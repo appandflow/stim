@@ -206,12 +206,38 @@ export function stimShellProvenanceInvalidReasons(meta) {
 }
 
 export function ccacheMeasurements(output) {
+  const structured = structuredCcache(output);
+  if (structured?.status === 'reported') {
+    const { hits, misses } = structured;
+    if (Number.isSafeInteger(hits) && Number.isSafeInteger(misses) && hits >= 0 && misses >= 0) {
+      return [{ hits, misses, hitRatePercent: hits + misses > 0 ? (100 * hits) / (hits + misses) : null }];
+    }
+  }
   return [...String(output ?? '').matchAll(/compilation cache\s+(\d+) hits\s*\/\s*(\d+) misses\s*\([\d.]+%\)/g)].map(
     ([, hits, misses]) => {
       hits = Number(hits);
       misses = Number(misses);
       return { hits, misses, hitRatePercent: hits + misses > 0 ? (100 * hits) / (hits + misses) : null };
     },
+  );
+}
+
+function structuredCcache(output) {
+  const match = String(output ?? '').match(/"ccache"\s*:\s*(\{[^{}]*\})/);
+  try {
+    return match ? JSON.parse(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function artifactCacheHit(entry) {
+  return (
+    entry.exitCode === 0 &&
+    (structuredCcache(entry.output)?.status === 'not-run' ||
+      /cache\s+hit\b|fingerprint\s+[0-9a-f]+\.\.\s+hit\b|compilation cache\s+not run; artifact cache supplied the app/.test(
+        entry.output,
+      ))
   );
 }
 
@@ -226,7 +252,10 @@ export function benchmarkCcache(meta, commands) {
   for (const entry of platformRuns) {
     const measurements = ccacheMeasurements(entry.output);
     result.builds.push(...measurements.map((measurement) => ({ commandId: entry.id ?? null, ...measurement })));
-    if (/build\s+compiling|compilation cache\s+unavailable/.test(entry.output) && measurements.length === 0) {
+    if (
+      measurements.length === 0 &&
+      (!artifactCacheHit(entry) || /build\s+compiling|compilation cache\s+unavailable/.test(entry.output))
+    ) {
       result.invalidReasons.push('ccache-evidence-missing');
     }
   }
@@ -245,14 +274,7 @@ export function benchmarkCcache(meta, commands) {
     result.invalidReasons.push('stale-cmake-launcher-state');
   }
   result.invalidReasons = [...new Set(result.invalidReasons)];
-  const artifactHit = platformRuns.some(
-    (entry) =>
-      entry.exitCode === 0 &&
-      /cache\s+hit\b|fingerprint\s+[0-9a-f]+\.\.\s+hit\b|compilation cache\s+not run; artifact cache supplied the app/.test(
-        entry.output,
-      ),
-  );
-  if (!result.builds.length && !artifactHit) result.invalidReasons.push('ccache-evidence-missing');
+  if (!platformRuns.length) result.invalidReasons.push('ccache-evidence-missing');
   result.invalidReasons = [...new Set(result.invalidReasons)];
   result.status = result.invalidReasons.length ? 'investigate' : result.builds.length ? 'measured' : 'artifact-hit';
   return result;

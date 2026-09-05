@@ -9,6 +9,7 @@ import {
   benchmarkCcache,
   assertAndroidDoctorClean,
   runnerToolOutput,
+  ccacheMeasurements,
 } from './run-guards.mjs';
 
 const targetConfig = parseBenchmarkTargets({
@@ -63,6 +64,35 @@ describe('compiler cache health', () => {
       'stale-cmake-launcher-state',
     ]);
     expect(benchmarkCcache({ ...meta, timingTarget: {} }, commands).invalidReasons).toContain('ccache-target-missing');
+  });
+
+  it('does not let good retry evidence mask an earlier invocation with no evidence', () => {
+    expect(benchmarkCcache(meta, [...build(''), ...build('fingerprint abcdef.. hit')]).invalidReasons).toContain(
+      'ccache-evidence-missing',
+    );
+    expect(
+      benchmarkCcache(meta, [...build(''), ...build('compilation cache 80 hits / 20 misses (80%)')]).invalidReasons,
+    ).toContain('ccache-evidence-missing');
+  });
+
+  it('measures structured Stim output for both collection and immediate alerts', () => {
+    const output = JSON.stringify(
+      { ok: true, facts: { ccache: { status: 'reported', hits: 80, misses: 20, hitRatePercent: 80 } } },
+      null,
+      2,
+    );
+    expect(benchmarkCcache(meta, build(output)).status).toBe('measured');
+    expect(
+      ccacheMeasurements(
+        runnerToolOutput({ type: 'item.completed', item: { type: 'command_execution', aggregated_output: output } }),
+      ),
+    ).toEqual([{ hits: 80, misses: 20, hitRatePercent: 80 }]);
+    expect(
+      benchmarkCcache(
+        meta,
+        build(JSON.stringify({ ok: true, facts: { ccache: { status: 'not-run', hits: null, misses: null } } })),
+      ).status,
+    ).toBe('artifact-hit');
   });
 
   it('rejects dirty or incomplete doctor evidence before timing', () => {
