@@ -99,12 +99,13 @@ export function repairCxxLauncherState(root: string): CxxRepairResult {
       if (!contained(canonicalRoot, canonicalTarget))
         throw new Error('generated directory resolves outside this checkout');
       if (realpathSync(cxx) !== join(realpathSync(dirname(cxx)), '.cxx')) throw new Error('.cxx is a symbolic link');
-      const tracked = getExecutor().runFile('git', ['ls-files', '-z', '--', `:(literal)${label}`], {
-        cwd: root,
+      const gitPath = relative(canonicalRoot, canonicalTarget);
+      const tracked = getExecutor().runFile('git', ['ls-files', '-z', '--', `:(literal)${gitPath}`], {
+        cwd: canonicalRoot,
         timeoutMs: 5000,
       });
       if (tracked) throw new Error('directory contains tracked files');
-      getExecutor().runFile('git', ['check-ignore', '-q', '--', label], { cwd: root, timeoutMs: 5000 });
+      getExecutor().runFile('git', ['check-ignore', '-q', '--', gitPath], { cwd: canonicalRoot, timeoutMs: 5000 });
       const active = listBuildLocks().some((lock) => {
         if (lock.platform !== 'android' || !lock.alive || !lock.projectRoot) return false;
         return realpathSync(lock.projectRoot) === canonicalRoot;

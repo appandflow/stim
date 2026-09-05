@@ -108,6 +108,17 @@ test('repair refuses a redirected .cxx directory even when its target is within 
   expect(existsSync(app)).toBe(true);
 });
 
+test('repair follows pnpm package links within the checkout for Git safety checks', () => {
+  const module = 'node_modules/.pnpm/native@1/node_modules/native';
+  const stale = cache(`${module}/android`, null);
+  symlinkSync(join(root, module), join(root, 'node_modules/native'), 'dir');
+  expect(repairCxxLauncherState(root)).toEqual({
+    removed: ['node_modules/native/android/.cxx/Debug/abc123/arm64-v8a'],
+    refused: [],
+  });
+  expect(existsSync(stale)).toBe(false);
+});
+
 test('doctor --json --fix reports the post-repair state as one JSON payload', () => {
   writeFileSync(
     join(root, 'package.json'),
