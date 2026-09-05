@@ -6,6 +6,9 @@ import {
   parseBenchmarkTargets,
   shellCommandSegments,
   stimShellProvenanceInvalidReasons,
+  benchmarkCcache,
+  assertAndroidDoctorClean,
+  runnerToolOutput,
 } from './run-guards.mjs';
 
 const targetConfig = parseBenchmarkTargets({
@@ -18,6 +21,74 @@ const targetConfig = parseBenchmarkTargets({
       runTimeoutSeconds: 600,
     },
   },
+});
+
+const build = (output) => [{ id: 'build', command: 'stim android', exitCode: 0, output }];
+
+describe('compiler cache health', () => {
+  const meta = { arm: 'stim', platform: 'android', variant: 'native', timingTarget: { ccacheMinHitRatePercent: 50 } };
+
+  it('flags the observed 9-hit 308-miss run and retains the measured evidence', () => {
+    expect(
+      benchmarkCcache(meta, build('build compiling debug\ncompilation cache 9 hits / 308 misses (2.8%)')),
+    ).toMatchObject({
+      status: 'investigate',
+      builds: [{ hits: 9, misses: 308 }],
+      invalidReasons: ['ccache-hit-rate-below-target'],
+    });
+    expect(benchmarkCcache(meta, build('compilation cache 80 hits / 20 misses (80%)')).status).toBe('measured');
+  });
+
+  it('accepts a proven artifact hit while refusing absent compiler evidence after a build', () => {
+    expect(benchmarkCcache(meta, build('fingerprint abcdef.. hit (1s)')).status).toBe('artifact-hit');
+    expect(benchmarkCcache(meta, build('build compiling debug\ncompilation cache unavailable'))).toMatchObject({
+      status: 'investigate',
+      invalidReasons: ['ccache-evidence-missing'],
+    });
+    expect(benchmarkCcache(meta, build(''))).toMatchObject({ status: 'investigate' });
+    expect(benchmarkCcache({ ...meta, arm: 'control' }, [])).toMatchObject({
+      status: 'not-applicable',
+      invalidReasons: [],
+    });
+  });
+
+  it('does not let a retry hide an earlier poorly cached build or stale doctor finding', () => {
+    const commands = [
+      ...build('build compiling debug\ncompilation cache 9 hits / 308 misses (2.8%)'),
+      ...build('fingerprint abcdef.. hit'),
+      { command: 'stim doctor --platform android', output: 'The configured CMake cache predates the ccache launcher' },
+    ];
+    expect(benchmarkCcache(meta, commands).invalidReasons).toEqual([
+      'ccache-hit-rate-below-target',
+      'stale-cmake-launcher-state',
+    ]);
+    expect(benchmarkCcache({ ...meta, timingTarget: {} }, commands).invalidReasons).toContain('ccache-target-missing');
+  });
+
+  it('rejects dirty or incomplete doctor evidence before timing', () => {
+    expect(() =>
+      assertAndroidDoctorClean({ platform: 'android', findings: [{ level: 'cost', title: 'stale CMake' }] }),
+    ).toThrow(/stale CMake/);
+    expect(() => assertAndroidDoctorClean({ findings: [] })).toThrow(/invalid/);
+    expect(assertAndroidDoctorClean({ platform: 'android', findings: [] })).toMatchObject({
+      platform: 'android',
+      findings: [],
+    });
+  });
+
+  it('only extracts tool output for immediate alerts, including Claude tool results', () => {
+    const output = 'compilation cache 9 hits / 308 misses (2.8%)';
+    expect(
+      runnerToolOutput({ type: 'item.completed', item: { type: 'command_execution', aggregated_output: output } }),
+    ).toBe(output);
+    expect(
+      runnerToolOutput({
+        type: 'user',
+        message: { content: [{ type: 'tool_result', content: [{ type: 'text', text: output }] }] },
+      }),
+    ).toBe(output);
+    expect(runnerToolOutput({ type: 'item.completed', item: { type: 'agent_message', text: output } })).toBe('');
+  });
 });
 
 describe('benchmark run guards', () => {
