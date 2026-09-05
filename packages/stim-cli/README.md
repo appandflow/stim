@@ -41,6 +41,13 @@ one native platform is in scope; shared project checks still run. Doctor also
 prints the running CLI version and the `stim` installation resolved from PATH,
 and flags a resolved installation that is older than another available one.
 
+For stale Android CMake launcher findings, stop native builds and run
+`stim doctor --fix --platform android` in the affected checkout. It clears
+affected ignored, untracked generated `.cxx` configurations in the app and
+installed native modules, then reports remaining findings. The next build
+recreates that output; source files, custom launcher settings, and shared
+ccache entries are preserved.
+
 Stim builds or restores the app, installs it, launches it, and checks launch
 readiness. Plain output streams progress and reports the complete result. Use
 `--json` when a script needs structured data.

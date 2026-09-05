@@ -26,6 +26,14 @@ fix PATH or the installation before continuing so commands and guidance match.
 
   stim doctor --platform ios          # or: --platform android
 
+For stale Android CMake launcher findings, stop native builds and run
+stim doctor --fix --platform android in the affected checkout before warming
+more worktrees. It removes affected ignored, untracked generated .cxx
+configurations, including installed native modules; the next build recreates
+them. It preserves source, custom launcher settings, and the shared ccache.
+
+Continue with cache seeding:
+
   # In the main checkout, seed the shared build caches when more native
   # worktrees are coming. Skip this for one-off or JavaScript-only work.
   stim start
