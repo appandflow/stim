@@ -206,35 +206,40 @@ export function stimShellProvenanceInvalidReasons(meta) {
 }
 
 export function ccacheMeasurements(output) {
-  const structured = structuredCcache(output);
-  if (structured?.status === 'reported') {
-    const { hits, misses } = structured;
-    if (Number.isSafeInteger(hits) && Number.isSafeInteger(misses) && hits >= 0 && misses >= 0) {
-      return [{ hits, misses, hitRatePercent: hits + misses > 0 ? (100 * hits) / (hits + misses) : null }];
-    }
-  }
-  return [...String(output ?? '').matchAll(/compilation cache\s+(\d+) hits\s*\/\s*(\d+) misses\s*\([\d.]+%\)/g)].map(
-    ([, hits, misses]) => {
-      hits = Number(hits);
-      misses = Number(misses);
-      return { hits, misses, hitRatePercent: hits + misses > 0 ? (100 * hits) / (hits + misses) : null };
-    },
-  );
+  const structured = structuredCcaches(output)
+    .filter(
+      ({ status, hits, misses }) =>
+        status === 'reported' && Number.isSafeInteger(hits) && Number.isSafeInteger(misses) && hits >= 0 && misses >= 0,
+    )
+    .map(({ hits, misses }) => ({
+      hits,
+      misses,
+      hitRatePercent: hits + misses > 0 ? (100 * hits) / (hits + misses) : null,
+    }));
+  const human = [
+    ...String(output ?? '').matchAll(/compilation cache\s+(\d+) hits\s*\/\s*(\d+) misses\s*\([\d.]+%\)/g),
+  ].map(([, hits, misses]) => {
+    hits = Number(hits);
+    misses = Number(misses);
+    return { hits, misses, hitRatePercent: hits + misses > 0 ? (100 * hits) / (hits + misses) : null };
+  });
+  return [...structured, ...human];
 }
 
-function structuredCcache(output) {
-  const match = String(output ?? '').match(/"ccache"\s*:\s*(\{[^{}]*\})/);
-  try {
-    return match ? JSON.parse(match[1]) : null;
-  } catch {
-    return null;
-  }
+function structuredCcaches(output) {
+  return [...String(output ?? '').matchAll(/"ccache"\s*:\s*(\{[^{}]*\})/g)].flatMap((match) => {
+    try {
+      return [JSON.parse(match[1])];
+    } catch {
+      return [];
+    }
+  });
 }
 
 function artifactCacheHit(entry) {
   return (
     entry.exitCode === 0 &&
-    (structuredCcache(entry.output)?.status === 'not-run' ||
+    (structuredCcaches(entry.output).some((cache) => cache.status === 'not-run') ||
       /cache\s+hit\b|fingerprint\s+[0-9a-f]+\.\.\s+hit\b|compilation cache\s+not run; artifact cache supplied the app/.test(
         entry.output,
       ))
@@ -252,6 +257,12 @@ export function benchmarkCcache(meta, commands) {
   for (const entry of platformRuns) {
     const measurements = ccacheMeasurements(entry.output);
     result.builds.push(...measurements.map((measurement) => ({ commandId: entry.id ?? null, ...measurement })));
+    if (
+      /compilation cache\s+unavailable/.test(entry.output) ||
+      structuredCcaches(entry.output).some((cache) => cache.status !== 'reported' && cache.status !== 'not-run')
+    ) {
+      result.invalidReasons.push('ccache-evidence-missing');
+    }
     if (
       measurements.length === 0 &&
       (!artifactCacheHit(entry) || /build\s+compiling|compilation cache\s+unavailable/.test(entry.output))

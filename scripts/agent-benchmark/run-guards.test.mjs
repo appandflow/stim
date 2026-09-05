@@ -95,6 +95,20 @@ describe('compiler cache health', () => {
     ).toBe('artifact-hit');
   });
 
+  it('retains every cache result when agents chain JSON and plain builds', () => {
+    const good = JSON.stringify({ facts: { ccache: { status: 'reported', hits: 80, misses: 20 } } });
+    const bad = JSON.stringify({ facts: { ccache: { status: 'reported', hits: 9, misses: 308 } } });
+    const audit = benchmarkCcache(meta, [
+      { ...build(`${good}\n${bad}`)[0], command: 'stim android --json; stim android --json' },
+    ]);
+    expect(audit.builds).toHaveLength(2);
+    expect(audit.invalidReasons).toContain('ccache-hit-rate-below-target');
+    expect(ccacheMeasurements(`${good}\ncompilation cache 9 hits / 308 misses (2.8%)`)).toHaveLength(2);
+    expect(benchmarkCcache(meta, build(`${good}\ncompilation cache unavailable`)).invalidReasons).toContain(
+      'ccache-evidence-missing',
+    );
+  });
+
   it('rejects dirty or incomplete doctor evidence before timing', () => {
     expect(() =>
       assertAndroidDoctorClean({ platform: 'android', findings: [{ level: 'cost', title: 'stale CMake' }] }),
