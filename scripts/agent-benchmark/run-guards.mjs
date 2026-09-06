@@ -64,7 +64,8 @@ export function topLevelShellCommand(command) {
   const trimmed = String(command ?? '').trim();
   const match = trimmed.match(/^\/bin\/(?:zsh|bash|sh) -lc (["'])([\s\S]*)\1$/);
   if (!match) return trimmed;
-  const source = match[1] === '"' ? match[2].replace(/\\(["\\$`])/g, '$1').replace(/\\\n/g, '') : match[2];
+  const source =
+    match[1] === '"' ? match[2].replace(/\\(["\\$`\n])/g, (_, char) => (char === '\n' ? '' : char)) : match[2];
   return source.trim();
 }
 

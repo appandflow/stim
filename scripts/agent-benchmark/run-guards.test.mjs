@@ -228,6 +228,9 @@ describe('benchmark run guards', () => {
     expect(topLevelShellCommand(`/bin/zsh -lc ${JSON.stringify(literal)}`)).toBe(literal);
     expect(topLevelShellCommand('/bin/zsh -lc "echo \\$VALUE"')).toBe('echo $VALUE');
     expect(topLevelShellCommand('/bin/zsh -lc "echo \\q"')).toBe('echo \\q');
+    const quotedNewline = "printf '%s' 'before" + '\\'.repeat(2) + "\nafter'";
+    expect(topLevelShellCommand(`/bin/zsh -lc "${quotedNewline}"`)).toBe("printf '%s' 'before\\\nafter'");
+    expect(topLevelShellCommand('/bin/zsh -lc "echo before\\\nafter"')).toBe('echo beforeafter');
   });
 
   it('rejects setup recovery inside the timer', () => {
