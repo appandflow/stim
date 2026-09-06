@@ -26,7 +26,7 @@ import {
   launchCrashRepair,
   launchCrashToken,
 } from '../launch-crash-benchmark.mjs';
-import { selectBenchmarkCacheKey } from './cache-key.mjs';
+import { benchmarkFingerprint, selectBenchmarkCacheKey } from './cache-key.mjs';
 import { matchesGoldenPreparation } from './golden-state.mjs';
 import {
   androidApplicationLabelFromBadging,
@@ -254,19 +254,7 @@ function sha256(path) {
 }
 
 function verifyGoldenCache(platform, platformGolden = goldenFor(platform)) {
-  const script = [
-    'const fingerprint = await import("@expo/fingerprint");',
-    'const result = await fingerprint.createFingerprintAsync(process.cwd(), {',
-    `  platforms: [${JSON.stringify(platform)}],`,
-    '  silent: true,',
-    '  ignorePaths: ["**/android/local.properties", "**/android/.idea/**"],',
-    '});',
-    'process.stdout.write(result.hash);',
-  ].join('\n');
-  const fingerprint = run('node', ['--input-type=module', '-e', script], {
-    cwd: main,
-    timeout: 2 * 60 * 1000,
-  });
+  const fingerprint = benchmarkFingerprint(main, stimPackage, platform);
   const cacheRoot = join(platformGolden, 'stim-home', 'build-cache', platform);
   const cacheKey = selectBenchmarkCacheKey(platform, fingerprint, existsSync(cacheRoot) ? readdirSync(cacheRoot) : []);
   const cacheDir = join(cacheRoot, cacheKey);

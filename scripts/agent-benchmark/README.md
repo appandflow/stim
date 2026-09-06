@@ -87,6 +87,8 @@ export STIM_BENCH_SKILLS_ROOT=/path/to/skills
 Preflight runs the pinned Stim shim through the same isolated login-shell
 startup used by timed commands. Dispatch refuses a Stim version, executable,
 or CLI digest mismatch and refuses a control shell that can resolve Stim.
+Golden cache validation hashes the fixture with the pinned CLI's fingerprint
+dependency, not the fixture's potentially different version.
 
 ## Run a cell
 
