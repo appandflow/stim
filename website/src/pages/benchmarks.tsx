@@ -207,12 +207,40 @@ export default function Benchmarks(): ReactNode {
                 <dd>The reported time is the validated Settings screenshot, not the earlier app-process marker.</dd>
               </div>
               <div>
+                <dt>Prepared caches</dt>
+                <dd>
+                  Installed dependencies and cache preparation are outside the timer. Android runs start from clean
+                  generated native state, with a seeded Stim APK and compiler cache and shared warmed Gradle caches.
+                  Both Android arms create their worktree and device inside the timer.
+                </dd>
+              </div>
+              <div>
                 <dt>Launch-failure suite</dt>
                 <dd>Diagnosis time and repaired Settings proof are reported separately from readiness results.</dd>
               </div>
               <div>
                 <dt>Audited attempts</dt>
-                <dd>Transcript rules, device identity, isolation, and proof are checked; invalid runs are excluded.</dd>
+                <dd>
+                  Transcript rules, device identity, isolation, and proof are checked; invalid runs are excluded, not
+                  retried simply for a better result. Android native Stim runs also require verified compiler-cache
+                  reuse against a fixed threshold established before dispatch.
+                </dd>
+              </div>
+              <div>
+                <dt>Current Android coverage</dt>
+                <dd>
+                  Nine of 16 attempts passed publication review. Seven were excluded for setup, completion, or
+                  coordinator-path isolation violations. Missing cells stay disabled; they are not zero-time results or
+                  evidence of a performance win.
+                </dd>
+              </div>
+              <div>
+                <dt>Current crash coverage</dt>
+                <dd>
+                  Sol completed the iOS Stim repair with recorded Settings proof. Control reached the 20-minute limit
+                  before completing the recording protocol and is excluded. This is one valid attempt, not a paired
+                  speedup comparison.
+                </dd>
               </div>
             </dl>
           </section>
