@@ -6,6 +6,7 @@ import {
   benchmarkTiming,
   parseBenchmarkTargets,
   shellCommandSegments,
+  topLevelShellCommand,
   stimShellProvenanceInvalidReasons,
   benchmarkCcache,
   assertAndroidDoctorClean,
@@ -211,6 +212,22 @@ describe('benchmark run guards', () => {
       'echo "a && b"',
       'stim guide agent',
     ]);
+    const search = 'rg -n "run:android|agent-device|emulator" .';
+    const body = `${search} | sed -n '1,180p'`;
+    const wrapped = `/bin/zsh -lc ${JSON.stringify(body)}`;
+    expect(shellCommandSegments(wrapped)).toEqual([search, "sed -n '1,180p'"]);
+    expect(agentDeviceIsolationInvalidReasons([{ command: wrapped }], 'env expected agent-device ')).toEqual([]);
+  });
+
+  it('decodes one shell quoting layer while preserving proof command boundaries and literal backslashes', () => {
+    const proof =
+      'env AGENT_DEVICE_STATE_DIR=/tmp/bench AGENT_DEVICE_SESSION=run agent-device wait text "Offline maps"';
+    expect(topLevelShellCommand(`/bin/zsh -lc ${JSON.stringify(proof)}`)).toBe(proof);
+    expect(topLevelShellCommand(`/bin/zsh -lc ${JSON.stringify(`${proof}; agent-device close`)}`)).not.toBe(proof);
+    const literal = "rg '\\d+\\s' file";
+    expect(topLevelShellCommand(`/bin/zsh -lc ${JSON.stringify(literal)}`)).toBe(literal);
+    expect(topLevelShellCommand('/bin/zsh -lc "echo \\$VALUE"')).toBe('echo $VALUE');
+    expect(topLevelShellCommand('/bin/zsh -lc "echo \\q"')).toBe('echo \\q');
   });
 
   it('rejects setup recovery inside the timer', () => {

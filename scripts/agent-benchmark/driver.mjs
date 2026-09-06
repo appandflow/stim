@@ -45,6 +45,7 @@ import {
   benchmarkCcache,
   ccacheMeasurements,
   runnerToolOutput,
+  topLevelShellCommand,
 } from './run-guards.mjs';
 
 const launchCrashVariant = 'launch-crash';
@@ -1626,12 +1627,6 @@ function commandEvidence(meta, eventsPath, runDir) {
   }
   invalidReasons.push(...agentDeviceIsolationInvalidReasons(commands, agentDeviceCommand(meta, '')));
   return { commands, activities, completedEvents, invalidReasons };
-}
-
-function topLevelShellCommand(command) {
-  const trimmed = String(command ?? '').trim();
-  const match = trimmed.match(/^\/bin\/(?:zsh|bash|sh) -lc (["'])([\s\S]*)\1$/);
-  return (match?.[2] ?? trimmed).trim();
 }
 
 function agentDeviceOpenCommand(meta, appAlive) {
