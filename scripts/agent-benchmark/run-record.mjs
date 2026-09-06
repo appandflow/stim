@@ -24,6 +24,28 @@ export function completedCleanupRecord(record) {
 export function durableRunRecord(previous, next, cleanupCompleted = false) {
   if (
     cleanupCompleted &&
+    previous?.variant === 'launch-crash' &&
+    next.variant === 'launch-crash' &&
+    typeof previous.runId === 'string' &&
+    previous.runId === next.runId &&
+    previous.proof?.valid === true &&
+    previous.proof.kind === 'launch-crash-source-repair' &&
+    previous.proof.sourceSha256 &&
+    previous.proof.sourceSha256 === previous.evidenceSha256?.proof &&
+    next.proof?.reason === 'launch-crash-source-missing' &&
+    sameEvidence(previous, next)
+  ) {
+    const invalidReasons = next.invalidReasons.filter((reason) => reason !== 'launch-crash-source-missing');
+    return {
+      ...next,
+      proof: previous.proof,
+      evidenceSha256: { ...next.evidenceSha256, proof: previous.evidenceSha256.proof },
+      invalidReasons,
+      valid: invalidReasons.length === 0,
+    };
+  }
+  if (
+    cleanupCompleted &&
     previous?.valid === true &&
     next.valid === false &&
     next.invalidReasons.length > 0 &&

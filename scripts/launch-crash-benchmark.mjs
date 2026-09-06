@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { shellCommandSegments, topLevelShellCommand } from './agent-benchmark/run-guards.mjs';
 
 export function launchCrashToken(runId) {
   const digest = createHash('sha256').update(runId).digest('hex').slice(0, 12).toUpperCase();
@@ -35,6 +36,8 @@ function successful(command) {
 
 function shellCommand(command) {
   const value = String(command ?? '').trim();
+  const normalized = topLevelShellCommand(value);
+  if (normalized !== value) return normalized;
   const body = value.replace(/^\/bin\/(?:zsh|bash|sh) -lc\s+/, '');
   return body.replace(/^["']/, '').replace(/["']$/, '').trim();
 }
@@ -58,7 +61,9 @@ function errorCaptureCommand(command, arm, platform) {
   command = shellCommand(command);
   if (arm === 'stim') return /(?:^|\s)stim\s+logs\s+--errors(?:\s|$)/.test(command);
   const explicitLogFile =
-    /\b(?:tail|rg|grep)\b[\s\S]*(?:\.log\b|(?:^|[\s'"])(?:\.?\/)?(?:tmp|logs?|\.expo\/dev\/logs)\/)/.test(command);
+    /\b(?:tail|rg|grep|sed|cat)\b[\s\S]*(?:\.log\b|(?:^|[\s'"])(?:\.?\/)?(?:tmp|logs?|\.expo\/dev\/logs)\/)/.test(
+      command,
+    );
   if (platform === 'android') return /\badb\s+logcat\b/.test(command) || explicitLogFile;
   return /\bxcrun\s+simctl\s+spawn\b|\blog\s+(?:show|stream)\b/.test(command) || explicitLogFile;
 }
@@ -92,6 +97,10 @@ function sourceInspectionBeforeCapture(command, arm, platform) {
 
 function allowedBeforeErrorCapture(command, arm, platform) {
   const value = shellCommand(command);
+  if (/^(?:stim\s+(?:guide|doctor|worktree\s+warm)\b|rsync\b|pgrep\b|sed\b|cat\b)/.test(value)) {
+    const segments = shellCommandSegments(value);
+    if (segments.length > 1) return segments.every((segment) => allowedBeforeErrorCapture(segment, arm, platform));
+  }
   if (/^tool:todo_list\b/.test(value)) return true;
   if (/^(?:env\s+)?(?:[^\s=]+=[^\s]+\s+)*agent-device\s+/.test(value)) return true;
   if (
@@ -103,6 +112,16 @@ function allowedBeforeErrorCapture(command, arm, platform) {
     return true;
   }
   if (sourceInspectionBeforeCapture(value, arm, platform)) return false;
+  if (/^(?:\.\/)?node_modules\/\.bin\/expo\s+--version$/.test(value)) return true;
+  if (/^node\s+-p\s+(?:process\.execPath|(["'])process\.execPath\1)$/.test(value)) return true;
+  if (/^print\s+-r\s+--\s+\d+\s*\|\s*tee\s+\/(?:private\/)?tmp\/[A-Za-z0-9_./-]+\.pid$/.test(value)) return true;
+  if (
+    /^node\s+-p\s+(["'])require\.resolve\((["'])(?:expo|react-native)\/package\.json\2\)\1(?:\s*&&\s*(?:\.\/)?node_modules\/\.bin\/expo\s+--version)?$/.test(
+      value,
+    )
+  ) {
+    return true;
+  }
   if (
     /(?:\/(?:skills|skill)\/[^\s]+\/|(?:^|\s)workspace\/)SKILL\.md\b/.test(value) &&
     /(?:^|\s)(?:cat|sed|head)(?:\s|$)/.test(value)
@@ -131,14 +150,19 @@ function allowedBeforeErrorCapture(command, arm, platform) {
   ) {
     return true;
   }
-  if (/^cp\b/.test(value) && /(?:node_modules|ios\/Pods|ios\/build|android\/(?:\.gradle|app\/build))/.test(value)) {
+  if (
+    /^(?:cp|rsync)\b/.test(value) &&
+    /(?:node_modules|ios\/Pods|ios\/build|android\/(?:\.gradle|app\/build))/.test(value)
+  ) {
     return true;
   }
   if (arm === 'stim') {
-    return new RegExp(`^stim\\s+(?:worktree\\s+create|start|${platform}|logs\\s+--errors)(?:\\s|$)`).test(value);
+    return new RegExp(
+      `^stim\\s+(?:guide|doctor|worktree\\s+(?:warm|create)|start|${platform}|logs\\s+--errors)(?:\\s|$)`,
+    ).test(value);
   }
   return (
-    /^(?:(?:[A-Za-z_][A-Za-z0-9_]*=(?:\S+|\$\([^)]*\))[;\s]+)*)(?:open\s+-a\s+Simulator|xcrun\s+simctl\s+|npx\s+expo\s+|xcodebuild\b|\.\/gradlew\b|adb\b|nohup\b|launchctl\b|ps\b|sleep\b|tail\b|cat\s+\/?tmp\/|wc\b|lsof\b|command\s+-v\b|test\b|kill\b)/.test(
+    /^(?:(?:[A-Za-z_][A-Za-z0-9_]*=(?:\S+|\$\([^)]*\))[;\s]+)*)(?:open\s+-a\s+Simulator|xcrun\s+simctl\s+|npx\s+expo\s+|xcodebuild\b|\.\/gradlew\b|adb\b|nohup\b|launchctl\b|ps\b|pgrep\b|sleep\b|tail\b|cat\s+\/?tmp\/|wc\b|lsof\b|command\s+-v\b|test\b|kill\b)/.test(
       value,
     ) ||
     launchCommand(value, arm, platform) ||
@@ -150,10 +174,7 @@ export function launchCrashDiagnosis(commands, { dispatchAt, token, arm = 'stim'
   const ordered = orderedCommands(commands);
   const sourceMarkers = ['app/_layout.tsx', 'RootLayout'];
   const initialLaunchIndex = ordered.findIndex(
-    (command) =>
-      successful(command) &&
-      launchCommand(command.command, arm, platform) &&
-      (arm !== 'stim' || (typeof command.output === 'string' && command.output.includes(token))),
+    (command) => successful(command) && launchCommand(command.command, arm, platform),
   );
   if (initialLaunchIndex === -1) {
     return { valid: false, reason: 'launch-crash-initial-launch-evidence-missing' };

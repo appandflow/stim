@@ -998,7 +998,14 @@ describe('benchmark viewer export', () => {
         'skill',
       ],
       ['worktree', '2026-09-04T12:00:03.000Z', '2026-09-04T12:00:05.000Z', 'stim worktree create bench/run', 'ready'],
-      ['launch', '2026-09-04T12:00:10.000Z', '2026-09-04T12:00:20.000Z', 'stim ios', token],
+      [
+        'metadata',
+        '2026-09-04T12:00:06.000Z',
+        '2026-09-04T12:00:07.000Z',
+        String.raw`/bin/zsh -lc "node -p \"require.resolve('expo/package.json')\" && node_modules/.bin/expo --version"`,
+        '58.0.0-canary',
+      ],
+      ['launch', '2026-09-04T12:00:10.000Z', '2026-09-04T12:00:20.000Z', 'stim ios', 'app launched'],
       ['logs', '2026-09-04T12:00:25.000Z', '2026-09-04T12:00:30.000Z', 'stim logs --errors', token],
       [
         'diagnosis',
@@ -1067,7 +1074,7 @@ describe('benchmark viewer export', () => {
         valid: true,
         invalidReasons: [],
         dispatchToDiagnosisSeconds: 90,
-        diagnosisCommandCount: 5,
+        diagnosisCommandCount: 6,
         diagnosisUsage: {
           input_tokens: 100_000,
           cached_input_tokens: 80_000,
@@ -1118,7 +1125,7 @@ describe('benchmark viewer export', () => {
       id: 'launch-crash-stim',
       platform: 'ios',
       diagnosisSeconds: 90,
-      diagnosisCommandCount: 5,
+      diagnosisCommandCount: 6,
       launchCrashAudit: {
         initialLaunchCommandId: 'launch',
         errorCaptureCommandId: 'logs',
