@@ -57,6 +57,16 @@
   gap: 1.5rem;
 }
 
+.stimFit {
+  max-width: 800px;
+  padding: 0 1rem 4rem;
+  line-height: 1.7;
+}
+
+.stimFit li {
+  margin-bottom: 1rem;
+}
+
 .stimFeatureCard {
   overflow: hidden;
   padding: 1.5rem;

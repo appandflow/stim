@@ -99,6 +99,40 @@ export default function Home(): ReactNode {
             ))}
           </div>
         </section>
+        <section className="container stimFit" aria-labelledby="when-you-dont-need-stim">
+          <Heading as="h2" id="when-you-dont-need-stim">
+            When you probably don't need Stim
+          </Heading>
+          <p>
+            Stim helps with repeated setup, builds, and device management across worktrees. If those aren't slowing you
+            down, it may add little.
+          </p>
+          <ul>
+            <li>
+              <strong>One long-lived checkout, one running app.</strong> Your existing tooling already keeps builds
+              warm. If you aren't juggling worktrees or agents, there's less to isolate and less duplicated work to
+              avoid.
+            </li>
+            <li>
+              <strong>An installed Expo development build and mostly JavaScript changes.</strong> You can keep using the
+              same native app while Metro serves your changes. If native dependencies and configuration rarely change,
+              there may be little build time to save.
+            </li>
+            <li>
+              <strong>Agents that don't run the app.</strong> If your agents only edit code and run unit tests, they
+              don't need isolated simulators or a native build workflow.
+            </li>
+            <li>
+              <strong>Your existing setup already handles this.</strong> If your scripts or development platform provide
+              isolated environments and reliable build reuse, Stim may duplicate what you have.
+            </li>
+            <li>
+              <strong>You want cloud builds or app distribution.</strong> Stim builds locally; it doesn't replace hosted
+              build infrastructure, signing workflows, or store submission.
+            </li>
+          </ul>
+          <p>You don't need to replace a workflow that already works.</p>
+        </section>
       </main>
     </Layout>
   );
