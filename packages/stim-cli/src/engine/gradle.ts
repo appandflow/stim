@@ -1,6 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import chalk from 'chalk';
 import { phaseLine } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
@@ -477,6 +478,16 @@ export async function buildAndroid(
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
   const task = assembleTaskFor(variant);
   const args = gradleArgs(task, { buildCache, abi });
+  if (ccache) {
+    const script = ['../shim/android-no-pch.gradle', '../../shim/android-no-pch.gradle']
+      .map((path) => fileURLToPath(new URL(path, import.meta.url)))
+      .find((path) => existsSync(path));
+    if (!script) throw new Error('Stim installation is missing shim/android-no-pch.gradle. Reinstall stim-cli.');
+    args.push('--init-script', script);
+    onNote(
+      chalk.dim(phaseLine('cache', 'CMake PCH off by default for ccache reuse (explicit project settings preserved)')),
+    );
+  }
   if (buildCache) {
     onNote(chalk.dim(phaseLine('cache', 'gradle build cache on (--build-cache, shared under the Gradle user home)')));
   }

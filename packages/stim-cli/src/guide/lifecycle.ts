@@ -389,14 +389,16 @@ The trade-off is the same class as the iOS CAS one: an object reused from
 worktree A carries A's directory as its DWARF comp_dir, so a debugger stepping
 into reused C++ resolves sources against that path.
 
-Precompiled headers are where the misses are, and the cause is mtime, not
-paths. worklets and expo-modules-core precompile a header without
--fno-pch-timestamp, so ccache re-checks the mtime of the PCH inputs
-(\`Precompiled header includes ..., which has a new mtime\`), rebuilds the
-header, and every translation unit that includes it misses too -- 5 to 11
-seconds per module, paid again after anything that rewrites those mtimes,
-a fresh npm ci included. No stale .pch is ever served. reanimated passes
--Xclang -fno-pch-timestamp and hits across worktrees like everything else.
+When Stim supplies ccache, its Gradle init script defaults Android app and
+library CMake builds to CMAKE_DISABLE_PRECOMPILE_HEADERS=ON. PCH inputs can
+retain a previous worktree's paths even with upstream timestamp fixes, causing
+the header and its consuming objects to miss. Compiling ordinary headers
+instead favors reuse across worktrees at the cost of a slower cold C++ build.
+This does not edit dependency sources or change iOS builds. Without Stim's
+ccache setup, PCH behavior is unchanged. A module with an explicit
+CMAKE_DISABLE_PRECOMPILE_HEADERS argument in its default config, build types,
+or product flavors keeps that choice; CMake target-level PCH overrides also
+take precedence. Direct Gradle builds do not receive Stim's init script.
 
 The launcher persists in the project. AGP writes it into each
 .cxx/**/CMakeCache.txt on the first configure, so a plain \`./gradlew\` in that
