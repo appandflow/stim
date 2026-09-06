@@ -308,7 +308,13 @@ test('the agent guide routes to every detailed topic', () => {
     expect(agent).toContain(`guide ${topicName}`);
   }
   expect(agent).toContain('stim guide errors <CODE>');
-  for (const route of ['guide errors sandbox', 'guide facts devmenu', 'guide cleanup collector']) {
+  for (const route of [
+    'guide errors sandbox',
+    'guide facts devmenu',
+    'guide cleanup collector',
+    'guide lifecycle builds',
+    'guide lifecycle concurrency',
+  ]) {
     expect(agent).toContain(route);
   }
 });

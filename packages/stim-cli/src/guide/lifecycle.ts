@@ -306,8 +306,21 @@ result as proof instead of requiring an unrelated screenshot.`,
     },
     builds: {
       summary:
-        'cache hits, misses, the fingerprint shift, .fingerprintignore, install unchanged, where runtime state lives',
-      body: () => `AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
+        'optional cache warm-up, build optimizations, fingerprints, .fingerprintignore, install unchanged, runtime state',
+      body: () => `OPTIONAL CACHE WARM-UP FOR REPEATED NATIVE WORK
+  When several native worktrees are coming, build the main checkout once to
+  seed the shared caches before warming the linked worktrees. Skip this extra
+  build for one-off or JavaScript-only work. For local simulator or emulator
+  work, run these commands in the main checkout's app directory:
+
+    stim doctor --platform ios        # or: --platform android
+    stim start
+    stim ios                          # or: stim android
+    stim stop
+
+  Follow the normal ownership and consent rules in guide agent.
+
+AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
   Both platforms store the artifact verbatim, so its hash is its identity.
   Before installing, Stim hashes the artifact it is about to install and the
   one the device already has -- \`pm path\` then \`sha256sum\` on Android, the
@@ -351,8 +364,9 @@ committing. The shared caches need no project-file edits:
            when the project configured ccache (the two defeat each other).
   android  gradlew carries --build-cache, so task outputs cross worktrees with
            no org.gradle.caching=true in gradle.properties. Debug builds also
-           carry -PreactNativeArchitectures=<target ABI> when Stim can prove
-           the emulator or physical-device ABI; otherwise they stay universal.
+           carry -PreactNativeArchitectures=<target ABI>, using the owned
+           emulator system-image ABI or the physical device's primary ABI.
+           Unknown targets and Release builds stay universal.
   ccache   the same gradlew run carries an absolute
            CMAKE_C_COMPILER_LAUNCHER / CMAKE_CXX_COMPILER_LAUNCHER plus
            CCACHE_DIR, CCACHE_BASEDIR, CCACHE_NOHASHDIR, CCACHE_SLOPPINESS
@@ -459,6 +473,8 @@ THE BUILD CACHE HAS THREE LEVELS
   If the iOS fingerprint after prebuild or pod install is unavailable, Stim
   installs the build but skips local storage and remote uploads. fingerprint
   and cacheKey are null in the result and lastBuild; the old key is not reused.
+  Android does the same if its post-Gradle fingerprint cannot be computed.
+  These null fields mean unavailable cache information, not an install failure.
 
 WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   Every entry is keyed on what the tree hashes, so two workspaces share an
