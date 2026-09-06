@@ -417,8 +417,16 @@ take precedence. Direct Gradle builds do not receive Stim's init script.
 The launcher persists in the project. AGP writes it into each
 .cxx/**/CMakeCache.txt on the first configure, so a plain \`./gradlew\` in that
 checkout also compiles through ccache -- and a .cxx configured BEFORE the
-variables existed keeps compiling without them until it is deleted once.
-\`stim doctor\` reports both.
+variables existed can keep compiling without them until it is cleared once.
+\`stim doctor\` reports stale configurations in this checkout's app and installed
+native modules. Stop native builds, then run \`stim doctor --fix --platform android\`:
+it removes only affected ignored, untracked generated .cxx configurations and
+reruns the diagnostics. The next build recreates them. It refuses directories
+outside the checkout and configured custom launchers. Shared ccache entries and
+source files are preserved. Its cache-lock check cannot detect --no-build-cache,
+release-swap fallback, or direct Gradle builds; stop all native builds and keep
+them stopped until repair finishes.
+Run it before copying the checkout into worktrees.
 
 THE BUILD CACHE HAS THREE LEVELS
   1. Stim's own, on this machine: a directory under ~/.stim shared by

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
+import { existsSync, readFileSync, realpathSync, rmSync } from 'fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import { plural } from './command-output.ts';
 import { getExecutor } from './exec.ts';
@@ -34,12 +34,15 @@ import {
   settingShapeErrors,
 } from './settings.ts';
 import type { RemoteDeviceBackend } from './types.ts';
+import { readCxxLauncherStates, type CxxLauncherState } from './doctor-cxx.ts';
+export { parseCmakeCacheLauncher } from './doctor-cxx.ts';
 
 type AnyJson = Record<string, unknown>;
 
 export { detectXcodeMajor, parseXcodeMajor };
 
 export interface Finding {
+  code?: string;
   level: 'cost' | 'note';
   title: string;
   detail: string;
@@ -361,18 +364,6 @@ export function checkCcacheInstalled(onPath: boolean): Finding | null {
   );
 }
 
-export interface CxxLauncherState {
-  path: string;
-  launcher: string | null;
-}
-
-export function parseCmakeCacheLauncher(source: unknown): string | null {
-  if (typeof source !== 'string') return null;
-  const match = /^CMAKE_CXX_COMPILER_LAUNCHER(?::[A-Z]+)?=(.*)$/m.exec(source);
-  const value = match?.[1]?.trim();
-  return value ? value : null;
-}
-
 // CMake docs, CMAKE_<LANG>_COMPILER_LAUNCHER: the value is a ;-separated
 // command line whose first word is resolved through PATH unless it is
 // absolute, so only an absolute one is a path this machine must hold.
@@ -401,55 +392,18 @@ export function checkCxxCompilerLauncher({
       'cost',
       'A configured CMake cache names a compiler launcher that is not on this machine',
       `${plural(missing.length, 'CMakeCache.txt file')} under this project name ${named}, and CMake runs that path for every C++ compile. Until the cache is reconfigured the build fails there rather than falling back: ${missing[0]?.path}.`,
-      'Delete the configured CMake directories once so the next build reconfigures: `rm -rf android/app/.cxx android/app/build` (and node_modules/*/android/.cxx for library modules).',
+      'With ccache installed, run `stim doctor --fix --platform android` in this checkout to clear affected generated .cxx configurations. Custom launchers require project-specific repair. Stop native builds before repairing.',
     );
   }
   if (!ccacheOnPath) return null;
-  if (states.length === 0) return null;
-  if (states.some((state) => state.launcher !== null)) return null;
+  const stale = states.filter((state) => state.launcher === null);
+  if (stale.length === 0) return null;
   return finding(
     'cost',
     'The configured CMake cache predates the ccache launcher, so C++ compiles still bypass it',
-    `CMake seeds CMAKE_CXX_COMPILER_LAUNCHER from the environment on a FRESH configure only, so a .cxx directory written before Stim set the variable keeps compiling without it and the shared cache stays empty. ${plural(states.length, 'CMakeCache.txt file')} here names no launcher: ${states[0]?.path}.`,
-    'Delete the configured CMake directories once: `rm -rf android/app/.cxx android/app/build` (and node_modules/*/android/.cxx for library modules). The next `stim android` reconfigures with the launcher and every later build keeps it.',
+    `CMake seeds CMAKE_CXX_COMPILER_LAUNCHER from the environment on a fresh configure only. ${plural(stale.length, 'CMakeCache.txt file')} here names no launcher: ${stale[0]?.path}. These configurations can bypass ccache; cache misses reported by ccache itself still represent compilations that used the launcher.`,
+    'Stop native builds, then run `stim doctor --fix --platform android` in this checkout. It clears affected ignored, untracked .cxx configurations; the next `stim android` configures them with ccache. Existing custom launcher settings require project-specific repair.',
   );
-}
-
-const CXX_SCAN_DEPTH = 4;
-
-function readCxxLauncherStates(projectRoot: string): CxxLauncherState[] {
-  const base = join(projectRoot, 'android', 'app', '.cxx');
-  const states: CxxLauncherState[] = [];
-  const walk = (dir: string, depth: number): void => {
-    let names: string[];
-    try {
-      names = readdirSync(dir);
-    } catch {
-      return;
-    }
-    for (const name of names) {
-      const path = join(dir, name);
-      if (name === 'CMakeCache.txt') {
-        let source: string | null = null;
-        try {
-          source = readFileSync(path, 'utf-8');
-        } catch {
-          continue;
-        }
-        states.push({ path: relative(projectRoot, path), launcher: parseCmakeCacheLauncher(source) });
-        continue;
-      }
-      if (depth >= CXX_SCAN_DEPTH) continue;
-      try {
-        if (!statSync(path).isDirectory()) continue;
-      } catch {
-        continue;
-      }
-      walk(path, depth + 1);
-    }
-  };
-  walk(base, 0);
-  return states;
 }
 
 function ccacheIsOnPath(): boolean {
@@ -826,10 +780,19 @@ function androidCcacheFindings(
 ): (Finding | null)[] {
   if (platform !== 'android' && !existsSync(join(projectRoot, 'android'))) return [];
   const onPath = lookupCcache ? lookupCcache() : ccacheIsOnPath();
-  return [
-    checkCcacheInstalled(onPath),
-    checkCxxCompilerLauncher({ states: readCxxLauncherStates(projectRoot), ccacheOnPath: onPath }),
-  ];
+  let cxx: Finding | null;
+  try {
+    cxx = checkCxxCompilerLauncher({ states: readCxxLauncherStates(projectRoot), ccacheOnPath: onPath });
+  } catch (error) {
+    cxx = finding(
+      'cost',
+      'CMake launcher state could not be inspected',
+      String(error),
+      'Restore read access and rerun doctor.',
+    );
+  }
+  if (cxx) cxx.code = 'android-cmake-launcher';
+  return [checkCcacheInstalled(onPath), cxx];
 }
 
 function checkAppProject(projectRoot: string): Finding | null {

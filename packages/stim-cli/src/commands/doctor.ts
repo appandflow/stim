@@ -15,6 +15,7 @@ import { detectFingerprintParity, detectXcodeMajor, runDoctor } from '../doctor.
 import type { DoctorPlatform, Finding } from '../doctor.ts';
 import { phaseLine } from '../command-output.ts';
 import { compareStimVersions, inspectStimVersions, type StimVersionReport } from '../stim-installations.ts';
+import { repairCxxLauncherState } from '../doctor-cxx.ts';
 
 interface DoctorOptions {
   json?: boolean;
@@ -170,7 +171,7 @@ export default function doctorCommand(
     )
     .option(
       '--fix',
-      'apply the findings Stim can repair itself and report the rest, which stay read-only. Every repair writes a per-user file, never a committed one, and refuses a file it cannot read back rather than replace it. Today one finding qualifies: the sandbox allowance.',
+      'repair the sandbox allowance and stale Android .cxx configurations in this checkout. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
     )
     .action(async (opts: DoctorOptions) => {
       const root = findProjectRoot(process.cwd());
@@ -180,7 +181,21 @@ export default function doctorCommand(
         return;
       }
 
-      if (opts.fix) applySandboxFix(root);
+      if (opts.fix) {
+        if (detectHarness() !== 'codex' || sandboxFinding(repoRoot(root) ?? root)) applySandboxFix(root);
+        if (opts.platform !== 'ios') {
+          try {
+            const repair = repairCxxLauncherState(root);
+            for (const path of repair.removed)
+              console.error(phaseLine('cache', `removed ${path}; next build reconfigures`));
+            for (const { path, reason } of repair.refused) console.error(phaseLine('cache', `kept ${path}: ${reason}`));
+            if (repair.refused.length > 0) process.exitCode = 1;
+          } catch (error) {
+            console.error(phaseLine('cache', `CMake cleanup failed: ${(error as Error).message}`));
+            process.exitCode = 1;
+          }
+        }
+      }
 
       const stim = await inspectVersions(version);
 

@@ -28,6 +28,12 @@ for placement overrides and guide lifecycle options for warm behavior.
 
   stim doctor --platform ios          # or: --platform android
 
+For stale Android CMake launcher findings, stop native builds and run
+stim doctor --fix --platform android in the affected checkout before warming
+more worktrees. It removes affected ignored, untracked generated .cxx
+configurations, including installed native modules; the next build recreates
+them. It preserves source, custom launcher settings, and the shared ccache.
+
   # Skip Git creation if the harness already created this linked worktree.
   git worktree add -b <branch> <worktree-path> HEAD
   cd <worktree-path>
