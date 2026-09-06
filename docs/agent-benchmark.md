@@ -261,6 +261,10 @@ a repaired Settings screenshot. The Stim arm must preserve `stim ios` launch
 output and `stim logs --errors`; control collects the equivalent Metro and
 simulator logs manually. The injected error text is unique per run so the
 collector can prove that the reported stack and repair refer to this failure.
+The unique token and source location must appear in captured runtime errors;
+the earlier successful launch command does not have to print the token inline.
+Before capture, normal guide, doctor, worktree warming, and narrowly scoped
+installed-dependency resolution are setup, not application-source inspection.
 
 The coordinator creates a per-run fixture branch, injects and commits the
 exception, and checks out that fixture before dispatch, outside the timed

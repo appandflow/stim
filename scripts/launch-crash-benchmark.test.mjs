@@ -46,7 +46,7 @@ describe('launch crash benchmark', () => {
         {
           id: 'launch',
           command: 'stim ios',
-          output: token,
+          output: 'launch com.example.app\n1 error-level record during launch (logs --errors --source device)',
           exitCode: 0,
           startedAt: '2026-09-04T12:00:01.000Z',
           endedAt: '2026-09-04T12:00:10.000Z',
@@ -106,6 +106,60 @@ describe('launch crash benchmark', () => {
       reason: 'launch-crash-pre-capture-command-not-allowed',
       commandId: 'inspect',
     });
+  });
+
+  it('allows current Stim setup and narrow dependency resolution before separately captured errors', () => {
+    const token = launchCrashToken('setup');
+    const setup = [
+      'stim guide agent',
+      'git worktree add -b bench/run /tmp/bench-run HEAD',
+      'stim worktree warm',
+      'stim doctor --platform ios',
+      `node -p "require.resolve('expo/package.json')" && node_modules/.bin/expo --version`,
+    ].map((command, index) => ({
+      id: `setup-${index}`,
+      command: `/bin/zsh -lc ${JSON.stringify(command)}`,
+      exitCode: 0,
+      endedAt: `2026-09-04T12:00:0${index + 1}Z`,
+    }));
+    const evidence = [
+      {
+        id: 'launch',
+        command: 'stim ios',
+        output: 'launched com.example.app',
+        exitCode: 0,
+        endedAt: '2026-09-04T12:00:10Z',
+      },
+      {
+        id: 'logs',
+        command: 'stim logs --errors',
+        output: `${token}\napp/_layout.tsx in RootLayout`,
+        exitCode: 0,
+        startedAt: '2026-09-04T12:00:11Z',
+        endedAt: '2026-09-04T12:00:12Z',
+      },
+    ];
+    const options = { dispatchAt: '2026-09-04T12:00:00Z', token };
+    expect(launchCrashDiagnosis([...setup, ...evidence], options)).toMatchObject({
+      valid: true,
+      commandId: 'logs',
+      dispatchToDiagnosisSeconds: 12,
+    });
+    for (const command of [
+      `node -p "require('fs').readFileSync('app/_layout.tsx', 'utf8')"`,
+      `node -p "require.resolve('expo/package.json'); require('./app/_layout.tsx')"`,
+      'stim guide agent && cat app/_layout.tsx',
+      'stim doctor --platform ios; git diff',
+    ]) {
+      expect(launchCrashDiagnosis([{ ...setup[0], command }, ...evidence], options)).toMatchObject({
+        valid: false,
+        reason: 'launch-crash-pre-capture-command-not-allowed',
+        commandId: 'setup-0',
+      });
+    }
+    expect(
+      launchCrashDiagnosis([...setup, evidence[0], { ...evidence[1], output: 'unrelated error' }], options),
+    ).toMatchObject({ valid: false, reason: 'launch-crash-error-capture-missing' });
   });
 
   it('rejects source inspection hidden after an allowed compound-command prefix', () => {
@@ -189,6 +243,46 @@ describe('launch crash benchmark', () => {
         },
       ),
     ).toMatchObject({ valid: true, commandId: 'logs' });
+  });
+
+  it('allows dependency copying and PID/log diagnostics without treating source reads as logs', () => {
+    const token = launchCrashToken('control-setup');
+    const setup = [
+      'rsync -aR node_modules ios/Pods ios/build /tmp/worktree/',
+      './node_modules/.bin/expo --version',
+      'node -p process.execPath',
+      'pgrep -P 35182 -fl .',
+      'print -r -- 35182 | tee /tmp/run-metro.pid',
+      "sed -n '1,160p' /tmp/run-metro.log",
+    ].map((command, index) => ({
+      id: `setup-${index}`,
+      command,
+      exitCode: 0,
+      endedAt: `2026-09-04T12:00:0${index + 1}Z`,
+    }));
+    const launch = {
+      id: 'launch',
+      command: 'npx expo run:ios --device SIMULATOR',
+      output: 'launched',
+      exitCode: 0,
+      endedAt: '2026-09-04T12:00:10Z',
+    };
+    const logs = {
+      id: 'logs',
+      command: "sed -n '1,160p' /tmp/run-runtime.log",
+      output: `${token}\napp/_layout.tsx in RootLayout`,
+      exitCode: 0,
+      startedAt: '2026-09-04T12:00:11Z',
+      endedAt: '2026-09-04T12:00:12Z',
+    };
+    const options = { dispatchAt: '2026-09-04T12:00:00Z', token, arm: 'control' };
+    expect(launchCrashDiagnosis([...setup, launch, logs], options)).toMatchObject({ valid: true, commandId: 'logs' });
+    expect(
+      launchCrashDiagnosis([launch, { ...logs, command: "sed -n '1,160p' app/_layout.tsx" }], options),
+    ).toMatchObject({ valid: false, reason: 'launch-crash-error-capture-missing' });
+    expect(
+      launchCrashDiagnosis([launch, { ...logs, command: 'cat app/_layout.tsx /tmp/run-runtime.log' }], options),
+    ).toMatchObject({ valid: false, reason: 'launch-crash-pre-capture-command-not-allowed' });
   });
 
   it('unwraps a shell command whose nested quoting changes the closing quote', () => {

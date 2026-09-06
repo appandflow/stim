@@ -5,6 +5,39 @@ const hashes = { events: 'events', settingsPng: 'settings', transcript: 'transcr
 const valid = { valid: true, invalidReasons: [], evidenceSha256: hashes, collectedAt: 'first' };
 
 describe('durable benchmark run records', () => {
+  it('retains verified crash repair evidence after cleanup without retaining a stale audit verdict', () => {
+    const previous = {
+      runId: 'crash-run',
+      variant: 'launch-crash',
+      valid: false,
+      invalidReasons: ['launch-crash-initial-launch-missing'],
+      proof: { valid: true, kind: 'launch-crash-source-repair', sourceSha256: 'source' },
+      evidenceSha256: { ...hashes, proof: 'source' },
+    };
+    const next = {
+      runId: 'crash-run',
+      variant: 'launch-crash',
+      valid: false,
+      invalidReasons: ['launch-crash-source-missing'],
+      proof: { valid: false, reason: 'launch-crash-source-missing' },
+      evidenceSha256: hashes,
+    };
+    expect(durableRunRecord(previous, next, true)).toMatchObject({
+      valid: true,
+      proof: previous.proof,
+      invalidReasons: [],
+    });
+    expect(
+      durableRunRecord(previous, { ...next, invalidReasons: [...next.invalidReasons, 'timeout'] }, true),
+    ).toMatchObject({ valid: false, invalidReasons: ['timeout'] });
+    expect(durableRunRecord(previous, next)).toBe(next);
+    for (const changed of [
+      { ...next, runId: 'different-run' },
+      { ...next, evidenceSha256: { ...hashes, events: 'changed' } },
+    ])
+      expect(durableRunRecord(previous, changed, true)).toBe(changed);
+    expect(durableRunRecord({ ...previous, evidenceSha256: { ...hashes, proof: 'different' } }, next, true)).toBe(next);
+  });
   it('requires a successful recorded worktree cleanup', () => {
     expect(completedCleanupRecord({ cleanedAt: 'now', actions: ['stim worktree remove --force'] })).toBe(true);
     expect(completedCleanupRecord({ cleanedAt: 'now', actions: ['verified agent-device sessions empty'] })).toBe(false);
