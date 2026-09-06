@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  agentDeviceIsolationInvalidReasons,
   benchmarkSetupInvalidReasons,
   benchmarkTarget,
   benchmarkTiming,
@@ -25,6 +26,41 @@ const targetConfig = parseBenchmarkTargets({
 });
 
 const build = (output) => [{ id: 'build', command: 'stim android', exitCode: 0, output }];
+
+describe('agent-device session isolation', () => {
+  const prefix = 'env AGENT_DEVICE_STATE_DIR=/tmp/bench-state AGENT_DEVICE_SESSION=bench-run agent-device ';
+
+  it('accepts delayed scoped navigation without splitting quoted separators', () => {
+    for (const command of [
+      `sleep 5; ${prefix}snapshot`,
+      `/bin/zsh -lc 'sleep 5 && ${prefix}snapshot'`,
+      `${prefix}fill @e5 "text; more text"`,
+      `${prefix}snapshot\n${prefix}click @e1`,
+    ]) {
+      expect(agentDeviceIsolationInvalidReasons([{ command }], prefix)).toEqual([]);
+    }
+  });
+
+  it('rejects an unscoped or mismatched invocation anywhere in a chain', () => {
+    for (const command of [
+      'agent-device snapshot',
+      `sleep 5; agent-device snapshot`,
+      `${prefix}snapshot; agent-device click @e1`,
+      `${prefix}snapshot && ${prefix.replace('SESSION=bench-run', 'SESSION=default')}snapshot`,
+      `agent-device snapshot\n${prefix}snapshot`,
+    ]) {
+      expect(agentDeviceIsolationInvalidReasons([{ command }], prefix)).toEqual([
+        'agent-device-run-session-not-applied',
+      ]);
+    }
+  });
+
+  it('rejects delayed daemon recovery even with the correct session', () => {
+    expect(agentDeviceIsolationInvalidReasons([{ command: `sleep 5; ${prefix}daemon stop --clean` }], prefix)).toEqual([
+      'agent-device-daemon-recovery-inside-timer',
+    ]);
+  });
+});
 
 describe('compiler cache health', () => {
   const meta = { arm: 'stim', platform: 'android', variant: 'native', timingTarget: { ccacheMinHitRatePercent: 50 } };

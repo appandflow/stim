@@ -35,6 +35,7 @@ import {
 } from './watch-app-selection.mjs';
 import { completedCleanupRecord, durableRunRecord } from './run-record.mjs';
 import {
+  agentDeviceIsolationInvalidReasons,
   benchmarkSetupInvalidReasons,
   benchmarkTarget,
   benchmarkTiming,
@@ -1623,14 +1624,7 @@ function commandEvidence(meta, eventsPath, runDir) {
   ) {
     invalidReasons.push('android-native-control-used-release-build');
   }
-  if (topLevelCommands.some((command) => /(?:^|\s)agent-device\s+daemon\s+stop(?:\s|$)/.test(command))) {
-    invalidReasons.push('agent-device-daemon-recovery-inside-timer');
-  }
-  const expectedAgentDevicePrefix = agentDeviceCommand(meta, '');
-  const agentDeviceCommands = topLevelCommands.filter((command) => /(?:^|\s)agent-device(?:\s|$)/.test(command));
-  if (agentDeviceCommands.some((command) => !command.startsWith(expectedAgentDevicePrefix))) {
-    invalidReasons.push('agent-device-run-session-not-applied');
-  }
+  invalidReasons.push(...agentDeviceIsolationInvalidReasons(commands, agentDeviceCommand(meta, '')));
   return { commands, activities, completedEvents, invalidReasons };
 }
 
