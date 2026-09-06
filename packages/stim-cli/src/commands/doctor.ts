@@ -181,7 +181,7 @@ export default function doctorCommand(
       }
 
       if (opts.fix) {
-        if (opts.platform !== 'android') applySandboxFix(root);
+        if (detectHarness() !== 'codex' || sandboxFinding(repoRoot(root) ?? root)) applySandboxFix(root);
         if (opts.platform !== 'ios') {
           try {
             const repair = repairCxxLauncherState(root);

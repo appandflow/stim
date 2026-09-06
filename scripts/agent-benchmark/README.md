@@ -38,6 +38,7 @@ each platform, change, and arm:
     "android.native.stim": {
       "screenReadySeconds": 300,
       "platformCommandSeconds": 180,
+      "ccacheMinHitRatePercent": 50,
       "runTimeoutSeconds": 600
     },
     "android.native.control": {
@@ -53,6 +54,21 @@ performance target but does not invalidate a slow model. A Stim platform
 command over `platformCommandSeconds` is an invalid machine/build result.
 `runTimeoutSeconds` terminates and invalidates a runaway agent. Keep
 authentication and raw evidence out of Git.
+
+Android native Stim cells also require `ccacheMinHitRatePercent`. Establish this
+machine/scenario threshold from a verified warm compiler-cache probe before
+dispatch; the example value is illustrative. Keep it fixed across models.
+Collection records actual hits and misses, accepts proven artifact hits without
+C++ compilation, and flags missing or below-target compiler-cache evidence.
+Completed tool output triggers an immediate `CACHE ALERT` and preserves
+`cache-alerts.json`. A flagged attempt stays available for investigation and is
+excluded from published comparisons; investigate the cause before retrying.
+
+Android golden preparation and every preflight require a structured doctor
+report without cost findings. Repair the fixture with
+`stim doctor --fix --platform android`, seed its shared caches, and verify
+cross-worktree reuse before creating the golden. Preflight only inspects the
+fixture; it never changes cache state during a timed cell.
 
 Set the machine-local paths explicitly:
 
@@ -71,6 +87,8 @@ export STIM_BENCH_SKILLS_ROOT=/path/to/skills
 Preflight runs the pinned Stim shim through the same isolated login-shell
 startup used by timed commands. Dispatch refuses a Stim version, executable,
 or CLI digest mismatch and refuses a control shell that can resolve Stim.
+Golden cache validation hashes the fixture with the pinned CLI's fingerprint
+dependency, not the fixture's potentially different version.
 
 ## Run a cell
 

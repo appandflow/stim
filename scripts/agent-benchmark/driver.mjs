@@ -17,6 +17,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createInterface } from 'node:readline';
 import {
   changedPathsFromGitOutputs,
   injectRootRenderCrash,
@@ -25,7 +26,7 @@ import {
   launchCrashRepair,
   launchCrashToken,
 } from '../launch-crash-benchmark.mjs';
-import { selectBenchmarkCacheKey } from './cache-key.mjs';
+import { benchmarkFingerprint, selectBenchmarkCacheKey } from './cache-key.mjs';
 import { matchesGoldenPreparation } from './golden-state.mjs';
 import {
   androidApplicationLabelFromBadging,
@@ -39,6 +40,10 @@ import {
   benchmarkTiming,
   parseBenchmarkTargets,
   stimShellProvenanceInvalidReasons,
+  assertAndroidDoctorClean,
+  benchmarkCcache,
+  ccacheMeasurements,
+  runnerToolOutput,
 } from './run-guards.mjs';
 
 const launchCrashVariant = 'launch-crash';
@@ -249,19 +254,7 @@ function sha256(path) {
 }
 
 function verifyGoldenCache(platform, platformGolden = goldenFor(platform)) {
-  const script = [
-    'const fingerprint = await import("@expo/fingerprint");',
-    'const result = await fingerprint.createFingerprintAsync(process.cwd(), {',
-    `  platforms: [${JSON.stringify(platform)}],`,
-    '  silent: true,',
-    '  ignorePaths: ["**/android/local.properties", "**/android/.idea/**"],',
-    '});',
-    'process.stdout.write(result.hash);',
-  ].join('\n');
-  const fingerprint = run('node', ['--input-type=module', '-e', script], {
-    cwd: main,
-    timeout: 2 * 60 * 1000,
-  });
+  const fingerprint = benchmarkFingerprint(main, stimPackage, platform);
   const cacheRoot = join(platformGolden, 'stim-home', 'build-cache', platform);
   const cacheKey = selectBenchmarkCacheKey(platform, fingerprint, existsSync(cacheRoot) ? readdirSync(cacheRoot) : []);
   const cacheDir = join(cacheRoot, cacheKey);
@@ -533,6 +526,7 @@ function preflight(requestedPlatform = 'ios') {
     shellProbeHome,
   );
   const shellProvenance = verifyRunnerShell('stim', shellProbeEnvironment);
+  const doctor = platform === 'android' ? androidDoctor(main, shellProbeEnvironment) : null;
   const booted = platform === 'android' ? androidEmulatorTransports() : bootedSimulators().map((device) => device.udid);
   if (booted.length) {
     throw new Error(`booted ${platform} devices require operator cleanup: ${JSON.stringify(booted)}`);
@@ -576,11 +570,24 @@ function preflight(requestedPlatform = 'ios') {
     goldenCache,
     parkedSimulator,
     shellProvenance,
+    doctor,
     stimExecutableSha256: sha256(join(stimBin, 'stim')),
     stimCliSha256: sha256(stimCli),
   };
   writeFileSync(join(state, 'last-preflight.json'), `${JSON.stringify(preflightRecord, null, 2)}\n`);
   return preflightRecord;
+}
+
+function androidDoctor(cwd, env) {
+  return assertAndroidDoctorClean(
+    JSON.parse(
+      run('node', [stimCli, 'doctor', '--platform', 'android', '--json'], {
+        cwd,
+        env,
+        timeout: 2 * 60 * 1000,
+      }),
+    ),
+  );
 }
 
 async function waitForLoadGate() {
@@ -704,6 +711,7 @@ function prepareAndroid() {
   ensureDirs();
   prepareAllowedBin();
   versionChecks();
+  androidDoctor(main, { ...cleanRubyEnvironment(process.env), STIM_HOME: join(state, 'doctor-home') });
   const platformGolden = goldenFor('android');
   const readyPath = join(platformGolden, 'READY.json');
   if (existsSync(readyPath)) {
@@ -1107,7 +1115,7 @@ function terminateProcessTree(child, processGroupId, graceMs) {
   return timer;
 }
 
-function spawnStamped(command, args, output, options, input, timeoutMs = null, killGraceMs = 5000) {
+function spawnStamped(command, args, output, options, input, timeoutMs = null, killGraceMs = 5000, onEvent = null) {
   const child = spawn(command, args, { ...options, detached: process.platform !== 'win32' });
   const processGroupId = process.platform === 'win32' ? null : child.pid;
   let timedOut = false;
@@ -1130,6 +1138,17 @@ function spawnStamped(command, args, output, options, input, timeoutMs = null, k
   stampErr.stdout.on('data', (chunk) => errChunks.push(chunk));
   child.stdout.pipe(stampOut.stdin);
   child.stderr.pipe(stampErr.stdin);
+  if (onEvent) {
+    createInterface({ input: child.stdout, crlfDelay: Infinity }).on('line', (line) => {
+      let event;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        return;
+      }
+      onEvent(event);
+    });
+  }
   child.stdin.end(input);
   const stampOutClosed = new Promise((done) => stampOut.on('close', done));
   const stampErrClosed = new Promise((done) => stampErr.on('close', done));
@@ -1175,6 +1194,16 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
   }
   const preflightReport = preflight(platform);
   const timingTarget = benchmarkTarget(benchmarkTargets(), { platform, variant, arm });
+  if (
+    platform === 'android' &&
+    variant === 'native' &&
+    arm === 'stim' &&
+    timingTarget.ccacheMinHitRatePercent == null
+  ) {
+    throw new Error(
+      'Android native Stim benchmark requires a ccacheMinHitRatePercent target established before dispatch',
+    );
+  }
   preflightReport.loadGate = await waitForLoadGate();
   if (!preflightReport.loadGate.passed) {
     throw new Error('one-minute load average did not pass two consecutive samples within 10 minutes');
@@ -1351,6 +1380,27 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
     { cwd: runnerCwd, env, stdio: ['pipe', 'pipe', 'pipe'] },
     prompt,
     timingTarget.runTimeoutSeconds * 1000,
+    5000,
+    (event) => {
+      if (arm !== 'stim' || platform !== 'android' || timingTarget.ccacheMinHitRatePercent == null) return;
+      for (const measurement of ccacheMeasurements(runnerToolOutput(event))) {
+        if (measurement.hitRatePercent != null && measurement.hitRatePercent >= timingTarget.ccacheMinHitRatePercent)
+          continue;
+        const alert = {
+          observedAt: new Date().toISOString(),
+          runId,
+          minimumHitRatePercent: timingTarget.ccacheMinHitRatePercent,
+          ...measurement,
+        };
+        const path = join(runDir, 'cache-alerts.json');
+        const alerts = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : [];
+        alerts.push(alert);
+        writeFileSync(path, `${JSON.stringify(alerts, null, 2)}\n`);
+        process.stderr.write(
+          `CACHE ALERT ${runId}: ${measurement.hits} hits / ${measurement.misses} misses; expected at least ${timingTarget.ccacheMinHitRatePercent}% hits. Investigate before publishing.\n`,
+        );
+      }
+    },
   );
   const runnerResult = await runner;
   const watcherForceKill = runnerResult.timedOut ? terminateProcessTree(watcher, watcher.pid, 5000) : null;
@@ -2072,6 +2122,7 @@ function collect(runDir) {
     : { error: 'missing-app-alive-record' };
   const eventsPath = join(runDir, 'events.jsonl');
   const commandAudit = commandEvidence(meta, eventsPath, runDir);
+  const ccache = benchmarkCcache(meta, commandAudit.commands);
   const screen = screenEvidence(meta, appAlive, commandAudit.commands, runDir);
   const timing = benchmarkTiming(
     meta.timingTarget,
@@ -2131,6 +2182,7 @@ function collect(runDir) {
     ...benchmarkSetupInvalidReasons(meta, commandAudit.commands),
     ...stimShellProvenanceInvalidReasons(meta),
     ...timing.invalidReasons,
+    ...ccache.invalidReasons,
     ...(git('status', '--short') === '' ? [] : ['main-checkout-dirty']),
   ];
   const nextRunRecord = {
@@ -2150,6 +2202,7 @@ function collect(runDir) {
     dispatchToProofSeconds: appAlive.dispatchToProofSeconds ?? null,
     dispatchToScreenReadySeconds: screen.dispatchToScreenReadySeconds ?? null,
     timing,
+    ccache,
     stimShellProvenance: meta.stimShellProvenance ?? null,
     dispatchToDiagnosisSeconds: diagnosis?.dispatchToDiagnosisSeconds ?? null,
     diagnosisCommandCount: diagnosis?.commandCount ?? null,

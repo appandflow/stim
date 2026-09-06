@@ -6,6 +6,7 @@ import { getExecutor } from '../exec.ts';
 import { acquireBuildLock, releaseBuildLock } from '../engine/build-lock.ts';
 import { readCxxLauncherStates, repairCxxLauncherState } from '../doctor-cxx.ts';
 import { checkCxxCompilerLauncher } from '../doctor.ts';
+import { claudeLocalSettingsPath, missingAllowance } from '../sandbox.ts';
 
 let root: string;
 let home: string;
@@ -119,21 +120,30 @@ test('repair follows pnpm package links within the checkout for Git safety check
   expect(existsSync(stale)).toBe(false);
 });
 
-test('doctor --json --fix reports the post-repair state as one JSON payload', () => {
-  writeFileSync(
-    join(root, 'package.json'),
-    JSON.stringify({ name: 'fixture', dependencies: { 'react-native': '0.81.0' } }),
-  );
-  const stale = cache('android/app', null);
-  const cli = join(import.meta.dirname, '../../dist/cli.mjs');
-  const plain = JSON.parse(
-    getExecutor().runFile(process.execPath, [cli, 'doctor', '--json', '--platform', 'android'], { cwd: root }),
-  );
-  expect(plain.findings.some((finding: { code?: string }) => finding.code === 'android-cmake-launcher')).toBe(true);
-  expect(existsSync(stale)).toBe(true);
-  const fixed = JSON.parse(
-    getExecutor().runFile(process.execPath, [cli, 'doctor', '--json', '--fix', '--platform', 'android'], { cwd: root }),
-  );
-  expect(fixed.findings.some((finding: { code?: string }) => finding.code === 'android-cmake-launcher')).toBe(false);
-  expect(existsSync(stale)).toBe(false);
-});
+test.each(['claude', 'codex'])(
+  'Android doctor --json --fix repairs CMake under %s without a false sandbox failure',
+  (harness) => {
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ name: 'fixture', dependencies: { 'react-native': '0.81.0' } }),
+    );
+    const stale = cache('android/app', null);
+    const cli = join(import.meta.dirname, '../../dist/cli.mjs');
+    const plain = JSON.parse(
+      getExecutor().runFile(process.execPath, [cli, 'doctor', '--json', '--platform', 'android'], { cwd: root }),
+    );
+    expect(plain.findings.some((finding: { code?: string }) => finding.code === 'android-cmake-launcher')).toBe(true);
+    expect(existsSync(stale)).toBe(true);
+    const fixed = JSON.parse(
+      getExecutor().runFile(process.execPath, [cli, 'doctor', '--json', '--fix', '--platform', 'android'], {
+        cwd: root,
+        env: harness === 'claude' ? { CLAUDECODE: '1' } : { CODEX_SANDBOX: 'seatbelt' },
+        omitEnv: harness === 'codex' ? ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT'] : [],
+      }),
+    );
+    expect(fixed.findings.some((finding: { code?: string }) => finding.code === 'android-cmake-launcher')).toBe(false);
+    expect(missingAllowance([claudeLocalSettingsPath(root)], home)).toHaveLength(harness === 'claude' ? 0 : 3);
+    expect(existsSync(claudeLocalSettingsPath(root))).toBe(harness === 'claude');
+    expect(existsSync(stale)).toBe(false);
+  },
+);

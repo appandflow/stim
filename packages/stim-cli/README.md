@@ -46,7 +46,8 @@ For stale Android CMake launcher findings, stop native builds and run
 affected ignored, untracked generated `.cxx` configurations in the app and
 installed native modules, then reports remaining findings. The next build
 recreates that output; source files, custom launcher settings, and shared
-ccache entries are preserved.
+ccache entries are preserved. Its cache-lock check cannot detect uncached,
+release-swap fallback, or direct Gradle builds; stop all native builds first.
 
 Stim builds or restores the app, installs it, launches it, and checks launch
 readiness. Plain output streams progress and reports the complete result. Use

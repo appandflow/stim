@@ -74,6 +74,10 @@ export interface CxxRepairResult {
   refused: { path: string; reason: string }[];
 }
 
+/**
+ * Keep every native build stopped until repair finishes. The supplemental
+ * cache-lock check cannot detect uncached builds, release-swap fallback, or direct Gradle.
+ */
 export function repairCxxLauncherState(root: string): CxxRepairResult {
   const canonicalRoot = realpathSync(root);
   const result: CxxRepairResult = { removed: [], refused: [] };

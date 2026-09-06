@@ -38,6 +38,17 @@ export function parseBenchmarkTargets(contents) {
         throw new Error(`benchmark target ${key}.runTimeoutSeconds must be at least platformCommandSeconds`);
       }
     }
+    if (target.ccacheMinHitRatePercent != null) {
+      if (
+        platform !== 'android' ||
+        arm !== 'stim' ||
+        !Number.isFinite(target.ccacheMinHitRatePercent) ||
+        target.ccacheMinHitRatePercent <= 0 ||
+        target.ccacheMinHitRatePercent > 100
+      ) {
+        throw new Error(`benchmark target ${key}.ccacheMinHitRatePercent must be in (0, 100] for Android Stim`);
+      }
+    }
   }
   return config;
 }
@@ -192,4 +203,115 @@ export function stimShellProvenanceInvalidReasons(meta) {
     probe.cliSha256 === expected.cliSha256
     ? []
     : ['stim-shell-provenance-mismatch'];
+}
+
+export function ccacheMeasurements(output) {
+  const structured = structuredCcaches(output)
+    .filter(
+      ({ status, hits, misses }) =>
+        status === 'reported' && Number.isSafeInteger(hits) && Number.isSafeInteger(misses) && hits >= 0 && misses >= 0,
+    )
+    .map(({ hits, misses }) => ({
+      hits,
+      misses,
+      hitRatePercent: hits + misses > 0 ? (100 * hits) / (hits + misses) : null,
+    }));
+  const human = [
+    ...String(output ?? '').matchAll(/compilation cache\s+(\d+) hits\s*\/\s*(\d+) misses\s*\([\d.]+%\)/g),
+  ].map(([, hits, misses]) => {
+    hits = Number(hits);
+    misses = Number(misses);
+    return { hits, misses, hitRatePercent: hits + misses > 0 ? (100 * hits) / (hits + misses) : null };
+  });
+  return [...structured, ...human];
+}
+
+function structuredCcaches(output) {
+  return [...String(output ?? '').matchAll(/"ccache"\s*:\s*(\{[^{}]*\})/g)].flatMap((match) => {
+    try {
+      return [JSON.parse(match[1])];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function artifactCacheHit(entry) {
+  return (
+    entry.exitCode === 0 &&
+    (structuredCcaches(entry.output).some((cache) => cache.status === 'not-run') ||
+      /cache\s+hit\b|fingerprint\s+[0-9a-f]+\.\.\s+hit\b|compilation cache\s+not run; artifact cache supplied the app/.test(
+        entry.output,
+      ))
+  );
+}
+
+export function benchmarkCcache(meta, commands) {
+  const minimum = meta.timingTarget?.ccacheMinHitRatePercent ?? null;
+  const result = { minimumHitRatePercent: minimum, status: 'not-applicable', builds: [], invalidReasons: [] };
+  if (meta.arm !== 'stim' || meta.platform !== 'android') return result;
+  if (meta.variant === 'native' && minimum == null) result.invalidReasons.push('ccache-target-missing');
+  const platformRuns = commands.filter(
+    (entry) => commandSegmentsStartingWith(entry.command, 'stim android').length > 0,
+  );
+  for (const entry of platformRuns) {
+    const measurements = ccacheMeasurements(entry.output);
+    result.builds.push(...measurements.map((measurement) => ({ commandId: entry.id ?? null, ...measurement })));
+    if (
+      /compilation cache\s+unavailable/.test(entry.output) ||
+      structuredCcaches(entry.output).some((cache) => cache.status !== 'reported' && cache.status !== 'not-run')
+    ) {
+      result.invalidReasons.push('ccache-evidence-missing');
+    }
+    if (
+      measurements.length === 0 &&
+      (!artifactCacheHit(entry) || /build\s+compiling|compilation cache\s+unavailable/.test(entry.output))
+    ) {
+      result.invalidReasons.push('ccache-evidence-missing');
+    }
+  }
+  for (const measurement of result.builds) {
+    if (measurement.hitRatePercent == null) result.invalidReasons.push('ccache-evidence-missing');
+    else if (minimum != null && measurement.hitRatePercent < minimum)
+      result.invalidReasons.push('ccache-hit-rate-below-target');
+  }
+  if (
+    commands.some(
+      (entry) =>
+        commandSegmentsStartingWith(entry.command, 'stim doctor').length > 0 &&
+        /configured CMake cache|CMake launcher state could not be inspected/.test(entry.output),
+    )
+  ) {
+    result.invalidReasons.push('stale-cmake-launcher-state');
+  }
+  result.invalidReasons = [...new Set(result.invalidReasons)];
+  if (!platformRuns.length) result.invalidReasons.push('ccache-evidence-missing');
+  result.invalidReasons = [...new Set(result.invalidReasons)];
+  result.status = result.invalidReasons.length ? 'investigate' : result.builds.length ? 'measured' : 'artifact-hit';
+  return result;
+}
+
+export function assertAndroidDoctorClean(report) {
+  if (report?.platform !== 'android' || !Array.isArray(report.findings))
+    throw new Error('invalid Android doctor report');
+  const failures = report.findings.filter((finding) => finding.level === 'cost');
+  if (failures.length)
+    throw new Error(`Android fixture is not ready: ${failures.map((finding) => finding.title).join('; ')}`);
+  return { checkedAt: new Date().toISOString(), platform: report.platform, findings: report.findings };
+}
+
+export function runnerToolOutput(event) {
+  if (event?.type === 'item.completed' && event.item?.type === 'command_execution')
+    return event.item.aggregated_output ?? '';
+  if (event?.type === 'user' && Array.isArray(event.message?.content)) {
+    return event.message.content
+      .filter((part) => part.type === 'tool_result')
+      .map((part) =>
+        typeof part.content === 'string'
+          ? part.content
+          : (part.content ?? []).map((block) => block.text ?? '').join('\n'),
+      )
+      .join('\n');
+  }
+  return '';
 }
