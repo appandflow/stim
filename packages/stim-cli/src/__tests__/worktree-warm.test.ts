@@ -488,6 +488,27 @@ test('warm copies literal ignored filenames and skips excluded derived data', ()
   expect(existsSync(join(target, 'node_modules/pkg/.DerivedData'))).toBe(false);
 });
 
+test.each(['android/build/', 'apps/mobile/'])('warm excludes generated autolinking from ignored %s', (ignored) => {
+  write(root, '.gitignore', `${ignored}\n`);
+  const app = ignored.startsWith('apps/') ? 'apps/mobile/' : '';
+  const generated = `${app}android/build/generated`;
+  write(root, `${generated}/autolinking/autolinking.json`, 'source checkout paths');
+  write(root, `${generated}/autolinking/package.json.sha`, 'unchanged checksum');
+  write(root, `${generated}/other/output`, 'reusable output');
+  write(root, `${generated}/autolinking-extra/keep`, 'unrelated output');
+  const result = warm();
+  expect(result.failed).toEqual([]);
+  expect(existsSync(join(target, generated, 'autolinking'))).toBe(false);
+  expect(readFileSync(join(target, generated, 'other/output'), 'utf8')).toBe('reusable output');
+  expect(readFileSync(join(target, generated, 'autolinking-extra/keep'), 'utf8')).toBe('unrelated output');
+  expect(readFileSync(join(root, generated, 'autolinking/autolinking.json'), 'utf8')).toBe('source checkout paths');
+  write(target, `${generated}/autolinking/autolinking.json`, 'destination checkout paths');
+  expect(warm().failed).toEqual([]);
+  expect(readFileSync(join(target, generated, 'autolinking/autolinking.json'), 'utf8')).toBe(
+    'destination checkout paths',
+  );
+});
+
 test('exclusive directory publication preserves an empty directory created after the final precheck', () => {
   write(root, 'node_modules/pkg/index.js', 'source package');
   publication.beforeMkdir = (path) => {
