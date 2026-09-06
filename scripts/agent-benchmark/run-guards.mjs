@@ -60,10 +60,13 @@ export function benchmarkTarget(config, selection) {
   return { key, machine: config.machine, ...value };
 }
 
-function topLevelShellCommand(command) {
+export function topLevelShellCommand(command) {
   const trimmed = String(command ?? '').trim();
   const match = trimmed.match(/^\/bin\/(?:zsh|bash|sh) -lc (["'])([\s\S]*)\1$/);
-  return (match?.[2] ?? trimmed).trim();
+  if (!match) return trimmed;
+  const source =
+    match[1] === '"' ? match[2].replace(/\\(["\\$`\n])/g, (_, char) => (char === '\n' ? '' : char)) : match[2];
+  return source.trim();
 }
 
 export function shellCommandSegments(command) {
