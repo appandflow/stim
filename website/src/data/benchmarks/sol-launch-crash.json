@@ -5,7 +5,7 @@
   "suite": "launch-crash",
   "platform": "ios",
   "protocolVersion": 4,
-  "recordedOn": "2026-09-04",
+  "recordedOn": "2026-09-06",
   "primaryMetric": "Dispatch to first actionable diagnosis; repaired Settings screenshot reported separately",
   "pricing": {
     "model": "gpt-5.6-sol",
@@ -18,7 +18,7 @@
   "environment": {
     "machine": {
       "model": "Mac mini",
-      "chip": "Apple M4 (10-core)",
+      "chip": "Apple M4",
       "memory": "16 GB"
     },
     "macos": "macOS 26.5.2 (25F84)",
@@ -35,238 +35,320 @@
       "arm": "stim",
       "valid": true,
       "invalidReasons": [],
-      "settingsReadySeconds": 144.048,
-      "appAliveSeconds": 61.765,
-      "diagnosisSeconds": 85.015,
-      "diagnosisCommandCount": 7,
+      "settingsReadySeconds": 277.477,
+      "appAliveSeconds": 144.506,
+      "diagnosisSeconds": 161.544,
+      "diagnosisCommandCount": 14,
       "launchCrashAudit": {
-        "initialLaunchCommandId": "item_7",
-        "errorCaptureCommandId": "item_9",
-        "diagnosisCommandId": "item_11",
-        "repairedLaunchCommandId": "item_16",
-        "screenshotCommandId": "item_22"
+        "initialLaunchCommandId": "item_15",
+        "errorCaptureCommandId": "item_17",
+        "diagnosisCommandId": "item_17",
+        "screenshotCommandId": "item_32"
       },
       "diagnosisUsage": {
-        "input_tokens": 172917,
-        "cached_input_tokens": 163456,
-        "output_tokens": 1580,
-        "reasoning_output_tokens": 315,
-        "total_tokens": 174497
+        "input_tokens": 362061,
+        "cached_input_tokens": 334976,
+        "output_tokens": 2968,
+        "reasoning_output_tokens": 900,
+        "total_tokens": 365029
       },
-      "estimatedDiagnosisCostUsd": 0.13482639999999999,
-      "totalSeconds": 174.299,
-      "commandCount": 19,
+      "estimatedDiagnosisCostUsd": 0.3016904,
+      "totalSeconds": 322.673,
+      "commandCount": 30,
       "usage": {
-        "input_tokens": 438683,
-        "cached_input_tokens": 420864,
-        "output_tokens": 4609,
-        "reasoning_output_tokens": 1074
+        "input_tokens": 924772,
+        "cached_input_tokens": 886272,
+        "output_tokens": 7901,
+        "reasoning_output_tokens": 2560
       },
-      "estimatedTokenCostUsd": 0.3318016,
-      "summary": "Created an isolated worktree, worked on the JavaScript launch failure, and ran Stim's iOS workflow. It used the captured Stim error log to identify the injected failure before repairing it. It reached Settings and captured valid agent-device proof.",
+      "estimatedTokenCostUsd": 0.6665288,
+      "summary": "Created an isolated worktree, worked on the JavaScript launch failure, and ran Stim's iOS workflow. It used the captured Stim error log to identify the injected failure before repairing it. It reached Settings and captured valid agent-device proof. The record includes 3 failed command attempts before completion.",
       "messages": [
         {
           "id": "item_0",
-          "atSeconds": 5.532,
-          "text": "I’m using the Stim skill for the isolated Metro/build workflow and the agent-device skill for the required simulator verification and screenshot. I’ll preserve the mandated command order and remain within the requested run paths for project work."
+          "atSeconds": 7.275,
+          "text": "I’m using the Stim skill for the prescribed build/launch diagnostics and the agent-device skill for simulator navigation and proof capture. I’ll follow the required command order, keep the inherited Stim environment unchanged, and make only the smallest launch repair."
         },
         {
-          "id": "item_3",
-          "atSeconds": 16.04,
-          "text": "The skills confirm the required sequence: create the isolated worktree, start its Metro server, launch iOS, and trust the exact simulator identifier in Stim’s launch summary. I’m creating the worktree now with the exact requested command."
-        },
-        {
-          "id": "item_5",
-          "atSeconds": 35.706,
-          "text": "The run worktree is `worktree/bench+launch-crash-stim`. From here onward I’ll operate only there (plus the explicitly allowed proof destination), beginning with the mandated baseline launch before any source inspection."
-        },
-        {
-          "id": "item_8",
-          "atSeconds": 78.024,
-          "text": "The baseline launch reproduced the deterministic failure on simulator `<simulator-udid>`, with `STIM_BENCH_LAUNCH_CRASH_1427F780936F` recorded during initial rendering. I’m now running the required standalone error-log query immediately, before inspecting source."
+          "id": "item_4",
+          "atSeconds": 27.205,
+          "text": "The isolated worktree is created on the requested branch. I’m warming it now, then I’ll run the Stim iOS preflight and the mandated `stim start` → `stim ios` → `stim logs --errors` sequence before inspecting any project source or diff."
         },
         {
           "id": "item_10",
-          "atSeconds": 83.278,
-          "text": "The standalone log confirms this is a JavaScript exception from Metro, not a native build/install failure. I’ll locate that exact sentinel in the initial render path and make only the minimal repair."
+          "atSeconds": 101.007,
+          "text": "The mandated baseline sequence is preserved. Stim’s first diagnostic is an environment prerequisite failure: the warmed checkout has no resolvable local `expo` package, so Metro could not start and `stim ios` correctly refused with `STIM_NO_METRO`. I’ll restore the checkout’s declared dependencies, repeat the same Stim launch flow to reach the intended JavaScript root-render failure, and diagnose it from Stim’s own error output."
         },
         {
-          "id": "item_14",
-          "atSeconds": 93.316,
-          "text": "The cause is isolated: `RootLayout` unconditionally throws the exact sentinel before calling the theme hook or returning any providers/routes. The smallest repair is deleting that single injected throw; no native or product behavior needs changing."
+          "id": "item_16",
+          "atSeconds": 156.08,
+          "text": "The pinned Stim run is now on simulator `<simulator-udid>`; the native build cache hit and the app installed/launched. I’m waiting for Stim’s readiness verdict, then I’ll capture `stim logs --errors` immediately and use that JavaScript stack to make the repair."
         },
         {
-          "id": "item_17",
-          "atSeconds": 110.296,
-          "text": "The repaired launch is now `OK` on the same adopted simulator, full UDID `<simulator-udid>`, with Metro still running on port 8082. Per the agent-device skill, I’m opening that exact app/device session and will use its semantic snapshot to handle onboarding and reach Settings."
+          "id": "item_18",
+          "atSeconds": 165.989,
+          "text": "The intended failure is confirmed from Stim’s launch logs: `RootLayout` throws `STIM_BENCH_LAUNCH_CRASH_92786B8FAC04` at `app/_layout.tsx:27` before any providers or routes can render. I’ll remove only that injected throw, let Fast Refresh apply the JavaScript-only fix, then verify clean error logs before opening the same simulator for Settings proof."
         },
         {
-          "id": "item_20",
-          "atSeconds": 136.475,
-          "text": "The app opened directly without Expo onboarding, and the semantic `Settings, tab, 4 of 4` control reached the Settings screen. I’m now executing the four required proof commands individually and exactly, starting with the text wait."
+          "id": "item_22",
+          "atSeconds": 193.017,
+          "text": "The source fix is live, and the only error record remains the preserved pre-fix timestamp (`10:20:34.500`); no new error has appeared. I’m now entering the required isolated agent-device session on that exact simulator. From this point I’ll execute the eight proof commands in order, with only semantic UI actions between recording start and the required text wait."
         },
         {
-          "id": "item_25",
-          "atSeconds": 163.485,
-          "text": "The required wait succeeded, the 402×874 Settings screenshot was captured and copied, and the isolated agent-device session closed cleanly. I’m doing only final read-only validation of the proof file and the one-line source diff; Metro and the app remain running."
+          "id": "item_26",
+          "atSeconds": 241.584,
+          "text": "The first post-fix UI check still shows the native splash, which matches Stim’s documented case where an error screen/splash can survive a JavaScript fix that occurred before the initial root mounted. I’m using Stim’s in-place reload remedy—same Metro process, app, and adopted simulator—then I’ll continue the active recording and semantic navigation."
         },
         {
-          "id": "item_29",
-          "atSeconds": 174.039,
-          "text": "Fixed the launch crash by removing the injected unconditional throw from [app/_layout.tsx](worktree/bench+launch-crash-stim/app/_layout.tsx:26).\n\n- Repaired launch: `OK` on simulator `<simulator-udid>`\n- Worktree: `worktree/bench+launch-crash-stim`\n- Screenshot: [settings.png](results/sol-launch-crash/launch-crash-stim/proof/settings.png)\n- Proof file verified at 69,788 bytes\n- Metro and the app remain running."
+          "id": "item_37",
+          "atSeconds": 310.671,
+          "text": "All eight proof commands succeeded in order: the expected Settings text was found, the screenshot was saved/copied, recording stop reported the MP4 path, the recording was copied, and the isolated agent-device session closed. I’m doing only the final non-mutating checks for the minimal diff and non-empty proof artifacts; Metro and the app remain running."
+        },
+        {
+          "id": "item_39",
+          "atSeconds": 322.458,
+          "text": "Fixed the launch failure by removing the injected root-render throw in `app/_layout.tsx`. The Settings screen rendered on simulator `<simulator-udid>`, and all eight proof commands succeeded.\n\n- Run worktree: `./worktrees/bench-launch-crash-stim`\n- [Settings screenshot](tmp/launch-crash-stim-settings.png)\n- [Copied proof screenshot](results/sol-launch-crash/launch-crash-stim/proof/settings.png)\n- Recording: `results/sol-launch-crash/launch-crash-stim/proof/session.mp4`\n\nMetro and the app remain running."
         }
       ],
       "commands": [
         {
           "id": "item_1",
-          "startSeconds": 6.722,
-          "endSeconds": 6.722,
-          "command": "cat results/sol-launch-crash/launch-crash-stim/runner-home/.codex/skills/stim/SKILL.md",
-          "output": "---\nname: stim\ndescription: The React Native / Expo CLI for AI agents. Use when an agent needs an isolated Metro server and simulator or emulator, must build and launch an app, inspect build or runtime errors, create a parallel worktree, or identify the correct device for UI interaction.\n---\n\n# Stim\n\nUse Stim to run React Native and Expo apps without sharing a Metro port or\ndevice with another workspace. Run it without installing:\n\n```bash\nnpx stim-cli <command>\n```\n\nOr install it once, which provides the same `stim` command:\n\n```bash\nnpm install --global stim-cli\n```\n\nDo not change the installation mode unless the user asks. Later examples use\n`stim`. If it is not installed globally, replace `stim` with the `npx` form above.\n\nStim requires Node 20.19.4+, or 22.12.0+ on Node 22. If `npx` returns E401 or\nE404 in a repo with a private registry, use:\n\n```bash\nnpx --registry=https://registry.npmjs.org stim-cli <command>\n```\n\nPrefer plain output: it streams each phase and ends with the facts the next step\nneeds. Use `--json` only when a script must parse a stable payload.\n\n## Normal workflow\n\nWork in the current checkout by default. When the agent creates an app worktree\nfor isolation or parallel work, carry its dependencies and native outputs.\n\nBefore a native worktree task, run `stim doctor --platform ios` (or `android`).\nIt checks the main checkout from a linked worktree. Fix relevant findings and\ninspect the upstream gap.\n\n```bash\nstim doctor --platform ios\n\n# In the main checkout, seed the shared build caches when more native\n# worktrees are coming; skip one-off or JavaScript-only work.\nstim start\nstim ios                    # or: stim android\nstim stop\n\n# Branches from HEAD. --carry-ignored carries installed dependencies and\n# native output: pass it on the first creation, never on a retry. It prints\n# the new absolute path.\nstim worktree create <name> --carry-ignored\ncd <printed-path>\n\nstim start\nstim ios                    # or: stim android\nstim logs --errors\n\n# Edit JavaScript or TypeScript. Fast Refresh applies the change.\nstim logs --since 30s --level error\n\nstim stop\n\nstim worktree remove\n```\n\nFollow these rules during the loop:\n\n- Run `start` before a debug `ios` or `android` build. If it returns\n  `STIM_NO_METRO`, run `stim start` and retry.\n- Run `ios` or `android` again after a native input changes. A JavaScript-only\n  change does not need one.\n- A cold native build can outlive a shell timeout. Run the same command again:\n  the second call joins the active build or returns its result.\n- `ios` and `android` install the app, launch it, and check its readiness. No\n  separate device tool is required. Trust the exact device, app, Metro, and\n  launch facts in Stim's final summary. Use the full reported device ID. Never\n  assume that a simulator named `booted` belongs to this workspace.\n- An `OK` summary with no launch qualifier proves the launch. `bundle requested,\nstill building` means Metro has not finished the bundle; wait and query the\n  logs. For `launch UNVERIFIED`, follow the printed remedy before you claim\n  success. JSON reports these as `true`, `\"bundling\"`, and `\"unverified\"` in\n  `launched`.\n- Exit code 0 from `logs --errors` is the pass condition. Human output can show\n  `No matching log records` on stderr. JSON mode prints zero bytes when no\n  records match. Do not read the NDJSON files directly.\n- Use `stim status` when resuming a workspace or recovering missing device,\n  port, server, or build facts; a normal `start` and platform run already print\n  them. Use `stim doctor` when a build is unexpectedly slow or the environment\n  looks incomplete.\n\n## Ownership and deletion\n\nStim creates, boots, and deletes only devices it created. Owned simulators use\nthe `stim-<label> (<model> <runtime>)` name. Never point Stim at a user-created\nemulator or simulator.\n\n`worktree remove` parks the workspace's simulator for a later one to adopt. A\nparked simulator is Stim-owned: never delete one by hand; `gc --delete` clears\nverified entries, keeps failures (`stim guide lifecycle`). First launch on a physical iPhone can need\none-time taps the remedy names.\n\n`stim android --device [serial]` and `stim ios --device [udid]` install on a\nconnected physical device. Stim never creates, boots, or deletes hardware, and\nrecords nothing about it, so `stop` and `gc` leave it alone.\n\nA `--device` run leases that device for the run. `stim device lock ios --for\n10m` holds it across runs; `stim device unlock` gives it back\n(`stim guide lifecycle`). Never delete another workspace's lease file under\n`~/.stim/device-locks`; `gc --delete` removes the expired ones.\n\nTreat a refusal as an ownership or state mismatch: read its code and remedy.\nNever reach for `--force` first.\n\nAsk the user before these actions:\n\n- `worktree remove`, because it deletes the worktree, its Stim-created branch\n  when it has no unique commits, and gives up its owned device.\n- `worktree remove --force`, because it also discards uncommitted and untracked\n  files.\n- `gc --delete`, because it deletes orphaned resources. `gc --delete --cache all`\n  empties the shared build caches instead; it inspects nothing else.\n- `stop` when the workspace owns an EAS session, because it irreversibly ends\n  that remote session. For a local device, `stop` shuts it down but does not\n  delete it. An explicit `stop` shuts down a Stim-owned simulator even when\n  another process uses it. It never shuts down an unowned simulator.\n\n## Under a sandbox\n\nAn agent harness that sandboxes shell commands usually permits writes inside\nthe project and little else. Three things Stim needs sit outside that\nboundary, and none of the failures names the sandbox: writes to `STIM_HOME`\n(`~/.stim` unless set) fail with `EPERM` on a directory the user can write, the\niOS simulator service looks dead, and the adb server looks unreachable. They\nare not a broken machine: compare that path against the harness's allowlist,\nand the conflict is visible before anything runs.\n\nDecide at the start of a session, not after the third failure: either run Stim\nwith the harness's sandbox disabled, or ask the user to allow those three.\n`stim guide errors` lists what to allow.\n\n## Load advanced guidance only when needed\n\nThe installed CLI is the source of truth for flags, payloads, settings, error\ncodes, remote devices, release builds, caches, and cleanup. Read the topic\nfirst:\n\n```bash\nstim guide             # list topics\nstim guide lifecycle   # full flow, flags, worktrees, builds, and capacity\nstim guide facts       # JSON payload fields\nstim guide metro       # supervisor, custom Metro, tunnels, and remote devices\nstim guide logs        # filters, record shape, and capture limits\nstim guide errors      # error codes and remedies\nstim guide cleanup     # destructive behavior and disk cleanup\nstim guide settings    # configuration files and supported keys\n```\n\nRun the guide before tasks involving any of these:\n\n- release configurations or Android variants;\n- remote proxy or EAS devices;\n- custom Metro processes or public tunnels;\n- cache bypasses, cache misses, or concurrent builds;\n- machine capacity limits;\n- cache hit rates or the time the cache saved, which `stim stats` reports;\n- worktree carry-over warnings;\n- fingerprint exclusions;\n- `gc`, `--force`, cleanup failures, or unfamiliar cleanup states and error\n  codes.\n\nOrdinary `stim stop` and an authorized clean `stim worktree remove` do not need\nthe cleanup guide.\n\nIf this skill and `stim guide` disagree, follow the guide: it comes from the\nbinary that is running.\n",
+          "startSeconds": 9.387,
+          "endSeconds": 9.387,
+          "command": "sed -n '1,240p' results/sol-launch-crash/launch-crash-stim/runner-home/.codex/skills/stim/SKILL.md && sed -n '1,280p' results/sol-launch-crash/launch-crash-stim/runner-home/.codex/skills/agent-device/SKILL.md",
+          "output": "---\nname: stim\ndescription: The React Native / Expo CLI for AI agents. Use when running or building a React Native or Expo app on a simulator, emulator, or device, including expo run:ios, expo run:android, react-native run-ios, react-native run-android, expo start, and Metro; when reading build, launch, redbox, or runtime errors from the app logs; when working in parallel worktrees; or when identifying the correct device for UI interaction.\n---\n\n# Stim\n\nBefore using Stim, load the workflow guide from the installed CLI:\n\n```bash\nstim guide agent\n```\n\nFollow the version-matched instructions it prints.\n---\nname: agent-device\ndescription: Automates Apple-platform apps (iOS, tvOS, macOS), Android devices, and Amazon Vega OS TV apps in Vega Virtual Devices. Use when navigating apps, taking snapshots/screenshots where supported, driving TV remotes, tapping, typing, scrolling, extracting UI info, collecting evidence, or planning agent-device CLI commands.\n---\n\n# agent-device\n\nFor a normal app-driving task, start immediately. Do not probe first with `--help`, `--version`, `devices`, `appstate`, `snapshot`, or `screenshot`:\n\n```bash\nagent-device open <app> --foreground\n```\n\nThat starts the session and returns the initial interactive snapshot with `@refs`.\n\nLoop: act with `press|click|fill|longpress <target> ... --settle`, `scroll <direction> --settle`, or `back --settle`; continue from the printed diff, verify the named expectation (`wait text \"...\"`, `is`, `get`, or `find`), then run `agent-device close`.\n\nCopy refs byte-for-byte: `@e12`, `@e12~s4` — keep the `@` and any `~sN`. Prefer current refs, then `id`/`label`/`role` selectors; coordinates are a last resort. If snapshot reports sparse/AX-unavailable, its refs and selectors are invalid: run `agent-device screenshot`, inspect the image, use coordinates, then retry `snapshot -i` after navigating. Otherwise run `snapshot -i` only when the diff lacks the next target.\n\nError output includes corrective hints; follow them instead of re-planning. Only when the task is specialized (for example gestures, scripting, TV, macOS, remote, or debugging) or a command shape is unclear, run `agent-device help <topic>`. `agent-device --help` lists topics, but is not a startup step.\n",
           "exitCode": 0
         },
         {
           "id": "item_2",
-          "startSeconds": 11.383,
-          "endSeconds": 11.383,
-          "command": "cat results/sol-launch-crash/launch-crash-stim/runner-home/.codex/skills/agent-device/SKILL.md",
-          "output": "---\nname: agent-device\ndescription: Automates Apple-platform apps (iOS, tvOS, macOS), Android devices, and Amazon Vega OS TV apps in Vega Virtual Devices. Use when navigating apps, taking snapshots/screenshots where supported, driving TV remotes, tapping, typing, scrolling, extracting UI info, collecting evidence, or planning agent-device CLI commands.\n---\n\n# agent-device\n\nFor a normal app-driving task, start immediately. Do not probe first with `--help`, `--version`, `devices`, `appstate`, `snapshot`, or `screenshot`:\n\n```bash\nagent-device open <app> --foreground\n```\n\nThat starts the session and returns the initial interactive snapshot with `@refs`.\n\nLoop: act with `press|click|fill|longpress <target> ... --settle`, `scroll <direction> --settle`, or `back --settle`; continue from the printed diff, verify the named expectation (`wait text \"...\"`, `is`, `get`, or `find`), then run `agent-device close`.\n\nCopy refs byte-for-byte: `@e12`, `@e12~s4` — keep the `@` and any `~sN`. Prefer current refs, then `id`/`label`/`role` selectors; coordinates are a last resort. If snapshot reports sparse/AX-unavailable, its refs and selectors are invalid: run `agent-device screenshot`, inspect the image, use coordinates, then retry `snapshot -i` after navigating. Otherwise run `snapshot -i` only when the diff lacks the next target.\n\nError output includes corrective hints; follow them instead of re-planning. Only when the task is specialized (for example gestures, scripting, TV, macOS, remote, or debugging) or a command shape is unclear, run `agent-device help <topic>`. `agent-device --help` lists topics, but is not a startup step.\n",
+          "startSeconds": 14.844,
+          "endSeconds": 14.951,
+          "command": "stim guide agent",
+          "output": "Commands use `stim`. If it is not installed globally, replace `stim` with `npx stim-cli`.\n\nAGENT WORKFLOW\n\nUse Stim to run React Native and Expo apps without sharing a Metro port or\ndevice with another workspace. Prefer plain output: it streams each phase and\nends with the facts the next step needs. Use --json only when a script must\nparse a stable payload.\n\nNORMAL WORKFLOW\n\nWork in the current checkout by default. When the task needs another branch or\nan isolated environment, create a linked worktree with Git and warm its\nignored state. If a harness already created this linked worktree, run\nstim worktree warm here instead of creating another one. It copies missing\nignored paths from the main checkout, including eligible .env and local\nconfiguration files. It preserves the branch, tracked files, and every existing\ndestination entry; existing ignored directories are skipped whole, not filled in.\nRead guide lifecycle options for exclusions and incomplete-copy remedies.\n\nBefore native worktree work, run doctor for the platform in scope. It checks\nthe main checkout from a linked worktree. Fix relevant findings and inspect the\nupstream gap. It also prints the running CLI version and the stim installation\nresolved from PATH. If that resolved installation is older than another one,\nfix PATH or the installation before continuing so commands and guidance match.\n\n  stim doctor --platform ios          # or: --platform android\n\n  # Skip Git creation if the harness already created this linked worktree.\n  git worktree add -b <branch> <worktree-path> HEAD\n  cd <worktree-path>\n  stim worktree warm\n\n  stim start\n  stim ios                             # or: stim android\n\n  # Reproduce the affected behavior and capture the baseline errors.\n  stim logs --errors\n\n  # Edit JavaScript or TypeScript; Fast Refresh applies the change.\n  # For UI work, wait for the expected UI and repeat the affected interaction\n  # on the reported device. Keep using the existing automation session, if any.\n  stim logs --errors\n  # Retain proof before cleanup: a screenshot, recording, or relevant runtime output.\n\n  stim stop\n  stim worktree remove\n\nRULES DURING THE LOOP\n\n- Run Stim from the app directory: the one whose package.json depends on\n  react-native or expo. Anywhere else -- a monorepo root, a tools package --\n  start, ios and android refuse with STIM_NO_PROJECT naming that package.json,\n  and doctor reports it as a finding.\n- Run start before a debug ios or android build. If it returns STIM_NO_METRO,\n  run stim start and retry.\n- Run ios or android again after a native input changes. A JavaScript-only\n  change does not need one.\n- Reload is not part of the normal workflow. Use stim reload on an owned local\n  simulator or emulator after a failed first bundle load, when an error screen\n  remains after the fix, or when you explicitly need an app restart. For a\n  physical device that reached Metro, use agent-device metro reload with the\n  reported port. The detected iOS Local Network first-load remedy uses UI\n  automation instead because that app never established a Metro connection.\n- A successful stim reload confirms that the request was sent, not that new\n  JavaScript loaded or the screen recovered. Verify the expected UI on the\n  reported device and inspect stim logs --errors before claiming recovery.\n- If launch reports an app error but also says the native process is alive,\n  the app did not crash. Fix JavaScript or TypeScript and use Fast Refresh. If\n  the error screen remains, follow the printed reload remedy instead of\n  running ios or android again. If launch says FATAL because the app process exited,\n  fix the crash and run the platform command again; Metro cannot restart it.\n- A native build can outlive a shell timeout. Retry the same command and\n  follow its printed remedy if waiting times out. See guide lifecycle concurrency.\n- ios and android install the app, launch it, and check readiness. Trust the\n  exact device, app, Metro, and launch facts in the final summary. Use the full\n  reported device ID. Never assume a simulator named booted belongs to this\n  workspace.\n- After each ios or android run, give the user one compact result: exact device,\n  app id, launch state, cache result, total duration, and whether stim logs\n  --errors passed. Include a remedy only when action remains. Do not repeat the\n  phase transcript.\n- An OK summary with no launch qualifier proves the launch. \"bundle requested,\n  still building\" means Metro has not finished; wait and query the logs. For\n  launch UNVERIFIED, follow the printed remedy before claiming success. JSON\n  reports these as true, \"bundling\", and \"unverified\" in launched.\n- A clean logs --errors check requires exit code 0 AND no matching errors in\n  captured logs. Exit code 0 alone means the query succeeded, even when errors\n  were printed. Human output shows \"No matching log records\" on stderr for\n  zero matches; JSON mode prints zero bytes. This does not prove launch or log\n  capture succeeded. Do not read the NDJSON files directly.\n- Use stim status when resuming a workspace or recovering missing device,\n  port, server, or build facts. A normal start and platform run already print\n  them. Use stim doctor when a build is unexpectedly slow or the environment\n  looks incomplete.\n\nOWNERSHIP AND DELETION\n\nStim creates, boots, and deletes only devices it created. Owned simulators use\nthe stim-<label> (<model> <runtime>) name. Never point Stim at a user-created\nemulator or simulator.\n\nworktree remove parks the workspace's simulator for later adoption. A parked\nsimulator is Stim-owned: never delete one by hand. gc --delete clears verified\nentries and keeps failures; see guide lifecycle pool. First launch on a\nphysical iPhone can need the one-time taps named by the remedy.\n\nstim android --device [serial] and stim ios --device [udid] install on a\nconnected physical device. Stim never creates, boots, shuts down, or deletes\nhardware. It records a temporary lease, not an owned-device registry entry.\n\nA --device run leases that device for the run. stim device lock ios --for 10m\nholds it across runs; stim device unlock gives it back. Never delete another\nworkspace's lease file under ~/.stim/device-locks; gc --delete removes expired\nones.\n\nstop and worktree remove release this workspace's leases. On a physical\niPhone, stop also closes the app by ending its log collector; it does not\nshut down the phone or uninstall the app.\n\nTreat a refusal as an ownership or state mismatch: read its code and remedy.\nNever reach for --force first.\n\nAsk the user before these actions:\n\n- worktree remove, because it deletes the worktree and gives up its owned\n  device. It works with any linked worktree, warmed or not, without requiring\n  a Stim registry entry. Git-created branches are kept; a branch with an\n  existing Stim ownership record is deleted only when it has no unique commits.\n- worktree remove --force, because it also discards uncommitted and untracked\n  files.\n- gc --delete, because it deletes orphaned resources. gc --delete --cache all\n  empties the shared build caches instead; it inspects nothing else.\n- stop when the workspace owns an EAS session, because it irreversibly ends\n  that remote session. For a local device, stop shuts it down but does not\n  delete it. An explicit stop shuts down a Stim-owned simulator even when\n  another process uses it. It never shuts down an unowned simulator.\n\nSANDBOXES\n\nAn agent harness that sandboxes shell commands usually permits writes inside\nthe project and little else. Stim also needs writes to STIM_HOME (~/.stim by\ndefault), simulator service access, and local access to the adb server. When\nthose sit outside the harness allowlist, the failure looks like an unwritable\ndirectory or unavailable device service rather than a broken machine. Decide\nat the start of a session whether to run Stim outside the sandbox or ask the\nuser to allow those operations. guide errors sandbox lists the exact\nrequirements.\n\nLOAD ADVANCED GUIDANCE WHEN NEEDED\n\n  stim guide                      # list topics\n  stim guide errors               # index of every refusal code and message\n  stim guide errors <CODE>        # one refusal, e.g. stim guide errors STIM_NO_METRO\n  stim guide errors sandbox       # running under a sandboxing harness\n  stim guide errors unverified    # launch unverified, and the Local Network reason\n  stim guide errors fallbacks     # swap, cache, and install notes on a release cache hit\n  stim guide lifecycle            # the ordered flow, consent rules, and capacity\n  stim guide lifecycle verification # reproduce, edit, verify the UI, and retain proof\n  stim guide lifecycle builds     # build optimizations, optional cache warm-up, fingerprints\n  stim guide lifecycle concurrency # shared builds, wait timeouts, capacity limits\n  stim guide lifecycle options    # every flag, Android variants, --device-type, --system-image\n  stim guide lifecycle devices    # ios --device and android --device on a physical phone\n  stim guide lifecycle release    # Release configurations and ...Release variants\n  stim guide facts                # the --json payloads\n  stim guide facts devmenu        # the Expo dev menu or Tools button over the app\n  stim guide metro                # supervisor, custom Metro, tunnels, and remote devices\n  stim guide logs                 # filters, record shape, and capture limits\n  stim guide cleanup              # what reclaims a device, and what deletes\n  stim guide cleanup collector    # an unproven collector pid; why the app on a phone closed\n  stim guide settings             # configuration files and supported keys\n\nA refusal prints a CODE such as STIM_NO_METRO. Run stim guide errors <CODE>\nwith the code exactly as printed and read only that section; every code in a\nshared header (STIM_BAD_ARG / STIM_NO_PROJECT) resolves to the same section. A\nrefusal with no code is quoted by message in stim guide errors. A topic with\nsections called bare prints its section index, so read the narrowest section\nbefore release configurations or Android variants; remote devices; custom\nMetro processes or tunnels; cache misses, bypasses, or concurrent builds;\ncapacity limits; cache statistics from stim stats; worktree carry-over;\nfingerprint exclusions; gc; --force; cleanup failures; or unfamiliar states\nand error codes. Ordinary stim stop and an authorized clean\nstim worktree remove do not need the cleanup guide.\n",
           "exitCode": 0
         },
         {
-          "id": "item_4",
-          "startSeconds": 17.766,
-          "endSeconds": 33.271,
-          "command": "stim worktree create bench/launch-crash-stim --dir worktree/project --carry-ignored",
-          "output": "  branch      worktree-bench/launch-crash-stim from HEAD (2a3617e)\n  carry       node_modules, Pods, native build output (APFS clone)\n  ready       worktree/bench+launch-crash-stim\nworktree/bench+launch-crash-stim\n",
+          "id": "item_3",
+          "startSeconds": 20.037,
+          "endSeconds": 20.037,
+          "command": "git worktree add -b worktree-bench/launch-crash-stim './worktrees/bench-launch-crash-stim' HEAD",
+          "output": "Preparing worktree (new branch 'worktree-bench/launch-crash-stim')\nHEAD is now at f79ecf8 test: prepare launch failure fixture\n",
           "exitCode": 0
         },
         {
           "id": "item_6",
-          "startSeconds": 36.798,
-          "endSeconds": 38.808,
-          "command": "stim start",
-          "output": "  metro       starting on port 8082 (expo-child, supervisor pid 81004)\nOK: dev server on port 8082, supervisor pid 81004 (expo-child) (1.7s)\n  logs        results/sol-launch-crash/launch-crash-stim/stim-home/workspaces/bench-sol-launch-crash-gpt-5-6-sol-launch-crash---574ab4bcbb0ef655/logs\n",
+          "startSeconds": 60.472,
+          "endSeconds": 63.042,
+          "command": "stim doctor --platform ios",
+          "output": "Doctor (iOS)\n  result      PASS\n  findings    0\n  version     1.0.0-rc.17\n  resolved    1.0.0-rc.17 at ./bin/stim\n  installs    1 distinct PATH install\n\nProject\n  project     main checkout, dependencies, local upstream\n  settings    every Stim setting type\n\niOS\n  setup       CocoaPods, warm state, dev client\n  caches      Metro, Xcode compilation, ccache, build provider\n  devices     remote device, SimSlim profile\n\nShared\n  services    EAS session\n  fingerprint parity when dependencies are absent\n\nHandled automatically\n  caches      Metro transform store, Xcode compilation cache\n  meaning     missing project cache settings are healthy\n",
           "exitCode": 0
         },
         {
           "id": "item_7",
-          "startSeconds": 40.848,
-          "endSeconds": 73.433,
-          "command": "stim ios",
-          "output": "  device      booting stim-96eeb490-bench-sol-launch-crash-gpt-5- (iPhone 17 26.5) (<simulator-udid>)\n  fingerprint b1232a.. hit (5.3s)\n  device      resetting privacy grants and the keychain on <simulator-udid>\n  device      stim-96eeb490-bench-sol-launch-crash-gpt-5- (iPhone 17 26.5) (<simulator-udid-prefix>) adopted (15.7s)\n  install     removed <agent-device-helper>, left by the previous workspace\n  install     unchanged (stim-96eeb490-bench-sol-launch-crash-gpt-5- (iPhone 17 26.5) already has this build) (621ms)\n  install     dev client prepared (1.1s)\n  launch      com.appandflow.trailhead (959ms)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (12.2s total)\n  launch      1 error-level record in the device log during launch (logs --errors --source device)\n  launch       ERROR  [Error: STIM_BENCH_LAUNCH_CRASH_1427F780936F]\nOK: com.appandflow.trailhead on stim-96eeb490-bench-sol-launch-crash-gpt-5- (iPhone 17 26.5) (<simulator-udid-prefix>), Metro port 8082 (from cache, 32.4s)\n  device      stim-96eeb490-bench-sol-launch-crash-gpt-5- (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       from cache\n  compilation cache not run; artifact cache supplied the app\n  logs        results/sol-launch-crash/launch-crash-stim/stim-home/workspaces/bench-sol-launch-crash-gpt-5-6-sol-launch-crash---574ab4bcbb0ef655/logs\n",
+          "startSeconds": 65.277,
+          "endSeconds": 65.951,
+          "command": "stim start",
+          "output": "  metro       starting on port 8082 (expo-child, supervisor pid 26043)\nThe supervisor exited (code 1) before the dev server came up on port 8082.\n  Stim supervisor: failed to start the expo-child dev server: STIM_EXPO_BIN: Cannot start an Expo dev server for ./worktrees/bench-launch-crash-stim: the `expo` package is not resolvable from it (require.resolve(\"expo/package.json\") failed, and no node_modules/.bin/expo exists in it or in any parent). Remedy: Install the project's dependencies (in a monorepo, from the workspace root), or check that this package really depends on `expo`.\n  Supervisor log: results/sol-launch-crash/launch-crash-stim/stim-home/workspaces/bench-sol-launch-crash-gpt-5-6-sol-launch-crash---89ae34cbc4331261/logs/supervisor.log\n  metro: failed to start the expo-child dev server: STIM_EXPO_BIN: Cannot start an Expo dev server for ./worktrees/bench-launch-crash-stim: the `expo` package is not resolvable from it (require.resolve(\"expo/package.json\") failed, and no node_modules/.bin/expo exists in it or in any parent). Remedy: Install the project's dependencies (in a monorepo, from the workspace root), or check that this package really depends on `expo`.\n  Full records: `stim logs --errors`\nFix the error above and run `stim start` again; `stim logs --errors` has the full records.\nfailed: STIM_SUPERVISOR_EXITED\n",
+          "exitCode": 1
+        },
+        {
+          "id": "item_5",
+          "startSeconds": 28.161,
+          "endSeconds": 89.422,
+          "command": "stim worktree warm",
+          "output": "  carry       copied .expo, ios/.<local-host>, ios/Pods, +2 from workspace/trailhead-sdk58-bench\n  carry       complete: 5 ignored entries copied, 0 kept, 0 failed\n",
           "exitCode": 0
         },
         {
+          "id": "item_8",
+          "startSeconds": 70.184,
+          "endSeconds": 90.431,
+          "command": "stim ios",
+          "output": "  metro       port 8082 did not verify yet; retrying in 3s (Metro may still be indexing)\n  metro       port 8082 did not verify yet; retrying in 7s (Metro may still be indexing)\n  metro       port 8082 did not verify yet; retrying in 10s (Metro may still be indexing)\n  error       Nothing is serving this workspace's dev server on port 8082.\n  remedy      Run `stim start` first, or pass --no-metro-check.\n  failed      STIM_NO_METRO\n",
+          "exitCode": 1
+        },
+        {
           "id": "item_9",
-          "startSeconds": 79.273,
-          "endSeconds": 79.503,
+          "startSeconds": 92.792,
+          "endSeconds": 92.907,
           "command": "stim logs --errors",
-          "output": "09:11:21.998 error metro   ERROR  [Error: STIM_BENCH_LAUNCH_CRASH_1427F780936F]\n",
+          "output": "10:19:07.572 fatal metro  failed to start the expo-child dev server: STIM_EXPO_BIN: Cannot start an Expo dev server for ./worktrees/bench-launch-crash-stim: the `expo` package is not resolvable from it (require.resolve(\"expo/package.json\") failed, and no node_modules/.bin/expo exists in it or in any parent). Remedy: Install the project's dependencies (in a monorepo, from the workspace root), or check that this package really depends on `expo`.\n",
           "exitCode": 0
         },
         {
           "id": "item_11",
-          "startSeconds": 84.856,
-          "endSeconds": 85.015,
-          "command": "rg -n \"STIM_BENCH_LAUNCH_CRASH_1427F780936F|LAUNCH_CRASH|1427F780936F\" .",
-          "output": "./app/_layout.tsx:27:  throw new Error('STIM_BENCH_LAUNCH_CRASH_1427F780936F');\n",
+          "startSeconds": 102.82,
+          "endSeconds": 102.82,
+          "command": "pwd && git status --short && rg --files -g 'package.json' -g 'package-lock.json' -g 'yarn.lock' -g 'pnpm-lock.yaml' -g 'bun.lock*' -g '.npmrc' | sort && test -d node_modules && echo node_modules-present || echo node_modules-missing && sed -n '1,220p' package.json",
+          "output": "./worktrees/bench-launch-crash-stim\npackage-lock.json\npackage.json\nnode_modules-present\n{\n  \"name\": \"trailhead\",\n  \"description\": \"Reference Expo app for local stim-cli iOS and Android testing\",\n  \"license\": \"MIT\",\n  \"repository\": \"https://github.com/appandflow/trailhead\",\n  \"main\": \"expo-router/entry\",\n  \"version\": \"1.0.0\",\n  \"scripts\": {\n    \"start\": \"expo start\",\n    \"android\": \"expo run:android\",\n    \"ios\": \"expo run:ios\",\n    \"web\": \"expo start --web\",\n    \"lint\": \"expo lint\",\n    \"typecheck\": \"tsc --noEmit\",\n    \"bench\": \"node bench/bench.mjs\"\n  },\n  \"dependencies\": {\n    \"@expo/vector-icons\": \"^15.0.2\",\n    \"@react-navigation/bottom-tabs\": \"^7.3.10\",\n    \"@react-navigation/elements\": \"^2.3.8\",\n    \"@react-navigation/native\": \"^7.1.6\",\n    \"@shopify/flash-list\": \"2.0.2\",\n    \"@shopify/react-native-skia\": \"2.11.2\",\n    \"@tanstack/react-query\": \"^5.101.4\",\n    \"date-fns\": \"^4.4.0\",\n    \"drizzle-orm\": \"^0.45.2\",\n    \"expo\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-asset\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-blur\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-constants\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-crypto\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-dev-client\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-device\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-file-system\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-font\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-haptics\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-image\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-linear-gradient\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-linking\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-location\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-network\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-notifications\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-router\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-secure-store\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-sharing\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-splash-screen\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-sqlite\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-status-bar\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-symbols\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-system-ui\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-task-manager\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-video\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-web-browser\": \"58.0.0-canary-20260902-26df09e\",\n    \"lottie-react-native\": \"~7.3.8\",\n    \"react\": \"19.2.3\",\n    \"react-dom\": \"19.2.3\",\n    \"react-native\": \"0.87.0\",\n    \"react-native-gesture-handler\": \"~3.1.0\",\n    \"react-native-maps\": \"1.27.2\",\n    \"react-native-mmkv\": \"^4.3.2\",\n    \"react-native-nitro-modules\": \"^0.36.5\",\n    \"react-native-reanimated\": \"4.6.0\",\n    \"react-native-safe-area-context\": \"5.9.1\",\n    \"react-native-screens\": \"~4.27.0\",\n    \"react-native-svg\": \"15.15.4\",\n    \"react-native-web\": \"~0.21.0\",\n    \"react-native-webview\": \"13.16.1\",\n    \"react-native-worklets\": \"0.12.1\",\n    \"zod\": \"^4.4.3\",\n    \"zustand\": \"^5.0.15\"\n  },\n  \"devDependencies\": {\n    \"@react-native/metro-config\": \"0.87.0\",\n    \"@types/react\": \"~19.2.0\",\n    \"drizzle-kit\": \"^0.31.10\",\n    \"eslint\": \"^9.25.0\",\n    \"eslint-config-expo\": \"58.0.0-canary-20260902-26df09e\",\n    \"typescript\": \"~6.0.3\"\n  },\n  \"overrides\": {\n    \"@expo/vector-icons\": {\n      \"expo-font\": \"$expo-font\"\n    },\n    \"drizzle-orm\": {\n      \"expo-sqlite\": \"$expo-sqlite\"\n    },\n    \"expo-modules-core\": {\n      \"react-native-worklets\": \"$react-native-worklets\"\n    }\n  },\n  \"expo\": {\n    \"autolinking\": {\n      \"ios\": {\n        \"buildFromSource\": [\"expo-video\"]\n      }\n    },\n    \"install\": {\n      \"exclude\": [\n        \"@shopify/react-native-skia\",\n        \"react-native-reanimated\",\n        \"react-native-worklets\",\n        \"react-native-safe-area-context\"\n      ]\n    },\n    \"doctor\": {\n      \"appConfigFieldsNotSyncedCheck\": {\n        \"enabled\": false\n      }\n    }\n  },\n  \"private\": true\n}\n",
           "exitCode": 0
         },
         {
           "id": "item_12",
-          "startSeconds": 90.158,
-          "endSeconds": 90.159,
-          "command": "sed -n '1,120p' app/_layout.tsx",
-          "output": "import { useEffect } from 'react';\nimport { Stack } from 'expo-router';\nimport { StatusBar } from 'expo-status-bar';\nimport { GestureHandlerRootView } from 'react-native-gesture-handler';\nimport { SafeAreaProvider } from 'react-native-safe-area-context';\nimport { QueryClient, QueryClientProvider } from '@tanstack/react-query';\nimport * as SplashScreen from 'expo-splash-screen';\n\nimport { initializeDatabase } from '@/src/db/client';\nimport { seedHikesIfEmpty } from '@/src/db/seed';\nimport { useTheme } from '@/src/theme';\n\nSplashScreen.preventAutoHideAsync().catch(() => {});\n\nconst queryClient = new QueryClient({\n  defaultOptions: { queries: { staleTime: 60_000, retry: 1 } },\n});\n\n// Both are synchronous and idempotent, and the schema has to exist before any\n// screen queries it. Doing this at module scope rather than in an effect means\n// the first render already has a usable database, with no loading state and no\n// setState-in-effect cascade.\ninitializeDatabase();\nseedHikesIfEmpty();\n\nexport default function RootLayout() {\n  throw new Error('STIM_BENCH_LAUNCH_CRASH_1427F780936F');\n  const { name, colors } = useTheme();\n\n  useEffect(() => {\n    SplashScreen.hideAsync().catch(() => {});\n  }, []);\n\n  return (\n    <GestureHandlerRootView style={{ flex: 1 }}>\n      <SafeAreaProvider>\n        <QueryClientProvider client={queryClient}>\n          <StatusBar style={name === 'dark' ? 'light' : 'dark'} />\n          <Stack\n            screenOptions={{\n              headerStyle: { backgroundColor: colors.surface },\n              headerTintColor: colors.text,\n              contentStyle: { backgroundColor: colors.background },\n            }}\n          >\n            <Stack.Screen name=\"(tabs)\" options={{ headerShown: false }} />\n            <Stack.Screen name=\"trail/[id]\" options={{ title: 'Trail' }} />\n            <Stack.Screen name=\"hike/[id]\" options={{ title: 'Hike' }} />\n            <Stack.Screen name=\"+not-found\" options={{ title: 'Not found' }} />\n          </Stack>\n        </QueryClientProvider>\n      </SafeAreaProvider>\n    </GestureHandlerRootView>\n  );\n}\n",
+          "startSeconds": 107.718,
+          "endSeconds": 107.718,
+          "command": "ls -ld node_modules node_modules/expo node_modules/.bin/expo 2>&1 || true && find node_modules -mindepth 1 -maxdepth 1 -print | sed -n '1,40p'",
+          "output": "drwxr-xr-x@ 601 <local-user>  staff  19232 Sep  6 10:18 node_modules\nlrwxr-xr-x@   1 <local-user>  staff     15 Sep  6 10:18 node_modules/.bin/expo -> ../expo/bin/cli\ndrwxr-xr-x@  36 <local-user>  staff   1152 Sep  6 10:18 node_modules/expo\nnode_modules/is-docker\nnode_modules/plist\nnode_modules/tinyglobby\nnode_modules/callsites\nnode_modules/node-forge\nnode_modules/node-exports-info\nnode_modules/use-callback-ref\nnode_modules/expo-dev-client\nnode_modules/hyphenate-style-name\nnode_modules/zod\nnode_modules/xcode\nnode_modules/bser\nnode_modules/simple-swizzle\nnode_modules/getenv\nnode_modules/define-data-property\nnode_modules/is-bigint\nnode_modules/which-boxed-primitive\nnode_modules/destroy\nnode_modules/jsesc\nnode_modules/hosted-git-info\nnode_modules/@types\nnode_modules/globals\nnode_modules/anser\nnode_modules/browserslist\nnode_modules/expo-application\nnode_modules/on-headers\nnode_modules/shebang-regex\nnode_modules/xml2js\nnode_modules/drizzle-kit\nnode_modules/pngjs\nnode_modules/asap\nnode_modules/parse-png\nnode_modules/is-wsl\nnode_modules/functions-have-names\nnode_modules/styleq\nnode_modules/.bin\nnode_modules/is-array-buffer\nnode_modules/supports-hyperlinks\nnode_modules/jest-worker\nnode_modules/expo-video\n",
           "exitCode": 0
         },
         {
           "id": "item_13",
-          "startSeconds": 90.163,
-          "endSeconds": 90.309,
-          "command": "git status --short",
-          "output": "",
+          "startSeconds": 112.795,
+          "endSeconds": 113.007,
+          "command": "node -p \"require.resolve('expo/package.json')\" && node_modules/.bin/expo --version",
+          "output": "58.0.0-canary-20260902-26df09e\n",
           "exitCode": 0
         },
         {
-          "id": "item_16",
-          "startSeconds": 99.244,
-          "endSeconds": 107.955,
+          "id": "item_14",
+          "startSeconds": 117.398,
+          "endSeconds": 119.774,
+          "command": "stim start",
+          "output": "  metro       starting on port 8082 (expo-child, supervisor pid 26677)\nOK: dev server on port 8082, supervisor pid 26677 (expo-child) (2.3s)\n  logs        results/sol-launch-crash/launch-crash-stim/stim-home/workspaces/bench-sol-launch-crash-gpt-5-6-sol-launch-crash---89ae34cbc4331261/logs\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_15",
+          "startSeconds": 122.233,
+          "endSeconds": 152.874,
           "command": "stim ios",
-          "output": "  fingerprint b1232a.. hit (2.7s)\n  device      stim-96eeb490-bench-sol-launch-crash-gpt-5- (iPhone 17 26.5) (<simulator-udid-prefix>) booted (79ms)\n  install     unchanged (stim-96eeb490-bench-sol-launch-crash-gpt-5- (iPhone 17 26.5) already has this build) (519ms)\n  install     dev client prepared (851ms)\n  launch      com.appandflow.trailhead (355ms)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (3.5s total)\nOK: com.appandflow.trailhead on stim-96eeb490-bench-sol-launch-crash-gpt-5- (iPhone 17 26.5) (<simulator-udid-prefix>), Metro port 8082 (from cache, 8.4s)\n  device      stim-96eeb490-bench-sol-launch-crash-gpt-5- (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       from cache\n  compilation cache not run; artifact cache supplied the app\n  logs        results/sol-launch-crash/launch-crash-stim/stim-home/workspaces/bench-sol-launch-crash-gpt-5-6-sol-launch-crash---574ab4bcbb0ef655/logs\n",
+          "output": "  device      booting stim-bench-sol-launch-crash-gpt-5-6-sol-lau (iPhone 17 26.5) (<simulator-udid>)\n  fingerprint 7ac183.. hit (8.7s)\n  device      resetting privacy grants and the keychain on <simulator-udid>\n  device      stim-bench-sol-launch-crash-gpt-5-6-sol-lau (iPhone 17 26.5) (<simulator-udid-prefix>) adopted (16.6s)\n  install     unchanged (stim-bench-sol-launch-crash-gpt-5-6-sol-lau (iPhone 17 26.5) already has this build) (807ms)\n  install     dev client prepared (1.3s)\n  launch      com.appandflow.trailhead (1.1s)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (9.3s total)\n  launch      1 error-level record in the device log during launch (logs --errors --source device)\nOK: com.appandflow.trailhead on stim-bench-sol-launch-crash-gpt-5-6-sol-lau (iPhone 17 26.5) (<simulator-udid-prefix>), Metro port 8082 (from cache, 30.6s)\n  device      stim-bench-sol-launch-crash-gpt-5-6-sol-lau (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       from cache\n  compilation cache not run; artifact cache supplied the app\n  logs        results/sol-launch-crash/launch-crash-stim/stim-home/workspaces/bench-sol-launch-crash-gpt-5-6-sol-launch-crash---89ae34cbc4331261/logs\n",
           "exitCode": 0
         },
         {
-          "id": "item_18",
-          "startSeconds": 112.546,
-          "endSeconds": 126.763,
-          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
-          "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/launch-crash-stim\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 32 visible nodes\n@e1 [application] \"Trailhead\"\n@e2 [other] \"\"\n@e3 [other] \"Trails\"\n@e4 [text-field] \"Search trails\" [editable]\n@e5 [scroll-area] \"All regions\" [scrollable]\n  [content below scroll-area hidden]\n@e6 [other] \"All regions\"\n@e7 [button] \"All regions\" [selected]\n@e8 [button] \"Adirondacks\"\n@e9 [button] \"Bas-Saint-Laurent\"\n@e10 [button] \"Charlevoix\"\n@e11 [scroll-area] \"Any level\" [scrollable]\n  [content below scroll-area hidden]\n@e12 [other] \"Any level\"\n@e13 [button] \"Any level\" [selected]\n@e14 [button] \"Easy\"\n@e15 [button] \"Moderate\"\n@e16 [button] \"Hard\"\n@e17 [button] \"Expert\"\n@e18 [text] \"200 trails\"\n@e19 [button] \"Sort by name\" [selected]\n@e20 [button] \"Sort by distance\"\n@e21 [button] \"Sort by rating\"\n@e22 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\" [scrollable]\n  [content below scroll-area hidden]\n@e23 [other] [same label as parent]\n@e24 [button] [same label as parent]\n@e25 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e26 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n@e27 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n@e28 [other] \"Trails, tab, 1 of 4\"\n@e29 [button] \"Trails, tab, 1 of 4\" [selected]\n@e30 [button] \"Record, tab, 2 of 4\"\n@e31 [button] \"History, tab, 3 of 4\"\n@e32 [button] \"Settings, tab, 4 of 4\"\n",
+          "id": "item_17",
+          "startSeconds": 161.356,
+          "endSeconds": 161.544,
+          "command": "stim logs --errors",
+          "output": "10:20:34.500 error metro   ERROR  [Error: STIM_BENCH_LAUNCH_CRASH_92786B8FAC04]\n    Code: _layout.tsx\n      25 |\n      26 | export default function RootLayout() {\n    > 27 |   throw new Error('STIM_BENCH_LAUNCH_CRASH_92786B8FAC04');\n         |                  ^\n      28 |   const { name, colors } = useTheme();\n      29 |\n      30 |   useEffect(() => {\n    Call Stack\n      RootLayout (app/_layout.tsx:27:18)\n",
           "exitCode": 0
         },
         {
           "id": "item_19",
-          "startSeconds": 131.25,
-          "endSeconds": 134.364,
-          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device click @e32 --settle",
-          "output": "Tapped @e32 (352, 816)\nsettled after 1856ms: +29 -28 (~4 unchanged)\n- @e2 [other] \"\"\n- @e3 [other] \"Trails\"\n- @e4 [text-field] \"Search trails\"\n- @e5 [scroll-area] \"All regions\"\n- @e6 [other] \"All regions\"\n- @e7 [button] \"All regions\"\n- @e8 [button] \"Adirondacks\"\n- @e9 [button] \"Bas-Saint-Laurent\"\n- @e10 [button] \"Charlevoix\"\n- @e11 [scroll-area] \"Any level\"\n- @e12 [other] \"Any level\"\n- @e13 [button] \"Any level\"\n- @e14 [button] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [button] \"Hard\"\n- @e17 [button] \"Expert\"\n- @e18 [text] \"200 trails\"\n- @e19 [button] \"Sort by name\"\n- @e20 [button] \"Sort by distance\"\n- @e21 [button] \"Sort by rating\"\n- @e22 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e23 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e24 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e25 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e26 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n- @e27 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n+ @e2~s639375 [other] \"Settings\"\n+ @e3~s639375 [scroll-area] \"UNITS\"\n+ @e4~s639375 [other] \"UNITS\"\n+ @e5~s639375 [cell] \"Distance\"\n+ @e6~s639375 [text] \"\"\n+ @e7~s639375 [button] \"Metric units\"\n+ @e8~s639375 [button] \"Imperial units\"\n+ @e9~s639375 [text] \"Used across the whole app\"\n+ @e10~s639375 [text] \"PREFERENCES\"\n+ @e11~s639375 [other] \"Hike reminders\"\n+ @e12~s639375 [switch] \"Hike reminders\"\n+ @e13~s639375 [text] \"\"\n+ @e14~s639375 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s639375 [text] \"Offline maps\"\n+ @e16~s639375 [switch] \"Offline maps\"\n+ @e17~s639375 [text] \"\"\n+ @e18~s639375 [text] \"Keep map tiles for saved trails on device\"\n+ @e19~s639375 [text] \"STORAGE\"\n+ @e20~s639375 [cell] \"Recorded hikes\"\n+ @e21~s639375 [text] \"\"\n+ @e22~s639375 [text] \"48\"\n+ @e23~s639375 [text] \"Stored in a local database\"\n+ @e24~s639375 [button] \"Reset sample data\"\n+ @e25~s639375 [text] \"ABOUT\"\n+ @e26~s639375 [cell] \"\"\n+ @e27~s639375 [text] \"Version\"\n+ @e28~s639375 [text] \"1.0.0\"\n- @e29 [button] \"Trails, tab, 1 of 4\"\n+ @e30~s639375 [button] \"Trails, tab, 1 of 4\"\n- @e32 [button] \"Settings, tab, 4 of 4\"\n+ @e33~s639375 [button] \"Settings, tab, 4 of 4\"\n",
+          "startSeconds": 167.249,
+          "endSeconds": 167.25,
+          "command": "sed -n '1,180p' app/_layout.tsx && git diff -- app/_layout.tsx",
+          "output": "import { useEffect } from 'react';\nimport { Stack } from 'expo-router';\nimport { StatusBar } from 'expo-status-bar';\nimport { GestureHandlerRootView } from 'react-native-gesture-handler';\nimport { SafeAreaProvider } from 'react-native-safe-area-context';\nimport { QueryClient, QueryClientProvider } from '@tanstack/react-query';\nimport * as SplashScreen from 'expo-splash-screen';\n\nimport { initializeDatabase } from '@/src/db/client';\nimport { seedHikesIfEmpty } from '@/src/db/seed';\nimport { useTheme } from '@/src/theme';\n\nSplashScreen.preventAutoHideAsync().catch(() => {});\n\nconst queryClient = new QueryClient({\n  defaultOptions: { queries: { staleTime: 60_000, retry: 1 } },\n});\n\n// Both are synchronous and idempotent, and the schema has to exist before any\n// screen queries it. Doing this at module scope rather than in an effect means\n// the first render already has a usable database, with no loading state and no\n// setState-in-effect cascade.\ninitializeDatabase();\nseedHikesIfEmpty();\n\nexport default function RootLayout() {\n  throw new Error('STIM_BENCH_LAUNCH_CRASH_92786B8FAC04');\n  const { name, colors } = useTheme();\n\n  useEffect(() => {\n    SplashScreen.hideAsync().catch(() => {});\n  }, []);\n\n  return (\n    <GestureHandlerRootView style={{ flex: 1 }}>\n      <SafeAreaProvider>\n        <QueryClientProvider client={queryClient}>\n          <StatusBar style={name === 'dark' ? 'light' : 'dark'} />\n          <Stack\n            screenOptions={{\n              headerStyle: { backgroundColor: colors.surface },\n              headerTintColor: colors.text,\n              contentStyle: { backgroundColor: colors.background },\n            }}\n          >\n            <Stack.Screen name=\"(tabs)\" options={{ headerShown: false }} />\n            <Stack.Screen name=\"trail/[id]\" options={{ title: 'Trail' }} />\n            <Stack.Screen name=\"hike/[id]\" options={{ title: 'Hike' }} />\n            <Stack.Screen name=\"+not-found\" options={{ title: 'Not found' }} />\n          </Stack>\n        </QueryClientProvider>\n      </SafeAreaProvider>\n    </GestureHandlerRootView>\n  );\n}\n",
           "exitCode": 0
         },
         {
           "id": "item_21",
-          "startSeconds": 138.512,
-          "endSeconds": 138.791,
+          "startSeconds": 185.537,
+          "endSeconds": 185.791,
+          "command": "stim logs --errors",
+          "output": "10:20:34.500 error metro   ERROR  [Error: STIM_BENCH_LAUNCH_CRASH_92786B8FAC04]\n    Code: _layout.tsx\n      25 |\n      26 | export default function RootLayout() {\n    > 27 |   throw new Error('STIM_BENCH_LAUNCH_CRASH_92786B8FAC04');\n         |                  ^\n      28 |   const { name, colors } = useTheme();\n      29 |\n      30 |   useEffect(() => {\n    Call Stack\n      RootLayout (app/_layout.tsx:27:18)\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_23",
+          "startSeconds": 194.368,
+          "endSeconds": 212.047,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/launch-crash-stim\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 2 nodes\n@e1 [application] \"Trailhead\"\n@e2 [image] \"SplashScreenLogo\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_24",
+          "startSeconds": 216.244,
+          "endSeconds": 217.355,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device record start tmp/launch-crash-stim-session.mp4 --scope device --quality high --hide-touches",
+          "output": "tmp/launch-crash-stim-session.mp4\nSession state: ./state/agent-device/sessions/launch-crash-stim\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_25",
+          "startSeconds": 224.301,
+          "endSeconds": 234.455,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device wait text \"Trails\"",
+          "output": "Error (COMMAND_FAILED): wait timed out for text: Trails. Current surface: Trailhead, SplashScreenLogo.\nHint: Retry with --debug and inspect diagnostics log for details.\nDiagnostic ID: mtpwhab0-7f134424\nDiagnostics Log: ./state/agent-device/sessions/launch-crash-stim/requests/2fbed3cd5b72c675.ndjson\n",
+          "exitCode": 1
+        },
+        {
+          "id": "item_27",
+          "startSeconds": 242.594,
+          "endSeconds": 243.804,
+          "command": "stim reload",
+          "output": "Reload requested for com.appandflow.trailhead on stim-bench-sol-launch-crash-gpt-5-6-sol-lau (iPhone 17 26.5) (<simulator-udid>) via deep-link; ios Metro port 8082. Completion is not observed; verify the expected UI and run stim logs --errors.\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_28",
+          "startSeconds": 247.517,
+          "endSeconds": 255.534,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device wait text \"Trails\"",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_29",
+          "startSeconds": 260.009,
+          "endSeconds": 260.459,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device snapshot -i",
+          "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 28 visible nodes (truncated)\nDetected an overly complex or slow accessibility tree. Fell back to the private-ax snapshot backend. It is OK to continue; use --json to inspect snapshotQuality.reason if you need recovery details.\n@e1 [application] \"Trailhead\"\n@e2 [text] \"Trails\"\n@e3 [text] \"\"\n@e4 [text-field] \"Search trails\" [editable]\n@e5 [scroll-area] [scrollable]\n  [content below scroll-area hidden]\n@e6 [button] \"All regions\" [selected]\n@e7 [button] \"Adirondacks\"\n@e8 [button] \"Bas-Saint-Laurent\"\n@e9 [button] \"Charlevoix\"\n@e10 [scroll-area] [scrollable]\n  [content below scroll-area hidden]\n@e11 [button] \"Any level\" [selected]\n@e12 [button] \"Easy\"\n@e13 [button] \"Moderate\"\n@e14 [button] \"Hard\"\n@e15 [button] \"Expert\"\n@e16 [text] \"200 trails\"\n@e17 [button] \"Sort by name\" [selected]\n@e18 [button] \"Sort by distance\"\n@e19 [button] \"Sort by rating\"\n@e20 [scroll-area] [scrollable]\n  [content below scroll-area hidden]\n@e21 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n@e22 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e23 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n@e24 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n@e25 [button] \"Trails, tab, 1 of 4\" [selected]\n@e26 [button] \"Record, tab, 2 of 4\"\n@e27 [button] \"History, tab, 3 of 4\"\n@e28 [button] \"Settings, tab, 4 of 4\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_30",
+          "startSeconds": 265.246,
+          "endSeconds": 268.138,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device click @e28 --settle",
+          "output": "Tapped @e28 (352, 816)\nsettled after 2266ms: +28 -24 (~4 unchanged)\n- @e2 [text] \"Trails\"\n- @e3 [text] \"\"\n- @e4 [text-field] \"Search trails\"\n+ @e2~s826664 [text] \"Settings\"\n- @e6 [button] \"All regions\"\n- @e7 [button] \"Adirondacks\"\n- @e8 [button] \"Bas-Saint-Laurent\"\n- @e9 [button] \"Charlevoix\"\n- @e10 [scroll-area]\n- @e11 [button] \"Any level\"\n- @e12 [button] \"Easy\"\n- @e13 [button] \"Moderate\"\n- @e14 [button] \"Hard\"\n- @e15 [button] \"Expert\"\n- @e16 [text] \"200 trails\"\n- @e17 [button] \"Sort by name\"\n- @e18 [button] \"Sort by distance\"\n- @e19 [button] \"Sort by rating\"\n- @e20 [scroll-area]\n- @e21 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e22 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e23 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n- @e24 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n- @e25 [button] \"Trails, tab, 1 of 4\"\n+ @e4~s826664 [text] \"UNITS\"\n+ @e5~s826664 [text] \"Distance\"\n+ @e6~s826664 [text] \"\"\n+ @e7~s826664 [button] \"Metric units\"\n+ @e8~s826664 [button] \"Imperial units\"\n+ @e9~s826664 [text] \"Used across the whole app\"\n+ @e10~s826664 [text] \"PREFERENCES\"\n+ @e11~s826664 [text] \"Hike reminders\"\n+ @e12~s826664 [switch] \"Hike reminders\"\n+ @e13~s826664 [text] \"\"\n+ @e14~s826664 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s826664 [text] \"Offline maps\"\n+ @e16~s826664 [switch] \"Offline maps\"\n+ @e17~s826664 [text] \"\"\n+ @e18~s826664 [text] \"Keep map tiles for saved trails on device\"\n+ @e19~s826664 [text] \"STORAGE\"\n+ @e20~s826664 [text] \"Recorded hikes\"\n+ @e21~s826664 [text] \"\"\n+ @e22~s826664 [text] \"48\"\n+ @e23~s826664 [text] \"Stored in a local database\"\n+ @e24~s826664 [button] \"Reset sample data\"\n+ @e25~s826664 [text] \"ABOUT\"\n+ @e26~s826664 [text] \"\"\n+ @e27~s826664 [text] \"Version\"\n+ @e28~s826664 [text] \"1.0.0\"\n+ @e29~s826664 [button] \"Trails, tab, 1 of 4\"\n- @e28 [button] \"Settings, tab, 4 of 4\"\n+ @e32~s826664 [button] \"Settings, tab, 4 of 4\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_31",
+          "startSeconds": 271.57,
+          "endSeconds": 271.57,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device wait text \"Keep map tiles for saved trails on device\"",
           "output": "",
           "exitCode": 0
         },
         {
-          "id": "item_22",
-          "startSeconds": 143.377,
-          "endSeconds": 144.048,
+          "id": "item_32",
+          "startSeconds": 277.074,
+          "endSeconds": 277.477,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device screenshot tmp/launch-crash-stim-settings.png",
           "output": "tmp/launch-crash-stim-settings.png (402x874 @1x)\n",
           "exitCode": 0
         },
         {
-          "id": "item_23",
-          "startSeconds": 149.293,
-          "endSeconds": 149.293,
+          "id": "item_33",
+          "startSeconds": 281.701,
+          "endSeconds": 281.701,
           "command": "cp tmp/launch-crash-stim-settings.png results/sol-launch-crash/launch-crash-stim/proof/settings.png",
           "output": "",
           "exitCode": 0
         },
         {
-          "id": "item_24",
-          "startSeconds": 154.65,
-          "endSeconds": 154.876,
+          "id": "item_34",
+          "startSeconds": 286.201,
+          "endSeconds": 286.745,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device record stop",
+          "output": "tmp/launch-crash-stim-session.mp4\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_35",
+          "startSeconds": 291.8,
+          "endSeconds": 291.8,
+          "command": "cp tmp/launch-crash-stim-session.mp4 results/sol-launch-crash/launch-crash-stim/proof/session.mp4",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_36",
+          "startSeconds": 296.988,
+          "endSeconds": 296.988,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device close",
           "output": "Closed: launch-crash-stim\n",
           "exitCode": 0
         },
         {
-          "id": "item_26",
-          "startSeconds": 166.899,
-          "endSeconds": 166.899,
-          "command": "stat -f '%N %z bytes' results/sol-launch-crash/launch-crash-stim/proof/settings.png",
-          "output": "results/sol-launch-crash/launch-crash-stim/proof/settings.png 69788 bytes\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_27",
-          "startSeconds": 166.918,
-          "endSeconds": 166.918,
-          "command": "git diff -- app/_layout.tsx",
-          "output": "diff --git a/app/_layout.tsx b/app/_layout.tsx\nindex 23be71d..456c461 100644\n--- a/app/_layout.tsx\n+++ b/app/_layout.tsx\n@@ -24,7 +24,6 @@ initializeDatabase();\n seedHikesIfEmpty();\n \n export default function RootLayout() {\n-  throw new Error('STIM_BENCH_LAUNCH_CRASH_1427F780936F');\n   const { name, colors } = useTheme();\n \n   useEffect(() => {\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_28",
-          "startSeconds": 166.918,
-          "endSeconds": 166.918,
-          "command": "git diff --check",
-          "output": "",
+          "id": "item_38",
+          "startSeconds": 313.227,
+          "endSeconds": 313.227,
+          "command": "git diff --check && git status --short && git diff -- app/_layout.tsx && stat -f '%N %z bytes' tmp/launch-crash-stim-settings.png tmp/launch-crash-stim-session.mp4 results/sol-launch-crash/launch-crash-stim/proof/settings.png results/sol-launch-crash/launch-crash-stim/proof/session.mp4",
+          "output": " M app/_layout.tsx\ndiff --git a/app/_layout.tsx b/app/_layout.tsx\nindex 8de25b0..456c461 100644\n--- a/app/_layout.tsx\n+++ b/app/_layout.tsx\n@@ -24,7 +24,6 @@ initializeDatabase();\n seedHikesIfEmpty();\n \n export default function RootLayout() {\n-  throw new Error('STIM_BENCH_LAUNCH_CRASH_92786B8FAC04');\n   const { name, colors } = useTheme();\n \n   useEffect(() => {\ntmp/launch-crash-stim-settings.png 70058 bytes\ntmp/launch-crash-stim-session.mp4 692922 bytes\nresults/sol-launch-crash/launch-crash-stim/proof/settings.png 70058 bytes\nresults/sol-launch-crash/launch-crash-stim/proof/session.mp4 692922 bytes\n",
           "exitCode": 0
         }
       ],
@@ -276,19 +358,19 @@
           "id": "app-alive",
           "kind": "appAlive",
           "label": "App process alive",
-          "atSeconds": 61.765
+          "atSeconds": 144.506
         },
         {
           "id": "diagnosis",
           "kind": "diagnosis",
           "label": "Actionable diagnosis",
-          "atSeconds": 85.015
+          "atSeconds": 161.544
         },
         {
           "id": "settings-ready",
           "kind": "settingsReady",
           "label": "Settings proof ready",
-          "atSeconds": 144.048
+          "atSeconds": 277.477
         }
       ],
       "proof": {
@@ -296,611 +378,10 @@
         "expected": "Keep map tiles for saved trails on device",
         "width": 402,
         "height": 874
-      }
-    },
-    {
-      "id": "launch-crash-control",
-      "model": "gpt-5.6-sol",
-      "platform": "ios",
-      "variant": "launch-crash",
-      "arm": "control",
-      "valid": true,
-      "invalidReasons": [],
-      "settingsReadySeconds": 638.649,
-      "appAliveSeconds": 445.054,
-      "diagnosisSeconds": 566.836,
-      "diagnosisCommandCount": 46,
-      "launchCrashAudit": {
-        "initialLaunchCommandId": "item_13",
-        "errorCaptureCommandId": "item_53",
-        "diagnosisCommandId": "item_53",
-        "repairedLaunchCommandId": "item_60",
-        "screenshotCommandId": "item_67"
       },
-      "diagnosisUsage": {
-        "input_tokens": 1941061,
-        "cached_input_tokens": 1858944,
-        "output_tokens": 14292,
-        "reasoning_output_tokens": 5266,
-        "total_tokens": 1955353
-      },
-      "estimatedDiagnosisCostUsd": 1.3578856000000001,
-      "totalSeconds": 665.539,
-      "commandCount": 59,
-      "usage": {
-        "input_tokens": 2908816,
-        "cached_input_tokens": 2815872,
-        "output_tokens": 18303,
-        "reasoning_output_tokens": 6681
-      },
-      "estimatedTokenCostUsd": 1.8641848,
-      "summary": "Created an isolated worktree and carried over dependencies or native outputs, worked on the JavaScript launch failure, and started the local Expo/Xcode workflow. It started one process with nohup and monitored the detached work through later commands. It reached Settings and captured valid agent-device proof. The record includes 2 failed command attempts before completion.",
-      "messages": [
-        {
-          "id": "item_0",
-          "atSeconds": 4.92,
-          "text": "I’m using the agent-device skill because the requested proof requires simulator UI automation. I’ll first create the isolated run worktree, preserve the fixture’s installed/native build artifacts, then start Metro and the native run in the required detached order before examining any application source."
-        },
-        {
-          "id": "item_7",
-          "atSeconds": 79.464,
-          "text": "The run worktree now has the fixture’s `node_modules`, CocoaPods installation, and existing iOS build output. I’m starting Metro detached next; I will not inspect source or diffs until the required failed launch has been captured by a separate completed foreground command."
-        },
-        {
-          "id": "item_14",
-          "atSeconds": 124.136,
-          "text": "The exact iPhone 17 / iOS 26.5 simulator was created, and the native boot-build-install-launch pipeline is running detached with its own `workspace/tmp` PID and log. I’m polling only process/build status now; no application source has been opened."
-        },
-        {
-          "id": "item_25",
-          "atSeconds": 188.864,
-          "text": "The first `nohup` launches were reaped by the execution host immediately after their parent shell exited, before either Metro or Xcode actually ran. I confirmed no source was exposed and am switching to a detached `screen` host, still recording the actual process PIDs and logs under `workspace/tmp`, so the required processes persist independently."
-        },
-        {
-          "id": "item_36",
-          "atSeconds": 310.979,
-          "text": "The detached native build is healthy and compiling the carried CocoaPods dependencies against the required iOS 26.5 simulator. Metro is independently alive on port 8081. I’m continuing short status polls until install and launch complete."
-        },
-        {
-          "id": "item_43",
-          "atSeconds": 462.027,
-          "text": "The detached native process completed successfully: the build succeeded, install succeeded, and launch returned app PID `55660` on simulator UDID `<simulator-udid>`. I’m now running the required separate, completed foreground error-capture command; only after it prints both the crash token and source location will I inspect code."
-        },
-        {
-          "id": "item_50",
-          "atSeconds": 525.714,
-          "text": "The JS launch was blocked by iOS’s first-use “Open in Trailhead?” confirmation, so Metro correctly saw no request yet. Per the agent-device skill, I’m opening the required isolated session with the exact simulator UDID and will use the dialog’s semantic “Open” label to complete the initial launch; the same session can remain open through the repair and final proof."
-        },
-        {
-          "id": "item_54",
-          "atSeconds": 571.943,
-          "text": "The completed foreground capture printed the deterministic token `STIM_BENCH_LAUNCH_CRASH_ABF5177E5BDE` and pinpointed `RootLayout` at `app/_layout.tsx:27:18`. Source inspection is now permitted; I’ll remove only that deliberate throw, verify the focused diff/type checks, and let the existing Metro process apply the update."
-        },
-        {
-          "id": "item_59",
-          "atSeconds": 600.496,
-          "text": "The repair is a one-line deletion, TypeScript passes, `git diff --check` passes, and the existing repaired Metro reports `packager-status:running`. I’m performing the required final recovery relaunch now; from that point onward I will not inspect or search any prior crash-token output, and will use only agent-device UI evidence to reach and prove Settings."
-        },
-        {
-          "id": "item_65",
-          "atSeconds": 630.875,
-          "text": "The repaired app is now rendering normally. I completed Expo’s onboarding, closed the developer menu, and selected “Settings, tab, 4 of 4” by its semantic ref. I’m executing the four required proof commands individually and exactly as specified."
-        },
-        {
-          "id": "item_71",
-          "atSeconds": 665.021,
-          "text": "Removed the deliberate root-render throw; TypeScript and diff checks pass. Settings proof succeeded and Metro/app were left running.\n\n- Run worktree: [launch-crash-control](worktree/launch-crash-control)\n- Screenshot: [settings.png](results/sol-launch-crash/launch-crash-control/proof/settings.png)"
-        }
-      ],
-      "commands": [
-        {
-          "id": "item_1",
-          "startSeconds": 6.794,
-          "endSeconds": 6.794,
-          "command": "sed -n '1,240p' results/sol-launch-crash/launch-crash-control/runner-home/.codex/skills/agent-device/SKILL.md",
-          "output": "---\nname: agent-device\ndescription: Automates Apple-platform apps (iOS, tvOS, macOS), Android devices, and Amazon Vega OS TV apps in Vega Virtual Devices. Use when navigating apps, taking snapshots/screenshots where supported, driving TV remotes, tapping, typing, scrolling, extracting UI info, collecting evidence, or planning agent-device CLI commands.\n---\n\n# agent-device\n\nFor a normal app-driving task, start immediately. Do not probe first with `--help`, `--version`, `devices`, `appstate`, `snapshot`, or `screenshot`:\n\n```bash\nagent-device open <app> --foreground\n```\n\nThat starts the session and returns the initial interactive snapshot with `@refs`.\n\nLoop: act with `press|click|fill|longpress <target> ... --settle`, `scroll <direction> --settle`, or `back --settle`; continue from the printed diff, verify the named expectation (`wait text \"...\"`, `is`, `get`, or `find`), then run `agent-device close`.\n\nCopy refs byte-for-byte: `@e12`, `@e12~s4` — keep the `@` and any `~sN`. Prefer current refs, then `id`/`label`/`role` selectors; coordinates are a last resort. If snapshot reports sparse/AX-unavailable, its refs and selectors are invalid: run `agent-device screenshot`, inspect the image, use coordinates, then retry `snapshot -i` after navigating. Otherwise run `snapshot -i` only when the diff lacks the next target.\n\nError output includes corrective hints; follow them instead of re-planning. Only when the task is specialized (for example gestures, scripting, TV, macOS, remote, or debugging) or a command shape is unclear, run `agent-device help <topic>`. `agent-device --help` lists topics, but is not a startup step.\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_2",
-          "startSeconds": 12.162,
-          "endSeconds": 12.162,
-          "command": "git worktree add -b bench/launch-crash-control worktree/launch-crash-control HEAD",
-          "output": "Preparing worktree (new branch 'bench/launch-crash-control')\nHEAD is now at 03c8492 test: prepare launch failure fixture\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_3",
-          "startSeconds": 17.302,
-          "endSeconds": 17.302,
-          "command": "find . -maxdepth 3 -type d \\\\( -name node_modules -o -name Pods -o -name build -o -name .gradle -o -name DerivedData \\\\) -print",
-          "output": "./node_modules\n./node_modules/plist/node_modules\n./node_modules/expo-dev-client/build\n./node_modules/simple-swizzle/node_modules\n./node_modules/hosted-git-info/node_modules\n./node_modules/expo-application/build\n./node_modules/xml2js/node_modules\n./node_modules/jest-worker/node_modules\n./node_modules/jest-worker/build\n./node_modules/expo-video/build\n./node_modules/expo-file-system/build\n./node_modules/tsconfig-paths/node_modules\n./node_modules/expo-web-browser/build\n./node_modules/expo-modules-autolinking/build\n./node_modules/expo-manifests/build\n./node_modules/react-native-reanimated/node_modules\n./node_modules/eslint-plugin-import/node_modules\n./node_modules/expo-crypto/build\n./node_modules/expo-keep-awake/build\n./node_modules/expo-asset/build\n./node_modules/css-tree/node_modules\n./node_modules/react-native/node_modules\n./node_modules/expo-linking/build\n./node_modules/wrap-ansi/node_modules\n./node_modules/y18n/build\n./node_modules/resolve-workspace-root/build\n./node_modules/expo-server/build\n./node_modules/eslint-config-expo/node_modules\n./node_modules/source-map-support/node_modules\n./node_modules/expo-sqlite/build\n./node_modules/tsx/node_modules\n./node_modules/ora/node_modules\n./node_modules/yargs-parser/build\n./node_modules/eslint-import-resolver-node/node_modules\n./node_modules/expo-status-bar/build\n./node_modules/eslint-plugin-react-hooks/node_modules\n./node_modules/eslint-module-utils/node_modules\n./node_modules/expo-dev-menu/build\n./node_modules/badgin/build\n./node_modules/await-lock/build\n./node_modules/mime-types/node_modules\n./node_modules/expo-notifications/build\n./node_modules/expo-symbols/build\n./node_modules/expo/node_modules\n./node_modules/expo/build\n./node_modules/expo-location/build\n./node_modules/metro/node_modules\n./node_modules/eslint-plugin-expo/build\n./node_modules/expo-image/build\n./node_modules/react-native-worklets/node_modules\n./node_modules/lighthouse-logger/node_modules\n./node_modules/is-bun-module/node_modules\n./node_modules/expo-splash-screen/build\n./node_modules/react-dom/node_modules\n./node_modules/expo-font/build\n./node_modules/expo-linear-gradient/build\n./node_modules/http-errors/node_modules\n./node_modules/expo-network/build\n./node_modules/metro-babel-transformer/node_modules\n./node_modules/expo-constants/build\n./node_modules/jest-util/node_modules\n./node_modules/jest-util/build\n./node_modules/jest-get-type/build\n./node_modules/react-native-web/node_modules\n./node_modules/compression/node_modules\n./node_modules/restore-cursor/node_modules\n./node_modules/serve-static/node_modules\n./node_modules/expo-system-ui/build\n./node_modules/cliui/node_modules\n./node_modules/cliui/build\n./node_modules/ansi-escapes/node_modules\n./node_modules/prop-types/node_modules\n./node_modules/jest-validate/node_modules\n./node_modules/jest-validate/build\n./node_modules/yargs/node_modules\n./node_modules/yargs/build\n./node_modules/glob/node_modules\n./node_modules/import-fresh/node_modules\n./node_modules/expo-haptics/build\n./node_modules/pretty-format/node_modules\n./node_modules/pretty-format/build\n./node_modules/hoist-non-react-statics/node_modules\n./node_modules/terser/node_modules\n./node_modules/log-symbols/node_modules\n./node_modules/micromatch/node_modules\n./node_modules/connect/node_modules\n./node_modules/expo-router/node_modules\n./node_modules/expo-router/build\n./node_modules/send/node_modules\n./node_modules/expo-device/node_modules\n./node_modules/expo-device/build\n./node_modules/simple-plist/node_modules\n./node_modules/npm-package-arg/node_modules\n./node_modules/finalhandler/node_modules\n./node_modules/expo-blur/build\n./node_modules/expo-sharing/build\n./node_modules/expo-secure-store/build\n./node_modules/fbjs/node_modules\n./node_modules/expo-glass-effect/build\n./node_modules/babel-preset-expo/build\n./node_modules/expo-task-manager/build\n./node_modules/path-scurry/node_modules\n./ios/Pods\n./ios/build\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_5",
-          "startSeconds": 57.79,
-          "endSeconds": 71.193,
-          "command": "cp -a worktree/fixture-launch-crash-control/ios/Pods worktree/launch-crash-control/ios/Pods",
-          "output": "",
-          "exitCode": 0
-        },
-        {
-          "id": "item_6",
-          "startSeconds": 74.238,
-          "endSeconds": 74.381,
-          "command": "cp -a worktree/fixture-launch-crash-control/ios/build worktree/launch-crash-control/ios/build",
-          "output": "",
-          "exitCode": 0
-        },
-        {
-          "id": "item_4",
-          "startSeconds": 24.408,
-          "endSeconds": 75.721,
-          "command": "cp -a worktree/fixture-launch-crash-control/node_modules worktree/launch-crash-control/node_modules",
-          "output": "",
-          "exitCode": 0
-        },
-        {
-          "id": "item_8",
-          "startSeconds": 81.384,
-          "endSeconds": 81.436,
-          "command": "nohup ./node_modules/.bin/expo start --dev-client > tmp/launch-crash-control-metro.log 2>&1 & echo $! > tmp/launch-crash-control-metro.pid",
-          "output": "",
-          "exitCode": 0
-        },
-        {
-          "id": "item_9",
-          "startSeconds": 86.67,
-          "endSeconds": 86.772,
-          "command": "xcrun simctl list devicetypes | rg '\"'^iPhone 17 '\"\\\\('",
-          "output": "",
-          "exitCode": 0
-        },
-        {
-          "id": "item_10",
-          "startSeconds": 90.857,
-          "endSeconds": 90.963,
-          "command": "xcrun simctl list runtimes | rg 'iOS 26\\\\.5'",
-          "output": "iOS 26.5 (26.5 - 23F77) - com.apple.CoreSimulator.SimRuntime.iOS-26-5\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_11",
-          "startSeconds": 95.651,
-          "endSeconds": 95.862,
-          "command": "xcrun simctl create 'Trailhead launch-crash-control' com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-26-5",
-          "output": "<simulator-udid>\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_12",
-          "startSeconds": 107.784,
-          "endSeconds": 107.784,
-          "command": "find ios -maxdepth 1 \\\\( -name '*.xcworkspace' -o -name '*.xcodeproj' \\\\) -print",
-          "output": "ios/Trailhead.xcworkspace\nios/Trailhead.xcodeproj\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_13",
-          "startSeconds": 119.457,
-          "endSeconds": 119.511,
-          "command": "\"nohup sh -c 'set -e; RUN_UDID=<simulator-udid>; echo RUN_SIMULATOR_UDID=\"'$RUN_UDID; xcrun simctl boot $RUN_UDID; xcrun simctl bootstatus $RUN_UDID -b; xcodebuild -workspace ios/Trailhead.xcworkspace -scheme Trailhead -configuration Debug -sdk iphonesimulator -destination platform=iOS'\"\\\\ Simulator,id=\"'$RUN_UDID -derivedDataPath .derivedData build; xcrun simctl install $RUN_UDID .derivedData/Build/Products/Debug-iphonesimulator/Trailhead.app; xcrun simctl launch $RUN_UDID com.appandflow.trailhead'\"' > tmp/launch-crash-control-native.log 2>&1 & echo \"'$! > tmp/launch-crash-control-native.pid'",
-          "output": "",
-          "exitCode": 0
-        },
-        {
-          "id": "item_15",
-          "startSeconds": 126.523,
-          "endSeconds": 126.674,
-          "command": "native_pid=$(sed -n '\"'1p' tmp/launch-crash-control-native.pid); if kill -0 \\\"\"'$native_pid\" 2>/dev/null; then echo \"native process $native_pid running\"; else echo \"native process $native_pid finished\"; fi; tail -n 8 tmp/launch-crash-control-native.log",
-          "output": "native process 46941 finished\nRUN_SIMULATOR_UDID=<simulator-udid>\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_16",
-          "startSeconds": 132.551,
-          "endSeconds": 132.551,
-          "command": "tail -n 80 tmp/launch-crash-control-native.log",
-          "output": "RUN_SIMULATOR_UDID=<simulator-udid>\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_17",
-          "startSeconds": 137.197,
-          "endSeconds": 137.546,
-          "command": "xcrun simctl list devices | rg 'Trailhead launch-crash-control'",
-          "output": "<device inventory omitted from public artifact>",
-          "exitCode": 0
-        },
-        {
-          "id": "item_18",
-          "startSeconds": 142.619,
-          "endSeconds": 142.762,
-          "command": "ps ax -o pid=,ppid=,command= | rg 'xcodebuild.*Trailhead|simctl bootstatus <simulator-udid-prefix>'",
-          "output": "<process output omitted from public artifact>",
-          "exitCode": 0
-        },
-        {
-          "id": "item_19",
-          "startSeconds": 148.748,
-          "endSeconds": 148.958,
-          "command": "ps -p 46941 -o pid=,stat=,command=",
-          "output": "<process output omitted from public artifact>",
-          "exitCode": 1
-        },
-        {
-          "id": "item_20",
-          "startSeconds": 159.637,
-          "endSeconds": 160.004,
-          "command": "\"nohup sh -c 'RUN_UDID=<simulator-udid>; echo RUN_SIMULATOR_UDID=\"'$RUN_UDID; xcrun simctl bootstatus $RUN_UDID -b; echo BOOTSTATUS_EXIT=$?; xcodebuild -workspace ios/Trailhead.xcworkspace -scheme Trailhead -configuration Debug -sdk iphonesimulator -destination \"platform=iOS Simulator,id=$RUN_UDID\" -derivedDataPath .derivedData build; build_status=$?; echo BUILD_EXIT=$build_status; if [ $build_status -ne 0 ]; then exit $build_status; fi; xcrun simctl install $RUN_UDID .derivedData/Build/Products/Debug-iphonesimulator/Trailhead.app; install_status=$?; echo INSTALL_EXIT=$install_status; if [ $install_status -ne 0 ]; then exit $install_status; fi; xcrun simctl launch $RUN_UDID com.appandflow.trailhead; echo LAUNCH_EXIT=$?'\"' </dev/null > tmp/launch-crash-control-native.log 2>&1 & echo \"'$! > tmp/launch-crash-control-native.pid'",
-          "output": "",
-          "exitCode": 0
-        },
-        {
-          "id": "item_21",
-          "startSeconds": 165.045,
-          "endSeconds": 165.24,
-          "command": "native_pid=$(sed -n '\"'1p' tmp/launch-crash-control-native.pid); if kill -0 \\\"\"'$native_pid\" 2>/dev/null; then echo \"native process $native_pid running\"; else echo \"native process $native_pid finished\"; fi; tail -n 12 tmp/launch-crash-control-native.log",
-          "output": "native process 47967 finished\nRUN_SIMULATOR_UDID=<simulator-udid>\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_22",
-          "startSeconds": 170.335,
-          "endSeconds": 170.667,
-          "command": "xcrun simctl bootstatus <simulator-udid> -b",
-          "output": "Monitoring boot status for Trailhead launch-crash-control (<simulator-udid>).\nDevice already booted, nothing to do.\n\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_23",
-          "startSeconds": 176.235,
-          "endSeconds": 176.236,
-          "command": "metro_pid=$(sed -n '\"'1p' tmp/launch-crash-control-metro.pid); if kill -0 \\\"\"'$metro_pid\" 2>/dev/null; then echo \"metro process $metro_pid running\"; else echo \"metro process $metro_pid finished\"; fi; tail -n 20 tmp/launch-crash-control-metro.log",
-          "output": "metro process 46073 finished\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_24",
-          "startSeconds": 182.172,
-          "endSeconds": 182.172,
-          "command": "command -v setsid || command -v daemon || command -v dtach || command -v screen",
-          "output": "screen\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_27",
-          "startSeconds": 197.046,
-          "endSeconds": 197.046,
-          "command": "metro_pid=$(sed -n '\"'1p' tmp/launch-crash-control-metro.pid); if kill -0 \\\"\"'$metro_pid\" 2>/dev/null; then echo \"metro process $metro_pid running\"; else echo \"metro process $metro_pid finished\"; fi; tail -n 20 tmp/launch-crash-control-metro.log",
-          "output": "metro process 48738 running\nStarting project at worktree/launch-crash-control\nLogs: worktree/launch-crash-control/.expo/dev/logs/start.log\nReact Compiler enabled\nStarting Metro Bundler\n\nWaiting on http://localhost:8081\n\nLogs for your project will appear below.\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_29",
-          "startSeconds": 212.024,
-          "endSeconds": 212.024,
-          "command": "native_pid=$(sed -n '\"'1p' tmp/launch-crash-control-native.pid); if kill -0 \\\"\"'$native_pid\" 2>/dev/null; then echo \"native process $native_pid running\"; else echo \"native process $native_pid finished\"; fi; tail -n 12 tmp/launch-crash-control-native.log",
-          "output": "native process 49195 running\n    Target 'React-callinvoker' in project 'Pods' (no dependencies)\n    Target 'React-Core-React-Core_privacy' in project 'Pods' (no dependencies)\n    Target 'React-Core-prebuilt' in project 'Pods'\n        ➜ Explicit dependency on target 'ReactNativeDependencies' in project 'Pods'\n    Target 'ReactNativeDependencies' in project 'Pods' (no dependencies)\n    Target 'RCTDeprecation' in project 'Pods' (no dependencies)\n    Target 'hermes-engine' in project 'Pods' (no dependencies)\n    Target 'EXApplication-ExpoApplication_privacy' in project 'Pods' (no dependencies)\n\nGatherProvisioningInputs\n\nCreateBuildDescription\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_30",
-          "startSeconds": 217.745,
-          "endSeconds": 217.9,
-          "command": "native_pid=$(sed -n '\"'1p' tmp/launch-crash-control-native.pid); if kill -0 \\\"\"'$native_pid\" 2>/dev/null; then echo \"native process $native_pid running\"; else echo \"native process $native_pid finished\"; fi; tail -n 12 tmp/launch-crash-control-native.log",
-          "output": "native process 49195 running\n\nCpResource worktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/React-cxxreact/React-cxxreact_privacy.bundle/PrivacyInfo.xcprivacy worktree/launch-crash-control/node_modules/react-native/ReactCommon/cxxreact/PrivacyInfo.xcprivacy (in target 'React-cxxreact-React-cxxreact_privacy' from project 'Pods')\n    cd worktree/launch-crash-control/ios/Pods\n    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks worktree/launch-crash-control/node_modules/react-native/ReactCommon/cxxreact/PrivacyInfo.xcprivacy worktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/React-cxxreact/React-cxxreact_privacy.bundle\n\nProcessInfoPlistFile worktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/React-cxxreact/React-cxxreact_privacy.bundle/Info.plist worktree/launch-crash-control/ios/Pods/Target\\ Support\\ Files/React-cxxreact/ResourceBundle-React-cxxreact_privacy-React-cxxreact-Info.plist (in target 'React-cxxreact-React-cxxreact_privacy' from project 'Pods')\n    cd worktree/launch-crash-control/ios/Pods\n    builtin-infoPlistUtility worktree/launch-crash-control/ios/Pods/Target\\ Support\\ Files/React-cxxreact/ResourceBundle-React-cxxreact_privacy-React-cxxreact-Info.plist -producttype com.apple.product-type.bundle -expandbuildsettings -format binary -platform iphonesimulator -o worktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/React-cxxreact/React-cxxreact_privacy.bundle/Info.plist\n\nCompileAssetCatalogVariant thinned worktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/expo-dev-menu/EXDevMenu.bundle worktree/launch-crash-control/node_modules/expo-dev-menu/ios/Assets.xcassets (in target 'expo-dev-menu-EXDevMenu' from project 'Pods')\n    cd worktree/launch-crash-control/ios/Pods\n    Xcode/usr/bin/actool worktree/launch-crash-control/node_modules/expo-dev-menu/ios/Assets.xcassets --compile worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/expo-dev-menu-EXDevMenu.build/assetcatalog_output/thinned --output-format human-readable-text --notices --warnings --export-dependency-info worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/expo-dev-menu-EXDevMenu.build/assetcatalog_dependencies_thinned --output-partial-info-plist worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/expo-dev-menu-EXDevMenu.build/assetcatalog_generated_info.plist_thinned --compress-pngs --enable-on-demand-resources NO --filter-for-thinning-device-configuration iPhone18,3 --filter-for-device-os-version 26.5 --development-region en --target-device iphone --target-device ipad --minimum-deployment-target 16.4 --platform iphonesimulator\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_31",
-          "startSeconds": 223.458,
-          "endSeconds": 223.623,
-          "command": "native_pid=$(sed -n '\"'1p' tmp/launch-crash-control-native.pid); if kill -0 \\\"\"'$native_pid\" 2>/dev/null; then echo \"native process $native_pid running\"; else echo \"native process $native_pid finished\"; fi; tail -n 8 tmp/launch-crash-control-native.log",
-          "output": "native process 49195 running\nPrecompileModule worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/ExplicitPrecompiledModules/_DarwinFoundation2-EYCMQHWF5HEU7DYSS1YVH34KP.scan\n    cd /\n    builtin-precompileModule worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/ExplicitPrecompiledModules/_DarwinFoundation2-EYCMQHWF5HEU7DYSS1YVH34KP.scan\n\nSwiftCompile normal arm64 Compiling\\ Font.swift,\\ Glyph.swift,\\ GradientAnimations.swift,\\ GradientFill.swift,\\ GradientFillNode.swift,\\ GradientFillRenderer.swift,\\ GradientRenderLayer.swift,\\ GradientStroke.swift,\\ GradientStrokeNode.swift,\\ GradientStrokeRenderer.swift,\\ GradientValueProvider.swift,\\ Group.swift,\\ GroupInterpolator.swift,\\ GroupNode.swift,\\ GroupOutputNode.swift,\\ ImageAsset.swift,\\ ImageCompositionLayer.swift,\\ ImageLayer.swift,\\ ImageLayerModel.swift,\\ IndexChangeset.swift,\\ InfiniteOpaqueAnimationLayer.swift,\\ Interpolatable.swift,\\ InterpolatableExtensions.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Private/Model/Text/Font.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Private/Model/Text/Glyph.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Private/CoreAnimation/Animations/GradientAnimations.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Private/Model/ShapeItems/GradientFill.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Private/MainThread/NodeRenderSystem/Nodes/RenderNodes/GradientFillNode.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Private/MainThread/NodeRenderSystem/Nodes/OutputNodes/Renderables/GradientFillRenderer.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Private/CoreAnimation/Layers/GradientRenderLayer.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Private/Model/ShapeItems/GradientStroke.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Private/MainThread/NodeRenderSystem/Nodes/RenderNodes/GradientStrokeNode.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Private/MainThread/NodeRenderSystem/Nodes/OutputNodes/Renderables/GradientStrokeRenderer.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Public/DynamicProperties/ValueProviders/GradientValueProvider.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Private/Model/ShapeItems/Group.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Private/MainThread/NodeRenderSystem/NodeProperties/ValueProviders/GroupInterpolator.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Private/MainThread/NodeRenderSystem/Nodes/RenderContainers/GroupNode.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Private/MainThread/NodeRenderSystem/Nodes/OutputNodes/GroupOutputNode.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Private/Model/Assets/ImageAsset.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Private/MainThread/LayerContainers/CompLayers/ImageCompositionLayer.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Private/CoreAnimation/Layers/ImageLayer.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Private/Model/Layers/ImageLayerModel.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Private/EmbeddedLibraries/EpoxyCore/Diffing/IndexChangeset.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Private/CoreAnimation/Layers/InfiniteOpaqueAnimationLayer.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Public/Keyframes/Interpolatable.swift worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Private/Utility/Interpolatable/InterpolatableExtensions.swift (in target 'lottie-ios' from project 'Pods')\nSwiftCompile normal arm64 worktree/launch-crash-control/ios/Pods/lottie-ios/Sources/Private/Model/Text/Font.swift (in target 'lottie-ios' from project 'Pods')\n    cd worktree/launch-crash-control/ios/Pods\n    \n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_32",
-          "startSeconds": 229.777,
-          "endSeconds": 239.828,
-          "command": "sleep 10; native_pid=$(sed -n '\"'1p' tmp/launch-crash-control-native.pid); if kill -0 \\\"\"'$native_pid\" 2>/dev/null; then echo \"native process $native_pid running\"; else echo \"native process $native_pid finished\"; fi; tail -n 10 tmp/launch-crash-control-native.log",
-          "output": "native process 49195 running\n    export XPCSERVICES_FOLDER_PATH\\=app/XPCServices\n    export YACC\\=yacc\n    export _DISCOVER_COMMAND_LINE_LINKER_INPUTS\\=YES\n    export _DISCOVER_COMMAND_LINE_LINKER_INPUTS_INCLUDE_WL\\=YES\n    export _LD_MULTIARCH\\=YES\n    export __DIAGNOSE_DEPRECATED_ARCHS\\=YES\n    export __ORIGINAL_SDK_DEFINED_LLVM_TARGET_TRIPLE_SYS\\=ios\n    export arch\\=undefined_arch\n    export variant\\=normal\n    sh -c worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/ExpoModulesJSI.build/Script-46EB2E0002F430.sh\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_33",
-          "startSeconds": 248.732,
-          "endSeconds": 258.925,
-          "command": "sleep 10; native_pid=$(sed -n '\"'1p' tmp/launch-crash-control-native.pid); if kill -0 \\\"\"'$native_pid\" 2>/dev/null; then echo \"native process $native_pid running\"; else echo \"native process $native_pid finished\"; fi; tail -n 10 tmp/launch-crash-control-native.log",
-          "output": "native process 49195 running\n\nSwiftDriverJobDiscovery normal arm64 Emitting module for RNScreens (in target 'RNScreens' from project 'Pods')\n\nLibtool worktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/react-native-webview/libreact-native-webview.a normal (in target 'react-native-webview' from project 'Pods')\n    cd worktree/launch-crash-control/ios/Pods\n    Xcode/Toolchains/XcodeDefault.xctoolchain/usr/bin/libtool -static -arch_only arm64 -D -syslibroot Xcode/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/react-native-webview -filelist worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/react-native-webview.build/Objects-normal/arm64/react-native-webview.LinkFileList -dependency_info worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/react-native-webview.build/Objects-normal/arm64/react-native-webview_libtool_dependency_info.dat -o worktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/react-native-webview/libreact-native-webview.a\n\nPhaseScriptExecution [CP]\\ Copy\\ XCFrameworks worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/react-native-skia.build/Script-46EB2E0002F530.sh (in target 'react-native-skia' from project 'Pods')\n    cd worktree/launch-crash-control/ios/Pods\n    sh -c worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/react-native-skia.build/Script-46EB2E0002F530.sh\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_34",
-          "startSeconds": 268.914,
-          "endSeconds": 284.116,
-          "command": "sleep 15; native_pid=$(sed -n '\"'1p' tmp/launch-crash-control-native.pid); if kill -0 \\\"\"'$native_pid\" 2>/dev/null; then echo \"native process $native_pid running\"; else echo \"native process $native_pid finished\"; fi; tail -n 10 tmp/launch-crash-control-native.log",
-          "output": "native process 49195 running\n    Using response file: worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNScreens.build/Objects-normal/arm64/af3fcb34312c57c0f52879cdce924b91-common-args.resp\n    \n    Xcode/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -x objective-c++ -ivfsstatcache worktree/launch-crash-control/.derivedData/SDKStatCaches.noindex/iphonesimulator26.5-23F81a-6cfe768891a92b912361537c460fe42b.sdkstatcache -target arm64-apple-ios15.1-simulator -fmessage-length\\=0 -fdiagnostics-show-note-include-stack -fmacro-backtrace-limit\\=0 -fno-color-diagnostics -fmodules-prune-interval\\=86400 -fmodules-prune-after\\=345600 -fbuild-session-file\\=worktree/launch-crash-control/.derivedData/ModuleCache.noindex/Session.modulevalidation -fmodules-validate-once-per-build-session -Wnon-modular-include-in-framework-module -Werror\\=non-modular-include-in-framework-module -Wno-trigraphs -Wno-missing-field-initializers -Wno-missing-prototypes -Werror\\=return-type -Wdocumentation -Wunreachable-code -Wno-implicit-atomic-properties -Werror\\=deprecated-objc-isa-usage -Wno-objc-interface-ivars -Werror\\=objc-root-class -Wno-arc-repeated-use-of-weak -Wimplicit-retain-self -Wno-non-virtual-dtor -Wno-overloaded-virtual -Wno-exit-time-destructors -Wduplicate-method-match -Wno-missing-braces -Wparentheses -Wswitch -Wunused-function -Wno-unused-label -Wno-unused-parameter -Wunused-variable -Wunused-value -Wempty-body -Wuninitialized -Wconditional-uninitialized -Wno-unknown-pragmas -Wno-shadow -Wno-four-char-constants -Wno-conversion -Wconstant-conversion -Wint-conversion -Wbool-conversion -Wenum-conversion -Wno-float-conversion -Wnon-literal-null-conversion -Wobjc-literal-conversion -Wshorten-64-to-32 -Wno-newline-eof -Wno-selector -Wno-strict-selector-match -Wundeclared-selector -Wdeprecated-implementations -Wno-c++11-extensions -Wno-implicit-fallthrough -isysroot Xcode/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -fstrict-aliasing -Wprotocol -Wdeprecated-declarations -Winvalid-offsetof -Wno-sign-conversion -Winfinite-recursion -Wmove -Wcomma -Wblock-capture-autoreleasing -Wstrict-prototypes -Wrange-loop-analysis -Wno-semicolon-before-method-body -Wunguarded-availability -index-store-path worktree/launch-crash-control/.derivedData/Index.noindex/DataStore @worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNScreens.build/Objects-normal/arm64/af3fcb34312c57c0f52879cdce924b91-common-args.resp -DRCT_NEW_ARCH_ENABLED\\=1 -include worktree/launch-crash-control/ios/Pods/Target\\ Support\\ Files/RNScreens/RNScreens-prefix.pch -MMD -MT dependencies -MF worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNScreens.build/Objects-normal/arm64/RNSScreenNavigationContainer.d --serialize-diagnostics worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNScreens.build/Objects-normal/arm64/RNSScreenNavigationContainer.dia -c worktree/launch-crash-control/node_modules/react-native-screens/ios/RNSScreenNavigationContainer.mm -o worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNScreens.build/Objects-normal/arm64/RNSScreenNavigationContainer.o -index-unit-output-path build/Pods.build/Debug-iphonesimulator/RNScreens.build/Objects-normal/arm64/RNSScreenNavigationContainer.o\n\nCompileC worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNScreens.build/Objects-normal/arm64/RNSScreenFooter.o worktree/launch-crash-control/node_modules/react-native-screens/ios/RNSScreenFooter.mm normal arm64 objective-c++ com.apple.compilers.llvm.clang.1_0.compiler (in target 'RNScreens' from project 'Pods')\n    cd worktree/launch-crash-control/ios/Pods\n    \n    Using response file: worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNScreens.build/Objects-normal/arm64/af3fcb34312c57c0f52879cdce924b91-common-args.resp\n    \n    Xcode/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -x objective-c++ -ivfsstatcache worktree/launch-crash-control/.derivedData/SDKStatCaches.noindex/iphonesimulator26.5-23F81a-6cfe768891a92b912361537c460fe42b.sdkstatcache -target arm64-apple-ios15.1-simulator -fmessage-length\\=0 -fdiagnostics-show-note-include-stack -fmacro-backtrace-limit\\=0 -fno-color-diagnostics -fmodules-prune-interval\\=86400 -fmodules-prune-after\\=345600 -fbuild-session-file\\=worktree/launch-crash-control/.derivedData/ModuleCache.noindex/Session.modulevalidation -fmodules-validate-once-per-build-session -Wnon-modular-include-in-framework-module -Werror\\=non-modular-include-in-framework-module -Wno-trigraphs -Wno-missing-field-initializers -Wno-missing-prototypes -Werror\\=return-type -Wdocumentation -Wunreachable-code -Wno-implicit-atomic-properties -Werror\\=deprecated-objc-isa-usage -Wno-objc-interface-ivars -Werror\\=objc-root-class -Wno-arc-repeated-use-of-weak -Wimplicit-retain-self -Wno-non-virtual-dtor -Wno-overloaded-virtual -Wno-exit-time-destructors -Wduplicate-method-match -Wno-missing-braces -Wparentheses -Wswitch -Wunused-function -Wno-unused-label -Wno-unused-parameter -Wunused-variable -Wunused-value -Wempty-body -Wuninitialized -Wconditional-uninitialized -Wno-unknown-pragmas -Wno-shadow -Wno-four-char-constants -Wno-conversion -Wconstant-conversion -Wint-conversion -Wbool-conversion -Wenum-conversion -Wno-float-conversion -Wnon-literal-null-conversion -Wobjc-literal-conversion -Wshorten-64-to-32 -Wno-newline-eof -Wno-selector -Wno-strict-selector-match -Wundeclared-selector -Wdeprecated-implementations -Wno-c++11-extensions -Wno-implicit-fallthrough -isysroot Xcode/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -fstrict-aliasing -Wprotocol -Wdeprecated-declarations -Winvalid-offsetof -Wno-sign-conversion -Winfinite-recursion -Wmove -Wcomma -Wblock-capture-autoreleasing -Wstrict-prototypes -Wrange-loop-analysis -Wno-semicolon-before-method-body -Wunguarded-availability -index-store-path worktree/launch-crash-control/.derivedData/Index.noindex/DataStore @worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNScreens.build/Objects-normal/arm64/af3fcb34312c57c0f52879cdce924b91-common-args.resp -DRCT_NEW_ARCH_ENABLED\\=1 -include worktree/launch-crash-control/ios/Pods/Target\\ Support\\ Files/RNScreens/RNScreens-prefix.pch -MMD -MT dependencies -MF worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNScreens.build/Objects-normal/arm64/RNSScreenFooter.d --serialize-diagnostics worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNScreens.build/Objects-normal/arm64/RNSScreenFooter.dia -c worktree/launch-crash-control/node_modules/react-native-screens/ios/RNSScreenFooter.mm -o worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNScreens.build/Objects-normal/arm64/RNSScreenFooter.o -index-unit-output-path build/Pods.build/Debug-iphonesimulator/RNScreens.build/Objects-normal/arm64/RNSScreenFooter.o\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_35",
-          "startSeconds": 287.81,
-          "endSeconds": 308.024,
-          "command": "sleep 20; native_pid=$(sed -n '\"'1p' tmp/launch-crash-control-native.pid); if kill -0 \\\"\"'$native_pid\" 2>/dev/null; then echo \"native process $native_pid running\"; else echo \"native process $native_pid finished\"; fi; tail -n 8 tmp/launch-crash-control-native.log",
-          "output": "native process 49195 running\n    Xcode/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -x objective-c++ -ivfsstatcache worktree/launch-crash-control/.derivedData/SDKStatCaches.noindex/iphonesimulator26.5-23F81a-6cfe768891a92b912361537c460fe42b.sdkstatcache -target arm64-apple-ios15.1-simulator -fmessage-length\\=0 -fdiagnostics-show-note-include-stack -fmacro-backtrace-limit\\=0 -fno-color-diagnostics -fmodules-prune-interval\\=86400 -fmodules-prune-after\\=345600 -fbuild-session-file\\=worktree/launch-crash-control/.derivedData/ModuleCache.noindex/Session.modulevalidation -fmodules-validate-once-per-build-session -Wnon-modular-include-in-framework-module -Werror\\=non-modular-include-in-framework-module -Wno-trigraphs -Wno-missing-field-initializers -Wno-missing-prototypes -Werror\\=return-type -Wdocumentation -Wunreachable-code -Wno-implicit-atomic-properties -Werror\\=deprecated-objc-isa-usage -Wno-objc-interface-ivars -Werror\\=objc-root-class -Wno-arc-repeated-use-of-weak -Wimplicit-retain-self -Wno-non-virtual-dtor -Wno-overloaded-virtual -Wno-exit-time-destructors -Wduplicate-method-match -Wno-missing-braces -Wparentheses -Wswitch -Wunused-function -Wno-unused-label -Wno-unused-parameter -Wunused-variable -Wunused-value -Wempty-body -Wuninitialized -Wconditional-uninitialized -Wno-unknown-pragmas -Wno-shadow -Wno-four-char-constants -Wno-conversion -Wconstant-conversion -Wint-conversion -Wbool-conversion -Wenum-conversion -Wno-float-conversion -Wnon-literal-null-conversion -Wobjc-literal-conversion -Wshorten-64-to-32 -Wno-newline-eof -Wno-selector -Wno-strict-selector-match -Wundeclared-selector -Wdeprecated-implementations -Wno-c++11-extensions -Wno-implicit-fallthrough -isysroot Xcode/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -fstrict-aliasing -Wprotocol -Wdeprecated-declarations -Winvalid-offsetof -Wno-sign-conversion -Winfinite-recursion -Wmove -Wcomma -Wblock-capture-autoreleasing -Wstrict-prototypes -Wrange-loop-analysis -Wno-semicolon-before-method-body -Wunguarded-availability -index-store-path worktree/launch-crash-control/.derivedData/Index.noindex/DataStore @worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/af3fcb34312c57c0f52879cdce924b91-common-args.resp -DRCT_NEW_ARCH_ENABLED\\=1 -include worktree/launch-crash-control/ios/Pods/Target\\ Support\\ Files/RNSVG/RNSVG-prefix.pch -MMD -MT dependencies -MF worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/RNSVGSvgViewManager.d --serialize-diagnostics worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/RNSVGSvgViewManager.dia -c worktree/launch-crash-control/node_modules/react-native-svg/apple/ViewManagers/RNSVGSvgViewManager.mm -o worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/RNSVGSvgViewManager.o -index-unit-output-path build/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/RNSVGSvgViewManager.o\n\nCompileC worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/RNSVGSvgView.o worktree/launch-crash-control/node_modules/react-native-svg/apple/Elements/RNSVGSvgView.mm normal arm64 objective-c++ com.apple.compilers.llvm.clang.1_0.compiler (in target 'RNSVG' from project 'Pods')\n    cd worktree/launch-crash-control/ios/Pods\n    \n    Using response file: worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/af3fcb34312c57c0f52879cdce924b91-common-args.resp\n    \n    Xcode/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -x objective-c++ -ivfsstatcache worktree/launch-crash-control/.derivedData/SDKStatCaches.noindex/iphonesimulator26.5-23F81a-6cfe768891a92b912361537c460fe42b.sdkstatcache -target arm64-apple-ios15.1-simulator -fmessage-length\\=0 -fdiagnostics-show-note-include-stack -fmacro-backtrace-limit\\=0 -fno-color-diagnostics -fmodules-prune-interval\\=86400 -fmodules-prune-after\\=345600 -fbuild-session-file\\=worktree/launch-crash-control/.derivedData/ModuleCache.noindex/Session.modulevalidation -fmodules-validate-once-per-build-session -Wnon-modular-include-in-framework-module -Werror\\=non-modular-include-in-framework-module -Wno-trigraphs -Wno-missing-field-initializers -Wno-missing-prototypes -Werror\\=return-type -Wdocumentation -Wunreachable-code -Wno-implicit-atomic-properties -Werror\\=deprecated-objc-isa-usage -Wno-objc-interface-ivars -Werror\\=objc-root-class -Wno-arc-repeated-use-of-weak -Wimplicit-retain-self -Wno-non-virtual-dtor -Wno-overloaded-virtual -Wno-exit-time-destructors -Wduplicate-method-match -Wno-missing-braces -Wparentheses -Wswitch -Wunused-function -Wno-unused-label -Wno-unused-parameter -Wunused-variable -Wunused-value -Wempty-body -Wuninitialized -Wconditional-uninitialized -Wno-unknown-pragmas -Wno-shadow -Wno-four-char-constants -Wno-conversion -Wconstant-conversion -Wint-conversion -Wbool-conversion -Wenum-conversion -Wno-float-conversion -Wnon-literal-null-conversion -Wobjc-literal-conversion -Wshorten-64-to-32 -Wno-newline-eof -Wno-selector -Wno-strict-selector-match -Wundeclared-selector -Wdeprecated-implementations -Wno-c++11-extensions -Wno-implicit-fallthrough -isysroot Xcode/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -fstrict-aliasing -Wprotocol -Wdeprecated-declarations -Winvalid-offsetof -Wno-sign-conversion -Winfinite-recursion -Wmove -Wcomma -Wblock-capture-autoreleasing -Wstrict-prototypes -Wrange-loop-analysis -Wno-semicolon-before-method-body -Wunguarded-availability -index-store-path worktree/launch-crash-control/.derivedData/Index.noindex/DataStore @worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/af3fcb34312c57c0f52879cdce924b91-common-args.resp -DRCT_NEW_ARCH_ENABLED\\=1 -include worktree/launch-crash-control/ios/Pods/Target\\ Support\\ Files/RNSVG/RNSVG-prefix.pch -MMD -MT dependencies -MF worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/RNSVGSvgView.d --serialize-diagnostics worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/RNSVGSvgView.dia -c worktree/launch-crash-control/node_modules/react-native-svg/apple/Elements/RNSVGSvgView.mm -o worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/RNSVGSvgView.o -index-unit-output-path build/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/RNSVGSvgView.o\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_37",
-          "startSeconds": 313.29,
-          "endSeconds": 333.592,
-          "command": "sleep 20; native_pid=$(sed -n '\"'1p' tmp/launch-crash-control-native.pid); if kill -0 \\\"\"'$native_pid\" 2>/dev/null; then echo \"native process $native_pid running\"; else echo \"native process $native_pid finished\"; fi; tail -n 8 tmp/launch-crash-control-native.log",
-          "output": "native process 49195 running\n    Xcode/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -x objective-c++ -ivfsstatcache worktree/launch-crash-control/.derivedData/SDKStatCaches.noindex/iphonesimulator26.5-23F81a-6cfe768891a92b912361537c460fe42b.sdkstatcache -target arm64-apple-ios15.1-simulator -fmessage-length\\=0 -fdiagnostics-show-note-include-stack -fmacro-backtrace-limit\\=0 -fno-color-diagnostics -fmodules-prune-interval\\=86400 -fmodules-prune-after\\=345600 -fbuild-session-file\\=worktree/launch-crash-control/.derivedData/ModuleCache.noindex/Session.modulevalidation -fmodules-validate-once-per-build-session -Wnon-modular-include-in-framework-module -Werror\\=non-modular-include-in-framework-module -Wno-trigraphs -Wno-missing-field-initializers -Wno-missing-prototypes -Werror\\=return-type -Wdocumentation -Wunreachable-code -Wno-implicit-atomic-properties -Werror\\=deprecated-objc-isa-usage -Wno-objc-interface-ivars -Werror\\=objc-root-class -Wno-arc-repeated-use-of-weak -Wimplicit-retain-self -Wno-non-virtual-dtor -Wno-overloaded-virtual -Wno-exit-time-destructors -Wduplicate-method-match -Wno-missing-braces -Wparentheses -Wswitch -Wunused-function -Wno-unused-label -Wno-unused-parameter -Wunused-variable -Wunused-value -Wempty-body -Wuninitialized -Wconditional-uninitialized -Wno-unknown-pragmas -Wno-shadow -Wno-four-char-constants -Wno-conversion -Wconstant-conversion -Wint-conversion -Wbool-conversion -Wenum-conversion -Wno-float-conversion -Wnon-literal-null-conversion -Wobjc-literal-conversion -Wshorten-64-to-32 -Wno-newline-eof -Wno-selector -Wno-strict-selector-match -Wundeclared-selector -Wdeprecated-implementations -Wno-c++11-extensions -Wno-implicit-fallthrough -isysroot Xcode/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -fstrict-aliasing -Wprotocol -Wdeprecated-declarations -Winvalid-offsetof -Wno-sign-conversion -Winfinite-recursion -Wmove -Wcomma -Wblock-capture-autoreleasing -Wstrict-prototypes -Wrange-loop-analysis -Wno-semicolon-before-method-body -Wunguarded-availability -index-store-path worktree/launch-crash-control/.derivedData/Index.noindex/DataStore @worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/af3fcb34312c57c0f52879cdce924b91-common-args.resp -DRCT_NEW_ARCH_ENABLED\\=1 -include worktree/launch-crash-control/ios/Pods/Target\\ Support\\ Files/RNSVG/RNSVG-prefix.pch -MMD -MT dependencies -MF worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/RNSVGCircleManager.d --serialize-diagnostics worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/RNSVGCircleManager.dia -c worktree/launch-crash-control/node_modules/react-native-svg/apple/ViewManagers/RNSVGCircleManager.mm -o worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/RNSVGCircleManager.o -index-unit-output-path build/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/RNSVGCircleManager.o\n\nCompileC worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/RNSVGCircle.o worktree/launch-crash-control/node_modules/react-native-svg/apple/Shapes/RNSVGCircle.mm normal arm64 objective-c++ com.apple.compilers.llvm.clang.1_0.compiler (in target 'RNSVG' from project 'Pods')\n    cd worktree/launch-crash-control/ios/Pods\n    \n    Using response file: worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/af3fcb34312c57c0f52879cdce924b91-common-args.resp\n    \n    Xcode/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -x objective-c++ -ivfsstatcache worktree/launch-crash-control/.derivedData/SDKStatCaches.noindex/iphonesimulator26.5-23F81a-6cfe768891a92b912361537c460fe42b.sdkstatcache -target arm64-apple-ios15.1-simulator -fmessage-length\\=0 -fdiagnostics-show-note-include-stack -fmacro-backtrace-limit\\=0 -fno-color-diagnostics -fmodules-prune-interval\\=86400 -fmodules-prune-after\\=345600 -fbuild-session-file\\=worktree/launch-crash-control/.derivedData/ModuleCache.noindex/Session.modulevalidation -fmodules-validate-once-per-build-session -Wnon-modular-include-in-framework-module -Werror\\=non-modular-include-in-framework-module -Wno-trigraphs -Wno-missing-field-initializers -Wno-missing-prototypes -Werror\\=return-type -Wdocumentation -Wunreachable-code -Wno-implicit-atomic-properties -Werror\\=deprecated-objc-isa-usage -Wno-objc-interface-ivars -Werror\\=objc-root-class -Wno-arc-repeated-use-of-weak -Wimplicit-retain-self -Wno-non-virtual-dtor -Wno-overloaded-virtual -Wno-exit-time-destructors -Wduplicate-method-match -Wno-missing-braces -Wparentheses -Wswitch -Wunused-function -Wno-unused-label -Wno-unused-parameter -Wunused-variable -Wunused-value -Wempty-body -Wuninitialized -Wconditional-uninitialized -Wno-unknown-pragmas -Wno-shadow -Wno-four-char-constants -Wno-conversion -Wconstant-conversion -Wint-conversion -Wbool-conversion -Wenum-conversion -Wno-float-conversion -Wnon-literal-null-conversion -Wobjc-literal-conversion -Wshorten-64-to-32 -Wno-newline-eof -Wno-selector -Wno-strict-selector-match -Wundeclared-selector -Wdeprecated-implementations -Wno-c++11-extensions -Wno-implicit-fallthrough -isysroot Xcode/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -fstrict-aliasing -Wprotocol -Wdeprecated-declarations -Winvalid-offsetof -Wno-sign-conversion -Winfinite-recursion -Wmove -Wcomma -Wblock-capture-autoreleasing -Wstrict-prototypes -Wrange-loop-analysis -Wno-semicolon-before-method-body -Wunguarded-availability -index-store-path worktree/launch-crash-control/.derivedData/Index.noindex/DataStore @worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/af3fcb34312c57c0f52879cdce924b91-common-args.resp -DRCT_NEW_ARCH_ENABLED\\=1 -include worktree/launch-crash-control/ios/Pods/Target\\ Support\\ Files/RNSVG/RNSVG-prefix.pch -MMD -MT dependencies -MF worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/RNSVGCircle.d --serialize-diagnostics worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/RNSVGCircle.dia -c worktree/launch-crash-control/node_modules/react-native-svg/apple/Shapes/RNSVGCircle.mm -o worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/RNSVGCircle.o -index-unit-output-path build/Pods.build/Debug-iphonesimulator/RNSVG.build/Objects-normal/arm64/RNSVGCircle.o\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_38",
-          "startSeconds": 337.246,
-          "endSeconds": 362.463,
-          "command": "sleep 25; native_pid=$(sed -n '\"'1p' tmp/launch-crash-control-native.pid); if kill -0 \\\"\"'$native_pid\" 2>/dev/null; then echo \"native process $native_pid running\"; else echo \"native process $native_pid finished\"; fi; tail -n 8 tmp/launch-crash-control-native.log",
-          "output": "native process 49195 running\n    Xcode/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -x c++ -ivfsstatcache worktree/launch-crash-control/.derivedData/SDKStatCaches.noindex/iphonesimulator26.5-23F81a-6cfe768891a92b912361537c460fe42b.sdkstatcache -target arm64-apple-ios15.1-simulator -fmessage-length\\=0 -fdiagnostics-show-note-include-stack -fmacro-backtrace-limit\\=0 -fno-color-diagnostics -fmodules-prune-interval\\=86400 -fmodules-prune-after\\=345600 -fbuild-session-file\\=worktree/launch-crash-control/.derivedData/ModuleCache.noindex/Session.modulevalidation -fmodules-validate-once-per-build-session -Wnon-modular-include-in-framework-module -Werror\\=non-modular-include-in-framework-module -Wno-trigraphs -Wno-missing-field-initializers -Wno-missing-prototypes -Werror\\=return-type -Wdocumentation -Wunreachable-code -Werror\\=deprecated-objc-isa-usage -Werror\\=objc-root-class -Wno-non-virtual-dtor -Wno-overloaded-virtual -Wno-exit-time-destructors -Wno-missing-braces -Wparentheses -Wswitch -Wunused-function -Wno-unused-label -Wno-unused-parameter -Wunused-variable -Wunused-value -Wempty-body -Wuninitialized -Wconditional-uninitialized -Wno-unknown-pragmas -Wno-shadow -Wno-four-char-constants -Wno-conversion -Wconstant-conversion -Wint-conversion -Wbool-conversion -Wenum-conversion -Wno-float-conversion -Wnon-literal-null-conversion -Wobjc-literal-conversion -Wshorten-64-to-32 -Wno-newline-eof -Wno-c++11-extensions -Wno-implicit-fallthrough -isysroot Xcode/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -fstrict-aliasing -Wdeprecated-declarations -Winvalid-offsetof -Wno-sign-conversion -Winfinite-recursion -Wmove -Wcomma -Wblock-capture-autoreleasing -Wstrict-prototypes -Wrange-loop-analysis -Wno-semicolon-before-method-body -Wunguarded-availability -index-store-path worktree/launch-crash-control/.derivedData/Index.noindex/DataStore @worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNReanimated.build/Objects-normal/arm64/82b82416624d2658e5098eb0a28c15c5-common-args.resp -Wno-documentation -DRCT_NEW_ARCH_ENABLED\\=1 -include worktree/launch-crash-control/ios/Pods/Target\\ Support\\ Files/RNReanimated/RNReanimated-prefix.pch -MMD -MT dependencies -MF worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNReanimated.build/Objects-normal/arm64/CSSAnimation.d --serialize-diagnostics worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNReanimated.build/Objects-normal/arm64/CSSAnimation.dia -c worktree/launch-crash-control/node_modules/react-native-reanimated/Common/cpp/reanimated/CSS/core/CSSAnimation.cpp -o worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNReanimated.build/Objects-normal/arm64/CSSAnimation.o -index-unit-output-path build/Pods.build/Debug-iphonesimulator/RNReanimated.build/Objects-normal/arm64/CSSAnimation.o\n\nCompileC worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNReanimated.build/Objects-normal/arm64/CSSAngle.o worktree/launch-crash-control/node_modules/react-native-reanimated/Common/cpp/reanimated/CSS/common/values/CSSAngle.cpp normal arm64 c++ com.apple.compilers.llvm.clang.1_0.compiler (in target 'RNReanimated' from project 'Pods')\n    cd worktree/launch-crash-control/ios/Pods\n    \n    Using response file: worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNReanimated.build/Objects-normal/arm64/82b82416624d2658e5098eb0a28c15c5-common-args.resp\n    \n    Xcode/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -x c++ -ivfsstatcache worktree/launch-crash-control/.derivedData/SDKStatCaches.noindex/iphonesimulator26.5-23F81a-6cfe768891a92b912361537c460fe42b.sdkstatcache -target arm64-apple-ios15.1-simulator -fmessage-length\\=0 -fdiagnostics-show-note-include-stack -fmacro-backtrace-limit\\=0 -fno-color-diagnostics -fmodules-prune-interval\\=86400 -fmodules-prune-after\\=345600 -fbuild-session-file\\=worktree/launch-crash-control/.derivedData/ModuleCache.noindex/Session.modulevalidation -fmodules-validate-once-per-build-session -Wnon-modular-include-in-framework-module -Werror\\=non-modular-include-in-framework-module -Wno-trigraphs -Wno-missing-field-initializers -Wno-missing-prototypes -Werror\\=return-type -Wdocumentation -Wunreachable-code -Werror\\=deprecated-objc-isa-usage -Werror\\=objc-root-class -Wno-non-virtual-dtor -Wno-overloaded-virtual -Wno-exit-time-destructors -Wno-missing-braces -Wparentheses -Wswitch -Wunused-function -Wno-unused-label -Wno-unused-parameter -Wunused-variable -Wunused-value -Wempty-body -Wuninitialized -Wconditional-uninitialized -Wno-unknown-pragmas -Wno-shadow -Wno-four-char-constants -Wno-conversion -Wconstant-conversion -Wint-conversion -Wbool-conversion -Wenum-conversion -Wno-float-conversion -Wnon-literal-null-conversion -Wobjc-literal-conversion -Wshorten-64-to-32 -Wno-newline-eof -Wno-c++11-extensions -Wno-implicit-fallthrough -isysroot Xcode/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -fstrict-aliasing -Wdeprecated-declarations -Winvalid-offsetof -Wno-sign-conversion -Winfinite-recursion -Wmove -Wcomma -Wblock-capture-autoreleasing -Wstrict-prototypes -Wrange-loop-analysis -Wno-semicolon-before-method-body -Wunguarded-availability -index-store-path worktree/launch-crash-control/.derivedData/Index.noindex/DataStore @worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNReanimated.build/Objects-normal/arm64/82b82416624d2658e5098eb0a28c15c5-common-args.resp -Wno-documentation -DRCT_NEW_ARCH_ENABLED\\=1 -include worktree/launch-crash-control/ios/Pods/Target\\ Support\\ Files/RNReanimated/RNReanimated-prefix.pch -MMD -MT dependencies -MF worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNReanimated.build/Objects-normal/arm64/CSSAngle.d --serialize-diagnostics worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNReanimated.build/Objects-normal/arm64/CSSAngle.dia -c worktree/launch-crash-control/node_modules/react-native-reanimated/Common/cpp/reanimated/CSS/common/values/CSSAngle.cpp -o worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/RNReanimated.build/Objects-normal/arm64/CSSAngle.o -index-unit-output-path build/Pods.build/Debug-iphonesimulator/RNReanimated.build/Objects-normal/arm64/CSSAngle.o\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_39",
-          "startSeconds": 366.436,
-          "endSeconds": 391.534,
-          "command": "sleep 25; native_pid=$(sed -n '\"'1p' tmp/launch-crash-control-native.pid); if kill -0 \\\"\"'$native_pid\" 2>/dev/null; then echo \"native process $native_pid running\"; else echo \"native process $native_pid finished\"; fi; tail -n 8 tmp/launch-crash-control-native.log",
-          "output": "native process 49195 running\n    export arch\\=undefined_arch\n    export variant\\=normal\n    sh -c worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/ExpoWebBrowser.build/Script-46EB2E00021DC0.sh\n\nSwiftEmitModule normal arm64 Emitting\\ module\\ for\\ NitroMmkv (in target 'NitroMmkv' from project 'Pods')\nEmitSwiftModule normal arm64 (in target 'NitroMmkv' from project 'Pods')\n    cd worktree/launch-crash-control/ios/Pods\n    \n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_40",
-          "startSeconds": 395.36,
-          "endSeconds": 420.626,
-          "command": "sleep 25; native_pid=$(sed -n '\"'1p' tmp/launch-crash-control-native.pid); if kill -0 \\\"\"'$native_pid\" 2>/dev/null; then echo \"native process $native_pid running\"; else echo \"native process $native_pid finished\"; fi; tail -n 10 tmp/launch-crash-control-native.log",
-          "output": "native process 49195 running\n    Xcode/usr/bin/actool worktree/launch-crash-control/ios/Trailhead/Images.xcassets --compile worktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/Trailhead.app --output-format human-readable-text --notices --warnings --export-dependency-info worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Trailhead.build/Debug-iphonesimulator/Trailhead.build/assetcatalog_dependencies --output-partial-info-plist worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Trailhead.build/Debug-iphonesimulator/Trailhead.build/assetcatalog_generated_info.plist --app-icon AppIcon --compress-pngs --enable-on-demand-resources YES --development-region en --target-device iphone --minimum-deployment-target 16.4 --platform iphonesimulator --bundle-identifier com.appandflow.trailhead --generate-swift-asset-symbol-extensions NO --generate-swift-asset-symbols worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Trailhead.build/Debug-iphonesimulator/Trailhead.build/DerivedSources/GeneratedAssetSymbols.swift --generate-objc-asset-symbols worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Trailhead.build/Debug-iphonesimulator/Trailhead.build/DerivedSources/GeneratedAssetSymbols.h --generate-asset-symbol-index worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Trailhead.build/Debug-iphonesimulator/Trailhead.build/DerivedSources/GeneratedAssetSymbols-Index.plist\n/* com.apple.actool.compilation-results */\nworktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Trailhead.build/Debug-iphonesimulator/Trailhead.build/DerivedSources/GeneratedAssetSymbols-Index.plist\nworktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Trailhead.build/Debug-iphonesimulator/Trailhead.build/DerivedSources/GeneratedAssetSymbols.h\nworktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Trailhead.build/Debug-iphonesimulator/Trailhead.build/DerivedSources/GeneratedAssetSymbols.swift\n\n\nCompileAssetCatalogVariant thinned worktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/Trailhead.app worktree/launch-crash-control/ios/Trailhead/Images.xcassets (in target 'Trailhead' from project 'Trailhead')\n    cd worktree/launch-crash-control/ios\n    Xcode/usr/bin/actool worktree/launch-crash-control/ios/Trailhead/Images.xcassets --compile worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Trailhead.build/Debug-iphonesimulator/Trailhead.build/assetcatalog_output/thinned --output-format human-readable-text --notices --warnings --export-dependency-info worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Trailhead.build/Debug-iphonesimulator/Trailhead.build/assetcatalog_dependencies_thinned --output-partial-info-plist worktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/Trailhead.build/Debug-iphonesimulator/Trailhead.build/assetcatalog_generated_info.plist_thinned --app-icon AppIcon --compress-pngs --enable-on-demand-resources YES --filter-for-thinning-device-configuration iPhone18,3 --filter-for-device-os-version 26.5 --development-region en --target-device iphone --minimum-deployment-target 16.4 --platform iphonesimulator\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_41",
-          "startSeconds": 424.084,
-          "endSeconds": 439.137,
-          "command": "sleep 15; native_pid=$(sed -n '\"'1p' tmp/launch-crash-control-native.pid); if kill -0 \\\"\"'$native_pid\" 2>/dev/null; then echo \"native process $native_pid running\"; else echo \"native process $native_pid finished\"; fi; tail -n 14 tmp/launch-crash-control-native.log",
-          "output": "native process 49195 running\n\nLd worktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/Trailhead.app/Trailhead.debug.dylib normal (in target 'Trailhead' from project 'Trailhead')\n    cd worktree/launch-crash-control/ios\n    Xcode/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -Xlinker -reproducible -target arm64-apple-ios16.4-simulator -dynamiclib -isysroot Xcode/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -O0 -Lworktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/EagerLinkingTBDs/Debug-iphonesimulator -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator -LXcode/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk/usr/lib/swift -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/EXApplication -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/EXConstants -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/EXJSONUtils -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/EXManifests -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/EXUpdatesInterface -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/Expo -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoAsset -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoBlur -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoCrypto -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoDevice -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoDomWebView -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoGlassEffect -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoHaptics -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoKeepAwake -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoLinearGradient -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoLinking -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoLogBox -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoModulesWorkletsAdapter -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoNetwork -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoNotifications -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoRouter -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoSQLite -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoSecureStore -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoSharing -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoSplashScreen -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoSymbols -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoSystemUI -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoTaskManager -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoUI -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ExpoWebBrowser -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/MMKVCore -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/NitroMmkv -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/NitroModules -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/RNCMaskedView -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/RNGestureHandler -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/RNReanimated -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/RNSVG -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/RNScreens -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/RNWorklets -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ReactAppDependencyProvider -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/ReactCodegen -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/UMAppLoader -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/expo-dev-launcher -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/expo-dev-menu -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/expo-dev-menu-interface -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/lottie-ios -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/lottie-react-native -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/react-native-maps -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/react-native-safe-area-context -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/react-native-skia -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/react-native-webview -Lworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/XCFrameworkIntermediates/react-native-skia -LXcode/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/iphonesimulator -LXcode/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk/usr/lib/swift -Fworktree/launch-crash-control/.derivedData/Build/Intermediates.noindex/EagerLinkingTBDs/Debug-iphonesimulator -Fworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator -Fworktree/launch-crash-control/node_modules/@shopify/react-native-skia/libs/ios -Fworktree/launch-crash-control/node_modules/expo-modules-jsi/apple/Products -Fworktree/launch-crash-control/ios/Pods/ExpoFileSystem -Fworktree/launch-crash-control/ios/Pods/ExpoFont -Fworktree/launch-crash-control/ios/Pods/ExpoImage -Fworktree/launch-crash-control/ios/Pods/ExpoLocation -Fworktree/launch-crash-control/ios/Pods/ExpoModulesCore -Fworktree/launch-crash-control/ios/Pods/ExpoModulesWorklets -Fworktree/launch-crash-control/ios/Pods/ExpoVideo -Fworktree/launch-crash-control/ios/Pods/React-Core-prebuilt -Fworktree/launch-crash-control/ios/Pods/ReactNativeDependencies/framework/packages/react-native -Fworktree/launch-crash-control/ios/Pods/hermes-engine/destroot/Library/Frameworks/universal -Fworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/XCFrameworkIntermediates/ExpoFileSystem -Fworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/XCFrameworkIntermediates/ExpoFont -Fworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/XCFrameworkIntermediates/ExpoImage -Fworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/XCFrameworkIntermediates/ExpoLocation -Fworktree/launch-crash-control/.derivedData/Build/Products/Debug-iphonesimulator/XCFrameworkIntermediates/ExpoModulesCore -Fworktree/launch-crash-control/.derivedData/Build/Prod\n... output clipped for the viewer",
-          "exitCode": 0
-        },
-        {
-          "id": "item_28",
-          "startSeconds": 206.507,
-          "endSeconds": 445.112,
-          "command": "screen -DmS trailhead_native_launch-crash-control sh -c 'echo \"'$$ > tmp/launch-crash-control-native.pid; exec > tmp/launch-crash-control-native.log 2>&1; RUN_UDID=<simulator-udid>; echo RUN_SIMULATOR_UDID=$RUN_UDID; xcrun simctl bootstatus $RUN_UDID -b; echo BOOTSTATUS_EXIT=$?; xcodebuild -workspace ios/Trailhead.xcworkspace -scheme Trailhead -configuration Debug -sdk iphonesimulator -destination \"platform=iOS Simulator,id=$RUN_UDID\" -derivedDataPath .derivedData build; build_status=$?; echo BUILD_EXIT=$build_status; if [ $build_status -ne 0 ]; then exit $build_status; fi; xcrun simctl install $RUN_UDID .derivedData/Build/Products/Debug-iphonesimulator/Trailhead.app; install_status=$?; echo INSTALL_EXIT=$install_status; if [ $install_status -ne 0 ]; then exit $install_status; fi; xcrun simctl launch $RUN_UDID com.appandflow.trailhead; echo LAUNCH_EXIT=$?'\"'",
-          "output": "",
-          "exitCode": 0
-        },
-        {
-          "id": "item_42",
-          "startSeconds": 442.935,
-          "endSeconds": 452.994,
-          "command": "sleep 10; native_pid=$(sed -n '\"'1p' tmp/launch-crash-control-native.pid); if kill -0 \\\"\"'$native_pid\" 2>/dev/null; then echo \"native process $native_pid running\"; else echo \"native process $native_pid finished\"; fi; tail -n 12 tmp/launch-crash-control-native.log",
-          "output": "native process 49195 finished\nnote: Run script build phase '[CP-User] [Expo] Switch ExpoFont XCFramework for build configuration' will be run during every build because the option to run the script phase \"Based on dependency analysis\" is unchecked. (in target 'ExpoFont' from project 'Pods')\nnote: Run script build phase '[CP-User] [Expo] Switch ExpoFileSystem XCFramework for build configuration' will be run during every build because the option to run the script phase \"Based on dependency analysis\" is unchecked. (in target 'ExpoFileSystem' from project 'Pods')\nnote: Run script build phase '[Expo] Configure project' will be run during every build because the option to run the script phase \"Based on dependency analysis\" is unchecked. (in target 'Trailhead' from project 'Trailhead')\nnote: Run script build phase 'Bundle React Native code and images' will be run during every build because the option to run the script phase \"Based on dependency analysis\" is unchecked. (in target 'Trailhead' from project 'Trailhead')\nwarning: Run script build phase '[CP-User] react-native-maps patches' will be run during every build because it does not specify any outputs. To address this issue, either add output dependencies to the script phase, or configure it to run in every build by unchecking \"Based on dependency analysis\" in the script phase. (in target 'react-native-maps' from project 'Pods')\nnote: Run script build phase '[CP-User] Generate app.config for prebuilt Constants.manifest' will be run during every build because the option to run the script phase \"Based on dependency analysis\" is unchecked. (in target 'EXConstants' from project 'Pods')\n** BUILD SUCCEEDED **\n\nBUILD_EXIT=0\nINSTALL_EXIT=0\ncom.appandflow.trailhead: 55660\nLAUNCH_EXIT=0\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_44",
-          "startSeconds": 463.482,
-          "endSeconds": 463.482,
-          "command": "tail -n 160 tmp/launch-crash-control-metro.log",
-          "output": "Starting project at worktree/launch-crash-control\nLogs: worktree/launch-crash-control/.expo/dev/logs/start.log\nReact Compiler enabled\nStarting Metro Bundler\n\nWaiting on http://localhost:8081\n\nLogs for your project will appear below.\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_45",
-          "startSeconds": 475.89,
-          "endSeconds": 476.179,
-          "command": "xcrun simctl openurl <simulator-udid> 'exp+trailhead://expo-development-client/?url=http%3A%2F%2F<local-ip>%3A8081'",
-          "output": "An error was encountered processing the command (domain=LSApplicationWorkspaceErrorDomain, code=115):\nSimulator device failed to open exp+trailhead://expo-development-client/?url=http%3A%2F%2F<local-ip>%3A8081.\nUnderlying error (domain=LSApplicationWorkspaceErrorDomain, code=115):\n\tThe operation couldn’t be completed. (LSApplicationWorkspaceErrorDomain error 115.)\n",
-          "exitCode": 115
-        },
-        {
-          "id": "item_46",
-          "startSeconds": 482.535,
-          "endSeconds": 482.842,
-          "command": "'app_container=$(xcrun simctl get_app_container <simulator-udid> com.appandflow.trailhead app); plutil -p \"$app_container/Info.plist\" | rg -A 8 '\"'CFBundleURLSchemes'\"",
-          "output": "      \"CFBundleURLSchemes\" => [\n        0 => \"trailhead\"\n        1 => \"com.appandflow.trailhead\"\n      ]\n    }\n  ]\n  \"CFBundleVersion\" => \"1\"\n  \"DTCompiler\" => \"com.apple.compilers.llvm.clang.1_0\"\n  \"DTPlatformBuild\" => \"23F81a\"\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_47",
-          "startSeconds": 488.373,
-          "endSeconds": 488.635,
-          "command": "xcrun simctl openurl <simulator-udid> 'trailhead://expo-development-client/?url=http%3A%2F%2F<local-ip>%3A8081'",
-          "output": "",
-          "exitCode": 0
-        },
-        {
-          "id": "item_48",
-          "startSeconds": 499.185,
-          "endSeconds": 504.289,
-          "command": "sleep 5; tail -n 200 tmp/launch-crash-control-metro.log",
-          "output": "Starting project at worktree/launch-crash-control\nLogs: worktree/launch-crash-control/.expo/dev/logs/start.log\nReact Compiler enabled\nStarting Metro Bundler\n\nWaiting on http://localhost:8081\n\nLogs for your project will appear below.\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_49",
-          "startSeconds": 511.718,
-          "endSeconds": 512.024,
-          "command": "xcrun simctl io <simulator-udid> screenshot tmp/launch-crash-control-initial.png",
-          "output": "Detected file type from extension: PNG\nNote: No display specified. Defaulting to display: <simulator-udid> (screenID: 1, name: LCD)\nWrote screenshot to: tmp/launch-crash-control-initial.png\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_51",
-          "startSeconds": 529.019,
-          "endSeconds": 540.136,
-          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
-          "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/launch-crash-control\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 4 nodes\n@e1 [alert] \"Open in “Trailhead”?\"\n@e2 [button] \"Cancel\"\n@e3 [button] \"Open\"\n@e4 [text] \"Open in “Trailhead”?\"\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_52",
-          "startSeconds": 549.035,
-          "endSeconds": 560.765,
-          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device click @e3 --settle",
-          "output": "Tapped @e3 (275, 474)\nnot settled after 10001ms\nhint: The UI kept changing for the whole settle budget (animation, carousel, or ticker?), so no settled diff is shown. Raise --timeout, wait for specific content, or take a fresh snapshot.\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_53",
-          "startSeconds": 566.836,
-          "endSeconds": 566.836,
-          "command": "rg -n -C 8 'ERROR|Error|crash|CRASH' tmp/launch-crash-control-metro.log | tail -n 160",
-          "output": "1:Starting project at worktree/launch-crash-control\n2:Logs: worktree/launch-crash-control/.expo/dev/logs/start.log\n3-React Compiler enabled\n4-Starting Metro Bundler\n5-\n6-Waiting on http://localhost:8081\n7-\n8-Logs for your project will appear below.\n9-| (node:48738) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n10-| (Use `node --trace-warnings ...` to show where the warning was created)\n--\n16-| (Use `node --trace-warnings ...` to show where the warning was created)\n17-| (node:48738) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n18-| (Use `node --trace-warnings ...` to show where the warning was created)\n19-| (node:48738) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n20-| (Use `node --trace-warnings ...` to show where the warning was created)\n21-| (node:48738) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n22-| (Use `node --trace-warnings ...` to show where the warning was created)\n23-iOS Bundled 6795ms node_modules/expo-router/entry.js (2714 modules)\n24: ERROR  [Error: STIM_BENCH_LAUNCH_CRASH_ABF5177E5BDE] \n25-\n26-Code: _layout.tsx\n27-  25 |\n28-  26 | export default function RootLayout() {\n29:> 27 |   throw new Error('STIM_BENCH_LAUNCH_CRASH_ABF5177E5BDE');\n30-     |                  ^\n31-  28 |   const { name, colors } = useTheme();\n32-  29 |\n33-  30 |   useEffect(() => {\n34-Call Stack\n35-  RootLayout (app/_layout.tsx:27:18)\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_55",
-          "startSeconds": 573.319,
-          "endSeconds": 573.319,
-          "command": "sed -n '1,90p' app/_layout.tsx; git diff -- app/_layout.tsx",
-          "output": "import { useEffect } from 'react';\nimport { Stack } from 'expo-router';\nimport { StatusBar } from 'expo-status-bar';\nimport { GestureHandlerRootView } from 'react-native-gesture-handler';\nimport { SafeAreaProvider } from 'react-native-safe-area-context';\nimport { QueryClient, QueryClientProvider } from '@tanstack/react-query';\nimport * as SplashScreen from 'expo-splash-screen';\n\nimport { initializeDatabase } from '@/src/db/client';\nimport { seedHikesIfEmpty } from '@/src/db/seed';\nimport { useTheme } from '@/src/theme';\n\nSplashScreen.preventAutoHideAsync().catch(() => {});\n\nconst queryClient = new QueryClient({\n  defaultOptions: { queries: { staleTime: 60_000, retry: 1 } },\n});\n\n// Both are synchronous and idempotent, and the schema has to exist before any\n// screen queries it. Doing this at module scope rather than in an effect means\n// the first render already has a usable database, with no loading state and no\n// setState-in-effect cascade.\ninitializeDatabase();\nseedHikesIfEmpty();\n\nexport default function RootLayout() {\n  throw new Error('STIM_BENCH_LAUNCH_CRASH_ABF5177E5BDE');\n  const { name, colors } = useTheme();\n\n  useEffect(() => {\n    SplashScreen.hideAsync().catch(() => {});\n  }, []);\n\n  return (\n    <GestureHandlerRootView style={{ flex: 1 }}>\n      <SafeAreaProvider>\n        <QueryClientProvider client={queryClient}>\n          <StatusBar style={name === 'dark' ? 'light' : 'dark'} />\n          <Stack\n            screenOptions={{\n              headerStyle: { backgroundColor: colors.surface },\n              headerTintColor: colors.text,\n              contentStyle: { backgroundColor: colors.background },\n            }}\n          >\n            <Stack.Screen name=\"(tabs)\" options={{ headerShown: false }} />\n            <Stack.Screen name=\"trail/[id]\" options={{ title: 'Trail' }} />\n            <Stack.Screen name=\"hike/[id]\" options={{ title: 'Hike' }} />\n            <Stack.Screen name=\"+not-found\" options={{ title: 'Not found' }} />\n          </Stack>\n        </QueryClientProvider>\n      </SafeAreaProvider>\n    </GestureHandlerRootView>\n  );\n}\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_57",
-          "startSeconds": 584.754,
-          "endSeconds": 587.344,
-          "command": "./node_modules/.bin/tsc --noEmit",
-          "output": "",
-          "exitCode": 0
-        },
-        {
-          "id": "item_58",
-          "startSeconds": 592.84,
-          "endSeconds": 592.84,
-          "command": "git diff --check; git diff -- app/_layout.tsx; metro_pid=$(sed -n '\"'1p' tmp/launch-crash-control-metro.pid); kill -0 \\\"\"'$metro_pid\"; curl -fsS http://<local-ip>:8081/status",
-          "output": "diff --git a/app/_layout.tsx b/app/_layout.tsx\nindex fc5f1f5..456c461 100644\n--- a/app/_layout.tsx\n+++ b/app/_layout.tsx\n@@ -24,7 +24,6 @@ initializeDatabase();\n seedHikesIfEmpty();\n \n export default function RootLayout() {\n-  throw new Error('STIM_BENCH_LAUNCH_CRASH_ABF5177E5BDE');\n   const { name, colors } = useTheme();\n \n   useEffect(() => {\npackager-status:running",
-          "exitCode": 0
-        },
-        {
-          "id": "item_60",
-          "startSeconds": 602.546,
-          "endSeconds": 602.933,
-          "command": "xcrun simctl openurl <simulator-udid> 'trailhead://expo-development-client/?url=http%3A%2F%2F<local-ip>%3A8081'",
-          "output": "",
-          "exitCode": 0
-        },
-        {
-          "id": "item_61",
-          "startSeconds": 609.377,
-          "endSeconds": 609.666,
-          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device snapshot -i",
-          "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 25 visible nodes (27 total)\n@e1 [application] \"Trailhead\"\n@e2 [other] \"Trailhead\"\n@e3 [text] \"Runtime version: exposdk:57.0.0\"\n@e4 [button] \"Close\"\n@e5 [scroll-area] \"Reload\" [scrollable]\n  [content below scroll-area hidden]\n@e6 [other] \"Reload\"\n@e7 [button] \"Reload\"\n@e8 [button] \"Go home\"\n@e9 [text] \"TOOLS\"\n@e10 [button] \"Source code explorer\"\n@e11 [button] \"Toggle performance monitor\" [disabled]\n@e12 [button] \"Toggle element inspector\" [disabled]\n@e13 [image] \"Running\"\n@e14 [text] \"Fast refresh\"\n@e15 [switch] \"0\" [disabled]\n@e16 [switch] \"0\" [disabled]\n@e19 [switch] \"1\"\n@e20 [switch] \"1\"\n@e21 [scroll-area] \"dev-tools\" [scrollable]\n  [content below scroll-area hidden]\n@e22 [other] \"dev-tools\"\n@e23 [image] \"dev-tools\"\n@e24 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\n@e25 [text] \"You can open it at any time by pressing the blue button with the gear icon, or with the ⌃ + d keyboard shortcut.\"\n@e26 [text] \"(Connect Hardware Keyboard must be enabled on your simulator to use this shortcut, you can toggle it with ⌘ + shift + K.)\"\n@e27 [button] \"Continue\"\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_62",
-          "startSeconds": 614.594,
-          "endSeconds": 616.479,
-          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device click @e27 --settle",
-          "output": "Tapped @e27 (201, 798)\nsettled after 1122ms: +0 -7 (~20 unchanged)\n- @e21 [scroll-area] \"dev-tools\"\n- @e22 [other] \"dev-tools\"\n- @e23 [image] \"dev-tools\"\n- @e24 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\n- @e25 [text] \"You can open it at any time by pressing the blue button with the gear icon, or with the ⌃ + d keyboard shortcut.\"\n- @e26 [text] \"(Connect Hardware Keyboard must be enabled on your simulator to use this shortcut, you can toggle it with ⌘ + shift + K.)\"\n- @e27 [button] \"Continue\"\nunchanged interactive (19):\n= @e2~s230352 [other] \"Trailhead\"\n= @e3~s230352 [text] \"Runtime version: exposdk:57.0.0\"\n= @e4~s230352 [button] \"Close\"\n= @e5~s230352 [scroll-area] \"Reload\"\n= @e6~s230352 [other] \"Reload\"\n= @e7~s230352 [button] \"Reload\"\n= @e8~s230352 [button] \"Go home\"\n= @e9~s230352 [text] \"TOOLS\"\n= @e10~s230352 [button] \"Source code explorer\"\n= @e11~s230352 [button] \"Toggle performance monitor\"\n= @e12~s230352 [button] \"Toggle element inspector\"\n= @e13~s230352 [image] \"Running\"\n= @e14~s230352 [text] \"Fast refresh\"\n= @e15~s230352 [switch] \"0\"\n= @e16~s230352 [switch] \"0\"\n= @e17~s230352 [image] \"hand.tap\"\n= @e18~s230352 [text] \"Tools button\"\n= @e19~s230352 [switch] \"1\"\n= @e20~s230352 [switch] \"1\"\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_63",
-          "startSeconds": 619.67,
-          "endSeconds": 622.604,
-          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device click @e4~s230352 --settle",
-          "output": "Tapped @e4 (361, 419)\nsettled after 2165ms: +34 -19 (~1 unchanged)\n- @e2 [other] \"Trailhead\"\n- @e3 [text] \"Runtime version: exposdk:57.0.0\"\n- @e4 [button] \"Close\"\n- @e5 [scroll-area] \"Reload\"\n- @e6 [other] \"Reload\"\n- @e7 [button] \"Reload\"\n- @e8 [button] \"Go home\"\n- @e9 [text] \"TOOLS\"\n- @e10 [button] \"Source code explorer\"\n- @e11 [button] \"Toggle performance monitor\" [disabled]\n- @e12 [button] \"Toggle element inspector\" [disabled]\n- @e13 [image] \"Running\"\n- @e14 [text] \"Fast refresh\"\n- @e15 [switch] \"0\" [disabled]\n- @e16 [switch] \"0\" [disabled]\n- @e17 [image] \"hand.tap\"\n- @e18 [text] \"Tools button\"\n- @e19 [switch] \"1\"\n- @e20 [switch] \"1\"\n+ @e2~s230358 [other] \"gearshape.fill\"\n+ @e3~s230358 [image] \"gearshape.fill\"\n+ @e4~s230358 [text] \"Tools\"\n+ @e5~s230358 [other] \"\"\n+ @e6~s230358 [other] \"Trails\"\n+ @e7~s230358 [text-field] \"Search trails\"\n+ @e8~s230358 [scroll-area] \"All regions\"\n+ @e9~s230358 [other] \"All regions\"\n+ @e10~s230358 [button] \"All regions\"\n+ @e11~s230358 [button] \"Adirondacks\"\n+ @e12~s230358 [button] \"Bas-Saint-Laurent\"\n+ @e13~s230358 [button] \"Charlevoix\"\n+ @e14~s230358 [scroll-area] \"Any level\"\n+ @e15~s230358 [other] \"Any level\"\n+ @e16~s230358 [button] \"Any level\"\n+ @e17~s230358 [button] \"Easy\"\n+ @e18~s230358 [button] \"Moderate\"\n+ @e19~s230358 [button] \"Hard\"\n+ @e20~s230358 [button] \"Expert\"\n+ @e21~s230358 [text] \"200 trails\"\n+ @e22~s230358 [button] \"Sort by name\"\n+ @e23~s230358 [button] \"Sort by distance\"\n+ @e24~s230358 [button] \"Sort by rating\"\n+ @e25~s230358 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e26~s230358 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e27~s230358 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e28~s230358 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n+ @e29~s230358 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n+ @e30~s230358 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n+ @e31~s230358 [other] \"Trails, tab, 1 of 4\"\n+ @e32~s230358 [button] \"Trails, tab, 1 of 4\"\n+ @e33~s230358 [button] \"Record, tab, 2 of 4\"\n+ @e34~s230358 [button] \"History, tab, 3 of 4\"\n+ @e35~s230358 [button] \"Settings, tab, 4 of 4\"\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_64",
-          "startSeconds": 625.951,
-          "endSeconds": 628.394,
-          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device click @e35~s230358 --settle",
-          "output": "Tapped @e35 (352, 816)\nsettled after 1758ms: +29 -28 (~7 unchanged)\n- @e5 [other] \"\"\n- @e6 [other] \"Trails\"\n- @e7 [text-field] \"Search trails\"\n- @e8 [scroll-area] \"All regions\"\n- @e9 [other] \"All regions\"\n- @e10 [button] \"All regions\"\n- @e11 [button] \"Adirondacks\"\n- @e12 [button] \"Bas-Saint-Laurent\"\n- @e13 [button] \"Charlevoix\"\n- @e14 [scroll-area] \"Any level\"\n- @e15 [other] \"Any level\"\n- @e16 [button] \"Any level\"\n- @e17 [button] \"Easy\"\n- @e18 [button] \"Moderate\"\n- @e19 [button] \"Hard\"\n- @e20 [button] \"Expert\"\n- @e21 [text] \"200 trails\"\n- @e22 [button] \"Sort by name\"\n- @e23 [button] \"Sort by distance\"\n- @e24 [button] \"Sort by rating\"\n- @e25 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e26 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e28 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e29 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n- @e30 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n+ @e5~s230363 [other] \"Settings\"\n+ @e6~s230363 [scroll-area] \"UNITS\"\n+ @e7~s230363 [other] \"UNITS\"\n+ @e8~s230363 [cell] \"Distance\"\n+ @e9~s230363 [text] \"\"\n+ @e10~s230363 [button] \"Metric units\"\n+ @e11~s230363 [button] \"Imperial units\"\n+ @e12~s230363 [text] \"Used across the whole app\"\n+ @e13~s230363 [text] \"PREFERENCES\"\n+ @e14~s230363 [other] \"Hike reminders\"\n+ @e15~s230363 [switch] \"Hike reminders\"\n+ @e16~s230363 [text] \"\"\n+ @e17~s230363 [text] \"Nudge me when I have not hiked in a while\"\n+ @e18~s230363 [text] \"Offline maps\"\n+ @e19~s230363 [switch] \"Offline maps\"\n+ @e20~s230363 [text] \"\"\n+ @e21~s230363 [text] \"Keep map tiles for saved trails on device\"\n+ @e22~s230363 [text] \"STORAGE\"\n+ @e23~s230363 [cell] \"Recorded hikes\"\n+ @e24~s230363 [text] \"\"\n+ @e25~s230363 [text] \"48\"\n+ @e26~s230363 [text] \"Stored in a local database\"\n+ @e27~s230363 [button] \"Reset sample data\"\n+ @e28~s230363 [text] \"ABOUT\"\n+ @e29~s230363 [cell] \"\"\n+ @e30~s230363 [text] \"Version\"\n+ @e31~s230363 [text] \"1.0.0\"\n- @e32 [button] \"Trails, tab, 1 of 4\"\n+ @e33~s230363 [button] \"Trails, tab, 1 of 4\"\n- @e35 [button] \"Settings, tab, 4 of 4\"\n+ @e36~s230363 [button] \"Settings, tab, 4 of 4\"\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_66",
-          "startSeconds": 632.658,
-          "endSeconds": 632.824,
-          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device wait text \"Keep map tiles for saved trails on device\"",
-          "output": "",
-          "exitCode": 0
-        },
-        {
-          "id": "item_67",
-          "startSeconds": 638.13,
-          "endSeconds": 638.649,
-          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device screenshot tmp/launch-crash-control-settings.png",
-          "output": "tmp/launch-crash-control-settings.png (402x874 @1x)\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_68",
-          "startSeconds": 642.437,
-          "endSeconds": 642.437,
-          "command": "cp tmp/launch-crash-control-settings.png results/sol-launch-crash/launch-crash-control/proof/settings.png",
-          "output": "",
-          "exitCode": 0
-        },
-        {
-          "id": "item_69",
-          "startSeconds": 648.719,
-          "endSeconds": 648.852,
-          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device close",
-          "output": "Closed: launch-crash-control\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_70",
-          "startSeconds": 657.442,
-          "endSeconds": 657.442,
-          "command": "test -s results/sol-launch-crash/launch-crash-control/proof/settings.png && stat -f 'settings.png: %z bytes' results/sol-launch-crash/launch-crash-control/proof/settings.png",
-          "output": "settings.png: 76916 bytes\n",
-          "exitCode": 0
-        }
-      ],
-      "backgroundProcesses": [
-        {
-          "id": "background-item_8",
-          "label": "./node_modules/.bin/expo start --dev-client",
-          "startSeconds": 81.436,
-          "endSeconds": 592.84,
-          "launcherCommandId": "item_8",
-          "monitorCount": 3
-        }
-      ],
-      "markers": [
-        {
-          "id": "app-alive",
-          "kind": "appAlive",
-          "label": "App process alive",
-          "atSeconds": 445.054
-        },
-        {
-          "id": "diagnosis",
-          "kind": "diagnosis",
-          "label": "Actionable diagnosis",
-          "atSeconds": 566.836
-        },
-        {
-          "id": "settings-ready",
-          "kind": "settingsReady",
-          "label": "Settings proof ready",
-          "atSeconds": 638.649
-        }
-      ],
-      "proof": {
-        "src": "benchmarks/sol-launch-crash/launch-crash-control.png",
-        "expected": "Keep map tiles for saved trails on device",
-        "width": 402,
-        "height": 874
+      "recording": {
+        "src": "benchmarks/sol-launch-crash/launch-crash-stim.mp4",
+        "bytes": 692922
       }
     }
   ]
