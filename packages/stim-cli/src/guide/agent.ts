@@ -23,6 +23,8 @@ the main checkout from a linked worktree. Fix relevant findings and inspect the
 upstream gap. It also prints the running CLI version and the stim installation
 resolved from PATH. If that resolved installation is older than another one,
 fix PATH or the installation before continuing so commands and guidance match.
+Doctor reports cross-volume staging and build-cache copies; read guide settings
+for placement overrides and guide lifecycle options for warm behavior.
 
   stim doctor --platform ios          # or: --platform android
 
