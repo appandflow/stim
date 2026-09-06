@@ -1,0 +1,17 @@
+gradle.beforeProject { project ->
+    ["com.android.application", "com.android.library"].each { plugin ->
+        project.pluginManager.withPlugin(plugin) {
+            project.extensions.getByName("androidComponents").finalizeDsl { android ->
+                def configs = [android.defaultConfig] + android.buildTypes.toList() + android.productFlavors.toList()
+                def configured = configs.any { config ->
+                    config.externalNativeBuild.cmake.arguments.any { arg ->
+                        arg =~ /^(?:-D\s*)?CMAKE_DISABLE_PRECOMPILE_HEADERS(?::[^=]+)?=/
+                    }
+                }
+                if (!configured) {
+                    android.defaultConfig.externalNativeBuild.cmake.arguments.add("-DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON")
+                }
+            }
+        }
+    }
+}

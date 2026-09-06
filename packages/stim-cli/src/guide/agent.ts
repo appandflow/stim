@@ -65,6 +65,9 @@ RULES DURING THE LOOP
 - If fingerprinting fails after native inputs change during the run, Stim
   installs the build without caching it. A null fingerprint or cacheKey is
   unavailable cache information, not an install failure.
+- When Stim supplies Android ccache, it defaults CMake PCH off for reuse
+  across worktrees; explicit project PCH settings are preserved. This favors
+  warm builds over cold C++ compilation. See guide lifecycle builds.
 - Android Debug builds target the owned emulator system-image ABI or the
   physical device's primary ABI. Unknown targets and Release builds stay
   universal.
