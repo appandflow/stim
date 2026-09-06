@@ -565,6 +565,8 @@ test('H1: cloneIgnoredEntries carries a top-level ignored $(...) filename as a l
 
 test('isCarrySkipped skips .DerivedData at any depth and treats .stim normally', () => {
   for (const rel of [
+    'android/build/generated/autolinking',
+    'apps/mobile/android/build/generated/autolinking/autolinking.json',
     '.DerivedData',
     'ios/build/.DerivedData',
     'node_modules/expo-modules-jsi/apple/.DerivedData',

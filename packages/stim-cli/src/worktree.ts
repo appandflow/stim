@@ -20,9 +20,12 @@ import { makeTemporaryDirectory, removeTemporaryEntry } from './temporary.ts';
 const CARRY_SKIP_BASENAMES = new Set(['.DerivedData']);
 
 export function isCarrySkipped(rel: string): boolean {
-  return String(rel)
-    .split('/')
-    .some((seg) => CARRY_SKIP_BASENAMES.has(seg));
+  return (
+    /(^|\/)android\/build\/generated\/autolinking(\/|$)/.test(rel) ||
+    String(rel)
+      .split('/')
+      .some((seg) => CARRY_SKIP_BASENAMES.has(seg))
+  );
 }
 
 export function gitCommonDir(cwd: string): string | null {
@@ -226,7 +229,7 @@ function missingDestinationReason(target: string, rel: string): string | null {
   return lstatSync(join(target, rel), { throwIfNoEntry: false }) ? 'exists' : null;
 }
 
-function publishMissingEntry(from: string, to: string): boolean {
+function publishMissingEntry(from: string, to: string, rel: string): boolean {
   let cloned = true;
   const stat = lstatSync(from);
   if (stat.isSymbolicLink()) {
@@ -248,7 +251,8 @@ function publishMissingEntry(from: string, to: string): boolean {
   } else if (stat.isDirectory()) {
     mkdirSync(to, { mode: stat.mode | 0o700 });
     for (const name of readdirSync(from)) {
-      if (!CARRY_SKIP_BASENAMES.has(name) && !publishMissingEntry(join(from, name), join(to, name))) {
+      const child = `${rel}/${name}`;
+      if (!isCarrySkipped(child) && !publishMissingEntry(join(from, name), join(to, name), child)) {
         cloned = false;
       }
     }
@@ -305,7 +309,7 @@ export function cloneIgnoredEntries({
         continue;
       }
       mkdirSync(dirname(to), { recursive: true });
-      if (!publishMissingEntry(destination, to)) cloned = false;
+      if (!publishMissingEntry(destination, to, rel)) cloned = false;
       copied.push(rel);
     } catch (e) {
       failed.push({ file: rel, error: String((e as Error)?.message || e) });

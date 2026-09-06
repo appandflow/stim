@@ -608,7 +608,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   paths eligible under the main checkout's Git ignore rules, including .env
   and local configuration. The source's nonempty
   .worktreeexclude replaces its resolved worktree.exclude setting. Nested
-  registered worktrees and .DerivedData are excluded. Warm also skips paths
+  registered worktrees, .DerivedData, and android/build/generated/autolinking
+  caches are excluded, including in nested apps. Gradle regenerates autolinking
+  for the destination checkout on its next build. Warm also skips paths
   overlapping a nested destination worktree or below a symlink ancestor.
 
   Large copies stage privately outside Git working trees on the destination
