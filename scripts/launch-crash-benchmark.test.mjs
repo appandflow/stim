@@ -150,6 +150,10 @@ describe('launch crash benchmark', () => {
       `node -p "require.resolve('expo/package.json'); require('./app/_layout.tsx')"`,
       'stim guide agent && cat app/_layout.tsx',
       'stim doctor --platform ios; git diff',
+      'stim guide agent && rg "throw new Error" .',
+      'stim doctor --platform ios; rg "throw new Error" .',
+      'stim worktree warm | rg "throw new Error" .',
+      'rsync -a node_modules /tmp/wt/ && rg "throw new Error" .',
     ]) {
       expect(launchCrashDiagnosis([{ ...setup[0], command }, ...evidence], options)).toMatchObject({
         valid: false,
@@ -277,6 +281,16 @@ describe('launch crash benchmark', () => {
     };
     const options = { dispatchAt: '2026-09-04T12:00:00Z', token, arm: 'control' };
     expect(launchCrashDiagnosis([...setup, launch, logs], options)).toMatchObject({ valid: true, commandId: 'logs' });
+    for (const command of [
+      'pgrep -fl Metro && rg "throw new Error" .',
+      'sed -n "1,160p" /tmp/run-metro.log && rg "throw new Error" .',
+      'cat /tmp/run-metro.log; rg "throw new Error" .',
+    ]) {
+      expect(launchCrashDiagnosis([{ ...setup[0], command }, launch, logs], options)).toMatchObject({
+        valid: false,
+        reason: 'launch-crash-pre-capture-command-not-allowed',
+      });
+    }
     expect(
       launchCrashDiagnosis([launch, { ...logs, command: "sed -n '1,160p' app/_layout.tsx" }], options),
     ).toMatchObject({ valid: false, reason: 'launch-crash-error-capture-missing' });

@@ -14,6 +14,7 @@ import { userInfo } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
 import { launchCrashDiagnosis, launchCrashRecovery } from './launch-crash-benchmark.mjs';
+import { topLevelShellCommand } from './agent-benchmark/run-guards.mjs';
 
 const modelPricing = {
   'gpt-5.6-luna': {
@@ -156,9 +157,10 @@ function replacementLabel(path) {
 }
 
 function unwrapShellCommand(command) {
-  return String(command)
-    .replace(/^\/bin\/(?:zsh|bash|sh) -lc /, '')
-    .replace(/^(['"])([\s\S]*)\1$/, '$2');
+  const value = String(command);
+  const normalized = topLevelShellCommand(value);
+  if (normalized !== value) return normalized;
+  return value.replace(/^\/bin\/(?:zsh|bash|sh) -lc /, '').replace(/^(['"])([\s\S]*)\1$/, '$2');
 }
 
 export function sanitizeBenchmarkText(value, replacements = []) {

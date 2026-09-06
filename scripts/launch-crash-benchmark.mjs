@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { topLevelShellCommand } from './agent-benchmark/run-guards.mjs';
+import { shellCommandSegments, topLevelShellCommand } from './agent-benchmark/run-guards.mjs';
 
 export function launchCrashToken(runId) {
   const digest = createHash('sha256').update(runId).digest('hex').slice(0, 12).toUpperCase();
@@ -97,6 +97,10 @@ function sourceInspectionBeforeCapture(command, arm, platform) {
 
 function allowedBeforeErrorCapture(command, arm, platform) {
   const value = shellCommand(command);
+  if (/^(?:stim\s+(?:guide|doctor|worktree\s+warm)\b|rsync\b|pgrep\b|sed\b|cat\b)/.test(value)) {
+    const segments = shellCommandSegments(value);
+    if (segments.length > 1) return segments.every((segment) => allowedBeforeErrorCapture(segment, arm, platform));
+  }
   if (/^tool:todo_list\b/.test(value)) return true;
   if (/^(?:env\s+)?(?:[^\s=]+=[^\s]+\s+)*agent-device\s+/.test(value)) return true;
   if (
