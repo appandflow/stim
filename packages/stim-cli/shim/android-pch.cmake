@@ -44,20 +44,16 @@ function(stim_pch_relocate)
         set(eligible FALSE)
       endif()
     endforeach()
-    set(relocated)
     foreach(header IN LISTS headers)
       if(header MATCHES "\\$<")
         set(eligible FALSE)
       elseif(IS_ABSOLUTE "${header}")
         file(REAL_PATH "${header}" absolute)
+        cmake_path(NORMAL_PATH header OUTPUT_VARIABLE lexical)
         cmake_path(IS_PREFIX root "${absolute}" NORMALIZE contained)
-        if(NOT contained)
+        if(NOT contained OR NOT lexical STREQUAL absolute)
           set(eligible FALSE)
         endif()
-        file(RELATIVE_PATH relative "${root}" "${absolute}")
-        list(APPEND relocated "<${relative}>")
-      elseif(header MATCHES "^[<\"]")
-        list(APPEND relocated "${header}")
       else()
         set(eligible FALSE)
       endif()
@@ -65,19 +61,16 @@ function(stim_pch_relocate)
     if(NOT eligible)
       continue()
     endif()
-    set_property(TARGET "${owner}" PROPERTY PRECOMPILE_HEADERS "${relocated}")
     foreach(target IN LISTS family)
       file(RELATIVE_PATH relative_root "${CMAKE_BINARY_DIR}" "${root}")
       if(NOT relative_root)
         set(relative_root ".")
       endif()
       target_compile_options("${target}" PRIVATE
-        "SHELL:-Xclang -relocatable-pch"
-        "SHELL:-Xclang -fno-pch-timestamp"
-        "SHELL:-Xclang -isysroot -Xclang \"${relative_root}\""
-        "-DSTIM_PCH_CACHE_ID=${STIM_PCH_IDENTITY}")
-      # Clang's PCH preprocessor opens the serialized source relative to an include directory.
-      target_include_directories("${target}" PRIVATE "${root}")
+        "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-Xclang -relocatable-pch>"
+        "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-Xclang -fno-pch-timestamp>"
+        "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-Xclang -isysroot -Xclang \"${relative_root}\">"
+        "$<$<COMPILE_LANGUAGE:CXX>:-DSTIM_PCH_CACHE_ID=${STIM_PCH_IDENTITY}>")
       set_property(TARGET "${target}" PROPERTY CXX_COMPILER_LAUNCHER
         "${STIM_PCH_NODE};${STIM_PCH_COMPILER};--cache;${STIM_PCH_HEADERS};${STIM_PCH_CCACHE}")
     endforeach()

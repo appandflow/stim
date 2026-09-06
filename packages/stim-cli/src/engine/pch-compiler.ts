@@ -1,12 +1,19 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getExecutor } from '../exec.ts';
 
 export function relocatePchArguments(args: readonly string[]): string[] {
-  const result = [...args];
-  if (!result.includes('-relocatable-pch')) return result;
+  if (!args.includes('-relocatable-pch')) return [...args];
+  const preprocessing = args.includes('-E');
+  const consumingPch = !preprocessing && args.includes('-include-pch');
+  const result = args.flatMap((arg) => {
+    const macro = /^(-D__STIM_PCH_HEADER_\d+=)(.*)$/.exec(arg);
+    if (!macro) return [arg];
+    if (consumingPch) return [];
+    return [`${macro[1]}${JSON.stringify(realpathSync(JSON.parse(macro[2]!)))}`];
+  });
   for (let i = 0; i < result.length - 3; i += 1) {
     if (result[i] === '-Xclang' && result[i + 1] === '-isysroot' && result[i + 2] === '-Xclang') {
       // Clang 18 serializes absolute paths when its PCH relocation root is relative.
@@ -14,7 +21,6 @@ export function relocatePchArguments(args: readonly string[]): string[] {
     }
   }
   // ccache manifests need relative preprocessor paths; Clang 18 PCHs need canonical compiler paths.
-  const preprocessing = result.includes('-E');
   if (preprocessing) return result;
   for (let i = 0; i < result.length; i += 1) {
     const arg = result[i]!;
@@ -39,7 +45,18 @@ function stagePchArguments(args: string[], cache: string): string[] {
   if (index < 0) return args;
   const header = args[index + 2]!;
   const source = `${header}.cxx`;
-  const headerBytes = readFileSync(header);
+  const defines: string[] = [];
+  const headerBytes = Buffer.from(
+    '#pragma once\n' +
+      readFileSync(header, 'utf8').replace(/^#include ("(?:[^"\\]|\\.)*")$/gm, (line, quoted: string) => {
+        const path: unknown = JSON.parse(quoted);
+        if (typeof path !== 'string' || !isAbsolute(path)) return line;
+        if (join(path) !== realpathSync(path)) throw new Error('Stim PCH header became a symlink; reconfigure CMake');
+        const macro = `__STIM_PCH_HEADER_${defines.length}`;
+        defines.push(`-D${macro}=${JSON.stringify(relative(process.cwd(), realpathSync(path)))}`);
+        return `#include ${macro}\n#undef ${macro}`;
+      }),
+  );
   const sourceBytes = readFileSync(source);
   const key = createHash('sha256')
     .update(`${headerBytes.length}\0`)
@@ -68,7 +85,24 @@ function stagePchArguments(args: string[], cache: string): string[] {
   if (!readFileSync(stagedHeader).equals(headerBytes) || !readFileSync(stagedSource).equals(sourceBytes)) {
     throw new Error('Stim PCH header cache content does not match its identity');
   }
-  return args.map((arg) => (arg === header ? stagedHeader : arg === source ? stagedSource : arg));
+  return [...defines, ...args.map((arg) => (arg === header ? stagedHeader : arg === source ? stagedSource : arg))];
+}
+
+function relocatePreprocessorOutput(bytes: Buffer, root: string): Buffer {
+  const text = bytes.toString('utf8');
+  if (!Buffer.from(text).equals(bytes)) return bytes;
+  // Clang's system-header linemarkers retain absolute paths in ccache 4 manifests.
+  return Buffer.from(
+    text.replace(/^(#[ \t]+\d+[ \t]+)("(?:[^"\\]|\\.)*")((?:[ \t]+[1-4])*[ \t]*)$/gm, (line, before, quoted, after) => {
+      try {
+        const filename: unknown = JSON.parse(quoted);
+        if (typeof filename !== 'string' || !filename.startsWith(root + sep)) return line;
+        return before + JSON.stringify(relative(process.cwd(), filename)) + after;
+      } catch {
+        return line;
+      }
+    }),
+  );
 }
 
 if (
@@ -83,18 +117,37 @@ if (
   if (!compiler) process.exitCode = 1;
   else {
     const prefix = `${process.execPath} ${fileURLToPath(import.meta.url)}`;
+    const normalized = cacheMode ? args : relocatePchArguments(args);
+    const preprocessing = !cacheMode && normalized.includes('-E') && normalized.includes('-relocatable-pch');
+    const rootIndex = normalized.findIndex(
+      (arg, i) => arg === '-Xclang' && normalized[i + 1] === '-isysroot' && normalized[i + 2] === '-Xclang',
+    );
+    const root = rootIndex < 0 ? undefined : normalized[rootIndex + 3];
+    const outputIndex = normalized.indexOf('-o');
+    const outputPath = outputIndex < 0 ? undefined : normalized[outputIndex + 1];
     const child =
       cacheMode && cache && ccache
         ? getExecutor().spawn(ccache, [compiler, ...stagePchArguments(args, cache)], {
             stdio: 'inherit',
             env: { ...process.env, CCACHE_PREFIX: prefix, CCACHE_PREFIX_CPP: prefix },
           })
-        : getExecutor().spawn(compiler, relocatePchArguments(args), { stdio: 'inherit' });
+        : getExecutor().spawn(compiler, normalized, {
+            stdio: preprocessing && root ? ['inherit', 'pipe', 'inherit'] : 'inherit',
+          });
+    const chunks: Buffer[] = [];
+    child.stdout?.on('data', (chunk: Buffer) => chunks.push(chunk));
     child.on('error', (error) => {
       console.error(error.message);
       process.exitCode = 1;
     });
-    child.on('exit', (code, signal) => {
+    child.on('close', (code, signal) => {
+      if (preprocessing && root) {
+        if (code === 0 && outputPath && outputPath !== '-') {
+          writeFileSync(outputPath, relocatePreprocessorOutput(readFileSync(outputPath), root));
+        }
+        const stdout = Buffer.concat(chunks);
+        process.stdout.write(code === 0 ? relocatePreprocessorOutput(stdout, root) : stdout);
+      }
       if (signal) process.kill(process.pid, signal);
       else process.exitCode = code ?? 1;
     });

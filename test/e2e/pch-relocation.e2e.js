@@ -1,6 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { getExecutor } from '../../packages/stim-cli/src/exec.ts';
@@ -25,11 +34,21 @@ test(
       for (const name of ['first checkout', 'second checkout']) {
         const root = join(directory, name);
         mkdirSync(join(root, 'include'), { recursive: true });
-        const header = '#pragma once\n#include <string>\nconstexpr int answer() { return 42; }\n';
+        mkdirSync(join(root, 'shadow/include'), { recursive: true });
+        mkdirSync(join(root, 'vendor'), { recursive: true });
+        const header =
+          '#pragma once\n#include <string>\ninline int ignored(int unused) { return 1; }\nconstexpr int answer() { return 42; }\n';
         writeFileSync(join(root, 'include/Pch.h'), header);
-        writeFileSync(join(root, 'owner.cpp'), 'int owner() { return answer(); }\n');
-        writeFileSync(join(root, 'consumer.cpp'), 'int consumer() { return answer(); }\n');
-        const source = `cmake_minimum_required(VERSION 3.22)\nproject(probe LANGUAGES CXX)\nadd_library(owner STATIC owner.cpp)\ntarget_precompile_headers(owner PRIVATE "\${CMAKE_CURRENT_SOURCE_DIR}/include/Pch.h")\nadd_library(consumer STATIC consumer.cpp)\ntarget_precompile_headers(consumer REUSE_FROM owner)\n`;
+        writeFileSync(join(root, 'shadow/include/Pch.h'), header.replace('return 42', 'return 99'));
+        writeFileSync(join(root, 'config.h'), '#define CONFIG 99\n');
+        writeFileSync(join(root, 'vendor/config.h'), '#define CONFIG 7\n');
+        const assertions = '#include <config.h>\nstatic_assert(CONFIG == 7);\nstatic_assert(answer() == 42);\n';
+        writeFileSync(
+          join(root, 'owner.cpp'),
+          '#include <config.h>\nstatic_assert(CONFIG == 7);\nint owner() { return answer(); }\n',
+        );
+        writeFileSync(join(root, 'consumer.cpp'), assertions + 'int consumer() { return answer(); }\n');
+        const source = `cmake_minimum_required(VERSION 3.22)\nproject(probe LANGUAGES CXX)\nadd_library(owner STATIC owner.cpp)\ntarget_precompile_headers(owner PRIVATE "\${CMAKE_CURRENT_SOURCE_DIR}/include/Pch.h")\nadd_library(consumer STATIC consumer.cpp)\ntarget_precompile_headers(consumer REUSE_FROM owner)\nforeach(target owner consumer)\n  target_include_directories(\${target} PRIVATE "\${CMAKE_CURRENT_SOURCE_DIR}/shadow")\n  target_include_directories(\${target} SYSTEM PRIVATE "\${CMAKE_CURRENT_SOURCE_DIR}/vendor")\nendforeach()\n`;
         writeFileSync(join(root, 'CMakeLists.txt'), source);
         const setup = { dir: join(directory, 'cache'), statsLog: join(directory, `${name}.stats`), env: {} };
         setup.env = ccacheEnvironment({
@@ -66,6 +85,7 @@ test(
             '-DANDROID_ABI=arm64-v8a',
             '-DANDROID_PLATFORM=android-24',
             '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON',
+            '-DCMAKE_CXX_FLAGS=-Werror=unused-parameter',
             ...flags,
           ],
           env,
@@ -81,7 +101,7 @@ test(
         assert.equal(readCcacheActivity(setup.statsLog).misses, 0);
         assert.equal(readCcacheActivity(setup.statsLog).hits, 3);
         const generated = readFileSync(join(build, 'CMakeFiles/owner.dir/cmake_pch.hxx'), 'utf8');
-        assert.ok(!generated.includes(root));
+        assert.ok(generated.includes(root), 'CMake retains the exact original header declaration');
         writeFileSync(
           join(root, 'consumer.cpp'),
           'static_assert(answer() == 42);\nint changed_consumer() { return answer(); }\n',
@@ -107,6 +127,37 @@ test(
           const commands = JSON.parse(readFileSync(join(build, 'compile_commands.json'), 'utf8'));
           assert.ok(commands.every((entry) => !entry.command.includes('-relocatable-pch')));
         }
+        writeFileSync(join(root, 'CMakeLists.txt'), source);
+        writeFileSync(join(root, 'include/Pch.h'), '#pragma once\n#define ANSWER 42\n');
+        for (const target of ['owner', 'consumer']) {
+          writeFileSync(
+            join(root, `${target}.cpp`),
+            `static_assert(ANSWER == 42);\nint ${target}() { return ANSWER; }\n`,
+          );
+        }
+        run(cmake, ['-S', root, '-B', build], env);
+        run(cmake, ['--build', build], env);
+        mkdirSync(join(root, 'actual'));
+        writeFileSync(join(root, 'actual/Config.h'), '#define ANSWER 99\n');
+        writeFileSync(join(root, 'include/Config.h'), '#define ANSWER 42\n');
+        renameSync(join(root, 'include/Pch.h'), join(root, 'actual/Pch.h'));
+        writeFileSync(join(root, 'actual/Pch.h'), '#pragma once\n#include "Config.h"\n');
+        symlinkSync(join(root, 'actual/Pch.h'), join(root, 'include/Pch.h'));
+        assert.doesNotMatch(run(cmake, ['-S', root, '-B', build], env), /Stim: relocatable PCH/);
+        run(cmake, ['--build', build], env);
+        writeFileSync(join(root, 'include/Mixed.h'), '#pragma once\n#define ANSWER 42\n');
+        writeFileSync(join(root, 'mixed.c'), 'int mixed() { return ANSWER; }\n');
+        writeFileSync(
+          join(root, 'CMakeLists.txt'),
+          `cmake_minimum_required(VERSION 3.22)\nproject(probe LANGUAGES C CXX)\nadd_library(mixed STATIC mixed.c owner.cpp)\ntarget_precompile_headers(mixed PRIVATE "\${CMAKE_CURRENT_SOURCE_DIR}/include/Mixed.h")\n`,
+        );
+        run(cmake, ['-S', root, '-B', build], env);
+        run(cmake, ['--build', build], env);
+        const mixed = JSON.parse(readFileSync(join(build, 'compile_commands.json'), 'utf8'));
+        assert.ok(mixed.some((entry) => entry.file.endsWith('mixed.c') && !entry.command.includes('-relocatable-pch')));
+        assert.ok(
+          mixed.some((entry) => entry.file.endsWith('owner.cpp') && entry.command.includes('-relocatable-pch')),
+        );
       }
     } finally {
       if (process.env.STIM_PCH_TEST_KEEP) console.log(directory);

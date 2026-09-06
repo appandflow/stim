@@ -393,19 +393,23 @@ Precompiled headers can embed both input timestamps and absolute checkout
 paths. Fixing timestamps alone does not make a PCH portable. On Android with
 Clang 18 and CMake 3.22+, Stim supplies a Gradle init script that makes eligible
 PCH targets relocatable without editing project or dependency sources. It
-normalizes their header declarations, retains header-content validation, and
-attaches a compiler wrapper that resolves the relocation root after ccache
-hashes the stable relative arguments. The wrapper identity is part of the
-compiler-cache key. CMake's generated umbrella header and empty PCH source
-are staged by content under the shared ccache's pch-headers directory, so an
-AGP build-directory hash does not enter the PCH. Real library headers remain
+preserves exact header choices, search order, and header-content validation.
+A compiler wrapper resolves header paths and the relocation root after ccache
+hashes stable relative arguments. It normalizes only workspace filenames in
+preprocessor linemarkers, not source tokens. The wrapper identity is part of
+the compiler-cache key. CMake's generated umbrella header and empty PCH source
+are staged with private include macros by content under the shared ccache's
+pch-headers directory, so an AGP build-directory hash does not enter the PCH.
+Real library headers remain
 in the current checkout and are checked by ccache and Clang. A plain Gradle
 build can still use the configured target. The tiny staged files are removed
 with that shared cache by gc, not by ccache's object-size eviction.
 
 Stim leaves custom compiler launchers, ccache prefixes, project include hooks,
-disabled PCHs, external-source targets, and unsupported PCH declarations alone.
-Other Clang versions keep their ordinary PCH behavior. Installation or Node
+disabled PCHs, external-source targets, and symlinked, non-absolute, or
+unsupported PCH declarations alone. Other Clang versions keep their ordinary
+PCH behavior. If a regular PCH header becomes a symlink after configuration,
+reconfigure CMake to leave that target unadapted. Installation or Node
 paths containing whitespace also skip the adapter because ccache does not
 support quoting its prefix command. Skipping relocation does not disable the
 ordinary compiler cache. The CMake log names each adapted PCH owner as
