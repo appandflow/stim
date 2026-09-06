@@ -42,7 +42,11 @@ pnpm test
 ```
 
 Use only the checks that apply while iterating. Run all defined checks before a
-commit. Run `pnpm run test:e2e` when a change affects an end-to-end workflow.
+commit. The only exception is the candidate version commit in the explicitly
+authorized expedited RC lane documented in [`RELEASE.md`](./RELEASE.md); that
+commit follows the lane's short preflight, tarball inspection, and exact-commit
+CI requirements. Run `pnpm run test:e2e` when a change affects an end-to-end
+workflow.
 
 ## Tests and abstractions
 
@@ -154,14 +158,17 @@ pedantic, or style-only rule.
 
 Treat `packages/stim-cli/skill/SKILL.md` as a tiny discovery router. Its body
 only tells the agent to run `stim guide agent` and follow the version-matched
-instructions. Keep every operational detail in that guide topic, including the
-normal workflow, ownership and deletion rules, command notation, topic routing,
-flags, payloads, settings, backends, caches, cleanup, and remedies. Do not add a
+instructions. Keep operational guidance in the version-matched guides.
+`guide agent` covers the normal workflow, safety, recovery actions, and topic
+routing. Put transparent build optimizations and cache internals in the relevant
+detailed topics, not the root agent guide. Detailed topics also own flag,
+payload, setting, backend, cleanup, and remedy references. Do not add a
 version check, compatibility branch, migration path, or failure fallback to the
 static skill. Only one skill ships.
 
-Update `guide agent`, the relevant detailed guide topics, and their contract
-tests when commands, defaults, safety rules, or remedies change. The static
+Update the affected guide topics and their contract tests when commands,
+defaults, safety rules, or remedies change. Change `guide agent` when the agent's
+actions, safety rules, or topic routing change. The static
 skill changes only when its activation description or single routing command
 changes.
 

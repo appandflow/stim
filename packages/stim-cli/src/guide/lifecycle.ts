@@ -153,11 +153,13 @@ result as proof instead of requiring an unrelated screenshot.`,
 
     branch      build       cache       caches      carry       device
     devices     error       failed      findings    fingerprint gems
-    install     ip.txt      lan         launch      lease       log
+    install     installs    ip.txt      lan         launch      lease
+    log
     logs        meaning     metro       pods        port        prebuild
-    project     ready       remedy      removed     result      services
+    project     ready       remedy      removed     resolved    result
+    services
     setting     settings    setup       state       stats       stop
-    storage     swap        verify      workspace
+    storage     swap        verify      version     workspace
 
   \`app\` and \`compilation cache\` join them in the stdout block a successful
   run ends with, and nowhere else. A line states a fact; the reason a fact
@@ -304,8 +306,21 @@ result as proof instead of requiring an unrelated screenshot.`,
     },
     builds: {
       summary:
-        'cache hits, misses, the fingerprint shift, .fingerprintignore, install unchanged, where runtime state lives',
-      body: () => `AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
+        'optional cache warm-up, build optimizations, fingerprints, .fingerprintignore, install unchanged, runtime state',
+      body: () => `OPTIONAL CACHE WARM-UP FOR REPEATED NATIVE WORK
+  When several native worktrees are coming, build the main checkout once to
+  seed the shared caches before warming the linked worktrees. Skip this extra
+  build for one-off or JavaScript-only work. For local simulator or emulator
+  work, run these commands in the main checkout's app directory:
+
+    stim doctor --platform ios        # or: --platform android
+    stim start
+    stim ios                          # or: stim android
+    stim stop
+
+  Follow the normal ownership and consent rules in guide agent.
+
+AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
   Both platforms store the artifact verbatim, so its hash is its identity.
   Before installing, Stim hashes the artifact it is about to install and the
   one the device already has -- \`pm path\` then \`sha256sum\` on Android, the
@@ -349,8 +364,9 @@ committing. The shared caches need no project-file edits:
            when the project configured ccache (the two defeat each other).
   android  gradlew carries --build-cache, so task outputs cross worktrees with
            no org.gradle.caching=true in gradle.properties. Debug builds also
-           carry -PreactNativeArchitectures=<target ABI> when Stim can prove
-           the emulator or physical-device ABI; otherwise they stay universal.
+           carry -PreactNativeArchitectures=<target ABI>, using the owned
+           emulator system-image ABI or the physical device's primary ABI.
+           Unknown targets and Release builds stay universal.
   ccache   the same gradlew run carries an absolute
            CMAKE_C_COMPILER_LAUNCHER / CMAKE_CXX_COMPILER_LAUNCHER plus
            CCACHE_DIR, CCACHE_BASEDIR, CCACHE_NOHASHDIR, CCACHE_SLOPPINESS
@@ -387,14 +403,16 @@ The trade-off is the same class as the iOS CAS one: an object reused from
 worktree A carries A's directory as its DWARF comp_dir, so a debugger stepping
 into reused C++ resolves sources against that path.
 
-Precompiled headers are where the misses are, and the cause is mtime, not
-paths. worklets and expo-modules-core precompile a header without
--fno-pch-timestamp, so ccache re-checks the mtime of the PCH inputs
-(\`Precompiled header includes ..., which has a new mtime\`), rebuilds the
-header, and every translation unit that includes it misses too -- 5 to 11
-seconds per module, paid again after anything that rewrites those mtimes,
-a fresh npm ci included. No stale .pch is ever served. reanimated passes
--Xclang -fno-pch-timestamp and hits across worktrees like everything else.
+When Stim supplies ccache, its Gradle init script defaults Android app and
+library CMake builds to CMAKE_DISABLE_PRECOMPILE_HEADERS=ON. PCH inputs can
+retain a previous worktree's paths even with upstream timestamp fixes, causing
+the header and its consuming objects to miss. Compiling ordinary headers
+instead favors reuse across worktrees at the cost of a slower cold C++ build.
+This does not edit dependency sources or change iOS builds. Without Stim's
+ccache setup, PCH behavior is unchanged. A module with an explicit
+CMAKE_DISABLE_PRECOMPILE_HEADERS argument in its default config, build types,
+or product flavors keeps that choice; CMake target-level PCH overrides also
+take precedence. Direct Gradle builds do not receive Stim's init script.
 
 The launcher persists in the project. AGP writes it into each
 .cxx/**/CMakeCache.txt on the first configure, so a plain \`./gradlew\` in that
@@ -455,6 +473,8 @@ THE BUILD CACHE HAS THREE LEVELS
   If the iOS fingerprint after prebuild or pod install is unavailable, Stim
   installs the build but skips local storage and remote uploads. fingerprint
   and cacheKey are null in the result and lastBuild; the old key is not reused.
+  Android does the same if its post-Gradle fingerprint cannot be computed.
+  These null fields mean unavailable cache information, not an install failure.
 
 WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   Every entry is keyed on what the tree hashes, so two workspaces share an

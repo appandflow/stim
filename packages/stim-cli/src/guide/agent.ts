@@ -20,18 +20,13 @@ Read guide lifecycle options for exclusions and incomplete-copy remedies.
 
 Before native worktree work, run doctor for the platform in scope. It checks
 the main checkout from a linked worktree. Fix relevant findings and inspect the
-upstream gap. Doctor also reports cross-volume staging and build-cache copies.
-Large temporary copies use a writable location on the relevant volume outside
-Git working trees. STIM_TMPDIR or machine tempDir overrides that location;
-read guide settings for placement and guide lifecycle options for warm behavior.
+upstream gap. It also prints the running CLI version and the stim installation
+resolved from PATH. If that resolved installation is older than another one,
+fix PATH or the installation before continuing so commands and guidance match.
+Doctor reports cross-volume staging and build-cache copies; read guide settings
+for placement overrides and guide lifecycle options for warm behavior.
 
   stim doctor --platform ios          # or: --platform android
-
-  # In the main checkout, seed the shared build caches when more native
-  # worktrees are coming. Skip this for one-off or JavaScript-only work.
-  stim start
-  stim ios                             # or: stim android
-  stim stop
 
   # Skip Git creation if the harness already created this linked worktree.
   git worktree add -b <branch> <worktree-path> HEAD
@@ -63,12 +58,6 @@ RULES DURING THE LOOP
   run stim start and retry.
 - Run ios or android again after a native input changes. A JavaScript-only
   change does not need one.
-- If fingerprinting fails after native inputs change during the run, Stim
-  installs the build without caching it. A null fingerprint or cacheKey is
-  unavailable cache information, not an install failure.
-- Android Debug builds target the owned emulator system-image ABI or the
-  physical device's primary ABI. Unknown targets and Release builds stay
-  universal.
 - Reload is not part of the normal workflow. Use stim reload on an owned local
   simulator or emulator after a failed first bundle load, when an error screen
   remains after the fix, or when you explicitly need an app restart. For a
@@ -83,10 +72,8 @@ RULES DURING THE LOOP
   the error screen remains, follow the printed reload remedy instead of
   running ios or android again. If launch says FATAL because the app process exited,
   fix the crash and run the platform command again; Metro cannot restart it.
-- A cold native build can outlive a shell timeout. Run the same command again:
-  the second call joins the active build or returns its result. If a builder
-  fails, one waiter takes over and the others keep waiting within the same
-  90-minute limit. Follow the remedy if STIM_BUILD_WAIT_TIMEOUT is returned.
+- A native build can outlive a shell timeout. Retry the same command and
+  follow its printed remedy if waiting times out. See guide lifecycle concurrency.
 - ios and android install the app, launch it, and check readiness. Trust the
   exact device, app, Metro, and launch facts in the final summary. Use the full
   reported device ID. Never assume a simulator named booted belongs to this
@@ -172,7 +159,8 @@ LOAD ADVANCED GUIDANCE WHEN NEEDED
   stim guide errors fallbacks     # swap, cache, and install notes on a release cache hit
   stim guide lifecycle            # the ordered flow, consent rules, and capacity
   stim guide lifecycle verification # reproduce, edit, verify the UI, and retain proof
-  stim guide lifecycle builds     # cache hits, misses, fingerprints, .fingerprintignore
+  stim guide lifecycle builds     # build optimizations, optional cache warm-up, fingerprints
+  stim guide lifecycle concurrency # shared builds, wait timeouts, capacity limits
   stim guide lifecycle options    # every flag, Android variants, --device-type, --system-image
   stim guide lifecycle devices    # ios --device and android --device on a physical phone
   stim guide lifecycle release    # Release configurations and ...Release variants

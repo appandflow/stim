@@ -718,7 +718,7 @@ describe('buildAndroid', () => {
     expect(beats.length).toBe(settled);
   });
 
-  test('the ccache environment reaches the Gradle child, and its stats log is read back', async () => {
+  test('ccache opts into the packaged PCH policy, forwards its environment, and reads fresh statistics', async () => {
     makeAndroidProject();
     const statsLog = join(root, 'logs', 'ccache-stats.log');
     mkdirSync(join(root, 'logs'), { recursive: true });
@@ -733,7 +733,11 @@ describe('buildAndroid', () => {
           statsLog,
           env: { CMAKE_CXX_COMPILER_LAUNCHER: '/opt/homebrew/bin/ccache', CCACHE_DIR: join(root, 'ccache') },
         },
-        spawnFn: (_cmd, _args, opts) => {
+        spawnFn: (_cmd, args, opts) => {
+          expect(args.slice(0, 3)).toEqual(['assembleDebug', '--build-cache', '--init-script']);
+          expect(args).toHaveLength(4);
+          expect(args[3]).toBe(join(import.meta.dirname, '../../shim/android-no-pch.gradle'));
+          expect(existsSync(args[3]!)).toBe(true);
           envs.push(opts.env as NodeJS.ProcessEnv);
           expect(existsSync(statsLog)).toBe(false);
           return fakeChild({
@@ -754,7 +758,7 @@ describe('buildAndroid', () => {
     expect(spawnEnv.CCACHE_DIR).toBe(join(root, 'ccache'));
     expect(spawnEnv.TERM).toBe('dumb');
     expect(result.ccache).toEqual({ status: 'reported', hits: 1, misses: 1, hitRatePercent: 50 });
-    expect(notes.filter((line) => line.includes('ccache'))).toEqual([]);
+    expect(notes.some((line) => line.includes('PCH off by default'))).toBe(true);
   });
 
   test('without ccache the Gradle argv and environment are unchanged and no statistics are claimed', async () => {

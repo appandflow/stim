@@ -308,7 +308,13 @@ test('the agent guide routes to every detailed topic', () => {
     expect(agent).toContain(`guide ${topicName}`);
   }
   expect(agent).toContain('stim guide errors <CODE>');
-  for (const route of ['guide errors sandbox', 'guide facts devmenu', 'guide cleanup collector']) {
+  for (const route of [
+    'guide errors sandbox',
+    'guide facts devmenu',
+    'guide cleanup collector',
+    'guide lifecycle builds',
+    'guide lifecycle concurrency',
+  ]) {
     expect(agent).toContain(route);
   }
 });
@@ -362,6 +368,5 @@ test('temporary storage guidance names the override and Git visibility boundary'
   expect(settings).toContain('STIM_TMPDIR');
   expect(settings).toContain('tempDir');
   expect(settings).toMatch(/outside Git working trees/);
-  expect(renderTopic('agent')).toContain('STIM_TMPDIR');
   expect(renderSection('lifecycle', 'options')).toContain('STIM_TMPDIR');
 });
