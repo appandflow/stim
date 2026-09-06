@@ -9,6 +9,7 @@ import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts'
 import { androidHome } from '../sim/android.ts';
 import { capDiagnostics, type Diagnostic, extractGradleDiagnostics } from './errors-gradle.ts';
 import { CCACHE_UNAVAILABLE, type CcacheSetup, readCcacheActivity } from './ccache.ts';
+import { resolvePch } from './pch.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
 import type { CcacheActivity } from '../types.ts';
 
@@ -477,6 +478,8 @@ export async function buildAndroid(
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
   const task = assembleTaskFor(variant);
   const args = gradleArgs(task, { buildCache, abi });
+  const pch = ccache ? resolvePch(root, ccache, env) : null;
+  if (pch) args.push(...pch.args);
   if (buildCache) {
     onNote(chalk.dim(phaseLine('cache', 'gradle build cache on (--build-cache, shared under the Gradle user home)')));
   }
@@ -508,7 +511,7 @@ export async function buildAndroid(
     child = spawn(project.gradlew as string, args, {
       cwd: project.androidDir,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...env, ...ccache?.env, TERM: 'dumb', FORCE_COLOR: '0' },
+      env: { ...env, ...ccache?.env, ...pch?.env, TERM: 'dumb', FORCE_COLOR: '0' },
     });
   } catch (err) {
     return spawnFailure(err, project, now() - startedAt);

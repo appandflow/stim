@@ -6,6 +6,7 @@ export default defineConfig({
     'cache-manifest': 'src/cache-manifest.ts',
     'supervisor-run': 'src/supervisor/run.ts',
     'collector-run': 'src/collector/run.ts',
+    'pch-compiler': 'src/engine/pch-compiler.ts',
   },
   format: 'esm',
   dts: true,

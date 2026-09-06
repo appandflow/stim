@@ -389,14 +389,29 @@ The trade-off is the same class as the iOS CAS one: an object reused from
 worktree A carries A's directory as its DWARF comp_dir, so a debugger stepping
 into reused C++ resolves sources against that path.
 
-Precompiled headers are where the misses are, and the cause is mtime, not
-paths. worklets and expo-modules-core precompile a header without
--fno-pch-timestamp, so ccache re-checks the mtime of the PCH inputs
-(\`Precompiled header includes ..., which has a new mtime\`), rebuilds the
-header, and every translation unit that includes it misses too -- 5 to 11
-seconds per module, paid again after anything that rewrites those mtimes,
-a fresh npm ci included. No stale .pch is ever served. reanimated passes
--Xclang -fno-pch-timestamp and hits across worktrees like everything else.
+Precompiled headers can embed both input timestamps and absolute checkout
+paths. Fixing timestamps alone does not make a PCH portable. On Android with
+Clang 18 and CMake 3.22+, Stim supplies a Gradle init script that makes eligible
+PCH targets relocatable without editing project or dependency sources. It
+normalizes their header declarations, retains header-content validation, and
+attaches a compiler wrapper that resolves the relocation root after ccache
+hashes the stable relative arguments. The wrapper identity is part of the
+compiler-cache key. CMake's generated umbrella header and empty PCH source
+are staged by content under the shared ccache's pch-headers directory, so an
+AGP build-directory hash does not enter the PCH. Real library headers remain
+in the current checkout and are checked by ccache and Clang. A plain Gradle
+build can still use the configured target. The tiny staged files are removed
+with that shared cache by gc, not by ccache's object-size eviction.
+
+Stim leaves custom compiler launchers, ccache prefixes, project include hooks,
+disabled PCHs, external-source targets, and unsupported PCH declarations alone.
+Other Clang versions keep their ordinary PCH behavior. Installation or Node
+paths containing whitespace also skip the adapter because ccache does not
+support quoting its prefix command. Skipping relocation does not disable the
+ordinary compiler cache. The CMake log names each adapted PCH owner as
+\`Stim: relocatable PCH for <target>\`. If misses remain, use doctor for setup
+findings and inspect ccache debug logs for individual misses; never ignore
+header content or fingerprint real native inputs away to force hits.
 
 The launcher persists in the project. AGP writes it into each
 .cxx/**/CMakeCache.txt on the first configure, so a plain \`./gradlew\` in that

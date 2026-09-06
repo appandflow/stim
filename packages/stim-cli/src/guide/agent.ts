@@ -68,6 +68,9 @@ RULES DURING THE LOOP
 - Android Debug builds target the owned emulator system-image ABI or the
   physical device's primary ABI. Unknown targets and Release builds stay
   universal.
+- Android builds adapt eligible Clang 18 precompiled headers for reuse across
+  worktrees without editing dependency sources. Custom compiler setup is
+  preserved. For native cache misses and eligibility, read guide lifecycle builds.
 - Reload is not part of the normal workflow. Use stim reload on an owned local
   simulator or emulator after a failed first bundle load, when an error screen
   remains after the fix, or when you explicitly need an app restart. For a

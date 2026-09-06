@@ -1,0 +1,25 @@
+gradle.beforeProject { project ->
+    ["com.android.application", "com.android.library"].each { plugin ->
+        project.pluginManager.withPlugin(plugin) {
+            project.extensions.getByName("androidComponents").finalizeDsl { android ->
+                def configs = [android.defaultConfig] + android.buildTypes.toList() + android.productFlavors.toList()
+                def custom = configs.any { config ->
+                    config.externalNativeBuild.cmake.arguments.any { arg ->
+                        arg =~ /CMAKE_(PROJECT_.*INCLUDE|CXX_COMPILER_LAUNCHER|C_COMPILER_LAUNCHER)/
+                    }
+                }
+                if (!custom) {
+                    android.defaultConfig.externalNativeBuild.cmake.arguments.addAll([
+                        "-DCMAKE_PROJECT_INCLUDE=" + System.getenv("STIM_PCH_CMAKE"),
+                        "-DSTIM_PCH_ROOT=" + System.getenv("STIM_PCH_ROOT"),
+                        "-DSTIM_PCH_CCACHE=" + System.getenv("STIM_PCH_CCACHE"),
+                        "-DSTIM_PCH_NODE=" + System.getenv("STIM_PCH_NODE"),
+                        "-DSTIM_PCH_COMPILER=" + System.getenv("STIM_PCH_COMPILER"),
+                        "-DSTIM_PCH_HEADERS=" + System.getenv("STIM_PCH_HEADERS"),
+                        "-DSTIM_PCH_IDENTITY=" + System.getenv("STIM_PCH_IDENTITY")
+                    ])
+                }
+            }
+        }
+    }
+}
