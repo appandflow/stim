@@ -103,6 +103,19 @@ export function shellCommandSegments(command) {
   return segments;
 }
 
+export function agentDeviceIsolationInvalidReasons(commands, expectedPrefix) {
+  const segments = commands.flatMap((command) => shellCommandSegments(command.command));
+  const reasons = [];
+  if (segments.some((command) => /(?:^|\s)agent-device\s+daemon\s+stop(?:\s|$)/.test(command))) {
+    reasons.push('agent-device-daemon-recovery-inside-timer');
+  }
+  const deviceCommands = segments.filter((command) => /(?:^|\s)agent-device(?:\s|$)/.test(command));
+  if (deviceCommands.some((command) => !command.startsWith(expectedPrefix))) {
+    reasons.push('agent-device-run-session-not-applied');
+  }
+  return reasons;
+}
+
 function commandSegmentsStartingWith(command, expected) {
   return shellCommandSegments(command).filter((segment) => segment === expected || segment.startsWith(`${expected} `));
 }
