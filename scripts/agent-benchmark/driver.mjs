@@ -34,6 +34,7 @@ import {
   matchesExpectedIosSimulator,
 } from './watch-app-selection.mjs';
 import { completedCleanupRecord, durableRunRecord } from './run-record.mjs';
+import { isolatedRunnerInvocation, prepareRunnerIsolation, runnerIsolationPolicy } from './runner-isolation.mjs';
 import {
   agentDeviceIsolationInvalidReasons,
   benchmarkSetupInvalidReasons,
@@ -892,7 +893,7 @@ function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform 
   const targetFlag = platform === 'ios' ? '--udid' : '--serial';
   const deviceProof = ` After the app launches, you MUST use the agent-device skill and CLI. Codex does not forward the coordinator's agent-device environment into shell tools, so every agent-device command below includes the required prefix. Never run a bare \`agent-device\` command. Read the exact run ${targetDescription} from the launch output. Handle any Expo onboarding shown and navigate to the Settings tab using semantic refs or labels between steps 2 and 3 below. Do not stop or restart the agent-device daemon; report a failure if the isolated session refuses to open. The explicit state and session assignments and device identifier prevent cross-run ownership.`;
   const proofProtocol = `\n\nFINAL PROOF PROTOCOL: The proof directory already exists. For each numbered shell command below, send the displayed line alone as the entire Bash \`command\` string. Do not prepend \`mkdir\`, append \`ls\`, combine it with another command, use redirection, or wrap it in a script or interactive shell. Replace only the angle-bracketed value in step 1.\n\n1. \`${agentDevicePrefix} open com.appandflow.trailhead --foreground --platform ${platform} ${targetFlag} <run ${targetDescription}>\`\n2. \`${agentDevicePrefix} record start ${recordingScratch} --scope device --quality high --hide-touches\`\n3. \`${agentDevicePrefix} wait text ${JSON.stringify(expected)}\`\n4. \`${agentDevicePrefix} screenshot ${screenshotScratch}\`\n5. \`cp ${screenshotScratch} ${screenshot}\`\n6. \`${agentDevicePrefix} record stop\`\n7. \`cp ${recordingScratch} ${recording}\`\n8. \`${agentDevicePrefix} close\`\n\nDo not claim completion before all eight commands succeed in order, the wait finds the expected text, recording stop reports the saved video, and the copied screenshot and recording exist.`;
-  const suffix = ` Stay in this turn until the Settings screenshot is saved; do not stop to await a background notification. Do not use subagents. Do not read or write outside the fixture checkout, the run worktree, ${runDir}, ${screenshotScratch}, and ${recordingScratch}. Report the run worktree and screenshot paths, then stop; the coordinator will verify and clean up.${proofProtocol}`;
+  const suffix = ` Stay in this turn until the Settings screenshot is saved; do not stop to await a background notification. Do not use subagents. Work only in the fixture checkout, run worktree, and the current run's proof, temporary, runtime, and tool-state paths. Coordinator configuration, golden caches, other worktrees, and other runs' file contents are protected by the runner filesystem policy. Parent directory listings are permitted; do not try to bypass a denied read or use another process or service to access protected files. Report the run worktree and screenshot paths, then stop; the coordinator will verify and clean up.${proofProtocol}`;
   if (variant === launchCrashVariant) {
     const launch =
       arm === 'stim'
@@ -1004,9 +1005,43 @@ function makeRunnerHome(runDir, arm) {
   return { codexHome };
 }
 
-function verifyRunnerProfile(codexHome, env, arm, runDir) {
+function prepareRunIsolation(runId, runDir, env, arm, crash = null, claudeGuidance = null) {
+  const runTmp = join(runDir, 'tmp');
+  return prepareRunnerIsolation({
+    policy: runnerIsolationPolicy({
+      protectedRoots: [root, worktreeParent],
+      reservedRoots: [golden, results, state, worktreeParent],
+      readPaths: [
+        ...(!crash ? [main] : []),
+        allowedBin,
+        ...(arm === 'stim' ? [stimBin, join(root, 'runtime'), stimPackage] : []),
+      ],
+      writePaths: [env.GRADLE_USER_HOME, env.ANDROID_AVD_HOME].filter(Boolean),
+      scopedAccess: {
+        readPaths: [crash?.fixtureCheckout, claudeGuidance?.path].filter(Boolean),
+        writePaths: [
+          join(worktreeParent, arm === 'stim' ? `bench-${runId}` : runId),
+          join(runDir, 'runner-home'),
+          join(runDir, 'shell-home'),
+          join(runDir, 'proof'),
+          runTmp,
+          agentDeviceState,
+          env.STIM_HOME,
+        ],
+      },
+    }),
+    profilePath: join(runDir, 'runner-isolation.sb'),
+    probeRoots: [root, golden, results],
+    probeParent: runTmp,
+    execute: (file, args) => run(file, args, { cwd: main, env }),
+  });
+}
+
+function verifyRunnerProfile(codexHome, env, arm, runDir, isolation) {
   const path = join(runDir, 'prompt-input.json');
-  const output = run(executablePath(codexBin), ['debug', 'prompt-input', 'profile smoke'], {
+  const invocation = { command: executablePath(codexBin), args: ['debug', 'prompt-input', 'profile smoke'] };
+  const checked = isolatedRunnerInvocation(isolation, invocation.command, invocation.args);
+  const output = run(checked.command, checked.args, {
     cwd: main,
     env,
     timeout: 30_000,
@@ -1045,7 +1080,8 @@ function smoke(arm) {
   };
   if (arm === 'stim') env.STIM_POOL_IOS_PARKED_MAX = '1';
   env.BENCH_STIM_HOME = env.STIM_HOME;
-  const profile = verifyRunnerProfile(codexHome, env, arm, runDir);
+  const isolation = prepareRunIsolation(runId, runDir, env, arm);
+  const profile = verifyRunnerProfile(codexHome, env, arm, runDir, isolation);
   const resolvedStim = run('/bin/sh', ['-c', 'command -v stim || true'], {
     cwd: main,
     env,
@@ -1057,7 +1093,7 @@ function smoke(arm) {
     throw new Error(`Stim profile resolved unexpected binary: ${resolvedStim}`);
   }
   const stimStatus = arm === 'stim' ? JSON.parse(run('stim', ['status', '--json'], { cwd: main, env })) : null;
-  const smokeRecord = { checkedAt: new Date().toISOString(), arm, profile, resolvedStim, stimStatus };
+  const smokeRecord = { checkedAt: new Date().toISOString(), arm, profile, isolation, resolvedStim, stimStatus };
   writeFileSync(join(runDir, 'smoke.json'), `${JSON.stringify(smokeRecord, null, 2)}\n`);
   process.stdout.write(`${JSON.stringify(smokeRecord, null, 2)}\n`);
 }
@@ -1071,25 +1107,29 @@ async function runnerSmoke(arm) {
   const env = {
     ...cleanRubyEnvironment(process.env),
     CODEX_HOME: codexHome,
+    STIM_HOME: join(runDir, 'stim-home'),
+    TMPDIR: join(runDir, 'tmp'),
     PATH: `${arm === 'stim' ? `${stimBin}:` : ''}${allowedBin}:/usr/bin:/bin:/usr/sbin:/sbin`,
   };
+  const isolation = prepareRunIsolation(`runner-smoke-${arm}`, runDir, env, arm);
+  const invocation = isolatedRunnerInvocation(isolation, executablePath(codexBin), [
+    '--ask-for-approval',
+    'never',
+    'exec',
+    '--strict-config',
+    '--ignore-rules',
+    '--json',
+    '--model',
+    'gpt-5.6-luna',
+    '--sandbox',
+    'read-only',
+    '--cd',
+    main,
+    '-',
+  ]);
   const result = await spawnStamped(
-    executablePath(codexBin),
-    [
-      '--ask-for-approval',
-      'never',
-      'exec',
-      '--strict-config',
-      '--ignore-rules',
-      '--json',
-      '--model',
-      'gpt-5.6-luna',
-      '--sandbox',
-      'read-only',
-      '--cd',
-      main,
-      '-',
-    ],
+    invocation.command,
+    invocation.args,
     join(runDir, 'events.jsonl'),
     { cwd: main, env, stdio: ['pipe', 'pipe', 'pipe'] },
     'Reply OK only.',
@@ -1280,8 +1320,9 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
   const prompt = promptFor(arm, variant, runId, runDir, crash, platform);
   writeFileSync(join(runDir, 'prompt.txt'), `${prompt}\n`);
   const shellProvenance = verifyRunnerShell(arm, env);
-  const profile = verifyRunnerProfile(codexHome, env, arm, runDir);
   const claudeGuidance = runnerKind === 'claude' ? writeClaudeGuidance(codexHome, arm, runDir) : null;
+  const isolation = prepareRunIsolation(runId, runDir, env, arm, crash, claudeGuidance);
+  const profile = verifyRunnerProfile(codexHome, env, arm, runDir, isolation);
   const agentDevice = prepareAgentDeviceRun(runId, platform, expectedParkedSimulator?.udid ?? null);
   const dispatchAt = new Date().toISOString();
   const meta = {
@@ -1301,7 +1342,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
     preflight: preflightReport,
     expectedStimShellProvenance: arm === 'stim' ? expectedStimShellProvenance() : null,
     stimShellProvenance: shellProvenance,
-    profile: { ...profile, claudeGuidance },
+    profile: { ...profile, claudeGuidance, isolation },
     expectedBuildCache,
     expectedParkedSimulator,
     expectedStimDevice,
@@ -1375,9 +1416,10 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
           runnerCwd,
           '-',
         ];
+  const isolatedRunner = isolatedRunnerInvocation(isolation, runnerCommand, runnerArgs);
   const runner = spawnStamped(
-    runnerCommand,
-    runnerArgs,
+    isolatedRunner.command,
+    isolatedRunner.args,
     join(runDir, 'events.jsonl'),
     { cwd: runnerCwd, env, stdio: ['pipe', 'pipe', 'pipe'] },
     prompt,

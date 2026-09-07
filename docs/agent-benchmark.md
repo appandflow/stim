@@ -100,6 +100,22 @@ independently pinned `agent-device` skill. The control profile exposes only
 `agent-device`; the Stim binary and skill are unavailable. Both profiles have
 the same model settings, filesystem authority, and app task.
 
+The macOS coordinator launches both runners and their child processes under
+the same filesystem policy. It denies coordinator configuration, golden-state
+and sibling-run file contents and writes, while permitting parent-directory
+listings. Each run retains its own worktree, proof, temporary files, runner
+home, selected tools, and the configured shared native-cache/device state.
+Coordinator metadata and transcripts remain outside those writable grants.
+Before timing starts, real read/write and child-process probes must verify the
+policy; an unavailable sandbox or overbroad grant refuses dispatch. The policy
+and its digest are retained with the private run metadata.
+
+This boundary prevents accidental benchmark-data access, not adversarial host
+access: native system services and pre-existing processes are not sandboxed by
+the runner policy. Strong isolation from a malicious agent requires a separate
+host or VM. The coordinator still independently verifies app/device evidence.
+Historical attempts keep the policy and verdict under which they were run.
+
 The Stim agent creates its own worktree with Git after dispatch:
 
 ```text
