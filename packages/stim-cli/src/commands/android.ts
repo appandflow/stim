@@ -1,3 +1,9 @@
+import {
+  resolveOptimizations,
+  artifactCachePolicy,
+  optimizationBuildProfile,
+  type Optimizations,
+} from '../optimizations.ts';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { type Command, InvalidArgumentError } from 'commander';
@@ -530,7 +536,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     ensureRemoteOwned,
     detectRemoteProviders,
     metroCheck,
-    useBuildCache,
+    useBuildCache: requestedBuildCache,
     variantFlag,
     systemImageFlag,
     deviceFlag,
@@ -702,16 +708,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   };
 
   const settingsRepoRoot = repoRoot(root);
-  let cas: ReturnType<typeof resolveAndroidCas>;
-  try {
-    cas = resolveAndroidCas(root);
-  } catch (error) {
-    return fail(
-      'STIM_BAD_ARG',
-      `Could not prepare Android CAS: ${(error as Error).message}`,
-      'Fix the CAS toolchain manifest or unset STIM_ANDROID_CAS_TOOLCHAIN. See `stim guide lifecycle builds`.',
-    );
-  }
   const settingsRoot = settingsRepoRoot ?? root;
   const settingsContext = {
     projectPath: root,
@@ -730,6 +726,18 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   for (const key of unknownSettingKeys(settings)) {
     out(phaseLine('setting', chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`)));
   }
+  let optimizations: Optimizations;
+  let cas: ReturnType<typeof resolveAndroidCas>;
+  try {
+    optimizations = resolveOptimizations(settings);
+    cas =
+      optimizations.android.compilerCache === 'cas'
+        ? resolveAndroidCas(root, { ...process.env, STIM_ANDROID_CAS_TOOLCHAIN: optimizations.android.casToolchain! })
+        : null;
+  } catch (error) {
+    return fail('STIM_BAD_ARG', `Could not configure Android build: ${(error as Error).message}`, SETTING_SHAPE_REMEDY);
+  }
+  const buildProfile = optimizationBuildProfile('android', optimizations);
   const cacheProviderConfig = resolveCacheProvider(settingsContext);
   const cacheProviderError = cacheProviderSettingError(settings);
   if (cacheProviderError) out(phaseLine('cache', chalk.yellow(`${cacheProviderError} Using the local cache.`)));
@@ -762,6 +770,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const flavorRefusal = productFlavorRefusal({ flavors: readProductFlavors(root), variant });
   if (flavorRefusal) return fail(flavorRefusal.code, flavorRefusal.reason, flavorRefusal.remedy);
   const release = isReleaseVariant(variant);
+  const cachePolicy = artifactCachePolicy(optimizations, requestedBuildCache, release);
+  const useBuildCache = cachePolicy.read;
   const isExpo = detectIsExpo(root);
   const physical = deviceFlag !== null && deviceFlag !== undefined && deviceFlag !== false;
   if (physical && deviceFlag === '') {
@@ -1040,6 +1050,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     variant,
     deviceAbi,
     compiler: cas?.id,
+    buildProfile,
+    targetAbiOnly: optimizations.android.targetAbiOnly,
   });
 
   let hash = '';
@@ -1047,9 +1059,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   let providerName: string | null = null;
   let providerLoad: Promise<LoadCacheProviderResult> | null = null;
   const cacheWarn = createWarnOnce((line) => phase('cache', chalk.yellow(line)));
-  const loadTieredProvider = cacheProviderConfig
-    ? () => (providerLoad ??= loadCacheProviderModule({ projectRoot: root, config: cacheProviderConfig }))
-    : null;
+  const loadTieredProvider =
+    cachePolicy.remote && cacheProviderConfig
+      ? () => (providerLoad ??= loadCacheProviderModule({ projectRoot: root, config: cacheProviderConfig }))
+      : null;
   let fingerprintSources: FingerprintSource[] = [];
   let cacheKey = '';
   let storeHash = '';
@@ -1118,7 +1131,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     }
     phase(
       'fingerprint',
-      `${shortHash(hash)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : ' (--no-build-cache)'} ${fingerprintTimer()}${missDiff}`,
+      `${shortHash(hash)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : !requestedBuildCache ? ' (--no-build-cache)' : ' (cache reuse off in config)'} ${fingerprintTimer()}${missDiff}`,
     );
     if (missUntracked) phase('fingerprint', chalk.dim(missUntracked));
     if (found?.tier === 'provider') {
@@ -1139,7 +1152,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
     async function resolveRemoteArtifact(): Promise<void> {
       // Expo buildCacheProvider run options cannot key Android ABIs, so targeted APKs are unsafe in this tier.
-      if (buildAbi || cas) return;
+      if (buildAbi || cas || buildProfile || !cachePolicy.remote) return;
 
       if (!apkPath) {
         const loaded: LoadProjectProviderResult = await loadProvider(root, { isExpo });
@@ -1391,7 +1404,14 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
             phase('build', `compiling ${variant || 'debug'} with Gradle`);
             const built: BuildAndroidResultLike = await build(
               { root, logWriter: writer, variant, abi: buildAbi },
-              { estimateMs: estimates().coldBuildMs, ccache: cas ? null : ccacheFor({ root, onNote: out }), cas },
+              {
+                estimateMs: estimates().coldBuildMs,
+                ccache: optimizations.android.compilerCache === 'ccache' ? ccacheFor({ root, onNote: out }) : null,
+                cas,
+                buildCache: optimizations.android.gradleBuildCache,
+                pch: optimizations.android.pch,
+                compilerCacheDisabled: optimizations.android.compilerCache === 'none',
+              },
             );
             ccacheActivity = built.ccache ?? CCACHE_UNAVAILABLE;
             if (built.failed) {
@@ -1448,25 +1468,27 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
                 );
               }
 
-              const assetManifest = release ? captureAssets(root, { variant }) : null;
-              try {
-                const stored = await storeTieredBuild({
-                  local: filesystemBuildCapability({
-                    resolve: resolveCached,
-                    store: storeCached,
-                    sources: storeSources,
-                    assetManifest,
-                  }),
-                  loadProvider: loadTieredProvider,
-                  target: { projectRoot: root, platform: PLATFORM, key: storeKey },
-                  sourcePath: apkPath!,
-                  overwrite: !useBuildCache || swapFellBack,
-                  warn: cacheWarn,
-                });
-                providerUpload = stored.providerUpload;
-                providerName = stored.providerName ?? providerName;
-              } catch (err) {
-                phase('cache', chalk.yellow(`could not store the build: ${(err as Error)?.message || err}`));
+              if (cachePolicy.write) {
+                const assetManifest = release ? captureAssets(root, { variant }) : null;
+                try {
+                  const stored = await storeTieredBuild({
+                    local: filesystemBuildCapability({
+                      resolve: resolveCached,
+                      store: storeCached,
+                      sources: storeSources,
+                      assetManifest,
+                    }),
+                    loadProvider: loadTieredProvider,
+                    target: { projectRoot: root, platform: PLATFORM, key: storeKey },
+                    sourcePath: apkPath!,
+                    overwrite: !useBuildCache || swapFellBack,
+                    warn: cacheWarn,
+                  });
+                  providerUpload = stored.providerUpload;
+                  providerName = stored.providerName ?? providerName;
+                } catch (err) {
+                  phase('cache', chalk.yellow(`could not store the build: ${(err as Error)?.message || err}`));
+                }
               }
 
               if (remote) {

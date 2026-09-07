@@ -204,13 +204,6 @@ export function getConcurrencyLimits({ env = process.env }: { env?: NodeJS.Proce
   };
 }
 
-export function metroStoreInjectionEnabled(): boolean {
-  const cfg = loadConfig();
-  const caches = cfg?.caches;
-  if (!caches || typeof caches !== 'object' || Array.isArray(caches)) return true;
-  return (caches as Record<string, unknown>).injectMetroStore !== false;
-}
-
 function resolveLimit(envVal: unknown, cfgVal: unknown): number {
   const hasEnv = envVal !== undefined && envVal !== null && envVal !== '';
   const raw = hasEnv ? Number(envVal) : typeof cfgVal === 'number' ? cfgVal : Number.NaN;

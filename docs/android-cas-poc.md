@@ -99,6 +99,24 @@ assertion failures stop the script. All fixture data remains available.
 Build this Stim checkout, then use its CLI with a disposable React Native/Expo
 worktree and a private `STIM_HOME`:
 
+For persistent selection, merge this into `$STIM_HOME/config.json` (default
+`~/.stim/config.json`). The same `optimizations` object in `.stim.json` can
+override machine defaults per repository. `stim guide settings` lists the
+Android, iOS, Metro, and artifact-cache switches.
+
+```json
+{
+  "optimizations": {
+    "android": {
+      "compilerCache": "cas",
+      "casToolchain": "/absolute/private/toolchain.json"
+    }
+  }
+}
+```
+
+The environment form remains available:
+
 ```sh
 export STIM_HOME=/absolute/private/stim-state
 export STIM_ANDROID_CAS_TOOLCHAIN=/absolute/private/toolchain.json
@@ -182,9 +200,11 @@ probe is the independently runnable correctness evidence.
 - The adapter assumes `-c` appears directly in the argument list and the
   working directory is the CMake build directory. Response-file-only modes
   and different build-system layouts need coverage.
-- Generated CMake configurations retain adapter paths and depend on the CAS
-  environment. Opting out in an already configured checkout needs a cleanup
-  flow; use disposable worktrees for now.
+- Generated CAS configurations retain adapter paths and depend on the CAS
+  environment. Stim separates compiler/PCH modes under `.cxx/stim-<profile>`
+  so switching back to `compilerCache: "ccache"` or `"none"` uses a different
+  configuration without deleting evidence. Direct Gradle uses its own staging
+  directory. Legacy unprofiled configurations need their previous cleanup flow.
 - Compiler binaries are hashed, but all toolchain headers are assumed
   immutable. In-place header changes are not represented in Stim's APK key.
   Normal Clang input validation remains enabled.

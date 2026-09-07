@@ -1,4 +1,10 @@
 import { rmSync } from 'node:fs';
+import {
+  resolveOptimizations,
+  artifactCachePolicy,
+  optimizationBuildProfile,
+  type Optimizations,
+} from '../optimizations.ts';
 import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
 import {
@@ -199,7 +205,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
   let d: typeof DEFAULT_DEPS = { ...DEFAULT_DEPS, ...overrides };
   const json = Boolean(opts.json);
   const metroCheck = opts.metroCheck !== false;
-  const useBuildCache = opts.buildCache !== false;
+  let useBuildCache = opts.buildCache !== false;
 
   const phase = writePhase;
   const note = writeNote;
@@ -346,6 +352,13 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
       remedy: SETTING_SHAPE_REMEDY,
     });
   }
+  let optimizations: Optimizations;
+  try {
+    optimizations = resolveOptimizations(settings);
+  } catch (error) {
+    return fail({ code: 'STIM_BAD_ARG', message: (error as Error).message, remedy: SETTING_SHAPE_REMEDY });
+  }
+  const buildProfile = optimizationBuildProfile('ios', optimizations);
   const cacheProviderConfig = d.resolveCacheProviderConfig(settingsContext);
   for (const key of unknownSettingKeys(settings)) {
     note(phaseLine('setting', chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`)));
@@ -380,6 +393,8 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
 
   const configuration = resolveConfiguration(opts.configuration, settings);
   const release = isReleaseConfiguration(configuration);
+  const cachePolicy = artifactCachePolicy(optimizations, useBuildCache, release);
+  useBuildCache = cachePolicy.read;
 
   const deviceType = resolveDeviceType(opts.deviceType, settings);
   const runtime = resolveRuntime(opts.runtime, settings);
@@ -572,7 +587,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
   let providerLoad: Promise<LoadCacheProviderResult> | null = null;
   const cacheWarn = createWarnOnce((line) => note(chalk.yellow(phaseLine('cache', line))));
   const loadProvider =
-    cacheProviderConfig && !physical
+    cachePolicy.remote && cacheProviderConfig && !physical
       ? () => (providerLoad ??= d.loadCacheProvider({ projectRoot: root, config: cacheProviderConfig }))
       : null;
   if (cacheProviderConfig && physical) {
@@ -743,6 +758,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
     cacheKey = buildCacheKey(PLATFORM, fingerprint, {
       ...(configuration ? { configuration } : {}),
       isSimulator: !physical,
+      ...(buildProfile ? { buildProfile } : {}),
     });
     stats.setCacheKey(cacheKey);
     storeHash = fingerprint;
@@ -780,7 +796,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
     }
     phase(
       'fingerprint',
-      `${shortHash(fingerprint)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : ' (--no-build-cache)'} ${fingerprintTimer()}${missDiff}`,
+      `${shortHash(fingerprint)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : opts.buildCache === false ? ' (--no-build-cache)' : ' (cache reuse off in config)'} ${fingerprintTimer()}${missDiff}`,
     );
     if (missUntracked) note(chalk.dim(phaseLine('fingerprint', missUntracked)));
     if (found?.tier === 'provider') {
@@ -793,7 +809,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
   }
 
   async function resolveRemoteArtifact(): Promise<void> {
-    if (physical) return;
+    if (physical || !cachePolicy.remote || buildProfile) return;
     if (!appPath) {
       const loaded: LoadProjectProviderResult = await d.loadProjectProvider(root, { isExpo });
       if (loaded?.unavailable) {
@@ -1137,6 +1153,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
             storeKey = buildCacheKey(PLATFORM, after.hash, {
               ...(configuration ? { configuration } : {}),
               isSimulator: !physical,
+              ...(buildProfile ? { buildProfile } : {}),
             });
             note(
               chalk.dim(
@@ -1169,6 +1186,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
             logWriter: logWriter(),
             ...(configuration ? { configuration } : {}),
             estimateMs: estimates().coldBuildMs,
+            optimizations: optimizations.ios,
           });
           if (result?.failed) {
             phase('build', `FAILED after ${formatDuration(result.durationMs)}`);
@@ -1189,7 +1207,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
           appPath = result.appPath ?? null;
           bundleId = result.bundleId ?? null;
 
-          if (storeKey) {
+          if (storeKey && cachePolicy.write) {
             try {
               const stored = await storeTieredBuild({
                 local: filesystemBuildCapability({

@@ -26,7 +26,6 @@ import {
   setRepoSetting,
   unsetRepoSetting,
   getConcurrencyLimits,
-  metroStoreInjectionEnabled,
 } from '../config.ts';
 import { makeConfig } from './_factories.ts';
 import assert from 'node:assert';
@@ -414,20 +413,4 @@ test('a negative or garbage value reads as unlimited', () => {
     maxBuilds: 0,
     maxDevices: 0,
   });
-});
-
-test('the Metro store injection is ON by default, with no config at all', () => {
-  expect(metroStoreInjectionEnabled()).toBe(true);
-});
-
-test('only the literal false turns it off', () => {
-  saveConfig({ version: 2, projects: {}, repos: {}, caches: { injectMetroStore: false } });
-  expect(metroStoreInjectionEnabled()).toBe(false);
-});
-
-test('a malformed or unrelated caches value leaves it on', () => {
-  for (const caches of [{}, { metroCache: '/x' }, { injectMetroStore: 'false' }, { injectMetroStore: 0 }, ['/x']]) {
-    saveConfig({ version: 2, projects: {}, repos: {}, caches } as never);
-    expect(metroStoreInjectionEnabled()).toBe(true);
-  }
 });

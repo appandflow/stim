@@ -355,7 +355,8 @@ one; nothing per run is kept there.
 No .gitignore entry is created or required.
 Native preparation can change project files: expo prebuild generates native
 sources, and pod install can update Podfile.lock. Review those changes before
-committing. The shared caches need no project-file edits:
+committing. The shared caches need no project-file edits. The defaults below can be changed
+with machine or project optimization settings; see \`guide settings\`:
 
   ios      xcodebuild carries COMPILATION_CACHE_ENABLE_CACHING, a shared
            COMPILATION_CACHE_CAS_PATH and a clang prefix mapping of this
@@ -378,10 +379,14 @@ committing. The shared caches need no project-file edits:
            the project configured -- in-process on a bare project, and through
            Expo's config override on SDK 54+. Expo SDK 53 and older use their
            normal Metro cache. Turn it off machine-wide with
-           { "caches": { "injectMetroStore": false } } in
+           { "optimizations": { "metroSharedCache": false } } in
            ~/.stim/config.json; see \`guide settings\`. A project that calls
            \`sharedCacheStores()\` from @stim-cli/metro in its own metro
            config also gets the \`cache.provider\` tier behind that store.
+
+Every Stim Android build uses a CMake staging profile, including the default
+ccache mode. The first run with this layout configures a separate build tree;
+changing modes selects another profile. See \`guide settings\` for cleanup.
 
 Each reports its cache setup. \`stim doctor\` checks missing or stale setup
 when a build is blocked or slow. It reports what Stim cannot handle itself
@@ -409,29 +414,36 @@ retain a previous worktree's paths even with upstream timestamp fixes, causing
 the header and its consuming objects to miss. Compiling ordinary headers
 instead favors reuse across worktrees at the cost of a slower cold C++ build.
 This does not edit dependency sources or change iOS builds. Without Stim's
-ccache setup, PCH behavior is unchanged. A module with an explicit
+ccache setup, auto PCH behavior is unchanged. Explicit optimizations.android.pch
+on/off applies with any compiler cache selection. A module with an explicit
 CMAKE_DISABLE_PRECOMPILE_HEADERS argument in its default config, build types,
 or product flavors keeps that choice; CMake target-level PCH overrides also
 take precedence. Direct Gradle builds do not receive Stim's init script.
 
 EXPERIMENTAL ANDROID CAS
-STIM_ANDROID_CAS_TOOLCHAIN opts into a private Apple Clang toolchain manifest
-on macOS. It retains PCH and replaces the ccache setup for that invocation.
+optimizations.android.compilerCache="cas" with android.casToolchain under the
+same optimizations object selects a private Apple Clang toolchain manifest
+on macOS. STIM_ANDROID_CAS_TOOLCHAIN also selects CAS in auto mode. It retains
+PCH and replaces the ccache setup for that invocation.
 Compiler results live under $STIM_HOME/android-cas/<toolchain-id>; APK cache
 keys include that ID. This is a development prototype requiring a compatible
 linker and NDK copy, not an automatically installed backend. See
 docs/android-cas-poc.md in the Stim repository for setup, evidence, and limits.
-Use disposable worktrees: their generated CMake configurations retain the
-adapter paths and require the CAS environment even for direct Gradle builds.
+Compiler/PCH modes have separate generated directories under each module's
+.cxx/stim-<profile> (or custom staging root). Switching modes in Stim selects
+the matching directory; direct Gradle builds keep their own configuration.
+Generated CAS directories still depend on Stim's environment and adapter paths.
 
-The launcher persists in the project. AGP writes it into each
+For older, unprofiled builds, the launcher persists in the project. AGP writes
+it into each
 .cxx/**/CMakeCache.txt on the first configure, so a plain \`./gradlew\` in that
 checkout also compiles through ccache -- and a .cxx configured BEFORE the
 variables existed can keep compiling without them until it is cleared once.
 \`stim doctor\` reports stale configurations in this checkout's app and installed
 native modules. Stop native builds, then run \`stim doctor --fix --platform android\`:
-it removes only affected ignored, untracked generated .cxx configurations and
-reruns the diagnostics. The next build recreates them. It refuses directories
+it removes only affected ignored, untracked legacy .cxx configurations and
+reruns the diagnostics. Managed profiles and disabled compiler caches are
+left alone. The next build recreates legacy output. It refuses directories
 outside the checkout and configured custom launchers. Shared ccache entries and
 source files are preserved. Its cache-lock check cannot detect --no-build-cache,
 release-swap fallback, or direct Gradle builds; stop all native builds and keep

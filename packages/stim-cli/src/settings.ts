@@ -1,7 +1,14 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'fs';
 import { isAbsolute, join, relative, resolve, sep } from 'path';
 import type { CacheProviderConfig } from '@stim-cli/cache';
-import { getProjectSettings, getRepoSettings } from './config.ts';
+import { getProjectSettings, getRepoSettings, loadConfig } from './config.ts';
+import {
+  OPTIMIZATION_SHAPES,
+  resolveOptimizations,
+  resolveMetroSharedCache,
+  type Optimizations,
+} from './optimizations.ts';
+import { gitCommonDir as projectGitCommonDir, repoRoot as projectRepoRoot } from './worktree.ts';
 import { TUNNEL_MODES, type TunnelMode } from './engine/metro-reach.ts';
 import type { RemoteDeviceBackend, Settings, SettingsObject } from './types.ts';
 export type { Settings, SettingsObject };
@@ -25,7 +32,7 @@ export function mergeSettingsLayers(layers: Array<SettingsObject | null | undefi
   return out;
 }
 
-type SettingShape = 'string' | 'path' | 'strings' | 'number' | 'object';
+type SettingShape = 'string' | 'path' | 'strings' | 'number' | 'object' | 'boolean';
 
 interface SettingShapeRule {
   expected: string;
@@ -33,6 +40,7 @@ interface SettingShapeRule {
 }
 
 const SETTING_SHAPE_RULES: Record<SettingShape, SettingShapeRule> = {
+  boolean: { expected: 'true or false', accepts: (value) => typeof value === 'boolean' },
   string: { expected: 'a string', accepts: (value) => typeof value === 'string' },
   path: { expected: 'a string path', accepts: (value) => typeof value === 'string' },
   strings: {
@@ -44,6 +52,7 @@ const SETTING_SHAPE_RULES: Record<SettingShape, SettingShapeRule> = {
 };
 
 const SETTING_SHAPES: Record<string, SettingShape> = {
+  ...OPTIMIZATION_SHAPES,
   'ios.deviceType': 'string',
   'ios.runtime': 'string',
   'ios.configuration': 'string',
@@ -431,7 +440,7 @@ export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
   const unknown: string[] = [];
   for (const [key, value] of Object.entries(settings)) {
     const path = prefix ? `${prefix}.${key}` : key;
-    if (KNOWN_SETTINGS.has(path)) continue;
+    if (KNOWN_SETTINGS.has(path) && ![...KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`))) continue;
     if (isPlainObject(value) && [...KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`))) {
       unknown.push(...unknownSettingKeys(value, path));
       continue;
@@ -462,11 +471,30 @@ export function resolveSettings({
   gitCommonDir?: string | null;
   repoRoot?: string | null;
 }): SettingsObject {
+  const machine = loadConfig();
   return mergeSettingsLayers([
     projectPath ? getProjectSettings(projectPath) : null,
     gitCommonDir ? getRepoSettings(gitCommonDir) : null,
     readCommittedSettings(repoRoot),
+    machine?.optimizations === undefined ? null : { optimizations: machine.optimizations },
+    machine?.caches?.injectMetroStore === false ? { optimizations: { metroSharedCache: false } } : null,
   ]);
+}
+
+function settingsForProject(root: string): SettingsObject {
+  return resolveSettings({
+    projectPath: root,
+    gitCommonDir: projectGitCommonDir(root),
+    repoRoot: projectRepoRoot(root) ?? root,
+  });
+}
+
+export function projectOptimizations(root: string): Optimizations {
+  return resolveOptimizations(settingsForProject(root));
+}
+
+export function projectMetroSharedCache(root: string): boolean {
+  return resolveMetroSharedCache(settingsForProject(root));
 }
 
 interface CacheSettingsLayer {

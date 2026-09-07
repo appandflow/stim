@@ -258,6 +258,8 @@ test('the CLI and the Expo provider compute the same key', () => {
   for (const [platform, options] of [
     ['ios', {}],
     ['ios', { configuration: 'Release' }],
+    ['ios', { buildProfile: 'opt-test' }],
+    ['android', { buildProfile: 'opt-test', compiler: 'apple-cas-test' }],
     ['ios', { device: 'generic' }],
     ['ios', { device: 'Janic iPhone' }],
     ['ios', { device: true }],
