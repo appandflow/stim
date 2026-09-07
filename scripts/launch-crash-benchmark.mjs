@@ -37,7 +37,7 @@ function successful(command) {
 function shellCommand(command) {
   const value = String(command ?? '').trim();
   const normalized = topLevelShellCommand(value);
-  if (normalized !== value) return normalized;
+  if (normalized !== value || !/^\/bin\/(?:zsh|bash|sh) -lc\s+/.test(value)) return normalized;
   const body = value.replace(/^\/bin\/(?:zsh|bash|sh) -lc\s+/, '');
   return body.replace(/^["']/, '').replace(/["']$/, '').trim();
 }
@@ -162,6 +162,23 @@ function allowedBeforeErrorCapture(command, arm, platform) {
     ).test(value);
   }
   if (platform === 'android') {
+    if (
+      /^(?:echo\s+["']?\$!["']?|printf\s+['"]%s\\n['"]\s+["']?\$!["']?)\s*>\s*\/(?:private\/)?tmp\/[A-Za-z0-9_./-]+\.pid$/.test(
+        value,
+      )
+    )
+      return true;
+    if (/^cd\s+(?:"[^"$`]+"|'[^']+'|[^\s;&|$`]+)$/.test(value)) return true;
+    if (/^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"$`]*"|'[^']*'|[^\s;&|$`]+)$/.test(value)) return true;
+    const pipeline = value.split(/\s+\|\s+/);
+    if (
+      pipeline.length > 1 &&
+      /^adb\s+(?:-s\s+\S+\s+)?logcat\b[^|;&]*$/.test(pipeline[0]) &&
+      pipeline
+        .slice(1)
+        .every((filter) => /^(?:rg|grep)(?:\s+-[EinFv]+)*\s+(?:"[^"$`]*"|'[^']*'|[A-Za-z0-9_:.-]+)$/.test(filter))
+    )
+      return true;
     const segments = shellCommandSegments(value);
     if (segments.length > 1) return segments.every((segment) => allowedBeforeErrorCapture(segment, arm, platform));
     if (/^(?:avdmanager|emulator|sdkmanager)\b/.test(value)) return true;
