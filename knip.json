@@ -3,6 +3,7 @@
   "ignore": [
     "website/**",
     "packages/stim-cli/shim/**",
+    "scripts/agent-benchmark/compat/ps-bridge.mjs",
     "scripts/agent-benchmark/stamp.mjs",
     "scripts/agent-benchmark/watch-app.mjs"
   ]

@@ -106,6 +106,29 @@ checks before starting the clock and records the policy digest. This is a
 macOS benchmark-data boundary, not a security sandbox for hostile code or
 already-running native services. Unsupported hosts fail closed.
 
+### iOS sandbox compatibility
+
+For the pinned agent-device 0.20.10 / ExpoModulesJSI fixture affected by
+sandboxed process inspection and nested SwiftPM sandboxes, prepare an explicit
+local compatibility copy with `prepareNativeCompatibility` from
+`native-compat.mjs`. Supply a new destination, the installed package, an exact
+reviewed native-helper source commit and SHA-256, and a dedicated fixture copy.
+The adapter refuses unknown base bytes. It does not update a global install.
+It patches the copied package and the selected fixture's ignored JSI build
+script; prepare fresh golden state afterward because native inputs changed.
+
+Set `STIM_BENCH_AGENT_DEVICE_BIN` to the copied `bin/agent-device.mjs`,
+`STIM_BENCH_NATIVE_COMPAT_MANIFEST` to the generated manifest, and pin its digest
+as `NATIVE_COMPAT_SHA256` in the new campaign's `pins.env`. Both arms receive
+the same package and Xcode wrapper. Do not retrofit frozen campaign pins.
+The package tree, native helper source, bridge, and Xcode/JSI changes are
+hash-bound, including executable permissions and internal symlinks. The bridge
+adds a Node process for each process query in both arms. Preflight repeats the
+process-identity and Xcode-resolution smoke inside the run's exact isolation
+profile before starting the clock; collection rejects changed compatibility
+bytes. This does not replace a real untimed build, recording, and cleanup test
+before accepting a new toolchain combination.
+
 ## Run a cell
 
 Prepare the platform golden, then dispatch, collect, and clean one cell:
