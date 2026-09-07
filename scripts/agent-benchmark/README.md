@@ -129,6 +129,14 @@ profile before starting the clock; collection rejects changed compatibility
 bytes. This does not replace a real untimed build, recording, and cleanup test
 before accepting a new toolchain combination.
 
+Android launch-error control preparation carries dependencies and native outputs
+but leaves out the root `android/build` directory. Its generated autolinking cache
+contains absolute source-checkout paths and package checksums that survive a copy.
+The control prompt also requires excluding `android/build/generated/autolinking`
+when the agent creates its run worktree. Gradle regenerates this metadata locally;
+`android/app/build` remains available for native output reuse. Verify the generated
+project and dependency roots belong to the run worktree before accepting a pilot.
+
 ## Run a cell
 
 Prepare the platform golden, then dispatch, collect, and clean one cell:
