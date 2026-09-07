@@ -166,6 +166,11 @@ the app process without requiring the native-change task's APK-label mutation;
 validation still requires runtime error evidence before source inspection,
 the exact repair, and Settings-screen screenshot/video proof.
 
+A launch can finish before the JavaScript error reaches its log. Both arms must
+wait for a completed foreground log query to print the error and source location
+before inspecting or editing source. An empty successful query or a redbox visible
+only through device automation does not satisfy this log-first diagnosis measure.
+
 `dispatch` creates and commits the broken fixture before the timed turn, gives
 the agent the fixture checkout as its starting directory, and requires the
 agent to create the measured run worktree itself. `collect` rejects source
