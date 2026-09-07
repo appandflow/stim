@@ -438,6 +438,23 @@ describe('benchmark viewer export', () => {
     expect(
       sanitizeCommandOutput('git status --short; git branch -a', 'remotes/origin/@janic/issue-1-clear-filters'),
     ).toBe('<branch inventory omitted from public artifact>');
+    expect(
+      sanitizeCommandOutput('git worktree list && git status', 'worktree/private-diagnostic [private-branch]'),
+    ).toBe('<branch inventory omitted from public artifact>');
+  });
+
+  it('omits coordinator listings and unrelated AVD names without changing ordinary command output', () => {
+    for (const command of [
+      'ls -la /private/benchmark; echo ---; ls -la /private/benchmark/state',
+      'ls ~/.android/avd',
+      'find /private/benchmark/results -maxdepth 2 -type d',
+      '/bin/ls -la /private/benchmark',
+    ]) {
+      expect(sanitizeCommandOutput(command, 'private-run-id\nPersonal_Device.avd\nprivate-audit.json')).toBe(
+        '<directory inventory omitted from public artifact>',
+      );
+    }
+    expect(sanitizeCommandOutput('cat build.log', 'BUILD SUCCESSFUL')).toBe('BUILD SUCCESSFUL');
   });
 
   it('redacts a user-scoped remote branch outside an inventory', () => {
@@ -626,7 +643,7 @@ describe('benchmark viewer export', () => {
     expect(readdirSync(proofDir)).toEqual(['fixture-control.png']);
   });
 
-  it('requires integrity-bound Android readiness and cleanup evidence', () => {
+  it('requires integrity-bound Android evidence even when correcting a session audit', () => {
     const root = mkdtempSync(join(tmpdir(), 'stim-android-export-'));
     tempDirs.push(root);
     const stageDir = join(root, 'results', 'sol-android');
@@ -749,6 +766,104 @@ describe('benchmark viewer export', () => {
     const payload = exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'));
     expect(payload.runs).toHaveLength(1);
     expect(payload.runs[0].commands[0].output).toBe('emulator <simulator-udid>');
+
+    const eventsPath = join(runDir, 'events.jsonl');
+    const metaPath = join(runDir, 'meta.json');
+    const originalEvents = readFileSync(eventsPath, 'utf8');
+    const originalMeta = readFileSync(metaPath, 'utf8');
+    const prefix = 'env AGENT_DEVICE_STATE_DIR=state AGENT_DEVICE_SESSION=private-run-id agent-device ';
+    const scopedEvents = originalEvents
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const stamped = JSON.parse(line);
+        const event = JSON.parse(stamped.line);
+        event.item.command = event.item.command.replace(/^agent-device /, prefix);
+        stamped.line = JSON.stringify(event);
+        return stamped;
+      });
+    writeFileSync(eventsPath, scopedEvents.map((event) => JSON.stringify(event)).join('\n') + '\n');
+    writeFileSync(
+      metaPath,
+      JSON.stringify({ ...JSON.parse(originalMeta), agentDevice: { stateDir: 'state', session: 'private-run-id' } }),
+    );
+    const commandsPath = join(runDir, 'commands.log');
+    const scopedCommands = scopedEvents
+      .map((event) => JSON.parse(event.line))
+      .filter((event) => event.type === 'item.started')
+      .map(({ item }) => ({ id: item.id, command: item.command }));
+    writeFileSync(commandsPath, scopedCommands.map((command) => JSON.stringify(command)).join('\n') + '\n');
+    const rejectedRecord = {
+      ...record,
+      valid: false,
+      invalidReasons: ['agent-device-run-session-not-applied'],
+      evidenceSha256: { ...record.evidenceSha256, events: sha256(eventsPath) },
+    };
+    writeFileSync(recordPath, JSON.stringify(rejectedRecord));
+    const correctionPath = join(runDir, 'lookup-audit-correction.json');
+    const correction = {
+      schemaVersion: 1,
+      runId: record.runId,
+      originalRecordSha256: sha256(recordPath),
+      correctionSourceSha256: sha256(join(process.cwd(), 'scripts/agent-benchmark/run-guards.mjs')),
+      commandsSha256: sha256(commandsPath),
+      commandCount: scopedCommands.length,
+    };
+    writeFileSync(correctionPath, JSON.stringify(correction));
+    expect(exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof')).runs[0]).toMatchObject({
+      valid: true,
+      settingsReadySeconds: 8,
+    });
+    expect(JSON.parse(readFileSync(recordPath))).toEqual(rejectedRecord);
+    for (const change of [
+      { originalRecordSha256: 'stale' },
+      { commandsSha256: 'stale' },
+      { correctionSourceSha256: 'stale' },
+      { commandCount: 0 },
+    ]) {
+      writeFileSync(correctionPath, JSON.stringify({ ...correction, ...change }));
+      expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'))).toThrow(
+        'no valid benchmark runs found',
+      );
+    }
+    const otherFailure = {
+      ...rejectedRecord,
+      invalidReasons: [...rejectedRecord.invalidReasons, 'benchmark-run-timeout'],
+    };
+    writeFileSync(recordPath, JSON.stringify(otherFailure));
+    writeFileSync(correctionPath, JSON.stringify({ ...correction, originalRecordSha256: sha256(recordPath) }));
+    expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'))).toThrow(
+      'no valid benchmark runs found',
+    );
+    writeFileSync(recordPath, JSON.stringify(rejectedRecord));
+    writeFileSync(correctionPath, JSON.stringify(correction));
+    writeFileSync(
+      commandsPath,
+      scopedCommands
+        .map((command, index) =>
+          JSON.stringify(index === 0 ? { ...command, command: 'agent-device snapshot' } : command),
+        )
+        .join('\n') + '\n',
+    );
+    writeFileSync(correctionPath, JSON.stringify({ ...correction, commandsSha256: sha256(commandsPath) }));
+    expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'))).toThrow(
+      'no valid benchmark runs found',
+    );
+    writeFileSync(commandsPath, scopedCommands.map((command) => JSON.stringify(command)).join('\n') + '\n');
+    writeFileSync(correctionPath, JSON.stringify(correction));
+    writeFileSync(
+      metaPath,
+      JSON.stringify({
+        ...JSON.parse(originalMeta),
+        agentDevice: { stateDir: 'wrong-state', session: 'private-run-id' },
+      }),
+    );
+    expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'))).toThrow(
+      'no valid benchmark runs found',
+    );
+    writeFileSync(metaPath, originalMeta);
+    writeFileSync(eventsPath, originalEvents);
+    writeFileSync(recordPath, JSON.stringify(record));
 
     const completeRecording = readFileSync(recordingPath);
     const shortRecording = Buffer.from(completeRecording);
