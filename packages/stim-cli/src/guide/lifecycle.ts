@@ -604,6 +604,11 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   worktrees of the same Git repository; the main checkout
   must be available. Running it in the main checkout refuses.
 
+  Wait for warm to exit successfully (exit code 0) before running start,
+  ios, android, or a dependency install in that worktree. If a shell tool
+  yields a running session or job ID, poll or wait for completion; empty
+  stdout or a returned job ID does not mean the copy has finished.
+
   Warm copies installed dependencies, Pods, native output, and other ignored
   paths eligible under the main checkout's Git ignore rules, including .env
   and local configuration. The source's nonempty

@@ -219,11 +219,14 @@ test('the errors topic documents every code the build commands and the iOS signi
   }
 });
 
-test('current guides expose warm and remove while leaving worktree creation to Git', () => {
+test('current guides require completed warming and leave worktree creation to Git', () => {
   const body = allBodies().join('\n');
   expect(body).toContain('git worktree add');
   expect(body).toContain('stim worktree warm');
   expect(body).toContain('stim worktree remove');
+  for (const guide of [renderTopic('agent'), renderSection('lifecycle', 'options')]) {
+    expect(guide).toContain('Wait for warm to exit successfully (exit code 0)');
+  }
   expect(body).not.toMatch(/worktree create|--carry-ignored|STIM_WORKTREE_BRANCH_EXISTS/);
   expect(body).not.toMatch(/worktreeDir|worktree\.baseRef|worktree\.include|\.worktreeinclude/);
   expect(sectionLookup('errors')['STIM_WORKTREE_BRANCH_EXISTS']).toBeUndefined();
