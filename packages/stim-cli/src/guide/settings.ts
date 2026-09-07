@@ -323,7 +323,8 @@ The example shows the defaults. Full setting names and behavior:
   optimizations.metroSharedCache
     false stops Stim appending its shared Metro store on both dev servers.
     Project-configured stores remain the project's choice. The older machine
-    caches.injectMetroStore=false is still supported as a fallback.
+    caches.injectMetroStore=false is still supported as a fallback. An explicit
+    repository/project metroSharedCache=true overrides that machine fallback.
   optimizations.ios.compilationCache
     controls Xcode compilation caching (Xcode 26+).
   optimizations.ios.swiftCompilationCache
@@ -352,12 +353,17 @@ The example shows the defaults. Full setting names and behavior:
     false stops narrowing Debug builds to the device ABI. Release is always
     universal; project ABI filters still apply.
 
-Compiler/PCH choices use separate native artifact keys. Legacy Expo providers
+Android CAS, explicit PCH modes, and changed iOS compiler options use separate
+native artifact keys. Android ccache and none share an artifact key when their
+PCH mode matches; disable artifact caching too to force native compilation. Legacy Expo providers
 cannot key these compiler profiles, so Stim skips that tier for custom profiles
 and Android CAS. Providers implementing the Stim key contract remain usable.
 Android compiler/PCH profiles also get separate CMake staging directories under
 <module>/.cxx/stim-<profile>, or under the project's custom staging root. Switching
 backends in Stim selects the matching directory without deleting previous builds.
+These directories accumulate across profile changes and shim upgrades. Stim
+does not prune them; remove an obsolete generated profile only with all native
+builds stopped. Worktree removal reclaims profiles with the rest of the tree.
 Direct Gradle runs keep their own configuration. These switches control Stim's
 build invocations; they do not edit Xcode, Gradle, CMake, or Metro project files.
 

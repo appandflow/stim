@@ -1,7 +1,7 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
 import { dirname, join, parse } from 'node:path';
-import { projectOptimizations } from '../settings.ts';
+import { projectMetroSharedCache } from '../settings.ts';
 import { getExecutor } from '../exec.ts';
 import { type NdjsonRecord, type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi } from '../process-output.ts';
@@ -202,7 +202,7 @@ function resolveMetroStoreInjection(
   root: string,
   { log, env }: { log: NdjsonWriter; env: NodeJS.ProcessEnv },
 ): Record<string, string> | null {
-  if (!projectOptimizations(root).metroSharedCache) {
+  if (!projectMetroSharedCache(root)) {
     log.write({
       src: 'metro',
       level: 'debug',

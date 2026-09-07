@@ -642,7 +642,7 @@ describe('startBareServer and the shared store', () => {
     expect(added[0]?.msg).toContain(metroStoreRoot(root));
   });
 
-  test.each(['legacy', 'machine', 'project'])(
+  test.each(['legacy', 'machine', 'project', 'native-invalid'])(
     '%s Metro opt-out leaves the project config exactly as loaded',
     async (layer) => {
       writeFileSync(
@@ -655,8 +655,18 @@ describe('startBareServer and the shared store', () => {
             : { optimizations: { metroSharedCache: layer !== 'machine' } }),
         }),
       );
-      if (layer === 'project')
-        writeFileSync(join(root, '.stim.json'), JSON.stringify({ optimizations: { metroSharedCache: false } }));
+      if (layer === 'project' || layer === 'native-invalid')
+        writeFileSync(
+          join(root, '.stim.json'),
+          JSON.stringify({
+            optimizations: {
+              metroSharedCache: false,
+              ...(layer === 'native-invalid'
+                ? { android: { compilerCache: 'cas' }, ios: { compilationCache: 'false' } }
+                : {}),
+            },
+          }),
+        );
       const projectStore = { name: 'project store' };
       const { deps, seen } = configuringDeps([projectStore]);
       const writer = recordingWriter();

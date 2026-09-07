@@ -1607,6 +1607,7 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as unknown as boolea
   test.each([
     { compilationCache: true, swiftCompilationCache: false, prefixMapping: true },
     { compilationCache: false, swiftCompilationCache: false, prefixMapping: false },
+    { compilationCache: false, swiftCompilationCache: false, prefixMapping: true },
     { compilationCache: true, swiftCompilationCache: true, prefixMapping: true },
   ])(
     'builds a real app with compiler optimizations %j',

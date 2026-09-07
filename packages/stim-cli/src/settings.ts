@@ -2,7 +2,12 @@ import { existsSync, readFileSync, realpathSync, statSync } from 'fs';
 import { isAbsolute, join, relative, resolve, sep } from 'path';
 import type { CacheProviderConfig } from '@stim-cli/cache';
 import { getProjectSettings, getRepoSettings, loadConfig } from './config.ts';
-import { OPTIMIZATION_SHAPES, resolveOptimizations, type Optimizations } from './optimizations.ts';
+import {
+  OPTIMIZATION_SHAPES,
+  resolveOptimizations,
+  resolveMetroSharedCache,
+  type Optimizations,
+} from './optimizations.ts';
 import { gitCommonDir as projectGitCommonDir, repoRoot as projectRepoRoot } from './worktree.ts';
 import { TUNNEL_MODES, type TunnelMode } from './engine/metro-reach.ts';
 import type { RemoteDeviceBackend, Settings, SettingsObject } from './types.ts';
@@ -476,14 +481,20 @@ export function resolveSettings({
   ]);
 }
 
+function settingsForProject(root: string): SettingsObject {
+  return resolveSettings({
+    projectPath: root,
+    gitCommonDir: projectGitCommonDir(root),
+    repoRoot: projectRepoRoot(root) ?? root,
+  });
+}
+
 export function projectOptimizations(root: string): Optimizations {
-  return resolveOptimizations(
-    resolveSettings({
-      projectPath: root,
-      gitCommonDir: projectGitCommonDir(root),
-      repoRoot: projectRepoRoot(root) ?? root,
-    }),
-  );
+  return resolveOptimizations(settingsForProject(root));
+}
+
+export function projectMetroSharedCache(root: string): boolean {
+  return resolveMetroSharedCache(settingsForProject(root));
 }
 
 interface CacheSettingsLayer {

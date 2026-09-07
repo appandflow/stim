@@ -4974,7 +4974,7 @@ test('an unavailable CAS manifest returns one JSON refusal before device or buil
     expect(h.stdout).toHaveLength(1);
     expect(JSON.parse(h.stdout[0]!)).toMatchObject({
       code: 'STIM_BAD_ARG',
-      message: expect.stringContaining('Could not prepare Android CAS'),
+      message: expect.stringContaining('Could not configure Android build'),
     });
   } finally {
     if (previous === undefined) delete process.env.STIM_ANDROID_CAS_TOOLCHAIN;

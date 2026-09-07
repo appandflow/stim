@@ -764,6 +764,9 @@ describe('buildAndroid', () => {
     assert(spawnEnv);
     expect(spawnEnv.CMAKE_CXX_COMPILER_LAUNCHER).toBe('/opt/homebrew/bin/ccache');
     expect(spawnEnv.CCACHE_DIR).toBe(join(root, 'ccache'));
+    expect(spawnEnv.STIM_ANDROID_CCACHE).toBe('on');
+    expect(spawnEnv.STIM_ANDROID_PCH).toBe('auto');
+    expect(spawnEnv.STIM_ANDROID_NATIVE_PROFILE).toMatch(/^[a-f0-9]{16}$/);
     expect(spawnEnv.TERM).toBe('dumb');
     expect(result.ccache).toEqual({ status: 'reported', hits: 1, misses: 1, hitRatePercent: 50 });
     expect(notes.some((line) => line.includes('PCH off by default'))).toBe(true);
@@ -792,6 +795,8 @@ describe('buildAndroid', () => {
             nativeScript,
           ]);
           expect((opts.env as NodeJS.ProcessEnv).CMAKE_CXX_COMPILER_LAUNCHER).toBe('');
+          expect((opts.env as NodeJS.ProcessEnv).STIM_ANDROID_CCACHE).toBe('off');
+          expect((opts.env as NodeJS.ProcessEnv).STIM_ANDROID_PCH).toBe('auto');
           expect((opts.env as NodeJS.ProcessEnv).STIM_ANDROID_CAS_CONTEXT).toBe(join(root, 'context.json'));
           return fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() });
         },
@@ -1059,4 +1064,31 @@ describe('a real flavored build.gradle', () => {
     );
     expect(parseProductFlavors(text)).toEqual({ known: false, dimensions: [] });
   });
+});
+
+test('uncached PCH modes pass explicit policy and distinct CMake profiles to Gradle', async () => {
+  makeAndroidProject();
+  const profiles: string[] = [];
+  for (const pch of ['on', 'off'] as const) {
+    const result = await buildAndroid(
+      { root },
+      {
+        pch,
+        compilerCacheDisabled: true,
+        env: { CMAKE_CXX_COMPILER_LAUNCHER: '/inherited/ccache' },
+        spawnFn: (_cmd, _args, opts) => {
+          const env = opts.env as NodeJS.ProcessEnv;
+          expect(env.CMAKE_CXX_COMPILER_LAUNCHER).toBe('');
+          expect(env.CCACHE_DISABLE).toBe('1');
+          expect(env.STIM_ANDROID_CCACHE).toBe('off');
+          expect(env.STIM_ANDROID_PCH).toBe(pch);
+          profiles.push(env.STIM_ANDROID_NATIVE_PROFILE!);
+          return fakeChild({ lines: ['BUILD SUCCESSFUL'], onExit: () => writeApk() });
+        },
+      },
+    );
+    expect(result.ok).toBe(true);
+  }
+  expect(profiles[0]).toMatch(/^[a-f0-9]{16}$/);
+  expect(profiles[0]).not.toBe(profiles[1]);
 });

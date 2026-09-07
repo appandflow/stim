@@ -727,23 +727,15 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     out(phaseLine('setting', chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`)));
   }
   let optimizations: Optimizations;
-  try {
-    optimizations = resolveOptimizations(settings);
-  } catch (error) {
-    return fail('STIM_BAD_ARG', (error as Error).message, SETTING_SHAPE_REMEDY);
-  }
   let cas: ReturnType<typeof resolveAndroidCas>;
   try {
+    optimizations = resolveOptimizations(settings);
     cas =
       optimizations.android.compilerCache === 'cas'
         ? resolveAndroidCas(root, { ...process.env, STIM_ANDROID_CAS_TOOLCHAIN: optimizations.android.casToolchain! })
         : null;
   } catch (error) {
-    return fail(
-      'STIM_BAD_ARG',
-      `Could not prepare Android CAS: ${(error as Error).message}`,
-      'Fix optimizations.android.casToolchain or STIM_ANDROID_CAS_TOOLCHAIN, or select compilerCache=ccache. See `stim guide settings`.',
-    );
+    return fail('STIM_BAD_ARG', `Could not configure Android build: ${(error as Error).message}`, SETTING_SHAPE_REMEDY);
   }
   const buildProfile = optimizationBuildProfile('android', optimizations);
   const cacheProviderConfig = resolveCacheProvider(settingsContext);

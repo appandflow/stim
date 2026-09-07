@@ -554,7 +554,7 @@ describe('the Metro store injected into an Expo child', () => {
     expect(String(records.find((record) => record.event === 'cache_store_skipped')?.msg)).toContain('predates');
   });
 
-  test.each(['legacy', 'machine', 'project'])(
+  test.each(['legacy', 'machine', 'project', 'native-invalid'])(
     '%s Metro opt-out leaves NODE_OPTIONS exactly as the caller set it',
     async (layer) => {
       writeFileSync(
@@ -567,8 +567,18 @@ describe('the Metro store injected into an Expo child', () => {
             : { optimizations: { metroSharedCache: layer !== 'machine' } }),
         }),
       );
-      if (layer === 'project')
-        writeFileSync(join(root, '.stim.json'), JSON.stringify({ optimizations: { metroSharedCache: false } }));
+      if (layer === 'project' || layer === 'native-invalid')
+        writeFileSync(
+          join(root, '.stim.json'),
+          JSON.stringify({
+            optimizations: {
+              metroSharedCache: false,
+              ...(layer === 'native-invalid'
+                ? { android: { compilerCache: 'cas' }, ios: { compilationCache: 'false' } }
+                : {}),
+            },
+          }),
+        );
       fakeBin();
       process.env.NODE_OPTIONS = '--enable-source-maps';
       const logsDir = join(root, '.stim', 'logs');

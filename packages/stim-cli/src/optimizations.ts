@@ -49,25 +49,8 @@ export function resolveOptimizations(
   settings: SettingsObject = {},
   env: NodeJS.ProcessEnv = process.env,
 ): Optimizations {
-  function value(path: string): unknown {
-    let node: unknown = settings;
-    for (const key of ['optimizations', ...path.split('.')]) {
-      if (node === undefined) return undefined;
-      if (!node || typeof node !== 'object' || Array.isArray(node)) {
-        throw new Error('Invalid optimizations setting. Expected nested objects.');
-      }
-      node = (node as SettingsObject)[key];
-    }
-    return node;
-  }
-  function boolean(path: string, fallback = true): boolean {
-    const raw = value(path);
-    if (raw === undefined) return fallback;
-    if (typeof raw !== 'boolean') throw new Error(`Invalid optimizations.${path}. Expected true or false.`);
-    return raw;
-  }
   function choice<T extends string>(path: string, choices: readonly T[], fallback: T): T {
-    const raw = value(path);
+    const raw = optimizationValue(settings, path);
     if (raw === undefined) return fallback;
     if (typeof raw !== 'string' || !choices.includes(raw as T)) {
       throw new Error(`Invalid optimizations.${path}. Expected ${choices.join(', ')}.`);
@@ -75,7 +58,7 @@ export function resolveOptimizations(
     return raw as T;
   }
   const compiler = choice('android.compilerCache', ['auto', 'ccache', 'cas', 'none'], 'auto');
-  const manifest = env.STIM_ANDROID_CAS_TOOLCHAIN || value('android.casToolchain');
+  const manifest = env.STIM_ANDROID_CAS_TOOLCHAIN || optimizationValue(settings, 'android.casToolchain');
   if (manifest !== undefined && (typeof manifest !== 'string' || !isAbsolute(manifest) || /[\r\n\0]/.test(manifest))) {
     throw new Error('Invalid Android CAS toolchain. Expected an absolute path to the toolchain JSON manifest.');
   }
@@ -86,21 +69,21 @@ export function resolveOptimizations(
     );
   }
   return {
-    buildCache: boolean('buildCache'),
-    remoteBuildCache: boolean('remoteBuildCache'),
-    releaseBundleSwap: boolean('releaseBundleSwap'),
-    metroSharedCache: boolean('metroSharedCache'),
+    buildCache: optimizationBoolean(settings, 'buildCache'),
+    remoteBuildCache: optimizationBoolean(settings, 'remoteBuildCache'),
+    releaseBundleSwap: optimizationBoolean(settings, 'releaseBundleSwap'),
+    metroSharedCache: optimizationBoolean(settings, 'metroSharedCache'),
     ios: {
-      compilationCache: boolean('ios.compilationCache'),
-      swiftCompilationCache: boolean('ios.swiftCompilationCache', false),
-      prefixMapping: boolean('ios.prefixMapping'),
+      compilationCache: optimizationBoolean(settings, 'ios.compilationCache'),
+      swiftCompilationCache: optimizationBoolean(settings, 'ios.swiftCompilationCache', false),
+      prefixMapping: optimizationBoolean(settings, 'ios.prefixMapping'),
     },
     android: {
       compilerCache,
       casToolchain: (manifest as string | undefined) ?? null,
       pch: choice('android.pch', ['auto', 'on', 'off'], 'auto'),
-      gradleBuildCache: boolean('android.gradleBuildCache'),
-      targetAbiOnly: boolean('android.targetAbiOnly'),
+      gradleBuildCache: optimizationBoolean(settings, 'android.gradleBuildCache'),
+      targetAbiOnly: optimizationBoolean(settings, 'android.targetAbiOnly'),
     },
   };
 }
@@ -115,4 +98,26 @@ export function artifactCachePolicy(
     write: options.buildCache,
     remote: options.buildCache && options.remoteBuildCache,
   };
+}
+
+function optimizationValue(settings: SettingsObject, path: string): unknown {
+  let node: unknown = settings;
+  for (const key of ['optimizations', ...path.split('.')]) {
+    if (node === undefined) return undefined;
+    if (!node || typeof node !== 'object' || Array.isArray(node))
+      throw new Error('Invalid optimizations setting. Expected nested objects.');
+    node = (node as SettingsObject)[key];
+  }
+  return node;
+}
+
+function optimizationBoolean(settings: SettingsObject, path: string, fallback = true): boolean {
+  const raw = optimizationValue(settings, path);
+  if (raw === undefined) return fallback;
+  if (typeof raw !== 'boolean') throw new Error(`Invalid optimizations.${path}. Expected true or false.`);
+  return raw;
+}
+
+export function resolveMetroSharedCache(settings: SettingsObject): boolean {
+  return optimizationBoolean(settings, 'metroSharedCache');
 }

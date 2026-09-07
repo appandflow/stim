@@ -31,7 +31,7 @@ import {
   tunnelModeSetting,
   unknownSettingKeys,
 } from '../settings.ts';
-import { resolveOptimizations } from '../optimizations.ts';
+import { resolveOptimizations, resolveMetroSharedCache } from '../optimizations.ts';
 import { saveConfig, setProjectSetting, setRepoSetting, upsertProject } from '../config.ts';
 
 type SettingsView = {
@@ -683,4 +683,12 @@ test('the legacy machine Metro opt-out remains a fallback that a project can ove
   expect(resolveOptimizations(resolveSettings({}), {}).metroSharedCache).toBe(false);
   writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ optimizations: { metroSharedCache: true } }));
   expect(resolveOptimizations(resolveSettings({ repoRoot: tmpHome }), {}).metroSharedCache).toBe(true);
+});
+
+test('an absent or malformed legacy cache setting leaves the shared Metro store enabled', () => {
+  expect(resolveMetroSharedCache(resolveSettings({}))).toBe(true);
+  for (const caches of [{}, { metroCache: '/x' }, { injectMetroStore: 'false' }, { injectMetroStore: 0 }, ['/x']]) {
+    saveConfig({ version: 2, projects: {}, repos: {}, caches } as never);
+    expect(resolveMetroSharedCache(resolveSettings({}))).toBe(true);
+  }
 });
