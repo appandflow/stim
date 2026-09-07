@@ -28,6 +28,7 @@ import {
 } from '../launch-crash-benchmark.mjs';
 import { benchmarkFingerprint, selectBenchmarkCacheKey } from './cache-key.mjs';
 import { matchesGoldenPreparation } from './golden-state.mjs';
+import { collectedNativeCompatibility, probeNativeCompatibility, verifyNativeCompatibility } from './native-compat.mjs';
 import {
   androidApplicationLabelFromBadging,
   matchesExpectedAndroidEmulator,
@@ -66,6 +67,7 @@ const worktreeParent = resolve(process.env.STIM_BENCH_WORKTREE_PARENT ?? join(ro
 const stimPackage = resolve(process.env.STIM_BENCH_STIM_PACKAGE ?? join(root, 'runtime', 'node_modules', 'stim-cli'));
 const stimCli = join(stimPackage, 'dist', 'cli.mjs');
 const agentDeviceBin = process.env.STIM_BENCH_AGENT_DEVICE_BIN ?? 'agent-device';
+const nativeCompatManifest = process.env.STIM_BENCH_NATIVE_COMPAT_MANIFEST;
 const claudeBin = process.env.STIM_BENCH_CLAUDE_BIN ?? 'claude';
 const codexBin = process.env.STIM_BENCH_CODEX_BIN ?? 'codex';
 const agentSkillsRoot = process.env.STIM_BENCH_SKILLS_ROOT;
@@ -332,6 +334,12 @@ function ensureDirs() {
 }
 
 function prepareAllowedBin() {
+  const compatibility = verifyNativeCompatibility(
+    nativeCompatManifest,
+    pins.NATIVE_COMPAT_SHA256,
+    main,
+    executablePath(agentDeviceBin),
+  );
   const names = [
     'adb',
     'agent-device',
@@ -347,15 +355,26 @@ function prepareAllowedBin() {
     'sdkmanager',
     'watchman',
   ];
+  if (compatibility) names.push('xcodebuild');
   for (const name of names) {
     let source;
     try {
-      source = run('/usr/bin/which', [name], { cwd: root });
+      source =
+        name === 'agent-device'
+          ? executablePath(agentDeviceBin)
+          : name === 'xcodebuild' && compatibility
+            ? join(compatibility.directory, 'bin/xcodebuild')
+            : run('/usr/bin/which', [name], { cwd: root });
     } catch {
       continue;
     }
     const target = join(allowedBin, name);
-    if (!existsSync(source) || existsSync(target)) continue;
+    if (!existsSync(source)) continue;
+    if (existsSync(target)) {
+      if (realpathSync(target) !== realpathSync(source))
+        throw new Error(`allowed tool ${name} resolves to a stale target`);
+      continue;
+    }
     symlinkSync(source, target);
   }
   chmodSync(join(stimBin, 'stim'), 0o755);
@@ -514,6 +533,12 @@ function preflight(requestedPlatform = 'ios') {
   ensureDirs();
   prepareAllowedBin();
   const actual = versionChecks();
+  const nativeCompatibility = verifyNativeCompatibility(
+    nativeCompatManifest,
+    pins.NATIVE_COMPAT_SHA256,
+    main,
+    executablePath(agentDeviceBin),
+  );
   const targets = benchmarkTargets();
   if (!readFileSync(join(stimBin, 'stim'), 'utf8').includes(stimCli)) {
     throw new Error('Stim shim does not target the pinned CLI checkout');
@@ -562,6 +587,7 @@ function preflight(requestedPlatform = 'ios') {
   const preflightRecord = {
     checkedAt: new Date().toISOString(),
     actual,
+    nativeCompatibility,
     disk,
     load,
     thermal,
@@ -928,9 +954,9 @@ function platformLaunchInstructions(arm, platform, runId, startMetro) {
       : `Use the Stim skill and only the pinned published command available on PATH as exactly \`stim\` (never through npx or an absolute path). Keep the inherited STIM_HOME unchanged. Run \`stim start\`, then run \`stim android --system-image ${JSON.stringify(pins.ANDROID_SYSTEM_IMAGE)}\`. Leave Metro and the changed app running until the screenshot is saved.`;
   }
   if (platform === 'android') {
-    return `Use only the project's local Expo and Android SDK tooling; do not use Stim. Create a new AVD named exactly ${JSON.stringify(`Trailhead_${runId}`)} from ${JSON.stringify(pins.ANDROID_SYSTEM_IMAGE)} using avdmanager's default hardware profile, matching Stim; do not use an existing emulator. Set disk.dataPartition.size=8589934592 in its config.ini, matching Stim's default 8 GiB data partition. Boot it with the emulator's default Quick Boot policy, matching Stim; the fresh AVD cold-boots because no snapshot exists. Wait for Android boot completion. ${startMetro ? 'Start Metro detached. ' : ''}Build, install, and launch only the default Debug variant; do not use a Release variant. Start that native build/install/launch as a shell background process with its PID and log under /tmp, then poll it using repeated short foreground shell calls such as \`ps -p <pid>\` and \`tail\`; do not use a long blocking shell call or end the turn while waiting. After it finishes successfully, immediately perform the agent-device proof. Leave the emulator${startMetro ? ', Metro,' : ''} and app running. `;
+    return `Use only the project's local Expo and Android SDK tooling; do not use Stim. Create a new AVD named exactly ${JSON.stringify(`Trailhead_${runId}`)} from ${JSON.stringify(pins.ANDROID_SYSTEM_IMAGE)} using avdmanager's default hardware profile, matching Stim; do not use an existing emulator. Set disk.dataPartition.size=8589934592 in its config.ini, matching Stim's default 8 GiB data partition. Boot it with the emulator's default Quick Boot policy, matching Stim; the fresh AVD cold-boots because no snapshot exists. Wait for Android boot completion. ${startMetro ? 'Start Metro detached. ' : ''}Build, install, and launch only the default Debug variant; do not use a Release variant. Start that native build/install/launch as a shell background process with its PID and log under /tmp, then poll it using repeated short foreground shell calls such as \`kill -0 <pid>\` and \`tail\`; do not use a long blocking shell call or end the turn while waiting. After it finishes successfully, immediately perform the agent-device proof. Leave the emulator${startMetro ? ', Metro,' : ''} and app running. `;
   }
-  return `Run the iOS app with the project's local Expo and Apple tooling on a new iPhone 17 simulator running iOS 26.5; do not use an existing simulator. ${startMetro ? 'Start Metro detached. ' : ''}Start the native build/install/launch as a shell background process with its PID and log under /tmp, then poll it using repeated short foreground shell calls such as \`ps -p <pid>\` and \`tail\`; do not use a long blocking shell call or end the turn while waiting. After it finishes successfully, immediately perform the agent-device proof. Leave the changed app running. Do not use Stim.`;
+  return `Run the iOS app with the project's local Expo and Apple tooling on a new iPhone 17 simulator running iOS 26.5; do not use an existing simulator. ${startMetro ? 'Start Metro detached. ' : ''}Start the native build/install/launch as a shell background process with its PID and log under /tmp, then poll it using repeated short foreground shell calls such as \`kill -0 <pid>\` and \`tail\`; do not use a long blocking shell call or end the turn while waiting. After it finishes successfully, immediately perform the agent-device proof. Leave the changed app running. Do not use Stim.`;
 }
 
 function runnerForModel(model) {
@@ -1014,6 +1040,7 @@ function prepareRunIsolation(runId, runDir, env, arm, crash = null, claudeGuidan
       readPaths: [
         ...(!crash ? [main] : []),
         allowedBin,
+        ...(nativeCompatManifest ? [dirname(realpathSync(nativeCompatManifest))] : []),
         ...(arm === 'stim' ? [stimBin, join(root, 'runtime'), stimPackage] : []),
       ],
       writePaths: [env.GRADLE_USER_HOME, env.ANDROID_AVD_HOME].filter(Boolean),
@@ -1317,11 +1344,25 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
     });
   }
   const crash = variant === launchCrashVariant ? prepareLaunchCrashFixture(arm, runId, env) : null;
+  if (crash && nativeCompatManifest)
+    verifyNativeCompatibility(
+      nativeCompatManifest,
+      pins.NATIVE_COMPAT_SHA256,
+      crash.fixtureCheckout,
+      executablePath(agentDeviceBin),
+    );
   const prompt = promptFor(arm, variant, runId, runDir, crash, platform);
   writeFileSync(join(runDir, 'prompt.txt'), `${prompt}\n`);
   const shellProvenance = verifyRunnerShell(arm, env);
   const claudeGuidance = runnerKind === 'claude' ? writeClaudeGuidance(codexHome, arm, runDir) : null;
   const isolation = prepareRunIsolation(runId, runDir, env, arm, crash, claudeGuidance);
+  preflightReport.nativeCompatibilityProbe = probeNativeCompatibility(
+    preflightReport.nativeCompatibility,
+    (file, args) => {
+      const invocation = isolatedRunnerInvocation(isolation, file, args);
+      return run(invocation.command, invocation.args, { cwd: main, env, timeout: 30_000 });
+    },
+  );
   const profile = verifyRunnerProfile(codexHome, env, arm, runDir, isolation);
   const agentDevice = prepareAgentDeviceRun(runId, platform, expectedParkedSimulator?.udid ?? null);
   const dispatchAt = new Date().toISOString();
@@ -2164,6 +2205,7 @@ function collect(runDir) {
   const recording = recordingEvidence(meta, commandAudit.commands, runDir, screen);
   const worktreeRecord = worktreeEvidence(runDir, meta, eventsPath);
   const worktree = worktreeRecord?.path ?? null;
+  const nativeCompatibility = collectedNativeCompatibility(meta, worktree, main);
   const proof = proofFor(meta, appAlive, runDir, worktree, commandAudit.completedEvents);
   const rollout =
     meta.runner === 'claude'
@@ -2193,6 +2235,7 @@ function collect(runDir) {
   const diagnosisUsage =
     diagnosis?.valid && meta.runner !== 'claude' ? usageAtOrBefore(rollout, diagnosis.observedAt) : null;
   const invalidReasons = [
+    ...(nativeCompatibility && !nativeCompatibility.valid ? ['native-compatibility-changed-or-unverified'] : []),
     ...(appAlive.error ? [appAlive.error] : []),
     ...(meta.runnerResult?.code === 0 ? [] : [`runner-exit-${meta.runnerResult?.code}`]),
     ...(runnerMetrics?.isError ? [`runner-${runnerMetrics.terminalReason ?? 'error'}`] : []),
@@ -2228,6 +2271,7 @@ function collect(runDir) {
     arm: meta.arm,
     variant: meta.variant,
     valid: invalidReasons.length === 0,
+    nativeCompatibility,
     invalidReasons,
     dispatchToAppAliveSeconds: appAlive.dispatchToAppAliveSeconds ?? null,
     dispatchToProofSeconds: appAlive.dispatchToProofSeconds ?? null,
