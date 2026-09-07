@@ -126,6 +126,12 @@ cd <worktree-parent>/bench-<run-id>
 The Stim arm then runs `stim worktree warm`. The control uses branch
 `bench/<run-id>` at `<worktree-parent>/<run-id>` and copies the same installed
 dependencies and native outputs from the fixture main checkout using its own tools.
+Both arms finish copying before starting Metro or native commands. Shell-tool
+wrappers must preserve session handles and exit status, and agents poll foreground
+jobs to completion. The setup audit requires successful warm completion before
+dependent Stim commands and rejects overlapping warm/use intervals; missing or
+ambiguous ordering evidence is not accepted. Detached processes retain their
+separate PID/log monitoring.
 
 The Stim arm uses the inherited isolated `STIM_HOME` and invokes the pinned
 published CLI as exactly `stim`. On iOS it requests the pinned model/runtime and

@@ -143,6 +143,16 @@ function dependencyInstallCommand(command) {
   );
 }
 
+function commandCompletedBefore(first, second) {
+  if (first.parallelTimingAmbiguous || second.parallelTimingAmbiguous) return false;
+  if (Number.isInteger(first.endEventOffset) && Number.isInteger(second.startEventOffset)) {
+    return first.endEventOffset < second.startEventOffset;
+  }
+  const end = Date.parse(first.endedAt);
+  const start = Date.parse(second.startedAt);
+  return Number.isFinite(end) && Number.isFinite(start) && end <= start;
+}
+
 export function benchmarkSetupInvalidReasons(meta, commands) {
   const reasons = [];
   if (commands.some((command) => dependencyInstallCommand(command.command))) {
@@ -152,8 +162,28 @@ export function benchmarkSetupInvalidReasons(meta, commands) {
   if (!successfulCommand(commands, 'stim guide agent')) {
     reasons.push('stim-guide-agent-missing-or-failed');
   }
-  if (!successfulCommand(commands, 'stim worktree warm')) {
+  const warmRuns = commands.filter(
+    (command) => commandSegmentsStartingWith(command.command, 'stim worktree warm').length > 0,
+  );
+  const successfulWarms = warmRuns.filter((warm) => successfulCommand([warm], 'stim worktree warm'));
+  if (!successfulWarms.length) {
     reasons.push('stim-worktree-warm-missing-or-failed');
+  }
+  const dependentRuns = commands.filter(
+    (command) =>
+      ['stim start', 'stim ios', 'stim android'].some(
+        (prefix) => commandSegmentsStartingWith(command.command, prefix).length > 0,
+      ) || dependencyInstallCommand(command.command),
+  );
+  if (
+    successfulWarms.length &&
+    dependentRuns.some(
+      (command) =>
+        !successfulWarms.some((warm) => commandCompletedBefore(warm, command)) ||
+        warmRuns.some((warm) => !commandCompletedBefore(warm, command) && !commandCompletedBefore(command, warm)),
+    )
+  ) {
+    reasons.push('stim-worktree-warm-not-complete-before-use');
   }
   const platformCommand = `stim ${meta.platform ?? 'ios'}`;
   const platformRuns = commands.filter(

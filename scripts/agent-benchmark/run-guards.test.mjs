@@ -298,9 +298,10 @@ describe('benchmark run guards', () => {
   it('accepts a warm native build with the shared Gradle cache enabled', () => {
     const commands = [
       { command: "/bin/zsh -lc 'stim guide agent'", exitCode: 0 },
-      { command: "/bin/zsh -lc 'stim worktree warm'", exitCode: 0 },
+      { command: "/bin/zsh -lc 'stim worktree warm'", exitCode: 0, endEventOffset: 2 },
       {
         command: "/bin/zsh -lc 'stim android --system-image image'",
+        startEventOffset: 3,
         exitCode: 0,
         output: 'fingerprint abcdef.. miss\ncache gradle build cache on (--build-cache, shared)',
       },
@@ -311,10 +312,11 @@ describe('benchmark run guards', () => {
   it('audits Claude-style chained commands', () => {
     const commands = [
       { command: `/bin/zsh -lc 'cd "$WT" && stim guide agent'`, exitCode: 0 },
-      { command: `/bin/zsh -lc 'cd "$WT" && stim worktree warm'`, exitCode: 0 },
-      { command: `/bin/zsh -lc 'cd "$WT" && npm install'`, exitCode: 0 },
+      { command: `/bin/zsh -lc 'cd "$WT" && stim worktree warm'`, exitCode: 0, endEventOffset: 2 },
+      { command: `/bin/zsh -lc 'cd "$WT" && npm install'`, exitCode: 0, startEventOffset: 3 },
       {
         command: `/bin/zsh -lc 'cd "$WT" && stim android --system-image image'`,
+        startEventOffset: 4,
         exitCode: 0,
         elapsedSeconds: 346,
         output: 'fingerprint abcdef.. miss\nbuild ok',
@@ -330,6 +332,87 @@ describe('benchmark run guards', () => {
       platformCommandTargetMet: false,
       invalidReasons: ['platform-command-target-exceeded'],
     });
+  });
+
+  it.each(['stim start', 'stim ios', 'stim android', 'npm install'])(
+    'rejects %s starting before warm finishes even when warm eventually succeeds',
+    (command) => {
+      const commands = [
+        { command: 'stim guide agent', exitCode: 0 },
+        {
+          command,
+          exitCode: 0,
+          startedAt: '2026-09-07T12:01:00Z',
+          endedAt: '2026-09-07T12:01:05Z',
+        },
+        {
+          command: 'stim worktree warm',
+          exitCode: 0,
+          startedAt: '2026-09-07T12:00:00Z',
+          endedAt: '2026-09-07T12:01:30Z',
+        },
+      ];
+      expect(benchmarkSetupInvalidReasons({ arm: 'stim', platform: 'android' }, commands)).toContain(
+        'stim-worktree-warm-not-complete-before-use',
+      );
+      expect(benchmarkSetupInvalidReasons({ arm: 'control', platform: 'android' }, commands)).toEqual(
+        command === 'npm install' ? ['dependencies-installed-inside-timer'] : [],
+      );
+      commands[1].startedAt = '2026-09-07T12:01:31Z';
+      commands[1].endedAt = '2026-09-07T12:01:32Z';
+      expect(benchmarkSetupInvalidReasons({ arm: 'stim', platform: 'android' }, commands)).toEqual(
+        command === 'npm install' ? ['dependencies-installed-inside-timer'] : [],
+      );
+    },
+  );
+
+  it('uses event order for equal timestamps and refuses unknown or ambiguous warm completion', () => {
+    const warm = {
+      command: 'stim worktree warm',
+      exitCode: 0,
+      startedAt: '2026-09-07T12:00:00Z',
+      endedAt: '2026-09-07T12:01:00Z',
+      startEventOffset: 1,
+      endEventOffset: 4,
+    };
+    const start = {
+      command: 'stim start',
+      exitCode: 0,
+      startedAt: '2026-09-07T12:01:00Z',
+      endedAt: '2026-09-07T12:01:01Z',
+      startEventOffset: 3,
+      endEventOffset: 5,
+    };
+    const meta = { arm: 'stim', platform: 'ios' };
+    const commands = [{ command: 'stim guide agent', exitCode: 0 }, warm, start];
+    expect(benchmarkSetupInvalidReasons(meta, commands)).toEqual(['stim-worktree-warm-not-complete-before-use']);
+    warm.endEventOffset = 2;
+    expect(benchmarkSetupInvalidReasons(meta, commands)).toEqual([]);
+    for (const unproven of [
+      { ...warm, parallelTimingAmbiguous: true },
+      { ...warm, endedAt: undefined, endEventOffset: undefined },
+    ]) {
+      expect(benchmarkSetupInvalidReasons(meta, [commands[0], unproven, start])).toEqual([
+        'stim-worktree-warm-not-complete-before-use',
+      ]);
+    }
+  });
+
+  it('does not let an earlier warm hide a second overlapping warm or a launch before setup', () => {
+    const guide = { command: 'stim guide agent', exitCode: 0 };
+    const warm = { command: 'stim worktree warm', exitCode: 0, startEventOffset: 1, endEventOffset: 2 };
+    const start = { command: 'stim start', exitCode: 0, startEventOffset: 4, endEventOffset: 6 };
+    const secondWarm = { ...warm, startEventOffset: 3, endEventOffset: 5 };
+    const meta = { arm: 'stim', platform: 'ios' };
+    expect(benchmarkSetupInvalidReasons(meta, [guide, warm, start, secondWarm])).toEqual([
+      'stim-worktree-warm-not-complete-before-use',
+    ]);
+    secondWarm.startEventOffset = 7;
+    secondWarm.endEventOffset = 8;
+    expect(benchmarkSetupInvalidReasons(meta, [guide, warm, start, secondWarm])).toEqual([]);
+    expect(benchmarkSetupInvalidReasons(meta, [guide, start, secondWarm])).toEqual([
+      'stim-worktree-warm-not-complete-before-use',
+    ]);
   });
 
   it('does not let a later successful command mask failed setup', () => {
