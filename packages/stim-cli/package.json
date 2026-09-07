@@ -1,6 +1,6 @@
 {
   "name": "stim-cli",
-  "version": "1.0.0-rc.18",
+  "version": "1.0.0-rc.19",
   "description": "Stim: fast, isolated React Native environments for coding agents",
   "keywords": [
     "agent",
