@@ -226,22 +226,6 @@ export default function Benchmarks(): ReactNode {
                   reuse against a fixed threshold established before dispatch.
                 </dd>
               </div>
-              <div>
-                <dt>Current Android coverage</dt>
-                <dd>
-                  Nine of 16 attempts passed publication review. Seven were excluded for setup, completion, or
-                  coordinator-path isolation violations. Missing cells stay disabled; they are not zero-time results or
-                  evidence of a performance win.
-                </dd>
-              </div>
-              <div>
-                <dt>Current crash coverage</dt>
-                <dd>
-                  Sol completed the iOS Stim repair with recorded Settings proof. Control reached the 20-minute limit
-                  before completing the recording protocol and is excluded. This is one valid attempt, not a paired
-                  speedup comparison.
-                </dd>
-              </div>
             </dl>
           </section>
 
