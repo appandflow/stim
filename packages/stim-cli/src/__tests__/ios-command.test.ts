@@ -1,5 +1,7 @@
 import assert from 'node:assert';
-import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
+import { captureProcessToken } from '../process-identity.ts';
+import { once } from 'node:events';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -2122,26 +2124,16 @@ describe('Contract 6: the dev-client scheme', () => {
   });
 });
 
-function collectorProcessCommand(pid: number): string {
-  try {
-    return execFileSync('ps', ['-ww', '-o', 'command=', '-p', String(pid)], { encoding: 'utf-8' }).trim();
-  } catch {
-    return '';
-  }
-}
-
-// Spawns a real detached process so the default `verifyCollectorOwnership` reads its actual
-// live command (via ps on darwin, via /proc/[pid]/cmdline on linux) instead of a mocked
-// executor, which only exercises the darwin ps path and fails closed for the wrong reason on
-// Linux CI.
 async function spawnFakeCollector(title: string | null): Promise<ChildProcess> {
   const rename = title ? `process.title = ${JSON.stringify(title)};` : '';
-  const child = spawn(process.execPath, ['-e', `${rename} setInterval(() => {}, 1000);`], { stdio: 'ignore' });
-  const expected = title ?? process.execPath;
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline && !collectorProcessCommand(child.pid as number).startsWith(expected)) {
-    await new Promise((r) => setTimeout(r, 25));
-  }
+  const child = spawn(
+    process.execPath,
+    ['-e', `${rename} process.stdout.write('ready'); setInterval(() => {}, 1000);`],
+    {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    },
+  );
+  await once(child.stdout!, 'data');
   return child;
 }
 
@@ -2240,10 +2232,14 @@ describe('the collector', () => {
     expect(result.pid).toBe(7001);
   });
 
-  test('the default ownership check is wired through: a live process titled for this workspace is signalled', async () => {
+  test('the default ownership check is wired through: a live process with a persisted identity is signalled', async () => {
     const child = await spawnFakeCollector(collectorProcessTitle('ios', root));
     try {
-      const h = collectorHarness({ state: { collectors: { ios: { pid: child.pid, startedAt: 'T' } } } });
+      const h = collectorHarness({
+        state: {
+          collectors: { ios: { pid: child.pid, startedAt: 'T', processToken: captureProcessToken(child.pid!) } },
+        },
+      });
       h.opts.verify = undefined;
       const result = await replaceCollector(h.opts);
       expect(h.kills).toEqual([{ pid: child.pid, signal: 'SIGTERM' }]);

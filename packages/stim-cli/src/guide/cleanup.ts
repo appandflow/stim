@@ -157,24 +157,22 @@ THE ONE CASE GC WILL NOT REAP
 
   Before signalling a recorded collector pid, \`stop\`, \`gc --delete\`,
   \`worktree remove\`, and a fresh \`ios\` / \`android\` run each read that
-  pid's live command and require it to be this workspace's collector for
-  that platform. A pid that cannot be proven is reported and left alone: the
+  persisted process identity and require it to match the exact process
+  registered for this workspace and platform. A pid that cannot be proven is
+  reported and left alone: the
   kernel reuses pids, and an unreaped record is a smaller problem than a
   signal delivered to someone else's process. A fresh \`ios\` / \`android\`
   run starts its replacement anyway, leaving the unproven pid to clear on its
-  own. A collector started by an older Stim states no root in its command, so
+  own. A collector started by an older Stim has no process identity token, so
   it reports as unverified until its record clears -- which happens when its
   own device's log stream ends and it unregisters itself, or when the next
   \`ios\` / \`android\` run overwrites the record with its own, whichever
   comes first; the old process itself keeps running until it exits on its own.
 
-  \`stop\`, \`gc --delete\`, and \`worktree remove\` weigh an unproven live
-  pid against the record's own startedAt claim: a pid that started AFTER that
-  claim is a newer process that recycled the number, so the record is
-  genuinely stale and gets dropped, as before. A pid that started at or
-  before that claim may still be the collector Stim registered, so the
-  record is kept and reported for a retry, the same way a device teardown
-  that could not be confirmed keeps its record.`,
+  A different exact OS start identity proves PID reuse: the recorded collector
+  is gone, and the unrelated process is never signalled. A missing, malformed,
+  or unreadable identity leaves the record unverified and kept for a retry.
+  Wall-clock timestamps and command names are not ownership proof.`,
     },
     disk: {
       summary: 'disk usage, AVD and build-log sizes, the data partition, trimming the shared caches',

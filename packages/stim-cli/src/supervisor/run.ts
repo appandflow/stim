@@ -1,9 +1,10 @@
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { clearSupervisor, setSupervisor } from '../config.ts';
 import { type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
-import { supervisorPidFile, workspaceLogsDir } from '../paths.ts';
+import { workspaceLogsDir } from '../paths.ts';
+import { captureProcessToken } from '../process-identity.ts';
 import { detectIsExpo } from '../project.ts';
 import { describeError } from './errors.ts';
 import {
@@ -13,6 +14,8 @@ import {
   clearWorkspaceSupervisor,
   writePidFile,
   writeWorkspaceState,
+  readWorkspaceState,
+  withWorkspaceStateLock,
 } from './state.ts';
 
 export {
@@ -116,17 +119,25 @@ export async function runSupervisor({
   shutdown: (code: number, event: string, msg: string) => Promise<void>;
   startedAt: string;
 } | null> {
+  root = realpathSync(root);
   const logsDir = workspaceLogsDir(root);
   const writer = createNdjsonWriter(join(logsDir, 'metro.ndjson'));
   const mode = isExpo(root) ? MODE_EXPO : MODE_BARE;
   const startedAt = new Date(now()).toISOString();
-  const record = { pid: process.pid, port, mode, startedAt };
+  const processToken = captureProcessToken(process.pid);
+  if (!processToken) {
+    stderr('Stim supervisor: could not capture process identity; refusing to start an unmanaged server.');
+    writer.close();
+    onExit(1);
+    return null;
+  }
+  const record = { pid: process.pid, processToken, port, mode, startedAt };
 
   clearExpoMetroTunnel(root);
   writePidFile(root, process.pid);
   writeWorkspaceState(root, { supervisor: record });
   try {
-    setSupervisor(root, { pid: process.pid, port, startedAt });
+    setSupervisor(root, record);
   } catch (err) {
     writer.write({
       src: 'metro',
@@ -148,13 +159,10 @@ export async function runSupervisor({
   const finish = (code: number, event: string, level: string, msg: string) => {
     writer.write({ src: 'metro', level, event, msg });
     try {
-      clearSupervisor(root);
+      clearSupervisor(root, record);
     } catch {}
     try {
-      clearWorkspaceSupervisor(root);
-    } catch {}
-    try {
-      rmSync(supervisorPidFile(root), { force: true });
+      clearWorkspaceSupervisor(root, record);
     } catch {}
     const closed = writer.close();
     if (closed.dropped > 0) {
@@ -179,7 +187,11 @@ export async function runSupervisor({
       tunnel,
       onTunnelUrl: (url: string) => {
         try {
-          writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url } });
+          withWorkspaceStateLock(root, () => {
+            if (readWorkspaceState(root)?.supervisor?.processToken === processToken) {
+              writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url } });
+            }
+          });
         } catch (err) {
           stderr(`Stim supervisor: could not record the Expo tunnel URL: ${describeError(err)}`);
         }
@@ -195,7 +207,11 @@ export async function runSupervisor({
   const readyServer: ServerHandle = server;
 
   if (readyServer.serverPid) {
-    writeWorkspaceState(root, { supervisor: { ...record, serverPid: readyServer.serverPid } });
+    withWorkspaceStateLock(root, () => {
+      if (readWorkspaceState(root)?.supervisor?.processToken === processToken) {
+        writeWorkspaceState(root, { supervisor: { ...record, serverPid: readyServer.serverPid } });
+      }
+    });
   }
   writer.write({
     src: 'metro',

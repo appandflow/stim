@@ -2,6 +2,7 @@ export type { BuildLockInfo } from './engine/build-lock.ts';
 export type { BuildSlotInfo } from './engine/build-slots.ts';
 
 export interface SupervisorRecord {
+  processToken?: string;
   pid?: number;
   port?: number;
   startedAt?: string;

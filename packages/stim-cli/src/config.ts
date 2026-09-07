@@ -5,6 +5,7 @@ import { isOnMountedVolume } from './fs-util.ts';
 import { withDirLock } from './dir-lock.ts';
 
 import type { Config, ConcurrencyLimits, DeviceRecord, ProjectRecord, RepoRecord, SupervisorRecord } from './types.ts';
+import { sameProcessRecord, type ProcessRecord } from './process-identity.ts';
 export type { Config, ConcurrencyLimits, DeviceRecord, ProjectRecord, RepoRecord, SupervisorRecord };
 
 export function getConfigDir(): string {
@@ -173,25 +174,31 @@ export function clearDevice(projectPath: string, platform: string): void {
   });
 }
 
-export function setSupervisor(projectPath: string, { pid, port, startedAt }: SupervisorRecord): SupervisorRecord {
+export function setSupervisor(
+  projectPath: string,
+  { pid, port, startedAt, processToken }: SupervisorRecord,
+): SupervisorRecord {
   requireAbsoluteProjectPath(projectPath);
   return withConfigLock(() => {
     const cfg = ensureConfig();
     if (!cfg.projects[projectPath]) {
       cfg.projects[projectPath] = { metroPort: null, platforms: {} };
     }
-    cfg.projects[projectPath].supervisor = { pid, port, startedAt };
+    cfg.projects[projectPath].supervisor = { pid, port, startedAt, processToken };
     saveConfig(cfg);
     return cfg.projects[projectPath].supervisor;
   });
 }
 
-export function clearSupervisor(projectPath: string): void {
-  withConfigLock(() => {
+export function clearSupervisor(projectPath: string, expected?: ProcessRecord | null): boolean {
+  return withConfigLock(() => {
     const cfg = loadConfig();
-    if (!cfg?.projects?.[projectPath]?.supervisor) return;
-    delete cfg.projects[projectPath].supervisor;
+    const current = cfg?.projects?.[projectPath]?.supervisor;
+    if (!current) return true;
+    if (expected !== undefined && !sameProcessRecord(current, expected)) return false;
+    delete cfg.projects[projectPath]!.supervisor;
     saveConfig(cfg);
+    return true;
   });
 }
 

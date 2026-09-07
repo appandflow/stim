@@ -1,5 +1,4 @@
 import {
-  readTunnelProcessToken,
   startTunnel,
   startTunnelSequence,
   stopTunnel,
@@ -11,7 +10,6 @@ import {
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resetExecutor, setExecutor } from '../exec.ts';
 import { IMPOSSIBLE_PID, makeChildProcess } from './_factories.ts';
 
 function clock(start = 1_000) {
@@ -595,7 +593,7 @@ function fixtureRecord(overrides: Partial<TunnelRecord> = {}): TunnelRecord {
 }
 
 function stopVerified(record: TunnelRecord, options: Parameters<typeof stopTunnel>[1] = {}) {
-  return stopTunnel(record, { readProcessToken: () => 'linux:100', ...options });
+  return stopTunnel(record, { inspectIdentity: () => 'same', ...options });
 }
 
 describe('stopTunnel: idempotent, never throws', () => {
@@ -615,179 +613,49 @@ describe('stopTunnel: idempotent, never throws', () => {
     delete (record as Partial<TunnelRecord>).processToken;
     const result = await stopTunnel(record, {
       isAlive: () => true,
-      readProcessArgs: () => ['cloudflared', 'tunnel', '--url', 'http://127.0.0.1:8081'],
       kill: (pid) => signalled.push(pid),
     });
     expect(signalled).toEqual([]);
     expect(result).toEqual({ status: 'failed', reason: expect.stringMatching(/process identity token.*retry/i) });
   });
 
-  test('the same pid and argv with a different process token is not signalled', async () => {
-    const signalled: number[] = [];
-    const result = await stopVerified(fixtureRecord(), {
-      isAlive: () => true,
-      readProcessArgs: () => ['cloudflared', 'tunnel', '--url', 'http://127.0.0.1:8081'],
-      readProcessToken: () => 'linux:200',
-      kill: (pid) => signalled.push(pid),
-    } as Parameters<typeof stopTunnel>[1]);
-    expect(signalled).toEqual([]);
-    expect(result).toEqual({ status: 'failed', reason: expect.stringContaining('process instance') });
+  test.each(['different', 'gone'] as const)('a %s identity is stale and never signalled', async (identity) => {
+    const kill = vi.fn<(pid: number) => void>();
+    const result = await stopVerified(fixtureRecord(), { isAlive: () => true, inspectIdentity: () => identity, kill });
+    expect(result.status).toBe('missing');
+    expect(kill).not.toHaveBeenCalled();
   });
 
-  test('signals an alive pid only when its ngrok command and port match', async () => {
-    let alive = true;
-    const signalled: number[] = [];
-    const result = await stopVerified(fixtureRecord({ provider: 'ngrok', pid: 777 }), {
-      isAlive: () => alive,
-      readProcessArgs: () => ['/opt/homebrew/bin/ngrok', 'http', '8081', '--log=stdout', '--log-format=json'],
-      kill: (pid) => {
-        signalled.push(pid);
-        alive = false;
-      },
-    });
-    expect(signalled).toEqual([777]);
-    expect(result).toEqual({ status: 'stopped' });
+  test('an unreadable native identity retains the record without signalling', async () => {
+    const kill = vi.fn<(pid: number) => void>();
+    const result = await stopVerified(fixtureRecord(), { isAlive: () => true, inspectIdentity: () => 'unknown', kill });
+    expect(result.status).toBe('failed');
+    expect(kill).not.toHaveBeenCalled();
   });
 
-  test('signals the exact ngrok command with the recorded stable URL', async () => {
+  test.each(['ngrok', 'cloudflared'] as const)('stops the recorded %s instance', async (provider) => {
     let alive = true;
-    const signalled: number[] = [];
-    const stableUrl = `https://${'stable-'.repeat(500)}endpoint.ngrok.app`;
-    const result = await stopVerified(fixtureRecord({ provider: 'ngrok', pid: 779, url: stableUrl }), {
-      isAlive: () => alive,
-      readProcessArgs: () => ['ngrok', 'http', '8081', '--log=stdout', '--log-format=json', '--url', stableUrl],
-      kill: (pid) => {
-        signalled.push(pid);
-        alive = false;
-      },
+    const kill = vi.fn<(pid: number) => void>(() => {
+      alive = false;
     });
-    expect(signalled).toEqual([779]);
+    const result = await stopVerified(fixtureRecord({ provider }), { isAlive: () => alive, kill });
+    expect(kill).toHaveBeenCalledExactlyOnceWith(4242);
     expect(result.status).toBe('stopped');
   });
 
-  test.each([
-    ['an unrelated flag', ['ngrok', 'http', '8081', '--log=stdout', '--log-format=json', '--inspect=false']],
-    ['an extra positional argument', ['ngrok', 'http', '8081', '--log=stdout', '--log-format=json', 'other']],
-    ['a different subcommand', ['ngrok', 'tcp', '8081', '--log=stdout', '--log-format=json']],
-    [
-      'a duplicate endpoint flag',
-      [
-        'ngrok',
-        'http',
-        '8081',
-        '--log=stdout',
-        '--log-format=json',
-        '--url',
-        'https://x.ngrok.app',
-        '--url',
-        'https://x.ngrok.app',
-      ],
-    ],
-    [
-      'a stable endpoint different from the record',
-      ['ngrok', 'http', '8081', '--log=stdout', '--log-format=json', '--url', 'https://other.ngrok.app'],
-    ],
-  ])('does not signal an ngrok command with %s', async (_name, args) => {
-    let alive = true;
-    const signalled: number[] = [];
-    const result = await stopVerified(fixtureRecord({ provider: 'ngrok', url: 'https://x.ngrok.app' }), {
-      isAlive: () => alive,
-      readProcessArgs: () => args,
-      kill: (pid) => {
-        signalled.push(pid);
-        alive = false;
-      },
-    });
-    expect(signalled).toEqual([]);
-    expect(result.status).toBe('failed');
-  });
-
-  test('signals an alive pid only when its cloudflared command and local URL match', async () => {
-    let alive = true;
-    const signalled: number[] = [];
-    const result = await stopVerified(fixtureRecord({ provider: 'cloudflared', pid: 778 }), {
-      isAlive: () => alive,
-      readProcessArgs: () => ['/opt/homebrew/bin/cloudflared', 'tunnel', '--url', 'http://127.0.0.1:8081'],
-      kill: (pid) => {
-        signalled.push(pid);
-        alive = false;
-      },
-    });
-    expect(signalled).toEqual([778]);
-    expect(result).toEqual({ status: 'stopped' });
-  });
-
-  test('does not signal an alive pid owned by the wrong provider', async () => {
-    const signalled: number[] = [];
-    const result = await stopVerified(fixtureRecord({ provider: 'ngrok' }), {
-      isAlive: () => true,
-      readProcessArgs: () => ['/usr/local/bin/cloudflared', 'tunnel', '--url', 'http://127.0.0.1:8081'],
-      kill: (pid) => signalled.push(pid),
-    });
-    expect(signalled).toEqual([]);
-    expect(result).toEqual({ status: 'failed', reason: expect.stringContaining('could not verify') });
-  });
-
-  test('does not accept a provider word in an unrelated path or argument', async () => {
-    const signalled: number[] = [];
-    for (const args of [
-      ['/tmp/ngrok-helper', 'http', '8081'],
-      ['/usr/bin/node', '/tmp/ngrok/server.js', 'http', '8081'],
-      ['/usr/bin/sleep', 'ngrok', 'http', '8081'],
-    ]) {
-      const result = await stopVerified(fixtureRecord({ provider: 'ngrok' }), {
-        isAlive: () => true,
-        readProcessArgs: () => args,
-        kill: (pid) => signalled.push(pid),
-      });
-      expect(result.status).toBe('failed');
-    }
-    expect(signalled).toEqual([]);
-  });
-
-  test('does not signal a matching provider command for a different local port', async () => {
-    const signalled: number[] = [];
-    const result = await stopVerified(fixtureRecord({ provider: 'cloudflared', port: 8081 }), {
-      isAlive: () => true,
-      readProcessArgs: () => ['cloudflared', 'tunnel', '--url', 'http://127.0.0.1:9090'],
-      kill: (pid) => signalled.push(pid),
-    });
-    expect(signalled).toEqual([]);
-    expect(result.status).toBe('failed');
-  });
-
-  test.each([
-    ['a run subcommand', ['cloudflared', 'tunnel', 'run', 'other', '--url', 'http://127.0.0.1:8081']],
-    ['an unrelated flag', ['cloudflared', 'tunnel', '--url', 'http://127.0.0.1:8081', '--no-autoupdate']],
-    [
-      'a duplicate endpoint flag',
-      ['cloudflared', 'tunnel', '--url', 'http://127.0.0.1:8081', '--url', 'http://127.0.0.1:8081'],
-    ],
-    ['an alternate endpoint', ['cloudflared', 'tunnel', '--url', 'http://localhost:8081']],
-  ])('does not signal a cloudflared command with %s', async (_name, args) => {
-    let alive = true;
-    const signalled: number[] = [];
-    const result = await stopVerified(fixtureRecord({ provider: 'cloudflared' }), {
-      isAlive: () => alive,
-      readProcessArgs: () => args,
-      kill: (pid) => {
-        signalled.push(pid);
-        alive = false;
-      },
-    });
-    expect(signalled).toEqual([]);
-    expect(result.status).toBe('failed');
-  });
-
-  test('an unreadable live command fails closed without a signal', async () => {
-    const signalled: number[] = [];
+  test('a reused PID during the exit wait does not hold cleanup or get another signal', async () => {
+    let identity: 'same' | 'different' = 'same';
+    const kill = vi.fn<(pid: number) => void>();
     const result = await stopVerified(fixtureRecord(), {
       isAlive: () => true,
-      readProcessArgs: () => null,
-      kill: (pid) => signalled.push(pid),
+      inspectIdentity: () => identity,
+      kill,
+      sleep: async () => {
+        identity = 'different';
+      },
     });
-    expect(signalled).toEqual([]);
-    expect(result).toEqual({ status: 'failed', reason: expect.stringContaining('could not read') });
+    expect(result.status).toBe('stopped');
+    expect(kill).toHaveBeenCalledTimes(1);
   });
 
   test("a kill racing the process's own exit (ESRCH) reads as missing, not failed", async () => {
@@ -800,7 +668,6 @@ describe('stopTunnel: idempotent, never throws', () => {
     try {
       const result = await stopVerified(fixtureRecord({ logFile }), {
         isAlive: () => true,
-        readProcessArgs: () => ['cloudflared', 'tunnel', '--url', 'http://127.0.0.1:8081', '--logfile', logFile],
         kill: () => {
           throw Object.assign(new Error('no such process'), { code: 'ESRCH' });
         },
@@ -817,7 +684,6 @@ describe('stopTunnel: idempotent, never throws', () => {
   test('a kill that fails for another reason is a returned failed status, not a throw', async () => {
     const result = await stopVerified(fixtureRecord(), {
       isAlive: () => true,
-      readProcessArgs: () => ['cloudflared', 'tunnel', '--url', 'http://127.0.0.1:8081'],
       kill: () => {
         throw new Error('operation not permitted');
       },
@@ -830,7 +696,6 @@ describe('stopTunnel: idempotent, never throws', () => {
     const c = clock();
     const result = await stopVerified(fixtureRecord(), {
       isAlive: () => true,
-      readProcessArgs: () => ['cloudflared', 'tunnel', '--url', 'http://127.0.0.1:8081'],
       kill: () => {},
       now: c.now,
       sleep: c.sleep,
@@ -838,53 +703,6 @@ describe('stopTunnel: idempotent, never throws', () => {
     });
     expect(result.status).toBe('failed');
     expect(result.reason).toContain('did not exit');
-  });
-});
-
-describe('readTunnelProcessToken', () => {
-  test('reads Linux procfs starttime as a boot-relative process token', () => {
-    const stat = `4242 (ngrok helper) S ${Array.from({ length: 18 }, (_, index) => index + 1).join(' ')} 98765 0`;
-    expect(
-      readTunnelProcessToken(4242, {
-        platform: 'linux',
-        readProcStat: (path, maxBytes) => {
-          expect(path).toBe('/proc/4242/stat');
-          expect(maxBytes).toBeLessThanOrEqual(64 * 1024);
-          return Buffer.from(stat);
-        },
-      }),
-    ).toBe('linux:98765');
-  });
-
-  test('normalizes a bounded BSD lstart value', () => {
-    const calls: Array<{ pid: number; timeoutMs: number }> = [];
-    const token = readTunnelProcessToken(4242, {
-      platform: 'darwin',
-      runPsStartCommand: (pid, timeoutMs) => {
-        calls.push({ pid, timeoutMs });
-        return 'Fri Aug 28 06:10:11 2026\n';
-      },
-    });
-    expect(token).toBe('ps-lstart:Fri Aug 28 06:10:11 2026');
-    expect(calls).toEqual([{ pid: 4242, timeoutMs: expect.any(Number) }]);
-  });
-
-  test('uses full-width BSD ps argv for the process start token', () => {
-    const calls: Array<{ file: string; args: string[]; timeoutMs: number | undefined }> = [];
-    setExecutor({
-      runFile(file, args, options) {
-        calls.push({ file, args, timeoutMs: options?.timeoutMs });
-        return 'Fri Aug 28 06:10:11 2026';
-      },
-    });
-    try {
-      expect(readTunnelProcessToken(4242, { platform: 'darwin' })).toBe('ps-lstart:Fri Aug 28 06:10:11 2026');
-    } finally {
-      resetExecutor();
-    }
-    expect(calls).toEqual([
-      { file: 'ps', args: ['-ww', '-o', 'lstart=', '-p', '4242'], timeoutMs: expect.any(Number) },
-    ]);
   });
 });
 

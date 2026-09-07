@@ -85,13 +85,12 @@ DESTRUCTIVE COMMANDS -- ask the user first
   gc --delete --cache <name>
                           empties only the caches that carry <name>
   worktree remove --force discards uncommitted and untracked work
-  stop --force            kills a process Stim could not identify
 
 Permanent local deletion lives in exactly TWO commands: \`worktree remove\`
 (the workspace you name) and \`gc --delete\` (the machine). For a local device,
 \`stop\` shuts it down and never deletes it. For a recorded EAS session,
-\`stop\` irreversibly ends the session. \`stop --force\` can also kill an
-unidentified process on the reserved port. There is no \`--delete\` flag on
+\`stop\` irreversibly ends the session. Externally started servers are left
+alone, even when they use the reserved port. There is no \`--delete\` flag on
 \`stop\`.
 
 CAPACITY
@@ -607,7 +606,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   device          lock <ios|android> [id] --for <duration> --wait <seconds> --json;
                   unlock [ios|android] --json
   logs            --source --level --since --grep --tail --follow --errors --json
-  stop            --json --force
+  stop            --json
   status          --json          (already machine-wide)
   stats           --json          (this project and machine-wide)
   doctor          --json --fix --platform <ios|android>

@@ -7,6 +7,8 @@ import type { StartError, StartFacts, SupervisorRecord } from '../types.ts';
 import { getProject, upsertProject } from '../config.ts';
 import { getExecutor } from '../exec.ts';
 import { isPidAlive, resolveProjectMetro } from '../metro.ts';
+import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
+import { resolveSupervisorTarget, type SupervisorStateRecord } from '../supervisor/ownership.ts';
 import type { MetroResolution } from '../metro.ts';
 import { queryLogs } from '../logs-query.ts';
 import { ensureWorkspaceStorage, supervisorLogFile, workspaceLogsDir } from '../paths.ts';
@@ -91,6 +93,7 @@ export function parseWait(value: unknown): WaitResult {
 }
 
 interface SupervisorCandidate {
+  processToken?: unknown;
   pid?: unknown;
   port?: unknown;
   mode?: unknown;
@@ -115,26 +118,24 @@ export function liveSupervisor({
   project,
   port,
   isAlive = isPidAlive,
+  inspectIdentity = inspectProcessIdentity,
 }: {
   state?: { supervisor?: SupervisorCandidate | null } | null;
   project?: { supervisor?: SupervisorCandidate | null } | null;
   port?: number;
   isAlive?: (pid: number) => boolean;
+  inspectIdentity?: typeof inspectProcessIdentity;
 } = {}): LiveSupervisor | null {
-  const candidates = [state?.supervisor, project?.supervisor].filter((s): s is SupervisorCandidate =>
-    Boolean(s && Number.isFinite(Number(s.pid))),
-  );
-  for (const candidate of candidates) {
-    if (Number(candidate.port) !== Number(port)) continue;
-    if (!isAlive(Number(candidate.pid))) continue;
-    return {
-      pid: Number(candidate.pid),
-      port: Number(candidate.port),
-      mode: (candidate.mode ?? state?.supervisor?.mode ?? null) as string | null,
-      startedAt: (candidate.startedAt ?? null) as string | null,
-    };
-  }
-  return null;
+  const target = resolveSupervisorTarget({
+    state: state?.supervisor as SupervisorStateRecord | undefined,
+    record: project?.supervisor as SupervisorStateRecord | undefined,
+    reservedPort: port,
+    isAlive,
+    inspectIdentity,
+  });
+  return target.status === 'ours' && target.port === port
+    ? { pid: target.pid!, port: target.port!, mode: target.mode ?? null, startedAt: target.startedAt ?? null }
+    : null;
 }
 
 export function startFacts({
@@ -397,6 +398,19 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         let publicOrigin = remote ? publicUrl : null;
         let resolution = await resolveProjectMetro(port, root);
         let supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
+        const recordedTarget = resolveSupervisorTarget({
+          state: readWorkspaceState(root)?.supervisor,
+          record: getProject(root)?.supervisor,
+          reservedPort: port,
+        });
+        if (recordedTarget.status === 'unverified') {
+          return fail({
+            code: 'STIM_SUPERVISOR_EXITED',
+            message: `Cannot reuse or replace the recorded supervisor: ${recordedTarget.reason}.`,
+            remedy:
+              'Stop it with the tool that started it, then retry `stim start`. Stim leaves unverified processes alone.',
+          });
+        }
         let managedTunnel: ManagedTunnelTracking | null = null;
         let spawnedChild: ChildProcess | null = null;
         let spawnedTs: number | null = null;
@@ -638,6 +652,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
                 }
                 const handoffRecord = {
                   pid: child.pid as number,
+                  processToken: child.pid ? captureProcessToken(child.pid) : null,
                   port,
                   mode: isExpo ? 'expo-child' : 'bare-inproc',
                   startedAt: new Date(spawnedTs ?? Date.now()).toISOString(),

@@ -7,6 +7,7 @@ import { setExecutor, resetExecutor } from '../exec.ts';
 import { saveConfig } from '../config.ts';
 import type { AddressInfo } from 'node:net';
 import assert from 'node:assert';
+import { captureProcessToken } from '../process-identity.ts';
 import { makeConfig } from './_factories.ts';
 import statusCommand, { readVolumes } from '../commands/status.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
@@ -217,7 +218,10 @@ function writeLogs(root: string, records: NdjsonRecord[]) {
   writeFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), records.map((r) => JSON.stringify(r)).join('\n') + '\n');
 }
 
-function writeState(root: string, supervisor: { pid: number; port: number; mode: string; startedAt: number }) {
+function writeState(
+  root: string,
+  supervisor: { pid: number; processToken?: string | null; port: number; mode: string; startedAt: number },
+) {
   ensureWorkspaceStorage(root);
   writeFileSync(workspaceStateFile(root), JSON.stringify({ supervisor }));
 }
@@ -242,7 +246,13 @@ test('status reports a supervisor whose port answers as this project as healthy'
         throw new Error('spawn should not be called from status');
       },
     });
-    writeState(root, { pid: process.pid, port, mode: 'bare-inproc', startedAt: 1700000000000 });
+    writeState(root, {
+      pid: process.pid,
+      processToken: captureProcessToken(process.pid),
+      port,
+      mode: 'bare-inproc',
+      startedAt: 1700000000000,
+    });
     writeLogs(root, [
       { ts: 1, src: 'metro', level: 'error', msg: 'before the marker' },
       { ts: 2, src: 'metro', level: 'info', msg: 'bundle built', marker: true },
@@ -255,7 +265,12 @@ test('status reports a supervisor whose port answers as this project as healthy'
           [root]: {
             label: 'agent-1',
             metroPort: port,
-            supervisor: { pid: process.pid, port, startedAt: '1700000000000' },
+            supervisor: {
+              pid: process.pid,
+              processToken: captureProcessToken(process.pid)!,
+              port,
+              startedAt: '1700000000000',
+            },
             platforms: {},
           },
         },

@@ -112,6 +112,7 @@ export function parseArgs(argv: string[]): ParsedCollectorArgs {
 }
 
 import { readCollectors, registerCollector, unregisterCollector } from './state.ts';
+import { captureProcessToken } from '../process-identity.ts';
 export { readCollectors, registerCollector, unregisterCollector };
 
 export interface RunCollectorOptions {
@@ -213,6 +214,13 @@ export async function runCollector({
 }: RunCollectorOptions): Promise<RunCollectorHandle | null> {
   const writer = createNdjsonWriter(join(workspaceLogsDir(root), 'device.ndjson'));
   const startedAt = new Date(now()).toISOString();
+  const processToken = captureProcessToken(process.pid);
+  if (!processToken) {
+    stderr('Stim collector: could not capture process identity; refusing to start an unmanaged collector.');
+    writer.close();
+    onExit(1);
+    return null;
+  }
 
   let finished = false;
   let captured = 0;
@@ -232,7 +240,7 @@ export async function runCollector({
     }
     writer.write({ src: 'device', platform, level, event, msg });
     try {
-      unregisterCollector(root, platform, process.pid);
+      unregisterCollector(root, platform, process.pid, processToken);
     } catch {}
     const closed = writer.close();
     if (closed.dropped > 0) {
@@ -256,9 +264,11 @@ export async function runCollector({
   }
 
   try {
-    registerCollector(root, platform, { pid: process.pid, startedAt });
+    registerCollector(root, platform, { pid: process.pid, processToken, startedAt });
   } catch (err) {
     stderr(`Stim collector: could not record the collector in ${root}: ${describe(err)}`);
+    finish(1, 'error', 'Could not persist collector identity', 'collector_failed');
+    return null;
   }
 
   let pid: number | null = null;

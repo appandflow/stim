@@ -6,7 +6,8 @@ import { getConfigDir, loadConfig } from '../config.ts';
 import type { ProjectRecord, SupervisorRecord } from '../config.ts';
 import { getExecutor } from '../exec.ts';
 import { isMetroRunning } from '../ports.ts';
-import { isPidAlive, resolveProjectMetro } from '../metro.ts';
+import { resolveProjectMetro } from '../metro.ts';
+import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import type { MetroResolution } from '../metro.ts';
 import { queryLogs } from '../logs-query.ts';
 import { workspaceLogsDir } from '../paths.ts';
@@ -251,7 +252,7 @@ async function supervisorFacts(
   const pid = state?.pid ?? record?.pid ?? null;
   if (!pid) return null;
   const port = state?.port ?? record?.port ?? null;
-  const alive = isPidAlive(pid);
+  const alive = resolveSupervisorTarget({ state, record, reservedPort: proj?.metroPort }).status === 'ours';
   let healthy = false;
   if (alive && port) {
     const resolution = port === proj?.metroPort && metroResolution ? metroResolution : await resolveOnPort(port, path);

@@ -1,5 +1,14 @@
 import assert from 'node:assert';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  realpathSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,10 +32,38 @@ import {
 let tmpHome: string;
 let root: string;
 
+test('an old supervisor finishing cannot erase its replacement registration or tunnel', async () => {
+  let closed = false;
+  const running = await runSupervisor({
+    root,
+    port: 8083,
+    isExpo: () => false,
+    attachSignals: false,
+    onExit: () => {},
+    startBare: async () => ({
+      close() {
+        closed = true;
+      },
+    }),
+  });
+  assert(running);
+  const replacement = { pid: process.pid, processToken: 'replacement-instance', port: 8083 };
+  const metroTunnel = { kind: 'expo' as const, url: 'https://replacement.example.com' };
+  writeWorkspaceState(root, { supervisor: replacement, metroTunnel });
+  upsertProject(root, { supervisor: replacement });
+  writePidFile(root, process.pid);
+  await running.shutdown(0, 'supervisor_stopped', 'test shutdown');
+  expect(closed).toBe(true);
+  expect(readWorkspaceState(root)?.supervisor).toEqual(replacement);
+  expect(readWorkspaceState(root)?.metroTunnel).toEqual(metroTunnel);
+  expect(getProject(root)?.supervisor).toEqual(replacement);
+  expect(readPidFile(root)).toBe(process.pid);
+});
+
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
-  root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
+  root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws' }));
 });
 

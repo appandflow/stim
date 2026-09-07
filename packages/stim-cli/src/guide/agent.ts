@@ -134,6 +134,8 @@ shut down the phone or uninstall the app.
 
 Treat a refusal as an ownership or state mismatch: read its code and remedy.
 Never reach for --force first.
+Stim leaves externally started servers alone. Stop them with their original
+tool; neither a matching port nor --force grants process ownership.
 
 Ask the user before these actions:
 

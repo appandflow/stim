@@ -1,5 +1,7 @@
-import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { type ChildProcess, spawn } from 'node:child_process';
+import { captureProcessToken } from '../process-identity.ts';
+import { once } from 'node:events';
+import { realpathSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
@@ -151,7 +153,7 @@ test('reclaimProject refuses to kill an unidentified process on the port', async
 });
 
 function workspaceWithSession(sessionId: string): string {
-  const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
   ensureWorkspaceStorage(root);
   writeFileSync(workspaceStateFile(root), JSON.stringify({ remoteDevice: { platform: 'ios', sessionId } }));
   upsertProject(root, { label: 'agent-1' });
@@ -231,7 +233,7 @@ test('a throwing stop is contained, so the caller still removes the tree', async
 });
 
 test('a workspace with no session never reaches for eas', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
   upsertProject(root, { label: 'agent-1' });
   let called = false;
   const r = await reclaimProject(root, {
@@ -297,7 +299,7 @@ test('reclaim clears a verified terminal record without issuing stop', async () 
 });
 
 function workspaceWithManagedTunnel(pid: number): string {
-  const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
   ensureWorkspaceStorage(root);
   writeFileSync(
     workspaceStateFile(root),
@@ -407,7 +409,7 @@ test('a throwing tunnel stop is contained, so the caller still removes the tree'
 });
 
 test('a workspace with no recorded tunnel never calls stopMetroTunnel', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
   upsertProject(root, { label: 'agent-1' });
   let called = false;
   const r = await reclaimProject(root, {
@@ -422,7 +424,7 @@ test('a workspace with no recorded tunnel never calls stopMetroTunnel', async ()
 });
 
 test('an Expo-hosted tunnel has no process of its own -- reclaim never calls stopMetroTunnel for it', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
   ensureWorkspaceStorage(root);
   writeFileSync(
     workspaceStateFile(root),
@@ -442,7 +444,7 @@ test('an Expo-hosted tunnel has no process of its own -- reclaim never calls sto
 });
 
 test('an operator-supplied tunnel (metro.publicUrl) is never recorded, so reclaim never touches it', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
   upsertProject(root, { label: 'agent-1' });
   let called = false;
   const r = await reclaimProject(root, {
@@ -457,7 +459,7 @@ test('an operator-supplied tunnel (metro.publicUrl) is never recorded, so reclai
 });
 
 function workspaceWithCollector(pid: number, platform = 'ios'): string {
-  const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
   ensureWorkspaceStorage(root);
   writeFileSync(
     workspaceStateFile(root),
@@ -467,22 +469,16 @@ function workspaceWithCollector(pid: number, platform = 'ios'): string {
   return root;
 }
 
-function processCommand(pid: number): string {
-  try {
-    return execFileSync('ps', ['-ww', '-o', 'command=', '-p', String(pid)], { encoding: 'utf-8' }).trim();
-  } catch {
-    return '';
-  }
-}
-
 async function spawnFakeProcess(title: string | null): Promise<ChildProcess> {
   const rename = title ? `process.title = ${JSON.stringify(title)};` : '';
-  const child = spawn(process.execPath, ['-e', `${rename} setInterval(() => {}, 1000);`], { stdio: 'ignore' });
-  const expected = title ?? process.execPath;
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline && !processCommand(child.pid as number).startsWith(expected)) {
-    await new Promise((r) => setTimeout(r, 25));
-  }
+  const child = spawn(
+    process.execPath,
+    ['-e', `${rename} process.stdout.write('ready'); setInterval(() => {}, 1000);`],
+    {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    },
+  );
+  await once(child.stdout!, 'data');
   return child;
 }
 
@@ -505,245 +501,86 @@ function exits(child: ChildProcess, timeoutMs = 5_000): Promise<boolean> {
   });
 }
 
-test('reclaim SIGTERMs a live pid whose command proves it is this workspace collector', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
-  const child = await spawnFakeProcess(`stim-collector-ios --root ${root}`);
-  ensureWorkspaceStorage(root);
-  writeFileSync(
-    workspaceStateFile(root),
-    JSON.stringify({ collectors: { ios: { pid: child.pid, startedAt: '2026-01-01T00:00:00.000Z' } } }),
-  );
-  upsertProject(root, { label: 'agent-1' });
-
-  const died = exits(child);
-  const r = await reclaimProject(root);
-  expect(await died).toBe(true);
-  expect(r.skippedDevices).toEqual([]);
-  rmSync(root, { recursive: true, force: true });
-}, 20_000);
-
-test('reclaim leaves a live pid it cannot prove running, says so, and -- since it started after the recorded startedAt -- drops the now-stale record', async () => {
-  const child = await spawnFakeProcess(null);
-  // workspaceWithCollector's startedAt (2026-01-01) predates this real process, which just
-  // started: the live pid is a newer, unrelated process that recycled the number.
-  const root = workspaceWithCollector(child.pid as number);
-
-  const r = await reclaimProject(root);
-  expect(stillRunning(child.pid as number)).toBe(true);
-  expect(r.skippedDevices).toEqual([
-    {
-      platform: 'ios',
-      name: `ios log collector (pid ${child.pid})`,
-      reason: expect.stringContaining("does not run this workspace's ios log collector"),
-    },
-  ]);
-  expect(r.skippedDevices[0]?.reason).toMatch(/not signalled/);
-  expect(r.failedDevices).toEqual([]);
-  expect(r.keptEntry).toBe(false);
-  expect(getProject(root)).toBe(null);
-  child.kill('SIGKILL');
-  await exits(child);
-  rmSync(root, { recursive: true, force: true });
-}, 20_000);
-
-test('reclaim leaves a collector recorded for another root alone and, since it started after the recorded startedAt, drops the record', async () => {
-  const other = mkdtempSync(join(tmpdir(), 'stim-other-'));
-  const child = await spawnFakeProcess(`stim-collector-ios --root ${other}`);
-  const root = workspaceWithCollector(child.pid as number);
-
-  const r = await reclaimProject(root);
-  expect(stillRunning(child.pid as number)).toBe(true);
-  expect(r.skippedDevices.map((d) => d.name)).toEqual([`ios log collector (pid ${child.pid})`]);
-  expect(r.keptEntry).toBe(false);
-  expect(getProject(root)).toBe(null);
-  child.kill('SIGKILL');
-  await exits(child);
-  rmSync(other, { recursive: true, force: true });
-  rmSync(root, { recursive: true, force: true });
-}, 20_000);
-
-test('reclaim says nothing about a collector pid that is already gone', async () => {
-  const child = await spawnFakeProcess(null);
-  const pid = child.pid as number;
-  child.kill('SIGKILL');
-  await exits(child);
-  const root = workspaceWithCollector(pid);
-
-  const r = await reclaimProject(root);
-  expect(r.skippedDevices).toEqual([]);
-  expect(r.keptEntry).toBe(false);
-  expect(getProject(root)).toBe(null);
-  rmSync(root, { recursive: true, force: true });
-}, 20_000);
-
-test("reclaim keeps the record and routes it to failedDevices when a live, unverified pid started at or before the record's startedAt -- it may still be ours", async () => {
-  const child = await spawnFakeProcess(null);
-  const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
-  ensureWorkspaceStorage(root);
-  const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-  writeFileSync(
-    workspaceStateFile(root),
-    JSON.stringify({ collectors: { ios: { pid: child.pid, startedAt: future } } }),
-  );
-  upsertProject(root, { label: 'agent-1' });
-
-  const r = await reclaimProject(root);
-  expect(stillRunning(child.pid as number)).toBe(true);
-  expect(r.failedDevices.map((d) => d.name)).toEqual([`ios log collector (pid ${child.pid})`]);
-  expect(r.failedDevices[0]?.reason).toMatch(/not signalled/);
-  expect(r.keptEntry).toBe(true);
-  expect(getProject(root)).toBeTruthy();
-  child.kill('SIGKILL');
-  await exits(child);
-  rmSync(root, { recursive: true, force: true });
-}, 20_000);
-
-describe('the unverified-collector start-time split (mocked verify and start time, real pid for liveness)', () => {
-  test('recycled: the live process started after the record -- drop the record, as today', async () => {
-    const child = await spawnFakeProcess(null);
-    const root = workspaceWithCollector(child.pid as number); // startedAt: 2026-01-01T00:00:00.000Z
-    const r = await reclaimProject(root, {
-      verifyCollector: () => ({ status: 'unverified', reason: 'stubbed' }),
-      readCollectorStartTime: () => new Date(),
-    });
-    expect(r.keptEntry).toBe(false);
-    expect(r.failedDevices).toEqual([]);
-    expect(r.skippedDevices.length).toBe(1);
-    expect(getProject(root)).toBe(null);
-    child.kill('SIGKILL');
-    await exits(child);
-    rmSync(root, { recursive: true, force: true });
-  }, 20_000);
-
-  test('possibly ours: the live process started before the record -- keep it for retry', async () => {
-    const child = await spawnFakeProcess(null);
-    const root = workspaceWithCollector(child.pid as number); // startedAt: 2026-01-01T00:00:00.000Z
-    const r = await reclaimProject(root, {
-      verifyCollector: () => ({ status: 'unverified', reason: 'stubbed' }),
-      readCollectorStartTime: () => new Date('2025-01-01T00:00:00.000Z'),
-    });
-    expect(r.keptEntry).toBe(true);
-    expect(r.failedDevices.length).toBe(1);
-    expect(r.failedDevices[0]?.reason).toMatch(/not signalled/);
-    expect(getProject(root)).toBeTruthy();
-    child.kill('SIGKILL');
-    await exits(child);
-    rmSync(root, { recursive: true, force: true });
-  }, 20_000);
-
-  test("possibly ours: the live process started at exactly the record's startedAt -- keep it (boundary is inclusive)", async () => {
-    const child = await spawnFakeProcess(null);
-    const root = workspaceWithCollector(child.pid as number);
-    const r = await reclaimProject(root, {
-      verifyCollector: () => ({ status: 'unverified', reason: 'stubbed' }),
-      readCollectorStartTime: () => new Date('2026-01-01T00:00:00.000Z'),
-    });
-    expect(r.keptEntry).toBe(true);
-    child.kill('SIGKILL');
-    await exits(child);
-    rmSync(root, { recursive: true, force: true });
-  }, 20_000);
-
-  test('possibly ours: a live process a few seconds after the record is within the clock-skew tolerance -- keep it', async () => {
-    const child = await spawnFakeProcess(null);
-    const root = workspaceWithCollector(child.pid as number); // startedAt: 2026-01-01T00:00:00.000Z
-    const r = await reclaimProject(root, {
-      verifyCollector: () => ({ status: 'unverified', reason: 'stubbed' }),
-      readCollectorStartTime: () => new Date('2026-01-01T00:00:02.000Z'), // 2s after, inside the tolerance
-    });
-    expect(r.keptEntry).toBe(true);
-    expect(r.failedDevices.length).toBe(1);
-    child.kill('SIGKILL');
-    await exits(child);
-    rmSync(root, { recursive: true, force: true });
-  }, 20_000);
-
-  test('recycled: a live process comfortably past the clock-skew tolerance is still dropped', async () => {
-    const child = await spawnFakeProcess(null);
-    const root = workspaceWithCollector(child.pid as number); // startedAt: 2026-01-01T00:00:00.000Z
-    const r = await reclaimProject(root, {
-      verifyCollector: () => ({ status: 'unverified', reason: 'stubbed' }),
-      readCollectorStartTime: () => new Date('2026-01-01T00:00:10.000Z'), // 10s after, past the tolerance
-    });
-    expect(r.keptEntry).toBe(false);
-    expect(r.failedDevices).toEqual([]);
-    expect(getProject(root)).toBe(null);
-    child.kill('SIGKILL');
-    await exits(child);
-    rmSync(root, { recursive: true, force: true });
-  }, 20_000);
-
-  test('a record with no startedAt at all fails closed to keep', async () => {
-    const child = await spawnFakeProcess(null);
-    const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
-    ensureWorkspaceStorage(root);
-    writeFileSync(workspaceStateFile(root), JSON.stringify({ collectors: { ios: { pid: child.pid } } }));
-    upsertProject(root, { label: 'agent-1' });
-    const r = await reclaimProject(root, {
-      verifyCollector: () => ({ status: 'unverified', reason: 'stubbed' }),
-      readCollectorStartTime: () => new Date(),
-    });
-    expect(r.keptEntry).toBe(true);
-    child.kill('SIGKILL');
-    await exits(child);
-    rmSync(root, { recursive: true, force: true });
-  }, 20_000);
-
-  test('an unreadable live start time fails closed to keep, even against a stale-looking record', async () => {
-    const child = await spawnFakeProcess(null);
-    const root = workspaceWithCollector(child.pid as number);
-    const r = await reclaimProject(root, {
-      verifyCollector: () => ({ status: 'unverified', reason: 'stubbed' }),
-      readCollectorStartTime: () => null,
-    });
-    expect(r.keptEntry).toBe(true);
-    child.kill('SIGKILL');
-    await exits(child);
-    rmSync(root, { recursive: true, force: true });
-  }, 20_000);
-
-  test('gone never consults the start time and never signals', async () => {
-    const child = await spawnFakeProcess(null);
-    const root = workspaceWithCollector(child.pid as number);
-    let readStartTimeCalls = 0;
-    const r = await reclaimProject(root, {
-      verifyCollector: () => ({ status: 'gone' }),
-      readCollectorStartTime: () => {
-        readStartTimeCalls += 1;
-        return new Date();
-      },
-    });
-    expect(r.skippedDevices).toEqual([]);
-    expect(r.failedDevices).toEqual([]);
-    expect(readStartTimeCalls).toBe(0);
-    expect(stillRunning(child.pid as number)).toBe(true);
-    child.kill('SIGKILL');
-    await exits(child);
-    rmSync(root, { recursive: true, force: true });
-  }, 20_000);
-
-  test('ours signals the pid without consulting the start time', async () => {
-    const child = await spawnFakeProcess(null);
-    const root = workspaceWithCollector(child.pid as number);
-    let readStartTimeCalls = 0;
+test('reclaim stops an owned collector regardless of its process title', async () => {
+  const child = await spawnFakeProcess('unrelated-looking-title');
+  const root = workspaceWithCollector(child.pid!);
+  try {
+    const token = captureProcessToken(child.pid!);
+    expect(token).toBeTruthy();
+    writeFileSync(
+      workspaceStateFile(root),
+      JSON.stringify({ collectors: { ios: { pid: child.pid, processToken: token } } }),
+    );
     const died = exits(child);
-    const r = await reclaimProject(root, {
-      verifyCollector: () => ({ status: 'ours' }),
-      readCollectorStartTime: () => {
-        readStartTimeCalls += 1;
-        return new Date();
-      },
-    });
+    const result = await reclaimProject(root);
     expect(await died).toBe(true);
-    expect(readStartTimeCalls).toBe(0);
-    expect(r.skippedDevices).toEqual([]);
+    expect(result.keptEntry).toBe(false);
+    expect(result.failedDevices).toEqual([]);
+  } finally {
+    child.kill('SIGKILL');
     rmSync(root, { recursive: true, force: true });
-  }, 20_000);
+  }
+});
+
+test.each(['2020-01-01T00:00:00Z', '2099-01-01T00:00:00Z'])(
+  'reclaim retains a live legacy collector regardless of wall-clock startedAt (%s)',
+  async (startedAt) => {
+    const child = await spawnFakeProcess('stim-collector-ios');
+    const root = workspaceWithCollector(child.pid!);
+    try {
+      writeFileSync(workspaceStateFile(root), JSON.stringify({ collectors: { ios: { pid: child.pid, startedAt } } }));
+      const result = await reclaimProject(root);
+      expect(stillRunning(child.pid!)).toBe(true);
+      expect(result.keptEntry).toBe(true);
+      expect(result.failedDevices[0]?.reason).toMatch(/keeping the record/);
+      expect(getProject(root)).toBeTruthy();
+    } finally {
+      child.kill('SIGKILL');
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test('reclaim drops an exited collector without signalling a replacement', async () => {
+  const child = await spawnFakeProcess(null);
+  const token = captureProcessToken(child.pid!);
+  const root = workspaceWithCollector(child.pid!);
+  const died = exits(child);
+  child.kill('SIGKILL');
+  await died;
+  try {
+    writeFileSync(
+      workspaceStateFile(root),
+      JSON.stringify({ collectors: { ios: { pid: child.pid, processToken: token } } }),
+    );
+    const result = await reclaimProject(root);
+    expect(result.keptEntry).toBe(false);
+    expect(result.failedDevices).toEqual([]);
+    expect(getProject(root)).toBeNull();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('reclaim retains a live legacy supervisor even before any port listens', async () => {
+  const child = await spawnFakeProcess(null);
+  const root = workspaceWithCollector(99999999);
+  try {
+    writeFileSync(workspaceStateFile(root), JSON.stringify({ supervisor: { pid: child.pid, port: 8083 } }));
+    const result = await reclaimProject(root);
+    expect(result.keptEntry).toBe(true);
+    expect(result.skippedMetro).toMatch(/identity/);
+    expect(stillRunning(child.pid!)).toBe(true);
+    expect(existsSync(workspaceStateFile(root))).toBe(true);
+  } finally {
+    child.kill('SIGKILL');
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('reclaimProject releases the leases the workspace holds', async () => {
   setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
-  const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
   try {
     ensureWorkspaceStorage(root);
     const taken = takeLease({ root, platform: 'ios', id: 'UDID-1', deviceName: 'Old iPhone', kind: 'declared' });
@@ -764,7 +601,7 @@ test('reclaimProject releases the leases the workspace holds', async () => {
 
 test('reclaimProject releases a lease whose token the recreated workspace lost', async () => {
   setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
-  const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
   try {
     takeLease({ root, platform: 'ios', id: 'UDID-1', kind: 'declared' });
     rmSync(workspaceStateFile(root), { force: true });

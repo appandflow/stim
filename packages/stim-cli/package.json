@@ -51,6 +51,7 @@
     "@stim-cli/metro": "workspace:^",
     "chalk": "^5.4.1",
     "commander": "^13.1.0",
+    "unique-pid": "0.1.0",
     "ws": "^8.21.3"
   },
   "devDependencies": {

@@ -43,7 +43,7 @@ export function killPreviousCollector(
   const record = (collectors ?? readCollectors(root))?.[platform] as { pid?: number } | undefined;
   const pid = Number(record?.pid);
   if (!Number.isFinite(pid) || pid <= 0 || pid === process.pid) return null;
-  const ownership = verify({ pid, platform, root, isAlive });
+  const ownership = verify({ pid, platform, root, isAlive, expected: record });
   if (ownership.status === 'gone') return null;
   if (ownership.status === 'unverified') {
     note(

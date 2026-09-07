@@ -3,23 +3,32 @@ import { isMetroRunning } from '../ports.ts';
 import {
   parseLsofPids,
   parseLsofCwd,
-  parsePsPgid,
   isInsideProject,
-  processGroupLeader,
   processCwd,
   resolveProjectMetro,
   killMetroTree,
   NOT_OURS_FOREIGN_CWD,
   NOT_OURS_UNRESPONSIVE,
 } from '../metro.ts';
+import { captureProcessToken } from '../process-identity.ts';
+import { writeWorkspaceState } from '../supervisor/state.ts';
 import { spawn as realSpawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { realpathSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 const CAN_READ_CWD = processCwd(process.pid) !== null;
 import { join } from 'node:path';
 
-afterEach(() => resetExecutor());
+let home: string;
+beforeEach(() => {
+  home = mkdtempSync(join(tmpdir(), 'stim-metro-home-'));
+  process.env.STIM_HOME = home;
+});
+afterEach(() => {
+  resetExecutor();
+  rmSync(home, { recursive: true, force: true });
+  delete process.env.STIM_HOME;
+});
 
 test('parseLsofPids parses newline separated pids and ignores junk', () => {
   expect(parseLsofPids('59914\n59806\n')).toEqual([59914, 59806]);
@@ -33,12 +42,6 @@ test('parseLsofCwd extracts the cwd path from -Fn field output', () => {
   expect(parseLsofCwd(out)).toBe('/Volumes/SSD/Developer/member-app');
   expect(parseLsofCwd('')).toBe(null);
   expect(parseLsofCwd('p59914\nfcwd\n')).toBe(null);
-});
-
-test('parsePsPgid reads the process group id', () => {
-  expect(parsePsPgid(' 59806\n')).toBe(59806);
-  expect(parsePsPgid('')).toBe(null);
-  expect(parsePsPgid('nonsense')).toBe(null);
 });
 
 test('isInsideProject accepts the root and descendants, rejects siblings', () => {
@@ -81,109 +84,44 @@ test('resolveProjectMetro refuses a Metro running from another directory', async
   resetExecutor();
 });
 
-test('resolveProjectMetro identifies our Metro and reports its group leader', async () => {
+test('resolveProjectMetro identifies a workspace Metro without claiming ownership', async () => {
   setExecutor({
     run: () => '',
     runQuiet: (cmd: string) => {
       if (cmd.includes('-sTCP:LISTEN')) return '59914';
       if (cmd.includes('-d cwd')) return 'p59914\nfcwd\nn/a/b\n';
-      if (cmd.includes('ps -o pgid=')) return ' 59806\n';
       return '';
     },
     spawn: () => {},
   });
   const r = await resolveProjectMetro(8082, '/a/b', { probe: async () => true });
   expect(r.metro!.pid).toBe(59914);
-  expect(r.metro!.leader).toBe(59806);
+  expect(r.metro!.leader).toBe(59914);
+  expect(r.metro!.processToken).toBeUndefined();
   resetExecutor();
 });
 
-test('killMetroTree signals the process group, not just the pid', () => {
-  const signalled: [number, string | number][] = [];
-  const origKill = process.kill;
-  process.kill = ((pid: number, sig: string | number) => {
-    signalled.push([pid, sig]);
-    return true;
-  }) as typeof process.kill;
-  try {
-    expect(killMetroTree(59806)).toBe(true);
-    expect(signalled[0]).toEqual([-59806, 'SIGTERM']);
-  } finally {
-    process.kill = origKill;
-  }
+test.each([undefined, 'malformed'])('killMetroTree refuses an unverified identity (%s)', (token) => {
+  const signal = vi.spyOn(process, 'kill');
+  expect(killMetroTree(59806, token)).toBe(false);
+  expect(signal).not.toHaveBeenCalled();
+  signal.mockRestore();
 });
 
-test('killMetroTree falls back to the bare pid when the group is gone', () => {
-  const signalled: [number, string | number][] = [];
-  const origKill = process.kill;
-  process.kill = ((pid: number, sig: string | number) => {
-    if (pid < 0) throw new Error('ESRCH');
-    signalled.push([pid, sig]);
-    return true;
-  }) as typeof process.kill;
-  try {
-    expect(killMetroTree(59806)).toBe(true);
-    expect(signalled[0]).toEqual([59806, 'SIGTERM']);
-  } finally {
-    process.kill = origKill;
-  }
-});
-
-test('killMetroTree signals the listener pid, not the leader, when the leader is our own process group', () => {
-  setExecutor({
-    run: () => '',
-    runQuiet: (cmd: string) => (cmd.includes('ps -o pgid=') ? ' 4242\n' : ''),
-    spawn: () => {},
-  });
-  const signalled: [number, string | number][] = [];
-  const origKill = process.kill;
-  process.kill = ((pid: number, sig: string | number) => {
-    signalled.push([pid, sig]);
-    return true;
-  }) as typeof process.kill;
-  try {
-    expect(killMetroTree(4242, 5555)).toBe(true);
-    expect(signalled).toEqual([[5555, 'SIGTERM']]);
-  } finally {
-    process.kill = origKill;
-    resetExecutor();
-  }
-});
-
-test('killMetroTree resolves its own process group with the real ps and spares it', () => {
-  const ownPgid = processGroupLeader(process.pid);
-  expect(Number.isFinite(ownPgid), 'ps must report a numeric pgid for this process').toBeTruthy();
-  const signalled: [number, string | number][] = [];
-  const origKill = process.kill;
-  process.kill = ((pid: number, sig: string | number) => {
-    signalled.push([pid, sig]);
-    return true;
-  }) as typeof process.kill;
-  try {
-    expect(killMetroTree(ownPgid)).toBe(true);
-    expect(signalled).toEqual([[ownPgid, 'SIGTERM']]);
-  } finally {
-    process.kill = origKill;
-  }
-});
-
-test('killMetroTree reports false when nothing could be signalled', () => {
-  const origKill = process.kill;
-  process.kill = (() => {
-    throw new Error('ESRCH');
-  }) as typeof process.kill;
-  try {
-    expect(killMetroTree(1234567)).toBe(false);
-  } finally {
-    process.kill = origKill;
-  }
+test('killMetroTree refuses to signal its own group even with a matching token', () => {
+  const token = captureProcessToken(process.pid);
+  expect(token).toBeTruthy();
+  const signal = vi.spyOn(process, 'kill');
+  expect(killMetroTree(process.pid, token!)).toBe(false);
+  expect(signal).not.toHaveBeenCalled();
+  signal.mockRestore();
 });
 
 test.skipIf(!CAN_READ_CWD)(
-  'resolveProjectMetro identifies and kills a REAL listening process from the project dir',
+  'resolveProjectMetro reuses an external server but only kills a REAL explicitly recorded detached supervisor',
   { timeout: 30_000 },
   async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'stim-metro-'));
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'stim-metro-')));
     const script = join(dir, 'fake-metro.js');
     writeFileSync(
       script,
@@ -226,7 +164,14 @@ test.skipIf(!CAN_READ_CWD)(
       const foreign = await resolveProjectMetro(port, join(tmpdir(), 'some-other-project'));
       expect(foreign.notOurs, 'a process outside the project must not be claimed').toBeTruthy();
 
-      expect(killMetroTree(ours.metro!.leader)).toBe(true);
+      expect(killMetroTree(ours.metro!.leader)).toBe(false);
+      expect(await isMetroRunning(port)).toBe(true);
+      const token = captureProcessToken(child.pid!);
+      expect(token).toBeTruthy();
+      writeWorkspaceState(dir, { supervisor: { pid: child.pid, port, processToken: token } });
+      const owned = await resolveProjectMetro(port, dir);
+      expect(owned.metro?.processToken).toBe(token);
+      expect(killMetroTree(owned.metro!.leader, owned.metro!.processToken)).toBe(true);
       for (let i = 0; i < 40; i++) {
         if (!(await isMetroRunning(port))) break;
         await new Promise((r) => setTimeout(r, 100));
