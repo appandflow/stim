@@ -120,7 +120,7 @@ describe('launch crash benchmark', () => {
     );
   });
 
-  it('uses the first command that reports both the token and source location', () => {
+  it('waits past empty logs and UI-only errors for token-bearing log evidence', () => {
     const token = launchCrashToken('run');
     const diagnosis = launchCrashDiagnosis(
       [
@@ -131,6 +131,30 @@ describe('launch crash benchmark', () => {
           exitCode: 0,
           startedAt: '2026-09-04T12:00:01.000Z',
           endedAt: '2026-09-04T12:00:10.000Z',
+        },
+        {
+          id: 'empty-logs',
+          command: 'stim logs --errors',
+          output: 'No matching log records',
+          exitCode: 0,
+          startedAt: '2026-09-04T12:00:10.100Z',
+          endedAt: '2026-09-04T12:00:10.200Z',
+        },
+        {
+          id: 'redbox',
+          command: 'agent-device snapshot -i',
+          output: `${token}\napp/_layout.tsx:28 in RootLayout`,
+          exitCode: 0,
+          startedAt: '2026-09-04T12:00:10.300Z',
+          endedAt: '2026-09-04T12:00:10.400Z',
+        },
+        {
+          id: 'empty-logs-retry',
+          command: 'stim logs --errors',
+          output: 'No matching log records',
+          exitCode: 0,
+          startedAt: '2026-09-04T12:00:10.500Z',
+          endedAt: '2026-09-04T12:00:10.600Z',
         },
         {
           id: 'logs',
@@ -148,7 +172,7 @@ describe('launch crash benchmark', () => {
       valid: true,
       observedAt: '2026-09-04T12:00:15.000Z',
       dispatchToDiagnosisSeconds: 15,
-      commandCount: 2,
+      commandCount: 5,
       commandId: 'logs',
       command: 'stim logs --errors',
       initialLaunchCommandId: 'launch',
