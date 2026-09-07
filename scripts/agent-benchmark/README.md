@@ -90,6 +90,21 @@ or CLI digest mismatch and refuses a control shell that can resolve Stim.
 Golden cache validation hashes the fixture with the pinned CLI's fingerprint
 dependency, not the fixture's potentially different version.
 
+Both runners are launched through macOS `sandbox-exec` with a verified,
+run-scoped policy. Configuration, golden files, coordinator evidence and
+sibling worktrees/results cannot be read or written by the runner process tree.
+Parent-directory listing is permitted. The current worktree, proof, temporary
+files, runner home, selected tool runtime and configured shared Gradle/AVD/device
+state remain accessible. Keep those shared paths narrowly scoped; dispatch
+refuses a grant that exposes the protected coordinator probes. Do not use a
+protected coordinator directory as a shared cache root.
+
+`smoke stim` and `smoke control` verify real filesystem denials and the Codex
+skill profile without running a model task. Timed dispatch repeats the same
+checks before starting the clock and records the policy digest. This is a
+macOS benchmark-data boundary, not a security sandbox for hostile code or
+already-running native services. Unsupported hosts fail closed.
+
 ## Run a cell
 
 Prepare the platform golden, then dispatch, collect, and clean one cell:
