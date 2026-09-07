@@ -16,7 +16,7 @@ minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
   - stim-cli
   - '@stim-cli/*'
-  - unique-pid@0.1.0
+  - unique-pid@0.1.1
 allowBuilds:
   '@swc/core': false
   core-js: false

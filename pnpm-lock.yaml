@@ -179,8 +179,8 @@ importers:
         specifier: ^13.1.0
         version: 13.1.0
       unique-pid:
-        specifier: 0.1.0
-        version: 0.1.0
+        specifier: 0.1.1
+        version: 0.1.1
       ws:
         specifier: ^8.21.3
         version: 8.21.3
@@ -7278,8 +7278,8 @@ packages:
   unified@11.0.5:
     resolution: {integrity: sha512-xKvGhPWw3k84Qjh8bI3ZeJjqnyadK+GEFtazSfZv/rKeTkTjOJho6mFqh2SM96iIcZokxiOpg78GazTSg8+KHA==}
 
-  unique-pid@0.1.0:
-    resolution: {integrity: sha512-2j8S5qAoZ+07IHY4Yq82Gj22+CSUbetqFCJvp08dlV0Vp0iJ6f3sm6LGCm0b3E9MW3dXI/JcGbE+gKprEAkwWw==}
+  unique-pid@0.1.1:
+    resolution: {integrity: sha512-IG/DcbOKtMcwPiE9HyzZwBc/h/YFKB12iOP3ESu1OxecvEA8+3718MQdJvWFbzOTmhm3hoX2HHEHdVcR02rMwg==}
     engines: {node: ^20.19.4 || >=22.12.0}
     os: [darwin, linux, win32]
 
@@ -15962,7 +15962,7 @@ snapshots:
       trough: 2.2.0
       vfile: 6.0.3
 
-  unique-pid@0.1.0:
+  unique-pid@0.1.1:
     dependencies:
       node-gyp-build: 4.8.4
 
