@@ -1,5 +1,6 @@
 import { closeSync, openSync, readFileSync, readSync } from 'node:fs';
 import { getExecutor } from './exec.ts';
+import { readMacosProcess } from './macos-process.ts';
 
 export const PROCESS_COMMAND_TIMEOUT_MS: number = 1_000;
 export const PROCESS_COMMAND_MAX_BYTES: number = 32 * 1024;
@@ -110,6 +111,10 @@ export function readProcessArgs(
     if (platform === 'win32') return null;
     return parsePsCommand(runPsCommand(pid, PROCESS_COMMAND_TIMEOUT_MS));
   } catch {
+    if (platform === 'darwin' && runPsCommand === defaultRunPsCommand) {
+      const observation = readMacosProcess(pid);
+      return observation && !observation.zombie ? observation.args : null;
+    }
     return null;
   }
 }
@@ -183,6 +188,10 @@ export function readProcessStartTime(
     const parsed = new Date(raw);
     return Number.isNaN(parsed.getTime()) ? null : parsed;
   } catch {
+    if (platform === 'darwin' && runPsCommand === runPsStartCommand) {
+      const observation = readMacosProcess(pid);
+      return observation && !observation.zombie ? observation.startTime : null;
+    }
     return null;
   }
 }

@@ -174,7 +174,14 @@ THE ONE CASE GC WILL NOT REAP
   genuinely stale and gets dropped, as before. A pid that started at or
   before that claim may still be the collector Stim registered, so the
   record is kept and reported for a retry, the same way a device teardown
-  that could not be confirmed keeps its record.`,
+  that could not be confirmed keeps its record.
+
+  On macOS, if the sandbox prevents ps from executing, Stim reads same-user
+  process identity through native macOS APIs. The first fallback compiles a
+  small read-only helper using the installed Apple command-line tools and
+  caches it under $STIM_HOME/tools by source hash and architecture. A missing
+  compiler or denied native inspection still leaves ownership unverified;
+  it never authorizes signalling an unknown process.`,
     },
     disk: {
       summary: 'disk usage, AVD and build-log sizes, the data partition, trimming the shared caches',
