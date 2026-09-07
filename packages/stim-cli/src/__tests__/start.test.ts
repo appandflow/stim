@@ -1,4 +1,5 @@
 import assert from 'node:assert';
+import { captureProcessToken } from '../process-identity.ts';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import type { SpawnOptions } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
@@ -229,7 +230,15 @@ async function runSpawnedExpoStart({
   let tunnelWritten: Promise<number | null> = Promise.resolve(null);
   exec.spawn = (cmd, args, opts) => {
     exec.calls.spawn.push({ cmd, args, opts });
-    writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'expo-child', startedAt: 'T' } });
+    writeWorkspaceState(root, {
+      supervisor: {
+        pid: process.pid,
+        processToken: captureProcessToken(process.pid),
+        port,
+        mode: 'expo-child',
+        startedAt: 'T',
+      },
+    });
     metroListener(port).then((server) => {
       held.server = server;
       exec.listening = true;
@@ -330,6 +339,7 @@ describe('liveSupervisor', () => {
       project: { supervisor: { pid: 10, port: 8082 } },
       port: 8082,
       isAlive: alive,
+      inspectIdentity: () => 'same',
     });
     expect(found).toEqual({ pid: 10, port: 8082, mode: 'bare-inproc', startedAt: 'T' });
   });
@@ -340,6 +350,7 @@ describe('liveSupervisor', () => {
       project: { supervisor: { pid: 11, port: 8082, startedAt: 'T' } },
       port: 8082,
       isAlive: alive,
+      inspectIdentity: () => 'same',
     });
     assert(found);
     expect(found.pid).toBe(11);
@@ -364,6 +375,7 @@ describe('liveSupervisor', () => {
         project: null,
         port: 8082,
         isAlive: alive,
+        inspectIdentity: () => 'same',
       }),
     ).toBe(null);
   });
@@ -475,7 +487,15 @@ describe('action: already running', () => {
     const server = await metroListener(port);
     setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } }));
     upsertProject(root, { metroPort: port });
-    writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
+    writeWorkspaceState(root, {
+      supervisor: {
+        pid: process.pid,
+        processToken: captureProcessToken(process.pid),
+        port,
+        mode: 'bare-inproc',
+        startedAt: 'T',
+      },
+    });
 
     let result;
     try {
@@ -578,7 +598,13 @@ describe('action: already running', () => {
     upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
     if (owned) {
       writeWorkspaceState(root, {
-        supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' },
+        supervisor: {
+          pid: process.pid,
+          processToken: captureProcessToken(process.pid),
+          port,
+          mode: 'bare-inproc',
+          startedAt: 'T',
+        },
       });
     }
     let tunnelStarted = false;
@@ -621,7 +647,15 @@ describe('action: already running', () => {
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
     setExecutor(exec);
     upsertProject(root, { metroPort: port });
-    writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
+    writeWorkspaceState(root, {
+      supervisor: {
+        pid: process.pid,
+        processToken: captureProcessToken(process.pid),
+        port,
+        mode: 'bare-inproc',
+        startedAt: 'T',
+      },
+    });
 
     try {
       await runAction({ json: true });
@@ -642,7 +676,15 @@ describe('action: already running', () => {
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
     setExecutor(exec);
     upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'expo' } } });
-    writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'expo-child', startedAt: 'T' } });
+    writeWorkspaceState(root, {
+      supervisor: {
+        pid: process.pid,
+        processToken: captureProcessToken(process.pid),
+        port,
+        mode: 'expo-child',
+        startedAt: 'T',
+      },
+    });
 
     let result;
     try {
@@ -670,7 +712,15 @@ describe('action: already running', () => {
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
     setExecutor(exec);
     upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'expo' } } });
-    writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'expo-child', startedAt: 'T' } });
+    writeWorkspaceState(root, {
+      supervisor: {
+        pid: process.pid,
+        processToken: captureProcessToken(process.pid),
+        port,
+        mode: 'expo-child',
+        startedAt: 'T',
+      },
+    });
     const tunnelWritten = new Promise<number>((resolve) => {
       setTimeout(() => {
         writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url: 'exp://already-healthy.exp.direct' } });
@@ -703,7 +753,15 @@ describe('action: spawning the supervisor', () => {
     const held: { server: Server | null } = { server: null };
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
-      writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
+      writeWorkspaceState(root, {
+        supervisor: {
+          pid: process.pid,
+          processToken: captureProcessToken(process.pid),
+          port,
+          mode: 'bare-inproc',
+          startedAt: 'T',
+        },
+      });
       metroListener(port).then((s) => {
         held.server = s;
         exec.listening = true;
@@ -757,7 +815,15 @@ describe('action: spawning the supervisor', () => {
     const held: { server: Server | null } = { server: null };
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
-      writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
+      writeWorkspaceState(root, {
+        supervisor: {
+          pid: process.pid,
+          processToken: captureProcessToken(process.pid),
+          port,
+          mode: 'bare-inproc',
+          startedAt: 'T',
+        },
+      });
       metroListener(port).then((s) => {
         held.server = s;
         exec.listening = true;
@@ -797,7 +863,15 @@ describe('action: spawning the supervisor', () => {
     const held: { server: Server | null } = { server: null };
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
-      writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
+      writeWorkspaceState(root, {
+        supervisor: {
+          pid: process.pid,
+          processToken: captureProcessToken(process.pid),
+          port,
+          mode: 'bare-inproc',
+          startedAt: 'T',
+        },
+      });
       metroListener(port).then((s) => {
         held.server = s;
         exec.listening = true;
@@ -952,7 +1026,15 @@ describe('action: spawning the supervisor', () => {
     const held: { server: Server | null } = { server: null };
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
-      writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
+      writeWorkspaceState(root, {
+        supervisor: {
+          pid: process.pid,
+          processToken: captureProcessToken(process.pid),
+          port,
+          mode: 'bare-inproc',
+          startedAt: 'T',
+        },
+      });
       metroListener(port).then((s) => {
         held.server = s;
         exec.listening = true;
@@ -1004,7 +1086,15 @@ describe('action: spawning the supervisor', () => {
         STIM_METRO_PUBLIC_URL: 'https://stable.ngrok.app',
         EXPO_PACKAGER_PROXY_URL: 'https://stable.ngrok.app',
       });
-      writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
+      writeWorkspaceState(root, {
+        supervisor: {
+          pid: process.pid,
+          processToken: captureProcessToken(process.pid),
+          port,
+          mode: 'bare-inproc',
+          startedAt: 'T',
+        },
+      });
       metroListener(port).then((server) => {
         held.server = server;
         exec.listening = true;
@@ -1061,7 +1151,15 @@ describe('action: spawning the supervisor', () => {
     const held: { server: Server | null; starting: Promise<Server> | null } = { server: null, starting: null };
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
-      writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
+      writeWorkspaceState(root, {
+        supervisor: {
+          pid: process.pid,
+          processToken: captureProcessToken(process.pid),
+          port,
+          mode: 'bare-inproc',
+          startedAt: 'T',
+        },
+      });
       held.starting ??= metroListener(port).then((server) => {
         held.server = server;
         exec.listening = true;
@@ -1126,7 +1224,13 @@ describe('action: spawning the supervisor', () => {
         queueMicrotask(releaseFirstLock);
         setTimeout(() => {
           writeWorkspaceState(root, {
-            supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' },
+            supervisor: {
+              pid: process.pid,
+              processToken: captureProcessToken(process.pid),
+              port,
+              mode: 'bare-inproc',
+              startedAt: 'T',
+            },
           });
           metroListener(port).then((server) => {
             held.server = server;
@@ -1272,7 +1376,15 @@ describe('action: spawning the supervisor', () => {
     const held: { server: Server | null } = { server: null };
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
-      writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
+      writeWorkspaceState(root, {
+        supervisor: {
+          pid: process.pid,
+          processToken: captureProcessToken(process.pid),
+          port,
+          mode: 'bare-inproc',
+          startedAt: 'T',
+        },
+      });
       metroListener(port).then((server) => {
         held.server = server;
         exec.listening = true;
@@ -1487,7 +1599,15 @@ describe('action: spawning the supervisor', () => {
     const held: { server: Server | null } = { server: null };
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
-      writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
+      writeWorkspaceState(root, {
+        supervisor: {
+          pid: process.pid,
+          processToken: captureProcessToken(process.pid),
+          port,
+          mode: 'bare-inproc',
+          startedAt: 'T',
+        },
+      });
       metroListener(port).then((server) => {
         held.server = server;
         exec.listening = true;
@@ -1573,7 +1693,13 @@ describe('action: spawning the supervisor', () => {
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
       writeWorkspaceState(root, {
-        supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' },
+        supervisor: {
+          pid: process.pid,
+          processToken: captureProcessToken(process.pid),
+          port,
+          mode: 'bare-inproc',
+          startedAt: 'T',
+        },
       });
       return { pid: process.pid, unref() {}, on() {} };
     };
@@ -1628,7 +1754,15 @@ describe('action: spawning the supervisor', () => {
     const held: { server: Server | null } = { server: null };
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
-      writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
+      writeWorkspaceState(root, {
+        supervisor: {
+          pid: process.pid,
+          processToken: captureProcessToken(process.pid),
+          port,
+          mode: 'bare-inproc',
+          startedAt: 'T',
+        },
+      });
       metroListener(port).then((server) => {
         held.server = server;
         exec.listening = true;
@@ -1896,7 +2030,15 @@ describe('action: an existing supervisor that is not answering', () => {
     const exec = metroExecutor({ listeners: {} });
     setExecutor(exec);
     upsertProject(root, { metroPort: port });
-    writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
+    writeWorkspaceState(root, {
+      supervisor: {
+        pid: process.pid,
+        processToken: captureProcessToken(process.pid),
+        port,
+        mode: 'bare-inproc',
+        startedAt: 'T',
+      },
+    });
     mkdirSync(workspaceLogsDir(root), { recursive: true });
     writeFileSync(supervisorLogFile(root), 'still starting\n');
 
@@ -1919,7 +2061,15 @@ describe('action: an existing supervisor that is not answering', () => {
     };
     setExecutor(exec);
     upsertProject(root, { metroPort: port });
-    writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
+    writeWorkspaceState(root, {
+      supervisor: {
+        pid: process.pid,
+        processToken: captureProcessToken(process.pid),
+        port,
+        mode: 'bare-inproc',
+        startedAt: 'T',
+      },
+    });
     metroListener(port).then((s) => {
       held.server = s;
       exec.listening = true;
@@ -1955,7 +2105,15 @@ describe('action: an existing supervisor that is not answering', () => {
     };
     setExecutor(exec);
     upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'expo' } } });
-    writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'expo-child', startedAt: 'T' } });
+    writeWorkspaceState(root, {
+      supervisor: {
+        pid: process.pid,
+        processToken: captureProcessToken(process.pid),
+        port,
+        mode: 'expo-child',
+        startedAt: 'T',
+      },
+    });
     metroListener(port).then((server) => {
       held.server = server;
       exec.listening = true;
@@ -1990,7 +2148,15 @@ describe('action: an existing supervisor that is not answering', () => {
     };
     setExecutor(exec);
     upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'expo' } } });
-    writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'expo-child', startedAt: 'T' } });
+    writeWorkspaceState(root, {
+      supervisor: {
+        pid: process.pid,
+        processToken: captureProcessToken(process.pid),
+        port,
+        mode: 'expo-child',
+        startedAt: 'T',
+      },
+    });
     metroListener(port).then((server) => {
       held.server = server;
       exec.listening = true;
@@ -2023,7 +2189,15 @@ describe('output contract', () => {
     const server = await metroListener(port);
     setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } }));
     upsertProject(root, { metroPort: port });
-    writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'expo-child', startedAt: 'T' } });
+    writeWorkspaceState(root, {
+      supervisor: {
+        pid: process.pid,
+        processToken: captureProcessToken(process.pid),
+        port,
+        mode: 'expo-child',
+        startedAt: 'T',
+      },
+    });
 
     let result;
     try {

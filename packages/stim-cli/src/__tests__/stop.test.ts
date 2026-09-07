@@ -21,6 +21,63 @@ import { makeConfig, makeError, makeMetroResolution } from './_factories.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
+import { captureProcessToken } from '../process-identity.ts';
+
+test('a live legacy supervisor is retained without signalling or releasing its port', async () => {
+  const { calls, opts } = seams({
+    state: { pid: process.pid, port: 8083 },
+    isAlive: () => true,
+    inspectIdentity: undefined,
+  });
+  const result = await runStop(opts);
+  expect(result.ok).toBe(false);
+  expect(result.outcomes.supervisor.status).toBe('unverified');
+  expect(calls.signals).toEqual([]);
+  expect(calls.freed).toEqual([]);
+  expect(calls.stateCleared).toBe(0);
+});
+
+test('an authentic token for another PID cannot authorize a supervisor signal', async () => {
+  const token = captureProcessToken(process.pid);
+  expect(token).toBeTruthy();
+  const { calls, opts } = seams({
+    state: { pid: 4242, port: 8083, processToken: token },
+    isAlive: () => true,
+    inspectIdentity: undefined,
+  });
+  const result = await runStop(opts);
+  expect(result.outcomes.supervisor.status).toBe('unverified');
+  expect(calls.signals).toEqual([]);
+});
+
+test('cleanup preserves a replacement supervisor even when the OS reused its PID', () => {
+  const old = { pid: 4242, processToken: 'old' };
+  const replacement = { pid: 4242, processToken: 'new' };
+  writeFileSync(supervisorPidFile(tmpRoot), '4242');
+  writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: replacement, launches: { ios: {} } }));
+  expect(clearSupervisorState(tmpRoot, old)).toBe(false);
+  expect(readSupervisorState(tmpRoot)).toEqual(replacement);
+  expect(readFileSync(supervisorPidFile(tmpRoot), 'utf8')).toBe('4242');
+  expect(JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf8')).launches).toEqual({ ios: {} });
+});
+
+test('collector signal failure or unconfirmed exit retains the ownership record', async () => {
+  for (const signalFailure of [true, false]) {
+    const { calls, opts } = seams({
+      collectors: { ios: { pid: 111, processToken: 'fixture' } },
+      isAlive: () => true,
+      signalCollector: () => {
+        if (signalFailure) throw makeError('denied', { code: 'EPERM' });
+      },
+      waitForDeath: async () => false,
+    });
+    const result = await runStop(opts);
+    expect(result.ok).toBe(false);
+    expect(result.outcomes.collectors.entries[0]?.status).toBe('failed');
+    expect(calls.collectorsCleared).toBe(0);
+    expect(calls.freed).toEqual([]);
+  }
+});
 
 test('no supervisor recorded anywhere is "none", not an error', () => {
   const r = resolveSupervisorTarget({ state: null, record: null, reservedPort: 8083, isAlive: () => true });
@@ -29,6 +86,7 @@ test('no supervisor recorded anywhere is "none", not an error', () => {
 
 test('an alive pid whose recorded port matches the reservation is ours to signal', () => {
   const r = resolveSupervisorTarget({
+    inspectIdentity: () => 'same',
     state: { pid: 4242, port: 8083, mode: 'bare-inproc', startedAt: '111' },
     record: { pid: 4242, port: 8083 },
     reservedPort: 8083,
@@ -42,6 +100,7 @@ test('an alive pid whose recorded port matches the reservation is ours to signal
 
 test('a recorded pid that is not running is already stopped, not a failure', () => {
   const r = resolveSupervisorTarget({
+    inspectIdentity: () => 'same',
     state: { pid: 4242, port: 8083 },
     record: { pid: 4242, port: 8083 },
     reservedPort: 8083,
@@ -53,6 +112,7 @@ test('a recorded pid that is not running is already stopped, not a failure', () 
 
 test('a live pid whose recorded port is not this project reservation is refused', () => {
   const r = resolveSupervisorTarget({
+    inspectIdentity: () => 'same',
     state: { pid: 4242, port: 8099 },
     record: { pid: 4242, port: 8099 },
     reservedPort: 8083,
@@ -65,6 +125,7 @@ test('a live pid whose recorded port is not this project reservation is refused'
 
 test('state.json and the global registry disagreeing on the pid is refused', () => {
   const r = resolveSupervisorTarget({
+    inspectIdentity: () => 'same',
     state: { pid: 4242, port: 8083 },
     record: { pid: 777, port: 8083 },
     reservedPort: 8083,
@@ -77,6 +138,7 @@ test('state.json and the global registry disagreeing on the pid is refused', () 
 
 test('a registry record with no state.json is still actionable when the port matches', () => {
   const r = resolveSupervisorTarget({
+    inspectIdentity: () => 'same',
     state: null,
     record: { pid: 4242, port: 8083, startedAt: '5' },
     reservedPort: 8083,
@@ -88,6 +150,7 @@ test('a registry record with no state.json is still actionable when the port mat
 
 test('no reservation left falls back to the in-workspace record', () => {
   const r = resolveSupervisorTarget({
+    inspectIdentity: () => 'same',
     state: { pid: 4242, port: 8083 },
     record: null,
     reservedPort: null,
@@ -143,7 +206,7 @@ function seams(over = {}) {
       calls.killedMetro.push(leader);
       return true;
     },
-    findListener: () => null,
+    inspectIdentity: () => 'same' as const,
     teardownIos: (udid: string, opts: { del?: boolean; label?: string }) => {
       calls.teardowns.push({ udid, opts });
       return { status: 'torn-down', label: 'stim-a' };
@@ -215,15 +278,15 @@ test('the headline stop lines land in the label column, not as colon sentences',
   expect(text).not.toMatch(/^(supervisor|collectors|metro|ios|android|port|leases):/m);
 });
 
-test('a metro stopped without a supervisor reports itself in the same column', async () => {
+test('an external Metro is reported in the same column and left alone', async () => {
   const { opts } = seams({
     project: { metroPort: 8083, platforms: {} },
     resolveMetro: async () => makeMetroResolution.identified({ metro: { pid: 90, leader: 88, cwd: '/proj/a' } }),
   });
   const reported: string[] = [];
   const r = await runStop({ ...opts, report: (line: string) => reported.push(line) });
-  expect(r.outcomes.metro.status).toBe('stopped');
-  expect(reported.join('\n')).toMatch(/^  metro {7}stopped pid 90 on port 8083$/m);
+  expect(r.outcomes.metro.status).toBe('not-managed');
+  expect(reported.join('\n')).toMatch(/^  metro {7}leaving port 8083 alone:/m);
 });
 
 test('a supervisor that outlives the wait is reported, never SIGKILLed', async () => {
@@ -269,42 +332,24 @@ test('an unverified supervisor record is refused without signalling anything', a
   expect(calls.freed.length).toBe(0);
 });
 
-test('no supervisor but our own Metro on the port kills the group', async () => {
+test('a workspace Metro without a saved supervisor identity is left alone', async () => {
   const { calls, opts } = seams({
     resolveMetro: async () => makeMetroResolution.identified({ metro: { pid: 90, leader: 88, cwd: '/proj/a' } }),
   });
   const r = await runStop(opts);
   expect(r.ok).toBe(true);
-  expect(r.outcomes.metro.status).toBe('stopped');
-  expect(r.outcomes.metro.pid).toBe(90);
-  expect(calls.killedMetro).toEqual([88]);
+  expect(r.outcomes.metro.status).toBe('not-managed');
+  expect(calls.killedMetro).toEqual([]);
 });
 
-test('an unproven listener is refused and named, and --force overrides it', async () => {
-  const { opts } = seams({
+test('an unproven listener is named and left alone', async () => {
+  const { opts, calls } = seams({
     resolveMetro: async () => makeMetroResolution.notOurs({ notOurs: 'pid 99 runs from /elsewhere' }),
   });
-  const refused = await runStop(opts);
-  expect(refused.ok).toBe(false);
-  expect(refused.outcomes.metro.status).toBe('refused');
-  expect(refused.outcomes.metro.reason).toMatch(/elsewhere/);
-  expect(refused.outcomes.port.status).toBe('kept');
-
-  const forced = seams({
-    resolveMetro: async () => makeMetroResolution.notOurs({ notOurs: 'pid 99 runs from /elsewhere' }),
-    findListener: () => 99,
-    force: true,
-  });
-  const r = await runStop(forced.opts);
-  expect(r.ok).toBe(true);
-  expect(r.outcomes.metro.status).toBe('forced');
-  expect(forced.calls.killedMetro).toEqual([99]);
-});
-
-test('--force with nothing listening still reports missing', async () => {
-  const { calls, opts } = seams({ force: true });
-  const r = await runStop(opts);
-  expect(r.outcomes.metro.status).toBe('missing');
+  const result = await runStop(opts);
+  expect(result.ok).toBe(true);
+  expect(result.outcomes.metro.status).toBe('not-managed');
+  expect(result.outcomes.metro.reason).toMatch(/elsewhere/);
   expect(calls.killedMetro).toEqual([]);
 });
 
@@ -524,14 +569,7 @@ test('resolveCollectorTargets signals only live pids recorded for this workspace
     root: '/w/project',
     collectors: { ios: { pid: 111 }, android: { pid: 222 } },
     isAlive: (pid) => pid === 111,
-    verify: ({ pid, platform, root }) =>
-      verifyCollectorOwnership({
-        pid,
-        platform,
-        root,
-        isAlive: () => true,
-        readArgs: () => [`stim-collector-${platform}`, '--root', root],
-      }),
+    verify: () => ({ status: 'ours' }),
   });
   expect(targets).toEqual([
     { platform: 'ios', pid: 111, status: 'running' },
@@ -548,25 +586,18 @@ test('resolveCollectorTargets refuses a record with no usable pid, and refuses o
   expect(targets.map((t) => t.status)).toEqual(['invalid', 'invalid']);
 });
 
-test('resolveCollectorTargets refuses a live pid that is not this workspace collector', () => {
+test('resolveCollectorTargets refuses a live pid with no persisted identity', () => {
   const targets = resolveCollectorTargets({
     root: '/w/project',
     collectors: { ios: { pid: 111 }, android: { pid: 222 } },
     isAlive: () => true,
-    verify: ({ pid, platform, root }) =>
-      verifyCollectorOwnership({
-        pid,
-        platform,
-        root,
-        isAlive: () => true,
-        readArgs: () => (pid === 111 ? ['stim-collector-ios', '--root', '/w/other'] : ['/usr/bin/vitest', 'run']),
-      }),
+    verify: ({ pid, platform, root }) => verifyCollectorOwnership({ pid, platform, root, isAlive: () => true }),
   });
   expect(targets.map((t) => [t.platform, t.status])).toEqual([
     ['ios', 'unverified'],
     ['android', 'unverified'],
   ]);
-  expect(targets[0]?.reason).toMatch(/does not run this workspace's ios log collector/);
+  expect(targets[0]?.reason).toMatch(/no verifiable identity/);
 });
 
 test('stop SIGTERMs every recorded collector and clears the key', async () => {

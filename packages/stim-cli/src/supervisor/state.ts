@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 import { withDirLock } from '../dir-lock.ts';
 import { ensureWorkspaceStorage, supervisorPidFile, workspaceStateFile, workspaceStateLock } from '../paths.ts';
 import type { ManagedProvider } from '../engine/metro-reach.ts';
+import { sameProcessRecord, type ProcessRecord } from '../process-identity.ts';
 
 export const MODE_BARE = 'bare-inproc';
 export const MODE_EXPO = 'expo-child';
@@ -173,8 +174,15 @@ function replaceWorkspaceState(root: string, state: WorkspaceState): WorkspaceSt
   return state;
 }
 
-export function clearWorkspaceSupervisor(root: string): void {
-  clearWorkspaceStateKey(root, 'supervisor', () => true);
+export function clearWorkspaceSupervisor(root: string, expected?: ProcessRecord | null): boolean {
+  return withWorkspaceStateLock(root, () => {
+    const current = readWorkspaceState(root)?.supervisor;
+    if (current && expected !== undefined && !sameProcessRecord(current, expected)) return false;
+    clearWorkspaceStateKey(root, 'supervisor', () => true);
+    clearExpoMetroTunnel(root);
+    if (expected === undefined || readPidFile(root) === expected?.pid) rmSync(supervisorPidFile(root), { force: true });
+    return true;
+  });
 }
 
 export function clearExpoMetroTunnel(root: string): void {

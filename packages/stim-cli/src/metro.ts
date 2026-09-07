@@ -2,23 +2,16 @@ import { getExecutor } from './exec.ts';
 import { isMetroRunning } from './ports.ts';
 import { readlinkSync, realpathSync } from 'fs';
 import { sep } from 'path';
-
-export function findPidListeningOnPort(port: number): number | null {
-  const out = getExecutor().runQuiet(`lsof -nP -iTCP:${port} -sTCP:LISTEN -t`);
-  if (!out) return null;
-  const first = out.split('\n')[0];
-  if (!first) return null;
-  const pid = parseInt(first, 10);
-  return Number.isFinite(pid) ? pid : null;
-}
+import { inspectProcessIdentity } from './process-identity.ts';
+import { readWorkspaceState } from './supervisor/state.ts';
 
 export function isPidAlive(pid: number): boolean {
-  if (!pid) return false;
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
   }
 }
 
@@ -39,12 +32,6 @@ export function parseLsofCwd(out: unknown): string | null {
   return nLine ? nLine.slice(1) : null;
 }
 
-export function parsePsPgid(out: unknown): number | null {
-  if (!out) return null;
-  const n = parseInt(String(out).trim(), 10);
-  return Number.isFinite(n) ? n : null;
-}
-
 export function processCwd(pid: number): string | null {
   if (process.platform === 'linux') {
     try {
@@ -52,10 +39,6 @@ export function processCwd(pid: number): string | null {
     } catch {}
   }
   return parseLsofCwd(getExecutor().runQuiet(`lsof -a -p ${pid} -d cwd -Fn`));
-}
-
-export function processGroupLeader(pid: number): number | null {
-  return parsePsPgid(getExecutor().runQuiet(`ps -o pgid= -p ${pid}`));
 }
 
 function canonicalPath(path: string): string {
@@ -82,7 +65,7 @@ export interface MetroResolution {
   notOurs?: string;
   kind?: string;
   pid?: number;
-  metro?: { pid: number; leader: number; cwd: string };
+  metro?: { pid: number; leader: number; cwd: string; processToken?: string };
 }
 
 export async function resolveProjectMetro(
@@ -112,34 +95,25 @@ export async function resolveProjectMetro(
       pid,
     };
   }
-  const leader = processGroupLeader(pid) ?? pid;
-  return { metro: { pid, leader, cwd } };
+  const supervisor = readWorkspaceState(canonicalPath(projectPath))?.supervisor;
+  const owned = supervisor?.port === port && inspectProcessIdentity(supervisor) === 'same';
+  return {
+    metro: {
+      pid,
+      leader: owned ? (supervisor.pid as number) : pid,
+      cwd,
+      ...(owned ? { processToken: supervisor.processToken as string } : {}),
+    },
+  };
 }
 
-function ownProcessGroup(): number | null {
-  return processGroupLeader(process.pid);
-}
-
-export function killMetroTree(leader: number | null | undefined, listenerPid?: number | null): boolean {
-  if (!leader) return false;
-  if (leader === ownProcessGroup()) {
-    const target = listenerPid ?? leader;
-    try {
-      process.kill(target, 'SIGTERM');
-      return true;
-    } catch {
-      return false;
-    }
-  }
+export function killMetroTree(leader: number | null | undefined, processToken?: string): boolean {
+  if (!leader || leader === process.pid || inspectProcessIdentity({ pid: leader, processToken }) !== 'same')
+    return false;
   try {
     process.kill(-leader, 'SIGTERM');
     return true;
   } catch {
-    try {
-      process.kill(listenerPid ?? leader, 'SIGTERM');
-      return true;
-    } catch {
-      return false;
-    }
+    return false;
   }
 }

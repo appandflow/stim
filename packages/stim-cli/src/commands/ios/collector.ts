@@ -66,7 +66,7 @@ export async function stopPreviousCollector({
   let killed: number | null = null;
 
   if (previousPid) {
-    const ownership = verify({ pid: previousPid, platform: PLATFORM, root, isAlive: alive });
+    const ownership = verify({ pid: previousPid, platform: PLATFORM, root, isAlive: alive, expected: previous });
     if (ownership.status === 'ours') {
       try {
         kill(previousPid, 'SIGTERM');

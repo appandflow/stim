@@ -1,12 +1,10 @@
 import chalk from 'chalk';
-import { rmSync } from 'fs';
 import type { Command } from 'commander';
 import { phaseLine, plural, releasedLeaseFact } from '../command-output.ts';
-import { clearSupervisor, getProject, upsertProject } from '../config.ts';
-import type { ProjectRecord, SupervisorRecord } from '../config.ts';
+import { clearSupervisor, getProject, upsertProject, withConfigLock } from '../config.ts';
+import type { ProjectRecord } from '../config.ts';
 import { findProjectRoot } from '../project.ts';
-import { supervisorPidFile } from '../paths.ts';
-import { findPidListeningOnPort, isPidAlive, killMetroTree, resolveProjectMetro } from '../metro.ts';
+import { isPidAlive, killMetroTree, resolveProjectMetro } from '../metro.ts';
 import type { MetroResolution } from '../metro.ts';
 import {
   clearManagedMetroTunnel,
@@ -15,6 +13,9 @@ import {
   readMetroTunnel,
   readRemoteSession,
   readWorkspaceState,
+  clearWorkspaceSupervisor,
+  withWorkspaceStateLock,
+  writeWorkspaceState,
 } from '../supervisor/state.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
@@ -22,19 +23,16 @@ import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
 import { stopTunnel } from '../engine/tunnel.ts';
+import {
+  inspectProcessIdentity,
+  sameProcessRecord,
+  waitForProcessExit,
+  type ProcessRecord,
+} from '../process-identity.ts';
+import { resolveSupervisorTarget, type SupervisorTarget, type SupervisorStateRecord } from '../supervisor/ownership.ts';
+export { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 
 const DEFAULT_WAIT_MS = 10_000;
-const POLL_MS = 100;
-
-type SupervisorRecordExt = SupervisorRecord & { mode?: string | null };
-
-interface SupervisorStateRecord {
-  pid?: number;
-  port?: number;
-  mode?: string | null;
-  startedAt?: string | null;
-  [key: string]: unknown;
-}
 
 interface CollectorStateRecord {
   pid?: number | string;
@@ -66,79 +64,33 @@ interface RemoteDeviceRecord {
   platform?: string | null;
   sessionId?: string;
 }
-export function clearSupervisorState(root: string): void {
-  try {
-    rmSync(supervisorPidFile(root), { force: true });
-  } catch {}
-  clearWorkspaceStateKeys(root, ['supervisor', 'launches']);
+export function clearSupervisorState(root: string, expected?: ProcessRecord | null): boolean {
+  return withWorkspaceStateLock(root, () => {
+    if (!clearWorkspaceSupervisor(root, expected)) return false;
+    clearWorkspaceStateKeys(root, ['launches']);
+    return true;
+  });
 }
 
-export function clearCollectorState(root: string): void {
-  clearWorkspaceStateKeys(root, ['collectors']);
-}
-
-interface SupervisorTarget {
-  status: string;
-  pid?: number;
-  reason?: string;
-  port?: number | null;
-  mode?: string | null;
-  startedAt?: string | null;
-}
-
-export function resolveSupervisorTarget({
-  state,
-  record,
-  reservedPort,
-  isAlive = isPidAlive,
-}: {
-  state?: SupervisorStateRecord | null;
-  record?: SupervisorRecordExt | null;
-  reservedPort?: number | null;
-  isAlive?: (pid: number) => boolean;
-} = {}): SupervisorTarget {
-  const statePid = numberOrNull(state?.pid);
-  const recordPid = numberOrNull(record?.pid);
-  const pid = statePid ?? recordPid;
-  if (!pid) return { status: 'none' };
-
-  if (statePid && recordPid && statePid !== recordPid) {
-    return {
-      status: 'unverified',
-      pid,
-      reason: `workspace state.json records supervisor pid ${statePid} but the registry records pid ${recordPid}`,
-    };
-  }
-
-  if (!isAlive(pid)) return { status: 'stale', pid };
-
-  const port = numberOrNull(state?.port) ?? numberOrNull(record?.port);
-  if (reservedPort !== null && reservedPort !== undefined && port !== null && port !== reservedPort) {
-    return {
-      status: 'unverified',
-      pid,
-      reason: `supervisor pid ${pid} records port ${port}, but this project reserved port ${reservedPort}`,
-    };
-  }
-  if (reservedPort !== null && reservedPort !== undefined && port === null) {
-    return {
-      status: 'unverified',
-      pid,
-      reason: `supervisor pid ${pid} has no recorded port, so it cannot be matched against reserved port ${reservedPort}`,
-    };
-  }
-
-  return {
-    status: 'ours',
-    pid,
-    port,
-    mode: state?.mode ?? record?.mode ?? null,
-    startedAt: state?.startedAt ?? record?.startedAt ?? null,
-  };
+export function clearCollectorState(root: string, expected?: CollectorStateMap | null): boolean {
+  return withWorkspaceStateLock(root, () => {
+    const state = readWorkspaceState(root);
+    const current = { ...state?.collectors };
+    if (expected === undefined) {
+      clearWorkspaceStateKeys(root, ['collectors']);
+      return true;
+    }
+    for (const [platform, record] of Object.entries(expected ?? {})) {
+      if (sameProcessRecord(current[platform] as ProcessRecord | undefined, record)) delete current[platform];
+    }
+    if (Object.keys(current).length) writeWorkspaceState(root, { collectors: current });
+    else clearWorkspaceStateKeys(root, ['collectors']);
+    return Object.keys(current).length === 0;
+  });
 }
 
 function numberOrNull(v: unknown): number | null {
-  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
+  return typeof v === 'number' && Number.isSafeInteger(v) && v > 0 ? v : null;
 }
 
 interface CollectorTarget {
@@ -172,7 +124,7 @@ export function resolveCollectorTargets({
       targets.push({ platform, pid, status: 'stale' });
       continue;
     }
-    const ownership = verify({ pid, platform, root, isAlive });
+    const ownership = verify({ pid, platform, root, isAlive, expected: record });
     if (ownership.status === 'gone') {
       targets.push({ platform, pid, status: 'stale' });
       continue;
@@ -184,28 +136,6 @@ export function resolveCollectorTargets({
     targets.push({ platform, pid, status: 'running' });
   }
   return targets;
-}
-
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
-async function waitForExit(
-  pid: number,
-  {
-    timeoutMs = DEFAULT_WAIT_MS,
-    intervalMs = POLL_MS,
-    isAlive = isPidAlive,
-  }: {
-    timeoutMs?: number;
-    intervalMs?: number;
-    isAlive?: (pid: number) => boolean;
-  } = {},
-): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (!isAlive(pid)) return true;
-    await sleep(intervalMs);
-  }
-  return !isAlive(pid);
 }
 
 interface SupervisorOutcome {
@@ -279,7 +209,6 @@ function defaultTeardownRemoteSession(
 
 export async function runStop({
   root,
-  force = false,
   project = undefined,
   state = undefined,
   collectors = undefined,
@@ -288,11 +217,10 @@ export async function runStop({
   clearCollectors = clearCollectorState,
   isAlive = isPidAlive,
   killGroup = killMetroTree,
+  inspectIdentity = inspectProcessIdentity,
   waitForDeath = undefined,
   waitMs = DEFAULT_WAIT_MS,
   resolveMetro = resolveProjectMetro,
-  killMetro = killMetroTree,
-  findListener = findPidListeningOnPort,
   teardownIos = teardownOwnedIosSim,
   teardownAvd = teardownOwnedAvd,
   remoteDevice = undefined,
@@ -306,20 +234,18 @@ export async function runStop({
   report = (line: string) => console.error(line),
 }: {
   root: string;
-  force?: boolean;
   project?: ProjectRecord | null;
   state?: SupervisorStateRecord | null;
   collectors?: CollectorStateMap | null;
   signalCollector?: (pid: number) => void;
   verifyCollector?: typeof verifyCollectorOwnership;
-  clearCollectors?: (root: string) => void;
+  clearCollectors?: (root: string, expected?: CollectorStateMap | null) => boolean | void;
   isAlive?: (pid: number) => boolean;
-  killGroup?: (leader: number | null | undefined) => boolean;
+  killGroup?: typeof killMetroTree;
+  inspectIdentity?: typeof inspectProcessIdentity;
   waitForDeath?: ((pid: number) => Promise<boolean>) | undefined;
   waitMs?: number;
   resolveMetro?: (port: number, root: string) => Promise<MetroResolution>;
-  killMetro?: (leader: number | null | undefined, listenerPid?: number | null) => boolean;
-  findListener?: (port: number) => number | null;
   teardownIos?: (udid: string, opts: { del?: boolean; label?: string }) => TeardownResult;
   teardownAvd?: (avdName: string, opts: { del?: boolean }) => TeardownResult;
   remoteDevice?: RemoteDeviceRecord | null;
@@ -327,16 +253,17 @@ export async function runStop({
   stopMetroTunnel?: typeof stopTunnel;
   releaseLeases?: (root: string) => ReleasedLease[];
   teardownRemoteSession?: (root: string, sessionId: string) => { status: 'torn-down' | 'failed'; reason?: string };
-  freePort?: (root: string, port: number) => void;
-  clearRegistration?: (root: string) => Promise<void>;
-  clearState?: (root: string) => void;
+  freePort?: (root: string, port: number) => boolean | void;
+  clearRegistration?: (root: string, expected?: ProcessRecord | null) => Promise<boolean | void>;
+  clearState?: (root: string, expected?: ProcessRecord | null) => boolean | void;
   report?: (line: string) => void;
 }): Promise<{ ok: boolean; outcomes: StopOutcomes; summary: string }> {
   const proj = project === undefined ? getProject(root) : project;
   const sup = state === undefined ? readSupervisorState(root) : state;
   const collectorRecords = collectors === undefined ? readCollectorState(root) : collectors;
   const reservedPort = typeof proj?.metroPort === 'number' ? proj.metroPort : null;
-  const waiter = waitForDeath ?? ((pid: number) => waitForExit(pid, { timeoutMs: waitMs, isAlive }));
+  const waiter =
+    waitForDeath ?? ((pid: number, processToken?: string) => waitForProcessExit({ pid, processToken }, waitMs));
 
   const outcomes: StopOutcomes = {
     supervisor: { status: 'none' },
@@ -350,7 +277,13 @@ export async function runStop({
   let ok = true;
   let stillHolding: string | null | undefined = null;
 
-  const target = resolveSupervisorTarget({ state: sup, record: proj?.supervisor ?? null, reservedPort, isAlive });
+  const target = resolveSupervisorTarget({
+    state: sup,
+    record: proj?.supervisor ?? null,
+    reservedPort,
+    isAlive,
+    inspectIdentity,
+  });
   if (target.status === 'none') {
     report(chalk.dim(phaseLine('stop', 'no supervisor recorded')));
   } else if (target.status === 'stale') {
@@ -373,11 +306,12 @@ export async function runStop({
     }
   }
 
-  outcomes.collectors = reapCollectors(root, collectorRecords, {
+  outcomes.collectors = await reapCollectors(root, collectorRecords, {
     isAlive,
     signal: signalCollector,
     report,
     verify: verifyCollector,
+    waiter,
   });
   const unverifiedCollectors = outcomes.collectors.entries.filter((e) => e.status === 'unverified');
   if (unverifiedCollectors.length) {
@@ -389,7 +323,15 @@ export async function runStop({
         ),
       ),
     );
-  } else if (outcomes.collectors.entries.length) clearCollectors(root);
+    ok = false;
+    stillHolding ??= 'collector process identity could not be verified';
+  } else if (outcomes.collectors.entries.some((entry) => entry.status === 'failed')) {
+    ok = false;
+    stillHolding ??= 'a collector could not be stopped';
+  } else if (outcomes.collectors.entries.length && clearCollectors(root, collectorRecords) === false) {
+    ok = false;
+    stillHolding ??= 'a replacement collector appeared during cleanup';
+  }
 
   const supervisorHandled =
     outcomes.supervisor.status === 'stopped' ||
@@ -401,18 +343,41 @@ export async function runStop({
   } else if (reservedPort === null) {
     report(chalk.dim(phaseLine('metro', 'no port reserved')));
   } else {
-    outcomes.metro = await stopMetro(reservedPort, root, { force, resolveMetro, killMetro, findListener, report });
+    outcomes.metro = await stopMetro(reservedPort, root, { resolveMetro, report });
     if (outcomes.metro.status === 'refused' || outcomes.metro.status === 'failed') {
       ok = false;
       stillHolding = outcomes.metro.reason;
     }
   }
 
+  const releaseStoppedSupervisor = async () => {
+    const stateCleared = clearState(root, sup);
+    const registrationCleared = await clearRegistration(root, proj?.supervisor ?? null);
+    if (stateCleared === false || registrationCleared === false) {
+      ok = false;
+      outcomes.port = {
+        status: 'kept',
+        port: reservedPort,
+        reason: 'a replacement supervisor appeared during cleanup',
+      };
+      return;
+    }
+    if (reservedPort !== null) {
+      if (freePort(root, reservedPort) === false) {
+        ok = false;
+        outcomes.port = { status: 'kept', port: reservedPort, reason: 'the port reservation changed during cleanup' };
+        return;
+      }
+      outcomes.port = { status: 'freed', port: reservedPort };
+      report(chalk.dim(phaseLine('port', `released ${reservedPort}`)));
+    }
+  };
+
   if (stillHolding) {
     report(chalk.dim(phaseLine('device', 'left alone (something is still running)')));
   } else {
     outcomes.device = shutDownDevices(proj, { teardownIos, teardownAvd, report });
-    if (outcomes.device.ios?.status === 'failed' || outcomes.device.android?.status === 'failed') ok = false;
+    if ([outcomes.device.ios, outcomes.device.android].some((device) => device?.status === 'failed')) ok = false;
   }
 
   const remote = remoteDevice === undefined ? readRemoteSession(root) : remoteDevice;
@@ -479,24 +444,17 @@ export async function runStop({
       outcomes.supervisor.status === 'already-stopped' ||
       outcomes.supervisor.status === 'stopped';
     if (tunnelHolding && supervisorIsDown) {
-      clearState(root);
-      await clearRegistration(root);
+      clearState(root, sup);
+      await clearRegistration(root, proj?.supervisor ?? null);
     }
   } else {
-    if (reservedPort !== null) {
-      freePort(root, reservedPort);
-      outcomes.port = { status: 'freed', port: reservedPort };
-      report(chalk.dim(phaseLine('port', `released ${reservedPort}`)));
-    }
-    clearState(root);
-    await clearRegistration(root);
-    if (tunnel?.kind === 'expo') clearWorkspaceStateKeys(root, ['metroTunnel']);
+    await releaseStoppedSupervisor();
   }
 
   return { ok, outcomes, summary: summarize(root, outcomes, ok) };
 }
 
-function reapCollectors(
+async function reapCollectors(
   root: string,
   collectors: CollectorStateMap | null | undefined,
   {
@@ -504,13 +462,15 @@ function reapCollectors(
     signal,
     report,
     verify = verifyCollectorOwnership,
+    waiter,
   }: {
     isAlive: (pid: number) => boolean;
     signal: (pid: number) => void;
     report: (line: string) => void;
     verify?: typeof verifyCollectorOwnership;
+    waiter: (pid: number, processToken?: string) => Promise<boolean>;
   },
-): CollectorsOutcome {
+): Promise<CollectorsOutcome> {
   const targets = resolveCollectorTargets({ root, collectors, isAlive, verify });
   const entries: CollectorEntry[] = [];
   for (const target of targets) {
@@ -534,14 +494,45 @@ function reapCollectors(
       continue;
     }
     try {
+      const ownership = verify({
+        pid: target.pid as number,
+        platform: target.platform,
+        root,
+        isAlive,
+        expected: collectors?.[target.platform],
+      });
+      if (ownership.status !== 'ours') {
+        entries.push({
+          platform: target.platform,
+          pid: target.pid,
+          status: ownership.status === 'gone' ? 'already-stopped' : 'unverified',
+          ...(ownership.status === 'unverified' ? { reason: ownership.reason } : {}),
+        });
+        continue;
+      }
       signal(target.pid as number);
+      if (!(await waiter(target.pid as number, collectors?.[target.platform]?.processToken as string | undefined))) {
+        entries.push({
+          platform: target.platform,
+          pid: target.pid,
+          status: 'failed',
+          reason: 'collector exit could not be confirmed',
+        });
+        continue;
+      }
       entries.push({ platform: target.platform, pid: target.pid, status: 'stopped' });
       report(chalk.green(phaseLine('stop', `collector ${target.platform} pid ${target.pid}`)));
-    } catch {
-      entries.push({ platform: target.platform, pid: target.pid, status: 'already-stopped' });
+    } catch (error) {
+      const gone = (error as NodeJS.ErrnoException).code === 'ESRCH';
+      entries.push({ platform: target.platform, pid: target.pid, status: gone ? 'already-stopped' : 'failed' });
       report(
         chalk.dim(
-          phaseLine('stop', `collector ${target.platform} pid ${target.pid} exited before it could be signalled`),
+          phaseLine(
+            'stop',
+            gone
+              ? `collector ${target.platform} pid ${target.pid} exited before it could be signalled`
+              : `could not signal collector ${target.platform} pid ${target.pid}`,
+          ),
         ),
       );
     }
@@ -560,15 +551,15 @@ async function stopSupervisor(
     waiter,
     report,
   }: {
-    killGroup: (leader: number | null | undefined) => boolean;
-    waiter: (pid: number) => Promise<boolean>;
+    killGroup: typeof killMetroTree;
+    waiter: (pid: number, processToken?: string) => Promise<boolean>;
     report: (line: string) => void;
   },
 ): Promise<SupervisorOutcome> {
   report(chalk.dim(phaseLine('stop', `sending SIGTERM to supervisor process group ${target.pid}`)));
   let signalled = false;
   try {
-    signalled = killGroup(target.pid);
+    signalled = killGroup(target.pid, target.processToken);
   } catch (e) {
     signalled = false;
     report(
@@ -582,7 +573,7 @@ async function stopSupervisor(
     report(chalk.red(phaseLine('stop', reason)));
     return { status: 'failed', pid: target.pid, port: target.port ?? null, reason };
   }
-  const died = await waiter(target.pid as number);
+  const died = await waiter(target.pid as number, target.processToken);
   if (died) {
     report(chalk.green(phaseLine('stop', `supervisor pid ${target.pid}`)));
     return { status: 'stopped', pid: target.pid, port: target.port ?? null, mode: target.mode ?? null };
@@ -599,16 +590,10 @@ async function stopMetro(
   port: number,
   root: string,
   {
-    force,
     resolveMetro,
-    killMetro,
-    findListener,
     report,
   }: {
-    force: boolean;
     resolveMetro: (port: number, root: string) => Promise<MetroResolution>;
-    killMetro: (leader: number | null | undefined, listenerPid?: number | null) => boolean;
-    findListener: (port: number) => number | null;
     report: (line: string) => void;
   },
 ): Promise<MetroOutcome> {
@@ -617,29 +602,10 @@ async function stopMetro(
     report(chalk.dim(phaseLine('metro', `nothing listening on port ${port}`)));
     return { status: 'missing', port };
   }
-  if (resolution.notOurs && !force) {
-    report(chalk.yellow(phaseLine('metro', `refusing to kill port ${port}: ${resolution.notOurs}`)));
-    report(chalk.dim(phaseLine('', 'pass --force to kill it anyway')));
-    return { status: 'refused', port, reason: resolution.notOurs };
-  }
-  const identified = Boolean(resolution.metro);
-  const pid = identified ? resolution.metro!.pid : findListener(port);
-  const leader = identified ? (resolution.metro!.leader ?? pid) : pid;
-  if (!leader) {
-    report(chalk.dim(phaseLine('metro', `nothing listening on port ${port}`)));
-    return { status: 'missing', port };
-  }
-  if (!killMetro(leader, pid)) {
-    const reason = `could not kill the process on port ${port}`;
-    report(chalk.red(phaseLine('metro', reason)));
-    return { status: 'failed', port, pid, reason };
-  }
-  if (identified) {
-    report(chalk.green(phaseLine('metro', `stopped pid ${pid} on port ${port}`)));
-    return { status: 'stopped', port, pid };
-  }
-  report(chalk.yellow(phaseLine('metro', `killed pid ${pid} on port ${port} (forced, identity unverified)`)));
-  return { status: 'forced', port, pid };
+  const reason =
+    resolution.notOurs || 'no recorded Stim supervisor owns this server; stop it with the tool that started it';
+  report(chalk.yellow(phaseLine('metro', `leaving port ${port} alone: ${reason}`)));
+  return { status: 'not-managed', port, reason };
 }
 
 const OCCUPANCY_HINT = 'often a UI-test runner or device tool still attached';
@@ -729,7 +695,7 @@ function summarize(root: string, outcomes: StopOutcomes, ok: boolean): string {
   const unverified = outcomes.collectors.entries.filter((e) => e.status === 'unverified').length;
   if (unverified) parts.push(`${unverified} collector${unverified === 1 ? '' : 's'} left unsignalled`);
   if (outcomes.metro.status === 'stopped') parts.push(`metro on port ${outcomes.metro.port} stopped`);
-  if (outcomes.metro.status === 'forced') parts.push(`port ${outcomes.metro.port} killed (forced)`);
+  if (outcomes.metro.status === 'not-managed') parts.push(`external server on port ${outcomes.metro.port} left alone`);
   if (outcomes.metro.status === 'refused') parts.push(`port ${outcomes.metro.port} refused`);
   if (outcomes.metro.status === 'failed') parts.push(`port ${outcomes.metro.port} could not be freed`);
   const devicesByPlatform: [string, DeviceOutcomeEntry | null][] = [
@@ -752,19 +718,25 @@ function summarize(root: string, outcomes: StopOutcomes, ok: boolean): string {
   return `${ok ? 'Stopped' : 'Stopped with problems'}: ${what} (${root})`;
 }
 
-function defaultFreePort(root: string, _port: number): void {
-  if (!getProject(root)) return;
-  upsertProject(root, { metroPort: null });
+function defaultFreePort(root: string, port: number): boolean {
+  return withConfigLock(() => {
+    const current = getProject(root);
+    if (!current) return true;
+    if (current.supervisor || current.metroPort !== port) return false;
+    upsertProject(root, { metroPort: null });
+    return true;
+  });
 }
 
-async function defaultClearRegistration(root: string): Promise<void> {
+async function defaultClearRegistration(root: string, expected?: ProcessRecord | null): Promise<boolean> {
   try {
-    clearSupervisor(root);
-  } catch {}
+    return clearSupervisor(root, expected);
+  } catch {
+    return false;
+  }
 }
 
 interface StopOptions {
-  force?: boolean;
   json?: boolean;
 }
 
@@ -774,10 +746,6 @@ export default function stopCommand(program: Command): void {
     .description(
       "The inverse of `start`: halt this workspace's supervisor, shut the owned device down (never deleted), and free the reserved port. Non-destructive -- the device stays assigned, so coming back costs a boot. Acts on the current workspace.",
     )
-    .option(
-      '--force',
-      "Kill whatever listens on the reserved port even if it cannot be identified as this project's dev server (only reachable when no supervisor is recorded)",
-    )
     .option('--json', 'print the per-step outcomes as JSON')
     .action(async (opts: StopOptions) => {
       const root = findProjectRoot(process.cwd());
@@ -786,7 +754,7 @@ export default function stopCommand(program: Command): void {
         process.exit(1);
       }
 
-      const { ok, outcomes, summary } = await runStop({ root, force: Boolean(opts.force) });
+      const { ok, outcomes, summary } = await runStop({ root });
 
       if (opts.json) {
         console.log(JSON.stringify({ root, ok, ...outcomes }));

@@ -674,7 +674,15 @@ captured"  (in metro.ndjson, bare RN)
   the supervisor.log tail if it wrote one, plus this attempt's error records
   from the timeline (an expo child's config error -- a PluginError, a bad app
   config -- lands THERE, not in supervisor.log). \`stim logs --errors\` has
-  the full records. Fix that and run \`start\` again; nothing is left running.`,
+  the full records. Fix that and run \`start\` again.
+
+  "Cannot reuse or replace the recorded supervisor: ..."
+  A live record has no verifiable OS process identity, or the workspace and
+  registry records disagree. Nothing new was started; the old process is
+  left running. If inspection is denied, retry with permission to inspect
+  Stim's processes. For a legacy record, stop the server with the tool that
+  started it before retrying. Never reconstruct ownership from a process
+  name, port, or wall-clock timestamp.`,
     },
     STIM_BAD_ARG: {
       summary: 'an argument, setting, directory, flavor, or device name refused before anything starts',
@@ -740,18 +748,19 @@ captured"  (in metro.ndjson, bare RN)
   command holding it; if none is running, remove the named directory.`,
     },
     teardown: {
-      summary: 'stop refusing to kill a port or signal a supervisor, and a failed device teardown',
+      summary: 'an unmanaged port, an unverified supervisor, and a failed device teardown',
       separator: '--- TEARDOWN AND WORKSPACE REFUSALS ---',
       body: () => `"metro       refusing to kill port <n>: ... runs from <dir>, outside
 <project>"  (stop)
-  Stim will not kill a process it cannot attribute to you.
-  \`stim stop --force\` kills it without proving whose it is -- ask the user
-  first. That flag is reachable only when no supervisor is recorded for this
-  workspace, and it never deletes anything.
+  Stim only signals processes it launched and whose saved identity still
+  matches. Stop an externally started server with the tool that started it.
+  Matching this workspace's port or directory does not authorize cleanup,
+  and stop has no override for process ownership.
 
 "stop        refusing to signal supervisor pid <n>: ..."  (stop)
-  The two records describing that supervisor disagree, or it records a port
-  this project did not reserve. A pid is a number the OS reuses, so it is not
+  The records disagree, the saved OS identity is unavailable, or it records a
+  port this project did not reserve. If process inspection is denied, retry
+  with permission to inspect the processes Stim started. A pid is a number the OS reuses, so it is not
   signalled. The port reservation is KEPT -- it is the only handle a retry
   has. Check \`ps -p <n>\` and \`stim status\` before signalling by hand.
 

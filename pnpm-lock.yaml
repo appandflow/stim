@@ -178,6 +178,9 @@ importers:
       commander:
         specifier: ^13.1.0
         version: 13.1.0
+      unique-pid:
+        specifier: 0.1.1
+        version: 0.1.1
       ws:
         specifier: ^8.21.3
         version: 8.21.3
@@ -5775,6 +5778,10 @@ packages:
     resolution: {integrity: sha512-Z3lTE9pLaJF47NyMhd4ww1yFTAP8YhYI8SleJiHzM46Fgpm5cnNzSl9XfzFNqbaz+VlJrIj3fXQ4DeN1Rjm6cw==}
     engines: {node: '>=18'}
 
+  node-gyp-build@4.8.4:
+    resolution: {integrity: sha512-LA4ZjwlnUblHVgq0oBF3Jl/6h/Nvs5fzBLwdEF4nuxnFdsfajde4WfxtJr3CaiH+F6ewcIB/q4jQ4UzPyid+CQ==}
+    hasBin: true
+
   node-releases@2.0.53:
     resolution: {integrity: sha512-D9UOmYG3UH1V+ENW56t5QXBwJw1YEY18ruVeus89Rw+SyIgjPkCO84bRzO3uNIYosJbNwiabWVn48o3uJLjxFQ==}
     engines: {node: '>=18'}
@@ -7270,6 +7277,11 @@ packages:
 
   unified@11.0.5:
     resolution: {integrity: sha512-xKvGhPWw3k84Qjh8bI3ZeJjqnyadK+GEFtazSfZv/rKeTkTjOJho6mFqh2SM96iIcZokxiOpg78GazTSg8+KHA==}
+
+  unique-pid@0.1.1:
+    resolution: {integrity: sha512-IG/DcbOKtMcwPiE9HyzZwBc/h/YFKB12iOP3ESu1OxecvEA8+3718MQdJvWFbzOTmhm3hoX2HHEHdVcR02rMwg==}
+    engines: {node: ^20.19.4 || >=22.12.0}
+    os: [darwin, linux, win32]
 
   unique-string@3.0.0:
     resolution: {integrity: sha512-VGXBUVwxKMBUznyffQweQABPRRW1vHZAbadFZud4pLFAqRGvv/96vafgjWFqzourzr8YonlQiPgH0YCJfawoGQ==}
@@ -14269,6 +14281,8 @@ snapshots:
       emojilib: 2.4.0
       skin-tone: 2.0.0
 
+  node-gyp-build@4.8.4: {}
+
   node-releases@2.0.53: {}
 
   normalize-path@3.0.0: {}
@@ -15947,6 +15961,10 @@ snapshots:
       is-plain-obj: 4.1.0
       trough: 2.2.0
       vfile: 6.0.3
+
+  unique-pid@0.1.1:
+    dependencies:
+      node-gyp-build: 4.8.4
 
   unique-string@3.0.0:
     dependencies:
