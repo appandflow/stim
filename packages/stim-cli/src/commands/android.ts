@@ -702,7 +702,16 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   };
 
   const settingsRepoRoot = repoRoot(root);
-  const cas = resolveAndroidCas(root);
+  let cas: ReturnType<typeof resolveAndroidCas>;
+  try {
+    cas = resolveAndroidCas(root);
+  } catch (error) {
+    return fail(
+      'STIM_BAD_ARG',
+      `Could not prepare Android CAS: ${(error as Error).message}`,
+      'Fix the CAS toolchain manifest or unset STIM_ANDROID_CAS_TOOLCHAIN. See `stim guide lifecycle builds`.',
+    );
+  }
   const settingsRoot = settingsRepoRoot ?? root;
   const settingsContext = {
     projectPath: root,
@@ -1130,7 +1139,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
     async function resolveRemoteArtifact(): Promise<void> {
       // Expo buildCacheProvider run options cannot key Android ABIs, so targeted APKs are unsafe in this tier.
-      if (buildAbi) return;
+      if (buildAbi || cas) return;
 
       if (!apkPath) {
         const loaded: LoadProjectProviderResult = await loadProvider(root, { isExpo });

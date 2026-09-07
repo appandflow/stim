@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveAndroidCas } from '../engine/android-cas.ts';
+import { getExecutor } from '../exec.ts';
 import { buildCacheKey } from '@stim-cli/core';
 
 let root: string;
@@ -57,4 +58,36 @@ test('workspaces share CAS while compiler replacements invalidate APK and genera
   expect(replaced.dir).not.toBe(first.dir);
   expect(replaced.env.STIM_ANDROID_CAS_STATE).not.toBe(first.env.STIM_ANDROID_CAS_STATE);
   expect(buildCacheKey('android', 'same-source', { compiler: replaced.id })).not.toBe(key);
+});
+
+test('compiler evidence waits for inherited stderr to close after the compiler exits', () => {
+  const compiler = join(root, 'compiler.cjs');
+  writeFileSync(
+    compiler,
+    `#!/usr/bin/env node
+require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => process.stderr.write("late compile job cache miss"), 80)'], { stdio: ['ignore', 'ignore', 2] }).unref();
+process.exit(0);
+`,
+    { mode: 0o755 },
+  );
+  const context = join(root, 'context.json');
+  writeFileSync(
+    context,
+    JSON.stringify({
+      clang: compiler,
+      clangxx: compiler,
+      source: root,
+      state: root,
+      cache: join(root, 'cache'),
+      resourceDir: root,
+    }),
+  );
+  getExecutor().runFile(
+    process.execPath,
+    [join(import.meta.dirname, '../../dist/android-cas-compiler.mjs'), '-c', 'source.c'],
+    { env: { STIM_ANDROID_CAS_CONTEXT: context } },
+  );
+  const record = JSON.parse(readFileSync(join(root, 'compiler.jsonl'), 'utf8'));
+  expect(record.code).toBe(0);
+  expect(record.stderr).toBe('late compile job cache miss');
 });

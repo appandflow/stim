@@ -3,9 +3,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getExecutor } from '../src/exec.ts';
-import { waitForChild } from '../src/process-output.ts';
+import { once } from 'node:events';
 
-const config = JSON.parse(readFileSync(process.env.STIM_ANDROID_CAS_CONTEXT!, 'utf8')) as {
+const context = process.env.STIM_ANDROID_CAS_CONTEXT;
+if (!context) throw new Error('Missing STIM_ANDROID_CAS_CONTEXT. Run this build through stim android.');
+const config = JSON.parse(readFileSync(context, 'utf8')) as {
   clang: string;
   clangxx: string;
   lld: string;
@@ -70,16 +72,15 @@ child.stderr!.on('data', (chunk: Buffer) => {
   stderr += chunk.toString();
   process.stderr.write(chunk);
 });
-const result = await waitForChild(child);
+const [code] = (await once(child, 'close')) as [number | null];
 appendFileSync(
   join(config.state, 'compiler.jsonl'),
   `${JSON.stringify({
     argv: [compiler, ...extra, ...args],
     cwd: process.cwd(),
-    code: result.code,
+    code,
     seconds: (performance.now() - started) / 1000,
     stderr,
   })}\n`,
 );
-if (result.error) throw result.error;
-process.exitCode = result.code ?? 1;
+process.exitCode = code ?? 1;

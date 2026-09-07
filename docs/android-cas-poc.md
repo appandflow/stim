@@ -190,12 +190,15 @@ probe is the independently runnable correctness evidence.
   Normal Clang input validation remains enabled.
 - Debug/source paths use `/^src` and `/^build` and need debugger mapping.
   Existing doctor/ccache statistics do not describe CAS, and this prototype
-  does not configure CAS size limits or eviction.
+  does not configure CAS size limits or eviction. Compiler evidence logs also
+  accumulate under the workspace state directory.
 
 For upstream work, a CMake facility for stable PCH include spelling could
 replace the project hook, and Android-compatible compiler CAS distribution
 could replace the manual compiler/linker setup. Neither needs the old
 checkout-root include-search workaround. Stim would still select the backend,
 provide per-workspace path mappings, manage cache storage, and separate APK
-keys. The measurements support further testing; the shipping ccache/PCH-off
+keys. Legacy Expo providers are skipped for CAS because they cannot represent
+the compiler identity; providers implementing Stim's full key contract can
+share it between worktrees using the same local toolchain. The measurements support further testing; the shipping ccache/PCH-off
 setup remains faster for warm builds in this sample.

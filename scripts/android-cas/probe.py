@@ -81,6 +81,7 @@ for checkout in ["A", "B"]:
                       pch_hits=sum("compile job cache hit" in r["stderr"] for r in pchs),
                       pch_misses=sum("compile job cache miss" in r["stderr"] for r in pchs),
                       thinlto=all("-flto=thin" in r["argv"] for r in compiles))
+        assert record["thinlto"], record
         results.append(record)
         (out / "results.json").write_text(json.dumps(results, indent=2))
         return record

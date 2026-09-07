@@ -147,3 +147,16 @@ test.each(['claude', 'codex'])(
     expect(existsSync(stale)).toBe(false);
   },
 );
+
+test('doctor preserves existing CMake state while CAS is explicitly selected', () => {
+  const previous = process.env.STIM_ANDROID_CAS_TOOLCHAIN;
+  const path = cache('android/app', null);
+  process.env.STIM_ANDROID_CAS_TOOLCHAIN = '/toolchain.json';
+  try {
+    expect(repairCxxLauncherState(root)).toEqual({ removed: [], refused: [] });
+    expect(existsSync(path)).toBe(true);
+  } finally {
+    if (previous === undefined) delete process.env.STIM_ANDROID_CAS_TOOLCHAIN;
+    else process.env.STIM_ANDROID_CAS_TOOLCHAIN = previous;
+  }
+});

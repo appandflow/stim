@@ -763,7 +763,9 @@ export function runDoctor(
     checkMetroCache(metroConfig),
     platform === 'android' ? null : checkCompilationCache(podfile, xcodeMajor),
     platform === 'android' ? null : checkCcacheConflict(podfile, podfileProperties),
-    ...(platform === 'ios' ? [] : androidCcacheFindings(projectRoot, platform, lookupCcache)),
+    ...(platform === 'ios' || process.env.STIM_ANDROID_CAS_TOOLCHAIN
+      ? []
+      : androidCcacheFindings(projectRoot, platform, lookupCcache)),
     checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig),
     easFinding,
     concurrencyFinding,
