@@ -3,7 +3,6 @@ import { existsSync, rmSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTree, isPidAlive } from './metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd, type ParkedDevice, type ParkRequest } from './teardown.ts';
 import { parkedMaxSetting } from './sim-pool.ts';
-import { readCollectors } from './collector/state.ts';
 import { verifyCollectorOwnership } from './collector/ownership.ts';
 import {
   clearManagedMetroTunnel,
@@ -25,13 +24,15 @@ async function reapCollectors(
   root: string,
   {
     verify = verifyCollectorOwnership,
+    collectors,
   }: {
     verify?: typeof verifyCollectorOwnership;
-  } = {},
+    collectors: Record<string, unknown>;
+  },
 ): Promise<{ skippedDevices: SkippedDevice[]; failedDevices: SkippedDevice[] }> {
   const skippedDevices: SkippedDevice[] = [];
   const failedDevices: SkippedDevice[] = [];
-  for (const [platform, record] of Object.entries(readCollectors(root))) {
+  for (const [platform, record] of Object.entries(collectors)) {
     const rec = record as ProcessRecord | null;
     const pid = rec?.pid;
     if (typeof pid !== 'number' || pid <= 0 || pid === process.pid || !isPidAlive(pid)) continue;
@@ -322,7 +323,30 @@ export async function reclaimProject(
 
   const { skippedDevices: skippedCollectors, failedDevices: failedCollectors } = await reapCollectors(path, {
     verify: verifyCollector,
+    collectors: initialState?.collectors ?? {},
   });
+
+  function retainReplacementProcesses() {
+    const currentState = readWorkspaceState(path);
+    const currentProject = getProject(path);
+    const replacement = Boolean(
+      (currentState?.supervisor && !sameProcessRecord(currentState.supervisor, initialState?.supervisor)) ||
+      (currentProject?.supervisor && !sameProcessRecord(currentProject.supervisor, project?.supervisor)) ||
+      Object.entries(currentState?.collectors ?? {}).some(
+        ([platform, record]) =>
+          !sameProcessRecord(
+            record as ProcessRecord,
+            initialState?.collectors?.[platform] as ProcessRecord | undefined,
+          ),
+      ),
+    );
+    if (replacement) {
+      supervisorHeld = true;
+      skippedMetro = 'A replacement process appeared during cleanup; its ownership records are retained';
+    }
+  }
+
+  retainReplacementProcesses();
 
   const { deletedDevices, parkedDevices, evictedDevices, poolNotes, skippedDevices, failedDevices } =
     deleteOwnedDevices && !supervisorHeld && failedCollectors.length === 0
@@ -357,19 +381,7 @@ export async function reclaimProject(
     releasedLeases = [];
   }
 
-  const currentState = readWorkspaceState(path);
-  const replacement = Boolean(
-    (currentState?.supervisor && !sameProcessRecord(currentState.supervisor, initialState?.supervisor)) ||
-    (getProject(path)?.supervisor && !sameProcessRecord(getProject(path)?.supervisor, project?.supervisor)) ||
-    Object.entries(currentState?.collectors ?? {}).some(
-      ([platform, record]) =>
-        !sameProcessRecord(record as ProcessRecord, initialState?.collectors?.[platform] as ProcessRecord | undefined),
-    ),
-  );
-  if (replacement) {
-    supervisorHeld = true;
-    skippedMetro = 'A replacement process appeared during cleanup; its ownership records are retained';
-  }
+  retainReplacementProcesses();
 
   const removedWorkspaceDirs: string[] = [];
   const failedWorkspaceDirs: string[] = [];

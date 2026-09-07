@@ -578,6 +578,67 @@ test('reclaim retains a live legacy supervisor even before any port listens', as
   }
 });
 
+test.each(['collector', 'supervisor'] as const)(
+  'reclaim leaves a replacement %s and its device alone after awaiting supervisor exit',
+  async (kind) => {
+    const replacement = await spawnFakeProcess(null);
+    const root = workspaceWithCollector(99999999);
+    let supervisor: ChildProcess | undefined;
+    try {
+      const processToken = captureProcessToken(replacement.pid!);
+      expect(processToken).toBeTruthy();
+      const record = { pid: replacement.pid!, processToken };
+      const replacementState = kind === 'collector' ? { collectors: { ios: record } } : { supervisor: record };
+      const script = `
+        const { writeFileSync } = require('node:fs');
+        process.on('SIGTERM', () => {
+          writeFileSync(process.argv[1], process.argv[2]);
+          process.exit(0);
+        });
+        process.stdout.write('ready');
+        setInterval(() => {}, 1000);
+      `;
+      supervisor = spawn(process.execPath, ['-e', script, workspaceStateFile(root), JSON.stringify(replacementState)], {
+        detached: true,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      await once(supervisor.stdout!, 'data');
+      const supervisorToken = captureProcessToken(supervisor.pid!);
+      expect(supervisorToken).toBeTruthy();
+      const saved = { pid: supervisor.pid!, processToken: supervisorToken!, port: 8083 };
+      writeFileSync(workspaceStateFile(root), JSON.stringify({ supervisor: saved }));
+      upsertProject(root, { metroPort: 8083, supervisor: saved });
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true });
+      const commands: string[] = [];
+      setExecutor({
+        run: (cmd) => {
+          commands.push(cmd);
+          return '';
+        },
+        runQuiet: (cmd) => {
+          commands.push(cmd);
+          return null;
+        },
+        spawn: () => {},
+      });
+
+      const result = await reclaimProject(root, { deleteOwnedDevices: true });
+
+      expect(stillRunning(replacement.pid!)).toBe(true);
+      expect(result.killedPid).toBe(supervisor.pid);
+      expect(result.keptEntry).toBe(true);
+      expect(result.skippedMetro).toMatch(/replacement/);
+      expect(commands).toEqual([]);
+      expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf8'))).toEqual(replacementState);
+      expect(getProject(root)?.platforms?.ios?.deviceUdid).toBe('U1');
+    } finally {
+      supervisor?.kill('SIGKILL');
+      replacement.kill('SIGKILL');
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
 test('reclaimProject releases the leases the workspace holds', async () => {
   setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
