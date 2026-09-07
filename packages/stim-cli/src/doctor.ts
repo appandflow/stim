@@ -678,8 +678,6 @@ export function runDoctor(
 
   const provider = appConfig ? providerFromConfig(appConfig) : null;
   const owner = appConfig ? ownerFromConfig(appConfig) : null;
-  const easFinding =
-    provider === 'eas' ? checkEasAuth({ provider, owner, auth: easAuth({ projectRoot, owner }) }) : null;
 
   const limits = typeof concurrency === 'function' ? concurrency() : concurrency;
   let concurrencyFinding: Finding | null = null;
@@ -709,6 +707,11 @@ export function runDoctor(
       finding('cost', 'Invalid optimization setting', (error as Error).message, SETTING_SHAPE_REMEDY),
     );
   }
+  const remoteBuildCache = optimizations?.buildCache && optimizations.remoteBuildCache;
+  const easFinding =
+    remoteBuildCache && provider === 'eas'
+      ? checkEasAuth({ provider, owner, auth: easAuth({ projectRoot, owner }) })
+      : null;
   if (platform !== 'android') {
     const poolSettingError = parkedMaxSetting('ios').error;
     if (poolSettingError) {
@@ -777,9 +780,7 @@ export function runDoctor(
     ...(platform === 'ios' || optimizations?.android.compilerCache !== 'ccache'
       ? []
       : androidCcacheFindings(projectRoot, platform, lookupCcache)),
-    optimizations?.buildCache && optimizations.remoteBuildCache
-      ? checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig)
-      : null,
+    remoteBuildCache ? checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig) : null,
     easFinding,
     concurrencyFinding,
     simslimFinding,
