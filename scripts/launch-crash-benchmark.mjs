@@ -37,7 +37,7 @@ function successful(command) {
 function shellCommand(command) {
   const value = String(command ?? '').trim();
   const normalized = topLevelShellCommand(value);
-  if (normalized !== value) return normalized;
+  if (normalized !== value || !/^\/bin\/(?:zsh|bash|sh) -lc\s+/.test(value)) return normalized;
   const body = value.replace(/^\/bin\/(?:zsh|bash|sh) -lc\s+/, '');
   return body.replace(/^["']/, '').replace(/["']$/, '').trim();
 }
@@ -48,7 +48,7 @@ function launchCommand(command, arm, platform) {
   if (platform === 'android') {
     return (
       /(?:\bexpo|expo\/bin\/cli|node_modules\/\.bin\/expo)\s+run:android\b/.test(command) ||
-      /\bgradlew\b[^\n]*(?:install|connected)\w*|\badb\s+shell\s+am\s+start\b/.test(command)
+      /\bgradlew\b[^\n]*(?:install|connected)\w*|\badb\s+(?:-s\s+\S+\s+)?shell\s+am\s+start\b/.test(command)
     );
   }
   return (
@@ -64,7 +64,7 @@ function errorCaptureCommand(command, arm, platform) {
     /\b(?:tail|rg|grep|sed|cat)\b[\s\S]*(?:\.log\b|(?:^|[\s'"])(?:\.?\/)?(?:tmp|logs?|\.expo\/dev\/logs)\/)/.test(
       command,
     );
-  if (platform === 'android') return /\badb\s+logcat\b/.test(command) || explicitLogFile;
+  if (platform === 'android') return /\badb\s+(?:-s\s+\S+\s+)?logcat\b/.test(command) || explicitLogFile;
   return /\bxcrun\s+simctl\s+spawn\b|\blog\s+(?:show|stream)\b/.test(command) || explicitLogFile;
 }
 
@@ -152,7 +152,7 @@ function allowedBeforeErrorCapture(command, arm, platform) {
   }
   if (
     /^(?:cp|rsync)\b/.test(value) &&
-    /(?:node_modules|ios\/Pods|ios\/build|android\/(?:\.gradle|app\/build))/.test(value)
+    /(?:node_modules|ios\/Pods|ios\/build|android\/(?:\.gradle|\.cxx|build|app\/build|local\.properties))/.test(value)
   ) {
     return true;
   }
@@ -160,6 +160,35 @@ function allowedBeforeErrorCapture(command, arm, platform) {
     return new RegExp(
       `^stim\\s+(?:guide|doctor|worktree\\s+(?:warm|create)|start|${platform}|logs\\s+--errors)(?:\\s|$)`,
     ).test(value);
+  }
+  if (platform === 'android') {
+    if (
+      /^(?:echo\s+["']?\$!["']?|printf\s+['"]%s\\n['"]\s+["']?\$!["']?)\s*>\s*\/(?:private\/)?tmp\/[A-Za-z0-9_./-]+\.pid$/.test(
+        value,
+      )
+    )
+      return true;
+    if (/^cd\s+(?:"[^"$`]+"|'[^']+'|[^\s;&|$`]+)$/.test(value)) return true;
+    if (/^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"$`]*"|'[^']*'|[^\s;&|$`]+)$/.test(value)) return true;
+    const pipeline = value.split(/\s+\|\s+/);
+    if (
+      pipeline.length > 1 &&
+      /^adb\s+(?:-s\s+\S+\s+)?logcat\b[^|;&]*$/.test(pipeline[0]) &&
+      pipeline
+        .slice(1)
+        .every((filter) => /^(?:rg|grep)(?:\s+-[EinFv]+)*\s+(?:"[^"$`]*"|'[^']*'|[A-Za-z0-9_:.-]+)$/.test(filter))
+    )
+      return true;
+    const segments = shellCommandSegments(value);
+    if (segments.length > 1) return segments.every((segment) => allowedBeforeErrorCapture(segment, arm, platform));
+    if (/^(?:avdmanager|emulator|sdkmanager)\b/.test(value)) return true;
+    if (/^(?:printf|echo)\s+['"]?(?:no|n)(?:\\n)?['"]?$/.test(value)) return true;
+    if (
+      /^(?:printf|echo)\s+['"]disk\.dataPartition\.size=8589934592(?:\\n)?['"]\s*>>?\s*[^;&|]+\/config\.ini['"]?$/.test(
+        value,
+      )
+    )
+      return true;
   }
   return (
     /^(?:(?:[A-Za-z_][A-Za-z0-9_]*=(?:\S+|\$\([^)]*\))[;\s]+)*)(?:open\s+-a\s+Simulator|xcrun\s+simctl\s+|npx\s+expo\s+|xcodebuild\b|\.\/gradlew\b|adb\b|nohup\b|launchctl\b|ps\b|pgrep\b|sleep\b|tail\b|cat\s+\/?tmp\/|wc\b|lsof\b|command\s+-v\b|test\b|kill\b)/.test(

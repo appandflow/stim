@@ -6,6 +6,7 @@ import {
   androidApplicationLabelFromBadging,
   androidDevicesFromAdb,
   iosDevicesFromSimctl,
+  readinessProofKind,
   selectAndroidCandidate,
   selectIosCandidate,
 } from './watch-app-selection.mjs';
@@ -195,10 +196,11 @@ while (Date.now() < deadline) {
         observedAt: new Date().toISOString(),
         simulator: selection.candidate,
       };
+      const proofKind = readinessProofKind(platform, variant);
       const proof =
-        variant === 'javascript'
+        proofKind === 'javascript'
           ? captureJavascriptProof()
-          : variant === 'native' && platform === 'android'
+          : proofKind === 'android-native'
             ? captureAndroidNativeProof(selection.candidate.udid)
             : null;
       if (proof && !proof.valid) {
