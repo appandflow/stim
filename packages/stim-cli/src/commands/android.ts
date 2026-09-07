@@ -120,6 +120,7 @@ import { selectFromPool } from '../engine/device-pool.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import { buildAndroid, productFlavorRefusal, readProductFlavors } from '../engine/gradle.ts';
 import { CCACHE_NOT_RUN, CCACHE_UNAVAILABLE, resolveCcache } from '../engine/ccache.ts';
+import { resolveAndroidCas } from '../engine/android-cas.ts';
 import { swapApkBundle, resolveKeystore } from '../engine/apk-swap.ts';
 import { captureAssetManifest } from '../engine/asset-manifest.ts';
 import {
@@ -701,6 +702,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   };
 
   const settingsRepoRoot = repoRoot(root);
+  const cas = resolveAndroidCas(root);
   const settingsRoot = settingsRepoRoot ?? root;
   const settingsContext = {
     projectPath: root,
@@ -1028,6 +1030,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     device,
     variant,
     deviceAbi,
+    compiler: cas?.id,
   });
 
   let hash = '';
@@ -1379,7 +1382,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
             phase('build', `compiling ${variant || 'debug'} with Gradle`);
             const built: BuildAndroidResultLike = await build(
               { root, logWriter: writer, variant, abi: buildAbi },
-              { estimateMs: estimates().coldBuildMs, ccache: ccacheFor({ root, onNote: out }) },
+              { estimateMs: estimates().coldBuildMs, ccache: cas ? null : ccacheFor({ root, onNote: out }), cas },
             );
             ccacheActivity = built.ccache ?? CCACHE_UNAVAILABLE;
             if (built.failed) {

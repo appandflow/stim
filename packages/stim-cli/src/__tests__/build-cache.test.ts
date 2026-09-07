@@ -262,6 +262,7 @@ test('the CLI and the Expo provider compute the same key', () => {
     ['ios', { device: 'Janic iPhone' }],
     ['ios', { device: true }],
     ['android', { variant: 'release', device: 'emulator-5554', abi: 'arm64-v8a' }],
+    ['android', { variant: 'release', compiler: 'apple-cas-012345' }],
   ] as [string, Record<string, unknown>][]) {
     expect(buildCacheKey(platform, 'hash', options)).toBe(providerKey(platform, 'hash', options));
   }

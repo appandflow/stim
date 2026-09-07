@@ -339,24 +339,27 @@ export function androidBuildOptions({
   device,
   variant,
   deviceAbi,
+  compiler,
 }: {
   release: boolean;
   physical: boolean;
   device: OwnedDeviceRecord;
   variant: string | null;
   deviceAbi: typeof androidDeviceAbi;
+  compiler?: string;
 }): {
   abi: string | null;
-  runOptions: { variant?: string; abi?: string };
-  remoteRunOptions: { variant?: string; abi?: string } | null;
+  runOptions: { variant?: string; abi?: string; compiler?: string };
+  remoteRunOptions: { variant?: string; abi?: string; compiler?: string } | null;
 } {
   let abi: string | null = null;
   if (!release && physical && device.serial) abi = deviceAbi(device.serial);
   if (!release && !physical) abi = androidSystemImageAbi(device.systemImage);
 
-  const runOptions: { variant?: string; abi?: string } = {};
+  const runOptions: { variant?: string; abi?: string; compiler?: string } = {};
   if (variant) runOptions.variant = variant;
   if (abi) runOptions.abi = abi;
+  if (compiler) runOptions.compiler = compiler;
 
   return {
     abi,

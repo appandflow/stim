@@ -373,3 +373,7 @@ test('temporary storage guidance names the override and Git visibility boundary'
   expect(settings).toMatch(/outside Git working trees/);
   expect(renderSection('lifecycle', 'options')).toContain('STIM_TMPDIR');
 });
+
+test('build guidance names the experimental Android compiler opt-in', () => {
+  expect(renderSection('lifecycle', 'builds')).toContain('STIM_ANDROID_CAS_TOOLCHAIN');
+});

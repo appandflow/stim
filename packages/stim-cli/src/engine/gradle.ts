@@ -12,6 +12,7 @@ import { capDiagnostics, type Diagnostic, extractGradleDiagnostics } from './err
 import { CCACHE_UNAVAILABLE, type CcacheSetup, readCcacheActivity } from './ccache.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
 import type { CcacheActivity } from '../types.ts';
+import type { AndroidCasSetup } from './android-cas.ts';
 
 export const BUILD_ERROR = 'STIM_BUILD_FAILED';
 
@@ -447,6 +448,7 @@ export async function buildAndroid(
     env = process.env,
     buildCache = true,
     ccache = null,
+    cas = null,
     heartbeatMs = HEARTBEAT_INTERVAL_MS,
     estimateMs = null,
     onHeartbeat = (line: string) => console.error(line),
@@ -457,6 +459,7 @@ export async function buildAndroid(
     env?: NodeJS.ProcessEnv;
     buildCache?: boolean;
     ccache?: CcacheSetup | null;
+    cas?: AndroidCasSetup | null;
     heartbeatMs?: number;
     estimateMs?: number | null;
     onHeartbeat?: (line: string) => void;
@@ -478,7 +481,10 @@ export async function buildAndroid(
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
   const task = assembleTaskFor(variant);
   const args = gradleArgs(task, { buildCache, abi });
-  if (ccache) {
+  if (cas) {
+    args.push('--init-script', cas.initScript);
+    onNote(chalk.dim(phaseLine('cache', `Apple Clang CAS on (${cas.dir})`)));
+  } else if (ccache) {
     const script = ['../shim/android-no-pch.gradle', '../../shim/android-no-pch.gradle']
       .map((path) => fileURLToPath(new URL(path, import.meta.url)))
       .find((path) => existsSync(path));
@@ -519,7 +525,7 @@ export async function buildAndroid(
     child = spawn(project.gradlew as string, args, {
       cwd: project.androidDir,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...env, ...ccache?.env, TERM: 'dumb', FORCE_COLOR: '0' },
+      env: { ...env, ...ccache?.env, ...cas?.env, TERM: 'dumb', FORCE_COLOR: '0' },
     });
   } catch (err) {
     return spawnFailure(err, project, now() - startedAt);
