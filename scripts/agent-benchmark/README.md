@@ -96,6 +96,10 @@ wrapper returning is not proof its shell process exited. Collection rejects Stim
 start, platform, or dependency-install commands that overlap worktree warm or lack
 proof of an earlier successful warm. Explicitly detached control processes retain
 their separate PID/log monitoring.
+Unfinished shell commands remain in the audit with unknown completion. Claude
+background-task submission is not command completion: a correlated terminal
+TaskOutput result must provide the shell exit status before the audit accepts it.
+The result fields follow the [Claude Agent SDK task-output schema](https://code.claude.com/docs/en/agent-sdk/python#taskoutput).
 
 Both runners are launched through macOS `sandbox-exec` with a verified,
 run-scoped policy. Configuration, golden files, coordinator evidence and

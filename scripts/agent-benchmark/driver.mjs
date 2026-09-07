@@ -27,6 +27,7 @@ import {
   launchCrashToken,
 } from '../launch-crash-benchmark.mjs';
 import { benchmarkFingerprint, selectBenchmarkCacheKey } from './cache-key.mjs';
+import { reconstructCommandEvidence } from './command-evidence.mjs';
 import { matchesGoldenPreparation } from './golden-state.mjs';
 import { launchCrashSetup } from './launch-crash-setup.mjs';
 import { collectedNativeCompatibility, probeNativeCompatibility, verifyNativeCompatibility } from './native-compat.mjs';
@@ -1590,89 +1591,7 @@ function commandEvidence(meta, eventsPath, runDir) {
     return { commands: [], activities: [], completedEvents: [], invalidReasons: [] };
   }
   const stamped = readFileSync(eventsPath, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
-  const started = new Map();
-  const commands = [];
-  const activities = [];
-  const completedEvents = [];
-  const completeCommand = (id, item, record, offset) => {
-    const begin = started.get(id);
-    const elapsedSeconds = begin ? (Date.parse(record.arrivedAt) - Date.parse(begin.at)) / 1000 : null;
-    commands.push({
-      id,
-      command: item.command ?? begin?.command ?? null,
-      startedAt: begin?.at ?? null,
-      endedAt: record.arrivedAt,
-      elapsedSeconds,
-      parallelTimingAmbiguous: !begin,
-      exitCode: item.exit_code,
-      startEventOffset: begin?.offset ?? null,
-      endEventOffset: offset,
-      output: item.aggregated_output ?? '',
-    });
-    completedEvents.push(item);
-  };
-  for (const [offset, record] of stamped.entries()) {
-    let event;
-    try {
-      event = JSON.parse(record.line);
-    } catch {
-      continue;
-    }
-    if (meta.runner === 'claude') {
-      for (const block of event.message?.content ?? []) {
-        if (event.type === 'assistant' && block.type === 'tool_use' && block.name !== 'Bash') {
-          activities.push({
-            id: block.id,
-            command: `tool:${block.name} ${JSON.stringify(block.input ?? {})}`,
-            startedAt: record.arrivedAt,
-            endedAt: record.arrivedAt,
-          });
-        }
-        if (event.type === 'assistant' && block.type === 'tool_use' && block.name === 'Bash') {
-          started.set(block.id, {
-            offset,
-            at: record.arrivedAt,
-            command: block.input?.command ?? null,
-          });
-        }
-        if (event.type === 'user' && block.type === 'tool_result' && started.has(block.tool_use_id)) {
-          const result = event.tool_use_result ?? {};
-          const output = typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? result);
-          completeCommand(
-            block.tool_use_id,
-            {
-              type: 'command_execution',
-              command: started.get(block.tool_use_id)?.command ?? null,
-              aggregated_output: output,
-              exit_code: Number.isInteger(result.exit_code)
-                ? result.exit_code
-                : block.is_error || result.is_error
-                  ? 1
-                  : 0,
-            },
-            record,
-            offset,
-          );
-        }
-      }
-      continue;
-    }
-    const item = event.item;
-    if (event.type === 'item.started' && item?.type && item.type !== 'command_execution') {
-      activities.push({
-        id: item.id,
-        command: `tool:${item.type} ${JSON.stringify(item.changes ?? item)}`,
-        startedAt: record.arrivedAt,
-        endedAt: record.arrivedAt,
-      });
-    }
-    if (event.type === 'item.started' && item?.type === 'command_execution') {
-      started.set(item.id, { offset, at: record.arrivedAt, command: item.command });
-    }
-    if (event.type === 'item.completed' && item?.type === 'command_execution') {
-      completeCommand(item.id, item, record, offset);
-    }
-  }
+  const { commands, activities, completedEvents } = reconstructCommandEvidence(meta.runner, stamped);
   writeFileSync(join(runDir, 'commands.log'), `${commands.map((command) => JSON.stringify(command)).join('\n')}\n`);
   const commandText = commands.map((command) => command.command ?? '').join('\n');
   const outputText = completedEvents.map((item) => item.aggregated_output ?? '').join('\n');
