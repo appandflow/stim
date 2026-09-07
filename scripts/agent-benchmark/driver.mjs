@@ -1360,7 +1360,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
     preflightReport.nativeCompatibility,
     (file, args) => {
       const invocation = isolatedRunnerInvocation(isolation, file, args);
-      return run(invocation.command, invocation.args, { cwd: main, env, timeout: 30_000 });
+      return run(invocation.command, invocation.args, { cwd: crash?.fixtureCheckout ?? main, env, timeout: 30_000 });
     },
   );
   const profile = verifyRunnerProfile(codexHome, env, arm, runDir, isolation);
@@ -2205,7 +2205,7 @@ function collect(runDir) {
   const recording = recordingEvidence(meta, commandAudit.commands, runDir, screen);
   const worktreeRecord = worktreeEvidence(runDir, meta, eventsPath);
   const worktree = worktreeRecord?.path ?? null;
-  const nativeCompatibility = collectedNativeCompatibility(meta, worktree, main);
+  const nativeCompatibility = collectedNativeCompatibility(meta, worktree);
   const proof = proofFor(meta, appAlive, runDir, worktree, commandAudit.completedEvents);
   const rollout =
     meta.runner === 'claude'

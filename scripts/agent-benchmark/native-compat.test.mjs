@@ -39,6 +39,7 @@ test('compatibility refuses changed package bytes, permissions, fixture patch, a
     writeFileSync(jsi, 'patched JSI');
     const wrapper = join(root, 'bin/xcodebuild');
     writeFileSync(wrapper, 'wrapper');
+    chmodSync(wrapper, 0o755);
     const manifest = join(root, 'manifest.json');
     writeFileSync(
       manifest,
@@ -47,6 +48,7 @@ test('compatibility refuses changed package bytes, permissions, fixture patch, a
         architecture: process.arch,
         agentDevicePackageSha256: packageHash(packagePath),
         xcodebuildSha256: fileHash(wrapper),
+        xcodebuildMode: 0o755,
         jsiSha256: fileHash(jsi),
       }),
     );
@@ -58,13 +60,12 @@ test('compatibility refuses changed package bytes, permissions, fixture patch, a
         nativeCompatibilityProbe: { processIdentity: true },
       },
     };
-    assert.equal(collectedNativeCompatibility(meta, null, fixture).valid, true);
+    assert.equal(collectedNativeCompatibility(meta, fixture).valid, true);
+    assert.equal(collectedNativeCompatibility(meta, null).valid, false);
+    assert.equal(collectedNativeCompatibility(meta, join(root, 'removed-worktree')).valid, false);
     assert.equal(
-      collectedNativeCompatibility(
-        { preflight: { nativeCompatibility: meta.preflight.nativeCompatibility } },
-        null,
-        fixture,
-      ).valid,
+      collectedNativeCompatibility({ preflight: { nativeCompatibility: meta.preflight.nativeCompatibility } }, fixture)
+        .valid,
       false,
     );
     assert(verifyNativeCompatibility(manifest, hash, fixture, entry));
@@ -72,12 +73,16 @@ test('compatibility refuses changed package bytes, permissions, fixture patch, a
     assert.throws(() => verifyNativeCompatibility(null, hash, fixture, entry), /missing/);
     assert.throws(() => verifyNativeCompatibility(manifest, hash, fixture, wrapper), /not the compatibility package/);
     writeFileSync(join(packagePath, 'implementation.js'), 'different implementation');
-    assert.equal(collectedNativeCompatibility(meta, null, fixture).valid, false);
+    assert.equal(collectedNativeCompatibility(meta, fixture).valid, false);
     assert.throws(() => verifyNativeCompatibility(manifest, hash, fixture, entry), /package changed/);
     writeFileSync(join(packagePath, 'implementation.js'), 'original implementation');
     chmodSync(entry, 0o700);
     assert.throws(() => verifyNativeCompatibility(manifest, hash, fixture, entry), /package changed/);
     chmodSync(entry, mode);
+    chmodSync(wrapper, 0o644);
+    assert.throws(() => verifyNativeCompatibility(manifest, hash, fixture, entry), /wrapper changed/);
+    assert.equal(collectedNativeCompatibility(meta, fixture).valid, false);
+    chmodSync(wrapper, 0o755);
     writeFileSync(jsi, 'unpatched JSI');
     assert.throws(() => verifyNativeCompatibility(manifest, hash, fixture, entry), /JSI compatibility/);
   } finally {

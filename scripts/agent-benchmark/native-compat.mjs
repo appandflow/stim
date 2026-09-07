@@ -151,6 +151,7 @@ export function prepareNativeCompatibility({
     originalJsiSha256: originalJsiHash,
     jsiSha256: fileHash(jsi),
     xcodebuildSha256: fileHash(join(destination, 'bin/xcodebuild')),
+    xcodebuildMode: lstatSync(join(destination, 'bin/xcodebuild')).mode & 0o777,
     bridgeSha256: fileHash(join(dist, 'ps-bridge.mjs')),
   };
   const path = join(destination, 'manifest.json');
@@ -172,7 +173,13 @@ export function verifyNativeCompatibility(path, expectedSha256, fixture, agentDe
   const packagePath = join(directory, 'agent-device');
   if (packageHash(packagePath) !== manifest.agentDevicePackageSha256)
     throw new Error('agent-device compatibility package changed');
-  if (fileHash(join(directory, 'bin/xcodebuild')) !== manifest.xcodebuildSha256)
+  const wrapper = join(directory, 'bin/xcodebuild');
+  const wrapperMode = lstatSync(wrapper).mode & 0o777;
+  if (
+    fileHash(wrapper) !== manifest.xcodebuildSha256 ||
+    wrapperMode !== manifest.xcodebuildMode ||
+    !(wrapperMode & 0o100)
+  )
     throw new Error('Xcode compatibility wrapper changed');
   if (fileHash(join(fixture, jsiRelative)) !== manifest.jsiSha256)
     throw new Error('ExpoModulesJSI compatibility patch missing or changed');
@@ -198,16 +205,17 @@ export function probeNativeCompatibility(compatibility, execute) {
   return JSON.parse(execute(process.execPath, ['--input-type=module', '-e', script]));
 }
 
-export function collectedNativeCompatibility(meta, worktree, fixture) {
+export function collectedNativeCompatibility(meta, worktree) {
   const expected = meta.preflight?.nativeCompatibility;
   if (!expected) return null;
   try {
     if (!meta.preflight.nativeCompatibilityProbe?.processIdentity)
       throw new Error('sandbox compatibility probe missing');
+    if (!worktree || !existsSync(worktree)) throw new Error('run worktree missing for compatibility validation');
     verifyNativeCompatibility(
       join(expected.directory, 'manifest.json'),
       expected.manifestSha256,
-      worktree && existsSync(worktree) ? worktree : fixture,
+      worktree,
       join(expected.directory, 'agent-device/bin/agent-device.mjs'),
     );
     return { valid: true, manifestSha256: expected.manifestSha256 };
