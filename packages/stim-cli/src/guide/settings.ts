@@ -4,14 +4,15 @@ export default {
   summary: 'Settings Stim reads, and where they can live',
   body: () => `SETTINGS
 
-There is no \`stim config\` command: Stim's commands take no device flags, so
-settings are FILES, edited by hand or committed.
+There is no \`stim config\` command. Settings are JSON files, edited by
+hand or committed; command-line selectors override their matching settings.
 
 Resolution order, first match wins:
   1. project layer   ~/.stim/config.json, under this project's entry
   2. repo layer      ~/.stim/config.json, under this repo's git common dir
   3. committed       .stim.json at the repo root  <- normally the one you want
-  4. Stim default
+  4. machine defaults  ~/.stim/config.json, top-level optimizations only
+  5. Stim default
 
 The committed file is plain JSON and is the only layer that travels with the
 repo, so a device model or a carry-over rule every worktree should share
@@ -188,7 +189,8 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         This module is EXECUTABLE CODE that every worktree on
                         this repository runs; review a committed value the way
                         you review a build script.
-                        \`stim ios\` and \`stim android\` always use it. Metro
+                        \`stim ios\` and \`stim android\` use it unless
+                        artifact or remote artifact caching is disabled. Metro
                         uses it only when the project's own metro.config.js
                         calls \`sharedCacheStores()\` from @stim-cli/metro: the
                         store Stim injects for you (bare in-process, or the
@@ -200,8 +202,8 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
   caches                extra shared-cache paths for \`gc\` to report. A JSON
                         array; every path is treated as a flat store.
 
-Every key above takes ONE type: a string, an array of strings, a number, or,
-for android.avdConfig and cache.options, an object. A value of the wrong type is
+Each setting takes its documented type: string, array of strings, number,
+boolean, or object. A value of the wrong type is
 refused by name on every command that resolves settings, so a wrong shape never
 falls back to a default silently. \`stim doctor\` reports it as a finding
 instead of refusing.
@@ -279,20 +281,91 @@ Each of those prints one dim line saying it happened. There is no setup skill
 and no init command; \`stim doctor\` reports the project-side settings as
 things you need only if you ALSO build outside Stim.
 
-TURNING THE METRO STORE OFF (MACHINE-LEVEL)
-The Expo injection is the invasive one, so it has a switch -- and the switch is
-machine-level, because a committed file would be exactly the repo change this
-feature exists to avoid:
+OPTIMIZATION SWITCHES
+Put an optimizations object at the TOP LEVEL of $STIM_HOME/config.json
+(default ~/.stim/config.json) to set machine defaults. Merge it into the
+existing file; preserve the project and device records. No project changes
+are required. The same object in .stim.json, or the existing repository/project
+settings layers, overrides individual values. Explicit false wins; removing a
+key inherits the next layer. Changes apply on the next build or Metro restart.
 
   {
-    "caches": { "injectMetroStore": false }
+    "optimizations": {
+      "buildCache": true,
+      "remoteBuildCache": true,
+      "releaseBundleSwap": true,
+      "metroSharedCache": true,
+      "ios": {
+        "compilationCache": true,
+        "swiftCompilationCache": false,
+        "prefixMapping": true
+      },
+      "android": {
+        "compilerCache": "auto",
+        "pch": "auto",
+        "gradleBuildCache": true,
+        "targetAbiOnly": true
+      }
+    }
   }
 
-in ~/.stim/config.json. It turns the store off on BOTH dev servers. Only the
-literal false does; anything else leaves it on. The Expo adapter also fails
-soft when it cannot create a FileStore: it writes one line to stderr (which
-lands in the timeline) and the dev server runs with whatever cache it would
-have had.
+The example shows the defaults. Full setting names and behavior:
+  optimizations.buildCache
+    false skips native artifact reads AND writes, including remote providers.
+    Compiler caches remain independent. The existing --no-build-cache flag
+    only bypasses reads and still stores the fresh build.
+  optimizations.remoteBuildCache
+    false skips both optional remote artifact providers, including loading
+    their modules and authentication. Local artifact caching stays enabled.
+  optimizations.releaseBundleSwap
+    false always builds Release from source, including the current JS;
+    it never installs an old embedded bundle. Fresh artifacts can still store.
+  optimizations.metroSharedCache
+    false stops Stim appending its shared Metro store on both dev servers.
+    Project-configured stores remain the project's choice. The older machine
+    caches.injectMetroStore=false is still supported as a fallback. An explicit
+    repository/project metroSharedCache=true overrides that machine fallback.
+  optimizations.ios.compilationCache
+    controls Xcode compilation caching (Xcode 26+).
+  optimizations.ios.swiftCompilationCache
+    opts into experimental Swift caching, requiring compilationCache=true.
+  optimizations.ios.prefixMapping
+    controls Clang source/DerivedData prefix mapping. false clears Stim's
+    mappings. The existing Xcode version and project-ccache guards still apply.
+  optimizations.android.compilerCache
+    auto uses a CAS manifest if supplied, otherwise the normal ccache setup.
+    ccache explicitly selects that setup; none stops Stim injecting it and
+    disables inherited ccache. Project-defined compiler integrations can still
+    override CMake settings. cas requires the manifest below.
+  optimizations.android.casToolchain
+    absolute path to the experimental Apple Clang toolchain JSON manifest.
+    STIM_ANDROID_CAS_TOOLCHAIN overrides this path. An explicit ccache or none
+    selection overrides automatic CAS selection even with that environment
+    variable set. See the repository's docs/android-cas-poc.md for prerequisites.
+  optimizations.android.pch
+    auto keeps library/project policy, with PCH off by default when Stim supplies
+    ccache. on/off overrides Gradle CMAKE_DISABLE_PRECOMPILE_HEADERS arguments;
+    CMake target-level overrides still win. on does not fix stock ccache's
+    cross-worktree PCH limitations.
+  optimizations.android.gradleBuildCache
+    false passes --no-build-cache to Gradle, overriding org.gradle.caching=true.
+  optimizations.android.targetAbiOnly
+    false stops narrowing Debug builds to the device ABI. Release is always
+    universal; project ABI filters still apply.
+
+Android CAS, explicit PCH modes, and changed iOS compiler options use separate
+native artifact keys. Android ccache and none share an artifact key when their
+PCH mode matches; disable artifact caching too to force native compilation. Legacy Expo providers
+cannot key these compiler profiles, so Stim skips that tier for custom profiles
+and Android CAS. Providers implementing the Stim key contract remain usable.
+Android compiler/PCH profiles also get separate CMake staging directories under
+<module>/.cxx/stim-<profile>, or under the project's custom staging root. Switching
+backends in Stim selects the matching directory without deleting previous builds.
+These directories accumulate across profile changes and shim upgrades. Stim
+does not prune them; remove an obsolete generated profile only with all native
+builds stopped. Worktree removal reclaims profiles with the rest of the tree.
+Direct Gradle runs keep their own configuration. These switches control Stim's
+build invocations; they do not edit Xcode, Gradle, CMake, or Metro project files.
 
 Reading the timeline for it: on Expo, \`cache_store_requested\` is Stim saying
 it asked (it set EXPO_OVERRIDE_METRO_CONFIG on a process it does not run, which

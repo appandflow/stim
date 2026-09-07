@@ -175,6 +175,8 @@ export function sharedStoreRoot(store: unknown): string | null {
 }
 
 export interface BuildRunOptions {
+  buildProfile?: string;
+  compiler?: string;
   variant?: string;
   abi?: string;
   configuration?: string;
@@ -212,7 +214,9 @@ function buildTarget(options: BuildRunOptions): string {
 export function buildCacheKey(platform: string, fingerprintHash: string, options: unknown = {}): string {
   const opts = (options && typeof options === 'object' ? options : {}) as BuildRunOptions;
   const abi = platform === 'android' && typeof opts.abi === 'string' ? slug(opts.abi) : '';
-  return `${fingerprintHash}-${buildVariant(platform, opts)}-${buildTarget(opts)}${abi ? `-${abi}` : ''}`;
+  const compiler = typeof opts.compiler === 'string' ? slug(opts.compiler) : '';
+  const profile = typeof opts.buildProfile === 'string' ? slug(opts.buildProfile) : '';
+  return `${fingerprintHash}-${buildVariant(platform, opts)}-${buildTarget(opts)}${abi ? `-${abi}` : ''}${compiler ? `-${compiler}` : ''}${profile ? `-${profile}` : ''}`;
 }
 
 export interface RegisterOptions {

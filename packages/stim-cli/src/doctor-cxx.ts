@@ -3,6 +3,7 @@ import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { getExecutor } from './exec.ts';
 import { listBuildLocks } from './engine/build-lock.ts';
 import { projectCmakeLauncher } from './engine/ccache.ts';
+import { projectOptimizations } from './settings.ts';
 
 export interface CxxLauncherState {
   path: string;
@@ -39,6 +40,7 @@ function moduleRoots(root: string): string[] {
 function cacheFiles(base: string, depth = 0): string[] {
   const files: string[] = [];
   for (const name of children(base)) {
+    if (depth === 0 && /^stim-[a-f0-9]{16}$/.test(name)) continue;
     const path = join(base, name);
     const entry = lstatSync(path);
     if (entry.isSymbolicLink()) continue;
@@ -81,6 +83,7 @@ export interface CxxRepairResult {
 export function repairCxxLauncherState(root: string): CxxRepairResult {
   const canonicalRoot = realpathSync(root);
   const result: CxxRepairResult = { removed: [], refused: [] };
+  if (projectOptimizations(root).android.compilerCache !== 'ccache') return result;
   const ccache = getExecutor().runQuiet('command -v ccache', { timeoutMs: 5000 });
   if (!ccache) return result;
   const appOverrides = declaredLauncher(join(root, 'android', 'app'));

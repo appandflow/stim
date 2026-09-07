@@ -147,3 +147,42 @@ test.each(['claude', 'codex'])(
     expect(existsSync(stale)).toBe(false);
   },
 );
+
+test.each(['none', 'cas'])(
+  'doctor preserves native configurations when the selected compiler cache is %s',
+  (compilerCache) => {
+    const path = cache('android/app', null);
+    writeFileSync(
+      join(root, '.stim.json'),
+      JSON.stringify({ optimizations: { android: { compilerCache, casToolchain: '/toolchain.json' } } }),
+    );
+    expect(repairCxxLauncherState(root)).toEqual({ removed: [], refused: [] });
+    expect(existsSync(path)).toBe(true);
+  },
+);
+
+test('legacy launcher repair preserves managed compiler profiles alongside stale legacy configurations', () => {
+  const legacy = cache('android/app', null);
+  const managed = join(root, 'android/app/.cxx/stim-0123456789abcdef/Debug/abc123/arm64-v8a');
+  mkdirSync(managed, { recursive: true });
+  writeFileSync(
+    join(managed, 'CMakeCache.txt'),
+    'CMAKE_BUILD_TYPE:STRING=Debug\nCMAKE_CXX_COMPILER_LAUNCHER:STRING=\n',
+  );
+  expect(repairCxxLauncherState(root).removed).toHaveLength(1);
+  expect(existsSync(legacy)).toBe(false);
+  expect(existsSync(managed)).toBe(true);
+});
+
+test('doctor preserves existing CMake state while CAS is explicitly selected', () => {
+  const previous = process.env.STIM_ANDROID_CAS_TOOLCHAIN;
+  const path = cache('android/app', null);
+  process.env.STIM_ANDROID_CAS_TOOLCHAIN = '/toolchain.json';
+  try {
+    expect(repairCxxLauncherState(root)).toEqual({ removed: [], refused: [] });
+    expect(existsSync(path)).toBe(true);
+  } finally {
+    if (previous === undefined) delete process.env.STIM_ANDROID_CAS_TOOLCHAIN;
+    else process.env.STIM_ANDROID_CAS_TOOLCHAIN = previous;
+  }
+});

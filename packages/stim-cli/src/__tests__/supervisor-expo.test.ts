@@ -554,30 +554,51 @@ describe('the Metro store injected into an Expo child', () => {
     expect(String(records.find((record) => record.event === 'cache_store_skipped')?.msg)).toContain('predates');
   });
 
-  test('the machine-level kill switch leaves NODE_OPTIONS exactly as the caller set it', async () => {
-    writeFileSync(
-      join(tmpHome, 'config.json'),
-      JSON.stringify({ projects: {}, repos: {}, caches: { injectMetroStore: false } }),
-    );
-    fakeBin();
-    process.env.NODE_OPTIONS = '--enable-source-maps';
-    const logsDir = join(root, '.stim', 'logs');
-    const calls: { opts: SpawnOptions }[] = [];
-    await startExpoServer({
-      root,
-      port: 8121,
-      logsDir,
-      spawnFn: (_cmd, _args, opts) => {
-        calls.push({ opts });
-        return fakeChild();
-      },
-    });
-    const env = calls[0]?.opts.env as Record<string, string>;
-    expect(env.NODE_OPTIONS).toBe('--enable-source-maps');
-    expect(env.STIM_METRO_STORE).toBe(undefined);
-    const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));
-    expect(records.some((r) => r.event === 'cache_store_skipped')).toBe(true);
-  });
+  test.each(['legacy', 'machine', 'project', 'native-invalid'])(
+    '%s Metro opt-out leaves NODE_OPTIONS exactly as the caller set it',
+    async (layer) => {
+      writeFileSync(
+        join(tmpHome, 'config.json'),
+        JSON.stringify({
+          projects: {},
+          repos: {},
+          ...(layer === 'legacy'
+            ? { caches: { injectMetroStore: false } }
+            : { optimizations: { metroSharedCache: layer !== 'machine' } }),
+        }),
+      );
+      if (layer === 'project' || layer === 'native-invalid')
+        writeFileSync(
+          join(root, '.stim.json'),
+          JSON.stringify({
+            optimizations: {
+              metroSharedCache: false,
+              ...(layer === 'native-invalid'
+                ? { android: { compilerCache: 'cas' }, ios: { compilationCache: 'false' } }
+                : {}),
+            },
+          }),
+        );
+      fakeBin();
+      process.env.NODE_OPTIONS = '--enable-source-maps';
+      const logsDir = join(root, '.stim', 'logs');
+      const calls: { opts: SpawnOptions }[] = [];
+      await startExpoServer({
+        root,
+        port: 8121,
+        logsDir,
+        spawnFn: (_cmd, _args, opts) => {
+          calls.push({ opts });
+          return fakeChild();
+        },
+      });
+      const env = calls[0]?.opts.env as Record<string, string>;
+      expect(env.NODE_OPTIONS).toBe('--enable-source-maps');
+      expect(env.STIM_METRO_STORE).toBe(undefined);
+      const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));
+      expect(records.some((r) => r.event === 'cache_store_skipped')).toBe(true);
+    },
+  );
 });
 
 describe('the honest record of the Metro store injection', () => {

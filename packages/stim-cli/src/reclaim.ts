@@ -3,9 +3,7 @@ import { existsSync, rmSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTree, isPidAlive } from './metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd, type ParkedDevice, type ParkRequest } from './teardown.ts';
 import { parkedMaxSetting } from './sim-pool.ts';
-import { readCollectors } from './collector/state.ts';
 import { verifyCollectorOwnership } from './collector/ownership.ts';
-import { readProcessStartTime } from './process-args.ts';
 import {
   clearManagedMetroTunnel,
   clearRemoteSession,
@@ -19,92 +17,52 @@ import { releaseWorkspaceLeases, type ReleasedLease } from './engine/device-leas
 import { resolveEasCliBin } from './engine/remote-cache.ts';
 import { stopTunnel, type StopTunnelResult } from './engine/tunnel.ts';
 import { workspaceDir } from './paths.ts';
+import { resolveSupervisorTarget } from './supervisor/ownership.ts';
+import { sameProcessRecord, waitForProcessExit, type ProcessRecord } from './process-identity.ts';
 
-// #183: fail closed toward "keep" for an unverified live pid unless its own start time proves
-// it recycled the number. RECYCLED_PID_TOLERANCE_MS absorbs NTP steps and lstart's one-second
-// truncation so a genuinely-ours collector never flips to "recycled" on a near-equal timestamp.
-const RECYCLED_PID_TOLERANCE_MS = 5_000;
-
-type StartTimeVerdict =
-  | { recycled: true }
-  | { recycled: false; cause: 'no-recorded-start' }
-  | { recycled: false; cause: 'unreadable-live-start' }
-  | { recycled: false; cause: 'started-at-or-before' };
-
-function classifyPidAgainstRecord(
-  recordedStartedAt: unknown,
-  pid: number,
-  readStartTime: (pid: number) => Date | null,
-): StartTimeVerdict {
-  if (typeof recordedStartedAt !== 'string') return { recycled: false, cause: 'no-recorded-start' };
-  const recordedMs = Date.parse(recordedStartedAt);
-  if (!Number.isFinite(recordedMs)) return { recycled: false, cause: 'no-recorded-start' };
-  let liveStart: Date | null;
-  try {
-    liveStart = readStartTime(pid);
-  } catch {
-    liveStart = null;
-  }
-  if (!liveStart) return { recycled: false, cause: 'unreadable-live-start' };
-  if (liveStart.getTime() > recordedMs + RECYCLED_PID_TOLERANCE_MS) return { recycled: true };
-  return { recycled: false, cause: 'started-at-or-before' };
-}
-
-function keptReason(
-  cause: 'no-recorded-start' | 'unreadable-live-start' | 'started-at-or-before',
-  pid: number,
-): string {
-  if (cause === 'started-at-or-before') {
-    return `it started at or before this record's startedAt, so it may still be ours; inspect it with \`ps -p ${pid}\` and retry`;
-  }
-  if (cause === 'unreadable-live-start') {
-    return `pid ${pid}'s start time could not be read, so it may still be ours; inspect it with \`ps -p ${pid}\` and retry`;
-  }
-  return `this record has no usable startedAt to compare against, so pid ${pid} may still be ours; inspect it with \`ps -p ${pid}\` and retry`;
-}
-
-function reapCollectors(
+async function reapCollectors(
   root: string,
   {
     verify = verifyCollectorOwnership,
-    readStartTime = readProcessStartTime,
+    collectors,
   }: {
     verify?: typeof verifyCollectorOwnership;
-    readStartTime?: (pid: number) => Date | null;
-  } = {},
-): { skippedDevices: SkippedDevice[]; failedDevices: SkippedDevice[] } {
+    collectors: Record<string, unknown>;
+  },
+): Promise<{ skippedDevices: SkippedDevice[]; failedDevices: SkippedDevice[] }> {
   const skippedDevices: SkippedDevice[] = [];
   const failedDevices: SkippedDevice[] = [];
-  for (const [platform, record] of Object.entries(readCollectors(root))) {
-    const rec = record as { pid?: unknown; startedAt?: unknown } | null;
+  for (const [platform, record] of Object.entries(collectors)) {
+    const rec = record as ProcessRecord | null;
     const pid = rec?.pid;
     if (typeof pid !== 'number' || pid <= 0 || pid === process.pid || !isPidAlive(pid)) continue;
-    const ownership = verify({ pid, platform, root });
+    const ownership = verify({ pid, platform, root, expected: rec });
     if (ownership.status === 'gone') continue;
     if (ownership.status === 'unverified') {
       const name = `${platform} log collector (pid ${pid})`;
       const platformLabel = platform === 'android' ? 'android' : 'ios';
-      const verdict = classifyPidAgainstRecord(rec?.startedAt, pid, readStartTime);
-      if (verdict.recycled) {
-        skippedDevices.push({
-          platform: platformLabel,
-          name,
-          reason: `${ownership.reason}, so it was not signalled -- inspect it with \`ps -p ${pid}\``,
-        });
-      } else {
-        const entry: SkippedDevice = {
-          platform: platformLabel,
-          name,
-          reason: `${ownership.reason}, so it was not signalled -- ${keptReason(verdict.cause, pid)}`,
-        };
-        skippedDevices.push(entry);
-        failedDevices.push(entry);
-      }
+      const entry: SkippedDevice = {
+        platform: platformLabel,
+        name,
+        reason: `${ownership.reason}; keeping the record without signalling the process`,
+      };
+      skippedDevices.push(entry);
+      failedDevices.push(entry);
       continue;
     }
     try {
       process.kill(pid, 'SIGTERM');
-    } catch {}
+      if (await waitForProcessExit(rec!, 5_000)) continue;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') continue;
+    }
+    const entry: SkippedDevice = {
+      platform: platform === 'android' ? 'android' : 'ios',
+      name: `${platform} log collector (pid ${pid})`,
+      reason: 'Collector exit could not be confirmed; keeping its ownership record.',
+    };
+    skippedDevices.push(entry);
+    failedDevices.push(entry);
   }
   return { skippedDevices, failedDevices };
 }
@@ -326,7 +284,6 @@ export async function reclaimProject(
     stopMetroTunnel = defaultStopMetroTunnel,
     releaseLeases = releaseWorkspaceLeases,
     verifyCollector = verifyCollectorOwnership,
-    readCollectorStartTime = readProcessStartTime,
   }: {
     deleteOwnedDevices?: boolean;
     parkOwnedDevices?: boolean;
@@ -335,27 +292,73 @@ export async function reclaimProject(
     stopMetroTunnel?: StopMetroTunnelFn;
     releaseLeases?: (root: string) => ReleasedLease[];
     verifyCollector?: typeof verifyCollectorOwnership;
-    readCollectorStartTime?: (pid: number) => Date | null;
   } = {},
 ): Promise<ReclaimResult> {
   const project = getProject(path);
   const dereferenced = describeDereferenced(project);
+  const initialState = readWorkspaceState(path);
 
-  const { skippedDevices: skippedCollectors, failedDevices: failedCollectors } = reapCollectors(path, {
+  let killedPid: number | null = null;
+  let skippedMetro: string | null = null;
+  let supervisorHeld = false;
+  const supervisor = resolveSupervisorTarget({
+    state: initialState?.supervisor,
+    record: project?.supervisor,
+    reservedPort: project?.metroPort,
+  });
+  if (supervisor.status === 'ours') {
+    if (killMetroTree(supervisor.pid, supervisor.processToken) && (await waitForProcessExit(supervisor, 10_000))) {
+      killedPid = supervisor.pid!;
+    } else {
+      skippedMetro = `could not confirm supervisor pid ${supervisor.pid} exited`;
+      supervisorHeld = true;
+    }
+  } else if (supervisor.status === 'unverified') {
+    skippedMetro = supervisor.reason ?? 'supervisor identity could not be verified';
+    supervisorHeld = true;
+  } else if (typeof project?.metroPort === 'number') {
+    const resolution = await resolveProjectMetro(project.metroPort, path);
+    if (!resolution.missing) skippedMetro = 'Externally started server left alone; no verified Stim supervisor owns it';
+  }
+
+  const { skippedDevices: skippedCollectors, failedDevices: failedCollectors } = await reapCollectors(path, {
     verify: verifyCollector,
-    readStartTime: readCollectorStartTime,
+    collectors: initialState?.collectors ?? {},
   });
 
-  const { deletedDevices, parkedDevices, evictedDevices, poolNotes, skippedDevices, failedDevices } = deleteOwnedDevices
-    ? reclaimOwnedDevices(project, path, { park: parkOwnedDevices })
-    : {
-        deletedDevices: [] as string[],
-        parkedDevices: [] as ParkedDevice[],
-        evictedDevices: [] as ParkedDevice[],
-        poolNotes: [] as string[],
-        skippedDevices: [] as SkippedDevice[],
-        failedDevices: [] as SkippedDevice[],
-      };
+  function retainReplacementProcesses() {
+    const currentState = readWorkspaceState(path);
+    const currentProject = getProject(path);
+    const replacement = Boolean(
+      (currentState?.supervisor && !sameProcessRecord(currentState.supervisor, initialState?.supervisor)) ||
+      (currentProject?.supervisor && !sameProcessRecord(currentProject.supervisor, project?.supervisor)) ||
+      Object.entries(currentState?.collectors ?? {}).some(
+        ([platform, record]) =>
+          !sameProcessRecord(
+            record as ProcessRecord,
+            initialState?.collectors?.[platform] as ProcessRecord | undefined,
+          ),
+      ),
+    );
+    if (replacement) {
+      supervisorHeld = true;
+      skippedMetro = 'A replacement process appeared during cleanup; its ownership records are retained';
+    }
+  }
+
+  retainReplacementProcesses();
+
+  const { deletedDevices, parkedDevices, evictedDevices, poolNotes, skippedDevices, failedDevices } =
+    deleteOwnedDevices && !supervisorHeld && failedCollectors.length === 0
+      ? reclaimOwnedDevices(project, path, { park: parkOwnedDevices })
+      : {
+          deletedDevices: [] as string[],
+          parkedDevices: [] as ParkedDevice[],
+          evictedDevices: [] as ParkedDevice[],
+          poolNotes: [] as string[],
+          skippedDevices: [] as SkippedDevice[],
+          failedDevices: [] as SkippedDevice[],
+        };
   skippedDevices.push(...skippedCollectors);
   failedDevices.push(...failedCollectors);
 
@@ -378,21 +381,11 @@ export async function reclaimProject(
     releasedLeases = [];
   }
 
-  let killedPid: number | null = null;
-  let skippedMetro: string | null = null;
-  if (typeof project?.metroPort === 'number') {
-    const resolution = await resolveProjectMetro(project.metroPort, path);
-    if (resolution.metro) {
-      killedPid = killMetroTree(resolution.metro.leader, resolution.metro.pid) ? resolution.metro.pid : null;
-      if (killedPid === null) skippedMetro = `could not kill pid ${resolution.metro.pid}`;
-    } else if (resolution.notOurs) {
-      skippedMetro = resolution.notOurs;
-    }
-  }
+  retainReplacementProcesses();
 
   const removedWorkspaceDirs: string[] = [];
   const failedWorkspaceDirs: string[] = [];
-  if (failedDevices.length === 0) {
+  if (failedDevices.length === 0 && !supervisorHeld) {
     const dir = workspaceDir(path);
     if (existsSync(dir)) {
       try {
@@ -404,7 +397,7 @@ export async function reclaimProject(
     }
   }
 
-  const keptEntry = failedDevices.length > 0 || failedWorkspaceDirs.length > 0;
+  const keptEntry = supervisorHeld || failedDevices.length > 0 || failedWorkspaceDirs.length > 0;
   if (project && !keptEntry && !preserveProjectRecord) removeProject(path);
 
   return {

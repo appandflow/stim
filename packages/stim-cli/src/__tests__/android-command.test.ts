@@ -1,5 +1,7 @@
 import assert from 'node:assert';
-import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
+import { captureProcessToken } from '../process-identity.ts';
+import { once } from 'node:events';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -70,7 +72,7 @@ let root: string;
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-home-'));
   process.env.STIM_HOME = home;
-  root = mkdtempSync(join(tmpdir(), 'stim-android-'));
+  root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-android-')));
   writeFileSync(
     join(root, 'package.json'),
     JSON.stringify({
@@ -2227,26 +2229,16 @@ describe('Contract 4: state.json.lastBuild', () => {
   });
 });
 
-function collectorProcessCommand(pid: number): string {
-  try {
-    return execFileSync('ps', ['-ww', '-o', 'command=', '-p', String(pid)], { encoding: 'utf-8' }).trim();
-  } catch {
-    return '';
-  }
-}
-
-// Spawns a real detached process so the default `verifyCollectorOwnership` reads its actual
-// live command (via ps on darwin, via /proc/[pid]/cmdline on linux) instead of a mocked
-// executor, which only exercises the darwin ps path and fails closed for the wrong reason on
-// Linux CI.
 async function spawnFakeCollector(title: string | null): Promise<ChildProcess> {
   const rename = title ? `process.title = ${JSON.stringify(title)};` : '';
-  const child = spawn(process.execPath, ['-e', `${rename} setInterval(() => {}, 1000);`], { stdio: 'ignore' });
-  const expected = title ?? process.execPath;
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline && !collectorProcessCommand(child.pid as number).startsWith(expected)) {
-    await new Promise((r) => setTimeout(r, 25));
-  }
+  const child = spawn(
+    process.execPath,
+    ['-e', `${rename} process.stdout.write('ready'); setInterval(() => {}, 1000);`],
+    {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    },
+  );
+  await once(child.stdout!, 'data');
   return child;
 }
 
@@ -2319,12 +2311,14 @@ describe('Contract 5: the device-log collector', () => {
     expect(h.stderr.some((l) => /pid 4242/.test(l) && /not signalled/.test(l))).toBeTruthy();
   });
 
-  test('the default ownership check is wired through: a live process titled for this workspace is signalled', async () => {
+  test('the default ownership check is wired through: a live process with a persisted identity is signalled', async () => {
     const child = await spawnFakeCollector(collectorProcessTitle('android', root));
     try {
+      writeWorkspaceState(root, {
+        collectors: { android: { pid: child.pid, processToken: captureProcessToken(child.pid!) } },
+      });
       const signalled: Array<[number, NodeJS.Signals]> = [];
       const result = killPreviousCollector(root, {
-        collectors: { android: { pid: child.pid as number } },
         kill: (pid, sig) => {
           signalled.push([pid, sig]);
           return true;
@@ -4875,4 +4869,137 @@ describe('run statistics', () => {
     expect(runs).toHaveLength(1);
     expect(runs[0]?.run.failed).toBe(false);
   });
+});
+
+describe('optimization configuration', () => {
+  test('disabling artifact caching skips both reads and writes in both provider tiers', async () => {
+    const h = harness({
+      resolveSettingsFor: () => ({ optimizations: { buildCache: false } }),
+      resolveCached: never('local lookup'),
+      storeCached: never('local store'),
+      loadProvider: never('legacy provider'),
+      loadCacheProviderModule: never('cache provider'),
+      resolveCacheProvider: () => ({ provider: 'fixture', options: {} }),
+    });
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.build).toHaveLength(1);
+    expect(h.calls.uploadRemoteBuild).toHaveLength(0);
+  });
+
+  test('disabling remote caching keeps local artifact reuse', async () => {
+    const h = harness({
+      resolveSettingsFor: () => ({ optimizations: { remoteBuildCache: false } }),
+      resolveCached: () => '/cache/app.apk',
+      build: never('build'),
+      loadProvider: never('legacy provider'),
+      loadCacheProviderModule: never('cache provider'),
+      resolveCacheProvider: () => ({ provider: 'fixture', options: {} }),
+    });
+    expect((await h.run()).facts?.cacheHit).toBe('local');
+  });
+
+  test('disabling release bundle swaps compiles current JS even with an existing artifact', async () => {
+    const h = harness({
+      variant: 'release',
+      resolveSettingsFor: () => ({ optimizations: { releaseBundleSwap: false } }),
+      resolveCached: never('release artifact lookup'),
+      swapApk: never('bundle swap'),
+    });
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.build).toHaveLength(1);
+    expect(h.calls.storeCached).toHaveLength(1);
+  });
+
+  test('native switches disable injected ccache and ABI narrowing and reach the Gradle engine', async () => {
+    const engine: unknown[] = [];
+    const h = harness({
+      deviceAbi: () => 'arm64-v8a',
+      ccacheFor: never('ccache setup'),
+      resolveSettingsFor: () => ({
+        optimizations: { android: { compilerCache: 'none', pch: 'on', gradleBuildCache: false, targetAbiOnly: false } },
+      }),
+      build: async (args: unknown, opts: unknown) => {
+        engine.push(args, opts);
+        return { ok: true, apkPath: fakeApk(), durationMs: 1 };
+      },
+    });
+    expect((await h.run()).ok).toBe(true);
+    expect(engine[0]).toMatchObject({ abi: null });
+    expect(engine[1]).toMatchObject({
+      ccache: null,
+      cas: null,
+      compilerCacheDisabled: true,
+      pch: 'on',
+      buildCache: false,
+    });
+    expect(h.calls.storeCached[0]?.[1]).toMatch(/opt-/);
+  });
+});
+
+test('CAS Release builds skip the legacy Expo provider that cannot key compiler identity', async () => {
+  const ndk = join(home, 'ndk');
+  mkdirSync(ndk);
+  writeFileSync(join(ndk, 'source.properties'), 'Pkg.Revision = 27.1.12297006\n');
+  const binary = join(home, 'compiler');
+  writeFileSync(binary, 'test compiler bytes');
+  const manifest = join(home, 'toolchain.json');
+  writeFileSync(
+    manifest,
+    JSON.stringify({ clang: binary, clangxx: binary, lld: binary, ar: binary, ranlib: binary, ndk }),
+  );
+  const h = harness({
+    variant: 'release',
+    resolveSettingsFor: () => ({ optimizations: { android: { compilerCache: 'cas', casToolchain: manifest } } }),
+    loadProvider: never('legacy Expo provider'),
+    resolveRemoteBuild: never('legacy lookup'),
+    uploadRemoteBuild: never('legacy upload'),
+  });
+  expect((await h.run()).ok).toBe(true);
+  expect(h.calls.storeCached[0]?.[1]).toMatch(/apple-cas-/);
+});
+
+test('an unavailable CAS manifest returns one JSON refusal before device or build work', async () => {
+  const previous = process.env.STIM_ANDROID_CAS_TOOLCHAIN;
+  process.env.STIM_ANDROID_CAS_TOOLCHAIN = join(home, 'missing-toolchain.json');
+  try {
+    const h = harness({ json: true, ensureDevice: never('device setup'), build: never('build') });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(h.stdout).toHaveLength(1);
+    expect(JSON.parse(h.stdout[0]!)).toMatchObject({
+      code: 'STIM_BAD_ARG',
+      message: expect.stringContaining('Could not configure Android build'),
+    });
+  } finally {
+    if (previous === undefined) delete process.env.STIM_ANDROID_CAS_TOOLCHAIN;
+    else process.env.STIM_ANDROID_CAS_TOOLCHAIN = previous;
+  }
+});
+
+test('CAS Release builds skip legacy providers that cannot key compiler identity', async () => {
+  const previous = process.env.STIM_ANDROID_CAS_TOOLCHAIN;
+  const ndk = join(home, 'ndk');
+  mkdirSync(ndk);
+  writeFileSync(join(ndk, 'source.properties'), 'Pkg.Revision = 27.1.12297006\n');
+  const binary = join(home, 'compiler');
+  writeFileSync(binary, 'test compiler bytes');
+  const manifest = join(home, 'toolchain.json');
+  writeFileSync(
+    manifest,
+    JSON.stringify({ clang: binary, clangxx: binary, lld: binary, ar: binary, ranlib: binary, ndk }),
+  );
+  process.env.STIM_ANDROID_CAS_TOOLCHAIN = manifest;
+  try {
+    const h = harness({
+      variant: 'release',
+      loadProvider: never('legacy provider'),
+      resolveRemoteBuild: never('legacy lookup'),
+      uploadRemoteBuild: never('legacy upload'),
+    });
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.storeCached[0]?.[1]).toMatch(/apple-cas-/);
+  } finally {
+    if (previous === undefined) delete process.env.STIM_ANDROID_CAS_TOOLCHAIN;
+    else process.env.STIM_ANDROID_CAS_TOOLCHAIN = previous;
+  }
 });

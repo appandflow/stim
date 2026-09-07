@@ -31,7 +31,8 @@ import {
   tunnelModeSetting,
   unknownSettingKeys,
 } from '../settings.ts';
-import { setProjectSetting, setRepoSetting, upsertProject } from '../config.ts';
+import { resolveOptimizations, resolveMetroSharedCache } from '../optimizations.ts';
+import { saveConfig, setProjectSetting, setRepoSetting, upsertProject } from '../config.ts';
 
 type SettingsView = {
   caches?: string[];
@@ -647,4 +648,47 @@ test('the three iOS device settings are known keys', () => {
     }),
   ).toEqual([]);
   expect(unknownSettingKeys({ ios: { lanPort: 1 } })).toEqual(['ios.lanPort']);
+});
+
+test('machine optimization defaults merge with committed, repository and project overrides, including false', () => {
+  saveConfig({
+    version: 2,
+    projects: {},
+    repos: {},
+    optimizations: {
+      buildCache: false,
+      android: { pch: 'on', gradleBuildCache: false },
+      ios: { prefixMapping: false },
+    },
+  });
+  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ optimizations: { android: { pch: 'off' } } }));
+  setRepoSetting('/repo/.git', 'optimizations.android.pch', 'on');
+  upsertProject('/proj', {});
+  setProjectSetting('/proj', 'optimizations.android.pch', 'auto');
+  setProjectSetting('/proj', 'optimizations.ios.compilationCache', false);
+  const options = resolveOptimizations(
+    resolveSettings({ projectPath: '/proj', gitCommonDir: '/repo/.git', repoRoot: tmpHome }),
+    {},
+  );
+  expect(options.buildCache).toBe(false);
+  expect(options.android.pch).toBe('auto');
+  expect(options.android.gradleBuildCache).toBe(false);
+  expect(options.ios).toEqual({ compilationCache: false, swiftCompilationCache: false, prefixMapping: false });
+  expect(resolveOptimizations(resolveSettings({ repoRoot: tmpHome }), {}).android.pch).toBe('off');
+  expect(resolveOptimizations(resolveSettings({}), {}).android.pch).toBe('on');
+});
+
+test('the legacy machine Metro opt-out remains a fallback that a project can override', () => {
+  saveConfig({ version: 2, projects: {}, repos: {}, caches: { injectMetroStore: false } });
+  expect(resolveOptimizations(resolveSettings({}), {}).metroSharedCache).toBe(false);
+  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ optimizations: { metroSharedCache: true } }));
+  expect(resolveOptimizations(resolveSettings({ repoRoot: tmpHome }), {}).metroSharedCache).toBe(true);
+});
+
+test('an absent or malformed legacy cache setting leaves the shared Metro store enabled', () => {
+  expect(resolveMetroSharedCache(resolveSettings({}))).toBe(true);
+  for (const caches of [{}, { metroCache: '/x' }, { injectMetroStore: 'false' }, { injectMetroStore: 0 }, ['/x']]) {
+    saveConfig({ version: 2, projects: {}, repos: {}, caches } as never);
+    expect(resolveMetroSharedCache(resolveSettings({}))).toBe(true);
+  }
 });

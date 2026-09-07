@@ -47,6 +47,18 @@ import {
 
 const testStimVersions = analyzeStimVersions('1.2.3', '/tools/stim-cli', []);
 
+let testHome: string;
+
+beforeEach(() => {
+  testHome = mkdtempSync(join(tmpdir(), 'stim-doctor-test-home-'));
+  process.env.STIM_HOME = testHome;
+});
+
+afterEach(() => {
+  delete process.env.STIM_HOME;
+  rmSync(testHome, { recursive: true, force: true });
+});
+
 test('checkMainCheckout reports missing dependencies, Pods, and native output', () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-source-cold-'));
   try {
@@ -833,6 +845,21 @@ test('the EAS finding reaches the report runDoctor returns', () => {
   });
   expect(findings.some((f) => /EAS/.test(f.title) && f.level === 'cost')).toBeTruthy();
   rmSync(dir, { recursive: true, force: true });
+});
+
+test.each(['buildCache', 'remoteBuildCache'])('doctor skips EAS auth when %s is disabled', (setting) => {
+  const dir = mkdtempSync(join(tmpdir(), 'stim-doctor-'));
+  try {
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { expo: '~57.0.0' } }));
+    writeFileSync(join(dir, 'app.json'), JSON.stringify({ expo: { buildCacheProvider: 'eas' } }));
+    writeFileSync(join(dir, '.stim.json'), JSON.stringify({ optimizations: { [setting]: false } }));
+    const auth = vi.fn<() => EasAuthResult>(() => ({ failed: true, code: 'logged-out', remedy: 'Run eas login.' }));
+    const findings = runDoctor(dir, { easAuth: auth });
+    expect(auth).not.toHaveBeenCalled();
+    expect(findings.some((finding) => /EAS/.test(finding.title))).toBe(false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('checkConcurrency is silent when no limit is set', () => {

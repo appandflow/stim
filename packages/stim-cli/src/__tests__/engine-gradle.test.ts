@@ -355,8 +355,8 @@ describe('gradleArgs', () => {
     expect(gradleArgs('assembleProductionRelease')).toEqual(['assembleProductionRelease', '--build-cache']);
   });
 
-  test('a caller can turn it off, and then the argv is exactly the task', () => {
-    expect(gradleArgs('assembleDebug', { buildCache: false })).toEqual(['assembleDebug']);
+  test('explicitly disables even a project-enabled Gradle build cache', () => {
+    expect(gradleArgs('assembleDebug', { buildCache: false })).toEqual(['assembleDebug', '--no-build-cache']);
   });
 
   test('limits React Native native compilation to a proven target ABI', () => {
@@ -367,6 +367,8 @@ describe('gradleArgs', () => {
     ]);
   });
 });
+
+const nativeScript = join(import.meta.dirname, '../../shim/android-optimizations.gradle');
 
 describe('buildAndroid', () => {
   test('runs ./gradlew assembleDebug in android/ and streams every line as it arrives', async () => {
@@ -394,7 +396,7 @@ describe('buildAndroid', () => {
     const call = calls[0];
     assert(call);
     expect(call.cmd).toBe(join(root, 'android', 'gradlew'));
-    expect(call.args).toEqual(['assembleDebug', '--build-cache']);
+    expect(call.args).toEqual(['assembleDebug', '--build-cache', '--init-script', nativeScript]);
     expect(ASSEMBLE_TASK).toBe('assembleDebug');
     expect(call.opts.cwd).toBe(join(root, 'android'));
     const { stdio } = call.opts;
@@ -407,7 +409,9 @@ describe('buildAndroid', () => {
     const [start, ...transcript] = writer.records;
     assert(start);
     expect(start.event).toBe('build_start');
-    expect(start.msg).toBe(`${join(root, 'android', 'gradlew')} assembleDebug --build-cache`);
+    expect(start.msg).toBe(
+      `${join(root, 'android', 'gradlew')} assembleDebug --build-cache --init-script ${nativeScript}`,
+    );
     expect(transcript.map((r) => r.msg)).toEqual(['> Task :app:compileDebugKotlin', 'BUILD SUCCESSFUL in 41s']);
     for (const record of transcript) {
       expect(record.src).toBe('build');
@@ -429,7 +433,9 @@ describe('buildAndroid', () => {
         },
       },
     );
-    expect(calls).toEqual([['assembleDebug', '--build-cache', '-PreactNativeArchitectures=arm64-v8a']]);
+    expect(calls).toEqual([
+      ['assembleDebug', '--build-cache', '-PreactNativeArchitectures=arm64-v8a', '--init-script', nativeScript],
+    ]);
     const starts = writer.records.filter((r) => r.event === 'build_start');
     expect(starts.length).toBe(1);
     const start = starts[0];
@@ -438,11 +444,11 @@ describe('buildAndroid', () => {
     expect(start.level).toBe('info');
     expect(start.raw).toBe(undefined);
     expect(start.msg).toBe(
-      `${join(root, 'android', 'gradlew')} assembleDebug --build-cache -PreactNativeArchitectures=arm64-v8a`,
+      `${join(root, 'android', 'gradlew')} assembleDebug --build-cache -PreactNativeArchitectures=arm64-v8a --init-script ${nativeScript}`,
     );
   });
 
-  test('the build_start record shows the argv WITHOUT --build-cache when the cache is off', async () => {
+  test('the build_start record shows --no-build-cache when the cache is off', async () => {
     makeAndroidProject();
     const writer = recordingWriter();
     await buildAndroid(
@@ -454,7 +460,9 @@ describe('buildAndroid', () => {
     );
     const start = writer.records.find((r) => r.event === 'build_start');
     assert(start);
-    expect(start.msg).toBe(`${join(root, 'android', 'gradlew')} assembleDebug`);
+    expect(start.msg).toBe(
+      `${join(root, 'android', 'gradlew')} assembleDebug --no-build-cache --init-script ${nativeScript}`,
+    );
   });
 
   test('a failing build comes back as data with the diagnostics extracted, never a throw', async () => {
@@ -542,7 +550,7 @@ describe('buildAndroid', () => {
         onNote: (line) => notes.push(line),
       },
     );
-    expect(calls).toEqual([['assembleDebug']]);
+    expect(calls).toEqual([['assembleDebug', '--no-build-cache', '--init-script', nativeScript]]);
     expect(notes).toEqual([]);
   });
 
@@ -561,7 +569,7 @@ describe('buildAndroid', () => {
         },
       },
     );
-    expect(calls).toEqual([['assembleProductionDebug', '--build-cache']]);
+    expect(calls).toEqual([['assembleProductionDebug', '--build-cache', '--init-script', nativeScript]]);
     expect((result as BuildAndroidResultLike).ok).toBe(true);
     expect((result as BuildAndroidResultLike).apkPath).toBe(
       join(apkOutputsDir(root), 'production', 'debug', 'app-production-debug.apk'),
@@ -736,7 +744,7 @@ describe('buildAndroid', () => {
         spawnFn: (_cmd, args, opts) => {
           expect(args.slice(0, 3)).toEqual(['assembleDebug', '--build-cache', '--init-script']);
           expect(args).toHaveLength(4);
-          expect(args[3]).toBe(join(import.meta.dirname, '../../shim/android-no-pch.gradle'));
+          expect(args[3]).toBe(nativeScript);
           expect(existsSync(args[3]!)).toBe(true);
           envs.push(opts.env as NodeJS.ProcessEnv);
           expect(existsSync(statsLog)).toBe(false);
@@ -756,12 +764,49 @@ describe('buildAndroid', () => {
     assert(spawnEnv);
     expect(spawnEnv.CMAKE_CXX_COMPILER_LAUNCHER).toBe('/opt/homebrew/bin/ccache');
     expect(spawnEnv.CCACHE_DIR).toBe(join(root, 'ccache'));
+    expect(spawnEnv.STIM_ANDROID_CCACHE).toBe('on');
+    expect(spawnEnv.STIM_ANDROID_PCH).toBe('auto');
+    expect(spawnEnv.STIM_ANDROID_NATIVE_PROFILE).toMatch(/^[a-f0-9]{16}$/);
     expect(spawnEnv.TERM).toBe('dumb');
     expect(result.ccache).toEqual({ status: 'reported', hits: 1, misses: 1, hitRatePercent: 50 });
     expect(notes.some((line) => line.includes('PCH off by default'))).toBe(true);
   });
 
-  test('without ccache the Gradle argv and environment are unchanged and no statistics are claimed', async () => {
+  test('CAS injects its toolchain instead of the ccache PCH policy and clears inherited launchers', async () => {
+    makeAndroidProject();
+    const script = join(import.meta.dirname, '../../shim/android-cas.gradle');
+    const result = await buildAndroid(
+      { root },
+      {
+        env: { CMAKE_CXX_COMPILER_LAUNCHER: '/old/ccache' },
+        cas: {
+          id: 'apple-cas-test',
+          dir: join(root, 'cas'),
+          initScript: script,
+          env: { CMAKE_CXX_COMPILER_LAUNCHER: '', STIM_ANDROID_CAS_CONTEXT: join(root, 'context.json') },
+        },
+        spawnFn: (_cmd, args, opts) => {
+          expect(args).toEqual([
+            'assembleDebug',
+            '--build-cache',
+            '--init-script',
+            script,
+            '--init-script',
+            nativeScript,
+          ]);
+          expect((opts.env as NodeJS.ProcessEnv).CMAKE_CXX_COMPILER_LAUNCHER).toBe('');
+          expect((opts.env as NodeJS.ProcessEnv).STIM_ANDROID_CCACHE).toBe('off');
+          expect((opts.env as NodeJS.ProcessEnv).STIM_ANDROID_PCH).toBe('auto');
+          expect((opts.env as NodeJS.ProcessEnv).STIM_ANDROID_CAS_CONTEXT).toBe(join(root, 'context.json'));
+          return fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() });
+        },
+      },
+    );
+    expect(result.ok).toBe(true);
+    expect(result.ccache?.status).toBe('unavailable');
+  });
+
+  test('without ccache the project compiler is preserved and no statistics are claimed', async () => {
     makeAndroidProject();
     const calls: { args: string[]; env: NodeJS.ProcessEnv }[] = [];
     const result = await buildAndroid(
@@ -776,7 +821,7 @@ describe('buildAndroid', () => {
     expect((result as BuildAndroidResultLike).ok).toBe(true);
     const call = calls[0];
     assert(call);
-    expect(call.args).toEqual(['assembleDebug', '--build-cache']);
+    expect(call.args).toEqual(['assembleDebug', '--build-cache', '--init-script', nativeScript]);
     expect(call.env.CMAKE_CXX_COMPILER_LAUNCHER).toBe(undefined);
     expect(call.env.CCACHE_DIR).toBe(undefined);
     expect(result.ccache).toEqual({ status: 'unavailable', hits: null, misses: null, hitRatePercent: null });
@@ -1019,4 +1064,31 @@ describe('a real flavored build.gradle', () => {
     );
     expect(parseProductFlavors(text)).toEqual({ known: false, dimensions: [] });
   });
+});
+
+test('uncached PCH modes pass explicit policy and distinct CMake profiles to Gradle', async () => {
+  makeAndroidProject();
+  const profiles: string[] = [];
+  for (const pch of ['on', 'off'] as const) {
+    const result = await buildAndroid(
+      { root },
+      {
+        pch,
+        compilerCacheDisabled: true,
+        env: { CMAKE_CXX_COMPILER_LAUNCHER: '/inherited/ccache' },
+        spawnFn: (_cmd, _args, opts) => {
+          const env = opts.env as NodeJS.ProcessEnv;
+          expect(env.CMAKE_CXX_COMPILER_LAUNCHER).toBe('');
+          expect(env.CCACHE_DISABLE).toBe('1');
+          expect(env.STIM_ANDROID_CCACHE).toBe('off');
+          expect(env.STIM_ANDROID_PCH).toBe(pch);
+          profiles.push(env.STIM_ANDROID_NATIVE_PROFILE!);
+          return fakeChild({ lines: ['BUILD SUCCESSFUL'], onExit: () => writeApk() });
+        },
+      },
+    );
+    expect(result.ok).toBe(true);
+  }
+  expect(profiles[0]).toMatch(/^[a-f0-9]{16}$/);
+  expect(profiles[0]).not.toBe(profiles[1]);
 });

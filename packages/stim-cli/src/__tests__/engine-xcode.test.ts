@@ -488,6 +488,20 @@ describe('compilationCacheSettings', () => {
     ]);
   });
 
+  test('explicit switches override project-enabled caching and prefix mapping while allowing Swift caching', () => {
+    const options = { compilationCache: false, swiftCompilationCache: true, prefixMapping: false };
+    const settings = compilationCacheSettings({ ...base, xcodeMajor: 26, optimizations: options });
+    expect(settings).toContain('COMPILATION_CACHE_ENABLE_CACHING=NO');
+    expect(settings).toContain('SWIFT_ENABLE_COMPILE_CACHE=NO');
+    expect(
+      compilationCacheSettings({ ...base, xcodeMajor: 26, optimizations: { ...options, compilationCache: true } }),
+    ).toContain('SWIFT_ENABLE_COMPILE_CACHE=YES');
+    expect(settings).toContain('CLANG_ENABLE_PREFIX_MAPPING=NO');
+    expect(settings).toContain('CLANG_OTHER_PREFIX_MAPPINGS=');
+    expect(compilationCacheSettings({ ...base, xcodeMajor: 25, optimizations: options })).toEqual([]);
+    expect(compilationCacheSettings({ ...base, xcodeMajor: 26, ccache: true, optimizations: options })).toEqual([]);
+  });
+
   test('the prefix mapping is the workspace root, normalised, and the virtual prefix a committed Podfile block must match', () => {
     expect(prefixMapping('/w/app-412')).toBe('/w/app-412=/^src');
     expect(prefixMapping('/w/app-412/')).toBe('/w/app-412=/^src');
@@ -1590,41 +1604,53 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as unknown as boolea
     expect(resolveScheme(project)).toEqual({ scheme: 'Scratch', schemes: ['Scratch'] });
   });
 
-  test('builds for real: the .app lands where productsDir says and its binary plist is readable', async () => {
-    resetExecutor();
-    writeScratchProject(tmp);
-    const logFile = join(workspaceLogsDir(tmp), 'build-ios.ndjson');
-    const writer = createNdjsonWriter(logFile);
-    const result = asResult(
-      await buildIos({
-        root: tmp,
-        udid: 'unused-with-an-explicit-destination',
-        destination: LIVE_DESTINATION,
-        logWriter: writer,
-      }),
-    );
-    writer.close();
+  test.each([
+    { compilationCache: true, swiftCompilationCache: false, prefixMapping: true },
+    { compilationCache: false, swiftCompilationCache: false, prefixMapping: false },
+    { compilationCache: false, swiftCompilationCache: false, prefixMapping: true },
+    { compilationCache: true, swiftCompilationCache: true, prefixMapping: true },
+  ])(
+    'builds a real app with compiler optimizations %j',
+    async (optimizations) => {
+      resetExecutor();
+      writeScratchProject(tmp);
+      const logFile = join(workspaceLogsDir(tmp), 'build-ios.ndjson');
+      const writer = createNdjsonWriter(logFile);
+      const result = asResult(
+        await buildIos({
+          root: tmp,
+          udid: 'unused-with-an-explicit-destination',
+          destination: LIVE_DESTINATION,
+          logWriter: writer,
+          optimizations,
+        }),
+      );
+      writer.close();
 
-    expect(result.failed).toBe(undefined);
-    expect(result.scheme).toBe('Scratch');
-    expect(result.appPath).toBe(
-      join(workspaceDerivedData(tmp), 'Build', 'Products', 'Debug-iphonesimulator', 'Scratch.app'),
-    );
-    expect(existsSync(result.appPath)).toBeTruthy();
-    expect(result.bundleId).toBe('com.stimcli.scratch');
-    expect(result.durationMs > 0).toBeTruthy();
+      expect(result.failed).toBe(undefined);
+      expect(result.scheme).toBe('Scratch');
+      expect(result.appPath).toBe(
+        join(workspaceDerivedData(tmp), 'Build', 'Products', 'Debug-iphonesimulator', 'Scratch.app'),
+      );
+      expect(existsSync(result.appPath)).toBeTruthy();
+      expect(result.bundleId).toBe('com.stimcli.scratch');
+      expect(result.durationMs > 0).toBeTruthy();
 
-    const records = parseNdjsonText(readFileSync(logFile, 'utf-8'));
-    expect(records[0]?.event).toBe('build_start');
-    expect(records[0]?.msg).toMatch(/^xcodebuild -project .*-derivedDataPath .* build [\s\S]+$/);
-    expect(records[0]?.msg).toMatch(/ COMPILATION_CACHE_ENABLE_CACHING=YES /);
-    const transcript = records.filter((r) => r.level === 'debug');
-    expect(transcript.length > 20).toBeTruthy();
-    expect(transcript.every((r) => r.src === 'build')).toBeTruthy();
-    expect(transcript.some((r) => r.msg?.includes('BUILD SUCCEEDED'))).toBeTruthy();
-    expect(records.at(-1)?.event).toBe('build_done');
-    expect(records.filter((r) => r.level === 'error').length).toBe(0);
-  }, 120_000);
+      const records = parseNdjsonText(readFileSync(logFile, 'utf-8'));
+      expect(records[0]?.event).toBe('build_start');
+      expect(records[0]?.msg).toMatch(/^xcodebuild -project .*-derivedDataPath .* build [\s\S]+$/);
+      expect(records[0]?.msg).toContain(
+        ` COMPILATION_CACHE_ENABLE_CACHING=${optimizations.compilationCache ? 'YES' : 'NO'} `,
+      );
+      const transcript = records.filter((r) => r.level === 'debug');
+      expect(transcript.length > 20).toBeTruthy();
+      expect(transcript.every((r) => r.src === 'build')).toBeTruthy();
+      expect(transcript.some((r) => r.msg?.includes('BUILD SUCCEEDED'))).toBeTruthy();
+      expect(records.at(-1)?.event).toBe('build_done');
+      expect(records.filter((r) => r.level === 'error').length).toBe(0);
+    },
+    120_000,
+  );
 
   test('builds the device slice for real: -sdk iphoneos lands the .app in Debug-iphoneos', async () => {
     resetExecutor();

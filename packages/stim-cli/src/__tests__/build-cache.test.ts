@@ -258,10 +258,13 @@ test('the CLI and the Expo provider compute the same key', () => {
   for (const [platform, options] of [
     ['ios', {}],
     ['ios', { configuration: 'Release' }],
+    ['ios', { buildProfile: 'opt-test' }],
+    ['android', { buildProfile: 'opt-test', compiler: 'apple-cas-test' }],
     ['ios', { device: 'generic' }],
     ['ios', { device: 'Janic iPhone' }],
     ['ios', { device: true }],
     ['android', { variant: 'release', device: 'emulator-5554', abi: 'arm64-v8a' }],
+    ['android', { variant: 'release', compiler: 'apple-cas-012345' }],
   ] as [string, Record<string, unknown>][]) {
     expect(buildCacheKey(platform, 'hash', options)).toBe(providerKey(platform, 'hash', options));
   }

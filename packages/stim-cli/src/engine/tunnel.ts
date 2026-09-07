@@ -5,17 +5,7 @@ import { basename, join, resolve as resolvePath, sep } from 'node:path';
 import { getConfigDir } from '../config.ts';
 import { getExecutor } from '../exec.ts';
 import { isPidAlive } from '../metro.ts';
-import {
-  PROCESS_COMMAND_MAX_BYTES,
-  PROCESS_COMMAND_TIMEOUT_MS,
-  type ReadProcCommand,
-  type RunPsCommand,
-  parseLinuxStartTicks,
-  parseLstartOutput,
-  readProcFile,
-  readProcessArgs as readProcessArgsDefault,
-  runPsStartCommand,
-} from '../process-args.ts';
+import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { createLineReader } from '../process-output.ts';
 import type { ManagedProvider } from './metro-reach.ts';
 import { withWorkspaceProcessLock, type WorkspaceProcessLockOptions } from './workspace-process-lock.ts';
@@ -327,7 +317,7 @@ export async function startTunnel({
   requireReachable = true,
   cleanupTimeoutMs = CLEANUP_TIMEOUT_MS,
   isChildAlive = isPidAlive,
-  readProcessToken = readTunnelProcessToken,
+  readProcessToken = captureProcessToken,
   logFile = null,
 }: StartTunnelOptions): Promise<StartTunnelResult> {
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
@@ -379,14 +369,14 @@ export async function startTunnel({
   if (!pid) {
     return failAfterCleanup(`${provider} started but reported no pid.`);
   }
-  const captureProcessToken = (): string | null => {
+  const captureChildIdentity = (): string | null => {
     try {
       return readProcessToken(pid);
     } catch {
       return null;
     }
   };
-  const initialProcessToken = captureProcessToken();
+  const initialProcessToken = captureChildIdentity();
   if (!initialProcessToken) {
     return failAfterCleanup(`${provider} started but its process identity token could not be read.`);
   }
@@ -419,7 +409,7 @@ export async function startTunnel({
     }
   }
 
-  const finalProcessToken = captureProcessToken();
+  const finalProcessToken = captureChildIdentity();
   if (!finalProcessToken || finalProcessToken !== initialProcessToken) {
     return failAfterCleanup(`${provider} process identity changed before its tunnel could be recorded.`);
   }
@@ -561,8 +551,7 @@ function describe(err: unknown): string {
 
 export interface StopTunnelOptions {
   isAlive?: (pid: number) => boolean;
-  readProcessArgs?: (pid: number) => readonly string[] | null;
-  readProcessToken?: (pid: number) => string | null;
+  inspectIdentity?: typeof inspectProcessIdentity;
   kill?: (pid: number) => void;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
@@ -584,74 +573,11 @@ function isEsrch(err: unknown): boolean {
   return (err as NodeJS.ErrnoException)?.code === 'ESRCH';
 }
 
-function linuxStartToken(data: Buffer, maxBytes: number): string | null {
-  const ticks = parseLinuxStartTicks(data, maxBytes);
-  return ticks === null ? null : `linux:${ticks}`;
-}
-
-function psStartToken(output: string): string | null {
-  const normalized = parseLstartOutput(output);
-  return normalized ? `ps-lstart:${normalized}` : null;
-}
-
-export function readTunnelProcessToken(
-  pid: number,
-  {
-    platform = process.platform,
-    readProcStat = readProcFile,
-    runPsStartCommand: runPsCommand = runPsStartCommand,
-  }: {
-    platform?: NodeJS.Platform;
-    readProcStat?: ReadProcCommand;
-    runPsStartCommand?: RunPsCommand;
-  } = {},
-): string | null {
-  try {
-    if (platform === 'linux') {
-      return linuxStartToken(readProcStat(`/proc/${pid}/stat`, PROCESS_COMMAND_MAX_BYTES), PROCESS_COMMAND_MAX_BYTES);
-    }
-    if (platform === 'win32') return null;
-    return psStartToken(runPsCommand(pid, PROCESS_COMMAND_TIMEOUT_MS));
-  } catch {
-    return null;
-  }
-}
-
-function isHttpsUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
-
-function sameArgs(actual: readonly string[], expected: readonly string[]): boolean {
-  return actual.length === expected.length && actual.every((arg, index) => arg === expected[index]);
-}
-
-function matchesTunnelProcess(record: TunnelRecord, args: readonly string[]): boolean {
-  const [executable, ...commandArgs] = args;
-  if (!executable || basename(executable) !== record.provider) return false;
-
-  if (record.provider === 'ngrok') {
-    const owned = tunnelArgv('ngrok', record.port, null, record.logFile).args;
-    return (
-      sameArgs(commandArgs, owned) ||
-      (isHttpsUrl(record.url) &&
-        sameArgs(commandArgs, tunnelArgv('ngrok', record.port, record.url, record.logFile).args))
-    );
-  }
-
-  return sameArgs(commandArgs, tunnelArgv('cloudflared', record.port, null, record.logFile).args);
-}
-
 export async function stopTunnel(
   record: TunnelRecord | null | undefined,
   {
     isAlive = isPidAlive,
-    readProcessArgs = readProcessArgsDefault,
-    readProcessToken = readTunnelProcessToken,
+    inspectIdentity = inspectProcessIdentity,
     kill = defaultKill,
     now = Date.now,
     sleep = defaultSleep,
@@ -673,39 +599,12 @@ export async function stopTunnel(
     };
   }
 
-  let processArgs: readonly string[] | null = null;
-  let processTokenBefore: string | null = null;
-  let processTokenAfter: string | null = null;
-  try {
-    processTokenBefore = readProcessToken(pid);
-    processArgs = readProcessArgs(pid);
-    processTokenAfter = readProcessToken(pid);
-  } catch {
-    processArgs = null;
-  }
-  if (!processTokenBefore || processTokenBefore !== processTokenAfter) {
-    if (!isAlive(pid)) return missing();
+  const identity = inspectIdentity(record);
+  if (identity === 'gone' || identity === 'different') return missing();
+  if (identity !== 'same') {
     return {
       status: 'failed',
-      reason: `could not verify the process instance for tunnel pid ${pid}; refusing to signal it.`,
-    };
-  }
-  if (processTokenBefore !== record.processToken) {
-    if (!isAlive(pid)) return missing();
-    return {
-      status: 'failed',
-      reason: `tunnel pid ${pid} belongs to a different process instance; refusing to signal it.`,
-    };
-  }
-  if (!processArgs) {
-    if (!isAlive(pid)) return missing();
-    return { status: 'failed', reason: `could not read the command for tunnel pid ${pid}; refusing to signal it.` };
-  }
-  if (!matchesTunnelProcess(record, processArgs)) {
-    if (!isAlive(pid)) return missing();
-    return {
-      status: 'failed',
-      reason: `could not verify tunnel pid ${pid} as ${record.provider} for local port ${record.port}; refusing to signal it.`,
+      reason: `could not verify the process identity for tunnel pid ${pid}; refusing to signal it.`,
     };
   }
 
@@ -716,10 +615,15 @@ export async function stopTunnel(
   }
 
   const deadline = now() + timeoutMs;
-  while (now() < deadline && isAlive(pid)) {
+  const exited = () => {
+    if (!isAlive(pid)) return true;
+    const current = inspectIdentity(record);
+    return current === 'gone' || current === 'different';
+  };
+  while (now() < deadline && !exited()) {
     await sleep(STOP_POLL_MS);
   }
-  if (isAlive(pid)) return { status: 'failed', reason: `pid ${pid} did not exit within ${timeoutMs}ms.` };
+  if (!exited()) return { status: 'failed', reason: `pid ${pid} did not exit within ${timeoutMs}ms.` };
   removeRecordedTunnelLogFile(record.logFile);
   return { status: 'stopped' };
 }
