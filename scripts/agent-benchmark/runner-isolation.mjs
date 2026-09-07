@@ -32,11 +32,32 @@ function pathFilter(paths) {
   return `(require-any ${paths.map((path) => `(subpath ${JSON.stringify(path)})`).join(' ')})`;
 }
 
-export function runnerIsolationPolicy({ protectedRoots, readPaths, writePaths }) {
+export function runnerIsolationPolicy({
+  protectedRoots,
+  reservedRoots = [],
+  readPaths,
+  writePaths,
+  scopedAccess = {},
+}) {
   const roots = [...new Set(protectedRoots.map(canonicalPath))];
   if (roots.length === 0 || roots.includes('/')) throw new Error('benchmark isolation needs bounded protected roots');
-  const writes = [...new Set(writePaths.map(canonicalPath))];
-  const reads = [...new Set([...readPaths.map(canonicalPath), ...writes])];
+  const reserved = reservedRoots.map(canonicalPath);
+  const configuredReads = readPaths.map(canonicalPath);
+  const configuredWrites = writePaths.map(canonicalPath);
+  if (
+    [...configuredReads, ...configuredWrites].some((path) =>
+      reserved.some((root) => contains(path, root) || contains(root, path)),
+    )
+  ) {
+    throw new Error('benchmark isolation configured grant overlaps a reserved directory');
+  }
+  const scopedReads = (scopedAccess.readPaths ?? []).map(canonicalPath);
+  const scopedWrites = (scopedAccess.writePaths ?? []).map(canonicalPath);
+  if ([...scopedReads, ...scopedWrites].some((path) => reserved.some((root) => contains(path, root)))) {
+    throw new Error('benchmark isolation scoped grant covers a reserved directory');
+  }
+  const writes = [...new Set([...configuredWrites, ...scopedWrites])];
+  const reads = [...new Set([...configuredReads, ...scopedReads, ...writes])];
   if (reads.some((path) => roots.some((root) => contains(path, root)))) {
     throw new Error('benchmark isolation grant covers a protected root');
   }

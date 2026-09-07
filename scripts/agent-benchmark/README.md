@@ -95,9 +95,10 @@ run-scoped policy. Configuration, golden files, coordinator evidence and
 sibling worktrees/results cannot be read or written by the runner process tree.
 Parent-directory listing is permitted. The current worktree, proof, temporary
 files, runner home, selected tool runtime and configured shared Gradle/AVD/device
-state remain accessible. Keep those shared paths narrowly scoped; dispatch
-refuses a grant that exposes the protected coordinator probes. Do not use a
-protected coordinator directory as a shared cache root.
+state remain accessible. Configured tool/cache paths cannot overlap golden,
+results, coordinator state or worktree directories, including through symlinks.
+Only the coordinator's selected run paths receive scoped exceptions. Dispatch
+also refuses a policy that exposes the protected coordinator probes.
 
 `smoke stim` and `smoke control` verify real filesystem denials and the Codex
 skill profile without running a model task. Timed dispatch repeats the same

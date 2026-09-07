@@ -1010,21 +1010,25 @@ function prepareRunIsolation(runId, runDir, env, arm, crash = null, claudeGuidan
   return prepareRunnerIsolation({
     policy: runnerIsolationPolicy({
       protectedRoots: [root, worktreeParent],
+      reservedRoots: [golden, results, state, worktreeParent],
       readPaths: [
-        crash?.fixtureCheckout ?? main,
+        ...(!crash ? [main] : []),
         allowedBin,
         ...(arm === 'stim' ? [stimBin, join(root, 'runtime'), stimPackage] : []),
-        ...(claudeGuidance ? [claudeGuidance.path] : []),
       ],
-      writePaths: [
-        join(worktreeParent, arm === 'stim' ? `bench-${runId}` : runId),
-        join(runDir, 'runner-home'),
-        join(runDir, 'shell-home'),
-        join(runDir, 'proof'),
-        runTmp,
-        agentDeviceState,
-        ...[env.STIM_HOME, env.GRADLE_USER_HOME, env.ANDROID_AVD_HOME].filter(Boolean),
-      ],
+      writePaths: [env.GRADLE_USER_HOME, env.ANDROID_AVD_HOME].filter(Boolean),
+      scopedAccess: {
+        readPaths: [crash?.fixtureCheckout, claudeGuidance?.path].filter(Boolean),
+        writePaths: [
+          join(worktreeParent, arm === 'stim' ? `bench-${runId}` : runId),
+          join(runDir, 'runner-home'),
+          join(runDir, 'shell-home'),
+          join(runDir, 'proof'),
+          runTmp,
+          agentDeviceState,
+          env.STIM_HOME,
+        ],
+      },
     }),
     profilePath: join(runDir, 'runner-isolation.sb'),
     probeRoots: [root, golden, results],

@@ -36,6 +36,38 @@ function prepare(paths, policy = paths.policy) {
 }
 
 describe('benchmark runner filesystem isolation', () => {
+  it('rejects configured grants inside reserved data, including future paths and aliases, but allows scoped run paths', () => {
+    const paths = fixture();
+    const worktrees = join(paths.root, 'worktrees');
+    mkdirSync(worktrees);
+    const alias = join(paths.root, 'golden-alias');
+    symlinkSync(paths.golden, alias);
+    const options = {
+      protectedRoots: [paths.root, worktrees],
+      reservedRoots: [paths.golden, paths.results, worktrees],
+      readPaths: [paths.tools],
+      writePaths: [],
+      scopedAccess: { writePaths: [paths.run, join(worktrees, 'current')] },
+    };
+    expect(() => runnerIsolationPolicy(options)).not.toThrow();
+    for (const grant of [
+      paths.root,
+      paths.golden,
+      join(paths.golden, 'android', 'stim-home'),
+      join(alias, 'android'),
+      join(paths.results, 'pilot', 'previous-run'),
+      join(worktrees, 'previous-run'),
+    ]) {
+      for (const key of ['readPaths', 'writePaths']) {
+        expect(() => runnerIsolationPolicy({ ...options, [key]: [grant] })).toThrow(
+          'configured grant overlaps a reserved directory',
+        );
+      }
+    }
+    expect(() => runnerIsolationPolicy({ ...options, scopedAccess: { writePaths: [paths.results] } })).toThrow(
+      'scoped grant covers a reserved directory',
+    );
+  });
   it.skipIf(process.platform !== 'darwin')(
     'allows Git to create the exact future worktree without exposing siblings',
     () => {
