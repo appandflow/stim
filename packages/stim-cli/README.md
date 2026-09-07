@@ -21,6 +21,12 @@ npx stim-cli <command>
 
 Node 20.19.4 or later on Node 20, or Node 22.12.0 or later, is required.
 
+Machine defaults in `~/.stim/config.json` can enable or disable native artifact
+caching, remote caches, Metro sharing, iOS compiler caching and prefix mapping,
+and Android ccache/CAS, PCH, Gradle caching, and target ABI narrowing. Optional
+`.stim.json` overrides apply per repository. Run `stim guide settings` for the
+`optimizations` schema; existing defaults remain unchanged.
+
 ## Normal workflow
 
 ```bash

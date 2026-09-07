@@ -197,3 +197,32 @@ test('both packages resolve the same cache roots the CLI does', async () => {
     delete process.env.STIM_METRO_CACHE;
   }
 });
+
+test('the standalone cache provider never serves an artifact from another compiler profile', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-pkg-profile-'));
+  process.env.STIM_HOME = home;
+  try {
+    const provider = await import('@stim-cli/expo-build-cache');
+    const apk = join(home, 'app.apk');
+    writeFileSync(apk, 'native build');
+    await provider.uploadBuildCache({
+      platform: 'android',
+      fingerprintHash: 'same',
+      buildPath: apk,
+      runOptions: { buildProfile: 'opt-pch' },
+    });
+    expect(
+      await provider.resolveBuildCache({ platform: 'android', fingerprintHash: 'same', runOptions: {} }),
+    ).toBeNull();
+    expect(
+      await provider.resolveBuildCache({
+        platform: 'android',
+        fingerprintHash: 'same',
+        runOptions: { buildProfile: 'opt-pch' },
+      }),
+    ).toBeTruthy();
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    delete process.env.STIM_HOME;
+  }
+});

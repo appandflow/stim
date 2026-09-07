@@ -642,26 +642,37 @@ describe('startBareServer and the shared store', () => {
     expect(added[0]?.msg).toContain(metroStoreRoot(root));
   });
 
-  test('the machine-level kill switch leaves the project config exactly as loaded', async () => {
-    writeFileSync(
-      join(tmpHome, 'config.json'),
-      JSON.stringify({ projects: {}, repos: {}, caches: { injectMetroStore: false } }),
-    );
-    const projectStore = { name: 'project store' };
-    const { deps, seen } = configuringDeps([projectStore]);
-    const writer = recordingWriter();
-    await startBareServer({
-      root,
-      port: 8201,
-      logsDir: join(root, 'logs'),
-      deps,
-      writer,
-      reporterFactory: () => ({ update() {} }),
-      fileStore: FakeStore,
-    });
-    expect(seen.config?.cacheStores).toEqual([projectStore]);
-    expect(writer.records.some((r) => r.event === 'cache_store_skipped')).toBe(true);
-  });
+  test.each(['legacy', 'machine', 'project'])(
+    '%s Metro opt-out leaves the project config exactly as loaded',
+    async (layer) => {
+      writeFileSync(
+        join(tmpHome, 'config.json'),
+        JSON.stringify({
+          projects: {},
+          repos: {},
+          ...(layer === 'legacy'
+            ? { caches: { injectMetroStore: false } }
+            : { optimizations: { metroSharedCache: layer !== 'machine' } }),
+        }),
+      );
+      if (layer === 'project')
+        writeFileSync(join(root, '.stim.json'), JSON.stringify({ optimizations: { metroSharedCache: false } }));
+      const projectStore = { name: 'project store' };
+      const { deps, seen } = configuringDeps([projectStore]);
+      const writer = recordingWriter();
+      await startBareServer({
+        root,
+        port: 8201,
+        logsDir: join(root, 'logs'),
+        deps,
+        writer,
+        reporterFactory: () => ({ update() {} }),
+        fileStore: FakeStore,
+      });
+      expect(seen.config?.cacheStores).toEqual([projectStore]);
+      expect(writer.records.some((r) => r.event === 'cache_store_skipped')).toBe(true);
+    },
+  );
 
   test('an unresolvable metro-cache is a warn record, not a failure to serve', async () => {
     const projectStore = { name: 'project store' };

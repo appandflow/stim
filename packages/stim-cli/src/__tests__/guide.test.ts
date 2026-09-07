@@ -1,3 +1,4 @@
+import { OPTIMIZATION_SHAPES } from '../optimizations.ts';
 import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'node:url';
@@ -376,4 +377,11 @@ test('temporary storage guidance names the override and Git visibility boundary'
 
 test('build guidance names the experimental Android compiler opt-in', () => {
   expect(renderSection('lifecycle', 'builds')).toContain('STIM_ANDROID_CAS_TOOLCHAIN');
+});
+
+test('the settings guide documents every configurable optimization', () => {
+  const body = renderTopic('settings');
+  for (const key of Object.keys(OPTIMIZATION_SHAPES)) {
+    expect(body).toContain(key);
+  }
 });

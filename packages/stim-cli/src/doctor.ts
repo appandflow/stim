@@ -1,3 +1,4 @@
+import { resolveOptimizations, type Optimizations } from './optimizations.ts';
 import { existsSync, readFileSync, realpathSync, rmSync } from 'fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import { plural } from './command-output.ts';
@@ -700,6 +701,14 @@ export function runDoctor(
   const settingShapeFindings = settingShapeErrors(projectSettings).map((error) =>
     finding('cost', 'A setting has the wrong type', error, SETTING_SHAPE_REMEDY),
   );
+  let optimizations: Optimizations | null = null;
+  try {
+    optimizations = resolveOptimizations(projectSettings);
+  } catch (error) {
+    settingShapeFindings.push(
+      finding('cost', 'Invalid optimization setting', (error as Error).message, SETTING_SHAPE_REMEDY),
+    );
+  }
   if (platform !== 'android') {
     const poolSettingError = parkedMaxSetting('ios').error;
     if (poolSettingError) {
@@ -760,13 +769,17 @@ export function runDoctor(
     ...checkMainCheckout(projectRoot, { platform }),
     ...checkStorageLayout(projectRoot, { platform }),
     checkDevClient(pkg, isExpo),
-    checkMetroCache(metroConfig),
-    platform === 'android' ? null : checkCompilationCache(podfile, xcodeMajor),
-    platform === 'android' ? null : checkCcacheConflict(podfile, podfileProperties),
-    ...(platform === 'ios' || process.env.STIM_ANDROID_CAS_TOOLCHAIN
+    optimizations?.metroSharedCache ? checkMetroCache(metroConfig) : null,
+    platform === 'android' || !optimizations?.ios.compilationCache ? null : checkCompilationCache(podfile, xcodeMajor),
+    platform === 'android' || !optimizations?.ios.compilationCache
+      ? null
+      : checkCcacheConflict(podfile, podfileProperties),
+    ...(platform === 'ios' || optimizations?.android.compilerCache !== 'ccache'
       ? []
       : androidCcacheFindings(projectRoot, platform, lookupCcache)),
-    checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig),
+    optimizations?.buildCache && optimizations.remoteBuildCache
+      ? checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig)
+      : null,
     easFinding,
     concurrencyFinding,
     simslimFinding,

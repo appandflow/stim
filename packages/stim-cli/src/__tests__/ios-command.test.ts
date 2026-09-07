@@ -162,7 +162,7 @@ interface RecordedArgs {
   [key: string]: unknown;
   installIosApp: { appPath?: unknown; proveInstalled?: unknown };
   launchIosApp: { devClientScheme?: unknown; metroPort?: unknown; bundleId?: unknown };
-  buildIos: { configuration?: unknown; root?: unknown };
+  buildIos: { configuration?: unknown; root?: unknown; optimizations?: unknown };
   swapJsBundle: { cachedAppPath?: unknown; isExpo?: unknown; root?: unknown };
   verifyReleaseLaunch: { pid?: unknown };
   readBundleId: unknown;
@@ -5329,5 +5329,75 @@ describe('run statistics', () => {
 
     expect(runs).toHaveLength(1);
     expect(runs[0]?.run.failed).toBe(false);
+  });
+});
+
+describe('optimization configuration', () => {
+  test('disabling artifact caching skips local reads, writes and remote provider loading', async () => {
+    reserve();
+    const { exitCode, calls } = await run(
+      {},
+      {
+        resolveSettings: () => ({ optimizations: { buildCache: false } }),
+        resolveBuild: () => {
+          throw new Error('unexpected lookup');
+        },
+        storeBuild: () => {
+          throw new Error('unexpected store');
+        },
+        loadProjectProvider: () => {
+          throw new Error('unexpected legacy provider');
+        },
+        loadCacheProvider: () => {
+          throw new Error('unexpected provider');
+        },
+        resolveCacheProviderConfig: () => ({ provider: 'fixture', options: {} }),
+      },
+    );
+    expect(exitCode).toBeNull();
+    expect(calls.order).toContain('buildIos');
+    expect(calls.order).not.toContain('storeBuild');
+    expect(calls.order).not.toContain('uploadRemote');
+  });
+
+  test('disabling remote caching retains local reuse', async () => {
+    reserve();
+    const { exitCode, calls } = await run(
+      {},
+      {
+        resolveSettings: () => ({ optimizations: { remoteBuildCache: false } }),
+        resolveBuild: () => join(root, 'cached/Fixture.app'),
+        loadProjectProvider: () => {
+          throw new Error('unexpected legacy provider');
+        },
+        loadCacheProvider: () => {
+          throw new Error('unexpected provider');
+        },
+        resolveCacheProviderConfig: () => ({ provider: 'fixture', options: {} }),
+      },
+    );
+    expect(exitCode).toBeNull();
+    expect(calls.order).not.toContain('buildIos');
+  });
+
+  test('disabling release bundle swaps forces a fresh build and passes compiler options', async () => {
+    reserve();
+    const ios = { compilationCache: false, swiftCompilationCache: true, prefixMapping: false };
+    const { exitCode, calls } = await run(
+      { configuration: 'Release' },
+      {
+        resolveSettings: () => ({ optimizations: { releaseBundleSwap: false, ios } }),
+        resolveBuild: () => {
+          throw new Error('unexpected release lookup');
+        },
+        swapJsBundle: () => {
+          throw new Error('unexpected swap');
+        },
+      },
+    );
+    expect(exitCode).toBeNull();
+    expect(calls.order).toContain('buildIos');
+    expect(calls.args.buildIos.optimizations).toEqual(ios);
+    expect(calls.args.storeBuild.key).toMatch(/opt-/);
   });
 });

@@ -4877,6 +4877,93 @@ describe('run statistics', () => {
   });
 });
 
+describe('optimization configuration', () => {
+  test('disabling artifact caching skips both reads and writes in both provider tiers', async () => {
+    const h = harness({
+      resolveSettingsFor: () => ({ optimizations: { buildCache: false } }),
+      resolveCached: never('local lookup'),
+      storeCached: never('local store'),
+      loadProvider: never('legacy provider'),
+      loadCacheProviderModule: never('cache provider'),
+      resolveCacheProvider: () => ({ provider: 'fixture', options: {} }),
+    });
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.build).toHaveLength(1);
+    expect(h.calls.uploadRemoteBuild).toHaveLength(0);
+  });
+
+  test('disabling remote caching keeps local artifact reuse', async () => {
+    const h = harness({
+      resolveSettingsFor: () => ({ optimizations: { remoteBuildCache: false } }),
+      resolveCached: () => '/cache/app.apk',
+      build: never('build'),
+      loadProvider: never('legacy provider'),
+      loadCacheProviderModule: never('cache provider'),
+      resolveCacheProvider: () => ({ provider: 'fixture', options: {} }),
+    });
+    expect((await h.run()).facts?.cacheHit).toBe('local');
+  });
+
+  test('disabling release bundle swaps compiles current JS even with an existing artifact', async () => {
+    const h = harness({
+      variant: 'release',
+      resolveSettingsFor: () => ({ optimizations: { releaseBundleSwap: false } }),
+      resolveCached: never('release artifact lookup'),
+      swapApk: never('bundle swap'),
+    });
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.build).toHaveLength(1);
+    expect(h.calls.storeCached).toHaveLength(1);
+  });
+
+  test('native switches disable injected ccache and ABI narrowing and reach the Gradle engine', async () => {
+    const engine: unknown[] = [];
+    const h = harness({
+      deviceAbi: () => 'arm64-v8a',
+      ccacheFor: never('ccache setup'),
+      resolveSettingsFor: () => ({
+        optimizations: { android: { compilerCache: 'none', pch: 'on', gradleBuildCache: false, targetAbiOnly: false } },
+      }),
+      build: async (args: unknown, opts: unknown) => {
+        engine.push(args, opts);
+        return { ok: true, apkPath: fakeApk(), durationMs: 1 };
+      },
+    });
+    expect((await h.run()).ok).toBe(true);
+    expect(engine[0]).toMatchObject({ abi: null });
+    expect(engine[1]).toMatchObject({
+      ccache: null,
+      cas: null,
+      compilerCacheDisabled: true,
+      pch: 'on',
+      buildCache: false,
+    });
+    expect(h.calls.storeCached[0]?.[1]).toMatch(/opt-/);
+  });
+});
+
+test('CAS Release builds skip the legacy Expo provider that cannot key compiler identity', async () => {
+  const ndk = join(home, 'ndk');
+  mkdirSync(ndk);
+  writeFileSync(join(ndk, 'source.properties'), 'Pkg.Revision = 27.1.12297006\n');
+  const binary = join(home, 'compiler');
+  writeFileSync(binary, 'test compiler bytes');
+  const manifest = join(home, 'toolchain.json');
+  writeFileSync(
+    manifest,
+    JSON.stringify({ clang: binary, clangxx: binary, lld: binary, ar: binary, ranlib: binary, ndk }),
+  );
+  const h = harness({
+    variant: 'release',
+    resolveSettingsFor: () => ({ optimizations: { android: { compilerCache: 'cas', casToolchain: manifest } } }),
+    loadProvider: never('legacy Expo provider'),
+    resolveRemoteBuild: never('legacy lookup'),
+    uploadRemoteBuild: never('legacy upload'),
+  });
+  expect((await h.run()).ok).toBe(true);
+  expect(h.calls.storeCached[0]?.[1]).toMatch(/apple-cas-/);
+});
+
 test('an unavailable CAS manifest returns one JSON refusal before device or build work', async () => {
   const previous = process.env.STIM_ANDROID_CAS_TOOLCHAIN;
   process.env.STIM_ANDROID_CAS_TOOLCHAIN = join(home, 'missing-toolchain.json');

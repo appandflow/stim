@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 import { isAbsolute, join, relative, sep } from 'node:path';
-import { metroStoreInjectionEnabled } from '../config.ts';
+import { projectOptimizations } from '../settings.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { appendCacheStore, metroStoreRoot, registerMetroStore } from './metro-store.ts';
 import { supervisorError } from './errors.ts';
@@ -145,7 +145,7 @@ function installSharedCacheStore({
       src: 'metro',
       level: 'debug',
       event: 'cache_store_skipped',
-      msg: 'the shared Metro transform store is off (caches.injectMetroStore is false in ~/.stim/config.json)',
+      msg: 'the shared Metro transform store is off in configuration',
     });
     return false;
   }
@@ -296,7 +296,7 @@ export async function startBareServer({
     root,
     config,
     writer,
-    enabled: cacheStore === undefined ? metroStoreInjectionEnabled() : cacheStore,
+    enabled: cacheStore === undefined ? projectOptimizations(root).metroSharedCache : cacheStore,
     FileStore: fileStore === undefined ? loadFileStore(root) : fileStore,
   });
   if (sharedStoreInstalled && normalizeMetroTransformerPaths(config, root)) {

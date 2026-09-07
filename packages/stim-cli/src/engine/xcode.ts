@@ -11,6 +11,7 @@ import { createLineReader } from '../process-output.ts';
 import { capDiagnostics, describeDiagnostic, type Diagnostic, extractXcodeDiagnostics } from './errors-xcode.ts';
 import { cleanLine } from '../supervisor/server-expo.ts';
 import type { CompilationCacheActivity } from '../types.ts';
+import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
 
 const IOS_DIR = 'ios';
 
@@ -195,22 +196,24 @@ export function compilationCacheSettings({
   casPath,
   xcodeMajor,
   ccache = false,
+  optimizations = resolveOptimizations({}, {}).ios,
 }: {
   workspaceRoot: string;
   derivedDataPath: string;
   casPath: string;
   xcodeMajor: number | null;
   ccache?: boolean;
+  optimizations?: Optimizations['ios'];
 }): string[] {
   if (xcodeMajor === null || xcodeMajor === undefined) return [];
   if (xcodeMajor < COMPILATION_CACHE_MIN_XCODE) return [];
   if (ccache) return [];
   return [
-    'COMPILATION_CACHE_ENABLE_CACHING=YES',
+    `COMPILATION_CACHE_ENABLE_CACHING=${optimizations.compilationCache ? 'YES' : 'NO'}`,
     `COMPILATION_CACHE_CAS_PATH=${casPath}`,
-    'SWIFT_ENABLE_COMPILE_CACHE=NO',
-    'CLANG_ENABLE_PREFIX_MAPPING=YES',
-    `CLANG_OTHER_PREFIX_MAPPINGS=${compilationPrefixMappings(workspaceRoot, derivedDataPath)}`,
+    `SWIFT_ENABLE_COMPILE_CACHE=${optimizations.compilationCache && optimizations.swiftCompilationCache ? 'YES' : 'NO'}`,
+    `CLANG_ENABLE_PREFIX_MAPPING=${optimizations.prefixMapping ? 'YES' : 'NO'}`,
+    `CLANG_OTHER_PREFIX_MAPPINGS=${optimizations.prefixMapping ? compilationPrefixMappings(workspaceRoot, derivedDataPath) : ''}`,
   ];
 }
 
@@ -232,12 +235,14 @@ function resolveCompilationCacheSettings({
   derivedDataPath,
   exec = null,
   casPath = sharedCompilationCache(),
+  optimizations = resolveOptimizations({}, {}).ios,
   onNote = (line: string) => console.error(line),
 }: {
   root: string;
   derivedDataPath: string;
   exec?: Executor | null;
   casPath?: string;
+  optimizations?: Optimizations['ios'];
   onNote?: (line: string) => void;
 }): string[] {
   const settings = compilationCacheSettings({
@@ -246,8 +251,9 @@ function resolveCompilationCacheSettings({
     casPath,
     xcodeMajor: detectXcodeMajor(exec),
     ccache: ccacheEnabled(readPodfileProperties(root)),
+    optimizations,
   });
-  if (settings.length > 0) {
+  if (settings.length > 0 && optimizations.compilationCache) {
     register({
       dir: casPath,
       name: 'Xcode compilation cache',
@@ -545,6 +551,7 @@ export async function buildIos({
   derivedDataPath = null,
   extraArgs = [],
   compilationCache = undefined,
+  optimizations = resolveOptimizations({}, {}).ios,
   now = () => Date.now(),
   exec = null,
   heartbeatMs = HEARTBEAT_INTERVAL_MS,
@@ -563,6 +570,7 @@ export async function buildIos({
   derivedDataPath?: string | null;
   extraArgs?: string[];
   compilationCache?: string[] | null;
+  optimizations?: Optimizations['ios'];
   now?: () => number;
   exec?: Executor | null;
   heartbeatMs?: number;
@@ -622,7 +630,7 @@ export async function buildIos({
 
   const buildSettings =
     compilationCache === undefined
-      ? resolveCompilationCacheSettings({ root, derivedDataPath: dd, exec: executor, onNote })
+      ? resolveCompilationCacheSettings({ root, derivedDataPath: dd, exec: executor, onNote, optimizations })
       : compilationCache || [];
 
   const args = xcodebuildArgs({
