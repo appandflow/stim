@@ -18,6 +18,12 @@ configuration files. It preserves the branch, tracked files, and every existing
 destination entry; existing ignored directories are skipped whole, not filled in.
 Read guide lifecycle options for exclusions and incomplete-copy remedies.
 
+Wait for warm to exit successfully (exit code 0) before running stim start,
+stim ios, stim android, or a dependency install in that worktree. If the shell
+tool returns a running session or job ID, poll or wait for that job to finish;
+the ID is not completion. Do not install dependencies while warm is copying.
+If warm fails or reports incomplete, resolve the reported failure first.
+
 Before native worktree work, run doctor for the platform in scope. It checks
 the main checkout from a linked worktree. Fix relevant findings and inspect the
 upstream gap. It also prints the running CLI version and the stim installation
