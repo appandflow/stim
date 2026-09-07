@@ -145,3 +145,18 @@ node scripts/agent-benchmark/driver.mjs selftest-launch-crash
 node scripts/agent-benchmark/driver.mjs selftest-android
 node scripts/agent-benchmark/driver.mjs selftest-runner-timeout
 ```
+
+## Export reviewed evidence
+
+`scripts/export-benchmark-viewer.mjs` verifies the retained transcript, app proof,
+Settings screenshot, recording, and cleanup before creating portable website
+artifacts. It does not modify coordinator records.
+
+A reviewed executable-lookup session correction can be supplied beside a run as
+`lookup-audit-correction.json`. It binds the run ID, original record hash,
+command-log hash and count, and the corrected `run-guards.mjs` source hash using
+`schemaVersion`, `runId`, `originalRecordSha256`, `commandsSha256`, `commandCount`,
+and `correctionSourceSha256`. Export matches every command against the retained
+events and reruns the current session audit. It can clear only the sole
+`agent-device-run-session-not-applied` reason; every evidence check still applies.
+Keep the original verdict and correction provenance private, outside Git.

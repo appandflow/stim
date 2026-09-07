@@ -14,7 +14,7 @@ import { userInfo } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
 import { launchCrashDiagnosis, launchCrashRecovery } from './launch-crash-benchmark.mjs';
-import { topLevelShellCommand } from './agent-benchmark/run-guards.mjs';
+import { agentDeviceIsolationInvalidReasons, topLevelShellCommand } from './agent-benchmark/run-guards.mjs';
 
 const modelPricing = {
   'gpt-5.6-luna': {
@@ -928,6 +928,63 @@ function validateLaunchCrashRecord(runDir, record, meta) {
   return { diagnosis, recovery, diagnosisUsage, screenReadySeconds };
 }
 
+function publicationRecord(runDir, meta) {
+  const recordPath = join(runDir, 'run.json');
+  const record = readJson(recordPath);
+  const correctionPath = join(runDir, 'lookup-audit-correction.json');
+  if (record.valid || !existsSync(correctionPath)) return record;
+  const correction = readJson(correctionPath);
+  const commandsPath = join(runDir, 'commands.log');
+  const guardPath = fileURLToPath(new URL('./agent-benchmark/run-guards.mjs', import.meta.url));
+  if (
+    correction.schemaVersion !== 1 ||
+    correction.runId !== record.runId ||
+    correction.originalRecordSha256 !== fileSha256(recordPath) ||
+    correction.correctionSourceSha256 !== fileSha256(guardPath) ||
+    !existsSync(commandsPath) ||
+    correction.commandsSha256 !== fileSha256(commandsPath) ||
+    record.invalidReasons?.length !== 1 ||
+    record.invalidReasons[0] !== 'agent-device-run-session-not-applied' ||
+    !meta.agentDevice?.stateDir ||
+    meta.agentDevice.session !== meta.runId
+  )
+    return record;
+  const commands = readFileSync(commandsPath, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
+  const invocations = readFileSync(join(runDir, 'events.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .flatMap((line) => {
+      const stamped = JSON.parse(line);
+      let event;
+      try {
+        event = JSON.parse(stamped.line);
+      } catch {
+        return [];
+      }
+      if (event.type === 'item.started' && event.item?.type === 'command_execution') {
+        return [{ id: event.item.id, command: event.item.command }];
+      }
+      return event.type === 'assistant'
+        ? (event.message?.content ?? [])
+            .filter((block) => block.type === 'tool_use' && block.name === 'Bash')
+            .map((block) => ({ id: block.id, command: block.input?.command }))
+        : [];
+    });
+  if (
+    commands.length !== record.commandCount ||
+    commands.length !== correction.commandCount ||
+    commands.length !== invocations.length ||
+    commands.some(
+      (command, index) => command.id !== invocations[index].id || command.command !== invocations[index].command,
+    )
+  )
+    return record;
+  const prefix = `env AGENT_DEVICE_STATE_DIR=${meta.agentDevice.stateDir} AGENT_DEVICE_SESSION=${meta.agentDevice.session} agent-device `;
+  if (agentDeviceIsolationInvalidReasons(commands, prefix).length) return record;
+  return { ...record, valid: true, invalidReasons: [] };
+}
+
 export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
   const absoluteStageDir = resolve(stageDir);
   const stage = basename(absoluteStageDir);
@@ -940,8 +997,8 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
     .filter((runDir) => existsSync(join(runDir, 'run.json')) && existsSync(join(runDir, 'meta.json')));
   const records = runDirs
     .map((runDir) => {
-      const record = readJson(join(runDir, 'run.json'));
       const meta = readJson(join(runDir, 'meta.json'));
+      const record = publicationRecord(runDir, meta);
       return {
         runDir,
         record,
