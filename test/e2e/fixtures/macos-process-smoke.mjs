@@ -24,7 +24,7 @@ if (mode === 'denied') {
   const exited = once(child, 'exit');
   await once(child.stdout, 'data');
   try {
-    assert.deepEqual(readProcessArgs(child.pid), [title]);
+    assert.deepEqual(readProcessArgs(child.pid).filter(Boolean), [title]);
     assert(readProcessStartTime(child.pid) instanceof Date);
     assert.equal(verifyCollectorOwnership({ pid: child.pid, platform: 'ios', root }).status, 'ours');
     assert.equal(

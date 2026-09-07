@@ -32,7 +32,10 @@ function identifiesCollector(args: readonly string[], platform: string): boolean
 }
 
 function tokenize(args: readonly string[]): string[] {
-  const only = args.length === 1 ? args[0] : null;
+  const only =
+    args.length === 1 || (args[0]?.startsWith(TITLE_PREFIX) && args.slice(1).every((arg) => arg === ''))
+      ? args[0]
+      : null;
   return only && /\s/.test(only) ? only.trim().split(/\s+/) : [...args];
 }
 

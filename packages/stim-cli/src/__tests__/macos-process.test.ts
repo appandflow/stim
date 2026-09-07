@@ -20,7 +20,7 @@ describe.skipIf(process.platform !== 'darwin')('native macOS process inspection'
 
   test('keeps exact argv boundaries and start identity when ps execution is denied', async () => {
     const executor = getExecutor();
-    const args = ['-e', 'setInterval(() => {}, 1000)', '--', 'space and "quotes"', '', 'back\\slash', '\u2603'];
+    const args = ['-e', 'setInterval(() => {}, 1000)', '--', 'space and "quotes"', '', 'back\\slash', '\u2603', '', ''];
     const child = executor.spawn(process.execPath, args, { stdio: 'ignore' });
     const exited = once(child, 'exit');
     await once(child, 'spawn');

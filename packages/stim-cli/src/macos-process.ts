@@ -15,6 +15,10 @@ function helperPath(): string {
   const hash = createHash('sha256').update(readFileSync(source)).update(process.arch).digest('hex');
   const directory = join(getConfigDir(), 'tools', `macos-process-${hash}`);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const directoryStat = lstatSync(directory);
+  if (!directoryStat.isDirectory() || directoryStat.uid !== process.getuid?.() || (directoryStat.mode & 0o077) !== 0) {
+    throw new Error('macOS process helper directory is not private');
+  }
   const binary = join(directory, 'process');
   if (!existsSync(binary)) {
     const temporary = mkdtempSync(join(directory, 'compile-'));
@@ -68,7 +72,6 @@ export function readMacosProcess(pid: number): MacosProcess | null {
     const args = decoded.split('\0');
     if (args.pop() !== '' || args.length !== value.argc) return null;
     if (value.zombie ? args.length !== 0 : !args[0]) return null;
-    while (args.length > 1 && args.at(-1) === '') args.pop();
     return {
       args,
       startTime: new Date(Number(value.startSeconds) * 1_000 + Math.floor(value.startMicros / 1_000)),
