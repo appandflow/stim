@@ -47,6 +47,18 @@ import {
 
 const testStimVersions = analyzeStimVersions('1.2.3', '/tools/stim-cli', []);
 
+let testHome: string;
+
+beforeEach(() => {
+  testHome = mkdtempSync(join(tmpdir(), 'stim-doctor-test-home-'));
+  process.env.STIM_HOME = testHome;
+});
+
+afterEach(() => {
+  delete process.env.STIM_HOME;
+  rmSync(testHome, { recursive: true, force: true });
+});
+
 test('checkMainCheckout reports missing dependencies, Pods, and native output', () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-source-cold-'));
   try {
