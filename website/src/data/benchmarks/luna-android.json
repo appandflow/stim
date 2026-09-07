@@ -5,7 +5,7 @@
   "suite": "readiness",
   "platform": "android",
   "protocolVersion": 4,
-  "recordedOn": "2026-09-06",
+  "recordedOn": "2026-09-06 to 2026-09-07",
   "primaryMetric": "Dispatch to validated Settings screenshot",
   "pricing": {
     "model": "gpt-5.6-luna",

@@ -438,6 +438,23 @@ describe('benchmark viewer export', () => {
     expect(
       sanitizeCommandOutput('git status --short; git branch -a', 'remotes/origin/@janic/issue-1-clear-filters'),
     ).toBe('<branch inventory omitted from public artifact>');
+    expect(
+      sanitizeCommandOutput('git worktree list && git status', 'worktree/private-diagnostic [private-branch]'),
+    ).toBe('<branch inventory omitted from public artifact>');
+  });
+
+  it('omits coordinator listings and unrelated AVD names without changing ordinary command output', () => {
+    for (const command of [
+      'ls -la /private/benchmark; echo ---; ls -la /private/benchmark/state',
+      'ls ~/.android/avd',
+      'find /private/benchmark/results -maxdepth 2 -type d',
+      '/bin/ls -la /private/benchmark',
+    ]) {
+      expect(sanitizeCommandOutput(command, 'private-run-id\nPersonal_Device.avd\nprivate-audit.json')).toBe(
+        '<directory inventory omitted from public artifact>',
+      );
+    }
+    expect(sanitizeCommandOutput('cat build.log', 'BUILD SUCCESSFUL')).toBe('BUILD SUCCESSFUL');
   });
 
   it('redacts a user-scoped remote branch outside an inventory', () => {

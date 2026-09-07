@@ -5,7 +5,7 @@
   "suite": "readiness",
   "platform": "android",
   "protocolVersion": 4,
-  "recordedOn": "2026-09-06",
+  "recordedOn": "2026-09-06 to 2026-09-07",
   "primaryMetric": "Dispatch to validated Settings screenshot",
   "pricing": null,
   "environment": {
@@ -393,7 +393,7 @@
           "startSeconds": 68.745,
           "endSeconds": 69.392,
           "command": "ls -a && git worktree list",
-          "output": ".\n..\n.env.example\n.expo\n.fingerprintignore\n.git\n.gitignore\nAGENTS.md\nCLAUDE.md\nLICENSE\nREADME.md\nandroid\napp\napp.json\nassets\nbench\ndocs\neslint.config.js\nios\nnode_modules\npackage-lock.json\npackage.json\nscripts\nsrc\ntsconfig.json\nworkspace/trailhead-sdk58-bench                       35acf01 [benchmark/sdk58-fixture]\nworktree/cache-diagnostic  35acf01 (detached HEAD)",
+          "output": "<branch inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -401,7 +401,7 @@
           "startSeconds": 69.933,
           "endSeconds": 69.965,
           "command": "ls ./ 2>&1; ls ./worktrees 2>&1 | head",
-          "output": "FINAL_STATUS.md\nRC19_RESTART.md\nREADME.md\nallowed-bin\naudit-lookup-correction-rc19.mjs\navds\nbin\nenv.sh\ngolden\ngradle-home\nlaunch-retries-rc19.mjs\npins.env\npublic-preview\nquarantine-native.mjs\nresults\nretry-failed-rc19.mjs\nrun-android-matrix.mjs\nruntime\nsanitized-machine.json\nstate\ntargets.json\ntmp\nworktrees",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -449,7 +449,7 @@
           "startSeconds": 81.16,
           "endSeconds": 83.944,
           "command": "du -sh node_modules .expo android/app/build android/build android/.gradle android/.cxx ios/build 2>/dev/null; echo \"--- env\"; ls -a .env* 2>/dev/null",
-          "output": "2.0G\tnode_modules\n 12K\t.expo\n1.2M\tios/build\n--- env\n.env.example",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -481,7 +481,7 @@
           "startSeconds": 114.44,
           "endSeconds": 114.49,
           "command": "ls ./avds 2>&1 | head; echo \"--- runtime\"; ls ./runtime 2>&1 | head; echo \"--- state\"; ls ./state 2>&1 | head",
-          "output": "--- runtime\nnode_modules\npackage-lock.json\npackage.json\n--- state\nagent-device\nandroid-matrix.json\ncache-probe-evidence.json\ncache-probe-home\ncache-probe-report.md\ndoctor-home\nfixture-native-quarantine\ninvestigated-holds-rc19.json\nios-isolation-issue.md\nlast-preflight.json",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -489,7 +489,7 @@
           "startSeconds": 120.171,
           "endSeconds": 120.215,
           "command": "ls \"$ANDROID_HOME/system-images/android-36/\" 2>&1; echo \"---\"; ls \"$ANDROID_HOME/system-images/android-36/google_apis_playstore_ps16k/\" 2>&1",
-          "output": "google_apis_playstore_ps16k\n---\narm64-v8a",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -505,7 +505,7 @@
           "startSeconds": 128.693,
           "endSeconds": 128.731,
           "command": "ls \"$ANDROID_AVD_HOME\"; echo \"--- config\"; cat \"$ANDROID_AVD_HOME/Trailhead_javascript-control.avd/config.ini\"",
-          "output": "Trailhead_javascript-control.avd\nTrailhead_javascript-control.ini\n--- config\nPlayStore.enabled=no\nabi.type=arm64-v8a\navd.id=<build>\navd.ini.encoding=UTF-8\navd.name=<build>\ndisk.cachePartition=yes\ndisk.cachePartition.size=66MB\ndisk.dataPartition.path=<temp>\ndisk.dataPartition.size=6G\ndisk.systemPartition.size=0\ndisk.vendorPartition.size=0\nfastboot.forceChosenSnapshotBoot=no\nfastboot.forceColdBoot=no\nfastboot.forceFastBoot=yes\nfirstboot.bootFromDownloadableSnapshot=yes\nfirstboot.bootFromLocalSnapshot=yes\nfirstboot.saveToLocalSnapshot=yes\nhw.accelerometer=yes\nhw.accelerometer_uncalibrated=yes\nhw.arc=no\nhw.arc.autologin=no\nhw.audioInput=yes\nhw.audioOutput=yes\nhw.battery=yes\nhw.camera.back=emulated\nhw.camera.back.orientation=90\nhw.camera.front=none\nhw.camera.front.orientation=90\nhw.cpu.arch=arm64\nhw.cpu.ncore=4\nhw.dPad=yes\nhw.display1.density=0\nhw.display1.flag=0\nhw.display1.height=0\nhw.display1.width=0\nhw.display1.xOffset=-1\nhw.display1.yOffset=-1\nhw.display2.density=0\nhw.display2.flag=0\nhw.display2.height=0\nhw.display2.width=0\nhw.display2.xOffset=-1\nhw.display2.yOffset=-1\nhw.display3.density=0\nhw.display3.flag=0\nhw.display3.height=0\nhw.display3.width=0\nhw.display3.xOffset=-1\nhw.display3.yOffset=-1\nhw.displayRegion.0.1.height=0\nhw.displayRegion.0.1.width=0\nhw.displayRegion.0.1.xOffset=-1\nhw.displayRegion.0.1.yOffset=-1\nhw.displayRegion.0.2.height=0\nhw.displayRegion.0.2.width=0\nhw.displayRegion.0.2.xOffset=-1\nhw.displayRegion.0.2.yOffset=-1\nhw.displayRegion.0.3.height=0\nhw.displayRegion.0.3.width=0\nhw.displayRegion.0.3.xOffset=-1\nhw.displayRegion.0.3.yOffset=-1\nhw.gltransport=pipe\nhw.gltransport.asg.dataRingSize=32768\nhw.gltransport.asg.writeBufferSize=1048576\nhw.gltransport.asg.writeStepSize=4096\nhw.gltransport.drawFlushInterval=800\nhw.gps=yes\nhw.gpu.enabled=no\nhw.gpu.mode=auto\nhw.gsmModem=yes\nhw.gyroscope=yes\nhw.hotplug_multi_display=no\nhw.initialOrientation=portrait\nhw.keyboard=no\nhw.keyboard.charmap=qwerty2\nhw.keyboard.lid=yes\nhw.lcd.backlight=yes\nhw.lcd.circular=false\nhw.lcd.density=160\nhw.lcd.depth=16\nhw.lcd.height=640\nhw.lcd.transparent=false\nhw.lcd.vsync=60\nhw.lcd.width=320\nhw.mainKeys=yes\nhw.multi_display_window=no\nhw.ramSize=2G\nhw.rotaryInput=no\nhw.screen=multi-touch\nhw.sdCard=yes\nhw.sensor.hinge=no\nhw.sensor.hinge.count=0\nhw.sensor.hinge.fold_to_displayRegion.0.1_at_posture=1\nhw.sensor.hinge.resizable.config=1\nhw.sensor.hinge.sub_type=0\nhw.sensor.hinge.type=0\nhw.sensor.roll=no\nhw.sensor.roll.count=0\nhw.sensor.roll.resize_to_displayRegion.0.1_at_posture=6\nhw.sensor.roll.resize_to_displayRegion.0.2_at_posture=6\nhw.sensor.roll.resize_to_displayRegion.0.3_at_posture=6\nhw.sensors.gyroscope_uncalibrated=yes\nhw.sensors.heading=no\nhw.sensors.heart_rate=no\nhw.sensors.humidity=yes\nhw.sensors.light=yes\nhw.sensors.magnetic_field=yes\nhw.sensors.magnetic_field_uncalibrated=yes\nhw.sensors.orientation=yes\nhw.sensors.pressure=yes\nhw.sensors.proximity=yes\nhw.sensors.rgbclight=no\nhw.sensors.temperature=yes\nhw.sensors.wrist_tilt=no\nhw.touchpad0=no\nhw.touchpad0.height=400\nhw.touchpad0.width=600\nhw.trackBall=yes\nhw.useext4=yes\nimage.sysdir.1=system-images/android-36/google_apis_playstore_ps16k/arm64-v8a/\nkernel.newDeviceNaming=autodetect\nkernel.supportsYaffs2=autodetect\nruntime.network.latency=none\nruntime.network.speed=full\nsdcard.size=512 MB\nshowDeviceFrame=yes\ntag.display=16 KB Page Size\ntag.displaynames=16 KB Page Size,Google APIs PlayStore\ntag.id=page_size_16kb\ntag.ids=page_size_16kb,google_apis_playstore\ntarget=android-36\ntest.delayAdbTillBootComplete=0\ntest.monitorAdb=0\ntest.quitAfterBootTimeOut=-1\nuserdata.useQcow2=no\nvm.heapSize=32M",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -745,7 +745,7 @@
           "startSeconds": 375.446,
           "endSeconds": 375.468,
           "command": "ls -l results/opus-android/javascript-control/proof/",
-          "output": "total 30096\n-rw-r--r--@ 1 <local-user>  staff  15091723 Sep  7 05:26 metro-8081-at-app-alive.bundle\n-rw-r--r--@ 1 <local-user>  staff    271286 Sep  7 05:27 session.mp4\n-rw-r--r--@ 1 <local-user>  staff     40203 Sep  7 05:27 settings.png",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         }
       ],
@@ -1261,7 +1261,7 @@
           "startSeconds": 69.119,
           "endSeconds": 69.169,
           "command": "ls -la workspace/trailhead-sdk58-bench",
-          "output": "total 1176\ndrwxr-xr-x@  25 <local-user>  staff     800 Sep  5 19:54 .\ndrwxr-xr-x@  24 <local-user>  staff     768 Sep  5 19:56 ..\n-rw-r--r--@   1 <local-user>  staff     103 Sep  5 19:37 .env.example\ndrwxr-xr-x@   3 <local-user>  staff      96 Sep  5 19:40 .expo\n-rw-r--r--@   1 <local-user>  staff      62 Sep  5 19:37 .fingerprintignore\ndrwxr-xr-x@  15 <local-user>  staff     480 Sep  7 05:31 .git\n-rw-r--r--@   1 <local-user>  staff     482 Sep  5 19:37 .gitignore\n-rw-r--r--@   1 <local-user>  staff    2356 Sep  5 19:37 AGENTS.md\n-rw-r--r--@   1 <local-user>  staff      11 Sep  5 19:37 CLAUDE.md\n-rw-r--r--@   1 <local-user>  staff    1067 Sep  5 19:37 LICENSE\n-rw-r--r--@   1 <local-user>  staff    2431 Sep  5 19:37 README.md\ndrwxr-xr-x@  10 <local-user>  staff     320 Sep  6 01:01 android\ndrwxr-xr-x@   7 <local-user>  staff     224 Sep  5 19:37 app\n-rw-r--r--@   1 <local-user>  staff    1959 Sep  5 19:37 app.json\ndrwxr-xr-x@   4 <local-user>  staff     128 Sep  5 19:37 assets\ndrwxr-xr-x@   5 <local-user>  staff     160 Sep  5 19:37 bench\ndrwxr-xr-x@   3 <local-user>  staff      96 Sep  5 19:37 docs\n-rw-r--r--@   1 <local-user>  staff     237 Sep  5 19:37 eslint.config.js\ndrwxr-xr-x@  13 <local-user>  staff     416 Sep  5 19:38 ios\ndrwxr-xr-x@ 601 <local-user>  staff   19232 Sep  5 19:54 node_modules\n-rw-r--r--@   1 <local-user>  staff  554895 Sep  5 19:53 package-lock.json\n-rw-r--r--@   1 <local-user>  staff    3839 Sep  5 19:53 package.json\ndrwxr-xr-x@   3 <local-user>  staff      96 Sep  5 19:37 scripts\ndrwxr-xr-x@   9 <local-user>  staff     288 Sep  5 19:37 src\n-rw-r--r--@   1 <local-user>  staff     320 Sep  5 19:37 tsconfig.json",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1277,7 +1277,7 @@
           "startSeconds": 74.253,
           "endSeconds": 74.275,
           "command": "ls -la workspace/android && cat workspace/strings.xml",
-          "output": "total 64\ndrwxr-xr-x@ 10 <local-user>  staff   320 Sep  6 01:01 .\ndrwxr-xr-x@ 25 <local-user>  staff   800 Sep  5 19:54 ..\n-rw-r--r--@  1 <local-user>  staff   183 Sep  5 19:37 .gitignore\ndrwxr-xr-x@  6 <local-user>  staff   192 Sep  6 01:01 app\n-rw-r--r--@  1 <local-user>  staff   556 Sep  5 19:37 build.gradle\ndrwxr-xr-x@  3 <local-user>  staff    96 Sep  5 19:37 gradle\n-rw-r--r--@  1 <local-user>  staff  2618 Sep  5 19:37 gradle.properties\n-rwxr-xr-x@  1 <local-user>  staff  8618 Sep  5 19:37 gradlew\n-rw-r--r--@  1 <local-user>  staff  2995 Sep  5 19:37 gradlew.bat\n-rw-r--r--@  1 <local-user>  staff  1262 Sep  5 19:37 settings.gradle\n<resources>\n  <string name=\"app_name\">Trailhead</string>\n  <string name=\"expo_system_ui_user_interface_style\" translatable=\"false\">automatic</string>\n  <string name=\"expo_splash_screen_resize_mode\" translatable=\"false\">contain</string>\n</resources>",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1293,7 +1293,7 @@
           "startSeconds": 79.622,
           "endSeconds": 79.649,
           "command": "ls -la ./worktrees/ 2>&1 | head -20; echo \"---\"; ls -la results/opus-android/native-control/ 2>&1",
-          "output": "total 0\ndrwxr-xr-x@  2 <local-user>  staff   64 Sep  7 05:28 .\ndrwxr-xr-x@ 25 <local-user>  staff  800 Sep  7 05:29 ..\n---\ntotal 96\ndrwxr-xr-x@ 15 <local-user>  staff    480 Sep  7 05:29 .\ndrwxr-xr-x@  4 <local-user>  staff    128 Sep  7 05:29 ..\n-rw-r--r--@  1 <local-user>  staff      3 Sep  7 05:29 avds-before.json\n-rw-r--r--@  1 <local-user>  staff      3 Sep  7 05:29 devices-before.json\n-rw-r--r--@  1 <local-user>  staff   7197 Sep  7 05:29 meta.json\n-rw-r--r--@  1 <local-user>  staff  12657 Sep  7 05:29 prompt-input.json\n-rw-r--r--@  1 <local-user>  staff   5539 Sep  7 05:29 prompt.txt\ndrwxr-xr-x@  2 <local-user>  staff     64 Sep  7 05:29 proof\ndrwxr-xr-x@  2 <local-user>  staff     64 Sep  7 05:29 raw\n-rw-r--r--@  1 <local-user>  staff   1644 Sep  7 05:29 runner-guidance.md\ndrwxr-xr-x@  3 <local-user>  staff     96 Sep  7 05:29 runner-home\n-rw-r--r--@  1 <local-user>  staff   3177 Sep  7 05:29 runner-isolation.sb\ndrwxr-xr-x@  5 <local-user>  staff    160 Sep  7 05:31 shell-home\ndrwxr-xr-x@  2 <local-user>  staff     64 Sep  7 05:29 stim-home\ndrwxr-xr-x@  6 <local-user>  staff    192 Sep  7 05:29 tmp",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1301,7 +1301,7 @@
           "startSeconds": 82.136,
           "endSeconds": 84.95,
           "command": "du -sh workspace/node_modules workspace/build 2>&1; echo \"---\"; ls -la workspace/app ; echo \"--- gradle caches\"; ls -d workspace/.gradle workspace/build 2>&1",
-          "output": "Exit code 1\ndu: workspace/build: No such file or directory\n2.0G\tworkspace/node_modules\n---\ntotal 40\ndrwxr-xr-x@  6 <local-user>  staff   192 Sep  6 01:01 .\ndrwxr-xr-x@ 10 <local-user>  staff   320 Sep  6 01:01 ..\n-rw-r--r--@  1 <local-user>  staff  8899 Sep  5 19:37 build.gradle\n-rw-r--r--@  1 <local-user>  staff  2257 Sep  5 19:37 debug.keystore\n-rw-r--r--@  1 <local-user>  staff   562 Sep  5 19:37 proguard-rules.pro\ndrwxr-xr-x@  5 <local-user>  staff   160 Sep  5 19:37 src\n--- gradle caches\nls: workspace/.gradle: No such file or directory\nls: workspace/build: No such file or directory",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 1
         },
         {
@@ -1325,7 +1325,7 @@
           "startSeconds": 98.247,
           "endSeconds": 98.273,
           "command": "echo \"ANDROID_HOME=$ANDROID_HOME\"; echo \"ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT\"; ls -d ~system/Library/Android/sdk 2>&1; echo \"--- cmdline-tools\"; ls ~system/Library/Android/sdk/cmdline-tools 2>&1; echo \"--- emulator\"; ls ~system/Library/Android/sdk/emulator/emulator 2>&1",
-          "output": "ANDROID_HOME=workspace/sdk\nANDROID_SDK_ROOT=\nworkspace/sdk\n--- cmdline-tools\nlatest\n--- emulator\nworkspace/emulator",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1333,7 +1333,7 @@
           "startSeconds": 100.041,
           "endSeconds": 100.064,
           "command": "ls -d ~system/Library/Android/sdk/system-images/android-36/google_apis_playstore_ps16k/arm64-v8a 2>&1; echo \"--- avd home\"; echo \"ANDROID_AVD_HOME=$ANDROID_AVD_HOME\"; ls ~/.android/avd 2>&1",
-          "output": "workspace/arm64-v8a\n--- avd home\nANDROID_AVD_HOME=./avds\nAndroid16_16KB.avd\nAndroid16_16KB.ini\nstim-trailhead-sdk58-probe.avd\nstim-trailhead-sdk58-probe.ini",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1341,7 +1341,7 @@
           "startSeconds": 103.814,
           "endSeconds": 104.129,
           "command": "ls -la \"$ANDROID_AVD_HOME\" 2>&1; echo \"--- existing avds\"; \"$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager\" list avd -c 2>&1 | tail -20",
-          "output": "total 0\ndrwxr-xr-x@  2 <local-user>  staff   64 Sep  7 05:28 .\ndrwxr-xr-x@ 25 <local-user>  staff  800 Sep  7 05:29 ..\n--- existing avds",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1357,7 +1357,7 @@
           "startSeconds": 109.762,
           "endSeconds": 110.134,
           "command": "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager\" list avd -c 2>&1 | tail; echo \"--- files\"; ls -la \"$ANDROID_AVD_HOME",
-          "output": "Trailhead_native-control\n--- files\ntotal 8\ndrwxr-xr-x@  4 <local-user>  staff  128 Sep  7 05:31 .\ndrwxr-xr-x@ 25 <local-user>  staff  800 Sep  7 05:29 ..\ndrwxr-xr-x@  3 <local-user>  staff   96 Sep  7 05:31 Trailhead_native-control.avd\n-rw-r--r--@  1 <local-user>  staff  175 Sep  7 05:31 Trailhead_native-control.ini",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1373,7 +1373,7 @@
           "startSeconds": 122.779,
           "endSeconds": 122.815,
           "command": "ps -p 6600 > /dev/null 2>&1 && echo \"COPY_RUNNING\" || echo \"COPY_DONE\"; cat tmp/native-control-deps.log; echo \"--- count\"; ls ./worktrees/native-control/node_modules 2>/dev/null | wc -l",
-          "output": "<process output omitted from public artifact>",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1389,7 +1389,7 @@
           "startSeconds": 138.982,
           "endSeconds": 139.02,
           "command": "pgrep -fl \"cp -pR\" 2>&1; echo \"--- count now\"; ls ./worktrees/native-control/node_modules 2>/dev/null | wc -l",
-          "output": "<process output omitted from public artifact>",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1405,7 +1405,7 @@
           "startSeconds": 149.328,
           "endSeconds": 150.401,
           "command": "rm -rf ./worktrees/native-control/node_modules; ls -d ./worktrees/native-control/node_modules 2>&1; echo CLEAN_RC=$?",
-          "output": "ls: ./worktrees/native-control/node_modules: No such file or directory\nCLEAN_RC=1",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1437,7 +1437,7 @@
           "startSeconds": 166.268,
           "endSeconds": 166.296,
           "command": "cat tmp/native-control-deps.done 2>/dev/null || echo \"COPY_IN_PROGRESS\"; ls ./worktrees/native-control/node_modules 2>/dev/null | wc -l",
-          "output": "COPY_IN_PROGRESS\n     168",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1453,7 +1453,7 @@
           "startSeconds": 177.266,
           "endSeconds": 177.302,
           "command": "ls ./worktrees/native-control/node_modules 2>/dev/null | wc -l; echo \"--- avd in use\"; adb -s <simulator-udid> emu avd name 2>&1 | head -3",
-          "output": "     227\n--- avd in use\nTrailhead_native-control\r\nOK",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1469,7 +1469,7 @@
           "startSeconds": 183.923,
           "endSeconds": 183.946,
           "command": "cat tmp/native-control-deps.done 2>/dev/null || echo \"IN_PROGRESS\"; ls ./worktrees/native-control/node_modules 2>/dev/null | wc -l",
-          "output": "IN_PROGRESS\n     290",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1477,7 +1477,7 @@
           "startSeconds": 186.214,
           "endSeconds": 186.236,
           "command": "cat tmp/native-control-deps.done 2>/dev/null || echo \"IN_PROGRESS\"; ls ./worktrees/native-control/node_modules 2>/dev/null | wc -l",
-          "output": "IN_PROGRESS\n     365",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1485,7 +1485,7 @@
           "startSeconds": 188.672,
           "endSeconds": 188.697,
           "command": "cat tmp/native-control-deps.done 2>/dev/null || echo \"IN_PROGRESS\"; ls ./worktrees/native-control/node_modules 2>/dev/null | wc -l",
-          "output": "IN_PROGRESS\n     377",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1493,7 +1493,7 @@
           "startSeconds": 191.172,
           "endSeconds": 191.196,
           "command": "cat tmp/native-control-deps.done 2>/dev/null || echo \"IN_PROGRESS\"; ls ./worktrees/native-control/node_modules 2>/dev/null | wc -l",
-          "output": "IN_PROGRESS\n     405",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1501,7 +1501,7 @@
           "startSeconds": 193.559,
           "endSeconds": 193.583,
           "command": "cat tmp/native-control-deps.done 2>/dev/null || echo \"IN_PROGRESS\"; ls ./worktrees/native-control/node_modules 2>/dev/null | wc -l",
-          "output": "IN_PROGRESS\n     405",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1509,7 +1509,7 @@
           "startSeconds": 196.019,
           "endSeconds": 196.041,
           "command": "cat tmp/native-control-deps.done 2>/dev/null || echo \"IN_PROGRESS\"; ls ./worktrees/native-control/node_modules 2>/dev/null | wc -l",
-          "output": "IN_PROGRESS\n     494",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1517,7 +1517,7 @@
           "startSeconds": 198.369,
           "endSeconds": 198.393,
           "command": "cat tmp/native-control-deps.done 2>/dev/null || echo \"IN_PROGRESS\"; ls ./worktrees/native-control/node_modules 2>/dev/null | wc -l",
-          "output": "IN_PROGRESS\n     513",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1525,7 +1525,7 @@
           "startSeconds": 200.669,
           "endSeconds": 200.691,
           "command": "cat tmp/native-control-deps.done 2>/dev/null || echo \"IN_PROGRESS\"; ls ./worktrees/native-control/node_modules 2>/dev/null | wc -l",
-          "output": "IN_PROGRESS\n     541",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1533,7 +1533,7 @@
           "startSeconds": 203.065,
           "endSeconds": 203.09,
           "command": "cat tmp/native-control-deps.done 2>/dev/null || echo \"IN_PROGRESS\"; ls ./worktrees/native-control/node_modules 2>/dev/null | wc -l",
-          "output": "RC=0\n     597",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1541,7 +1541,7 @@
           "startSeconds": 209.157,
           "endSeconds": 209.74,
           "command": "echo \"src: $(ls -A workspace/node_modules | wc -l)\"; echo \"dst: $(ls -A ./worktrees/native-control/node_modules | wc -l)\"; echo \"--- sizes\"; du -sh workspace/node_modules ./worktrees/native-control/node_modules",
-          "output": "src:      599\ndst:      599\n--- sizes\n2.0G\tworkspace/node_modules\n2.1G\t./worktrees/native-control/node_modules",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1821,7 +1821,7 @@
           "startSeconds": 314.547,
           "endSeconds": 314.612,
           "command": "cat tmp/native-control-build.done 2>/dev/null || echo \"BUILDING\"; grep -c \"^> Task\" tmp/native-control-build.log; tail -1 tmp/native-control-build.log; ls ./worktrees/native-control/android/app/build/outputs/apk/debug/ 2>/dev/null || echo \"no apk yet\"",
-          "output": "BUILDING\n769\n> Task :shopify_react-native-skia:copyDebugJniLibsProjectOnly\nno apk yet",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1981,7 +1981,7 @@
           "startSeconds": 463.101,
           "endSeconds": 463.148,
           "command": "ls -la results/opus-android/native-control/proof/",
-          "output": "total 608\ndrwxr-xr-x@  5 <local-user>  staff     160 Sep  7 05:37 .\ndrwxr-xr-x@ 16 <local-user>  staff     512 Sep  7 05:35 ..\n-rw-r--r--@  1 <local-user>  staff     101 Sep  7 05:35 native-application-label.txt\n-rw-r--r--@  1 <local-user>  staff  263240 Sep  7 05:37 session.mp4\n-rw-r--r--@  1 <local-user>  staff   40309 Sep  7 05:37 settings.png",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {

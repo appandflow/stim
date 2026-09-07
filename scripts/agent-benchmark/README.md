@@ -151,6 +151,8 @@ node scripts/agent-benchmark/driver.mjs selftest-runner-timeout
 `scripts/export-benchmark-viewer.mjs` verifies the retained transcript, app proof,
 Settings screenshot, recording, and cleanup before creating portable website
 artifacts. It does not modify coordinator records.
+Directory and worktree inventories are omitted from public command output;
+the command and its timing remain visible.
 
 A reviewed executable-lookup session correction can be supplied beside a run as
 `lookup-audit-correction.json`. It binds the run ID, original record hash,

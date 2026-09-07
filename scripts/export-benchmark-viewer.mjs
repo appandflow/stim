@@ -54,7 +54,8 @@ const agentDeviceBundlePattern = /\b(?:[A-Za-z0-9-]+\.)+[A-Za-z0-9.-]*agentdevic
 const processInspectionPattern = /\b(?:ps|pgrep)(?:\s|$)/;
 const deviceInventoryPattern = /\b(?:agent-device devices|xcrun simctl list devices)\b/;
 const machineStoragePattern = /\b(?:df|diskutil)(?:\s|$)/;
-const branchInventoryPattern = /\bgit\s+(?:branch|for-each-ref)(?:\s|$)/;
+const branchInventoryPattern = /\bgit\s+(?:branch|for-each-ref|worktree\s+list)(?:\s|$)/;
+const directoryInventoryPattern = /\b(?:ls|find|tree)(?:\s|$)/;
 const interactiveShellPattern = /^(?:bash|sh|zsh)$/;
 const adbPublicKeyMessagePattern = /(\bSending adb public key \[)[A-Za-z0-9+/=]{80,}(?:\s+[^\]\r\n]*)?(\])/g;
 const adbPublicKeyBootArgumentPattern = /(\bandroidboot\.qemu\.adb\.pubkey=)[A-Za-z0-9+/=]{80,}/g;
@@ -212,6 +213,9 @@ export function sanitizeCommandOutput(command, value, replacements = []) {
   }
   if (branchInventoryPattern.test(unwrapped)) {
     return '<branch inventory omitted from public artifact>';
+  }
+  if (directoryInventoryPattern.test(unwrapped)) {
+    return '<directory inventory omitted from public artifact>';
   }
   if (processInspectionPattern.test(unwrapped)) {
     return '<process output omitted from public artifact>';

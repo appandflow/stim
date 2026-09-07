@@ -5,7 +5,7 @@
   "suite": "readiness",
   "platform": "android",
   "protocolVersion": 4,
-  "recordedOn": "2026-09-06",
+  "recordedOn": "2026-09-06 to 2026-09-07",
   "primaryMetric": "Dispatch to validated Settings screenshot",
   "pricing": {
     "model": "gpt-5.6-sol",
@@ -167,7 +167,7 @@
           "startSeconds": 74.729,
           "endSeconds": 74.729,
           "command": "ls -la node_modules/terminal-link; sed -n '1,120p' node_modules/terminal-link/package.json; stim logs --errors",
-          "output": "total 40\ndrwxr-xr-x@   7 <local-user>  staff    224 Sep  6 22:05 .\ndrwxr-xr-x@ 601 <local-user>  staff  19232 Sep  6 22:05 ..\n-rw-r--r--@   1 <local-user>  staff   1912 Sep  5 19:54 index.d.ts\n-rw-r--r--@   1 <local-user>  staff    837 Sep  5 19:54 index.js\n-rw-r--r--@   1 <local-user>  staff   1109 Sep  5 19:54 license\n-rw-r--r--@   1 <local-user>  staff    788 Sep  5 19:54 package.json\n-rw-r--r--@   1 <local-user>  staff   1874 Sep  5 19:54 readme.md\n{\n\t\"name\": \"terminal-link\",\n\t\"version\": \"2.1.1\",\n\t\"description\": \"Create clickable links in the terminal\",\n\t\"license\": \"MIT\",\n\t\"repository\": \"sindresorhus/terminal-link\",\n\t\"funding\": \"https://github.com/sponsors/sindresorhus\",\n\t\"author\": {\n\t\t\"name\": \"Sindre Sorhus\",\n\t\t\"email\": \"sindresorhus@gmail.com\",\n\t\t\"url\": \"sindresorhus.com\"\n\t},\n\t\"engines\": {\n\t\t\"node\": \">=8\"\n\t},\n\t\"scripts\": {\n\t\t\"test\": \"xo && ava && tsd\"\n\t},\n\t\"files\": [\n\t\t\"index.js\",\n\t\t\"index.d.ts\"\n\t],\n\t\"keywords\": [\n\t\t\"link\",\n\t\t\"hyperlink\",\n\t\t\"url\",\n\t\t\"ansi\",\n\t\t\"escape\",\n\t\t\"terminal\",\n\t\t\"term\",\n\t\t\"console\",\n\t\t\"command-line\"\n\t],\n\t\"dependencies\": {\n\t\t\"ansi-escapes\": \"^4.2.1\",\n\t\t\"supports-hyperlinks\": \"^2.0.0\"\n\t},\n\t\"devDependencies\": {\n\t\t\"ava\": \"^2.3.0\",\n\t\t\"clear-module\": \"^4.0.0\",\n\t\t\"tsd\": \"^0.11.0\",\n\t\t\"xo\": \"^0.25.3\"\n\t}\n}\n22:06:03.081 error metro  Error: Cannot find module 'terminal-link'\n22:06:03.082 error metro  the expo-child dev server exited unexpectedly (exit code 7); shutting the supervisor down\n",
+          "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
