@@ -90,6 +90,17 @@ or CLI digest mismatch and refuses a control shell that can resolve Stim.
 Golden cache validation hashes the fixture with the pinned CLI's fingerprint
 dependency, not the fixture's potentially different version.
 
+Both arms preserve shell exit status and running-session handles when using code
+wrappers, then poll foreground jobs to completion before dependent commands. A
+wrapper returning is not proof its shell process exited. Collection rejects Stim
+start, platform, or dependency-install commands that overlap worktree warm or lack
+proof of an earlier successful warm. Explicitly detached control processes retain
+their separate PID/log monitoring.
+Unfinished shell commands remain in the audit with unknown completion. Claude
+background-task submission is not command completion: a correlated terminal
+TaskOutput result must provide the shell exit status before the audit accepts it.
+The result fields follow the [Claude Agent SDK task-output schema](https://code.claude.com/docs/en/agent-sdk/python#taskoutput).
+
 Both runners are launched through macOS `sandbox-exec` with a verified,
 run-scoped policy. Configuration, golden files, coordinator evidence and
 sibling worktrees/results cannot be read or written by the runner process tree.

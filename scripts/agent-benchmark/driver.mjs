@@ -27,6 +27,7 @@ import {
   launchCrashToken,
 } from '../launch-crash-benchmark.mjs';
 import { benchmarkFingerprint, selectBenchmarkCacheKey } from './cache-key.mjs';
+import { reconstructCommandEvidence } from './command-evidence.mjs';
 import { matchesGoldenPreparation } from './golden-state.mjs';
 import { launchCrashSetup } from './launch-crash-setup.mjs';
 import { collectedNativeCompatibility, probeNativeCompatibility, verifyNativeCompatibility } from './native-compat.mjs';
@@ -906,7 +907,7 @@ function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform 
   const stimSource = variant === launchCrashVariant ? crash.fixtureCheckout : main;
   const worktree =
     arm === 'stim'
-      ? `In ${stimSource}, run exactly \`git worktree add -b worktree-bench/${runId} ${quotedStimPath} HEAD\`. Then change into ${stimPath}, run \`stim worktree warm\`, and work only in that checkout. `
+      ? `In ${stimSource}, run exactly \`git worktree add -b worktree-bench/${runId} ${quotedStimPath} HEAD\`. Then change into ${stimPath}, run \`stim worktree warm\`, and wait for its successful exit before running start or a platform command. Work only in that checkout. `
       : variant === launchCrashVariant
         ? `In ${crash.fixtureCheckout}, create a git worktree for branch bench/${runId} at ${join(worktreeParent, runId)} from the current fixture HEAD and carry installed dependencies and native outputs from the fixture checkout. Then work only in that run worktree. Name the new ${platform === 'ios' ? 'simulator' : 'AVD'} exactly ${JSON.stringify(controlDeviceName)}. `
         : `In ${main}, create a git worktree for branch bench/${runId} at ${join(worktreeParent, runId)} and carry installed dependencies and native outputs from the main checkout. Then work only in that worktree. Name the new ${platform === 'ios' ? 'simulator' : 'AVD'} exactly ${JSON.stringify(controlDeviceName)} so the coordinator can prove ownership and clean it safely. `;
@@ -920,7 +921,9 @@ function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform 
   const targetFlag = platform === 'ios' ? '--udid' : '--serial';
   const deviceProof = ` After the app launches, you MUST use the agent-device skill and CLI. Codex does not forward the coordinator's agent-device environment into shell tools, so every agent-device command below includes the required prefix. Never run a bare \`agent-device\` command. Read the exact run ${targetDescription} from the launch output. Handle any Expo onboarding shown and navigate to the Settings tab using semantic refs or labels between steps 2 and 3 below. Do not stop or restart the agent-device daemon; report a failure if the isolated session refuses to open. The explicit state and session assignments and device identifier prevent cross-run ownership.`;
   const proofProtocol = `\n\nFINAL PROOF PROTOCOL: The proof directory already exists. For each numbered shell command below, send the displayed line alone as the entire Bash \`command\` string. Do not prepend \`mkdir\`, append \`ls\`, combine it with another command, use redirection, or wrap it in a script or interactive shell. Replace only the angle-bracketed value in step 1.\n\n1. \`${agentDevicePrefix} open com.appandflow.trailhead --foreground --platform ${platform} ${targetFlag} <run ${targetDescription}>\`\n2. \`${agentDevicePrefix} record start ${recordingScratch} --scope device --quality high --hide-touches\`\n3. \`${agentDevicePrefix} wait text ${JSON.stringify(expected)}\`\n4. \`${agentDevicePrefix} screenshot ${screenshotScratch}\`\n5. \`cp ${screenshotScratch} ${screenshot}\`\n6. \`${agentDevicePrefix} record stop\`\n7. \`cp ${recordingScratch} ${recording}\`\n8. \`${agentDevicePrefix} close\`\n\nDo not claim completion before all eight commands succeed in order, the wait finds the expected text, recording stop reports the saved video, and the copied screenshot and recording exist.`;
-  const suffix = ` Stay in this turn until the Settings screenshot is saved; do not stop to await a background notification. Do not use subagents. Work only in the fixture checkout, run worktree, and the current run's proof, temporary, runtime, and tool-state paths. Coordinator configuration, golden caches, other worktrees, and other runs' file contents are protected by the runner filesystem policy. Parent directory listings are permitted; do not try to bypass a denied read or use another process or service to access protected files. Report the run worktree and screenshot paths, then stop; the coordinator will verify and clean up.${proofProtocol}`;
+  const commandCompletion =
+    'For foreground shell-tool calls, preserve the full result, including exit status and any running session handle. In a code wrapper around exec_command or write_stdin, print the complete result with text(result), not only result.output. A completed code wrapper or empty output does not mean its shell process finished. If the shell result contains a session_id, poll that session with write_stdin until an exit_code is returned before issuing dependent commands; do not replace polling with another copy of the command. For explicitly detached shell processes, continue the separate PID/log monitoring required by this task. Finish dependency copying before starting Metro or native commands; do not install dependencies inside the timed run.';
+  const suffix = ` ${commandCompletion} Stay in this turn until the Settings screenshot is saved; do not stop to await a background notification. Do not use subagents. Work only in the fixture checkout, run worktree, and the current run's proof, temporary, runtime, and tool-state paths. Coordinator configuration, golden caches, other worktrees, and other runs' file contents are protected by the runner filesystem policy. Parent directory listings are permitted; do not try to bypass a denied read or use another process or service to access protected files. Report the run worktree and screenshot paths, then stop; the coordinator will verify and clean up.${proofProtocol}`;
   if (variant === launchCrashVariant) {
     const launch = launchCrashSetup({ arm, platform, systemImage: pins.ANDROID_SYSTEM_IMAGE }).instructions;
     return (
@@ -1588,89 +1591,7 @@ function commandEvidence(meta, eventsPath, runDir) {
     return { commands: [], activities: [], completedEvents: [], invalidReasons: [] };
   }
   const stamped = readFileSync(eventsPath, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
-  const started = new Map();
-  const commands = [];
-  const activities = [];
-  const completedEvents = [];
-  const completeCommand = (id, item, record, offset) => {
-    const begin = started.get(id);
-    const elapsedSeconds = begin ? (Date.parse(record.arrivedAt) - Date.parse(begin.at)) / 1000 : null;
-    commands.push({
-      id,
-      command: item.command ?? begin?.command ?? null,
-      startedAt: begin?.at ?? null,
-      endedAt: record.arrivedAt,
-      elapsedSeconds,
-      parallelTimingAmbiguous: !begin,
-      exitCode: item.exit_code,
-      startEventOffset: begin?.offset ?? null,
-      endEventOffset: offset,
-      output: item.aggregated_output ?? '',
-    });
-    completedEvents.push(item);
-  };
-  for (const [offset, record] of stamped.entries()) {
-    let event;
-    try {
-      event = JSON.parse(record.line);
-    } catch {
-      continue;
-    }
-    if (meta.runner === 'claude') {
-      for (const block of event.message?.content ?? []) {
-        if (event.type === 'assistant' && block.type === 'tool_use' && block.name !== 'Bash') {
-          activities.push({
-            id: block.id,
-            command: `tool:${block.name} ${JSON.stringify(block.input ?? {})}`,
-            startedAt: record.arrivedAt,
-            endedAt: record.arrivedAt,
-          });
-        }
-        if (event.type === 'assistant' && block.type === 'tool_use' && block.name === 'Bash') {
-          started.set(block.id, {
-            offset,
-            at: record.arrivedAt,
-            command: block.input?.command ?? null,
-          });
-        }
-        if (event.type === 'user' && block.type === 'tool_result' && started.has(block.tool_use_id)) {
-          const result = event.tool_use_result ?? {};
-          const output = typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? result);
-          completeCommand(
-            block.tool_use_id,
-            {
-              type: 'command_execution',
-              command: started.get(block.tool_use_id)?.command ?? null,
-              aggregated_output: output,
-              exit_code: Number.isInteger(result.exit_code)
-                ? result.exit_code
-                : block.is_error || result.is_error
-                  ? 1
-                  : 0,
-            },
-            record,
-            offset,
-          );
-        }
-      }
-      continue;
-    }
-    const item = event.item;
-    if (event.type === 'item.started' && item?.type && item.type !== 'command_execution') {
-      activities.push({
-        id: item.id,
-        command: `tool:${item.type} ${JSON.stringify(item.changes ?? item)}`,
-        startedAt: record.arrivedAt,
-        endedAt: record.arrivedAt,
-      });
-    }
-    if (event.type === 'item.started' && item?.type === 'command_execution') {
-      started.set(item.id, { offset, at: record.arrivedAt, command: item.command });
-    }
-    if (event.type === 'item.completed' && item?.type === 'command_execution') {
-      completeCommand(item.id, item, record, offset);
-    }
-  }
+  const { commands, activities, completedEvents } = reconstructCommandEvidence(meta.runner, stamped);
   writeFileSync(join(runDir, 'commands.log'), `${commands.map((command) => JSON.stringify(command)).join('\n')}\n`);
   const commandText = commands.map((command) => command.command ?? '').join('\n');
   const outputText = completedEvents.map((item) => item.aggregated_output ?? '').join('\n');
