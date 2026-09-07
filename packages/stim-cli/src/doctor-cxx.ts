@@ -79,6 +79,7 @@ export interface CxxRepairResult {
  * cache-lock check cannot detect uncached builds, release-swap fallback, or direct Gradle.
  */
 export function repairCxxLauncherState(root: string): CxxRepairResult {
+  if (process.env.STIM_ANDROID_CAS_TOOLCHAIN) return { removed: [], refused: [] };
   const canonicalRoot = realpathSync(root);
   const result: CxxRepairResult = { removed: [], refused: [] };
   const ccache = getExecutor().runQuiet('command -v ccache', { timeoutMs: 5000 });

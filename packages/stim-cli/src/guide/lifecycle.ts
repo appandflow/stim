@@ -414,6 +414,16 @@ CMAKE_DISABLE_PRECOMPILE_HEADERS argument in its default config, build types,
 or product flavors keeps that choice; CMake target-level PCH overrides also
 take precedence. Direct Gradle builds do not receive Stim's init script.
 
+EXPERIMENTAL ANDROID CAS
+STIM_ANDROID_CAS_TOOLCHAIN opts into a private Apple Clang toolchain manifest
+on macOS. It retains PCH and replaces the ccache setup for that invocation.
+Compiler results live under $STIM_HOME/android-cas/<toolchain-id>; APK cache
+keys include that ID. This is a development prototype requiring a compatible
+linker and NDK copy, not an automatically installed backend. See
+docs/android-cas-poc.md in the Stim repository for setup, evidence, and limits.
+Use disposable worktrees: their generated CMake configurations retain the
+adapter paths and require the CAS environment even for direct Gradle builds.
+
 The launcher persists in the project. AGP writes it into each
 .cxx/**/CMakeCache.txt on the first configure, so a plain \`./gradlew\` in that
 checkout also compiles through ccache -- and a .cxx configured BEFORE the

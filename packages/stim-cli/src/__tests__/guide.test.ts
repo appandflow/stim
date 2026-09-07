@@ -29,7 +29,7 @@ function allBodies(): string[] {
   return bodies;
 }
 
-const NOT_A_REFUSAL_CODE = new Set(['STIM_HOME']);
+const NOT_A_REFUSAL_CODE = new Set(['STIM_HOME', 'STIM_ANDROID_CAS_TOOLCHAIN']);
 
 function scrapedCodes(source: string): Set<string> {
   return new Set(
@@ -372,4 +372,8 @@ test('temporary storage guidance names the override and Git visibility boundary'
   expect(settings).toContain('tempDir');
   expect(settings).toMatch(/outside Git working trees/);
   expect(renderSection('lifecycle', 'options')).toContain('STIM_TMPDIR');
+});
+
+test('build guidance names the experimental Android compiler opt-in', () => {
+  expect(renderSection('lifecycle', 'builds')).toContain('STIM_ANDROID_CAS_TOOLCHAIN');
 });

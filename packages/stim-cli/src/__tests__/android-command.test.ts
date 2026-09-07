@@ -4876,3 +4876,49 @@ describe('run statistics', () => {
     expect(runs[0]?.run.failed).toBe(false);
   });
 });
+
+test('an unavailable CAS manifest returns one JSON refusal before device or build work', async () => {
+  const previous = process.env.STIM_ANDROID_CAS_TOOLCHAIN;
+  process.env.STIM_ANDROID_CAS_TOOLCHAIN = join(home, 'missing-toolchain.json');
+  try {
+    const h = harness({ json: true, ensureDevice: never('device setup'), build: never('build') });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(h.stdout).toHaveLength(1);
+    expect(JSON.parse(h.stdout[0]!)).toMatchObject({
+      code: 'STIM_BAD_ARG',
+      message: expect.stringContaining('Could not prepare Android CAS'),
+    });
+  } finally {
+    if (previous === undefined) delete process.env.STIM_ANDROID_CAS_TOOLCHAIN;
+    else process.env.STIM_ANDROID_CAS_TOOLCHAIN = previous;
+  }
+});
+
+test('CAS Release builds skip legacy providers that cannot key compiler identity', async () => {
+  const previous = process.env.STIM_ANDROID_CAS_TOOLCHAIN;
+  const ndk = join(home, 'ndk');
+  mkdirSync(ndk);
+  writeFileSync(join(ndk, 'source.properties'), 'Pkg.Revision = 27.1.12297006\n');
+  const binary = join(home, 'compiler');
+  writeFileSync(binary, 'test compiler bytes');
+  const manifest = join(home, 'toolchain.json');
+  writeFileSync(
+    manifest,
+    JSON.stringify({ clang: binary, clangxx: binary, lld: binary, ar: binary, ranlib: binary, ndk }),
+  );
+  process.env.STIM_ANDROID_CAS_TOOLCHAIN = manifest;
+  try {
+    const h = harness({
+      variant: 'release',
+      loadProvider: never('legacy provider'),
+      resolveRemoteBuild: never('legacy lookup'),
+      uploadRemoteBuild: never('legacy upload'),
+    });
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.storeCached[0]?.[1]).toMatch(/apple-cas-/);
+  } finally {
+    if (previous === undefined) delete process.env.STIM_ANDROID_CAS_TOOLCHAIN;
+    else process.env.STIM_ANDROID_CAS_TOOLCHAIN = previous;
+  }
+});
