@@ -112,7 +112,11 @@ export function agentDeviceIsolationInvalidReasons(commands, expectedPrefix) {
   if (segments.some((command) => /(?:^|\s)agent-device\s+daemon\s+stop(?:\s|$)/.test(command))) {
     reasons.push('agent-device-daemon-recovery-inside-timer');
   }
-  const deviceCommands = segments.filter((command) => /(?:^|\s)agent-device(?:\s|$)/.test(command));
+  const lookup =
+    /^(?:command\s+-[vV]|which|type|whence)\s+(?:[\w./-]+\s+)*agent-device(?:\s+[\w./-]+)*(?:\s+\d*>\s*[\w./-]*)?$/;
+  const deviceCommands = segments.filter(
+    (command) => /(?:^|\s)agent-device(?:\s|$)/.test(command) && !lookup.test(command),
+  );
   if (deviceCommands.some((command) => !command.startsWith(expectedPrefix))) {
     reasons.push('agent-device-run-session-not-applied');
   }

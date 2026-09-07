@@ -56,6 +56,36 @@ describe('agent-device session isolation', () => {
     }
   });
 
+  it('does not treat literal executable discovery as a device invocation', () => {
+    for (const command of [
+      'command -v agent-device',
+      'command -V agent-device 2>&1',
+      'which node agent-device adb',
+      'type agent-device 2>/dev/null',
+      'whence agent-device',
+      `command -v agent-device 2>&1; ${prefix}snapshot`,
+      `/bin/zsh -lc 'command -v agent-device 2>&1'`,
+    ]) {
+      expect(agentDeviceIsolationInvalidReasons([{ command }], prefix)).toEqual([]);
+    }
+  });
+
+  it('does not let executable discovery hide an actual unscoped invocation', () => {
+    for (const command of [
+      'command agent-device snapshot',
+      'command -p agent-device snapshot',
+      'command -v agent-device; agent-device snapshot',
+      'which agent-device && agent-device snapshot',
+      'command -v agent-device $(agent-device snapshot)',
+      'command -v agent-device >$(agent-device snapshot)',
+      'type agent-device `agent-device snapshot`',
+    ]) {
+      expect(agentDeviceIsolationInvalidReasons([{ command }], prefix)).toContain(
+        'agent-device-run-session-not-applied',
+      );
+    }
+  });
+
   it('rejects delayed daemon recovery even with the correct session', () => {
     expect(agentDeviceIsolationInvalidReasons([{ command: `sleep 5; ${prefix}daemon stop --clean` }], prefix)).toEqual([
       'agent-device-daemon-recovery-inside-timer',
