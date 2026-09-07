@@ -149,6 +149,14 @@ describe('launch crash benchmark', () => {
           endedAt: '2026-09-04T12:00:10.400Z',
         },
         {
+          id: 'empty-logs-retry',
+          command: 'stim logs --errors',
+          output: 'No matching log records',
+          exitCode: 0,
+          startedAt: '2026-09-04T12:00:10.500Z',
+          endedAt: '2026-09-04T12:00:10.600Z',
+        },
+        {
           id: 'logs',
           command: 'stim logs --errors',
           output: `${token}\napp/_layout.tsx:28 in RootLayout`,
@@ -164,7 +172,7 @@ describe('launch crash benchmark', () => {
       valid: true,
       observedAt: '2026-09-04T12:00:15.000Z',
       dispatchToDiagnosisSeconds: 15,
-      commandCount: 4,
+      commandCount: 5,
       commandId: 'logs',
       command: 'stim logs --errors',
       initialLaunchCommandId: 'launch',
