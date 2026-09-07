@@ -63,6 +63,8 @@ describe('agent-device session isolation', () => {
       'which node agent-device adb',
       'type agent-device 2>/dev/null',
       'whence agent-device',
+      'command -v agent-device daemon stop',
+      'command -v agent-device &>/dev/null',
       `command -v agent-device 2>&1; ${prefix}snapshot`,
       `/bin/zsh -lc 'command -v agent-device 2>&1'`,
     ]) {
@@ -78,6 +80,11 @@ describe('agent-device session isolation', () => {
       'which agent-device && agent-device snapshot',
       'command -v agent-device $(agent-device snapshot)',
       'command -v agent-device >$(agent-device snapshot)',
+      'command -v agent-device 2>&$(agent-device snapshot)',
+      'command -v agent-device 2>&$(agent-device daemon stop)',
+      'command -v agent-device; $(agent-device snapshot)',
+      'command -v agent-device && $(agent-device daemon stop)',
+      'command -v agent-device & `agent-device snapshot`',
       'type agent-device `agent-device snapshot`',
     ]) {
       expect(agentDeviceIsolationInvalidReasons([{ command }], prefix)).toContain(
@@ -90,6 +97,12 @@ describe('agent-device session isolation', () => {
     expect(agentDeviceIsolationInvalidReasons([{ command: `sleep 5; ${prefix}daemon stop --clean` }], prefix)).toEqual([
       'agent-device-daemon-recovery-inside-timer',
     ]);
+    expect(
+      agentDeviceIsolationInvalidReasons(
+        [{ command: 'command -v agent-device && $(agent-device daemon stop)' }],
+        prefix,
+      ),
+    ).toEqual(['agent-device-daemon-recovery-inside-timer', 'agent-device-run-session-not-applied']);
   });
 });
 

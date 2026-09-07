@@ -94,6 +94,7 @@ export function shellCommandSegments(command) {
       continue;
     }
     const next = source[index + 1];
+    if (char === '&' && (source[index - 1] === '>' || source[index - 1] === '<' || next === '>')) continue;
     const separator = char === '\n' || char === ';' || char === '|' || char === '&';
     if (!separator) continue;
     const segment = source.slice(start, index).trim();
@@ -109,14 +110,14 @@ export function shellCommandSegments(command) {
 export function agentDeviceIsolationInvalidReasons(commands, expectedPrefix) {
   const segments = commands.flatMap((command) => shellCommandSegments(command.command));
   const reasons = [];
-  if (segments.some((command) => /(?:^|\s)agent-device\s+daemon\s+stop(?:\s|$)/.test(command))) {
+  const lookup =
+    /^(?:command\s+-[vV]|which|type|whence)\s+(?:[\w./-]+\s+)*agent-device(?:\s+[\w./-]+)*(?:\s+(?:\d*>|&>)\s*(?:&\d+|[\w./-]+))?$/;
+  const deviceCommands = segments.filter(
+    (command) => /(?:^|[\s(`])agent-device(?:\s|[)`]|$)/.test(command) && !lookup.test(command),
+  );
+  if (deviceCommands.some((command) => /(?:^|[\s(`])agent-device\s+daemon\s+stop(?:\s|[)`]|$)/.test(command))) {
     reasons.push('agent-device-daemon-recovery-inside-timer');
   }
-  const lookup =
-    /^(?:command\s+-[vV]|which|type|whence)\s+(?:[\w./-]+\s+)*agent-device(?:\s+[\w./-]+)*(?:\s+\d*>\s*[\w./-]*)?$/;
-  const deviceCommands = segments.filter(
-    (command) => /(?:^|\s)agent-device(?:\s|$)/.test(command) && !lookup.test(command),
-  );
   if (deviceCommands.some((command) => !command.startsWith(expectedPrefix))) {
     reasons.push('agent-device-run-session-not-applied');
   }
