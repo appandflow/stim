@@ -5,7 +5,7 @@ keeps machine-local pins, credentials, build artifacts, raw transcripts, and
 device identifiers outside the repository while keeping fixture preparation,
 dispatch, evidence collection, audit, cleanup, and reporting reviewable.
 
-The driver runs the iOS and Android readiness suites plus the iOS JavaScript
+The driver runs the iOS and Android readiness suites plus the JavaScript
 launch-failure suite described in [`../../docs/agent-benchmark.md`](../../docs/agent-benchmark.md).
 Runs are sequential. Never dispatch two cells against the same benchmark root.
 
@@ -125,7 +125,15 @@ Android is selected explicitly and remains a separate result block:
 node scripts/agent-benchmark/driver.mjs preflight android
 node scripts/agent-benchmark/driver.mjs prepare android
 node scripts/agent-benchmark/driver.mjs dispatch gpt-5.6-sol stim javascript sol-android android
+node scripts/agent-benchmark/driver.mjs dispatch gpt-5.6-sol stim launch-crash sol-android-crash android
 ```
+
+Launch-error recovery uses the same injected JavaScript exception on both
+platforms. Android control creates a fresh AVD from the pinned arm64 system
+image and uses its exact serial for launch and log capture. The watcher records
+the app process without requiring the native-change task's APK-label mutation;
+validation still requires runtime error evidence before source inspection,
+the exact repair, and Settings-screen screenshot/video proof.
 
 `dispatch` creates and commits the broken fixture before the timed turn, gives
 the agent the fixture checkout as its starting directory, and requires the

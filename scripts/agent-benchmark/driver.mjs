@@ -28,6 +28,7 @@ import {
 } from '../launch-crash-benchmark.mjs';
 import { benchmarkFingerprint, selectBenchmarkCacheKey } from './cache-key.mjs';
 import { matchesGoldenPreparation } from './golden-state.mjs';
+import { launchCrashSetup } from './launch-crash-setup.mjs';
 import {
   androidApplicationLabelFromBadging,
   matchesExpectedAndroidEmulator,
@@ -829,7 +830,7 @@ function prepareAndroid() {
   process.stdout.write(`${JSON.stringify(ready, null, 2)}\n`);
 }
 
-function prepareLaunchCrashFixture(arm, runId, environment) {
+function prepareLaunchCrashFixture(arm, runId, environment, platform) {
   const fixtureCheckout = join(worktreeParent, `fixture-${runId}`);
   const fixtureBranch = arm === 'stim' ? `worktree-fixture/${runId}` : `bench-fixture/${runId}`;
   run('git', ['worktree', 'add', '-b', fixtureBranch, fixtureCheckout, 'HEAD'], {
@@ -839,7 +840,7 @@ function prepareLaunchCrashFixture(arm, runId, environment) {
   if (arm === 'stim') {
     run('stim', ['worktree', 'warm'], { cwd: fixtureCheckout, env: environment, timeout: 20 * 60 * 1000 });
   } else {
-    for (const name of ['node_modules', 'ios/Pods', 'ios/build']) {
+    for (const name of launchCrashSetup({ arm, platform, systemImage: pins.ANDROID_SYSTEM_IMAGE }).ignoredPaths) {
       const source = join(main, name);
       if (!existsSync(source)) continue;
       const target = join(fixtureCheckout, name);
@@ -881,7 +882,7 @@ function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform 
     arm === 'stim'
       ? `In ${stimSource}, run exactly \`git worktree add -b worktree-bench/${runId} ${quotedStimPath} HEAD\`. Then change into ${stimPath}, run \`stim worktree warm\`, and work only in that checkout. `
       : variant === launchCrashVariant
-        ? `In ${crash.fixtureCheckout}, create a git worktree for branch bench/${runId} at ${join(worktreeParent, runId)} from the current fixture HEAD and carry installed dependencies and native outputs from the fixture checkout. Then work only in that run worktree. Name the new simulator exactly ${JSON.stringify(controlDeviceName)}. `
+        ? `In ${crash.fixtureCheckout}, create a git worktree for branch bench/${runId} at ${join(worktreeParent, runId)} from the current fixture HEAD and carry installed dependencies and native outputs from the fixture checkout. Then work only in that run worktree. Name the new ${platform === 'ios' ? 'simulator' : 'AVD'} exactly ${JSON.stringify(controlDeviceName)}. `
         : `In ${main}, create a git worktree for branch bench/${runId} at ${join(worktreeParent, runId)} and carry installed dependencies and native outputs from the main checkout. Then work only in that worktree. Name the new ${platform === 'ios' ? 'simulator' : 'AVD'} exactly ${JSON.stringify(controlDeviceName)} so the coordinator can prove ownership and clean it safely. `;
   const screenshot = join(runDir, 'proof', 'settings.png');
   const screenshotScratch = join('/tmp', `${runId}-settings.png`);
@@ -895,10 +896,7 @@ function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform 
   const proofProtocol = `\n\nFINAL PROOF PROTOCOL: The proof directory already exists. For each numbered shell command below, send the displayed line alone as the entire Bash \`command\` string. Do not prepend \`mkdir\`, append \`ls\`, combine it with another command, use redirection, or wrap it in a script or interactive shell. Replace only the angle-bracketed value in step 1.\n\n1. \`${agentDevicePrefix} open com.appandflow.trailhead --foreground --platform ${platform} ${targetFlag} <run ${targetDescription}>\`\n2. \`${agentDevicePrefix} record start ${recordingScratch} --scope device --quality high --hide-touches\`\n3. \`${agentDevicePrefix} wait text ${JSON.stringify(expected)}\`\n4. \`${agentDevicePrefix} screenshot ${screenshotScratch}\`\n5. \`cp ${screenshotScratch} ${screenshot}\`\n6. \`${agentDevicePrefix} record stop\`\n7. \`cp ${recordingScratch} ${recording}\`\n8. \`${agentDevicePrefix} close\`\n\nDo not claim completion before all eight commands succeed in order, the wait finds the expected text, recording stop reports the saved video, and the copied screenshot and recording exist.`;
   const suffix = ` Stay in this turn until the Settings screenshot is saved; do not stop to await a background notification. Do not use subagents. Work only in the fixture checkout, run worktree, and the current run's proof, temporary, runtime, and tool-state paths. Coordinator configuration, golden caches, other worktrees, and other runs' file contents are protected by the runner filesystem policy. Parent directory listings are permitted; do not try to bypass a denied read or use another process or service to access protected files. Report the run worktree and screenshot paths, then stop; the coordinator will verify and clean up.${proofProtocol}`;
   if (variant === launchCrashVariant) {
-    const launch =
-      arm === 'stim'
-        ? 'Use the Stim skill and only the pinned published command available on PATH as exactly `stim`. Keep the inherited STIM_HOME unchanged. Before inspecting source or git diff, run `stim start` and then `stim ios` so the benchmark observes the failure. Preserve that launch output, then immediately run `stim logs --errors` as its own command. Diagnose the launch failure from those results. Only after the diagnostic commands may you inspect and edit source. Make the smallest repair and demonstrate the repaired Settings screen on the same adopted simulator. Leave Metro and the app running until screenshot proof is complete. Do not use npx, an absolute Stim path, raw Expo launch commands, or stop Stim.'
-        : "Use the project's local Expo and Apple tooling and do not use Stim. Create a new iPhone 17 simulator running iOS 26.5 with the exact required name; do not substitute another device type or runtime and do not use an existing simulator. Before inspecting source or git diff, start Metro as a detached process with its PID and log under /tmp. Start the initial native build/install/launch as a detached shell process with its PID and log under /tmp, then poll it with short foreground shell commands. Once the app has launched and failed, run a separate foreground `tail`, `rg`, or simulator-log command that completes and prints the crash token and source location. Only after that explicit error-capture command completes may you inspect or edit source. Make the smallest repair and demonstrate the repaired Settings screen on the same simulator. Leave Metro and the app running until screenshot proof is complete. Do not use a long-running foreground shell command, concurrent shell tool calls, or rely on streamed output from a command that is still running as diagnosis evidence.";
+    const launch = launchCrashSetup({ arm, platform, systemImage: pins.ANDROID_SYSTEM_IMAGE }).instructions;
     return (
       worktree +
       'The app has a deterministic JavaScript failure during its initial root render. Diagnose and repair that launch failure without making unrelated product changes. ' +
@@ -1231,9 +1229,6 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
   if (!['javascript', 'native', launchCrashVariant].includes(variant)) {
     throw new Error(`unsupported variant: ${variant}`);
   }
-  if (platform === 'android' && variant === launchCrashVariant) {
-    throw new Error('the launch-crash benchmark currently supports iOS only');
-  }
   const preflightReport = preflight(platform);
   const timingTarget = benchmarkTarget(benchmarkTargets(), { platform, variant, arm });
   if (
@@ -1316,7 +1311,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
       timeout: 10 * 60 * 1000,
     });
   }
-  const crash = variant === launchCrashVariant ? prepareLaunchCrashFixture(arm, runId, env) : null;
+  const crash = variant === launchCrashVariant ? prepareLaunchCrashFixture(arm, runId, env, platform) : null;
   const prompt = promptFor(arm, variant, runId, runDir, crash, platform);
   writeFileSync(join(runDir, 'prompt.txt'), `${prompt}\n`);
   const shellProvenance = verifyRunnerShell(arm, env);
@@ -1359,7 +1354,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
       join(runDir, 'devices-before.json'),
       join(runDir, 'app-alive.json'),
       dispatchAt,
-      variant === launchCrashVariant ? 'native' : variant,
+      variant,
       arm,
       expectedParkedSimulator?.udid ?? '',
       expectedControlSimulator.name,

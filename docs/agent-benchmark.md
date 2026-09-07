@@ -273,9 +273,11 @@ A launch-crash diagnostic is a separate suite, not a fifth performance cell.
 Inject a deterministic root-render JavaScript exception before the first app
 screen, then give each agent the same repair task. Compare dispatch to the
 first actionable diagnosis, commands and tokens to diagnosis, and dispatch to
-a repaired Settings screenshot. The Stim arm must preserve `stim ios` launch
+a repaired Settings screenshot. Run separate iOS and Android blocks. The Stim
+arm must preserve the matching `stim ios` or `stim android` launch
 output and `stim logs --errors`; control collects the equivalent Metro and
-simulator logs manually. The injected error text is unique per run so the
+device logs manually, using the exact emulator serial for Android `adb`
+commands. The injected error text is unique per run so the
 collector can prove that the reported stack and repair refer to this failure.
 The unique token and source location must appear in captured runtime errors;
 the earlier successful launch command does not have to print the token inline.
@@ -289,7 +291,9 @@ run worktree from that HEAD, so worktree setup remains part of the measured
 workflow. The agent must launch before inspecting source. An actionable
 diagnosis contains both the run's unique error token and the root-layout source
 location. A valid repair removes that token and reaches the unchanged Settings
-proof on the same explicitly targeted simulator. The recovery mechanism is a
+proof on the same explicitly targeted simulator or emulator. Android launch
+recovery does not require the readiness native-change task's APK-label edit.
+The recovery mechanism is a
 measured agent choice, not a validity condition. Report diagnosis and repair
 timing separately; do not add crash-suite results to the readiness charts.
 

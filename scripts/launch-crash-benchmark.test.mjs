@@ -9,6 +9,80 @@ import {
 } from './launch-crash-benchmark.mjs';
 
 describe('launch crash benchmark', () => {
+  it('accepts fresh Android setup and separately captured serial-scoped runtime errors', () => {
+    const token = launchCrashToken('android-control');
+    const setup = [
+      "echo no | avdmanager create avd -n Trailhead_run -k 'system-images;android-36;google_apis_playstore_ps16k;arm64-v8a'",
+      "printf 'disk.dataPartition.size=8589934592\\n' >> /tmp/avds/Trailhead_run.avd/config.ini",
+      'nohup emulator -avd Trailhead_run > /tmp/emulator.log 2>&1 &',
+      'adb -s emulator-5554 wait-for-device',
+      'adb -s emulator-5554 reverse tcp:8081 tcp:8081',
+    ].map((command, index) => ({
+      id: `setup-${index}`,
+      command,
+      exitCode: 0,
+      endedAt: `2026-09-04T12:00:0${index + 1}Z`,
+    }));
+    const evidence = [
+      {
+        id: 'launch',
+        command: 'adb -s emulator-5554 shell am start -n com.example.app/.MainActivity',
+        exitCode: 0,
+        endedAt: '2026-09-04T12:00:10Z',
+      },
+      {
+        id: 'logs',
+        command: 'adb -s emulator-5554 logcat -d',
+        exitCode: 0,
+        output: `${token}\napp/_layout.tsx:28 in RootLayout`,
+        endedAt: '2026-09-04T12:00:12Z',
+      },
+    ];
+    const options = { dispatchAt: '2026-09-04T12:00:00Z', token, arm: 'control', platform: 'android' };
+    expect(launchCrashDiagnosis([...setup, ...evidence], options)).toMatchObject({
+      valid: true,
+      initialLaunchCommandId: 'launch',
+      errorCaptureCommandId: 'logs',
+      dispatchToDiagnosisSeconds: 12,
+    });
+    for (const command of [
+      'avdmanager list avd; rg "throw new Error" .',
+      'adb -s emulator-5554 get-state && cat app/_layout.tsx',
+      "printf 'disk.dataPartition.size=8589934592\\n' >> /tmp/avds/Trailhead_run.avd/config.ini; git diff",
+    ]) {
+      expect(launchCrashDiagnosis([{ ...setup[0], command }, ...evidence], options)).toMatchObject({
+        valid: false,
+        reason: 'launch-crash-pre-capture-command-not-allowed',
+        commandId: 'setup-0',
+      });
+    }
+  });
+
+  it('requires Android Stim launch before the separate error capture', () => {
+    const token = launchCrashToken('android-stim');
+    const commands = [
+      {
+        id: 'launch',
+        command: "stim android --system-image 'system-images;android-36;google_apis_playstore_ps16k;arm64-v8a'",
+        exitCode: 0,
+        endedAt: '2026-09-04T12:00:10Z',
+      },
+      {
+        id: 'logs',
+        command: 'stim logs --errors',
+        exitCode: 0,
+        output: `${token}\nRootLayout`,
+        endedAt: '2026-09-04T12:00:12Z',
+      },
+    ];
+    const options = { dispatchAt: '2026-09-04T12:00:00Z', token, arm: 'stim', platform: 'android' };
+    expect(launchCrashDiagnosis(commands, options)).toMatchObject({ valid: true });
+    expect(launchCrashDiagnosis([{ ...commands[0], command: 'stim ios' }, commands[1]], options)).toMatchObject({
+      valid: false,
+      reason: 'launch-crash-initial-launch-evidence-missing',
+    });
+  });
+
   it('combines staged, unstaged, and untracked repair paths', () => {
     expect(changedPathsFromGitOutputs('app/_layout.tsx\0', '')).toEqual(['app/_layout.tsx']);
     expect(changedPathsFromGitOutputs('app/_layout.tsx\0', 'notes.txt\0')).toEqual(['app/_layout.tsx', 'notes.txt']);
