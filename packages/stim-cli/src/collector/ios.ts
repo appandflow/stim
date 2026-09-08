@@ -126,6 +126,8 @@ function recordFromLogEvent(
   };
   const proc = procFromImagePath(event.processImagePath);
   if (proc) record.proc = proc;
+  if (typeof event.subsystem === 'string') record.subsystem = event.subsystem;
+  if (typeof event.category === 'string') record.category = event.category;
   return record;
 }
 
@@ -154,6 +156,8 @@ export function logStreamArgs(udid: string, appName: string, executableName?: st
     'ndjson',
     '--predicate',
     `processImagePath ENDSWITH "/${appName}.app/${exe}"`,
+    '--level',
+    'info',
   ];
 }
 

@@ -10,6 +10,8 @@ import {
   shortHash,
   shortUdid,
 } from '../command-output.ts';
+import { parseLogcatLine } from '../collector/android.ts';
+import { parseLogStreamLine } from '../collector/ios.ts';
 
 test('formatDuration uses one format for every command', () => {
   expect(formatDuration(0)).toBe('0ms');
@@ -116,6 +118,21 @@ test('the count never depends on the process a record names', () => {
   expect(named.summary).toBe(unnamed.summary);
   expect(named.summary).toBe('1 error-level record in the device log during launch (logs --errors --source device)');
   expect(named.lines).toEqual([]);
+});
+
+test('device JavaScript failures remain visible without a client or Metro copy', () => {
+  const android = parseLogcatLine('09-08 15:00:00.000 E/ReactNativeJS( 123): startup failed');
+  const ios = parseLogStreamLine(
+    JSON.stringify({
+      eventType: 'logEvent',
+      messageType: 'Error',
+      eventMessage: 'startup failed',
+      subsystem: 'com.facebook.react.log',
+      category: 'javascript',
+    }),
+  );
+  expect(launchErrorReport([{ ...android, platform: 'android' }]).lines).toEqual(['startup failed']);
+  expect(launchErrorReport([{ ...ios, platform: 'ios' }]).lines).toEqual(['startup failed']);
 });
 
 test('no device record means no count line at all', () => {

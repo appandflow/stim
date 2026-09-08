@@ -119,7 +119,10 @@ line by design (see \`guide logs\`), not this single-payload contract.`,
                                  reads \`bundle loaded, process alive, stable
                                  for 3s -- the first screen may still be
                                  rendering\`. Poll the UI before you trust a
-                                 screenshot
+                                 screenshot. Optional app-declared readiness
+                                 adds a separate stderr readiness phase; it
+                                 does not change this field. See
+                                 \`guide lifecycle readiness\`
                     "bundling"   the request DID arrive and Metro was still
                                  building when the bundle timeout closed.
                                  The wiring is proven; the JS has simply not

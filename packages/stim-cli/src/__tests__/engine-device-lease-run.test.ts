@@ -2,7 +2,8 @@ import assert from 'node:assert';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { STABILITY_WINDOW_MS, VERIFY_TIMEOUT_MS } from '../engine/app-install.ts';
+import { VERIFY_TIMEOUT_MS } from '../engine/app-install.ts';
+import { APP_READINESS_TIMEOUT_MS } from '../engine/app-readiness.ts';
 import { deviceLeasePath, parseLease, takeLease, type LeaseIo, type WorkspaceLeases } from '../engine/device-lease.ts';
 import {
   DEBUG_VERIFY_STEP_MS,
@@ -118,7 +119,7 @@ describe('the flags that steer the wait', () => {
     expect(leaseStepMs(0)).toBe(LEASE_STEP_FLOOR_MS);
     expect(leaseStepMs(1000)).toBe(LEASE_STEP_FLOOR_MS);
     expect(leaseStepMs(INSTALL_MS)).toBe(INSTALL_MS);
-    expect(DEBUG_VERIFY_STEP_MS).toBe(VERIFY_TIMEOUT_MS + STABILITY_WINDOW_MS);
+    expect(leaseStepMs(DEBUG_VERIFY_STEP_MS)).toBeGreaterThanOrEqual(VERIFY_TIMEOUT_MS + APP_READINESS_TIMEOUT_MS);
   });
 });
 
@@ -426,13 +427,13 @@ describe('the per-step raise', () => {
     expect(lease.expiresAt).toBe(before);
   });
 
-  test('the verification raise outlasts the bundle deadline plus the stability window', async () => {
+  test('the verification raise outlasts the bundle deadline plus the optional readiness wait', async () => {
     const h = harness();
     const lease = await leased(h);
     h.advance(INSTALL_MS);
     lease.raise(DEBUG_VERIFY_STEP_MS);
 
-    h.advance(VERIFY_TIMEOUT_MS + STABILITY_WINDOW_MS);
+    h.advance(VERIFY_TIMEOUT_MS + APP_READINESS_TIMEOUT_MS);
     expect(Date.parse(lease.expiresAt as string)).toBeGreaterThan(h.now());
   });
 

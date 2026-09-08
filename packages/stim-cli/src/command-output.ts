@@ -103,6 +103,7 @@ export const OUTPUT_LABELS: readonly string[] = [
   'port',
   'prebuild',
   'project',
+  'readiness',
   'ready',
   'remedy',
   'removed',
@@ -133,6 +134,15 @@ export interface LaunchErrorRecord {
   [key: string]: unknown;
 }
 
+export function isAppLaunchError(record: LaunchErrorRecord): boolean {
+  return (
+    record.src !== 'device' ||
+    record.level === 'fatal' ||
+    (record.platform === 'android' && typeof record.proc === 'string' && /^ReactNativeJS\(\d+\)$/.test(record.proc)) ||
+    (record.platform === 'ios' && record.subsystem === 'com.facebook.react.log' && record.category === 'javascript')
+  );
+}
+
 /**
  * Splits the error-level records a verified launch collected into the device
  * log the run counts and the records it still prints one by one.
@@ -140,7 +150,7 @@ export interface LaunchErrorRecord {
 export function launchErrorReport(records: readonly LaunchErrorRecord[]): { summary: string | null; lines: string[] } {
   const fromDevice = records.filter((record) => record.src === 'device');
   const lines = records
-    .filter((record) => record.src !== 'device')
+    .filter(isAppLaunchError)
     .map((record) => (record.msg === undefined || record.msg === null ? '' : String(record.msg)))
     .filter((msg) => msg !== '');
   const summary =
@@ -148,6 +158,12 @@ export function launchErrorReport(records: readonly LaunchErrorRecord[]): { summ
       ? null
       : `${plural(fromDevice.length, 'error-level record')} in the device log during launch (logs --errors --source device)`;
   return { summary, lines };
+}
+
+export function appReadinessMessage(status: 'ready' | 'timed-out' | 'error', waitedMs: number): string {
+  if (status === 'ready') return `app reported ready (${formatDuration(waitedMs)} verification total)`;
+  if (status === 'error') return 'not confirmed: an app error or process exit interrupted the readiness wait';
+  return 'not confirmed: no ready log within 30s of bundle load; inspect the UI and logs';
 }
 
 export const SLOW_STEP_MS = 2000;

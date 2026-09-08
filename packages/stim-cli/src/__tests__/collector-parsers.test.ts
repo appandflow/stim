@@ -135,12 +135,14 @@ describe('ios: log stream ndjson', () => {
       'ndjson',
       '--predicate',
       'processImagePath ENDSWITH "/MyApp.app/MyApp"',
+      '--level',
+      'info',
     ]);
   });
 
   test('logStreamArgs anchors to CFBundleExecutable when it differs from the .app basename', () => {
     const args = logStreamArgs('U1', 'MyAppDev', 'MyApp');
-    expect(args[args.length - 1]).toBe('processImagePath ENDSWITH "/MyAppDev.app/MyApp"');
+    expect(args[args.indexOf('--predicate') + 1]).toBe('processImagePath ENDSWITH "/MyAppDev.app/MyApp"');
   });
 
   test('logStreamArgs falls back to the .app basename as the executable when none is given', () => {

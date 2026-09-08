@@ -20,7 +20,7 @@ import {
   RELEASE_VERIFY_WAIT_MS,
   installConflictKind,
 } from '../../engine/app-install.ts';
-import { formatDuration, launchErrorReport, phaseLine, stepTimer } from '../../command-output.ts';
+import { appReadinessMessage, formatDuration, launchErrorReport, phaseLine, stepTimer } from '../../command-output.ts';
 import { MODE_BARE, MODE_EXPO, writeWorkspaceLaunch, writeWorkspaceState } from '../../supervisor/state.ts';
 import type {
   VerifyLaunchResultLike,
@@ -125,6 +125,7 @@ async function verifyAndroidRun({
 
   const verification: VerifyLaunchResultLike = metroCheck
     ? await verifyLaunched({
+        onReadinessPending: () => phase('readiness', 'waiting for app readiness (up to 30s after bundle load)'),
         logsDir,
         since: launchedAt,
         metroPort,
@@ -136,6 +137,8 @@ async function verifyAndroidRun({
         },
       })
     : { verified: false, skipped: true };
+  if (verification.readiness)
+    phase('readiness', appReadinessMessage(verification.readiness, verification.waitedMs ?? 0));
   if (verification?.fatal) {
     const reason = verification.processAlive === false ? 'the app process exited' : 'Metro could not build the bundle';
     phase('verify', chalk.red(`FATAL after ${formatDuration(verification.waitedMs ?? 0)}: ${reason}`));
@@ -165,7 +168,7 @@ async function verifyAndroidRun({
       'verify',
       `bundle loaded` +
         (verification.processAlive === true ? ', process alive' : '') +
-        `, stable for 3s -- the first screen may still be rendering` +
+        (verification.readiness ? '' : ', stable for 3s -- the first screen may still be rendering') +
         ` (${formatDuration(verification.waitedMs ?? 0)} total)`,
     );
     const report = launchErrorReport(verification.errors ?? []);
