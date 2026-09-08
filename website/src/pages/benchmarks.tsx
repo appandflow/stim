@@ -2,17 +2,13 @@ import type { ReactNode } from 'react';
 import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
-import { benchmarks, defaultRun, displayVariant } from '@site/src/components/benchmarkCatalog';
+import { benchmarks, displayVariant } from '@site/src/components/benchmarkCatalog';
 import BenchmarkVideo from '@site/src/components/BenchmarkVideo';
-import { benchmarkDimensions, benchmarkModelLabel } from '@site/src/components/benchmarkSelection';
+import { benchmarkModelLabel } from '@site/src/components/benchmarkSelection';
 import {
   benchmarkDisplayTitle,
   benchmarkOverview,
-  benchmarkSelectionSearch,
-  formatCost,
   formatSeconds,
-  formatTokens,
-  totalTokens,
   type BenchmarkData,
   type BenchmarkRun,
 } from '@site/src/components/benchmarkData';
@@ -27,48 +23,6 @@ const readinessPlatforms = (['ios', 'android'] as const)
   }))
   .filter(({ benchmarks: platformBenchmarks }) => platformBenchmarks.length > 0);
 
-function LaunchCrashCard({ benchmark }: { benchmark: BenchmarkData }): ReactNode {
-  const runs = benchmark.runs.filter((run) => run.valid && run.diagnosisSeconds !== null);
-  const maxSeconds = Math.max(1, ...runs.map((run) => run.diagnosisSeconds ?? 0));
-  return (
-    <article className={styles.comparisonCard}>
-      <h3>
-        {benchmarkModelLabel(benchmarkDimensions(benchmark).model)} /{' '}
-        {benchmark.platform === 'android' ? 'Android' : 'iOS'}
-      </h3>
-      <span className={`${styles.outcome} ${styles.neutral}`}>Time to first actionable diagnosis</span>
-      {runs.map((run) => (
-        <div className={styles.barRow} key={run.id}>
-          <div className={styles.barHead}>
-            <span>{run.arm === 'stim' ? 'Stim' : 'Control'}</span>
-            <strong>{formatSeconds(run.diagnosisSeconds ?? null)}</strong>
-          </div>
-          <div className={styles.barTrack}>
-            <div
-              className={`${styles.bar} ${run.arm === 'control' ? styles.controlBar : ''}`}
-              style={{ width: `${((run.diagnosisSeconds ?? 0) / maxSeconds) * 100}%` }}
-            />
-          </div>
-          <div className={styles.barMeta}>
-            <span>Settings repaired {formatSeconds(run.settingsReadySeconds)}</span>
-            <span>
-              {totalTokens(run.usage) > 0 ? formatTokens(totalTokens(run.usage)) : 'unavailable'} total tokens
-            </span>
-            <span>{formatCost(run.estimatedTokenCostUsd)} total cost</span>
-          </div>
-        </div>
-      ))}
-      <Link
-        to={`/benchmarks/details${benchmarkSelectionSearch(
-          { stage: benchmark.stage, runId: defaultRun(benchmark)?.id ?? '' },
-          benchmarks,
-        )}#audit-title`}
-      >
-        Open the run audit
-      </Link>
-    </article>
-  );
-}
 function OverviewChart({
   variant,
   benchmarks: allBenchmarks,
@@ -89,46 +43,49 @@ function OverviewChart({
         <span className={styles.stimKey}>Stim</span>
         <span className={styles.controlKey}>Control</span>
       </div>
-      {overview.rows.map((row) => (
-        <div className={styles.overviewModel} key={row.stage}>
-          <strong>
-            {variant === 'launch-crash'
-              ? benchmarkModelLabel(
-                  allBenchmarks.find((candidate) => candidate.stage === row.stage)?.runs[0]?.model ?? row.title,
-                )
-              : benchmarkDisplayTitle(row.title)}
-          </strong>
-          <div className={styles.overviewBars}>
-            {row.arms.map((arm) => {
-              if (!arm.run || !arm.href) {
+      {overview.rows.map((row) => {
+        const label =
+          variant === 'launch-crash'
+            ? benchmarkModelLabel(
+                allBenchmarks.find((candidate) => candidate.stage === row.stage)?.runs[0]?.model ?? row.title,
+              )
+            : benchmarkDisplayTitle(row.title);
+        const href = row.arms.find((arm) => arm.href)?.href;
+        return (
+          <div className={styles.overviewModel} key={row.stage}>
+            <strong>{href ? <Link to={href}>{label}</Link> : label}</strong>
+            <div className={styles.overviewBars}>
+              {row.arms.map((arm) => {
+                if (!arm.run || !arm.href) {
+                  return (
+                    <span className={styles.missingBar} key={arm.arm}>
+                      <span>{arm.label}</span>
+                      <span>No valid run</span>
+                    </span>
+                  );
+                }
                 return (
-                  <span className={styles.missingBar} key={arm.arm}>
+                  <Link
+                    className={styles.overviewBarLink}
+                    key={arm.arm}
+                    to={arm.href}
+                    aria-label={`${benchmarkDisplayTitle(row.title)} ${displayVariant(variant)}, ${arm.arm}, ${formatSeconds(arm.run.settingsReadySeconds)}. Open run audit.`}
+                  >
                     <span>{arm.label}</span>
-                    <span>No valid run</span>
-                  </span>
+                    <span className={styles.overviewTrack} aria-hidden="true">
+                      <span
+                        className={`${styles.overviewBar} ${arm.arm === 'control' ? styles.controlBar : ''}`}
+                        style={{ width: `${arm.widthPercent}%` }}
+                      />
+                    </span>
+                    <strong>{formatSeconds(arm.run.settingsReadySeconds)}</strong>
+                  </Link>
                 );
-              }
-              return (
-                <Link
-                  className={styles.overviewBarLink}
-                  key={arm.arm}
-                  to={arm.href}
-                  aria-label={`${benchmarkDisplayTitle(row.title)} ${displayVariant(variant)}, ${arm.arm}, ${formatSeconds(arm.run.settingsReadySeconds)}. Open run audit.`}
-                >
-                  <span>{arm.label}</span>
-                  <span className={styles.overviewTrack} aria-hidden="true">
-                    <span
-                      className={`${styles.overviewBar} ${arm.arm === 'control' ? styles.controlBar : ''}`}
-                      style={{ width: `${arm.widthPercent}%` }}
-                    />
-                  </span>
-                  <strong>{formatSeconds(arm.run.settingsReadySeconds)}</strong>
-                </Link>
-              );
-            })}
+              })}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </article>
   );
 }
@@ -191,11 +148,6 @@ export default function Benchmarks(): ReactNode {
                     title={`${platform === 'ios' ? 'iOS' : 'Android'} launch recovery`}
                     benchmarks={launchCrashBenchmarks.filter((candidate) => candidate.platform === platform)}
                   />
-                ))}
-              </div>
-              <div className={styles.comparisonGrid}>
-                {launchCrashBenchmarks.map((candidate) => (
-                  <LaunchCrashCard benchmark={candidate} key={candidate.stage} />
                 ))}
               </div>
             </section>
