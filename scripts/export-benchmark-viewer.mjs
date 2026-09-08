@@ -866,7 +866,7 @@ function reviewedChecksumProof(runDir, record, meta) {
     : null;
 }
 
-function completedBeforeRunnerTimeout(runDir, record, meta, commands) {
+function completedBeforeRunnerTimeout(runDir, record, meta, { commands, activities }) {
   const seconds = meta.timingTarget?.runTimeoutSeconds;
   const deadline = Date.parse(meta.dispatchAt) + seconds * 1000;
   const proofIds = [
@@ -902,6 +902,11 @@ function completedBeforeRunnerTimeout(runDir, record, meta, commands) {
           (command) => command.id === id && command.exitCode === 0 && Date.parse(command.endedAt) <= deadline,
         ),
     ) &&
+    activities
+      .filter((activity) => !/^tool:(?:reasoning|agent_message) /.test(activity.command))
+      .every(
+        (activity) => Number.isFinite(Date.parse(activity.completedAt)) && Date.parse(activity.completedAt) <= deadline,
+      ) &&
     commands.every((command) => Number.isFinite(Date.parse(command.endedAt)) && Date.parse(command.endedAt) <= deadline)
   );
 }
@@ -928,7 +933,7 @@ function validateLaunchCrashRecord(runDir, record, meta, rederive = false, revie
     record.invalidReasons?.some((reason) => reason === 'runner-exit-143' || reason === 'benchmark-run-timeout') &&
     (typeof review.completion?.assessment !== 'string' ||
       !review.completion.assessment.trim() ||
-      !completedBeforeRunnerTimeout(runDir, record, meta, commands))
+      !completedBeforeRunnerTimeout(runDir, record, meta, evidence))
   )
     return reject('task proof did not complete before runner timeout');
   let auxiliarySessions = [];
@@ -1183,7 +1188,7 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
             ? validateReadinessRecord(runDir, record, meta)
             : true,
         launchCrashValidation:
-          record.variant === 'launch-crash'
+          record.variant === 'launch-crash' && record.valid
             ? validateLaunchCrashRecord(
                 runDir,
                 record,

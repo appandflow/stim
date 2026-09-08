@@ -1460,12 +1460,15 @@ describe('benchmark viewer export', () => {
       writeFileSync(reviewPath, JSON.stringify({ ...diagnosticReview, diagnosticCommands: [diagnosticEntry] }));
       expect(reviewedExport().runs[0]).toMatchObject({ valid: true, diagnosisSeconds: 90 });
       for (const entry of [
+        null,
         { ...diagnosticEntry, command: 'cat app/_layout.tsx' },
         { ...diagnosticEntry, assessment: '' },
       ]) {
         writeFileSync(reviewPath, JSON.stringify({ ...diagnosticReview, diagnosticCommands: [entry] }));
         expect(reviewedExport).toThrow('no valid benchmark runs found');
       }
+      writeFileSync(reviewPath, JSON.stringify({ ...diagnosticReview, diagnosticCommands: {} }));
+      expect(reviewedExport).toThrow('no valid benchmark runs found');
       writeFileSync(eventsPath, reviewedEvents);
       writeFileSync(recordPath, JSON.stringify(rejected));
       const metaPath = join(runDir, 'meta.json');
@@ -1542,6 +1545,41 @@ describe('benchmark viewer export', () => {
       writeFileSync(reviewPath, JSON.stringify(timeoutReview));
       expect(reviewedExport().runs[0]).toMatchObject({ valid: true, settingsReadySeconds: 150 });
       expect(JSON.parse(readFileSync(recordPath))).toEqual(timeoutRecord);
+      for (const completionSeconds of [160, 181, null]) {
+        const editEvents = [
+          stamp('2026-09-04T12:02:35Z', {
+            type: 'item.started',
+            item: { id: 'file-edit', type: 'file_change', changes: [] },
+          }),
+        ];
+        if (completionSeconds !== null)
+          editEvents.push(
+            stamp(new Date(Date.parse(timeoutMeta.dispatchAt) + completionSeconds * 1000).toISOString(), {
+              type: 'item.completed',
+              item: { id: 'file-edit', type: 'file_change', changes: [] },
+            }),
+          );
+        writeFileSync(eventsPath, timeoutEvents + editEvents.join('\n') + '\n');
+        writeFileSync(
+          recordPath,
+          JSON.stringify({
+            ...timeoutRecord,
+            evidenceSha256: { ...timeoutRecord.evidenceSha256, events: sha256(eventsPath) },
+          }),
+        );
+        writeFileSync(reviewPath, JSON.stringify({ ...timeoutReview, originalRecordSha256: sha256(recordPath) }));
+        let outcome;
+        try {
+          outcome = reviewedExport().runs[0].valid;
+        } catch (error) {
+          outcome = error.message.includes('no valid benchmark runs found') ? false : error.message;
+        }
+        expect(outcome).toBe(completionSeconds === 160);
+      }
+      writeFileSync(eventsPath, timeoutEvents);
+      writeFileSync(recordPath, JSON.stringify(timeoutRecord));
+      writeFileSync(reviewPath, JSON.stringify({ ...timeoutReview, completion: { assessment: 1 } }));
+      expect(reviewedExport).toThrow('no valid benchmark runs found');
       for (const changed of [
         { timingTarget: { runTimeoutSeconds: 150 } },
         { runnerResult: { code: 1, timedOut: false } },

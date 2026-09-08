@@ -47,10 +47,13 @@ export function reconstructCommandEvidence(runner, stamped) {
               command: `tool:${block.name} ${JSON.stringify(block.input ?? {})}`,
               startedAt: record.arrivedAt,
               endedAt: record.arrivedAt,
+              completedAt: null,
             });
           }
         }
         if (event.type !== 'user' || block.type !== 'tool_result') continue;
+        const activity = activities.find((entry) => entry.id === block.tool_use_id);
+        if (activity) activity.completedAt = record.arrivedAt;
         const result = event.tool_use_result ?? {};
         const taskId = taskQueries.get(block.tool_use_id);
         if (taskId) {
@@ -112,13 +115,27 @@ export function reconstructCommandEvidence(runner, stamped) {
       continue;
     }
     const item = event.item;
-    if (event.type === 'item.started' && item?.type && item.type !== 'command_execution') {
+    const executableActivity = item?.type && !['command_execution', 'reasoning', 'agent_message'].includes(item.type);
+    if (event.type === 'item.started' && executableActivity) {
       activities.push({
         id: item.id,
         command: `tool:${item.type} ${JSON.stringify(item.changes ?? item)}`,
         startedAt: record.arrivedAt,
         endedAt: record.arrivedAt,
+        completedAt: null,
       });
+    }
+    if (event.type === 'item.completed' && executableActivity) {
+      const activity = activities.find((entry) => entry.id === item?.id);
+      if (activity) activity.completedAt = record.arrivedAt;
+      else
+        activities.push({
+          id: item.id,
+          command: `tool:${item.type} ${JSON.stringify(item.changes ?? item)}`,
+          startedAt: null,
+          endedAt: record.arrivedAt,
+          completedAt: record.arrivedAt,
+        });
     }
     if (event.type === 'item.started' && item?.type === 'command_execution') {
       started.set(item.id, { offset, at: record.arrivedAt, command: item.command });
