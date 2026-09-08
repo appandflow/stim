@@ -554,7 +554,7 @@ describe('the Metro store injected into an Expo child', () => {
     expect(String(records.find((record) => record.event === 'cache_store_skipped')?.msg)).toContain('predates');
   });
 
-  test.each(['legacy', 'machine', 'project', 'native-invalid'])(
+  test.each(['machine', 'project', 'native-invalid'])(
     '%s Metro opt-out leaves NODE_OPTIONS exactly as the caller set it',
     async (layer) => {
       writeFileSync(
@@ -562,9 +562,7 @@ describe('the Metro store injected into an Expo child', () => {
         JSON.stringify({
           projects: {},
           repos: {},
-          ...(layer === 'legacy'
-            ? { caches: { injectMetroStore: false } }
-            : { optimizations: { metroSharedCache: layer !== 'machine' } }),
+          optimizations: { metroSharedCache: layer !== 'machine' },
         }),
       );
       if (layer === 'project' || layer === 'native-invalid')

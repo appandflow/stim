@@ -36,6 +36,20 @@ or Android target, Stim regenerates the current workspace's JavaScript and
 assets in a copy of the artifact. If that swap fails, it builds fresh. iOS
 physical-device Release runs always build fresh.
 
+### Optional artifact providers
+
+The provider integration is implemented, but Stim ships no network provider
+or hosted cache service. Without a configured provider, artifacts stay on the
+local machine.
+
+Projects can supply a module through `cache.provider` using the
+[`@stim-cli/cache` contract](https://github.com/appandflow/stim/tree/main/packages/cache),
+or use a configured Expo `buildCacheProvider`, such as `eas`.
+`optimizations.remoteBuildCache` controls whether Stim uses those providers.
+Provider and build-profile restrictions still apply; see
+[build optimizations](./build-optimizations.md#compare-compiler-settings).
+This caches app artifacts; ccache and Clang CAS use separate compiler caches.
+
 ## Keep the main checkout warm
 
 Run `stim doctor` before native worktree work. It checks whether the main

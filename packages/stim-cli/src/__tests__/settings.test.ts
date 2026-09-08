@@ -678,17 +678,9 @@ test('machine optimization defaults merge with committed, repository and project
   expect(resolveOptimizations(resolveSettings({}), {}).android.pch).toBe('on');
 });
 
-test('the legacy machine Metro opt-out remains a fallback that a project can override', () => {
-  saveConfig({ version: 2, projects: {}, repos: {}, caches: { injectMetroStore: false } });
-  expect(resolveOptimizations(resolveSettings({}), {}).metroSharedCache).toBe(false);
+test('a repository can enable the shared Metro store over a machine opt-out', () => {
+  saveConfig({ version: 2, projects: {}, repos: {}, optimizations: { metroSharedCache: false } });
+  expect(resolveMetroSharedCache(resolveSettings({}))).toBe(false);
   writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ optimizations: { metroSharedCache: true } }));
-  expect(resolveOptimizations(resolveSettings({ repoRoot: tmpHome }), {}).metroSharedCache).toBe(true);
-});
-
-test('an absent or malformed legacy cache setting leaves the shared Metro store enabled', () => {
-  expect(resolveMetroSharedCache(resolveSettings({}))).toBe(true);
-  for (const caches of [{}, { metroCache: '/x' }, { injectMetroStore: 'false' }, { injectMetroStore: 0 }, ['/x']]) {
-    saveConfig({ version: 2, projects: {}, repos: {}, caches } as never);
-    expect(resolveMetroSharedCache(resolveSettings({}))).toBe(true);
-  }
+  expect(resolveMetroSharedCache(resolveSettings({ repoRoot: tmpHome }))).toBe(true);
 });

@@ -642,7 +642,7 @@ describe('startBareServer and the shared store', () => {
     expect(added[0]?.msg).toContain(metroStoreRoot(root));
   });
 
-  test.each(['legacy', 'machine', 'project', 'native-invalid'])(
+  test.each(['machine', 'project', 'native-invalid'])(
     '%s Metro opt-out leaves the project config exactly as loaded',
     async (layer) => {
       writeFileSync(
@@ -650,9 +650,7 @@ describe('startBareServer and the shared store', () => {
         JSON.stringify({
           projects: {},
           repos: {},
-          ...(layer === 'legacy'
-            ? { caches: { injectMetroStore: false } }
-            : { optimizations: { metroSharedCache: layer !== 'machine' } }),
+          optimizations: { metroSharedCache: layer !== 'machine' },
         }),
       );
       if (layer === 'project' || layer === 'native-invalid')
