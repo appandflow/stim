@@ -7,6 +7,7 @@ function shellTokens(command) {
       continue;
     }
     const start = index;
+    if (command[index] === '#') return null;
     if (/[;&|\n]/.test(command[index])) {
       index += 1;
       if (command[index] === command[start] && /[&|]/.test(command[start])) index += 1;
@@ -21,6 +22,7 @@ function shellTokens(command) {
       if (char === '`' || (char === '$' && command[index + 1] === '(')) return null;
       if (char === '\\' && quote !== "'") {
         if (index + 1 === command.length) return null;
+        if (/[\r\n]/.test(command[index + 1])) return null;
         value += command[index + 1];
         index += 2;
         continue;
@@ -51,7 +53,7 @@ export function benchmarkCommandPresentation(command, exitCode) {
     !path.operator &&
     path.value &&
     !/^[-~]/.test(path.value) &&
-    !/[$`*?{}]/.test(path.value) &&
+    !/[$`*?{}[\]]/.test(path.value) &&
     tokens[pathIndex + 1]?.value === '&&' &&
     tokens[pathIndex + 2] &&
     !tokens[pathIndex + 2].operator &&
@@ -70,7 +72,11 @@ export function benchmarkCommandPresentation(command, exitCode) {
     const hasEnv = tokens[first]?.value === 'env';
     let end = first + Number(hasEnv);
     const hidden = [];
-    while (tokens[end] && !tokens[end].operator && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[end].value)) {
+    while (
+      tokens[end] &&
+      !tokens[end].operator &&
+      /^[A-Za-z_][A-Za-z0-9_]*=/.test(hasEnv ? tokens[end].value : display.slice(tokens[end].start, tokens[end].end))
+    ) {
       if (/^AGENT_DEVICE_(?:STATE_DIR|SESSION)=[^$`]+$/.test(tokens[end].value)) hidden.push(end);
       end += 1;
     }
