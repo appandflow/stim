@@ -31,6 +31,66 @@ available. These checks do not prove that a screen rendered correctly.
 A nonfatal error still appears as launch evidence. The agent can read the error
 and decide whether the change caused it.
 
+### Optional app-declared readiness
+
+If your app already uses Sentry or Expo Observe, use its readiness API to
+record when the initial screen becomes usable. Neither SDK is required by
+Stim, and no additional Stim package is needed.
+
+**Current Stim support:** these APIs report readiness to their SDK, not to Stim. Stim does not currently
+consume their readiness metrics or extend its launch wait when either SDK is
+installed. Keep verifying the expected UI on the reported device; a successful
+launch summary is not a full-render guarantee.
+
+**Expo Observe:** after configuring the SDK and wrapping your root with
+`ObserveRoot`, call `markInteractive()` from `useObserve()` when the screen is
+ready (SDK 56 and later):
+
+```tsx
+const { markInteractive } = useObserve();
+
+useEffect(() => {
+  if (isReady) markInteractive();
+}, [isReady, markInteractive]);
+```
+
+Import `useObserve` from `expo-observe` and `useEffect` from `react`. Follow
+the [Expo Observe setup guide](https://docs.expo.dev/eas/observe/get-started/)
+for SDK 55's API and the complete integration. Metrics are not dispatched from
+debug builds by default; use Expo's development configuration when validating
+SDK reporting, rather than interpreting missing metrics as a launch failure.
+
+**Sentry:** with your existing tracing and navigation integration configured,
+render its full-display marker in the screen:
+
+```tsx
+<Sentry.TimeToFullDisplay record={isReady} />
+```
+
+Import Sentry with `import * as Sentry from '@sentry/react-native'`. SDK
+versions that expose `Sentry.reportFullyDisplayed()` also support an imperative
+call. Follow [Sentry's Time to Display guide](https://docs.sentry.io/platforms/react-native/tracing/instrumentation/time-to-display/)
+for the required instrumentation and version-specific API.
+
+Choose `isReady` based on usable content, completed essential initialization,
+and a dismissed splash screen, not just a mounted root or a live native
+process. Cover each launch destination, including login, onboarding, and deep
+links. Do not report success from a cleanup or `finally` block after a startup
+error.
+
+On Android, the platform's first-frame signal is not the same as
+[`reportFullyDrawn()`](https://developer.android.com/topic/performance/vitals/launch-time),
+which needs an explicit call. Do not assume a similarly named SDK API emits
+that Android signal. On iOS, Apple's standard launch measurement ends at the
+first frame; later preparation can use
+[custom signposts](https://developer.apple.com/documentation/xcode/reducing-your-app-s-launch-time).
+Neither first-frame measurement proves that React content is interactive.
+
+An app can fail before sending a readiness marker while its native process
+remains alive. Inspect captured errors independently. An absent marker can
+also mean disabled instrumentation or a reporting deadline, so absence alone
+does not establish a crash or a successful launch.
+
 ## Query the timeline
 
 <StimTabs
