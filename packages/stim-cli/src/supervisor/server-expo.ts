@@ -215,14 +215,14 @@ function resolveMetroStoreInjection(
   root: string,
   { log, env }: { log: NdjsonWriter; env: NodeJS.ProcessEnv },
 ): Record<string, string> | null {
-  if (!projectMetroSharedCache(root)) {
+  const sharedCache = projectMetroSharedCache(root);
+  if (!sharedCache) {
     log.write({
       src: 'metro',
       level: 'debug',
       event: 'cache_store_skipped',
       msg: 'the shared Metro transform store is off in configuration',
     });
-    return null;
   }
   const sdkMajor = expoSdkMajor(root);
   if (sdkMajor === null || sdkMajor < 54) {
@@ -247,13 +247,14 @@ function resolveMetroStoreInjection(
     });
     return null;
   }
-  const storeRoot = metroStoreRoot(root);
+  const storeRoot = sharedCache ? metroStoreRoot(root) : '';
   const additions = expoMetroStoreEnv({
     root,
     storeRoot,
     adapterPath,
     existingOverride: env.EXPO_OVERRIDE_METRO_CONFIG,
   });
+  if (!sharedCache) return additions;
   registerMetroStore(storeRoot);
   log.write({
     src: 'metro',

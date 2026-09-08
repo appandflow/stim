@@ -124,7 +124,7 @@ function appendStore(config, defaultConfig) {
   const server = { ...defaultConfig.server, ...output.server };
   const enhanceMiddleware = server.enhanceMiddleware;
 
-  return {
+  const observed = {
     ...output,
     server: {
       ...server,
@@ -136,6 +136,10 @@ function appendStore(config, defaultConfig) {
         return (req, res, next) => observe(req, res, () => enhanced(req, res, next));
       },
     },
+  };
+  if (!storeRoot) return observed;
+  return {
+    ...observed,
     cacheStores(MetroCache) {
       const resolved = typeof configuredStores === 'function' ? configuredStores(MetroCache) : configuredStores;
       const stores = Array.isArray(resolved) ? resolved : [];
@@ -162,7 +166,7 @@ function appendStore(config, defaultConfig) {
   };
 }
 
-if (!projectRoot || !storeRoot) {
+if (!projectRoot) {
   module.exports = {};
 } else {
   const projectRequire = createRequire(path.join(projectRoot, 'package.json'));
