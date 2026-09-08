@@ -42,6 +42,7 @@ function successfulLaunch(command, arm, platform) {
     /^(?:cd\s+(?:[^\s'"$`\\;&|]+|'[^'\n]+'|"[^"$`\n]+")\s*&&\s*)?set -(?:o|eo|euo) pipefail\s*(?:&&|;|\n)\s*/,
   );
   if (!prefix) return false;
+  if (/^cd\s/.test(prefix[0]) && !/&&\s*$/.test(prefix[0])) return false;
   let pipeline = value.slice(prefix[0].length);
   const report = /;\s*echo "PIPELINE_EXIT=\$\?"\s*$/.exec(pipeline);
   if (report) {

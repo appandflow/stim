@@ -12,9 +12,13 @@ import {
 
 describe('launch crash benchmark', () => {
   it.skipIf(process.platform === 'win32')('uses the real pipeline status when a trailing echo exits zero', () => {
-    for (const code of [0, 7]) {
-      const command =
-        'cd /tmp && set -o pipefail && npx expo run:android 2>&1 | tee /dev/null | tail -40; echo "PIPELINE_EXIT=$?"';
+    for (const [code, prefix, valid] of [
+      [0, 'cd /tmp && set -o pipefail &&', true],
+      [7, 'cd /tmp && set -o pipefail &&', false],
+      [7, 'cd /dev/null/not-a-directory && set -o pipefail;', false],
+      [7, 'cd /dev/null/not-a-directory && set -o pipefail\n', false],
+    ]) {
+      const command = `${prefix} npx expo run:android 2>&1 | tee /dev/null | tail -40; echo "PIPELINE_EXIT=$?"`;
       const result = spawnSync('/bin/bash', ['-c', `npx() { return ${code}; }; ${command}`], {
         encoding: 'utf8',
         timeout: 5000,
@@ -27,7 +31,7 @@ describe('launch crash benchmark', () => {
         ],
         { dispatchAt: '2026-09-04T12:00:00Z', token: 'test-token', arm: 'control', platform: 'android' },
       );
-      expect(diagnosis.valid).toBe(code === 0);
+      expect(diagnosis.valid).toBe(valid);
     }
   });
 
