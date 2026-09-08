@@ -59,6 +59,12 @@ Stim builds or restores the app, installs it, launches it, and checks launch
 readiness. Plain output streams progress and reports the complete result. Use
 `--json` when a script needs structured data.
 
+Launch evidence does not prove that the UI is interactive. Apps already using
+Sentry or Expo Observe can optionally
+[report readiness through that SDK](https://appandflow.github.io/stim/docs/dev-server-and-logs#optional-app-declared-readiness).
+Stim does not currently consume those metrics or change its wait based on SDK
+installation; verify the expected screen separately.
+
 `stim reload [ios|android]` requests a JavaScript reload in the live app on this
 workspace's owned local device. Use it after a failed first bundle load, when
 an error screen remains after a fix, or when you explicitly need an app
