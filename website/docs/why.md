@@ -72,3 +72,25 @@ existing setup with worktree isolation.
 Local CPU, memory, and disk are finite. `stim doctor`, `stim status`, and
 `stim gc` make those limits visible. Remote devices remain available when a
 local simulator is not the right target.
+
+## When you probably don't need Stim
+
+Stim helps with repeated setup, builds, and device management across worktrees.
+If those aren't slowing you down, it may add little.
+
+- **One long-lived checkout, one running app.** Your existing tooling already
+  keeps builds warm. If you aren't juggling worktrees or agents, there's less to
+  isolate and less duplicated work to avoid.
+- **An installed Expo development build and mostly JavaScript changes.** You
+  can keep using the same native app while Metro serves your changes. If native
+  dependencies and configuration rarely change, there may be little build time
+  to save.
+- **Agents that don't run the app.** If your agents only edit code and run unit
+  tests, they don't need isolated simulators or a native build workflow.
+- **Your existing setup already handles this.** If your scripts or development
+  platform provide isolated environments and reliable build reuse, Stim may
+  duplicate what you have.
+- **You want cloud builds or app distribution.** Stim builds locally; it doesn't
+  replace hosted build infrastructure, signing workflows, or store submission.
+
+You don't need to replace a workflow that already works.
