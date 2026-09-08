@@ -38,10 +38,17 @@ function successful(command) {
   return commandWithReportedStatus(command).exitCode === 0;
 }
 
+function completedStepCommand(command, arm) {
+  const body = topLevelShellCommand(commandWithReportedStatus(command).command);
+  if (arm !== 'stim') return body;
+  return /[&|]\s*$/.test(body) ? '' : (shellCommandSegments(body).at(-1) ?? '');
+}
+
 function successfulLaunch(command, arm, platform) {
-  if (!successful(command) || !launchCommand(command.command, arm, platform)) return false;
+  if (!successful(command)) return false;
   const value = shellCommand(command.command);
-  if (!/\|\s*tee\b/.test(value)) return true;
+  if (!/\|\s*tee\b/.test(value)) return launchCommand(completedStepCommand(command, arm), arm, platform);
+  if (!launchCommand(command.command, arm, platform)) return false;
   const prefix = value.match(
     /^(?:cd\s+(?:[^\s'"$`\\;&|]+|'[^'\n]+'|"[^"$`\n]+")\s*&&\s*)?set -(?:o|eo|euo) pipefail\s*(?:&&|;|\n)\s*/,
   );
@@ -344,7 +351,7 @@ export function launchCrashDiagnosis(
     (command, index) =>
       index > initialLaunchIndex &&
       successful(command) &&
-      errorCaptureCommand(command.command, arm, platform) &&
+      errorCaptureCommand(completedStepCommand(command, arm), arm, platform) &&
       typeof command.output === 'string' &&
       command.output.includes(token),
   );
