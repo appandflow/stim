@@ -128,18 +128,68 @@ export function shellCommandSegments(command) {
   return segments;
 }
 
-export function agentDeviceIsolationInvalidReasons(commands, expectedPrefix) {
+export function agentDeviceAuxiliarySessions(commands, expectedPrefix, target) {
+  if (!target?.device || !['ios', 'android'].includes(target.platform)) return [];
+  const prefix = expectedPrefix.match(
+    /^(env AGENT_DEVICE_STATE_DIR=\S+ AGENT_DEVICE_SESSION=)([\w.-]+)( agent-device )$/,
+  );
+  if (!prefix) return [];
+  const groups = new Map();
+  const proofOpen = commands.findIndex((entry) =>
+    topLevelShellCommand(entry.command).startsWith(`${expectedPrefix}open `),
+  );
+  if (proofOpen < 0) return [];
+  commands.forEach((entry, index) => {
+    const command = topLevelShellCommand(entry.command);
+    if (!command.startsWith(`${prefix[1]}${prefix[2]}-`)) return;
+    const match = command.slice(prefix[1].length).match(/^([\w.-]+) agent-device ([\s\S]+)$/);
+    if (!match || !new RegExp(`^${prefix[2].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-[a-z][a-z0-9-]*$`).test(match[1]))
+      return;
+    const group = groups.get(match[1]) ?? [];
+    group.push({ ...entry, command, body: match[2], index });
+    groups.set(match[1], group);
+  });
+  const open = `open com.appandflow.trailhead --foreground --platform ${target.platform} ${target.platform === 'ios' ? '--udid' : '--serial'} ${target.device}`;
+  return [...groups.entries()].flatMap(([session, entries]) => {
+    if (
+      entries.length < 2 ||
+      entries[0].body !== open ||
+      entries[0].exitCode !== 0 ||
+      entries.at(-1).body !== 'close' ||
+      entries.at(-1).exitCode !== 0 ||
+      entries.at(-1).index >= proofOpen ||
+      entries.some((entry) => shellCommandSegments(entry.command).length !== 1 || /[$`]/.test(entry.command)) ||
+      entries
+        .slice(1, -1)
+        .some(
+          (entry) =>
+            !/^(?:click|press|fill|snapshot|wait|screenshot|back|scroll)(?:\s|$)/.test(entry.body) ||
+            /--(?:session|state-dir|udid|serial|platform|device)(?:[=\s]|$)/.test(entry.body),
+        )
+    )
+      return [];
+    return [{ session, commands: entries.map(({ id, command }) => ({ commandId: id, command })) }];
+  });
+}
+
+export function agentDeviceIsolationInvalidReasons(commands, expectedPrefix, target) {
   const segments = commands.flatMap((command) => shellCommandSegments(command.command));
+  const auxiliary = new Set(
+    agentDeviceAuxiliarySessions(commands, expectedPrefix, target).flatMap((session) =>
+      session.commands.map((entry) => entry.command),
+    ),
+  );
   const reasons = [];
   const lookup =
     /^(?:command\s+-[vV]|which|type|whence)\s+(?:[\w./-]+\s+)*agent-device(?:\s+[\w./-]+)*(?:\s+(?:\d*>|&>)\s*(?:&\d+|[\w./-]+))?$/;
+  const help = /^agent-device(?:\s+--help|\s+help(?:\s+[\w-]+)*)(?:\s+(?:\d*>|&>)\s*(?:&\d+|[\w./-]+))?$/;
   const deviceCommands = segments.filter(
-    (command) => /(?:^|[\s(`])agent-device(?:\s|[)`]|$)/.test(command) && !lookup.test(command),
+    (command) => /(?:^|[\s(`])agent-device(?:\s|[)`]|$)/.test(command) && !lookup.test(command) && !help.test(command),
   );
   if (deviceCommands.some((command) => /(?:^|[\s(`])agent-device\s+daemon\s+stop(?:\s|[)`]|$)/.test(command))) {
     reasons.push('agent-device-daemon-recovery-inside-timer');
   }
-  if (deviceCommands.some((command) => !command.startsWith(expectedPrefix))) {
+  if (deviceCommands.some((command) => !command.startsWith(expectedPrefix) && !auxiliary.has(command))) {
     reasons.push('agent-device-run-session-not-applied');
   }
   return reasons;

@@ -256,7 +256,20 @@ unrecognized setup command. It contains `schemaVersion: 1`, `runId`,
 `shellParserSha256` (run-guards), and ordered `commands` entries with `commandId`,
 the exact `command`, and a nonempty `assessment`. Export re-derives diagnosis,
 recovery and diagnosis-time usage from hash-verified retained evidence. A review
-can clear only setup-syntax rejection and its missing-diagnosis/usage consequences;
-it cannot clear other failure reasons or source-before-capture violations. Valid
-runs with setup warnings also require review before publication. The original
+can clear setup-syntax rejection and its missing-diagnosis/usage consequences.
+Read-only agent-device help does not need a session. An auxiliary diagnostic
+session must use the exact run namespace and state directory, open the assigned
+device, and close successfully before the pinned proof session opens. Its
+`auxiliarySessions` review entries name each `session` and a nonempty `assessment`.
+Default or foreign sessions, device overrides, missing closure and daemon
+interference remain failures.
+
+An iOS `Podfile.lock` update is reviewable only when every difference is a valid
+`SPEC CHECKSUMS` value for an existing pod. Dependency versions and all other
+content must match. Collection retains base/final lockfiles and the exact repaired
+source under `raw/`, with hashes in `auxiliary-audit-evidence.json`. A review's
+`sourceChanges` contains that file's `evidenceSha256` and an `assessment`; export
+checks every retained hash, the original source hash and checksum-only semantics.
+It cannot clear other source changes, dependency changes or source-before-capture
+violations. Valid runs with setup or auxiliary warnings also require review before publication. The original
 `run.json` is never rewritten, and review records stay private.

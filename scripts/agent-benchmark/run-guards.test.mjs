@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   agentDeviceIsolationInvalidReasons,
+  agentDeviceAuxiliarySessions,
   benchmarkSetupInvalidReasons,
   benchmarkTarget,
   benchmarkTiming,
@@ -30,6 +31,69 @@ const build = (output) => [{ id: 'build', command: 'stim android', exitCode: 0, 
 
 describe('agent-device session isolation', () => {
   const prefix = 'env AGENT_DEVICE_STATE_DIR=/tmp/bench-state AGENT_DEVICE_SESSION=bench-run agent-device ';
+
+  it('allows help output without letting help hide an unscoped device command', () => {
+    expect(
+      agentDeviceIsolationInvalidReasons(
+        [{ command: 'which agent-device; agent-device --help 2>&1 | head -20\nagent-device help open' }],
+        prefix,
+      ),
+    ).toEqual([]);
+    for (const command of [
+      'agent-device help; agent-device snapshot',
+      'agent-device help $(agent-device snapshot)',
+      'agent-device --help `agent-device snapshot`',
+    ]) {
+      expect(agentDeviceIsolationInvalidReasons([{ command }], prefix)).toContain(
+        'agent-device-run-session-not-applied',
+      );
+    }
+  });
+
+  it('requires auxiliary diagnosis to open the same device and close before pinned proof', () => {
+    const auxiliary = prefix.replace('SESSION=bench-run ', 'SESSION=bench-run-diag ');
+    const commands = [
+      {
+        id: 'diag-open',
+        command: `${auxiliary}open com.appandflow.trailhead --foreground --platform ios --udid U1`,
+        exitCode: 0,
+      },
+      { id: 'diag-click', command: `${auxiliary}click @e3 --settle`, exitCode: 0 },
+      { id: 'diag-close', command: `${auxiliary}close`, exitCode: 0 },
+      {
+        id: 'proof',
+        command: `${prefix}open com.appandflow.trailhead --foreground --platform ios --udid U1`,
+        exitCode: 0,
+      },
+    ];
+    const target = { platform: 'ios', device: 'U1' };
+    expect(agentDeviceIsolationInvalidReasons(commands, prefix, target)).toEqual([]);
+    expect(agentDeviceAuxiliarySessions(commands, prefix, target)).toEqual([
+      {
+        session: 'bench-run-diag',
+        commands: commands.slice(0, 3).map(({ id, command }) => ({ commandId: id, command })),
+      },
+    ]);
+    for (const changed of [
+      commands.map((entry) => ({
+        ...entry,
+        command: entry.command.replace('SESSION=bench-run-diag ', 'SESSION=default '),
+      })),
+      commands.map((entry) => ({
+        ...entry,
+        command: entry.command.replace('STATE_DIR=/tmp/bench-state ', 'STATE_DIR=/tmp/other '),
+      })),
+      [{ ...commands[0], command: commands[0].command.replace('--udid U1', '--udid U2') }, ...commands.slice(1)],
+      [...commands.slice(0, 2), commands[3]],
+      [commands[0], commands[1], commands[3], commands[2]],
+      [commands[0], commands[1], { ...commands[2], exitCode: 1 }, commands[3]],
+      [commands[0], { ...commands[1], command: `${auxiliary}click @e3 --session default` }, ...commands.slice(2)],
+      [commands[0], { ...commands[1], command: `${auxiliary}click $(agent-device snapshot)` }, ...commands.slice(2)],
+    ])
+      expect(agentDeviceIsolationInvalidReasons(changed, prefix, target)).toContain(
+        'agent-device-run-session-not-applied',
+      );
+  });
 
   it('accepts delayed scoped navigation without splitting quoted separators', () => {
     for (const command of [
