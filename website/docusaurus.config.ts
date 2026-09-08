@@ -5,7 +5,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 const config: Config = {
   title: 'Stim',
   tagline: 'Fast, isolated React Native environments for coding agents',
-  favicon: 'img/favicon.svg',
+  favicon: 'img/branding/logo.svg',
 
   future: {
     v4: true,
@@ -49,11 +49,16 @@ const config: Config = {
 
   themeConfig: {
     colorMode: {
-      defaultMode: 'dark',
-      respectPrefersColorScheme: true,
+      defaultMode: 'light',
+      respectPrefersColorScheme: false,
     },
     navbar: {
-      title: 'Stim',
+      logo: {
+        alt: 'Stim',
+        src: 'img/branding/wordmark.svg',
+        width: 75,
+        height: 36,
+      },
       items: [
         {
           type: 'docSidebar',
