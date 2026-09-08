@@ -14,11 +14,22 @@ it('selects Android fixture inputs and owned-device launch instructions for both
     expect(setup.instructions).not.toContain('stim ios');
     expect(setup.instructions).not.toContain('simulator');
   }
+  expect(launchCrashSetup({ platform: 'android', arm: 'control', systemImage }).instructions).toContain(
+    'inherited ANDROID_AVD_HOME',
+  );
   expect(launchCrashSetup({ platform: 'ios', arm: 'control' }).ignoredPaths).toEqual([
     'node_modules',
     'ios/Pods',
     'ios/build',
   ]);
+});
+
+it.each(['ios', 'android'])('keeps managed control servers alive through %s proof', (platform) => {
+  const { instructions } = launchCrashSetup({ platform, arm: 'control', systemImage });
+  expect(instructions).toContain('runner-managed shell sessions');
+  expect(instructions).toContain('wait for readiness instead of waiting for exit or stopping it');
+  expect(instructions).not.toContain('Do not use a long-running foreground shell command');
+  expect(instructions).toContain('explicit error-capture command completes');
 });
 
 it('carries reusable Android outputs without importing a sibling autolinking cache', () => {
