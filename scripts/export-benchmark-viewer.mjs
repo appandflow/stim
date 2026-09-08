@@ -181,6 +181,8 @@ export function sanitizeBenchmarkText(value, replacements = []) {
   text = text.replace(agentDeviceBundlePattern, '<agent-device-helper>');
   text = text.replace(adbPublicKeyMessagePattern, '$1<adb-public-key>$2');
   text = text.replace(adbPublicKeyBootArgumentPattern, '$1<adb-public-key>');
+  text = text.replace(simulatorIdPattern, (id, offset, input) => (input[offset - 1] === '/' ? 'simulator-udid' : id));
+  text = text.replace(/(?<=\/)<simulator-udid>/g, 'simulator-udid');
   text = text.replace(fileUrlAbsolutePathPattern, (_match, path) => `file:///${replacementLabel(path)}`);
   text = text.replace(compilerFlagAbsolutePathPattern, (_match, flag, path) => `${flag}${replacementLabel(path)}`);
   text = text.replace(
@@ -458,7 +460,7 @@ function assertPortable(payload) {
       `benchmark export contains a nested absolute machine path root: ${leakedNestedPrivatePath}\n${field}`,
     );
   }
-  const leakedRoot = [
+  for (const root of [
     '/Applications',
     '/Library',
     '/System',
@@ -470,17 +472,16 @@ function assertPortable(payload) {
     '/opt',
     '/Pods.build',
     '/XPCServices',
-  ].find((root) => {
+  ]) {
     const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return (
-      new RegExp(`(?<![A-Za-z0-9._/])${escaped}(?![A-Za-z0-9._+-])`).test(serialized) ||
-      new RegExp(`-[FLI]${escaped}(?![A-Za-z0-9._+-])`).test(serialized)
-    );
-  });
-  if (leakedRoot) {
-    const at = serialized.indexOf(leakedRoot);
-    const field = serialized.slice(Math.max(0, at - 80), Math.min(serialized.length, at + 240));
-    throw new Error(`benchmark export contains an absolute machine path root: ${leakedRoot}\n${field}`);
+    const match =
+      new RegExp(`(?<![A-Za-z0-9._/])${escaped}(?![A-Za-z0-9._+-])`).exec(serialized) ??
+      new RegExp(`-[FLI]${escaped}(?![A-Za-z0-9._+-])`).exec(serialized);
+    if (match) {
+      const at = match.index;
+      const field = serialized.slice(Math.max(0, at - 80), Math.min(serialized.length, at + 240));
+      throw new Error(`benchmark export contains an absolute machine path root: ${root}\n${field}`);
+    }
   }
   const leakedSystemPath = serialized.match(systemAbsolutePathPattern)?.[0];
   if (leakedSystemPath) {

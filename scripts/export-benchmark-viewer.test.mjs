@@ -380,6 +380,18 @@ describe('benchmark viewer export', () => {
     );
   });
 
+  it('keeps redacted simulator containers as path segments before sanitizing roots', () => {
+    const udid = 'A35AFE7E-06D9-4E4B-A14D-0451595A13BC';
+    const appId = 'B35AFE7E-06D9-4E4B-A14D-0451595A13BC';
+    const paths =
+      `/Users/alice/Library/Developer/CoreSimulator/Devices/${udid}/data/Containers/Data/Application/${appId}/Library/HTTPStorages/example.app ` +
+      `worktree/project/${appId}/Library/data /System/Library/EventTimingProfiles/Sim.Touch.plist`;
+    expect(sanitizeBenchmarkText(paths, [[udid, '<simulator-udid>']])).toBe(
+      'workspace/example.app worktree/project/simulator-udid/Library/data system/System/Library/EventTimingProfiles/Sim.Touch.plist',
+    );
+    expect(sanitizeBenchmarkText(`--udid ${udid}`, [[udid, '<simulator-udid>']])).toBe('--udid <simulator-udid>');
+  });
+
   it('preserves URL path separators while sanitizing hosts', () => {
     expect(sanitizeBenchmarkText('http://127.0.0.1:8081/tmp/foo')).toBe('http://<local-ip>:8081/tmp/foo');
     expect(sanitizeBenchmarkText('https://example.com/opt/page')).toBe('https://example.com/opt/page');
@@ -625,9 +637,26 @@ describe('benchmark viewer export', () => {
         dispatchToScreenReadySeconds: 1,
         commandCount: 0,
         screen: { valid: true, expected: 'Offline maps', dimensions: { width: 402, height: 874 } },
+        simulator: { udid: 'A35AFE7E-06D9-4E4B-A14D-0451595A13BC' },
       }),
     );
     writeFileSync(join(validRunDir, 'proof', 'settings.png'), 'valid proof');
+    writeFileSync(
+      join(validRunDir, 'events.jsonl'),
+      stamp('2026-09-03T20:00:02.500Z', {
+        type: 'item.completed',
+        item: {
+          id: 'logs',
+          type: 'command_execution',
+          command: 'cat app.log',
+          aggregated_output:
+            '/Users/alice/Library/Developer/CoreSimulator/Devices/A35AFE7E-06D9-4E4B-A14D-0451595A13BC/data/Containers/Data/Application/B35AFE7E-06D9-4E4B-A14D-0451595A13BC/Library/HTTPStorages/example.app ' +
+            'worktree/project/B35AFE7E-06D9-4E4B-A14D-0451595A13BC/Library/data ' +
+            '/System/Library/EventTimingProfiles/Sim.Touch.plist -L/Volumes/private/lib file:///Users/alice/private.log',
+          exit_code: 0,
+        },
+      }),
+    );
 
     const proofDir = join(root, 'proof');
     mkdirSync(proofDir, { recursive: true });
@@ -640,6 +669,10 @@ describe('benchmark viewer export', () => {
 
     expect(payload.runs.map((run) => run.id)).toEqual(['fixture-control']);
     expect(payload.recordedOn).toBe('2026-09-03');
+    expect(payload.runs[0].commands[0].output).toBe(
+      'workspace/example.app worktree/project/simulator-udid/Library/data ' +
+        'system/System/Library/EventTimingProfiles/Sim.Touch.plist -Lworkspace/lib file:///workspace/private.log',
+    );
     expect(readdirSync(proofDir)).toEqual(['fixture-control.png']);
   });
 
