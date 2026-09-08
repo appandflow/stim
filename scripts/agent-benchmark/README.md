@@ -207,6 +207,11 @@ shell programs are safe or replace the runner's filesystem isolation.
 Build/launch pipelines ending in `tee` must enable `set -o pipefail` in the same
 shell command. Without it, zero exit status proves only the log writer finished,
 so the command cannot establish initial launch success.
+The pipeline may follow `cd <worktree> && set -o pipefail && ...`. If it ends
+with `; echo "PIPELINE_EXIT=$?"`, the captured output must contain exactly one
+`PIPELINE_EXIT=0` line: the echo's own zero exit does not prove build success.
+Retained launch-evidence rejections can be reviewed only when re-derived commands
+prove successful launch, separate error capture, repair and Settings proof.
 
 A launch can finish before the JavaScript error reaches its log. Both arms must
 repeat standalone foreground log queries, without separate sleep or wait commands,

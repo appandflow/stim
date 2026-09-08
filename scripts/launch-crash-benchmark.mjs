@@ -37,7 +37,28 @@ function successful(command) {
 function successfulLaunch(command, arm, platform) {
   if (!successful(command) || !launchCommand(command.command, arm, platform)) return false;
   const value = shellCommand(command.command);
-  return !/\|\s*tee\b/.test(value) || /^set -(?:o|eo|euo) pipefail\s*(?:;|\n)/.test(value);
+  if (!/\|\s*tee\b/.test(value)) return true;
+  const prefix = value.match(
+    /^(?:cd\s+(?:[^\s'"$`\\;&|]+|'[^'\n]+'|"[^"$`\n]+")\s*&&\s*)?set -(?:o|eo|euo) pipefail\s*(?:&&|;|\n)\s*/,
+  );
+  if (!prefix) return false;
+  if (/^cd\s/.test(prefix[0]) && !/&&\s*$/.test(prefix[0])) return false;
+  let pipeline = value.slice(prefix[0].length);
+  const report = /;\s*echo "PIPELINE_EXIT=\$\?"\s*$/.exec(pipeline);
+  if (report) {
+    const statuses = [...String(command.output ?? '').matchAll(/^PIPELINE_EXIT=(\d+)\s*$/gm)];
+    if (statuses.length !== 1 || statuses[0][1] !== '0') return false;
+    pipeline = pipeline.slice(0, report.index);
+  }
+  const [launch, ...filters] = pipeline.replace(/\s+2>&1(?=\s|$)/g, '').split(/\s*\|\s*/);
+  const group = /^\{\s*([\s\S]*?);\s*\}$/.exec(launch);
+  const launches = group ? shellCommandSegments(group[1]) : [launch];
+  return (
+    launches.length > 0 &&
+    launches.every((entry) => launchCommand(entry, arm, platform) && !/[;&\n$`]/.test(entry)) &&
+    filters.length > 0 &&
+    filters.every((filter) => /^(?:tee(?: -a)? [\w/.-]+|(?:tail|head) -(?:\d+|n \d+))\s*$/.test(filter))
+  );
 }
 
 function shellCommand(command) {
