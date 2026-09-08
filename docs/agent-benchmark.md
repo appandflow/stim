@@ -144,6 +144,9 @@ partition, system image, and default Quick Boot policy as Stim.
 Launch-error control may use runner-managed sessions instead of detached shell
 jobs and keeps the inherited Android SDK, AVD, Gradle, and emulator-report
 locations unchanged so device verification and cleanup see the same metadata.
+The launch-error audit recognizes scoped setup and log capture across shell
+quoting forms. It reports all rejected operations for investigation; source
+inspection before completed error capture still invalidates the attempt.
 Installing dependencies inside the timed interval, a failed `guide agent` or
 `worktree warm`, and an Android native build without Stim's `--build-cache`
 evidence invalidate the attempt.

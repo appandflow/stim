@@ -9,6 +9,112 @@ import {
 } from './launch-crash-benchmark.mjs';
 
 describe('launch crash benchmark', () => {
+  it('audits a complete managed Android setup and reports every out-of-scope operation', () => {
+    const token = launchCrashToken('managed-setup');
+    const setup = { worktree: '/tmp/run', avdConfig: '/tmp/avds/Trailhead_run.avd/config.ini' };
+    const copy = `set -e
+run=/tmp/run
+for rel in node_modules android/.gradle android/build android/app/build android/app/.cxx ios/Pods; do
+  if [ -e "$rel" ]; then
+    mkdir -p "$run/$(dirname "$rel")"
+    rsync -a --exclude='generated/autolinking/' "$rel" "$run/$(dirname "$rel")/"
+  fi
+done`;
+    const inputs = [
+      copy,
+      `printf 'no\\n' | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd -n Trailhead_run -k 'system-images;android-36;google_apis_playstore_ps16k;arm64-v8a'`,
+      'printenv ANDROID_AVD_HOME',
+      `rg '^disk\\.dataPartition\\.size=' ${setup.avdConfig} || true`,
+      '"$ANDROID_HOME/emulator/emulator" -avd Trailhead_run 2>&1 | tee /tmp/emulator.log',
+      './node_modules/.bin/expo start --dev-client --port 8081 2>&1 | tee /tmp/metro.log',
+      `rg '^(port\\.serial|avd\\.name|pid)=' /Users/example/Library/Caches/TemporaryItems/avd/running/pid_123.ini`,
+      `"$ANDROID_HOME/platform-tools/adb" -s emulator-5554 wait-for-device shell 'until [ "$(getprop sys.boot_completed)" = "1" ]; do sleep 1; done; getprop sys.boot_completed'`,
+      '"$ANDROID_HOME/platform-tools/adb" -s emulator-5554 reverse tcp:8081 tcp:8081',
+    ];
+    const before = inputs.map((command, index) => ({
+      id: `setup-${index}`,
+      command: `/bin/zsh -lc '` + command.replaceAll("'", "'\"'\"'") + "'",
+      exitCode: 0,
+      startedAt: '2026-09-04T12:00:01Z',
+      endedAt: '2026-09-04T12:00:02Z',
+    }));
+    const launch = {
+      id: 'launch',
+      command:
+        'set -o pipefail; ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a ./node_modules/.bin/expo run:android --device emulator-5554 --no-bundler 2>&1 | tee -a /tmp/native.log',
+      exitCode: 0,
+      startedAt: '2026-09-04T12:00:03Z',
+      endedAt: '2026-09-04T12:00:10Z',
+    };
+    const logs = {
+      id: 'logs',
+      command: 'rg -n -i -C 8 "error|exception" /tmp/metro.log',
+      output: `${token}\napp/_layout.tsx:27`,
+      exitCode: 0,
+      startedAt: '2026-09-04T12:00:11Z',
+      endedAt: '2026-09-04T12:00:12Z',
+    };
+    const edit = {
+      id: 'config',
+      command: `tool:file_change ${JSON.stringify([{ path: setup.avdConfig, kind: 'update' }])}`,
+      startedAt: '2026-09-04T12:00:01Z',
+    };
+    const options = {
+      dispatchAt: '2026-09-04T12:00:00Z',
+      token,
+      arm: 'control',
+      platform: 'android',
+      setup,
+      activities: [edit],
+    };
+    expect(launchCrashDiagnosis([...before, launch, logs], options)).toMatchObject({
+      valid: true,
+      errorCaptureCommandId: 'logs',
+    });
+    const masked = {
+      ...launch,
+      id: 'masked',
+      command: './node_modules/.bin/expo run:android --bad-option 2>&1 | tee /tmp/native.log',
+      output: 'CommandError: unsupported flag',
+    };
+    expect(launchCrashDiagnosis([...before, masked, logs], options)).toMatchObject({
+      valid: false,
+      reason: 'launch-crash-initial-launch-evidence-missing',
+    });
+    expect(launchCrashDiagnosis([...before, masked, launch, logs], options)).toMatchObject({
+      valid: true,
+      initialLaunchCommandId: 'launch',
+    });
+    expect(launchCrashDiagnosis([...before, launch, logs], { ...options, setup: {} })).toMatchObject({ valid: false });
+    for (const command of [
+      copy.replace('rsync -a', 'cat package.json\n    rsync -a'),
+      copy.replace('node_modules android/.gradle', 'app node_modules android/.gradle'),
+      'printenv SECRET_KEY',
+      './node_modules/.bin/expo start | tee /tmp/metro.log; cat package.json',
+      './node_modules/.bin/expo start --port $(cat private-port) | tee /tmp/metro.log',
+      'rg anything /tmp/other.avd/config.ini',
+      `cat package.json ${setup.avdConfig}`,
+      `rg -n . package.json ${setup.avdConfig}`,
+      `cat ./app/_layout.t\\sx ${setup.avdConfig}`,
+      `tool:file_change ${JSON.stringify([{ path: '/tmp/other.avd/config.ini', kind: 'update' }])}`,
+    ]) {
+      expect(launchCrashDiagnosis([{ ...before[0], command, id: 'bad' }, launch, logs], options)).toMatchObject({
+        valid: false,
+        commandId: 'bad',
+      });
+    }
+    const violations = launchCrashDiagnosis(
+      [
+        { ...before[0], id: 'first', command: 'cat app/_layout.tsx' },
+        { ...before[0], id: 'second', command: 'printenv SECRET_KEY' },
+        launch,
+        logs,
+      ],
+      options,
+    );
+    expect(violations.violations.map((item) => item.commandId)).toEqual(['first', 'second']);
+  });
+
   it.each(['ios', 'android'])(
     'accepts a live managed Metro session without accepting unfinished %s launch evidence',
     (platform) => {
@@ -262,6 +368,7 @@ describe('launch crash benchmark', () => {
       valid: false,
       reason: 'launch-crash-pre-capture-command-not-allowed',
       commandId: 'inspect',
+      violations: [{ commandId: 'inspect', command: commands[0].command }],
     });
   });
 
@@ -364,6 +471,7 @@ describe('launch crash benchmark', () => {
         valid: false,
         reason: 'launch-crash-pre-capture-command-not-allowed',
         commandId: 'inspect',
+        violations: [{ commandId: 'inspect', command }],
       });
     }
   });
@@ -695,6 +803,7 @@ describe('launch crash benchmark', () => {
         valid: false,
         reason: 'launch-crash-pre-capture-command-not-allowed',
         commandId: 'mixed',
+        violations: [{ commandId: 'mixed', command }],
       });
     }
   });

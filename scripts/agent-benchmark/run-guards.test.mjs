@@ -274,6 +274,13 @@ describe('benchmark run guards', () => {
     const quotedNewline = "printf '%s' 'before" + '\\'.repeat(2) + "\nafter'";
     expect(topLevelShellCommand(`/bin/zsh -lc "${quotedNewline}"`)).toBe("printf '%s' 'before\\\nafter'");
     expect(topLevelShellCommand('/bin/zsh -lc "echo before\\\nafter"')).toBe('echo beforeafter');
+    const apostrophe = `printf '%s' "it's ready"`;
+    const quoted = "'" + apostrophe.replaceAll("'", "'\"'\"'") + "'";
+    expect(topLevelShellCommand(`/bin/zsh -lc ${quoted}`)).toBe(apostrophe);
+    expect(topLevelShellCommand('/bin/zsh -lc "echo ok"; cat app/_layout.tsx')).toBe(
+      '/bin/zsh -lc "echo ok"; cat app/_layout.tsx',
+    );
+    expect(topLevelShellCommand('/bin/zsh -lc "unterminated')).toBe('/bin/zsh -lc "unterminated');
   });
 
   it('rejects setup recovery inside the timer', () => {
