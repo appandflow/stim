@@ -91,7 +91,8 @@ Golden cache validation hashes the fixture with the pinned CLI's fingerprint
 dependency, not the fixture's potentially different version.
 
 Both arms preserve shell exit status and running-session handles when using code
-wrappers, then poll foreground jobs to completion before dependent commands. A
+wrappers, then poll finite jobs to completion before dependent commands. Long-lived
+server sessions stay running and require readiness evidence, not an exit status. A
 wrapper returning is not proof its shell process exited. Collection rejects Stim
 start, platform, or dependency-install commands that overlap worktree warm or lack
 proof of an earlier successful warm. Explicitly detached control processes retain
@@ -176,6 +177,12 @@ image and uses its exact serial for launch and log capture. The watcher records
 the app process without requiring the native-change task's APK-label mutation;
 validation still requires runtime error evidence before source inspection,
 the exact repair, and Settings-screen screenshot/video proof.
+
+Launch-error control can use runner-managed sessions for Metro, emulators, and
+native commands; it does not have to daemonize shell jobs. It keeps per-run logs
+for the separate completed error query and preserves the inherited Android SDK,
+AVD, Gradle, and emulator-report locations so observation and cleanup use the
+same metadata as the agent.
 
 A launch can finish before the JavaScript error reaches its log. Both arms must
 repeat standalone foreground log queries, without separate sleep or wait commands,

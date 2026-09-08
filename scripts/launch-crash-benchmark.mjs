@@ -112,6 +112,13 @@ function allowedBeforeErrorCapture(command, arm, platform) {
     return true;
   }
   if (sourceInspectionBeforeCapture(value, arm, platform)) return false;
+  if (
+    arm === 'control' &&
+    /^(?:\.\/)?node_modules\/\.bin\/expo\s+start(?:\s|$)/.test(value) &&
+    shellCommandSegments(value).length === 1 &&
+    !/`|\$\(/.test(value)
+  )
+    return true;
   if (/^(?:\.\/)?node_modules\/\.bin\/expo\s+--version$/.test(value)) return true;
   if (/^node\s+-p\s+(?:process\.execPath|(["'])process\.execPath\1)$/.test(value)) return true;
   if (/^print\s+-r\s+--\s+\d+\s*\|\s*tee\s+\/(?:private\/)?tmp\/[A-Za-z0-9_./-]+\.pid$/.test(value)) return true;

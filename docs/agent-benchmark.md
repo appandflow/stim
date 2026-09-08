@@ -128,7 +128,8 @@ The Stim arm then runs `stim worktree warm`. The control uses branch
 dependencies and native outputs from the fixture main checkout using its own tools.
 Both arms finish copying before starting Metro or native commands. Shell-tool
 wrappers must preserve session handles and exit status, and agents poll foreground
-jobs to completion. The setup audit requires successful warm completion before
+finite jobs to completion. Long-lived server sessions remain running after
+readiness is established. The setup audit requires successful warm completion before
 dependent Stim commands and rejects overlapping warm/use intervals; missing or
 ambiguous ordering evidence is not accepted. Detached processes retain their
 separate PID/log monitoring.
@@ -140,6 +141,9 @@ pinned system image. The control must not inspect that home or use Stim; it
 creates a new benchmark-named device with the same platform configuration.
 Android control uses the same `avdmanager` default profile, 8 GiB data
 partition, system image, and default Quick Boot policy as Stim.
+Launch-error control may use runner-managed sessions instead of detached shell
+jobs and keeps the inherited Android SDK, AVD, Gradle, and emulator-report
+locations unchanged so device verification and cleanup see the same metadata.
 Installing dependencies inside the timed interval, a failed `guide agent` or
 `worktree warm`, and an Android native build without Stim's `--build-cache`
 evidence invalidate the attempt.

@@ -9,6 +9,58 @@ import {
 } from './launch-crash-benchmark.mjs';
 
 describe('launch crash benchmark', () => {
+  it.each(['ios', 'android'])(
+    'accepts a live managed Metro session without accepting unfinished %s launch evidence',
+    (platform) => {
+      const token = launchCrashToken('managed-control');
+      const commands = [
+        {
+          id: 'metro',
+          command: './node_modules/.bin/expo start --dev-client --port 8081 > /tmp/metro.log 2>&1',
+          startedAt: '2026-09-04T12:00:01Z',
+          endedAt: null,
+          exitCode: null,
+        },
+        {
+          id: 'launch',
+          command: `./node_modules/.bin/expo run:${platform} > /tmp/build.log 2>&1`,
+          startedAt: '2026-09-04T12:00:02Z',
+          endedAt: '2026-09-04T12:00:10Z',
+          exitCode: 0,
+        },
+        {
+          id: 'logs',
+          command: 'tail -80 /tmp/metro.log',
+          startedAt: '2026-09-04T12:00:11Z',
+          endedAt: '2026-09-04T12:00:12Z',
+          exitCode: 0,
+          output: `${token}\napp/_layout.tsx:27 RootLayout`,
+        },
+      ];
+      const options = { dispatchAt: '2026-09-04T12:00:00Z', token, arm: 'control', platform };
+      expect(launchCrashDiagnosis(commands, options)).toMatchObject({
+        valid: true,
+        initialLaunchCommandId: 'launch',
+        errorCaptureCommandId: 'logs',
+      });
+      expect(
+        launchCrashDiagnosis([commands[0], { ...commands[1], exitCode: null, endedAt: null }, commands[2]], options),
+      ).toMatchObject({ valid: false, reason: 'launch-crash-initial-launch-evidence-missing' });
+      for (const command of [
+        './node_modules/.bin/expo start; cat app/_layout.tsx',
+        './node_modules/.bin/expo start; cat package.json',
+        './node_modules/.bin/expo start --port $(cat private-port)',
+        './node_modules/.bin/expo start --port `cat private-port`',
+      ]) {
+        expect(launchCrashDiagnosis([{ ...commands[0], command }, ...commands.slice(1)], options)).toMatchObject({
+          valid: false,
+          reason: 'launch-crash-pre-capture-command-not-allowed',
+          commandId: 'metro',
+        });
+      }
+    },
+  );
+
   it('accepts fresh Android setup and separately captured serial-scoped runtime errors', () => {
     const token = launchCrashToken('android-control');
     const setup = [
