@@ -13,9 +13,13 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import { userInfo } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
-import { launchCrashDiagnosis, launchCrashRecovery } from './launch-crash-benchmark.mjs';
+import { launchCrashDiagnosis, launchCrashRecovery, podfileChecksumChanges } from './launch-crash-benchmark.mjs';
 import { reconstructCommandEvidence } from './agent-benchmark/command-evidence.mjs';
-import { agentDeviceIsolationInvalidReasons, topLevelShellCommand } from './agent-benchmark/run-guards.mjs';
+import {
+  agentDeviceIsolationInvalidReasons,
+  agentDeviceAuxiliarySessions,
+  topLevelShellCommand,
+} from './agent-benchmark/run-guards.mjs';
 
 const modelPricing = {
   'gpt-5.6-luna': {
@@ -832,6 +836,35 @@ function sameUsage(left, right) {
   );
 }
 
+function reviewedChecksumProof(runDir, record, meta) {
+  const path = join(runDir, 'raw', 'auxiliary-audit-evidence.json');
+  if (!existsSync(path) || (meta.platform ?? 'ios') !== 'ios') return null;
+  const evidence = readJson(path);
+  const names = ['Podfile.lock.base', 'Podfile.lock.final', 'launch-crash-source-final.tsx'];
+  if (
+    evidence.schemaVersion !== 1 ||
+    evidence.runId !== record.runId ||
+    evidence.metaSha256 !== fileSha256(join(runDir, 'meta.json')) ||
+    !meta.crash?.originalSha256 ||
+    JSON.stringify(evidence.changedPaths) !==
+      JSON.stringify([meta.crash.sourceRelative, 'ios/Podfile.lock'].toSorted()) ||
+    JSON.stringify(evidence.changedPaths) !== JSON.stringify(record.proof?.changedPaths) ||
+    names.some(
+      (name) =>
+        !existsSync(join(runDir, 'raw', name)) || evidence.files?.[name] !== fileSha256(join(runDir, 'raw', name)),
+    ) ||
+    evidence.files['launch-crash-source-final.tsx'] !== meta.crash.originalSha256
+  )
+    return null;
+  const changes = podfileChecksumChanges(
+    readFileSync(join(runDir, 'raw', 'Podfile.lock.base'), 'utf8'),
+    readFileSync(join(runDir, 'raw', 'Podfile.lock.final'), 'utf8'),
+  );
+  return changes?.length
+    ? { sourceSha256: meta.crash.originalSha256, checksumChanges: changes, evidenceSha256: fileSha256(path) }
+    : null;
+}
+
 function validateLaunchCrashRecord(runDir, record, meta, rederive = false) {
   const reject = (reason) => {
     if (process.env.STIM_BENCH_EXPORT_DEBUG === '1') {
@@ -850,6 +883,19 @@ function validateLaunchCrashRecord(runDir, record, meta, rederive = false) {
     readFileSync(eventsPath, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse),
   );
   const commands = evidence.commands;
+  let auxiliarySessions = [];
+  if (meta.agentDevice?.session && meta.agentDevice?.stateDir) {
+    const prefix = `env AGENT_DEVICE_STATE_DIR=${meta.agentDevice.stateDir} AGENT_DEVICE_SESSION=${meta.agentDevice.session} agent-device `;
+    const target = { platform: meta.platform ?? 'ios', device: record.simulator?.udid };
+    if (meta.agentDevice.session !== meta.runId || agentDeviceIsolationInvalidReasons(commands, prefix, target).length)
+      return reject('agent-device isolation mismatch');
+    auxiliarySessions = agentDeviceAuxiliarySessions(commands, prefix, target);
+  } else if (record.invalidReasons?.includes('agent-device-run-session-not-applied'))
+    return reject('agent-device identity missing');
+  const needsChecksumReview =
+    record.proof?.checksumChanges?.length || record.invalidReasons?.includes('launch-crash-unrelated-source-changes');
+  const checksumProof = needsChecksumReview ? reviewedChecksumProof(runDir, record, meta) : null;
+  if (needsChecksumReview && !checksumProof) return reject('checksum-only source evidence missing or changed');
   const token = [record.proof?.expected, ...commands.map((command) => command.output)]
     .join('\n')
     .match(/STIM_BENCH_LAUNCH_CRASH_[0-9A-F]{12}/)?.[0];
@@ -878,7 +924,7 @@ function validateLaunchCrashRecord(runDir, record, meta, rederive = false) {
   if (!existsSync(transcriptPath)) return reject('transcript missing');
   if (record.evidenceSha256?.transcript !== fileSha256(transcriptPath)) return reject('transcript hash mismatch');
   if (runner !== 'claude' && !diagnosisUsage) return reject('diagnosis usage missing');
-  if (rederive) return { diagnosis, recovery, diagnosisUsage, screenReadySeconds };
+  if (rederive) return { diagnosis, recovery, diagnosisUsage, screenReadySeconds, auxiliarySessions, checksumProof };
   if (
     record.diagnosis?.observedAt !== diagnosis.observedAt ||
     record.dispatchToDiagnosisSeconds !== diagnosis.dispatchToDiagnosisSeconds ||
@@ -898,7 +944,7 @@ function validateLaunchCrashRecord(runDir, record, meta, rederive = false) {
   ) {
     return reject('evidence command ids mismatch');
   }
-  return { diagnosis, recovery, diagnosisUsage, screenReadySeconds };
+  return { diagnosis, recovery, diagnosisUsage, screenReadySeconds, auxiliarySessions, checksumProof };
 }
 
 function publicationRecord(runDir, meta) {
@@ -910,6 +956,8 @@ function publicationRecord(runDir, meta) {
       'launch-crash-pre-capture-command-not-allowed',
       'launch-crash-diagnosis-missing',
       'launch-crash-diagnosis-usage-missing',
+      'launch-crash-unrelated-source-changes',
+      'agent-device-run-session-not-applied',
     ]);
     const eligible =
       record.valid ||
@@ -917,7 +965,7 @@ function publicationRecord(runDir, meta) {
     const derived = eligible ? validateLaunchCrashRecord(runDir, record, meta, true) : null;
     if (!derived) return record.valid ? { ...record, valid: false } : record;
     const warnings = derived.diagnosis.setupWarnings ?? [];
-    if (!warnings.length && record.valid) return record;
+    if (!warnings.length && !derived.auxiliarySessions.length && !derived.checksumProof && record.valid) return record;
     if (!existsSync(reviewPath)) return { ...record, valid: false };
     const review = readJson(reviewPath);
     const policyPath = fileURLToPath(new URL('./launch-crash-benchmark.mjs', import.meta.url));
@@ -929,6 +977,19 @@ function publicationRecord(runDir, meta) {
       review.metaSha256 !== fileSha256(join(runDir, 'meta.json')) ||
       review.policySha256 !== fileSha256(policyPath) ||
       review.shellParserSha256 !== fileSha256(guardPath) ||
+      (derived.checksumProof &&
+        (review.sourceChanges?.evidenceSha256 !== derived.checksumProof.evidenceSha256 ||
+          typeof review.sourceChanges?.assessment !== 'string' ||
+          !review.sourceChanges.assessment.trim())) ||
+      (derived.auxiliarySessions.length > 0 &&
+        (!Array.isArray(review.auxiliarySessions) ||
+          review.auxiliarySessions.length !== derived.auxiliarySessions.length ||
+          derived.auxiliarySessions.some(
+            (session, index) =>
+              review.auxiliarySessions[index]?.session !== session.session ||
+              typeof review.auxiliarySessions[index]?.assessment !== 'string' ||
+              !review.auxiliarySessions[index].assessment.trim(),
+          ))) ||
       !Array.isArray(review.commands) ||
       review.commands.length !== warnings.length ||
       warnings.some(
@@ -946,6 +1007,18 @@ function publicationRecord(runDir, meta) {
       ...record,
       valid: true,
       invalidReasons: [],
+      ...(derived.checksumProof
+        ? {
+            proof: {
+              ...record.proof,
+              valid: true,
+              kind: 'launch-crash-source-repair',
+              sourceSha256: derived.checksumProof.sourceSha256,
+              checksumChanges: derived.checksumProof.checksumChanges,
+            },
+          }
+        : {}),
+      auxiliarySessions: derived.auxiliarySessions,
       diagnosis: derived.diagnosis,
       recovery: derived.recovery,
       dispatchToDiagnosisSeconds: derived.diagnosis.dispatchToDiagnosisSeconds,

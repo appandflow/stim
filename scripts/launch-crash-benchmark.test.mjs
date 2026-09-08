@@ -5,10 +5,29 @@ import {
   launchCrashDiagnosis,
   launchCrashRecovery,
   launchCrashRepair,
+  podfileChecksumChanges,
   launchCrashToken,
 } from './launch-crash-benchmark.mjs';
 
 describe('launch crash benchmark', () => {
+  it('accepts only checksum-row updates, not dependency changes or malformed lockfiles', () => {
+    const before = `PODS:\n  - Core (1.0)\n\nSPEC CHECKSUMS:\n  Core: ${'a'.repeat(40)}\n\nCOCOAPODS: 1.16.2\n`;
+    const after = before.replace('a'.repeat(40), 'b'.repeat(40));
+    expect(podfileChecksumChanges(before, after)).toEqual([
+      { pod: 'Core', before: 'a'.repeat(40), after: 'b'.repeat(40) },
+    ]);
+    expect(podfileChecksumChanges(before, before)).toEqual([]);
+    for (const changed of [
+      after.replace('(1.0)', '(2.0)'),
+      after.replace('Core:', 'Other:'),
+      after.replace('1.16.2', '1.17.0'),
+      after.replace('b'.repeat(40), 'invalid'),
+      after.replace('\n\nCOCOAPODS', `\n  Added: ${'c'.repeat(40)}\n\nCOCOAPODS`),
+      after.replace('SPEC CHECKSUMS:', 'OTHER:'),
+    ]) {
+      expect(podfileChecksumChanges(before, changed)).toBeNull();
+    }
+  });
   it('warns on unfamiliar setup while rejecting source inspection before runtime diagnosis', () => {
     const token = launchCrashToken('managed-setup');
     const setup = { worktree: '/tmp/run', avdConfig: '/tmp/avds/Trailhead_run.avd/config.ini' };

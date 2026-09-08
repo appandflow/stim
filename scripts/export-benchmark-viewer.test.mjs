@@ -1383,6 +1383,114 @@ describe('benchmark viewer export', () => {
       );
     }
     writeFileSync(recordPath, JSON.stringify(original));
+    const prefix = 'env AGENT_DEVICE_STATE_DIR=/tmp/bench-state AGENT_DEVICE_SESSION=private-run-id agent-device ';
+    const auxiliaryPrefix = prefix.replace('SESSION=private-run-id ', 'SESSION=private-run-id-diag ');
+    const open = 'open com.appandflow.trailhead --foreground --platform ios --udid U1';
+    const extraEvents = [
+      ['aux-open', 100, `${auxiliaryPrefix}${open}`],
+      ['aux-close', 110, `${auxiliaryPrefix}close`],
+      ['proof-open', 140, `${prefix}${open}`],
+    ].flatMap(([id, seconds, command]) => [
+      stamp(new Date(Date.parse('2026-09-04T12:00:00Z') + seconds * 1000).toISOString(), {
+        type: 'item.started',
+        item: { id, type: 'command_execution', command },
+      }),
+      stamp(new Date(Date.parse('2026-09-04T12:00:00Z') + (seconds + 1) * 1000).toISOString(), {
+        type: 'item.completed',
+        item: { id, type: 'command_execution', command, aggregated_output: 'ok', exit_code: 0 },
+      }),
+    ]);
+    const scopedEvents =
+      originalEvents
+        .trim()
+        .split('\n')
+        .map((line) => {
+          const stamped = JSON.parse(line);
+          const event = JSON.parse(stamped.line);
+          if (event.item.command.startsWith('agent-device '))
+            event.item.command = prefix + event.item.command.slice('agent-device '.length);
+          return JSON.stringify({ ...stamped, line: JSON.stringify(event) });
+        })
+        .concat(extraEvents)
+        .toSorted((a, b) => JSON.parse(a).arrivedAt.localeCompare(JSON.parse(b).arrivedAt))
+        .join('\n') + '\n';
+    writeFileSync(eventsPath, scopedEvents);
+    const raw = join(runDir, 'raw');
+    mkdirSync(raw);
+    const source = 'export default function RootLayout() { return null; }\n';
+    const lock = `PODS:\n  - Core (1.0)\n\nSPEC CHECKSUMS:\n  Core: ${'a'.repeat(40)}\n\nCOCOAPODS: 1.16.2\n`;
+    writeFileSync(join(raw, 'Podfile.lock.base'), lock);
+    writeFileSync(join(raw, 'Podfile.lock.final'), lock.replace('a'.repeat(40), 'b'.repeat(40)));
+    writeFileSync(join(raw, 'launch-crash-source-final.tsx'), source);
+    const metaPath = join(runDir, 'meta.json');
+    const scopedMeta = {
+      ...JSON.parse(readFileSync(metaPath)),
+      runId: original.runId,
+      agentDevice: { stateDir: '/tmp/bench-state', session: original.runId },
+      crash: { sourceRelative: 'app/_layout.tsx', originalSha256: sha256(join(raw, 'launch-crash-source-final.tsx')) },
+    };
+    writeFileSync(metaPath, JSON.stringify(scopedMeta));
+    const changedPaths = ['app/_layout.tsx', 'ios/Podfile.lock'];
+    const auxiliaryRecord = {
+      ...original,
+      valid: false,
+      invalidReasons: ['launch-crash-unrelated-source-changes', 'agent-device-run-session-not-applied'],
+      simulator: { udid: 'U1' },
+      proof: { ...original.proof, valid: false, changedPaths },
+      evidenceSha256: { ...original.evidenceSha256, events: sha256(eventsPath) },
+    };
+    writeFileSync(recordPath, JSON.stringify(auxiliaryRecord));
+    const evidencePath = join(raw, 'auxiliary-audit-evidence.json');
+    const refreshEvidence = () =>
+      writeFileSync(
+        evidencePath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: original.runId,
+          metaSha256: sha256(metaPath),
+          changedPaths,
+          files: Object.fromEntries(
+            ['Podfile.lock.base', 'Podfile.lock.final', 'launch-crash-source-final.tsx'].map((name) => [
+              name,
+              sha256(join(raw, name)),
+            ]),
+          ),
+        }),
+      );
+    refreshEvidence();
+    const auxiliaryReview = {
+      ...review,
+      commands: [],
+      originalRecordSha256: sha256(recordPath),
+      metaSha256: sha256(metaPath),
+      sourceChanges: {
+        evidenceSha256: sha256(evidencePath),
+        assessment: 'Only a spec checksum changed; source bytes match the original.',
+      },
+      auxiliarySessions: [{ session: 'private-run-id-diag', assessment: 'Same device, closed before proof.' }],
+    };
+    writeFileSync(reviewPath, JSON.stringify(auxiliaryReview));
+    expect(reviewedExport().runs[0]).toMatchObject({ valid: true, diagnosisSeconds: 90, settingsReadySeconds: 150 });
+    expect(JSON.parse(readFileSync(recordPath))).toEqual(auxiliaryRecord);
+    for (const change of [
+      { sourceChanges: undefined },
+      { auxiliarySessions: [] },
+      { sourceChanges: { ...auxiliaryReview.sourceChanges, evidenceSha256: 'changed' } },
+      { auxiliarySessions: [{ session: 'private-run-id-diag', assessment: '' }] },
+    ]) {
+      writeFileSync(reviewPath, JSON.stringify({ ...auxiliaryReview, ...change }));
+      expect(reviewedExport).toThrow('no valid benchmark runs found');
+    }
+    writeFileSync(join(raw, 'Podfile.lock.final'), lock.replace('(1.0)', '(2.0)'));
+    refreshEvidence();
+    writeFileSync(
+      reviewPath,
+      JSON.stringify({
+        ...auxiliaryReview,
+        sourceChanges: { ...auxiliaryReview.sourceChanges, evidenceSha256: sha256(evidencePath) },
+      }),
+    );
+    expect(reviewedExport).toThrow('no valid benchmark runs found');
   });
 
   it('refuses a launch-crash record without audited recovery proof', () => {

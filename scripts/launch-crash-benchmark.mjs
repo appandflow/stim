@@ -393,6 +393,36 @@ export function launchCrashRepair(source, token, expectedSha256) {
   return { valid: true, sourceSha256 };
 }
 
+function parsePodfileChecksums(source) {
+  const parts = source.split('SPEC CHECKSUMS:\n');
+  if (parts.length !== 2) return null;
+  const end = parts[1].indexOf('\n\n');
+  if (end < 0) return null;
+  const rows = parts[1]
+    .slice(0, end)
+    .split('\n')
+    .map((line) => line.match(/^  ([\w/.+-]+): ([0-9a-f]{40})$/));
+  if (!rows.length || rows.some((row) => !row) || new Set(rows.map((row) => row[1])).size !== rows.length) return null;
+  return { prefix: parts[0], suffix: parts[1].slice(end), rows };
+}
+
+export function podfileChecksumChanges(before, after) {
+  const left = parsePodfileChecksums(before);
+  const right = parsePodfileChecksums(after);
+  if (
+    !left ||
+    !right ||
+    left.prefix !== right.prefix ||
+    left.suffix !== right.suffix ||
+    left.rows.length !== right.rows.length
+  )
+    return null;
+  if (left.rows.some((row, index) => row[1] !== right.rows[index][1])) return null;
+  return left.rows.flatMap((row, index) =>
+    row[2] === right.rows[index][2] ? [] : [{ pod: row[1], before: row[2], after: right.rows[index][2] }],
+  );
+}
+
 export function launchCrashRecovery(commands, { diagnosis, screen }) {
   if (!diagnosis?.valid) return { valid: false, reason: 'launch-crash-diagnosis-missing' };
   const ordered = orderedCommands(commands);

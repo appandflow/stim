@@ -25,6 +25,7 @@ import {
   launchCrashRecovery,
   launchCrashRepair,
   launchCrashToken,
+  podfileChecksumChanges,
 } from '../launch-crash-benchmark.mjs';
 import { benchmarkFingerprint, selectBenchmarkCacheKey } from './cache-key.mjs';
 import { reconstructCommandEvidence } from './command-evidence.mjs';
@@ -40,6 +41,7 @@ import { completedCleanupRecord, durableRunRecord } from './run-record.mjs';
 import { isolatedRunnerInvocation, prepareRunnerIsolation, runnerIsolationPolicy } from './runner-isolation.mjs';
 import {
   agentDeviceIsolationInvalidReasons,
+  agentDeviceAuxiliarySessions,
   benchmarkSetupInvalidReasons,
   benchmarkTarget,
   benchmarkTiming,
@@ -153,7 +155,7 @@ function run(file, args, options = {}) {
     maxBuffer: options.maxBuffer ?? 64 * 1024 * 1024,
     stdio: options.stdio ?? ['ignore', 'pipe', 'pipe'],
   });
-  return typeof output === 'string' ? output.trim() : '';
+  return typeof output === 'string' ? (options.trim === false ? output : output.trim()) : '';
 }
 
 function jsonRun(file, args, options) {
@@ -1599,7 +1601,7 @@ function tokensFromUsage(usage) {
   };
 }
 
-function commandEvidence(meta, eventsPath, runDir) {
+function commandEvidence(meta, eventsPath, runDir, device) {
   if (!existsSync(eventsPath)) {
     return { commands: [], activities: [], completedEvents: [], invalidReasons: [] };
   }
@@ -1637,8 +1639,11 @@ function commandEvidence(meta, eventsPath, runDir) {
   ) {
     invalidReasons.push('android-native-control-used-release-build');
   }
-  invalidReasons.push(...agentDeviceIsolationInvalidReasons(commands, agentDeviceCommand(meta, '')));
-  return { commands, activities, completedEvents, invalidReasons };
+  const target =
+    meta.variant === launchCrashVariant ? { platform: meta.platform ?? 'ios', device: device?.udid } : null;
+  invalidReasons.push(...agentDeviceIsolationInvalidReasons(commands, agentDeviceCommand(meta, ''), target));
+  const auxiliarySessions = agentDeviceAuxiliarySessions(commands, agentDeviceCommand(meta, ''), target);
+  return { commands, activities, completedEvents, invalidReasons, auxiliarySessions };
 }
 
 function agentDeviceOpenCommand(meta, appAlive) {
@@ -1992,7 +1997,40 @@ function proofFor(meta, appAlive, runDir, worktree, commandItems) {
       run('git', ['diff', '--name-only', '-z', 'HEAD'], { cwd: worktree }),
       run('git', ['ls-files', '--others', '--exclude-standard', '-z'], { cwd: worktree }),
     );
-    if (changedPaths.length !== 1 || changedPaths[0] !== meta.crash.sourceRelative) {
+    let checksumChanges = null;
+    if (
+      (meta.platform ?? 'ios') === 'ios' &&
+      changedPaths.length === 2 &&
+      changedPaths.includes(meta.crash.sourceRelative) &&
+      changedPaths.includes('ios/Podfile.lock')
+    ) {
+      const before = run('git', ['show', 'HEAD:ios/Podfile.lock'], { cwd: worktree, trim: false });
+      const after = readFileSync(join(worktree, 'ios/Podfile.lock'), 'utf8');
+      checksumChanges = podfileChecksumChanges(before, after);
+      if (checksumChanges?.length) {
+        const raw = join(runDir, 'raw');
+        mkdirSync(raw, { recursive: true });
+        writeFileSync(join(raw, 'Podfile.lock.base'), before);
+        writeFileSync(join(raw, 'Podfile.lock.final'), after);
+        writeFileSync(join(raw, 'launch-crash-source-final.tsx'), source);
+        const names = ['Podfile.lock.base', 'Podfile.lock.final', 'launch-crash-source-final.tsx'];
+        writeFileSync(
+          join(raw, 'auxiliary-audit-evidence.json'),
+          JSON.stringify(
+            {
+              schemaVersion: 1,
+              runId: meta.runId,
+              metaSha256: sha256(join(runDir, 'meta.json')),
+              files: Object.fromEntries(names.map((name) => [name, sha256(join(raw, name))])),
+              changedPaths,
+            },
+            null,
+            2,
+          ) + '\n',
+        );
+      }
+    }
+    if ((changedPaths.length !== 1 || changedPaths[0] !== meta.crash.sourceRelative) && !checksumChanges?.length) {
       return {
         valid: false,
         reason: 'launch-crash-unrelated-source-changes',
@@ -2007,6 +2045,7 @@ function proofFor(meta, appAlive, runDir, worktree, commandItems) {
       target: sourcePath,
       sourceSha256,
       changedPaths,
+      ...(checksumChanges?.length ? { checksumChanges } : {}),
     };
   }
   if (appAlive.proof?.valid && existsSync(appAlive.proof.target)) {
@@ -2122,7 +2161,7 @@ function collect(runDir) {
     ? JSON.parse(readFileSync(appAlivePath, 'utf8'))
     : { error: 'missing-app-alive-record' };
   const eventsPath = join(runDir, 'events.jsonl');
-  const commandAudit = commandEvidence(meta, eventsPath, runDir);
+  const commandAudit = commandEvidence(meta, eventsPath, runDir, appAlive.simulator);
   const ccache = benchmarkCcache(meta, commandAudit.commands);
   const screen = screenEvidence(meta, appAlive, commandAudit.commands, runDir);
   const timing = benchmarkTiming(
@@ -2218,6 +2257,7 @@ function collect(runDir) {
     diagnosisTokens: tokensFromUsage(diagnosisUsage),
     diagnosis,
     recovery,
+    auxiliarySessions: commandAudit.auxiliarySessions,
     simulator: appAlive.simulator ?? null,
     worktree,
     worktreeEvidence: worktreeRecord,
