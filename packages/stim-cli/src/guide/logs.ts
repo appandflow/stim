@@ -111,9 +111,11 @@ WHAT WRITES WHAT
                        In expo-child mode everything Expo prints lands in
                        metro.ndjson with raw: true, so \`--source client\`
                        returns nothing there.
-  device.ndjson        the device-log collector \`ios\` / \`android\` attaches
-                       after launch: \`simctl log stream\` predicated on the
-                       app, or \`adb logcat\` filtered to the app's pid. This
+  device.ndjson        the device-log collector uses \`simctl log stream\`
+                       predicated on the app, or \`adb logcat\` filtered to
+                       the app's pid. Local iOS simulator capture starts
+                       before launch; Android attaches once the pid is known
+                       and reads buffered logcat records. This
                        is where a native crash that never reached JS shows up
                        -- and, on iOS, where every Apple framework running in
                        the app's process also logs. The proven noise sources

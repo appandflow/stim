@@ -33,63 +33,84 @@ and decide whether the change caused it.
 
 ### Optional app-declared readiness
 
-If your app already uses Sentry or Expo Observe, use its readiness API to
-record when the initial screen becomes usable. Neither SDK is required by
-Stim, and no additional Stim package is needed.
+No package or monitoring SDK is required. In a debug app, emit this once at
+startup, before initialization that can block the first screen:
 
-**Current Stim support:** these APIs report readiness to their SDK, not to Stim. Stim does not currently
-consume their readiness metrics or extend its launch wait when either SDK is
-installed. Keep verifying the expected UI on the reported device; a successful
-launch summary is not a full-render guarantee.
+```ts
+if (__DEV__) console.info('[stim:readiness] pending');
+```
 
-**Expo Observe:** after configuring the SDK and wrapping your root with
-`ObserveRoot`, call `markInteractive()` from `useObserve()` when the screen is
-ready (SDK 56 and later):
+Emit the second line when essential initialization succeeds, usable content is
+rendered, and the splash screen is hidden:
+
+```ts
+if (__DEV__) console.info('[stim:readiness] ready');
+```
+
+For example, in an Expo root layout with an existing `isReady` state:
 
 ```tsx
-const { markInteractive } = useObserve();
+import { useEffect } from 'react';
+import * as SplashScreen from 'expo-splash-screen';
 
+if (__DEV__) console.info('[stim:readiness] pending');
+
+// Inside the root component:
 useEffect(() => {
-  if (isReady) markInteractive();
-}, [isReady, markInteractive]);
+  if (!isReady) return;
+  let active = true;
+  SplashScreen.hideAsync()
+    .then(() => {
+      if (active && __DEV__) console.info('[stim:readiness] ready');
+    })
+    .catch(console.error);
+  return () => {
+    active = false;
+  };
+}, [isReady]);
 ```
 
-Import `useObserve` from `expo-observe` and `useEffect` from `react`. Follow
-the [Expo Observe setup guide](https://docs.expo.dev/eas/observe/get-started/)
-for SDK 55's API and the complete integration. Metrics are not dispatched from
-debug builds by default; use Expo's development configuration when validating
-SDK reporting, rather than interpreting missing metrics as a launch failure.
+Use the app's real readiness condition, not an arbitrary timer or merely a
+mounted root. Cover login, onboarding, and deep-link destinations. Never emit
+`ready` from a failure handler or a `finally` block.
 
-**Sentry:** with your existing tracing and navigation integration configured,
-render its full-display marker in the screen:
+Without an observed `pending`, Stim keeps its default three-second stability
+window after bundle completion. A `pending` observed before that window closes
+opts into waiting for `ready`, up to 30 seconds after bundle completion.
+Repeated `pending` logs do not extend the deadline. A matching `ready` can end
+the wait early; an app error or process exit interrupts it. A missing `ready`
+prints **readiness not confirmed**, not success or an inferred crash.
 
-```tsx
-<Sentry.TimeToFullDisplay record={isReady} />
+Stim reads exact standalone messages from this app's platform-specific device
+log, after the current launch. Stale, other-platform, error-level, and embedded
+example messages are ignored. Unlabelled shared Metro output cannot identify
+which platform is ready. If device-log capture is unavailable or `pending` is
+not captured in time, the default check applies. Release runs and
+`--no-metro-check` do not use this debug-only integration.
+
+This is the app declaring readiness, not visual verification. It does not alter
+the `launched` JSON field: bundle/process evidence remains separate. Continue
+checking the expected UI and `stim logs --errors`. For agent implementation
+instructions, run `stim guide lifecycle readiness`.
+
+#### Ask your agent to add it
+
+Copy this prompt into your coding agent:
+
+```text
+Add optional Stim app-readiness logs to this app. Read `stim guide agent`,
+then follow `stim guide lifecycle readiness` from the installed CLI. If Stim
+is not installed globally, use `npx stim-cli` instead of `stim`.
+
+Use the app's existing initialization and splash-screen lifecycle without
+adding a package or monitoring SDK. Cover its real startup destinations,
+including login, onboarding, and deep links; never report ready after failure.
+
+Verify a normal launch, a slow successful launch, a missing ready signal, and
+a startup error on the supported platforms. Remove temporary test delays and
+errors afterward. Report the changes, observed readiness output, and any
+validation you could not complete.
 ```
-
-Import Sentry with `import * as Sentry from '@sentry/react-native'`. SDK
-versions that expose `Sentry.reportFullyDisplayed()` also support an imperative
-call. Follow [Sentry's Time to Display guide](https://docs.sentry.io/platforms/react-native/tracing/instrumentation/time-to-display/)
-for the required instrumentation and version-specific API.
-
-Choose `isReady` based on usable content, completed essential initialization,
-and a dismissed splash screen, not just a mounted root or a live native
-process. Cover each launch destination, including login, onboarding, and deep
-links. Do not report success from a cleanup or `finally` block after a startup
-error.
-
-On Android, the platform's first-frame signal is not the same as
-[`reportFullyDrawn()`](https://developer.android.com/topic/performance/vitals/launch-time),
-which needs an explicit call. Do not assume a similarly named SDK API emits
-that Android signal. On iOS, Apple's standard launch measurement ends at the
-first frame; later preparation can use
-[custom signposts](https://developer.apple.com/documentation/xcode/reducing-your-app-s-launch-time).
-Neither first-frame measurement proves that React content is interactive.
-
-An app can fail before sending a readiness marker while its native process
-remains alive. Inspect captured errors independently. An absent marker can
-also mean disabled instrumentation or a reporting deadline, so absence alone
-does not establish a crash or a successful launch.
 
 ## Query the timeline
 

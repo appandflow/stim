@@ -786,6 +786,106 @@ describe('verifyLaunch', () => {
   });
 });
 
+describe('optional app readiness', () => {
+  function signal(ts: number, state: string, extra: Partial<NdjsonRecord> = {}): NdjsonRecord {
+    return { ts, src: 'device', platform: 'ios', level: 'info', msg: `[stim:readiness] ${state}`, ...extra };
+  }
+
+  async function run(records: NdjsonRecord[], options: Partial<Parameters<typeof verifyLaunch>[0]> = {}) {
+    const clock = fakeClock();
+    let pendingNotices = 0;
+    const result = await verifyLaunch({
+      since: 1000,
+      platform: 'ios',
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => [{ ts: 1000, event: 'bundle_build_done', platform: 'ios' }],
+      readDeviceRecords: () => records.filter((record) => Number(record.ts) <= clock.at()),
+      readClientRecords: () => [],
+      processAlive: () => true,
+      onReadinessPending: () => {
+        pendingNotices += 1;
+      },
+      ...options,
+    });
+    return { result, pendingNotices };
+  }
+
+  test.each(['ios', 'android'] as const)('waits past 3 seconds for %s app readiness', async (platform) => {
+    const { result, pendingNotices } = await run(
+      [signal(1500, 'pending', { platform }), signal(6500, 'ready', { platform })],
+      { platform, readRecords: () => [{ ts: 1000, event: 'bundle_build_done', platform }] },
+    );
+    expect(result).toMatchObject({ verified: true, processAlive: true, readiness: 'ready', waitedMs: 5500 });
+    expect(pendingNotices).toBe(1);
+  });
+
+  test('a fast ready replaces the default stability delay', async () => {
+    const { result } = await run([signal(1000, 'pending'), signal(1500, 'ready', { msg: "'[stim:readiness] ready'" })]);
+    expect(result).toMatchObject({ readiness: 'ready', waitedMs: 500 });
+  });
+
+  test('missing ready is bounded and repeated pending cannot extend the deadline', async () => {
+    const { result, pendingNotices } = await run([
+      signal(1000, 'pending'),
+      signal(3000, 'pending'),
+      signal(30000, 'pending'),
+      signal(31500, 'ready'),
+    ]);
+    expect(result).toMatchObject({ verified: true, readiness: 'timed-out', waitedMs: 30000 });
+    expect(pendingNotices).toBe(1);
+  });
+
+  test.each([
+    signal(500, 'pending'),
+    signal(1500, 'pending', { platform: 'android' }),
+    signal(1500, 'pending', { platform: undefined }),
+    signal(1500, 'pending', { src: 'metro' }),
+    signal(1500, 'pending', { src: 'build' }),
+    signal(1500, 'pending', { level: 'error' }),
+    signal(1500, 'pending', { msg: 'example: [stim:readiness] pending' }),
+    signal(1500, 'pending', { msg: '[stim:readiness] pending\nother log' }),
+  ])('does not opt in from stale, ambiguous, or embedded evidence: %j', async (record) => {
+    const { result, pendingNotices } = await run([record, signal(5000, 'ready')]);
+    expect(result).toMatchObject({ verified: true, waitedMs: 3000 });
+    expect(result.readiness).toBeUndefined();
+    expect(pendingNotices).toBe(0);
+  });
+
+  test('ignores a future-dated pending record already present in the log', async () => {
+    const { result } = await run([], { readDeviceRecords: () => [signal(9000, 'pending')] });
+    expect(result).toMatchObject({ verified: true, waitedMs: 3000 });
+    expect(result.readiness).toBeUndefined();
+  });
+
+  test('ready without pending does not opt in, and ready before pending cannot satisfy the wait', async () => {
+    expect((await run([signal(1000, 'ready')])).result).toMatchObject({ waitedMs: 3000 });
+    expect((await run([signal(1000, 'ready'), signal(1500, 'pending')])).result).toMatchObject({
+      readiness: 'timed-out',
+      waitedMs: 30000,
+    });
+  });
+
+  test('an app error interrupts the wait even when ready is present', async () => {
+    const { result } = await run([signal(1000, 'pending'), signal(1500, 'ready')], {
+      readClientRecords: () => [{ ts: 1000, src: 'client', platform: 'ios', level: 'error', msg: 'startup failed' }],
+    });
+    expect(result).toMatchObject({ verified: true, readiness: 'error', processAlive: true, waitedMs: 0 });
+    expect(result.errors?.[0]?.msg).toBe('startup failed');
+  });
+
+  test('a process exit interrupts a pending wait', async () => {
+    const { result } = await run([signal(1000, 'pending')], { processAlive: () => false });
+    expect(result).toMatchObject({ verified: false, fatal: true, readiness: 'error', waitedMs: 0 });
+  });
+
+  test('readiness signals alone cannot prove a bundle launch', async () => {
+    const { result } = await run([signal(1000, 'pending'), signal(1500, 'ready')], { readRecords: () => [] });
+    expect(result).toMatchObject({ verified: false, timedOut: true, waitedMs: 20000 });
+    expect(result.readiness).not.toBe('ready');
+  });
+});
+
 describe('unverifiedLaunchLines', () => {
   test('iOS names the picker and the exact command to retry without an alert step', () => {
     const url = devClientUrl('io.tlon.groups', 8082);
@@ -1605,7 +1705,7 @@ describe('verifyLaunch: still bundling', () => {
       },
     });
     expect(result.verified).toBe(true);
-    expect(deviceReads).toBe(1);
+    expect(deviceReads).toBeGreaterThan(1);
     expect(result.waitedMs).toBe(STABILITY_WINDOW_MS);
   });
 

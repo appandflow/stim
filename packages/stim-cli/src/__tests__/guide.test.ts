@@ -303,6 +303,9 @@ test('the agent workflow checks errors before and after edits, before cleanup', 
   expect(normalWorkflow.lastIndexOf('stim logs --errors')).toBeLessThan(normalWorkflow.lastIndexOf('stim stop'));
   expect(agent).toContain('stim guide lifecycle verification');
   expect(renderSection('lifecycle', 'verification')).toBeTruthy();
+  expect(agent).toContain('stim guide lifecycle readiness');
+  expect(renderSection('lifecycle', 'readiness')).toContain('[stim:readiness] pending');
+  expect(renderSection('lifecycle', 'readiness')).toContain('[stim:readiness] ready');
 });
 
 test('the agent guide routes to every detailed topic', () => {

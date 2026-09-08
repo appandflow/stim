@@ -105,6 +105,61 @@ TWO REPORTS, TWO QUESTIONS
   the machine, with a hit rate and an estimate of the time saved (see
   \`guide facts stats\`).`,
   sections: {
+    readiness: {
+      summary: 'implement optional pending/ready app logs, deadlines, errors, and platform isolation',
+      body: () => `OPTIONAL APP READINESS
+
+No package or SDK is needed. This applies to debug ios/android launches with
+Metro verification enabled, not release builds or --no-metro-check.
+
+1. Add this at app startup, before essential initialization:
+
+     if (__DEV__) console.info('[stim:readiness] pending');
+
+2. Use the app's real ready state: essential initialization succeeded, usable
+   content rendered, and the splash screen hidden. From that success path:
+
+     if (__DEV__) console.info('[stim:readiness] ready');
+
+   In an Expo root component with an existing isReady state:
+
+     useEffect(() => {
+       if (!isReady) return;
+       let active = true;
+       SplashScreen.hideAsync().then(() => {
+         if (active && __DEV__) console.info('[stim:readiness] ready');
+       }).catch(console.error);
+       return () => { active = false; };
+     }, [isReady]);
+
+   Import useEffect from react and SplashScreen as a namespace from
+   expo-splash-screen. Keep the pending log outside the component at module
+   scope, before startup work. Use the project's existing splash lifecycle;
+   do not add a splash dependency to a bare app just for this integration.
+   Cover login, onboarding, and deep links. Do not report ready merely on
+   root mount, on a timer, in a failure handler, or in finally.
+
+3. Run the platform command from the app directory. Check for the readiness
+   phase and inspect the UI on the reported device. Exercise a slow success,
+   a missing ready message, and a startup error. Retain the relevant output.
+
+Without an observed pending, Stim keeps its default 3-second stability window
+after bundle completion. Pending must be observed before that window closes.
+It opts into waiting for ready until 30 seconds after bundle completion.
+Repeated pending messages never extend the deadline. Ready can end the wait
+early; an app error or process exit interrupts it. No ready means readiness
+not confirmed, not a crash or successful readiness.
+
+Only exact standalone info/debug messages captured from this app's device log
+for this platform and current launch are accepted. Stale, other-platform,
+error-level, and embedded example messages are ignored. Unlabelled shared
+Metro output cannot identify a platform. If pending is not captured in time,
+including when device logs are unavailable, the default check applies.
+
+The app declares readiness; Stim does not inspect a rendered frame. This does
+not change launched JSON semantics or the need to inspect the expected UI and
+stim logs --errors. A reload request does not run this launch check.`,
+    },
     verification: {
       summary: 'reproduce the affected behavior, verify the change on the reported device, and retain proof',
       body: () => `VERIFY THE CHANGE
@@ -155,7 +210,8 @@ result as proof instead of requiring an unrelated screenshot.`,
     install     installs    ip.txt      lan         launch      lease
     log
     logs        meaning     metro       pods        port        prebuild
-    project     ready       remedy      removed     resolved    result
+    project     readiness   ready       remedy      removed     resolved
+    result
     services
     setting     settings    setup       state       stats       stop
     storage     swap        verify      version     workspace

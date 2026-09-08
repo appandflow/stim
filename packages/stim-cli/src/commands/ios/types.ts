@@ -54,6 +54,7 @@ export interface BuildIosResultLike {
 }
 
 export interface VerifyLaunchResultLike {
+  readiness?: 'ready' | 'timed-out' | 'error';
   verified?: boolean;
   skipped?: boolean;
   requested?: boolean;

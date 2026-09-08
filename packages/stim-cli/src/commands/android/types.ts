@@ -61,6 +61,7 @@ export interface LaunchResultLike {
 }
 
 export interface VerifyLaunchResultLike {
+  readiness?: 'ready' | 'timed-out' | 'error';
   verified?: boolean;
   skipped?: boolean;
   requested?: boolean;

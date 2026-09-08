@@ -1,5 +1,6 @@
 import { clockTime, formatElapsed } from '../command-output.ts';
-import { STABILITY_WINDOW_MS, VERIFY_TIMEOUT_MS } from './app-install.ts';
+import { VERIFY_TIMEOUT_MS } from './app-install.ts';
+import { APP_READINESS_TIMEOUT_MS } from './app-readiness.ts';
 import {
   deviceLeasePath,
   fileLeaseIo,
@@ -15,7 +16,7 @@ import {
 } from './device-lease.ts';
 
 export const LEASE_STEP_FLOOR_MS = 60_000;
-export const DEBUG_VERIFY_STEP_MS: number = VERIFY_TIMEOUT_MS + STABILITY_WINDOW_MS;
+export const DEBUG_VERIFY_STEP_MS: number = VERIFY_TIMEOUT_MS + APP_READINESS_TIMEOUT_MS;
 export const DEFAULT_DEVICE_WAIT_SECONDS = 60;
 export const DEVICE_WAIT_POLL_MS = 2_000;
 export const DEVICE_WAIT_LINE_MS = 30_000;

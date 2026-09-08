@@ -103,6 +103,7 @@ export const OUTPUT_LABELS: readonly string[] = [
   'port',
   'prebuild',
   'project',
+  'readiness',
   'ready',
   'remedy',
   'removed',
@@ -148,6 +149,12 @@ export function launchErrorReport(records: readonly LaunchErrorRecord[]): { summ
       ? null
       : `${plural(fromDevice.length, 'error-level record')} in the device log during launch (logs --errors --source device)`;
   return { summary, lines };
+}
+
+export function appReadinessMessage(status: 'ready' | 'timed-out' | 'error', waitedMs: number): string {
+  if (status === 'ready') return `app reported ready (${formatDuration(waitedMs)} verification total)`;
+  if (status === 'error') return 'not confirmed: an app error or process exit interrupted the readiness wait';
+  return 'not confirmed: no ready log within 30s of bundle load; inspect the UI and logs';
 }
 
 export const SLOW_STEP_MS = 2000;
