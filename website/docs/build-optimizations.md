@@ -58,16 +58,18 @@ All keys below are inside `optimizations`.
 | `buildCache`        | `true`  | Reads and stores complete native build artifacts. Set to `false` to skip both local and remote artifact reads and writes. Compiler caches remain independent.                                                                                    |
 | `remoteBuildCache`  | `true`  | Allows configured remote artifact cache providers. Set to `false` to skip remote lookup, upload, provider loading, and authentication while keeping the local artifact cache. It does not configure a provider by itself.                        |
 | `releaseBundleSwap` | `true`  | Allows supported Release artifact hits to reuse native code with the current JavaScript and assets inserted into a copy. If swapping fails, Stim builds fresh. Set to `false` to build Release from source; fresh artifacts can still be stored. |
-| `metroSharedCache`  | `true`  | Adds Stim's shared Metro transform store for Expo and bare React Native. Set to `false` to stop adding it; stores configured by the project remain.                                                                                              |
+| `metroSharedCache`  | `true`  | Adds Stim's shared Metro transform store for Expo SDK 54+ and bare React Native. Set to `false` to stop adding it; stores configured by the project remain.                                                                                      |
 
 The older machine setting `caches.injectMetroStore: false` is still supported as
 a fallback. An explicit `optimizations.metroSharedCache` value takes precedence.
 
 ## iOS options
 
-These keys are inside `optimizations.ios`. They apply to Xcode 26 or newer when
-the project does not enable its own ccache integration. Older or unrecognized
-Xcode versions and projects using ccache retain their own compiler settings.
+These keys are inside `optimizations.ios`. They apply to Xcode 26 or newer unless
+`apple.ccacheEnabled` is `"true"` in `ios/Podfile.properties.json`. Older or
+unrecognized Xcode versions and projects with that ccache setting retain their
+own compiler settings. Custom ccache integrations using other mechanisms are
+not detected by this guard.
 
 | Option                  | Default | What it does                                                                                                                                                                           |
 | ----------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -79,13 +81,13 @@ Xcode versions and projects using ccache retain their own compiler settings.
 
 These keys are inside `optimizations.android`.
 
-| Option             | Default  | What it does                                                                                                                                                                                                                                                |
-| ------------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `compilerCache`    | `"auto"` | Selects `"auto"`, `"ccache"`, `"cas"`, or `"none"`. Auto uses CAS when a toolchain manifest is supplied, otherwise ccache when available. Explicit `"ccache"` keeps ccache even if a CAS manifest is configured. `"none"` disables Stim's compiler caching. |
-| `casToolchain`     | Unset    | Absolute path to the experimental Android CAS toolchain manifest. `STIM_ANDROID_CAS_TOOLCHAIN` overrides this path. Required when `compilerCache` resolves to `"cas"`.                                                                                      |
-| `pch`              | `"auto"` | Selects `"auto"`, `"on"`, or `"off"` for precompiled headers. Auto preserves library and project policy, but defaults PCH off when Stim supplies ccache and the project has no explicit PCH argument. See the PCH behavior below.                           |
-| `gradleBuildCache` | `true`   | Passes `--build-cache` to Gradle to reuse cacheable task outputs. Set to `false` to pass Gradle's `--no-build-cache`, overriding `org.gradle.caching=true`.                                                                                                 |
-| `targetAbiOnly`    | `true`   | Narrows Debug builds to the target device's ABI to avoid compiling unused architectures. Set to `false` to stop narrowing Debug builds. Release builds remain universal, subject to the project's ABI filters.                                              |
+| Option             | Default  | What it does                                                                                                                                                                                                                                                                     |
+| ------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `compilerCache`    | `"auto"` | Selects `"auto"`, `"ccache"`, `"cas"`, or `"none"`. Auto uses CAS when a toolchain manifest is supplied, otherwise ccache when available. Explicit `"ccache"` keeps ccache even if a CAS manifest is configured. `"none"` disables Stim's compiler caching and inherited ccache. |
+| `casToolchain`     | Unset    | Absolute path to the experimental Android CAS toolchain manifest. `STIM_ANDROID_CAS_TOOLCHAIN` overrides this path. Required when `compilerCache` resolves to `"cas"`.                                                                                                           |
+| `pch`              | `"auto"` | Selects `"auto"`, `"on"`, or `"off"` for precompiled headers. Auto preserves library and project policy, but defaults PCH off when Stim supplies ccache and the project has no explicit PCH argument. See the PCH behavior below.                                                |
+| `gradleBuildCache` | `true`   | Passes `--build-cache` to Gradle to reuse cacheable task outputs. Set to `false` to pass Gradle's `--no-build-cache`, overriding `org.gradle.caching=true`.                                                                                                                      |
+| `targetAbiOnly`    | `true`   | Narrows Debug builds to the target device's ABI to avoid compiling unused architectures. Set to `false` to stop narrowing Debug builds. Release builds remain universal, subject to the project's ABI filters.                                                                   |
 
 ### ccache and precompiled headers
 
@@ -129,7 +131,7 @@ remains configured. Selecting `"cas"` without a manifest refuses the build.
 ## Compare compiler settings
 
 A native artifact hit skips compilation, so bypass it when comparing compiler
-caches. For a single invocation, use:
+caches. For a single invocation, use the command for your platform:
 
 <StimTabs code={`stim android --no-build-cache
 stim ios --no-build-cache`} />

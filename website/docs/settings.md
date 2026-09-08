@@ -17,7 +17,7 @@ Stim reads the first value found in this order:
 1. Project settings in `~/.stim/config.json`, keyed by absolute path.
 2. Repository settings in the same machine file, keyed by the git common dir.
 3. Committed `.stim.json` at the repository root.
-4. Machine defaults under top-level `optimizations` in the same file (for
+4. Machine defaults under top-level `optimizations` in `~/.stim/config.json` (for
    optimization settings only).
 5. The Stim default.
 
