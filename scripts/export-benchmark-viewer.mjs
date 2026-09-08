@@ -342,7 +342,7 @@ export function eventsFor(runDir, start, replacements) {
     }
   }
   for (const command of commands) {
-    const presentation = benchmarkCommandPresentation(command.command, command.exitCode);
+    const presentation = benchmarkCommandPresentation(command.command, command.exitCode, command.output);
     if (presentation) command.presentation = presentation;
   }
   return { messages, commands };
