@@ -186,10 +186,14 @@ same metadata as the agent.
 
 The pre-capture audit decodes shell quoting without executing it and recognizes
 scoped setup operations, including local SDK tools, managed log pipelines, and
-the assigned AVD's configuration edit. Collection reports every rejected command
-in `diagnosis.violations`, retaining the first rejection in `commandId`. Unknown
-commands and source inspection still invalidate the attempt; this is not a
-replacement for the runner's filesystem isolation.
+the assigned AVD's configuration edit. Unrecognized setup syntax is retained in
+`diagnosis.setupWarnings` for review, not automatically treated as a failed task.
+Review these commands before publication; a warning is not a safety approval.
+Detected source inspection before completed log capture remains a hard failure,
+with every offending command in `diagnosis.violations` and the first in `commandId`.
+Version, isolation, warm ordering, device, exact repair, timing, screenshot and
+recording gates remain unchanged. This heuristic audit does not prove arbitrary
+shell programs are safe or replace the runner's filesystem isolation.
 Build/launch pipelines ending in `tee` must enable `set -o pipefail` in the same
 shell command. Without it, zero exit status proves only the log writer finished,
 so the command cannot establish initial launch success.
@@ -235,3 +239,14 @@ and `correctionSourceSha256`. Export matches every command against the retained
 events and reruns the current session audit. It can clear only the sole
 `agent-device-run-session-not-applied` reason; every evidence check still applies.
 Keep the original verdict and correction provenance private, outside Git.
+
+For launch-error runs, `launch-error-audit-review.json` records a review of each
+unrecognized setup command. It contains `schemaVersion: 1`, `runId`,
+`originalRecordSha256`, `metaSha256`, `policySha256` (the launch-crash audit source),
+`shellParserSha256` (run-guards), and ordered `commands` entries with `commandId`,
+the exact `command`, and a nonempty `assessment`. Export re-derives diagnosis,
+recovery and diagnosis-time usage from hash-verified retained evidence. A review
+can clear only setup-syntax rejection and its missing-diagnosis/usage consequences;
+it cannot clear other failure reasons or source-before-capture violations. Valid
+runs with setup warnings also require review before publication. The original
+`run.json` is never rewritten, and review records stay private.

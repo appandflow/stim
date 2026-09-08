@@ -1257,6 +1257,85 @@ describe('benchmark viewer export', () => {
     });
 
     const original = JSON.parse(readFileSync(recordPath, 'utf8'));
+    const eventsPath = join(runDir, 'events.jsonl');
+    const originalEvents = readFileSync(eventsPath, 'utf8');
+    const unfamiliar = `/bin/zsh -lc "printf 'SETUP_COMPLETE\\n'"`;
+    const reviewedEvents =
+      originalEvents
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => {
+          const stamped = JSON.parse(line);
+          const event = JSON.parse(stamped.line);
+          if (event.item.id === 'metadata') event.item.command = unfamiliar;
+          return JSON.stringify({ ...stamped, line: JSON.stringify(event) });
+        })
+        .join('\n') + '\n';
+    writeFileSync(eventsPath, reviewedEvents);
+    const rejected = {
+      ...original,
+      valid: false,
+      invalidReasons: [
+        'launch-crash-pre-capture-command-not-allowed',
+        'launch-crash-diagnosis-missing',
+        'launch-crash-diagnosis-usage-missing',
+      ],
+      diagnosis: { valid: false, reason: 'launch-crash-pre-capture-command-not-allowed' },
+      recovery: { valid: false, reason: 'launch-crash-diagnosis-missing' },
+      dispatchToDiagnosisSeconds: null,
+      diagnosisUsage: null,
+      diagnosisCommandCount: null,
+      evidenceSha256: { ...original.evidenceSha256, events: sha256(eventsPath) },
+    };
+    writeFileSync(recordPath, JSON.stringify(rejected));
+    const reviewedExport = () => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'proof'));
+    expect(reviewedExport).toThrow('no valid benchmark runs found');
+    writeFileSync(recordPath, JSON.stringify({ ...original, evidenceSha256: rejected.evidenceSha256 }));
+    expect(reviewedExport).toThrow('no valid benchmark runs found');
+    writeFileSync(recordPath, JSON.stringify(rejected));
+    const reviewPath = join(runDir, 'launch-error-audit-review.json');
+    const review = {
+      schemaVersion: 1,
+      runId: rejected.runId,
+      originalRecordSha256: sha256(recordPath),
+      metaSha256: sha256(join(runDir, 'meta.json')),
+      policySha256: sha256(join(process.cwd(), 'scripts/launch-crash-benchmark.mjs')),
+      shellParserSha256: sha256(join(process.cwd(), 'scripts/agent-benchmark/run-guards.mjs')),
+      commands: [
+        {
+          commandId: 'metadata',
+          command: unfamiliar,
+          assessment: 'Prints a literal setup-complete message; no source access.',
+        },
+      ],
+    };
+    writeFileSync(reviewPath, JSON.stringify(review));
+    expect(reviewedExport().runs[0]).toMatchObject({ valid: true, diagnosisSeconds: 90, settingsReadySeconds: 150 });
+    expect(JSON.parse(readFileSync(recordPath))).toEqual(rejected);
+    for (const changed of [
+      { originalRecordSha256: 'changed' },
+      { metaSha256: 'changed' },
+      { policySha256: 'changed' },
+      { shellParserSha256: 'changed' },
+      { commands: [] },
+      { commands: [{ ...review.commands[0], command: 'different' }] },
+      { commands: [{ ...review.commands[0], assessment: '' }] },
+    ]) {
+      writeFileSync(reviewPath, JSON.stringify({ ...review, ...changed }));
+      expect(reviewedExport).toThrow('no valid benchmark runs found');
+    }
+    writeFileSync(
+      recordPath,
+      JSON.stringify({ ...rejected, invalidReasons: [...rejected.invalidReasons, 'control-emulator-mismatch'] }),
+    );
+    writeFileSync(reviewPath, JSON.stringify({ ...review, originalRecordSha256: sha256(recordPath) }));
+    expect(reviewedExport).toThrow('no valid benchmark runs found');
+    writeFileSync(recordPath, JSON.stringify(rejected));
+    writeFileSync(reviewPath, JSON.stringify(review));
+    writeFileSync(eventsPath, reviewedEvents.replaceAll('SETUP_COMPLETE', 'app/_layout.tsx'));
+    expect(reviewedExport).toThrow('no valid benchmark runs found');
+    writeFileSync(eventsPath, originalEvents);
+    rmSync(reviewPath);
     for (const mutate of [
       (record) => (record.dispatchToDiagnosisSeconds = 1),
       (record) => (record.diagnosisCommandCount = 1),
