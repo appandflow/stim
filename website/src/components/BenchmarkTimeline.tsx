@@ -29,12 +29,12 @@ function position(seconds: number, total: number): string {
   return `${Math.min(100, Math.max(0, (seconds / total) * 100))}%`;
 }
 
-function shortCommand(command: string): string {
+function shortCommand(command: BenchmarkCommand): string {
   return displayCommand(command).slice(0, 92);
 }
 
-function displayCommand(command: string): string {
-  return command.replace(/^\/bin\/(?:zsh|bash|sh) -lc /, '').replace(/^['"]|['"]$/g, '');
+function displayCommand(command: BenchmarkCommand): string {
+  return command.presentation?.command ?? command.command;
 }
 
 function eventTime(selected: BenchmarkAuditSelection): number {
@@ -87,9 +87,19 @@ function TerminalDetail({
           {formatSeconds(elapsed)} / {state === 'running' ? 'running' : `exit ${command.exitCode ?? '-'}`}
         </span>
       </div>
+      {command.presentation && (
+        <div className={styles.commandContext}>
+          <details>
+            <summary>Command context and original</summary>
+            {command.presentation.cwd && <span>Directory: {command.presentation.cwd}</span>}
+            {command.presentation.isolatedAgentDevice && <span>Isolated agent-device session</span>}
+            <pre>{command.command}</pre>
+          </details>
+        </div>
+      )}
       <pre>
         <span className={styles.prompt}>$ </span>
-        {displayCommand(command.command)}
+        {displayCommand(command)}
         {state === 'running' ? '\n\n... command still running' : command.output ? `\n\n${command.output}` : ''}
       </pre>
     </section>
@@ -235,50 +245,30 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
               <strong>{formatSeconds(run.settingsReadySeconds)}</strong>
               <small>validated recovery endpoint</small>
             </div>
-            <div>
-              <span>Tokens to diagnosis</span>
-              <strong>{run.diagnosisUsage ? formatTokens(totalTokens(run.diagnosisUsage)) : 'unavailable'}</strong>
-              <small>
-                {totalTokens(run.usage) > 0
-                  ? `${formatTokens(totalTokens(run.usage))} tokens for the full repair`
-                  : 'Full repair usage unavailable'}
-              </small>
-            </div>
-            <div>
-              <span>Cost to diagnosis</span>
-              <strong>{formatCost(run.estimatedDiagnosisCostUsd ?? null)}</strong>
-              <small>
-                {formatCost(run.estimatedTokenCostUsd)} total / {run.diagnosisCommandCount ?? '-'} of {run.commandCount}{' '}
-                commands
-              </small>
-            </div>
           </>
         ) : (
-          <>
-            <div>
-              <span>Settings ready</span>
-              <strong>{formatSeconds(run.settingsReadySeconds)}</strong>
-              <small>primary outcome</small>
-            </div>
-            <div>
-              <span>Total tokens</span>
-              <strong>{formatTokens(totalTokens(run.usage))}</strong>
-              <small>
-                {formatTokens(run.usage.input_tokens)} input / {formatTokens(run.usage.output_tokens)} output /{' '}
-                {formatTokens(run.usage.reasoning_output_tokens)} reasoning
-              </small>
-            </div>
-            <div>
-              <span>Token cost</span>
-              <strong>{formatCost(run.estimatedTokenCostUsd)}</strong>
-              <small>reported by runner or API-equivalent estimate</small>
-            </div>
-            <div>
-              <span>Commands</span>
-              <strong>{run.commandCount}</strong>
-              <small>{formatTokens(run.usage.cached_input_tokens)} cached input</small>
-            </div>
-          </>
+          <div>
+            <span>Settings ready</span>
+            <strong>{formatSeconds(run.settingsReadySeconds)}</strong>
+            <small>primary outcome</small>
+          </div>
+        )}
+        <div>
+          <span>Total tokens</span>
+          <strong>{totalTokens(run.usage) > 0 ? formatTokens(totalTokens(run.usage)) : 'unavailable'}</strong>
+          <small>full agent run, including cached input</small>
+        </div>
+        <div>
+          <span>Total cost</span>
+          <strong>{formatCost(run.estimatedTokenCostUsd)}</strong>
+          <small>full agent run / reported or API-equivalent estimate</small>
+        </div>
+        {!isLaunchCrash && (
+          <div>
+            <span>Commands</span>
+            <strong>{run.commandCount}</strong>
+            <small>{formatTokens(run.usage.cached_input_tokens)} cached input</small>
+          </div>
         )}
       </div>
 
@@ -464,12 +454,12 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
                           ((command.endSeconds - command.startSeconds) / run.totalSeconds) * 100,
                         )}%`,
                       }}
-                      aria-label={`${shortCommand(command.command)}, ${formatSeconds(
+                      aria-label={`${shortCommand(command)}, ${formatSeconds(
                         command.endSeconds - command.startSeconds,
                       )}, exit ${command.exitCode ?? 'unknown'}`}
                       onClick={() => inspect({ kind: 'command', event: command })}
                     >
-                      {shortCommand(command.command)}
+                      {shortCommand(command)}
                     </button>
                   ))}
               </div>
@@ -572,7 +562,7 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
           {run.commands.map((command) => (
             <button type="button" key={command.id} onClick={() => inspect({ kind: 'command', event: command })}>
               <span>+{formatSeconds(command.startSeconds)}</span>
-              <code>{shortCommand(command.command)}</code>
+              <code>{shortCommand(command)}</code>
               <span>{formatSeconds(command.endSeconds - command.startSeconds)}</span>
             </button>
           ))}

@@ -181,7 +181,11 @@
           "endSeconds": 179.053,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
           "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/launch-crash-stim\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 2 nodes\n@e1 [application] \"Trailhead\"\n@e2 [image] \"SplashScreenLogo\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_15",
@@ -189,7 +193,11 @@
           "endSeconds": 186.929,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device record start tmp/launch-crash-stim-session.mp4 --scope device --quality high --hide-touches",
           "output": "tmp/launch-crash-stim-session.mp4\nSession state: ./state/agent-device/sessions/launch-crash-stim\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record start tmp/launch-crash-stim-session.mp4 --scope device --quality high --hide-touches",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_16",
@@ -197,7 +205,11 @@
           "endSeconds": 196.041,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device snapshot -i",
           "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 2 nodes\n@e1 [application] \"Trailhead\"\n@e2 [image] \"SplashScreenLogo\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_17",
@@ -205,7 +217,11 @@
           "endSeconds": 203.341,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device screenshot tmp/launch-crash-stim-current.png",
           "output": "tmp/launch-crash-stim-current.png (402x874 @1x)\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device screenshot tmp/launch-crash-stim-current.png",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_18",
@@ -229,7 +245,11 @@
           "endSeconds": 222.423,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device snapshot -i",
           "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 32 visible nodes\n@e1 [application] \"Trailhead\"\n@e2 [other] \"\"\n@e3 [other] \"Trails\"\n@e4 [text-field] \"Search trails\" [editable]\n@e5 [scroll-area] \"All regions\" [scrollable]\n  [content below scroll-area hidden]\n@e6 [other] \"All regions\"\n@e7 [button] \"All regions\" [selected]\n@e8 [button] \"Adirondacks\"\n@e9 [button] \"Bas-Saint-Laurent\"\n@e10 [button] \"Charlevoix\"\n@e11 [scroll-area] \"Any level\" [scrollable]\n  [content below scroll-area hidden]\n@e12 [other] \"Any level\"\n@e13 [button] \"Any level\" [selected]\n@e14 [button] \"Easy\"\n@e15 [button] \"Moderate\"\n@e16 [button] \"Hard\"\n@e17 [button] \"Expert\"\n@e18 [text] \"200 trails\"\n@e19 [button] \"Sort by name\" [selected]\n@e20 [button] \"Sort by distance\"\n@e21 [button] \"Sort by rating\"\n@e22 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\" [scrollable]\n  [content below scroll-area hidden]\n@e23 [other] [same label as parent]\n@e24 [button] [same label as parent]\n@e25 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e26 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n@e27 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n@e28 [other] \"Trails, tab, 1 of 4\"\n@e29 [button] \"Trails, tab, 1 of 4\" [selected]\n@e30 [button] \"Record, tab, 2 of 4\"\n@e31 [button] \"History, tab, 3 of 4\"\n@e32 [button] \"Settings, tab, 4 of 4\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_22",
@@ -237,7 +257,11 @@
           "endSeconds": 229.3,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device click @e32 --settle",
           "output": "Tapped @e32 (352, 816)\nsettled after 1709ms: +29 -28 (~4 unchanged)\n- @e2 [other] \"\"\n- @e3 [other] \"Trails\"\n- @e4 [text-field] \"Search trails\"\n- @e5 [scroll-area] \"All regions\"\n- @e6 [other] \"All regions\"\n- @e7 [button] \"All regions\"\n- @e8 [button] \"Adirondacks\"\n- @e9 [button] \"Bas-Saint-Laurent\"\n- @e10 [button] \"Charlevoix\"\n- @e11 [scroll-area] \"Any level\"\n- @e12 [other] \"Any level\"\n- @e13 [button] \"Any level\"\n- @e14 [button] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [button] \"Hard\"\n- @e17 [button] \"Expert\"\n- @e18 [text] \"200 trails\"\n- @e19 [button] \"Sort by name\"\n- @e20 [button] \"Sort by distance\"\n- @e21 [button] \"Sort by rating\"\n- @e22 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e23 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e24 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e25 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e26 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n- @e27 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n+ @e2~s691677 [other] \"Settings\"\n+ @e3~s691677 [scroll-area] \"UNITS\"\n+ @e4~s691677 [other] \"UNITS\"\n+ @e5~s691677 [cell] \"Distance\"\n+ @e6~s691677 [text] \"\"\n+ @e7~s691677 [button] \"Metric units\"\n+ @e8~s691677 [button] \"Imperial units\"\n+ @e9~s691677 [text] \"Used across the whole app\"\n+ @e10~s691677 [text] \"PREFERENCES\"\n+ @e11~s691677 [other] \"Hike reminders\"\n+ @e12~s691677 [switch] \"Hike reminders\"\n+ @e13~s691677 [text] \"\"\n+ @e14~s691677 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s691677 [text] \"Offline maps\"\n+ @e16~s691677 [switch] \"Offline maps\"\n+ @e17~s691677 [text] \"\"\n+ @e18~s691677 [text] \"Keep map tiles for saved trails on device\"\n+ @e19~s691677 [text] \"STORAGE\"\n+ @e20~s691677 [cell] \"Recorded hikes\"\n+ @e21~s691677 [text] \"\"\n+ @e22~s691677 [text] \"48\"\n+ @e23~s691677 [text] \"Stored in a local database\"\n+ @e24~s691677 [button] \"Reset sample data\"\n+ @e25~s691677 [text] \"ABOUT\"\n+ @e26~s691677 [cell] \"\"\n+ @e27~s691677 [text] \"Version\"\n+ @e28~s691677 [text] \"1.0.0\"\n- @e29 [button] \"Trails, tab, 1 of 4\"\n+ @e30~s691677 [button] \"Trails, tab, 1 of 4\"\n- @e32 [button] \"Settings, tab, 4 of 4\"\n+ @e33~s691677 [button] \"Settings, tab, 4 of 4\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e32 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_23",
@@ -245,7 +269,11 @@
           "endSeconds": 236.144,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device wait text \"Keep map tiles for saved trails on device\"",
           "output": "",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device wait text \"Keep map tiles for saved trails on device\"",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_24",
@@ -253,7 +281,11 @@
           "endSeconds": 242.118,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device screenshot tmp/launch-crash-stim-settings.png",
           "output": "tmp/launch-crash-stim-settings.png (402x874 @1x)\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device screenshot tmp/launch-crash-stim-settings.png",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_25",
@@ -269,7 +301,11 @@
           "endSeconds": 251.478,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device record stop",
           "output": "tmp/launch-crash-stim-session.mp4\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record stop",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_27",
@@ -293,7 +329,11 @@
           "endSeconds": 267.973,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device close",
           "output": "Closed: launch-crash-stim\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device close",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_32",
@@ -622,7 +662,11 @@
           "endSeconds": 720.887,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
           "output": "Opened: com.appandflow.trailhead\r\nSession state: ./state/agent-device/sessions/launch-crash-control\r\nPage: com.appandflow.trailhead\r\nApp: com.appandflow.trailhead\r\nSnapshot: 4 nodes\r\n@e1 [alert] \"Open in “Trailhead”?\"\r\n@e2 [button] \"Cancel\"\r\n@e3 [button] \"Open\"\r\n@e4 [text] \"Open in “Trailhead”?\"\r\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_33",
@@ -630,7 +674,11 @@
           "endSeconds": 730.464,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device click @e3 --settle",
           "output": "Tapped @e3 (275, 474)\nsettled after 3922ms: +0 -0 (~4 unchanged)\nunchanged interactive (4):\n= @e1~s885421 [alert] \"Open in “Trailhead”?\"\n= @e2~s885421 [button] \"Cancel\"\n= @e3~s885421 [button] \"Open\"\n= @e4~s885421 [text] \"Open in “Trailhead”?\"\nhint: Settled on a nearly-empty tree — the app may still be loading. Wait for specific content (wait text ...) before interacting.\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e3 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_34",
@@ -638,7 +686,11 @@
           "endSeconds": 733.86,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device click 'Open' --settle",
           "output": "",
-          "exitCode": 1
+          "exitCode": 1,
+          "presentation": {
+            "command": "agent-device click 'Open' --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_35",
@@ -646,7 +698,11 @@
           "endSeconds": 744.037,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device click text=\"Open\" --settle",
           "output": "Tapped text=Open (275, 474)\nsettled after 3734ms: +0 -0 (~4 unchanged)\nunchanged interactive (4):\n= @e1~s885426 [alert] \"Open in “Trailhead”?\"\n= @e2~s885426 [button] \"Cancel\"\n= @e3~s885426 [button] \"Open\"\n= @e4~s885426 [text] \"Open in “Trailhead”?\"\nhint: Settled on a nearly-empty tree — the app may still be loading. Wait for specific content (wait text ...) before interacting.\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click text=\"Open\" --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_36",
@@ -654,7 +710,11 @@
           "endSeconds": 747.617,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device press @e3 --settle",
           "output": "Error (COMMAND_FAILED): Ref @e3 needs a complete snapshot — the current frame only authorizes its emitted refs\nHint: Capture a fresh interactive snapshot (snapshot -i) or use a stable selector, then retry.\nDiagnostic ID: mts41kqr-d99e3498\nDiagnostics Log: ./state/agent-device/sessions/launch-crash-control/requests/566c1d6f2d3cfb24.ndjson\n",
-          "exitCode": 1
+          "exitCode": 1,
+          "presentation": {
+            "command": "agent-device press @e3 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_37",
@@ -662,7 +722,11 @@
           "endSeconds": 751.834,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device snapshot -i",
           "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 4 nodes\n@e1 [alert] \"Open in “Trailhead”?\"\n@e2 [button] \"Cancel\"\n@e3 [button] \"Open\"\n@e4 [text] \"Open in “Trailhead”?\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_38",
@@ -670,7 +734,11 @@
           "endSeconds": 760.389,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device click @e3 --settle",
           "output": "Tapped @e3 (275, 474)\nsettled after 1756ms: +60 -4 (~0 unchanged)\n- @e1 [alert] \"Open in “Trailhead”?\"\n- @e2 [button] \"Cancel\"\n- @e3 [button] \"Open\"\n- @e4 [text] \"Open in “Trailhead”?\"\n+ @e1~s885432 [application] \"Trailhead\"\n+ @e2~s885432 [other] \"Trailhead\"\n+ @e3~s885432 [text] \"Runtime version: exposdk:58.0.0\"\n+ @e4~s885432 [button] \"Close\"\n+ @e5~s885432 [scroll-area] \"Reload\"\n+ @e6~s885432 [other] \"Reload\"\n+ @e7~s885432 [button] \"Reload\"\n+ @e8~s885432 [button] \"Go home\"\n+ @e9~s885432 [button] \"Source code explorer\"\n+ @e10~s885432 [button] \"Toggle performance monitor\" [disabled]\n+ @e11~s885432 [button] \"Toggle element inspector\" [disabled]\n+ @e12~s885432 [text] \"Fast refresh\"\n+ @e13~s885432 [switch] \"0\" [disabled]\n+ @e14~s885432 [switch] \"0\" [disabled]\n+ @e15~s885432 [text] \"Tools button\"\n+ @e16~s885432 [switch] \"1\"\n+ @e17~s885432 [switch] \"1\"\n+ @e18~s885432 [text] \"Debugging not working? Try manually reloading first.\"\n+ @e19~s885432 [other] \"Vertical scroll bar, -1 page\"\n+ @e20~s885432 [scroll-area] \"dev-tools\"\n+ @e21~s885432 [other] \"dev-tools\"\n+ @e22~s885432 [image] \"dev-tools\"\n+ @e23~s885432 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\n+ @e24~s885432 [text] \"You can open it at any time by pressing the blue button with the gear icon, or with the ⌃ + d keyboard shortcut.\"\n+ @e25~s885432 [text] \"(Connect Hardware Keyboard must be enabled on your simulator to use this shortcut, you can toggle it with ⌘ + shift + K.)\"\n+ @e26~s885432 [button] \"Continue\"\n+ @e27~s885432 [other] \"Vertical scroll bar, -1 page\"\n+ @e28~s885432 [image] \"SplashScreenLogo\"\n+ @e29~s885432 [other] \"There was a problem loading the project.\"\n+ @e30~s885432 [other] \"Log 1 of 1\"\n+ @e31~s885432 [other] \"Render Error\"\n+ @e32~s885432 [text] \"STIM_BENCH_LAUNCH_CRASH_5ED1D01D283F\"\n+ @e33~s885432 [scroll-area] \"Source\"\n+ @e34~s885432 [other] \"Source\"\n+ @e35~s885432 [scroll-area] \"‎  25 |\"\n+ @e36~s885432 [cell] \"‎  25 |\"\n+ @e37~s885432 [text] \"‎  26 | export default function RootLayout() {\"\n+ @e38~s885432 [text] \"‎> 27 |   throw new Error('STIM_BENCH_LAUNCH_CRASH_5ED1D01D283F');\"\n+ @e39~s885432 [text] \"‎     |                  ^\"\n+ @e40~s885432 [text] \"‎  28 |   const { name, colors } = useTheme();\"\n+ @e41~s885432 [text] \"‎  29 |\"\n+ @e42~s885432 [text] \"‎  30 |   useEffect(() => {\"\n+ @e43~s885432 [other] \"_layout.tsx (27:18)\"\n+ @e44~s885432 [text] \"Component Stack\"\n+ @e45~s885432 [other] \"<RootLayout />, _layout.tsx:27\"\n+ @e46~s885432 [other] \"<WrappedScreenComponent />, useScreens.js:284\"\n+ @e47~s885432 [other] \"<ZoomTransitionTargetContextProvider />, zoom-transition-context-providers.ios.js:90\"\n+ @e48~s885432 [other] \"See 29 more components\"\n+ @e49~s885432 [text] \"Call Stack\"\n+ @e50~s885432 [other] \"RootLayout, _layout.tsx:27:18\"\n+ @e51~s885432 [other] \"See 13 more frames\"\n+ @e52~s885432 [other] \"Dismiss\"\n+ @e53~s885432 [other] \"Minimize\"\n+ @e54~s885432 [other] \"Copy\"\n+ @e55~s885432 [text] \"This development build encountered the following error:\"\n+ @e56~s885432 [scroll-area] \"Failed to load app from http://<local-ip>:8081 with error: Could not connect to the server.\"\n+ @e57~s885432 [cell] \"Failed to load app from http://<local-ip>:8081 with error: Could not connect to the server.\"\n+ @e58~s885432 [button] \"Reload\"\n+ @e59~s885432 [button] \"Go home\"\n+ @e60~s885432 [button] \"Copy\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e3 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_11",
@@ -702,7 +770,11 @@
           "endSeconds": 791.39,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device click text=\"Reload\" --settle",
           "output": "Error (AMBIGUOUS_MATCH): Selector matched 4 distinct actionable elements: text=Reload\nHint: Multiple candidates matched. Narrow the query or pass an exact identifier.\nCandidates:\n  @e5~s885433 [scroll-area] \"Reload\"\n  @e6~s885433 [other] \"Reload\"\n  @e7~s885433 [button] \"Reload\"\n  @e58~s885433 [button] \"Reload\"\nDiagnostic ID: mts42icv-7fc70904\nDiagnostics Log: ./state/agent-device/sessions/launch-crash-control/requests/8aa386a5f6cf289e.ndjson\n",
-          "exitCode": 1
+          "exitCode": 1,
+          "presentation": {
+            "command": "agent-device click text=\"Reload\" --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_44",
@@ -710,7 +782,11 @@
           "endSeconds": 796.851,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device click @e58~s885432 --settle",
           "output": "Error (COMMAND_FAILED): Ref @e58 was minted from a superseded snapshot generation\nHint: Ref @e58 was minted from snapshot s885432 but the session's ref frame is now s885433 — re-run snapshot -i.\nDiagnostic ID: mts42mqd-aba8086f\nDiagnostics Log: ./state/agent-device/sessions/launch-crash-control/requests/e1a7a9cc1c889cf4.ndjson\n",
-          "exitCode": 1
+          "exitCode": 1,
+          "presentation": {
+            "command": "agent-device click @e58~s885432 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_45",
@@ -718,7 +794,11 @@
           "endSeconds": 800.633,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device snapshot -i",
           "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 42 visible nodes (60 total)\nHint: React Native warning/error overlay detected. It overlays part of the app and should be handled before interacting.\nRun: agent-device react-native dismiss-overlay\nThe command verifies the overlay is gone. Run agent-device snapshot -i afterward only when you need fresh refs for the next action.\n@e1 [application] \"Trailhead\"\n@e2 [other] \"Trailhead\"\n@e4 [button] \"Close\"\n@e5 [scroll-area] \"Reload\" [scrollable]\n  [content below scroll-area hidden]\n@e6 [other] \"Reload\"\n@e19 [other] \"Vertical scroll bar, -1 page\"\n@e20 [scroll-area] \"dev-tools\" [scrollable]\n  [content below scroll-area hidden]\n@e21 [other] \"dev-tools\"\n@e27 [other] \"Vertical scroll bar, -1 page\"\n@e28 [image] \"SplashScreenLogo\"\n@e29 [other] \"There was a problem loading the project.\"\n@e30 [other] \"Log 1 of 1\"\n@e31 [other] \"Render Error\"\n@e32 [text] \"STIM_BENCH_LAUNCH_CRASH_5ED1D01D283F\"\n@e33 [scroll-area] \"Source\" [scrollable]\n  [content below scroll-area hidden]\n@e34 [other] \"Source\"\n@e35 [scroll-area] \"‎  25 |\" [scrollable]\n  [content below scroll-area hidden]\n@e36 [cell] \"‎  25 |\"\n@e37 [text] \"‎  26 | export default function RootLayout() {\"\n@e38 [text] \"‎> 27 |   throw new Error('STIM_BENCH_LAUNCH_CRASH_5ED1D01D283F');\"\n@e39 [text] \"‎     |                  ^\"\n@e40 [text] \"‎  28 |   const { name, colors } = useTheme();\"\n@e41 [text] \"‎  29 |\"\n@e42 [text] \"‎  30 |   useEffect(() => {\"\n@e43 [other] \"_layout.tsx (27:18)\"\n@e44 [text] \"Component Stack\"\n@e45 [other] \"<RootLayout />, _layout.tsx:27\"\n@e46 [other] \"<WrappedScreenComponent />, useScreens.js:284\"\n@e47 [other] \"<ZoomTransitionTargetContextProvider />, zoom-transition-context-providers.ios.js:90\"\n@e48 [other] \"See 29 more components\"\n@e49 [text] \"Call Stack\"\n@e50 [other] \"RootLayout, _layout.tsx:27:18\"\n@e51 [other] \"See 13 more frames\"\n@e52 [other] \"Dismiss\"\n@e53 [other] \"Minimize\"\n@e54 [other] \"Copy\"\n@e55 [text] \"This development build encountered the following error:\"\n@e56 [scroll-area] \"Failed to load app from http://<local-ip>:8081 with error: Could not connect to the server.\" [scrollable]\n  [content below scroll-area hidden]\n@e57 [cell] [same label as parent]\n@e58 [button] \"Reload\"\n@e59 [button] \"Go home\"\n@e60 [button] \"Copy\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_46",
@@ -726,7 +806,11 @@
           "endSeconds": 809.722,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device click @e58 --settle",
           "output": "Tapped @e58 (201, 736)\nsettled after 3720ms: +0 -7 (~53 unchanged)\n- @e29 [other] \"There was a problem loading the project.\"\n- @e55 [text] \"This development build encountered the following error:\"\n- @e56 [scroll-area] \"Failed to load app from http://<local-ip>:8081 with error: Could not connect to the server.\"\n- @e57 [cell] \"Failed to load app from http://<local-ip>:8081 with error: Could not connect to the server.\"\n- @e58 [button] \"Reload\"\n- @e59 [button] \"Go home\"\n- @e60 [button] \"Copy\"\nunchanged interactive (20):\n= @e2~s885444 [other] \"Trailhead\"\n= @e3~s885444 [text] \"Runtime version: exposdk:58.0.0\"\n= @e4~s885444 [button] \"Close\"\n= @e5~s885444 [scroll-area] \"Reload\"\n= @e6~s885444 [other] \"Reload\"\n= @e7~s885444 [button] \"Reload\"\n= @e8~s885444 [button] \"Go home\"\n= @e9~s885444 [button] \"Source code explorer\"\n= @e10~s885444 [button] \"Toggle performance monitor\"\n= @e11~s885444 [button] \"Toggle element inspector\"\n= @e12~s885444 [text] \"Fast refresh\"\n= @e13~s885444 [switch] \"0\"\n= @e14~s885444 [switch] \"0\"\n= @e15~s885444 [text] \"Tools button\"\n= @e16~s885444 [switch] \"1\"\n= @e17~s885444 [switch] \"1\"\n= @e18~s885444 [text] \"Debugging not working? Try manually reloading first.\"\n= @e19~s885444 [other] \"Vertical scroll bar, -1 page\"\n= @e20~s885444 [scroll-area] \"dev-tools\"\n= @e21~s885444 [other] \"dev-tools\"\n… more interactive elements not shown, use snapshot -i\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e58 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_47",
@@ -734,7 +818,11 @@
           "endSeconds": 814.71,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device snapshot -i",
           "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 35 visible nodes (53 total)\nHint: React Native warning/error overlay detected. It overlays part of the app and should be handled before interacting.\nRun: agent-device react-native dismiss-overlay\nThe command verifies the overlay is gone. Run agent-device snapshot -i afterward only when you need fresh refs for the next action.\n@e1 [application] \"Trailhead\"\n@e2 [other] \"Trailhead\"\n@e4 [button] \"Close\"\n@e5 [scroll-area] \"Reload\" [scrollable]\n  [content below scroll-area hidden]\n@e6 [other] \"Reload\"\n@e19 [other] \"Vertical scroll bar, -1 page\"\n@e20 [scroll-area] \"dev-tools\" [scrollable]\n  [content below scroll-area hidden]\n@e21 [other] \"dev-tools\"\n@e27 [other] \"Vertical scroll bar, -1 page\"\n@e28 [image] \"SplashScreenLogo\"\n@e29 [other] \"Log 1 of 1\"\n@e30 [other] \"Render Error\"\n@e31 [text] \"STIM_BENCH_LAUNCH_CRASH_5ED1D01D283F\"\n@e32 [scroll-area] \"Source\" [scrollable]\n  [content below scroll-area hidden]\n@e33 [other] \"Source\"\n@e34 [scroll-area] \"‎  25 |\" [scrollable]\n  [content below scroll-area hidden]\n@e35 [cell] \"‎  25 |\"\n@e36 [text] \"‎  26 | export default function RootLayout() {\"\n@e37 [text] \"‎> 27 |   throw new Error('STIM_BENCH_LAUNCH_CRASH_5ED1D01D283F');\"\n@e38 [text] \"‎     |                  ^\"\n@e39 [text] \"‎  28 |   const { name, colors } = useTheme();\"\n@e40 [text] \"‎  29 |\"\n@e41 [text] \"‎  30 |   useEffect(() => {\"\n@e42 [other] \"_layout.tsx (27:18)\"\n@e43 [text] \"Component Stack\"\n@e44 [other] \"<RootLayout />, _layout.tsx:27\"\n@e45 [other] \"<WrappedScreenComponent />, useScreens.js:284\"\n@e46 [other] \"<ZoomTransitionTargetContextProvider />, zoom-transition-context-providers.ios.js:90\"\n@e47 [other] \"See 29 more components\"\n@e48 [text] \"Call Stack\"\n@e49 [other] \"RootLayout, _layout.tsx:27:18\"\n@e50 [other] \"See 13 more frames\"\n@e51 [other] \"Dismiss\"\n@e52 [other] \"Minimize\"\n@e53 [other] \"Copy\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_48",
@@ -758,7 +846,11 @@
           "endSeconds": 841.839,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
           "output": "Opened: com.appandflow.trailhead\r\nSession state: ./state/agent-device/sessions/launch-crash-control\r\nPage: com.appandflow.trailhead\r\nApp: com.appandflow.trailhead\r\nSnapshot: 10 visible nodes (28 total)\r\n@e1 [application] \"Trailhead\"\r\n@e2 [other] \"Trailhead\"\r\n@e4 [button] \"Close\"\r\n@e5 [scroll-area] \"Reload\" [scrollable]\r\n  [content below scroll-area hidden]\r\n@e6 [other] \"Reload\"\r\n@e19 [other] \"Vertical scroll bar, -1 page\"\r\n@e20 [scroll-area] \"dev-tools\" [scrollable]\r\n  [content below scroll-area hidden]\r\n@e21 [other] \"dev-tools\"\r\n@e27 [other] \"Vertical scroll bar, -1 page\"\r\n@e28 [image] \"SplashScreenLogo\"\r\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_53",
@@ -766,7 +858,11 @@
           "endSeconds": 853.906,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device record start tmp/launch-crash-control-session.mp4 --scope device --quality high --hide-touches",
           "output": "tmp/launch-crash-control-session.mp4\nSession state: ./state/agent-device/sessions/launch-crash-control\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record start tmp/launch-crash-control-session.mp4 --scope device --quality high --hide-touches",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_54",
@@ -774,7 +870,11 @@
           "endSeconds": 860.13,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device click @e4 --settle",
           "output": "Tapped @e4 (41, 62)\nsettled after 2247ms: +13 -15 (~13 unchanged)\n- @e1 [application] \"Trailhead\"\n- @e2 [other] \"Trailhead\"\n+ @e1~s885450 [application] \"Trailhead\"\n+ @e2~s885450 [image] \"SplashScreenLogo\"\n+ @e3~s885450 [text] \"Trailhead\"\n- @e5 [scroll-area] \"Reload\"\n- @e6 [other] \"Reload\"\n- @e7 [button] \"Reload\"\n- @e8 [button] \"Go home\"\n- @e9 [button] \"Source code explorer\"\n+ @e6~s885450 [button] \"Reload\"\n+ @e7~s885450 [button] \"Go home\"\n+ @e8~s885450 [button] \"Source code explorer\"\n- @e18 [text] \"Debugging not working? Try manually reloading first.\"\n+ @e17~s885450 [text] \"Debugging not working? Try manually reloading first.\"\n- @e20 [scroll-area] \"dev-tools\"\n- @e21 [other] \"dev-tools\"\n- @e22 [image] \"dev-tools\"\n- @e23 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\n- @e24 [text] \"You can open it at any time by pressing the blue button with the gear icon, or with the ⌃ + d keyboard shortcut.\"\n- @e25 [text] \"(Connect Hardware Keyboard must be enabled on your simulator to use this shortcut, you can toggle it with ⌘ + shift + K.)\"\n+ @e19~s885450 [other] \"Vertical scroll bar, -1 page\"\n+ @e20~s885450 [image] \"dev-tools\"\n+ @e21~s885450 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\n+ @e22~s885450 [text] \"You can open it at any time by pressing the blue button with the gear icon, or with the ⌃ + d keyboard shortcut.\"\n+ @e23~s885450 [text] \"(Connect Hardware Keyboard must be enabled on your simulator to use this shortcut, you can toggle it with ⌘ + shift + K.)\"\n- @e28 [image] \"SplashScreenLogo\"\n+ @e26~s885450 [other] \"Vertical scroll bar, -1 page\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e4 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_55",
@@ -782,7 +882,11 @@
           "endSeconds": 864.95,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device snapshot -i",
           "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 24 visible nodes (26 total) (truncated)\nDetected an overly complex or slow accessibility tree. Fell back to the private-ax snapshot backend. It is OK to continue; use --json to inspect snapshotQuality.reason if you need recovery details.\n@e1 [application] \"Trailhead\"\n@e2 [image] \"SplashScreenLogo\"\n@e5 [button] \"Close\"\n@e6 [button] \"Reload\"\n@e7 [button] \"Go home\"\n@e8 [button] \"Source code explorer\"\n@e9 [button] \"Toggle performance monitor\" [disabled]\n@e10 [button] \"Toggle element inspector\" [disabled]\n@e11 [text] \"Fast refresh\"\n@e12 [switch] \"0\" [disabled]\n@e13 [switch] \"0\" [disabled]\n@e14 [text] \"Tools button\"\n@e15 [switch] \"1\"\n@e16 [switch] \"1\"\n@e17 [text] \"Debugging not working? Try manually reloading first.\"\n@e18 [other] \"Vertical scroll bar, -1 page\"\n@e19 [other] \"Vertical scroll bar, -1 page\"\n@e20 [image] \"dev-tools\"\n@e21 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\n@e22 [text] \"You can open it at any time by pressing the blue button with the gear icon, or with the ⌃ + d keyboard shortcut.\"\n@e23 [text] \"(Connect Hardware Keyboard must be enabled on your simulator to use this shortcut, you can toggle it with ⌘ + shift + K.)\"\n@e24 [button] \"Continue\"\n@e25 [other] \"Vertical scroll bar, -1 page\"\n@e26 [other] \"Vertical scroll bar, -1 page\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_56",
@@ -790,7 +894,11 @@
           "endSeconds": 871.315,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device click @e5 --settle",
           "output": "Tapped @e5 (41, 62)\nsettled after 1033ms: +0 -0 (~26 unchanged)\nunchanged interactive (20):\n= @e2~s885453 [image] \"SplashScreenLogo\"\n= @e3~s885453 [text] \"Trailhead\"\n= @e4~s885453 [text] \"Runtime version: exposdk:58.0.0\"\n= @e5~s885453 [button] \"Close\"\n= @e6~s885453 [button] \"Reload\"\n= @e7~s885453 [button] \"Go home\"\n= @e8~s885453 [button] \"Source code explorer\"\n= @e9~s885453 [button] \"Toggle performance monitor\"\n= @e10~s885453 [button] \"Toggle element inspector\"\n= @e11~s885453 [text] \"Fast refresh\"\n= @e12~s885453 [switch] \"0\"\n= @e13~s885453 [switch] \"0\"\n= @e14~s885453 [text] \"Tools button\"\n= @e15~s885453 [switch] \"1\"\n= @e16~s885453 [switch] \"1\"\n= @e17~s885453 [text] \"Debugging not working? Try manually reloading first.\"\n= @e18~s885453 [other] \"Vertical scroll bar, -1 page\"\n= @e19~s885453 [other] \"Vertical scroll bar, -1 page\"\n= @e20~s885453 [image] \"dev-tools\"\n= @e21~s885453 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\n… more interactive elements not shown, use snapshot -i\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e5 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_57",
@@ -798,7 +906,11 @@
           "endSeconds": 876.146,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device snapshot -i",
           "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 24 visible nodes (26 total) (truncated)\n@e1 [application] \"Trailhead\"\n@e2 [image] \"SplashScreenLogo\"\n@e5 [button] \"Close\"\n@e6 [button] \"Reload\"\n@e7 [button] \"Go home\"\n@e8 [button] \"Source code explorer\"\n@e9 [button] \"Toggle performance monitor\" [disabled]\n@e10 [button] \"Toggle element inspector\" [disabled]\n@e11 [text] \"Fast refresh\"\n@e12 [switch] \"0\" [disabled]\n@e13 [switch] \"0\" [disabled]\n@e14 [text] \"Tools button\"\n@e15 [switch] \"1\"\n@e16 [switch] \"1\"\n@e17 [text] \"Debugging not working? Try manually reloading first.\"\n@e18 [other] \"Vertical scroll bar, -1 page\"\n@e19 [other] \"Vertical scroll bar, -1 page\"\n@e20 [image] \"dev-tools\"\n@e21 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\n@e22 [text] \"You can open it at any time by pressing the blue button with the gear icon, or with the ⌃ + d keyboard shortcut.\"\n@e23 [text] \"(Connect Hardware Keyboard must be enabled on your simulator to use this shortcut, you can toggle it with ⌘ + shift + K.)\"\n@e24 [button] \"Continue\"\n@e25 [other] \"Vertical scroll bar, -1 page\"\n@e26 [other] \"Vertical scroll bar, -1 page\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_58",
@@ -806,7 +918,11 @@
           "endSeconds": 880.769,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device click @e24 --settle",
           "output": "Tapped @e24 (13, 637)\nsettled after 1034ms: +0 -0 (~26 unchanged)\nunchanged interactive (20):\n= @e2~s885456 [image] \"SplashScreenLogo\"\n= @e3~s885456 [text] \"Trailhead\"\n= @e4~s885456 [text] \"Runtime version: exposdk:58.0.0\"\n= @e5~s885456 [button] \"Close\"\n= @e6~s885456 [button] \"Reload\"\n= @e7~s885456 [button] \"Go home\"\n= @e8~s885456 [button] \"Source code explorer\"\n= @e9~s885456 [button] \"Toggle performance monitor\"\n= @e10~s885456 [button] \"Toggle element inspector\"\n= @e11~s885456 [text] \"Fast refresh\"\n= @e12~s885456 [switch] \"0\"\n= @e13~s885456 [switch] \"0\"\n= @e14~s885456 [text] \"Tools button\"\n= @e15~s885456 [switch] \"1\"\n= @e16~s885456 [switch] \"1\"\n= @e17~s885456 [text] \"Debugging not working? Try manually reloading first.\"\n= @e18~s885456 [other] \"Vertical scroll bar, -1 page\"\n= @e19~s885456 [other] \"Vertical scroll bar, -1 page\"\n= @e20~s885456 [image] \"dev-tools\"\n= @e21~s885456 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\n… more interactive elements not shown, use snapshot -i\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e24 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_59",
@@ -814,7 +930,11 @@
           "endSeconds": 886.397,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device click text=\"Continue\" --settle",
           "output": "Tapped text=Continue (13, 637)\nsettled after 1032ms: +0 -0 (~26 unchanged)\nunchanged interactive (20):\n= @e2~s885459 [image] \"SplashScreenLogo\"\n= @e3~s885459 [text] \"Trailhead\"\n= @e4~s885459 [text] \"Runtime version: exposdk:58.0.0\"\n= @e5~s885459 [button] \"Close\"\n= @e6~s885459 [button] \"Reload\"\n= @e7~s885459 [button] \"Go home\"\n= @e8~s885459 [button] \"Source code explorer\"\n= @e9~s885459 [button] \"Toggle performance monitor\"\n= @e10~s885459 [button] \"Toggle element inspector\"\n= @e11~s885459 [text] \"Fast refresh\"\n= @e12~s885459 [switch] \"0\"\n= @e13~s885459 [switch] \"0\"\n= @e14~s885459 [text] \"Tools button\"\n= @e15~s885459 [switch] \"1\"\n= @e16~s885459 [switch] \"1\"\n= @e17~s885459 [text] \"Debugging not working? Try manually reloading first.\"\n= @e18~s885459 [other] \"Vertical scroll bar, -1 page\"\n= @e19~s885459 [other] \"Vertical scroll bar, -1 page\"\n= @e20~s885459 [image] \"dev-tools\"\n= @e21~s885459 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\n… more interactive elements not shown, use snapshot -i\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click text=\"Continue\" --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_60",
@@ -822,7 +942,11 @@
           "endSeconds": 890.515,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device press @e5 --settle",
           "output": "Error (COMMAND_FAILED): Ref @e5 needs a complete snapshot — the current frame only authorizes its emitted refs\nHint: Capture a fresh interactive snapshot (snapshot -i) or use a stable selector, then retry.\nDiagnostic ID: mts44n04-2c030068\nDiagnostics Log: ./state/agent-device/sessions/launch-crash-control/requests/b09450b490a52f24.ndjson\n",
-          "exitCode": 1
+          "exitCode": 1,
+          "presentation": {
+            "command": "agent-device press @e5 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_61",
@@ -830,7 +954,11 @@
           "endSeconds": 897.68,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device snapshot -i",
           "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 24 visible nodes (26 total) (truncated)\n@e1 [application] \"Trailhead\"\n@e2 [image] \"SplashScreenLogo\"\n@e5 [button] \"Close\"\n@e6 [button] \"Reload\"\n@e7 [button] \"Go home\"\n@e8 [button] \"Source code explorer\"\n@e9 [button] \"Toggle performance monitor\" [disabled]\n@e10 [button] \"Toggle element inspector\" [disabled]\n@e11 [text] \"Fast refresh\"\n@e12 [switch] \"0\" [disabled]\n@e13 [switch] \"0\" [disabled]\n@e14 [text] \"Tools button\"\n@e15 [switch] \"1\"\n@e16 [switch] \"1\"\n@e17 [text] \"Debugging not working? Try manually reloading first.\"\n@e18 [other] \"Vertical scroll bar, -1 page\"\n@e19 [other] \"Vertical scroll bar, -1 page\"\n@e20 [image] \"dev-tools\"\n@e21 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\n@e22 [text] \"You can open it at any time by pressing the blue button with the gear icon, or with the ⌃ + d keyboard shortcut.\"\n@e23 [text] \"(Connect Hardware Keyboard must be enabled on your simulator to use this shortcut, you can toggle it with ⌘ + shift + K.)\"\n@e24 [button] \"Continue\"\n@e25 [other] \"Vertical scroll bar, -1 page\"\n@e26 [other] \"Vertical scroll bar, -1 page\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_62",
@@ -838,7 +966,11 @@
           "endSeconds": 903.451,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device press @e5 --settle",
           "output": "Tapped @e5 (41, 62)\nsettled after 1036ms: +0 -0 (~26 unchanged)\nunchanged interactive (20):\n= @e2~s885462 [image] \"SplashScreenLogo\"\n= @e3~s885462 [text] \"Trailhead\"\n= @e4~s885462 [text] \"Runtime version: exposdk:58.0.0\"\n= @e5~s885462 [button] \"Close\"\n= @e6~s885462 [button] \"Reload\"\n= @e7~s885462 [button] \"Go home\"\n= @e8~s885462 [button] \"Source code explorer\"\n= @e9~s885462 [button] \"Toggle performance monitor\"\n= @e10~s885462 [button] \"Toggle element inspector\"\n= @e11~s885462 [text] \"Fast refresh\"\n= @e12~s885462 [switch] \"0\"\n= @e13~s885462 [switch] \"0\"\n= @e14~s885462 [text] \"Tools button\"\n= @e15~s885462 [switch] \"1\"\n= @e16~s885462 [switch] \"1\"\n= @e17~s885462 [text] \"Debugging not working? Try manually reloading first.\"\n= @e18~s885462 [other] \"Vertical scroll bar, -1 page\"\n= @e19~s885462 [other] \"Vertical scroll bar, -1 page\"\n= @e20~s885462 [image] \"dev-tools\"\n= @e21~s885462 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\n… more interactive elements not shown, use snapshot -i\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device press @e5 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_63",
@@ -846,7 +978,11 @@
           "endSeconds": 908.862,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device back --settle",
           "output": "Error (COMMAND_FAILED): in-app back control is not available\nHint: Retry with --debug and inspect diagnostics log for details.\nDiagnostic ID: mts4502p-33abfa2b\nDiagnostics Log: ./state/agent-device/sessions/launch-crash-control/runner.log\n",
-          "exitCode": 1
+          "exitCode": 1,
+          "presentation": {
+            "command": "agent-device back --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_64",
@@ -854,7 +990,11 @@
           "endSeconds": 913.232,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device react-native dismiss-overlay",
           "output": "No React Native overlay detected\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device react-native dismiss-overlay",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_65",
@@ -862,7 +1002,11 @@
           "endSeconds": 920.101,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device click label=\"Close\" --settle",
           "output": "Tapped label=Close (41, 62)\nsettled after 1032ms: +0 -0 (~26 unchanged)\nunchanged interactive (20):\n= @e2~s885466 [image] \"SplashScreenLogo\"\n= @e3~s885466 [text] \"Trailhead\"\n= @e4~s885466 [text] \"Runtime version: exposdk:58.0.0\"\n= @e5~s885466 [button] \"Close\"\n= @e6~s885466 [button] \"Reload\"\n= @e7~s885466 [button] \"Go home\"\n= @e8~s885466 [button] \"Source code explorer\"\n= @e9~s885466 [button] \"Toggle performance monitor\"\n= @e10~s885466 [button] \"Toggle element inspector\"\n= @e11~s885466 [text] \"Fast refresh\"\n= @e12~s885466 [switch] \"0\"\n= @e13~s885466 [switch] \"0\"\n= @e14~s885466 [text] \"Tools button\"\n= @e15~s885466 [switch] \"1\"\n= @e16~s885466 [switch] \"1\"\n= @e17~s885466 [text] \"Debugging not working? Try manually reloading first.\"\n= @e18~s885466 [other] \"Vertical scroll bar, -1 page\"\n= @e19~s885466 [other] \"Vertical scroll bar, -1 page\"\n= @e20~s885466 [image] \"dev-tools\"\n= @e21~s885466 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\n… more interactive elements not shown, use snapshot -i\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click label=\"Close\" --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_66",
@@ -870,7 +1014,11 @@
           "endSeconds": 929.079,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device screenshot tmp/launch-crash-control-debug.png",
           "output": "tmp/launch-crash-control-debug.png (402x874 @1x)\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device screenshot tmp/launch-crash-control-debug.png",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_67",
@@ -886,7 +1034,11 @@
           "endSeconds": 945.445,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device snapshot -i",
           "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 24 visible nodes (26 total) (truncated)\n@e1 [application] \"Trailhead\"\n@e2 [image] \"SplashScreenLogo\"\n@e5 [button] \"Close\"\n@e6 [button] \"Reload\"\n@e7 [button] \"Go home\"\n@e8 [button] \"Source code explorer\"\n@e9 [button] \"Toggle performance monitor\" [disabled]\n@e10 [button] \"Toggle element inspector\" [disabled]\n@e11 [text] \"Fast refresh\"\n@e12 [switch] \"0\" [disabled]\n@e13 [switch] \"0\" [disabled]\n@e14 [text] \"Tools button\"\n@e15 [switch] \"1\"\n@e16 [switch] \"1\"\n@e17 [text] \"Debugging not working? Try manually reloading first.\"\n@e18 [other] \"Vertical scroll bar, -1 page\"\n@e19 [other] \"Vertical scroll bar, -1 page\"\n@e20 [image] \"dev-tools\"\n@e21 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\n@e22 [text] \"You can open it at any time by pressing the blue button with the gear icon, or with the ⌃ + d keyboard shortcut.\"\n@e23 [text] \"(Connect Hardware Keyboard must be enabled on your simulator to use this shortcut, you can toggle it with ⌘ + shift + K.)\"\n@e24 [button] \"Continue\"\n@e25 [other] \"Vertical scroll bar, -1 page\"\n@e26 [other] \"Vertical scroll bar, -1 page\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_69",
@@ -894,7 +1046,11 @@
           "endSeconds": 952.499,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device click @e7 --settle",
           "output": "Tapped @e7 (64, 194)\nsettled after 1050ms: +0 -0 (~26 unchanged)\nunchanged interactive (20):\n= @e2~s885469 [image] \"SplashScreenLogo\"\n= @e3~s885469 [text] \"Trailhead\"\n= @e4~s885469 [text] \"Runtime version: exposdk:58.0.0\"\n= @e5~s885469 [button] \"Close\"\n= @e6~s885469 [button] \"Reload\"\n= @e7~s885469 [button] \"Go home\"\n= @e8~s885469 [button] \"Source code explorer\"\n= @e9~s885469 [button] \"Toggle performance monitor\"\n= @e10~s885469 [button] \"Toggle element inspector\"\n= @e11~s885469 [text] \"Fast refresh\"\n= @e12~s885469 [switch] \"0\"\n= @e13~s885469 [switch] \"0\"\n= @e14~s885469 [text] \"Tools button\"\n= @e15~s885469 [switch] \"1\"\n= @e16~s885469 [switch] \"1\"\n= @e17~s885469 [text] \"Debugging not working? Try manually reloading first.\"\n= @e18~s885469 [other] \"Vertical scroll bar, -1 page\"\n= @e19~s885469 [other] \"Vertical scroll bar, -1 page\"\n= @e20~s885469 [image] \"dev-tools\"\n= @e21~s885469 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\n… more interactive elements not shown, use snapshot -i\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e7 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_70",
@@ -910,7 +1066,11 @@
           "endSeconds": 966.151,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device snapshot -i",
           "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 2 nodes\n@e1 [application] \"Trailhead\"\n@e2 [image] \"SplashScreenLogo\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_72",
@@ -942,7 +1102,11 @@
           "endSeconds": 1004.66,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device wait text \"Trails\"",
           "output": "",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device wait text \"Trails\"",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_76",
@@ -950,7 +1114,11 @@
           "endSeconds": 1009.131,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device snapshot -i",
           "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 40 visible nodes (59 total)\n@e1 [application] \"Trailhead\"\n@e2 [other] \"Trailhead\"\n@e4 [button] \"Close\"\n@e5 [scroll-area] \"Reload\" [scrollable]\n  [content below scroll-area hidden]\n@e6 [other] \"Reload\"\n@e20 [other] \"Vertical scroll bar, -1 page\"\n@e21 [scroll-area] \"dev-tools\" [scrollable]\n  [content below scroll-area hidden]\n@e22 [other] \"dev-tools\"\n@e28 [other] \"Vertical scroll bar, -1 page\"\n@e29 [other] \"\"\n@e30 [other] \"Trails\"\n@e31 [text-field] \"Search trails\" [editable]\n@e32 [scroll-area] \"All regions\" [scrollable]\n  [content below scroll-area hidden]\n@e33 [other] \"All regions\"\n@e34 [button] \"All regions\" [selected]\n@e35 [button] \"Adirondacks\"\n@e36 [button] \"Bas-Saint-Laurent\"\n@e37 [button] \"Charlevoix\"\n@e38 [scroll-area] \"Any level\" [scrollable]\n  [content below scroll-area hidden]\n@e39 [other] \"Any level\"\n@e40 [button] \"Any level\" [selected]\n@e41 [button] \"Easy\"\n@e42 [button] \"Moderate\"\n@e43 [button] \"Hard\"\n@e44 [button] \"Expert\"\n@e45 [text] \"200 trails\"\n@e46 [button] \"Sort by name\" [selected]\n@e47 [button] \"Sort by distance\"\n@e48 [button] \"Sort by rating\"\n@e49 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\" [scrollable]\n  [content below scroll-area hidden]\n@e50 [other] [same label as parent]\n@e51 [button] [same label as parent]\n@e52 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e53 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n@e54 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n@e55 [other] \"Trails, tab, 1 of 4\"\n@e56 [button] \"Trails, tab, 1 of 4\" [selected]\n@e57 [button] \"Record, tab, 2 of 4\"\n@e58 [button] \"History, tab, 3 of 4\"\n@e59 [button] \"Settings, tab, 4 of 4\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_77",
@@ -958,7 +1126,11 @@
           "endSeconds": 1015.467,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device click @e59 --settle",
           "output": "Tapped @e59 (352, 816)\nsettled after 1767ms: +29 -28 (~31 unchanged)\n- @e29 [other] \"\"\n- @e30 [other] \"Trails\"\n- @e31 [text-field] \"Search trails\"\n- @e32 [scroll-area] \"All regions\"\n- @e33 [other] \"All regions\"\n- @e34 [button] \"All regions\"\n- @e35 [button] \"Adirondacks\"\n- @e36 [button] \"Bas-Saint-Laurent\"\n- @e37 [button] \"Charlevoix\"\n- @e38 [scroll-area] \"Any level\"\n- @e39 [other] \"Any level\"\n- @e40 [button] \"Any level\"\n- @e41 [button] \"Easy\"\n- @e42 [button] \"Moderate\"\n- @e43 [button] \"Hard\"\n- @e44 [button] \"Expert\"\n- @e45 [text] \"200 trails\"\n- @e46 [button] \"Sort by name\"\n- @e47 [button] \"Sort by distance\"\n- @e48 [button] \"Sort by rating\"\n- @e49 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e50 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e51 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e52 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e53 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n- @e54 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n+ @e29~s885476 [other] \"Settings\"\n+ @e30~s885476 [scroll-area] \"UNITS\"\n+ @e31~s885476 [other] \"UNITS\"\n+ @e32~s885476 [cell] \"Distance\"\n+ @e33~s885476 [text] \"\"\n+ @e34~s885476 [button] \"Metric units\"\n+ @e35~s885476 [button] \"Imperial units\"\n+ @e36~s885476 [text] \"Used across the whole app\"\n+ @e37~s885476 [text] \"PREFERENCES\"\n+ @e38~s885476 [other] \"Hike reminders\"\n+ @e39~s885476 [switch] \"Hike reminders\"\n+ @e40~s885476 [text] \"\"\n+ @e41~s885476 [text] \"Nudge me when I have not hiked in a while\"\n+ @e42~s885476 [text] \"Offline maps\"\n+ @e43~s885476 [switch] \"Offline maps\"\n+ @e44~s885476 [text] \"\"\n+ @e45~s885476 [text] \"Keep map tiles for saved trails on device\"\n+ @e46~s885476 [text] \"STORAGE\"\n+ @e47~s885476 [cell] \"Recorded hikes\"\n+ @e48~s885476 [text] \"\"\n+ @e49~s885476 [text] \"48\"\n+ @e50~s885476 [text] \"Stored in a local database\"\n+ @e51~s885476 [button] \"Reset sample data\"\n+ @e52~s885476 [text] \"ABOUT\"\n+ @e53~s885476 [cell] \"\"\n+ @e54~s885476 [text] \"Version\"\n+ @e55~s885476 [text] \"1.0.0\"\n- @e56 [button] \"Trails, tab, 1 of 4\"\n+ @e57~s885476 [button] \"Trails, tab, 1 of 4\"\n- @e59 [button] \"Settings, tab, 4 of 4\"\n+ @e60~s885476 [button] \"Settings, tab, 4 of 4\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e59 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_78",
@@ -966,7 +1138,11 @@
           "endSeconds": 1018.644,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device wait text \"Keep map tiles for saved trails on device\"",
           "output": "",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device wait text \"Keep map tiles for saved trails on device\"",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_79",
@@ -974,7 +1150,11 @@
           "endSeconds": 1023.385,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device screenshot tmp/launch-crash-control-settings.png",
           "output": "tmp/launch-crash-control-settings.png (402x874 @1x)\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device screenshot tmp/launch-crash-control-settings.png",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_80",
@@ -990,7 +1170,11 @@
           "endSeconds": 1036.917,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device record stop",
           "output": "tmp/launch-crash-control-session.mp4\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record stop",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_82",
@@ -1006,7 +1190,11 @@
           "endSeconds": 1044.88,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device close",
           "output": "Closed: launch-crash-control\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device close",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_85",

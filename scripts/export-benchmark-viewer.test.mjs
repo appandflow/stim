@@ -29,6 +29,37 @@ afterEach(() => {
 });
 
 describe('benchmark viewer export', () => {
+  it('adds concise display metadata while preserving original command evidence and output', () => {
+    const root = mkdtempSync(join(tmpdir(), 'stim-viewer-display-'));
+    tempDirs.push(root);
+    const command = 'cd /Users/example/project && env AGENT_DEVICE_SESSION=run agent-device snapshot';
+    writeFileSync(
+      join(root, 'events.jsonl'),
+      [
+        stamp('2026-09-08T12:00:01.000Z', {
+          type: 'item.started',
+          item: { id: 'command', type: 'command_execution', command },
+        }),
+        stamp('2026-09-08T12:00:03.000Z', {
+          type: 'item.completed',
+          item: { id: 'command', type: 'command_execution', command, exit_code: 0, aggregated_output: 'Settings' },
+        }),
+      ].join('\n'),
+    );
+    expect(
+      eventsFor(root, '2026-09-08T12:00:00.000Z', [['/Users/example/project', './worktrees/run']]).commands,
+    ).toEqual([
+      {
+        id: 'command',
+        command: 'cd ./worktrees/run && env AGENT_DEVICE_SESSION=run agent-device snapshot',
+        presentation: { command: 'agent-device snapshot', cwd: './worktrees/run', isolatedAgentDevice: true },
+        output: 'Settings',
+        startSeconds: 1,
+        endSeconds: 3,
+        exitCode: 0,
+      },
+    ]);
+  });
   it('extends detached processes through commands that monitor their PID or PID file', () => {
     const commands = [
       {

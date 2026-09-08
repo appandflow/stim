@@ -116,6 +116,13 @@ the runner policy. Strong isolation from a malicious agent requires a separate
 host or VM. The coordinator still independently verifies app/device evidence.
 Historical attempts keep the policy and verdict under which they were run.
 
+The runner starts in the source repository; the isolated run worktree does not
+exist until the agent creates it after dispatch. After creation, shell calls use
+that worktree through the tool's working-directory parameter when available.
+Otherwise the agent keeps explicit `cd` prefixes where needed; changing one
+shell's directory does not imply that later calls inherit it. Worktree creation
+remains inside the timer for both arms.
+
 The Stim agent creates its own worktree with Git after dispatch:
 
 ```text
@@ -230,6 +237,15 @@ data includes only valid attempts and uses relative paths and redacted device
 identifiers. Private raw results retain invalid attempts for diagnosis. The
 Markdown report is the machine-readable summary; the viewer is an audit view
 and does not redefine metrics.
+
+Token and cost displays cover the full agent run for every scenario and model,
+including work after the diagnosis and Settings endpoints. Missing usage stays
+unavailable, not zero. The viewer uses concise command presentation: successful
+literal `cd ... &&` prefixes move into expandable working-directory context,
+and explicit agent-device state/session assignments are hidden from the default
+command line. The original sanitized command remains expandable. Failed setup,
+dynamic shell constructs, output, timing and validation evidence are unchanged;
+the real commands retain their isolation assignments.
 
 The executable coordinator and its machine-local setup contract live in
 [`scripts/agent-benchmark/`](../scripts/agent-benchmark/README.md). The driver

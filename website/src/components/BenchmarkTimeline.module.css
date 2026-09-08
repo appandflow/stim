@@ -489,6 +489,29 @@
   color: #3fb950;
 }
 
+.commandContext {
+  padding: 0.65rem 1.1rem;
+  border-bottom: 1px solid #30363d;
+  color: #8b949e;
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+.commandContext summary {
+  cursor: pointer;
+}
+
+.commandContext span {
+  display: block;
+  margin-top: 0.5rem;
+}
+
+.commandContext pre {
+  min-height: 0;
+  max-height: 12rem;
+  padding: 0.6rem 0 0;
+}
+
 .eventDetail {
   min-height: 10rem;
   padding: 1rem;

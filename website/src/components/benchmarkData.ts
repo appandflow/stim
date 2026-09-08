@@ -3,6 +3,11 @@ export type BenchmarkCommand = {
   startSeconds: number;
   endSeconds: number;
   command: string;
+  presentation?: {
+    command: string;
+    cwd?: string;
+    isolatedAgentDevice?: boolean;
+  };
   output: string;
   exitCode: number | null;
 };

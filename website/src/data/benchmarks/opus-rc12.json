@@ -95,7 +95,11 @@
           "endSeconds": 53.663,
           "command": "cd worktree/bench+javascript-stim && grep -rn \"Keep map tiles for saved trails on device\" --include=*.ts --include=*.tsx --include=*.js --include=*.jsx --include=*.json . | grep -v node_modules",
           "output": "(eval):1: no matches found: --include=*.ts",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "grep -rn \"Keep map tiles for saved trails on device\" --include=*.ts --include=*.tsx --include=*.js --include=*.jsx --include=*.json . | grep -v node_modules",
+            "cwd": "worktree/bench+javascript-stim"
+          }
         },
         {
           "id": "toolu_01Vibr7i8HRLMXM9Fdt9PePP",
@@ -103,7 +107,11 @@
           "endSeconds": 56.113,
           "command": "cd worktree/bench+javascript-stim && grep -rn \"Keep map tiles\" . --exclude-dir=node_modules --exclude-dir=ios --exclude-dir=android --exclude-dir=.git",
           "output": "app/(tabs)/settings.tsx:112:            subtitle=\"Keep map tiles for saved trails on device\"\nShell cwd was reset to workspace/trailhead-v3",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "grep -rn \"Keep map tiles\" . --exclude-dir=node_modules --exclude-dir=ios --exclude-dir=android --exclude-dir=.git",
+            "cwd": "worktree/bench+javascript-stim"
+          }
         },
         {
           "id": "toolu_01AYBYDtU5nikTbeXavrvZqo",
@@ -111,7 +119,11 @@
           "endSeconds": 65.106,
           "command": "cd worktree/bench+javascript-stim && stim start",
           "output": "  metro       starting on port 8082 (expo-child, supervisor pid 47379)\nOK: dev server on port 8082, supervisor pid 47379 (expo-child) (1.7s)\n  logs        results/opus-rc12/javascript-stim/stim-home/workspaces/bench-opus-rc12-opus-javascript-stim-17884695828--4a06f54d61bc6610/logs\nShell cwd was reset to workspace/trailhead-v3",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim start",
+            "cwd": "worktree/bench+javascript-stim"
+          }
         },
         {
           "id": "toolu_0136ED5hiitmYyo2NmZfZ6HU",
@@ -119,7 +131,11 @@
           "endSeconds": 104.1,
           "command": "cd worktree/bench+javascript-stim && stim ios",
           "output": "  device      booting stim-98652d33-bench-opus-rc12-opus-javascri (iPhone 17 26.5) (<simulator-udid>)\n  fingerprint b1232a.. hit (3.6s)\n  device      resetting privacy grants and the keychain on <simulator-udid>\n  device      stim-98652d33-bench-opus-rc12-opus-javascri (iPhone 17 26.5) (<simulator-udid-prefix>) adopted (14.6s)\n  install     removed <agent-device-helper>, left by the previous workspace\n  install     Trailhead.app -> stim-98652d33-bench-opus-rc12-opus-javascri (iPhone 17 26.5) (<simulator-udid-prefix>) (4.6s)\n  install     dev client prepared (756ms)\n  launch      com.appandflow.trailhead (422ms)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (14.5s total)\nOK: com.appandflow.trailhead on stim-98652d33-bench-opus-rc12-opus-javascri (iPhone 17 26.5) (<simulator-udid-prefix>), Metro port 8082 (from cache, 36.6s)\n  device      stim-98652d33-bench-opus-rc12-opus-javascri (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       from cache\n  compilation cache not run; artifact cache supplied the app\n  logs        results/opus-rc12/javascript-stim/stim-home/workspaces/bench-opus-rc12-opus-javascript-stim-17884695828--4a06f54d61bc6610/logs\nShell cwd was reset to workspace/trailhead-v3",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim ios",
+            "cwd": "worktree/bench+javascript-stim"
+          }
         },
         {
           "id": "toolu_01YLkDWBTNpvwUVXWzpaqw3T",
@@ -742,7 +758,11 @@
           "endSeconds": 59.56,
           "command": "cd worktree/bench+native-stim && stim start",
           "output": "  metro       starting on port 8082 (expo-child, supervisor pid 63674)\nOK: dev server on port 8082, supervisor pid 63674 (expo-child) (1.7s)\n  logs        results/opus-rc12/native-stim/stim-home/workspaces/bench-native-stim--e62d0a39ada44c59/logs\nShell cwd was reset to workspace/trailhead-v3",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim start",
+            "cwd": "worktree/bench+native-stim"
+          }
         },
         {
           "id": "toolu_017jbRXnc47MRRSTzZHcPG2F",
@@ -750,7 +770,11 @@
           "endSeconds": 206.9,
           "command": "cd worktree/bench+native-stim && stim ios",
           "output": "  device      booting stim-32fe72ce-bench-opus-rc12-opus-native-s (iPhone 17 26.5) (<simulator-udid>)\n  fingerprint 07b1c1.. miss (5.2s)\n  build       compiling Debug with xcodebuild\n  cache       compilation cache on (CAS at results/opus-rc12/native-stim/stim-home/compilation-cache)\n  device      resetting privacy grants and the keychain on <simulator-udid>\n  build       still compiling (30s of ~4m15s)\n  build       still compiling (1m00s of ~4m15s)\n  build       still compiling (1m30s of ~4m15s)\n  build       still compiling (2m00s of ~4m15s)\n  cache       compilation cache 1394/1394 hits (100%)\n  build       ok (2m02s)\n  device      stim-32fe72ce-bench-opus-rc12-opus-native-s (iPhone 17 26.5) (<simulator-udid-prefix>) adopted (26.4s)\n  install     removed <agent-device-helper>, left by the previous workspace\n  install     Trailhead.app -> stim-32fe72ce-bench-opus-rc12-opus-native-s (iPhone 17 26.5) (<simulator-udid-prefix>) (3.4s)\n  install     dev client prepared (704ms)\n  launch      com.appandflow.trailhead (431ms)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (11.5s total)\nOK: com.appandflow.trailhead on stim-32fe72ce-bench-opus-rc12-opus-native-s (iPhone 17 26.5) (<simulator-udid-prefix>), Metro port 8082 (built, 2m25s)\n  device      stim-32fe72ce-bench-opus-rc12-opus-native-s (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       built\n  compilation cache 1394/1394 hits (100%)\n  logs        results/opus-rc12/native-stim/stim-home/workspaces/bench-native-stim--e62d0a39ada44c59/logs\nShell cwd was reset to workspace/trailhead-v3",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim ios",
+            "cwd": "worktree/bench+native-stim"
+          }
         },
         {
           "id": "toolu_01FK7E4qfZbtpLDn3MKK4CUw",
@@ -1002,7 +1026,11 @@
           "endSeconds": 91.583,
           "command": "cd worktree/native-control && grep -rn \"derivedDataPath\" node_modules/@expo/cli/build/src/run/ios/ 2>/dev/null | head -20",
           "output": "Shell cwd was reset to workspace/trailhead-v3",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "grep -rn \"derivedDataPath\" node_modules/@expo/cli/build/src/run/ios/ 2>/dev/null | head -20",
+            "cwd": "worktree/native-control"
+          }
         },
         {
           "id": "toolu_01WE553VtwtTEA78PYNUZQwu",

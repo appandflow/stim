@@ -72,9 +72,9 @@ function ComparisonCard({
                 <>
                   <span>Settings repaired {formatSeconds(run.settingsReadySeconds)}</span>
                   <span>
-                    {run.diagnosisUsage ? formatTokens(totalTokens(run.diagnosisUsage)) : 'unavailable'} tokens
+                    {totalTokens(run.usage) > 0 ? formatTokens(totalTokens(run.usage)) : 'unavailable'} total tokens
                   </span>
-                  <span>{formatCost(run.estimatedDiagnosisCostUsd ?? null)} cost</span>
+                  <span>{formatCost(run.estimatedTokenCostUsd)} total cost</span>
                 </>
               ) : (
                 <>

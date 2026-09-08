@@ -95,7 +95,11 @@
           "endSeconds": 54.314,
           "command": "cd worktree/bench+javascript-stim && grep -rn \"Keep map tiles for saved trails on device\" --include=\"*.ts*\" .",
           "output": "app/(tabs)/settings.tsx:112:            subtitle=\"Keep map tiles for saved trails on device\"\nShell cwd was reset to workspace/trailhead-v3",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "grep -rn \"Keep map tiles for saved trails on device\" --include=\"*.ts*\" .",
+            "cwd": "worktree/bench+javascript-stim"
+          }
         },
         {
           "id": "toolu_01Lx7kYEUZA3NvMJE1apDmhY",
@@ -103,7 +107,11 @@
           "endSeconds": 64.679,
           "command": "cd worktree/bench+javascript-stim && stim start",
           "output": "  metro       starting on port 8082 (expo-child, supervisor pid 37914)\nOK: dev server on port 8082, supervisor pid 37914 (expo-child) (2.2s)\n  logs        results/sonnet-rc12/javascript-stim/stim-home/workspaces/bench-sonnet-rc12-sonnet-javascript-stim-1788463--b47adf33626c984e/logs\nShell cwd was reset to workspace/trailhead-v3",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim start",
+            "cwd": "worktree/bench+javascript-stim"
+          }
         },
         {
           "id": "toolu_011vpn7Q6aVfsSQCmWMQofc7",
@@ -127,7 +135,11 @@
           "endSeconds": 125.326,
           "command": "cd worktree/bench+javascript-stim && stim ios --device-type \"iPhone 17\" --runtime 26.5",
           "output": "  device      booting stim-22c1f1cd-bench-sonnet-rc12-sonnet-java (iPhone 17 26.5) (<simulator-udid>)\n  fingerprint b1232a.. hit (3.7s)\n  device      resetting privacy grants and the keychain on <simulator-udid>\n  device      stim-22c1f1cd-bench-sonnet-rc12-sonnet-java (iPhone 17 26.5) (<simulator-udid-prefix>) adopted (28.1s)\n  install     removed <agent-device-helper>, left by the previous workspace\n  install     Trailhead.app -> stim-22c1f1cd-bench-sonnet-rc12-sonnet-java (iPhone 17 26.5) (<simulator-udid-prefix>) (4.8s)\n  install     dev client prepared (706ms)\n  launch      com.appandflow.trailhead (438ms)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (13.8s total)\nOK: com.appandflow.trailhead on stim-22c1f1cd-bench-sonnet-rc12-sonnet-java (iPhone 17 26.5) (<simulator-udid-prefix>), Metro port 8082 (from cache, 49.7s)\n  device      stim-22c1f1cd-bench-sonnet-rc12-sonnet-java (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       from cache\n  compilation cache not run; artifact cache supplied the app\n  logs        results/sonnet-rc12/javascript-stim/stim-home/workspaces/bench-sonnet-rc12-sonnet-javascript-stim-1788463--b47adf33626c984e/logs\nShell cwd was reset to workspace/trailhead-v3",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim ios --device-type \"iPhone 17\" --runtime 26.5",
+            "cwd": "worktree/bench+javascript-stim"
+          }
         },
         {
           "id": "toolu_01Ln8pNAzt87ZvgK1KwLY6NW",
@@ -688,7 +700,11 @@
           "endSeconds": 67.013,
           "command": "cd worktree/bench+native-stim && stim start",
           "output": "  metro       starting on port 8082 (expo-child, supervisor pid 68127)\nOK: dev server on port 8082, supervisor pid 68127 (expo-child) (1.7s)\n  logs        results/sonnet-rc12/native-stim/stim-home/workspaces/bench-sonnet-rc12-sonnet-native-stim-17884656618--d5320cfa805c450b/logs\nShell cwd was reset to workspace/trailhead-v3",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim start",
+            "cwd": "worktree/bench+native-stim"
+          }
         },
         {
           "id": "toolu_01Uw8n1G52j2uQnUMCR8jpiX",
@@ -696,7 +712,11 @@
           "endSeconds": 209.357,
           "command": "cd worktree/bench+native-stim && stim ios",
           "output": "  device      booting stim-be2d737e-bench-sonnet-rc12-sonnet-nati (iPhone 17 26.5) (<simulator-udid>)\n  fingerprint be60e5.. miss (5.6s)\n  build       compiling Debug with xcodebuild\n  cache       compilation cache on (CAS at results/sonnet-rc12/native-stim/stim-home/compilation-cache)\n  device      resetting privacy grants and the keychain on <simulator-udid>\n  build       still compiling (30s of ~4m15s)\n  build       still compiling (1m00s of ~4m15s)\n  build       still compiling (1m30s of ~4m15s)\n  cache       compilation cache 1394/1394 hits (100%)\n  build       ok (1m56s)\n  device      stim-be2d737e-bench-sonnet-rc12-sonnet-nati (iPhone 17 26.5) (<simulator-udid-prefix>) adopted (15.6s)\n  install     removed <agent-device-helper>, left by the previous workspace\n  install     Trailhead.app -> stim-be2d737e-bench-sonnet-rc12-sonnet-nati (iPhone 17 26.5) (<simulator-udid-prefix>) (3.2s)\n  install     dev client prepared (703ms)\n  launch      com.appandflow.trailhead (460ms)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (11.7s total)\nOK: com.appandflow.trailhead on stim-be2d737e-bench-sonnet-rc12-sonnet-nati (iPhone 17 26.5) (<simulator-udid-prefix>), Metro port 8082 (built, 2m19s)\n  device      stim-be2d737e-bench-sonnet-rc12-sonnet-nati (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       built\n  compilation cache 1394/1394 hits (100%)\n  logs        results/sonnet-rc12/native-stim/stim-home/workspaces/bench-sonnet-rc12-sonnet-native-stim-17884656618--d5320cfa805c450b/logs\nShell cwd was reset to workspace/trailhead-v3",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim ios",
+            "cwd": "worktree/bench+native-stim"
+          }
         },
         {
           "id": "toolu_01N5UqDz6qi28dVPoZq9ptoE",

@@ -146,7 +146,11 @@
           "endSeconds": 180.026,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim worktree warm",
           "output": "  carry       copied .expo, android/.gradle, android/app/.cxx, +7 from worktree/launch-error-fixture-rc21\n  carry       complete: 10 ignored entries copied, 0 kept, 0 failed\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim worktree warm",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
         },
         {
           "id": "toolu_01F7gPL47MdQt5P4WcyBAao2",
@@ -154,7 +158,11 @@
           "endSeconds": 186.599,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim start",
           "output": "  metro       starting on port 8082 (expo-child, supervisor pid 44358)\nOK: dev server on port 8082, supervisor pid 44358 (expo-child) (3.3s)\n  logs        results/opus-ios-launch-error/launch-crash-stim/stim-home/workspaces/bench-opus-ios-launch-error-opus-launch-crash-st--ffad1ab77a27ca15/logs\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim start",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
         },
         {
           "id": "toolu_01C4rak7tpCfFDrWVHuCmrSf",
@@ -162,7 +170,11 @@
           "endSeconds": 218.061,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim ios",
           "output": "  device      booting stim-bench-opus-ios-launch-error-opus-launc (iPhone 17 26.5) (<simulator-udid>)\n  device      resetting privacy grants and the keychain on <simulator-udid>\n  fingerprint 058f82.. hit (15.5s)\n  device      stim-bench-opus-ios-launch-error-opus-launc (iPhone 17 26.5) (<simulator-udid-prefix>) adopted (14.9s)\n  install     removed <agent-device-helper>, left by the previous workspace\n  install     unchanged (stim-bench-opus-ios-launch-error-opus-launc (iPhone 17 26.5) already has this build) (705ms)\n  install     dev client prepared (1.2s)\n  launch      com.appandflow.trailhead (976ms)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (8.3s total)\n  launch      1 error-level record in the device log during launch (logs --errors --source device)\n  launch       ERROR  [Error: STIM_BENCH_LAUNCH_CRASH_48AA7563069D]\n  remedy      The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, run `stim reload ios`. Do not run `stim ios` unless native inputs changed or the app process exits.\nOK: com.appandflow.trailhead on stim-bench-opus-ios-launch-error-opus-launc (iPhone 17 26.5) (<simulator-udid-prefix>), Metro port 8082 (from cache, 28.8s)\n  device      stim-bench-opus-ios-launch-error-opus-launc (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       from cache\n  compilation cache not run; artifact cache supplied the app\n  logs        results/opus-ios-launch-error/launch-crash-stim/stim-home/workspaces/bench-opus-ios-launch-error-opus-launch-crash-st--ffad1ab77a27ca15/logs\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim ios",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
         },
         {
           "id": "toolu_01GmaiS3ykNaQWtB9MaAwft8",
@@ -170,7 +182,11 @@
           "endSeconds": 222.079,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim logs --errors",
           "output": "04:04:00.376 error metro   ERROR  [Error: STIM_BENCH_LAUNCH_CRASH_48AA7563069D]\n    Code: _layout.tsx\n      25 |\n      26 | export default function RootLayout() {\n    > 27 |   throw new Error('STIM_BENCH_LAUNCH_CRASH_48AA7563069D');\n         |                  ^\n      28 |   const { name, colors } = useTheme();\n      29 |\n      30 |   useEffect(() => {\n    Call Stack\n      RootLayout (app/_layout.tsx:27:18)\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim logs --errors",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
         },
         {
           "id": "toolu_01NbcCN28Mnor4urXK6X1GfE",
@@ -178,7 +194,11 @@
           "endSeconds": 225.861,
           "command": "cd ./worktrees/bench-launch-crash-stim && git log --oneline -1 && git diff HEAD~1 --stat && sed -n '1,45p' app/_layout.tsx",
           "output": "b169ce9 test: prepare launch failure fixture\n app/_layout.tsx | 1 +\n 1 file changed, 1 insertion(+)\nimport { useEffect } from 'react';\nimport { Stack } from 'expo-router';\nimport { StatusBar } from 'expo-status-bar';\nimport { GestureHandlerRootView } from 'react-native-gesture-handler';\nimport { SafeAreaProvider } from 'react-native-safe-area-context';\nimport { QueryClient, QueryClientProvider } from '@tanstack/react-query';\nimport * as SplashScreen from 'expo-splash-screen';\n\nimport { initializeDatabase } from '@/src/db/client';\nimport { seedHikesIfEmpty } from '@/src/db/seed';\nimport { useTheme } from '@/src/theme';\n\nSplashScreen.preventAutoHideAsync().catch(() => {});\n\nconst queryClient = new QueryClient({\n  defaultOptions: { queries: { staleTime: 60_000, retry: 1 } },\n});\n\n// Both are synchronous and idempotent, and the schema has to exist before any\n// screen queries it. Doing this at module scope rather than in an effect means\n// the first render already has a usable database, with no loading state and no\n// setState-in-effect cascade.\ninitializeDatabase();\nseedHikesIfEmpty();\n\nexport default function RootLayout() {\n  throw new Error('STIM_BENCH_LAUNCH_CRASH_48AA7563069D');\n  const { name, colors } = useTheme();\n\n  useEffect(() => {\n    SplashScreen.hideAsync().catch(() => {});\n  }, []);\n\n  return (\n    <GestureHandlerRootView style={{ flex: 1 }}>\n      <SafeAreaProvider>\n        <QueryClientProvider client={queryClient}>\n          <StatusBar style={name === 'dark' ? 'light' : 'dark'} />\n          <Stack\n            screenOptions={{\n              headerStyle: { backgroundColor: colors.surface },\n              headerTintColor: colors.text,\n              contentStyle: { backgroundColor: colors.background },\n            }}\n          >\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "git log --oneline -1 && git diff HEAD~1 --stat && sed -n '1,45p' app/_layout.tsx",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
         },
         {
           "id": "toolu_016ohRfCxeWVnLHw2yvSWDob",
@@ -186,7 +206,11 @@
           "endSeconds": 231.208,
           "command": "cd ./worktrees/bench-launch-crash-stim && perl -i -ne \"print unless /^  throw new Error\\('STIM_BENCH_LAUNCH_CRASH_48AA7563069D'\\);\\$/\" app/_layout.tsx && git diff",
           "output": "diff --git a/app/_layout.tsx b/app/_layout.tsx\nindex 5449b2e..456c461 100644\n--- a/app/_layout.tsx\n+++ b/app/_layout.tsx\n@@ -24,7 +24,6 @@ initializeDatabase();\n seedHikesIfEmpty();\n \n export default function RootLayout() {\n-  throw new Error('STIM_BENCH_LAUNCH_CRASH_48AA7563069D');\n   const { name, colors } = useTheme();\n \n   useEffect(() => {\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "perl -i -ne \"print unless /^  throw new Error\\('STIM_BENCH_LAUNCH_CRASH_48AA7563069D'\\);\\$/\" app/_layout.tsx && git diff",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
         },
         {
           "id": "toolu_01XvUXaYDLsekmgYPPiaUiam",
@@ -194,7 +218,11 @@
           "endSeconds": 235.974,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim reload ios",
           "output": "Reload requested for com.appandflow.trailhead on stim-bench-opus-ios-launch-error-opus-launc (iPhone 17 26.5) (<simulator-udid>) via deep-link; ios Metro port 8082. Completion is not observed; verify the expected UI and run stim logs --errors.\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim reload ios",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
         },
         {
           "id": "toolu_01G6vknDCHTrqr4n6KmDWUGw",
@@ -202,7 +230,11 @@
           "endSeconds": 238.478,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim logs --errors --since 30s",
           "output": "No matching log records in results/opus-ios-launch-error/launch-crash-stim/stim-home/workspaces/bench-opus-ios-launch-error-opus-launch-crash-st--ffad1ab77a27ca15/logs\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim logs --errors --since 30s",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
         },
         {
           "id": "toolu_01Mz8bexcg4VZTRkFggK1tyc",
@@ -210,7 +242,11 @@
           "endSeconds": 253.925,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
           "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/launch-crash-stim\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 32 visible nodes\n@e1 [application] \"Trailhead\"\n@e2 [other] \"\"\n@e3 [other] \"Trails\"\n@e4 [text-field] \"Search trails\" [editable]\n@e5 [scroll-area] \"All regions\" [scrollable]\n  [content below scroll-area hidden]\n@e6 [other] \"All regions\"\n@e7 [button] \"All regions\" [selected]\n@e8 [button] \"Adirondacks\"\n@e9 [button] \"Bas-Saint-Laurent\"\n@e10 [button] \"Charlevoix\"\n@e11 [scroll-area] \"Any level\" [scrollable]\n  [content below scroll-area hidden]\n@e12 [other] \"Any level\"\n@e13 [button] \"Any level\" [selected]\n@e14 [button] \"Easy\"\n@e15 [button] \"Moderate\"\n@e16 [button] \"Hard\"\n@e17 [button] \"Expert\"\n@e18 [text] \"200 trails\"\n@e19 [button] \"Sort by name\" [selected]\n@e20 [button] \"Sort by distance\"\n@e21 [button] \"Sort by rating\"\n@e22 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\" [scrollable]\n  [content below scroll-area hidden]\n@e23 [other] [same label as parent]\n@e24 [button] [same label as parent]\n@e25 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e26 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n@e27 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n@e28 [other] \"Trails, tab, 1 of 4\"\n@e29 [button] \"Trails, tab, 1 of 4\" [selected]\n@e30 [button] \"Record, tab, 2 of 4\"\n@e31 [button] \"History, tab, 3 of 4\"\n@e32 [button] \"Settings, tab, 4 of 4\"",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_01ABJhLu76Ue8KhtwbX7YhPs",
@@ -218,7 +254,11 @@
           "endSeconds": 260.376,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device record start tmp/launch-crash-stim-session.mp4 --scope device --quality high --hide-touches",
           "output": "tmp/launch-crash-stim-session.mp4\nSession state: ./state/agent-device/sessions/launch-crash-stim",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record start tmp/launch-crash-stim-session.mp4 --scope device --quality high --hide-touches",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_01DEpvmepKZMnJjZue9bNaP1",
@@ -226,7 +266,11 @@
           "endSeconds": 266.13,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device press @e32 --settle",
           "output": "Tapped @e32 (352, 816)\nsettled after 2227ms: +32 -32 (~0 unchanged)\n- @e1 [application] \"Trailhead\"\n- @e2 [other] \"\"\n- @e3 [other] \"Trails\"\n- @e4 [text-field] \"Search trails\"\n- @e5 [scroll-area] \"All regions\"\n- @e6 [other] \"All regions\"\n- @e7 [button] \"All regions\"\n- @e8 [button] \"Adirondacks\"\n- @e9 [button] \"Bas-Saint-Laurent\"\n- @e10 [button] \"Charlevoix\"\n- @e11 [scroll-area] \"Any level\"\n- @e12 [other] \"Any level\"\n- @e13 [button] \"Any level\"\n- @e14 [button] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [button] \"Hard\"\n- @e17 [button] \"Expert\"\n- @e18 [text] \"200 trails\"\n- @e19 [button] \"Sort by name\"\n- @e20 [button] \"Sort by distance\"\n- @e21 [button] \"Sort by rating\"\n- @e22 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e23 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e24 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e25 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e26 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n- @e27 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n- @e28 [other] \"Trails, tab, 1 of 4\"\n- @e29 [button] \"Trails, tab, 1 of 4\"\n- @e30 [button] \"Record, tab, 2 of 4\"\n- @e31 [button] \"History, tab, 3 of 4\"\n- @e32 [button] \"Settings, tab, 4 of 4\"\n+ @e1~s935632 [application] \"Trailhead\"\n+ @e2~s935632 [text] \"Settings\"\n+ @e3~s935632 [scroll-area]\n+ @e4~s935632 [text] \"UNITS\"\n+ @e5~s935632 [text] \"Distance\"\n+ @e6~s935632 [text] \"\"\n+ @e7~s935632 [button] \"Metric units\"\n+ @e8~s935632 [button] \"Imperial units\"\n+ @e9~s935632 [text] \"Used across the whole app\"\n+ @e10~s935632 [text] \"PREFERENCES\"\n+ @e11~s935632 [text] \"Hike reminders\"\n+ @e12~s935632 [switch] \"Hike reminders\"\n+ @e13~s935632 [text] \"\"\n+ @e14~s935632 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s935632 [text] \"Offline maps\"\n+ @e16~s935632 [switch] \"Offline maps\"\n+ @e17~s935632 [text] \"\"\n+ @e18~s935632 [text] \"Keep map tiles for saved trails on device\"\n+ @e19~s935632 [text] \"STORAGE\"\n+ @e20~s935632 [text] \"Recorded hikes\"\n+ @e21~s935632 [text] \"\"\n+ @e22~s935632 [text] \"48\"\n+ @e23~s935632 [text] \"Stored in a local database\"\n+ @e24~s935632 [button] \"Reset sample data\"\n+ @e25~s935632 [text] \"ABOUT\"\n+ @e26~s935632 [text] \"\"\n+ @e27~s935632 [text] \"Version\"\n+ @e28~s935632 [text] \"1.0.0\"\n+ @e29~s935632 [button] \"Trails, tab, 1 of 4\"\n+ @e30~s935632 [button] \"Record, tab, 2 of 4\"\n+ @e31~s935632 [button] \"History, tab, 3 of 4\"\n+ @e32~s935632 [button] \"Settings, tab, 4 of 4\"",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device press @e32 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_01WAaTQMd8MkZs5prgLrC7pn",
@@ -234,7 +278,11 @@
           "endSeconds": 270.494,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device wait text \"Keep map tiles for saved trails on device\"",
           "output": "(Bash completed with no output)",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device wait text \"Keep map tiles for saved trails on device\"",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_01A29Yhqh27pSpcVuYnVXPZ9",
@@ -242,7 +290,11 @@
           "endSeconds": 275.201,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device screenshot tmp/launch-crash-stim-settings.png",
           "output": "tmp/launch-crash-stim-settings.png (402x874 @1x)",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device screenshot tmp/launch-crash-stim-settings.png",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_01JunT7i8agYu89xSZf5g3LZ",
@@ -258,7 +310,11 @@
           "endSeconds": 281.378,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device record stop",
           "output": "tmp/launch-crash-stim-session.mp4",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record stop",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_01KBF9oKYZFveEtSfiQ1wzfD",
@@ -274,7 +330,11 @@
           "endSeconds": 286.454,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device close",
           "output": "Closed: launch-crash-stim",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device close",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_018p3GvtcN7sQhm3cEkKCUP2",
@@ -627,7 +687,11 @@
           "endSeconds": 963.779,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
           "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/launch-crash-control\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 4 nodes\n@e1 [alert] \"Open in “Trailhead”?\"\n@e2 [button] \"Cancel\"\n@e3 [button] \"Open\"\n@e4 [text] \"Open in “Trailhead”?\"",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_018Derf1Xz9izs7gkonWwgqY",
@@ -635,7 +699,11 @@
           "endSeconds": 972.562,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device press @e3 --settle",
           "output": "Tapped @e3 (275, 474)\nsettled after 4061ms: +0 -0 (~4 unchanged)\nunchanged interactive (4):\n= @e1~s491056 [alert] \"Open in “Trailhead”?\"\n= @e2~s491056 [button] \"Cancel\"\n= @e3~s491056 [button] \"Open\"\n= @e4~s491056 [text] \"Open in “Trailhead”?\"\nhint: Settled on a nearly-empty tree — the app may still be loading. Wait for specific content (wait text ...) before interacting.",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device press @e3 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_01M7QSrm3T2i5zQ1TFESTR9e",
@@ -643,7 +711,11 @@
           "endSeconds": 976.851,
           "command": "for i in 1 2 3 4 5 6; do env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device press \"Open\" --settle 2>&1 | tail -3; done",
           "output": "Error (INVALID_ARGS): Target \"Open\" is not a @ref, selector, or \"x y\" point. To match by visible text, use text=\"Open\" (or label=/id=/role=), or pass an @ref from snapshot.\nHint: Check command arguments and run --help for usage examples.\nDiagnostic ID: mtsc9zk6-c67353c3\nError (INVALID_ARGS): Target \"Open\" is not a @ref, selector, or \"x y\" point. To match by visible text, use text=\"Open\" (or label=/id=/role=), or pass an @ref from snapshot.\nHint: Check command arguments and run --help for usage examples.\nDiagnostic ID: mtsc9zlx-ee097f51\nError (INVALID_ARGS): Target \"Open\" is not a @ref, selector, or \"x y\" point. To match by visible text, use text=\"Open\" (or label=/id=/role=), or pass an @ref from snapshot.\nHint: Check command arguments and run --help for usage examples.\nDiagnostic ID: mtsc9znq-7698aa02\nError (INVALID_ARGS): Target \"Open\" is not a @ref, selector, or \"x y\" point. To match by visible text, use text=\"Open\" (or label=/id=/role=), or pass an @ref from snapshot.\nHint: Check command arguments and run --help for usage examples.\nDiagnostic ID: mtsc9zpl-eb09e180\nError (INVALID_ARGS): Target \"Open\" is not a @ref, selector, or \"x y\" point. To match by visible text, use text=\"Open\" (or label=/id=/role=), or pass an @ref from snapshot.\nHint: Check command arguments and run --help for usage examples.\nDiagnostic ID: mtsc9zrd-6fc282a1\nError (INVALID_ARGS): Target \"Open\" is not a @ref, selector, or \"x y\" point. To match by visible text, use text=\"Open\" (or label=/id=/role=), or pass an @ref from snapshot.\nHint: Check command arguments and run --help for usage examples.\nDiagnostic ID: mtsc9zt6-ca1bc986",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "for i in 1 2 3 4 5 6; do agent-device press \"Open\" --settle 2>&1 | tail -3; done",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_01KX8Jg4v7bAQLPePA7PPrax",
@@ -651,7 +723,11 @@
           "endSeconds": 998.662,
           "command": "for i in 1 2 3 4 5 6; do env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device press 'text=\"Open\"' --settle 2>&1 | tail -4; done",
           "output": "= @e2~s491061 [button] \"Cancel\"\n= @e3~s491061 [button] \"Open\"\n= @e4~s491061 [text] \"Open in “Trailhead”?\"\nhint: Settled on a nearly-empty tree — the app may still be loading. Wait for specific content (wait text ...) before interacting.\n= @e2~s491066 [button] \"Cancel\"\n= @e3~s491066 [button] \"Open\"\n= @e4~s491066 [text] \"Open in “Trailhead”?\"\nhint: Settled on a nearly-empty tree — the app may still be loading. Wait for specific content (wait text ...) before interacting.\n+ @e50~s491078 [other] \"See 13 more frames\"\n+ @e51~s491078 [other] \"Dismiss\"\n+ @e52~s491078 [other] \"Minimize\"\n+ @e53~s491078 [other] \"Copy\"\nError (COMMAND_FAILED): Selector did not match: text=\"Open\"\nHint: Selector text/label values match exactly (quote multi-word values: text=\"Sign in\"). Run snapshot -i to see current elements and refs, or use find <text> for contains matching.\nDiagnostic ID: mtscag0d-25422f4b\nDiagnostics Log: ./state/agent-device/sessions/launch-crash-control/requests/4d0889127fe8eac3.ndjson\nError (COMMAND_FAILED): Selector did not match: text=\"Open\"\nHint: Selector text/label values match exactly (quote multi-word values: text=\"Sign in\"). Run snapshot -i to see current elements and refs, or use find <text> for contains matching.\nDiagnostic ID: mtscag8c-6b5d036c\nDiagnostics Log: ./state/agent-device/sessions/launch-crash-control/requests/9737c087a27e7832.ndjson\nError (COMMAND_FAILED): Selector did not match: text=\"Open\"\nHint: Selector text/label values match exactly (quote multi-word values: text=\"Sign in\"). Run snapshot -i to see current elements and refs, or use find <text> for contains matching.\nDiagnostic ID: mtscagg8-2a6f03d5\nDiagnostics Log: ./state/agent-device/sessions/launch-crash-control/requests/b5e3c8ff80d1da38.ndjson",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "for i in 1 2 3 4 5 6; do agent-device press 'text=\"Open\"' --settle 2>&1 | tail -4; done",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_01GTDMUSMG73Tv1orAQZwEWz",
@@ -707,7 +783,11 @@
           "endSeconds": 1070.057,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device snapshot -i 2>&1 | head -40",
           "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 40 visible nodes (59 total)\n@e1 [application] \"Trailhead\"\n@e2 [other] \"Trailhead\"\n@e4 [button] \"Close\"\n@e5 [scroll-area] \"Reload\" [scrollable]\n  [content below scroll-area hidden]\n@e6 [other] \"Reload\"\n@e20 [other] \"Vertical scroll bar, -1 page\"\n@e21 [scroll-area] \"dev-tools\" [scrollable]\n  [content below scroll-area hidden]\n@e22 [other] \"dev-tools\"\n@e28 [other] \"Vertical scroll bar, -1 page\"\n@e29 [other] \"\"\n@e30 [other] \"Trails\"\n@e31 [text-field] \"Search trails\" [editable]\n@e32 [scroll-area] \"All regions\" [scrollable]\n  [content below scroll-area hidden]\n@e33 [other] \"All regions\"\n@e34 [button] \"All regions\" [selected]\n@e35 [button] \"Adirondacks\"\n@e36 [button] \"Bas-Saint-Laurent\"\n@e37 [button] \"Charlevoix\"\n@e38 [scroll-area] \"Any level\" [scrollable]\n  [content below scroll-area hidden]\n@e39 [other] \"Any level\"\n@e40 [button] \"Any level\" [selected]\n@e41 [button] \"Easy\"\n@e42 [button] \"Moderate\"\n@e43 [button] \"Hard\"\n@e44 [button] \"Expert\"\n@e45 [text] \"200 trails\"\n@e46 [button] \"Sort by name\" [selected]\n@e47 [button] \"Sort by distance\"\n@e48 [button] \"Sort by rating\"\n@e49 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\" [scrollable]\n  [content below scroll-area hidden]\n@e50 [other] [same label as parent]\n@e51 [button] [same label as parent]",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i 2>&1 | head -40",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_012ZPz9AkwBKxHyAy8eo5BVq",
@@ -715,7 +795,11 @@
           "endSeconds": 1075.717,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device press @e4 --settle 2>&1 | head -20",
           "output": "Tapped @e4 (41, 62)\nsettled after 775ms: +0 -0 (~59 unchanged)\nunchanged interactive (20):\n= @e2~s491088 [other] \"Trailhead\"\n= @e3~s491088 [text] \"Runtime version: exposdk:58.0.0\"\n= @e4~s491088 [button] \"Close\"\n= @e5~s491088 [scroll-area] \"Reload\"\n= @e6~s491088 [other] \"Reload\"\n= @e7~s491088 [button] \"Reload\"\n= @e8~s491088 [button] \"Go home\"\n= @e9~s491088 [button] \"Source code explorer\"\n= @e10~s491088 [button] \"Toggle performance monitor\"\n= @e11~s491088 [button] \"Toggle element inspector\"\n= @e12~s491088 [button] \"Open DevTools\"\n= @e13~s491088 [text] \"Fast refresh\"\n= @e14~s491088 [switch] \"1\"\n= @e15~s491088 [switch] \"1\"\n= @e16~s491088 [text] \"Tools button\"\n= @e17~s491088 [switch] \"1\"\n= @e18~s491088 [switch] \"1\"",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device press @e4 --settle 2>&1 | head -20",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_012RKkkBnoHzfTTAyMBxbdi2",
@@ -723,7 +807,11 @@
           "endSeconds": 1081.89,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device press 'label=\"Close\"' --settle 2>&1 | head -12",
           "output": "Tapped label=\"Close\" (41, 62)\nsettled after 766ms: +0 -0 (~59 unchanged)\nunchanged interactive (20):\n= @e2~s491092 [other] \"Trailhead\"\n= @e3~s491092 [text] \"Runtime version: exposdk:58.0.0\"\n= @e4~s491092 [button] \"Close\"\n= @e5~s491092 [scroll-area] \"Reload\"\n= @e6~s491092 [other] \"Reload\"\n= @e7~s491092 [button] \"Reload\"\n= @e8~s491092 [button] \"Go home\"\n= @e9~s491092 [button] \"Source code explorer\"\n= @e10~s491092 [button] \"Toggle performance monitor\"",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device press 'label=\"Close\"' --settle 2>&1 | head -12",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_01JQEpYgX44GUfB8wtpQqUmu",
@@ -731,7 +819,11 @@
           "endSeconds": 1095.22,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device close 2>&1 | tail -3; xcrun simctl terminate <simulator-udid> com.appandflow.trailhead 2>&1; sleep 3; echo TERMINATED",
           "output": "Closed: launch-crash-control\nTERMINATED",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device close 2>&1 | tail -3; xcrun simctl terminate <simulator-udid> com.appandflow.trailhead 2>&1; sleep 3; echo TERMINATED",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_01Snho4AffF1eBPo1n2yxVcX",
@@ -739,7 +831,11 @@
           "endSeconds": 1100.764,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
           "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/launch-crash-control\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 2 nodes (truncated)\nDetected an overly complex or slow accessibility tree. Fell back to the queries snapshot backend. It is OK to continue; use --json to inspect snapshotQuality.reason if you need recovery details.\n@e1 [application]\n@e2 [image] \"SplashScreenLogo\"",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_011n2zUqyFp4zQfWNYaKsqH9",
@@ -747,7 +843,11 @@
           "endSeconds": 1105.965,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device record start tmp/launch-crash-control-session.mp4 --scope device --quality high --hide-touches",
           "output": "tmp/launch-crash-control-session.mp4\nSession state: ./state/agent-device/sessions/launch-crash-control",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record start tmp/launch-crash-control-session.mp4 --scope device --quality high --hide-touches",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_011E64xHi9ejLL7SJpGVHbQJ",
@@ -755,7 +855,11 @@
           "endSeconds": 1109.098,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device snapshot -i 2>&1 | head -30",
           "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 51 visible nodes (53 total) (truncated)\n@e1 [application] \"Trailhead\"\n@e2 [text] \"Trails\"\n@e3 [text] \"\"\n@e4 [text-field] \"Search trails\" [editable]\n@e5 [scroll-area] [scrollable]\n  [content below scroll-area hidden]\n@e6 [button] \"All regions\" [selected]\n@e7 [button] \"Adirondacks\"\n@e8 [button] \"Bas-Saint-Laurent\"\n@e9 [button] \"Charlevoix\"\n@e10 [scroll-area] [scrollable]\n  [content below scroll-area hidden]\n@e11 [button] \"Any level\" [selected]\n@e12 [button] \"Easy\"\n@e13 [button] \"Moderate\"\n@e14 [button] \"Hard\"\n@e15 [button] \"Expert\"\n@e16 [text] \"200 trails\"\n@e17 [button] \"Sort by name\" [selected]\n@e18 [button] \"Sort by distance\"\n@e19 [button] \"Sort by rating\"\n@e20 [scroll-area] [scrollable]\n  [content below scroll-area hidden]\n@e21 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n@e22 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e23 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n@e24 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i 2>&1 | head -30",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_01LCYXC67h9GTzyRwjaw2xCz",
@@ -763,7 +867,11 @@
           "endSeconds": 1113.086,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device find Settings 2>&1 | head -20",
           "output": "<directory inventory omitted from public artifact>",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device find Settings 2>&1 | head -20",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_01XMQ71RMCKZ69uxexCdHnFY",
@@ -771,7 +879,11 @@
           "endSeconds": 1117.652,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device snapshot -i 2>&1 | tail -25",
           "output": "@e31 [button] \"History, tab, 3 of 4\"\n@e32 [button] \"Settings, tab, 4 of 4\" [selected]\n@e35 [button] \"Close\"\n@e36 [button] \"Reload\"\n@e37 [button] \"Go home\"\n@e38 [button] \"Source code explorer\"\n@e39 [button] \"Toggle performance monitor\"\n@e40 [button] \"Toggle element inspector\"\n@e41 [button] \"Open DevTools\"\n@e42 [text] \"Fast refresh\"\n@e43 [switch] \"1\"\n@e44 [switch] \"1\"\n@e45 [text] \"Tools button\"\n@e46 [switch] \"1\"\n@e47 [switch] \"1\"\n@e48 [text] \"Debugging not working? Try manually reloading first.\"\n@e49 [other] \"Vertical scroll bar, -1 page\"\n@e50 [other] \"Vertical scroll bar, -1 page\"\n@e51 [image] \"dev-tools\"\n@e52 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\n@e53 [text] \"You can open it at any time by pressing the blue button with the gear icon, or with the ⌃ + d keyboard shortcut.\"\n@e54 [text] \"(Connect Hardware Keyboard must be enabled on your simulator to use this shortcut, you can toggle it with ⌘ + shift + K.)\"\n@e55 [button] \"Continue\"\n@e56 [other] \"Vertical scroll bar, -1 page\"\n@e57 [other] \"Vertical scroll bar, -1 page\"",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i 2>&1 | tail -25",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_01EPRuzuDGstEryvX5Y2nHVb",
@@ -779,7 +891,11 @@
           "endSeconds": 1122.913,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device press @e55 --settle 2>&1 | head -15",
           "output": "Tapped @e55 (13, 637)\nsettled after 1046ms: +0 -0 (~57 unchanged)\nunchanged interactive (20):\n= @e2~s856075 [text] \"Settings\"\n= @e3~s856075 [scroll-area]\n= @e4~s856075 [text] \"UNITS\"\n= @e5~s856075 [text] \"Distance\"\n= @e6~s856075 [text] \"\"\n= @e7~s856075 [button] \"Metric units\"\n= @e8~s856075 [button] \"Imperial units\"\n= @e9~s856075 [text] \"Used across the whole app\"\n= @e10~s856075 [text] \"PREFERENCES\"\n= @e11~s856075 [text] \"Hike reminders\"\n= @e12~s856075 [switch] \"Hike reminders\"\n= @e13~s856075 [text] \"\"",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device press @e55 --settle 2>&1 | head -15",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_01FUhNXZ7n2cuxqinoRvMWWL",
@@ -787,7 +903,11 @@
           "endSeconds": 1137.434,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device press @e35 --settle 2>&1 | head -12",
           "output": "Error (COMMAND_FAILED): Ref @e35 needs a complete snapshot — the current frame only authorizes its emitted refs\nHint: Capture a fresh interactive snapshot (snapshot -i) or use a stable selector, then retry.\nDiagnostic ID: mtscdfps-d91401cf\nDiagnostics Log: ./state/agent-device/sessions/launch-crash-control/requests/52872a38df474e15.ndjson",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device press @e35 --settle 2>&1 | head -12",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_014Nv4qZwBtETKPbcQ8aKkBS",
@@ -795,7 +915,11 @@
           "endSeconds": 1140.909,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device snapshot -i 2>&1 | rg -n \"Close|Continue|Settings|dev-tools\" | head -10",
           "output": "5:@e2 [text] \"Settings\"\n36:@e32 [button] \"Settings, tab, 4 of 4\" [selected]\n37:@e35 [button] \"Close\"\n53:@e51 [image] \"dev-tools\"\n57:@e55 [button] \"Continue\"",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i 2>&1 | rg -n \"Close|Continue|Settings|dev-tools\" | head -10",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_01PnxuS81hXZrh7ZfN54WqHQ",
@@ -803,7 +927,11 @@
           "endSeconds": 1145.091,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device press @e35 --settle 2>&1 | head -12",
           "output": "Tapped @e35 (41, 62)\nsettled after 1038ms: +0 -0 (~57 unchanged)\nunchanged interactive (20):\n= @e2~s856078 [text] \"Settings\"\n= @e3~s856078 [scroll-area]\n= @e4~s856078 [text] \"UNITS\"\n= @e5~s856078 [text] \"Distance\"\n= @e6~s856078 [text] \"\"\n= @e7~s856078 [button] \"Metric units\"\n= @e8~s856078 [button] \"Imperial units\"\n= @e9~s856078 [text] \"Used across the whole app\"\n= @e10~s856078 [text] \"PREFERENCES\"",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device press @e35 --settle 2>&1 | head -12",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_01AAM7jqWKZmCTrrAZDXc6NJ",
@@ -811,7 +939,11 @@
           "endSeconds": 1160.108,
           "command": "xcrun simctl terminate <simulator-udid> com.appandflow.trailhead 2>&1; sleep 3; env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid> 2>&1 | head -12",
           "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/launch-crash-control\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 2 nodes (truncated)\nDetected an overly complex or slow accessibility tree. Fell back to the queries snapshot backend. It is OK to continue; use --json to inspect snapshotQuality.reason if you need recovery details.\n@e1 [application]\n@e2 [image] \"SplashScreenLogo\"",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "xcrun simctl terminate <simulator-udid> com.appandflow.trailhead 2>&1; sleep 3; agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid> 2>&1 | head -12",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_016rXKQMa4reLZqQ87JTCqWc",
@@ -819,7 +951,11 @@
           "endSeconds": 1163.5,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device snapshot -i 2>&1 | rg -n \"tab|Close|Continue\" | head -12",
           "output": "6:@e4 [button] \"Close\"\n17:@e31 [text-field] \"Search trails\" [editable]\n44:@e55 [other] \"Trails, tab, 1 of 4\"\n45:@e56 [button] \"Trails, tab, 1 of 4\" [selected]\n46:@e57 [button] \"Record, tab, 2 of 4\"\n47:@e58 [button] \"History, tab, 3 of 4\"\n48:@e59 [button] \"Settings, tab, 4 of 4\"",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i 2>&1 | rg -n \"tab|Close|Continue\" | head -12",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_01GxZksWXHE9n9gub92xyPCp",
@@ -827,7 +963,11 @@
           "endSeconds": 1169.773,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device press @e59 --settle 2>&1 | head -20",
           "output": "Tapped @e59 (352, 816)\nsettled after 1767ms: +29 -28 (~31 unchanged)\n- @e29 [other] \"\"\n- @e30 [other] \"Trails\"\n- @e31 [text-field] \"Search trails\"\n- @e32 [scroll-area] \"All regions\"\n- @e33 [other] \"All regions\"\n- @e34 [button] \"All regions\"\n- @e35 [button] \"Adirondacks\"\n- @e36 [button] \"Bas-Saint-Laurent\"\n- @e37 [button] \"Charlevoix\"\n- @e38 [scroll-area] \"Any level\"\n- @e39 [other] \"Any level\"\n- @e40 [button] \"Any level\"\n- @e41 [button] \"Easy\"\n- @e42 [button] \"Moderate\"\n- @e43 [button] \"Hard\"\n- @e44 [button] \"Expert\"\n- @e45 [text] \"200 trails\"\n- @e46 [button] \"Sort by name\"",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device press @e59 --settle 2>&1 | head -20",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_0156w5nCtjNYiBxpWs5SL3YD",
@@ -835,7 +975,11 @@
           "endSeconds": 1173.155,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device wait text \"Keep map tiles for saved trails on device\"",
           "output": "(Bash completed with no output)",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device wait text \"Keep map tiles for saved trails on device\"",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_01Pq298xQtdj2umAWuoSKHom",
@@ -843,7 +987,11 @@
           "endSeconds": 1177.987,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device screenshot tmp/launch-crash-control-settings.png",
           "output": "tmp/launch-crash-control-settings.png (402x874 @1x)",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device screenshot tmp/launch-crash-control-settings.png",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_01DMYqzgQEgmj6qmNqXDK6Gh",
@@ -859,7 +1007,11 @@
           "endSeconds": 1188.16,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device record stop",
           "output": "tmp/launch-crash-control-session.mp4",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record stop",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_01U3LTb7Q258QqG9p428PmUk",
@@ -875,7 +1027,11 @@
           "endSeconds": 1193.402,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device close",
           "output": "Closed: launch-crash-control",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device close",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "toolu_01P7Ukt3UjaXUXkzSYvihATh",
