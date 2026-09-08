@@ -201,7 +201,9 @@ export function agentDeviceAuxiliarySessions(commands, expectedPrefix, target) {
 }
 
 export function agentDeviceIsolationInvalidReasons(commands, expectedPrefix, target) {
-  const segments = commands.flatMap((command) => shellCommandSegments(command.command));
+  const segments = commands.flatMap((command) =>
+    shellCommandSegments(command.command).map((segment) => segment.replace(/^do\s+/, '')),
+  );
   const auxiliary = new Set(
     agentDeviceAuxiliarySessions(commands, expectedPrefix, target).flatMap((session) =>
       session.commands.map((entry) => entry.command),

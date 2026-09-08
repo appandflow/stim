@@ -1430,6 +1430,175 @@ describe('benchmark viewer export', () => {
     }
     writeFileSync(eventsPath, reviewedEvents);
     writeFileSync(recordPath, JSON.stringify(rejected));
+    {
+      const diagnosticCommand = 'rg -n "\\.tsx" /tmp/metro.log';
+      const diagnosticEvents =
+        reviewedEvents
+          .trim()
+          .split('\n')
+          .map((line) => {
+            const stamped = JSON.parse(line),
+              event = JSON.parse(stamped.line);
+            if (event.item.id === 'metadata') event.item.command = diagnosticCommand;
+            return JSON.stringify({ ...stamped, line: JSON.stringify(event) });
+          })
+          .join('\n') + '\n';
+      writeFileSync(eventsPath, diagnosticEvents);
+      const diagnosticRecord = {
+        ...rejected,
+        evidenceSha256: { ...rejected.evidenceSha256, events: sha256(eventsPath) },
+      };
+      writeFileSync(recordPath, JSON.stringify(diagnosticRecord));
+      const diagnosticEntry = {
+        commandId: 'metadata',
+        command: diagnosticCommand,
+        assessment: 'Searches the runtime log, not source files.',
+      };
+      const diagnosticReview = { ...review, originalRecordSha256: sha256(recordPath), commands: [diagnosticEntry] };
+      writeFileSync(reviewPath, JSON.stringify(diagnosticReview));
+      expect(reviewedExport).toThrow('no valid benchmark runs found');
+      writeFileSync(reviewPath, JSON.stringify({ ...diagnosticReview, diagnosticCommands: [diagnosticEntry] }));
+      expect(reviewedExport().runs[0]).toMatchObject({ valid: true, diagnosisSeconds: 90 });
+      for (const entry of [
+        null,
+        { ...diagnosticEntry, command: 'cat app/_layout.tsx' },
+        { ...diagnosticEntry, assessment: '' },
+      ]) {
+        writeFileSync(reviewPath, JSON.stringify({ ...diagnosticReview, diagnosticCommands: [entry] }));
+        expect(reviewedExport).toThrow('no valid benchmark runs found');
+      }
+      writeFileSync(reviewPath, JSON.stringify({ ...diagnosticReview, diagnosticCommands: {} }));
+      expect(reviewedExport).toThrow('no valid benchmark runs found');
+      writeFileSync(eventsPath, reviewedEvents);
+      writeFileSync(recordPath, JSON.stringify(rejected));
+      const metaPath = join(runDir, 'meta.json');
+      const originalMeta = readFileSync(metaPath, 'utf8');
+      const originalSourceHash = createHash('sha256').update('restored source').digest('hex');
+      const timeoutMeta = {
+        ...JSON.parse(originalMeta),
+        timingTarget: { runTimeoutSeconds: 180 },
+        runnerResult: { code: 143, timedOut: true },
+        finishedAt: '2026-09-04T12:03:01Z',
+        crash: { originalSha256: originalSourceHash },
+      };
+      writeFileSync(metaPath, JSON.stringify(timeoutMeta));
+      const recordingPath = join(runDir, 'proof', 'session.mp4');
+      copyFileSync(
+        join(process.cwd(), 'website/static/benchmarks/luna-rc12/javascript-stim-interaction.mp4'),
+        recordingPath,
+      );
+      const proofSteps = [
+        ['open', 138, 'agent-device open com.app --foreground'],
+        ['record-start', 140, 'agent-device record start /tmp/session.mp4'],
+        ['wait', 149, 'agent-device wait text Settings'],
+        ['copy', 151, 'cp /tmp/settings.png proof/settings.png'],
+        ['record-stop', 152, 'agent-device record stop'],
+        ['record-copy', 153, 'cp /tmp/session.mp4 proof/session.mp4'],
+        ['close', 154, 'agent-device close'],
+      ];
+      const timeoutEvents =
+        [
+          ...reviewedEvents.trim().split('\n'),
+          ...proofSteps.flatMap(([id, seconds, command]) => {
+            const end = Date.parse(timeoutMeta.dispatchAt) + seconds * 1000;
+            return [
+              stamp(new Date(end - 500).toISOString(), {
+                type: 'item.started',
+                item: { id, type: 'command_execution', command },
+              }),
+              stamp(new Date(end).toISOString(), {
+                type: 'item.completed',
+                item: { id, type: 'command_execution', command, exit_code: 0, aggregated_output: '' },
+              }),
+            ];
+          }),
+        ]
+          .toSorted((a, b) => JSON.parse(a).arrivedAt.localeCompare(JSON.parse(b).arrivedAt))
+          .join('\n') + '\n';
+      writeFileSync(eventsPath, timeoutEvents);
+      const timeoutRecord = {
+        ...rejected,
+        invalidReasons: ['runner-exit-143', 'benchmark-run-timeout'],
+        proof: { ...rejected.proof, sourceSha256: originalSourceHash },
+        screen: {
+          ...rejected.screen,
+          openCommandId: 'open',
+          recordStartCommandId: 'record-start',
+          waitCommandId: 'wait',
+          copyCommandId: 'copy',
+          recordStopCommandId: 'record-stop',
+          recordingCopyCommandId: 'record-copy',
+          closeCommandId: 'close',
+        },
+        recording: { valid: true },
+        evidenceSha256: { ...rejected.evidenceSha256, events: sha256(eventsPath), recording: sha256(recordingPath) },
+      };
+      writeFileSync(recordPath, JSON.stringify(timeoutRecord));
+      const timeoutReview = {
+        ...review,
+        originalRecordSha256: sha256(recordPath),
+        metaSha256: sha256(metaPath),
+        completion: {
+          assessment: 'All task evidence completed before the original deadline; only final response timed out.',
+        },
+      };
+      writeFileSync(reviewPath, JSON.stringify(timeoutReview));
+      expect(reviewedExport().runs[0]).toMatchObject({ valid: true, settingsReadySeconds: 150 });
+      expect(JSON.parse(readFileSync(recordPath))).toEqual(timeoutRecord);
+      for (const completionSeconds of [160, 181, null]) {
+        const editEvents = [
+          stamp('2026-09-04T12:02:35Z', {
+            type: 'item.started',
+            item: { id: 'file-edit', type: 'file_change', changes: [] },
+          }),
+        ];
+        if (completionSeconds !== null)
+          editEvents.push(
+            stamp(new Date(Date.parse(timeoutMeta.dispatchAt) + completionSeconds * 1000).toISOString(), {
+              type: 'item.completed',
+              item: { id: 'file-edit', type: 'file_change', changes: [] },
+            }),
+          );
+        writeFileSync(eventsPath, timeoutEvents + editEvents.join('\n') + '\n');
+        writeFileSync(
+          recordPath,
+          JSON.stringify({
+            ...timeoutRecord,
+            evidenceSha256: { ...timeoutRecord.evidenceSha256, events: sha256(eventsPath) },
+          }),
+        );
+        writeFileSync(reviewPath, JSON.stringify({ ...timeoutReview, originalRecordSha256: sha256(recordPath) }));
+        let outcome;
+        try {
+          outcome = reviewedExport().runs[0].valid;
+        } catch (error) {
+          outcome = error.message.includes('no valid benchmark runs found') ? false : error.message;
+        }
+        expect(outcome).toBe(completionSeconds === 160);
+      }
+      writeFileSync(eventsPath, timeoutEvents);
+      writeFileSync(recordPath, JSON.stringify(timeoutRecord));
+      writeFileSync(reviewPath, JSON.stringify({ ...timeoutReview, completion: { assessment: 1 } }));
+      expect(reviewedExport).toThrow('no valid benchmark runs found');
+      for (const changed of [
+        { timingTarget: { runTimeoutSeconds: 150 } },
+        { runnerResult: { code: 1, timedOut: false } },
+      ]) {
+        writeFileSync(metaPath, JSON.stringify({ ...timeoutMeta, ...changed }));
+        writeFileSync(reviewPath, JSON.stringify({ ...timeoutReview, metaSha256: sha256(metaPath) }));
+        expect(reviewedExport).toThrow('no valid benchmark runs found');
+      }
+      writeFileSync(metaPath, JSON.stringify(timeoutMeta));
+      writeFileSync(
+        recordPath,
+        JSON.stringify({ ...timeoutRecord, screen: { ...timeoutRecord.screen, closeCommandId: undefined } }),
+      );
+      writeFileSync(reviewPath, JSON.stringify({ ...timeoutReview, originalRecordSha256: sha256(recordPath) }));
+      expect(reviewedExport).toThrow('no valid benchmark runs found');
+      writeFileSync(metaPath, originalMeta);
+      writeFileSync(eventsPath, reviewedEvents);
+      writeFileSync(recordPath, JSON.stringify(rejected));
+    }
     for (const changed of [
       { originalRecordSha256: 'changed' },
       { metaSha256: 'changed' },

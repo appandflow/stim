@@ -866,7 +866,52 @@ function reviewedChecksumProof(runDir, record, meta) {
     : null;
 }
 
-function validateLaunchCrashRecord(runDir, record, meta, rederive = false) {
+function completedBeforeRunnerTimeout(runDir, record, meta, { commands, activities }) {
+  const seconds = meta.timingTarget?.runTimeoutSeconds;
+  const deadline = Date.parse(meta.dispatchAt) + seconds * 1000;
+  const proofIds = [
+    'openCommandId',
+    'recordStartCommandId',
+    'waitCommandId',
+    'screenshotCommandId',
+    'copyCommandId',
+    'recordStopCommandId',
+    'recordingCopyCommandId',
+    'closeCommandId',
+  ].map((key) => record.screen?.[key]);
+  const recording = join(runDir, 'proof', 'session.mp4');
+  return (
+    Number.isFinite(seconds) &&
+    seconds > 0 &&
+    Number.isFinite(deadline) &&
+    new Set(proofIds).size === proofIds.length &&
+    meta.runnerResult?.timedOut === true &&
+    meta.runnerResult.code === 143 &&
+    Date.parse(meta.finishedAt) >= deadline &&
+    record.proof?.valid === true &&
+    /^[a-f0-9]{64}$/.test(record.proof.sourceSha256 ?? '') &&
+    record.proof.sourceSha256 === meta.crash?.originalSha256 &&
+    record.screen?.valid === true &&
+    record.recording?.valid === true &&
+    existsSync(recording) &&
+    fileSha256(recording) === record.evidenceSha256?.recording &&
+    proofIds.every(
+      (id) =>
+        typeof id === 'string' &&
+        commands.some(
+          (command) => command.id === id && command.exitCode === 0 && Date.parse(command.endedAt) <= deadline,
+        ),
+    ) &&
+    activities
+      .filter((activity) => !/^tool:(?:reasoning|agent_message) /.test(activity.command))
+      .every(
+        (activity) => Number.isFinite(Date.parse(activity.completedAt)) && Date.parse(activity.completedAt) <= deadline,
+      ) &&
+    commands.every((command) => Number.isFinite(Date.parse(command.endedAt)) && Date.parse(command.endedAt) <= deadline)
+  );
+}
+
+function validateLaunchCrashRecord(runDir, record, meta, rederive = false, review = {}) {
   const reject = (reason) => {
     if (process.env.STIM_BENCH_EXPORT_DEBUG === '1') {
       process.stderr.write(`${basename(runDir)}: ${reason}\n`);
@@ -884,6 +929,13 @@ function validateLaunchCrashRecord(runDir, record, meta, rederive = false) {
     readFileSync(eventsPath, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse),
   );
   const commands = evidence.commands;
+  if (
+    record.invalidReasons?.some((reason) => reason === 'runner-exit-143' || reason === 'benchmark-run-timeout') &&
+    (typeof review.completion?.assessment !== 'string' ||
+      !review.completion.assessment.trim() ||
+      !completedBeforeRunnerTimeout(runDir, record, meta, evidence))
+  )
+    return reject('task proof did not complete before runner timeout');
   let auxiliarySessions = [];
   if (
     record.invalidReasons?.includes('stim-worktree-warm-missing-or-failed') &&
@@ -913,6 +965,7 @@ function validateLaunchCrashRecord(runDir, record, meta, rederive = false) {
     platform: meta.platform ?? 'ios',
     activities: evidence.activities,
     setup: { worktree: record.worktree, avdConfig: meta.expectedControlAvdConfig },
+    reviewedDiagnostics: review.diagnosticCommands ?? [],
   });
   const recovery = launchCrashRecovery(commands, {
     diagnosis,
@@ -958,6 +1011,24 @@ function publicationRecord(runDir, meta) {
   const record = readJson(recordPath);
   if (record.variant === 'launch-crash') {
     const reviewPath = join(runDir, 'launch-error-audit-review.json');
+    const review = existsSync(reviewPath) ? readJson(reviewPath) : null;
+    const policyPath = fileURLToPath(new URL('./launch-crash-benchmark.mjs', import.meta.url));
+    const guardPath = fileURLToPath(new URL('./agent-benchmark/run-guards.mjs', import.meta.url));
+    if (
+      review &&
+      (review.schemaVersion !== 1 ||
+        review.runId !== record.runId ||
+        review.originalRecordSha256 !== fileSha256(recordPath) ||
+        review.metaSha256 !== fileSha256(join(runDir, 'meta.json')) ||
+        review.policySha256 !== fileSha256(policyPath) ||
+        review.shellParserSha256 !== fileSha256(guardPath) ||
+        (review.diagnosticCommands != null &&
+          (!Array.isArray(review.diagnosticCommands) ||
+            review.diagnosticCommands.some(
+              (entry) => !entry || typeof entry.assessment !== 'string' || !entry.assessment.trim(),
+            ))))
+    )
+      return { ...record, valid: false };
     const reviewableReasons = new Set([
       'launch-crash-pre-capture-command-not-allowed',
       'launch-crash-diagnosis-missing',
@@ -967,25 +1038,22 @@ function publicationRecord(runDir, meta) {
       'stim-worktree-warm-missing-or-failed',
       'launch-crash-unrelated-source-changes',
       'agent-device-run-session-not-applied',
+      'runner-exit-143',
+      'benchmark-run-timeout',
     ]);
     const eligible =
       record.valid ||
       (record.invalidReasons?.length > 0 && record.invalidReasons.every((reason) => reviewableReasons.has(reason)));
-    const derived = eligible ? validateLaunchCrashRecord(runDir, record, meta, true) : null;
+    const derived = eligible ? validateLaunchCrashRecord(runDir, record, meta, true, review ?? {}) : null;
     if (!derived) return record.valid ? { ...record, valid: false } : record;
     const warnings = derived.diagnosis.setupWarnings ?? [];
     if (!warnings.length && !derived.auxiliarySessions.length && !derived.checksumProof && record.valid) return record;
-    if (!existsSync(reviewPath)) return { ...record, valid: false };
-    const review = readJson(reviewPath);
-    const policyPath = fileURLToPath(new URL('./launch-crash-benchmark.mjs', import.meta.url));
-    const guardPath = fileURLToPath(new URL('./agent-benchmark/run-guards.mjs', import.meta.url));
+    if (!review) return { ...record, valid: false };
     if (
-      review.schemaVersion !== 1 ||
-      review.runId !== record.runId ||
-      review.originalRecordSha256 !== fileSha256(recordPath) ||
-      review.metaSha256 !== fileSha256(join(runDir, 'meta.json')) ||
-      review.policySha256 !== fileSha256(policyPath) ||
-      review.shellParserSha256 !== fileSha256(guardPath) ||
+      (review.diagnosticCommands ?? []).some(
+        (entry) =>
+          !warnings.some((warning) => entry.commandId === warning.commandId && entry.command === warning.command),
+      ) ||
       (derived.checksumProof &&
         (review.sourceChanges?.evidenceSha256 !== derived.checksumProof.evidenceSha256 ||
           typeof review.sourceChanges?.assessment !== 'string' ||
@@ -1120,7 +1188,17 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
             ? validateReadinessRecord(runDir, record, meta)
             : true,
         launchCrashValidation:
-          record.variant === 'launch-crash' ? validateLaunchCrashRecord(runDir, record, meta) : null,
+          record.variant === 'launch-crash' && record.valid
+            ? validateLaunchCrashRecord(
+                runDir,
+                record,
+                meta,
+                false,
+                existsSync(join(runDir, 'launch-error-audit-review.json'))
+                  ? readJson(join(runDir, 'launch-error-audit-review.json'))
+                  : {},
+              )
+            : null,
       };
     })
     .filter(({ runDir, record, readinessValidation, launchCrashValidation }) => {

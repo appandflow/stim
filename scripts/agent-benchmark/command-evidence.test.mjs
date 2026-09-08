@@ -31,6 +31,43 @@ const setup = (runner, events) =>
   benchmarkSetupInvalidReasons({ arm: 'stim', platform: 'ios' }, reconstructCommandEvidence(runner, events).commands);
 
 describe('command completion evidence', () => {
+  it('retains completed-only file changes for deadline and source access auditing', () => {
+    const evidence = reconstructCommandEvidence('codex', [
+      stamp(8, { type: 'item.completed', item: { id: 'edit', type: 'file_change', changes: [] } }),
+    ]);
+    expect(evidence.activities[0]).toMatchObject({ id: 'edit', startedAt: null, completedAt: stamp(8, {}).arrivedAt });
+  });
+  it('does not treat completed-only agent commentary as source access', () => {
+    const evidence = reconstructCommandEvidence(
+      'codex',
+      ['reasoning', 'agent_message'].flatMap((type) =>
+        ['item.started', 'item.completed'].map((event) =>
+          stamp(1, { type: event, item: { id: type, type, text: 'Read app/_layout.tsx next' } }),
+        ),
+      ),
+    );
+    expect(evidence.activities).toEqual([]);
+  });
+  it.each(['claude', 'codex'])('distinguishes a completed %s file edit from its tool start', (runner) => {
+    const begin =
+      runner === 'claude'
+        ? stamp(1, {
+            type: 'assistant',
+            message: {
+              content: [{ type: 'tool_use', name: 'Edit', id: 'edit', input: { file_path: 'app/_layout.tsx' } }],
+            },
+          })
+        : stamp(1, { type: 'item.started', item: { id: 'edit', type: 'file_change', changes: [] } });
+    const end =
+      runner === 'claude'
+        ? result(8, 'edit', {})
+        : stamp(8, { type: 'item.completed', item: { id: 'edit', type: 'file_change' } });
+    expect(reconstructCommandEvidence(runner, [begin]).activities[0].completedAt).toBeNull();
+    expect(reconstructCommandEvidence(runner, [begin, end]).activities[0]).toMatchObject({
+      startedAt: stamp(1, {}).arrivedAt,
+      completedAt: stamp(8, {}).arrivedAt,
+    });
+  });
   it('retains unfinished Codex warm jobs so an earlier completed warm cannot hide overlap', () => {
     const events = [
       codex(0, 'guide', 'stim guide agent'),

@@ -33,6 +33,19 @@ const build = (output) => [{ id: 'build', command: 'stim android', exitCode: 0, 
 describe('agent-device session isolation', () => {
   const prefix = 'env AGENT_DEVICE_STATE_DIR=/tmp/bench-state AGENT_DEVICE_SESSION=bench-run agent-device ';
 
+  it('recognizes scoped loop bodies without allowing an unscoped iteration command', () => {
+    const scoped = `for i in 1 2 3; do ${prefix}press 'text="Open"' --settle 2>&1 | tail -4; done`;
+    expect(agentDeviceIsolationInvalidReasons([{ command: scoped }], prefix)).toEqual([]);
+    for (const command of [
+      scoped.replace('SESSION=bench-run', 'SESSION=default'),
+      scoped.replace('; done', '; agent-device close; done'),
+    ]) {
+      expect(agentDeviceIsolationInvalidReasons([{ command }], prefix)).toContain(
+        'agent-device-run-session-not-applied',
+      );
+    }
+  });
+
   it('allows help output without letting help hide an unscoped device command', () => {
     expect(
       agentDeviceIsolationInvalidReasons(
