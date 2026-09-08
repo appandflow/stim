@@ -427,7 +427,7 @@ PCH and replaces the ccache setup for that invocation.
 Compiler results live under $STIM_HOME/android-cas/<toolchain-id>; APK cache
 keys include that ID. This is a development prototype requiring a compatible
 linker and NDK copy, not an automatically installed backend. See
-docs/android-cas-poc.md in the Stim repository for setup, evidence, and limits.
+https://appandflow.github.io/stim/docs/android-cas for setup, evidence, and limits.
 Compiler/PCH modes have separate generated directories under each module's
 .cxx/stim-<profile> (or custom staging root). Switching modes in Stim selects
 the matching directory; direct Gradle builds keep their own configuration.

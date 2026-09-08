@@ -77,7 +77,7 @@ export interface StimConfig {
   concurrency?: { maxBuilds?: unknown; maxDevices?: unknown };
   pool?: { iosParkedMax?: unknown; androidParkedMax?: unknown };
   parked?: { ios?: unknown; android?: unknown };
-  caches?: { buildCache?: unknown; metroCache?: unknown; injectMetroStore?: unknown };
+  caches?: { buildCache?: unknown; metroCache?: unknown };
   [key: string]: unknown;
 }
 export type Config = StimConfig;

@@ -53,15 +53,19 @@ configuration, and direct builds outside Stim keep their own settings.
 
 All keys below are inside `optimizations`.
 
-| Option              | Default | What it does                                                                                                                                                                                                                                     |
-| ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `buildCache`        | `true`  | Reads and stores complete native build artifacts. Set to `false` to skip both local and remote artifact reads and writes. Compiler caches remain independent.                                                                                    |
-| `remoteBuildCache`  | `true`  | Allows configured remote artifact cache providers. Set to `false` to skip remote lookup, upload, provider loading, and authentication while keeping the local artifact cache. It does not configure a provider by itself.                        |
-| `releaseBundleSwap` | `true`  | Allows supported Release artifact hits to reuse native code with the current JavaScript and assets inserted into a copy. If swapping fails, Stim builds fresh. Set to `false` to build Release from source; fresh artifacts can still be stored. |
-| `metroSharedCache`  | `true`  | Adds Stim's shared Metro transform store for Expo SDK 54+ and bare React Native. Set to `false` to stop adding it; stores configured by the project remain.                                                                                      |
+| Option              | Default | What it does                                                                                                                                                                                                                                                  |
+| ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `buildCache`        | `true`  | Reads and stores complete native build artifacts. Set to `false` to skip both local and remote artifact reads and writes. Compiler caches remain independent.                                                                                                 |
+| `remoteBuildCache`  | `true`  | Allows configured artifact providers. Stim ships no network provider or hosted cache. Set to `false` to skip remote lookup, upload, provider loading, and authentication while keeping the local artifact cache. Has no effect without a configured provider. |
+| `releaseBundleSwap` | `true`  | Allows supported Release artifact hits to reuse native code with the current JavaScript and assets inserted into a copy. If swapping fails, Stim builds fresh. Set to `false` to build Release from source; fresh artifacts can still be stored.              |
+| `metroSharedCache`  | `true`  | Adds Stim's shared Metro transform store for Expo SDK 54+ and bare React Native. Set to `false` to stop adding it; stores configured by the project remain.                                                                                                   |
 
-The older machine setting `caches.injectMetroStore: false` is still supported as
-a fallback. An explicit `optimizations.metroSharedCache` value takes precedence.
+Remote artifact reuse is available through [optional cache providers](./build-caches.md#optional-artifact-providers).
+It does not synchronize compiler caches between machines.
+
+The machine setting `caches.injectMetroStore` has been removed. If you used
+`caches.injectMetroStore: false`, replace it with
+`optimizations.metroSharedCache: false` to keep the shared Metro store disabled.
 
 ## iOS options
 
@@ -107,7 +111,7 @@ and CAS backends.
 CAS uses an Apple Clang toolchain to cache compilation results and PCH with
 content-addressed inputs. The current integration requires macOS and a prepared
 compatible toolchain. Stim does not download or build it. Follow the
-[Android CAS setup and limitations](https://github.com/appandflow/stim/blob/24435399f111997c04be97c95367d0dd9875b115/docs/android-cas-poc.md)
+[Android CAS setup and limitations](./android-cas.md)
 before opting in; the Xcode compiler alone is not the complete setup.
 
 Merge this into the machine config, replacing the path with your manifest:

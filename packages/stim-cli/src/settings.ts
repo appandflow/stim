@@ -477,7 +477,6 @@ export function resolveSettings({
     gitCommonDir ? getRepoSettings(gitCommonDir) : null,
     readCommittedSettings(repoRoot),
     machine?.optimizations === undefined ? null : { optimizations: machine.optimizations },
-    machine?.caches?.injectMetroStore === false ? { optimizations: { metroSharedCache: false } } : null,
   ]);
 }
 

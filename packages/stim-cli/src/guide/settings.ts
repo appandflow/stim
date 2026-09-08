@@ -317,14 +317,15 @@ The example shows the defaults. Full setting names and behavior:
   optimizations.remoteBuildCache
     false skips both optional remote artifact providers, including loading
     their modules and authentication. Local artifact caching stays enabled.
+    Stim ships no network provider or hosted cache; this setting has no effect
+    unless a provider is configured through cache.provider or Expo.
   optimizations.releaseBundleSwap
     false always builds Release from source, including the current JS;
     it never installs an old embedded bundle. Fresh artifacts can still store.
   optimizations.metroSharedCache
     false stops Stim appending its shared Metro store on both dev servers.
-    Project-configured stores remain the project's choice. The older machine
-    caches.injectMetroStore=false is still supported as a fallback. An explicit
-    repository/project metroSharedCache=true overrides that machine fallback.
+    Project-configured stores remain the project's choice. Replace the removed
+    machine setting caches.injectMetroStore=false with this setting set false.
   optimizations.ios.compilationCache
     controls Xcode compilation caching (Xcode 26+).
   optimizations.ios.swiftCompilationCache
@@ -341,7 +342,8 @@ The example shows the defaults. Full setting names and behavior:
     absolute path to the experimental Apple Clang toolchain JSON manifest.
     STIM_ANDROID_CAS_TOOLCHAIN overrides this path. An explicit ccache or none
     selection overrides automatic CAS selection even with that environment
-    variable set. See the repository's docs/android-cas-poc.md for prerequisites.
+    variable set. For prerequisites, see:
+    https://appandflow.github.io/stim/docs/android-cas
   optimizations.android.pch
     auto keeps library/project policy, with PCH off by default when Stim supplies
     ccache. on/off overrides Gradle CMAKE_DISABLE_PRECOMPILE_HEADERS arguments;
