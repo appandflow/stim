@@ -136,6 +136,9 @@ Metro verification enabled, not release builds or --no-metro-check.
    expo-splash-screen. Keep the pending log outside the component at module
    scope, before startup work. Use the project's existing splash lifecycle;
    do not add a splash dependency to a bare app just for this integration.
+   Static imports run before module-scope statements. If imported startup work
+   must opt into the wait, emit pending from an earlier app entry module before
+   loading that work. A failure before pending keeps the default check.
    Cover login, onboarding, and deep links. Do not report ready merely on
    root mount, on a timer, in a failure handler, or in finally.
 

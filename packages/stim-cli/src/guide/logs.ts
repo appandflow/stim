@@ -121,31 +121,18 @@ WHAT WRITES WHAT
                        the app's process also logs. The proven noise sources
                        are recorded at info rather than error; the rest is why
                        --errors leaves this source out unless asked. A VERIFIED
-                       LAUNCH prints NONE of these records one by one. It counts
-                       them and prints one line instead:
+                       LAUNCH counts these records and prints one line:
 
                          launch      9 error-level records in the device log
                                      during launch
                                      (logs --errors --source device)
 
-                       THE COUNT IS NOT ATTRIBUTED TO ANYTHING, and that is the
-                       point. Both collectors already narrow the stream to the
-                       app: the simulator's \`log stream\` runs under a
-                       processImagePath predicate, and \`adb logcat\` is filtered
-                       to the app's pid. So every record left is MEANT to be
-                       inside the app's own process, and the error-level ones
-                       are the Apple frameworks running there -- "Failed to send
-                       CA Event for app launch measurements", "NSBundle (null)
-                       initWithPath failed", the TCP refusal. Nothing about the
-                       record says which of them wrote it, so the run does not
-                       guess; a count plus the command that shows the records is
-                       the honest report. The iOS predicate matches on a
-                       substring of the process path today, which a short app
-                       name can widen past the app -- appandflow/stim#264
-                       anchors it. Until it lands, read the records rather than
-                       trusting the count to be the app's alone. The app's OWN errors are not in this
-                       number: a redbox or a console.error arrives on the client
-                       or metro source and still prints line by line.
+                       The count does not attribute unknown OS errors to the app.
+                       Known JavaScript errors also print individually: Android
+                       ReactNativeJS records, and iOS com.facebook.react.log /
+                       javascript records. These can interrupt an optional
+                       readiness wait even without a client or Metro copy.
+                       Client and Metro errors still print individually.
 
                        The connection refusal \`TCP Conn ... Failed :
                        error 0:61 [61]\` (61 is ECONNREFUSED) is not even

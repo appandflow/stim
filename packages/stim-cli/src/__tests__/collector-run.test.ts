@@ -283,7 +283,7 @@ describe('the ios collector, spawned for real against a fake xcrun', { timeout: 
       'xcrun',
       [
         `case "$*" in`,
-        `  'simctl spawn UDID-1 log stream --style ndjson --predicate processImagePath ENDSWITH "/MyApp.app/MyApp"') ;;`,
+        `  'simctl spawn UDID-1 log stream --style ndjson --predicate processImagePath ENDSWITH "/MyApp.app/MyApp" --level info') ;;`,
         `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
         `esac`,
         `echo "${banner}" >&2`,
@@ -338,7 +338,7 @@ describe('the ios collector, spawned for real against a fake xcrun', { timeout: 
       'xcrun',
       [
         `case "$*" in`,
-        `  'simctl spawn UDID-1 log stream --style ndjson --predicate processImagePath ENDSWITH "/MyAppDev.app/MyApp"') ;;`,
+        `  'simctl spawn UDID-1 log stream --style ndjson --predicate processImagePath ENDSWITH "/MyAppDev.app/MyApp" --level info') ;;`,
         `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
         `esac`,
         ...iosShimLines().map((l) => `cat <<'LINE'\n${l}\nLINE`),

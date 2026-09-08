@@ -134,6 +134,15 @@ export interface LaunchErrorRecord {
   [key: string]: unknown;
 }
 
+export function isAppLaunchError(record: LaunchErrorRecord): boolean {
+  return (
+    record.src !== 'device' ||
+    record.level === 'fatal' ||
+    (record.platform === 'android' && typeof record.proc === 'string' && /^ReactNativeJS\(\d+\)$/.test(record.proc)) ||
+    (record.platform === 'ios' && record.subsystem === 'com.facebook.react.log' && record.category === 'javascript')
+  );
+}
+
 /**
  * Splits the error-level records a verified launch collected into the device
  * log the run counts and the records it still prints one by one.
@@ -141,7 +150,7 @@ export interface LaunchErrorRecord {
 export function launchErrorReport(records: readonly LaunchErrorRecord[]): { summary: string | null; lines: string[] } {
   const fromDevice = records.filter((record) => record.src === 'device');
   const lines = records
-    .filter((record) => record.src !== 'device')
+    .filter(isAppLaunchError)
     .map((record) => (record.msg === undefined || record.msg === null ? '' : String(record.msg)))
     .filter((msg) => msg !== '');
   const summary =

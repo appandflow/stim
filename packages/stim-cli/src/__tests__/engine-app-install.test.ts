@@ -879,6 +879,28 @@ describe('optional app readiness', () => {
     expect(result).toMatchObject({ verified: false, fatal: true, readiness: 'error', waitedMs: 0 });
   });
 
+  test.each([
+    { platform: 'android' as const, proc: 'ReactNativeJS(123)' },
+    { platform: 'ios' as const, subsystem: 'com.facebook.react.log', category: 'javascript' },
+  ])('a device JavaScript error interrupts readiness without a Metro/client copy: %j', async (origin) => {
+    const error = { ts: 6500, src: 'device', level: 'error', msg: 'startup failed', ...origin };
+    const { result } = await run([signal(1000, 'pending', origin), error, signal(7000, 'ready', origin)], {
+      platform: origin.platform,
+      readRecords: () => [{ ts: 1000, event: 'bundle_build_done', platform: origin.platform }],
+    });
+    expect(result).toMatchObject({ readiness: 'error', waitedMs: 5500, errors: [error] });
+  });
+
+  test('unattributed OS error records do not interrupt readiness', async () => {
+    const { result } = await run([
+      signal(1000, 'pending'),
+      { ts: 1500, src: 'device', platform: 'ios', level: 'error', msg: 'OS subsystem warning' },
+      signal(6500, 'ready'),
+    ]);
+    expect(result).toMatchObject({ readiness: 'ready', waitedMs: 5500 });
+    expect(result.errors).toHaveLength(1);
+  });
+
   test('readiness signals alone cannot prove a bundle launch', async () => {
     const { result } = await run([signal(1000, 'pending'), signal(1500, 'ready')], { readRecords: () => [] });
     expect(result).toMatchObject({ verified: false, timedOut: true, waitedMs: 20000 });

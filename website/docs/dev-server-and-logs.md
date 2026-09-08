@@ -74,6 +74,10 @@ Use the app's real readiness condition, not an arbitrary timer or merely a
 mounted root. Cover login, onboarding, and deep-link destinations. Never emit
 `ready` from a failure handler or a `finally` block.
 
+Static imports run before module-scope statements. To cover initialization in
+imported modules, emit `pending` from an earlier app entry module before loading
+that work. An error before `pending` still uses the default check.
+
 Without an observed `pending`, Stim keeps its default three-second stability
 window after bundle completion. A `pending` observed before that window closes
 opts into waiting for `ready`, up to 30 seconds after bundle completion.

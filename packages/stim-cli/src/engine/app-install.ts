@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { isAppLaunchError } from '../command-output.ts';
 import { join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import { parseNdjsonText, type NdjsonRecord } from '../ndjson.ts';
@@ -887,7 +888,7 @@ export async function verifyLaunch({
         };
       }
       const actionableErrors = errors.filter((record) => !isIosConnectionRefusal(record, platform));
-      const appErrors = actionableErrors.some((record) => record.src !== 'device' || record.level === 'fatal');
+      const appErrors = actionableErrors.some(isAppLaunchError);
       if (pendingAt === null || appErrors || ready || now() >= readinessDeadline) {
         return {
           verified: true,
