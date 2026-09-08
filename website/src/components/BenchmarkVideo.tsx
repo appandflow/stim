@@ -13,7 +13,7 @@ export default function BenchmarkVideo(): ReactNode {
     <section className={styles.story} aria-labelledby="benchmark-video-title">
       <div className={styles.heading}>
         <div>
-          <span>Prompt to proof</span>
+          <span>Archived replay</span>
           <Heading as="h2" id="benchmark-video-title">
             Watch the Luna JavaScript run unfold
           </Heading>
@@ -35,9 +35,10 @@ export default function BenchmarkVideo(): ReactNode {
         </video>
       </div>
       <p>
-        A continuous, silent replay of the published Luna rc.12 JavaScript run. The clock, commands, output, and proof
-        come from the <a href={audit}>published Luna audit</a>; the matching simulator interaction was recreated with
-        agent-device and plays at 2x speed.
+        A continuous, silent replay of the Luna JavaScript run. This archived video retains the original dispatch clock;
+        the <a href={audit}>interactive audit</a> now starts at first recorded agent activity. Commands, output, and
+        proof come from the recorded run; matching simulator interaction was recreated with agent-device and plays at 2x
+        speed.
       </p>
     </section>
   );

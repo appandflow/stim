@@ -284,6 +284,15 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
         <span>Agent turn {formatSeconds(run.totalSeconds)}</span>
       </div>
 
+      {run.timingOrigin ? (
+        <p>
+          Clock starts at the first recorded agent message or shell command. Excludes{' '}
+          {formatSeconds(run.timingOrigin.dispatchOffsetSeconds)} before that activity, including runner startup and any
+          unobserved initial reasoning. Settings proof from dispatch:{' '}
+          {formatSeconds(run.timingOrigin.dispatchSettingsReadySeconds)}. Tokens and cost cover the full turn.
+        </p>
+      ) : null}
+
       <section className={styles.summary}>
         <span>What the agent did</span>
         <p>{run.summary}</p>

@@ -876,7 +876,8 @@ describe('benchmark viewer export', () => {
     writeFileSync(correctionPath, JSON.stringify(correction));
     expect(exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof')).runs[0]).toMatchObject({
       valid: true,
-      settingsReadySeconds: 8,
+      settingsReadySeconds: 7,
+      timingOrigin: { dispatchOffsetSeconds: 1, dispatchSettingsReadySeconds: 8 },
     });
     expect(JSON.parse(readFileSync(recordPath))).toEqual(rejectedRecord);
     for (const change of [
@@ -1298,12 +1299,12 @@ describe('benchmark viewer export', () => {
     expect(payload).toMatchObject({
       suite: 'launch-crash',
       platform: 'ios',
-      primaryMetric: 'Dispatch to first actionable diagnosis; repaired Settings screenshot reported separately',
     });
     expect(payload.runs[0]).toMatchObject({
       id: 'launch-crash-stim',
       platform: 'ios',
-      diagnosisSeconds: 90,
+      diagnosisSeconds: 89,
+      timingOrigin: { dispatchOffsetSeconds: 1, dispatchDiagnosisSeconds: 90 },
       diagnosisCommandCount: 6,
       launchCrashAudit: {
         initialLaunchCommandId: 'launch',
@@ -1317,7 +1318,7 @@ describe('benchmark viewer export', () => {
       id: 'diagnosis',
       kind: 'diagnosis',
       label: 'Actionable diagnosis',
-      atSeconds: 90,
+      atSeconds: 89,
     });
 
     const original = JSON.parse(readFileSync(recordPath, 'utf8'));
@@ -1374,7 +1375,7 @@ describe('benchmark viewer export', () => {
       ],
     };
     writeFileSync(reviewPath, JSON.stringify(review));
-    expect(reviewedExport().runs[0]).toMatchObject({ valid: true, diagnosisSeconds: 90, settingsReadySeconds: 150 });
+    expect(reviewedExport().runs[0]).toMatchObject({ valid: true, diagnosisSeconds: 89, settingsReadySeconds: 149 });
     expect(JSON.parse(readFileSync(recordPath))).toEqual(rejected);
     const launchRejected = {
       ...rejected,
@@ -1382,7 +1383,7 @@ describe('benchmark viewer export', () => {
     };
     writeFileSync(recordPath, JSON.stringify(launchRejected));
     writeFileSync(reviewPath, JSON.stringify({ ...review, originalRecordSha256: sha256(recordPath) }));
-    expect(reviewedExport().runs[0]).toMatchObject({ valid: true, diagnosisSeconds: 90, settingsReadySeconds: 150 });
+    expect(reviewedExport().runs[0]).toMatchObject({ valid: true, diagnosisSeconds: 89, settingsReadySeconds: 149 });
     expect(JSON.parse(readFileSync(recordPath))).toEqual(launchRejected);
     const missingLaunch = reviewedEvents.replaceAll('stim ios', 'echo no-launch');
     writeFileSync(eventsPath, missingLaunch);
@@ -1456,7 +1457,7 @@ describe('benchmark viewer export', () => {
       } catch (error) {
         result = error.message.startsWith('no valid benchmark runs found') ? 'rejected' : error.message;
       }
-      expect(result).toEqual(failed ? 'rejected' : { valid: true, diagnosisSeconds: 90, settingsReadySeconds: 150 });
+      expect(result).toEqual(failed ? 'rejected' : { valid: true, diagnosisSeconds: 89, settingsReadySeconds: 149 });
       expect(JSON.parse(readFileSync(recordPath))).toEqual(statusRejected);
     }
     writeFileSync(eventsPath, reviewedEvents);
@@ -1489,7 +1490,7 @@ describe('benchmark viewer export', () => {
       writeFileSync(reviewPath, JSON.stringify(diagnosticReview));
       expect(reviewedExport).toThrow('no valid benchmark runs found');
       writeFileSync(reviewPath, JSON.stringify({ ...diagnosticReview, diagnosticCommands: [diagnosticEntry] }));
-      expect(reviewedExport().runs[0]).toMatchObject({ valid: true, diagnosisSeconds: 90 });
+      expect(reviewedExport().runs[0]).toMatchObject({ valid: true, diagnosisSeconds: 89 });
       for (const entry of [
         null,
         { ...diagnosticEntry, command: 'cat app/_layout.tsx' },
@@ -1574,7 +1575,7 @@ describe('benchmark viewer export', () => {
         },
       };
       writeFileSync(reviewPath, JSON.stringify(timeoutReview));
-      expect(reviewedExport().runs[0]).toMatchObject({ valid: true, settingsReadySeconds: 150 });
+      expect(reviewedExport().runs[0]).toMatchObject({ valid: true, settingsReadySeconds: 149 });
       expect(JSON.parse(readFileSync(recordPath))).toEqual(timeoutRecord);
       for (const completionSeconds of [160, 181, null]) {
         const editEvents = [
@@ -1755,7 +1756,7 @@ describe('benchmark viewer export', () => {
       auxiliarySessions: [{ session: 'private-run-id-diag', assessment: 'Same device, closed before proof.' }],
     };
     writeFileSync(reviewPath, JSON.stringify(auxiliaryReview));
-    expect(reviewedExport().runs[0]).toMatchObject({ valid: true, diagnosisSeconds: 90, settingsReadySeconds: 150 });
+    expect(reviewedExport().runs[0]).toMatchObject({ valid: true, diagnosisSeconds: 89, settingsReadySeconds: 149 });
     expect(JSON.parse(readFileSync(recordPath))).toEqual(auxiliaryRecord);
     for (const change of [
       { sourceChanges: undefined },

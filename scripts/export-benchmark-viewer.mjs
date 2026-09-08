@@ -12,6 +12,7 @@ import { createHash } from 'node:crypto';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { userInfo } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { timeBenchmarkFromFirstActivity } from './benchmark-timing.mjs';
 import { stripVTControlCharacters } from 'node:util';
 import { launchCrashDiagnosis, launchCrashRecovery, podfileChecksumChanges } from './launch-crash-benchmark.mjs';
 import { reconstructCommandEvidence } from './agent-benchmark/command-evidence.mjs';
@@ -1358,7 +1359,7 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
     .filter(Boolean)
     .toSorted()[0]
     ?.slice(0, 10);
-  const payload = {
+  const payload = timeBenchmarkFromFirstActivity({
     schemaVersion: 1,
     stage,
     title: formatStage(stage),
@@ -1380,7 +1381,7 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
       : null,
     environment,
     runs,
-  };
+  });
   assertPortable(payload);
   mkdirSync(proofDir, { recursive: true });
   const expectedArtifacts = new Set(artifactCopies.map(([, target]) => resolve(target)));
