@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import {
   changedPathsFromGitOutputs,
   injectRootRenderCrash,
@@ -10,6 +11,26 @@ import {
 } from './launch-crash-benchmark.mjs';
 
 describe('launch crash benchmark', () => {
+  it.skipIf(process.platform === 'win32')('uses the real pipeline status when a trailing echo exits zero', () => {
+    for (const code of [0, 7]) {
+      const command =
+        'cd /tmp && set -o pipefail && npx expo run:android 2>&1 | tee /dev/null | tail -40; echo "PIPELINE_EXIT=$?"';
+      const result = spawnSync('/bin/bash', ['-c', `npx() { return ${code}; }; ${command}`], {
+        encoding: 'utf8',
+        timeout: 5000,
+      });
+      expect(result.status).toBe(0);
+      const diagnosis = launchCrashDiagnosis(
+        [
+          { command, exitCode: result.status, output: result.stdout, endedAt: '2026-09-04T12:00:01Z' },
+          { command: 'adb logcat -d', exitCode: 0, output: 'test-token RootLayout', endedAt: '2026-09-04T12:00:02Z' },
+        ],
+        { dispatchAt: '2026-09-04T12:00:00Z', token: 'test-token', arm: 'control', platform: 'android' },
+      );
+      expect(diagnosis.valid).toBe(code === 0);
+    }
+  });
+
   it('accepts only checksum-row updates, not dependency changes or malformed lockfiles', () => {
     const before = `PODS:\n  - Core (1.0)\n\nSPEC CHECKSUMS:\n  Core: ${'a'.repeat(40)}\n\nCOCOAPODS: 1.16.2\n`;
     const after = before.replace('a'.repeat(40), 'b'.repeat(40));
@@ -90,6 +111,38 @@ done`;
       valid: true,
       errorCaptureCommandId: 'logs',
     });
+    const pipeline = {
+      ...launch,
+      command:
+        'cd /tmp/run && set -o pipefail && npx expo run:android --no-bundler --variant debug --device emulator-5554 2>&1 | tee /tmp/native.log | tail -40; echo "PIPELINE_EXIT=$?"',
+      output: 'BUILD SUCCESSFUL\nPIPELINE_EXIT=0\nShell cwd was reset to /tmp/fixture',
+    };
+    expect(launchCrashDiagnosis([...before, pipeline, logs], options)).toMatchObject({ valid: true });
+    expect(
+      launchCrashDiagnosis(
+        [
+          {
+            ...launch,
+            command:
+              'set -o pipefail; { xcrun simctl launch U1 com.appandflow.trailhead; xcrun simctl openurl U1 trailhead://app; } 2>&1 | tee /tmp/launch.log',
+          },
+          logs,
+        ],
+        { ...options, platform: 'ios' },
+      ),
+    ).toMatchObject({ valid: true });
+    for (const changed of [
+      { output: 'BUILD SUCCESSFUL\nPIPELINE_EXIT=1' },
+      { output: 'BUILD SUCCESSFUL' },
+      { output: 'PIPELINE_EXIT=1\nPIPELINE_EXIT=0' },
+      { command: pipeline.command.replace('set -o pipefail', 'set +o pipefail') },
+      { command: pipeline.command.replace('npx expo', 'set +o pipefail; npx expo') },
+      { command: pipeline.command.replace('; echo', '; true; echo') },
+    ])
+      expect(launchCrashDiagnosis([...before, { ...pipeline, ...changed }, logs], options)).toMatchObject({
+        valid: false,
+        reason: 'launch-crash-initial-launch-evidence-missing',
+      });
     const masked = {
       ...launch,
       id: 'masked',

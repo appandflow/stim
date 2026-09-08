@@ -956,6 +956,7 @@ function publicationRecord(runDir, meta) {
       'launch-crash-pre-capture-command-not-allowed',
       'launch-crash-diagnosis-missing',
       'launch-crash-diagnosis-usage-missing',
+      'launch-crash-initial-launch-evidence-missing',
       'launch-crash-unrelated-source-changes',
       'agent-device-run-session-not-applied',
     ]);

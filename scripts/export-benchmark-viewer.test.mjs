@@ -1345,6 +1345,24 @@ describe('benchmark viewer export', () => {
     writeFileSync(reviewPath, JSON.stringify(review));
     expect(reviewedExport().runs[0]).toMatchObject({ valid: true, diagnosisSeconds: 90, settingsReadySeconds: 150 });
     expect(JSON.parse(readFileSync(recordPath))).toEqual(rejected);
+    const launchRejected = {
+      ...rejected,
+      invalidReasons: ['launch-crash-initial-launch-evidence-missing', 'launch-crash-diagnosis-missing'],
+    };
+    writeFileSync(recordPath, JSON.stringify(launchRejected));
+    writeFileSync(reviewPath, JSON.stringify({ ...review, originalRecordSha256: sha256(recordPath) }));
+    expect(reviewedExport().runs[0]).toMatchObject({ valid: true, diagnosisSeconds: 90, settingsReadySeconds: 150 });
+    expect(JSON.parse(readFileSync(recordPath))).toEqual(launchRejected);
+    const missingLaunch = reviewedEvents.replaceAll('stim ios', 'echo no-launch');
+    writeFileSync(eventsPath, missingLaunch);
+    writeFileSync(
+      recordPath,
+      JSON.stringify({ ...launchRejected, evidenceSha256: { ...rejected.evidenceSha256, events: sha256(eventsPath) } }),
+    );
+    writeFileSync(reviewPath, JSON.stringify({ ...review, originalRecordSha256: sha256(recordPath) }));
+    expect(reviewedExport).toThrow('no valid benchmark runs found');
+    writeFileSync(eventsPath, reviewedEvents);
+    writeFileSync(recordPath, JSON.stringify(rejected));
     for (const changed of [
       { originalRecordSha256: 'changed' },
       { metaSha256: 'changed' },
