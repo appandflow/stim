@@ -317,8 +317,8 @@ The example shows the defaults. Full setting names and behavior:
   optimizations.remoteBuildCache
     false skips both optional remote artifact providers, including loading
     their modules and authentication. Local artifact caching stays enabled.
-    Stim ships no network provider or hosted cache; this setting has no effect
-    unless a provider is configured through cache.provider or Expo.
+    Stim ships no network provider or hosted cache. Remote artifact reuse
+    requires a provider configured through cache.provider or Expo.
   optimizations.releaseBundleSwap
     false always builds Release from source, including the current JS;
     it never installs an old embedded bundle. Fresh artifacts can still store.
