@@ -165,7 +165,11 @@
           "endSeconds": 176.084,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim worktree warm; echo \"EXIT=$?\"",
           "output": "  carry       copied .expo, android/.gradle, android/app/.cxx, +7 from worktree/launch-error-fixture-rc21\n  carry       complete: 10 ignored entries copied, 0 kept, 0 failed\nEXIT=0\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim worktree warm",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
         },
         {
           "id": "toolu_01NgsXL8524svYUqfo88A6GJ",
@@ -173,7 +177,11 @@
           "endSeconds": 181.83,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim start; echo \"EXIT=$?\"",
           "output": "  metro       starting on port 8082 (expo-child, supervisor pid 53940)\nOK: dev server on port 8082, supervisor pid 53940 (expo-child) (2.8s)\n  logs        results/opus-android-launch-error/launch-crash-stim/stim-home/workspaces/bench-opus-android-launch-error-opus-launch-cras--bbef3032c42f5dd6/logs\nEXIT=0\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim start",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
         },
         {
           "id": "toolu_011YaTAAgx6UCMeNZgdE8KJ8",
@@ -181,7 +189,11 @@
           "endSeconds": 223.185,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim android --system-image 'system-images;android-36;google_apis_playstore_ps16k;arm64-v8a'; echo \"EXIT=$?\"",
           "output": "  metro       port 8082 (pid 53951)\n  device      waiting for <simulator-udid> to finish booting\n  device      stim-bench-launch-crash-stim created (23.4s)\n  fingerprint 50c919.. hit (4.4s)\n  device      stim-bench-launch-crash-stim (<simulator-udid>) booted (152ms)\n  install     app-debug.apk -> <simulator-udid> (2.2s)\n  launch      com.appandflow.trailhead (194ms)\n  metro       debug_http_host <local-ip>:8082 + adb reverse tcp:8082->tcp:8082\n  logs        results/opus-android-launch-error/launch-crash-stim/stim-home/workspaces/bench-opus-android-launch-error-opus-launch-cras--bbef3032c42f5dd6/logs (collector pid 54319)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (7.4s total)\nOK: com.appandflow.trailhead launched on <simulator-udid>, Metro port 8082 (cache hit)\n  device      stim-bench-launch-crash-stim (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       cache hit\n  compilation cache not run; artifact cache supplied the app\n  logs        results/opus-android-launch-error/launch-crash-stim/stim-home/workspaces/bench-opus-android-launch-error-opus-launch-cras--bbef3032c42f5dd6/logs\nEXIT=0\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim android --system-image 'system-images;android-36;google_apis_playstore_ps16k;arm64-v8a'",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
         },
         {
           "id": "toolu_01ERs8XR8A9QU1uwnb32weYq",
@@ -189,7 +201,11 @@
           "endSeconds": 226.877,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim logs --errors; echo \"EXIT=$?\"",
           "output": "No matching log records in results/opus-android-launch-error/launch-crash-stim/stim-home/workspaces/bench-opus-android-launch-error-opus-launch-cras--bbef3032c42f5dd6/logs\nEXIT=0\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim logs --errors",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
         },
         {
           "id": "toolu_01KooUsU5vqFopKNcEquno56",
@@ -197,7 +213,11 @@
           "endSeconds": 230.354,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim logs --errors; echo \"EXIT=$?\"",
           "output": "No matching log records in results/opus-android-launch-error/launch-crash-stim/stim-home/workspaces/bench-opus-android-launch-error-opus-launch-cras--bbef3032c42f5dd6/logs\nEXIT=0\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim logs --errors",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
         },
         {
           "id": "toolu_01SRd18fucLKob5mt4MXBD3A",
@@ -205,7 +225,11 @@
           "endSeconds": 236.769,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim logs --errors; echo \"EXIT=$?\"",
           "output": "02:31:35.819 error metro   ERROR  [Error: STIM_BENCH_LAUNCH_CRASH_C5C8DB18AE1A]\n    Code: _layout.tsx\n      25 |\n      26 | export default function RootLayout() {\n    > 27 |   throw new Error('STIM_BENCH_LAUNCH_CRASH_C5C8DB18AE1A');\n         |                  ^\n      28 |   const { name, colors } = useTheme();\n      29 |\n      30 |   useEffect(() => {\n    Call Stack\n      RootLayout (app/_layout.tsx:27:18)\nEXIT=0\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim logs --errors",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
         },
         {
           "id": "toolu_013kCPc124jLqAyfbsHj85hm",
@@ -249,7 +273,11 @@
           "endSeconds": 254.054,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim reload; echo \"EXIT=$?\"",
           "output": "Reload requested for com.appandflow.trailhead on stim-bench-launch-crash-stim (<simulator-udid>) via deep-link; android Metro port 8082. Completion is not observed; verify the expected UI and run stim logs --errors.\nEXIT=0\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim reload",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
         },
         {
           "id": "toolu_014uYds1RMVzvjKVt3EQqKYV",
@@ -257,7 +285,11 @@
           "endSeconds": 256.36,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim logs --errors; echo \"EXIT=$?\"",
           "output": "No matching log records in results/opus-android-launch-error/launch-crash-stim/stim-home/workspaces/bench-opus-android-launch-error-opus-launch-cras--bbef3032c42f5dd6/logs\nEXIT=0\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim logs --errors",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
         },
         {
           "id": "toolu_01WKue1H6mH3DWZXnBUcXNQL",

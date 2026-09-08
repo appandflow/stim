@@ -2,6 +2,28 @@ import { describe, expect, it } from 'vitest';
 import { benchmarkCommandPresentation } from './benchmark-command-presentation.mjs';
 
 describe('benchmark command presentation', () => {
+  it('uses a captured successful exit marker without trusting the final echo exit code', () => {
+    const command = 'cd ./worktrees/run && stim worktree warm; echo "EXIT=$?"';
+    expect(
+      benchmarkCommandPresentation(command, 0, 'carry complete\nEXIT=0\nShell cwd was reset to ./fixture'),
+    ).toEqual({
+      command: 'stim worktree warm',
+      cwd: './worktrees/run',
+    });
+    expect(
+      benchmarkCommandPresentation('cd ./run && build | tail -40; echo "PIPELINE_EXIT=$?"', 0, 'PIPELINE_EXIT=0'),
+    ).toEqual({ command: 'build | tail -40', cwd: './run' });
+    for (const output of ['', 'EXIT=1', 'EXIT=0\nEXIT=1', 'EXIT=0\nEXIT=0']) {
+      expect(benchmarkCommandPresentation(command, 0, output)).toBeUndefined();
+    }
+    expect(benchmarkCommandPresentation(command, 1, 'EXIT=0')).toBeUndefined();
+    expect(benchmarkCommandPresentation('cd missing && stim ios; echo "EXIT=0"', 0, 'EXIT=0')).toBeUndefined();
+    expect(benchmarkCommandPresentation("cd missing && stim ios; echo 'EXIT=$?'", 0, 'EXIT=0')).toBeUndefined();
+    expect(
+      benchmarkCommandPresentation('cd missing && stim ios; echo done; echo "EXIT=$?"', 0, 'EXIT=0'),
+    ).toBeUndefined();
+  });
+
   it('moves a successful literal directory prefix into context without changing the command body', () => {
     expect(benchmarkCommandPresentation('cd "./worktrees/my app" && stim worktree warm', 0)).toEqual({
       command: 'stim worktree warm',

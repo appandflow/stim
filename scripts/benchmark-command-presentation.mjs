@@ -38,9 +38,16 @@ function shellTokens(command) {
   return tokens;
 }
 
-export function benchmarkCommandPresentation(command, exitCode) {
+export function benchmarkCommandPresentation(command, exitCode, output = '') {
   if (command.includes('<<')) return undefined;
   let display = command;
+  const statusEcho = display.match(/;\s*echo\s+"(EXIT|PIPELINE_EXIT)=\$\?"\s*$/);
+  if (exitCode === 0 && statusEcho) {
+    const markers = output.split(/\r?\n/).filter((line) => line.startsWith(`${statusEcho[1]}=`));
+    if (markers.length === 1 && markers[0] === `${statusEcho[1]}=0`) {
+      display = display.slice(0, statusEcho.index);
+    }
+  }
   let cwd;
   let tokens = shellTokens(display);
   if (!tokens) return undefined;
@@ -90,6 +97,6 @@ export function benchmarkCommandPresentation(command, exitCode) {
     index = end;
   }
   for (const [start, end] of removals.toReversed()) display = display.slice(0, start) + display.slice(end);
-  if (display === command) return undefined;
+  if (!cwd && removals.length === 0) return undefined;
   return { command: display, ...(cwd ? { cwd } : {}), ...(isolatedAgentDevice ? { isolatedAgentDevice } : {}) };
 }
