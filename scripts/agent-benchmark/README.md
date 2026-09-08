@@ -282,3 +282,19 @@ checks every retained hash, the original source hash and checksum-only semantics
 It cannot clear other source changes, dependency changes or source-before-capture
 violations. Valid runs with setup or auxiliary warnings also require review before publication. The original
 `run.json` is never rewritten, and review records stay private.
+
+The coordinator may adjudicate source-inspection false positives with
+`diagnosticCommands` entries containing the exact `commandId`, `command`, and
+an `assessment`. Read the captured command and output before approving one:
+log search patterns and error-response files are diagnostics, but actual app
+source access before runtime capture remains invalid. This is an explicit
+manual classification, not a claim that the shell heuristic proves safety.
+Reviews are bound to the original record, metadata and current audit code;
+each diagnostic entry must also appear in the reviewed setup command set.
+
+A runner timeout after completed task evidence can be reviewed with a
+`completion.assessment`. The original deadline does not move: repair, Settings
+proof, recording copy, session close and every captured command must finish
+before it. A missing or late proof, a running command, or a different runner
+failure still rejects the run. The final conversational response is not a task
+completion requirement; its timeout remains recorded in the private evidence.

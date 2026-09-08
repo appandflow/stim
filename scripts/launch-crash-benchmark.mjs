@@ -339,7 +339,7 @@ function allowedBeforeErrorCapture(command, arm, platform, setup = {}) {
 
 export function launchCrashDiagnosis(
   commands,
-  { dispatchAt, token, arm = 'stim', platform = 'ios', activities = [], setup = {} },
+  { dispatchAt, token, arm = 'stim', platform = 'ios', activities = [], setup = {}, reviewedDiagnostics = [] },
 ) {
   const ordered = orderedCommands(commands);
   const sourceMarkers = ['app/_layout.tsx', 'RootLayout'];
@@ -367,8 +367,16 @@ export function launchCrashDiagnosis(
       timestamp(command, 'startedAt') < captureEndedAt &&
       !allowedBeforeErrorCapture(command.command, arm, platform, setup),
   );
-  const disallowedBeforeCapture = unrecognizedBeforeCapture.filter((command) =>
-    sourceInspectionBeforeCapture(command.command, arm, platform),
+  const disallowedBeforeCapture = unrecognizedBeforeCapture.filter(
+    (command) =>
+      sourceInspectionBeforeCapture(command.command, arm, platform) &&
+      !reviewedDiagnostics.some(
+        (entry) =>
+          entry.commandId === command.id &&
+          entry.command === command.command &&
+          typeof entry.assessment === 'string' &&
+          entry.assessment.trim(),
+      ),
   );
   if (disallowedBeforeCapture.length) {
     return {

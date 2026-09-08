@@ -11,6 +11,56 @@ import {
 } from './launch-crash-benchmark.mjs';
 
 describe('launch crash benchmark', () => {
+  it('requires explicit coordinator review for diagnostics falsely flagged as source inspection', () => {
+    const diagnostic = {
+      id: 'diagnostic',
+      command: 'head -c 600 /tmp/testbundle.js',
+      output: '{"type":"UnableToResolveError","targetModuleName":"./index"}',
+      exitCode: 0,
+      endedAt: '2026-09-04T12:00:02Z',
+    };
+    const commands = [
+      {
+        id: 'launch',
+        command: 'xcrun simctl launch U1 com.app',
+        output: 'com.app: 123',
+        exitCode: 0,
+        endedAt: '2026-09-04T12:00:01Z',
+      },
+      diagnostic,
+      {
+        id: 'logs',
+        command: 'tail -40 /tmp/metro.log',
+        output: 'test-token RootLayout',
+        exitCode: 0,
+        endedAt: '2026-09-04T12:00:03Z',
+      },
+    ];
+    const options = { dispatchAt: '2026-09-04T12:00:00Z', token: 'test-token', arm: 'control', platform: 'ios' };
+    expect(launchCrashDiagnosis(commands, options).valid).toBe(false);
+    const review = {
+      commandId: diagnostic.id,
+      command: diagnostic.command,
+      assessment: 'Returned Metro HTTP404 error metadata, not a JavaScript bundle or application source.',
+    };
+    expect(launchCrashDiagnosis(commands, { ...options, reviewedDiagnostics: [review] })).toMatchObject({
+      valid: true,
+      dispatchToDiagnosisSeconds: 3,
+    });
+    for (const changed of [
+      { ...review, commandId: 'other' },
+      { ...review, command: 'cat app/_layout.tsx' },
+      { ...review, assessment: '' },
+    ]) {
+      expect(launchCrashDiagnosis(commands, { ...options, reviewedDiagnostics: [changed] }).valid).toBe(false);
+    }
+    expect(
+      launchCrashDiagnosis([...commands.slice(0, 2), { ...commands[2], output: 'no crash' }], {
+        ...options,
+        reviewedDiagnostics: [review],
+      }).valid,
+    ).toBe(false);
+  });
   it.skipIf(process.platform === 'win32')(
     'accepts reported Stim launch and log status only when the underlying command succeeded',
     () => {
