@@ -88,8 +88,14 @@ function orderedCommands(commands) {
 }
 
 function sourceInspectionBeforeCapture(command, arm, platform) {
-  const value = shellCommand(command);
+  const value = shellCommand(command).replace(/\\([A-Za-z_.])/g, '$1');
   if (/(?:\/(?:skills|skill)\/[^\s]+\/|(?:^|\s)workspace\/)SKILL\.md\b/.test(value)) return false;
+  if (
+    shellCommandSegments(value).some(
+      (segment) => /^(?:rg|grep)\b/.test(segment) && /\s(?:\.|app|src)\/?\s*$/.test(segment),
+    )
+  )
+    return true;
   if (/(?:^|[;&|]\s*)git\s+(?:diff|show)(?!-ref)(?:\s|$)/.test(value)) return true;
   if (/(?:^|[;&|]\s*)(?:\/[^\s]+\/)?(?:node|python\d*|ruby|perl)\s+(?:-[^-\s]*[ec]|--eval)\b/.test(value)) {
     return true;
@@ -322,10 +328,13 @@ export function launchCrashDiagnosis(
   const preCaptureActivity = [...ordered, ...activities].toSorted(
     (left, right) => timestamp(left, 'startedAt') - timestamp(right, 'startedAt'),
   );
-  const disallowedBeforeCapture = preCaptureActivity.filter(
+  const unrecognizedBeforeCapture = preCaptureActivity.filter(
     (command) =>
       timestamp(command, 'startedAt') < captureEndedAt &&
       !allowedBeforeErrorCapture(command.command, arm, platform, setup),
+  );
+  const disallowedBeforeCapture = unrecognizedBeforeCapture.filter((command) =>
+    sourceInspectionBeforeCapture(command.command, arm, platform),
   );
   if (disallowedBeforeCapture.length) {
     return {
@@ -361,6 +370,9 @@ export function launchCrashDiagnosis(
   }
   return {
     valid: true,
+    ...(unrecognizedBeforeCapture.length
+      ? { setupWarnings: unrecognizedBeforeCapture.map((entry) => ({ commandId: entry.id, command: entry.command })) }
+      : {}),
     observedAt,
     dispatchToDiagnosisSeconds,
     commandCount: ordered.filter((candidate) => timestamp(candidate, 'endedAt') <= Date.parse(observedAt)).length,

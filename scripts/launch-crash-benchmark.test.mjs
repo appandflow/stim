@@ -9,7 +9,7 @@ import {
 } from './launch-crash-benchmark.mjs';
 
 describe('launch crash benchmark', () => {
-  it('audits a complete managed Android setup and reports every out-of-scope operation', () => {
+  it('warns on unfamiliar setup while rejecting source inspection before runtime diagnosis', () => {
     const token = launchCrashToken('managed-setup');
     const setup = { worktree: '/tmp/run', avdConfig: '/tmp/avds/Trailhead_run.avd/config.ini' };
     const copy = `set -e
@@ -85,28 +85,39 @@ done`;
       valid: true,
       initialLaunchCommandId: 'launch',
     });
-    expect(launchCrashDiagnosis([...before, launch, logs], { ...options, setup: {} })).toMatchObject({ valid: false });
+    expect(launchCrashDiagnosis([...before, launch, logs], { ...options, setup: {} })).toMatchObject({
+      valid: true,
+      setupWarnings: expect.arrayContaining([{ commandId: before[0].id, command: before[0].command }]),
+    });
     for (const command of [
       copy.replace('rsync -a', 'cat package.json\n    rsync -a'),
-      copy.replace('node_modules android/.gradle', 'app node_modules android/.gradle'),
       'printenv SECRET_KEY',
       './node_modules/.bin/expo start | tee /tmp/metro.log; cat package.json',
       './node_modules/.bin/expo start --port $(cat private-port) | tee /tmp/metro.log',
       'rg anything /tmp/other.avd/config.ini',
       `cat package.json ${setup.avdConfig}`,
       `rg -n . package.json ${setup.avdConfig}`,
-      `cat ./app/_layout.t\\sx ${setup.avdConfig}`,
       `tool:file_change ${JSON.stringify([{ path: '/tmp/other.avd/config.ini', kind: 'update' }])}`,
     ]) {
-      expect(launchCrashDiagnosis([{ ...before[0], command, id: 'bad' }, launch, logs], options)).toMatchObject({
+      expect(launchCrashDiagnosis([{ ...before[0], command, id: 'unfamiliar' }, launch, logs], options)).toMatchObject({
+        valid: true,
+        setupWarnings: [{ commandId: 'unfamiliar', command }],
+      });
+    }
+    for (const command of [
+      copy.replace('rsync -a', 'cat app/_layout.tsx\n    rsync -a'),
+      `cat ./app/_layout.t\\sx ${setup.avdConfig}`,
+      'node -e "require(\'fs\').readFileSync(process.argv[1])" secret-source',
+    ]) {
+      expect(launchCrashDiagnosis([{ ...before[0], command, id: 'source' }, launch, logs], options)).toMatchObject({
         valid: false,
-        commandId: 'bad',
+        commandId: 'source',
       });
     }
     const violations = launchCrashDiagnosis(
       [
         { ...before[0], id: 'first', command: 'cat app/_layout.tsx' },
-        { ...before[0], id: 'second', command: 'printenv SECRET_KEY' },
+        { ...before[0], id: 'second', command: 'git diff' },
         launch,
         logs,
       ],
@@ -154,9 +165,8 @@ done`;
       ).toMatchObject({ valid: false, reason: 'launch-crash-initial-launch-evidence-missing' });
       for (const command of [
         './node_modules/.bin/expo start; cat app/_layout.tsx',
-        './node_modules/.bin/expo start; cat package.json',
-        './node_modules/.bin/expo start --port $(cat private-port)',
-        './node_modules/.bin/expo start --port `cat private-port`',
+        './node_modules/.bin/expo start --port $(cat app/_layout.tsx)',
+        './node_modules/.bin/expo start --port `cat app/_layout.tsx`',
       ]) {
         expect(launchCrashDiagnosis([{ ...commands[0], command }, ...commands.slice(1)], options)).toMatchObject({
           valid: false,

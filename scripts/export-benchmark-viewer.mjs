@@ -14,6 +14,7 @@ import { userInfo } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
 import { launchCrashDiagnosis, launchCrashRecovery } from './launch-crash-benchmark.mjs';
+import { reconstructCommandEvidence } from './agent-benchmark/command-evidence.mjs';
 import { agentDeviceIsolationInvalidReasons, topLevelShellCommand } from './agent-benchmark/run-guards.mjs';
 
 const modelPricing = {
@@ -801,40 +802,6 @@ function validateReadinessRecord(runDir, record, meta) {
   return { screenReadySeconds };
 }
 
-function nonShellActivitiesFor(runDir) {
-  const eventsPath = join(runDir, 'events.jsonl');
-  if (!existsSync(eventsPath)) return [];
-  const activities = [];
-  for (const record of readFileSync(eventsPath, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)) {
-    let event;
-    try {
-      event = JSON.parse(record.line);
-    } catch {
-      continue;
-    }
-    const item = event.item;
-    if (event.type === 'item.started' && item?.type && item.type !== 'command_execution') {
-      activities.push({
-        id: item.id,
-        command: `tool:${item.type} ${JSON.stringify(item.changes ?? item)}`,
-        startedAt: record.arrivedAt,
-        endedAt: record.arrivedAt,
-      });
-    }
-    for (const block of event.message?.content ?? []) {
-      if (event.type === 'assistant' && block.type === 'tool_use' && block.name !== 'Bash') {
-        activities.push({
-          id: block.id,
-          command: `tool:${block.name} ${JSON.stringify(block.input ?? {})}`,
-          startedAt: record.arrivedAt,
-          endedAt: record.arrivedAt,
-        });
-      }
-    }
-  }
-  return activities;
-}
-
 function usageAtOrBefore(path, observedAt) {
   if (!path || !existsSync(path)) return null;
   const cutoff = Date.parse(observedAt);
@@ -864,7 +831,7 @@ function sameUsage(left, right) {
   );
 }
 
-function validateLaunchCrashRecord(runDir, record, meta) {
+function validateLaunchCrashRecord(runDir, record, meta, rederive = false) {
   const reject = (reason) => {
     if (process.env.STIM_BENCH_EXPORT_DEBUG === '1') {
       process.stderr.write(`${basename(runDir)}: ${reason}\n`);
@@ -877,13 +844,11 @@ function validateLaunchCrashRecord(runDir, record, meta) {
     return reject('invalid evidence files');
   if (record.evidenceSha256?.events !== fileSha256(eventsPath)) return reject('events hash mismatch');
   if (record.evidenceSha256?.settingsPng !== fileSha256(proofPath)) return reject('screenshot hash mismatch');
-  const eventData = eventsFor(runDir, meta.dispatchAt, []);
-  const commands = eventData.commands.map((command) =>
-    Object.assign({}, command, {
-      startedAt: new Date(Date.parse(meta.dispatchAt) + command.startSeconds * 1000).toISOString(),
-      endedAt: new Date(Date.parse(meta.dispatchAt) + command.endSeconds * 1000).toISOString(),
-    }),
+  const evidence = reconstructCommandEvidence(
+    record.runner ?? meta.runner,
+    readFileSync(eventsPath, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse),
   );
+  const commands = evidence.commands;
   const token = [record.proof?.expected, ...commands.map((command) => command.output)]
     .join('\n')
     .match(/STIM_BENCH_LAUNCH_CRASH_[0-9A-F]{12}/)?.[0];
@@ -893,7 +858,8 @@ function validateLaunchCrashRecord(runDir, record, meta) {
     token,
     arm: record.arm,
     platform: meta.platform ?? 'ios',
-    activities: nonShellActivitiesFor(runDir),
+    activities: evidence.activities,
+    setup: { worktree: record.worktree, avdConfig: meta.expectedControlAvdConfig },
   });
   const recovery = launchCrashRecovery(commands, {
     diagnosis,
@@ -910,6 +876,8 @@ function validateLaunchCrashRecord(runDir, record, meta) {
   const diagnosisUsage = runner === 'claude' ? null : usageAtOrBefore(transcriptPath, diagnosis.observedAt);
   if (!existsSync(transcriptPath)) return reject('transcript missing');
   if (record.evidenceSha256?.transcript !== fileSha256(transcriptPath)) return reject('transcript hash mismatch');
+  if (runner !== 'claude' && !diagnosisUsage) return reject('diagnosis usage missing');
+  if (rederive) return { diagnosis, recovery, diagnosisUsage, screenReadySeconds };
   if (
     record.diagnosis?.observedAt !== diagnosis.observedAt ||
     record.dispatchToDiagnosisSeconds !== diagnosis.dispatchToDiagnosisSeconds ||
@@ -935,6 +903,63 @@ function validateLaunchCrashRecord(runDir, record, meta) {
 function publicationRecord(runDir, meta) {
   const recordPath = join(runDir, 'run.json');
   const record = readJson(recordPath);
+  if (record.variant === 'launch-crash') {
+    const reviewPath = join(runDir, 'launch-error-audit-review.json');
+    const reviewableReasons = new Set([
+      'launch-crash-pre-capture-command-not-allowed',
+      'launch-crash-diagnosis-missing',
+      'launch-crash-diagnosis-usage-missing',
+    ]);
+    const eligible =
+      record.valid ||
+      (record.invalidReasons?.length > 0 && record.invalidReasons.every((reason) => reviewableReasons.has(reason)));
+    const derived = eligible ? validateLaunchCrashRecord(runDir, record, meta, true) : null;
+    if (!derived) return record.valid ? { ...record, valid: false } : record;
+    const warnings = derived.diagnosis.setupWarnings ?? [];
+    if (!warnings.length && record.valid) return record;
+    if (!existsSync(reviewPath)) return { ...record, valid: false };
+    const review = readJson(reviewPath);
+    const policyPath = fileURLToPath(new URL('./launch-crash-benchmark.mjs', import.meta.url));
+    const guardPath = fileURLToPath(new URL('./agent-benchmark/run-guards.mjs', import.meta.url));
+    if (
+      review.schemaVersion !== 1 ||
+      review.runId !== record.runId ||
+      review.originalRecordSha256 !== fileSha256(recordPath) ||
+      review.metaSha256 !== fileSha256(join(runDir, 'meta.json')) ||
+      review.policySha256 !== fileSha256(policyPath) ||
+      review.shellParserSha256 !== fileSha256(guardPath) ||
+      !Array.isArray(review.commands) ||
+      review.commands.length !== warnings.length ||
+      warnings.some(
+        (warning, index) =>
+          review.commands[index]?.commandId !== warning.commandId ||
+          review.commands[index]?.command !== warning.command ||
+          typeof review.commands[index]?.assessment !== 'string' ||
+          !review.commands[index].assessment.trim(),
+      )
+    ) {
+      return { ...record, valid: false };
+    }
+    const usage = derived.diagnosisUsage;
+    return {
+      ...record,
+      valid: true,
+      invalidReasons: [],
+      diagnosis: derived.diagnosis,
+      recovery: derived.recovery,
+      dispatchToDiagnosisSeconds: derived.diagnosis.dispatchToDiagnosisSeconds,
+      diagnosisCommandCount: derived.diagnosis.commandCount,
+      diagnosisUsage: usage,
+      diagnosisTokens: usage
+        ? {
+            uncachedInput: Math.max(0, (usage.input_tokens ?? 0) - (usage.cached_input_tokens ?? 0)),
+            cachedInput: usage.cached_input_tokens ?? 0,
+            output: usage.output_tokens ?? 0,
+            reasoningOutput: usage.reasoning_output_tokens ?? 0,
+          }
+        : null,
+    };
+  }
   const correctionPath = join(runDir, 'lookup-audit-correction.json');
   if (record.valid || !existsSync(correctionPath)) return record;
   const correction = readJson(correctionPath);
