@@ -200,7 +200,11 @@
           "endSeconds": 138.641,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
           "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/javascript-stim\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 0 nodes\nInteractive snapshot is empty after filtering 43 raw Android nodes. Likely causes: the app content is not accessibility-visible yet, a transient route change, or depth/filter options hid the target.\nHint: sparse accessibility snapshot returned 0 nodes; snapshot state is invalid or unavailable for this screen. Use plain screenshot, not screenshot --overlay-refs, as visual truth. If screenshot shows the Home Screen or another app, run open for this app again first. Then navigate away with coordinates if needed and retry snapshot -i on the next screen.\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_20",
@@ -208,7 +212,11 @@
           "endSeconds": 143.265,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device record start tmp/javascript-stim-session.mp4 --scope device --quality high --hide-touches",
           "output": "tmp/javascript-stim-session.mp4\nSession state: ./state/agent-device/sessions/javascript-stim\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record start tmp/javascript-stim-session.mp4 --scope device --quality high --hide-touches",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_21",
@@ -216,7 +224,11 @@
           "endSeconds": 149.828,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device screenshot tmp/javascript-stim-navigation.png",
           "output": "tmp/javascript-stim-navigation.png (320x640)\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device screenshot tmp/javascript-stim-navigation.png",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_22",
@@ -224,7 +236,11 @@
           "endSeconds": 157.906,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device snapshot -i",
           "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 22 visible nodes (64 total)\nCollapsed 42 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [scroll-area] [scrollable]\n@e2 [text-field] \"Search trails, regions, tags\" [editable]\n@e3 [horizontalscrollview] \"Bas-Saint-Laurent, Adirondacks, All regions\" [scrollable]\n@e4 [button] \"All regions\"\n@e6 [button] \"Adirondacks\"\n@e8 [button] \"Bas-Saint-Laurent\"\n@e10 [horizontalscrollview] \"Hard, Moderate, Easy, Any level\" [scrollable]\n@e11 [button] \"Any level\"\n@e13 [button] \"Easy\"\n@e15 [button] \"Moderate\"\n@e17 [button] \"Hard\"\n@e19 [button] \"Expert\"\n@e20 [button] \"Sort by name\"\n@e22 [button] \"Sort by distance\"\n@e24 [button] \"Sort by rating\"\n@e26 [scroll-area] \"Belvedere de la Tour Bleu, Mont-Tremblant, , 1.9 km, , 701 m, , 1:31:00, Hard, , 5.0, (609), Belvedere de la Chute, Gaspesie, 11 km, 1106 m, 4:16:00, Moderate, 3.8, (837)\" [scrollable]\n  [content above scroll-area hidden]\n  [content below scroll-area hidden]\n@e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n@e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e53 [group] \", Trails\"\n@e56 [group] \", Record\"\n@e59 [group] \", History\"\n@e62 [group] \", Settings\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_23",
@@ -232,7 +248,11 @@
           "endSeconds": 162.748,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device click @e62 --settle",
           "output": "Tapped @e62 (280, 592)\nsettled after 1136ms: +18 -50 (~14 unchanged)\n- @e2 [text-field] \"Search trails, regions, tags\"\n- @e3 [horizontalscrollview]\n- @e4 [button] \"All regions\"\n- @e5 [text] \"All regions\"\n- @e6 [button] \"Adirondacks\"\n- @e7 [text] \"Adirondacks\"\n- @e8 [button] \"Bas-Saint-Laurent\"\n- @e9 [text] \"Bas-Saint-Laurent\"\n- @e10 [horizontalscrollview]\n- @e11 [button] \"Any level\"\n- @e12 [text] \"Any level\"\n- @e13 [button] \"Easy\"\n- @e14 [text] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [text] \"Moderate\"\n- @e17 [button] \"Hard\"\n- @e18 [text] \"Hard\"\n- @e19 [button] \"Expert\"\n- @e20 [button] \"Sort by name\"\n- @e21 [text] \"Name\"\n- @e22 [button] \"Sort by distance\"\n- @e23 [text] \"Distance\"\n- @e24 [button] \"Sort by rating\"\n- @e25 [text] \"Rating\"\n- @e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e28 [text] \"Belvedere de la Chute\"\n- @e29 [text] \"Gaspesie\"\n- @e30 [text] \"\"\n- @e31 [text] \"11 km\"\n- @e32 [text] \"\"\n- @e33 [text] \"1106 m\"\n- @e34 [text] \"\"\n- @e35 [text] \"4:16:00\"\n- @e36 [text] \"Moderate\"\n- @e37 [text] \"\"\n- @e38 [text] \"3.8\"\n- @e39 [text] \"(837)\"\n- @e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e41 [text] \"Belvedere de la Tour Bleu\"\n- @e42 [text] \"Mont-Tremblant\"\n- @e43 [text] \"\"\n- @e44 [text] \"1.9 km\"\n- @e45 [text] \"\"\n- @e46 [text] \"701 m\"\n- @e47 [text] \"\"\n- @e48 [text] \"1:31:00\"\n- @e49 [text] \"Hard\"\n- @e50 [text] \"\"\n- @e51 [text] \"5.0\"\n- @e52 [text] \"(609)\"\n+ @e3~s879411 [text] \"UNITS\"\n+ @e4~s879411 [text] \"Distance\"\n+ @e5~s879411 [text] \"\"\n+ @e6~s879411 [text] \"Used across the whole app\"\n+ @e7~s879411 [button] \"Metric units\"\n+ @e8~s879411 [text] \"Metric\"\n+ @e9~s879411 [button] \"Imperial units\"\n+ @e10~s879411 [text] \"Imperial\"\n+ @e11~s879411 [text] \"PREFERENCES\"\n+ @e12~s879411 [text] \"\"\n+ @e13~s879411 [text] \"Hike reminders\"\n+ @e14~s879411 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s879411 [switch] \"Hike reminders\"\n+ @e16~s879411 [text] \"\"\n+ @e17~s879411 [text] \"Offline maps\"\n+ @e18~s879411 [text] \"Keep saved trail maps available offline\"\n+ @e19~s879411 [switch] \"Offline maps\"\n+ @e20~s879411 [text] \"STORAGE\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e62 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_24",
@@ -240,7 +260,11 @@
           "endSeconds": 165.988,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device wait text \"Keep saved trail maps available offline\"",
           "output": "",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device wait text \"Keep saved trail maps available offline\"",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_25",
@@ -248,7 +272,11 @@
           "endSeconds": 172.011,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device screenshot tmp/javascript-stim-settings.png",
           "output": "tmp/javascript-stim-settings.png (320x640)\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device screenshot tmp/javascript-stim-settings.png",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_26",
@@ -264,7 +292,11 @@
           "endSeconds": 181.132,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device record stop",
           "output": "tmp/javascript-stim-session.mp4\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record stop",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_28",
@@ -280,7 +312,11 @@
           "endSeconds": 192.229,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device close",
           "output": "Closed: javascript-stim\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device close",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_31",
@@ -644,7 +680,11 @@
           "endSeconds": 346.632,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
           "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/javascript-control\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 3 visible nodes (5 total)\nCollapsed 2 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [group] \"Close\"\n@e3 [scroll-area] [scrollable]\n@e4 [group] \"Continue\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_41",
@@ -652,7 +692,11 @@
           "endSeconds": 350.446,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device record start tmp/javascript-control-session.mp4 --scope device --quality high --hide-touches",
           "output": "tmp/javascript-control-session.mp4\nSession state: ./state/agent-device/sessions/javascript-control\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record start tmp/javascript-control-session.mp4 --scope device --quality high --hide-touches",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_43",
@@ -660,7 +704,11 @@
           "endSeconds": 356.864,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device click @e4 --settle",
           "output": "Tapped @e4 (160, 552)\nsettled after 663ms: +14 -1 (~4 unchanged)\n- @e5 [text] \"Continue\"\n+ @e5~s841323 [group] \"Reload\"\n+ @e6~s841323 [text] \"Reload\"\n+ @e7~s841323 [group]\n+ @e8~s841323 [group] \"Home\"\n+ @e9~s841323 [text] \"Go home\"\n+ @e10~s841323 [group]\n+ @e11~s841323 [group] \"Performance monitor\"\n+ @e12~s841323 [text] \"Toggle performance monitor\"\n+ @e13~s841323 [group]\n+ @e14~s841323 [group] \"Element inspector\"\n+ @e15~s841323 [text] \"Toggle element inspector\"\n+ @e16~s841323 [group]\n+ @e17~s841323 [group] \"DevTools\"\n+ @e18~s841323 [text] \"Open DevTools\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e4 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_44",
@@ -668,7 +716,11 @@
           "endSeconds": 360.745,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device click @e1 --settle",
           "output": "Error (COMMAND_FAILED): Ref @e1 needs a complete snapshot — the current frame only authorizes its emitted refs\nHint: Capture a fresh interactive snapshot (snapshot -i) or use a stable selector, then retry.\nDiagnostic ID: mtpe4z77-2ff24bca\nDiagnostics Log: ./state/agent-device/sessions/javascript-control/requests/bbee2428bef5cd10.ndjson\n",
-          "exitCode": 1
+          "exitCode": 1,
+          "presentation": {
+            "command": "agent-device click @e1 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_45",
@@ -676,7 +728,11 @@
           "endSeconds": 365.511,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device snapshot -i",
           "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 7 visible nodes (18 total)\nCollapsed 11 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [group] \"Close\"\n@e3 [scroll-area] [scrollable]\n  [content below scroll-area hidden]\n@e4 [group] \"Reload\"\n@e7 [group] \"Home, Go home\"\n@e10 [group] \"Performance monitor, Toggle performance monitor\"\n@e13 [group] \"Element inspector, Toggle element inspector\"\n@e16 [group] \"DevTools, Open DevTools\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_46",
@@ -684,7 +740,11 @@
           "endSeconds": 370.797,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device click @e1 --settle",
           "output": "Tapped @e1 (294, 302)\nsettled after 1395ms: +63 -17 (~1 unchanged)\n- @e1 [group]\n- @e2 [group] \"Close\"\n- @e4 [group]\n- @e5 [group] \"Reload\"\n- @e6 [text] \"Reload\"\n- @e7 [group]\n- @e8 [group] \"Home\"\n- @e9 [text] \"Go home\"\n- @e10 [group]\n- @e11 [group] \"Performance monitor\"\n- @e12 [text] \"Toggle performance monitor\"\n- @e13 [group]\n- @e14 [group] \"Element inspector\"\n- @e15 [text] \"Toggle element inspector\"\n- @e16 [group]\n- @e17 [group] \"DevTools\"\n- @e18 [text] \"Open DevTools\"\n+ @e2~s841328 [text-field] \"Search trails, regions, tags\"\n+ @e3~s841328 [horizontalscrollview]\n+ @e4~s841328 [button] \"All regions\"\n+ @e5~s841328 [text] \"All regions\"\n+ @e6~s841328 [button] \"Adirondacks\"\n+ @e7~s841328 [text] \"Adirondacks\"\n+ @e8~s841328 [button] \"Bas-Saint-Laurent\"\n+ @e9~s841328 [text] \"Bas-Saint-Laurent\"\n+ @e10~s841328 [horizontalscrollview]\n+ @e11~s841328 [button] \"Any level\"\n+ @e12~s841328 [text] \"Any level\"\n+ @e13~s841328 [button] \"Easy\"\n+ @e14~s841328 [text] \"Easy\"\n+ @e15~s841328 [button] \"Moderate\"\n+ @e16~s841328 [text] \"Moderate\"\n+ @e17~s841328 [button] \"Hard\"\n+ @e18~s841328 [text] \"Hard\"\n+ @e19~s841328 [button] \"Expert\"\n+ @e20~s841328 [button] \"Sort by name\"\n+ @e21~s841328 [text] \"Name\"\n+ @e22~s841328 [button] \"Sort by distance\"\n+ @e23~s841328 [text] \"Distance\"\n+ @e24~s841328 [button] \"Sort by rating\"\n+ @e25~s841328 [text] \"Rating\"\n+ @e26~s841328 [scroll-area]\n+ @e27~s841328 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e28~s841328 [text] \"Belvedere de la Chute\"\n+ @e29~s841328 [text] \"Gaspesie\"\n+ @e30~s841328 [text] \"\"\n+ @e31~s841328 [text] \"11 km\"\n+ @e32~s841328 [text] \"\"\n+ @e33~s841328 [text] \"1106 m\"\n+ @e34~s841328 [text] \"\"\n+ @e35~s841328 [text] \"4:16:00\"\n+ @e36~s841328 [text] \"Moderate\"\n+ @e37~s841328 [text] \"\"\n+ @e38~s841328 [text] \"3.8\"\n+ @e39~s841328 [text] \"(837)\"\n+ @e40~s841328 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n+ @e41~s841328 [text] \"Belvedere de la Tour Bleu\"\n+ @e42~s841328 [text] \"Mont-Tremblant\"\n+ @e43~s841328 [text] \"\"\n+ @e44~s841328 [text] \"1.9 km\"\n+ @e45~s841328 [text] \"\"\n+ @e46~s841328 [text] \"701 m\"\n+ @e47~s841328 [text] \"\"\n+ @e48~s841328 [text] \"1:31:00\"\n+ @e49~s841328 [text] \"Hard\"\n+ @e50~s841328 [text] \"\"\n+ @e51~s841328 [text] \"5.0\"\n+ @e52~s841328 [text] \"(609)\"\n+ @e53~s841328 [group] \", Trails\"\n+ @e54~s841328 [text] \"\"\n+ @e55~s841328 [text] \"Trails\"\n+ @e56~s841328 [group] \", Record\"\n+ @e57~s841328 [text] \"\"\n+ @e58~s841328 [text] \"Record\"\n+ @e59~s841328 [group] \", History\"\n+ @e60~s841328 [text] \"\"\n+ @e61~s841328 [text] \"History\"\n+ @e62~s841328 [group] \", Settings\"\n+ @e63~s841328 [text] \"\"\n+ @e64~s841328 [text] \"Settings\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e1 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_47",
@@ -692,7 +752,11 @@
           "endSeconds": 377.135,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device click @e62~s841328 --settle",
           "output": "Tapped @e62 (280, 592)\nsettled after 1010ms: +18 -50 (~14 unchanged)\n- @e2 [text-field] \"Search trails, regions, tags\"\n- @e3 [horizontalscrollview]\n- @e4 [button] \"All regions\"\n- @e5 [text] \"All regions\"\n- @e6 [button] \"Adirondacks\"\n- @e7 [text] \"Adirondacks\"\n- @e8 [button] \"Bas-Saint-Laurent\"\n- @e9 [text] \"Bas-Saint-Laurent\"\n- @e10 [horizontalscrollview]\n- @e11 [button] \"Any level\"\n- @e12 [text] \"Any level\"\n- @e13 [button] \"Easy\"\n- @e14 [text] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [text] \"Moderate\"\n- @e17 [button] \"Hard\"\n- @e18 [text] \"Hard\"\n- @e19 [button] \"Expert\"\n- @e20 [button] \"Sort by name\"\n- @e21 [text] \"Name\"\n- @e22 [button] \"Sort by distance\"\n- @e23 [text] \"Distance\"\n- @e24 [button] \"Sort by rating\"\n- @e25 [text] \"Rating\"\n- @e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e28 [text] \"Belvedere de la Chute\"\n- @e29 [text] \"Gaspesie\"\n- @e30 [text] \"\"\n- @e31 [text] \"11 km\"\n- @e32 [text] \"\"\n- @e33 [text] \"1106 m\"\n- @e34 [text] \"\"\n- @e35 [text] \"4:16:00\"\n- @e36 [text] \"Moderate\"\n- @e37 [text] \"\"\n- @e38 [text] \"3.8\"\n- @e39 [text] \"(837)\"\n- @e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e41 [text] \"Belvedere de la Tour Bleu\"\n- @e42 [text] \"Mont-Tremblant\"\n- @e43 [text] \"\"\n- @e44 [text] \"1.9 km\"\n- @e45 [text] \"\"\n- @e46 [text] \"701 m\"\n- @e47 [text] \"\"\n- @e48 [text] \"1:31:00\"\n- @e49 [text] \"Hard\"\n- @e50 [text] \"\"\n- @e51 [text] \"5.0\"\n- @e52 [text] \"(609)\"\n+ @e3~s841332 [text] \"UNITS\"\n+ @e4~s841332 [text] \"Distance\"\n+ @e5~s841332 [text] \"\"\n+ @e6~s841332 [text] \"Used across the whole app\"\n+ @e7~s841332 [button] \"Metric units\"\n+ @e8~s841332 [text] \"Metric\"\n+ @e9~s841332 [button] \"Imperial units\"\n+ @e10~s841332 [text] \"Imperial\"\n+ @e11~s841332 [text] \"PREFERENCES\"\n+ @e12~s841332 [text] \"\"\n+ @e13~s841332 [text] \"Hike reminders\"\n+ @e14~s841332 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s841332 [switch] \"Hike reminders\"\n+ @e16~s841332 [text] \"\"\n+ @e17~s841332 [text] \"Offline maps\"\n+ @e18~s841332 [text] \"Keep saved trail maps available offline\"\n+ @e19~s841332 [switch] \"Offline maps\"\n+ @e20~s841332 [text] \"STORAGE\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e62~s841328 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_48",
@@ -700,7 +764,11 @@
           "endSeconds": 380.316,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device wait text \"Keep saved trail maps available offline\"",
           "output": "",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device wait text \"Keep saved trail maps available offline\"",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_49",
@@ -708,7 +776,11 @@
           "endSeconds": 387.033,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device screenshot tmp/javascript-control-settings.png",
           "output": "tmp/javascript-control-settings.png (320x640)\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device screenshot tmp/javascript-control-settings.png",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_50",
@@ -724,7 +796,11 @@
           "endSeconds": 402.224,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device record stop",
           "output": "tmp/javascript-control-session.mp4\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record stop",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_52",
@@ -740,7 +816,11 @@
           "endSeconds": 417.407,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device close",
           "output": "Closed: javascript-control\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device close",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_55",
@@ -964,7 +1044,11 @@
           "endSeconds": 191.002,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
           "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/native-stim\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 22 visible nodes (64 total)\nCollapsed 42 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [scroll-area] [scrollable]\n@e2 [text-field] \"Search trails, regions, tags\" [editable]\n@e3 [horizontalscrollview] \"Bas-Saint-Laurent, Adirondacks, All regions\" [scrollable]\n@e4 [button] \"All regions\"\n@e6 [button] \"Adirondacks\"\n@e8 [button] \"Bas-Saint-Laurent\"\n@e10 [horizontalscrollview] \"Hard, Moderate, Easy, Any level\" [scrollable]\n@e11 [button] \"Any level\"\n@e13 [button] \"Easy\"\n@e15 [button] \"Moderate\"\n@e17 [button] \"Hard\"\n@e19 [button] \"Expert\"\n@e20 [button] \"Sort by name\"\n@e22 [button] \"Sort by distance\"\n@e24 [button] \"Sort by rating\"\n@e26 [scroll-area] \"Belvedere de la Tour Bleu, Mont-Tremblant, , 1.9 km, , 701 m, , 1:31:00, Hard, , 5.0, (609), Belvedere de la Chute, Gaspesie, 11 km, 1106 m, 4:16:00, Moderate, 3.8, (837)\" [scrollable]\n  [content above scroll-area hidden]\n  [content below scroll-area hidden]\n@e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n@e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e53 [group] \", Trails\"\n@e56 [group] \", Record\"\n@e59 [group] \", History\"\n@e62 [group] \", Settings\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_21",
@@ -972,7 +1056,11 @@
           "endSeconds": 195.537,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device record start tmp/native-stim-session.mp4 --scope device --quality high --hide-touches",
           "output": "tmp/native-stim-session.mp4\nSession state: ./state/agent-device/sessions/native-stim\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record start tmp/native-stim-session.mp4 --scope device --quality high --hide-touches",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_22",
@@ -980,7 +1068,11 @@
           "endSeconds": 201.469,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device click @e62 --settle",
           "output": "Tapped @e62 (280, 592)\nsettled after 1355ms: +18 -50 (~14 unchanged)\n- @e2 [text-field] \"Search trails, regions, tags\"\n- @e3 [horizontalscrollview]\n- @e4 [button] \"All regions\"\n- @e5 [text] \"All regions\"\n- @e6 [button] \"Adirondacks\"\n- @e7 [text] \"Adirondacks\"\n- @e8 [button] \"Bas-Saint-Laurent\"\n- @e9 [text] \"Bas-Saint-Laurent\"\n- @e10 [horizontalscrollview]\n- @e11 [button] \"Any level\"\n- @e12 [text] \"Any level\"\n- @e13 [button] \"Easy\"\n- @e14 [text] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [text] \"Moderate\"\n- @e17 [button] \"Hard\"\n- @e18 [text] \"Hard\"\n- @e19 [button] \"Expert\"\n- @e20 [button] \"Sort by name\"\n- @e21 [text] \"Name\"\n- @e22 [button] \"Sort by distance\"\n- @e23 [text] \"Distance\"\n- @e24 [button] \"Sort by rating\"\n- @e25 [text] \"Rating\"\n- @e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e28 [text] \"Belvedere de la Chute\"\n- @e29 [text] \"Gaspesie\"\n- @e30 [text] \"\"\n- @e31 [text] \"11 km\"\n- @e32 [text] \"\"\n- @e33 [text] \"1106 m\"\n- @e34 [text] \"\"\n- @e35 [text] \"4:16:00\"\n- @e36 [text] \"Moderate\"\n- @e37 [text] \"\"\n- @e38 [text] \"3.8\"\n- @e39 [text] \"(837)\"\n- @e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e41 [text] \"Belvedere de la Tour Bleu\"\n- @e42 [text] \"Mont-Tremblant\"\n- @e43 [text] \"\"\n- @e44 [text] \"1.9 km\"\n- @e45 [text] \"\"\n- @e46 [text] \"701 m\"\n- @e47 [text] \"\"\n- @e48 [text] \"1:31:00\"\n- @e49 [text] \"Hard\"\n- @e50 [text] \"\"\n- @e51 [text] \"5.0\"\n- @e52 [text] \"(609)\"\n+ @e3~s591037 [text] \"UNITS\"\n+ @e4~s591037 [text] \"Distance\"\n+ @e5~s591037 [text] \"\"\n+ @e6~s591037 [text] \"Used across the whole app\"\n+ @e7~s591037 [button] \"Metric units\"\n+ @e8~s591037 [text] \"Metric\"\n+ @e9~s591037 [button] \"Imperial units\"\n+ @e10~s591037 [text] \"Imperial\"\n+ @e11~s591037 [text] \"PREFERENCES\"\n+ @e12~s591037 [text] \"\"\n+ @e13~s591037 [text] \"Hike reminders\"\n+ @e14~s591037 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s591037 [switch] \"Hike reminders\"\n+ @e16~s591037 [text] \"\"\n+ @e17~s591037 [text] \"Offline maps\"\n+ @e18~s591037 [text] \"Keep map tiles for saved trails on device\"\n+ @e19~s591037 [switch] \"Offline maps\"\n+ @e20~s591037 [text] \"STORAGE\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e62 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_23",
@@ -988,7 +1080,11 @@
           "endSeconds": 204.586,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device wait text \"Offline maps\"",
           "output": "",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device wait text \"Offline maps\"",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_24",
@@ -996,7 +1092,11 @@
           "endSeconds": 209.233,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device screenshot tmp/native-stim-settings.png",
           "output": "tmp/native-stim-settings.png (320x640)\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device screenshot tmp/native-stim-settings.png",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_25",
@@ -1012,7 +1112,11 @@
           "endSeconds": 221.926,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device record stop",
           "output": "tmp/native-stim-session.mp4\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record stop",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_27",
@@ -1028,7 +1132,11 @@
           "endSeconds": 228.858,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device close",
           "output": "Closed: native-stim\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device close",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_30",
@@ -1410,7 +1518,11 @@
           "endSeconds": 347.762,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
           "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/native-control\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 9 visible nodes (17 total)\nCollapsed 8 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [group] \"User\"\n@e3 [scroll-area] [scrollable]\n  [content below scroll-area hidden]\n@e4 [text] \"INFO\"\n@e5 [text-field] [editable]\n@e6 [text] \"http://\"\n@e7 [group] \"Connect\" [disabled]\n@e9 [group] \"Home\" [disabled]\n@e12 [group] \"Updates\"\n@e15 [group] \"Settings\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_42",
@@ -1418,7 +1530,11 @@
           "endSeconds": 352.607,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device record start tmp/native-control-session.mp4 --scope device --quality high --hide-touches",
           "output": "tmp/native-control-session.mp4\nSession state: ./state/agent-device/sessions/native-control\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record start tmp/native-control-session.mp4 --scope device --quality high --hide-touches",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_44",
@@ -1426,7 +1542,11 @@
           "endSeconds": 367.394,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device fill @e5 \"http://localhost:8081\" --settle",
           "output": "Filled 21 chars\nsettled after 806ms: +2 -3 (~14 unchanged)\n- @e5 [text-field]\n- @e6 [text] \"http://\"\n- @e7 [group] [disabled]\n+ @e5~s198306 [text-field] \"http://localhost:8081\"\n+ @e6~s198306 [group]\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device fill @e5 \"http://localhost:8081\" --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_45",
@@ -1434,7 +1554,11 @@
           "endSeconds": 372.109,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device snapshot -i",
           "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 8 visible nodes (16 total)\nCollapsed 8 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [group] \"User\"\n@e3 [scroll-area] [scrollable]\n  [content below scroll-area hidden]\n@e4 [text] \"INFO\"\n@e5 [text-field] \"http://localhost:8081\" [focused] [editable]\n@e6 [group] \"Connect\"\n@e8 [group] \"Home\" [disabled]\n@e11 [group] \"Updates\"\n@e14 [group] \"Settings\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_46",
@@ -1442,7 +1566,11 @@
           "endSeconds": 378.582,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device click @e6 --settle",
           "output": "Tapped @e6 (160, 481)\nsettled after 1741ms: +0 -16 (~0 unchanged)\n- @e1 [group]\n- @e2 [group] \"User\"\n- @e3 [scroll-area]\n- @e4 [text] \"INFO\"\n- @e5 [text-field] \"http://localhost:8081\"\n- @e6 [group]\n- @e7 [text] \"Connect\"\n- @e8 [group] [disabled]\n- @e9 [group] \"Home\"\n- @e10 [text] \"Home\"\n- @e11 [group]\n- @e12 [group] \"Updates\"\n- @e13 [text] \"Updates\"\n- @e14 [group]\n- @e15 [group] \"Settings\"\n- @e16 [text] \"Settings\"\nhint: Settled on a nearly-empty tree — the app may still be loading. Wait for specific content (wait text ...) before interacting.\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e6 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_47",
@@ -1450,7 +1578,11 @@
           "endSeconds": 395.771,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device wait text \"Trails\"",
           "output": "Error (COMMAND_FAILED): wait timed out for text: Trails. Current surface: Close, Continue.\nHint: Retry with --debug and inspect diagnostics log for details.\nDiagnostic ID: mtpdkkz3-223a9142\nDiagnostics Log: ./state/agent-device/sessions/native-control/requests/57d438d25551ac7b.ndjson\n",
-          "exitCode": 1
+          "exitCode": 1,
+          "presentation": {
+            "command": "agent-device wait text \"Trails\"",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_48",
@@ -1458,7 +1590,11 @@
           "endSeconds": 403.197,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device snapshot -i",
           "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 3 visible nodes (5 total)\nCollapsed 2 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [group] \"Close\"\n@e3 [scroll-area] [scrollable]\n@e4 [group] \"Continue\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_49",
@@ -1466,7 +1602,11 @@
           "endSeconds": 409.048,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device click @e4 --settle",
           "output": "Tapped @e4 (160, 552)\nsettled after 632ms: +14 -1 (~4 unchanged)\n- @e5 [text] \"Continue\"\n+ @e5~s198347 [group] \"Reload\"\n+ @e6~s198347 [text] \"Reload\"\n+ @e7~s198347 [group]\n+ @e8~s198347 [group] \"Home\"\n+ @e9~s198347 [text] \"Go home\"\n+ @e10~s198347 [group]\n+ @e11~s198347 [group] \"Performance monitor\"\n+ @e12~s198347 [text] \"Toggle performance monitor\"\n+ @e13~s198347 [group]\n+ @e14~s198347 [group] \"Element inspector\"\n+ @e15~s198347 [text] \"Toggle element inspector\"\n+ @e16~s198347 [group]\n+ @e17~s198347 [group] \"DevTools\"\n+ @e18~s198347 [text] \"Open DevTools\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e4 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_50",
@@ -1474,7 +1614,11 @@
           "endSeconds": 413.3,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device click @e1 --settle",
           "output": "Error (COMMAND_FAILED): Ref @e1 needs a complete snapshot — the current frame only authorizes its emitted refs\nHint: Capture a fresh interactive snapshot (snapshot -i) or use a stable selector, then retry.\nDiagnostic ID: mtpdl6e1-e3fc04b5\nDiagnostics Log: ./state/agent-device/sessions/native-control/requests/a6c8f0d331785a9c.ndjson\n",
-          "exitCode": 1
+          "exitCode": 1,
+          "presentation": {
+            "command": "agent-device click @e1 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_51",
@@ -1482,7 +1626,11 @@
           "endSeconds": 418.205,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device snapshot -i",
           "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 7 visible nodes (18 total)\nCollapsed 11 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [group] \"Close\"\n@e3 [scroll-area] [scrollable]\n  [content below scroll-area hidden]\n@e4 [group] \"Reload\"\n@e7 [group] \"Home, Go home\"\n@e10 [group] \"Performance monitor, Toggle performance monitor\"\n@e13 [group] \"Element inspector, Toggle element inspector\"\n@e16 [group] \"DevTools, Open DevTools\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_52",
@@ -1490,7 +1638,11 @@
           "endSeconds": 424.651,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device click @e1 --settle",
           "output": "Tapped @e1 (294, 302)\nsettled after 1416ms: +63 -17 (~1 unchanged)\n- @e1 [group]\n- @e2 [group] \"Close\"\n- @e4 [group]\n- @e5 [group] \"Reload\"\n- @e6 [text] \"Reload\"\n- @e7 [group]\n- @e8 [group] \"Home\"\n- @e9 [text] \"Go home\"\n- @e10 [group]\n- @e11 [group] \"Performance monitor\"\n- @e12 [text] \"Toggle performance monitor\"\n- @e13 [group]\n- @e14 [group] \"Element inspector\"\n- @e15 [text] \"Toggle element inspector\"\n- @e16 [group]\n- @e17 [group] \"DevTools\"\n- @e18 [text] \"Open DevTools\"\n+ @e2~s198352 [text-field] \"Search trails, regions, tags\"\n+ @e3~s198352 [horizontalscrollview]\n+ @e4~s198352 [button] \"All regions\"\n+ @e5~s198352 [text] \"All regions\"\n+ @e6~s198352 [button] \"Adirondacks\"\n+ @e7~s198352 [text] \"Adirondacks\"\n+ @e8~s198352 [button] \"Bas-Saint-Laurent\"\n+ @e9~s198352 [text] \"Bas-Saint-Laurent\"\n+ @e10~s198352 [horizontalscrollview]\n+ @e11~s198352 [button] \"Any level\"\n+ @e12~s198352 [text] \"Any level\"\n+ @e13~s198352 [button] \"Easy\"\n+ @e14~s198352 [text] \"Easy\"\n+ @e15~s198352 [button] \"Moderate\"\n+ @e16~s198352 [text] \"Moderate\"\n+ @e17~s198352 [button] \"Hard\"\n+ @e18~s198352 [text] \"Hard\"\n+ @e19~s198352 [button] \"Expert\"\n+ @e20~s198352 [button] \"Sort by name\"\n+ @e21~s198352 [text] \"Name\"\n+ @e22~s198352 [button] \"Sort by distance\"\n+ @e23~s198352 [text] \"Distance\"\n+ @e24~s198352 [button] \"Sort by rating\"\n+ @e25~s198352 [text] \"Rating\"\n+ @e26~s198352 [scroll-area]\n+ @e27~s198352 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e28~s198352 [text] \"Belvedere de la Chute\"\n+ @e29~s198352 [text] \"Gaspesie\"\n+ @e30~s198352 [text] \"\"\n+ @e31~s198352 [text] \"11 km\"\n+ @e32~s198352 [text] \"\"\n+ @e33~s198352 [text] \"1106 m\"\n+ @e34~s198352 [text] \"\"\n+ @e35~s198352 [text] \"4:16:00\"\n+ @e36~s198352 [text] \"Moderate\"\n+ @e37~s198352 [text] \"\"\n+ @e38~s198352 [text] \"3.8\"\n+ @e39~s198352 [text] \"(837)\"\n+ @e40~s198352 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n+ @e41~s198352 [text] \"Belvedere de la Tour Bleu\"\n+ @e42~s198352 [text] \"Mont-Tremblant\"\n+ @e43~s198352 [text] \"\"\n+ @e44~s198352 [text] \"1.9 km\"\n+ @e45~s198352 [text] \"\"\n+ @e46~s198352 [text] \"701 m\"\n+ @e47~s198352 [text] \"\"\n+ @e48~s198352 [text] \"1:31:00\"\n+ @e49~s198352 [text] \"Hard\"\n+ @e50~s198352 [text] \"\"\n+ @e51~s198352 [text] \"5.0\"\n+ @e52~s198352 [text] \"(609)\"\n+ @e53~s198352 [group] \", Trails\"\n+ @e54~s198352 [text] \"\"\n+ @e55~s198352 [text] \"Trails\"\n+ @e56~s198352 [group] \", Record\"\n+ @e57~s198352 [text] \"\"\n+ @e58~s198352 [text] \"Record\"\n+ @e59~s198352 [group] \", History\"\n+ @e60~s198352 [text] \"\"\n+ @e61~s198352 [text] \"History\"\n+ @e62~s198352 [group] \", Settings\"\n+ @e63~s198352 [text] \"\"\n+ @e64~s198352 [text] \"Settings\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e1 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_53",
@@ -1498,7 +1650,11 @@
           "endSeconds": 430.687,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device click @e62~s198352 --settle",
           "output": "Tapped @e62 (280, 592)\nsettled after 1179ms: +18 -50 (~14 unchanged)\n- @e2 [text-field] \"Search trails, regions, tags\"\n- @e3 [horizontalscrollview]\n- @e4 [button] \"All regions\"\n- @e5 [text] \"All regions\"\n- @e6 [button] \"Adirondacks\"\n- @e7 [text] \"Adirondacks\"\n- @e8 [button] \"Bas-Saint-Laurent\"\n- @e9 [text] \"Bas-Saint-Laurent\"\n- @e10 [horizontalscrollview]\n- @e11 [button] \"Any level\"\n- @e12 [text] \"Any level\"\n- @e13 [button] \"Easy\"\n- @e14 [text] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [text] \"Moderate\"\n- @e17 [button] \"Hard\"\n- @e18 [text] \"Hard\"\n- @e19 [button] \"Expert\"\n- @e20 [button] \"Sort by name\"\n- @e21 [text] \"Name\"\n- @e22 [button] \"Sort by distance\"\n- @e23 [text] \"Distance\"\n- @e24 [button] \"Sort by rating\"\n- @e25 [text] \"Rating\"\n- @e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e28 [text] \"Belvedere de la Chute\"\n- @e29 [text] \"Gaspesie\"\n- @e30 [text] \"\"\n- @e31 [text] \"11 km\"\n- @e32 [text] \"\"\n- @e33 [text] \"1106 m\"\n- @e34 [text] \"\"\n- @e35 [text] \"4:16:00\"\n- @e36 [text] \"Moderate\"\n- @e37 [text] \"\"\n- @e38 [text] \"3.8\"\n- @e39 [text] \"(837)\"\n- @e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e41 [text] \"Belvedere de la Tour Bleu\"\n- @e42 [text] \"Mont-Tremblant\"\n- @e43 [text] \"\"\n- @e44 [text] \"1.9 km\"\n- @e45 [text] \"\"\n- @e46 [text] \"701 m\"\n- @e47 [text] \"\"\n- @e48 [text] \"1:31:00\"\n- @e49 [text] \"Hard\"\n- @e50 [text] \"\"\n- @e51 [text] \"5.0\"\n- @e52 [text] \"(609)\"\n+ @e3~s198356 [text] \"UNITS\"\n+ @e4~s198356 [text] \"Distance\"\n+ @e5~s198356 [text] \"\"\n+ @e6~s198356 [text] \"Used across the whole app\"\n+ @e7~s198356 [button] \"Metric units\"\n+ @e8~s198356 [text] \"Metric\"\n+ @e9~s198356 [button] \"Imperial units\"\n+ @e10~s198356 [text] \"Imperial\"\n+ @e11~s198356 [text] \"PREFERENCES\"\n+ @e12~s198356 [text] \"\"\n+ @e13~s198356 [text] \"Hike reminders\"\n+ @e14~s198356 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s198356 [switch] \"Hike reminders\"\n+ @e16~s198356 [text] \"\"\n+ @e17~s198356 [text] \"Offline maps\"\n+ @e18~s198356 [text] \"Keep map tiles for saved trails on device\"\n+ @e19~s198356 [switch] \"Offline maps\"\n+ @e20~s198356 [text] \"STORAGE\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e62~s198352 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_54",
@@ -1506,7 +1662,11 @@
           "endSeconds": 434.824,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device wait text \"Offline maps\"",
           "output": "",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device wait text \"Offline maps\"",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_55",
@@ -1514,7 +1674,11 @@
           "endSeconds": 440.536,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device screenshot tmp/native-control-settings.png",
           "output": "tmp/native-control-settings.png (320x640)\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device screenshot tmp/native-control-settings.png",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_57",
@@ -1530,7 +1694,11 @@
           "endSeconds": 455.567,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device record stop",
           "output": "tmp/native-control-session.mp4\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record stop",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_59",
@@ -1546,7 +1714,11 @@
           "endSeconds": 465.904,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device close",
           "output": "Closed: native-control\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device close",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_61",

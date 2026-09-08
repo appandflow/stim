@@ -245,7 +245,11 @@
           "endSeconds": 212.047,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
           "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/launch-crash-stim\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 2 nodes\n@e1 [application] \"Trailhead\"\n@e2 [image] \"SplashScreenLogo\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_24",
@@ -253,7 +257,11 @@
           "endSeconds": 217.355,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device record start tmp/launch-crash-stim-session.mp4 --scope device --quality high --hide-touches",
           "output": "tmp/launch-crash-stim-session.mp4\nSession state: ./state/agent-device/sessions/launch-crash-stim\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record start tmp/launch-crash-stim-session.mp4 --scope device --quality high --hide-touches",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_25",
@@ -261,7 +269,11 @@
           "endSeconds": 234.455,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device wait text \"Trails\"",
           "output": "Error (COMMAND_FAILED): wait timed out for text: Trails. Current surface: Trailhead, SplashScreenLogo.\nHint: Retry with --debug and inspect diagnostics log for details.\nDiagnostic ID: mtpwhab0-7f134424\nDiagnostics Log: ./state/agent-device/sessions/launch-crash-stim/requests/2fbed3cd5b72c675.ndjson\n",
-          "exitCode": 1
+          "exitCode": 1,
+          "presentation": {
+            "command": "agent-device wait text \"Trails\"",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_27",
@@ -277,7 +289,11 @@
           "endSeconds": 255.534,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device wait text \"Trails\"",
           "output": "",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device wait text \"Trails\"",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_29",
@@ -285,7 +301,11 @@
           "endSeconds": 260.459,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device snapshot -i",
           "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 28 visible nodes (truncated)\nDetected an overly complex or slow accessibility tree. Fell back to the private-ax snapshot backend. It is OK to continue; use --json to inspect snapshotQuality.reason if you need recovery details.\n@e1 [application] \"Trailhead\"\n@e2 [text] \"Trails\"\n@e3 [text] \"\"\n@e4 [text-field] \"Search trails\" [editable]\n@e5 [scroll-area] [scrollable]\n  [content below scroll-area hidden]\n@e6 [button] \"All regions\" [selected]\n@e7 [button] \"Adirondacks\"\n@e8 [button] \"Bas-Saint-Laurent\"\n@e9 [button] \"Charlevoix\"\n@e10 [scroll-area] [scrollable]\n  [content below scroll-area hidden]\n@e11 [button] \"Any level\" [selected]\n@e12 [button] \"Easy\"\n@e13 [button] \"Moderate\"\n@e14 [button] \"Hard\"\n@e15 [button] \"Expert\"\n@e16 [text] \"200 trails\"\n@e17 [button] \"Sort by name\" [selected]\n@e18 [button] \"Sort by distance\"\n@e19 [button] \"Sort by rating\"\n@e20 [scroll-area] [scrollable]\n  [content below scroll-area hidden]\n@e21 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n@e22 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e23 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n@e24 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n@e25 [button] \"Trails, tab, 1 of 4\" [selected]\n@e26 [button] \"Record, tab, 2 of 4\"\n@e27 [button] \"History, tab, 3 of 4\"\n@e28 [button] \"Settings, tab, 4 of 4\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_30",
@@ -293,7 +313,11 @@
           "endSeconds": 268.138,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device click @e28 --settle",
           "output": "Tapped @e28 (352, 816)\nsettled after 2266ms: +28 -24 (~4 unchanged)\n- @e2 [text] \"Trails\"\n- @e3 [text] \"\"\n- @e4 [text-field] \"Search trails\"\n+ @e2~s826664 [text] \"Settings\"\n- @e6 [button] \"All regions\"\n- @e7 [button] \"Adirondacks\"\n- @e8 [button] \"Bas-Saint-Laurent\"\n- @e9 [button] \"Charlevoix\"\n- @e10 [scroll-area]\n- @e11 [button] \"Any level\"\n- @e12 [button] \"Easy\"\n- @e13 [button] \"Moderate\"\n- @e14 [button] \"Hard\"\n- @e15 [button] \"Expert\"\n- @e16 [text] \"200 trails\"\n- @e17 [button] \"Sort by name\"\n- @e18 [button] \"Sort by distance\"\n- @e19 [button] \"Sort by rating\"\n- @e20 [scroll-area]\n- @e21 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e22 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e23 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n- @e24 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n- @e25 [button] \"Trails, tab, 1 of 4\"\n+ @e4~s826664 [text] \"UNITS\"\n+ @e5~s826664 [text] \"Distance\"\n+ @e6~s826664 [text] \"\"\n+ @e7~s826664 [button] \"Metric units\"\n+ @e8~s826664 [button] \"Imperial units\"\n+ @e9~s826664 [text] \"Used across the whole app\"\n+ @e10~s826664 [text] \"PREFERENCES\"\n+ @e11~s826664 [text] \"Hike reminders\"\n+ @e12~s826664 [switch] \"Hike reminders\"\n+ @e13~s826664 [text] \"\"\n+ @e14~s826664 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s826664 [text] \"Offline maps\"\n+ @e16~s826664 [switch] \"Offline maps\"\n+ @e17~s826664 [text] \"\"\n+ @e18~s826664 [text] \"Keep map tiles for saved trails on device\"\n+ @e19~s826664 [text] \"STORAGE\"\n+ @e20~s826664 [text] \"Recorded hikes\"\n+ @e21~s826664 [text] \"\"\n+ @e22~s826664 [text] \"48\"\n+ @e23~s826664 [text] \"Stored in a local database\"\n+ @e24~s826664 [button] \"Reset sample data\"\n+ @e25~s826664 [text] \"ABOUT\"\n+ @e26~s826664 [text] \"\"\n+ @e27~s826664 [text] \"Version\"\n+ @e28~s826664 [text] \"1.0.0\"\n+ @e29~s826664 [button] \"Trails, tab, 1 of 4\"\n- @e28 [button] \"Settings, tab, 4 of 4\"\n+ @e32~s826664 [button] \"Settings, tab, 4 of 4\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e28 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_31",
@@ -301,7 +325,11 @@
           "endSeconds": 271.57,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device wait text \"Keep map tiles for saved trails on device\"",
           "output": "",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device wait text \"Keep map tiles for saved trails on device\"",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_32",
@@ -309,7 +337,11 @@
           "endSeconds": 277.477,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device screenshot tmp/launch-crash-stim-settings.png",
           "output": "tmp/launch-crash-stim-settings.png (402x874 @1x)\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device screenshot tmp/launch-crash-stim-settings.png",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_33",
@@ -325,7 +357,11 @@
           "endSeconds": 286.745,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device record stop",
           "output": "tmp/launch-crash-stim-session.mp4\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record stop",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_35",
@@ -341,7 +377,11 @@
           "endSeconds": 296.988,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device close",
           "output": "Closed: launch-crash-stim\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device close",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_38",

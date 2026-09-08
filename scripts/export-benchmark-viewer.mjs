@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
 import { launchCrashDiagnosis, launchCrashRecovery, podfileChecksumChanges } from './launch-crash-benchmark.mjs';
 import { reconstructCommandEvidence } from './agent-benchmark/command-evidence.mjs';
+import { benchmarkCommandPresentation } from './benchmark-command-presentation.mjs';
 import {
   agentDeviceIsolationInvalidReasons,
   agentDeviceAuxiliarySessions,
@@ -339,6 +340,10 @@ export function eventsFor(runDir, start, replacements) {
         started.delete(content.tool_use_id);
       }
     }
+  }
+  for (const command of commands) {
+    const presentation = benchmarkCommandPresentation(command.command, command.exitCode);
+    if (presentation) command.presentation = presentation;
   }
   return { messages, commands };
 }

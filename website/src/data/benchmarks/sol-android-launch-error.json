@@ -221,7 +221,11 @@
           "endSeconds": 216.59,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
           "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/launch-crash-stim\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 22 visible nodes (64 total)\nCollapsed 42 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [scroll-area] [scrollable]\n@e2 [text-field] \"Search trails, regions, tags\" [editable]\n@e3 [horizontalscrollview] \"Bas-Saint-Laurent, Adirondacks, All regions\" [scrollable]\n@e4 [button] \"All regions\"\n@e6 [button] \"Adirondacks\"\n@e8 [button] \"Bas-Saint-Laurent\"\n@e10 [horizontalscrollview] \"Hard, Moderate, Easy, Any level\" [scrollable]\n@e11 [button] \"Any level\"\n@e13 [button] \"Easy\"\n@e15 [button] \"Moderate\"\n@e17 [button] \"Hard\"\n@e19 [button] \"Expert\"\n@e20 [button] \"Sort by name\"\n@e22 [button] \"Sort by distance\"\n@e24 [button] \"Sort by rating\"\n@e26 [scroll-area] \"Belvedere de la Tour Bleu, Mont-Tremblant, , 1.9 km, , 701 m, , 1:31:00, Hard, , 5.0, (609), Belvedere de la Chute, Gaspesie, 11 km, 1106 m, 4:16:00, Moderate, 3.8, (837)\" [scrollable]\n  [content below scroll-area hidden]\n@e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n@e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e53 [group] \", Trails\"\n@e56 [group] \", Record\"\n@e59 [group] \", History\"\n@e62 [group] \", Settings\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_22",
@@ -229,7 +233,11 @@
           "endSeconds": 221.11,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device record start tmp/launch-crash-stim-session.mp4 --scope device --quality high --hide-touches",
           "output": "tmp/launch-crash-stim-session.mp4\nSession state: ./state/agent-device/sessions/launch-crash-stim\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record start tmp/launch-crash-stim-session.mp4 --scope device --quality high --hide-touches",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_23",
@@ -237,7 +245,11 @@
           "endSeconds": 229.665,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device click @e62 --settle",
           "output": "Tapped @e62 (280, 592)\nsettled after 1872ms: +18 -50 (~14 unchanged)\n- @e2 [text-field] \"Search trails, regions, tags\"\n- @e3 [horizontalscrollview]\n- @e4 [button] \"All regions\"\n- @e5 [text] \"All regions\"\n- @e6 [button] \"Adirondacks\"\n- @e7 [text] \"Adirondacks\"\n- @e8 [button] \"Bas-Saint-Laurent\"\n- @e9 [text] \"Bas-Saint-Laurent\"\n- @e10 [horizontalscrollview]\n- @e11 [button] \"Any level\"\n- @e12 [text] \"Any level\"\n- @e13 [button] \"Easy\"\n- @e14 [text] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [text] \"Moderate\"\n- @e17 [button] \"Hard\"\n- @e18 [text] \"Hard\"\n- @e19 [button] \"Expert\"\n- @e20 [button] \"Sort by name\"\n- @e21 [text] \"Name\"\n- @e22 [button] \"Sort by distance\"\n- @e23 [text] \"Distance\"\n- @e24 [button] \"Sort by rating\"\n- @e25 [text] \"Rating\"\n- @e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e28 [text] \"Belvedere de la Chute\"\n- @e29 [text] \"Gaspesie\"\n- @e30 [text] \"\"\n- @e31 [text] \"11 km\"\n- @e32 [text] \"\"\n- @e33 [text] \"1106 m\"\n- @e34 [text] \"\"\n- @e35 [text] \"4:16:00\"\n- @e36 [text] \"Moderate\"\n- @e37 [text] \"\"\n- @e38 [text] \"3.8\"\n- @e39 [text] \"(837)\"\n- @e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e41 [text] \"Belvedere de la Tour Bleu\"\n- @e42 [text] \"Mont-Tremblant\"\n- @e43 [text] \"\"\n- @e44 [text] \"1.9 km\"\n- @e45 [text] \"\"\n- @e46 [text] \"701 m\"\n- @e47 [text] \"\"\n- @e48 [text] \"1:31:00\"\n- @e49 [text] \"Hard\"\n- @e50 [text] \"\"\n- @e51 [text] \"5.0\"\n- @e52 [text] \"(609)\"\n+ @e3~s712907 [text] \"UNITS\"\n+ @e4~s712907 [text] \"Distance\"\n+ @e5~s712907 [text] \"\"\n+ @e6~s712907 [text] \"Used across the whole app\"\n+ @e7~s712907 [button] \"Metric units\"\n+ @e8~s712907 [text] \"Metric\"\n+ @e9~s712907 [button] \"Imperial units\"\n+ @e10~s712907 [text] \"Imperial\"\n+ @e11~s712907 [text] \"PREFERENCES\"\n+ @e12~s712907 [text] \"\"\n+ @e13~s712907 [text] \"Hike reminders\"\n+ @e14~s712907 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s712907 [switch] \"Hike reminders\"\n+ @e16~s712907 [text] \"\"\n+ @e17~s712907 [text] \"Offline maps\"\n+ @e18~s712907 [text] \"Keep map tiles for saved trails on device\"\n+ @e19~s712907 [switch] \"Offline maps\"\n+ @e20~s712907 [text] \"STORAGE\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e62 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_24",
@@ -245,7 +257,11 @@
           "endSeconds": 232.872,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device wait text \"Keep map tiles for saved trails on device\"",
           "output": "",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device wait text \"Keep map tiles for saved trails on device\"",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_25",
@@ -253,7 +269,11 @@
           "endSeconds": 239.117,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device screenshot tmp/launch-crash-stim-settings.png",
           "output": "tmp/launch-crash-stim-settings.png (320x640)\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device screenshot tmp/launch-crash-stim-settings.png",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_26",
@@ -269,7 +289,11 @@
           "endSeconds": 251.077,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device record stop",
           "output": "tmp/launch-crash-stim-session.mp4\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record stop",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_29",
@@ -285,7 +309,11 @@
           "endSeconds": 259.599,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device close",
           "output": "Closed: launch-crash-stim\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device close",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_31",
@@ -539,7 +567,11 @@
           "endSeconds": 488.893,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
           "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/launch-crash-control\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 3 visible nodes (5 total)\nCollapsed 2 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [group] \"Close\"\n@e3 [scroll-area] [scrollable]\n@e4 [group] \"Continue\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_27",
@@ -547,7 +579,11 @@
           "endSeconds": 496.497,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device record start tmp/launch-crash-control-session.mp4 --scope device --quality high --hide-touches",
           "output": "tmp/launch-crash-control-session.mp4\nSession state: ./state/agent-device/sessions/launch-crash-control\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record start tmp/launch-crash-control-session.mp4 --scope device --quality high --hide-touches",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_28",
@@ -555,7 +591,11 @@
           "endSeconds": 503.408,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device click @e4 --settle",
           "output": "Tapped @e4 (160, 552)\nsettled after 753ms: +14 -1 (~4 unchanged)\n- @e5 [text] \"Continue\"\n+ @e5~s138637 [group] \"Reload\"\n+ @e6~s138637 [text] \"Reload\"\n+ @e7~s138637 [group]\n+ @e8~s138637 [group] \"Home\"\n+ @e9~s138637 [text] \"Go home\"\n+ @e10~s138637 [group]\n+ @e11~s138637 [group] \"Performance monitor\"\n+ @e12~s138637 [text] \"Toggle performance monitor\"\n+ @e13~s138637 [group]\n+ @e14~s138637 [group] \"Element inspector\"\n+ @e15~s138637 [text] \"Toggle element inspector\"\n+ @e16~s138637 [group]\n+ @e17~s138637 [group] \"DevTools\"\n+ @e18~s138637 [text] \"Open DevTools\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e4 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_29",
@@ -563,7 +603,11 @@
           "endSeconds": 512.694,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device click @e1 --settle",
           "output": "Error (COMMAND_FAILED): Ref @e1 needs a complete snapshot — the current frame only authorizes its emitted refs\nHint: Capture a fresh interactive snapshot (snapshot -i) or use a stable selector, then retry.\nDiagnostic ID: mts05ruw-34085fef\nDiagnostics Log: ./state/agent-device/sessions/launch-crash-control/requests/97a05bbbf985d249.ndjson\n",
-          "exitCode": 1
+          "exitCode": 1,
+          "presentation": {
+            "command": "agent-device click @e1 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_31",
@@ -571,7 +615,11 @@
           "endSeconds": 519.315,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device snapshot -i",
           "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 7 visible nodes (18 total)\nCollapsed 11 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [group] \"Close\"\n@e3 [scroll-area] [scrollable]\n  [content below scroll-area hidden]\n@e4 [group] \"Reload\"\n@e7 [group] \"Home, Go home\"\n@e10 [group] \"Performance monitor, Toggle performance monitor\"\n@e13 [group] \"Element inspector, Toggle element inspector\"\n@e16 [group] \"DevTools, Open DevTools\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_32",
@@ -579,7 +627,11 @@
           "endSeconds": 524.233,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device click @e1 --settle",
           "output": "Tapped @e1 (294, 302)\nsettled after 1341ms: +63 -17 (~1 unchanged)\n- @e1 [group]\n- @e2 [group] \"Close\"\n- @e4 [group]\n- @e5 [group] \"Reload\"\n- @e6 [text] \"Reload\"\n- @e7 [group]\n- @e8 [group] \"Home\"\n- @e9 [text] \"Go home\"\n- @e10 [group]\n- @e11 [group] \"Performance monitor\"\n- @e12 [text] \"Toggle performance monitor\"\n- @e13 [group]\n- @e14 [group] \"Element inspector\"\n- @e15 [text] \"Toggle element inspector\"\n- @e16 [group]\n- @e17 [group] \"DevTools\"\n- @e18 [text] \"Open DevTools\"\n+ @e2~s138642 [text-field] \"Search trails, regions, tags\"\n+ @e3~s138642 [horizontalscrollview]\n+ @e4~s138642 [button] \"All regions\"\n+ @e5~s138642 [text] \"All regions\"\n+ @e6~s138642 [button] \"Adirondacks\"\n+ @e7~s138642 [text] \"Adirondacks\"\n+ @e8~s138642 [button] \"Bas-Saint-Laurent\"\n+ @e9~s138642 [text] \"Bas-Saint-Laurent\"\n+ @e10~s138642 [horizontalscrollview]\n+ @e11~s138642 [button] \"Any level\"\n+ @e12~s138642 [text] \"Any level\"\n+ @e13~s138642 [button] \"Easy\"\n+ @e14~s138642 [text] \"Easy\"\n+ @e15~s138642 [button] \"Moderate\"\n+ @e16~s138642 [text] \"Moderate\"\n+ @e17~s138642 [button] \"Hard\"\n+ @e18~s138642 [text] \"Hard\"\n+ @e19~s138642 [button] \"Expert\"\n+ @e20~s138642 [button] \"Sort by name\"\n+ @e21~s138642 [text] \"Name\"\n+ @e22~s138642 [button] \"Sort by distance\"\n+ @e23~s138642 [text] \"Distance\"\n+ @e24~s138642 [button] \"Sort by rating\"\n+ @e25~s138642 [text] \"Rating\"\n+ @e26~s138642 [scroll-area]\n+ @e27~s138642 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e28~s138642 [text] \"Belvedere de la Chute\"\n+ @e29~s138642 [text] \"Gaspesie\"\n+ @e30~s138642 [text] \"\"\n+ @e31~s138642 [text] \"11 km\"\n+ @e32~s138642 [text] \"\"\n+ @e33~s138642 [text] \"1106 m\"\n+ @e34~s138642 [text] \"\"\n+ @e35~s138642 [text] \"4:16:00\"\n+ @e36~s138642 [text] \"Moderate\"\n+ @e37~s138642 [text] \"\"\n+ @e38~s138642 [text] \"3.8\"\n+ @e39~s138642 [text] \"(837)\"\n+ @e40~s138642 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n+ @e41~s138642 [text] \"Belvedere de la Tour Bleu\"\n+ @e42~s138642 [text] \"Mont-Tremblant\"\n+ @e43~s138642 [text] \"\"\n+ @e44~s138642 [text] \"1.9 km\"\n+ @e45~s138642 [text] \"\"\n+ @e46~s138642 [text] \"701 m\"\n+ @e47~s138642 [text] \"\"\n+ @e48~s138642 [text] \"1:31:00\"\n+ @e49~s138642 [text] \"Hard\"\n+ @e50~s138642 [text] \"\"\n+ @e51~s138642 [text] \"5.0\"\n+ @e52~s138642 [text] \"(609)\"\n+ @e53~s138642 [group] \", Trails\"\n+ @e54~s138642 [text] \"\"\n+ @e55~s138642 [text] \"Trails\"\n+ @e56~s138642 [group] \", Record\"\n+ @e57~s138642 [text] \"\"\n+ @e58~s138642 [text] \"Record\"\n+ @e59~s138642 [group] \", History\"\n+ @e60~s138642 [text] \"\"\n+ @e61~s138642 [text] \"History\"\n+ @e62~s138642 [group] \", Settings\"\n+ @e63~s138642 [text] \"\"\n+ @e64~s138642 [text] \"Settings\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e1 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_33",
@@ -587,7 +639,11 @@
           "endSeconds": 532.799,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device click @e62~s138642 --settle",
           "output": "Tapped @e62 (280, 592)\nsettled after 1075ms: +18 -50 (~14 unchanged)\n- @e2 [text-field] \"Search trails, regions, tags\"\n- @e3 [horizontalscrollview]\n- @e4 [button] \"All regions\"\n- @e5 [text] \"All regions\"\n- @e6 [button] \"Adirondacks\"\n- @e7 [text] \"Adirondacks\"\n- @e8 [button] \"Bas-Saint-Laurent\"\n- @e9 [text] \"Bas-Saint-Laurent\"\n- @e10 [horizontalscrollview]\n- @e11 [button] \"Any level\"\n- @e12 [text] \"Any level\"\n- @e13 [button] \"Easy\"\n- @e14 [text] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [text] \"Moderate\"\n- @e17 [button] \"Hard\"\n- @e18 [text] \"Hard\"\n- @e19 [button] \"Expert\"\n- @e20 [button] \"Sort by name\"\n- @e21 [text] \"Name\"\n- @e22 [button] \"Sort by distance\"\n- @e23 [text] \"Distance\"\n- @e24 [button] \"Sort by rating\"\n- @e25 [text] \"Rating\"\n- @e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e28 [text] \"Belvedere de la Chute\"\n- @e29 [text] \"Gaspesie\"\n- @e30 [text] \"\"\n- @e31 [text] \"11 km\"\n- @e32 [text] \"\"\n- @e33 [text] \"1106 m\"\n- @e34 [text] \"\"\n- @e35 [text] \"4:16:00\"\n- @e36 [text] \"Moderate\"\n- @e37 [text] \"\"\n- @e38 [text] \"3.8\"\n- @e39 [text] \"(837)\"\n- @e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e41 [text] \"Belvedere de la Tour Bleu\"\n- @e42 [text] \"Mont-Tremblant\"\n- @e43 [text] \"\"\n- @e44 [text] \"1.9 km\"\n- @e45 [text] \"\"\n- @e46 [text] \"701 m\"\n- @e47 [text] \"\"\n- @e48 [text] \"1:31:00\"\n- @e49 [text] \"Hard\"\n- @e50 [text] \"\"\n- @e51 [text] \"5.0\"\n- @e52 [text] \"(609)\"\n+ @e3~s138646 [text] \"UNITS\"\n+ @e4~s138646 [text] \"Distance\"\n+ @e5~s138646 [text] \"\"\n+ @e6~s138646 [text] \"Used across the whole app\"\n+ @e7~s138646 [button] \"Metric units\"\n+ @e8~s138646 [text] \"Metric\"\n+ @e9~s138646 [button] \"Imperial units\"\n+ @e10~s138646 [text] \"Imperial\"\n+ @e11~s138646 [text] \"PREFERENCES\"\n+ @e12~s138646 [text] \"\"\n+ @e13~s138646 [text] \"Hike reminders\"\n+ @e14~s138646 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s138646 [switch] \"Hike reminders\"\n+ @e16~s138646 [text] \"\"\n+ @e17~s138646 [text] \"Offline maps\"\n+ @e18~s138646 [text] \"Keep map tiles for saved trails on device\"\n+ @e19~s138646 [switch] \"Offline maps\"\n+ @e20~s138646 [text] \"STORAGE\"\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device click @e62~s138642 --settle",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_34",
@@ -595,7 +651,11 @@
           "endSeconds": 540.713,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device wait text \"Keep map tiles for saved trails on device\"",
           "output": "",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device wait text \"Keep map tiles for saved trails on device\"",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_35",
@@ -603,7 +663,11 @@
           "endSeconds": 547.721,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device screenshot tmp/launch-crash-control-settings.png",
           "output": "tmp/launch-crash-control-settings.png (320x640)\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device screenshot tmp/launch-crash-control-settings.png",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_37",
@@ -619,7 +683,11 @@
           "endSeconds": 568.895,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device record stop",
           "output": "tmp/launch-crash-control-session.mp4\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record stop",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_39",
@@ -635,7 +703,11 @@
           "endSeconds": 577.866,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device close",
           "output": "Closed: launch-crash-control\n",
-          "exitCode": 0
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device close",
+            "isolatedAgentDevice": true
+          }
         },
         {
           "id": "item_41",

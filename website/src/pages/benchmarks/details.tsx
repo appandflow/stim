@@ -68,21 +68,12 @@ function ComparisonCard({
               />
             </div>
             <div className={styles.barMeta}>
-              {isLaunchCrash ? (
-                <>
-                  <span>Settings repaired {formatSeconds(run.settingsReadySeconds)}</span>
-                  <span>
-                    {run.diagnosisUsage ? formatTokens(totalTokens(run.diagnosisUsage)) : 'unavailable'} tokens
-                  </span>
-                  <span>{formatCost(run.estimatedDiagnosisCostUsd ?? null)} cost</span>
-                </>
-              ) : (
-                <>
-                  <span>{formatTokens(totalTokens(run.usage))} tokens</span>
-                  <span>{formatCost(run.estimatedTokenCostUsd)} cost</span>
-                  <span>{run.commandCount} commands</span>
-                </>
-              )}
+              {isLaunchCrash && <span>Settings repaired {formatSeconds(run.settingsReadySeconds)}</span>}
+              <span>
+                {totalTokens(run.usage) > 0 ? formatTokens(totalTokens(run.usage)) : 'unavailable'} total tokens
+              </span>
+              <span>{formatCost(run.estimatedTokenCostUsd)} total cost</span>
+              {!isLaunchCrash && <span>{run.commandCount} commands</span>}
             </div>
           </div>
         );
