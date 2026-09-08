@@ -11,6 +11,40 @@ import {
 } from './launch-crash-benchmark.mjs';
 
 describe('launch crash benchmark', () => {
+  it.skipIf(process.platform === 'win32')(
+    'accepts reported Stim launch and log status only when the underlying command succeeded',
+    () => {
+      for (const [launchCode, logCode] of [
+        [0, 0],
+        [7, 0],
+        [0, 7],
+      ]) {
+        const commands = [
+          ['stim ios', launchCode, ''],
+          ['stim logs --errors', logCode, 'test-token RootLayout'],
+        ].map(([body, code, output], index) => {
+          const command = `cd /tmp && ${body}; echo "EXIT=$?"`;
+          const result = spawnSync(
+            '/bin/bash',
+            ['-c', `stim() { printf '%s\\n' '${output}'; return ${code}; }; ${command}`],
+            { encoding: 'utf8', timeout: 5000 },
+          );
+          expect(result.status).toBe(0);
+          return {
+            id: String(index),
+            command,
+            exitCode: result.status,
+            output: result.stdout,
+            endedAt: `2026-09-04T12:00:0${index + 1}Z`,
+          };
+        });
+        expect(
+          launchCrashDiagnosis(commands, { dispatchAt: '2026-09-04T12:00:00Z', token: 'test-token', arm: 'stim' })
+            .valid,
+        ).toBe(launchCode === 0 && logCode === 0);
+      }
+    },
+  );
   it.skipIf(process.platform === 'win32')('uses the real pipeline status when a trailing echo exits zero', () => {
     for (const [code, prefix, valid] of [
       [0, 'cd /tmp && set -o pipefail &&', true],

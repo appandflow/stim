@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
-import { shellCommandSegments, topLevelShellCommand } from './agent-benchmark/run-guards.mjs';
+import {
+  commandWithReportedStatus,
+  shellCommandSegments,
+  topLevelShellCommand,
+} from './agent-benchmark/run-guards.mjs';
 
 export function launchCrashToken(runId) {
   const digest = createHash('sha256').update(runId).digest('hex').slice(0, 12).toUpperCase();
@@ -31,7 +35,7 @@ export function injectRootRenderCrash(source, token) {
 }
 
 function successful(command) {
-  return command.exitCode === 0;
+  return commandWithReportedStatus(command).exitCode === 0;
 }
 
 function successfulLaunch(command, arm, platform) {
@@ -70,7 +74,8 @@ function shellCommand(command) {
 
 function launchCommand(command, arm, platform) {
   command = shellCommand(command);
-  if (arm === 'stim') return new RegExp(`(?:^|\\s)stim\\s+${platform}(?:\\s|$)`).test(command);
+  if (arm === 'stim')
+    return shellCommandSegments(command).some((segment) => new RegExp(`^stim\\s+${platform}(?:\\s|$)`).test(segment));
   if (platform === 'android') {
     return (
       /(?:\bexpo|expo\/bin\/cli|node_modules\/\.bin\/expo)\s+run:android\b/.test(command) ||
@@ -85,7 +90,8 @@ function launchCommand(command, arm, platform) {
 
 function errorCaptureCommand(command, arm, platform) {
   command = shellCommand(command);
-  if (arm === 'stim') return /(?:^|\s)stim\s+logs\s+--errors(?:\s|$)/.test(command);
+  if (arm === 'stim')
+    return shellCommandSegments(command).some((segment) => /^stim\s+logs\s+--errors(?:\s|$)/.test(segment));
   const explicitLogFile =
     /\b(?:tail|rg|grep|sed|cat)\b[\s\S]*(?:\.log\b|(?:^|[\s'"])(?:\.?\/)?(?:tmp|logs?|\.expo\/dev\/logs)\/)/.test(
       command,
