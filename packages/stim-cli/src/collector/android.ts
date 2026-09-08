@@ -41,6 +41,7 @@ export function levelForLogcat(letter: string, tag: string): string {
 }
 
 const LOGCAT_TIME = /^(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\.(\d{3})\s+([A-Z])\/(.*?)\(\s*(\d+)\):\s?(.*)$/;
+const LOGCAT_EPOCH = /^\s*(\d+)\.(\d{3,6})\s+([A-Z])\/(.*?)\(\s*(\d+)\):\s?(.*)$/;
 
 export function parseLogcatTimestamp(
   {
@@ -61,8 +62,27 @@ export function parseLogcatTimestamp(
   return ts;
 }
 
-export function parseLogcatLine(line: string, { now = Date.now }: { now?: () => number } = {}): NdjsonRecord | null {
+export function parseLogcatLine(
+  line: string,
+  { now = Date.now, clockOffsetMs = null }: { now?: () => number; clockOffsetMs?: number | null } = {},
+): NdjsonRecord | null {
   if (typeof line !== 'string') return null;
+  const epoch = LOGCAT_EPOCH.exec(line.trimEnd());
+  if (epoch) {
+    const [, seconds, fraction, letter, tag, pid, msg] = epoch;
+    if (!letter || !tag || !msg?.trim()) return null;
+    const deviceTs = Number(seconds) * 1000 + Number(fraction!.slice(0, 3));
+    if (!Number.isSafeInteger(deviceTs)) return null;
+    return {
+      ts: deviceTs + (clockOffsetMs ?? 0),
+      deviceTs,
+      ...(clockOffsetMs === null ? {} : { clockOffsetMs }),
+      src: 'device',
+      level: levelForLogcat(letter, tag),
+      msg,
+      proc: `${tag.trim()}(${pid})`,
+    };
+  }
   const m = LOGCAT_TIME.exec(line.trimEnd());
   if (!m) return null;
   const [, month, day, hour, minute, second, millis, letter, tag, pid, msg] = m;
@@ -88,7 +108,22 @@ export function parseLogcatLine(line: string, { now = Date.now }: { now?: () => 
 }
 
 export function logcatArgs(serial: string, pid: number | string): string[] {
-  return ['-s', serial, 'logcat', '--pid', String(pid), '-v', 'time'];
+  return ['-s', serial, 'logcat', '--pid', String(pid), '-v', 'time,epoch'];
+}
+
+export function androidClockOffset(
+  serial: string,
+  { exec = getExecutor(), now = Date.now }: { exec?: Executor; now?: () => number } = {},
+): number | null {
+  const before = now();
+  try {
+    const output = exec.runFile('adb', ['-s', serial, 'shell', 'date', '+%s%3N'], { timeoutMs: 1000 }).trim();
+    const after = now();
+    if (!/^\d{13}$/.test(output) || after < before || after - before > 1000) return null;
+    return Math.round((before + after) / 2) - Number(output);
+  } catch {
+    return null;
+  }
 }
 
 export function parsePidof(text: unknown): number | null {

@@ -12,6 +12,7 @@ import {
   NOISE_RULES,
 } from '../collector/ios.ts';
 import {
+  androidClockOffset,
   levelForLogcat,
   levelFromLogcatLetter,
   logcatArgs,
@@ -32,6 +33,7 @@ import {
   TOOL_ERROR_PREFIX,
 } from '../collector/ios-device.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
+import { makeExecutor } from './_factories.ts';
 
 function isNotNull<T>(value: T | null): value is T {
   return value !== null;
@@ -604,7 +606,64 @@ describe('android: logcat -v time', () => {
   });
 
   test('logcatArgs is the exact argv', () => {
-    expect(logcatArgs('emulator-5554', 3132)).toEqual(['-s', 'emulator-5554', 'logcat', '--pid', '3132', '-v', 'time']);
+    expect(logcatArgs('emulator-5554', 3132)).toEqual([
+      '-s',
+      'emulator-5554',
+      'logcat',
+      '--pid',
+      '3132',
+      '-v',
+      'time,epoch',
+    ]);
+  });
+
+  test('epoch logcat keeps device time and shifts timestamps without reviving buffered records', () => {
+    const launch = 1788902585000;
+    const line = '         1788902582.542 I/ReactNativeJS( 1247): [stim:readiness] pending';
+    const current = parseLogcatLine(line, { clockOffsetMs: 2739, now: () => launch });
+    expect(current).toMatchObject({
+      ts: 1788902585281,
+      deviceTs: 1788902582542,
+      clockOffsetMs: 2739,
+      proc: 'ReactNativeJS(1247)',
+      msg: '[stim:readiness] pending',
+      level: 'info',
+    });
+    expect(current!.ts! > launch).toBe(true);
+    const old = parseLogcatLine(line.replace('2582.542', '2570.542'), { clockOffsetMs: 2739, now: () => launch });
+    expect(old!.ts! < launch).toBe(true);
+    expect(parseLogcatLine(line, { clockOffsetMs: -2739 })!.ts).toBe(1788902579803);
+    expect(parseLogcatLine(line)).toMatchObject({ ts: 1788902582542, deviceTs: 1788902582542 });
+    expect(parseLogcatLine(line)).not.toHaveProperty('clockOffsetMs');
+    expect(parseLogcatLine(line.replace('.542', '.542987'))!.ts).toBe(1788902582542);
+  });
+
+  test('clock alignment uses the midpoint of a bounded adb sample and rejects unsupported or slow clocks', () => {
+    const before = 1788902585000;
+    let after = before + 40;
+    let output = '1788902582281\n';
+    let failed = false;
+    let calls = 0;
+    const exec = makeExecutor({
+      runFile: (file, args, opts) => {
+        expect([file, args, opts]).toEqual(['adb', ['-s', 'serial', 'shell', 'date', '+%s%3N'], { timeoutMs: 1000 }]);
+        if (failed) throw new Error('offline');
+        return output;
+      },
+    });
+    const sample = () => androidClockOffset('serial', { exec, now: () => (calls++ % 2 === 0 ? before : after) });
+    expect(sample()).toBe(2739);
+    output = '1788902587759';
+    expect(sample()).toBe(-2739);
+    output = '1788902582%3N';
+    expect(sample()).toBe(null);
+    output = '1788902582281';
+    after = before + 1001;
+    expect(sample()).toBe(null);
+    after = before - 1;
+    expect(sample()).toBe(null);
+    failed = true;
+    expect(sample()).toBe(null);
   });
 
   test('parsePidof reads the single pid, and nothing from empty output', () => {

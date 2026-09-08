@@ -102,6 +102,10 @@ THE RECORD
     event    the producer's own event name (bundle_build_done, client_log, ...)
     stack    frames of { file, line, column, fn }, passed through as reported
     marker   true on the records that close an error window
+    deviceTs Android logcat's original epoch milliseconds; ts is aligned to
+             host time using a bounded clock query at each collector attachment
+    clockOffsetMs the offset added to deviceTs; absent if the query failed.
+             A collector_clock warning then says timestamps retain device time.
     raw      true when the level was inferred from a line of text rather than
              reported by the producer (every expo-child record)
 
