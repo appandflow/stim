@@ -1317,6 +1317,8 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
     writeFileSync(join(runDir, 'avds-before.json'), `${JSON.stringify(androidAvdSnapshot(), null, 2)}\n`);
   }
   const runnerKind = runnerForModel(model);
+  const runnerEnvironment =
+    runnerKind === 'claude' ? { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1', CLAUDE_CODE_DISABLE_CRON: '1' } : {};
   const { codexHome } = makeRunnerHome(runDir, arm);
   const runTmp = join(runDir, 'tmp');
   mkdirSync(runTmp, { recursive: true });
@@ -1326,6 +1328,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
   });
   const baseEnv = {
     ...cleanRubyEnvironment(process.env),
+    ...runnerEnvironment,
     CODEX_HOME: codexHome,
     STIM_HOME: join(runDir, 'stim-home'),
     TMPDIR: runTmp,
@@ -1381,7 +1384,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
     preflight: preflightReport,
     expectedStimShellProvenance: arm === 'stim' ? expectedStimShellProvenance() : null,
     stimShellProvenance: shellProvenance,
-    profile: { ...profile, claudeGuidance, isolation },
+    profile: { ...profile, claudeGuidance, isolation, runnerEnvironment },
     expectedBuildCache,
     expectedParkedSimulator,
     expectedStimDevice,
@@ -1443,6 +1446,8 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
           'false',
           '--append-system-prompt-file',
           claudeGuidance.path,
+          '--tools',
+          variant === launchCrashVariant ? 'Bash' : 'Bash,Edit,Read',
           '--allowedTools',
           variant === launchCrashVariant ? 'Bash' : 'Bash,Edit,Read',
         ]
