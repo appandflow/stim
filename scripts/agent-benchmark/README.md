@@ -212,6 +212,10 @@ with `; echo "PIPELINE_EXIT=$?"`, the captured output must contain exactly one
 `PIPELINE_EXIT=0` line: the echo's own zero exit does not prove build success.
 Retained launch-evidence rejections can be reviewed only when re-derived commands
 prove successful launch, separate error capture, repair and Settings proof.
+Ordinary commands may also append `; echo "EXIT=$?"`. The audit uses the single
+captured status line, not the echo's exit code; missing or ambiguous reports do
+not prove success. A retained warm-status rejection requires re-derived setup
+checks, including warm completion before start or build, before publication.
 
 A launch can finish before the JavaScript error reaches its log. Both arms must
 repeat standalone foreground log queries, without separate sleep or wait commands,

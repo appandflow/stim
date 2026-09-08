@@ -18,6 +18,7 @@ import { reconstructCommandEvidence } from './agent-benchmark/command-evidence.m
 import {
   agentDeviceIsolationInvalidReasons,
   agentDeviceAuxiliarySessions,
+  benchmarkSetupInvalidReasons,
   topLevelShellCommand,
 } from './agent-benchmark/run-guards.mjs';
 
@@ -884,6 +885,11 @@ function validateLaunchCrashRecord(runDir, record, meta, rederive = false) {
   );
   const commands = evidence.commands;
   let auxiliarySessions = [];
+  if (
+    record.invalidReasons?.includes('stim-worktree-warm-missing-or-failed') &&
+    benchmarkSetupInvalidReasons({ ...meta, arm: record.arm }, commands).length
+  )
+    return reject('setup evidence missing or failed');
   if (meta.agentDevice?.session && meta.agentDevice?.stateDir) {
     const prefix = `env AGENT_DEVICE_STATE_DIR=${meta.agentDevice.stateDir} AGENT_DEVICE_SESSION=${meta.agentDevice.session} agent-device `;
     const target = { platform: meta.platform ?? 'ios', device: record.simulator?.udid };
@@ -957,6 +963,8 @@ function publicationRecord(runDir, meta) {
       'launch-crash-diagnosis-missing',
       'launch-crash-diagnosis-usage-missing',
       'launch-crash-initial-launch-evidence-missing',
+      'launch-crash-error-capture-missing',
+      'stim-worktree-warm-missing-or-failed',
       'launch-crash-unrelated-source-changes',
       'agent-device-run-session-not-applied',
     ]);

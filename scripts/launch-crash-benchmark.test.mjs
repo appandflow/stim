@@ -11,6 +11,66 @@ import {
 } from './launch-crash-benchmark.mjs';
 
 describe('launch crash benchmark', () => {
+  it.skipIf(process.platform === 'win32')(
+    'accepts reported Stim launch and log status only when the underlying command succeeded',
+    () => {
+      for (const [launchCode, logCode] of [
+        [0, 0],
+        [7, 0],
+        [0, 7],
+      ]) {
+        const commands = [
+          ['stim ios', launchCode, ''],
+          ['stim logs --errors', logCode, 'test-token RootLayout'],
+        ].map(([body, code, output], index) => {
+          const command = `cd /tmp && ${body}; echo "EXIT=$?"`;
+          const result = spawnSync(
+            '/bin/bash',
+            ['-c', `stim() { printf '%s\\n' '${output}'; return ${code}; }; ${command}`],
+            { encoding: 'utf8', timeout: 5000 },
+          );
+          expect(result.status).toBe(0);
+          return {
+            id: String(index),
+            command,
+            exitCode: result.status,
+            output: result.stdout,
+            endedAt: `2026-09-04T12:00:0${index + 1}Z`,
+          };
+        });
+        expect(
+          launchCrashDiagnosis(commands, { dispatchAt: '2026-09-04T12:00:00Z', token: 'test-token', arm: 'stim' })
+            .valid,
+        ).toBe(launchCode === 0 && logCode === 0);
+      }
+      for (const suffix of ['; true', '; true; echo "EXIT=$?"', '||true; echo "EXIT=$?"']) {
+        for (const failedStep of [0, 1]) {
+          const commands = ['stim ios', 'stim logs --errors'].map((body, index) => {
+            const command = body + (index === failedStep ? suffix : '');
+            const result = spawnSync(
+              '/bin/bash',
+              [
+                '-c',
+                `stim() { printf '%s\\n' 'test-token RootLayout'; return ${index === failedStep ? 7 : 0}; }; ${command}`,
+              ],
+              { encoding: 'utf8', timeout: 5000 },
+            );
+            expect(result.status).toBe(0);
+            return {
+              command,
+              output: result.stdout,
+              exitCode: result.status,
+              endedAt: `2026-09-04T12:00:0${index + 1}Z`,
+            };
+          });
+          expect(
+            launchCrashDiagnosis(commands, { dispatchAt: '2026-09-04T12:00:00Z', token: 'test-token', arm: 'stim' })
+              .valid,
+          ).toBe(false);
+        }
+      }
+    },
+  );
   it.skipIf(process.platform === 'win32')('uses the real pipeline status when a trailing echo exits zero', () => {
     for (const [code, prefix, valid] of [
       [0, 'cd /tmp && set -o pipefail &&', true],
@@ -34,6 +94,34 @@ describe('launch crash benchmark', () => {
       expect(diagnosis.valid).toBe(valid);
     }
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'retains Stim pipefail launch pipelines with and without a status report',
+    () => {
+      for (const suffix of ['', '; echo "PIPELINE_EXIT=$?"']) {
+        for (const code of [0, 7]) {
+          const command = `set -o pipefail; stim ios | tee /dev/null${suffix}`;
+          const result = spawnSync('/bin/bash', ['-c', `stim() { return ${code}; }; ${command}`], {
+            encoding: 'utf8',
+            timeout: 5000,
+          });
+          const commands = [
+            { command, exitCode: result.status, output: result.stdout, endedAt: '2026-09-04T12:00:01Z' },
+            {
+              command: 'stim logs --errors',
+              exitCode: 0,
+              output: 'test-token RootLayout',
+              endedAt: '2026-09-04T12:00:02Z',
+            },
+          ];
+          expect(
+            launchCrashDiagnosis(commands, { dispatchAt: '2026-09-04T12:00:00Z', token: 'test-token', arm: 'stim' })
+              .valid,
+          ).toBe(code === 0);
+        }
+      }
+    },
+  );
 
   it('accepts only checksum-row updates, not dependency changes or malformed lockfiles', () => {
     const before = `PODS:\n  - Core (1.0)\n\nSPEC CHECKSUMS:\n  Core: ${'a'.repeat(40)}\n\nCOCOAPODS: 1.16.2\n`;

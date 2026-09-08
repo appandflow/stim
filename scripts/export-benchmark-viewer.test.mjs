@@ -1363,6 +1363,73 @@ describe('benchmark viewer export', () => {
     expect(reviewedExport).toThrow('no valid benchmark runs found');
     writeFileSync(eventsPath, reviewedEvents);
     writeFileSync(recordPath, JSON.stringify(rejected));
+    const statusEvents =
+      [
+        stamp('2026-09-04T12:00:07.100Z', {
+          type: 'item.completed',
+          item: { id: 'guide', type: 'command_execution', command: 'stim guide agent', exit_code: 0 },
+        }),
+        stamp('2026-09-04T12:00:08.000Z', {
+          type: 'item.started',
+          item: { id: 'warm', type: 'command_execution', command: 'stim worktree warm; echo "EXIT=$?"' },
+        }),
+        stamp('2026-09-04T12:00:09.000Z', {
+          type: 'item.completed',
+          item: {
+            id: 'warm',
+            type: 'command_execution',
+            command: 'stim worktree warm; echo "EXIT=$?"',
+            exit_code: 0,
+            aggregated_output: 'EXIT=0\n',
+          },
+        }),
+        ...reviewedEvents.trim().split('\n'),
+      ]
+        .toSorted((left, right) => JSON.parse(left).arrivedAt.localeCompare(JSON.parse(right).arrivedAt))
+        .join('\n') + '\n';
+    for (const failed of [false, true]) {
+      writeFileSync(eventsPath, failed ? statusEvents.replaceAll('EXIT=0', 'EXIT=7') : statusEvents);
+      const statusRejected = {
+        ...rejected,
+        invalidReasons: [
+          'stim-worktree-warm-missing-or-failed',
+          'launch-crash-error-capture-missing',
+          'launch-crash-diagnosis-missing',
+        ],
+        evidenceSha256: { ...rejected.evidenceSha256, events: sha256(eventsPath) },
+      };
+      writeFileSync(recordPath, JSON.stringify(statusRejected));
+      writeFileSync(
+        reviewPath,
+        JSON.stringify({
+          ...review,
+          originalRecordSha256: sha256(recordPath),
+          commands: [
+            ...review.commands,
+            {
+              commandId: 'warm',
+              command: 'stim worktree warm; echo "EXIT=$?"',
+              assessment: 'Warm completed successfully before launch; trailing echo reports its status.',
+            },
+          ],
+        }),
+      );
+      let result;
+      try {
+        const run = reviewedExport().runs[0];
+        result = {
+          valid: run.valid,
+          diagnosisSeconds: run.diagnosisSeconds,
+          settingsReadySeconds: run.settingsReadySeconds,
+        };
+      } catch (error) {
+        result = error.message.startsWith('no valid benchmark runs found') ? 'rejected' : error.message;
+      }
+      expect(result).toEqual(failed ? 'rejected' : { valid: true, diagnosisSeconds: 90, settingsReadySeconds: 150 });
+      expect(JSON.parse(readFileSync(recordPath))).toEqual(statusRejected);
+    }
+    writeFileSync(eventsPath, reviewedEvents);
+    writeFileSync(recordPath, JSON.stringify(rejected));
     for (const changed of [
       { originalRecordSha256: 'changed' },
       { metaSha256: 'changed' },

@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
-import { shellCommandSegments, topLevelShellCommand } from './agent-benchmark/run-guards.mjs';
+import {
+  commandWithReportedStatus,
+  shellCommandSegments,
+  topLevelShellCommand,
+} from './agent-benchmark/run-guards.mjs';
 
 export function launchCrashToken(runId) {
   const digest = createHash('sha256').update(runId).digest('hex').slice(0, 12).toUpperCase();
@@ -31,13 +35,20 @@ export function injectRootRenderCrash(source, token) {
 }
 
 function successful(command) {
-  return command.exitCode === 0;
+  return commandWithReportedStatus(command).exitCode === 0;
+}
+
+function completedStepCommand(command, arm) {
+  const body = topLevelShellCommand(commandWithReportedStatus(command).command);
+  if (arm !== 'stim') return body;
+  return /[&|]\s*$/.test(body) ? '' : (shellCommandSegments(body).at(-1) ?? '');
 }
 
 function successfulLaunch(command, arm, platform) {
-  if (!successful(command) || !launchCommand(command.command, arm, platform)) return false;
+  if (!successful(command)) return false;
   const value = shellCommand(command.command);
-  if (!/\|\s*tee\b/.test(value)) return true;
+  if (!/\|\s*tee\b/.test(value)) return launchCommand(completedStepCommand(command, arm), arm, platform);
+  if (!launchCommand(command.command, arm, platform)) return false;
   const prefix = value.match(
     /^(?:cd\s+(?:[^\s'"$`\\;&|]+|'[^'\n]+'|"[^"$`\n]+")\s*&&\s*)?set -(?:o|eo|euo) pipefail\s*(?:&&|;|\n)\s*/,
   );
@@ -70,7 +81,8 @@ function shellCommand(command) {
 
 function launchCommand(command, arm, platform) {
   command = shellCommand(command);
-  if (arm === 'stim') return new RegExp(`(?:^|\\s)stim\\s+${platform}(?:\\s|$)`).test(command);
+  if (arm === 'stim')
+    return shellCommandSegments(command).some((segment) => new RegExp(`^stim\\s+${platform}(?:\\s|$)`).test(segment));
   if (platform === 'android') {
     return (
       /(?:\bexpo|expo\/bin\/cli|node_modules\/\.bin\/expo)\s+run:android\b/.test(command) ||
@@ -85,7 +97,8 @@ function launchCommand(command, arm, platform) {
 
 function errorCaptureCommand(command, arm, platform) {
   command = shellCommand(command);
-  if (arm === 'stim') return /(?:^|\s)stim\s+logs\s+--errors(?:\s|$)/.test(command);
+  if (arm === 'stim')
+    return shellCommandSegments(command).some((segment) => /^stim\s+logs\s+--errors(?:\s|$)/.test(segment));
   const explicitLogFile =
     /\b(?:tail|rg|grep|sed|cat)\b[\s\S]*(?:\.log\b|(?:^|[\s'"])(?:\.?\/)?(?:tmp|logs?|\.expo\/dev\/logs)\/)/.test(
       command,
@@ -338,7 +351,7 @@ export function launchCrashDiagnosis(
     (command, index) =>
       index > initialLaunchIndex &&
       successful(command) &&
-      errorCaptureCommand(command.command, arm, platform) &&
+      errorCaptureCommand(completedStepCommand(command, arm), arm, platform) &&
       typeof command.output === 'string' &&
       command.output.includes(token),
   );

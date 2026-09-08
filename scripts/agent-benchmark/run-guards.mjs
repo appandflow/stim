@@ -227,8 +227,19 @@ function commandSegmentsStartingWith(command, expected) {
   return shellCommandSegments(command).filter((segment) => segment === expected || segment.startsWith(`${expected} `));
 }
 
+export function commandWithReportedStatus(command) {
+  const source = topLevelShellCommand(command.command);
+  const report = /(?:;|\n)\s*echo "([A-Z_]+)=\$\?"\s*$/.exec(source);
+  if (!report || shellCommandSegments(source).at(-1) !== `echo "${report[1]}=$?"`) return command;
+  const body = source.slice(0, report.index).trim();
+  const statuses = [...String(command.output ?? '').matchAll(new RegExp(`^${report[1]}=(\\d+)\\s*$`, 'gm'))];
+  const valid = command.exitCode === 0 && !/[&|]$/.test(body) && statuses.length === 1;
+  return { ...command, command: body, exitCode: valid ? Number(statuses[0][1]) : null };
+}
+
 function successfulCommand(commands, expected) {
   return commands.some((command) => {
+    command = commandWithReportedStatus(command);
     if (command.exitCode !== 0) return false;
     const segments = shellCommandSegments(command.command);
     const final = segments.at(-1);
