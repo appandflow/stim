@@ -18,6 +18,9 @@ Stim shares four types of work across projects and git worktrees:
 | Gradle caches and output | Repeating Android dependency and task work                |
 | Metro transform cache    | Transforming the same JavaScript modules in each worktree |
 
+See [build optimizations](./build-optimizations.md) for switches, defaults, and
+tradeoffs for each layer, including Android ccache, PCH, and experimental CAS.
+
 ## Native artifact cache
 
 Stim uses `@expo/fingerprint` to identify native inputs in both Expo and bare

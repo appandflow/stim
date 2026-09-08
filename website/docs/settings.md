@@ -17,11 +17,14 @@ Stim reads the first value found in this order:
 1. Project settings in `~/.stim/config.json`, keyed by absolute path.
 2. Repository settings in the same machine file, keyed by the git common dir.
 3. Committed `.stim.json` at the repository root.
-4. The Stim default.
+4. Machine defaults under top-level `optimizations` in the same file (for
+   optimization settings only).
+5. The Stim default.
 
 Nested objects merge by key. Arrays replace lower-precedence arrays. Unknown
 keys produce a warning. Every key below takes one type: a string, an array of
-strings, a number, or, for `android.avdConfig` and `cache.options`, an object.
+strings, a number, a boolean, or an object such as `android.avdConfig`,
+`cache.options`, and the nested `optimizations` settings.
 A value of the wrong type is refused by name on every command that resolves
 settings, so a wrong shape never falls back to a default silently. `stim doctor`
 reports it as a finding instead of refusing.
@@ -30,31 +33,32 @@ reports it as a finding instead of refusing.
 
 `.stim.json` supports these keys:
 
-| Key                           | Purpose                                              |
-| ----------------------------- | ---------------------------------------------------- |
-| `ios.deviceType`              | iOS Simulator device type                            |
-| `ios.runtime`                 | iOS Simulator runtime                                |
-| `ios.configuration`           | Xcode configuration, such as `Debug` or `Release`    |
-| `ios.remote`                  | Default remote backend, `proxy` or `eas`             |
-| `ios.simslimProfile`          | SimSlim profile for local iOS devices                |
-| `ios.signingIdentity`         | Keychain identity used to re-seal a device build     |
-| `ios.signingIdentitySha1`     | SHA-1 of that identity, when two share a name        |
-| `ios.lanHost`                 | Address a phone uses to reach this workspace's Metro |
-| `android.systemImage`         | Android SDK system image                             |
-| `android.dataPartitionSizeGb` | AVD data partition size                              |
-| `android.avdConfigFile`       | Additional AVD config file                           |
-| `android.avdConfig`           | Validated AVD config values                          |
-| `android.variant`             | Gradle build variant                                 |
-| `android.keystore`            | Release keystore path                                |
-| `android.keystorePassword`    | Release keystore password source                     |
-| `android.remote`              | Default remote backend, `proxy` or `eas`             |
-| `metro.tunnel`                | Remote tunnel mode                                   |
-| `metro.ngrokUrl`              | Existing ngrok URL                                   |
-| `metro.publicUrl`             | Existing public Metro URL                            |
-| `worktree.exclude`            | Ignored paths skipped by `worktree warm`             |
-| `cache.provider`              | Optional second-tier cache provider module           |
-| `cache.options`               | Options passed to that provider                      |
-| `caches`                      | Additional cache paths reported by `gc`              |
+| Key                           | Purpose                                                              |
+| ----------------------------- | -------------------------------------------------------------------- |
+| `ios.deviceType`              | iOS Simulator device type                                            |
+| `ios.runtime`                 | iOS Simulator runtime                                                |
+| `ios.configuration`           | Xcode configuration, such as `Debug` or `Release`                    |
+| `ios.remote`                  | Default remote backend, `proxy` or `eas`                             |
+| `ios.simslimProfile`          | SimSlim profile for local iOS devices                                |
+| `ios.signingIdentity`         | Keychain identity used to re-seal a device build                     |
+| `ios.signingIdentitySha1`     | SHA-1 of that identity, when two share a name                        |
+| `ios.lanHost`                 | Address a phone uses to reach this workspace's Metro                 |
+| `android.systemImage`         | Android SDK system image                                             |
+| `android.dataPartitionSizeGb` | AVD data partition size                                              |
+| `android.avdConfigFile`       | Additional AVD config file                                           |
+| `android.avdConfig`           | Validated AVD config values                                          |
+| `android.variant`             | Gradle build variant                                                 |
+| `android.keystore`            | Release keystore path                                                |
+| `android.keystorePassword`    | Release keystore password source                                     |
+| `android.remote`              | Default remote backend, `proxy` or `eas`                             |
+| `metro.tunnel`                | Remote tunnel mode                                                   |
+| `metro.ngrokUrl`              | Existing ngrok URL                                                   |
+| `metro.publicUrl`             | Existing public Metro URL                                            |
+| `worktree.exclude`            | Ignored paths skipped by `worktree warm`                             |
+| `cache.provider`              | Optional second-tier cache provider module                           |
+| `cache.options`               | Options passed to that provider                                      |
+| `caches`                      | Additional cache paths reported by `gc`                              |
+| `optimizations`               | [Build optimization switches and defaults](./build-optimizations.md) |
 
 `worktree warm` reads settings from the main checkout. A nonempty
 `.worktreeexclude` in main replaces its resolved `worktree.exclude` setting;
@@ -105,17 +109,21 @@ The committed `.stim.json` `caches` key and this machine-file `caches` key are
 different shapes: the committed key is an array of extra paths for `gc` to
 report, and this machine-file key is an object of named cache locations.
 
+Use a top-level [`optimizations` object](./build-optimizations.md) in this file to
+control build optimizations on this machine without changing project files.
+
 ## Environment variables
 
-| Variable                   | Purpose                                |
-| -------------------------- | -------------------------------------- |
-| `STIM_HOME`                | Runtime state root. Default: `~/.stim` |
-| `STIM_BUILD_CACHE`         | Native artifact cache root             |
-| `STIM_METRO_CACHE`         | Metro transform cache root             |
-| `STIM_MAX_BUILDS`          | Maximum concurrent native builds       |
-| `STIM_MAX_DEVICES`         | Maximum booted owned devices           |
-| `STIM_POOL_IOS_PARKED_MAX` | Maximum parked simulators              |
-| `STIM_METRO_PUBLIC_URL`    | Public Metro URL for remote use        |
+| Variable                     | Purpose                                                                                                  |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `STIM_HOME`                  | Runtime state root. Default: `~/.stim`                                                                   |
+| `STIM_BUILD_CACHE`           | Native artifact cache root                                                                               |
+| `STIM_METRO_CACHE`           | Metro transform cache root                                                                               |
+| `STIM_MAX_BUILDS`            | Maximum concurrent native builds                                                                         |
+| `STIM_MAX_DEVICES`           | Maximum booted owned devices                                                                             |
+| `STIM_POOL_IOS_PARKED_MAX`   | Maximum parked simulators                                                                                |
+| `STIM_METRO_PUBLIC_URL`      | Public Metro URL for remote use                                                                          |
+| `STIM_ANDROID_CAS_TOOLCHAIN` | Absolute path to the [Android CAS toolchain manifest](./build-optimizations.md#experimental-android-cas) |
 
 Proxy remote devices also use `AGENT_DEVICE_DAEMON_BASE_URL` and
 `AGENT_DEVICE_DAEMON_AUTH_TOKEN`. Those variables belong to the optional proxy

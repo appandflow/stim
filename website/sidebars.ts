@@ -14,7 +14,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Reference',
       collapsed: false,
-      items: ['commands', 'settings', 'requirements', 'agent-skills', 'cache-packages'],
+      items: ['commands', 'settings', 'build-optimizations', 'requirements', 'agent-skills', 'cache-packages'],
     },
     'changelog',
   ],
