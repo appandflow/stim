@@ -34,6 +34,12 @@ function successful(command) {
   return command.exitCode === 0;
 }
 
+function successfulLaunch(command, arm, platform) {
+  if (!successful(command) || !launchCommand(command.command, arm, platform)) return false;
+  const value = shellCommand(command.command);
+  return !/\|\s*tee\b/.test(value) || /^set -(?:o|eo|euo) pipefail\s*(?:;|\n)/.test(value);
+}
+
 function shellCommand(command) {
   return topLevelShellCommand(command).replace(
     /^"\$ANDROID_HOME\/(?:platform-tools\/(adb)|emulator\/(emulator)|cmdline-tools\/latest\/bin\/(avdmanager|sdkmanager))"(?=\s|$)/,
@@ -145,9 +151,11 @@ function ownedAvdEdit(value, setup) {
 
 function avdMetadataRead(value, setup) {
   const query = value.replace(/\s+\|\|\s+true$/, '');
-  const match = query.match(/^(?:rg|grep|cat)\s+([\s\S]*?)([^\s'";]+\.ini)$/);
+  const match = query.match(
+    /^(?:cat(?:\s+-n)?|(?:rg|grep)(?:\s+-[nEiFv]+)*\s+(?:'[^']*'|"[^"$`]*"|[A-Za-z0-9_.^=:-]+))\s+([^\s'";]+\.ini)$/,
+  );
   if (!match || /`|\$\(/.test(query) || shellCommandSegments(query).length !== 1) return false;
-  const target = match[2];
+  const target = match[1];
   return target === setup.avdConfig || /^\/[^\s;]+\/TemporaryItems\/avd\/running\/pid_\d+\.ini$/.test(target);
 }
 
@@ -170,6 +178,8 @@ function allowedBeforeErrorCapture(command, arm, platform, setup = {}) {
   }
   if (sourceInspectionBeforeCapture(value, arm, platform)) return false;
   if (arm === 'control') {
+    const pipefail = value.replace(/^set -(?:o|eo|euo) pipefail\s*(?:;|\n)\s*/, '');
+    if (pipefail !== value) return allowedBeforeErrorCapture(pipefail, arm, platform, setup);
     if (scopedCopyLoop(value, setup)) return true;
     const architecture = value.replace(/^ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a\s+/, '');
     if (architecture !== value) return allowedBeforeErrorCapture(architecture, arm, platform, setup);
@@ -293,9 +303,7 @@ export function launchCrashDiagnosis(
 ) {
   const ordered = orderedCommands(commands);
   const sourceMarkers = ['app/_layout.tsx', 'RootLayout'];
-  const initialLaunchIndex = ordered.findIndex(
-    (command) => successful(command) && launchCommand(command.command, arm, platform),
-  );
+  const initialLaunchIndex = ordered.findIndex((command) => successfulLaunch(command, arm, platform));
   if (initialLaunchIndex === -1) {
     return { valid: false, reason: 'launch-crash-initial-launch-evidence-missing' };
   }

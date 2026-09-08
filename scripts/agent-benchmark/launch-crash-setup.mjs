@@ -24,7 +24,13 @@ export function launchCrashSetup({ platform, arm, systemImage }) {
       ? ' When carrying native outputs, exclude android/build/generated/autolinking from the copy. It caches absolute paths to the source checkout; let Gradle regenerate it in the new worktree before building.'
       : '';
   const control = `Use the project's local Expo and ${tooling} tooling and do not use Stim.${portableCopy} ${controlDevice} Before inspecting source or git diff, start Metro and run the initial native build/install/launch. Keep Metro and any emulator process alive in runner-managed shell sessions or supported background tasks; a shell background job is not required. Save Metro and native output to per-run logs under /tmp. Poll finite copy/build commands to completion before dependent commands. For long-lived servers, preserve the running session and wait for readiness instead of waiting for exit or stopping it. Once the app has launched and failed, run a separate foreground \`tail\`, \`rg\`, or ${logs} command that completes and prints the crash token and source location. Only after that explicit error-capture command completes may you inspect or edit source. Make the smallest repair and demonstrate the repaired Settings screen on the same ${platform === 'ios' ? 'simulator' : 'emulator'}. Leave Metro and the app running until screenshot proof is complete. Do not rely on streamed output from a command that is still running as diagnosis evidence.`;
+  const pipelineRule =
+    ' For any build/launch pipeline ending in tee, enable set -o pipefail in that same shell command before the pipeline so its exit status proves the launch succeeded, not just the log writer.';
   const evidenceGate =
     'Do not inspect or edit source until a completed foreground log command prints the launch error and its source location. If the first log query is empty, repeat standalone foreground log queries without separate sleep or wait commands until the error and source location appear. A successful launch, a zero exit code, or an error visible only in a device snapshot does not satisfy this log-capture requirement.';
-  return { ignoredPaths, deviceKind, instructions: `${arm === 'stim' ? stim : control} ${evidenceGate}` };
+  return {
+    ignoredPaths,
+    deviceKind,
+    instructions: `${arm === 'stim' ? stim : control + pipelineRule} ${evidenceGate}`,
+  };
 }

@@ -190,6 +190,9 @@ the assigned AVD's configuration edit. Collection reports every rejected command
 in `diagnosis.violations`, retaining the first rejection in `commandId`. Unknown
 commands and source inspection still invalidate the attempt; this is not a
 replacement for the runner's filesystem isolation.
+Build/launch pipelines ending in `tee` must enable `set -o pipefail` in the same
+shell command. Without it, zero exit status proves only the log writer finished,
+so the command cannot establish initial launch success.
 
 A launch can finish before the JavaScript error reaches its log. Both arms must
 repeat standalone foreground log queries, without separate sleep or wait commands,

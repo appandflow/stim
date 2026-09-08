@@ -41,7 +41,7 @@ done`;
     const launch = {
       id: 'launch',
       command:
-        'ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a ./node_modules/.bin/expo run:android --device emulator-5554 --no-bundler 2>&1 | tee -a /tmp/native.log',
+        'set -o pipefail; ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a ./node_modules/.bin/expo run:android --device emulator-5554 --no-bundler 2>&1 | tee -a /tmp/native.log',
       exitCode: 0,
       startedAt: '2026-09-04T12:00:03Z',
       endedAt: '2026-09-04T12:00:10Z',
@@ -71,6 +71,20 @@ done`;
       valid: true,
       errorCaptureCommandId: 'logs',
     });
+    const masked = {
+      ...launch,
+      id: 'masked',
+      command: './node_modules/.bin/expo run:android --bad-option 2>&1 | tee /tmp/native.log',
+      output: 'CommandError: unsupported flag',
+    };
+    expect(launchCrashDiagnosis([...before, masked, logs], options)).toMatchObject({
+      valid: false,
+      reason: 'launch-crash-initial-launch-evidence-missing',
+    });
+    expect(launchCrashDiagnosis([...before, masked, launch, logs], options)).toMatchObject({
+      valid: true,
+      initialLaunchCommandId: 'launch',
+    });
     expect(launchCrashDiagnosis([...before, launch, logs], { ...options, setup: {} })).toMatchObject({ valid: false });
     for (const command of [
       copy.replace('rsync -a', 'cat package.json\n    rsync -a'),
@@ -79,6 +93,9 @@ done`;
       './node_modules/.bin/expo start | tee /tmp/metro.log; cat package.json',
       './node_modules/.bin/expo start --port $(cat private-port) | tee /tmp/metro.log',
       'rg anything /tmp/other.avd/config.ini',
+      `cat package.json ${setup.avdConfig}`,
+      `rg -n . package.json ${setup.avdConfig}`,
+      `cat ./app/_layout.t\\sx ${setup.avdConfig}`,
       `tool:file_change ${JSON.stringify([{ path: '/tmp/other.avd/config.ini', kind: 'update' }])}`,
     ]) {
       expect(launchCrashDiagnosis([{ ...before[0], command, id: 'bad' }, launch, logs], options)).toMatchObject({
