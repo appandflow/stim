@@ -79,8 +79,13 @@ imported modules, emit `pending` from an earlier app entry module before loading
 that work. An error before `pending` still uses the default check.
 
 Without an observed `pending`, Stim keeps its default three-second stability
-window after bundle completion. A `pending` observed before that window closes
-opts into waiting for `ready`, up to 30 seconds after bundle completion.
+window after bundle delivery. Managed Metro servers report when the native
+bundle response finishes; build-complete output alone does not close an observed
+request. Without response capture, Stim falls back to the build-complete marker.
+When Android reports queued JavaScript loading, Stim waits for device JavaScript
+activity before starting stability, bounded by the bundle timeout.
+A `pending` observed before that window closes opts into waiting for `ready`, up
+to 30 seconds after the same completion signal.
 Repeated `pending` logs do not extend the deadline. A matching `ready` can end
 the wait early; an app error or process exit interrupts it. A missing `ready`
 prints **readiness not confirmed**, not success or an inferred crash.

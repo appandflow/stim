@@ -147,7 +147,13 @@ async function verifyIosRun({
   if (verification.readiness)
     phase('readiness', appReadinessMessage(verification.readiness, verification.waitedMs ?? 0));
   if (verification?.fatal) {
-    const reason = verification.processAlive === false ? 'the app process exited' : 'Metro could not build the bundle';
+    const deliveryFailed = verification.record?.event === 'bundle_response_failed';
+    const reason =
+      verification.processAlive === false
+        ? 'the app process exited'
+        : deliveryFailed
+          ? 'Metro bundle delivery failed'
+          : 'Metro could not build the bundle';
     phase('verify', chalk.red(`FATAL after ${formatDuration(verification.waitedMs ?? 0)}: ${reason}`));
     for (const record of verification.errors ?? []) {
       if (record.msg) note(chalk.red(phaseLine('', String(record.msg))));
@@ -167,7 +173,7 @@ async function verifyIosRun({
         chalk.yellow(
           phaseLine(
             'remedy',
-            `The native app is still running. Fix the JavaScript or TypeScript error, then ${reloadRemedy} Do not run \`stim ios\` unless native inputs changed or the app process exits.`,
+            `The native app is still running. ${deliveryFailed ? 'Check the Metro logs and device connection, then' : 'Fix the JavaScript or TypeScript error, then'} ${reloadRemedy} Do not run \`stim ios\` unless native inputs changed or the app process exits.`,
           ),
         ),
       );
@@ -206,7 +212,7 @@ async function verifyIosRun({
   if (verification?.requested) {
     phase(
       'verify',
-      `BUNDLING: the app asked port ${metroPort} for its bundle and Metro was still building it ` +
+      `BUNDLING: the app asked port ${metroPort} for its bundle; build or delivery was still pending ` +
         `after ${formatDuration(verification.waitedMs ?? 0)} (a cold bundle on a large graph outlasts this window)`,
     );
     note(

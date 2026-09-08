@@ -592,7 +592,8 @@ describe('the Metro store injected into an Expo child', () => {
       });
       const env = calls[0]?.opts.env as Record<string, string>;
       expect(env.NODE_OPTIONS).toBe('--enable-source-maps');
-      expect(env.STIM_METRO_STORE).toBe(undefined);
+      expect(env.STIM_METRO_STORE).toBe('');
+      expect(env.EXPO_OVERRIDE_METRO_CONFIG).toBe(expoMetroConfigPath());
       const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));
       expect(records.some((r) => r.event === 'cache_store_skipped')).toBe(true);
     },

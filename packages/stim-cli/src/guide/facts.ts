@@ -103,7 +103,7 @@ line by design (see \`guide logs\`), not this single-payload contract.`,
                   the bundle would cost more than installing it
   launched        true, "bundling", or "unverified". THE THREE ARE DIFFERENT
                   FACTS and only the last one is a problem.
-                    true         Metro finished the bundle, then the app stayed
+                    true         Metro finished the bundle response, then the app stayed
                                  alive through a three-second stability window.
                                  The command checks process liveness when the
                                  platform exposes it. Errors from that window
@@ -124,7 +124,7 @@ line by design (see \`guide logs\`), not this single-payload contract.`,
                                  does not change this field. See
                                  \`guide lifecycle readiness\`
                     "bundling"   the request DID arrive and Metro was still
-                                 building when the bundle timeout closed.
+                                 building or delivering when the bundle timeout closed.
                                  The wiring is proven; the JS has simply not
                                  run yet (a cold bundle of ~10k modules takes
                                  longer than the window). Nothing to do --
