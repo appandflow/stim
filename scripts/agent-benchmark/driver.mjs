@@ -1386,6 +1386,14 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
     expectedParkedSimulator,
     expectedStimDevice,
     expectedControlSimulator,
+    expectedControlAvdConfig:
+      platform === 'android' && arm === 'control'
+        ? join(
+            process.env.ANDROID_AVD_HOME ?? join(process.env.HOME, '.android', 'avd'),
+            expectedControlSimulator.name + '.avd',
+            'config.ini',
+          )
+        : null,
     agentDevice,
     crash,
   };
@@ -2137,6 +2145,10 @@ function collect(runDir) {
           arm: meta.arm,
           platform: meta.platform ?? 'ios',
           activities: commandAudit.activities,
+          setup: {
+            worktree,
+            avdConfig: meta.expectedControlAvdConfig,
+          },
         })
       : null;
   const recovery =

@@ -184,6 +184,13 @@ for the separate completed error query and preserves the inherited Android SDK,
 AVD, Gradle, and emulator-report locations so observation and cleanup use the
 same metadata as the agent.
 
+The pre-capture audit decodes shell quoting without executing it and recognizes
+scoped setup operations, including local SDK tools, managed log pipelines, and
+the assigned AVD's configuration edit. Collection reports every rejected command
+in `diagnosis.violations`, retaining the first rejection in `commandId`. Unknown
+commands and source inspection still invalidate the attempt; this is not a
+replacement for the runner's filesystem isolation.
+
 A launch can finish before the JavaScript error reaches its log. Both arms must
 repeat standalone foreground log queries, without separate sleep or wait commands,
 until a completed query prints the error and source location before inspecting or

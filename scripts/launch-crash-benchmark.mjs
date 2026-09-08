@@ -35,11 +35,10 @@ function successful(command) {
 }
 
 function shellCommand(command) {
-  const value = String(command ?? '').trim();
-  const normalized = topLevelShellCommand(value);
-  if (normalized !== value || !/^\/bin\/(?:zsh|bash|sh) -lc\s+/.test(value)) return normalized;
-  const body = value.replace(/^\/bin\/(?:zsh|bash|sh) -lc\s+/, '');
-  return body.replace(/^["']/, '').replace(/["']$/, '').trim();
+  return topLevelShellCommand(command).replace(
+    /^"\$ANDROID_HOME\/(?:platform-tools\/(adb)|emulator\/(emulator)|cmdline-tools\/latest\/bin\/(avdmanager|sdkmanager))"(?=\s|$)/,
+    (_, adb, emulator, sdkTool) => adb ?? emulator ?? sdkTool,
+  );
 }
 
 function launchCommand(command, arm, platform) {
@@ -95,11 +94,69 @@ function sourceInspectionBeforeCapture(command, arm, platform) {
   return false;
 }
 
-function allowedBeforeErrorCapture(command, arm, platform) {
+function scopedCopyLoop(value, setup) {
+  const match = value.match(/^set -e\n([A-Za-z_]\w*)=([^\s;$`]+)\nfor ([A-Za-z_]\w*) in ([^;]+); do\n([\s\S]+)\ndone$/);
+  if (!match || !setup.worktree || match[2] !== setup.worktree) return false;
+  const [, destination, , item, paths, body] = match;
+  const allowedPaths = new Set([
+    'node_modules',
+    'android/.gradle',
+    'android/build',
+    'android/.cxx',
+    'android/app/build',
+    'android/app/.cxx',
+    'android/local.properties',
+    'ios/Pods',
+    'ios/build',
+  ]);
+  if (
+    !paths
+      .trim()
+      .split(/\s+/)
+      .every((path) => allowedPaths.has(path))
+  )
+    return false;
+  const expected = [
+    `if [ -e "$${item}" ]; then`,
+    `mkdir -p "$${destination}/$(dirname "$${item}")"`,
+    `rsync -a --exclude='generated/autolinking/' "$${item}" "$${destination}/$(dirname "$${item}")/"`,
+    'fi',
+  ];
+  return (
+    body
+      .split('\n')
+      .map((line) => line.trim())
+      .join('\n') === expected.join('\n')
+  );
+}
+
+function ownedAvdEdit(value, setup) {
+  if (!setup.avdConfig) return false;
+  const match = value.match(/^tool:(file_change|Edit|Write) ([\s\S]+)$/);
+  if (!match) return false;
+  try {
+    const payload = JSON.parse(match[2]);
+    const changes = match[1] === 'file_change' ? payload : [{ path: payload.file_path }];
+    return Array.isArray(changes) && changes.length > 0 && changes.every((change) => change.path === setup.avdConfig);
+  } catch {
+    return false;
+  }
+}
+
+function avdMetadataRead(value, setup) {
+  const query = value.replace(/\s+\|\|\s+true$/, '');
+  const match = query.match(/^(?:rg|grep|cat)\s+([\s\S]*?)([^\s'";]+\.ini)$/);
+  if (!match || /`|\$\(/.test(query) || shellCommandSegments(query).length !== 1) return false;
+  const target = match[2];
+  return target === setup.avdConfig || /^\/[^\s;]+\/TemporaryItems\/avd\/running\/pid_\d+\.ini$/.test(target);
+}
+
+function allowedBeforeErrorCapture(command, arm, platform, setup = {}) {
   const value = shellCommand(command);
   if (/^(?:stim\s+(?:guide|doctor|worktree\s+warm)\b|rsync\b|pgrep\b|sed\b|cat\b)/.test(value)) {
     const segments = shellCommandSegments(value);
-    if (segments.length > 1) return segments.every((segment) => allowedBeforeErrorCapture(segment, arm, platform));
+    if (segments.length > 1)
+      return segments.every((segment) => allowedBeforeErrorCapture(segment, arm, platform, setup));
   }
   if (/^tool:todo_list\b/.test(value)) return true;
   if (/^(?:env\s+)?(?:[^\s=]+=[^\s]+\s+)*agent-device\s+/.test(value)) return true;
@@ -112,6 +169,29 @@ function allowedBeforeErrorCapture(command, arm, platform) {
     return true;
   }
   if (sourceInspectionBeforeCapture(value, arm, platform)) return false;
+  if (arm === 'control') {
+    if (scopedCopyLoop(value, setup)) return true;
+    const architecture = value.replace(/^ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a\s+/, '');
+    if (architecture !== value) return allowedBeforeErrorCapture(architecture, arm, platform, setup);
+    const logged = value.match(/^([\s\S]+)\s+\|\s+tee(?:\s+-a)?\s+\/(?:private\/)?tmp\/[A-Za-z0-9_.-]+\.log$/);
+    if (logged) return allowedBeforeErrorCapture(logged[1], arm, platform, setup);
+    if (platform === 'android') {
+      if (
+        /^printenv(?:\s+(?:ANDROID_AVD_HOME|ANDROID_HOME|GRADLE_USER_HOME|ANDROID_EMU_CRASH_REPORTING_DATABASE))+$/.test(
+          value,
+        )
+      )
+        return true;
+      if (ownedAvdEdit(value, setup)) return true;
+      if (/^(?:rg|grep|cat)\s+[\s\S]*\.ini(?:\s+\|\|\s+true)?$/.test(value)) return avdMetadataRead(value, setup);
+      if (
+        /^adb\s+-s\s+[A-Za-z0-9_-]+\s+wait-for-device\s+shell\s+'until \[ "\$\(getprop sys\.boot_completed\)" = "1" \]; do sleep 1; done; getprop sys\.boot_completed'$/.test(
+          value,
+        )
+      )
+        return true;
+    }
+  }
   if (
     arm === 'control' &&
     /^(?:\.\/)?node_modules\/\.bin\/expo\s+start(?:\s|$)/.test(value) &&
@@ -187,9 +267,10 @@ function allowedBeforeErrorCapture(command, arm, platform) {
     )
       return true;
     const segments = shellCommandSegments(value);
-    if (segments.length > 1) return segments.every((segment) => allowedBeforeErrorCapture(segment, arm, platform));
+    if (segments.length > 1)
+      return segments.every((segment) => allowedBeforeErrorCapture(segment, arm, platform, setup));
     if (/^(?:avdmanager|emulator|sdkmanager)\b/.test(value)) return true;
-    if (/^(?:printf|echo)\s+['"]?(?:no|n)(?:\\n)?['"]?$/.test(value)) return true;
+    if (/^(?:printf|echo)\s+['"]?(?:no|n)(?:\\{1,2}n)?['"]?$/.test(value)) return true;
     if (
       /^(?:printf|echo)\s+['"]disk\.dataPartition\.size=8589934592(?:\\n)?['"]\s*>>?\s*[^;&|]+\/config\.ini['"]?$/.test(
         value,
@@ -206,7 +287,10 @@ function allowedBeforeErrorCapture(command, arm, platform) {
   );
 }
 
-export function launchCrashDiagnosis(commands, { dispatchAt, token, arm = 'stim', platform = 'ios', activities = [] }) {
+export function launchCrashDiagnosis(
+  commands,
+  { dispatchAt, token, arm = 'stim', platform = 'ios', activities = [], setup = {} },
+) {
   const ordered = orderedCommands(commands);
   const sourceMarkers = ['app/_layout.tsx', 'RootLayout'];
   const initialLaunchIndex = ordered.findIndex(
@@ -230,15 +314,17 @@ export function launchCrashDiagnosis(commands, { dispatchAt, token, arm = 'stim'
   const preCaptureActivity = [...ordered, ...activities].toSorted(
     (left, right) => timestamp(left, 'startedAt') - timestamp(right, 'startedAt'),
   );
-  const disallowedBeforeCapture = preCaptureActivity.find(
+  const disallowedBeforeCapture = preCaptureActivity.filter(
     (command) =>
-      timestamp(command, 'startedAt') < captureEndedAt && !allowedBeforeErrorCapture(command.command, arm, platform),
+      timestamp(command, 'startedAt') < captureEndedAt &&
+      !allowedBeforeErrorCapture(command.command, arm, platform, setup),
   );
-  if (disallowedBeforeCapture) {
+  if (disallowedBeforeCapture.length) {
     return {
       valid: false,
       reason: 'launch-crash-pre-capture-command-not-allowed',
-      commandId: disallowedBeforeCapture.id,
+      commandId: disallowedBeforeCapture[0].id,
+      violations: disallowedBeforeCapture.map(({ id, command }) => ({ commandId: id, command })),
     };
   }
   const capture = ordered[errorCaptureIndex];

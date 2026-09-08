@@ -62,11 +62,32 @@ export function benchmarkTarget(config, selection) {
 
 export function topLevelShellCommand(command) {
   const trimmed = String(command ?? '').trim();
-  const match = trimmed.match(/^\/bin\/(?:zsh|bash|sh) -lc (["'])([\s\S]*)\1$/);
+  const match = trimmed.match(/^\/bin\/(?:zsh|bash|sh) -lc\s+([\s\S]+)$/);
   if (!match) return trimmed;
-  const source =
-    match[1] === '"' ? match[2].replace(/\\(["\\$`\n])/g, (_, char) => (char === '\n' ? '' : char)) : match[2];
-  return source.trim();
+  const input = match[1];
+  let source = '';
+  let quote = null;
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    if (quote === "'") {
+      if (char === "'") quote = null;
+      else source += char;
+    } else if (char === '\\') {
+      const next = input[index + 1];
+      if (next === undefined) return trimmed;
+      if (!quote || /["\\$`\n]/.test(next)) {
+        if (next !== '\n') source += next;
+        index += 1;
+      } else source += char;
+    } else if (char === quote) {
+      quote = null;
+    } else if (!quote && (char === "'" || char === '"')) {
+      quote = char;
+    } else if (!quote && /\s|[;&|<>]/.test(char)) {
+      return trimmed;
+    } else source += char;
+  }
+  return quote ? trimmed : source.trim();
 }
 
 export function shellCommandSegments(command) {
