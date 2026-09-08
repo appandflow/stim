@@ -4,6 +4,7 @@ import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import { benchmarks, defaultRun, displayVariant } from '@site/src/components/benchmarkCatalog';
 import BenchmarkVideo from '@site/src/components/BenchmarkVideo';
+import { benchmarkDimensions, benchmarkModelLabel } from '@site/src/components/benchmarkSelection';
 import {
   benchmarkDisplayTitle,
   benchmarkOverview,
@@ -31,7 +32,10 @@ function LaunchCrashCard({ benchmark }: { benchmark: BenchmarkData }): ReactNode
   const maxSeconds = Math.max(1, ...runs.map((run) => run.diagnosisSeconds ?? 0));
   return (
     <article className={styles.comparisonCard}>
-      <h3>{benchmark.runs[0]?.model ?? benchmarkDisplayTitle(benchmark.title)}: JavaScript launch failure</h3>
+      <h3>
+        {benchmarkModelLabel(benchmarkDimensions(benchmark).model)} /{' '}
+        {benchmark.platform === 'android' ? 'Android' : 'iOS'}
+      </h3>
       <span className={`${styles.outcome} ${styles.neutral}`}>Time to first actionable diagnosis</span>
       {runs.map((run) => (
         <div className={styles.barRow} key={run.id}>
@@ -66,15 +70,17 @@ function LaunchCrashCard({ benchmark }: { benchmark: BenchmarkData }): ReactNode
 function OverviewChart({
   variant,
   benchmarks: allBenchmarks,
+  title,
 }: {
   variant: BenchmarkRun['variant'];
   benchmarks: BenchmarkData[];
+  title?: string;
 }): ReactNode {
   const overview = benchmarkOverview(allBenchmarks, variant);
   return (
     <article className={styles.overviewChart}>
       <div className={styles.overviewChartHead}>
-        <h3>{displayVariant(variant)}</h3>
+        <h3>{title ?? displayVariant(variant)}</h3>
         <span>Settings-ready time</span>
       </div>
       <div className={styles.overviewLegend} aria-hidden="true">
@@ -83,7 +89,13 @@ function OverviewChart({
       </div>
       {overview.rows.map((row) => (
         <div className={styles.overviewModel} key={row.stage}>
-          <strong>{benchmarkDisplayTitle(row.title)}</strong>
+          <strong>
+            {variant === 'launch-crash'
+              ? benchmarkModelLabel(
+                  allBenchmarks.find((candidate) => candidate.stage === row.stage)?.runs[0]?.model ?? row.title,
+                )
+              : benchmarkDisplayTitle(row.title)}
+          </strong>
           <div className={styles.overviewBars}>
             {row.arms.map((arm) => {
               if (!arm.run || !arm.href) {
@@ -164,9 +176,20 @@ export default function Benchmarks(): ReactNode {
                   </Heading>
                   <p>
                     A deterministic root-render exception is committed before dispatch. The agent must launch first,
-                    diagnose from captured errors, repair the source, and prove the unchanged Settings screen.
+                    diagnose from captured errors, repair the source, and prove the unchanged Settings screen. Each
+                    comparison is one matched run per arm, not an average or a best-of selection.
                   </p>
                 </div>
+              </div>
+              <div className={styles.overviewGrid}>
+                {(['ios', 'android'] as const).map((platform) => (
+                  <OverviewChart
+                    key={platform}
+                    variant="launch-crash"
+                    title={`${platform === 'ios' ? 'iOS' : 'Android'} launch recovery`}
+                    benchmarks={launchCrashBenchmarks.filter((candidate) => candidate.platform === platform)}
+                  />
+                ))}
               </div>
               <div className={styles.comparisonGrid}>
                 {launchCrashBenchmarks.map((candidate) => (
@@ -192,8 +215,8 @@ export default function Benchmarks(): ReactNode {
             </div>
             <dl>
               <div>
-                <dt>Two tasks</dt>
-                <dd>JavaScript-only and native changes run as separate benchmark passes.</dd>
+                <dt>Separate tasks</dt>
+                <dd>JavaScript-only changes, native changes, and launch-error recovery run as separate passes.</dd>
               </div>
               <div>
                 <dt>Two arms</dt>
@@ -216,7 +239,11 @@ export default function Benchmarks(): ReactNode {
               </div>
               <div>
                 <dt>Launch-failure suite</dt>
-                <dd>Diagnosis time and repaired Settings proof are reported separately from readiness results.</dd>
+                <dd>
+                  Eight matched comparisons cover Luna, Sol, Sonnet and Opus on iOS and Android. Diagnosis time and
+                  repaired Settings proof are reported separately from readiness results. Runs execute sequentially on a
+                  Mac mini with Apple M4 and 16 GB memory; each audit includes its toolchain details.
+                </dd>
               </div>
               <div>
                 <dt>Audited attempts</dt>

@@ -238,7 +238,11 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
             <div>
               <span>Tokens to diagnosis</span>
               <strong>{run.diagnosisUsage ? formatTokens(totalTokens(run.diagnosisUsage)) : 'unavailable'}</strong>
-              <small>{formatTokens(totalTokens(run.usage))} tokens for the full repair</small>
+              <small>
+                {totalTokens(run.usage) > 0
+                  ? `${formatTokens(totalTokens(run.usage))} tokens for the full repair`
+                  : 'Full repair usage unavailable'}
+              </small>
             </div>
             <div>
               <span>Cost to diagnosis</span>

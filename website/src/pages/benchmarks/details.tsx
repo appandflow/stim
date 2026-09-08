@@ -5,7 +5,7 @@ import useIsBrowser from '@docusaurus/useIsBrowser';
 import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
-import { benchmarks, displayVariant } from '@site/src/components/benchmarkCatalog';
+import { benchmarks, linkedBenchmarks, displayVariant } from '@site/src/components/benchmarkCatalog';
 import {
   benchmarkDimensions,
   benchmarkForDimensions,
@@ -96,8 +96,8 @@ export default function BenchmarkDetails(): ReactNode {
   const location = useLocation();
   const isBrowser = useIsBrowser();
   const search = isBrowser ? location.search : '';
-  const selection = useMemo(() => benchmarkSelectionFromSearch(search, benchmarks), [search]);
-  const benchmark = benchmarks.find((candidate) => candidate.stage === selection.stage) ?? benchmarks[0];
+  const selection = useMemo(() => benchmarkSelectionFromSearch(search, linkedBenchmarks), [search]);
+  const benchmark = linkedBenchmarks.find((candidate) => candidate.stage === selection.stage) ?? benchmarks[0];
   const publishedRuns = useMemo(() => benchmark?.runs.filter((run) => run.valid) ?? [], [benchmark]);
   const activeRun = publishedRuns.find((run) => run.id === selection.runId) ?? defaultRun(benchmark);
   const dimensions = benchmark ? benchmarkDimensions(benchmark) : null;
@@ -115,7 +115,7 @@ export default function BenchmarkDetails(): ReactNode {
   const navigateTo = (nextStage: string, nextRunId: string) => {
     history.push({
       pathname: location.pathname,
-      search: benchmarkSelectionSearch({ stage: nextStage, runId: nextRunId }, benchmarks),
+      search: benchmarkSelectionSearch({ stage: nextStage, runId: nextRunId }, linkedBenchmarks),
       hash: location.hash,
     });
   };
@@ -170,6 +170,11 @@ export default function BenchmarkDetails(): ReactNode {
             </p>
           </header>
 
+          {!benchmarks.includes(benchmark) ? (
+            <p>
+              This is an earlier comparison, preserved for shared links. Use the selectors below for current results.
+            </p>
+          ) : null}
           <div className={styles.benchmarkPickers}>
             <nav className={styles.benchmarkPicker} aria-label="Benchmark model">
               <span>Model</span>

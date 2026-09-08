@@ -9,6 +9,8 @@ import {
   exactBenchmarkForDimensions,
 } from './benchmarkSelection';
 import type { BenchmarkData } from './benchmarkData';
+import { benchmarkSelectionFromSearch, benchmarkSelectionSearch } from './benchmarkData';
+import { benchmarks, linkedBenchmarks } from './benchmarkCatalog';
 
 function benchmark(
   stage: string,
@@ -31,6 +33,33 @@ function benchmark(
 }
 
 describe('benchmark catalog selection', () => {
+  it('selects each published launch-error pair without choosing the earlier Sol sample', () => {
+    for (const model of ['gpt-5.6-luna', 'gpt-5.6-sol', 'sonnet', 'opus']) {
+      for (const platform of benchmarkPlatforms) {
+        const selected = exactBenchmarkForDimensions(benchmarks, { model, platform, suite: 'launch-crash' });
+        const runs = selected?.runs.filter((run) => run.valid);
+        expect(runs).toHaveLength(2);
+        expect(runs?.map((run) => run.arm)).toEqual(expect.arrayContaining(['control', 'stim']));
+        expect(selected?.stage).not.toBe('sol-launch-crash');
+      }
+    }
+  });
+
+  it('keeps the earlier Sol deep link reachable without duplicating its current comparison', () => {
+    const selection = { stage: 'sol-launch-crash', runId: 'launch-crash-stim' };
+    const search = benchmarkSelectionSearch(selection, linkedBenchmarks);
+    expect(benchmarkSelectionFromSearch(search, linkedBenchmarks)).toEqual(selection);
+    expect(
+      benchmarks
+        .filter((candidate) => {
+          const dimensions = benchmarkDimensions(candidate);
+          return (
+            dimensions.model === 'gpt-5.6-sol' && dimensions.platform === 'ios' && dimensions.suite === 'launch-crash'
+          );
+        })
+        .map((candidate) => candidate.stage),
+    ).toEqual(['sol-ios-launch-error']);
+  });
   const readinessIos = benchmark('sol-ios', 'gpt-5.6-sol', 'ios', 'readiness');
   const readinessAndroid = benchmark('sol-android', 'gpt-5.6-sol', 'android', 'readiness');
   const crashIos = benchmark('sol-crash', 'gpt-5.6-sol', 'ios', 'launch-crash');
