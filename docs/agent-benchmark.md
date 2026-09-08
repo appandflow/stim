@@ -6,7 +6,7 @@ which stopped before navigating the app.
 
 ## Question and pilot gate
 
-The primary question is whether Stim reduces elapsed time from agent dispatch
+The primary question is whether Stim reduces elapsed time from the first recorded agent activity
 to a changed Trailhead app visibly ready on its Settings screen. JavaScript and
 native changes are different workloads and are never combined into one run or
 one headline number.
@@ -215,9 +215,20 @@ device identifier.
 
 ## Metrics and records
 
-The primary metric is `dispatchToScreenReadySeconds`: dispatch to completion
-of the successful, validated `agent-device screenshot` command. Report
-`dispatchToAppAliveSeconds` separately. Also retain command count, raw token
+The website's primary metric starts at the first recorded agent message or
+shell-command start and ends at completion of the validated
+`agent-device screenshot` command. Apply the same origin to Stim and control. Runner init
+events do not start the clock. This excludes startup and any unobserved initial
+reasoning; it is not a measure of time from sending the prompt.
+
+Post-processing shifts all milestones, messages, commands and background spans
+by the same offset. Published `timingOrigin` retains the offset, source event
+and dispatch-based totals so the change is auditable and idempotent. Existing
+recordings and raw records are not retimed or overwritten; no rerun is needed.
+Tokens and cost still cover the full turn, including work after Settings proof.
+
+The coordinator retains `dispatchToScreenReadySeconds`,
+`dispatchToAppAliveSeconds` and dispatch-based timeout/target checks. Also retain command count, raw token
 fields, worktree and simulator evidence, cache and adoption/build output, and
 invalid-attempt reasons.
 The run record also stores its selected machine target, whether screen-ready
@@ -302,8 +313,8 @@ leases or automation sessions.
 
 A launch-crash diagnostic is a separate suite, not a fifth performance cell.
 Inject a deterministic root-render JavaScript exception before the first app
-screen, then give each agent the same repair task. Compare dispatch to the
-first actionable diagnosis, commands and tokens to diagnosis, and dispatch to
+screen, then give each agent the same repair task. Compare first recorded activity to the
+first actionable diagnosis, commands and tokens to diagnosis, and first recorded activity to
 a repaired Settings screenshot. Run separate iOS and Android blocks. The Stim
 arm must preserve the matching `stim ios` or `stim android` launch
 output and `stim logs --errors`; control collects the equivalent Metro and

@@ -6,7 +6,7 @@
   "platform": "android",
   "protocolVersion": 4,
   "recordedOn": "2026-09-08",
-  "primaryMetric": "Dispatch to first actionable diagnosis; repaired Settings screenshot reported separately",
+  "primaryMetric": "First recorded agent activity to actionable diagnosis; repaired Settings screenshot reported separately",
   "pricing": null,
   "environment": {
     "machine": {
@@ -28,9 +28,9 @@
       "arm": "stim",
       "valid": true,
       "invalidReasons": [],
-      "settingsReadySeconds": 284.889,
-      "appAliveSeconds": 217.064,
-      "diagnosisSeconds": 236.769,
+      "settingsReadySeconds": 201.465,
+      "appAliveSeconds": 133.64,
+      "diagnosisSeconds": 153.345,
       "diagnosisCommandCount": 8,
       "launchCrashAudit": {
         "initialLaunchCommandId": "toolu_011YaTAAgx6UCMeNZgdE8KJ8",
@@ -40,7 +40,7 @@
       },
       "diagnosisUsage": null,
       "estimatedDiagnosisCostUsd": null,
-      "totalSeconds": 314.017,
+      "totalSeconds": 230.593,
       "commandCount": 23,
       "usage": {
         "input_tokens": 445472,
@@ -54,103 +54,103 @@
       "messages": [
         {
           "id": "87098ee0-5f3d-4f32-8c32-a761063815ba-0",
-          "atSeconds": 83.424,
+          "atSeconds": 0,
           "text": "I'll start by creating the worktree as specified."
         },
         {
           "id": "050c8803-49ab-45b2-91e6-68e6d233d01b-0",
-          "atSeconds": 86.939,
+          "atSeconds": 3.515,
           "text": "Now let me load the Stim workflow guide."
         },
         {
           "id": "abf91d6d-9ee3-4daf-95df-eb652a062cea-0",
-          "atSeconds": 89.034,
+          "atSeconds": 5.61,
           "text": "Now running `stim worktree warm` in the new checkout."
         },
         {
           "id": "848cbbd5-3be3-4ec7-aa7e-8b5a81484d6c-0",
-          "atSeconds": 177.922,
+          "atSeconds": 94.498,
           "text": "Warm completed successfully (exit 0, 10 entries copied, 0 failed). Now starting Metro."
         },
         {
           "id": "197e4cb7-1862-40b5-9174-5631eda60138-0",
-          "atSeconds": 183.493,
+          "atSeconds": 100.069,
           "text": "Metro is up on port 8082. Now running the Android build and launch."
         },
         {
           "id": "6767d4b4-c4ba-4fd7-8a5d-3d2d7005a004-0",
-          "atSeconds": 225.526,
+          "atSeconds": 142.102,
           "text": "Launch output preserved. Run emulator serial: **<simulator-udid>**. Now the log query as its own command."
         },
         {
           "id": "3c46d7d0-2548-424e-b3d5-26149fe1297c-0",
-          "atSeconds": 229.499,
+          "atSeconds": 146.075,
           "text": "First query empty. Repeating the standalone log query."
         },
         {
           "id": "c467c20f-09b7-4a31-84ee-d403b9eeb0f9-0",
-          "atSeconds": 239.115,
+          "atSeconds": 155.691,
           "text": "Error and source location captured: `app/_layout.tsx:27` — an unconditional `throw` at the top of `RootLayout`. Now I can inspect source."
         },
         {
           "id": "7bfc0857-8876-43de-9072-c89544205801-0",
-          "atSeconds": 243.785,
+          "atSeconds": 160.361,
           "text": "The fix is to remove the injected throw (line 27). Let me verify it's the only occurrence and delete it."
         },
         {
           "id": "d4bbc38b-2a57-4105-aa30-fe65596f6818-0",
-          "atSeconds": 252.154,
+          "atSeconds": 168.73,
           "text": "Minimal one-line fix. The root render threw, so the error screen persists — reloading the app on the owned emulator per the guide."
         },
         {
           "id": "e4c8d912-a881-4b66-a2b3-fe42e28c0099-0",
-          "atSeconds": 259.561,
+          "atSeconds": 176.137,
           "text": "Errors cleared. Now the proof protocol — step 1, opening the isolated agent-device session on <simulator-udid>."
         },
         {
           "id": "988b6bf1-5235-4e81-ad74-75ea41ae00ed-0",
-          "atSeconds": 266.818,
+          "atSeconds": 183.394,
           "text": "App renders correctly — the launch failure is repaired. No onboarding shown. Step 2, start recording."
         },
         {
           "id": "28445777-7030-412e-af08-bed218ec5728-0",
-          "atSeconds": 271.013,
+          "atSeconds": 187.589,
           "text": "Recording started. Now navigating to the Settings tab."
         },
         {
           "id": "0f967b15-b194-46ed-806a-1297e6808b4d-0",
-          "atSeconds": 274.719,
+          "atSeconds": 191.295,
           "text": "The Settings screen is showing. Step 3, the wait."
         },
         {
           "id": "74238a07-6120-4599-ba2d-530698071853-0",
-          "atSeconds": 281.947,
+          "atSeconds": 198.523,
           "text": "The wait returned successfully (found the text, no failure output). Step 4, screenshot."
         },
         {
           "id": "f7cc7f85-19d9-4b11-9cfe-44bb1cb6b4ad-0",
-          "atSeconds": 299.778,
+          "atSeconds": 216.354,
           "text": "Verifying the copied proof artifacts exist."
         },
         {
           "id": "5eb64b8c-9ecd-4a40-89f3-71a2aff2b168-0",
-          "atSeconds": 313.795,
+          "atSeconds": 230.371,
           "text": "All eight proof commands succeeded in order. Metro and the app are still running on the owned emulator.\n\n## Diagnosis\n\n`stim android` reported `OK ... launched on <simulator-udid>` with the process alive, so the failure was JavaScript-only, not a native crash. The third standalone `stim logs --errors` query captured it with its source location:\n\n```\n02:31:35.819 error metro   ERROR  [Error: STIM_BENCH_LAUNCH_CRASH_C5C8DB18AE1A]\n    Code: _layout.tsx\n    > 27 |   throw new Error('STIM_BENCH_LAUNCH_CRASH_C5C8DB18AE1A');\n    Call Stack\n      RootLayout (app/_layout.tsx:27:18)\n```\n\nAn unconditional `throw` was sitting as the first statement of the `RootLayout` component — every initial root render threw before `useTheme()` or the provider tree ran, so nothing mounted. It was also unreachable dead code ahead of the real body.\n\n## Repair\n\nOne line removed in `app/_layout.tsx:27`; nothing else touched. `grep` confirmed that was the only occurrence of the marker in the project.\n\n```diff\n export default function RootLayout() {\n-  throw new Error('STIM_BENCH_LAUNCH_CRASH_C5C8DB18AE1A');\n   const { name, colors } = useTheme();\n```\n\nBecause the root component itself had thrown, Fast Refresh could not recover the screen, so I used `stim reload` on the owned emulator per the guide's remedy. The follow-up `stim logs --errors` was clean, and the `agent-device open` snapshot showed the fully rendered Trails screen with all four tabs — no onboarding was presented.\n\n## Verification\n\nNavigated Trails → Settings via the semantic ref `@e62` (the Settings tab group). The Settings screen rendered UNITS, PREFERENCES, and STORAGE sections; `wait text \"Keep map tiles for saved trails on device\"` matched, and the screenshot followed. Recording stop reported the saved video, and both copied artifacts exist.\n\n**Run worktree:** `./worktrees/bench-launch-crash-stim`\n**Screenshot:** `results/opus-android-launch-error/launch-crash-stim/proof/settings.png`\n**Recording:** `…/proof/session.mp4`\n\nMetro (port 8082) and the app on `<simulator-udid>` are left running for coordinator verification; the change is uncommitted in the run worktree."
         }
       ],
       "commands": [
         {
           "id": "toolu_01TyQQo1WnuRBipBEReaYNeN",
-          "startSeconds": 84.666,
-          "endSeconds": 85.391,
+          "startSeconds": 1.242,
+          "endSeconds": 1.967,
           "command": "git worktree add -b worktree-bench/launch-crash-stim './worktrees/bench-launch-crash-stim' HEAD",
           "output": "Preparing worktree (new branch 'worktree-bench/launch-crash-stim')\nHEAD is now at f16fb86 test: prepare launch failure fixture",
           "exitCode": 0
         },
         {
           "id": "toolu_015zot4inrxcLdkMf7Ter7bc",
-          "startSeconds": 87.525,
-          "endSeconds": 87.705,
+          "startSeconds": 4.101,
+          "endSeconds": 4.281,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim guide agent",
           "output": "Commands use `stim`. If it is not installed globally, replace `stim` with `npx stim-cli`.\n\nAGENT WORKFLOW\n\nUse Stim to run React Native and Expo apps without sharing a Metro port or\ndevice with another workspace. Prefer plain output: it streams each phase and\nends with the facts the next step needs. Use --json only when a script must\nparse a stable payload.\n\nNORMAL WORKFLOW\n\nWork in the current checkout by default. When the task needs another branch or\nan isolated environment, create a linked worktree with Git and warm its\nignored state. If a harness already created this linked worktree, run\nstim worktree warm here instead of creating another one. It copies missing\nignored paths from the main checkout, including eligible .env and local\nconfiguration files. It preserves the branch, tracked files, and every existing\ndestination entry; existing ignored directories are skipped whole, not filled in.\nRead guide lifecycle options for exclusions and incomplete-copy remedies.\n\nWait for warm to exit successfully (exit code 0) before running stim start,\nstim ios, stim android, or a dependency install in that worktree. If the shell\ntool returns a running session or job ID, poll or wait for that job to finish;\nthe ID is not completion. Do not install dependencies while warm is copying.\nIf warm fails or reports incomplete, resolve the reported failure first.\n\nBefore native worktree work, run doctor for the platform in scope. It checks\nthe main checkout from a linked worktree. Fix relevant findings and inspect the\nupstream gap. It also prints the running CLI version and the stim installation\nresolved from PATH. If that resolved installation is older than another one,\nfix PATH or the installation before continuing so commands and guidance match.\nDoctor reports cross-volume staging and build-cache copies; read guide settings\nfor placement overrides and guide lifecycle options for warm behavior.\n\n  stim doctor --platform ios          # or: --platform android\n\nFor stale Android CMake launcher findings, stop native builds and run\nstim doctor --fix --platform android in the affected checkout before warming\nmore worktrees. It removes affected ignored, untracked generated .cxx\nconfigurations, including installed native modules; the next build recreates\nthem. It preserves source, custom launcher settings, and the shared ccache.\n\n  # Skip Git creation if the harness already created this linked worktree.\n  git worktree add -b <branch> <worktree-path> HEAD\n  cd <worktree-path>\n  stim worktree warm\n\n  stim start\n  stim ios                             # or: stim android\n\n  # Reproduce the affected behavior and capture the baseline errors.\n  stim logs --errors\n\n  # Edit JavaScript or TypeScript; Fast Refresh applies the change.\n  # For UI work, wait for the expected UI and repeat the affected interaction\n  # on the reported device. Keep using the existing automation session, if any.\n  stim logs --errors\n  # Retain proof before cleanup: a screenshot, recording, or relevant runtime output.\n\n  stim stop\n  stim worktree remove\n\nRULES DURING THE LOOP\n\n- Run Stim from the app directory: the one whose package.json depends on\n  react-native or expo. Anywhere else -- a monorepo root, a tools package --\n  start, ios and android refuse with STIM_NO_PROJECT naming that package.json,\n  and doctor reports it as a finding.\n- Run start before a debug ios or android build. If it returns STIM_NO_METRO,\n  run stim start and retry.\n- Run ios or android again after a native input changes. A JavaScript-only\n  change does not need one.\n- Reload is not part of the normal workflow. Use stim reload on an owned local\n  simulator or emulator after a failed first bundle load, when an error screen\n  remains after the fix, or when you explicitly need an app restart. For a\n  physical device that reached Metro, use agent-device metro reload with the\n  reported port. The detected iOS Local Network first-load remedy uses UI\n  automation instead because that app never established a Metro connection.\n- A successful stim reload confirms that the request was sent, not that new\n  JavaScript loaded or the screen recovered. Verify the expected UI on the\n  reported device and inspect stim logs --errors before claiming recovery.\n- If launch reports an app error but also says the native process is alive,\n  the app did not crash. Fix JavaScript or TypeScript and use Fast Refresh. If\n  the error screen remains, follow the printed reload remedy instead of\n  running ios or android again. If launch says FATAL because the app process exited,\n  fix the crash and run the platform command again; Metro cannot restart it.\n- A native build can outlive a shell timeout. Retry the same command and\n  follow its printed remedy if waiting times out. See guide lifecycle concurrency.\n- ios and android install the app, launch it, and check readiness. Trust the\n  exact device, app, Metro, and launch facts in the final summary. Use the full\n  reported device ID. Never assume a simulator named booted belongs to this\n  workspace.\n- After each ios or android run, give the user one compact result: exact device,\n  app id, launch state, cache result, total duration, and whether stim logs\n  --errors passed. Include a remedy only when action remains. Do not repeat the\n  phase transcript.\n- An OK summary with no launch qualifier proves the launch. \"bundle requested,\n  still building\" means Metro has not finished; wait and query the logs. For\n  launch UNVERIFIED, follow the printed remedy before claiming success. JSON\n  reports these as true, \"bundling\", and \"unverified\" in launched.\n- A clean logs --errors check requires exit code 0 AND no matching errors in\n  captured logs. Exit code 0 alone means the query succeeded, even when errors\n  were printed. Human output shows \"No matching log records\" on stderr for\n  zero matches; JSON mode prints zero bytes. This does not prove launch or log\n  capture succeeded. Do not read the NDJSON files directly.\n- Use stim status when resuming a workspace or recovering missing device,\n  port, server, or build facts. A normal start and platform run already print\n  them. Use stim doctor when a build is unexpectedly slow or the environment\n  looks incomplete.\n\nOWNERSHIP AND DELETION\n\nStim creates, boots, and deletes only devices it created. Owned simulators use\nthe stim-<label> (<model> <runtime>) name. Never point Stim at a user-created\nemulator or simulator.\n\nworktree remove parks the workspace's simulator for later adoption. A parked\nsimulator is Stim-owned: never delete one by hand. gc --delete clears verified\nentries and keeps failures; see guide lifecycle pool. First launch on a\nphysical iPhone can need the one-time taps named by the remedy.\n\nstim android --device [serial] and stim ios --device [udid] install on a\nconnected physical device. Stim never creates, boots, shuts down, or deletes\nhardware. It records a temporary lease, not an owned-device registry entry.\n\nA --device run leases that device for the run. stim device lock ios --for 10m\nholds it across runs; stim device unlock gives it back. Never delete another\nworkspace's lease file under ~/.stim/device-locks; gc --delete removes expired\nones.\n\nstop and worktree remove release this workspace's leases. On a physical\niPhone, stop also closes the app by ending its log collector; it does not\nshut down the phone or uninstall the app.\n\nTreat a refusal as an ownership or state mismatch: read its code and remedy.\nNever reach for --force first.\nStim leaves externally started servers alone. Stop them with their original\ntool; neither a matching port nor --force grants process ownership.\n\nAsk the user before these actions:\n\n- worktree remove, because it deletes the worktree and gives up its owned\n  device. It works with any linked worktree, warmed or not, without requiring\n  a Stim registry entry. Git-created branches are kept; a branch with an\n  existing Stim ownership record is deleted only when it has no unique commits.\n- worktree remove --force, because it also discards uncommitted and untracked\n  files.\n- gc --delete, because it deletes orphaned resources. gc --delete --cache all\n  empties the shared build caches instead; it inspects nothing else.\n- stop when the workspace owns an EAS session, because it irreversibly ends\n  that remote session. For a local device, stop shuts it down but does not\n  delete it. An explicit stop shuts down a Stim-owned simulator even when\n  another process uses it. It never shuts down an unowned simulator.\n\nSANDBOXES\n\nAn agent harness that sandboxes shell commands usually permits writes inside\nthe project and little else. Stim also needs writes to STIM_HOME (~/.stim by\ndefault), simulator service access, and local access to the adb server. When\nthose sit outside the harness allowlist, the failure looks like an unwritable\ndirectory or unavailable device service rather than a broken machine. Decide\nat the start of a session whether to run Stim outside the sandbox or ask the\nuser to allow those operations. guide errors sandbox lists the exact\nrequirements.\n\nLOAD ADVANCED GUIDANCE WHEN NEEDED\n\n  stim guide                      # list topics\n  stim guide errors               # index of every refusal code and message\n  stim guide errors <CODE>        # one refusal, e.g. stim guide errors STIM_NO_METRO\n  stim guide errors sandbox       # running under a sandboxing harness\n  stim guide errors unverified    # launch unverified, and the Local Network reason\n  stim guide errors fallbacks     # swap, cache, and install notes on a release cache hit\n  stim guide lifecycle            # the ordered flow, consent rules, and capacity\n  stim guide lifecycle verification # reproduce, edit, verify the UI, and retain proof\n  stim guide lifecycle builds     # build optimizations, optional cache warm-up, fingerprints\n  stim guide lifecycle concurrency # shared builds, wait timeouts, capacity limits\n  stim guide lifecycle options    # every flag, Android variants, --device-type, --system-image\n  stim guide lifecycle devices    # ios --device and android --device on a physical phone\n  stim guide lifecycle release    # Release configurations and ...Release variants\n  stim guide facts                # the --json payloads\n  stim guide facts devmenu        # the Expo dev menu or Tools button over the app\n  stim guide metro                # supervisor, custom Metro, tunnels, and remote devices\n  stim guide logs                 # filters, record shape, and capture limits\n  stim guide cleanup              # what reclaims a device, and what deletes\n  stim guide cleanup collector    # an unproven collector pid; why the app on a phone closed\n  stim guide settings             # configuration files and supported keys\n\nA refusal prints a CODE such as STIM_NO_METRO. Run stim guide errors <CODE>\nwith the code exactly as printed and read only that section; every code in a\nshared header (STIM_BAD_ARG / STIM_NO_PROJECT) resolves to the same section. A\nrefusal with no code is quoted by message in stim guide errors. A topic with\nsections called bare prints its section index, so read the narrowest section\nbefore release configurations or Android variants; remote devices; custom\nMetro processes or tunnels; cache misses, bypasses, or concurrent builds;\ncapacity limits; cache statistics from stim stats; worktree carry-over;\nfingerprint exclusions; gc; --force; cleanup failures; or unfamiliar states\nand error codes. Ordinary stim stop and an authorized clean\nstim worktree remove do not need the cleanup guide.\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
           "exitCode": 0,
@@ -161,8 +161,8 @@
         },
         {
           "id": "toolu_01A48GRTh85bVwK7FW48rren",
-          "startSeconds": 90.568,
-          "endSeconds": 176.084,
+          "startSeconds": 7.144,
+          "endSeconds": 92.66,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim worktree warm; echo \"EXIT=$?\"",
           "output": "  carry       copied .expo, android/.gradle, android/app/.cxx, +7 from worktree/launch-error-fixture-rc21\n  carry       complete: 10 ignored entries copied, 0 kept, 0 failed\nEXIT=0\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
           "exitCode": 0,
@@ -173,8 +173,8 @@
         },
         {
           "id": "toolu_01NgsXL8524svYUqfo88A6GJ",
-          "startSeconds": 178.856,
-          "endSeconds": 181.83,
+          "startSeconds": 95.432,
+          "endSeconds": 98.406,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim start; echo \"EXIT=$?\"",
           "output": "  metro       starting on port 8082 (expo-child, supervisor pid 53940)\nOK: dev server on port 8082, supervisor pid 53940 (expo-child) (2.8s)\n  logs        results/opus-android-launch-error/launch-crash-stim/stim-home/workspaces/bench-opus-android-launch-error-opus-launch-cras--bbef3032c42f5dd6/logs\nEXIT=0\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
           "exitCode": 0,
@@ -185,8 +185,8 @@
         },
         {
           "id": "toolu_011YaTAAgx6UCMeNZgdE8KJ8",
-          "startSeconds": 185.022,
-          "endSeconds": 223.185,
+          "startSeconds": 101.598,
+          "endSeconds": 139.761,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim android --system-image 'system-images;android-36;google_apis_playstore_ps16k;arm64-v8a'; echo \"EXIT=$?\"",
           "output": "  metro       port 8082 (pid 53951)\n  device      waiting for <simulator-udid> to finish booting\n  device      stim-bench-launch-crash-stim created (23.4s)\n  fingerprint 50c919.. hit (4.4s)\n  device      stim-bench-launch-crash-stim (<simulator-udid>) booted (152ms)\n  install     app-debug.apk -> <simulator-udid> (2.2s)\n  launch      com.appandflow.trailhead (194ms)\n  metro       debug_http_host <local-ip>:8082 + adb reverse tcp:8082->tcp:8082\n  logs        results/opus-android-launch-error/launch-crash-stim/stim-home/workspaces/bench-opus-android-launch-error-opus-launch-cras--bbef3032c42f5dd6/logs (collector pid 54319)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (7.4s total)\nOK: com.appandflow.trailhead launched on <simulator-udid>, Metro port 8082 (cache hit)\n  device      stim-bench-launch-crash-stim (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       cache hit\n  compilation cache not run; artifact cache supplied the app\n  logs        results/opus-android-launch-error/launch-crash-stim/stim-home/workspaces/bench-opus-android-launch-error-opus-launch-cras--bbef3032c42f5dd6/logs\nEXIT=0\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
           "exitCode": 0,
@@ -197,8 +197,8 @@
         },
         {
           "id": "toolu_01ERs8XR8A9QU1uwnb32weYq",
-          "startSeconds": 226.573,
-          "endSeconds": 226.877,
+          "startSeconds": 143.149,
+          "endSeconds": 143.453,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim logs --errors; echo \"EXIT=$?\"",
           "output": "No matching log records in results/opus-android-launch-error/launch-crash-stim/stim-home/workspaces/bench-opus-android-launch-error-opus-launch-cras--bbef3032c42f5dd6/logs\nEXIT=0\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
           "exitCode": 0,
@@ -209,8 +209,8 @@
         },
         {
           "id": "toolu_01KooUsU5vqFopKNcEquno56",
-          "startSeconds": 230.199,
-          "endSeconds": 230.354,
+          "startSeconds": 146.775,
+          "endSeconds": 146.93,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim logs --errors; echo \"EXIT=$?\"",
           "output": "No matching log records in results/opus-android-launch-error/launch-crash-stim/stim-home/workspaces/bench-opus-android-launch-error-opus-launch-cras--bbef3032c42f5dd6/logs\nEXIT=0\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
           "exitCode": 0,
@@ -221,8 +221,8 @@
         },
         {
           "id": "toolu_01SRd18fucLKob5mt4MXBD3A",
-          "startSeconds": 236.546,
-          "endSeconds": 236.769,
+          "startSeconds": 153.122,
+          "endSeconds": 153.345,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim logs --errors; echo \"EXIT=$?\"",
           "output": "02:31:35.819 error metro   ERROR  [Error: STIM_BENCH_LAUNCH_CRASH_C5C8DB18AE1A]\n    Code: _layout.tsx\n      25 |\n      26 | export default function RootLayout() {\n    > 27 |   throw new Error('STIM_BENCH_LAUNCH_CRASH_C5C8DB18AE1A');\n         |                  ^\n      28 |   const { name, colors } = useTheme();\n      29 |\n      30 |   useEffect(() => {\n    Call Stack\n      RootLayout (app/_layout.tsx:27:18)\nEXIT=0\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
           "exitCode": 0,
@@ -233,8 +233,8 @@
         },
         {
           "id": "toolu_013kCPc124jLqAyfbsHj85hm",
-          "startSeconds": 240.402,
-          "endSeconds": 240.435,
+          "startSeconds": 156.978,
+          "endSeconds": 157.011,
           "command": "cd ./worktrees/bench-launch-crash-stim && nl -ba app/_layout.tsx | head -50",
           "output": "     1\timport { useEffect } from 'react';\n     2\timport { Stack } from 'expo-router';\n     3\timport { StatusBar } from 'expo-status-bar';\n     4\timport { GestureHandlerRootView } from 'react-native-gesture-handler';\n     5\timport { SafeAreaProvider } from 'react-native-safe-area-context';\n     6\timport { QueryClient, QueryClientProvider } from '@tanstack/react-query';\n     7\timport * as SplashScreen from 'expo-splash-screen';\n     8\t\n     9\timport { initializeDatabase } from '@/src/db/client';\n    10\timport { seedHikesIfEmpty } from '@/src/db/seed';\n    11\timport { useTheme } from '@/src/theme';\n    12\t\n    13\tSplashScreen.preventAutoHideAsync().catch(() => {});\n    14\t\n    15\tconst queryClient = new QueryClient({\n    16\t  defaultOptions: { queries: { staleTime: 60_000, retry: 1 } },\n    17\t});\n    18\t\n    19\t// Both are synchronous and idempotent, and the schema has to exist before any\n    20\t// screen queries it. Doing this at module scope rather than in an effect means\n    21\t// the first render already has a usable database, with no loading state and no\n    22\t// setState-in-effect cascade.\n    23\tinitializeDatabase();\n    24\tseedHikesIfEmpty();\n    25\t\n    26\texport default function RootLayout() {\n    27\t  throw new Error('STIM_BENCH_LAUNCH_CRASH_C5C8DB18AE1A');\n    28\t  const { name, colors } = useTheme();\n    29\t\n    30\t  useEffect(() => {\n    31\t    SplashScreen.hideAsync().catch(() => {});\n    32\t  }, []);\n    33\t\n    34\t  return (\n    35\t    <GestureHandlerRootView style={{ flex: 1 }}>\n    36\t      <SafeAreaProvider>\n    37\t        <QueryClientProvider client={queryClient}>\n    38\t          <StatusBar style={name === 'dark' ? 'light' : 'dark'} />\n    39\t          <Stack\n    40\t            screenOptions={{\n    41\t              headerStyle: { backgroundColor: colors.surface },\n    42\t              headerTintColor: colors.text,\n    43\t              contentStyle: { backgroundColor: colors.background },\n    44\t            }}\n    45\t          >\n    46\t            <Stack.Screen name=\"(tabs)\" options={{ headerShown: false }} />\n    47\t            <Stack.Screen name=\"trail/[id]\" options={{ title: 'Trail' }} />\n    48\t            <Stack.Screen name=\"hike/[id]\" options={{ title: 'Hike' }} />\n    49\t            <Stack.Screen name=\"+not-found\" options={{ title: 'Not found' }} />\n    50\t          </Stack>\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
           "exitCode": 0,
@@ -245,8 +245,8 @@
         },
         {
           "id": "toolu_013aw3cunULgBqhDgBNGmptX",
-          "startSeconds": 245.331,
-          "endSeconds": 245.396,
+          "startSeconds": 161.907,
+          "endSeconds": 161.972,
           "command": "cd ./worktrees/bench-launch-crash-stim && grep -rn \"STIM_BENCH_LAUNCH_CRASH\" --include='*.ts' --include='*.tsx' --include='*.js' --include='*.json' . | grep -v node_modules",
           "output": "app/_layout.tsx:27:  throw new Error('STIM_BENCH_LAUNCH_CRASH_C5C8DB18AE1A');\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
           "exitCode": 0,
@@ -257,8 +257,8 @@
         },
         {
           "id": "toolu_0136jpqzFUP5z45H2UMf7ZNC",
-          "startSeconds": 247.755,
-          "endSeconds": 247.864,
+          "startSeconds": 164.331,
+          "endSeconds": 164.44,
           "command": "cd ./worktrees/bench-launch-crash-stim && sed -i '' \"/throw new Error('STIM_BENCH_LAUNCH_CRASH_C5C8DB18AE1A');/d\" app/_layout.tsx && git diff",
           "output": "diff --git a/app/_layout.tsx b/app/_layout.tsx\nindex e3c2bd7..456c461 100644\n--- a/app/_layout.tsx\n+++ b/app/_layout.tsx\n@@ -24,7 +24,6 @@ initializeDatabase();\n seedHikesIfEmpty();\n \n export default function RootLayout() {\n-  throw new Error('STIM_BENCH_LAUNCH_CRASH_C5C8DB18AE1A');\n   const { name, colors } = useTheme();\n \n   useEffect(() => {\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
           "exitCode": 0,
@@ -269,8 +269,8 @@
         },
         {
           "id": "toolu_01VWHwbwru7idsTVpE4vQ2RM",
-          "startSeconds": 253.518,
-          "endSeconds": 254.054,
+          "startSeconds": 170.094,
+          "endSeconds": 170.63,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim reload; echo \"EXIT=$?\"",
           "output": "Reload requested for com.appandflow.trailhead on stim-bench-launch-crash-stim (<simulator-udid>) via deep-link; android Metro port 8082. Completion is not observed; verify the expected UI and run stim logs --errors.\nEXIT=0\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
           "exitCode": 0,
@@ -281,8 +281,8 @@
         },
         {
           "id": "toolu_014uYds1RMVzvjKVt3EQqKYV",
-          "startSeconds": 256.219,
-          "endSeconds": 256.36,
+          "startSeconds": 172.795,
+          "endSeconds": 172.936,
           "command": "cd ./worktrees/bench-launch-crash-stim && stim logs --errors; echo \"EXIT=$?\"",
           "output": "No matching log records in results/opus-android-launch-error/launch-crash-stim/stim-home/workspaces/bench-opus-android-launch-error-opus-launch-cras--bbef3032c42f5dd6/logs\nEXIT=0\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
           "exitCode": 0,
@@ -293,8 +293,8 @@
         },
         {
           "id": "toolu_01WKue1H6mH3DWZXnBUcXNQL",
-          "startSeconds": 261.328,
-          "endSeconds": 263.968,
+          "startSeconds": 177.904,
+          "endSeconds": 180.544,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
           "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/launch-crash-stim\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 22 visible nodes (64 total)\nCollapsed 42 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [scroll-area] [scrollable]\n@e2 [text-field] \"Search trails, regions, tags\" [editable]\n@e3 [horizontalscrollview] \"Bas-Saint-Laurent, Adirondacks, All regions\" [scrollable]\n@e4 [button] \"All regions\"\n@e6 [button] \"Adirondacks\"\n@e8 [button] \"Bas-Saint-Laurent\"\n@e10 [horizontalscrollview] \"Hard, Moderate, Easy, Any level\" [scrollable]\n@e11 [button] \"Any level\"\n@e13 [button] \"Easy\"\n@e15 [button] \"Moderate\"\n@e17 [button] \"Hard\"\n@e19 [button] \"Expert\"\n@e20 [button] \"Sort by name\"\n@e22 [button] \"Sort by distance\"\n@e24 [button] \"Sort by rating\"\n@e26 [scroll-area] \"Belvedere de la Tour Bleu, Mont-Tremblant, , 1.9 km, , 701 m, , 1:31:00, Hard, , 5.0, (609), Belvedere de la Chute, Gaspesie, 11 km, 1106 m, 4:16:00, Moderate, 3.8, (837)\" [scrollable]\n  [content below scroll-area hidden]\n@e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n@e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e53 [group] \", Trails\"\n@e56 [group] \", Record\"\n@e59 [group] \", History\"\n@e62 [group] \", Settings\"",
           "exitCode": 0,
@@ -305,8 +305,8 @@
         },
         {
           "id": "toolu_013J7Tn4k4RU8gx2jknfG9Gs",
-          "startSeconds": 268.516,
-          "endSeconds": 269.167,
+          "startSeconds": 185.092,
+          "endSeconds": 185.743,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device record start tmp/launch-crash-stim-session.mp4 --scope device --quality high --hide-touches",
           "output": "tmp/launch-crash-stim-session.mp4\nSession state: ./state/agent-device/sessions/launch-crash-stim",
           "exitCode": 0,
@@ -317,8 +317,8 @@
         },
         {
           "id": "toolu_01PfQmM3EACQNwRxyVrS5d27",
-          "startSeconds": 272.061,
-          "endSeconds": 273.503,
+          "startSeconds": 188.637,
+          "endSeconds": 190.079,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device click @e62 --settle",
           "output": "Tapped @e62 (280, 592)\nsettled after 1085ms: +18 -50 (~14 unchanged)\n- @e2 [text-field] \"Search trails, regions, tags\"\n- @e3 [horizontalscrollview]\n- @e4 [button] \"All regions\"\n- @e5 [text] \"All regions\"\n- @e6 [button] \"Adirondacks\"\n- @e7 [text] \"Adirondacks\"\n- @e8 [button] \"Bas-Saint-Laurent\"\n- @e9 [text] \"Bas-Saint-Laurent\"\n- @e10 [horizontalscrollview]\n- @e11 [button] \"Any level\"\n- @e12 [text] \"Any level\"\n- @e13 [button] \"Easy\"\n- @e14 [text] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [text] \"Moderate\"\n- @e17 [button] \"Hard\"\n- @e18 [text] \"Hard\"\n- @e19 [button] \"Expert\"\n- @e20 [button] \"Sort by name\"\n- @e21 [text] \"Name\"\n- @e22 [button] \"Sort by distance\"\n- @e23 [text] \"Distance\"\n- @e24 [button] \"Sort by rating\"\n- @e25 [text] \"Rating\"\n- @e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e28 [text] \"Belvedere de la Chute\"\n- @e29 [text] \"Gaspesie\"\n- @e30 [text] \"\"\n- @e31 [text] \"11 km\"\n- @e32 [text] \"\"\n- @e33 [text] \"1106 m\"\n- @e34 [text] \"\"\n- @e35 [text] \"4:16:00\"\n- @e36 [text] \"Moderate\"\n- @e37 [text] \"\"\n- @e38 [text] \"3.8\"\n- @e39 [text] \"(837)\"\n- @e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e41 [text] \"Belvedere de la Tour Bleu\"\n- @e42 [text] \"Mont-Tremblant\"\n- @e43 [text] \"\"\n- @e44 [text] \"1.9 km\"\n- @e45 [text] \"\"\n- @e46 [text] \"701 m\"\n- @e47 [text] \"\"\n- @e48 [text] \"1:31:00\"\n- @e49 [text] \"Hard\"\n- @e50 [text] \"\"\n- @e51 [text] \"5.0\"\n- @e52 [text] \"(609)\"\n+ @e3~s710803 [text] \"UNITS\"\n+ @e4~s710803 [text] \"Distance\"\n+ @e5~s710803 [text] \"\"\n+ @e6~s710803 [text] \"Used across the whole app\"\n+ @e7~s710803 [button] \"Metric units\"\n+ @e8~s710803 [text] \"Metric\"\n+ @e9~s710803 [button] \"Imperial units\"\n+ @e10~s710803 [text] \"Imperial\"\n+ @e11~s710803 [text] \"PREFERENCES\"\n+ @e12~s710803 [text] \"\"\n+ @e13~s710803 [text] \"Hike reminders\"\n+ @e14~s710803 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s710803 [switch] \"Hike reminders\"\n+ @e16~s710803 [text] \"\"\n+ @e17~s710803 [text] \"Offline maps\"\n+ @e18~s710803 [text] \"Keep map tiles for saved trails on device\"\n+ @e19~s710803 [switch] \"Offline maps\"\n+ @e20~s710803 [text] \"STORAGE\"",
           "exitCode": 0,
@@ -329,8 +329,8 @@
         },
         {
           "id": "toolu_01AL9YokEUyfiRDGkDamiWZZ",
-          "startSeconds": 277.691,
-          "endSeconds": 277.832,
+          "startSeconds": 194.267,
+          "endSeconds": 194.408,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device wait text \"Keep map tiles for saved trails on device\"",
           "output": "(Bash completed with no output)",
           "exitCode": 0,
@@ -341,8 +341,8 @@
         },
         {
           "id": "toolu_019nZaFbqZkfob7U654R9Lse",
-          "startSeconds": 283.391,
-          "endSeconds": 284.889,
+          "startSeconds": 199.967,
+          "endSeconds": 201.465,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device screenshot tmp/launch-crash-stim-settings.png",
           "output": "tmp/launch-crash-stim-settings.png (320x640)",
           "exitCode": 0,
@@ -353,16 +353,16 @@
         },
         {
           "id": "toolu_01Gq4taRabm6KL1JTfiL9Mq4",
-          "startSeconds": 287.471,
-          "endSeconds": 287.496,
+          "startSeconds": 204.047,
+          "endSeconds": 204.072,
           "command": "cp tmp/launch-crash-stim-settings.png results/opus-android-launch-error/launch-crash-stim/proof/settings.png",
           "output": "(Bash completed with no output)",
           "exitCode": 0
         },
         {
           "id": "toolu_011x2XYvepTSVBidak2B1R9a",
-          "startSeconds": 290.207,
-          "endSeconds": 292.279,
+          "startSeconds": 206.783,
+          "endSeconds": 208.855,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device record stop",
           "output": "tmp/launch-crash-stim-session.mp4",
           "exitCode": 0,
@@ -373,16 +373,16 @@
         },
         {
           "id": "toolu_014ZE1PUGgwLRv3t2xdRtZkw",
-          "startSeconds": 295.536,
-          "endSeconds": 295.563,
+          "startSeconds": 212.112,
+          "endSeconds": 212.139,
           "command": "cp tmp/launch-crash-stim-session.mp4 results/opus-android-launch-error/launch-crash-stim/proof/session.mp4",
           "output": "(Bash completed with no output)",
           "exitCode": 0
         },
         {
           "id": "toolu_01Sz9njA5t7gcsSVeYmhyDc5",
-          "startSeconds": 298.075,
-          "endSeconds": 298.453,
+          "startSeconds": 214.651,
+          "endSeconds": 215.029,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device close",
           "output": "Closed: launch-crash-stim",
           "exitCode": 0,
@@ -393,8 +393,8 @@
         },
         {
           "id": "toolu_015N6x8r51EqLipUybs9fzA1",
-          "startSeconds": 300.903,
-          "endSeconds": 300.926,
+          "startSeconds": 217.479,
+          "endSeconds": 217.502,
           "command": "ls -l results/opus-android-launch-error/launch-crash-stim/proof/",
           "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
@@ -406,19 +406,19 @@
           "id": "app-alive",
           "kind": "appAlive",
           "label": "App process alive",
-          "atSeconds": 217.064
+          "atSeconds": 133.64
         },
         {
           "id": "diagnosis",
           "kind": "diagnosis",
           "label": "Actionable diagnosis",
-          "atSeconds": 236.769
+          "atSeconds": 153.345
         },
         {
           "id": "settings-ready",
           "kind": "settingsReady",
           "label": "Settings proof ready",
-          "atSeconds": 284.889
+          "atSeconds": 201.465
         }
       ],
       "proof": {
@@ -430,6 +430,17 @@
       "recording": {
         "src": "benchmarks/opus-android-launch-error/launch-crash-stim.mp4",
         "bytes": 129141
+      },
+      "timingOrigin": {
+        "kind": "first-recorded-activity",
+        "dispatchOffsetSeconds": 83.424,
+        "event": {
+          "kind": "message",
+          "id": "87098ee0-5f3d-4f32-8c32-a761063815ba-0"
+        },
+        "dispatchSettingsReadySeconds": 284.889,
+        "dispatchDiagnosisSeconds": 236.769,
+        "dispatchTotalSeconds": 314.017
       }
     },
     {
@@ -440,9 +451,9 @@
       "arm": "control",
       "valid": true,
       "invalidReasons": [],
-      "settingsReadySeconds": 462.013,
-      "appAliveSeconds": 369.861,
-      "diagnosisSeconds": 382.889,
+      "settingsReadySeconds": 378.854,
+      "appAliveSeconds": 286.702,
+      "diagnosisSeconds": 299.73,
       "diagnosisCommandCount": 25,
       "launchCrashAudit": {
         "initialLaunchCommandId": "toolu_01672z2QhNn2yZGedmPk8CWt",
@@ -452,7 +463,7 @@
       },
       "diagnosisUsage": null,
       "estimatedDiagnosisCostUsd": null,
-      "totalSeconds": 495.823,
+      "totalSeconds": 412.664,
       "commandCount": 42,
       "usage": {
         "input_tokens": 939956,
@@ -466,126 +477,126 @@
       "messages": [
         {
           "id": "c306523c-6c10-48df-95a0-22a05acf4dc8-0",
-          "atSeconds": 83.159,
+          "atSeconds": 0,
           "text": "I'll start by inspecting the fixture checkout and setting up the run worktree."
         },
         {
           "id": "bd9c1dc5-fd6f-47e5-9c65-fd68d41123af-0",
-          "atSeconds": 86.997,
+          "atSeconds": 3.838,
           "text": "Now let me create the run worktree."
         },
         {
           "id": "f333747b-1026-4e56-90c8-b897dcb7d1d8-0",
-          "atSeconds": 152.178,
+          "atSeconds": 69.019,
           "text": "Now booting the emulator in a long-lived background session."
         },
         {
           "id": "f76a859c-849f-4cfa-9035-ac92960ca094-0",
-          "atSeconds": 201.742,
+          "atSeconds": 118.583,
           "text": "Metro is ready on 8081. Now setting up adb reverse and running the native build/install/launch."
         },
         {
           "id": "6ccc7f7f-916b-4005-b14f-e40a3ffb3921-0",
-          "atSeconds": 372.592,
+          "atSeconds": 289.433,
           "text": "Build succeeded and the app launched. Now capturing the launch error from logcat."
         },
         {
           "id": "8236b821-e190-40ea-87e6-fe8e17810637-0",
-          "atSeconds": 387.46,
+          "atSeconds": 304.301,
           "text": "Error captured: `STIM_BENCH_LAUNCH_CRASH_C040648E7488` thrown from `RootLayout (./_layout.tsx)`. Now I can inspect source."
         },
         {
           "id": "e699bdc9-1745-4ade-8cc9-7a56531bd41d-0",
-          "atSeconds": 392.701,
+          "atSeconds": 309.542,
           "text": "The fix is a single-line removal. Applying it:"
         },
         {
           "id": "b03c820e-3b3a-431c-b26f-676c00a750a2-0",
-          "atSeconds": 431.204,
+          "atSeconds": 348.045,
           "text": "No crash after the fix. Now running the final proof protocol."
         },
         {
           "id": "b071023f-8405-4fd2-b041-31133ba3f308-0",
-          "atSeconds": 441.061,
+          "atSeconds": 357.902,
           "text": "Recording started. Now handling onboarding and navigating to Settings."
         },
         {
           "id": "2c55db7d-487a-4b63-83de-93db57827cd1-0",
-          "atSeconds": 449.75,
+          "atSeconds": 366.591,
           "text": "The app renders fine now. Navigating to the Settings tab."
         },
         {
           "id": "84cbdca9-6493-4a0a-b6cb-6648dc6f038d-0",
-          "atSeconds": 455.453,
+          "atSeconds": 372.294,
           "text": "Settings screen is up. Continuing with step 3."
         },
         {
           "id": "6fc02a2a-b43f-4d8b-9180-78b09f27e3f9-0",
-          "atSeconds": 495.522,
+          "atSeconds": 412.363,
           "text": "All eight proof commands succeeded in order. Metro and the app remain running on the run emulator.\n\n## Diagnosis\n\nCaptured from a completed foreground `adb -s <simulator-udid> logcat -d` query after the initial build/install/launch:\n\n```\nE ReactNativeJS: { [Error: STIM_BENCH_LAUNCH_CRASH_C040648E7488]\nE ReactNativeJS:   componentStack: '\\n    at RootLayout(./_layout.tsx) ...'\n  isComponentError: true }\n```\n\nAn unconditional `throw` was the first statement in the `RootLayout` component body (`app/_layout.tsx:27`), so every initial root render aborted before any hooks ran.\n\n## Repair\n\nOne-line deletion in `app/_layout.tsx`:\n\n```diff\n export default function RootLayout() {\n-  throw new Error('STIM_BENCH_LAUNCH_CRASH_C040648E7488');\n   const { name, colors } = useTheme();\n```\n\nAfter relaunch, logcat shows only `Running \"main\"` and an unrelated `DrawerLayoutAndroid` deprecation warning — no error. The Trails list rendered, and the Settings tab shows Units / Preferences / Storage with \"Keep map tiles for saved trails on device\".\n\n## Environment used\n\n- Run worktree: `./worktrees/launch-crash-control` (branch `bench/launch-crash-control` at fixture HEAD `82d4429`); `node_modules`, `android/.gradle`, and `android/app/build` cloned from the fixture. The fixture had no `android/build`, so nothing from `android/build/generated/autolinking` was carried; Gradle regenerated it in the run worktree.\n- AVD `Trailhead_launch-crash-control` created from `system-images;android-36;google_apis_playstore_ps16k;arm64-v8a` with the default hardware profile; `disk.dataPartition.size=8589934592` replaced the template's `6G` (single key, no duplicate). Booted with default Quick Boot policy, serial **<simulator-udid>**.\n- `adb reverse tcp:8081 tcp:8081`; `npx expo run:android --no-bundler --variant debug --device <simulator-udid>` under `set -o pipefail` → `BUILD SUCCESSFUL`, `PIPELINE_EXIT=0`.\n- Logs: `tmp/...-metro.log`, `tmp/...-build.log`, `tmp/...-emulator.log`.\n\n## Proof paths\n\n- Screenshot: `results/opus-android-launch-error/launch-crash-control/proof/settings.png`\n- Recording: `.../proof/session.mp4`"
         }
       ],
       "commands": [
         {
           "id": "toolu_01Pgn9W3ZFB4E3bfyGTKrFnv",
-          "startSeconds": 84.544,
-          "endSeconds": 85.209,
+          "startSeconds": 1.385,
+          "endSeconds": 2.05,
           "command": "pwd && git -C ./worktrees/fixture-launch-crash-control rev-parse HEAD && ls -a",
           "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
           "id": "toolu_01T5ZRqWtCh5Xc8NjTMEt6Qy",
-          "startSeconds": 85.364,
-          "endSeconds": 85.387,
+          "startSeconds": 2.205,
+          "endSeconds": 2.228,
           "command": "env | grep -Ei 'ANDROID|GRADLE|JAVA' | sort",
           "output": "ANDROID_AVD_HOME=./avds\nANDROID_EMU_CRASH_REPORTING_DATABASE=./avds/.crash-reports/70131-1788847030516\nANDROID_HOME=workspace/sdk\nANDROID_SDK=workspace/sdk\nBENCH_STIM_HOME=results/opus-android-launch-error/launch-crash-control/stim-home\nCODEX_HOME=results/opus-android-launch-error/launch-crash-control/runner-home/.codex\nGRADLE_USER_HOME=./gradle-home\nJAVA_HOME=workspace/Home\nOLDPWD=./worktrees/fixture-launch-crash-control\nPWD=./worktrees/fixture-launch-crash-control\nSTIM_HOME=results/opus-android-launch-error/launch-crash-control/stim-home\nTMPDIR=results/opus-android-launch-error/launch-crash-control/tmp\nZDOTDIR=results/opus-android-launch-error/launch-crash-control/shell-home",
           "exitCode": 0
         },
         {
           "id": "toolu_017BsJF1hjqTtHJP8PXH6e1a",
-          "startSeconds": 90.545,
-          "endSeconds": 90.675,
+          "startSeconds": 7.386,
+          "endSeconds": 7.516,
           "command": "git -C ./worktrees/fixture-launch-crash-control worktree add -b bench/launch-crash-control ./worktrees/launch-crash-control 82d4429943fceebcb5b4e1bd7c386c290ddab4f5 2>&1 | tail -20",
           "output": "Preparing worktree (new branch 'bench/launch-crash-control')\nHEAD is now at 82d4429 test: prepare launch failure fixture",
           "exitCode": 0
         },
         {
           "id": "toolu_014vQbsDNTcsx3tKNcM9yZQq",
-          "startSeconds": 91.773,
-          "endSeconds": 94.434,
+          "startSeconds": 8.614,
+          "endSeconds": 11.275,
           "command": "ls android && du -sh node_modules android/app/build android/build 2>/dev/null",
           "output": "<directory inventory omitted from public artifact>",
           "exitCode": 1
         },
         {
           "id": "toolu_01AKC2ppzWY5c2GztpmSMKMv",
-          "startSeconds": 98.36,
-          "endSeconds": 98.392,
+          "startSeconds": 15.201,
+          "endSeconds": 15.233,
           "command": "ls -a android android/app | head -40; df -T apfs workspace/ExternalSSD 2>/dev/null || df -h workspace/ExternalSSD",
           "output": "<machine storage inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
           "id": "toolu_01BbceoAuz1DmBo7TjhYH7qi",
-          "startSeconds": 103.603,
-          "endSeconds": 123.846,
+          "startSeconds": 20.444,
+          "endSeconds": 40.687,
           "command": "time cp -Rc ./worktrees/fixture-launch-crash-control/node_modules ./worktrees/launch-crash-control/node_modules 2>&1 | tail -5",
           "output": "cp -Rc   2>&1  0.12s user 10.94s system 54% cpu 20.221 total\ntail -5  0.00s user 0.00s system 0% cpu 20.221 total",
           "exitCode": 0
         },
         {
           "id": "toolu_019ob7eJTm45jejcxjpGKXG6",
-          "startSeconds": 128.131,
-          "endSeconds": 128.539,
+          "startSeconds": 44.972,
+          "endSeconds": 45.38,
           "command": "time cp -Rc ./worktrees/fixture-launch-crash-control/android/.gradle ./worktrees/launch-crash-control/android/.gradle && time cp -Rc ./worktrees/fixture-launch-crash-control/android/app/build ./worktrees/launch-crash-control/android/app/build; echo COPY_EXIT=$?",
           "output": "cp -Rc    0.00s user 0.00s system 30% cpu 0.016 total\ncp -Rc    0.00s user 0.22s system 62% cpu 0.365 total\nCOPY_EXIT=0",
           "exitCode": 0
         },
         {
           "id": "toolu_01YGRZEmYGBeUo6b8ic12znA",
-          "startSeconds": 133.564,
-          "endSeconds": 136.053,
+          "startSeconds": 50.405,
+          "endSeconds": 52.894,
           "command": "cd ./worktrees/launch-crash-control && du -sh node_modules android/.gradle android/app/build && ls android && git status --short | head",
           "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0,
@@ -596,144 +607,144 @@
         },
         {
           "id": "toolu_01EpEfKoZVHWCt6yXYVqc28E",
-          "startSeconds": 134.058,
-          "endSeconds": 136.073,
+          "startSeconds": 50.899,
+          "endSeconds": 52.914,
           "command": "cat ./worktrees/launch-crash-control/package.json",
           "output": "{\n  \"name\": \"trailhead\",\n  \"description\": \"Reference Expo app for local stim-cli iOS and Android testing\",\n  \"license\": \"MIT\",\n  \"repository\": \"https://github.com/appandflow/trailhead\",\n  \"main\": \"expo-router/entry\",\n  \"version\": \"1.0.0\",\n  \"scripts\": {\n    \"start\": \"expo start\",\n    \"android\": \"expo run:android\",\n    \"ios\": \"expo run:ios\",\n    \"web\": \"expo start --web\",\n    \"lint\": \"expo lint\",\n    \"typecheck\": \"tsc --noEmit\",\n    \"bench\": \"node bench/bench.mjs\"\n  },\n  \"dependencies\": {\n    \"@expo/vector-icons\": \"^15.0.2\",\n    \"@react-navigation/bottom-tabs\": \"^7.3.10\",\n    \"@react-navigation/elements\": \"^2.3.8\",\n    \"@react-navigation/native\": \"^7.1.6\",\n    \"@shopify/flash-list\": \"2.0.2\",\n    \"@shopify/react-native-skia\": \"2.11.2\",\n    \"@tanstack/react-query\": \"^5.101.4\",\n    \"date-fns\": \"^4.4.0\",\n    \"drizzle-orm\": \"^0.45.2\",\n    \"expo\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-asset\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-blur\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-constants\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-crypto\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-dev-client\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-device\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-file-system\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-font\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-haptics\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-image\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-linear-gradient\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-linking\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-location\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-network\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-notifications\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-router\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-secure-store\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-sharing\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-splash-screen\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-sqlite\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-status-bar\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-symbols\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-system-ui\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-task-manager\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-video\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-web-browser\": \"58.0.0-canary-20260902-26df09e\",\n    \"lottie-react-native\": \"~7.3.8\",\n    \"react\": \"19.2.3\",\n    \"react-dom\": \"19.2.3\",\n    \"react-native\": \"0.87.0\",\n    \"react-native-gesture-handler\": \"~3.1.0\",\n    \"react-native-maps\": \"1.27.2\",\n    \"react-native-mmkv\": \"^4.3.2\",\n    \"react-native-nitro-modules\": \"^0.36.5\",\n    \"react-native-reanimated\": \"4.6.0\",\n    \"react-native-safe-area-context\": \"5.9.1\",\n    \"react-native-screens\": \"~4.27.0\",\n    \"react-native-svg\": \"15.15.4\",\n    \"react-native-web\": \"~0.21.0\",\n    \"react-native-webview\": \"13.16.1\",\n    \"react-native-worklets\": \"0.12.1\",\n    \"zod\": \"^4.4.3\",\n    \"zustand\": \"^5.0.15\"\n  },\n  \"devDependencies\": {\n    \"@react-native/metro-config\": \"0.87.0\",\n    \"@types/react\": \"~19.2.0\",\n    \"drizzle-kit\": \"^0.31.10\",\n    \"eslint\": \"^9.25.0\",\n    \"eslint-config-expo\": \"58.0.0-canary-20260902-26df09e\",\n    \"typescript\": \"~6.0.3\"\n  },\n  \"overrides\": {\n    \"@expo/vector-icons\": {\n      \"expo-font\": \"$expo-font\"\n    },\n    \"drizzle-orm\": {\n      \"expo-sqlite\": \"$expo-sqlite\"\n    },\n    \"expo-modules-core\": {\n      \"react-native-worklets\": \"$react-native-worklets\"\n    }\n  },\n  \"expo\": {\n    \"autolinking\": {\n      \"ios\": {\n        \"buildFromSource\": [\"expo-video\"]\n      }\n    },\n    \"install\": {\n      \"exclude\": [\n        \"@shopify/react-native-skia\",\n        \"react-native-reanimated\",\n        \"react-native-worklets\",\n        \"react-native-safe-area-context\"\n      ]\n    },\n    \"doctor\": {\n      \"appConfigFieldsNotSyncedCheck\": {\n        \"enabled\": false\n      }\n    }\n  },\n  \"private\": true\n}",
           "exitCode": 0
         },
         {
           "id": "toolu_01Rd3CRMm2kr6gLepfMh2Sc7",
-          "startSeconds": 139.593,
-          "endSeconds": 139.626,
+          "startSeconds": 56.434,
+          "endSeconds": 56.467,
           "command": "ls workspace/android-36 2>&1; ls ./avds 2>&1 | head",
           "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
           "id": "toolu_01VHF5PeZ2ADq744kZXF9UU2",
-          "startSeconds": 142.577,
-          "endSeconds": 143.243,
+          "startSeconds": 59.418,
+          "endSeconds": 60.084,
           "command": "echo no | workspace/avdmanager create avd -n Trailhead_launch-crash-control -k \"system-images;android-36;google_apis_playstore_ps16k;arm64-v8a\" 2>&1 | tail -20; echo EXIT=$?",
           "output": "Warning: This version only understands SDK XML versions up to 3 but an SDK XML file of version 4 was encountered. This can happen if you use versions of Android Studio and the command-line tools that were released at different times.\nAuto-selecting single ABI arm64-v8a\nDo you wish to create a custom hardware profile? [no] EXIT=0",
           "exitCode": 0
         },
         {
           "id": "toolu_01HAH8xBKMiMKjFPEAZxfXRb",
-          "startSeconds": 145.844,
-          "endSeconds": 145.868,
+          "startSeconds": 62.685,
+          "endSeconds": 62.709,
           "command": "AVD=./avds/Trailhead_launch-crash-control.avd; printf 'disk.dataPartition.size=8589934592\\n' >> \"$AVD/config.ini\"; grep -n 'disk.dataPartition.size' \"$AVD/config.ini\"",
           "output": "9:disk.dataPartition.size=6G\n137:disk.dataPartition.size=8589934592",
           "exitCode": 0
         },
         {
           "id": "toolu_012pQKd2VXRgiCP3oh8aEhzQ",
-          "startSeconds": 150.846,
-          "endSeconds": 150.888,
+          "startSeconds": 67.687,
+          "endSeconds": 67.729,
           "command": "AVD=./avds/Trailhead_launch-crash-control.avd; grep -v '^disk.dataPartition.size=' \"$AVD/config.ini\" > \"$AVD/config.ini.tmp\" && printf 'disk.dataPartition.size=8589934592\\n' >> \"$AVD/config.ini.tmp\" && mv \"$AVD/config.ini.tmp\" \"$AVD/config.ini\" && grep -n 'disk.dataPartition.size' \"$AVD/config.ini\"",
           "output": "136:disk.dataPartition.size=8589934592",
           "exitCode": 0
         },
         {
           "id": "toolu_01GXfU8nwKTqCuziWTncUj4h",
-          "startSeconds": 154.259,
-          "endSeconds": 154.276,
+          "startSeconds": 71.1,
+          "endSeconds": 71.117,
           "command": "nohup workspace/emulator -avd Trailhead_launch-crash-control -no-snapshot-save > tmp/launch-crash-control-emulator.log 2>&1 &\necho EMU_PID=$!",
           "output": "EMU_PID=71935",
           "exitCode": 0
         },
         {
           "id": "toolu_012H5tUHV3RnvZ1mMtQzvxuA",
-          "startSeconds": 157.474,
-          "endSeconds": 160.516,
+          "startSeconds": 74.315,
+          "endSeconds": 77.357,
           "command": "kill 71935 2>/dev/null; sleep 3; pgrep -fl \"Trailhead_opus-android-launch-error\" | head",
           "output": "<process output omitted from public artifact>",
           "exitCode": 0
         },
         {
           "id": "toolu_01JmgxSQ6Uf4xAyHhNawsUjj",
-          "startSeconds": 163.087,
-          "endSeconds": 163.111,
+          "startSeconds": 79.928,
+          "endSeconds": 79.952,
           "command": "nohup workspace/emulator -avd Trailhead_launch-crash-control > tmp/launch-crash-control-emulator.log 2>&1 &\necho EMU_PID=$!",
           "output": "EMU_PID=71980",
           "exitCode": 0
         },
         {
           "id": "toolu_018EzjLdY29xL8WSmKrQTov9",
-          "startSeconds": 165.994,
-          "endSeconds": 166.046,
+          "startSeconds": 82.835,
+          "endSeconds": 82.887,
           "command": "for i in $(seq 1 60); do S=$(workspace/adb devices | grep -E '^emulator-' | awk '{print $1}'); if [ -n \"$S\" ]; then echo \"SERIALS: $S\"; break; fi; sleep 5; done; workspace/adb devices -l",
           "output": "SERIALS: <simulator-udid>\nList of devices attached\n<simulator-udid>          offline transport_id:119",
           "exitCode": 0
         },
         {
           "id": "toolu_01AswzWhKsS3TaUBWoHVRtNG",
-          "startSeconds": 169.827,
-          "endSeconds": 186.12,
+          "startSeconds": 86.668,
+          "endSeconds": 102.961,
           "command": "ADB=workspace/adb; $ADB -s <simulator-udid> wait-for-device; for i in $(seq 1 120); do B=$($ADB -s <simulator-udid> shell getprop sys.boot_completed 2>/dev/null | tr -d '\\r'); if [ \"$B\" = \"1\" ]; then echo BOOT_COMPLETED; break; fi; sleep 5; done; $ADB -s <simulator-udid> emu avd name; $ADB devices -l",
           "output": "BOOT_COMPLETED\nTrailhead_launch-crash-control\r\nOK\r\nList of devices attached\n<simulator-udid>          device product:sdk_gphone16k_arm64 model:sdk_gphone16k_arm64 device:emu64a16k transport_id:120",
           "exitCode": 0
         },
         {
           "id": "toolu_01LL3LB9FVEmTMFiB6QEHQUb",
-          "startSeconds": 194.31,
-          "endSeconds": 194.341,
+          "startSeconds": 111.151,
+          "endSeconds": 111.182,
           "command": "cd ./worktrees/launch-crash-control && nohup npx expo start --dev-client > tmp/launch-crash-control-metro.log 2>&1 &\necho METRO_PID=$!",
           "output": "METRO_PID=72150\nShell cwd was reset to ./worktrees/fixture-launch-crash-control",
           "exitCode": 0
         },
         {
           "id": "toolu_0165NgR3vYSm1zi1y4SQVdUb",
-          "startSeconds": 197.253,
-          "endSeconds": 200.325,
+          "startSeconds": 114.094,
+          "endSeconds": 117.166,
           "command": "for i in $(seq 1 60); do if curl -s -o /dev/null -w '%{http_code}' http://<local-ip>:8081/status | grep -q 200; then echo METRO_READY; break; fi; sleep 3; done; curl -s http://<local-ip>:8081/status; echo; tail -20 tmp/launch-crash-control-metro.log",
           "output": "METRO_READY\npackager-status:running\nDependency validation might be unreliable when using canary SDK versions\nStarting Metro Bundler\n\nWaiting on http://localhost:8081\n\nLogs for your project will appear below.\n| (node:72164) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n| (Use `node --trace-warnings ...` to show where the warning was created)\n| (node:72164) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n| (Use `node --trace-warnings ...` to show where the warning was created)\n| (node:72164) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n| (Use `node --trace-warnings ...` to show where the warning was created)\n| (node:72164) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n| (Use `node --trace-warnings ...` to show where the warning was created)\n| (node:72164) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n| (Use `node --trace-warnings ...` to show where the warning was created)\n| (node:72164) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n| (Use `node --trace-warnings ...` to show where the warning was created)\n| (node:72164) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n| (Use `node --trace-warnings ...` to show where the warning was created)",
           "exitCode": 0
         },
         {
           "id": "toolu_01XduQ8PPZTG2F6G5uQUXxxK",
-          "startSeconds": 203.322,
-          "endSeconds": 203.387,
+          "startSeconds": 120.163,
+          "endSeconds": 120.228,
           "command": "workspace/adb -s <simulator-udid> reverse tcp:8081 tcp:8081 && workspace/adb -s <simulator-udid> reverse --list",
           "output": "8081\nhost-19 tcp:8081 tcp:8081",
           "exitCode": 0
         },
         {
           "id": "toolu_01672z2QhNn2yZGedmPk8CWt",
-          "startSeconds": 208.107,
-          "endSeconds": 369.866,
+          "startSeconds": 124.948,
+          "endSeconds": 286.707,
           "command": "cd ./worktrees/launch-crash-control && set -o pipefail && npx expo run:android --no-bundler --variant debug --device <simulator-udid> 2>&1 | tee tmp/launch-crash-control-build.log | tail -40; echo \"PIPELINE_EXIT=$?\"",
           "output": "C/C++:       |     ^\nC/C++: 1 warning generated.\n\n> Task :expo-modules-core:mergeDebugNativeLibs\n> Task :expo-modules-core:copyDebugJniLibsProjectOnly\n> Task :react-native-reanimated:buildCMakeDebug[arm64-v8a][reanimated]\n> Task :react-native-gesture-handler:configureCMakeDebug[arm64-v8a]\n> Task :app:configureCMakeDebug[arm64-v8a]\n> Task :react-native-reanimated:externalNativeBuildDebug\n> Task :react-native-reanimated:prefabDebugPackage\n> Task :react-native-reanimated:mergeDebugNativeLibs\n> Task :react-native-reanimated:copyDebugJniLibsProjectOnly\n> Task :react-native-gesture-handler:buildCMakeDebug[arm64-v8a]\n> Task :react-native-gesture-handler:mergeDebugNativeLibs\n> Task :react-native-gesture-handler:copyDebugJniLibsProjectOnly\n> Task :shopify_react-native-skia:externalNativeBuildDebug\n> Task :shopify_react-native-skia:prefabDebugPackage\n> Task :shopify_react-native-skia:mergeDebugJniLibFolders\n> Task :shopify_react-native-skia:mergeDebugNativeLibs\n> Task :shopify_react-native-skia:copyDebugJniLibsProjectOnly\n> Task :app:buildCMakeDebug[arm64-v8a]\n> Task :app:mergeDebugNativeLibs\n> Task :app:stripDebugDebugSymbols\n> Task :app:packageDebug\n> Task :app:createDebugApkListingFileRedirect\n> Task :app:assembleDebug\n\n[Incubating] Problems report is available at: file://./worktrees/launch-crash-control/android/build/reports/problems/problems-report.html\n\nDeprecated Gradle features were used in this build, making it incompatible with Gradle 10.\n\nYou can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.\n\nFor more on this, please refer to https://docs.gradle.org/9.4.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.\n\nBUILD SUCCESSFUL in 2m 38s\n607 actionable tasks: 304 executed, 303 from cache\nWaiting on http://localhost:8081\n› Installing ./worktrees/launch-crash-control/android/app/build/outputs/apk/debug/app-debug.apk\n› Opening trailhead://expo-development-client/?url=http%3A%2F%2F<local-ip>%3A8081 on Trailhead_launch-crash-control\nPIPELINE_EXIT=0\nShell cwd was reset to ./worktrees/fixture-launch-crash-control",
           "exitCode": 0
         },
         {
           "id": "toolu_01DZQfgUYqJjCCmQJcbZNRw9",
-          "startSeconds": 374.557,
-          "endSeconds": 374.96,
+          "startSeconds": 291.398,
+          "endSeconds": 291.801,
           "command": "workspace/adb -s <simulator-udid> logcat -d 2>&1 | rg -i -n \"ReactNativeJS|ExpoModulesCore|FATAL|Exception|Error:\" | tail -60",
           "output": "82432:09-08 02:04:10.424  7373  7406 E BugleRcs: cumf: RcsServiceConnectionException:com.google.android.rcs.client.lifecycle.RcsEngineLifecycleServiceV2:UNKNOWN\n82460:09-08 02:04:10.444  7373  7409 E BugleRcs: RcsEngineLifecycleManagerV2: RcsServiceConnectionException was raised while waiting to connect to RcsEngineLifecycleServiceV2\n82461:09-08 02:04:10.444  7373  7409 E BugleRcs: cumf: RcsServiceConnectionException:com.google.android.rcs.client.lifecycle.RcsEngineLifecycleServiceV2:UNKNOWN\n82480:09-08 02:04:10.454  7034  7034 W Finsky  : [2] STU: Failed to get storage stats for package 'com.android.hardware.vibrator' (1601: Error getting stats: android.content.pm.PackageManager.NameNotFoundException)\n82487:09-08 02:04:10.456  7373  7409 E BugleRcs: RcsEngineLifecycleManagerV2: RcsServiceConnectionException was raised while waiting to connect to RcsEngineLifecycleServiceV2\n82488:09-08 02:04:10.456  7373  7409 E BugleRcs: cumf: RcsServiceConnectionException:com.google.android.rcs.client.lifecycle.RcsEngineLifecycleServiceV2:UNKNOWN\n82503:09-08 02:04:10.456  7373  7406 E BugleRcs: RcsEngineLifecycleManagerV2: RcsServiceConnectionException was raised while waiting to connect to RcsEngineLifecycleServiceV2\n82504:09-08 02:04:10.456  7373  7406 E BugleRcs: cumf: RcsServiceConnectionException:com.google.android.rcs.client.lifecycle.RcsEngineLifecycleServiceV2:UNKNOWN\n82547:09-08 02:04:10.469  7034  7034 W Finsky  : [2] STU: Failed to get storage stats for package 'com.google.android.widevine.nonupdatable' (1601: Error getting stats: android.content.pm.PackageManager.NameNotFoundException)\n82896:09-08 02:04:10.532  7034  7034 W Finsky  : [2] STU: Failed to get storage stats for package 'com.android.hardware.contexthub' (1601: Error getting stats: android.content.pm.PackageManager.NameNotFoundException)\n82897:09-08 02:04:10.532  7034  7034 W Finsky  : [2] STU: Failed to get storage stats for package 'com.android.hardware.authsecret' (1601: Error getting stats: android.content.pm.PackageManager.NameNotFoundException)\n82901:09-08 02:04:10.540  7034  7034 W Finsky  : [2] STU: Failed to get storage stats for package 'com.android.apex.cts.shim' (1601: Error getting stats: android.content.pm.PackageManager.NameNotFoundException)\n82903:09-08 02:04:10.543  7034  7034 W Finsky  : [2] STU: Failed to get storage stats for package 'com.android.hardware.thermal' (1601: Error getting stats: android.content.pm.PackageManager.NameNotFoundException)\n82943:09-08 02:04:10.587  7034  7034 E Finsky  : java.lang.UnsupportedOperationException: Unauth not supported in gRPC BrowseService.\n83229:09-08 02:04:10.605  7373  8226 E GoogleApiManager: java.lang.SecurityException: Unknown calling package name 'com.google.android.gms'.\n83230:09-08 02:04:10.605  7373  8226 E GoogleApiManager: \tat android.os.Parcel.createExceptionOrNull(Parcel.java:3340)\n83231:09-08 02:04:10.605  7373  8226 E GoogleApiManager: \tat android.os.Parcel.createException(Parcel.java:3324)\n83232:09-08 02:04:10.605  7373  8226 E GoogleApiManager: \tat android.os.Parcel.readException(Parcel.java:3307)\n83233:09-08 02:04:10.605  7373  8226 E GoogleApiManager: \tat android.os.Parcel.readException(Parcel.java:3249)\n83283:09-08 02:04:10.619  7034  7034 W Finsky  : [2] STU: Failed to get storage stats for package 'com.android.hardware.uwb' (1601: Error getting stats: android.content.pm.PackageManager.NameNotFoundException)\n83294:09-08 02:04:10.629  7034  7034 W Finsky  : [2] STU: Failed to get storage stats for package 'com.android.virt' (1601: Error getting stats: android.content.pm.PackageManager.NameNotFoundException)\n83295:09-08 02:04:10.629  7034  7034 W Finsky  : [2] STU: Failed to get storage stats for package 'com.android.hardware.neuralnetworks' (1601: Error getting stats: android.content.pm.PackageManager.NameNotFoundException)\n83308:09-08 02:04:10.638  7034  7034 W Finsky  : [2] STU: Failed to get storage stats for package 'com.android.i18n' (1601: Error getting stats: android.content.pm.PackageManager.NameNotFoundException)\n83310:09-08 02:04:10.638  7373  8226 E GoogleApiManager: java.lang.SecurityException: Unknown calling package name 'com.google.android.gms'.\n83311:09-08 02:04:10.638  7373  8226 E GoogleApiManager: \tat android.os.Parcel.createExceptionOrNull(Parcel.java:3340)\n83312:09-08 02:04:10.638  7373  8226 E GoogleApiManager: \tat android.os.Parcel.createException(Parcel.java:3324)\n83313:09-08 02:04:10.638  7373  8226 E GoogleApiManager: \tat android.os.Parcel.readException(Parcel.java:3307)\n83314:09-08 02:04:10.638  7373  8226 E GoogleApiManager: \tat android.os.Parcel.readException(Parcel.java:3249)\n83327:09-08 02:04:10.639  7373  8227 W FlagStore: java.util.concurrent.ExecutionException: gvvj: 17: 17: API: Phenotype.API is not available on this device. Connection failed with: ConnectionResult{statusCode=DEVELOPER_ERROR, resolution=null, message=null, clientMethodKey=null}\n83390:09-08 02:04:10.645  7034  7034 W Finsky  : [2] STU: Failed to get storage stats for package 'com.android.hardware.dumpstate' (1601: Error getting stats: android.content.pm.PackageManager.NameNotFoundException)\n83393:09-08 02:04:10.647  7034  7034 W Finsky  : [2] STU: Failed to get storage stats for package 'com.android.hardware.cas' (1601: Error getting stats: android.content.pm.PackageManager.NameNotFoundException)\n83397:09-08 02:04:10.654  7034  7034 W Finsky  : [2] STU: Failed to get storage stats for package 'com.google.android.runtime' (1601: Error getting stats: android.content.pm.PackageManager.NameNotFoundException)\n83398:09-08 02:04:10.655  7034  7034 W Finsky  : [2] STU: Failed to get storage stats for package 'com.android.devicelock' (1601: Error getting stats: android.content.pm.PackageManager.NameNotFoundException)\n83401:09-08 02:04:10.664  7034  7034 W Finsky  : [2] STU: Failed to get storage stats for package 'com.android.hardware.power' (1601: Error getting stats: android.content.pm.PackageManager.NameNotFoundException)\n83455:09-08 02:04:10.704  7034  7034 W Finsky  : [2] STU: Failed to get storage stats for package 'com.android.hardware.rebootescrow' (1601: Error getting stats: android.content.pm.PackageManager.NameNotFoundException)\n83465:09-08 02:04:10.725  7034  7034 W Finsky  : [2] STU: Failed to get storage stats for package 'com.android.hardware.gatekeeper' (1601: Error getting stats: android.content.pm.PackageManager.NameNotFoundException)\n83594:09-08 02:04:10.803  7373  7406 E BugleRcs: RcsEngineLifecycleManagerV2: RcsServiceConnectionException was raised while waiting to connect to RcsEngineLifecycleServiceV2\n83595:09-08 02:04:10.803  7373  7406 E BugleRcs: cumf: RcsServiceConnectionException:com.google.android.rcs.client.lifecycle.RcsEngineLifecycleServiceV2:UNKNOWN\n83610:09-08 02:04:10.804  7373  7406 E BugleRcs: RcsEngineLifecycleManagerV2: RcsServiceConnectionException was raised while waiting to connect to RcsEngineLifecycleServiceV2\n83611:09-08 02:04:10.804  7373  7406 E BugleRcs: cumf: RcsServiceConnectionException:com.google.android.rcs.client.lifecycle.RcsEngineLifecycleServiceV2:UNKNOWN\n84016:09-08 02:04:11.213  1346  1346 D TaskFragmentComponent: java.lang.Exception\n84067:09-08 02:04:11.267  1346  1346 W Resources: java.lang.RuntimeException\n84113:09-08 02:04:11.267  1346  1346 W Resources: java.lang.RuntimeException\n84164:09-08 02:04:11.277  7495  7495 I EmojiCompatManager: java.lang.IllegalStateException: EmojiCompat is not initialized. Please call EmojiCompat.init() first\n84350:09-08 02:04:11.343  7373  7409 E BugleRcs: RcsEngineLifecycleManagerV2: RcsServiceConnectionException was raised while waiting to connect to RcsEngineLifecycleServiceV2\n84351:09-08 02:04:11.343  7373  7409 E BugleRcs: cumf: RcsServiceConnectionException:com.google.android.rcs.client.lifecycle.RcsEngineLifecycleServiceV2:UNKNOWN\n84366:09-08 02:04:11.344  7373  7409 E BugleRcs: RcsEngineLifecycleManagerV2: RcsServiceConnectionException was raised while waiting to connect to RcsEngineLifecycleServiceV2\n84367:09-08 02:04:11.344  7373  7409 E BugleRcs: cumf: RcsServiceConnectionException:com.google.android.rcs.client.lifecycle.RcsEngineLifecycleServiceV2:UNKNOWN\n84489:09-08 02:04:11.869  8132  8132 W unknown:BridgelessReact: ReactHost{0}.raiseSoftException(onWindowFocusChange(hasFocus = \"true\")): Tried to access onWindowFocusChange while context is not ready\n84490:09-08 02:04:11.872  8132  8132 E unknown:ReactHost: Unhandled SoftException\n84491:09-08 02:04:11.872  8132  8132 E unknown:ReactHost: com.facebook.react.bridge.ReactNoCrashSoftException: raiseSoftException(onWindowFocusChange(hasFocus = \"true\")): Tried to access onWindowFocusChange while context is not ready\n84492:09-08 02:04:11.872  8132  8132 E unknown:ReactHost: \tat com.facebook.react.runtime.ReactHostImpl.raiseSoftException(ReactHostImpl.kt:904)\n84493:09-08 02:04:11.872  8132  8132 E unknown:ReactHost: \tat com.facebook.react.runtime.ReactHostImpl.raiseSoftException$default(ReactHostImpl.kt:895)\n84540:09-08 02:04:11.882  7495  7495 I EmojiCompatManager: java.lang.IllegalStateException: EmojiCompat is not initialized. Please call EmojiCompat.init() first\n84588:09-08 02:04:12.211  6855  7636 W GLSUser : [AppCertManager] Exception while requesting key: \n84589:09-08 02:04:12.211  6855  7636 W GLSUser : java.util.concurrent.ExecutionException: dhmk: Parsing Exception\n84603:09-08 02:04:12.211  6855  7636 W GLSUser : Caused by: dhmk: Parsing Exception\n84628:09-08 02:04:12.617  6873  8075 E constellation: Exception: \n84673:09-08 02:04:12.636  7373  8209 W BugleRcsEngine: UPI - verifyPhoneNumber API returned an exception: 5008: sync [<simulator-udid>] [CONTEXT log_prefix=\"(PEv2-SM127957762-DefaultCallSmsData-1-1df)\" thread_id=103 ]\n84794:09-08 02:04:13.099  1792  1853 D PickerSyncController: java.lang.IllegalStateException: Unexpected Latest Media Collection Info: ID/Gen=null/0",
           "exitCode": 0
         },
         {
           "id": "toolu_015AwgeLjzvzYtiuSAdMyppR",
-          "startSeconds": 379.275,
-          "endSeconds": 379.362,
+          "startSeconds": 296.116,
+          "endSeconds": 296.203,
           "command": "workspace/adb -s <simulator-udid> logcat -d -s ReactNativeJS:V ReactNative:E ExpoModulesCore:E AndroidRuntime:E 2>&1 | tail -80",
           "output": "--------- beginning of main\n09-08 02:04:19.097  8132  8373 I ReactNativeJS: Running \"main\" with {\"rootTag\":1,\"initialProps\":{},\"fabric\":true}\n09-08 02:04:19.243  8132  8373 W ReactNativeJS: DrawerLayoutAndroid is deprecated and will be removed in a future release. Use 'react-native-drawer-layout' instead. See https://reactnavigation.org/docs/drawer-layout/",
           "exitCode": 0
         },
         {
           "id": "toolu_013iRrAXp9qv1TDQSG3SdNvX",
-          "startSeconds": 382.793,
-          "endSeconds": 382.889,
+          "startSeconds": 299.634,
+          "endSeconds": 299.73,
           "command": "workspace/adb -s <simulator-udid> logcat -d -s ReactNativeJS:V ReactNative:E ExpoModulesCore:E AndroidRuntime:E EXPO_DEV_CLIENT:V 2>&1 | tail -80",
           "output": "--------- beginning of main\n09-08 02:04:19.097  8132  8373 I ReactNativeJS: Running \"main\" with {\"rootTag\":1,\"initialProps\":{},\"fabric\":true}\n09-08 02:04:19.243  8132  8373 W ReactNativeJS: DrawerLayoutAndroid is deprecated and will be removed in a future release. Use 'react-native-drawer-layout' instead. See https://reactnavigation.org/docs/drawer-layout/\n09-08 02:04:20.800  8132  8373 E ReactNativeJS: { [Error: STIM_BENCH_LAUNCH_CRASH_C040648E7488]\n09-08 02:04:20.800  8132  8373 E ReactNativeJS:   componentStack: '\\n    at RootLayout(./_layout.tsx) (http://<local-ip>:8081/node_modules/expo-router/entry.bundle//&platform=android&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.bytecode=1&transform.routerRoot=app&transform.reactCompiler=true&unstable_transformProfile=hermes-stable:322485:20)\\n    at WrappedScreenComponent (http://<local-ip>:8081/node_modules/expo-router/entry.bundle//&platform=android&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.bytecode=1&transform.routerRoot=app&transform.reactCompiler=true&unstable_transformProfile=hermes-stable:112234:48)\\n    at Suspense (<anonymous>)\\n    at ZoomTransitionTargetContextProvider (http://<local-ip>:8081/node_modules/expo-router/entry.bundle//&platform=android&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.bytecode=1&transform.routerRoot=app&transform.reactCompiler=true&unstable_transformProfile=hermes-stable:112696:3)\\n    at Route (http://<local-ip>:8081/node_modules/expo-router/entry.bundle//&platform=android&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.bytecode=1&transform.routerRoot=app&transform.reactCompiler=true&unstable_transformProfile=hermes-stable:98223:3)\\n    at Route() (http://<local-ip>:8081/node_modules/expo-router/entry.bundle//&platform=android&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.bytecode=1&transform.routerRoot=app&transform.reactCompiler=true&unstable_transformProfile=hermes-stable:112239:5)\\n    at StaticContainer (http://<local-ip>:8081/node_modules/expo-router/entry.bundle//&platform=android&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.bytecode=1&transform.routerRoot=app&transform.reactCompiler=true&unstable_transformProfile=hermes-stable:127187:17)\\n    at EnsureSingleNavigator (http://<local-ip>:8081/node_modules/expo-router/entry.bundle//&platform=android&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.bytecode=1&transform.routerRoot=app&transform.reactCompiler=true&unstable_transformProfile=hermes-stable:127036:3)\\n    at PreventRemovalProvider (http://<local-ip>:8081/node_modules/expo-router/entry.bundle//&platform=android&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.bytecode=1&transform.routerRoot=app&transform.reactCompiler=true&unstable_transformProfile=hermes-stable:126926:3)\\n    at SceneView (http://<local-ip>:8081/node_modules/expo-router/entry.bundle//&platform=android&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.bytecode=1&transform.routerRoot=app&transform.reactCompiler=true&unstable_transformProfile=hermes-stable:126659:3)\\n    at NavigationProvider (http://<local-ip>:8081/node_modules/expo-router/entry.bundle//&platform=android&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.bytecode=1&transform.routerRoot=app&transform.reactCompiler=true&unstable_transformProfile=hermes-stable:104378:3)\\n    at NavigationContent (http://<local-ip>:8081/node_modules/expo-router/entry.bundle//&platform=android&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.bytecode=1&transform.routerRoot=app&transform.reactCompiler=true&unstable_transformProfile=hermes-stable:105408:27)\\n    at anonymous (http://<local-ip>:8081/node_modules/expo-router/entry.bundle//&platform=android&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.bytecode=1&transform.routerRoot=app&transform.reactCompiler=true&unstable_transformProfile=hermes-stable:105423:33)\\n    at Content (http://<local-ip>:8081/node_modules/expo-router/entry.bundle//&platform=android&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.bytecode=1&transform.routerRoot=app&transform.reactCompiler=true&unstable_transformProfile=hermes-stable:151502:3)\\n    at RNCSafeAreaProvider (<anonymous>)\\n    at SafeAreaProvider (http://<local-ip>:8081/node_modules/expo-router/entry.bundle//&platform=android&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.bytecode=1&transform.routerRoot=app&transform.reactCompile\n09-08 02:04:20.800  8132  8373 E ReactNativeJS:   isComponentError: true }",
           "exitCode": 0
         },
         {
           "id": "toolu_01B8ygQuXAe84xLD5eEcDzeo",
-          "startSeconds": 390.289,
-          "endSeconds": 390.366,
+          "startSeconds": 307.13,
+          "endSeconds": 307.207,
           "command": "cd ./worktrees/launch-crash-control && rg -n \"STIM_BENCH_LAUNCH_CRASH\" --glob '!node_modules' . | head -20",
           "output": "./app/_layout.tsx:27:  throw new Error('STIM_BENCH_LAUNCH_CRASH_C040648E7488');\nShell cwd was reset to ./worktrees/fixture-launch-crash-control",
           "exitCode": 0,
@@ -744,8 +755,8 @@
         },
         {
           "id": "toolu_01957UcKorJaZWvbxxhdZWRx",
-          "startSeconds": 391.037,
-          "endSeconds": 391.095,
+          "startSeconds": 307.878,
+          "endSeconds": 307.936,
           "command": "cd ./worktrees/launch-crash-control && git show --stat HEAD && git show HEAD -- app/_layout.tsx | head -80",
           "output": "commit 82d4429943fceebcb5b4e1bd7c386c290ddab4f5\nAuthor: Janic Duplessis <<local-user>@gmail.com>\nDate:   Tue Sep 8 01:57:56 2026 -0400\n\n    test: prepare launch failure fixture\n\n app/_layout.tsx | 1 +\n 1 file changed, 1 insertion(+)\ncommit 82d4429943fceebcb5b4e1bd7c386c290ddab4f5\nAuthor: Janic Duplessis <<local-user>@gmail.com>\nDate:   Tue Sep 8 01:57:56 2026 -0400\n\n    test: prepare launch failure fixture\n\ndiff --git a/app/_layout.tsx b/app/_layout.tsx\nindex 456c461..99cc000 100644\n--- a/app/_layout.tsx\n+++ b/app/_layout.tsx\n@@ -24,6 +24,7 @@ initializeDatabase();\n seedHikesIfEmpty();\n \n export default function RootLayout() {\n+  throw new Error('STIM_BENCH_LAUNCH_CRASH_C040648E7488');\n   const { name, colors } = useTheme();\n \n   useEffect(() => {\nShell cwd was reset to ./worktrees/fixture-launch-crash-control",
           "exitCode": 0,
@@ -756,8 +767,8 @@
         },
         {
           "id": "toolu_01NW2SDcRu7Yb9EW4eMGmrBs",
-          "startSeconds": 394.335,
-          "endSeconds": 394.386,
+          "startSeconds": 311.176,
+          "endSeconds": 311.227,
           "command": "cd ./worktrees/launch-crash-control && perl -ni -e \"print unless /throw new Error\\('STIM_BENCH_LAUNCH_CRASH_C040648E7488'\\);/\" app/_layout.tsx && git diff",
           "output": "diff --git a/app/_layout.tsx b/app/_layout.tsx\nindex 99cc000..456c461 100644\n--- a/app/_layout.tsx\n+++ b/app/_layout.tsx\n@@ -24,7 +24,6 @@ initializeDatabase();\n seedHikesIfEmpty();\n \n export default function RootLayout() {\n-  throw new Error('STIM_BENCH_LAUNCH_CRASH_C040648E7488');\n   const { name, colors } = useTheme();\n \n   useEffect(() => {\nShell cwd was reset to ./worktrees/fixture-launch-crash-control",
           "exitCode": 0,
@@ -768,24 +779,24 @@
         },
         {
           "id": "toolu_01M9QtLYVoCChVsuuEC5jesB",
-          "startSeconds": 399.628,
-          "endSeconds": 401.876,
+          "startSeconds": 316.469,
+          "endSeconds": 318.717,
           "command": "ADB=workspace/adb; $ADB -s <simulator-udid> logcat -c; $ADB -s <simulator-udid> shell am force-stop com.appandflow.trailhead; sleep 2; $ADB -s <simulator-udid> shell am start -a android.intent.action.VIEW -d \"trailhead://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081\" com.appandflow.trailhead 2>&1 | tail -5",
           "output": "Starting: Intent { act=android.intent.action.VIEW dat=trailhead://expo-development-client/... pkg=com.appandflow.trailhead }",
           "exitCode": 0
         },
         {
           "id": "toolu_01GAXVWXgohPLLjzdDpNJcZF",
-          "startSeconds": 404.47,
-          "endSeconds": 429.538,
+          "startSeconds": 321.311,
+          "endSeconds": 346.379,
           "command": "sleep 25; workspace/adb -s <simulator-udid> logcat -d -s ReactNativeJS:V 2>&1 | tail -20",
           "output": "--------- beginning of main\n09-08 02:04:44.174  8568  8618 I ReactNativeJS: Running \"main\" with {\"rootTag\":1,\"initialProps\":{},\"fabric\":true}\n09-08 02:04:44.312  8568  8618 W ReactNativeJS: DrawerLayoutAndroid is deprecated and will be removed in a future release. Use 'react-native-drawer-layout' instead. See https://reactnavigation.org/docs/drawer-layout/",
           "exitCode": 0
         },
         {
           "id": "toolu_01CX4fSzVGVuEfynYQ1Bs2QL",
-          "startSeconds": 432.879,
-          "endSeconds": 435.524,
+          "startSeconds": 349.72,
+          "endSeconds": 352.365,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
           "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/launch-crash-control\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 3 visible nodes (5 total)\nCollapsed 2 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [group] \"Close\"\n@e3 [scroll-area] [scrollable]\n@e4 [group] \"Continue\"",
           "exitCode": 0,
@@ -796,8 +807,8 @@
         },
         {
           "id": "toolu_01RqveUTCREmwN1Xfx5ypymN",
-          "startSeconds": 438.288,
-          "endSeconds": 438.647,
+          "startSeconds": 355.129,
+          "endSeconds": 355.488,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device record start tmp/launch-crash-control-session.mp4 --scope device --quality high --hide-touches",
           "output": "tmp/launch-crash-control-session.mp4\nSession state: ./state/agent-device/sessions/launch-crash-control",
           "exitCode": 0,
@@ -808,8 +819,8 @@
         },
         {
           "id": "toolu_01RMer9yc7qP15hAZQQ8ssRc",
-          "startSeconds": 442.316,
-          "endSeconds": 443.295,
+          "startSeconds": 359.157,
+          "endSeconds": 360.136,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device press @e4 --settle",
           "output": "Tapped @e4 (160, 552)\nsettled after 658ms: +14 -1 (~4 unchanged)\n- @e5 [text] \"Continue\"\n+ @e5~s679507 [group] \"Reload\"\n+ @e6~s679507 [text] \"Reload\"\n+ @e7~s679507 [group]\n+ @e8~s679507 [group] \"Home\"\n+ @e9~s679507 [text] \"Go home\"\n+ @e10~s679507 [group]\n+ @e11~s679507 [group] \"Performance monitor\"\n+ @e12~s679507 [text] \"Toggle performance monitor\"\n+ @e13~s679507 [group]\n+ @e14~s679507 [group] \"Element inspector\"\n+ @e15~s679507 [text] \"Toggle element inspector\"\n+ @e16~s679507 [group]\n+ @e17~s679507 [group] \"DevTools\"\n+ @e18~s679507 [text] \"Open DevTools\"",
           "exitCode": 0,
@@ -820,8 +831,8 @@
         },
         {
           "id": "toolu_01CFKfCBV5m7WmP64nGiwffu",
-          "startSeconds": 446.784,
-          "endSeconds": 448.252,
+          "startSeconds": 363.625,
+          "endSeconds": 365.093,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device back --settle",
           "output": "Back\nsettled after 1168ms: +63 -17 (~1 unchanged)\n- @e1 [group]\n- @e2 [group] \"Close\"\n- @e4 [group]\n- @e5 [group] \"Reload\"\n- @e6 [text] \"Reload\"\n- @e7 [group]\n- @e8 [group] \"Home\"\n- @e9 [text] \"Go home\"\n- @e10 [group]\n- @e11 [group] \"Performance monitor\"\n- @e12 [text] \"Toggle performance monitor\"\n- @e13 [group]\n- @e14 [group] \"Element inspector\"\n- @e15 [text] \"Toggle element inspector\"\n- @e16 [group]\n- @e17 [group] \"DevTools\"\n- @e18 [text] \"Open DevTools\"\n+ @e2~s679510 [text-field] \"Search trails, regions, tags\"\n+ @e3~s679510 [horizontalscrollview]\n+ @e4~s679510 [button] \"All regions\"\n+ @e5~s679510 [text] \"All regions\"\n+ @e6~s679510 [button] \"Adirondacks\"\n+ @e7~s679510 [text] \"Adirondacks\"\n+ @e8~s679510 [button] \"Bas-Saint-Laurent\"\n+ @e9~s679510 [text] \"Bas-Saint-Laurent\"\n+ @e10~s679510 [horizontalscrollview]\n+ @e11~s679510 [button] \"Any level\"\n+ @e12~s679510 [text] \"Any level\"\n+ @e13~s679510 [button] \"Easy\"\n+ @e14~s679510 [text] \"Easy\"\n+ @e15~s679510 [button] \"Moderate\"\n+ @e16~s679510 [text] \"Moderate\"\n+ @e17~s679510 [button] \"Hard\"\n+ @e18~s679510 [text] \"Hard\"\n+ @e19~s679510 [button] \"Expert\"\n+ @e20~s679510 [button] \"Sort by name\"\n+ @e21~s679510 [text] \"Name\"\n+ @e22~s679510 [button] \"Sort by distance\"\n+ @e23~s679510 [text] \"Distance\"\n+ @e24~s679510 [button] \"Sort by rating\"\n+ @e25~s679510 [text] \"Rating\"\n+ @e26~s679510 [scroll-area]\n+ @e27~s679510 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e28~s679510 [text] \"Belvedere de la Chute\"\n+ @e29~s679510 [text] \"Gaspesie\"\n+ @e30~s679510 [text] \"\"\n+ @e31~s679510 [text] \"11 km\"\n+ @e32~s679510 [text] \"\"\n+ @e33~s679510 [text] \"1106 m\"\n+ @e34~s679510 [text] \"\"\n+ @e35~s679510 [text] \"4:16:00\"\n+ @e36~s679510 [text] \"Moderate\"\n+ @e37~s679510 [text] \"\"\n+ @e38~s679510 [text] \"3.8\"\n+ @e39~s679510 [text] \"(837)\"\n+ @e40~s679510 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n+ @e41~s679510 [text] \"Belvedere de la Tour Bleu\"\n+ @e42~s679510 [text] \"Mont-Tremblant\"\n+ @e43~s679510 [text] \"\"\n+ @e44~s679510 [text] \"1.9 km\"\n+ @e45~s679510 [text] \"\"\n+ @e46~s679510 [text] \"701 m\"\n+ @e47~s679510 [text] \"\"\n+ @e48~s679510 [text] \"1:31:00\"\n+ @e49~s679510 [text] \"Hard\"\n+ @e50~s679510 [text] \"\"\n+ @e51~s679510 [text] \"5.0\"\n+ @e52~s679510 [text] \"(609)\"\n+ @e53~s679510 [group] \", Trails\"\n+ @e54~s679510 [text] \"\"\n+ @e55~s679510 [text] \"Trails\"\n+ @e56~s679510 [group] \", Record\"\n+ @e57~s679510 [text] \"\"\n+ @e58~s679510 [text] \"Record\"\n+ @e59~s679510 [group] \", History\"\n+ @e60~s679510 [text] \"\"\n+ @e61~s679510 [text] \"History\"\n+ @e62~s679510 [group] \", Settings\"\n+ @e63~s679510 [text] \"\"\n+ @e64~s679510 [text] \"Settings\"",
           "exitCode": 0,
@@ -832,8 +843,8 @@
         },
         {
           "id": "toolu_01YPvRVkUHMf9EZHyPCTQp6k",
-          "startSeconds": 452.312,
-          "endSeconds": 453.766,
+          "startSeconds": 369.153,
+          "endSeconds": 370.607,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device press @e62~s679510 --settle",
           "output": "Tapped @e62 (280, 592)\nsettled after 1167ms: +18 -50 (~14 unchanged)\n- @e2 [text-field] \"Search trails, regions, tags\"\n- @e3 [horizontalscrollview]\n- @e4 [button] \"All regions\"\n- @e5 [text] \"All regions\"\n- @e6 [button] \"Adirondacks\"\n- @e7 [text] \"Adirondacks\"\n- @e8 [button] \"Bas-Saint-Laurent\"\n- @e9 [text] \"Bas-Saint-Laurent\"\n- @e10 [horizontalscrollview]\n- @e11 [button] \"Any level\"\n- @e12 [text] \"Any level\"\n- @e13 [button] \"Easy\"\n- @e14 [text] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [text] \"Moderate\"\n- @e17 [button] \"Hard\"\n- @e18 [text] \"Hard\"\n- @e19 [button] \"Expert\"\n- @e20 [button] \"Sort by name\"\n- @e21 [text] \"Name\"\n- @e22 [button] \"Sort by distance\"\n- @e23 [text] \"Distance\"\n- @e24 [button] \"Sort by rating\"\n- @e25 [text] \"Rating\"\n- @e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e28 [text] \"Belvedere de la Chute\"\n- @e29 [text] \"Gaspesie\"\n- @e30 [text] \"\"\n- @e31 [text] \"11 km\"\n- @e32 [text] \"\"\n- @e33 [text] \"1106 m\"\n- @e34 [text] \"\"\n- @e35 [text] \"4:16:00\"\n- @e36 [text] \"Moderate\"\n- @e37 [text] \"\"\n- @e38 [text] \"3.8\"\n- @e39 [text] \"(837)\"\n- @e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e41 [text] \"Belvedere de la Tour Bleu\"\n- @e42 [text] \"Mont-Tremblant\"\n- @e43 [text] \"\"\n- @e44 [text] \"1.9 km\"\n- @e45 [text] \"\"\n- @e46 [text] \"701 m\"\n- @e47 [text] \"\"\n- @e48 [text] \"1:31:00\"\n- @e49 [text] \"Hard\"\n- @e50 [text] \"\"\n- @e51 [text] \"5.0\"\n- @e52 [text] \"(609)\"\n+ @e3~s679514 [text] \"UNITS\"\n+ @e4~s679514 [text] \"Distance\"\n+ @e5~s679514 [text] \"\"\n+ @e6~s679514 [text] \"Used across the whole app\"\n+ @e7~s679514 [button] \"Metric units\"\n+ @e8~s679514 [text] \"Metric\"\n+ @e9~s679514 [button] \"Imperial units\"\n+ @e10~s679514 [text] \"Imperial\"\n+ @e11~s679514 [text] \"PREFERENCES\"\n+ @e12~s679514 [text] \"\"\n+ @e13~s679514 [text] \"Hike reminders\"\n+ @e14~s679514 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s679514 [switch] \"Hike reminders\"\n+ @e16~s679514 [text] \"\"\n+ @e17~s679514 [text] \"Offline maps\"\n+ @e18~s679514 [text] \"Keep map tiles for saved trails on device\"\n+ @e19~s679514 [switch] \"Offline maps\"\n+ @e20~s679514 [text] \"STORAGE\"",
           "exitCode": 0,
@@ -844,8 +855,8 @@
         },
         {
           "id": "toolu_015q7c3HyGUpTru1GDdFgG3M",
-          "startSeconds": 457.836,
-          "endSeconds": 458.005,
+          "startSeconds": 374.677,
+          "endSeconds": 374.846,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device wait text \"Keep map tiles for saved trails on device\"",
           "output": "(Bash completed with no output)",
           "exitCode": 0,
@@ -856,8 +867,8 @@
         },
         {
           "id": "toolu_017CNf5NWac5TeRE3svHr8XL",
-          "startSeconds": 460.699,
-          "endSeconds": 462.013,
+          "startSeconds": 377.54,
+          "endSeconds": 378.854,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device screenshot tmp/launch-crash-control-settings.png",
           "output": "tmp/launch-crash-control-settings.png (320x640)",
           "exitCode": 0,
@@ -868,16 +879,16 @@
         },
         {
           "id": "toolu_01WbzvWcjaGSbmykoY7AJbm4",
-          "startSeconds": 464.765,
-          "endSeconds": 464.793,
+          "startSeconds": 381.606,
+          "endSeconds": 381.634,
           "command": "cp tmp/launch-crash-control-settings.png results/opus-android-launch-error/launch-crash-control/proof/settings.png",
           "output": "(Bash completed with no output)",
           "exitCode": 0
         },
         {
           "id": "toolu_01SRA5R2k4oTxrPkJCghHRcs",
-          "startSeconds": 467.675,
-          "endSeconds": 474.007,
+          "startSeconds": 384.516,
+          "endSeconds": 390.848,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device record stop",
           "output": "tmp/launch-crash-control-session.mp4",
           "exitCode": 0,
@@ -888,16 +899,16 @@
         },
         {
           "id": "toolu_01R3zNynHupCryTnnhrNmRJd",
-          "startSeconds": 476.693,
-          "endSeconds": 476.723,
+          "startSeconds": 393.534,
+          "endSeconds": 393.564,
           "command": "cp tmp/launch-crash-control-session.mp4 results/opus-android-launch-error/launch-crash-control/proof/session.mp4",
           "output": "(Bash completed with no output)",
           "exitCode": 0
         },
         {
           "id": "toolu_01E2Fn3Uror78fsQ2X2czwGu",
-          "startSeconds": 479.379,
-          "endSeconds": 479.711,
+          "startSeconds": 396.22,
+          "endSeconds": 396.552,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device close",
           "output": "Closed: launch-crash-control",
           "exitCode": 0,
@@ -908,8 +919,8 @@
         },
         {
           "id": "toolu_01AoVYeqBN4gCscLQ5v6ee6R",
-          "startSeconds": 481.782,
-          "endSeconds": 481.805,
+          "startSeconds": 398.623,
+          "endSeconds": 398.646,
           "command": "ls -l results/opus-android-launch-error/launch-crash-control/proof/",
           "output": "<directory inventory omitted from public artifact>",
           "exitCode": 0
@@ -921,19 +932,19 @@
           "id": "app-alive",
           "kind": "appAlive",
           "label": "App process alive",
-          "atSeconds": 369.861
+          "atSeconds": 286.702
         },
         {
           "id": "diagnosis",
           "kind": "diagnosis",
           "label": "Actionable diagnosis",
-          "atSeconds": 382.889
+          "atSeconds": 299.73
         },
         {
           "id": "settings-ready",
           "kind": "settingsReady",
           "label": "Settings proof ready",
-          "atSeconds": 462.013
+          "atSeconds": 378.854
         }
       ],
       "proof": {
@@ -945,6 +956,17 @@
       "recording": {
         "src": "benchmarks/opus-android-launch-error/launch-crash-control.mp4",
         "bytes": 265136
+      },
+      "timingOrigin": {
+        "kind": "first-recorded-activity",
+        "dispatchOffsetSeconds": 83.159,
+        "event": {
+          "kind": "message",
+          "id": "c306523c-6c10-48df-95a0-22a05acf4dc8-0"
+        },
+        "dispatchSettingsReadySeconds": 462.013,
+        "dispatchDiagnosisSeconds": 382.889,
+        "dispatchTotalSeconds": 495.823
       }
     }
   ]

@@ -42,6 +42,14 @@ export type BenchmarkUsage = {
 };
 
 export type BenchmarkRun = {
+  timingOrigin?: {
+    kind: 'first-recorded-activity';
+    dispatchOffsetSeconds: number;
+    event: { kind: 'message' | 'command'; id: string };
+    dispatchSettingsReadySeconds: number | null;
+    dispatchDiagnosisSeconds: number | null;
+    dispatchTotalSeconds: number;
+  };
   id: string;
   model: string;
   platform?: 'ios' | 'android';
