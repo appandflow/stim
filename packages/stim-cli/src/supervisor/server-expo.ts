@@ -145,6 +145,19 @@ export function cleanLine(line: unknown): string {
 export function recordFromLine(line: unknown, { stream = 'stdout' }: { stream?: string } = {}): NdjsonRecord | null {
   const msg = cleanLine(line);
   if (!msg.trim()) return null;
+  if (stream === 'stderr' && msg.startsWith('stim-bundle-response: ')) {
+    try {
+      const record = JSON.parse(msg.slice('stim-bundle-response: '.length));
+      if (
+        record.src === 'metro' &&
+        ['bundle_response_started', 'bundle_response_finished', 'bundle_response_failed'].includes(record.event) &&
+        ['ios', 'android'].includes(record.platform) &&
+        typeof record.requestId === 'string' &&
+        Number.isFinite(record.ts)
+      )
+        return record;
+    } catch {}
+  }
   const confirmed = metroStoreConfirmedRoot(msg);
   if (confirmed) {
     return {

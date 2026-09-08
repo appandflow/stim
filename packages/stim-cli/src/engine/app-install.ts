@@ -726,6 +726,9 @@ const BUNDLE_EVENTS = new Set([
   'bundle_build_failed',
   'bundling_error',
   'transformer_error',
+  'bundle_response_started',
+  'bundle_response_finished',
+  'bundle_response_failed',
 ]);
 
 export function isBundleProof(
@@ -811,26 +814,73 @@ export async function verifyLaunch({
   let activity: NdjsonRecord | null = null;
   let stabilityDeadline: number | null = null;
   let pendingAt: number | null = null;
+  let deliveryId: string | null = null;
+  let runtimeLoadingAt: number | null = null;
+  let runtimeStartedAt: number | null = null;
   while (true) {
     const metroRecords = read().filter((record) => after(record, since));
     const deviceRecords = readDevice().filter((record) => after(record, since));
     const clientRecords = readClient().filter((record) => after(record, since));
+    if (deliveryId === null) {
+      const request = metroRecords.find(
+        (record) =>
+          record.event === 'bundle_response_started' &&
+          typeof record.requestId === 'string' &&
+          isBundleProof(record, since, platform),
+      );
+      if (request) {
+        deliveryId = request.requestId as string;
+        proof = null;
+        stabilityDeadline = null;
+      }
+    }
     for (const record of metroRecords) {
       if (isBundleProof(record, since, platform)) activity = record;
-      if (!proof && isBundleReadyProof(record, since, platform)) {
+      const completed =
+        deliveryId === null
+          ? isBundleReadyProof(record, since, platform)
+          : record.event === 'bundle_response_finished' &&
+            record.requestId === deliveryId &&
+            isBundleProof(record, since, platform);
+      if (!proof && completed) {
         proof = record;
         stabilityDeadline = Number(record.ts) + Math.max(0, stabilityMs);
       }
     }
-    const readinessDeadline = proof ? Number(proof.ts) + APP_READINESS_TIMEOUT_MS : bundleDeadline;
     const signals = deviceRecords
       .filter((record) => Number(record.ts) <= now())
       .toSorted((a, b) => Number(a.ts) - Number(b.ts));
+    if (platform === 'android' && runtimeLoadingAt === null) {
+      // ReactHostImpl's Loading JS Bundle state precedes asynchronous ReactInstance.loadJSBundle evaluation.
+      const loading = signals.find(
+        (record) =>
+          record.src === 'device' &&
+          record.platform === 'android' &&
+          /^(?:unknown:)?BridgelessReact\(\d+\)$/.test(String(record.proc)) &&
+          /^ReactHost\{\d+\}\.getOrCreateReactInstanceTask\(\): Loading JS Bundle$/.test(String(record.msg)) &&
+          (stabilityDeadline === null || Number(record.ts) <= stabilityDeadline),
+      );
+      if (loading) runtimeLoadingAt = Number(loading.ts);
+    }
+    if (runtimeLoadingAt !== null && runtimeStartedAt === null) {
+      const executing = signals.find(
+        (record) =>
+          record.src === 'device' &&
+          record.platform === 'android' &&
+          Number(record.ts) >= runtimeLoadingAt! &&
+          (/^ReactNativeJS\(\d+\)$/.test(String(record.proc)) || appReadinessSignal(record, platform) !== null),
+      );
+      if (executing) runtimeStartedAt = Number(executing.ts);
+    }
+    const runtimeWaiting = runtimeLoadingAt !== null && runtimeStartedAt === null;
+    const completedAt = proof ? Math.max(Number(proof.ts), runtimeStartedAt ?? 0) : null;
+    if (completedAt !== null) stabilityDeadline = completedAt + Math.max(0, stabilityMs);
+    const readinessDeadline = completedAt !== null ? completedAt + APP_READINESS_TIMEOUT_MS : bundleDeadline;
     if (pendingAt === null) {
       const pending = signals.find(
         (record) =>
           appReadinessSignal(record, platform) === 'pending' &&
-          (stabilityDeadline === null || Number(record.ts) <= stabilityDeadline),
+          (runtimeWaiting || stabilityDeadline === null || Number(record.ts) <= stabilityDeadline),
       );
       if (pending) {
         pendingAt = Number(pending.ts);
@@ -845,7 +895,14 @@ export async function verifyLaunch({
           Number(record.ts) <= readinessDeadline &&
           appReadinessSignal(record, platform) === 'ready',
       );
-    const bundleErrors = metroRecords.filter((record) => isFatalLaunchError(record, platform));
+    const bundleErrors = metroRecords.filter(
+      (record) =>
+        isFatalLaunchError(record, platform) ||
+        (deliveryId !== null &&
+          record.event === 'bundle_response_failed' &&
+          record.requestId === deliveryId &&
+          isBundleProof(record, since, platform)),
+    );
     if (bundleErrors.length) {
       const alive = processAlive ? processAlive() : null;
       const fatalRecord = bundleErrors[bundleErrors.length - 1];
@@ -889,7 +946,7 @@ export async function verifyLaunch({
       }
       const actionableErrors = errors.filter((record) => !isIosConnectionRefusal(record, platform));
       const appErrors = actionableErrors.some(isAppLaunchError);
-      if (pendingAt === null || appErrors || ready || now() >= readinessDeadline) {
+      if ((!runtimeWaiting && pendingAt === null) || appErrors || ready || now() >= readinessDeadline) {
         return {
           verified: true,
           record: proof,
@@ -902,7 +959,7 @@ export async function verifyLaunch({
       }
     }
 
-    if (!proof && now() >= bundleDeadline) {
+    if ((!proof || runtimeWaiting) && now() >= bundleDeadline) {
       const requested = findBundleRequest(deviceRecords, since, metroPort, platform) ?? activity;
       const waitedMs = now() - startedAt;
       if (requested) {
@@ -917,7 +974,11 @@ export async function verifyLaunch({
       }
       return { verified: false, timedOut: true, mode, waitedMs };
     }
-    const deadline = proof && pendingAt !== null ? readinessDeadline : (stabilityDeadline ?? bundleDeadline);
+    const deadline = runtimeWaiting
+      ? bundleDeadline
+      : proof && pendingAt !== null
+        ? readinessDeadline
+        : (stabilityDeadline ?? bundleDeadline);
     await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
   }
 }

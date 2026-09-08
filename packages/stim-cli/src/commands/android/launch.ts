@@ -194,7 +194,7 @@ async function verifyAndroidRun({
   if (verification?.requested) {
     phase(
       'verify',
-      `BUNDLING: the app asked port ${metroPort} for its bundle and Metro was still building it ` +
+      `BUNDLING: the app asked port ${metroPort} for its bundle; build, delivery, or JavaScript loading was still pending ` +
         `after ${formatDuration(verification.waitedMs ?? 0)} (a cold bundle on a large graph outlasts this window)`,
     );
     phase(

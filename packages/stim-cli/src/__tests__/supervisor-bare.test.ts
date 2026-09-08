@@ -379,7 +379,8 @@ describe('startBareServer wiring', () => {
     expect(typeof calls.createDevMiddleware.logger.error).toBe('function');
     const middlewares = calls.runServer.options.unstable_extraMiddleware as unknown[];
     expect(typeof middlewares[0]).toBe('function');
-    expect(middlewares.slice(1)).toEqual(['community-mw', 'dev-mw']);
+    expect(typeof middlewares[1]).toBe('function');
+    expect(middlewares.slice(2)).toEqual(['community-mw', 'dev-mw']);
     expect(calls.runServer.options.websocketEndpoints).toEqual({ '/message': 'm', '/inspector': 'i' });
     expect('host' in calls.runServer.options).toBe(false);
   });
