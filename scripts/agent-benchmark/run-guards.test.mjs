@@ -65,7 +65,7 @@ describe('agent-device session isolation', () => {
         command: `${prefix}open com.appandflow.trailhead --foreground --platform ios --udid U1`,
         exitCode: 0,
       },
-    ];
+    ].map((entry, index) => Object.assign(entry, { startEventOffset: index * 2, endEventOffset: index * 2 + 1 }));
     const target = { platform: 'ios', device: 'U1' };
     expect(agentDeviceIsolationInvalidReasons(commands, prefix, target)).toEqual([]);
     expect(agentDeviceAuxiliarySessions(commands, prefix, target)).toEqual([
@@ -85,14 +85,36 @@ describe('agent-device session isolation', () => {
       })),
       [{ ...commands[0], command: commands[0].command.replace('--udid U1', '--udid U2') }, ...commands.slice(1)],
       [...commands.slice(0, 2), commands[3]],
-      [commands[0], commands[1], commands[3], commands[2]],
+      [
+        commands[0],
+        commands[1],
+        { ...commands[3], startEventOffset: 4, endEventOffset: 5 },
+        { ...commands[2], startEventOffset: 6, endEventOffset: 7 },
+      ],
       [commands[0], commands[1], { ...commands[2], exitCode: 1 }, commands[3]],
       [commands[0], { ...commands[1], command: `${auxiliary}click @e3 --session default` }, ...commands.slice(2)],
+      [commands[0], { ...commands[1], command: `${auxiliary}snapshot '--session' default` }, ...commands.slice(2)],
+      [commands[0], { ...commands[1], command: `${auxiliary}snapshot --se'ssion' default` }, ...commands.slice(2)],
+      [commands[0], { ...commands[1], command: `${auxiliary}snapshot --ses\\sion default` }, ...commands.slice(2)],
+      [...commands.slice(0, 3), { ...commands[3], startEventOffset: commands[2].startEventOffset }],
+      [
+        ...commands.slice(0, 2),
+        { ...commands[3], command: `sleep 1; ${commands[3].command}`, startEventOffset: 3, endEventOffset: 4 },
+        ...commands.slice(2),
+      ],
+      [commands[0], commands[1], { ...commands[2], parallelTimingAmbiguous: true }, commands[3]],
       [commands[0], { ...commands[1], command: `${auxiliary}click $(agent-device snapshot)` }, ...commands.slice(2)],
     ])
       expect(agentDeviceIsolationInvalidReasons(changed, prefix, target)).toContain(
         'agent-device-run-session-not-applied',
       );
+    expect(
+      agentDeviceIsolationInvalidReasons(
+        [commands[0], { ...commands[1], command: `${auxiliary}fill @e3 "hello there"` }, ...commands.slice(2)],
+        prefix,
+        target,
+      ),
+    ).toEqual([]);
   });
 
   it('accepts delayed scoped navigation without splitting quoted separators', () => {

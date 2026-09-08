@@ -128,6 +128,32 @@ export function shellCommandSegments(command) {
   return segments;
 }
 
+function literalShellArguments(command) {
+  const words = [];
+  let word = '';
+  let quote = null;
+  for (let index = 0; index < command.length; index++) {
+    const char = command[index];
+    if (char === '\\' && quote !== "'") {
+      const next = command[++index];
+      if (next == null) return null;
+      if (quote === '"' && !['$', '`', '"', '\\', '\n'].includes(next)) word += '\\';
+      if (next !== '\n') word += next;
+    } else if (quote) {
+      if (char === quote) quote = null;
+      else word += char;
+    } else if (char === "'" || char === '"') quote = char;
+    else if (/\s/.test(char)) {
+      if (word) words.push(word);
+      word = '';
+    } else if (/[<>*?[\]{}~()]/.test(char)) return null;
+    else word += char;
+  }
+  if (quote) return null;
+  if (word) words.push(word);
+  return words;
+}
+
 export function agentDeviceAuxiliarySessions(commands, expectedPrefix, target) {
   if (!target?.device || !['ios', 'android'].includes(target.platform)) return [];
   const prefix = expectedPrefix.match(
@@ -135,18 +161,18 @@ export function agentDeviceAuxiliarySessions(commands, expectedPrefix, target) {
   );
   if (!prefix) return [];
   const groups = new Map();
-  const proofOpen = commands.findIndex((entry) =>
-    topLevelShellCommand(entry.command).startsWith(`${expectedPrefix}open `),
+  const proofOpens = commands.filter((entry) =>
+    shellCommandSegments(entry.command).some((segment) => segment.startsWith(`${expectedPrefix}open `)),
   );
-  if (proofOpen < 0) return [];
-  commands.forEach((entry, index) => {
+  if (!proofOpens.length) return [];
+  commands.forEach((entry) => {
     const command = topLevelShellCommand(entry.command);
     if (!command.startsWith(`${prefix[1]}${prefix[2]}-`)) return;
     const match = command.slice(prefix[1].length).match(/^([\w.-]+) agent-device ([\s\S]+)$/);
     if (!match || !new RegExp(`^${prefix[2].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-[a-z][a-z0-9-]*$`).test(match[1]))
       return;
     const group = groups.get(match[1]) ?? [];
-    group.push({ ...entry, command, body: match[2], index });
+    group.push({ ...entry, command, body: match[2] });
     groups.set(match[1], group);
   });
   const open = `open com.appandflow.trailhead --foreground --platform ${target.platform} ${target.platform === 'ios' ? '--udid' : '--serial'} ${target.device}`;
@@ -157,15 +183,17 @@ export function agentDeviceAuxiliarySessions(commands, expectedPrefix, target) {
       entries[0].exitCode !== 0 ||
       entries.at(-1).body !== 'close' ||
       entries.at(-1).exitCode !== 0 ||
-      entries.at(-1).index >= proofOpen ||
+      proofOpens.some((proof) => !commandCompletedBefore(entries.at(-1), proof)) ||
+      entries.slice(1).some((entry, index) => !commandCompletedBefore(entries[index], entry)) ||
       entries.some((entry) => shellCommandSegments(entry.command).length !== 1 || /[$`]/.test(entry.command)) ||
-      entries
-        .slice(1, -1)
-        .some(
-          (entry) =>
-            !/^(?:click|press|fill|snapshot|wait|screenshot|back|scroll)(?:\s|$)/.test(entry.body) ||
-            /--(?:session|state-dir|udid|serial|platform|device)(?:[=\s]|$)/.test(entry.body),
-        )
+      entries.slice(1, -1).some((entry) => {
+        const args = literalShellArguments(entry.body);
+        return (
+          !args ||
+          !/^(?:click|press|fill|snapshot|wait|screenshot|back|scroll)$/.test(args[0]) ||
+          args.some((arg) => /^--(?:session|state-dir|udid|serial|platform|device)(?:=|$)/.test(arg))
+        );
+      })
     )
       return [];
     return [{ session, commands: entries.map(({ id, command }) => ({ commandId: id, command })) }];
