@@ -97,6 +97,16 @@ wrapper returning is not proof its shell process exited. Collection rejects Stim
 start, platform, or dependency-install commands that overlap worktree warm or lack
 proof of an earlier successful warm. Explicitly detached control processes retain
 their separate PID/log monitoring.
+Claude runs in one-shot print mode, which the coordinator does not resume after
+a scheduled wakeup. Both arms set `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` and
+`CLAUDE_CODE_DISABLE_CRON=1` so finite shell work stays in the active turn rather
+than depending on a later notification. The available tools are restricted with
+`--tools` to the same set as `--allowedTools`; auto-approval alone does not remove
+scheduling tools. The environment settings are recorded in each run's profile.
+Explicit shell detachment for servers remains available; agents
+must check readiness and keep working in the current turn. See the
+[Claude environment-variable reference](https://code.claude.com/docs/en/env-vars).
+
 Unfinished shell commands remain in the audit with unknown completion. Claude
 background-task submission is not command completion: a correlated terminal
 TaskOutput result must provide the shell exit status before the audit accepts it.
