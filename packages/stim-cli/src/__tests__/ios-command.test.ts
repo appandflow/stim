@@ -1,4 +1,6 @@
 import assert from 'node:assert';
+import { vi } from 'vitest';
+import * as crashDiagnostics from '../native-crash.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
@@ -874,7 +876,7 @@ describe('launch verification', () => {
 
   test('an app error with a live native process recommends reload instead of another native run', async () => {
     reserve();
-    const { errs } = await run(
+    const { errs, logs } = await run(
       {},
       {
         verifyLaunch: async () => ({
@@ -888,6 +890,8 @@ describe('launch verification', () => {
     expect(text).toMatch(/native app is still running/);
     expect(text).toContain('stim reload ios');
     expect(text).toMatch(/Do not run `stim ios` unless native inputs changed or the app process exits/);
+    expect(logs[0]).toMatch(/^WARNING: .*app errors detected/);
+    expect(logs.join('\n')).not.toContain('OK:');
   });
 
   test('a verified launch counts the device log instead of printing it', async () => {
@@ -904,7 +908,7 @@ describe('launch verification', () => {
             {
               src: 'client',
               msg: 'a redbox from the app',
-              stack: Array.from({ length: 7 }, (_, i) => ({ file: 'app.tsx', line: i + 1, fn: `frame${i}` })),
+              stack: Array.from({ length: 12 }, (_, i) => ({ file: 'app.tsx', line: i + 1, fn: `frame${i}` })),
             },
           ],
         }),
@@ -912,12 +916,12 @@ describe('launch verification', () => {
     );
     const text = errs.join('\n');
     expect(text).toMatch(
-      /^  launch {6}2 error-level records in the device log during launch \(logs --errors --source device\)$/m,
+      /^  launch {6}2 general device error-level records \(not confirmed app errors\); inspect with stim logs --errors --source device$/m,
     );
     expect(text).toMatch(/^  launch {6}a redbox from the app$/m);
     expect(text).toContain('Error stack:');
-    expect(text).toContain('at frame4 (app.tsx:5)');
-    expect(text).not.toContain('at frame5');
+    expect(text).toContain('at frame9 (app.tsx:10)');
+    expect(text).not.toContain('at frame10');
     expect(text).toContain('... 2 more frames');
     expect(text).toContain('stim logs --source all');
     expect(text).not.toMatch(/Failed to send CA Event/);
@@ -940,6 +944,8 @@ describe('launch verification', () => {
     expect(exitCode).toBe(1);
     expect(errs.join('\n')).toMatch(/attention client lost event tag/);
     expect(errs.join('\n')).toMatch(/run `stim ios` again.*Metro reload cannot restart an exited app/);
+    expect(errs.join('\n')).toContain('about a minute or longer');
+    expect(errs.join('\n')).toContain('Run `stim logs --errors` again');
   });
 
   test('a Metro build failure with a live native process recommends reload instead of another native run', async () => {
@@ -2092,7 +2098,8 @@ describe('success output', () => {
     expect(marker).toBeTruthy();
     assert(marker);
     expect(marker.src).toBe('build');
-    expect(marker.msg).toMatch(/launched com\.example\.app on BF2A.* against Metro port 8082/);
+    expect(marker.event).toBe('launch_attempt');
+    expect(marker.msg).toMatch(/launching com\.example\.app on BF2A/);
   });
 });
 
@@ -3120,6 +3127,26 @@ describe('configuration resolution', () => {
 });
 
 describe('release skips Metro entirely', () => {
+  test('an attributable native crash overrides a live release process probe', async () => {
+    const read = vi
+      .spyOn(crashDiagnostics, 'captureNativeCrashes')
+      .mockReturnValue([
+        { src: 'device', level: 'fatal', event: 'native_crash', msg: 'App.swift:17: Fatal error: release failed' },
+      ]);
+    try {
+      const { logs, errs, exitCode } = await run(
+        { configuration: 'Release', json: true },
+        {
+          verifyReleaseLaunch: async () => ({ verified: true, waitedMs: 3000 }),
+        },
+      );
+      expect(exitCode).toBe(1);
+      expect(parseFirst(logs).code).toBe('STIM_LAUNCH_FAILED');
+      expect(errs.join('\n')).toContain('FATAL: the app reported a native crash');
+    } finally {
+      read.mockRestore();
+    }
+  });
   test('no gate, no reservation needed, no port wiring, plain launch', async () => {
     const { exitCode, calls, errs } = await run({ configuration: 'Release' });
     expect(exitCode).toBe(null);
@@ -3154,6 +3181,7 @@ describe('release skips Metro entirely', () => {
     expect(parseFirst(logs).code).toBe('STIM_LAUNCH_FAILED');
     expect(errs.join('\n')).toMatch(/process exited within/);
     expect(errs.join('\n')).toMatch(/stim logs --errors/);
+    expect(errs.join('\n')).toContain('about a minute or longer');
   });
 
   test('the ios.configuration setting is the repo default, and the flag overrides it back to Debug', async () => {

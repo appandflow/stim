@@ -51,6 +51,10 @@ them. It preserves source, custom launcher settings, and the shared ccache.
   # Reproduce the affected behavior and capture the baseline errors.
   stim logs --errors
 
+  # If a native process exits with no report, inspect the captured device output.
+  # An empty query is not proof that a crashed app was healthy.
+  # See guide logs for JS/native symbolication and capture limits.
+
   # Edit JavaScript or TypeScript; Fast Refresh applies the change.
   # For UI work, wait for the expected UI and repeat the affected interaction
   # on the reported device. Keep using the existing automation session, if any.
@@ -98,6 +102,8 @@ RULES DURING THE LOOP
   still building" means Metro has not finished; wait and query the logs. For
   launch UNVERIFIED, follow the printed remedy before claiming success. JSON
   reports these as true, "bundling", and "unverified" in launched.
+  WARNING means the native launch completed with app errors, or an app readiness
+  signal was expected but not confirmed; inspect the output before claiming a healthy UI.
 - A clean logs --errors check requires exit code 0 AND no matching errors in
   captured logs. Exit code 0 alone means the query succeeded, even when errors
   were printed. Human output shows "No matching log records" on stderr for

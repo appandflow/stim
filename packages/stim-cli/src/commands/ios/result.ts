@@ -187,6 +187,7 @@ export interface ReportIosResultArgs {
   useBuildCache: boolean;
   waitedForBuild: WaitedForBuild | null;
   launchState: boolean | string;
+  launchWarning?: string;
   remote: LoadProjectProviderResult | null;
   providerName: string | null;
   closeWriter: () => void;
@@ -218,6 +219,7 @@ export function reportIosResult({
   useBuildCache,
   waitedForBuild,
   launchState,
+  launchWarning,
   remote,
   providerName,
   closeWriter,
@@ -270,11 +272,12 @@ export function reportIosResult({
     console.log(JSON.stringify(facts));
   } else {
     const summary =
-      `OK: ${bundleId} on ${deviceLabel(device, udid)}, ` +
+      `${launchWarning ? 'WARNING' : 'OK'}: ${bundleId} on ${deviceLabel(device, udid)}, ` +
       (release ? `${configuration} (embedded JS, no Metro)` : `Metro port ${metroPort}`) +
       ` (${cacheDescription(cacheHit, remote?.name ?? providerName)}, ${formatDuration(durationMs)})`;
-    const outcome =
-      launchState === LAUNCH_UNVERIFIED
+    const outcome = launchWarning
+      ? chalk.yellow(`${summary} -- ${launchWarning}`)
+      : launchState === LAUNCH_UNVERIFIED
         ? chalk.yellow(`${summary} -- launch UNVERIFIED`)
         : launchState === LAUNCH_BUNDLING
           ? chalk.green(`${summary} -- bundle requested, still building`)

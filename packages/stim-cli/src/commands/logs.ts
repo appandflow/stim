@@ -6,6 +6,10 @@ import { workspaceLogsDir } from '../paths.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import { buildCriteria, compileGrep, fileSizes, followLogs, parseSince, queryLogs } from '../logs-query.ts';
+import { errorDiagnostics } from '../error-diagnostics.ts';
+import { launchErrorPreview } from '../launch-error-preview.ts';
+import { readWorkspaceState } from '../supervisor/state.ts';
+import { captureWorkspaceCrashes } from '../native-crash.ts';
 
 const LEVEL_WIDTH = 5;
 const SRC_WIDTH = 6;
@@ -127,11 +131,11 @@ export default function logsCommand(program: Command): void {
     .option('--tail <n>', 'Only the last n matching records')
     .option(
       '--errors',
-      "Only errors and fatals since the last marker, from metro, client and build (the agent-loop query). Device errors are the OS talking, not the app -- the app's own crashes reach the client and metro streams -- so add --source device or --source all to include them.",
+      'Errors and fatals since the last marker, from metro, client and build, plus confirmed native app-crash reports. Add --source device or --source all for general device errors.',
     )
     .option('--follow', 'Keep streaming new records until interrupted')
     .option('--json', 'Emit the raw records, one per line (valid NDJSON; zero matches is zero bytes, exit 0)')
-    .action((opts: LogsOptions) => {
+    .action(async (opts: LogsOptions) => {
       const root = findProjectRoot(process.cwd());
       if (!root) {
         console.error(chalk.red('Not in a React Native project (no package.json found).'));
@@ -186,12 +190,27 @@ export default function logsCommand(program: Command): void {
           console.log(JSON.stringify(record));
           return;
         }
-        console.log(formatRecord(record, { paint: record?.level ? LEVEL_COLOURS[record.level] : undefined }));
+        const rendered = {
+          ...record,
+          msg: launchErrorPreview([record], root, { full: true }).join('\n'),
+          stack: undefined,
+        };
+        console.log(formatRecord(rendered, { paint: record?.level ? LEVEL_COLOURS[record.level] : undefined }));
       };
 
       const offsets = opts.follow ? fileSizes(dir) : null;
 
-      const records = queryLogs(query);
+      captureWorkspaceCrashes(root, dir);
+      const rawRecords = queryLogs(query);
+      const supervisorPort = readWorkspaceState(root)?.supervisor?.port;
+      const records = opts.json
+        ? rawRecords
+        : await errorDiagnostics(rawRecords, {
+            root,
+            logsDir: dir,
+            port: typeof supervisorPort === 'number' ? supervisorPort : null,
+            allowRequest: true,
+          });
       const errorCount = records.filter((record) => record.errorContext !== true).length;
       let seenErrors = 0;
       const capped =
@@ -205,7 +224,11 @@ export default function logsCommand(program: Command): void {
       for (const record of capped) emit(record);
       const hidden = errorCount - capped.filter((record) => record.errorContext !== true).length;
       if (hidden > 0) {
-        console.log(chalk.dim(`... and ${hidden} more (rerun with --tail ${hidden} or --json)`));
+        console.log(
+          chalk.dim(
+            `Showing ${ERRORS_PRINT_CAP} of ${errorCount} matching error records; ${hidden} not shown. Add --tail ${rawRecords.length} to include all captured records before grouping, or --json for raw records. Stacks are shown in full.`,
+          ),
+        );
       }
 
       if (!opts.follow) {

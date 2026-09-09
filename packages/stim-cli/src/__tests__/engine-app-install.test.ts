@@ -373,6 +373,33 @@ describe('ios', () => {
     expect(exec.calls.length).toBe(1);
   });
 
+  test('a cold Expo launch attaches console capture and passes its project URL without launching two React hosts', () => {
+    const exec = recordingExec({ outputs: { 'simctl launch': 'com.example.app: 4242' } });
+    const result = launchIosApp(
+      {
+        udid: 'U1',
+        bundleId: 'com.example.app',
+        metroPort: 8082,
+        devClientScheme: 'myapp',
+        consolePaths: { stdout: '/container/trace.out', stderr: '/container/trace.err' },
+      },
+      { exec },
+    );
+    expect(result.pid).toBe(4242);
+    expect(exec.calls[2]).toEqual([
+      'xcrun',
+      'simctl',
+      'launch',
+      '--stdout=/container/trace.out',
+      '--stderr=/container/trace.err',
+      'U1',
+      'com.example.app',
+      '--initialUrl',
+      'http://localhost:8082/?disableOnboarding=1',
+    ]);
+    expect(exec.calls).toHaveLength(3);
+  });
+
   test('a failed launch is reported, not thrown', () => {
     const exec = recordingExec({ fail: 'simctl launch' });
     expect(launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec }).reason).toMatch(

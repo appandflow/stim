@@ -31,19 +31,68 @@ available. These checks do not prove that a screen rendered correctly.
 A nonfatal error still appears as launch evidence. The agent can read the error
 and decide whether the change caused it.
 
-The human launch summary shows up to **5 error-stack frames** and **3 React
-component-stack frames**, in captured order, followed by the omitted-frame count.
+Only the human `ios` / `android` launch summary shows up to **10 frames per error,
+component, or native stack**. App-source frames take priority over dependencies;
+selected frames remain in captured order, followed by the omitted-frame count.
 Error stacks describe the call path; component stacks describe the React parent
-tree. They are labeled separately. Full captured detail remains available through
-`stim logs --source all`; add `--json` for raw records.
+tree. They are labeled separately. Every `stim logs` command, including
+`stim logs --errors`, shows full captured stacks without frame or message-length
+limits. The separate default limit of 20 error records never shortens a stack.
+Use `--source all` for all log sources, or `--json` for raw records. Text
+truncated by the runtime before capture cannot be restored.
 
-Symbolication is best effort. In development, `stim logs --errors` retains Expo's
-printed source excerpt and Call Stack; bare React Native's Metro symbolication
-responses appear as separate context, not as an inferred match to an error.
-Launch previews do not request source maps themselves. Shortened bundle locations
-are explicitly labeled **unsymbolicated**, and a component stack is never used
+Symbolication is best effort. In development, Stim asks the verified workspace's
+Metro `/symbolicate` endpoint to resolve captured JavaScript coordinates, with a
+short timeout and the original coordinates as fallback. Resolved launch context
+is saved separately so it remains readable after Metro stops. Expo's printed source
+excerpt and Call Stack are included when available. Uncorrelated bare React Native
+symbolication events remain explicitly separate context. Shortened bundle locations
+are labeled **unsymbolicated**, and a component stack is never used
 to invent a missing error stack. OS logging can truncate text before Stim captures
 it; “full” means the records actually captured, not a recovered original stack.
+
+Copies from different sources are combined only when their error title, stack
+location, platform compatibility, and timing match. Raw copies remain available
+with `--json`; repeated errors from the same source are not suppressed.
+Human queries can add a correlated device component stack to a selected Metro
+error; unrelated device errors are never added as context.
+
+#### Native crashes
+
+On iOS simulators, Stim attaches stdout/stderr on a cold launch and passes Expo's
+initial project URL directly, so
+an early Swift fatal error or uncaught exception can appear in the launch result.
+Console redirection uses the app's writable cache, including when `STIM_HOME` is
+on an external volume; captured crash evidence is retained in the workspace logs.
+OS crash reports can take about a minute or longer to arrive: rerunning
+`stim logs --errors` collects them before you stop or release the simulator.
+Reports are matched to the app, simulator, and launch time. Existing source locations
+and symbol names are retained, and app addresses are resolved with
+`atos` only when the local binary's UUID matches the report. Android reads the
+crash logcat buffer, including reports emitted outside the dead app's PID. Java
+exceptions retain their stack; C/C++ frames use matching local ELF build IDs and
+NDK tools where available. Unavailable symbols remain explicitly unresolved.
+Android can keep a crashed Java process alive behind its system crash dialog.
+Stim treats the crash report as failure even when the PID exists. Follow the
+printed app-scoped force-stop command after fixing the error, then rerun `stim android`.
+
+Confirmed app-crash reports are included in default `stim logs --errors` without
+including general OS error noise. Use `stim logs --source device --json` for full
+captured reports. A missing report is not proof that the app did not crash: OS
+reports can be delayed, physical iPhone capture is console-only, and stripped or
+remote builds may not have matching local debug symbols. This does not download
+symbols or replace Xcode/Android Studio's full crash-analysis tooling.
+
+For delayed reports, rerun `stim logs --errors` before stopping or releasing the
+device. Collection requires the workspace's current launch and device ownership
+or lease; after release, already-captured reports remain available without
+collecting another workspace's crashes.
+
+Non-follow human queries enrich errors; `--follow` streams captured records and
+does not continuously poll OS crash reports. `--json` preserves raw evidence.
+Stim does not resymbolicate an older error after a recorded Metro rebuild.
+Historical unsymbolicated JS coordinates require
+the matching bundle/source maps, not an unrelated rebuilt Metro bundle.
 
 ### Optional app-declared readiness
 

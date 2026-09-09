@@ -22,6 +22,7 @@ interface MarkerWindow {
 }
 
 export interface QueryCriteria {
+  includeNativeCrashes?: boolean;
   sources?: string[];
   minLevel?: string;
   grep?: RegExp;
@@ -79,7 +80,13 @@ export function recordMatches(record: NdjsonRecord | null | undefined, criteria:
   if (!record) return false;
   const { sources, minLevel, grep, sinceTs, errorsOnly, markerTs, bundleMarkerTs } = criteria;
 
-  if (sources && sources.length > 0 && !sources.includes(record.src as string)) return false;
+  if (
+    sources &&
+    sources.length > 0 &&
+    !sources.includes(record.src as string) &&
+    !(criteria.includeNativeCrashes && record.src === 'device' && record.event === 'native_crash')
+  )
+    return false;
   if (minLevel && levelRank(record.level) < levelRank(minLevel)) return false;
 
   if (errorsOnly) {
@@ -126,7 +133,10 @@ export function buildCriteria({
   bundleMarkerTs?: number;
   now?: number;
 } = {}): QueryCriteria {
-  const criteria: QueryCriteria = { errorsOnly: Boolean(errorsOnly) };
+  const criteria: QueryCriteria = {
+    errorsOnly: Boolean(errorsOnly),
+    includeNativeCrashes: Boolean(errorsOnly && !sources?.length),
+  };
   if (sources && sources.length > 0) criteria.sources = sources;
   else if (criteria.errorsOnly) criteria.sources = ERROR_SOURCES;
   if (minLevel) criteria.minLevel = minLevel;
@@ -196,7 +206,7 @@ function isExpoErrorContext(record: NdjsonRecord, event: unknown): boolean {
   );
 }
 
-function attachExpoErrorContext(all: NdjsonRecord[], matched: NdjsonRecord[]): NdjsonRecord[] {
+export function attachExpoErrorContext(all: NdjsonRecord[], matched: NdjsonRecord[]): NdjsonRecord[] {
   return matched.map((record) => {
     if (
       record.src !== 'metro' ||
@@ -206,7 +216,10 @@ function attachExpoErrorContext(all: NdjsonRecord[], matched: NdjsonRecord[]): N
     ) {
       return record;
     }
-    const index = all.indexOf(record);
+    const index = all.findIndex(
+      (entry) =>
+        entry.ts === record.ts && entry.src === record.src && entry.msg === record.msg && entry.event === record.event,
+    );
     if (index === -1) return record;
     const context: string[] = [];
     for (let i = index + 1; i < all.length; i += 1) {

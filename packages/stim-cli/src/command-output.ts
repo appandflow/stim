@@ -148,13 +148,16 @@ export function isAppLaunchError(record: LaunchErrorRecord): boolean {
  * Splits the error-level records a verified launch collected into the device
  * log the run counts and the records it still prints one by one.
  */
-export function launchErrorReport(records: readonly LaunchErrorRecord[]): { summary: string | null; lines: string[] } {
-  const fromDevice = records.filter((record) => record.src === 'device');
-  const lines = launchErrorPreview(records.filter(isAppLaunchError));
+export function launchErrorReport(
+  records: readonly LaunchErrorRecord[],
+  root?: string,
+): { summary: string | null; lines: string[] } {
+  const fromDevice = records.filter((record) => record.src === 'device' && !isAppLaunchError(record));
+  const lines = launchErrorPreview(records.filter(isAppLaunchError), root);
   const summary =
     fromDevice.length === 0
       ? null
-      : `${plural(fromDevice.length, 'error-level record')} in the device log during launch (logs --errors --source device)`;
+      : `${plural(fromDevice.length, 'general device error-level record')} (not confirmed app errors); inspect with stim logs --errors --source device`;
   return { summary, lines };
 }
 

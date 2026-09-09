@@ -1,4 +1,6 @@
 import { hashFile } from '../engine/installed-artifact.ts';
+import { vi } from 'vitest';
+import * as crashDiagnostics from '../native-crash.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import assert from 'node:assert';
 import { captureProcessToken } from '../process-identity.ts';
@@ -2459,8 +2461,8 @@ describe('Contract 1: the launch marker', () => {
     expect(marker).toBeTruthy();
     assert(marker);
     expect(marker.src).toBe('build');
-    expect(marker.event).toBe('app_launched');
-    expect(marker.msg).toMatch(/com\.example\.app on emulator-5584 against Metro port 8082/);
+    expect(marker.event).toBe('launch_attempt');
+    expect(marker.msg).toMatch(/launching com\.example\.app on emulator-5584/);
   });
 });
 
@@ -2728,20 +2730,23 @@ describe('launch verification', () => {
           {
             src: 'client',
             msg: 'a redbox from the app',
-            stack: Array.from({ length: 7 }, (_, i) => ({ file: 'app.tsx', line: i + 1, fn: `frame${i}` })),
+            stack: Array.from({ length: 12 }, (_, i) => ({ file: 'app.tsx', line: i + 1, fn: `frame${i}` })),
           },
         ],
       }),
     });
-    await h.run();
+    const result = await h.run();
+    expect(result.facts?.launched).toBe(true);
+    expect(h.stdout[0]).toMatch(/^WARNING: .*app errors detected/);
+    expect(h.stdout.join('\n')).not.toContain('OK:');
     const text = h.stderr.join('\n');
     expect(text).toMatch(
-      /^  launch {6}1 error-level record in the device log during launch \(logs --errors --source device\)$/m,
+      /^  launch {6}1 general device error-level record \(not confirmed app errors\); inspect with stim logs --errors --source device$/m,
     );
     expect(text).toMatch(/^  launch {6}a redbox from the app$/m);
     expect(text).toContain('Error stack:');
-    expect(text).toContain('at frame4 (app.tsx:5)');
-    expect(text).not.toContain('at frame5');
+    expect(text).toContain('at frame9 (app.tsx:10)');
+    expect(text).not.toContain('at frame10');
     expect(text).toContain('... 2 more frames');
     expect(text).toContain('stim logs --source all');
     expect(text).not.toMatch(/a native framework error/);
@@ -2759,7 +2764,8 @@ describe('launch verification', () => {
     });
     const result = await h.run();
     expect(result.ok).toBe(false);
-    expect(h.stderr.join('\n')).toMatch(/run `stim android` again.*Metro reload cannot restart an exited app/);
+    expect(h.stderr.join('\n')).toContain("adb -s 'emulator-5584' shell am force-stop 'com.example.app'");
+    expect(h.stderr.join('\n')).toMatch(/run `stim android` again.*Metro reload cannot recover/);
   });
 
   test.each([
@@ -3290,7 +3296,7 @@ describe('release skips Metro entirely', () => {
     const result = await h.run();
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe('STIM_LAUNCH_FAILED');
-    expect(h.stderr.join('\n')).toMatch(/UNVERIFIED: no com\.example\.app process/);
+    expect(h.stderr.join('\n')).toMatch(/FATAL: no com\.example\.app process/);
     expect(h.stderr.join('\n')).toMatch(/stim logs --errors/);
   });
 
@@ -3304,6 +3310,29 @@ describe('release skips Metro entirely', () => {
     expect(result.facts?.launched).toBe('unverified');
     expect(h.stderr.join('\n')).toMatch(/UNVERIFIED: the app process check failed/);
     expect(h.stderr.join('\n')).not.toMatch(/no com\.example\.app process/);
+  });
+
+  test('a release native crash overrides a still-live PID behind Android crash UI', async () => {
+    const read = vi.spyOn(crashDiagnostics, 'captureNativeCrashes').mockReturnValue([
+      {
+        src: 'device',
+        level: 'fatal',
+        event: 'native_crash',
+        msg: 'Native crash: java.lang.IllegalStateException: release failed',
+      },
+    ]);
+    try {
+      const h = harness({
+        variant: 'productionRelease',
+        verifyReleaseLaunched: async () => ({ verified: true, waitedMs: 3000, pid: 44 }),
+      });
+      const result = await h.run();
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe('STIM_LAUNCH_FAILED');
+      expect(h.stderr.join('\n')).toContain('FATAL: the app reported a native crash');
+    } finally {
+      read.mockRestore();
+    }
   });
 
   test('the android.variant setting is the repo default, and the flag overrides it back to debug', async () => {
@@ -4360,6 +4389,11 @@ describe('--device refusals found in review', () => {
     const state = JSON.stringify(readState());
     expect(state).not.toContain('RFCR7081Q9L');
     expect(loadConfig()?.projects?.[root]?.platforms?.android).toBeUndefined();
+    const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf8'));
+    expect(records.find((record) => record.event === 'launch_attempt')).toMatchObject({
+      physical: true,
+      deviceId: 'RFCR7081Q9L',
+    });
   });
 });
 

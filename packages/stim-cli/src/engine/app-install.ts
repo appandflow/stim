@@ -206,7 +206,7 @@ export function iosAppProcess(
   const e = exec || getExecutor();
   let out = '';
   try {
-    out = e.runFile('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list']);
+    out = e.runFile('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], { timeoutMs: 2000 });
   } catch {
     return undefined;
   }
@@ -225,10 +225,24 @@ export function launchIosApp(
     bundleId,
     metroPort,
     devClientScheme = null,
-  }: { udid: string; bundleId: string; metroPort: number | string | null; devClientScheme?: string | null },
+    consolePaths,
+  }: {
+    udid: string;
+    bundleId: string;
+    metroPort: number | string | null;
+    devClientScheme?: string | null;
+    consolePaths?: { stdout: string; stderr: string };
+  },
   { exec = null }: ExecOpt = {},
 ): IosLaunchResult {
   const e = exec || getExecutor();
+  const launchArgs = [
+    'simctl',
+    'launch',
+    ...(consolePaths ? [`--stdout=${consolePaths.stdout}`, `--stderr=${consolePaths.stderr}`] : []),
+    udid,
+    bundleId,
+  ];
   if (metroPort !== null) {
     try {
       e.runFile('xcrun', [
@@ -252,6 +266,15 @@ export function launchIosApp(
     if (devClientScheme) {
       const url = devClientUrl(devClientScheme, metroPort);
       try {
+        if (consolePaths && iosAppProcess(udid, bundleId, { exec: e }) === null) {
+          // Expo's EXDevLauncherController.initialUrlFromProcessInfo loads this
+          // project directly; launch-then-openurl can create two React hosts.
+          const initialUrl = new URL(url).searchParams.get('url')!;
+          const pid = parseLaunchedPid(
+            e.runFile('xcrun', [...launchArgs, '--initialUrl', initialUrl], { timeoutMs: 10000 }),
+          );
+          return { ok: true, mode: 'launch', url, jsLocation: jsLocationValue(metroPort), pid };
+        }
         e.runFile('xcrun', ['simctl', 'openurl', udid, url]);
         return { ok: true, mode: 'openurl', url, jsLocation: jsLocationValue(metroPort) };
       } catch (err) {
@@ -261,7 +284,7 @@ export function launchIosApp(
   }
 
   try {
-    const out = e.runFile('xcrun', ['simctl', 'launch', udid, bundleId]);
+    const out = e.runFile('xcrun', launchArgs, { timeoutMs: 10000 });
     const result: IosLaunchResult = { ok: true, mode: 'launch', pid: parseLaunchedPid(out) };
     if (metroPort !== null) result.jsLocation = jsLocationValue(metroPort);
     return result;
@@ -772,6 +795,31 @@ function expoBundleLine(msg: string) {
   return /\bBundl(?:ing|ed)\b/.test(msg);
 }
 
+function nativeLaunchFailure({
+  readCrashes,
+  since,
+  platform,
+  processAlive,
+  mode,
+  waitedMs,
+}: {
+  readCrashes: (() => NdjsonRecord[]) | null;
+  since: number | string | undefined;
+  platform: 'ios' | 'android' | null;
+  processAlive: (() => boolean | null) | null;
+  mode: string | null;
+  waitedMs: number;
+}): VerifyLaunchResult | null {
+  if (!readCrashes) return null;
+  const crashes = readCrashes().filter(
+    (record) =>
+      record.event === 'native_crash' && after(record, since) && recordCouldBelongToPlatform(record, platform),
+  );
+  return crashes.length
+    ? { verified: false, fatal: true, errors: crashes, processAlive: processAlive?.() ?? null, mode, waitedMs }
+    : null;
+}
+
 export async function verifyLaunch({
   logsDir,
   since,
@@ -784,6 +832,7 @@ export async function verifyLaunch({
   readRecords = null,
   readDeviceRecords = null,
   readClientRecords = null,
+  readNativeCrashes = null,
   processAlive = null,
   onReadinessPending = null,
   now = Date.now,
@@ -800,6 +849,7 @@ export async function verifyLaunch({
   readRecords?: (() => NdjsonRecord[]) | null;
   readDeviceRecords?: (() => NdjsonRecord[]) | null;
   readClientRecords?: (() => NdjsonRecord[]) | null;
+  readNativeCrashes?: (() => NdjsonRecord[]) | null;
   processAlive?: (() => boolean | null) | null;
   onReadinessPending?: (() => void) | null;
   now?: () => number;
@@ -817,10 +867,23 @@ export async function verifyLaunch({
   let deliveryId: string | null = null;
   let runtimeLoadingAt: number | null = null;
   let runtimeStartedAt: number | null = null;
+  let nextCrashCheck = startedAt + 1000;
   while (true) {
     const metroRecords = read().filter((record) => after(record, since));
     const deviceRecords = readDevice().filter((record) => after(record, since));
     const clientRecords = readClient().filter((record) => after(record, since));
+    if (now() >= nextCrashCheck) {
+      nextCrashCheck = now() + 2000;
+      const crash = nativeLaunchFailure({
+        readCrashes: readNativeCrashes,
+        since,
+        platform,
+        processAlive,
+        mode,
+        waitedMs: now() - startedAt,
+      });
+      if (crash) return crash;
+    }
     if (deliveryId === null) {
       const request = metroRecords.find(
         (record) =>
