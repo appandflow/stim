@@ -13,10 +13,12 @@ export function preparedAndroidEmulator({ config, avds, activeNames, systemImage
   }
   const record = records[0];
   if (
-    !record?.name?.startsWith('stim-') ||
+    typeof record?.name !== 'string' ||
+    !/^stim-[A-Za-z0-9._-]+$/.test(record.name) ||
     record.udid !== record.name ||
-    !record.configuration ||
-    record.deletionClaim != null ||
+    typeof record.parkedAt !== 'string' ||
+    record.configuration !== JSON.stringify([['disk.dataPartition.size', String(8 * 1024 ** 3)]]) ||
+    record.deletionClaim !== undefined ||
     (expectedName && record.name !== expectedName)
   ) {
     throw new Error('parked Android emulator identity or creation configuration is invalid');

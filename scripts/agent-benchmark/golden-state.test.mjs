@@ -28,6 +28,7 @@ describe('prepared Android pool', () => {
   const record = {
     udid: 'stim-seed',
     name: 'stim-seed',
+    parkedAt: '2026-09-09T00:00:00.000Z',
     systemImage,
     configuration: '[["disk.dataPartition.size","8589934592"]]',
   };
@@ -82,13 +83,30 @@ describe('prepared Android pool', () => {
   it('refuses unowned names, legacy configuration, and an in-progress deletion', () => {
     for (const replacement of [
       { ...record, name: 'user-device' },
+      { ...record, name: 'stim-invalid/name', udid: 'stim-invalid/name' },
       { ...record, udid: 'different' },
+      { ...record, parkedAt: undefined },
       { ...record, configuration: undefined },
+      { ...record, deletionClaim: null },
       { ...record, deletionClaim: { pid: 42 } },
     ]) {
       expect(() =>
         preparedAndroidEmulator({ ...input, config: { ...input.config, parked: { android: [replacement] } } }),
       ).toThrow('identity or creation configuration');
     }
+  });
+
+  it('refuses a consistent pool and AVD that Stim cannot adopt with benchmark defaults', () => {
+    const replacement = {
+      ...record,
+      configuration: JSON.stringify([['disk.dataPartition.size', String(10 * 1024 ** 3)]]),
+    };
+    expect(() =>
+      preparedAndroidEmulator({
+        ...input,
+        config: { ...input.config, parked: { android: [replacement] } },
+        avds: [{ ...avd, config: { 'disk.dataPartition.size': String(10 * 1024 ** 3) } }],
+      }),
+    ).toThrow('identity or creation configuration');
   });
 });
