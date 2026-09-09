@@ -9,16 +9,16 @@ function decodeStack(value: string): string {
 
 function expandStackFields(message: string): string {
   const expanded = message.replace(
-    /\b(componentStack|stack):\s*(['"])((?:\\.|(?!\2)[^\\])*)\2,?/g,
-    (_match, field: string, _quote: string, value: string) => {
-      return `${field === 'componentStack' ? 'Component' : 'Error'} stack:\n${decodeStack(value)}\n`;
+    /(?<!\w)(['"]?)(componentStack|stack)\1:\s*(['"])((?:\\.|(?!\3)[^\\])*)\3,?/g,
+    (_match, _keyQuote: string, field: string, _quote: string, value: string) => {
+      return `\n${field === 'componentStack' ? 'Component' : 'Error'} stack:\n${decodeStack(value)}\n`;
     },
   );
   return expanded.replace(
-    /(^|\n)[ \t]*(componentStack|stack):[ \t]*(['"])((?:\\.|[^\\\n])*)$/g,
-    (match, prefix: string, field: string, _quote: string, value: string) => {
+    /(^|\n|[,{])[ \t]*(['"]?)(componentStack|stack)\2:[ \t]*(['"])((?:\\.|[^\\\n])*)$/g,
+    (match, prefix: string, _keyQuote: string, field: string, _quote: string, value: string) => {
       if (!/\\n\s+at\s/.test(value)) return match;
-      return `${prefix}${field === 'componentStack' ? 'Component' : 'Error'} stack:\n${decodeStack(value)}\n[captured stack text is incomplete]`;
+      return `${prefix}\n${field === 'componentStack' ? 'Component' : 'Error'} stack:\n${decodeStack(value)}\n[captured stack text is incomplete]`;
     },
   );
 }

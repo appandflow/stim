@@ -208,6 +208,29 @@ test('launch previews preserve structured error and component stacks separately 
   expect(JSON.stringify(records)).toBe(original);
 });
 
+test('launch previews bound JSON-serialized object fields from the Metro client reporter', () => {
+  const stack = Array.from(
+    { length: 8 },
+    (_, i) => `    at error${i} (http://localhost:8082/index.bundle?platform=android:${i + 1}:2)`,
+  ).join('\n');
+  const componentStack = Array.from(
+    { length: 8 },
+    (_, i) => `    at component${i} (http://localhost:8082/index.bundle?platform=android:${i + 1}:3)`,
+  ).join('\n');
+  const record = { src: 'client', msg: JSON.stringify({ message: 'render failed', stack, componentStack }) };
+  const original = JSON.stringify(record);
+  const lines = launchErrorReport([record]).lines;
+  expect(lines).toContain('Error stack:');
+  expect(lines).toContain('  at error4 (index.bundle:5:2 [unsymbolicated])');
+  expect(lines).toContain('  ... 3 more frames');
+  expect(lines).toContain('Component stack:');
+  expect(lines).toContain('  at component2 (index.bundle:3:3 [unsymbolicated])');
+  expect(lines).toContain('  ... 5 more frames');
+  expect(lines.join('\n')).toContain('render failed');
+  expect(lines.join('\n')).not.toMatch(/error5|component3|platform=android|\\n/);
+  expect(JSON.stringify(record)).toBe(original);
+});
+
 test('launch previews do not interpret escaped newlines in ordinary error messages or discard malformed stack text', () => {
   const msg = 'Error: expected literal \\n in input';
   const malformed = "componentStack: 'unterminated text";
