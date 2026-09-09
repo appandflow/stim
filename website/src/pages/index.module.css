@@ -33,6 +33,16 @@
   display: none;
 }
 
+:global(html):has(.page),
+:global(body):has(.page) {
+  background-color: #fff;
+}
+
+:global(html[data-theme='dark']):has(.page),
+:global([data-theme='dark']) :global(body):has(.page) {
+  background-color: #5521ff;
+}
+
 .content {
   width: min(520px, calc(100% - 40px));
   margin: 0 auto;
@@ -171,26 +181,32 @@
 }
 
 .install :global(.theme-code-block),
-.install pre {
+.install pre,
+.agentSetup :global(.theme-code-block),
+.agentSetup pre {
   margin: 0;
   border-radius: 6px;
   background: var(--home-code);
   box-shadow: none;
 }
 
-.install pre code {
+.install pre code,
+.agentSetup pre code {
   padding: 14px 52px 14px 16px;
   font-size: 12px;
   line-height: 1.6;
 }
 
 .install pre,
-.install pre span {
+.install pre span,
+.agentSetup pre,
+.agentSetup pre span {
   color: var(--stim-ink) !important;
   background: transparent !important;
 }
 
-.install :global(.theme-code-block) button {
+.install :global(.theme-code-block) button,
+.agentSetup :global(.theme-code-block) button {
   color: var(--stim-muted);
   background: var(--home-background);
   opacity: 1;
@@ -278,14 +294,8 @@
   margin-bottom: 20px;
 }
 
-.agentSetup pre,
-.agentSetup pre span {
-  color: var(--stim-ink) !important;
-  background: var(--home-code);
-}
-
 .agentSetup :global(.theme-code-block) {
-  box-shadow: none;
+  margin-bottom: 20px;
 }
 
 .footer {
@@ -390,7 +400,8 @@
     height: 36px;
   }
 
-  .install pre code {
+  .install pre code,
+  .agentSetup pre code {
     font-size: 11px;
   }
 }
