@@ -114,8 +114,8 @@ Stim creates, boots, and deletes only devices it created. Owned simulators use
 the stim-<label> (<model> <runtime>) name. Never point Stim at a user-created
 emulator or simulator.
 
-worktree remove parks the workspace's simulator for later adoption. A parked
-simulator is Stim-owned: never delete one by hand. gc --delete clears verified
+worktree remove parks the workspace's simulator or emulator for later adoption.
+A parked device is Stim-owned: never delete one by hand. gc --delete clears verified
 entries and keeps failures; see guide lifecycle pool. First launch on a
 physical iPhone can need the one-time taps named by the remedy.
 

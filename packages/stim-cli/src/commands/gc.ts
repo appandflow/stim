@@ -21,6 +21,8 @@ import { emptyCaches, planCacheEmptying, selectCaches, trimCaches } from './gc/c
 import {
   collectDeviceLeases,
   collectParkedSims,
+  collectParkedAvds,
+  deleteParkedAvds,
   deleteParkedSims,
   deleteProjectDevices,
   describeUnverifiableDevices,
@@ -119,6 +121,7 @@ export async function collectGcReport(
       deviceSweepNotices: [],
       easSessionSweep: { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
       parkedSims: [],
+      parkedAvds: [],
       caches,
       cacheScope: scope,
       olderThan,
@@ -142,6 +145,7 @@ export async function collectGcReport(
     }
   }
   const parkedSims = collectParkedSims(deps);
+  const parkedAvds = collectParkedAvds(deps);
   const deadProjects: string[] = [];
   const invalidProjects: string[] = [];
   const skipped: GcSkip[] = [];
@@ -257,6 +261,7 @@ export async function collectGcReport(
     deadProjects,
     invalidProjects,
     parkedSims,
+    parkedAvds,
     orphanedDevices,
     staleDevices,
     staleDeviceRecords,
@@ -279,7 +284,7 @@ export async function collectGcReport(
 }
 
 export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}): Promise<void> {
-  const poolError = parkedMaxSetting('ios').error;
+  const poolError = parkedMaxSetting('ios').error || parkedMaxSetting('android').error;
   if (poolError) {
     console.error(chalk.yellow(`${poolError} ${POOL_SETTING_REMEDY}`));
   }
@@ -397,6 +402,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
   const actionable =
     deadProjects.length + invalidProjects.length > 0 ||
     report.parkedSims.length > 0 ||
+    report.parkedAvds.length > 0 ||
     orphanedDevices.length > 0 ||
     staleDevices.length > 0 ||
     staleDeviceRecords.length > 0 ||
@@ -419,7 +425,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     return;
   }
 
-  let deleteFailures = deleteParkedSims(report.parkedSims, deps);
+  let deleteFailures = deleteParkedSims(report.parkedSims, deps) + deleteParkedAvds(report.parkedAvds);
 
   removeInvalidProjectEntries(invalidProjects);
 

@@ -618,6 +618,58 @@ export function configureNewOwnedAvd(
   return configPath;
 }
 
+export function avdPoolConfiguration(dataPartitionSizeGb: number, avdConfig: Record<string, string>): string {
+  return JSON.stringify(
+    Object.entries({
+      ...avdConfig,
+      'disk.dataPartition.size': String(androidDataPartitionSizeBytes(dataPartitionSizeGb)),
+    }).toSorted(([a], [b]) => a.localeCompare(b)),
+  );
+}
+
+export function ownedAvdMatchesConfiguration(avdName: string, configuration: string): boolean {
+  const directory = ownedAvdDirectory(avdName);
+  if (!directory) return false;
+  const contents = readFileSync(join(directory, 'config.ini'), 'utf8');
+  const expected: unknown = JSON.parse(configuration);
+  return (
+    Array.isArray(expected) &&
+    expected.length > 0 &&
+    expected.every(
+      (entry) =>
+        Array.isArray(entry) &&
+        entry.length === 2 &&
+        entry.every((value) => typeof value === 'string') &&
+        contents.split(/\r?\n/).some((line) => line.trim() === `${entry[0]}=${entry[1]}`),
+    )
+  );
+}
+
+export function resetAdoptedAvd(avdName: string, serial: string, keepPackage: string): void {
+  const assertTarget = () => {
+    const resolved = resolveOwnedAvdSerial(avdName);
+    if (resolved.serial !== serial) throw new Error(`AVD ${avdName} is no longer running on ${serial}.`);
+  };
+  assertTarget();
+  const exec = getExecutor();
+  const output = exec.runFile('adb', ['-s', serial, 'shell', 'pm', 'list', 'packages', '-3'], { timeoutMs: 30000 });
+  const packages = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = /^package:([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+)$/.exec(line);
+      if (!match) throw new Error(`Could not read installed apps on ${avdName}: ${line}`);
+      return match[1]!;
+    });
+  for (const packageName of packages) {
+    assertTarget();
+    const args = packageName === keepPackage ? ['shell', 'pm', 'clear', packageName] : ['uninstall', packageName];
+    const result = exec.runFile('adb', ['-s', serial, ...args], { timeoutMs: 120000 });
+    if (result.trim() !== 'Success') throw new Error(`Could not clean ${packageName} on ${avdName}: ${result.trim()}`);
+  }
+}
+
 export function bootAndroidEmulator(
   avdName: string,
   consolePort: number,

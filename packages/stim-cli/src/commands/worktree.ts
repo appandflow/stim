@@ -244,7 +244,7 @@ interface ReclaimAllResult {
   parkedDevices: ParkedDevice[];
   evictedDevices: ParkedDevice[];
   poolNotes: string[];
-  parkedMax: number;
+  parkedMax: Record<'ios' | 'android', number>;
   skippedDevices: SkippedDevice[];
   keptEntries: string[];
   retainedResources: RetainedResource[];
@@ -347,7 +347,7 @@ async function reclaimAll(
     parkedDevices,
     evictedDevices,
     poolNotes,
-    parkedMax: parkedMaxSetting('ios').max,
+    parkedMax: { ios: parkedMaxSetting('ios').max, android: parkedMaxSetting('android').max },
     skippedDevices,
     keptEntries,
     retainedResources,
@@ -363,10 +363,21 @@ async function reclaimAll(
 function poolLines(result: ReclaimAllResult): string[] {
   const lines: string[] = [];
   for (const device of result.parkedDevices) {
-    lines.push(chalk.dim(phaseLine('device', `parked ${device.name} (${shortUdid(device.udid)})`)));
+    lines.push(
+      chalk.dim(
+        phaseLine(
+          'device',
+          `parked ${device.name}${device.platform === 'android' ? '' : ` (${shortUdid(device.udid)})`}`,
+        ),
+      ),
+    );
   }
   for (const device of result.evictedDevices) {
-    lines.push(chalk.dim(phaseLine('device', `deleted ${device.name} (pool over ${result.parkedMax})`)));
+    lines.push(
+      chalk.dim(
+        phaseLine('device', `deleted ${device.name} (pool over ${result.parkedMax[device.platform ?? 'ios']})`),
+      ),
+    );
   }
   for (const note of result.poolNotes) lines.push(chalk.yellow(phaseLine('device', note)));
   return lines;
@@ -532,7 +543,7 @@ function printRemovalCleanup(result: ReclaimAllResult, failed: boolean): void {
 }
 
 async function runRemove(target: string | undefined, opts: RemoveOptions = {}): Promise<void> {
-  const poolError = parkedMaxSetting('ios').error;
+  const poolError = parkedMaxSetting('ios').error || parkedMaxSetting('android').error;
   if (poolError) {
     console.error(chalk.red(poolError));
     console.error(chalk.dim(POOL_SETTING_REMEDY));

@@ -17,12 +17,15 @@ import {
   shutdownAndroidEmulator,
   waitForAndroidEmulatorShutdown,
   deleteAvd,
+  ownedAvdMatchesConfiguration,
+  ownedAvdSystemImage,
 } from './sim/android.ts';
 import { parkSim, removeParkedAfter, type ParkedSim } from './sim-pool.ts';
 
 export interface ParkedDevice {
   udid: string;
   name: string;
+  platform?: 'ios' | 'android';
 }
 
 export interface TeardownOutcome {
@@ -44,6 +47,21 @@ export interface ParkRequest {
   bundleId?: string | null;
   cacheKey?: string | null;
   simslimManaged?: boolean;
+  configuration?: string;
+}
+
+export function teardownParkedAvd(avdName: string): TeardownOutcome {
+  try {
+    const removed = removeParkedAfter('android', avdName, () => {
+      const result = teardownOwnedAvd(avdName, { del: true });
+      if (result.status !== 'torn-down' && result.status !== 'missing') throw new Error(result.reason);
+    });
+    return removed
+      ? { status: 'torn-down', label: avdName }
+      : { status: 'skipped', kind: 'not-parked', reason: 'emulator is no longer parked' };
+  } catch (error) {
+    return { status: 'failed', reason: String((error as Error)?.message || error) };
+  }
 }
 
 export function teardownParkedIosSim(
@@ -144,16 +162,19 @@ export function teardownOwnedAvd(
   avdName: string,
   {
     del = false,
+    park,
     waitForShutdown = waitForAndroidEmulatorShutdown,
     assertStopped = assertOwnedAvdStopped,
     resolveAvd = resolveOwnedAvdSerial,
   }: {
     del?: boolean;
+    park?: ParkRequest;
     waitForShutdown?: typeof waitForAndroidEmulatorShutdown;
     assertStopped?: typeof assertOwnedAvdStopped;
     resolveAvd?: typeof resolveOwnedAvdSerial;
   } = {},
 ): TeardownOutcome {
+  let parkFallback: string | undefined;
   try {
     const resolved = resolveAvd(avdName);
     if (resolved.notOwned) {
@@ -174,9 +195,52 @@ export function teardownOwnedAvd(
       if (current.missing) return { status: 'missing' };
       if (current.serial) throw new Error(`Owned AVD ${avdName} started again before deletion.`);
       assertStopped(avdName);
+      if (park && park.max > 0) {
+        try {
+          const systemImage = ownedAvdSystemImage(avdName);
+          if (!systemImage || !park.configuration || !ownedAvdMatchesConfiguration(avdName, park.configuration)) {
+            throw new Error('the AVD has no verified creation configuration');
+          }
+          const evicted = parkSim({
+            platform: 'android',
+            projectPath: park.projectPath,
+            max: park.max,
+            record: {
+              udid: avdName,
+              name: avdName,
+              systemImage,
+              configuration: park.configuration,
+              parkedAt: new Date().toISOString(),
+            },
+          });
+          const removed: ParkedDevice[] = [];
+          const failures: string[] = [];
+          for (const entry of evicted) {
+            const result = teardownParkedAvd(entry.name);
+            if (result.status === 'torn-down')
+              removed.push({ udid: entry.name, name: entry.name, platform: 'android' });
+            else if (result.status === 'failed')
+              failures.push(`could not delete evicted ${entry.name}: ${result.reason}`);
+          }
+          return {
+            status: 'torn-down',
+            label: avdName,
+            parked: { udid: avdName, name: avdName, platform: 'android' },
+            evicted: removed,
+            ...(failures.length ? { evictionFailures: failures } : {}),
+          };
+        } catch (error) {
+          parkFallback = String((error as Error)?.message || error);
+        }
+      }
       deleteAvd(avdName);
     }
-    return { status: 'torn-down', label: avdName, serial: resolved.serial ?? null };
+    return {
+      status: 'torn-down',
+      label: avdName,
+      serial: resolved.serial ?? null,
+      ...(parkFallback ? { parkFallback } : {}),
+    };
   } catch (e) {
     return { status: 'failed', reason: String((e as Error)?.message || e) };
   }

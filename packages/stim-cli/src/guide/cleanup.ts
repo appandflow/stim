@@ -5,11 +5,11 @@ const cleanup: GuideTopic = {
   preamble: () => `CLEANUP AND DISK
 
 WHAT RECLAIMS AN OWNED DEVICE
-  stim worktree remove    parks the owned simulator
-                            (\`guide lifecycle pool\`) and deletes every other
-                            owned device under the worktree
+  stim worktree remove    parks eligible owned simulators and emulators
+                            (\`guide lifecycle pool\`); deletes them when
+                            parking is disabled or their setup cannot be verified
   stim gc --delete        sweeps stim-* devices no project references, and
-                            clears verified parked simulators
+                            clears verified parked simulators and emulators
   stim gc --delete --older-than <days>
                             also reaps the device of a project nothing has
                             touched in that long, even though the project is
@@ -40,7 +40,7 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
 ON THE MAIN CHECKOUT
   git cannot remove the main working tree, and deleting the source tree is not
   what anyone meant -- so there, and only there, \`worktree remove\` reclaims
-  the ENVIRONMENT and nothing else: the owned devices are deleted, the Metro
+  the ENVIRONMENT and nothing else: the owned devices are parked or deleted, the Metro
   port freed, the registry entries (including nested monorepo app dirs)
   dropped, and the global workspace directory deleted. The tree itself is never touched, which
   is also why the dirty-tree and unpushed guards do not apply on that path.

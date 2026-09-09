@@ -4,22 +4,32 @@ import type { Config, DeviceRecord } from './types.ts';
 
 export type PoolPlatform = 'ios' | 'android';
 
-export interface ParkedSim {
+interface ParkedRecord {
   udid: string;
   name: string;
+  parkedAt: string;
+  deletionClaim?: unknown;
+}
+
+export interface ParkedSim extends ParkedRecord {
   deviceTypeIdentifier: string;
   runtimeIdentifier: string;
-  parkedAt: string;
   simslimManaged: boolean;
   bundleId?: string;
   cacheKey?: string;
-  deletionClaim?: unknown;
 }
+
+export interface ParkedAvd extends ParkedRecord {
+  systemImage: string;
+  configuration: string;
+}
+
+type PoolRecords = { ios: ParkedSim; android: ParkedAvd };
 
 export const DEFAULT_PARKED_MAX = 3;
 
 export const POOL_SETTING_REMEDY: string =
-  'Run `stim guide settings` for the simulator pool bound and where it can be set.';
+  'Run `stim guide settings` for the device pool bounds and where it can be set.';
 
 const MAX_SETTING: Record<PoolPlatform, { key: string; env: string }> = {
   ios: { key: 'iosParkedMax', env: 'STIM_POOL_IOS_PARKED_MAX' },
@@ -65,43 +75,52 @@ export function parkedMaxSetting(
   return { max: explicit ? parsed : env.STIM_HOME ? 0 : parsed, error: null };
 }
 
-function isParkedSim(value: unknown): value is ParkedSim {
+function isParkedRecord(value: unknown, platform: PoolPlatform): value is PoolRecords[PoolPlatform] {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   return (
     typeof record.udid === 'string' &&
     typeof record.name === 'string' &&
     record.name.startsWith('stim-') &&
-    typeof record.deviceTypeIdentifier === 'string' &&
-    typeof record.runtimeIdentifier === 'string' &&
     typeof record.parkedAt === 'string' &&
-    typeof record.simslimManaged === 'boolean' &&
-    (record.bundleId === undefined || typeof record.bundleId === 'string') &&
-    (record.cacheKey === undefined || typeof record.cacheKey === 'string')
+    (platform === 'android'
+      ? record.udid === record.name &&
+        /^stim-[A-Za-z0-9._-]+$/.test(record.name) &&
+        typeof record.systemImage === 'string' &&
+        typeof record.configuration === 'string'
+      : typeof record.deviceTypeIdentifier === 'string' &&
+        typeof record.runtimeIdentifier === 'string' &&
+        typeof record.simslimManaged === 'boolean' &&
+        (record.bundleId === undefined || typeof record.bundleId === 'string') &&
+        (record.cacheKey === undefined || typeof record.cacheKey === 'string'))
   );
 }
 
-function poolBlock(config: Config | null): Record<PoolPlatform, ParkedSim[]> {
+function poolBlock(config: Config | null): { [P in PoolPlatform]: PoolRecords[P][] } {
   const raw = config?.parked;
   const block = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
-  const read = (platform: PoolPlatform): ParkedSim[] => {
+  const read = <P extends PoolPlatform>(platform: P): PoolRecords[P][] => {
     const list = block[platform];
-    return Array.isArray(list) ? list.filter(isParkedSim) : [];
+    return Array.isArray(list)
+      ? list.filter((record): record is PoolRecords[P] => isParkedRecord(record, platform))
+      : [];
   };
   return { ios: read('ios'), android: read('android') };
 }
 
-export function readParked(platform: PoolPlatform, { config }: { config?: Config | null } = {}): ParkedSim[] {
+export function readParked<P extends PoolPlatform>(
+  platform: P,
+  { config }: { config?: Config | null } = {},
+): PoolRecords[P][] {
   return poolBlock(config === undefined ? loadConfig() : config)[platform];
 }
 
-function writeParked(config: Config, platform: PoolPlatform, records: ParkedSim[]): void {
+function writeParked<P extends PoolPlatform>(config: Config, platform: P, records: PoolRecords[P][]): void {
   const block = poolBlock(config);
-  block[platform] = records;
-  config.parked = { ios: block.ios, android: block.android };
+  config.parked = { ...block, [platform]: records };
 }
 
-function oldestFirst(records: readonly ParkedSim[]): ParkedSim[] {
+function oldestFirst<T extends ParkedRecord>(records: readonly T[]): T[] {
   return records.toSorted((a, b) => String(a.parkedAt).localeCompare(String(b.parkedAt)));
 }
 
@@ -119,7 +138,7 @@ export function selectParked(
   );
 }
 
-export function evictOverflow(records: readonly ParkedSim[], max: number): { keep: ParkedSim[]; evicted: ParkedSim[] } {
+export function evictOverflow<T extends ParkedRecord>(records: readonly T[], max: number): { keep: T[]; evicted: T[] } {
   if (records.length <= max) return { keep: [...records], evicted: [] };
   const ordered = oldestFirst(records);
   const evicted = ordered.slice(0, ordered.length - max);
@@ -127,19 +146,24 @@ export function evictOverflow(records: readonly ParkedSim[], max: number): { kee
   return { keep: records.filter((r) => !dropped.has(r.udid)), evicted };
 }
 
-export function parkSim({
+export function parkSim<P extends PoolPlatform>({
   platform,
   projectPath,
   record,
   max,
 }: {
-  platform: PoolPlatform;
+  platform: P;
   projectPath: string;
-  record: ParkedSim;
+  record: PoolRecords[P];
   max: number;
-}): ParkedSim[] {
+}): PoolRecords[P][] {
   return withConfigLock(() => {
     const cfg = ensureConfig();
+    if (platform === 'android') {
+      const current = cfg.projects[projectPath]?.platforms?.android;
+      if (!current?.owned || current.avdName !== record.udid)
+        throw new Error('The emulator assignment changed before parking.');
+    }
     const kept = readParked(platform, { config: cfg }).filter((r) => r.udid !== record.udid);
     const { keep, evicted } = evictOverflow([...kept, record], max);
     writeParked(cfg, platform, [...keep, ...evicted]);
@@ -150,22 +174,23 @@ export function parkSim({
   });
 }
 
-export function adoptParked({
+export function adoptParked<P extends PoolPlatform>({
   platform,
   projectPath,
   udid,
   device,
 }: {
-  platform: PoolPlatform;
+  platform: P;
   projectPath: string;
   udid: string;
   device: DeviceRecord;
-}): ParkedSim | null {
+}): PoolRecords[P] | null {
   return withConfigLock(() => {
     const cfg = ensureConfig();
     const records = readParked(platform, { config: cfg });
     const taken = records.find((r) => r.udid === udid);
     if (!taken || taken.deletionClaim !== undefined) return null;
+    if (platform === 'android' && cfg.projects[projectPath]?.platforms?.android) return null;
     writeParked(
       cfg,
       platform,
@@ -197,7 +222,10 @@ function parseDeletionClaim(value: unknown): { pid: number; token: string } | nu
   return { pid: claim.pid as number, token: claim.token };
 }
 
-function claimParkedRemoval(platform: PoolPlatform, udid: string): { record: ParkedSim; token: string } | null {
+function claimParkedRemoval<P extends PoolPlatform>(
+  platform: P,
+  udid: string,
+): { record: PoolRecords[P]; token: string } | null {
   return withConfigLock(() => {
     const cfg = loadConfig();
     if (!cfg) return null;
@@ -238,11 +266,11 @@ function clearParkedRemovalClaim(platform: PoolPlatform, udid: string, token: st
   });
 }
 
-export function removeParkedAfter(
-  platform: PoolPlatform,
+export function removeParkedAfter<P extends PoolPlatform>(
+  platform: P,
   udid: string,
-  beforeRemove: (record: ParkedSim) => void,
-): ParkedSim | null {
+  beforeRemove: (record: PoolRecords[P]) => void,
+): PoolRecords[P] | null {
   const claim = claimParkedRemoval(platform, udid);
   if (!claim) return null;
   try {

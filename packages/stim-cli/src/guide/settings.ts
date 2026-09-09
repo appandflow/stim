@@ -230,7 +230,7 @@ Unset, 0, or any non-positive value means NO enforcement -- the default, where
 Stim limits nothing. See \`guide lifecycle concurrency\` for what each cap
 does.
 
-THE SIMULATOR POOL BOUND IS MACHINE-LEVEL TOO
+THE DEVICE POOL BOUNDS ARE MACHINE-LEVEL TOO
 \`pool.iosParkedMax\` caps how many parked simulators \`worktree remove\` may
 leave behind for a later workspace to adopt. It is machine-level for the same
 reason: the disk they sit on is the whole machine's, about 2.5 GB each.
@@ -246,8 +246,16 @@ that already exists stays where it is until \`gc --delete\`. A value that is
 not a whole number 0 or more is refused by name on \`worktree remove\` and
 \`ios\`, and warned about by \`status\`, \`gc\` and \`doctor\`.
 
+Android uses \`pool.androidParkedMax\` or STIM_POOL_ANDROID_PARKED_MAX with
+these same defaults and validation rules. \`android\` validates that bound;
+\`worktree remove\`, \`status\`, \`gc\` and \`doctor\` check the applicable
+platform bounds. Android adoption matches the system image and AVD creation
+settings, preserves the APK, and clears app data before launch. See
+\`guide lifecycle pool\` for cleanup and the system state that remains.
+
 When STIM_HOME is set, parking and adoption are OFF unless
-STIM_POOL_IOS_PARKED_MAX is set too. A redirected home is a scoped config --
+the corresponding STIM_POOL_IOS_PARKED_MAX or STIM_POOL_ANDROID_PARKED_MAX
+is set too. A redirected home is a scoped config --
 test suites and the end-to-end harness use one -- and a scoped config must not
 leave simulators on the machine it cannot account for. A redirected home that
 wants a pool says so with the variable.
