@@ -1,0 +1,40 @@
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.track {
+  display: block;
+  width: 32px;
+  height: 16px;
+  padding: 2px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+}
+
+.thumb {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: currentColor;
+  view-transition-name: stim-theme-thumb;
+}
+
+:global([data-theme='dark']) .thumb {
+  transform: translateX(16px);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  :global(html:not(.stim-theme-transition)) .thumb {
+    transition: transform 250ms ease;
+  }
+}

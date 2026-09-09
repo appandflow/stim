@@ -4,7 +4,9 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 import Layout from '@theme/Layout';
 import CodeBlock from '@theme/CodeBlock';
 import Heading from '@theme/Heading';
+import ThemedImage from '@theme/ThemedImage';
 import { StimInstallTabs } from '@site/src/components/StimTabs';
+import ThemeSwitch from '@site/src/components/ThemeSwitch';
 import styles from './index.module.css';
 
 export default function Home(): ReactNode {
@@ -100,14 +102,25 @@ export default function Home(): ReactNode {
         <header className={styles.hero}>
           <nav className={styles.nav} aria-label="Main navigation">
             <Link to="/" aria-label="Stim home" className={`${styles.logo} stim-logo`}>
-              <img src={`${assetBase}logo.svg`} alt="" width="64" height="64" />
+              <ThemedImage
+                sources={{ light: `${assetBase}logo.svg`, dark: `${assetBase}logo-dark.svg` }}
+                alt=""
+                width="48"
+                height="48"
+              />
             </Link>
             <Link to="/docs/getting-started">Docs</Link>
             <Link to="/benchmarks">Benchmarks</Link>
             <a href="https://github.com/appandflow/stim" aria-label="Stim on GitHub" className={styles.github}>
-              <img src={`${assetBase}github.svg`} alt="" width="16" height="16" />
+              <ThemedImage
+                sources={{ light: `${assetBase}github.svg`, dark: `${assetBase}github-dark.svg` }}
+                alt=""
+                width="16"
+                height="16"
+              />
               GitHub
             </a>
+            <ThemeSwitch />
           </nav>
           <Heading as="h1">Fast, isolated React Native environments for agents</Heading>
           <p className={styles.lead}>
@@ -130,7 +143,13 @@ export default function Home(): ReactNode {
           onPointerLeave={resetTilt}
           onPointerCancel={resetTilt}
         >
-          <img src={`${assetBase}hero.svg`} alt="" width="520" height="520" fetchPriority="high" />
+          <ThemedImage
+            sources={{ light: `${assetBase}hero.svg`, dark: `${assetBase}hero-dark.svg` }}
+            alt=""
+            width="520"
+            height="520"
+            fetchPriority="high"
+          />
         </div>
         <section aria-label="Features" className={styles.features}>
           <article className={styles.feature}>
@@ -143,7 +162,13 @@ export default function Home(): ReactNode {
               View doc <span aria-hidden="true">&#8599;</span>
             </Link>
             <div className={styles.fastIllustration} data-reveal="">
-              <img src={`${assetBase}fast-builds.svg`} alt="" width="426" height="197" loading="lazy" />
+              <ThemedImage
+                sources={{ light: `${assetBase}fast-builds.svg`, dark: `${assetBase}fast-builds-dark.svg` }}
+                alt=""
+                width="448"
+                height="250"
+                loading="lazy"
+              />
             </div>
           </article>
           <article className={styles.feature}>
@@ -156,7 +181,13 @@ export default function Home(): ReactNode {
               View doc <span aria-hidden="true">&#8599;</span>
             </Link>
             <div className={styles.parallelIllustration} data-reveal="">
-              <img src={`${assetBase}parallel-agents.svg`} alt="" width="320" height="424" loading="lazy" />
+              <ThemedImage
+                sources={{ light: `${assetBase}parallel-agents.svg`, dark: `${assetBase}parallel-agents-dark.svg` }}
+                alt=""
+                width="324"
+                height="298"
+                loading="lazy"
+              />
             </div>
           </article>
           <article className={styles.feature}>
@@ -169,6 +200,15 @@ export default function Home(): ReactNode {
             <Link to="/docs/owned-devices" aria-label="Read about supported devices">
               View doc <span aria-hidden="true">&#8599;</span>
             </Link>
+            <div className={styles.deviceIllustration} data-reveal="">
+              <ThemedImage
+                sources={{ light: `${assetBase}react-native-expo.svg`, dark: `${assetBase}react-native-expo-dark.svg` }}
+                alt=""
+                width="386"
+                height="248"
+                loading="lazy"
+              />
+            </div>
           </article>
           <article className={styles.feature}>
             <Heading as="h2">Owned resources and complete cleanup</Heading>
@@ -180,7 +220,29 @@ export default function Home(): ReactNode {
             <Link to="/docs/commands" aria-label="Read about cleanup commands">
               View doc <span aria-hidden="true">&#8599;</span>
             </Link>
+            <div className={styles.cleanupIllustration} data-reveal="">
+              <ThemedImage
+                sources={{ light: `${assetBase}cleanup.svg`, dark: `${assetBase}cleanup-dark.svg` }}
+                alt=""
+                width="338"
+                height="433"
+                loading="lazy"
+              />
+            </div>
           </article>
+        </section>
+        <section className={styles.why} aria-labelledby="why-stim">
+          <Heading as="h2" id="why-stim">
+            Why Stim
+          </Heading>
+          <p>
+            React Native toolchains were built for one developer working in one checkout. Coding agents often work
+            across several worktrees at once. Stim lets those worktrees share build work while keeping their devices,
+            ports, and running apps separate.
+          </p>
+          <Link to="/docs/why">
+            More about Stim <span aria-hidden="true">&#8599;</span>
+          </Link>
         </section>
         <section className={styles.agentSetup} aria-labelledby="agent-setup">
           <Heading as="h2" id="agent-setup">
@@ -203,6 +265,15 @@ export default function Home(): ReactNode {
             MIT License. Built by <a href="https://appandflow.com">AppAndFlow</a>.
           </p>
         </footer>
+        <div className={styles.abstractIllustration} data-reveal="">
+          <ThemedImage
+            sources={{ light: `${assetBase}abstract.svg`, dark: `${assetBase}abstract-dark.svg` }}
+            alt=""
+            width="520"
+            height="520"
+            loading="lazy"
+          />
+        </div>
       </main>
     </Layout>
   );
