@@ -7,7 +7,7 @@ description: 'A supervised Metro server and a queryable launch timeline'
 import StimTabs from '@site/src/components/StimTabs';
 
 Commands use `stim`. If it is not installed globally, replace `stim` with
-`npx stim-cli`.
+`npx stim`.
 
 `stim start` reserves a port for the workspace and starts its React Native or
 Expo dev server under a detached supervisor. The command exits only after the
@@ -172,7 +172,7 @@ Copy this prompt into your coding agent:
 ```text
 Add optional Stim app-readiness logs to this app. Read `stim guide agent`,
 then follow `stim guide lifecycle readiness` from the installed CLI. If Stim
-is not installed globally, use `npx stim-cli` instead of `stim`.
+is not installed globally, use `npx stim` instead of `stim`.
 
 Use the app's existing initialization and splash-screen lifecycle without
 adding a package or monitoring SDK. Cover its real startup destinations,

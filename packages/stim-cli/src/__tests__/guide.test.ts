@@ -288,10 +288,10 @@ test('the static skill is only the agent guide router', () => {
 
 test('every guide topic explains the npx fallback for short stim commands', () => {
   for (const body of allBodies()) {
-    expect(body).toMatch(/not installed globally[^.]*npx stim-cli/i);
+    expect(body).toMatch(/not installed globally[^.]*npx stim`/i);
   }
   expect(renderIndex('9.9.9')).toContain('stim guide <topic>');
-  expect(renderIndex('9.9.9')).toMatch(/not installed globally[^.]*npx stim-cli/i);
+  expect(renderIndex('9.9.9')).toMatch(/not installed globally[^.]*npx stim`/i);
 });
 
 test('the agent workflow checks errors before and after edits, before cleanup', () => {

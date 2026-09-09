@@ -9,7 +9,7 @@ second tier by pointing `cache.provider` at a module that implements this
 contract. Stim ships no network provider; writing one is an addition, not a
 change to Stim.
 
-If Stim is not installed globally, replace `stim` with `npx stim-cli`.
+If Stim is not installed globally, replace `stim` with `npx stim`.
 
 ## Selecting a provider
 

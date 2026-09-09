@@ -197,7 +197,7 @@ export default function Home(): ReactNode {
           <nav aria-label="Footer navigation">
             <Link to="/docs/why">Why Stim</Link>
             <Link to="/docs/changelog">Changelog</Link>
-            <a href="https://www.npmjs.com/package/stim-cli">npm</a>
+            <a href="https://www.npmjs.com/package/stim">npm</a>
           </nav>
           <p>
             MIT License. Built by <a href="https://appandflow.com">AppAndFlow</a>.

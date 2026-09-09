@@ -4,7 +4,7 @@ import TabItem from '@theme/TabItem';
 import Tabs from '@theme/Tabs';
 
 const groupId = 'stim-invocation';
-const npxPrefix = 'npx stim-cli';
+const npxPrefix = 'npx stim';
 
 function normalize(code: string): string {
   return code.trim();
@@ -33,7 +33,7 @@ export function StimInstallTabs(): ReactNode {
   return (
     <Tabs groupId={groupId} defaultValue="global">
       <TabItem value="global" label="Global">
-        <CodeBlock language="bash">{`npm install --global stim-cli
+        <CodeBlock language="bash">{`npm install --global stim
 stim <command>`}</CodeBlock>
       </TabItem>
       <TabItem value="npx" label="npx">

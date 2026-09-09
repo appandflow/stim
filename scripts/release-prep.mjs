@@ -39,7 +39,7 @@ const internalRanges = (manifest) => {
   const found = [];
   for (const group of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
     for (const [name, range] of Object.entries(manifest[group] ?? {})) {
-      if (name === 'stim-cli' || name.startsWith('@stim-cli/')) found.push({ group, name, range });
+      if (name === 'stim' || name.startsWith('@stim-cli/')) found.push({ group, name, range });
     }
   }
   return found;

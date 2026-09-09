@@ -65,11 +65,23 @@ test('the five packages share one version and only bare workspace: ranges', () =
     const pkg = readManifest(REPO, dir);
     for (const group of ['dependencies', 'devDependencies', 'peerDependencies']) {
       for (const [name, range] of Object.entries(pkg[group] ?? {})) {
-        if (name !== 'stim-cli' && !name.startsWith('@stim-cli/')) continue;
+        if (name !== 'stim' && !name.startsWith('@stim-cli/')) continue;
         assert.equal(ACCEPTED_RANGES.has(range), true, `packages/${dir} ${group}.${name} is "${range}"`);
       }
     }
   }
+});
+
+test('--check refuses a versioned dependency on the renamed CLI', () => {
+  withWorkspace((root) => {
+    const core = readManifest(root, 'core');
+    core.devDependencies = { ...core.devDependencies, stim: '^1.0.0' };
+    writeFileSync(manifestIn(root, 'core'), `${JSON.stringify(core, null, 2)}\n`);
+
+    const result = runPrep(root, '--check');
+    assert.equal(result.status, 1, result.stdout);
+    assert.match(result.stderr, /devDependencies\.stim is "\^1\.0\.0", not one of workspace:/);
+  });
 });
 
 test('a bump rewrites all five versions and leaves the lockfile alone', () => {
@@ -110,7 +122,7 @@ test('a malformed, non-increasing, or missing version is refused without touchin
 test('a manifest the bump cannot rewrite leaves every version where it was', () => {
   withWorkspace((root) => {
     const before = versionsIn(root);
-    writeFileSync(manifestIn(root, 'stim-cli'), '{ "name": "stim-cli" }\n');
+    writeFileSync(manifestIn(root, 'stim-cli'), '{ "name": "stim" }\n');
 
     const result = runPrep(root, '99.0.0');
     assert.equal(result.status, 1, result.stdout);
@@ -135,6 +147,7 @@ test('pnpm pack substitutes the workspace ranges the CLI ships with', () => {
     const shipped = JSON.parse(execFileSync('tar', ['-xzOf', packed, 'package/package.json'], { encoding: 'utf8' }));
     const version = readManifest(REPO, 'stim-cli').version;
 
+    assert.equal(shipped.name, 'stim');
     assert.equal(shipped.version, version);
     for (const name of ['@stim-cli/cache', '@stim-cli/core', '@stim-cli/metro']) {
       assert.equal(shipped.dependencies[name], `^${version}`);

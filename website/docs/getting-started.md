@@ -9,8 +9,10 @@ import PromptBox, { PromptGrid } from '@site/src/components/PromptBox';
 
 ## Install Stim
 
-Install the CLI globally or run it with npx. The package is `stim-cli`; the
-installed command is `stim`.
+Install the CLI globally or run it with npx. The package and command are both
+`stim`. If you previously installed `stim-cli` globally, run
+`npm uninstall --global stim-cli` first. The `@stim-cli/*` packages keep their
+names.
 
 <StimInstallTabs />
 

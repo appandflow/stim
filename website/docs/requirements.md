@@ -5,7 +5,7 @@ description: 'Local and optional remote requirements'
 ---
 
 Commands use `stim`. If it is not installed globally, replace `stim` with
-`npx stim-cli`.
+`npx stim`.
 
 ## All projects
 

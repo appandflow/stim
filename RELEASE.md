@@ -1,6 +1,6 @@
 # Release process
 
-How to cut a new version of `stim-cli` to npm and GitHub. Keep this in sync with
+How to cut a new version of `stim` to npm and GitHub. Keep this in sync with
 what we actually do — when something changes, update both this file and the
 real workflow at the same time.
 
@@ -8,7 +8,7 @@ real workflow at the same time.
 
 ```
 packages/core                @stim-cli/core                shared primitives (cache roots, cache key, registration)
-packages/stim-cli              stim-cli                      the CLI
+packages/stim-cli            stim                          the CLI
 packages/cache               @stim-cli/cache               cache provider contract and tier coordination
 packages/expo-build-cache    @stim-cli/expo-build-cache    Expo build cache provider
 packages/metro               @stim-cli/metro               shared Metro transform cache + log reporter
@@ -32,7 +32,7 @@ the semver-higher one. Pull it and list commits since the matching tag:
 
 ```bash
 git fetch --tags
-if last=$(npm view stim-cli dist-tags --json 2>/dev/null | node -e '
+if last=$(npm view stim dist-tags --json 2>/dev/null | node -e '
   const { latest, next } = JSON.parse(require("fs").readFileSync(0, "utf8"));
   const parse = (v) => {
     const [core, pre] = v.split("-");
@@ -60,7 +60,7 @@ if last=$(npm view stim-cli dist-tags --json 2>/dev/null | node -e '
   echo "Last published: v$last"
   git log "v$last..HEAD" --oneline
 else
-  echo "No published stim-cli version"
+  echo "No published stim version"
   git log --oneline
 fi
 ```
@@ -72,7 +72,7 @@ first-publication bootstrap in
 Use `X.Y.Z-rc.N` for a release candidate. The workflow computes the publish
 dist-tag itself from the tag and the registry: it reads `npm view
 @stim-cli/core version` -- the first package every run publishes, not
-`stim-cli`, the last -- as its stable-or-not signal, and a candidate
+`stim`, the last -- as its stable-or-not signal, and a candidate
 publishes to `next` instead of `latest` only when that signal is already a
 stable version, so a plain `npm install` never regresses to a candidate.
 Every other publish -- a stable version, or a candidate published while no
@@ -220,7 +220,7 @@ The manual rows and report format are in
 [`docs/field-test-protocol.md`](./docs/field-test-protocol.md). Do not repeat
 the cache suite by hand: attach its machine-readable summary. Attach the loop
 suite result and log for each loop row. Run manual rows with the built candidate
-CLI as described by the protocol, never `stim-cli@latest`. Every claim in the
+CLI as described by the protocol, never `stim@latest`. Every claim in the
 draft release notes needs a matching automated check or manual observation.
 Missing evidence is not a pass.
 
@@ -373,9 +373,9 @@ repeat the affected gate rather than waiving it.
 8. **Smoke-test the published versions** from a scratch directory:
    ```bash
    version=X.Y.Z
-   cd /tmp && npx "stim-cli@$version" --version
-   cd /tmp && npx "stim-cli@$version" guide agent >/dev/null
-   npm view "stim-cli@$version" readme | head -c 200        # NOT "No README data found!"
+   cd /tmp && npx "stim@$version" --version
+   cd /tmp && npx "stim@$version" guide agent >/dev/null
+   npm view "stim@$version" readme | head -c 200        # NOT "No README data found!"
    npm view "@stim-cli/core@$version" version
    npm view "@stim-cli/cache@$version" version
    npm view "@stim-cli/expo-build-cache@$version" version

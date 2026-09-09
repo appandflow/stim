@@ -7,7 +7,7 @@ description: 'Parallel worktrees that share expensive build caches'
 import StimTabs from '@site/src/components/StimTabs';
 
 Commands use `stim`. If it is not installed globally, replace `stim` with
-`npx stim-cli`.
+`npx stim`.
 
 ## Create with Git
 

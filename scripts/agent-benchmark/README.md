@@ -19,12 +19,12 @@ benchmark-root/
   golden/
   pins.env
   targets.json
-  runtime/node_modules/stim-cli/
+  runtime/node_modules/stim/
   results/
   state/
 ```
 
-`bin/stim` is an executable shim for the pinned `stim-cli` in `runtime`.
+`bin/stim` is an executable shim for the pinned `stim` in `runtime`.
 `pins.env` contains the exact fixture, CLI, agent-device, OS, Xcode, Node, and
 CocoaPods values checked by `preflight`; use the keys read by `versionChecks`
 in `driver.mjs`. `targets.json` defines this machine's timing expectations for
@@ -81,7 +81,7 @@ Set the machine-local paths explicitly:
 export STIM_BENCH_ROOT=/path/to/benchmark-root
 export STIM_BENCH_FIXTURE=/path/to/clean-trailhead-checkout
 export STIM_BENCH_WORKTREE_PARENT=/path/to/benchmark-worktrees
-export STIM_BENCH_STIM_PACKAGE="$STIM_BENCH_ROOT/runtime/node_modules/stim-cli"
+export STIM_BENCH_STIM_PACKAGE="$STIM_BENCH_ROOT/runtime/node_modules/stim"
 export STIM_BENCH_CODEX_AUTH=/path/to/codex-auth.json
 export STIM_BENCH_SKILLS_ROOT=/path/to/skills
 ```

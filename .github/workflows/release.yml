@@ -81,7 +81,7 @@ jobs:
               if (bad) console.log(`${manifest.name} is ${manifest.version} but the tag is ${tag}`);
               for (const group of groups) {
                 for (const [name, range] of Object.entries(manifest[group] ?? {})) {
-                  if (name !== "stim-cli" && !name.startsWith("@stim-cli/")) continue;
+                  if (name !== "stim" && !name.startsWith("@stim-cli/")) continue;
                   const ok = accepted.has(range);
                   console.log(`${manifest.name} ${group}.${name} ${range} ${ok ? "ok" : "MISMATCH"}`);
                   if (!ok) bad += 1;
@@ -146,11 +146,11 @@ jobs:
           else
             npm publish "$RUNNER_TEMP/tarballs/expo-build-cache.tgz" --provenance --access public --tag "$DIST_TAG"
           fi
-      - name: Publish stim-cli
+      - name: Publish stim
         run: |
           version=$(node -p "require('$RUNNER_TEMP/tarballs/stim-cli.package.json').version")
-          if npm view "stim-cli@$version" version >/dev/null 2>&1; then
-            echo "stim-cli@$version is already published"
+          if npm view "stim@$version" version >/dev/null 2>&1; then
+            echo "stim@$version is already published"
           else
             npm publish "$RUNNER_TEMP/tarballs/stim-cli.tgz" --provenance --access public --tag "$DIST_TAG"
           fi

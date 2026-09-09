@@ -5,7 +5,7 @@ description: 'Owned devices, physical-device leases, and cleanup'
 ---
 
 Commands use `stim`. If it is not installed globally, replace `stim` with
-`npx stim-cli`.
+`npx stim`.
 
 Stim creates and records its local simulators and emulators. Their names start
 with `stim-`. It never creates, boots, or deletes a simulator or emulator that

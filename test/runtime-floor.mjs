@@ -28,7 +28,7 @@ const entrypoints = [
   ['@stim-cli/cache', 'loadCacheProvider'],
   ['@stim-cli/expo-build-cache', 'cacheRoot'],
   ['@stim-cli/metro', 'sharedCacheStores'],
-  ['stim-cli/cache-manifest', 'readManifest'],
+  ['stim/cache-manifest', 'readManifest'],
 ];
 
 for (const [specifier, exportName] of entrypoints) {

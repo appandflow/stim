@@ -5,7 +5,7 @@ description: 'Optional npm packages for builds that run outside Stim'
 ---
 
 Commands use `stim`. If it is not installed globally, replace `stim` with
-`npx stim-cli`.
+`npx stim`.
 
 Stim supplies its own cache arguments when it runs Metro and native builds. A
 project does not need these packages for `stim start`, `stim ios`, or
@@ -58,6 +58,6 @@ For current Expo SDK versions:
 Expo SDK 53 reads the provider under `expo.experiments.buildCacheProvider`.
 Confirm the key for the project's SDK before adding it.
 
-Both packages work without the `stim-cli` npm package. They register their cache
+Both packages work without the `stim` npm package. They register their cache
 directories in Stim's cache manifest when available, so `stim gc` can report and
 trim them.

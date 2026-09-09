@@ -1,6 +1,6 @@
 # Stim
 
-The `stim-cli` npm package installs the `stim` command.
+The `stim` npm package installs the `stim` command.
 
 Stim gives coding agents fast, isolated React Native and Expo environments. Each
 project or git worktree gets its own Metro port and owned device. Shared caches
@@ -8,15 +8,18 @@ keep native and JavaScript builds warm across worktrees.
 
 ## Install
 
+If you previously installed `stim-cli` globally, follow the
+[migration instructions](#migrating-from-stim-cli) first.
+
 ```bash
-npm install --global stim-cli
+npm install --global stim
 npx skills add appandflow/stim
 ```
 
 Run without a global install when needed:
 
 ```bash
-npx stim-cli <command>
+npx stim <command>
 ```
 
 Node 20.19.4 or later on Node 20, or Node 22.12.0 or later, is required.
@@ -113,9 +116,17 @@ Runtime state defaults to `~/.stim`. Set `STIM_HOME` to move it. Stim manages
 owned simulators and emulators, leases connected physical devices, and supports
 configured remote devices.
 
-## Package name
+## Migrating from stim-cli
 
-The product and command are named Stim. The npm package remains `stim-cli` until
-the unscoped `stim` package name is available.
+Remove the old global package before installing `stim`, since both provide the
+same command:
+
+```bash
+npm uninstall --global stim-cli
+npm install --global stim
+```
+
+Update programmatic imports from `stim-cli/cache-manifest` to
+`stim/cache-manifest`. The `@stim-cli/*` packages keep their names.
 
 MIT License.
