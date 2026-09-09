@@ -1245,7 +1245,7 @@ export function unverifiedLaunchLines({
     push(picker);
     if (serial && bundleId) {
       push(
-        `Otherwise the reverse mapping was not in place when the app started. Re-launch: adb -s ${serial} shell monkey -p ${bundleId} 1`,
+        `If the app is stuck, restart its process: adb -s ${serial} shell am force-stop ${bundleId} && adb -s ${serial} shell monkey -p ${bundleId} 1`,
       );
     }
   }
