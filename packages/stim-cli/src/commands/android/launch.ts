@@ -378,7 +378,8 @@ export async function finishAndroidRun({
   }
   androidPackage = packageFromApk || androidPackage || detectAndroidPackage(root);
 
-  if (!physical && !remoteDevice && device.adoptionPending) {
+  const adopting = !physical && !remoteDevice && Boolean(device.adoptionPending);
+  if (adopting) {
     if (!androidPackage || !device.avdName)
       return fail(
         LAUNCH_FAILED,
@@ -387,14 +388,6 @@ export async function finishAndroidRun({
       );
     try {
       resetAdoptedAvd(device.avdName, serial, androidPackage);
-      withConfigLock(() => {
-        const config = loadConfig();
-        const current = config?.projects[root]?.platforms?.android;
-        if (!config || !current || current.avdName !== device.avdName)
-          throw new Error('The adopted emulator assignment changed during cleanup.');
-        delete current.adoptionPending;
-        saveConfig(config);
-      });
     } catch (error) {
       return fail(
         LAUNCH_FAILED,
@@ -411,7 +404,7 @@ export async function finishAndroidRun({
     serial,
     apkPath: apkPath!,
     packageName: androidPackage,
-    allowUninstall: release,
+    allowUninstall: release || adopting,
   });
   if (installed.failed) {
     const conflict = installConflictKind(installed.reason);
@@ -425,6 +418,24 @@ export async function finishAndroidRun({
         rerun
       : `Check that ${serial} is still connected (\`adb devices\`) and has room for the APK.`;
     return fail(installed.code || INSTALL_FAILED, installed.reason, installRemedy, { lastBuildStatus: true });
+  }
+  if (adopting) {
+    try {
+      withConfigLock(() => {
+        const config = loadConfig();
+        const current = config?.projects[root]?.platforms?.android;
+        if (!config || !current || current.avdName !== device.avdName)
+          throw new Error('The adopted emulator assignment changed during installation.');
+        delete current.adoptionPending;
+        saveConfig(config);
+      });
+    } catch (error) {
+      return fail(
+        LAUNCH_FAILED,
+        `Could not finish adopting emulator ${device.avdName}: ${String((error as Error)?.message || error)}`,
+        'Retry to reconcile the emulator assignment; the app was not launched.',
+      );
+    }
   }
   const installSkipped = Boolean(installed.skipped);
   phase(

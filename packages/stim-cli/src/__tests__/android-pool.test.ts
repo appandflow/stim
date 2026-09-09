@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getProject, loadConfig, setDevice, upsertProject } from '../config.ts';
 import { ensureOwnedDevice } from '../engine/device.ts';
-import { resetExecutor, setExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { adoptParked, parkSim, readParked, removeParkedAfter } from '../sim-pool.ts';
 import { avdPoolConfiguration, hostSystemImageArch, resetAdoptedAvd } from '../sim/android.ts';
 import { teardownOwnedAvd, teardownParkedAvd } from '../teardown.ts';
@@ -183,6 +183,32 @@ test('a concurrent adoption cannot be overwritten by a new AVD creation using an
   ).rejects.toThrow('Another Stim run assigned AVD');
   expect(getProject('/adopter')?.platforms?.android?.avdName).toBe('stim-source');
   expect(calls.some((call) => call.includes('create avd'))).toBe(false);
+});
+
+test('an AVD parked between failed creation and recovery cannot bypass adoption', async () => {
+  upsertProject('/adopter', {});
+  const previous = getExecutor();
+  let creationFailed = false;
+  setExecutor({
+    ...previous,
+    run(cmd) {
+      if (cmd.includes('create avd')) {
+        creationFailed = true;
+        throw new Error('AVD stim-source already exists');
+      }
+      if (cmd === 'emulator -list-avds' && creationFailed) {
+        creationFailed = false;
+        park();
+      }
+      return previous.run(cmd);
+    },
+  });
+  await expect(
+    ensureOwnedDevice({ platform: 'android', projectPath: '/adopter', label: 'source', settings: {} }),
+  ).rejects.toThrow('was parked by another Stim run');
+  expect(getProject('/adopter')?.platforms?.android).toBeUndefined();
+  expect(readParked('android').map((record) => record.name)).toEqual(['stim-source']);
+  expect(running).toBeNull();
 });
 
 test('parking shuts down an owned AVD and overflow deletion failures keep both ownership records', () => {

@@ -387,6 +387,8 @@ result as proof instead of requiring an unrelated screenshot.`,
   remains pending for a retry. The installed APK's SHA-256 must match the
   requested artifact before Stim skips installation; a package name or cache
   key alone is insufficient, including for release builds with swapped JS.
+  If the retained APK has a conflicting signer or version, adoption uninstalls
+  it and retries installation. Adoption stays pending until installation succeeds.
 
   Parked AVDs retain app data until adoption. System apps, shared storage,
   accounts and device settings also remain: this is not a factory reset.

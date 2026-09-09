@@ -637,9 +637,6 @@ async function ensureOwnedAndroidDevice({
       };
     }
   }
-  const reservedNames = readParked('android').map((entry) => entry.name);
-  if (reservedNames.includes(ownedAvdName(label))) label = `${label}-${randomUUID().slice(0, 8)}`;
-
   let created: { avdName: string; systemImage: string | null };
   let fresh = false;
   try {
@@ -648,6 +645,8 @@ async function ensureOwnedAndroidDevice({
       if (current?.avdName && current.avdName !== record?.avdName) {
         throw new Error(`Another Stim run assigned AVD ${current.avdName} to this workspace. Retry to use it.`);
       }
+      if (readParked('android').some((entry) => entry.name === ownedAvdName(label)))
+        label = `${label}-${randomUUID().slice(0, 8)}`;
       const result = createOwnedAvd(label, { systemImage: flags.systemImage || settings.android?.systemImage });
       setDevice(projectPath, 'android', {
         avdName: result.avdName,
@@ -663,22 +662,29 @@ async function ensureOwnedAndroidDevice({
     const message = String((e as Error)?.message || e);
     const avdName = ownedAvdName(label);
     if (message.includes('already exists') && listAvds().includes(avdName)) {
-      const owner = findOtherProjectOwningAvd(avdName, projectPath);
-      if (owner) {
-        throw new Error(
-          `AVD ${avdName} already exists and is owned by another project (${owner}). Pass a distinct --label to avoid the collision instead of hijacking it.`,
-          { cause: e },
-        );
-      }
-      const current = loadConfig()?.projects?.[projectPath]?.platforms?.android;
-      if (current?.avdName === avdName) {
-        const state = current.setupIncomplete ? 'has incomplete setup' : 'was registered';
-        throw new Error(
-          `AVD ${avdName} ${state} by another concurrent Stim run. Retry after that run finishes so the recorded device is resolved safely.`,
-          { cause: e },
-        );
-      }
-      created = { avdName, systemImage: ownedAvdSystemImage(avdName) };
+      created = withConfigLock(() => {
+        if (readParked('android').some((entry) => entry.name === avdName)) {
+          throw new Error(`AVD ${avdName} was parked by another Stim run. Retry to adopt it safely.`, { cause: e });
+        }
+        const owner = findOtherProjectOwningAvd(avdName, projectPath);
+        if (owner) {
+          throw new Error(
+            `AVD ${avdName} already exists and is owned by another project (${owner}). Pass a distinct --label to avoid the collision instead of hijacking it.`,
+            { cause: e },
+          );
+        }
+        const current = loadConfig()?.projects?.[projectPath]?.platforms?.android;
+        if (current?.avdName) {
+          const state = current.setupIncomplete ? 'has incomplete setup' : 'was registered';
+          throw new Error(
+            `AVD ${current.avdName} ${state} by another concurrent Stim run. Retry after that run finishes so the recorded device is resolved safely.`,
+            { cause: e },
+          );
+        }
+        const result = { avdName, systemImage: ownedAvdSystemImage(avdName) };
+        setDevice(projectPath, 'android', { avdName, owned: true, deviceName: avdName });
+        return result;
+      });
       out(chalk.dim(phaseLine('device', `recovered ${avdName} (unrecorded from a prior run)`)));
     } else {
       throw e;

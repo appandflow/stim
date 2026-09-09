@@ -453,13 +453,14 @@ test('an invalid Android pool bound refuses before device creation and emits one
 describe('adopted Android installs', () => {
   afterEach(() => resetExecutor());
 
-  test.each(['same', 'different', 'cleanup-failed'] as const)(
+  test.each(['same', 'different', 'signature', 'downgrade', 'cleanup-failed', 'install-failed'] as const)(
     'cleanup precedes install and only matching APK bytes skip installation: %s',
     async (mode) => {
       const apkPath = fakeApk();
       const device = { avdName: 'stim-adopted', consolePort: 5584, owned: true, adoptionPending: true, adopted: true };
       upsertProject(root, { platforms: { android: device } });
       const commands: string[] = [];
+      let installs = 0;
       setExecutor(
         makeExecutor({
           run(cmd) {
@@ -478,28 +479,35 @@ describe('adopted Android installs', () => {
             if (args.includes('uninstall')) return 'Success';
             if (args.includes('path')) return 'package:/data/app/base.apk';
             if (args.includes('sha256sum'))
-              return `${mode === 'different' ? '0'.repeat(64) : hashFile(apkPath)}  /data/app/base.apk`;
-            if (args.includes('install')) return 'Success';
+              return `${mode === 'same' ? hashFile(apkPath) : '0'.repeat(64)}  /data/app/base.apk`;
+            if (args.includes('install')) {
+              installs++;
+              if (mode === 'install-failed') throw new Error('INSTALL_FAILED_INSUFFICIENT_STORAGE');
+              if (installs === 1 && mode === 'signature') throw new Error('INSTALL_FAILED_UPDATE_INCOMPATIBLE');
+              if (installs === 1 && mode === 'downgrade') throw new Error('INSTALL_FAILED_VERSION_DOWNGRADE');
+              return 'Success';
+            }
             throw new Error(`Unexpected runFile: ${cmd}`);
           },
         }),
       );
       const h = harness({ ensureDevice: async () => device, resolveCached: () => apkPath, install: installAndroidApp });
       const result = await h.run();
-      expect(result.ok).toBe(mode !== 'cleanup-failed');
+      const failed = mode === 'cleanup-failed' || mode === 'install-failed';
+      expect(result.ok).toBe(!failed);
       expect(result.error?.message?.includes('Could not clean com.example.app')).toBe(
-        mode === 'cleanup-failed' ? true : undefined,
+        mode === 'cleanup-failed' ? true : mode === 'install-failed' ? false : undefined,
       );
-      expect(h.calls.launch.length).toBe(mode === 'cleanup-failed' ? 0 : 1);
+      expect(h.calls.launch.length).toBe(failed ? 0 : 1);
       const clear = commands.indexOf('adb -s emulator-5584 shell pm clear com.example.app');
       const hash = commands.indexOf('adb -s emulator-5584 shell pm path com.example.app');
       expect(clear).toBeGreaterThanOrEqual(0);
       expect(hash > clear).toBe(mode !== 'cleanup-failed');
-      expect(commands.some((command) => command.includes(' install -r '))).toBe(mode === 'different');
+      const conflict = mode === 'signature' || mode === 'downgrade';
+      expect(installs).toBe(mode === 'same' || mode === 'cleanup-failed' ? 0 : conflict ? 2 : 1);
+      expect(commands.includes('adb -s emulator-5584 uninstall com.example.app')).toBe(conflict);
       expect(h.stderr.some((line) => line.includes('already has this build'))).toBe(mode === 'same');
-      expect(loadConfig()?.projects[root]?.platforms?.android?.adoptionPending).toBe(
-        mode === 'cleanup-failed' ? true : undefined,
-      );
+      expect(loadConfig()?.projects[root]?.platforms?.android?.adoptionPending).toBe(failed ? true : undefined);
     },
   );
 });
