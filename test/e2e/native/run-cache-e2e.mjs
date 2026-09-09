@@ -900,22 +900,20 @@ async function settle(dir, label, { firstGrowthMs = 90000, quietMs = 6000, timeo
   const startedAtMs = Date.now();
   const baseline = dirStats(dir);
   let last = baseline;
-  let moved = false;
+  let populated = baseline.files > 0;
   let stableSince = Date.now();
   while (Date.now() - startedAtMs < timeoutMs) {
     await sleep(stepMs);
     const now = dirStats(dir);
     if (now.files !== last.files || now.bytes !== last.bytes) {
       last = now;
-      moved = true;
+      populated ||= now.files > 0;
       stableSince = Date.now();
       continue;
     }
-    if (!moved) {
+    if (!populated) {
       if (Date.now() - startedAtMs >= firstGrowthMs) {
-        log(
-          `${label}: no growth at all in ${Math.round(firstGrowthMs / 1000)}s (${baseline.files} files, unchanged) -- reported as EMPTY, not as settled`,
-        );
+        log(`${label}: still empty after waiting ${Math.round(firstGrowthMs / 1000)}s for cache entries`);
         return last;
       }
       continue;
