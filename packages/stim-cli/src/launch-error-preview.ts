@@ -3,7 +3,6 @@ type StackKind = 'Error' | 'Component' | 'Native' | 'Caused-by';
 
 function framePriority(frame: string, root?: string): number {
   const normalized = frame.replaceAll('\\', '/');
-  if (/\(https?:\/\/[^\s)]*$/.test(normalized)) return 3;
   if (/^\s*at (?:android\.|java\.|com\.android\.|dalvik\.)/.test(normalized)) return 2;
   if (/(?:^|[/(\s])node_modules\//.test(normalized) || /\bnode:internal\//.test(normalized)) return 2;
   const paths = [
@@ -38,15 +37,13 @@ function expandStackFields(message: string): string {
     /(^|\n|[,{])[ \t]*(['"]?)(componentStack|stack)\2:[ \t]*(['"])((?:\\.|[^\\\n])*)$/gm,
     (match, prefix: string, _keyQuote: string, field: string, _quote: string, value: string) => {
       if (!/\\n\s+at\s/.test(value)) return match;
-      return `${prefix}\n${field === 'componentStack' ? 'Component' : 'Error'} stack:\n${decodeStack(value)}\n[captured stack text is incomplete: the runtime truncated it; saved logs cannot restore missing text]`;
+      return `${prefix}\n${field === 'componentStack' ? 'Component' : 'Error'} stack:\n${decodeStack(value)}`;
     },
   );
 }
 
 function shortFrame(frame: string, root?: string): string {
   const text = root ? frame.replaceAll(`${root}/`, '') : frame;
-  const incomplete = /\(https?:\/\/[^\s)]*$/.test(text);
-  if (incomplete) return text.trim().replace(/\(https?:\/\/[^\s)]*$/, '(location incomplete)');
   const compact = text
     .trim()
     .replace(/ \(BuildId: [0-9a-f]+\)/gi, '')
@@ -121,6 +118,7 @@ export function launchErrorPreview(
       /^\s*\S[^\n]*@\S+:\d+:\d+\s*$/.test(line) ||
       /^\s+\S[^\n]*\([^()]+:\d+:\d+\)\s*$/.test(line)
     ) {
+      if (!full && /\(https?:\/\/[^\s)]*$/.test(line)) return;
       frames.push(line);
     } else if (line.trim()) {
       flush();
@@ -158,15 +156,12 @@ export function launchErrorPreview(
     }
     if (typeof record.symbolicationNote === 'string') {
       flush();
-      lines.push(record.symbolicationNote);
+      lines.push(
+        ...record.symbolicationNote.split('\n').filter((line) => full || !line.startsWith('Same error captured by ')),
+      );
     }
   }
   flush();
-  if (hadStack && !full)
-    lines.push(
-      'Stack preview: up to 10 frames per stack; app frames preferred.',
-      'Full captured logs: stim logs --source all',
-      'Raw records: stim logs --source all --json',
-    );
+  if (hadStack && !full) lines.push('Full captured logs: stim logs --source all');
   return lines;
 }

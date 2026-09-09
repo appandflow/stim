@@ -125,13 +125,18 @@ test('native previews remove metadata noise but full output preserves it and Jav
   expect(java).toContain('Caused-by stack:\n  at crash');
 });
 
-test('a runtime-truncated frame remains identifiable without a broken bundle URL', () => {
-  const preview = launchErrorPreview([
-    { msg: "componentStack: '\\n    at Route (http://localhost:8082/index.bundle?plat" },
-  ]).join('\n');
-  expect(preview).toContain('at Route (location incomplete)');
-  expect(preview).toContain('runtime truncated');
-  expect(preview).not.toContain('http://');
+test('launch omits incomplete frames and capture noise while full logs retain the evidence', () => {
+  const record = {
+    msg: "componentStack: '\\n    at Route (http://localhost:8082/index.bundle?plat",
+    symbolicationNote: 'Same error captured by metro + device; raw copies retained in logs --json.',
+  };
+  const original = JSON.stringify(record);
+  expect(launchErrorPreview([record])).toEqual([]);
+  const full = launchErrorPreview([record], undefined, { full: true }).join('\n');
+  expect(full).toContain('at Route (http://localhost:8082/index.bundle?plat');
+  expect(full).not.toContain('runtime truncated');
+  expect(full).toContain('Same error captured');
+  expect(JSON.stringify(record)).toBe(original);
   const frames = [
     'at Screen (app.tsx:1:1)',
     ...Array.from({ length: 10 }, (_, i) => `at framework${i} (node_modules/lib/index.js:${i + 1}:2)`),
@@ -434,7 +439,10 @@ test('split Android error-object lines remain associated with their own error an
     expect(preview).toContain('Component stack:');
     expect(preview).toContain('at Screen (app.tsx:4:2)');
     expect(preview).not.toContain('isComponentError: true');
-    expect(preview).toContain('captured stack text is incomplete');
+    expect(preview).not.toContain('captured stack text is incomplete');
+    const full = launchErrorPreview(result, root, { full: true }).join('\n');
+    expect(full).toContain('at Screen (app.tsx:4:2)');
+    expect(full).not.toContain('captured stack text is incomplete');
   } finally {
     delete process.env.STIM_HOME;
     rmSync(root, { recursive: true, force: true });

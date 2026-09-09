@@ -162,9 +162,7 @@ test('launch previews cap a JavaScript stack split across Android log records wi
     'Error: second failure',
     'Error stack:',
     '  at retry (retry.ts:4:2)',
-    'Stack preview: up to 10 frames per stack; app frames preferred.',
     'Full captured logs: stim logs --source all',
-    'Raw records: stim logs --source all --json',
   ]);
   expect(report.summary).toBeNull();
   expect(records.map((record) => record.msg)).toEqual(messages);
@@ -183,9 +181,7 @@ test('launch previews unescape and bound serialized React component stacks while
     'Component stack:',
     ...Array.from({ length: 10 }, (_, i) => `  at Component${i} (index.bundle:${100 + i}:20 [unsymbolicated])`),
     '  ... 4 more frames',
-    'Stack preview: up to 10 frames per stack; app frames preferred.',
     'Full captured logs: stim logs --source all',
-    'Raw records: stim logs --source all --json',
   ]);
 });
 
@@ -204,13 +200,11 @@ test('launch previews preserve structured error and component stacks separately 
   expect(lines).toContain('  at fn9 (app.tsx:10:3)');
   expect(lines).not.toContain('  at fn10 (app.tsx:11:3)');
   expect(lines).toContain('  ... 3 more frames');
-  expect(lines.slice(-6)).toEqual([
+  expect(lines.slice(-4)).toEqual([
     'Component stack:',
     '  at Screen (screen.tsx:10:3)',
     '  at Root (root.tsx:4:2)',
-    'Stack preview: up to 10 frames per stack; app frames preferred.',
     'Full captured logs: stim logs --source all',
-    'Raw records: stim logs --source all --json',
   ]);
   expect(JSON.stringify(records)).toBe(original);
 });
@@ -259,11 +253,8 @@ test('launch previews still bound a component stack whose serialized log record 
   expect(lines).toEqual([
     'Component stack:',
     ...Array.from({ length: 10 }, (_, i) => `  at Component${i} (index.bundle:${100 + i}:20 [unsymbolicated])`),
-    '  ... 3 more frames',
-    '[captured stack text is incomplete: the runtime truncated it; saved logs cannot restore missing text]',
-    'Stack preview: up to 10 frames per stack; app frames preferred.',
+    '  ... 2 more frames',
     'Full captured logs: stim logs --source all',
-    'Raw records: stim logs --source all --json',
   ]);
 });
 
@@ -281,8 +272,6 @@ test('launch previews retain Expo and Hermes frame order and reset depth between
     'Error stack:',
     '  render@app.tsx:4:3',
     '  parent@root.tsx:5:4',
-    'Stack preview: up to 10 frames per stack; app frames preferred.',
     'Full captured logs: stim logs --source all',
-    'Raw records: stim logs --source all --json',
   ]);
 });
