@@ -38,7 +38,7 @@ Error stacks describe the call path; component stacks describe the React parent
 tree. They are labeled separately. Every `stim logs` command, including
 `stim logs --errors`, shows full captured stacks without frame or message-length
 limits. The separate default limit of 20 error records never shortens a stack.
-Use `--source all` for all sources/history, or `--json` for raw records. Text
+Use `--source all` for all log sources, or `--json` for raw records. Text
 truncated by the runtime before capture cannot be restored.
 
 Symbolication is best effort. In development, Stim asks the verified workspace's
