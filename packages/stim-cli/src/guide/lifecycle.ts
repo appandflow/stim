@@ -79,6 +79,11 @@ new JavaScript or observe the resulting UI. Verify the expected screen or
 interaction on the reported device and inspect \`stim logs --errors\` before
 claiming recovery; exit 0 alone does not prove it.
 
+An iOS simulator launch command has a 60-second deadline. This is separate
+from bundle delivery and readiness verification: it gives CoreSimulator time
+to accept the launch, not the app extra time to report readiness. A timeout
+still fails the launch; Stim does not automatically retry it.
+
 For an unverified Android launch, follow the emitted device-specific remedy.
 If the app is stuck before loading its first bundle, restart its process with
 the printed force-stop and launcher commands. Foregrounding the same process
