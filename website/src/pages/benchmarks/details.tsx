@@ -5,12 +5,7 @@ import useIsBrowser from '@docusaurus/useIsBrowser';
 import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
-import {
-  benchmarks,
-  linkedBenchmarks,
-  readinessIntegrationChecks,
-  displayVariant,
-} from '@site/src/components/benchmarkCatalog';
+import { benchmarks, linkedBenchmarks, displayVariant } from '@site/src/components/benchmarkCatalog';
 import {
   benchmarkDimensions,
   benchmarkForDimensions,
@@ -78,6 +73,10 @@ function ComparisonCard({
                 {totalTokens(run.usage) > 0 ? formatTokens(totalTokens(run.usage)) : 'unavailable'} total tokens
               </span>
               <span>{formatCost(run.estimatedTokenCostUsd)} total cost</span>
+              {run.recordedOn && <span>Recorded {run.recordedOn}</span>}
+              {run.appReadinessLogs !== undefined && (
+                <span>Readiness logs {run.appReadinessLogs ? 'enabled' : 'not integrated'}</span>
+              )}
               {!isLaunchCrash && <span>{run.commandCount} commands</span>}
             </div>
           </div>
@@ -94,7 +93,6 @@ export default function BenchmarkDetails(): ReactNode {
   const search = isBrowser ? location.search : '';
   const selection = useMemo(() => benchmarkSelectionFromSearch(search, linkedBenchmarks), [search]);
   const benchmark = linkedBenchmarks.find((candidate) => candidate.stage === selection.stage) ?? benchmarks[0];
-  const isReadinessCheck = readinessIntegrationChecks.includes(benchmark);
   const publishedRuns = useMemo(() => benchmark?.runs.filter((run) => run.valid) ?? [], [benchmark]);
   const activeRun = publishedRuns.find((run) => run.id === selection.runId) ?? defaultRun(benchmark);
   const dimensions = benchmark ? benchmarkDimensions(benchmark) : null;
@@ -160,121 +158,95 @@ export default function BenchmarkDetails(): ReactNode {
           <header className={styles.detailHero}>
             <Link to="/benchmarks">Benchmark overview</Link>
             <span className={styles.eyebrow}>Detailed audit</span>
-            <Heading as="h1">
-              {isReadinessCheck
-                ? `${benchmarkModelLabel(activeRun.model)}: Android readiness-integration check`
-                : `${benchmarkDisplayTitle(benchmark.title)}: Stim vs local toolchain`}
-            </Heading>
+            <Heading as="h1">{benchmarkDisplayTitle(benchmark.title)}: Stim vs local toolchain</Heading>
             <p>
               Select a model, platform, and run to inspect its timing, commands, terminal output, and Settings-screen
               proof.
             </p>
           </header>
 
-          {isReadinessCheck ? (
+          {publishedRuns.some((run) => run.appReadinessLogs) ? (
             <p>
-              Stim-only run with optional early pending and post-splash ready logs, using merged source{' '}
+              The current Stim run uses optional early pending and post-splash ready logs, with merged source{' '}
               <a href="https://github.com/appandflow/stim/commit/a4832aa34d9573ea2898604f6f639c71ae5f9804">a4832aa</a>{' '}
               built locally (not a new npm release). The initial launch reported the injected crash and hit the native
-              artifact cache. Controls were not rerun with this fixture, so this is not a matched speedup comparison.
-              The clock starts at the first recorded agent message or shell command, excluding the initial lead-in.
-              Original dispatch timing is retained below.
-            </p>
-          ) : !benchmarks.includes(benchmark) ? (
-            <p>
-              This is an earlier comparison, preserved for shared links. Use the selectors below for current results.
+              artifact cache. The retained control run does not emit these optional logs. This compares the integrated
+              Stim workflow with the standard toolchain, not identical instrumentation. New validated runs replace the
+              previous result for each arm; they are not selected for being faster.
             </p>
           ) : null}
-          {isReadinessCheck ? (
-            <nav className={styles.benchmarkPicker} aria-label="Readiness integration check model">
+          <div className={styles.benchmarkPickers}>
+            <nav className={styles.benchmarkPicker} aria-label="Benchmark model">
               <span>Model</span>
               <div className={styles.pickerOptions}>
-                {readinessIntegrationChecks.map((candidate) => (
-                  <button
-                    key={candidate.stage}
-                    type="button"
-                    aria-pressed={candidate === benchmark}
-                    onClick={() => navigateTo(candidate.stage, candidate.runs[0].id)}
-                  >
-                    {benchmarkModelLabel(candidate.runs[0].model)}
-                  </button>
-                ))}
+                {modelOptions.map((candidate) => {
+                  const model = benchmarkDimensions(candidate).model;
+                  const available = isAvailable({ model });
+                  return (
+                    <button
+                      key={model}
+                      type="button"
+                      aria-pressed={model === dimensions?.model}
+                      disabled={!available}
+                      title={available ? undefined : 'No published benchmark for this combination'}
+                      onClick={() => selectDimensions({ model })}
+                    >
+                      {benchmarkModelLabel(model)}
+                    </button>
+                  );
+                })}
               </div>
             </nav>
-          ) : (
-            <div className={styles.benchmarkPickers}>
-              <nav className={styles.benchmarkPicker} aria-label="Benchmark model">
-                <span>Model</span>
-                <div className={styles.pickerOptions}>
-                  {modelOptions.map((candidate) => {
-                    const model = benchmarkDimensions(candidate).model;
-                    const available = isAvailable({ model });
-                    return (
-                      <button
-                        key={model}
-                        type="button"
-                        aria-pressed={model === dimensions?.model}
-                        disabled={!available}
-                        title={available ? undefined : 'No published benchmark for this combination'}
-                        onClick={() => selectDimensions({ model })}
-                      >
-                        {benchmarkModelLabel(model)}
-                      </button>
-                    );
-                  })}
-                </div>
-              </nav>
 
-              <nav className={styles.benchmarkPicker} aria-label="Benchmark platform">
-                <span>Platform</span>
-                <div className={styles.pickerOptions}>
-                  {benchmarkPlatforms.map((platform) => {
-                    const available = isAvailable({ platform });
-                    return (
-                      <button
-                        key={platform}
-                        type="button"
-                        aria-pressed={platform === dimensions?.platform}
-                        disabled={!available}
-                        title={available ? undefined : 'No published benchmark for this combination'}
-                        onClick={() => selectDimensions({ platform })}
-                      >
-                        {platform === 'ios' ? 'iOS' : 'Android'}
-                      </button>
-                    );
-                  })}
-                </div>
-              </nav>
+            <nav className={styles.benchmarkPicker} aria-label="Benchmark platform">
+              <span>Platform</span>
+              <div className={styles.pickerOptions}>
+                {benchmarkPlatforms.map((platform) => {
+                  const available = isAvailable({ platform });
+                  return (
+                    <button
+                      key={platform}
+                      type="button"
+                      aria-pressed={platform === dimensions?.platform}
+                      disabled={!available}
+                      title={available ? undefined : 'No published benchmark for this combination'}
+                      onClick={() => selectDimensions({ platform })}
+                    >
+                      {platform === 'ios' ? 'iOS' : 'Android'}
+                    </button>
+                  );
+                })}
+              </div>
+            </nav>
 
-              <nav className={styles.benchmarkPicker} aria-label="Benchmark scenario">
-                <span>Scenario</span>
-                <div className={styles.pickerOptions}>
-                  {benchmarkSuites.map((suite) => {
-                    const available = isAvailable({ suite });
-                    return (
-                      <button
-                        key={suite}
-                        type="button"
-                        aria-pressed={suite === dimensions?.suite}
-                        disabled={!available}
-                        title={available ? undefined : 'No published benchmark for this combination'}
-                        onClick={() => selectDimensions({ suite })}
-                      >
-                        {suite === 'readiness' ? 'App readiness' : 'Launch crash'}
-                      </button>
-                    );
-                  })}
-                </div>
-              </nav>
-            </div>
-          )}
+            <nav className={styles.benchmarkPicker} aria-label="Benchmark scenario">
+              <span>Scenario</span>
+              <div className={styles.pickerOptions}>
+                {benchmarkSuites.map((suite) => {
+                  const available = isAvailable({ suite });
+                  return (
+                    <button
+                      key={suite}
+                      type="button"
+                      aria-pressed={suite === dimensions?.suite}
+                      disabled={!available}
+                      title={available ? undefined : 'No published benchmark for this combination'}
+                      onClick={() => selectDimensions({ suite })}
+                    >
+                      {suite === 'readiness' ? 'App readiness' : 'Launch crash'}
+                    </button>
+                  );
+                })}
+              </div>
+            </nav>
+          </div>
 
           <section className={styles.comparison} aria-labelledby="comparison-title">
             <div className={styles.sectionHeading}>
               <Heading as="h2" id="comparison-title">
                 {benchmark.suite === 'launch-crash' ? 'Launch-failure result' : 'Settings-ready comparison'}
               </Heading>
-              <p>Recorded {benchmark.recordedOn} / valid runs only</p>
+              <p>Latest update {benchmark.recordedOn} / valid runs only</p>
             </div>
             <div className={styles.comparisonGrid}>
               {grouped.map(({ variant, runs }) => (

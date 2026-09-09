@@ -8,7 +8,6 @@ import sonnetBenchmarkJson from '../data/benchmarks/sonnet-rc12.json';
 import sonnetAndroidBenchmarkJson from '../data/benchmarks/sonnet-android.json';
 import solBenchmarkJson from '../data/benchmarks/sol-rc12.json';
 import solAndroidBenchmarkJson from '../data/benchmarks/sol-android.json';
-import solLaunchCrashJson from '../data/benchmarks/sol-launch-crash.json';
 import lunaIosLaunchError from '../data/benchmarks/luna-ios-launch-error.json';
 import lunaAndroidLaunchError from '../data/benchmarks/luna-android-launch-error.json';
 import solIosLaunchError from '../data/benchmarks/sol-ios-launch-error.json';
@@ -17,10 +16,6 @@ import sonnetIosLaunchError from '../data/benchmarks/sonnet-ios-launch-error.jso
 import sonnetAndroidLaunchError from '../data/benchmarks/sonnet-android-launch-error.json';
 import opusIosLaunchError from '../data/benchmarks/opus-ios-launch-error.json';
 import opusAndroidLaunchError from '../data/benchmarks/opus-android-launch-error.json';
-import solAndroidReadinessCheck from '../data/benchmarks/sol-android-readiness-entry-error.json';
-import lunaAndroidReadinessCheck from '../data/benchmarks/luna-android-readiness-entry-error.json';
-import opusAndroidReadinessCheck from '../data/benchmarks/opus-android-readiness-entry-error.json';
-import sonnetAndroidReadinessCheck from '../data/benchmarks/sonnet-android-readiness-entry-retry.json';
 
 export const benchmarks = (
   [
@@ -43,14 +38,7 @@ export const benchmarks = (
   ] as BenchmarkData[]
 ).filter((benchmark) => benchmark.runs.some((run) => run.valid));
 
-export const readinessIntegrationChecks = [
-  solAndroidReadinessCheck,
-  lunaAndroidReadinessCheck,
-  sonnetAndroidReadinessCheck,
-  opusAndroidReadinessCheck,
-] as BenchmarkData[];
-
-export const linkedBenchmarks = [...benchmarks, solLaunchCrashJson as BenchmarkData, ...readinessIntegrationChecks];
+export { benchmarks as linkedBenchmarks };
 
 export function displayVariant(variant: BenchmarkRun['variant']): string {
   if (variant === 'javascript') return 'JavaScript change';

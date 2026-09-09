@@ -920,5 +920,6 @@
         "dispatchTotalSeconds": 773.082
       }
     }
-  ]
+  ],
+  "stageAliases": ["sol-launch-crash"]
 }
