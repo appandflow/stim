@@ -62,9 +62,9 @@ Collection records actual hits and misses, accepts proven artifact hits without
 C++ compilation, and flags missing or below-target compiler-cache evidence. A
 `stim android` invocation that exits 1 with a `STIM_NO_METRO` refusal and no
 build phase output stays in the timeline but does not count as missing
-compiler-cache evidence; another invocation must still produce build output, and
-a failed, interrupted, or crashed command that could have compiled still fails
-closed.
+compiler-cache evidence; another `stim android` invocation must still carry
+compiler statistics or a proven artifact hit, and a failed, interrupted, or
+crashed command that could have compiled still fails closed.
 Completed tool output triggers an immediate `CACHE ALERT` and preserves
 `cache-alerts.json`. A flagged attempt stays available for investigation and is
 excluded from published comparisons; investigate the cause before retrying.
