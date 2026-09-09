@@ -271,7 +271,7 @@ export function launchIosApp(
           // project directly; launch-then-openurl can create two React hosts.
           const initialUrl = new URL(url).searchParams.get('url')!;
           const pid = parseLaunchedPid(
-            e.runFile('xcrun', [...launchArgs, '--initialUrl', initialUrl], { timeoutMs: 10000 }),
+            e.runFile('xcrun', [...launchArgs, '--initialUrl', initialUrl], { timeoutMs: 60000 }),
           );
           return { ok: true, mode: 'launch', url, jsLocation: jsLocationValue(metroPort), pid };
         }
@@ -284,7 +284,7 @@ export function launchIosApp(
   }
 
   try {
-    const out = e.runFile('xcrun', launchArgs, { timeoutMs: 10000 });
+    const out = e.runFile('xcrun', launchArgs, { timeoutMs: 60000 });
     const result: IosLaunchResult = { ok: true, mode: 'launch', pid: parseLaunchedPid(out) };
     if (metroPort !== null) result.jsLocation = jsLocationValue(metroPort);
     return result;
