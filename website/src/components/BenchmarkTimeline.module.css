@@ -251,9 +251,16 @@
   padding: 0.5rem 0;
 }
 
+.axis,
+.dotTrack,
+.shellTracks,
+.backgroundTracks {
+  margin-inline: 1rem;
+}
+
 .backgroundTrack {
   position: relative;
-  min-width: 44rem;
+  min-width: 0;
 }
 
 .backgroundBar {
@@ -389,7 +396,7 @@
 
 .shellTrack {
   position: relative;
-  min-width: 44rem;
+  min-width: 0;
 }
 
 .commandBar {
