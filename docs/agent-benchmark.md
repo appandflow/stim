@@ -13,12 +13,12 @@ one headline number.
 
 Each model and platform contains four sequential cells:
 
-| Change     | Arm     | Device state                                                  |
-| ---------- | ------- | ------------------------------------------------------------- |
-| JavaScript | Stim    | adopt the prepared parked iOS simulator or create Android AVD |
-| JavaScript | Control | create a new simulator or AVD                                 |
-| Native     | Stim    | adopt the prepared parked iOS simulator or create Android AVD |
-| Native     | Control | create a new simulator or AVD                                 |
+| Change     | Arm     | Device state                                       |
+| ---------- | ------- | -------------------------------------------------- |
+| JavaScript | Stim    | adopt the prepared parked simulator or Android AVD |
+| JavaScript | Control | create a new simulator or AVD                      |
+| Native     | Stim    | adopt the prepared parked simulator or Android AVD |
+| Native     | Control | create a new simulator or AVD                      |
 
 Results from different platforms, change kinds, models, or deliberately changed
 pins remain separate. Never pool iOS and Android timings into one number.
@@ -39,8 +39,11 @@ Preparation runs outside the timer. On iOS it creates one Stim-owned simulator,
 warms the fixed fixture, removes its seed worktree, and verifies that cleanup
 parked the simulator. The iOS golden contains exactly one available, shut-down
 pool record whose device name starts with `stim-parked`, plus the matching build
-artifact. Android preparation warms the matching APK cache but retains no AVD;
-both Android arms create a fresh AVD during the timed run.
+artifact. Android preparation warms the matching APK cache and parks one
+Stim-owned AVD with the pinned system image and default creation settings.
+The Android Stim arm adopts that exact AVD; control creates a fresh one. Parking
+retains the APK and Quick Boot state; Stim clears app data at adoption before
+launch. Both scoped pool overrides are enabled explicitly for their platform.
 
 Before each dispatch, verify the package version and integrity, fixture commit,
 clean main checkout, golden build artifact, exact parked simulator identity and
@@ -152,7 +155,9 @@ separate PID/log monitoring.
 The Stim arm uses the inherited isolated `STIM_HOME` and invokes the pinned
 published CLI as exactly `stim`. On iOS it requests the pinned model/runtime and
 must report adoption of the prepared simulator. On Android it requests the
-pinned system image. The control must not inspect that home or use Stim; it
+pinned system image and must report adoption of the exact prepared AVD.
+Missing or incompatible parked state refuses dispatch rather than silently
+measuring a fresh boot. The control must not inspect that home or use Stim; it
 creates a new benchmark-named device with the same platform configuration.
 Android control uses the same `avdmanager` default profile, 8 GiB data
 partition, system image, and default Quick Boot policy as Stim.
@@ -331,7 +336,8 @@ or reused. If closure cannot be proven, stop and clean only the campaign-owned
 daemon. Remove the temporary screenshot and terminate only benchmark-owned
 processes. For Stim, run `stim stop` and `stim worktree remove --force`. On iOS,
 then verify that the same simulator is shut down, renamed as parked, and is the
-sole pool record. Android follows Stim's owned-emulator teardown contract. For
+sole pool record. On Android, verify that the same AVD is stopped and remains
+the sole compatible parked record, ready for the next sequential run. For
 control, remove its worktree and branch and shut down and delete only the newly
 created benchmark simulator or emulator. Do not touch unrelated physical-device
 leases or automation sessions.
