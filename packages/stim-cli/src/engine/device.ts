@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { randomUUID } from 'node:crypto';
 import { phaseLine } from '../command-output.ts';
 import {
   allConsolePortsAndSerials,
@@ -32,6 +33,11 @@ import {
 } from '../sim/ios.ts';
 import { adoptParked, dropParked, parkedMaxSetting, readParked, selectParked } from '../sim-pool.ts';
 import {
+  assertOwnedAvdStopped,
+  avdPoolConfiguration,
+  ownedAvdMatchesConfiguration,
+  pickDefaultSystemImage,
+  listInstalledSystemImages,
   bootAndroidEmulator,
   configureNewOwnedAvd,
   createOwnedAvd,
@@ -46,7 +52,7 @@ import {
   type SystemImage,
 } from '../sim/android.ts';
 import { androidAvdConfigSetting, androidDataPartitionSizeGbSetting, iosSimSlimProfileSetting } from '../settings.ts';
-import { teardownOwnedAvd, teardownParkedIosSim } from '../teardown.ts';
+import { teardownOwnedAvd, teardownParkedAvd, teardownParkedIosSim } from '../teardown.ts';
 import { reconcileSimSlim } from './simslim.ts';
 
 export interface OwnedDeviceRecord {
@@ -65,6 +71,7 @@ export interface OwnedDeviceRecord {
   adopted?: boolean;
   adoptionPending?: boolean;
   parkedCacheKey?: string;
+  poolConfiguration?: string;
   /**
    * The boot this call started, and the promise that finishes it: the wait on
    * `simctl bootstatus -b` and the SimSlim reconcile that follows it.
@@ -500,6 +507,7 @@ async function ensureOwnedAndroidDevice({
   teardownAvd: typeof teardownOwnedAvd;
 } & EmulatorLogging): Promise<OwnedDeviceRecord> {
   const avdConfig = androidAvdConfigSetting(settings, settingsRoot);
+  const configuration = avdPoolConfiguration(androidDataPartitionSizeGbSetting(settings), avdConfig);
   if (record?.setupIncomplete && record.avdName) {
     const cleanup = teardownAvd(record.avdName, { del: true });
     if (cleanup.status === 'failed' || cleanup.status === 'skipped') {
@@ -522,6 +530,7 @@ async function ensureOwnedAndroidDevice({
       } else if (resolved.serial) {
         const consolePort = Number(resolved.serial.replace(/^emulator-/, ''));
         const updated = {
+          ...record,
           avdName: record.avdName,
           consolePort,
           owned: true,
@@ -538,6 +547,7 @@ async function ensureOwnedAndroidDevice({
         return {
           ...(await bootOwnedAvdOnFreshPort({
             avdName: record.avdName,
+            metadata: record,
             projectPath,
             deviceName: record.deviceName,
             out,
@@ -576,10 +586,78 @@ async function ensureOwnedAndroidDevice({
     note(chalk.dim('Creating an owned emulator instead. Pass `--device` to build for a connected device.'));
   }
 
+  if (parkedMaxSetting('android').max > 0) {
+    const systemImage = pickDefaultSystemImage(listInstalledSystemImages(), {
+      systemImage: flags.systemImage || settings.android?.systemImage,
+    })?.pkg;
+    const candidates = readParked('android')
+      .filter((entry) => entry.systemImage === systemImage && entry.configuration === configuration)
+      .toSorted((a, b) => a.parkedAt.localeCompare(b.parkedAt));
+    for (const parked of candidates) {
+      if (parked.deletionClaim !== undefined) continue;
+      const resolved = resolveOwnedAvdSerial(parked.name);
+      if (resolved.missing) {
+        dropParked('android', parked.udid);
+        continue;
+      }
+      if (resolved.notOwned || resolved.serial) continue;
+      try {
+        assertOwnedAvdStopped(parked.name);
+      } catch (error) {
+        out(phaseLine('device', `kept parked ${parked.name}: ${String((error as Error)?.message || error)}`));
+        continue;
+      }
+      if (
+        ownedAvdSystemImage(parked.name) !== systemImage ||
+        !ownedAvdMatchesConfiguration(parked.name, configuration)
+      ) {
+        const result = teardownParkedAvd(parked.name);
+        if (result.status === 'failed') out(phaseLine('device', `kept ${parked.name}: ${result.reason}`));
+        continue;
+      }
+      const adopted = {
+        avdName: parked.name,
+        deviceName: parked.name,
+        owned: true,
+        poolConfiguration: configuration,
+        adoptionPending: true,
+      };
+      if (!adoptParked({ platform: 'android', projectPath, udid: parked.udid, device: adopted })) continue;
+      return {
+        ...(await bootOwnedAvdOnFreshPort({
+          avdName: parked.name,
+          projectPath,
+          metadata: adopted,
+          out,
+          logFile,
+          alive,
+        })),
+        adopted: true,
+        systemImage,
+      };
+    }
+  }
+  const reservedNames = readParked('android').map((entry) => entry.name);
+  if (reservedNames.includes(ownedAvdName(label))) label = `${label}-${randomUUID().slice(0, 8)}`;
+
   let created: { avdName: string; systemImage: string | null };
   let fresh = false;
   try {
-    created = createOwnedAvd(label, { systemImage: flags.systemImage || settings.android?.systemImage });
+    created = withConfigLock(() => {
+      const current = loadConfig()?.projects[projectPath]?.platforms?.android;
+      if (current?.avdName && current.avdName !== record?.avdName) {
+        throw new Error(`Another Stim run assigned AVD ${current.avdName} to this workspace. Retry to use it.`);
+      }
+      const result = createOwnedAvd(label, { systemImage: flags.systemImage || settings.android?.systemImage });
+      setDevice(projectPath, 'android', {
+        avdName: result.avdName,
+        owned: true,
+        deviceName: result.avdName,
+        setupIncomplete: true,
+        poolConfiguration: configuration,
+      });
+      return result;
+    });
     fresh = true;
   } catch (e) {
     const message = String((e as Error)?.message || e);
@@ -607,12 +685,6 @@ async function ensureOwnedAndroidDevice({
     }
   }
   if (fresh) {
-    setDevice(projectPath, 'android', {
-      avdName: created.avdName,
-      owned: true,
-      deviceName: created.avdName,
-      setupIncomplete: true,
-    });
     try {
       configureAvd(created.avdName, {
         dataPartitionSizeGb: androidDataPartitionSizeGbSetting(settings),
@@ -634,6 +706,7 @@ async function ensureOwnedAndroidDevice({
   return {
     ...(await bootOwnedAvdOnFreshPort({
       avdName: created.avdName,
+      metadata: fresh ? { poolConfiguration: configuration } : undefined,
       projectPath,
       deviceName: created.avdName,
       out,
@@ -659,7 +732,8 @@ export function claimAndroidConsolePort(
     avdName,
     deviceName,
     livePorts = [],
-  }: { projectPath: string; avdName: string; deviceName?: string; livePorts?: number[] },
+    metadata,
+  }: { projectPath: string; avdName: string; deviceName?: string; livePorts?: number[]; metadata?: OwnedDeviceRecord },
   {
     lock = withConfigLock,
     recordedPorts = () => allConsolePortsAndSerials().androidConsolePorts,
@@ -673,6 +747,8 @@ export function claimAndroidConsolePort(
   return lock(() => {
     const consolePort = nextConsolePort([...recordedPorts(), ...livePorts]);
     const claim: AndroidConsolePortClaim = {
+      ...(metadata?.poolConfiguration ? { poolConfiguration: metadata.poolConfiguration } : {}),
+      ...(metadata?.adoptionPending ? { adoptionPending: true } : {}),
       avdName,
       consolePort,
       owned: true,
@@ -693,6 +769,7 @@ function liveAndroidConsolePorts(): number[] {
 
 async function bootOwnedAvdOnFreshPort({
   avdName,
+  metadata,
   projectPath,
   deviceName,
   out,
@@ -700,6 +777,7 @@ async function bootOwnedAvdOnFreshPort({
   alive = isPidAlive,
 }: {
   avdName: string;
+  metadata?: OwnedDeviceRecord;
   projectPath: string;
   deviceName?: string;
   out: Notify;
@@ -709,6 +787,7 @@ async function bootOwnedAvdOnFreshPort({
     avdName,
     deviceName,
     livePorts: liveAndroidConsolePorts(),
+    metadata,
   });
   const serial = `emulator-${claim.consolePort}`;
   try {

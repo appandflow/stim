@@ -712,11 +712,17 @@ export function runDoctor(
     remoteBuildCache && provider === 'eas'
       ? checkEasAuth({ provider, owner, auth: easAuth({ projectRoot, owner }) })
       : null;
-  if (platform !== 'android') {
-    const poolSettingError = parkedMaxSetting('ios').error;
+  for (const poolPlatform of ['ios', 'android'] as const) {
+    if (platform && platform !== poolPlatform) continue;
+    const poolSettingError = parkedMaxSetting(poolPlatform).error;
     if (poolSettingError) {
       settingShapeFindings.push(
-        finding('cost', 'The simulator pool bound is not a number', poolSettingError, POOL_SETTING_REMEDY),
+        finding(
+          'cost',
+          `The ${poolPlatform === 'ios' ? 'simulator' : 'emulator'} pool bound is not a number`,
+          poolSettingError,
+          POOL_SETTING_REMEDY,
+        ),
       );
     }
   }

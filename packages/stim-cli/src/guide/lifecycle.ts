@@ -365,7 +365,34 @@ result as proof instead of requiring an unrelated screenshot.`,
   for unlisted \`stim-\` devices stays refused: a parked record in THIS config
   proves that simulator is Stim's and parked by this home. \`stop\` never
   parks -- it shuts the owned simulator down and keeps it assigned. Neither
-  does \`gc --delete\`, which is deleting what it finds.`,
+  does \`gc --delete\`, which is deleting what it finds.
+
+  ANDROID EMULATOR POOL
+  Android uses the same bounded park/adopt lifecycle, with
+  \`pool.androidParkedMax\` (default 3) or STIM_POOL_ANDROID_PARKED_MAX.
+  A redirected STIM_HOME disables parking unless that environment override
+  is set. Zero disables parking and adoption. \`stop\` keeps the assignment;
+  \`worktree remove\` parks eligible AVDs, and \`gc --delete\` empties the pool.
+
+  Adoption matches the system image, data partition size, and the creation
+  settings from android.avdConfig / android.avdConfigFile. The AVD keeps its
+  original stim-<label> name so its Quick Boot snapshot can survive reuse.
+  Normal desktop boots allow Quick Boot; headless Linux disables snapshots.
+  Incompatible AVDs stay parked until eviction or GC. AVDs created by older
+  versions without a recorded creation configuration are deleted at removal.
+
+  Android cleanup happens AFTER boot, before install or launch: \`adb shell
+  pm clear\` clears the adopting app's data while retaining its APK, and
+  other third-party apps are uninstalled. Failed cleanup blocks launch and
+  remains pending for a retry. The installed APK's SHA-256 must match the
+  requested artifact before Stim skips installation; a package name or cache
+  key alone is insufficient, including for release builds with swapped JS.
+
+  Parked AVDs retain app data until adoption. System apps, shared storage,
+  accounts and device settings also remain: this is not a factory reset.
+  Set the Android bound to 0 when a project needs a fresh device. Status lists
+  parked Android emulators; GC reports their system image, age and disk size.
+`,
     },
     builds: {
       summary:

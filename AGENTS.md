@@ -190,9 +190,12 @@ remain `stim-<label>`. Both are recorded with `owned: true`. Never do any of
 those actions to a user-created emulator or simulator. Keep a device record
 when teardown fails so `gc` can find the device later.
 
-Stim parks an owned simulator it no longer needs instead of deleting it, up to a
-configured maximum, and adopts a parked one before creating. Parked simulators
-are Stim-owned and listed in the pool record. Delete them only by eviction,
+Stim parks an eligible owned simulator or emulator it no longer needs instead
+of deleting it, up to a per-platform configured maximum, and adopts a compatible
+parked one before creating. Parked devices are Stim-owned and listed in the pool
+record. Android adoption matches the system image and recorded AVD creation
+settings, keeps the AVD name, clears app data and removes other third-party apps
+before launch. Skip Android installation only after verifying the APK bytes. Delete them only by eviction,
 adoption-time reconciliation of a listed unavailable simulator, or `gc
 --delete`; every route uses centralized teardown and ownership revalidation.
 

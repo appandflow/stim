@@ -2,7 +2,13 @@ import { formatLongDuration, shortUdid } from '../../command-output.ts';
 import { formatBytes } from '../../fs-util.ts';
 import type { BuildLockInfo, BuildSlotInfo, GcSkip, OrphanedDevice } from '../../types.ts';
 import type { GcCache } from './caches.ts';
-import type { DeviceLeaseGarbage, ParkedSimReport, StaleDeviceRecord, StaleProjectDevice } from './devices.ts';
+import type {
+  DeviceLeaseGarbage,
+  ParkedAvdReport,
+  ParkedSimReport,
+  StaleDeviceRecord,
+  StaleProjectDevice,
+} from './devices.ts';
 import type { EasSessionSweep } from './eas-sessions.ts';
 
 export interface GcReport {
@@ -10,6 +16,7 @@ export interface GcReport {
   deadProjects: string[];
   invalidProjects: string[];
   parkedSims: ParkedSimReport[];
+  parkedAvds: ParkedAvdReport[];
   orphanedDevices: OrphanedDevice[];
   staleDevices: StaleProjectDevice[];
   staleDeviceRecords: StaleDeviceRecord[];
@@ -53,6 +60,21 @@ function formatParkedSimReport(parkedSims: readonly ParkedSimReport[], now: numb
   return lines;
 }
 
+function formatParkedAvdReport(parkedAvds: readonly ParkedAvdReport[], now: number): string[] {
+  if (!parkedAvds.length) return [];
+  const lines: string[] = [];
+  lines.push(`Parked emulators (${parkedAvds.length}):`);
+  for (const avd of parkedAvds) {
+    const listed =
+      avd.listed === false ? ' - not on this machine' : avd.listed === null ? ' - listing unavailable; kept' : '';
+    lines.push(
+      `  android ${avd.name} ${avd.systemImage} ${parkedAge(avd.parkedAt, now)}${avd.bytes === null ? '' : ` ${formatBytes(avd.bytes)}`}${listed}`,
+    );
+  }
+  lines.push('              --delete attempts verified deletions and keeps failures.');
+  return lines;
+}
+
 function projectEntryLines(header: string, paths: string[]): string[] {
   return paths.length ? [header, ...paths.map((path) => `  ${path}`)] : [];
 }
@@ -63,6 +85,7 @@ export function formatGcReport(
     deadProjects = [],
     invalidProjects = [],
     parkedSims = [],
+    parkedAvds = [],
     orphanedDevices = [],
     staleDevices = [],
     staleDeviceRecords = [],
@@ -89,6 +112,7 @@ export function formatGcReport(
     deadProjects.length === 0 &&
     invalidProjects.length === 0 &&
     parkedSims.length === 0 &&
+    parkedAvds.length === 0 &&
     orphanedDevices.length === 0 &&
     staleDevices.length === 0 &&
     staleDeviceRecords.length === 0 &&
@@ -123,6 +147,7 @@ export function formatGcReport(
   );
 
   lines.push(...formatParkedSimReport(parkedSims, now));
+  lines.push(...formatParkedAvdReport(parkedAvds, now));
 
   if (orphanedDevices.length) {
     lines.push(`Orphaned devices (${orphanedDevices.length}):`);

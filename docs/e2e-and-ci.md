@@ -249,3 +249,17 @@ Two workflows under `.github/workflows/`:
   the thing most likely to end that run early; if it does, `--skip-race` drops
   it to two worktrees at the cost of the `single-flight` and `pods-reuse`
   checks (both of which then report SKIP with that reason).
+
+### Android emulator recycling
+
+After `pnpm run build`, run the pool smoke test against an existing debuggable APK:
+
+```bash
+node --experimental-strip-types test/e2e/native/run-android-pool-e2e.mjs /absolute/path/app-debug.apk
+```
+
+It creates an owned emulator in a temporary Stim home, records fresh and adopted
+setup timings, seeds and clears app data, verifies an unchanged APK skips
+installation, and checks that GC deletes the parked AVD. It uses separate launch
+and cleanup processes, like the CLI. The test removes its own devices and prints
+the temporary directory containing `result.json` and emulator logs.

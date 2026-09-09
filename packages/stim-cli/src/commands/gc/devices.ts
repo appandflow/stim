@@ -6,9 +6,9 @@ import { plural } from '../../command-output.ts';
 import { directorySize } from '../../fs-util.ts';
 import { leaseIsExpired, listLeaseFiles, type LeaseFileEntry } from '../../engine/device-lease.ts';
 import { listAllIosSims, listIosDeviceTypes, parseRuntimeVersion, type IosSimRecord } from '../../sim/ios.ts';
-import { ownedAvdDirectory } from '../../sim/android.ts';
+import { listAvds, ownedAvdDirectory } from '../../sim/android.ts';
 import { dropParked, readParked, type ParkedSim } from '../../sim-pool.ts';
-import { teardownOwnedIosSim, teardownOwnedAvd, teardownParkedIosSim } from '../../teardown.ts';
+import { teardownOwnedIosSim, teardownOwnedAvd, teardownParkedIosSim, teardownParkedAvd } from '../../teardown.ts';
 import type { Config, OrphanedDevice } from '../../types.ts';
 
 export interface StaleProjectDevice {
@@ -56,6 +56,7 @@ export interface ParkedSimReport {
 }
 
 export interface GcDeviceDependencies {
+  listAvds?: typeof listAvds;
   avdDirectory?: typeof ownedAvdDirectory;
   directorySize?: typeof directorySize;
   listAllIosSims?: typeof listAllIosSims;
@@ -105,6 +106,9 @@ export function findOrphanedDevices({
   }
   for (const sim of readParked('ios', { config })) {
     referenced.set(sim.udid, { path: 'the simulator pool', mounted: true });
+  }
+  for (const avd of readParked('android', { config })) {
+    referenced.set(avd.name, { path: 'the emulator pool', mounted: true });
   }
 
   const orphaned: OrphanedDevice[] = [];
@@ -287,6 +291,58 @@ export function collectParkedSims(deps: GcDeviceDependencies): ParkedSimReport[]
     deviceTypes = (deps.listIosDeviceTypes ?? listIosDeviceTypes)();
   } catch {}
   return describeParkedSims(records, sims, deviceTypes);
+}
+
+export interface ParkedAvdReport {
+  name: string;
+  systemImage: string;
+  parkedAt: string;
+  bytes: number | null;
+  listed: boolean | null;
+}
+
+export function collectParkedAvds(deps: GcDeviceDependencies): ParkedAvdReport[] {
+  const records = readParked('android');
+  if (!records.length) return [];
+  let avds: string[] | null = null;
+  try {
+    avds = (deps.listAvds ?? listAvds)();
+  } catch {}
+  return records.map((record) => {
+    let bytes: number | null = null;
+    try {
+      const directory = (deps.avdDirectory ?? ownedAvdDirectory)(record.name);
+      if (directory) bytes = (deps.directorySize ?? directorySize)(directory, { timeoutMs: AVD_SIZE_TIMEOUT_MS });
+    } catch {}
+    return {
+      name: record.name,
+      systemImage: record.systemImage,
+      parkedAt: record.parkedAt,
+      bytes,
+      listed: avds === null ? null : avds.includes(record.name),
+    };
+  });
+}
+
+export function deleteParkedAvds(avds: readonly ParkedAvdReport[]): number {
+  let failures = 0;
+  for (const avd of avds) {
+    if (avd.listed === null) {
+      failures++;
+      console.log(chalk.red(`Could not verify parked android emulator ${avd.name}; its pool record was kept.`));
+      continue;
+    }
+    const result = teardownParkedAvd(avd.name);
+    if (result.status === 'failed') {
+      failures++;
+      console.log(chalk.red(`Failed to delete parked android emulator ${avd.name}: ${result.reason}`));
+    } else if (result.status === 'torn-down') {
+      console.log(chalk.green(`Deleted parked android emulator ${avd.name}`));
+    } else {
+      console.log(chalk.dim(`Skipped ${avd.name}; it is no longer parked.`));
+    }
+  }
+  return failures;
 }
 
 export function deleteParkedSims(parkedSims: readonly ParkedSimReport[], deps: GcDeviceDependencies = {}): number {

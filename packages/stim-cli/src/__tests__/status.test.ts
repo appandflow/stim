@@ -167,33 +167,44 @@ test('status still warns about a recorded sim missing from a readable listing', 
   expect(logs.some((l) => /recorded sim UDID-GONE no longer exists/.test(l))).toBeTruthy();
 });
 
-test('status reports a parked simulator when no projects remain', async () => {
-  process.env.STIM_POOL_IOS_PARKED_MAX = '3';
-  saveConfig(
-    makeConfig({
-      parked: {
-        ios: [
-          {
-            udid: 'PARKED-1',
-            name: 'stim-parked (iPhone 17 26.5) park',
-            deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17',
-            runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
-            parkedAt: '2026-09-03T00:00:00.000Z',
-            simslimManaged: false,
-          },
-        ],
-        android: [],
-      },
-    }),
-  );
+test.each(['ios', 'android'] as const)(
+  'status reports a parked %s device when no projects remain',
+  async (platform) => {
+    const env = platform === 'ios' ? 'STIM_POOL_IOS_PARKED_MAX' : 'STIM_POOL_ANDROID_PARKED_MAX';
+    process.env[env] = '3';
+    saveConfig(
+      makeConfig({
+        parked: {
+          [platform]: [
+            platform === 'android'
+              ? {
+                  udid: 'stim-parked',
+                  name: 'stim-parked',
+                  systemImage: 'system-images;android-36;google_apis;arm64-v8a',
+                  configuration: '[]',
+                  parkedAt: '2026-09-03T00:00:00.000Z',
+                }
+              : {
+                  udid: 'PARKED-1',
+                  name: 'stim-parked (iPhone 17 26.5) park',
+                  deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17',
+                  runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+                  parkedAt: '2026-09-03T00:00:00.000Z',
+                  simslimManaged: false,
+                },
+          ],
+        },
+      }),
+    );
 
-  try {
-    const logs = await runStatus();
-    expect(logs).toContain('pool: 1 parked iOS simulator (max 3)');
-  } finally {
-    delete process.env.STIM_POOL_IOS_PARKED_MAX;
-  }
-});
+    try {
+      const logs = await runStatus();
+      expect(logs).toContain(`pool: 1 parked ${platform === 'ios' ? 'iOS simulator' : 'Android emulator'} (max 3)`);
+    } finally {
+      delete process.env[env];
+    }
+  },
+);
 
 async function runStatusJson() {
   const program = new Command();

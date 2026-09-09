@@ -46,16 +46,25 @@ Metro route required by the remote device. Remote EAS sessions can incur cost.
 - `stim stop` releases the live environment and device leases. It ends an owned
   remote session. On a physical iPhone, stopping the log collector also closes
   the app; it does not shut down the phone or uninstall anything.
-- `stim worktree remove` releases leases, parks the owned iOS simulator for
-  another workspace, and deletes owned Android emulators. The iOS pool keeps up
-  to three simulators by default and deletes the oldest when full. Disabling
-  parking makes removal delete the simulator; see [settings](/docs/settings).
+- `stim worktree remove` releases leases, parks eligible owned iOS simulators and
+  Android emulators for another workspace. Each platform keeps up to three
+  parked devices by default and deletes the oldest when full. Disabling
+  parking makes removal delete the device; see [settings](/docs/settings).
 - `stim gc` reports stale and orphaned resources.
 - `stim gc --delete` removes verified resources from the report, including
-  parked simulators and expired device lease files.
+  parked simulators, emulators, and expired device lease files.
 
 If deletion fails, Stim keeps the ownership record and exits with an error. A
 later cleanup can then retry without losing track of the resource.
 
 Runtime state lives under `$STIM_HOME`, which defaults to `~/.stim`. Each
 workspace stores state and logs in a directory derived from its absolute path.
+
+Android adoption requires the same system image, disk size and AVD creation
+settings. It keeps the AVD name and installed APK, clears the adopting app's
+data, and uninstalls other third-party apps before launch. Installation is
+skipped only when the installed APK matches the requested file by SHA-256.
+App data remains on disk while parked; system apps, shared storage, accounts
+and device settings persist across reuse. Set `pool.androidParkedMax` to `0`
+when a fresh device is required. AVDs created before Stim recorded their
+creation configuration are deleted when removed.

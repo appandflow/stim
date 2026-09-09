@@ -93,7 +93,7 @@ Run `stim guide settings` for the complete key and value list.
 ```json
 {
   "concurrency": { "maxBuilds": 2, "maxDevices": 3 },
-  "pool": { "iosParkedMax": 3 },
+  "pool": { "iosParkedMax": 3, "androidParkedMax": 3 },
   "caches": {
     "buildCache": "/Volumes/Cache/stim/build-cache",
     "metroCache": "/Volumes/Cache/stim/metro-cache"
@@ -104,6 +104,8 @@ Run `stim guide settings` for the complete key and value list.
 `pool.iosParkedMax` bounds the simulators `worktree remove` parks for a later
 workspace to adopt. Absent means 3; `0` turns parking and adoption off. When
 `STIM_HOME` is set, parking is off unless `STIM_POOL_IOS_PARKED_MAX` is set too.
+`pool.androidParkedMax` and `STIM_POOL_ANDROID_PARKED_MAX` apply the same rules
+to Android emulators. See [owned devices](/docs/owned-devices) for adoption cleanup.
 
 The committed `.stim.json` `caches` key and this machine-file `caches` key are
 different shapes: the committed key is an array of extra paths for `gc` to
@@ -114,16 +116,17 @@ control build optimizations on this machine without changing project files.
 
 ## Environment variables
 
-| Variable                     | Purpose                                                                                                  |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `STIM_HOME`                  | Runtime state root. Default: `~/.stim`                                                                   |
-| `STIM_BUILD_CACHE`           | Native artifact cache root                                                                               |
-| `STIM_METRO_CACHE`           | Metro transform cache root                                                                               |
-| `STIM_MAX_BUILDS`            | Maximum concurrent native builds                                                                         |
-| `STIM_MAX_DEVICES`           | Maximum booted owned devices                                                                             |
-| `STIM_POOL_IOS_PARKED_MAX`   | Maximum parked simulators                                                                                |
-| `STIM_METRO_PUBLIC_URL`      | Public Metro URL for remote use                                                                          |
-| `STIM_ANDROID_CAS_TOOLCHAIN` | Absolute path to the [Android CAS toolchain manifest](./build-optimizations.md#experimental-android-cas) |
+| Variable                       | Purpose                                                                                                  |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `STIM_HOME`                    | Runtime state root. Default: `~/.stim`                                                                   |
+| `STIM_BUILD_CACHE`             | Native artifact cache root                                                                               |
+| `STIM_METRO_CACHE`             | Metro transform cache root                                                                               |
+| `STIM_MAX_BUILDS`              | Maximum concurrent native builds                                                                         |
+| `STIM_MAX_DEVICES`             | Maximum booted owned devices                                                                             |
+| `STIM_POOL_ANDROID_PARKED_MAX` | Maximum parked Android emulators; 0 disables parking and adoption                                        |
+| `STIM_POOL_IOS_PARKED_MAX`     | Maximum parked simulators                                                                                |
+| `STIM_METRO_PUBLIC_URL`        | Public Metro URL for remote use                                                                          |
+| `STIM_ANDROID_CAS_TOOLCHAIN`   | Absolute path to the [Android CAS toolchain manifest](./build-optimizations.md#experimental-android-cas) |
 
 Proxy remote devices also use `AGENT_DEVICE_DAEMON_BASE_URL` and
 `AGENT_DEVICE_DAEMON_AUTH_TOKEN`. Those variables belong to the optional proxy

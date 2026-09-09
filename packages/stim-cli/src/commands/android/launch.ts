@@ -1,3 +1,4 @@
+import { resetAdoptedAvd } from '../../sim/android.ts';
 import type { ChildProcess } from 'node:child_process';
 import { rmSync } from 'node:fs';
 import { basename } from 'node:path';
@@ -50,7 +51,7 @@ import { remoteAndroidDeps } from '../../engine/device-remote.ts';
 import { type RunLease, DEBUG_VERIFY_STEP_MS, lostLine, lostRefusal } from '../../engine/device-lease-run.ts';
 import { type LoadProjectProviderResult, exitAfterFlush } from '../../engine/remote-cache.ts';
 import { type ReportAndroidResultArgs, finishAndroidUpload, reportAndroidResult, persistLastBuild } from './result.ts';
-import { upsertProject } from '../../config.ts';
+import { loadConfig, saveConfig, withConfigLock, upsertProject } from '../../config.ts';
 import { providerUploadOutcome } from '../../build-cache.ts';
 import { detectAndroidPackage } from '../../project.ts';
 import { launchOutcomeRecord } from '../native-runtime.ts';
@@ -368,7 +369,7 @@ export async function finishAndroidRun({
     'device',
     physical
       ? `${device.deviceName || serial} (${serial}) connected, not owned by Stim`
-      : `${device.avdName || serial} (${serial}) booted ${bootDuration()}`,
+      : `${device.avdName || serial} (${serial}) ${device.adopted || device.adoptionPending ? 'adopted' : 'booted'} ${bootDuration()}`,
   );
 
   const packageFromApk = readApkPackage(apkPath);
@@ -376,6 +377,32 @@ export async function finishAndroidRun({
     phase('install', chalk.dim(`applicationId ${packageFromApk} (from the APK; project files say ${androidPackage})`));
   }
   androidPackage = packageFromApk || androidPackage || detectAndroidPackage(root);
+
+  if (!physical && !remoteDevice && device.adoptionPending) {
+    if (!androidPackage || !device.avdName)
+      return fail(
+        LAUNCH_FAILED,
+        'Cannot clean an adopted emulator without its app package and AVD name.',
+        'Retry once the APK applicationId can be read.',
+      );
+    try {
+      resetAdoptedAvd(device.avdName, serial, androidPackage);
+      withConfigLock(() => {
+        const config = loadConfig();
+        const current = config?.projects[root]?.platforms?.android;
+        if (!config || !current || current.avdName !== device.avdName)
+          throw new Error('The adopted emulator assignment changed during cleanup.');
+        delete current.adoptionPending;
+        saveConfig(config);
+      });
+    } catch (error) {
+      return fail(
+        LAUNCH_FAILED,
+        `Could not clean adopted emulator ${device.avdName}: ${String((error as Error)?.message || error)}`,
+        'Fix the device cleanup error and retry; adoption remains pending and the app was not launched.',
+      );
+    }
+  }
 
   const lostBeforeInstall = physical ? raiseLeaseFor(ADB_INSTALL_TIMEOUT_MS, true) : null;
   if (lostBeforeInstall) return lostBeforeInstall;

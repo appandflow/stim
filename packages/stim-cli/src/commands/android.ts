@@ -1,3 +1,4 @@
+import { parkedMaxSetting } from '../sim-pool.ts';
 import {
   resolveOptimizations,
   artifactCachePolicy,
@@ -719,7 +720,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   let estimatesRead: RunEstimates | null = null;
   const estimates = (): RunEstimates => (estimatesRead ??= readEstimates({ projectKey, platform: PLATFORM }));
   const settings = resolveSettingsFor(settingsContext);
-  const [shapeError, ...moreShapeErrors] = settingShapeErrors(settings);
+  const [shapeError, ...moreShapeErrors] = [parkedMaxSetting('android').error, ...settingShapeErrors(settings)].filter(
+    (error): error is string => Boolean(error),
+  );
   if (shapeError) {
     return fail('STIM_BAD_ARG', shapeError, SETTING_SHAPE_REMEDY, { lines: moreShapeErrors });
   }

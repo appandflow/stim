@@ -236,8 +236,25 @@ function reclaimOwnedDevices(
 
   const android = project?.platforms?.android;
   if (android?.owned && android.avdName) {
-    const r = teardownOwnedAvd(android.avdName, { del: true });
-    if (r.status === 'torn-down') deletedDevices.push(android.avdName);
+    const bound = parkedMaxSetting('android');
+    const r = teardownOwnedAvd(android.avdName, {
+      del: true,
+      ...(park && !bound.error && bound.max > 0
+        ? {
+            park: {
+              projectPath,
+              max: bound.max,
+              configuration: typeof android.poolConfiguration === 'string' ? android.poolConfiguration : undefined,
+            },
+          }
+        : {}),
+    });
+    if (r.parkFallback) poolNotes.push(`could not park ${android.avdName}: ${r.parkFallback} -- deleted it instead`);
+    for (const failure of r.evictionFailures ?? []) poolNotes.push(failure);
+    if (r.parked) {
+      parkedDevices.push(r.parked);
+      evictedDevices.push(...(r.evicted ?? []));
+    } else if (r.status === 'torn-down') deletedDevices.push(android.avdName);
     else if (r.status === 'skipped') {
       skippedDevices.push({ platform: 'android', name: android.avdName, reason: `${r.reason} -- not touched` });
     } else if (r.status === 'failed') {

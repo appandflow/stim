@@ -1280,7 +1280,10 @@ test('runDoctor keeps shared checks and filters native checks and remote backend
         android: { remote: 'eas' },
       }),
     );
-    writeFileSync(join(home, 'config.json'), JSON.stringify({ pool: { iosParkedMax: 'bad' } }));
+    writeFileSync(
+      join(home, 'config.json'),
+      JSON.stringify({ pool: { iosParkedMax: 'bad', androidParkedMax: 'bad' } }),
+    );
     const options = {
       concurrency: { maxBuilds: 0, maxDevices: 0 },
       remoteEnv: {
@@ -1308,6 +1311,8 @@ test('runDoctor keeps shared checks and filters native checks and remote backend
     expect(android.some((finding) => finding.title.includes('SimSlim'))).toBe(false);
     expect(android.some((finding) => finding.title === 'This project uses a remote proxy')).toBe(false);
     expect(android.some((finding) => finding.title.includes('simulator pool bound'))).toBe(false);
+    expect(android.some((finding) => finding.title.includes('emulator pool bound'))).toBe(true);
+    expect(ios.some((finding) => finding.title.includes('emulator pool bound'))).toBe(false);
     expect(android.some((finding) => finding.title.includes('no eas-cli'))).toBe(true);
   } finally {
     delete process.env.STIM_HOME;
