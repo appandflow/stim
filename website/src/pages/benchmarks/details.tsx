@@ -178,8 +178,7 @@ export default function BenchmarkDetails(): ReactNode {
               built locally (not a new npm release). The initial launch reported the injected crash and hit the native
               artifact cache. Controls were not rerun with this fixture, so this is not a matched speedup comparison.
               The clock starts at the first recorded agent message or shell command, excluding the initial lead-in.
-              Original dispatch timing is retained below.{' '}
-              <Link to="/benchmarks#readiness-integration-title">Read the check methodology</Link>.
+              Original dispatch timing is retained below.
             </p>
           ) : !benchmarks.includes(benchmark) ? (
             <p>

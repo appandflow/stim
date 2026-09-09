@@ -2,22 +2,13 @@ import type { ReactNode } from 'react';
 import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
-import {
-  benchmarks,
-  linkedBenchmarks,
-  readinessIntegrationChecks,
-  displayVariant,
-} from '@site/src/components/benchmarkCatalog';
+import { benchmarks, displayVariant } from '@site/src/components/benchmarkCatalog';
 import BenchmarkVideo from '@site/src/components/BenchmarkVideo';
 import { benchmarkModelLabel } from '@site/src/components/benchmarkSelection';
 import {
   benchmarkDisplayTitle,
   benchmarkOverview,
-  benchmarkSelectionSearch,
-  formatCost,
   formatSeconds,
-  formatTokens,
-  totalTokens,
   type BenchmarkData,
   type BenchmarkRun,
 } from '@site/src/components/benchmarkData';
@@ -116,69 +107,6 @@ export default function Benchmarks(): ReactNode {
               command-level audit and Settings-screen proof.
             </p>
           </header>
-
-          <section className={styles.overview} aria-labelledby="readiness-integration-title">
-            <Heading as="h2" id="readiness-integration-title">
-              Latest: Android readiness-integration checks
-            </Heading>
-            <p>
-              Recorded September 8, 2026 on a Mac mini (Apple M4, 16 GB), Android 36 arm64. These Stim-only
-              startup-error runs add optional early pending and post-splash ready logs. Every published run hit the
-              native artifact cache, reported the injected crash in the initial launch command, repaired the source, and
-              captured Settings proof. Times include worktree warming, emulator creation, diagnosis, repair, and
-              screenshot capture.
-            </p>
-            <p>
-              This is an integration check, not a new matched comparison: controls were not rerun with this fixture. The
-              comparison runs below are retained, with the same first-activity timing rule. Stim was built locally from
-              merged source{' '}
-              <a href="https://github.com/appandflow/stim/commit/a4832aa34d9573ea2898604f6f639c71ae5f9804">a4832aa</a>,
-              with package and executable hashes validated; it was not a new npm release.{' '}
-              <Link to="/docs/dev-server-and-logs#ask-your-agent-to-add-it">Add optional readiness logs</Link>.
-            </p>
-            <div className={styles.checkTable}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Model / audit</th>
-                    <th>Diagnosis</th>
-                    <th>Settings proof</th>
-                    <th>Total tokens</th>
-                    <th>Total cost</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {readinessIntegrationChecks.map((benchmark) => {
-                    const run = benchmark.runs[0];
-                    const href = `/benchmarks/details${benchmarkSelectionSearch({ stage: benchmark.stage, runId: run.id }, linkedBenchmarks)}`;
-                    return (
-                      <tr key={benchmark.stage}>
-                        <td>
-                          <Link to={href}>{benchmarkModelLabel(run.model)}</Link>
-                        </td>
-                        <td>
-                          <Link to={href}>{formatSeconds(run.diagnosisSeconds ?? null)}</Link>
-                        </td>
-                        <td>
-                          <Link to={href}>{formatSeconds(run.settingsReadySeconds)}</Link>
-                        </td>
-                        <td>{formatTokens(totalTokens(run.usage))}</td>
-                        <td>{formatCost(run.estimatedTokenCostUsd)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            <p>
-              Opus had 1m 35s before Claude Code emitted its initialization event; its first recorded agent activity was
-              at 1m 36s. That lead-in is excluded from the displayed clock, with original dispatch timing retained in
-              the audit. Its initial Stim launch took 54s, similar to Sol and Luna (52-53s). Costs cover the full agent
-              turn, including work after the Settings screenshot: OpenAI costs are API-equivalent estimates; Claude
-              costs are CLI-reported. Each row is one validated run, not an average. Sonnet is a separately requested
-              repeat; its setup recovery remains in the timeline and elapsed time.
-            </p>
-          </section>
 
           {readinessPlatforms.map(({ platform, benchmarks: platformBenchmarks }) => (
             <section className={styles.overview} aria-labelledby={`${platform}-overview-title`} key={platform}>
