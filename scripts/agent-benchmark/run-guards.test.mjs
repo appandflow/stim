@@ -29,6 +29,7 @@ const targetConfig = parseBenchmarkTargets({
 });
 
 const build = (output) => [{ id: 'build', command: 'stim android', exitCode: 0, output }];
+const refusal = (output, exitCode = 1) => [{ id: 'refusal', command: 'stim android', exitCode, output }];
 
 describe('agent-device session isolation', () => {
   const prefix = 'env AGENT_DEVICE_STATE_DIR=/tmp/bench-state AGENT_DEVICE_SESSION=bench-run agent-device ';
@@ -253,6 +254,60 @@ describe('compiler cache health', () => {
     expect(
       benchmarkCcache(meta, [...build(''), ...build('compilation cache 80 hits / 20 misses (80%)')]).invalidReasons,
     ).toContain('ccache-evidence-missing');
+  });
+
+  const noMetro =
+    '  error       STIM_NO_METRO: No Metro port is reserved for this workspace.\n  remedy      Run `stim start` first.';
+  const artifactHit = build(
+    'fingerprint abcdef.. hit (1s)\ncompilation cache not run; artifact cache supplied the app',
+  );
+
+  it('does not blame the compiler cache for a STIM_NO_METRO refusal that precedes an artifact hit', () => {
+    expect(benchmarkCcache(meta, [...refusal(noMetro), ...artifactHit])).toMatchObject({
+      status: 'artifact-hit',
+      invalidReasons: [],
+    });
+    const structured = JSON.stringify({ code: 'STIM_NO_METRO', message: 'Port 8082 is not held.', remedy: null });
+    expect(benchmarkCcache(meta, [...refusal(structured), ...artifactHit])).toMatchObject({
+      status: 'artifact-hit',
+      invalidReasons: [],
+    });
+  });
+
+  it('still flags a failed build that reports no compiler statistics', () => {
+    const failed = 'build       compiling debug with Gradle\n  error       STIM_BUILD_FAILED: Gradle failed.';
+    expect(benchmarkCcache(meta, [...refusal(failed), ...artifactHit]).invalidReasons).toContain(
+      'ccache-evidence-missing',
+    );
+    expect(
+      benchmarkCcache(meta, [...refusal(`${noMetro}\n  build       compiling debug with Gradle`), ...artifactHit])
+        .invalidReasons,
+    ).toContain('ccache-evidence-missing');
+  });
+
+  it('still flags an interrupted, killed, or crashed command that could have compiled', () => {
+    expect(
+      benchmarkCcache(meta, [...refusal('build       compiling debug with Gradle', null), ...artifactHit])
+        .invalidReasons,
+    ).toContain('ccache-evidence-missing');
+    expect(benchmarkCcache(meta, [...refusal('', 137), ...artifactHit]).invalidReasons).toContain(
+      'ccache-evidence-missing',
+    );
+    expect(
+      benchmarkCcache(meta, [...refusal('TypeError: boom\n    at runAndroid (android.ts:1)'), ...artifactHit])
+        .invalidReasons,
+    ).toContain('ccache-evidence-missing');
+    expect(benchmarkCcache(meta, [...refusal(noMetro, 0), ...artifactHit]).invalidReasons).toContain(
+      'ccache-evidence-missing',
+    );
+  });
+
+  it('still flags a refusal that is the only platform run', () => {
+    expect(benchmarkCcache(meta, refusal(noMetro))).toMatchObject({
+      status: 'investigate',
+      builds: [],
+      invalidReasons: ['ccache-evidence-missing'],
+    });
   });
 
   it('measures structured Stim output for both collection and immediate alerts', () => {

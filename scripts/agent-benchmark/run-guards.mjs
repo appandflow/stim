@@ -409,15 +409,27 @@ function artifactCacheHit(entry) {
   );
 }
 
+const preBuildRefusalCodes = ['STIM_NO_METRO'];
+
+function preBuildRefusal(entry) {
+  return (
+    entry.exitCode === 1 &&
+    !/build\s+compiling|compilation cache|"ccache"\s*:/.test(entry.output) &&
+    preBuildRefusalCodes.some((code) =>
+      new RegExp(`"code"\\s*:\\s*"${code}"|^\\s*error\\s+${code}:`, 'm').test(entry.output),
+    )
+  );
+}
+
 export function benchmarkCcache(meta, commands) {
   const minimum = meta.timingTarget?.ccacheMinHitRatePercent ?? null;
   const result = { minimumHitRatePercent: minimum, status: 'not-applicable', builds: [], invalidReasons: [] };
   if (meta.arm !== 'stim' || meta.platform !== 'android') return result;
   if (meta.variant === 'native' && minimum == null) result.invalidReasons.push('ccache-target-missing');
-  const platformRuns = commands.filter(
-    (entry) => commandSegmentsStartingWith(entry.command, 'stim android').length > 0,
+  const attemptedBuilds = commands.filter(
+    (entry) => commandSegmentsStartingWith(entry.command, 'stim android').length > 0 && !preBuildRefusal(entry),
   );
-  for (const entry of platformRuns) {
+  for (const entry of attemptedBuilds) {
     const measurements = ccacheMeasurements(entry.output);
     result.builds.push(...measurements.map((measurement) => ({ commandId: entry.id ?? null, ...measurement })));
     if (
@@ -448,7 +460,7 @@ export function benchmarkCcache(meta, commands) {
     result.invalidReasons.push('stale-cmake-launcher-state');
   }
   result.invalidReasons = [...new Set(result.invalidReasons)];
-  if (!platformRuns.length) result.invalidReasons.push('ccache-evidence-missing');
+  if (!attemptedBuilds.length) result.invalidReasons.push('ccache-evidence-missing');
   result.invalidReasons = [...new Set(result.invalidReasons)];
   result.status = result.invalidReasons.length ? 'investigate' : result.builds.length ? 'measured' : 'artifact-hit';
   return result;
