@@ -158,12 +158,12 @@ policy and refuses an iOS run without the adapter when either fails: a nested
 head of the profile SwiftPM applies to manifests and plugins, and `/bin/ps -p
 <pid> -o lstart=`, the process identity agent-device reads for `simctl
 recordVideo`. The macOS kernel refuses a nested
-`sandbox_apply` unless the inner profile is equivalent to the one the process
-already runs under: a profile that differs in effect is refused in both
-directions, under deny-free and deny-containing outer profiles alike, while an
-equivalent profile nests at any depth. SwiftPM generates its profile per
-invocation from `(deny default)` with its own write grants, so no runner policy
-is equivalent to it, and `(with no-sandbox)` on `process-exec*` permits
+`sandbox_apply` unless the inner profile compiles to the same sandbox the
+process already runs under (identical, reordered, duplicated, or redundant
+rules all nest, at any depth); any other profile is refused in both
+directions, even one that only adds a rule with no effect. SwiftPM generates
+its profile per invocation from `(deny default)` with its own write grants, so
+no runner policy compiles to the same sandbox, and `(with no-sandbox)` on `process-exec*` permits
 nesting only by letting the child escape the boundary, which exposes protected
 data. No `sandbox-exec` policy hosts SwiftPM's sandbox, so the adapter's
 `-IDEPackageSupportDisableManifestSandbox=1`,
