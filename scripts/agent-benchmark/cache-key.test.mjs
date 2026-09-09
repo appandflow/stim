@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,9 +23,17 @@ it('hashes native inputs with the pinned CLI dependency despite a conflicting fi
       join(root, 'node_modules/@expo/fingerprint/index.js'),
       'throw new Error("Fixture fingerprint must not be loaded");',
     );
+    // @expo/fingerprint runs `npx react-native config`; without this local bin, npx installs react-native from the registry.
+    mkdirSync(join(root, 'node_modules/.bin'));
+    writeFileSync(
+      join(root, 'node_modules/.bin/react-native'),
+      '#!/bin/sh\n: > "$PWD/react-native-config.ran"\nprintf \'{"root":"%s","dependencies":{}}\' "$PWD"\n',
+      { mode: 0o755 },
+    );
     writeFileSync(join(root, 'android/build.gradle'), 'version = "one"');
     writeFileSync(join(root, 'ios/native.m'), 'one');
     const initial = benchmarkFingerprint(root, stimPackage, 'android');
+    expect(existsSync(join(root, 'react-native-config.ran'))).toBe(true);
     expect(initial).toMatch(/^[a-f0-9]{40}$/);
     writeFileSync(join(root, 'android/local.properties'), 'sdk.dir=/machine-specific-sdk');
     writeFileSync(join(root, 'ios/native.m'), 'two');
