@@ -227,6 +227,7 @@ test('current guides require completed warming and leave worktree creation to Gi
   expect(body).toContain('stim worktree remove');
   for (const guide of [renderTopic('agent'), renderSection('lifecycle', 'options')]) {
     expect(guide).toContain('Wait for warm to exit successfully (exit code 0)');
+    expect(guide).toMatch(/Concurrent\s+writes to the destination are unsafe/);
   }
   expect(body).not.toMatch(/worktree create|--carry-ignored|STIM_WORKTREE_BRANCH_EXISTS/);
   expect(body).not.toMatch(/worktreeDir|worktree\.baseRef|worktree\.include|\.worktreeinclude/);

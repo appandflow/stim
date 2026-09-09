@@ -31,24 +31,34 @@ branch's `HEAD`. The main checkout must still be available. It copies missing
 ignored entries, including installed dependencies, Pods, native build output,
 `.env`, and local configuration files. APFS clones keep copies space-efficient
 where supported; a normal byte copy is used when cloning is unavailable.
+Copies go directly to the destination with no intermediate staging. Keep main
+and the linked worktree on the same volume to benefit from CoW; `STIM_TMPDIR`
+and `tempDir` do not affect warming.
 
 Warm preserves the current branch, tracked files, and every existing
 destination entry, including dangling symlinks. An existing ignored directory
 such as `node_modules` is skipped whole; warm does not fill missing children.
 Untracked files that Git does not ignore are not copied.
 
+Wait for warm to exit successfully before editing, installing dependencies,
+starting Metro/builds, or running another warm in that worktree. **Concurrent
+writes to the destination are unsafe:** existing entries are checked before
+copying, not during it. Concurrent files can be overwritten or removed.
+
 Stim excludes:
 
 - Nested registered Git worktrees, including ignored parents containing them.
 - Any `.DerivedData` directory.
+- `android/build/generated/autolinking`, including in nested apps, so Gradle
+  regenerates paths for the new checkout.
 - Paths matched by main's nonempty `.worktreeexclude`, or its resolved
   `worktree.exclude` setting when that file is absent or empty.
 - Destination paths that overlap a registered nested worktree or have symlink
   ancestors.
 
 Warm writes only to stderr: copied, kept, and failed entry counts, plus any
-lockfile remedies. A failure exits 1; files already published remain. Inspect
-the named failure before retrying, because a partially published directory is
+lockfile remedies. A failure exits 1; files already copied remain. Inspect
+the named failure before retrying, because a partially copied directory is
 kept on retry. A completed copy does not prove dependencies are installed or
 match the current branch. Install missing dependencies with the project's
 package manager when main has none to copy.

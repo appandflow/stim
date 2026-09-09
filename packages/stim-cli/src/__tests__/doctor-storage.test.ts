@@ -50,7 +50,7 @@ test('doctor detects iOS output/cache and configured staging mismatches separate
   expect(findings[1]?.detail).toContain(output);
 });
 
-test('an explicit override on another volume warns for warm and artifact preparation', () => {
+test('an explicit override on another volume warns for artifact preparation but not direct warming', () => {
   const staging = join(base, 'override');
   const findings = checkStorageLayout(project, {
     platform: 'ios',
@@ -58,7 +58,6 @@ test('an explicit override on another volume warns for warm and artifact prepara
     stagingRoot: () => staging,
   });
   expect(findings.map((finding) => finding.title)).toEqual([
-    'Worktree staging crosses filesystems',
     'Cached app/APK staging crosses filesystems',
     'iOS device app staging crosses filesystems',
   ]);

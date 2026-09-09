@@ -8,7 +8,7 @@ import { cloneIgnoredEntries } from '../../packages/stim-cli/src/worktree.ts';
 import { checkStorageLayout } from '../../packages/stim-cli/src/doctor-storage.ts';
 
 test(
-  'warm stages on the destination APFS volume even when cloning falls back',
+  'warm copies directly on the destination APFS volume despite a temporary override and clone fallback',
   { skip: process.platform !== 'darwin' },
   () => {
     const base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-volumes-e2e-')));
@@ -41,7 +41,7 @@ test(
       process.env.STIM_HOME = join(base, 'home');
       process.env.STIM_BUILD_CACHE = join(volume, 'cache');
       process.env.TMPDIR = base;
-      delete process.env.STIM_TMPDIR;
+      process.env.STIM_TMPDIR = base;
       mkdirSync(source);
       git(['init', '-q', '-b', 'main']);
       writeFileSync(join(source, '.gitignore'), 'node_modules/\n');
@@ -63,14 +63,12 @@ test(
       for (const fallback of [false, true]) {
         const target = join(volume, `linked-${fallback}`);
         git(['worktree', 'add', '-qb', `linked-${fallback}`, target]);
-        const staged = [];
         setExecutor({
           ...real,
           runFile(file, args, opts) {
             if (file !== 'cp') return real.runFile(file, args, opts);
-            const staging = dirname(args.at(-1));
-            assert.equal(statSync(staging).dev, statSync(target).dev);
-            staged.push(staging);
+            assert.equal(args.at(-1), join(target, 'node_modules'));
+            assert.equal(statSync(dirname(args.at(-1))).dev, statSync(source).dev);
             if (fallback && args[0] === '-Rc') throw new Error('force clone fallback');
             return real.runFile(file, args, opts);
           },
@@ -80,15 +78,22 @@ test(
         assert.deepEqual(result.copied, ['node_modules']);
         assert.equal(result.cloned, !fallback);
         assert.equal(readFileSync(join(target, 'node_modules', 'pkg', 'index.js'), 'utf8'), 'source package');
-        for (const path of staged) assert.throws(() => statSync(path), { code: 'ENOENT' });
       }
       resetExecutor();
+      delete process.env.STIM_TMPDIR;
       assert.deepEqual(checkStorageLayout(source, { platform: 'android' }), []);
       process.env.STIM_TMPDIR = base;
       assert.deepEqual(
         checkStorageLayout(source, { platform: 'android' }).map((finding) => finding.title),
-        ['Worktree staging crosses filesystems', 'Cached app/APK staging crosses filesystems'],
+        ['Cached app/APK staging crosses filesystems'],
       );
+      const crossVolume = join(base, 'linked-other-volume');
+      git(['worktree', 'add', '-qb', 'linked-other-volume', crossVolume]);
+      const findings = checkStorageLayout(crossVolume, { platform: 'android' });
+      const warmFinding = findings.find((finding) => finding.title === 'Worktree copy crosses filesystems');
+      assert.ok(warmFinding);
+      assert.match(warmFinding.detail, /cannot share file blocks across volumes/);
+      assert.match(warmFinding.fix, /main checkout and linked worktree on the same volume/);
     } finally {
       resetExecutor();
       for (const [key, value] of Object.entries(previous)) {

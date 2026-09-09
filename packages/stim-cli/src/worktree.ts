@@ -1,21 +1,7 @@
-import {
-  chmodSync,
-  constants,
-  copyFileSync,
-  existsSync,
-  lstatSync,
-  linkSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  readlinkSync,
-  realpathSync,
-  symlinkSync,
-  utimesSync,
-} from 'fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, utimesSync } from 'fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { getExecutor } from './exec.ts';
-import { makeTemporaryDirectory, removeTemporaryEntry } from './temporary.ts';
+import { removeTemporaryEntry } from './temporary.ts';
 
 const CARRY_SKIP_BASENAMES = new Set(['.DerivedData']);
 
@@ -229,39 +215,23 @@ function missingDestinationReason(target: string, rel: string): string | null {
   return lstatSync(join(target, rel), { throwIfNoEntry: false }) ? 'exists' : null;
 }
 
-function publishMissingEntry(from: string, to: string, rel: string): boolean {
-  let cloned = true;
-  const stat = lstatSync(from);
-  if (stat.isSymbolicLink()) {
-    symlinkSync(readlinkSync(from), to);
-  } else if (stat.isFile()) {
-    if (process.platform === 'darwin') {
-      // libuv has no macOS clonefile backend: https://github.com/libuv/libuv/pull/3987.
-      try {
-        linkSync(from, to);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw error;
-        cloned = false;
-      }
+function removeCopiedExclusions(path: string, rel: string): void {
+  const entries = readdirSync(path, { withFileTypes: true });
+  const excluded = entries.filter((entry) => isCarrySkipped(`${rel}/${entry.name}`));
+  if (excluded.length > 0) {
+    const stat = lstatSync(path);
+    chmodSync(path, stat.mode | 0o700);
+    try {
+      for (const entry of excluded) removeTemporaryEntry(join(path, entry.name));
+    } finally {
+      utimesSync(path, stat.atime, stat.mtime);
+      chmodSync(path, stat.mode);
     }
-    if (process.platform !== 'darwin' || !cloned) {
-      copyFileSync(from, to, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
-    }
-    utimesSync(to, stat.atime, stat.mtime);
-  } else if (stat.isDirectory()) {
-    mkdirSync(to, { mode: stat.mode | 0o700 });
-    for (const name of readdirSync(from)) {
-      const child = `${rel}/${name}`;
-      if (!isCarrySkipped(child) && !publishMissingEntry(join(from, name), join(to, name), child)) {
-        cloned = false;
-      }
-    }
-    utimesSync(to, stat.atime, stat.mtime);
-    chmodSync(to, stat.mode);
-  } else {
-    throw new Error(`Unsupported ignored entry: ${from}`);
   }
-  return cloned;
+  for (const entry of entries) {
+    const child = `${rel}/${entry.name}`;
+    if (entry.isDirectory() && !isCarrySkipped(child)) removeCopiedExclusions(join(path, entry.name), child);
+  }
 }
 
 export function cloneIgnoredEntries({
@@ -283,7 +253,6 @@ export function cloneIgnoredEntries({
   for (const rel of listCarryableIgnoredEntries(root, patterns)) {
     const from = join(root, rel);
     const to = join(target, rel);
-    let staging: string | undefined;
     try {
       const reason = guard.covers(rel)
         ? 'tracked'
@@ -294,27 +263,18 @@ export function cloneIgnoredEntries({
         skipped.push({ file: rel, reason });
         continue;
       }
-      staging = makeTemporaryDirectory(target, '.stim-warm-');
-      const destination = join(staging, 'entry');
+      mkdirSync(dirname(to), { recursive: true });
       try {
-        getExecutor().runFile('cp', ['-Rc', from, destination]);
+        getExecutor().runFile('cp', ['-Rc', from, to]);
       } catch {
-        removeTemporaryEntry(destination);
-        getExecutor().runFile('cp', ['-R', from, destination]);
+        removeTemporaryEntry(to);
+        getExecutor().runFile('cp', ['-R', from, to]);
         cloned = false;
       }
-      const changed = missingDestinationReason(target, rel);
-      if (changed) {
-        skipped.push({ file: rel, reason: changed });
-        continue;
-      }
-      mkdirSync(dirname(to), { recursive: true });
-      if (!publishMissingEntry(destination, to, rel)) cloned = false;
+      if (lstatSync(to).isDirectory()) removeCopiedExclusions(to, rel);
       copied.push(rel);
     } catch (e) {
       failed.push({ file: rel, error: String((e as Error)?.message || e) });
-    } finally {
-      if (staging) removeTemporaryEntry(staging);
     }
   }
   return { copied, skipped, failed, cloned };

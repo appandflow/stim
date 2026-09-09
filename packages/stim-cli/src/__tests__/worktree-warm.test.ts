@@ -19,40 +19,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { cloneIgnoredEntries, warmWorktreePaths } from '../worktree.ts';
-import { temporaryRoot } from '../temporary.ts';
 import { Command } from 'commander';
 import { registerWarm } from '../commands/worktree.ts';
-
-const publication = vi.hoisted(() => ({
-  beforePublish: null as ((path: string) => void) | null,
-  beforeLink: null as ((from: string, to: string) => void) | null,
-  beforeMkdir: null as ((path: string) => void) | null,
-  stagingPaths: [] as string[],
-}));
-vi.mock('fs', async (importOriginal) => {
-  const fs = await importOriginal<typeof import('fs')>();
-  return {
-    ...fs,
-    mkdtempSync: (prefix: string) => {
-      const path = fs.mkdtempSync(prefix);
-      if (prefix.endsWith('.stim-warm-')) publication.stagingPaths.push(path);
-      return path;
-    },
-    mkdirSync: (path: string, options?: import('fs').MakeDirectoryOptions) => {
-      publication.beforeMkdir?.(path);
-      return fs.mkdirSync(path, options);
-    },
-    copyFileSync: (from: string, to: string, mode?: number) => {
-      publication.beforePublish?.(to);
-      return fs.copyFileSync(from, to, mode);
-    },
-    linkSync: (from: string, to: string) => {
-      publication.beforePublish?.(to);
-      publication.beforeLink?.(from, to);
-      return fs.linkSync(from, to);
-    },
-  };
-});
 
 let base: string;
 let root: string;
@@ -68,7 +36,6 @@ function write(dir: string, rel: string, value: string): void {
 }
 
 beforeEach(() => {
-  publication.stagingPaths = [];
   base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-test-warm-')));
   root = join(base, 'main');
   target = join(base, 'linked');
@@ -89,13 +56,9 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   resetExecutor();
-  publication.beforePublish = null;
-  publication.beforeLink = null;
-  publication.beforeMkdir = null;
   process.exitCode = 0;
   delete process.env.STIM_HOME;
   rmSync(base, { recursive: true, force: true });
-  for (const path of publication.stagingPaths) rmSync(path, { recursive: true, force: true });
 });
 
 function warm() {
@@ -163,41 +126,9 @@ test('missing-only copy discards partial clone output before byte-copy fallback'
   expect(result.copied).toEqual(['node_modules']);
   expect(readdirSync(join(target, 'node_modules'))).toEqual(['pkg']);
   expect(readFileSync(join(target, 'node_modules/pkg/index.js'), 'utf-8')).toBe('source package');
-  expect(publication.stagingPaths.every((path) => !existsSync(path))).toBe(true);
 });
 
-test.each(['file', 'empty directory', 'dangling symlink'])(
-  'missing-only copy preserves a concurrently created %s',
-  (kind) => {
-    write(root, 'node_modules/pkg/index.js', 'source package');
-    const real = getExecutor();
-    setExecutor({
-      ...real,
-      runFile(file, args, opts) {
-        const result = real.runFile(file, args, opts);
-        if (file === 'cp') {
-          if (kind === 'file') writeFileSync(join(target, 'node_modules'), 'concurrent file');
-          else if (kind === 'empty directory') mkdirSync(join(target, 'node_modules'));
-          else symlinkSync('missing-packages', join(target, 'node_modules'));
-        }
-        return result;
-      },
-    });
-    const result = warm();
-    expect(result.copied).toEqual([]);
-    expect(result.skipped).toEqual([{ file: 'node_modules', reason: 'exists' }]);
-    const actual =
-      kind === 'file'
-        ? readFileSync(join(target, 'node_modules'), 'utf-8')
-        : kind === 'empty directory'
-          ? readdirSync(join(target, 'node_modules'))
-          : readlinkSync(join(target, 'node_modules'));
-    const expected = kind === 'file' ? 'concurrent file' : kind === 'empty directory' ? [] : 'missing-packages';
-    expect(actual).toEqual(expected);
-  },
-);
-
-test('failed missing-only copies leave no partial destination and retain their error', () => {
+test('failed direct copies report partial output and keep existing files on retry', () => {
   write(root, 'node_modules/pkg/index.js', 'source package');
   const real = getExecutor();
   setExecutor({
@@ -213,8 +144,8 @@ test('failed missing-only copies leave no partial destination and retain their e
   const result = warm();
   expect(result.copied).toEqual([]);
   expect(result.failed).toEqual([{ file: 'node_modules', error: 'copy failed' }]);
-  expect(existsSync(join(target, 'node_modules'))).toBe(false);
-  expect(publication.stagingPaths.every((path) => !existsSync(path))).toBe(true);
+  expect(readFileSync(join(target, 'node_modules/partial'), 'utf-8')).toBe('incomplete');
+  expect(warm().skipped).toEqual([{ file: 'node_modules', reason: 'exists' }]);
 });
 
 test('missing-only copy preserves relative symlinks without linking files back to the source', () => {
@@ -223,14 +154,19 @@ test('missing-only copy preserves relative symlinks without linking files back t
   const destination = join(target, 'node_modules/pkg/index.js');
   linkSync(source, join(root, 'node_modules/pkg/sibling.js'));
   symlinkSync('pkg', join(root, 'node_modules/alias'));
+  write(base, 'outside/.DerivedData/keep', 'outside data');
+  symlinkSync('../../outside', join(root, 'node_modules/outside'));
+  symlinkSync('../../../outside', join(root, 'node_modules/pkg/.DerivedData'));
   const result = warm();
   expect(result.failed).toEqual([]);
   expect(readlinkSync(join(target, 'node_modules/alias'))).toBe('pkg');
+  expect(readlinkSync(join(target, 'node_modules/outside'))).toBe('../../outside');
+  expect(existsSync(join(target, 'node_modules/pkg/.DerivedData'))).toBe(false);
+  expect(readFileSync(join(base, 'outside/.DerivedData/keep'), 'utf-8')).toBe('outside data');
   const published = lstatSync(destination);
   expect(published.ino).not.toBe(lstatSync(source).ino);
   expect(published.nlink).toBe(1);
   expect(lstatSync(join(target, 'node_modules/pkg/sibling.js')).ino).not.toBe(published.ino);
-  expect(publication.stagingPaths.every((path) => !existsSync(path))).toBe(true);
   write(target, 'node_modules/pkg/index.js', 'edited destination');
   expect(readFileSync(source, 'utf-8')).toBe('source package');
   expect(readFileSync(join(target, 'node_modules/pkg/sibling.js'), 'utf-8')).toBe('source package');
@@ -238,61 +174,18 @@ test('missing-only copy preserves relative symlinks without linking files back t
   expect(readFileSync(destination, 'utf-8')).toBe('edited destination');
 });
 
-test.skipIf(process.platform !== 'darwin')(
-  'publication reuses the private staged inode and preserves timestamps',
-  () => {
-    write(root, '.env', 'source config');
-    const source = join(root, '.env');
-    utimesSync(source, new Date('2020-01-01'), new Date('2021-01-01'));
-    let staged: ReturnType<typeof lstatSync> | undefined;
-    let stagedPath: string | undefined;
-    publication.beforeLink = (from) => {
-      stagedPath = from;
-      staged = lstatSync(from);
-    };
-    const result = warm();
-    expect(result.failed).toEqual([]);
-    const published = lstatSync(join(target, '.env'));
-    expect(staged).toBeDefined();
-    expect(stagedPath).toBe(join(publication.stagingPaths[0]!, 'entry'));
-    expect(staged?.ino).not.toBe(lstatSync(source).ino);
-    expect(published.ino).toBe(staged?.ino);
-    expect(published.atimeMs).toBe(staged?.atimeMs);
-    expect(published.mtimeMs).toBe(staged?.mtimeMs);
-    expect(published.nlink).toBe(1);
-    expect(publication.stagingPaths.every((path) => !existsSync(path))).toBe(true);
-  },
-);
-
-test.each(['EXDEV', 'ENOTSUP', 'EPERM'])('publication copies independently when linking fails with %s', (code) => {
-  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
-  write(root, 'node_modules/pkg/index.js', 'source package');
-  let links = 0;
-  publication.beforeLink = () => {
-    links++;
-    throw Object.assign(new Error('link unavailable'), { code });
-  };
-  const result = warm();
-  expect(links).toBe(1);
-  expect(result.failed).toEqual([]);
-  expect(result.copied).toEqual(['node_modules']);
-  expect(result.cloned).toBe(false);
-  write(target, 'node_modules/pkg/index.js', 'edited destination');
-  expect(readFileSync(join(root, 'node_modules/pkg/index.js'), 'utf-8')).toBe('source package');
-  expect(publication.stagingPaths.every((path) => !existsSync(path))).toBe(true);
-});
-
-test('publication refuses EEXIST without attempting to copy', () => {
-  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+test.skipIf(process.platform !== 'darwin')('direct cloning preserves source timestamps', () => {
   write(root, '.env', 'source config');
-  publication.beforeLink = () => {
-    throw Object.assign(new Error('link destination exists'), { code: 'EEXIST' });
-  };
+  const source = join(root, '.env');
+  utimesSync(source, new Date('2020-01-01'), new Date('2021-01-01'));
+  const before = lstatSync(source);
   const result = warm();
-  expect(result.copied).toEqual([]);
-  expect(result.failed).toEqual([{ file: '.env', error: 'link destination exists' }]);
-  expect(existsSync(join(target, '.env'))).toBe(false);
-  expect(publication.stagingPaths.every((path) => !existsSync(path))).toBe(true);
+  expect(result.failed).toEqual([]);
+  expect(result.cloned).toBe(true);
+  const copied = lstatSync(join(target, '.env'));
+  expect(copied.ino).not.toBe(before.ino);
+  expect(copied.atimeMs).toBe(before.atimeMs);
+  expect(copied.mtimeMs).toBe(before.mtimeMs);
 });
 
 async function runWarm(cwd: string) {
@@ -313,40 +206,6 @@ async function runWarm(cwd: string) {
     error.mockRestore();
   }
 }
-
-test.each([
-  ['file', false],
-  ['dangling symlink', false],
-  ['file', true],
-  ['dangling symlink', true],
-])('publication preserves a late %s and earlier files (copy fallback: %s)', (kind, fallback) => {
-  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
-  write(root, 'node_modules/a.js', 'source a');
-  write(root, 'node_modules/b.js', 'source b');
-  if (fallback) {
-    publication.beforeLink = () => {
-      throw Object.assign(new Error('link unavailable'), { code: 'ENOTSUP' });
-    };
-  }
-  publication.beforePublish = (path) => {
-    if (path === join(target, 'node_modules/b.js')) {
-      publication.beforePublish = null;
-      if (kind === 'file') writeFileSync(path, 'concurrent b');
-      else symlinkSync('missing-b', path);
-    }
-  };
-  const result = warm();
-  expect(result.copied).toEqual([]);
-  expect(result.failed).toHaveLength(1);
-  expect(result.failed[0]?.error).toMatch(/EEXIST/);
-  expect(readFileSync(join(target, 'node_modules/a.js'), 'utf-8')).toBe('source a');
-  const actual =
-    kind === 'file'
-      ? readFileSync(join(target, 'node_modules/b.js'), 'utf-8')
-      : readlinkSync(join(target, 'node_modules/b.js'));
-  expect(actual).toBe(kind === 'file' ? 'concurrent b' : 'missing-b');
-  expect(existsSync(join(target, 'node_modules/missing-b'))).toBe(false);
-});
 
 test('warm identifies canonical main and linked roots from a symlinked subdirectory', () => {
   const alias = join(base, 'alias');
@@ -509,20 +368,6 @@ test.each(['android/build/', 'apps/mobile/'])('warm excludes generated autolinki
   );
 });
 
-test('exclusive directory publication preserves an empty directory created after the final precheck', () => {
-  write(root, 'node_modules/pkg/index.js', 'source package');
-  publication.beforeMkdir = (path) => {
-    if (path === join(target, 'node_modules')) {
-      publication.beforeMkdir = null;
-      mkdirSync(path);
-    }
-  };
-  const result = warm();
-  expect(result.copied).toEqual([]);
-  expect(result.failed[0]?.error).toMatch(/EEXIST/);
-  expect(readdirSync(join(target, 'node_modules'))).toEqual([]);
-});
-
 test('missing-only copy preserves executable file modes', () => {
   write(root, 'node_modules/pkg/bin', '#!/bin/sh\nexit 0\n');
   chmodSync(join(root, 'node_modules/pkg/bin'), 0o755);
@@ -531,7 +376,7 @@ test('missing-only copy preserves executable file modes', () => {
   expect(lstatSync(join(target, 'node_modules/pkg/bin')).mode & 0o777).toBe(0o755);
 });
 
-test('warm copies read-only directories, preserves their modes, and removes staging', async () => {
+test('warm removes excluded copies from read-only directories and restores their modes', async () => {
   write(root, 'node_modules/pkg/index.js', 'read-only package');
   write(root, 'node_modules/pkg/.DerivedData/large', 'excluded');
   chmodSync(join(root, 'node_modules/pkg'), 0o555);
@@ -541,16 +386,10 @@ test('warm copies read-only directories, preserves their modes, and removes stag
     expect(readFileSync(join(target, 'node_modules/pkg/index.js'), 'utf-8')).toBe('read-only package');
     expect(lstatSync(join(target, 'node_modules/pkg')).mode & 0o777).toBe(0o555);
     expect(existsSync(join(target, 'node_modules/pkg/.DerivedData'))).toBe(false);
-    expect(publication.stagingPaths.every((path) => !existsSync(path))).toBe(true);
   } finally {
     chmodSync(join(root, 'node_modules/pkg'), 0o755);
-    for (const entry of [
-      join(target, 'node_modules'),
-      ...publication.stagingPaths.map((path) => join(path, 'entry')),
-    ]) {
-      const pkg = join(entry, 'pkg');
-      if (existsSync(pkg)) chmodSync(pkg, 0o755);
-    }
+    const pkg = join(target, 'node_modules/pkg');
+    if (existsSync(pkg)) chmodSync(pkg, 0o755);
   }
 });
 
@@ -577,7 +416,7 @@ test('warm copies project-owned .stim directories unless the main exclusion file
   expect(readFileSync(join(target, 'apps/mobile/.stim/project.json'), 'utf-8')).toBe('nested project data');
 });
 
-test('staging ignored files never exposes their contents to Git status or git add', async () => {
+test('directly copied ignored files stay invisible to Git status and git add', async () => {
   write(root, '.env', 'source secret');
   const observations: { status: string; add: string; staged: string }[] = [];
   const real = getExecutor();
@@ -598,8 +437,6 @@ test('staging ignored files never exposes their contents to Git status or git ad
   const result = await runWarm(target);
   expect(result.code).toBe(0);
   expect(observations).toEqual([{ status: '', add: '', staged: 'source secret' }]);
-  expect(publication.stagingPaths.map((path) => realpathSync(dirname(path)))).toEqual([temporaryRoot(target)]);
-  expect(publication.stagingPaths.every((path) => !existsSync(path))).toBe(true);
   expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('source secret');
 });
 
