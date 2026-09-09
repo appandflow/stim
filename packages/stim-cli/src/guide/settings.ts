@@ -440,7 +440,7 @@ PREFER SELF-REGISTRATION OVER THE 'caches' SETTING
 There is no 'cache' command. A cache registers itself from code instead, once,
 and every 'gc' report shows it from then on, tagged (registered):
 
-  import { register } from 'stim-cli/cache-manifest';
+  import { register } from 'stim/cache-manifest';
   register({ dir: '<dir>', name: '<what to call it>', entriesDepth: 2 });
 
 entriesDepth is how far below dir one entry sits (default 1, a flat store).

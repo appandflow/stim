@@ -29,7 +29,7 @@ export function sectionNames(name: string): string[] {
   return Object.keys(topicByName(name)?.sections ?? {});
 }
 
-const COMMAND_NOTATION = 'Commands use `stim`. If it is not installed globally, replace `stim` with `npx stim-cli`.';
+const COMMAND_NOTATION = 'Commands use `stim`. If it is not installed globally, replace `stim` with `npx stim`.';
 
 function wordCount(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;

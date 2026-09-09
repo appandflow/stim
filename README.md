@@ -13,17 +13,18 @@ or configured remote devices.
 
 ## Install
 
-The npm package is named `stim-cli`. It installs the `stim` command.
+The `stim` npm package installs the `stim` command. If you previously installed
+`stim-cli` globally, run `npm uninstall --global stim-cli` first.
 
 ```bash
-npm install --global stim-cli
+npm install --global stim
 npx skills add appandflow/stim
 ```
 
 Run without a global install when needed:
 
 ```bash
-npx stim-cli <command>
+npx stim <command>
 ```
 
 Then ask your coding agent to build and run the app. The normal loop is:
@@ -77,7 +78,7 @@ stim guide settings
 
 ## Packages
 
-- [`stim-cli`](./packages/stim-cli) provides the `stim` command.
+- [`stim`](./packages/stim-cli) provides the `stim` command.
 - [`@stim-cli/metro`](./packages/metro) shares Metro transforms and records logs.
 - [`@stim-cli/expo-build-cache`](./packages/expo-build-cache) lets direct Expo
   builds share native artifacts with Stim.

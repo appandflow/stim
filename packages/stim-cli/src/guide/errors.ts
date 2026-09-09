@@ -830,11 +830,11 @@ not on any remote"  (worktree remove)
     environment: {
       summary: 'npx registry E401/E404, the Node floor, no free Metro port, the reservation race',
       separator: '--- ENVIRONMENT ---',
-      body: () => `"npm error code E401 / E404" while \`npx\` resolves the stim-cli package
+      body: () => `"npm error code E401 / E404" while \`npx\` resolves the stim package
   The repo probably pins a private registry in \`.npmrc\`, so \`npx\` looked for
   the package there instead of on npm. Use the public registry for this command:
 
-    npx --registry=https://registry.npmjs.org stim-cli <command>
+    npx --registry=https://registry.npmjs.org stim <command>
 
   A line such as \`npm warn exec ... will be installed\` is normal when using
   the no-install form.

@@ -29,8 +29,8 @@ change into an app or worktree.
 For a standalone field pass of the published release:
 
 ```bash
-published_version=$(npm view stim-cli version)
-stim() { npx "stim-cli@$published_version" "$@"; }
+published_version=$(npm view stim version)
+stim() { npx "stim@$published_version" "$@"; }
 test "$(stim --version)" = "$published_version"
 npx skills add appandflow/stim
 stim guide agent

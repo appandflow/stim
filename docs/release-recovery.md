@@ -9,7 +9,7 @@ The npm registry is the source of truth for "what was last released" -- a
 publish can fail after the tag is pushed, leaving the tag ahead of the
 registry. Post-stable, the last-published version can sit on either the
 `latest` or the `next` dist-tag; RELEASE.md section 1 shows the
-`npm view stim-cli dist-tags --json` invocation that checks both and picks
+`npm view stim dist-tags --json` invocation that checks both and picks
 the semver-higher one. If `git describe --tags --abbrev=0` is higher than
 that, a previous release got tagged but never landed. **Retry that publish
 at the existing version** (RELEASE.md section 4 step 7, or the manual
@@ -42,7 +42,7 @@ pnpm --filter @stim-cli/core publish --access public --tag <dist-tag> --otp <cod
 pnpm --filter @stim-cli/cache publish --access public --tag <dist-tag> --otp <code>
 pnpm --filter @stim-cli/metro publish --access public --tag <dist-tag> --otp <code>
 pnpm --filter @stim-cli/expo-build-cache publish --access public --tag <dist-tag> --otp <code>
-pnpm --filter stim-cli publish --access public --tag <dist-tag> --otp <code>
+pnpm --filter stim publish --access public --tag <dist-tag> --otp <code>
 ```
 
 ## First publication of a NEW package
@@ -53,6 +53,13 @@ published by hand (OTP) before the workflow can cover it. Then configure the
 package's trusted publisher for `appandflow/stim`, workflow `release.yml`,
 environment `release`. The workflow's already-exists skip makes the next
 tagged release pick it up cleanly.
+
+When an acquired package name already has a placeholder version, publish the
+CLI at the version the four scoped packages already share. Verify that version
+exists for every dependency before packing. The rename goes through a reviewed
+PR and required CI; inspect and smoke-test its pnpm tarball before the manual
+publish. Preserve existing version tags and publish only the new package name.
+Future releases resume the normal five-package workflow.
 
 For a from-scratch bootstrap (first release ever): confirm all the package
 names are available, use the intended first version, review the full release

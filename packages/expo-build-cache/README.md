@@ -8,7 +8,7 @@ Stim ignores two machine-local Android paths (`android/local.properties`,
 two hashes differ and each side fills its own entry. List them in the project's
 `.fingerprintignore` to bring the hashes back together.
 
-If Stim is not installed globally, replace `stim` with `npx stim-cli`.
+If Stim is not installed globally, replace `stim` with `npx stim`.
 
 ```bash
 npm install --save-dev @stim-cli/expo-build-cache
@@ -28,7 +28,7 @@ For current Expo SDK versions:
 
 Expo SDK 53 reads this value under `expo.experiments.buildCacheProvider`.
 
-The provider works without the `stim-cli` npm package. When Stim is available,
+The provider works without the `stim` npm package. When Stim is available,
 the provider registers its cache so `stim gc` can report and trim it.
 
 Set `STIM_BUILD_CACHE` to override the cache location.

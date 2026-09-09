@@ -6,7 +6,7 @@ description: 'Control native artifact reuse, compiler caches, PCH, and Metro cac
 import StimTabs from '@site/src/components/StimTabs';
 
 Commands use `stim`. If it is not installed globally, replace `stim` with
-`npx stim-cli`.
+`npx stim`.
 
 Stim enables build optimizations by default. Use the `optimizations` settings to
 disable individual layers when debugging or to opt into experimental compiler

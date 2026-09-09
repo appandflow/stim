@@ -25,7 +25,7 @@ pins remain separate. Never pool iOS and Android timings into one number.
 
 ## Pins and preparation
 
-Pin the exact published `stim-cli` version and package integrity, fixture
+Pin the exact published `stim` version and package integrity, fixture
 commit, runner version, model, reasoning effort, service tier, `agent-device`
 version and executable hash, Node.js, host machine, and platform toolchain
 before preparing the block. iOS also pins CocoaPods, Xcode, iPhone model, and

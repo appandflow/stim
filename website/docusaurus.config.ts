@@ -69,7 +69,7 @@ const config: Config = {
         { to: '/benchmarks', label: 'Benchmarks', position: 'left' },
         { to: '/docs/changelog', label: 'Changelog', position: 'left' },
         {
-          href: 'https://www.npmjs.com/package/stim-cli',
+          href: 'https://www.npmjs.com/package/stim',
           label: 'npm',
           position: 'right',
         },
@@ -94,7 +94,7 @@ const config: Config = {
         {
           title: 'Packages',
           items: [
-            { label: 'stim-cli', href: 'https://www.npmjs.com/package/stim-cli' },
+            { label: 'stim', href: 'https://www.npmjs.com/package/stim' },
             { label: '@stim-cli/metro', href: 'https://www.npmjs.com/package/@stim-cli/metro' },
             {
               label: '@stim-cli/expo-build-cache',

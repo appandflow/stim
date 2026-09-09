@@ -73,7 +73,7 @@ const allowedBin = join(root, 'allowed-bin');
 const stimBin = join(root, 'bin');
 const golden = join(root, 'golden');
 const worktreeParent = resolve(process.env.STIM_BENCH_WORKTREE_PARENT ?? join(root, '../trailhead-worktrees'));
-const stimPackage = resolve(process.env.STIM_BENCH_STIM_PACKAGE ?? join(root, 'runtime', 'node_modules', 'stim-cli'));
+const stimPackage = resolve(process.env.STIM_BENCH_STIM_PACKAGE ?? join(root, 'runtime', 'node_modules', 'stim'));
 const stimCli = join(stimPackage, 'dist', 'cli.mjs');
 const agentDeviceBin = process.env.STIM_BENCH_AGENT_DEVICE_BIN ?? 'agent-device';
 const nativeCompatManifest = process.env.STIM_BENCH_NATIVE_COMPAT_MANIFEST;
@@ -498,6 +498,7 @@ function git(...args) {
 }
 
 function versionChecks() {
+  const stimManifest = JSON.parse(readFileSync(join(stimPackage, 'package.json'), 'utf8'));
   const macVersion = run('sw_vers', ['-productVersion']);
   const macBuild = run('sw_vers', ['-buildVersion']);
   const xcode = run('xcodebuild', ['-version']).split('\n');
@@ -507,9 +508,9 @@ function versionChecks() {
     CLAUDE_VERSION: run(claudeBin, ['--version']).split(/\s+/)[0],
     NODE_VERSION: run('node', ['--version']).replace(/^v/, ''),
     COCOAPODS_VERSION: run('pod', ['--version']),
-    STIM_VERSION: JSON.parse(readFileSync(join(stimPackage, 'package.json'), 'utf8')).version,
+    STIM_VERSION: stimManifest.version,
     STIM_INTEGRITY: JSON.parse(readFileSync(join(root, 'runtime', 'package-lock.json'), 'utf8')).packages[
-      'node_modules/stim-cli'
+      `node_modules/${stimManifest.name}`
     ].integrity,
     AGENT_DEVICE_VERSION: run(agentDeviceBin, ['--version']).split(/\s+/).at(-1),
     AGENT_DEVICE_SHA256: sha256(executablePath(agentDeviceBin)),

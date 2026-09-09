@@ -173,11 +173,11 @@ skill changes only when its activation description or single routing command
 changes.
 
 Document command invocation once in each human-facing installation entry
-point. Show the no-install form, `npx stim-cli <command>`, and the global
-install, `npm install --global stim-cli`. The static skill is only a router and
+point. Show the no-install form, `npx stim <command>`, and the global
+install, `npm install --global stim`. The static skill is only a router and
 does not repeat installation instructions. Use `stim` alone in later examples.
 In a document that does not explain installation, add one short note that tells
-readers to replace `stim` with `npx stim-cli` when it is not installed globally.
+readers to replace `stim` with `npx stim` when it is not installed globally.
 On the website, use synchronized Global and npx tabs with Global as the default.
 Keep the full `npx` form in runnable hooks, release checks, and registry
 remedies, which cannot assume a global install.

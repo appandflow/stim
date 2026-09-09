@@ -3,7 +3,7 @@
 Optional Metro integration for Stim. It exports a transform cache shared across
 worktrees and an NDJSON reporter for structured Metro and client logs.
 
-If Stim is not installed globally, replace `stim` with `npx stim-cli`.
+If Stim is not installed globally, replace `stim` with `npx stim`.
 
 ```bash
 npm install --save-dev @stim-cli/metro
