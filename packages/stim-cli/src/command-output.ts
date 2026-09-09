@@ -152,12 +152,12 @@ export function launchErrorReport(
   records: readonly LaunchErrorRecord[],
   root?: string,
 ): { summary: string | null; lines: string[] } {
-  const fromDevice = records.filter((record) => record.src === 'device');
+  const fromDevice = records.filter((record) => record.src === 'device' && !isAppLaunchError(record));
   const lines = launchErrorPreview(records.filter(isAppLaunchError), root);
   const summary =
     fromDevice.length === 0
       ? null
-      : `${plural(fromDevice.length, 'error-level record')} in the device log during launch (logs --errors --source device)`;
+      : `${plural(fromDevice.length, 'general device error-level record')} (not confirmed app errors); inspect with stim logs --errors --source device`;
   return { summary, lines };
 }
 

@@ -113,7 +113,7 @@ async function verifyIosRun({
   lanOrigin,
   remoteDevice,
   metroOrigin,
-}: VerifyIosRunArgs): Promise<boolean | string> {
+}: VerifyIosRunArgs): Promise<{ state: boolean | string; warning?: string }> {
   const readNativeCrashes = () =>
     remoteDevice
       ? []
@@ -136,7 +136,7 @@ async function verifyIosRun({
         'verify',
         `process alive ${formatDuration(processCheck.waitedMs ?? 0)} after launch (${configuration}: no bundle fetch to observe)`,
       );
-      return true;
+      return { state: true };
     }
     for (const line of launchErrorPreview(crashes, root)) note(chalk.red(phaseLine('launch', line)));
     if (!crashes.length)
@@ -170,7 +170,7 @@ async function verifyIosRun({
         ),
       ),
     );
-    return crashes.length || processCheck?.reason === 'exited' ? LAUNCH_FATAL : LAUNCH_UNVERIFIED;
+    return { state: crashes.length || processCheck?.reason === 'exited' ? LAUNCH_FATAL : LAUNCH_UNVERIFIED };
   }
 
   const verification: VerifyLaunchResultLike = metroCheck
@@ -241,7 +241,7 @@ async function verifyIosRun({
         ),
       );
     }
-    return LAUNCH_FATAL;
+    return { state: LAUNCH_FATAL };
   }
   if (verification?.verified) {
     phase(
@@ -266,11 +266,18 @@ async function verifyIosRun({
         ),
       );
     }
-    return true;
+    return {
+      state: true,
+      warning: hasAppErrors
+        ? 'app errors detected; inspect the error above'
+        : verification.readiness === 'timed-out' || verification.readiness === 'error'
+          ? 'app readiness not confirmed; inspect the UI and logs'
+          : undefined,
+    };
   }
   if (verification?.skipped) {
     phase('verify', 'skipped (--no-metro-check): the launch is reported as unverified');
-    return LAUNCH_UNVERIFIED;
+    return { state: LAUNCH_UNVERIFIED };
   }
   if (verification?.requested) {
     phase(
@@ -283,7 +290,7 @@ async function verifyIosRun({
         phaseLine('', 'Nothing to do: `stim logs --source metro` shows the build finishing, usually within a minute.'),
       ),
     );
-    return LAUNCH_BUNDLING;
+    return { state: LAUNCH_BUNDLING };
   }
 
   phase('verify', chalk.yellow("UNVERIFIED: no bundle request reached this workspace's Metro"));
@@ -309,7 +316,7 @@ async function verifyIosRun({
       }),
   }))
     note(chalk.yellow(phaseLine('', line)));
-  return LAUNCH_UNVERIFIED;
+  return { state: LAUNCH_UNVERIFIED };
 }
 
 function reportLaunchErrors(errors: LaunchErrorRecord[], note: (line: string) => void, root: string): boolean {
@@ -753,7 +760,7 @@ export async function finishIosRun({
   if (remoteDevice) await d.replaceCollector({ root, udid, bundleId: bundleId!, appName, appExecutable, note });
 
   if (physical) raiseLeaseFor(release ? RELEASE_VERIFY_WAIT_MS : DEBUG_VERIFY_STEP_MS, false);
-  const launchState = await verifyIosRun({
+  const { state: launchState, warning: launchWarning } = await verifyIosRun({
     root,
     appPath,
     d,
@@ -820,6 +827,7 @@ export async function finishIosRun({
     useBuildCache,
     waitedForBuild,
     launchState,
+    launchWarning,
     remote,
     providerName,
     closeWriter,

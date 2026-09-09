@@ -102,6 +102,8 @@ RULES DURING THE LOOP
   still building" means Metro has not finished; wait and query the logs. For
   launch UNVERIFIED, follow the printed remedy before claiming success. JSON
   reports these as true, "bundling", and "unverified" in launched.
+  WARNING means the native launch completed with app errors, or an app readiness
+  signal was expected but not confirmed; inspect the output before claiming a healthy UI.
 - A clean logs --errors check requires exit code 0 AND no matching errors in
   captured logs. Exit code 0 alone means the query succeeded, even when errors
   were printed. Human output shows "No matching log records" on stderr for

@@ -99,7 +99,7 @@ async function verifyAndroidRun({
   physical,
   scheme,
   phase,
-}: VerifyAndroidRunArgs): Promise<boolean | string> {
+}: VerifyAndroidRunArgs): Promise<{ state: boolean | string; warning?: string }> {
   const readNativeCrashes = () =>
     remoteDevice
       ? []
@@ -109,7 +109,7 @@ async function verifyAndroidRun({
         );
   if (remoteRelease) {
     phase('verify', chalk.yellow('UNVERIFIED: remote adapter launch accepted; process verification is unavailable'));
-    return LAUNCH_UNVERIFIED;
+    return { state: LAUNCH_UNVERIFIED };
   }
   if (release) {
     const processCheck = await verifyReleaseLaunched({ serial, packageName: androidPackage });
@@ -119,11 +119,11 @@ async function verifyAndroidRun({
         'verify',
         `process alive ${formatDuration(processCheck.waitedMs ?? 0)} after launch (${variant}: no bundle fetch to observe)`,
       );
-      return true;
+      return { state: true };
     }
     if (processCheck?.reason === 'probe-failed' && !crashes.length) {
       phase('verify', chalk.yellow('UNVERIFIED: the app process check failed'));
-      return LAUNCH_UNVERIFIED;
+      return { state: LAUNCH_UNVERIFIED };
     }
     for (const line of launchErrorPreview(crashes, root)) phase('launch', chalk.red(line));
     if (!crashes.length)
@@ -145,7 +145,7 @@ async function verifyAndroidRun({
         'A release process exited before readiness. Run `stim logs --errors` for captured crash reports, or `stim logs --source device` for the full device output.',
       ),
     );
-    return LAUNCH_FATAL;
+    return { state: LAUNCH_FATAL };
   }
 
   const verification: VerifyLaunchResultLike = metroCheck
@@ -212,7 +212,7 @@ async function verifyAndroidRun({
         ),
       );
     }
-    return LAUNCH_FATAL;
+    return { state: LAUNCH_FATAL };
   }
   if (verification?.verified) {
     phase(
@@ -236,11 +236,19 @@ async function verifyAndroidRun({
         ),
       );
     }
-    return true;
+    return {
+      state: true,
+      warning:
+        report.lines.length > 0
+          ? 'app errors detected; inspect the error above'
+          : verification.readiness === 'timed-out' || verification.readiness === 'error'
+            ? 'app readiness not confirmed; inspect the UI and logs'
+            : undefined,
+    };
   }
   if (verification?.skipped) {
     phase('verify', 'skipped (--no-metro-check): the launch is reported as unverified');
-    return LAUNCH_UNVERIFIED;
+    return { state: LAUNCH_UNVERIFIED };
   }
   if (verification?.requested) {
     phase(
@@ -252,7 +260,7 @@ async function verifyAndroidRun({
       '',
       chalk.dim('Nothing to do: `stim logs --source metro` shows the build finishing, usually within a minute.'),
     );
-    return LAUNCH_BUNDLING;
+    return { state: LAUNCH_BUNDLING };
   }
 
   phase('verify', chalk.yellow("UNVERIFIED: no bundle request reached this workspace's Metro"));
@@ -266,7 +274,7 @@ async function verifyAndroidRun({
     mode: isExpo ? MODE_EXPO : MODE_BARE,
   }))
     phase('', chalk.yellow(line));
-  return LAUNCH_UNVERIFIED;
+  return { state: LAUNCH_UNVERIFIED };
 }
 
 interface FinishAndroidRunArgs {
@@ -620,7 +628,7 @@ export async function finishAndroidRun({
   }
 
   if (physical) raiseLeaseFor(release ? RELEASE_VERIFY_WAIT_MS : DEBUG_VERIFY_STEP_MS, false);
-  const launchState = await verifyAndroidRun({
+  const { state: launchState, warning: launchWarning } = await verifyAndroidRun({
     root,
     release,
     remoteRelease,
@@ -671,6 +679,7 @@ export async function finishAndroidRun({
     remote,
     providerName,
     launchState,
+    launchWarning,
     launched,
     ccache,
     durationMs: now() - started,

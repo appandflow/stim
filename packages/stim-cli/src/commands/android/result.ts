@@ -177,6 +177,7 @@ export interface ReportAndroidResultArgs {
   remote: LoadProjectProviderResult | null;
   providerName: string | null;
   launchState: boolean | string;
+  launchWarning?: string;
   launched: LaunchResultLike;
   ccache: CcacheActivity;
   durationMs: number;
@@ -202,6 +203,7 @@ export function reportAndroidResult({
   remote,
   providerName,
   launchState,
+  launchWarning,
   launched,
   ccache,
   durationMs,
@@ -241,11 +243,12 @@ export function reportAndroidResult({
     emit(JSON.stringify(facts));
   } else {
     const summary =
-      `OK: ${androidPackage} launched on ${serial}, ` +
+      `${launchWarning ? 'WARNING' : 'OK'}: ${androidPackage} launched on ${serial}, ` +
       `${release ? `${variant} (embedded JS, no Metro)` : `Metro port ${metroPort}`} ` +
       `(${cacheOutcome(record.cacheHit, remote?.name ?? providerName)})`;
-    const outcome =
-      launchState === LAUNCH_UNVERIFIED
+    const outcome = launchWarning
+      ? chalk.yellow(`${summary} -- ${launchWarning}`)
+      : launchState === LAUNCH_UNVERIFIED
         ? chalk.yellow(`${summary} -- launch UNVERIFIED`)
         : launchState === LAUNCH_BUNDLING
           ? chalk.green(`${summary} -- bundle requested, still building`)

@@ -190,9 +190,11 @@ export default function logsCommand(program: Command): void {
           console.log(JSON.stringify(record));
           return;
         }
-        const rendered = opts.errors
-          ? { ...record, msg: launchErrorPreview([record], root).join('\n'), stack: undefined }
-          : record;
+        const rendered = {
+          ...record,
+          msg: launchErrorPreview([record], root, { full: !opts.errors }).join('\n'),
+          stack: undefined,
+        };
         console.log(formatRecord(rendered, { paint: record?.level ? LEVEL_COLOURS[record.level] : undefined }));
       };
 
@@ -222,7 +224,11 @@ export default function logsCommand(program: Command): void {
       for (const record of capped) emit(record);
       const hidden = errorCount - capped.filter((record) => record.errorContext !== true).length;
       if (hidden > 0) {
-        console.log(chalk.dim(`... and ${hidden} more (rerun with --tail ${hidden} or --json)`));
+        console.log(
+          chalk.dim(
+            `Showing ${ERRORS_PRINT_CAP} of ${errorCount} matching error records; ${hidden} not shown. Add --tail ${rawRecords.length} to include all captured records before grouping (stacks still previewed), or --json for raw records.`,
+          ),
+        );
       }
 
       if (!opts.follow) {

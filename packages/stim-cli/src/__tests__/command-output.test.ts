@@ -108,7 +108,9 @@ test("a verified launch counts the device log and still prints the app's own err
     { src: 'metro', msg: 'a bundler error' },
   ];
   const report = launchErrorReport(records);
-  expect(report.summary).toBe('3 error-level records in the device log during launch (logs --errors --source device)');
+  expect(report.summary).toBe(
+    '3 general device error-level records (not confirmed app errors); inspect with stim logs --errors --source device',
+  );
   expect(report.lines).toEqual(['a redbox', 'a bundler error']);
 });
 
@@ -116,7 +118,9 @@ test('the count never depends on the process a record names', () => {
   const named = launchErrorReport([{ src: 'device', proc: 'Trailhead', msg: 'x' }]);
   const unnamed = launchErrorReport([{ src: 'device', msg: 'x' }]);
   expect(named.summary).toBe(unnamed.summary);
-  expect(named.summary).toBe('1 error-level record in the device log during launch (logs --errors --source device)');
+  expect(named.summary).toBe(
+    '1 general device error-level record (not confirmed app errors); inspect with stim logs --errors --source device',
+  );
   expect(named.lines).toEqual([]);
 });
 
@@ -158,9 +162,11 @@ test('launch previews cap a JavaScript stack split across Android log records wi
     'Error: second failure',
     'Error stack:',
     '  at retry (retry.ts:4:2)',
-    'Full captured stacks: stim logs --source all (add --json for raw records)',
+    'Stack preview: up to 10 frames per stack; app frames preferred.',
+    'Full captured logs: stim logs --source all (without --errors)',
+    'Raw records: stim logs --source all --json',
   ]);
-  expect(report.summary).toContain('17 error-level records');
+  expect(report.summary).toBeNull();
   expect(records.map((record) => record.msg)).toEqual(messages);
 });
 
@@ -177,7 +183,9 @@ test('launch previews unescape and bound serialized React component stacks while
     'Component stack:',
     ...Array.from({ length: 10 }, (_, i) => `  at Component${i} (index.bundle:${100 + i}:20 [unsymbolicated])`),
     '  ... 4 more frames',
-    'Full captured stacks: stim logs --source all (add --json for raw records)',
+    'Stack preview: up to 10 frames per stack; app frames preferred.',
+    'Full captured logs: stim logs --source all (without --errors)',
+    'Raw records: stim logs --source all --json',
   ]);
 });
 
@@ -196,11 +204,13 @@ test('launch previews preserve structured error and component stacks separately 
   expect(lines).toContain('  at fn9 (app.tsx:10:3)');
   expect(lines).not.toContain('  at fn10 (app.tsx:11:3)');
   expect(lines).toContain('  ... 3 more frames');
-  expect(lines.slice(-4)).toEqual([
+  expect(lines.slice(-6)).toEqual([
     'Component stack:',
     '  at Screen (screen.tsx:10:3)',
     '  at Root (root.tsx:4:2)',
-    'Full captured stacks: stim logs --source all (add --json for raw records)',
+    'Stack preview: up to 10 frames per stack; app frames preferred.',
+    'Full captured logs: stim logs --source all (without --errors)',
+    'Raw records: stim logs --source all --json',
   ]);
   expect(JSON.stringify(records)).toBe(original);
 });
@@ -250,8 +260,10 @@ test('launch previews still bound a component stack whose serialized log record 
     'Component stack:',
     ...Array.from({ length: 10 }, (_, i) => `  at Component${i} (index.bundle:${100 + i}:20 [unsymbolicated])`),
     '  ... 3 more frames',
-    '[captured stack text is incomplete]',
-    'Full captured stacks: stim logs --source all (add --json for raw records)',
+    '[captured stack text is incomplete: the runtime truncated it; saved logs cannot restore missing text]',
+    'Stack preview: up to 10 frames per stack; app frames preferred.',
+    'Full captured logs: stim logs --source all (without --errors)',
+    'Raw records: stim logs --source all --json',
   ]);
 });
 
@@ -269,6 +281,8 @@ test('launch previews retain Expo and Hermes frame order and reset depth between
     'Error stack:',
     '  render@app.tsx:4:3',
     '  parent@root.tsx:5:4',
-    'Full captured stacks: stim logs --source all (add --json for raw records)',
+    'Stack preview: up to 10 frames per stack; app frames preferred.',
+    'Full captured logs: stim logs --source all (without --errors)',
+    'Raw records: stim logs --source all --json',
   ]);
 });

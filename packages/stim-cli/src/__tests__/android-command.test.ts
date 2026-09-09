@@ -2735,10 +2735,13 @@ describe('launch verification', () => {
         ],
       }),
     });
-    await h.run();
+    const result = await h.run();
+    expect(result.facts?.launched).toBe(true);
+    expect(h.stdout[0]).toMatch(/^WARNING: .*app errors detected/);
+    expect(h.stdout.join('\n')).not.toContain('OK:');
     const text = h.stderr.join('\n');
     expect(text).toMatch(
-      /^  launch {6}1 error-level record in the device log during launch \(logs --errors --source device\)$/m,
+      /^  launch {6}1 general device error-level record \(not confirmed app errors\); inspect with stim logs --errors --source device$/m,
     );
     expect(text).toMatch(/^  launch {6}a redbox from the app$/m);
     expect(text).toContain('Error stack:');

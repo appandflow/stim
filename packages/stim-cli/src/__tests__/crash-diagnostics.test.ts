@@ -97,6 +97,43 @@ test('app frames beyond a framework prefix survive both preview limits without r
   );
 });
 
+test('native previews remove metadata noise but full output preserves it and Java causes stay distinct', () => {
+  const record = {
+    event: 'native_crash',
+    msg: 'Native crash',
+    stack: [
+      { file: 'libc.so', fn: '(abort+156) (BuildId: abc123) [captured native frame]' },
+      {
+        file: 'Trailhead.debug.dylib',
+        fn: '@objc AppDelegate.application (in Trailhead.debug.dylib) (/<compiler-generated>:0)',
+      },
+    ],
+  };
+  const preview = launchErrorPreview([record]).join('\n');
+  expect(preview).toContain('at (abort+156) (libc.so)');
+  expect(preview).toContain('at @objc AppDelegate.application (Trailhead.debug.dylib; compiler-generated)');
+  expect(preview).not.toContain('BuildId');
+  const full = launchErrorPreview([record], undefined, { full: true }).join('\n');
+  expect(full).toContain('BuildId: abc123');
+  expect(full).toContain('[captured native frame]');
+  const java = launchErrorPreview([
+    {
+      msg: 'RuntimeException: failed\n  at wrapper (Runtime.java:5)\nCaused by: IllegalStateException: broken\n  at crash (MainApplication.kt:34)',
+    },
+  ]).join('\n');
+  expect(java).toContain('Error stack:\n  at wrapper');
+  expect(java).toContain('Caused-by stack:\n  at crash');
+});
+
+test('a runtime-truncated frame remains identifiable without a broken bundle URL', () => {
+  const preview = launchErrorPreview([
+    { msg: "componentStack: '\\n    at Route (http://localhost:8082/index.bundle?plat" },
+  ]).join('\n');
+  expect(preview).toContain('at Route (location incomplete)');
+  expect(preview).toContain('runtime truncated');
+  expect(preview).not.toContain('http://');
+});
+
 test('cross-source copies collapse only with matching title, location, platform and time', () => {
   const a = { ts: 1000, src: 'client', platform: 'ios', msg: 'Error: broken\n    at render (app.tsx:4:2)' };
   const b = { ...a, ts: 1100, src: 'device' };

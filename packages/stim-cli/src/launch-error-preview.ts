@@ -1,5 +1,5 @@
 type RecordLike = { msg?: unknown; stack?: unknown; componentStack?: unknown; [key: string]: unknown };
-type StackKind = 'Error' | 'Component' | 'Native';
+type StackKind = 'Error' | 'Component' | 'Native' | 'Caused-by';
 
 function framePriority(frame: string, root?: string): number {
   const normalized = frame.replaceAll('\\', '/');
@@ -37,21 +37,29 @@ function expandStackFields(message: string): string {
     /(^|\n|[,{])[ \t]*(['"]?)(componentStack|stack)\2:[ \t]*(['"])((?:\\.|[^\\\n])*)$/gm,
     (match, prefix: string, _keyQuote: string, field: string, _quote: string, value: string) => {
       if (!/\\n\s+at\s/.test(value)) return match;
-      return `${prefix}\n${field === 'componentStack' ? 'Component' : 'Error'} stack:\n${decodeStack(value)}\n[captured stack text is incomplete]`;
+      return `${prefix}\n${field === 'componentStack' ? 'Component' : 'Error'} stack:\n${decodeStack(value)}\n[captured stack text is incomplete: the runtime truncated it; saved logs cannot restore missing text]`;
     },
   );
 }
 
 function shortFrame(frame: string, root?: string): string {
   const text = root ? frame.replaceAll(`${root}/`, '') : frame;
-  return text.trim().replace(/https?:\/\/[^\s)]+/g, (location) => {
-    const match = /^(.*\.bundle)(?:[^\s]*?)(:\d+:\d+)$/.exec(location);
-    if (!match) {
-      const bundle = /\/([^/]+\.bundle)/.exec(location)?.[1];
-      return bundle ? `${bundle} [unsymbolicated]` : location;
-    }
-    return `${match[1]!.split('/').at(-1)}${match[2]} [unsymbolicated]`;
-  });
+  const incomplete = /\(https?:\/\/[^\s)]*$/.test(text);
+  if (incomplete) return text.trim().replace(/\(https?:\/\/[^\s)]*$/, '(location incomplete)');
+  const compact = text
+    .trim()
+    .replace(/ \(BuildId: [0-9a-f]+\)/gi, '')
+    .replace(' [captured native frame]', '')
+    .replace(/ \(in ([^()]+)\) \(\/?<compiler-generated>:0\) \(\1\)$/, ' ($1; compiler-generated)')
+    .replace(/https?:\/\/[^\s)]+/g, (location) => {
+      const match = /^(.*\.bundle)(?:[^\s]*?)(:\d+:\d+)$/.exec(location);
+      if (!match) {
+        const bundle = /\/([^/]+\.bundle)/.exec(location)?.[1];
+        return bundle ? `${bundle} [unsymbolicated]` : location;
+      }
+      return `${match[1]!.split('/').at(-1)}${match[2]} [unsymbolicated]`;
+    });
+  return compact.replace(/\((\/(?:apex|system)\/[^()]+)\)/g, (_match, path: string) => `(${path.split('/').at(-1)})`);
 }
 
 function structuredFrames(value: unknown): string[] {
@@ -67,8 +75,12 @@ function structuredFrames(value: unknown): string[] {
   });
 }
 
-/** Formats a bounded human launch preview without changing captured records. */
-export function launchErrorPreview(records: readonly RecordLike[], root?: string): string[] {
+/** Formats captured stacks for humans; full mode removes preview limits and preserves frame text. */
+export function launchErrorPreview(
+  records: readonly RecordLike[],
+  root?: string,
+  { full = false }: { full?: boolean } = {},
+): string[] {
   const lines: string[] = [];
   let kind: StackKind = 'Error';
   let frames: string[] = [];
@@ -80,12 +92,12 @@ export function launchErrorPreview(records: readonly RecordLike[], root?: string
       const ranked = frames.map((frame, index) => ({ frame, index, rank: framePriority(frame, root) }));
       const selected = ranked
         .toSorted((a, b) => a.rank - b.rank || a.index - b.index)
-        .slice(0, 10)
+        .slice(0, full ? undefined : 10)
         .toSorted((a, b) => a.index - b.index);
-      const prioritized = selected.some(({ index }) => index >= 10);
+      const prioritized = !full && selected.some(({ index }) => index >= 10);
       lines.push(
         `${kind} stack${prioritized ? ' (app frames prioritized)' : ''}:`,
-        ...selected.map(({ frame }) => `  ${shortFrame(frame, root)}`),
+        ...selected.map(({ frame }) => `  ${full ? frame.trim() : shortFrame(frame, root)}`),
       );
       if (frames.length > selected.length) {
         const frameworkCount = ranked.filter((entry) => entry.rank === 2 && !selected.includes(entry)).length;
@@ -111,7 +123,12 @@ export function launchErrorPreview(records: readonly RecordLike[], root?: string
       frames.push(line);
     } else if (line.trim()) {
       flush();
-      lines.push(line.length > 1000 ? `${line.slice(0, 1000)} ... [truncated; full text in logs --json]` : line);
+      if (/^\s*Caused by:/.test(line)) kind = 'Caused-by';
+      lines.push(
+        !full && line.length > 1000
+          ? `${line.slice(0, 1000)} ... [preview shortened; full text in logs without --errors]`
+          : line,
+      );
     }
   };
   for (const record of records) {
@@ -146,6 +163,11 @@ export function launchErrorPreview(records: readonly RecordLike[], root?: string
     }
   }
   flush();
-  if (hadStack) lines.push('Full captured stacks: stim logs --source all (add --json for raw records)');
+  if (hadStack && !full)
+    lines.push(
+      'Stack preview: up to 10 frames per stack; app frames preferred.',
+      'Full captured logs: stim logs --source all (without --errors)',
+      'Raw records: stim logs --source all --json',
+    );
   return lines;
 }

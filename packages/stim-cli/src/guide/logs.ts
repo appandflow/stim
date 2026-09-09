@@ -84,9 +84,17 @@ FLAGS
   the safe direction: a client redbox that Fast Refresh already fixed keeps
   being reported until the next launch.
 
-  OUTPUT. --errors prints at most 20 error records, plus any stack context, and
-  then a "... and N more" line. N is exactly what \`--tail N\` prints, because
-  what was held back IS the tail. In non-follow human output, an Expo error includes its immediately
+  OUTPUT. --errors previews up to 10 frames per stack and the first 20 matching
+  error records, plus stack context. A footer reports any hidden record count;
+  use the printed --tail value to include all captured records before grouping,
+  still with previewed stacks. To remove both preview limits, omit --errors:
+    stim logs --source all
+  This includes all sources, levels and history, not just the latest errors;
+  add --since, --level or --grep to narrow it. --source all selects sources,
+  not stack depth. For untouched captured records use:
+    stim logs --source all --json
+  Neither form can restore text the runtime truncated before capture.
+  In non-follow human output, an Expo error includes its immediately
   following code frame and Call Stack lines. Bare React Native symbolication is
   shown as separate context because Metro does not provide an error correlation
   identifier. Context does not change the error count or the raw error records
@@ -131,9 +139,9 @@ WHAT WRITES WHAT
                        --errors leaves this source out unless asked. A VERIFIED
                        LAUNCH counts these records and prints one line:
 
-                         launch      9 error-level records in the device log
-                                     during launch
-                                     (logs --errors --source device)
+                         launch      9 general device error-level records
+                                     (not confirmed app errors); inspect with
+                                     stim logs --errors --source device
 
                        The count does not attribute unknown OS errors to the app.
                        Known JavaScript errors also print individually: Android
@@ -141,6 +149,10 @@ WHAT WRITES WHAT
                        javascript records. These can interrupt an optional
                        readiness wait even without a client or Metro copy.
                        Client and Metro errors still print individually.
+                       A native app that loaded its bundle but reported app errors
+                       ends with WARNING rather than OK. This does not change the
+                       launch JSON or exit code: launched describes bundle/process
+                       evidence, not a healthy UI. Inspect the errors and readiness.
 
                        Human ios/android and logs --errors output previews up to
                        ten frames per error, component or native stack. App-source

@@ -245,6 +245,33 @@ describe('logs command', () => {
     expect(parseNdjsonLine(out[0])).toEqual(record);
   });
 
+  test('omitting --errors shows every string and structured stack frame while JSON stays raw', async () => {
+    const frames = Array.from({ length: 13 }, (_, i) => ({ file: 'app.tsx', line: i + 1, fn: `render${i}` }));
+    const record = {
+      ts: 1,
+      src: 'client',
+      level: 'error',
+      msg: 'x'.repeat(1100),
+      stack: frames,
+      componentStack: frames.map((f) => `at ${f.fn} (${f.file}:${f.line}:1)`).join('\n'),
+    };
+    writeLog('client.ndjson', [record]);
+    await run({ errors: true });
+    expect(out[0]).not.toContain('render12');
+    expect(out[0]).toContain('3 more frames');
+    expect(out[0]).toContain('without --errors');
+    out.length = 0;
+    await run({ source: ['all'] });
+    expect(out[0]).toContain(record.msg);
+    expect(out[0]?.match(/render12/g)).toHaveLength(2);
+    expect(out[0]).toContain('Component stack:');
+    expect(out[0]).not.toContain('more frames');
+    expect(out[0]).not.toContain('Stack preview:');
+    out.length = 0;
+    await run({ errors: true, json: true });
+    expect(parseNdjsonLine(out[0])).toEqual(record);
+  });
+
   test('exits 0 and prints nothing to stdout when nothing matches', async () => {
     writeLog('metro.ndjson', [{ ts: 1, src: 'metro', level: 'info', msg: 'fine' }]);
     await run({ errors: true });
@@ -526,8 +553,8 @@ describe('logs command', () => {
       expect(out[0]).toMatch(/boom 0$/);
       expect(out[ERRORS_PRINT_CAP - 1]).toMatch(/boom 19$/);
       const hidden = 3004 - ERRORS_PRINT_CAP;
-      expect(out[ERRORS_PRINT_CAP]).toMatch(new RegExp(`and ${hidden} more`));
-      expect(out[ERRORS_PRINT_CAP]).toMatch(new RegExp(`--tail ${hidden}`));
+      expect(out[ERRORS_PRINT_CAP]).toContain(`${hidden} not shown`);
+      expect(out[ERRORS_PRINT_CAP]).toContain('--tail 3004');
       expect(out[ERRORS_PRINT_CAP]).toMatch(/--json/);
     });
 
@@ -552,7 +579,31 @@ describe('logs command', () => {
       expect(out.join('\n')).toContain('before visible errors');
       expect(out.join('\n')).toContain('after visible errors');
       expect(out.join('\n')).not.toContain('after hidden error');
-      expect(out.at(-1)).toMatch(/and 1 more/);
+      expect(out.at(-1)).toContain('1 not shown');
+    });
+
+    test('the cap remedy includes raw copies so grouping cannot hide errors from the suggested tail', async () => {
+      const records = Array.from({ length: 21 }, (_, i) => ({
+        ts: i * 2000,
+        level: 'error',
+        platform: 'ios',
+        msg: `Error: boom ${i}\n  at render (app.tsx:${i + 1}:2)`,
+      }));
+      writeLog(
+        'client.ndjson',
+        records.map((r) => ({ ...r, src: 'client' })),
+      );
+      writeLog(
+        'metro.ndjson',
+        records.map((r) => ({ src: 'metro', ts: r.ts + 100, level: r.level, platform: r.platform, msg: r.msg })),
+      );
+      await run({ errors: true });
+      expect(out.at(-1)).toContain('20 of 21 matching error records');
+      expect(out.at(-1)).toContain('--tail 42');
+      out.length = 0;
+      await run({ errors: true, tail: '42' });
+      expect(out).toHaveLength(21);
+      expect(out.at(-1)).toContain('boom 20');
     });
 
     test('the cap does not apply to --json, or to an explicit --tail', async () => {

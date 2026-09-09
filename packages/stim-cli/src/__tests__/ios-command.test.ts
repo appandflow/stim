@@ -876,7 +876,7 @@ describe('launch verification', () => {
 
   test('an app error with a live native process recommends reload instead of another native run', async () => {
     reserve();
-    const { errs } = await run(
+    const { errs, logs } = await run(
       {},
       {
         verifyLaunch: async () => ({
@@ -890,6 +890,8 @@ describe('launch verification', () => {
     expect(text).toMatch(/native app is still running/);
     expect(text).toContain('stim reload ios');
     expect(text).toMatch(/Do not run `stim ios` unless native inputs changed or the app process exits/);
+    expect(logs[0]).toMatch(/^WARNING: .*app errors detected/);
+    expect(logs.join('\n')).not.toContain('OK:');
   });
 
   test('a verified launch counts the device log instead of printing it', async () => {
@@ -914,7 +916,7 @@ describe('launch verification', () => {
     );
     const text = errs.join('\n');
     expect(text).toMatch(
-      /^  launch {6}2 error-level records in the device log during launch \(logs --errors --source device\)$/m,
+      /^  launch {6}2 general device error-level records \(not confirmed app errors\); inspect with stim logs --errors --source device$/m,
     );
     expect(text).toMatch(/^  launch {6}a redbox from the app$/m);
     expect(text).toContain('Error stack:');
