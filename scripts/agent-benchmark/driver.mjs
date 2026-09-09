@@ -38,7 +38,12 @@ import {
   matchesExpectedIosSimulator,
 } from './watch-app-selection.mjs';
 import { completedCleanupRecord, durableRunRecord } from './run-record.mjs';
-import { isolatedRunnerInvocation, prepareRunnerIsolation, runnerIsolationPolicy } from './runner-isolation.mjs';
+import {
+  isolatedRunnerInvocation,
+  prepareRunnerIsolation,
+  runnerIsolationPolicy,
+  verifyIsolationCompatibility,
+} from './runner-isolation.mjs';
 import {
   agentDeviceIsolationInvalidReasons,
   agentDeviceAuxiliarySessions,
@@ -1359,6 +1364,21 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
   const shellProvenance = verifyRunnerShell(arm, env);
   const claudeGuidance = runnerKind === 'claude' ? writeClaudeGuidance(codexHome, arm, runDir) : null;
   const isolation = prepareRunIsolation(runId, runDir, env, arm, crash, claudeGuidance);
+  try {
+    preflightReport.isolationCompatibility = verifyIsolationCompatibility(isolation, {
+      platform,
+      nativeCompatibility: preflightReport.nativeCompatibility,
+      execute: (file, args) => run(file, args, { cwd: crash?.fixtureCheckout ?? main, env, timeout: 30_000 }),
+    });
+  } catch (error) {
+    if (error.isolationCompatibility) {
+      writeFileSync(
+        join(runDir, 'isolation-compatibility.json'),
+        `${JSON.stringify(error.isolationCompatibility, null, 2)}\n`,
+      );
+    }
+    throw error;
+  }
   preflightReport.nativeCompatibilityProbe = probeNativeCompatibility(
     preflightReport.nativeCompatibility,
     (file, args) => {
