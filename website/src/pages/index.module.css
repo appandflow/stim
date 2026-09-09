@@ -13,6 +13,11 @@
   color: var(--stim-ink);
 }
 
+.page ::selection {
+  color: var(--home-background);
+  background: var(--stim-purple);
+}
+
 :global([data-theme='dark']) .page {
   --home-background: #5521ff;
   --home-border: rgb(255 255 255 / 30%);

@@ -7,7 +7,6 @@ import ThemeSwitch from './ThemeSwitch';
 
 const theme = vi.hoisted(() => ({ colorMode: 'light', setColorMode: vi.fn<(mode: string) => void>() }));
 vi.mock('@docusaurus/theme-common', () => ({ useColorMode: () => theme }));
-vi.mock('@docusaurus/useIsBrowser', () => ({ default: () => true }));
 
 describe('ThemeSwitch', () => {
   let container: HTMLDivElement;
