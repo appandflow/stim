@@ -265,7 +265,7 @@ describe('waitForBuild', () => {
     expect(polls).toBe(3);
   });
 
-  test('the lock disappearing with no artifact means the builder failed', async () => {
+  test('a released lock does not claim failure when native preparation may have changed the key', async () => {
     lockOn();
     const path = buildLockPath(PLATFORM, KEY);
     let polls = 0;
@@ -279,8 +279,8 @@ describe('waitForBuild', () => {
       }),
     );
     expect(result.hit).toBe(undefined);
-    expect(result.builderFailed).toBeTruthy();
-    expect(result.builderFailed).toMatch(/lock/i);
+    expect(result.lockReleased).toBe(true);
+    expect(result.builderFailed).toBeUndefined();
   });
 
   test('a dead builder means the same, without waiting for the lock to go', async () => {

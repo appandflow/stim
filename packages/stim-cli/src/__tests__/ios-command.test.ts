@@ -1648,25 +1648,26 @@ describe('single-flight builds', () => {
     expect(logs.length).toBe(1);
   });
 
-  test('a builder that failed makes the waiter take over and build', async () => {
+  test.each([false, true])('a missing artifact is rebuilt after a released lock: %s', async (released) => {
     reserve();
     let acquires = 0;
-    const { exitCode, calls, stderr } = await run(
-      {},
+    const { exitCode, calls, stderr, logs } = await run(
+      { json: true },
       {
         acquireBuildLock: () =>
           ++acquires === 1 ? heldBy() : { acquired: true, path: '/lock', lock: { pid: process.pid } },
-        waitForBuild: async () => ({
-          builderFailed: 'the build lock was released without an artifact',
-          waitedMs: 4000,
-        }),
+        waitForBuild: async () =>
+          released
+            ? { lockReleased: true as const, waitedMs: 4000 }
+            : { builderFailed: 'the builder (pid 41233) is gone', waitedMs: 4000 },
       },
     );
     expect(exitCode).toBe(null);
     expect(acquires).toBe(2);
     expect(calls.order.includes('buildIos')).toBeTruthy();
     expect(calls.order.includes('releaseBuildLock')).toBeTruthy();
-    expect(stderr).toMatch(/without an artifact/);
+    expect(parseFirst(logs).waitedForBuild).toBeNull();
+    expect(/FAILED without an artifact|RETRY:/.test(stderr)).toBe(!released);
   });
 
   test('losing the takeover race waits for the new holder and installs its artifact', async () => {
@@ -3414,8 +3415,9 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
     expect((state.lastBuild as Record<string, unknown>).cacheKey).toBe(calls.args.storeBuild.key);
   });
 
-  test('a post-shift hit installs the cached app and compiles nothing', async () => {
+  test.each([false, true])('a post-shift hit preserves a prior shared-build wait: %s', async (waited) => {
     reserve();
+    let acquires = 0;
     const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-debug-sim`, 'Fixture.app');
     const { logs, errs, calls } = await run(
       { json: true },
@@ -3424,6 +3426,19 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
         needsPrebuild: () => true,
         fingerprintProject: shifting(),
         resolveBuild: (_platform, key) => (key.startsWith(WARM) ? cachedApp : null),
+        ...(waited
+          ? {
+              acquireBuildLock: () =>
+                ++acquires === 1
+                  ? { held: { pid: 41233, projectRoot: '/w/builder', startedAt: null, logFile: null } }
+                  : {
+                      acquired: true as const,
+                      path: '/lock',
+                      lock: { pid: process.pid, projectRoot: root, startedAt: null, logFile: null },
+                    },
+              waitForBuild: async () => ({ lockReleased: true as const, waitedMs: 4000 }),
+            }
+          : {}),
       },
     );
     expect(calls.order.includes('runPrebuild')).toBe(true);
@@ -3436,6 +3451,9 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
     expect(facts.cacheHit).toBe('local');
     expect(facts.fingerprint).toBe(WARM);
     expect(facts.cacheKey).toBe(`${WARM}-debug-sim`);
+    expect(facts.waitedForBuild).toEqual(waited ? { pid: 41233, ms: 4000 } : null);
+    expect(errs.join('\n')).not.toMatch(/FAILED without an artifact|RETRY:/);
+    expect(/waited 4s for \/w\/builder's build -> installed from cache/.test(errs.join('\n'))).toBe(waited);
   });
 
   test('a post-shift hit on a Release build swaps the JS in, exactly as a first-pass hit does', async () => {

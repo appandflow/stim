@@ -594,6 +594,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
     note(chalk.dim(phaseLine('cache', PROVIDER_SKIPPED_ON_DEVICE)));
   }
   let waitedForBuild: WaitedForBuild | null = null;
+  let releasedWait: { facts: WaitedForBuild; who: string } | null = null;
   let swapDir: string | null = null;
   let swapFellBack = false;
   let buildFailure: BuildFailureFields = {};
@@ -895,6 +896,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
         if (previous) note(chalk.yellow(phaseLine('build', takeoverLine(previous))));
         break;
       } else if (attempt?.held) {
+        releasedWait = null;
         const held = attempt.held;
         const who = held.projectRoot || 'another workspace';
         phase(
@@ -935,6 +937,10 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
           cacheHit = 'local';
           waitedForBuild = { pid: held.pid, ms: waited.waitedMs };
           phase('build', `waited ${formatDuration(waited.waitedMs)} for ${who}'s build -> installed from cache`);
+        } else if (waited?.lockReleased) {
+          failedHolder = undefined;
+          releasedWait = { facts: { pid: held.pid, ms: waited.waitedMs }, who };
+          phase('build', `${who}'s build lock was released; rechecking this workspace before building`);
         } else {
           note(
             chalk.yellow(
@@ -1171,6 +1177,13 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
                 appPath = prepared;
                 cacheHit = 'local';
                 phase('cache', `hit ${shortHash(storeHash)} (post-${mutatingSteps.join('/')} key)`);
+                if (releasedWait) {
+                  waitedForBuild = releasedWait.facts;
+                  phase(
+                    'build',
+                    `waited ${formatDuration(waitedForBuild.ms)} for ${releasedWait.who}'s build -> installed from cache`,
+                  );
+                }
               }
             }
           }

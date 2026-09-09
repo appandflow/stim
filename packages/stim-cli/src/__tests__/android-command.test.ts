@@ -2130,18 +2130,22 @@ describe('single-flight builds', () => {
     expect(h.stdout.length).toBe(1);
   });
 
-  test('a builder that failed makes the waiter take over and build', async () => {
+  test.each([false, true])('a missing artifact is rebuilt after a released lock: %s', async (released) => {
     let acquires = 0;
     const h = harness({
       acquireLock: () => (++acquires === 1 ? heldBy() : { acquired: true, path: '/lock', lock: { pid: process.pid } }),
-      waitForBuild: async () => ({ builderFailed: 'the build lock was released without an artifact', waitedMs: 4000 }),
+      waitForBuild: async () =>
+        released
+          ? { lockReleased: true as const, waitedMs: 4000 }
+          : { builderFailed: 'the builder (pid 41233) is gone', waitedMs: 4000 },
     });
     const result = await h.run();
     expect(result.ok).toBe(true);
     expect(acquires).toBe(2);
     expect(h.calls.build.length).toBe(1);
     expect(h.calls.releaseLock.length).toBe(1);
-    expect(h.stderr.join('\n')).toMatch(/without an artifact/);
+    expect(result.facts?.waitedForBuild).toBeNull();
+    expect(/FAILED without an artifact|RETRY:/.test(h.stderr.join('\n'))).toBe(!released);
   });
 
   test('losing the takeover race waits for the new holder and installs its artifact', async () => {
@@ -3624,14 +3628,28 @@ describe('re-fingerprint after prebuild', () => {
     expect(readState().lastBuild.cacheKey).toBe(h.calls.storeCached[0]?.[1]);
   });
 
-  test('a post-shift hit installs the cached APK and runs no gradle build', async () => {
+  test.each([false, true])('a post-shift hit preserves a prior shared-build wait: %s', async (waited) => {
     cngProject();
+    let acquires = 0;
     const cachedApk = join(home, 'build-cache', 'android', `${WARM}-debug-sim`, 'app-debug.apk');
     const h = harness({
       fingerprint: shifting(),
       resolveCached: (_platform: string, key: string) => (key.startsWith(WARM) ? cachedApk : null),
       build: never('gradle'),
       storeCached: never('the store'),
+      ...(waited
+        ? {
+            acquireLock: () =>
+              ++acquires === 1
+                ? { held: { pid: 41233, projectRoot: '/w/builder', startedAt: null, logFile: null } }
+                : {
+                    acquired: true as const,
+                    path: '/lock',
+                    lock: { pid: process.pid, projectRoot: root, startedAt: null, logFile: null },
+                  },
+            waitForBuild: async () => ({ lockReleased: true as const, waitedMs: 4000 }),
+          }
+        : {}),
     });
     const result = await h.run();
     expect(result.ok).toBe(true);
@@ -3641,6 +3659,9 @@ describe('re-fingerprint after prebuild', () => {
     expect(result.facts?.cacheHit).toBe('local');
     expect(result.facts?.fingerprint).toBe(WARM);
     expect(result.facts?.cacheKey).toBe(`${WARM}-debug-sim`);
+    expect(result.facts?.waitedForBuild).toEqual(waited ? { pid: 41233, ms: 4000 } : null);
+    expect(h.stderr.join('\n')).not.toMatch(/FAILED without an artifact|RETRY:/);
+    expect(/waited 4s for \/w\/builder's build -> installed from cache/.test(h.stderr.join('\n'))).toBe(waited);
   });
 
   test('a post-shift hit on a release variant swaps the APK, gated on THAT entry manifest', async () => {

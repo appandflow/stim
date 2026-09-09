@@ -78,6 +78,7 @@ interface WaitForBuildOptions {
 export interface WaitForBuildResult {
   hit?: string;
   waitedMs?: number;
+  lockReleased?: true;
   builderFailed?: string;
   holder?: BuildLockRecord | null;
 }
@@ -305,7 +306,7 @@ export async function waitForBuild({
 
     if (!info) {
       return {
-        builderFailed: 'the build lock was released without an artifact',
+        lockReleased: true,
         holder,
         waitedMs: now() - started,
       };

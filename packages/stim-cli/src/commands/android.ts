@@ -1215,6 +1215,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     await resolveRemoteArtifact();
 
     let waitedForBuild: WaitedForBuild | null = null;
+    let releasedWait: { facts: WaitedForBuild; who: string } | null = null;
     async function waitForSharedBuild(): Promise<boolean> {
       if (!useBuildCache) return true;
       const waitStarted = now();
@@ -1236,6 +1237,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           if (previous) phase('build', chalk.yellow(takeoverLine(previous)));
           break;
         } else if (attempt?.held) {
+          releasedWait = null;
           const holder = attempt.held;
           const who = holder.projectRoot || 'another workspace';
           phase(
@@ -1276,6 +1278,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
             record.cacheHit = 'local';
             waitedForBuild = { pid: holder.pid, ms: waited.waitedMs };
             phase('build', `waited ${formatDuration(waited.waitedMs)} for ${who}'s build -> installed from cache`);
+          } else if (waited?.lockReleased) {
+            failedHolder = undefined;
+            releasedWait = { facts: { pid: holder.pid, ms: waited.waitedMs }, who };
+            phase('build', `${who}'s build lock was released; rechecking this workspace before building`);
           } else {
             phase(
               'build',
@@ -1398,6 +1404,13 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
                   apkPath = prepared;
                   record.cacheHit = 'local';
                   phase('cache', `hit ${shortHash(storeHash)} (post-prebuild key)`);
+                  if (releasedWait) {
+                    waitedForBuild = releasedWait.facts;
+                    phase(
+                      'build',
+                      `waited ${formatDuration(waitedForBuild.ms)} for ${releasedWait.who}'s build -> installed from cache`,
+                    );
+                  }
                 }
               }
             }

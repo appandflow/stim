@@ -646,6 +646,12 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   and install the artifact the builder stored. They report cacheHit: "local"
   plus waitedForBuild: { pid, ms }.
 
+  Native preparation can move the builder's cache key. A released lock with no
+  artifact at the original key does not prove the build failed. The waiter
+  rechecks after its own native preparation; a matching post-preparation cache
+  hit retains waitedForBuild. Artifacts remain stored only under their final
+  fingerprint, never under the old key.
+
   Nothing can deadlock on it. The lock is held by a PID, so a builder that
   crashes, is killed, or whose build simply fails frees it: the waiters see a
   released lock with no artifact, and one of them takes over and builds. The
