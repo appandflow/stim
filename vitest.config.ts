@@ -10,6 +10,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@theme/CodeBlock': fileURLToPath(new URL('./website/src/test/CodeBlock.ts', import.meta.url)),
+      '@docusaurus/useIsBrowser': fileURLToPath(new URL('./website/src/test/useIsBrowser.ts', import.meta.url)),
     },
   },
   test: {
