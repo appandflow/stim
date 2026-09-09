@@ -42,6 +42,8 @@ export type BenchmarkUsage = {
 };
 
 export type BenchmarkRun = {
+  recordedOn?: string;
+  appReadinessLogs?: boolean;
   timingOrigin?: {
     kind: 'first-recorded-activity';
     dispatchOffsetSeconds: number;
@@ -94,6 +96,7 @@ export type BenchmarkRun = {
 export type BenchmarkData = {
   schemaVersion: number;
   stage: string;
+  stageAliases?: string[];
   title: string;
   suite?: 'readiness' | 'launch-crash';
   platform?: 'ios' | 'android';
@@ -229,7 +232,10 @@ export function benchmarkSelectionFromSearch(search: string, benchmarks: Benchma
   const params = new URLSearchParams(search);
   const requestedStage = params.get('benchmark');
   const requestedRun = requestedStage ? params.get('run') : null;
-  const benchmark = benchmarks.find((candidate) => candidate.stage === requestedStage) ?? benchmarks[0];
+  const benchmark =
+    benchmarks.find(
+      (candidate) => candidate.stage === requestedStage || candidate.stageAliases?.includes(requestedStage ?? ''),
+    ) ?? benchmarks[0];
   const validRuns = benchmark?.runs.filter((run) => run.valid) ?? [];
   const run = validRuns.find((candidate) => candidate.id === requestedRun) ?? validRuns[0];
   return { stage: benchmark?.stage ?? '', runId: run?.id ?? '' };

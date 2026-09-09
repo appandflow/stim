@@ -707,6 +707,96 @@ describe('benchmark viewer export', () => {
     expect(readdirSync(proofDir)).toEqual(['fixture-control.png']);
   });
 
+  it('replaces an older faster attempt with the newest valid run while retaining the other arm', () => {
+    const root = mkdtempSync(join(tmpdir(), 'stim-latest-export-'));
+    tempDirs.push(root);
+    const stageDir = join(root, 'results', 'latest');
+    for (const [name, arm, day, seconds, valid] of [
+      ['z-older-fast', 'stim', '03', 1, true],
+      ['a-latest-valid', 'stim', '05', 9, true],
+      ['b-latest-invalid', 'stim', '06', 2, false],
+      ['control', 'control', '04', 4, true],
+    ]) {
+      const runDir = join(stageDir, name);
+      mkdirSync(join(runDir, 'proof'), { recursive: true });
+      writeFileSync(
+        join(runDir, 'meta.json'),
+        JSON.stringify({
+          dispatchAt: `2026-09-${day}T20:00:00.000Z`,
+          finishedAt: `2026-09-${day}T20:00:10.000Z`,
+        }),
+      );
+      writeFileSync(
+        join(runDir, 'run.json'),
+        JSON.stringify({
+          runId: name,
+          model: 'gpt-5.6-sol',
+          variant: 'fixture',
+          arm,
+          valid,
+          invalidReasons: valid ? [] : ['invalid proof'],
+          dispatchToScreenReadySeconds: seconds,
+          commandCount: 0,
+          screen: { valid: true },
+        }),
+      );
+      writeFileSync(join(runDir, 'proof', 'settings.png'), name);
+      writeFileSync(
+        join(runDir, 'events.jsonl'),
+        stamp(`2026-09-${day}T20:00:00.000Z`, {
+          type: 'item.completed',
+          item: { id: 'begin', type: 'agent_message', text: 'Starting the app task.' },
+        }),
+      );
+    }
+    const proofDir = join(root, 'proof');
+    mkdirSync(proofDir);
+    writeFileSync(join(proofDir, 'fixture-stim-valid-1.png'), 'superseded');
+    const payload = exportBenchmark(stageDir, join(root, 'benchmark.json'), proofDir);
+    expect(
+      payload.runs.map(({ id, settingsReadySeconds, recordedOn }) => ({ id, settingsReadySeconds, recordedOn })),
+    ).toEqual([
+      { id: 'fixture-stim', settingsReadySeconds: 9, recordedOn: '2026-09-05' },
+      { id: 'fixture-control', settingsReadySeconds: 4, recordedOn: '2026-09-04' },
+    ]);
+    expect(payload.recordedOn).toBe('2026-09-05');
+    expect(readdirSync(proofDir).toSorted()).toEqual(['fixture-control.png', 'fixture-stim.png']);
+    expect(readFileSync(join(proofDir, 'fixture-stim.png'), 'utf8')).toBe('a-latest-valid');
+    expect(readFileSync(join(stageDir, 'z-older-fast', 'proof', 'settings.png'), 'utf8')).toBe('z-older-fast');
+  });
+
+  it.each([
+    { model: 'gpt-5.6-luna', platform: 'ios' },
+    { model: 'gpt-5.6-sol', platform: 'android' },
+  ])('refuses to collapse different benchmark cells as attempts: $model / $platform', (different) => {
+    const root = mkdtempSync(join(tmpdir(), 'stim-mixed-export-'));
+    tempDirs.push(root);
+    const stageDir = join(root, 'results', 'mixed');
+    for (const [index, dimensions] of [{ model: 'gpt-5.6-sol', platform: 'ios' }, different].entries()) {
+      const runDir = join(stageDir, `run-${index}`);
+      mkdirSync(join(runDir, 'proof'), { recursive: true });
+      writeFileSync(
+        join(runDir, 'meta.json'),
+        JSON.stringify({ platform: dimensions.platform, dispatchAt: `2026-09-0${index + 3}T20:00:00.000Z` }),
+      );
+      writeFileSync(
+        join(runDir, 'run.json'),
+        JSON.stringify({
+          runId: `run-${index}`,
+          model: dimensions.model,
+          variant: 'fixture',
+          arm: 'stim',
+          valid: true,
+          screen: { valid: true },
+        }),
+      );
+      writeFileSync(join(runDir, 'proof', 'settings.png'), 'proof');
+    }
+    expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'proof'))).toThrow(
+      'benchmark stage must contain one model and platform',
+    );
+  });
+
   it('requires integrity-bound Android evidence even when correcting a session audit', () => {
     const root = mkdtempSync(join(tmpdir(), 'stim-android-export-'));
     tempDirs.push(root);

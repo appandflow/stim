@@ -10,7 +10,7 @@ import {
 } from './benchmarkSelection';
 import type { BenchmarkData } from './benchmarkData';
 import { benchmarkSelectionFromSearch, benchmarkSelectionSearch } from './benchmarkData';
-import { benchmarks, linkedBenchmarks, readinessIntegrationChecks } from './benchmarkCatalog';
+import { benchmarks, linkedBenchmarks } from './benchmarkCatalog';
 
 function benchmark(
   stage: string,
@@ -33,19 +33,42 @@ function benchmark(
 }
 
 describe('benchmark catalog selection', () => {
-  it('deep-links Stim-only readiness checks without substituting them into matched comparisons', () => {
-    expect(readinessIntegrationChecks).toHaveLength(4);
-    for (const check of readinessIntegrationChecks) {
-      expect(check.runs).toHaveLength(1);
-      const run = check.runs[0];
-      expect(run).toMatchObject({ valid: true, arm: 'stim', platform: 'android', variant: 'launch-crash' });
-      const selection = { stage: check.stage, runId: run.id };
-      expect(
-        benchmarkSelectionFromSearch(benchmarkSelectionSearch(selection, linkedBenchmarks), linkedBenchmarks),
-      ).toEqual(selection);
-      const comparison = exactBenchmarkForDimensions(benchmarks, benchmarkDimensions(check));
-      expect(comparison?.stage).not.toBe(check.stage);
-      expect(comparison?.runs.map((candidate) => candidate.arm)).toEqual(['stim', 'control']);
+  it('routes superseded readiness-check links to the current comparison and preserves the requested arm', () => {
+    for (const model of ['sol', 'luna', 'sonnet', 'opus']) {
+      const oldStage = `${model}-android-readiness-entry-${model === 'sonnet' ? 'retry' : 'error'}`;
+      for (const arm of ['stim', 'control']) {
+        const selection = benchmarkSelectionFromSearch(
+          `?benchmark=${oldStage}&run=launch-crash-${arm}`,
+          linkedBenchmarks,
+        );
+        expect(selection).toEqual({ stage: `${model}-android-launch-error`, runId: `launch-crash-${arm}` });
+        expect(benchmarkSelectionSearch(selection, linkedBenchmarks)).toContain(`${model}-android-launch-error`);
+      }
+    }
+  });
+
+  it('publishes only one benchmark per model, platform and scenario, and one run per arm and variant', () => {
+    const dimensions = benchmarks.map((candidate) => JSON.stringify(benchmarkDimensions(candidate)));
+    expect(new Set(dimensions).size).toBe(dimensions.length);
+    for (const entry of linkedBenchmarks) {
+      const cells = entry.runs.map((run) => `${run.arm}:${run.variant}`);
+      expect(new Set(cells).size).toBe(cells.length);
+    }
+  });
+
+  it('publishes readiness-aware first-command error evidence for every launch-error Stim cell', () => {
+    for (const model of ['gpt-5.6-luna', 'gpt-5.6-sol', 'sonnet', 'opus']) {
+      for (const platform of benchmarkPlatforms) {
+        const entry = exactBenchmarkForDimensions(benchmarks, { model, platform, suite: 'launch-crash' });
+        const stim = entry?.runs.find((run) => run.arm === 'stim');
+        const control = entry?.runs.find((run) => run.arm === 'control');
+        expect(stim).toMatchObject({ valid: true, appReadinessLogs: true });
+        expect(control).toMatchObject({ valid: true, appReadinessLogs: false });
+        const initial = stim?.commands.find((command) => command.id === stim.launchCrashAudit?.initialLaunchCommandId);
+        expect(initial?.output).toMatch(/readiness\s+waiting/);
+        expect(initial?.output).toMatch(/fingerprint .*hit/);
+        expect(initial?.output).toContain('STIM_BENCH_LAUNCH_CRASH_');
+      }
     }
   });
 
@@ -61,10 +84,13 @@ describe('benchmark catalog selection', () => {
     }
   });
 
-  it('keeps the earlier Sol deep link reachable without duplicating its current comparison', () => {
+  it('routes the earlier Sol deep link to its current comparison', () => {
     const selection = { stage: 'sol-launch-crash', runId: 'launch-crash-stim' };
     const search = benchmarkSelectionSearch(selection, linkedBenchmarks);
-    expect(benchmarkSelectionFromSearch(search, linkedBenchmarks)).toEqual(selection);
+    expect(benchmarkSelectionFromSearch(search, linkedBenchmarks)).toEqual({
+      stage: 'sol-ios-launch-error',
+      runId: 'launch-crash-stim',
+    });
     expect(
       benchmarks
         .filter((candidate) => {

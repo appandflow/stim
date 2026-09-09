@@ -290,6 +290,25 @@ device, storage, and branch listings, plus interactive shell transcripts whose
 cursor-control output cannot be made portable. Review the generated diff before
 publishing because command output can contain other project-specific data.
 
+Publish one current result per model, platform, scenario, and arm. A newer
+validated run replaces that arm in its existing canonical benchmark JSON;
+retain the other arm unless it is also rerun. Do not append a second catalog
+entry or choose whichever attempt is faster. Keep previous raw campaign
+records privately and use `stageAliases` to resolve old shared links to the
+current canonical benchmark. The replaced arm carries its full timeline,
+usage, cost, proof, recording, and per-run `recordedOn` date.
+The exporter selects the newest validated dispatch for each arm and variant
+within a stage, keeps stable run IDs, and removes superseded public proof
+files. A stage contains one model and platform; mixed stages refuse export.
+When a rerun uses a different stage, replace its arm in the canonical
+comparison rather than adding the new stage to the catalog.
+
+Launch-error Stim reruns emit optional early pending and post-splash ready
+logs. Existing control runs without this integration can remain: record
+`appReadinessLogs` per arm and disclose the different instrumentation in the
+comparison. This measures integrated Stim against the standard toolchain,
+not identical startup logging. Do not imply that retained controls were rerun.
+
 Invalid attempts are immutable audit records. Fix only a coordinator defect or
 environmental prerequisite, then reschedule the same cell under a new run id.
 Never relabel an invalid attempt to improve a result. Collector-only proof

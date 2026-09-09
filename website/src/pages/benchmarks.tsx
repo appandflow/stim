@@ -136,7 +136,10 @@ export default function Benchmarks(): ReactNode {
                   <p>
                     A deterministic root-render exception is committed before dispatch. The agent must launch first,
                     diagnose from captured errors, repair the source, and prove the unchanged Settings screen. Each
-                    comparison is one matched run per arm, not an average or a best-of selection.
+                    comparison shows the latest validated run per arm, not an average or a best-of selection. Stim runs
+                    use optional app readiness logs; retained control runs do not. The crash and recovery task are
+                    unchanged, but this compares integrated Stim with the standard toolchain, not identical
+                    instrumentation.
                   </p>
                 </div>
               </div>
@@ -169,8 +172,9 @@ export default function Benchmarks(): ReactNode {
               <div>
                 <dt>Same task, same agent</dt>
                 <dd>
-                  Each comparison uses the same starting code, requested change, AI model, and model settings. The agent
-                  works with Stim in one run and without it in the other.
+                  Each comparison uses the same app task, AI model, and model settings. The agent works with Stim in one
+                  run and without it in the other. Launch-error Stim reruns add optional readiness logs; the retained
+                  controls use the earlier fixture without those logs.
                 </dd>
               </div>
               <div>
@@ -206,9 +210,9 @@ export default function Benchmarks(): ReactNode {
               <div>
                 <dt>Results you can inspect</dt>
                 <dd>
-                  Each bar represents one checked run, not an average or the fastest of several attempts. Open it to see
-                  the commands, logs, and screenshots. Runs that fail the protocol checks are excluded; the full
-                  protocol explains those rules.
+                  Each bar represents the latest checked run, not an average or the fastest of several attempts. New
+                  validated runs replace the previous result in place. Open it to see the commands, logs, and
+                  screenshots. Runs that fail the protocol checks are excluded; the full protocol explains those rules.
                 </dd>
               </div>
             </dl>
