@@ -545,11 +545,3 @@
     grid-template-columns: 1fr;
   }
 }
-.checkTable {
-  max-width: 100%;
-  overflow-x: auto;
-}
-
-.checkTable table {
-  width: 100%;
-}
