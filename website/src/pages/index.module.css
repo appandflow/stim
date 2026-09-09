@@ -313,11 +313,6 @@
 @media (prefers-reduced-motion: no-preference) and (hover: hover) and (pointer: fine) {
   .heroIllustration img {
     transform: perspective(900px) rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg)) scale(1.1);
-    transition: transform 350ms ease-out;
-  }
-
-  .heroIllustration:hover img {
-    transition: none;
   }
 
   .primaryButton:hover:not(:active) {
