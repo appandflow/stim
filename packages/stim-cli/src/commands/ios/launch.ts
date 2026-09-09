@@ -43,7 +43,12 @@ import { type ReportIosResultArgs, finishIosUpload, reportIosResult } from './re
 import { providerUploadOutcome } from '../../build-cache.ts';
 import { launchOutcomeRecord } from '../native-runtime.ts';
 import { COLLECTOR_EXIT_WAIT_MS } from './collector.ts';
-import { captureNativeCrashes, printNativeCrashReport, simulatorConsolePaths } from '../../native-crash.ts';
+import {
+  captureNativeCrashes,
+  IOS_CRASH_REPORT_RETRY,
+  printNativeCrashReport,
+  simulatorConsolePaths,
+} from '../../native-crash.ts';
 import { errorDiagnostics } from '../../error-diagnostics.ts';
 
 interface VerifyIosRunArgs {
@@ -69,6 +74,20 @@ interface VerifyIosRunArgs {
   lanOrigin: string | null;
   remoteDevice: boolean;
   metroOrigin: string | null;
+}
+
+function missingCrashReportHint({
+  physical,
+  remote,
+  crashed,
+}: {
+  physical: boolean;
+  remote: boolean;
+  crashed: boolean;
+}): string {
+  return crashed && !physical && !remote
+    ? `No attributable native crash report captured yet. ${IOS_CRASH_REPORT_RETRY}`
+    : 'No attributable native crash report captured. Read `stim logs --source device` for available output.';
 }
 
 async function verifyIosRun({
@@ -124,7 +143,11 @@ async function verifyIosRun({
       note(
         phaseLine(
           'logs',
-          'No attributable native crash report captured. Read `stim logs --source device` for available output.',
+          missingCrashReportHint({
+            physical,
+            remote: Boolean(remoteDevice),
+            crashed: processCheck?.reason === 'exited',
+          }),
         ),
       );
     phase(
@@ -197,12 +220,7 @@ async function verifyIosRun({
     phase('verify', chalk.red(`FATAL after ${formatDuration(verification.waitedMs ?? 0)}: ${reason}`));
     for (const line of launchErrorPreview(verification.errors ?? [], root)) note(chalk.red(phaseLine('', line)));
     if (verification.processAlive === false && !verification.errors?.some((record) => record.event === 'native_crash'))
-      note(
-        phaseLine(
-          'logs',
-          'No attributable native crash report captured yet. Run `stim logs --errors` again for delayed reports, or `stim logs --source device` for available output.',
-        ),
-      );
+      note(phaseLine('logs', missingCrashReportHint({ physical, remote: Boolean(remoteDevice), crashed: true })));
     if (nativeFatal || verification.processAlive === false) {
       note(
         chalk.yellow(

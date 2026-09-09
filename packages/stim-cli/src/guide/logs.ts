@@ -172,7 +172,8 @@ WHAT WRITES WHAT
 
                        iOS simulator cold launch attaches app stdout/stderr and
                        passes Expo's initial URL directly. Fatal output is available
-                       before delayed OS reports; rerun logs --errors for those
+                       before delayed OS reports, which can take about a minute
+                       or longer to appear; rerun logs --errors for those
                        before stopping or releasing the device. Collection requires
                        this workspace's current launch and device ownership or lease;
                        afterward only already-captured reports remain available.

@@ -942,6 +942,8 @@ describe('launch verification', () => {
     expect(exitCode).toBe(1);
     expect(errs.join('\n')).toMatch(/attention client lost event tag/);
     expect(errs.join('\n')).toMatch(/run `stim ios` again.*Metro reload cannot restart an exited app/);
+    expect(errs.join('\n')).toContain('about a minute or longer');
+    expect(errs.join('\n')).toContain('Run `stim logs --errors` again');
   });
 
   test('a Metro build failure with a live native process recommends reload instead of another native run', async () => {
@@ -3177,6 +3179,7 @@ describe('release skips Metro entirely', () => {
     expect(parseFirst(logs).code).toBe('STIM_LAUNCH_FAILED');
     expect(errs.join('\n')).toMatch(/process exited within/);
     expect(errs.join('\n')).toMatch(/stim logs --errors/);
+    expect(errs.join('\n')).toContain('about a minute or longer');
   });
 
   test('the ios.configuration setting is the repo default, and the flag overrides it back to Debug', async () => {

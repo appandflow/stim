@@ -14,6 +14,9 @@ import { readWorkspaceLaunches, readWorkspaceState } from './supervisor/state.ts
 import { getProject } from './config.ts';
 import { deviceLeasePath, fileLeaseIo, parseLease } from './engine/device-lease.ts';
 
+export const IOS_CRASH_REPORT_RETRY =
+  'iOS crash reports can take about a minute or longer to appear. Run `stim logs --errors` again for the native stack.';
+
 interface CrashTarget {
   root?: string;
   platform: 'ios' | 'android';
@@ -350,8 +353,7 @@ function simulatorFatalConsole(target: CrashTarget): NdjsonRecord[] {
           pid: Number(/\[(\d+):\d+\]/.exec(text)?.[1]) || undefined,
           msg: fatal.join('\n'),
           rawReport: text,
-          symbolicationNote:
-            'Captured app stderr; the operating system crash report may arrive later. Run `stim logs --errors` again for its native stack.',
+          symbolicationNote: `Captured app stderr; the full operating system crash report is not available yet. ${IOS_CRASH_REPORT_RETRY}`,
         },
       ];
     } catch {

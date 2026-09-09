@@ -61,7 +61,8 @@ initial project URL directly, so
 an early Swift fatal error or uncaught exception can appear in the launch result.
 Console redirection uses the app's writable cache, including when `STIM_HOME` is
 on an external volume; captured crash evidence is retained in the workspace logs.
-OS crash reports can arrive later: rerunning `stim logs --errors` collects them.
+OS crash reports can take about a minute or longer to arrive: rerunning
+`stim logs --errors` collects them before you stop or release the simulator.
 Reports are matched to the app, simulator, and launch time. Existing source locations
 and symbol names are retained, and app addresses are resolved with
 `atos` only when the local binary's UUID matches the report. Android reads the
