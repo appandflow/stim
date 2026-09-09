@@ -611,9 +611,6 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
             <span>Run recording</span>
             <h2>Simulator playback</h2>
             <p>The run-scoped recording starts after the app session opens and includes onboarding and navigation.</p>
-            <a href={recordingSrc} download>
-              Download MP4
-            </a>
           </div>
           <video controls preload="metadata" poster={proofSrc} aria-label={`Simulator recording for ${run.id}`}>
             <source src={recordingSrc} type="video/mp4" />
