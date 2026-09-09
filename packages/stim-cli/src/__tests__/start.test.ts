@@ -34,6 +34,7 @@ import { IMPOSSIBLE_PID, asProcessExit, makeChildProcess } from './_factories.ts
 
 let tmpHome: string;
 let root: string;
+const originalCwd = process.cwd();
 
 const successfulTunnelCleanup = async () => ({ status: 'stopped' as const });
 
@@ -164,7 +165,6 @@ async function runAction(opts: Record<string, unknown>, register: (cmd: Command)
   const origLog = console.log;
   const origErr = console.error;
   const origExit = process.exit;
-  const cwd = process.cwd();
   let exitCode = null;
   console.log = (l) => logs.push(String(l));
   console.error = (l) => errs.push(String(l));
@@ -175,7 +175,7 @@ async function runAction(opts: Record<string, unknown>, register: (cmd: Command)
   try {
     await run(opts);
   } finally {
-    process.chdir(cwd);
+    process.chdir(originalCwd);
     console.log = origLog;
     console.error = origErr;
     process.exit = origExit;
@@ -191,7 +191,6 @@ async function runConcurrentActions(opts: Record<string, unknown>, register: (cm
   const origLog = console.log;
   const origErr = console.error;
   const origExit = process.exit;
-  const cwd = process.cwd();
   console.log = (line) => logs.push(String(line));
   console.error = (line) => errs.push(String(line));
   process.exit = asProcessExit((code) => exits.push(code));
@@ -199,7 +198,7 @@ async function runConcurrentActions(opts: Record<string, unknown>, register: (cm
   try {
     await Promise.all([run(opts), run(opts)]);
   } finally {
-    process.chdir(cwd);
+    process.chdir(originalCwd);
     console.log = origLog;
     console.error = origErr;
     process.exit = origExit;
