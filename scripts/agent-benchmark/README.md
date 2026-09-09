@@ -151,6 +151,21 @@ profile before starting the clock; collection rejects changed compatibility
 bytes. This does not replace a real untimed build, recording, and cleanup test
 before accepting a new toolchain combination.
 
+Dispatch also runs two untimed compatibility probes under the run's exact
+policy and refuses an iOS run without the adapter when either fails:
+`sandbox-exec -p '(version 1)(allow default)' /usr/bin/true`, the nested
+sandbox SwiftPM applies to manifests and plugins, and `/bin/ps -p <pid> -o
+lstart=`, the process identity agent-device reads for `simctl recordVideo`.
+The macOS kernel refuses `sandbox_apply` from any process whose policy
+contains a `deny` rule, whatever its operation, filter, or modifier; only a
+deny-free profile permits nesting, and `(with no-sandbox)` on `process-exec*`
+permits it only by letting the child escape the boundary, which exposes
+protected data. No policy rule keeps the forbidden-path denial and allows
+nesting, so the adapter's `-IDEPackageSupportDisableManifestSandbox=1`,
+`-IDEPackageSupportDisablePluginExecutionSandbox=1`, and `-disable-sandbox`
+flags remain the compensation. Both probe results are recorded in the run's
+`preflight.isolationCompatibility`.
+
 Android launch-error control preparation carries dependencies and native outputs
 but leaves out the root `android/build` directory. Its generated autolinking cache
 contains absolute source-checkout paths and package checksums that survive a copy.
