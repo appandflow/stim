@@ -16,8 +16,8 @@ function tiltIllustration({ currentTarget, clientX, clientY, pointerType }: Poin
   }
 
   const bounds = currentTarget.getBoundingClientRect();
-  currentTarget.style.setProperty('--tilt-x', `${(0.5 - (clientY - bounds.top) / bounds.height) * 6}deg`);
-  currentTarget.style.setProperty('--tilt-y', `${((clientX - bounds.left) / bounds.width - 0.5) * 6}deg`);
+  currentTarget.style.setProperty('--tilt-x', `${(0.5 - (clientY - bounds.top) / bounds.height) * 12}deg`);
+  currentTarget.style.setProperty('--tilt-y', `${((clientX - bounds.left) / bounds.width - 0.5) * 12}deg`);
 }
 
 function resetTilt({ currentTarget }: PointerEvent<HTMLDivElement>) {
@@ -94,7 +94,7 @@ export default function Home(): ReactNode {
           onPointerLeave={resetTilt}
           onPointerCancel={resetTilt}
         >
-          <img src={`${assetBase}hero.png`} alt="" width="520" height="520" fetchPriority="high" />
+          <img src={`${assetBase}hero.svg`} alt="" width="520" height="520" fetchPriority="high" />
         </div>
         <section aria-label="Features" className={styles.features}>
           <article className={styles.feature}>
