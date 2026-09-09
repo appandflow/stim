@@ -192,7 +192,7 @@ export default function logsCommand(program: Command): void {
         }
         const rendered = {
           ...record,
-          msg: launchErrorPreview([record], root, { full: !opts.errors }).join('\n'),
+          msg: launchErrorPreview([record], root, { full: true }).join('\n'),
           stack: undefined,
         };
         console.log(formatRecord(rendered, { paint: record?.level ? LEVEL_COLOURS[record.level] : undefined }));
@@ -226,7 +226,7 @@ export default function logsCommand(program: Command): void {
       if (hidden > 0) {
         console.log(
           chalk.dim(
-            `Showing ${ERRORS_PRINT_CAP} of ${errorCount} matching error records; ${hidden} not shown. Add --tail ${rawRecords.length} to include all captured records before grouping (stacks still previewed), or --json for raw records.`,
+            `Showing ${ERRORS_PRINT_CAP} of ${errorCount} matching error records; ${hidden} not shown. Add --tail ${rawRecords.length} to include all captured records before grouping, or --json for raw records. Stacks are shown in full.`,
           ),
         );
       }

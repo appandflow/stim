@@ -126,9 +126,7 @@ export function launchErrorPreview(
       flush();
       if (/^\s*Caused by:/.test(line)) kind = 'Caused-by';
       lines.push(
-        !full && line.length > 1000
-          ? `${line.slice(0, 1000)} ... [preview shortened; full text in logs without --errors]`
-          : line,
+        !full && line.length > 1000 ? `${line.slice(0, 1000)} ... [preview shortened; full text in stim logs]` : line,
       );
     }
   };
@@ -167,7 +165,7 @@ export function launchErrorPreview(
   if (hadStack && !full)
     lines.push(
       'Stack preview: up to 10 frames per stack; app frames preferred.',
-      'Full captured logs: stim logs --source all (without --errors)',
+      'Full captured logs: stim logs --source all',
       'Raw records: stim logs --source all --json',
     );
   return lines;

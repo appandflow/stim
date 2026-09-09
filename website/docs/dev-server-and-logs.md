@@ -31,12 +31,15 @@ available. These checks do not prove that a screen rendered correctly.
 A nonfatal error still appears as launch evidence. The agent can read the error
 and decide whether the change caused it.
 
-The human launch summary and `logs --errors` show up to **10 frames per error,
+Only the human `ios` / `android` launch summary shows up to **10 frames per error,
 component, or native stack**. App-source frames take priority over dependencies;
 selected frames remain in captured order, followed by the omitted-frame count.
 Error stacks describe the call path; component stacks describe the React parent
-tree. They are labeled separately. Full captured detail remains available through
-`stim logs --source all`; add `--json` for raw records.
+tree. They are labeled separately. Every `stim logs` command, including
+`stim logs --errors`, shows full captured stacks without frame or message-length
+limits. The separate default limit of 20 error records never shortens a stack.
+Use `--source all` for all sources/history, or `--json` for raw records. Text
+truncated by the runtime before capture cannot be restored.
 
 Symbolication is best effort. In development, Stim asks the verified workspace's
 Metro `/symbolicate` endpoint to resolve captured JavaScript coordinates, with a

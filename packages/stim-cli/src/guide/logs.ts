@@ -84,10 +84,12 @@ FLAGS
   the safe direction: a client redbox that Fast Refresh already fixed keeps
   being reported until the next launch.
 
-  OUTPUT. --errors previews up to 10 frames per stack and the first 20 matching
-  error records, plus stack context. A footer reports any hidden record count;
-  use the printed --tail value to include all captured records before grouping,
-  still with previewed stacks. To remove both preview limits, omit --errors:
+  OUTPUT. Every logs command, including --errors and --follow, shows full captured
+  error, component and native stacks, with no frame or message-length limit.
+  --errors shows the first 20 matching error records, plus stack context.
+  This record-count limit never truncates a stack. A footer reports hidden
+  records; use its printed --tail value to include all records before grouping.
+  To read the complete timeline without the default error-record limit:
     stim logs --source all
   This includes all sources, levels and history, not just the latest errors;
   add --since, --level or --grep to narrow it. --source all selects sources,
@@ -154,14 +156,16 @@ WHAT WRITES WHAT
                        launch JSON or exit code: launched describes bundle/process
                        evidence, not a healthy UI. Inspect the errors and readiness.
 
-                       Human ios/android and logs --errors output previews up to
+                       Only human ios/android launch output previews up to
                        ten frames per error, component or native stack. App-source
                        frames take priority; selected frames retain captured
                        order, with an omitted-frame count. Escaped
                        component stacks print one frame per line. Long bundle
                        URLs are shortened and labeled unsymbolicated; shortening
-                       is not source-map resolution. Read full captured detail
-                       with \`stim logs --source all\`, or add \`--json\` for raw
+                       is not source-map resolution. All logs commands show full
+                       captured stacks, including \`stim logs --errors\`.
+                       Use \`stim logs --source all\` for all sources/history,
+                       or add \`--json\` for raw
                        records. This preview does not alter logs or JSON.
 
                        Symbolication is best effort. Human launch and non-follow

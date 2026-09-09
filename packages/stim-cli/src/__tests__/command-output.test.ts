@@ -163,7 +163,7 @@ test('launch previews cap a JavaScript stack split across Android log records wi
     'Error stack:',
     '  at retry (retry.ts:4:2)',
     'Stack preview: up to 10 frames per stack; app frames preferred.',
-    'Full captured logs: stim logs --source all (without --errors)',
+    'Full captured logs: stim logs --source all',
     'Raw records: stim logs --source all --json',
   ]);
   expect(report.summary).toBeNull();
@@ -184,7 +184,7 @@ test('launch previews unescape and bound serialized React component stacks while
     ...Array.from({ length: 10 }, (_, i) => `  at Component${i} (index.bundle:${100 + i}:20 [unsymbolicated])`),
     '  ... 4 more frames',
     'Stack preview: up to 10 frames per stack; app frames preferred.',
-    'Full captured logs: stim logs --source all (without --errors)',
+    'Full captured logs: stim logs --source all',
     'Raw records: stim logs --source all --json',
   ]);
 });
@@ -209,7 +209,7 @@ test('launch previews preserve structured error and component stacks separately 
     '  at Screen (screen.tsx:10:3)',
     '  at Root (root.tsx:4:2)',
     'Stack preview: up to 10 frames per stack; app frames preferred.',
-    'Full captured logs: stim logs --source all (without --errors)',
+    'Full captured logs: stim logs --source all',
     'Raw records: stim logs --source all --json',
   ]);
   expect(JSON.stringify(records)).toBe(original);
@@ -262,7 +262,7 @@ test('launch previews still bound a component stack whose serialized log record 
     '  ... 3 more frames',
     '[captured stack text is incomplete: the runtime truncated it; saved logs cannot restore missing text]',
     'Stack preview: up to 10 frames per stack; app frames preferred.',
-    'Full captured logs: stim logs --source all (without --errors)',
+    'Full captured logs: stim logs --source all',
     'Raw records: stim logs --source all --json',
   ]);
 });
@@ -282,7 +282,7 @@ test('launch previews retain Expo and Hermes frame order and reset depth between
     '  render@app.tsx:4:3',
     '  parent@root.tsx:5:4',
     'Stack preview: up to 10 frames per stack; app frames preferred.',
-    'Full captured logs: stim logs --source all (without --errors)',
+    'Full captured logs: stim logs --source all',
     'Raw records: stim logs --source all --json',
   ]);
 });

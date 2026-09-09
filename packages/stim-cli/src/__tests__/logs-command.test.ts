@@ -245,32 +245,30 @@ describe('logs command', () => {
     expect(parseNdjsonLine(out[0])).toEqual(record);
   });
 
-  test('omitting --errors shows every string and structured stack frame while JSON stays raw', async () => {
-    const frames = Array.from({ length: 13 }, (_, i) => ({ file: 'app.tsx', line: i + 1, fn: `render${i}` }));
-    const record = {
-      ts: 1,
-      src: 'client',
-      level: 'error',
-      msg: 'x'.repeat(1100),
-      stack: frames,
-      componentStack: frames.map((f) => `at ${f.fn} (${f.file}:${f.line}:1)`).join('\n'),
-    };
-    writeLog('client.ndjson', [record]);
-    await run({ errors: true });
-    expect(out[0]).not.toContain('render12');
-    expect(out[0]).toContain('3 more frames');
-    expect(out[0]).toContain('without --errors');
-    out.length = 0;
-    await run({ source: ['all'] });
-    expect(out[0]).toContain(record.msg);
-    expect(out[0]?.match(/render12/g)).toHaveLength(2);
-    expect(out[0]).toContain('Component stack:');
-    expect(out[0]).not.toContain('more frames');
-    expect(out[0]).not.toContain('Stack preview:');
-    out.length = 0;
-    await run({ errors: true, json: true });
-    expect(parseNdjsonLine(out[0])).toEqual(record);
-  });
+  test.each([{}, { errors: true }, { errors: true, tail: '1' }])(
+    'logs %j shows every string and structured stack frame while JSON stays raw',
+    async (options) => {
+      const frames = Array.from({ length: 13 }, (_, i) => ({ file: 'app.tsx', line: i + 1, fn: `render${i}` }));
+      const record = {
+        ts: 1,
+        src: 'client',
+        level: 'error',
+        msg: 'x'.repeat(1100),
+        stack: frames,
+        componentStack: frames.map((f) => `at ${f.fn} (${f.file}:${f.line}:1)`).join('\n'),
+      };
+      writeLog('client.ndjson', [record]);
+      await run(options);
+      expect(out[0]).toContain(record.msg);
+      expect(out[0]?.match(/render12/g)).toHaveLength(2);
+      expect(out[0]).toContain('Component stack:');
+      expect(out[0]).not.toContain('more frames');
+      expect(out[0]).not.toContain('Stack preview:');
+      out.length = 0;
+      await run({ errors: true, json: true });
+      expect(parseNdjsonLine(out[0])).toEqual(record);
+    },
+  );
 
   test('exits 0 and prints nothing to stdout when nothing matches', async () => {
     writeLog('metro.ndjson', [{ ts: 1, src: 'metro', level: 'info', msg: 'fine' }]);
@@ -330,7 +328,7 @@ describe('logs command', () => {
     expect(parseNdjsonLine(out[0])).toEqual(error);
   });
 
-  test('--errors groups split Android frames before capping errors and prioritizing app frames', async () => {
+  test('--errors groups split Android frames into one complete stack before limiting error records', async () => {
     const base = { ts: 1000, src: 'device', level: 'error', platform: 'android', proc: 'ReactNativeJS(42)' };
     const records = [
       { ...base, msg: 'Error: broken' },
@@ -346,9 +344,9 @@ describe('logs command', () => {
     await run({ errors: true, source: 'device' });
     expect(out).toHaveLength(2);
     expect(out[0]).toContain('app/Screen.tsx:5:2');
-    expect(out[0]?.match(/  at /g)).toHaveLength(10);
+    expect(out[0]?.match(/  at /g)).toHaveLength(26);
     expect(out[0]?.match(/Error stack/g)).toHaveLength(1);
-    expect(out[0]).toContain('16 more frames');
+    expect(out[0]).not.toContain('more frames');
     expect(out[1]).toContain('another failure');
     out.length = 0;
     await run({ errors: true, source: 'device', json: true });
