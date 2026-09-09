@@ -1364,11 +1364,21 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
   const shellProvenance = verifyRunnerShell(arm, env);
   const claudeGuidance = runnerKind === 'claude' ? writeClaudeGuidance(codexHome, arm, runDir) : null;
   const isolation = prepareRunIsolation(runId, runDir, env, arm, crash, claudeGuidance);
-  preflightReport.isolationCompatibility = verifyIsolationCompatibility(isolation, {
-    platform,
-    nativeCompatibility: preflightReport.nativeCompatibility,
-    execute: (file, args) => run(file, args, { cwd: crash?.fixtureCheckout ?? main, env, timeout: 30_000 }),
-  });
+  try {
+    preflightReport.isolationCompatibility = verifyIsolationCompatibility(isolation, {
+      platform,
+      nativeCompatibility: preflightReport.nativeCompatibility,
+      execute: (file, args) => run(file, args, { cwd: crash?.fixtureCheckout ?? main, env, timeout: 30_000 }),
+    });
+  } catch (error) {
+    if (error.isolationCompatibility) {
+      writeFileSync(
+        join(runDir, 'isolation-compatibility.json'),
+        `${JSON.stringify(error.isolationCompatibility, null, 2)}\n`,
+      );
+    }
+    throw error;
+  }
   preflightReport.nativeCompatibilityProbe = probeNativeCompatibility(
     preflightReport.nativeCompatibility,
     (file, args) => {

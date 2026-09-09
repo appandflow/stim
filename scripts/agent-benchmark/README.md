@@ -152,19 +152,26 @@ bytes. This does not replace a real untimed build, recording, and cleanup test
 before accepting a new toolchain combination.
 
 Dispatch also runs two untimed compatibility probes under the run's exact
-policy and refuses an iOS run without the adapter when either fails:
-`sandbox-exec -p '(version 1)(allow default)' /usr/bin/true`, the nested
-sandbox SwiftPM applies to manifests and plugins, and `/bin/ps -p <pid> -o
-lstart=`, the process identity agent-device reads for `simctl recordVideo`.
-The macOS kernel refuses `sandbox_apply` from any process whose policy
-contains a `deny` rule, whatever its operation, filter, or modifier; only a
-deny-free profile permits nesting, and `(with no-sandbox)` on `process-exec*`
-permits it only by letting the child escape the boundary, which exposes
-protected data. No policy rule keeps the forbidden-path denial and allows
-nesting, so the adapter's `-IDEPackageSupportDisableManifestSandbox=1`,
+policy and refuses an iOS run without the adapter when either fails: a nested
+`sandbox-exec` applying
+`(deny default)(import "system.sb")(allow file-read*)(allow process*)`, the
+head of the profile SwiftPM applies to manifests and plugins, and `/bin/ps -p
+<pid> -o lstart=`, the process identity agent-device reads for `simctl
+recordVideo`. The macOS kernel refuses a nested
+`sandbox_apply` unless the inner profile is equivalent to the one the process
+already runs under: a profile that differs in effect is refused in both
+directions, under deny-free and deny-containing outer profiles alike, while an
+equivalent profile nests at any depth. SwiftPM generates its profile per
+invocation from `(deny default)` with its own write grants, so no runner policy
+is equivalent to it, and `(with no-sandbox)` on `process-exec*` permits
+nesting only by letting the child escape the boundary, which exposes protected
+data. No `sandbox-exec` policy hosts SwiftPM's sandbox, so the adapter's
+`-IDEPackageSupportDisableManifestSandbox=1`,
 `-IDEPackageSupportDisablePluginExecutionSandbox=1`, and `-disable-sandbox`
 flags remain the compensation. Both probe results are recorded in the run's
-`preflight.isolationCompatibility`.
+`preflight.isolationCompatibility`; a refused run has no `meta.json`, so
+dispatch writes them to `isolation-compatibility.json` in the run directory
+before failing.
 
 Android launch-error control preparation carries dependencies and native outputs
 but leaves out the root `android/build` directory. Its generated autolinking cache

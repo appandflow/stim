@@ -199,56 +199,68 @@ describe('benchmark runner filesystem isolation', () => {
       if (!denied.includes(key)) return '';
       throw Object.assign(new Error('Command failed'), { status: 71, stderr: `${refusals[key]}\n` });
     };
+    const bothRefused = {
+      nestedSandbox: { permitted: false, error: refusals.nested },
+      processIdentity: { permitted: false, error: refusals.ps },
+    };
     expect(() =>
       verifyIsolationCompatibility(isolation, {
         platform: 'ios',
         nativeCompatibility: null,
         execute: execute(['nested', 'ps']),
       }),
-    ).toThrow('sandbox-exec: sandbox_apply: Operation not permitted');
+    ).toThrow(
+      expect.objectContaining({
+        message: expect.stringContaining('sandbox-exec: sandbox_apply: Operation not permitted'),
+        isolationCompatibility: bothRefused,
+      }),
+    );
     expect(calls.length).toBeGreaterThan(0);
     for (const [file, args] of calls) {
       expect(file).toBe('/usr/bin/sandbox-exec');
       expect(args.slice(0, 2)).toEqual(['-p', paths.policy]);
     }
+    const nested = calls.find(([, args]) => args.at(-1) === '/usr/bin/true')[1];
+    expect(nested.slice(2, 4)).toEqual(['/usr/bin/sandbox-exec', '-p']);
+    expect(nested[4]).toContain('(deny default)');
     expect(() =>
       verifyIsolationCompatibility(isolation, { platform: 'ios', nativeCompatibility: null, execute: execute(['ps']) }),
     ).toThrow('/bin/sh: /bin/ps: Operation not permitted');
-    const compensated = {
-      nestedSandbox: { permitted: false, error: refusals.nested },
-      processIdentity: { permitted: false, error: refusals.ps },
-    };
     expect(
       verifyIsolationCompatibility(isolation, {
         platform: 'ios',
         nativeCompatibility: { manifestSha256: 'pinned' },
         execute: execute(['nested', 'ps']),
       }),
-    ).toEqual(compensated);
+    ).toEqual(bothRefused);
     expect(
       verifyIsolationCompatibility(isolation, {
         platform: 'android',
         nativeCompatibility: null,
         execute: execute(['nested', 'ps']),
       }),
-    ).toEqual(compensated);
+    ).toEqual(bothRefused);
     expect(
       verifyIsolationCompatibility(isolation, { platform: 'ios', nativeCompatibility: null, execute: execute([]) }),
     ).toEqual({ nestedSandbox: { permitted: true }, processIdentity: { permitted: true } });
   });
 
   it.skipIf(process.platform !== 'darwin')(
-    'detects the real nested-sandbox and ps refusals under the exact policy but not under a deny-free one',
+    'detects the real nested-sandbox and ps refusals under the exact policy with an inner profile that runs on its own',
     () => {
       const paths = fixture();
       const isolation = prepare(paths);
       expect(() =>
         verifyIsolationCompatibility(isolation, { platform: 'ios', nativeCompatibility: null, execute: realExecute }),
       ).toThrow('sandbox-exec: sandbox_apply: Operation not permitted');
+      const calls = [];
       const record = verifyIsolationCompatibility(isolation, {
         platform: 'android',
         nativeCompatibility: null,
-        execute: realExecute,
+        execute: (file, args) => {
+          calls.push(args);
+          return realExecute(file, args);
+        },
       });
       expect(record.nestedSandbox).toEqual({
         permitted: false,
@@ -256,11 +268,9 @@ describe('benchmark runner filesystem isolation', () => {
       });
       expect(record.processIdentity.permitted).toBe(false);
       expect(record.processIdentity.error).toContain('/bin/ps: Operation not permitted');
-      const open = verifiedIsolation(join(paths.root, 'open'), '(version 1)\n(allow default)\n');
-      expect(
-        verifyIsolationCompatibility(open, { platform: 'android', nativeCompatibility: null, execute: realExecute })
-          .nestedSandbox,
-      ).toEqual({ permitted: true });
+      const nested = calls.find((args) => args.at(-1) === '/usr/bin/true');
+      expect(nested[2]).toBe('/usr/bin/sandbox-exec');
+      expect(() => realExecute(nested[2], nested.slice(3))).not.toThrow();
     },
   );
 });

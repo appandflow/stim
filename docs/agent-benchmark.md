@@ -109,12 +109,14 @@ Coordinator metadata and transcripts remain outside those writable grants.
 Before timing starts, real read/write and child-process probes must verify the
 policy; an unavailable sandbox or overbroad grant refuses dispatch. Dispatch
 also probes toolchain compatibility under the exact policy: the macOS kernel
-refuses a nested `sandbox_apply` from any process whose policy denies
-anything, which breaks SwiftPM manifest and plugin sandboxes, and it refuses
-to execute `/bin/ps`, which agent-device's simulator recording needs for child
-process identity. An iOS run is refused before the clock starts when either
-probe fails and no pinned native compatibility adapter compensates. The policy,
-its digest, and the probe results are retained with the private run metadata.
+refuses a nested `sandbox_apply` of any profile that differs from the one a
+process already runs under, which breaks SwiftPM manifest and plugin sandboxes
+under every runner policy, and it refuses to execute `/bin/ps`, which
+agent-device's simulator recording needs for child process identity. An iOS
+run is refused before the clock starts when either probe fails and no pinned
+native compatibility adapter compensates. The policy, its digest, and the
+probe results are retained with the private run metadata; a refused run keeps
+its probe results in its run directory.
 
 This boundary prevents accidental benchmark-data access, not adversarial host
 access: native system services and pre-existing processes are not sandboxed by

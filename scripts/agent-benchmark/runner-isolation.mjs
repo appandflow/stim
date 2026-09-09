@@ -152,8 +152,11 @@ export function isolatedRunnerInvocation(isolation, command, args) {
   return { command: launcher, args: ['-p', policy, command, ...args] };
 }
 
+// Head of the profile swift-package-manager's Sources/Basics/Sandbox.swift applies to manifests and plugins.
+const swiftpmSandboxProfile = '(version 1)(deny default)(import "system.sb")(allow file-read*)(allow process*)';
+
 const compatibilityProbes = {
-  nestedSandbox: [launcher, ['-p', '(version 1)(allow default)', '/usr/bin/true']],
+  nestedSandbox: [launcher, ['-p', swiftpmSandboxProfile, '/usr/bin/true']],
   processIdentity: ['/bin/sh', ['-c', '/bin/ps -p "$$" -o lstart=']],
 };
 
@@ -169,13 +172,16 @@ export function verifyIsolationCompatibility(isolation, { platform, nativeCompat
     }
   }
   if (platform !== 'ios' || nativeCompatibility) return record;
+  const refuse = (message) => {
+    throw Object.assign(new Error(message), { isolationCompatibility: record });
+  };
   if (!record.nestedSandbox.permitted) {
-    throw new Error(
+    refuse(
       `benchmark isolation refuses nested sandboxes (${record.nestedSandbox.error}); iOS SwiftPM manifest and plugin sandboxes cannot build under the runner policy without the native compatibility adapter`,
     );
   }
   if (!record.processIdentity.permitted) {
-    throw new Error(
+    refuse(
       `benchmark isolation denies ps process identity (${record.processIdentity.error}); agent-device simulator recording cannot run under the runner policy without the native compatibility adapter`,
     );
   }
