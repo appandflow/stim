@@ -3,6 +3,7 @@ type StackKind = 'Error' | 'Component' | 'Native' | 'Caused-by';
 
 function framePriority(frame: string, root?: string): number {
   const normalized = frame.replaceAll('\\', '/');
+  if (/\(https?:\/\/[^\s)]*$/.test(normalized)) return 3;
   if (/^\s*at (?:android\.|java\.|com\.android\.|dalvik\.)/.test(normalized)) return 2;
   if (/(?:^|[/(\s])node_modules\//.test(normalized) || /\bnode:internal\//.test(normalized)) return 2;
   const paths = [
@@ -16,7 +17,7 @@ function framePriority(frame: string, root?: string): number {
     if (!absolute && !file.startsWith('../')) return 0;
     if (root && file.startsWith(`${root.replaceAll('\\', '/').replace(/\/$/, '')}/`)) return 0;
   }
-  if (/^\s*at (?:RCT\w+|View|Text|ScrollView|Suspense) \(<anonymous>\)\s*$/.test(frame)) return 2;
+  if (/\(<anonymous>\)\s*$/.test(frame)) return 2;
   return 1;
 }
 
@@ -94,7 +95,7 @@ export function launchErrorPreview(
         .toSorted((a, b) => a.rank - b.rank || a.index - b.index)
         .slice(0, full ? undefined : 10)
         .toSorted((a, b) => a.index - b.index);
-      const prioritized = !full && selected.some(({ index }) => index >= 10);
+      const prioritized = !full && selected.some(({ index, rank }) => index >= 10 && rank === 0);
       lines.push(
         `${kind} stack${prioritized ? ' (app frames prioritized)' : ''}:`,
         ...selected.map(({ frame }) => `  ${full ? frame.trim() : shortFrame(frame, root)}`),

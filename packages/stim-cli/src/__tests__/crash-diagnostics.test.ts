@@ -132,6 +132,15 @@ test('a runtime-truncated frame remains identifiable without a broken bundle URL
   expect(preview).toContain('at Route (location incomplete)');
   expect(preview).toContain('runtime truncated');
   expect(preview).not.toContain('http://');
+  const frames = [
+    'at Screen (app.tsx:1:1)',
+    ...Array.from({ length: 10 }, (_, i) => `at framework${i} (node_modules/lib/index.js:${i + 1}:2)`),
+    'at anonymous (http://localhost:8082/index.bundle?plat',
+  ];
+  const bounded = launchErrorPreview([{ stack: frames.join('\n') }]).join('\n');
+  expect(bounded).toContain('at framework8');
+  expect(bounded).not.toContain('at anonymous');
+  expect(bounded).not.toContain('app frames prioritized');
 });
 
 test('cross-source copies collapse only with matching title, location, platform and time', () => {
