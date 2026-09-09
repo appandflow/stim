@@ -57,7 +57,7 @@ function captureAction(register: (program: Command) => void) {
 }
 
 describe('formatting', () => {
-  test('formatTime renders local wall clock to the millisecond', () => {
+  test('formatTime renders local wall clock to the millisecond', async () => {
     const ts = Date.UTC(2026, 7, 25, 12, 34, 56, 789);
     const d = new Date(ts);
     const pad = (n: number, w = 2) => String(n).padStart(w, '0');
@@ -66,35 +66,35 @@ describe('formatting', () => {
     expect(formatTime(ts)).toMatch(/^\d{2}:\d{2}:\d{2}\.\d{3}$/);
   });
 
-  test('formatTime renders a record with no usable ts without crashing', () => {
+  test('formatTime renders a record with no usable ts without crashing', async () => {
     expect(formatTime(undefined)).toBe('--:--:--.---');
     expect(formatTime('nope')).toBe('--:--:--.---');
   });
 
-  test('formatRecord is "HH:MM:SS.mmm level src msg" with aligned columns', () => {
+  test('formatRecord is "HH:MM:SS.mmm level src msg" with aligned columns', async () => {
     const line = formatRecord({ ts: 0, src: 'metro', level: 'error', msg: 'Unable to resolve module' });
     expect(line).toMatch(/^\d{2}:\d{2}:\d{2}\.\d{3} error metro  Unable to resolve module$/);
   });
 
-  test('the level and src columns are padded so messages line up', () => {
+  test('the level and src columns are padded so messages line up', async () => {
     const a = formatRecord({ ts: 0, src: 'metro', level: 'info', msg: 'x' });
     const b = formatRecord({ ts: 0, src: 'client', level: 'error', msg: 'x' });
     expect(a.indexOf('x')).toBe(b.indexOf('x'));
   });
 
-  test('formatStackFrame renders fn, file, line and column', () => {
+  test('formatStackFrame renders fn, file, line and column', async () => {
     expect(formatStackFrame({ file: 'src/App.js', line: 12, column: 3, fn: 'render' })).toBe(
       'at render (src/App.js:12:3)',
     );
   });
 
-  test('formatStackFrame degrades when fields are missing', () => {
+  test('formatStackFrame degrades when fields are missing', async () => {
     expect(formatStackFrame({ file: 'src/App.js', line: 12 })).toBe('at src/App.js:12');
     expect(formatStackFrame({ fn: 'render' })).toBe('at render');
     expect(formatStackFrame({})).toBe(null);
   });
 
-  test('stack frames follow the message, indented', () => {
+  test('stack frames follow the message, indented', async () => {
     const line = formatRecord({
       ts: 0,
       src: 'client',
@@ -112,19 +112,19 @@ describe('formatting', () => {
     expect(lines[2]).toBe('    at src/index.js:1:1');
   });
 
-  test('a multi-line message keeps its own lines, indented under the first', () => {
+  test('a multi-line message keeps its own lines, indented under the first', async () => {
     const line = formatRecord({ ts: 0, src: 'metro', level: 'error', msg: 'first\nsecond' });
     const lines = line.split('\n');
     expect(lines[0]).toMatch(/first$/);
     expect(lines[1]).toBe('    second');
   });
 
-  test('a record missing src or msg still renders', () => {
+  test('a record missing src or msg still renders', async () => {
     const line = formatRecord({ ts: 0, level: 'info' });
     expect(line).toMatch(/^\d{2}:\d{2}:\d{2}\.\d{3} info /);
   });
 
-  test('formatRecord paints only the level, and defaults to no colour', () => {
+  test('formatRecord paints only the level, and defaults to no colour', async () => {
     const line = formatRecord({ ts: 0, src: 'metro', level: 'warn', msg: 'hm' }, { paint: (t) => `<${t}>` });
     expect(line).toMatch(/<warn >/);
     expect(formatRecord({ ts: 0, src: 'metro', level: 'warn', msg: 'hm' }).includes('<')).toBe(false);
@@ -132,12 +132,12 @@ describe('formatting', () => {
 });
 
 describe('option validation', () => {
-  test('parseTail accepts a non-negative integer', () => {
+  test('parseTail accepts a non-negative integer', async () => {
     expect(parseTail('50')).toEqual({ n: 50 });
     expect(parseTail('0')).toEqual({ n: 0 });
   });
 
-  test('parseTail rejects garbage with a message instead of NaN', () => {
+  test('parseTail rejects garbage with a message instead of NaN', async () => {
     for (const bad of ['abc', '-1', '1.5', '', ' ']) {
       const r = parseTail(bad);
       expect(r.n).toBe(undefined);
@@ -145,7 +145,7 @@ describe('option validation', () => {
     }
   });
 
-  test('validateSources accepts the Contract-1 sources and rejects a typo', () => {
+  test('validateSources accepts the Contract-1 sources and rejects a typo', async () => {
     expect(validateSources(['metro', 'client'])).toEqual({ sources: ['metro', 'client'] });
     expect(validateSources(undefined)).toEqual({ sources: undefined });
     const r = validateSources(['metrro']);
@@ -154,13 +154,13 @@ describe('option validation', () => {
     expect(r.error).toMatch(/metro, client, device, build/);
   });
 
-  test('validateSources expands all to every Contract-1 source', () => {
+  test('validateSources expands all to every Contract-1 source', async () => {
     expect(validateSources(['all'])).toEqual({ sources: ['metro', 'client', 'device', 'build'] });
     expect(validateSources(['client', 'all'])).toEqual({ sources: ['metro', 'client', 'device', 'build'] });
     expect(validateSources(['metrro']).error).toMatch(/or all/);
   });
 
-  test('validateLevel accepts the Contract-1 levels and names the valid set otherwise', () => {
+  test('validateLevel accepts the Contract-1 levels and names the valid set otherwise', async () => {
     expect(validateLevel('warn')).toEqual({ level: 'warn' });
     const r = validateLevel('loud');
     expect(r.level).toBe(undefined);
@@ -219,57 +219,57 @@ describe('logs command', () => {
     writeFileSync(join(logsDir, name), records.map((r) => `${JSON.stringify(r)}\n`).join(''));
   }
 
-  function run(opts: Record<string, unknown>) {
+  async function run(opts: Record<string, unknown>) {
     try {
-      captureAction(logsCommand)(opts);
+      await captureAction(logsCommand)(opts);
     } catch (err) {
       if ((err as Error).message !== 'exit') throw err;
     }
   }
 
-  test('prints the merged timeline, one line per record', () => {
+  test('prints the merged timeline, one line per record', async () => {
     writeLog('metro.ndjson', [{ ts: 1, src: 'metro', level: 'info', msg: 'bundling' }]);
     writeLog('client.ndjson', [{ ts: 2, src: 'client', level: 'warn', msg: 'deprecated' }]);
-    run({});
+    await run({});
     expect(exitCode).toBe(null);
     expect(out.length).toBe(2);
     expect(out[0]).toMatch(/ info  metro  bundling$/);
     expect(out[1]).toMatch(/ warn  client deprecated$/);
   });
 
-  test('--json emits the raw records, one valid NDJSON object per line', () => {
+  test('--json emits the raw records, one valid NDJSON object per line', async () => {
     const record = { ts: 1, src: 'metro', level: 'error', msg: 'boom', event: 'bundling_error' };
     writeLog('metro.ndjson', [record]);
-    run({ json: true });
+    await run({ json: true });
     expect(out.length).toBe(1);
     expect(parseNdjsonLine(out[0])).toEqual(record);
   });
 
-  test('exits 0 and prints nothing to stdout when nothing matches', () => {
+  test('exits 0 and prints nothing to stdout when nothing matches', async () => {
     writeLog('metro.ndjson', [{ ts: 1, src: 'metro', level: 'info', msg: 'fine' }]);
-    run({ errors: true });
+    await run({ errors: true });
     expect(exitCode).toBe(null);
     expect(out).toEqual([]);
   });
 
-  test('exits 0 when the workspace has no log directory at all', () => {
+  test('exits 0 when the workspace has no log directory at all', async () => {
     rmSync(workspaceDir(project), { recursive: true, force: true });
-    run({});
+    await run({});
     expect(exitCode).toBe(null);
     expect(out).toEqual([]);
   });
 
-  test('--errors applies the marker window across sources', () => {
+  test('--errors applies the marker window across sources', async () => {
     writeLog('client.ndjson', [
       { ts: 10, src: 'client', level: 'error', msg: 'stale' },
       { ts: 30, src: 'client', level: 'error', msg: 'fresh' },
     ]);
     writeLog('build-ios.ndjson', [{ ts: 20, src: 'build', level: 'info', msg: 'launched', marker: true }]);
-    run({ errors: true, json: true });
+    await run({ errors: true, json: true });
     expect(parsedMsgs(out)).toEqual(['fresh']);
   });
 
-  test('--errors keeps Expo code and call-stack lines with their error in human output', () => {
+  test('--errors keeps Expo code and call-stack lines with their error in human output', async () => {
     const event = 'expo_stdout';
     const error = {
       ts: 1,
@@ -290,7 +290,7 @@ describe('logs command', () => {
       { ts: 8, src: 'metro', level: 'info', raw: true, event, msg: 'iOS Bundled 50ms' },
     ]);
 
-    run({ errors: true });
+    await run({ errors: true });
     expect(out).toHaveLength(1);
     expect(out[0]).toContain('Code: _layout.tsx');
     expect(out[0]).toContain('RootLayout (app/_layout.tsx:27:18)');
@@ -298,12 +298,12 @@ describe('logs command', () => {
     expect(out[0]).not.toContain('iOS Bundled');
 
     out.length = 0;
-    run({ errors: true, json: true });
+    await run({ errors: true, json: true });
     expect(out).toHaveLength(1);
     expect(parseNdjsonLine(out[0])).toEqual(error);
   });
 
-  test('--errors keeps bare React Native symbolication with its error in human output', () => {
+  test('--errors keeps bare React Native symbolication with its error in human output', async () => {
     const error = { ts: 1, src: 'client', level: 'error', msg: '[Error: STIM_BARE_LAUNCH_CRASH]' };
     writeLog('client.ndjson', [
       error,
@@ -328,7 +328,7 @@ describe('logs command', () => {
       },
     ]);
 
-    run({ errors: true });
+    await run({ errors: true });
     expect(out).toHaveLength(3);
     expect(out[0]).toContain('[Error: STIM_BARE_LAUNCH_CRASH]');
     expect(out[1]).toContain('Metro symbolication context (not correlated to a specific client error)');
@@ -337,12 +337,12 @@ describe('logs command', () => {
     expect(out[2]).toContain('Code: /app/App.tsx:16:35');
 
     out.length = 0;
-    run({ errors: true, json: true });
+    await run({ errors: true, json: true });
     expect(out).toHaveLength(1);
     expect(parseNdjsonLine(out[0])).toEqual(error);
   });
 
-  test('--errors reports reordered bare symbolication separately from client errors', () => {
+  test('--errors reports reordered bare symbolication separately from client errors', async () => {
     writeLog('client.ndjson', [
       {
         ts: 1,
@@ -355,7 +355,7 @@ describe('logs command', () => {
       { ts: 3, src: 'client', level: 'error', msg: '[Error: second]' },
     ]);
 
-    run({ errors: true });
+    await run({ errors: true });
     expect(out).toHaveLength(3);
     expect(out[0]).toContain('not correlated to a specific client error');
     expect(out[0]).toContain('First.tsx');
@@ -363,7 +363,7 @@ describe('logs command', () => {
     expect(out[2]).not.toContain('First.tsx');
   });
 
-  test('--since also bounds bare context when a launch marker exists', () => {
+  test('--since also bounds bare context when a launch marker exists', async () => {
     const now = Date.now();
     writeLog('build-ios.ndjson', [
       { ts: now - 60 * 60 * 1000, src: 'build', level: 'info', msg: 'launched', marker: true },
@@ -386,62 +386,62 @@ describe('logs command', () => {
       { ts: now, src: 'client', level: 'error', msg: '[Error: recent]' },
     ]);
 
-    run({ errors: true, since: '5m' });
+    await run({ errors: true, since: '5m' });
     expect(out.join('\n')).toContain('recent context');
     expect(out.join('\n')).not.toContain('old context');
   });
 
-  test('--source, --level, --grep and --tail reach the query', () => {
+  test('--source, --level, --grep and --tail reach the query', async () => {
     writeLog('metro.ndjson', [
       { ts: 1, src: 'metro', level: 'debug', msg: 'noise' },
       { ts: 2, src: 'metro', level: 'error', msg: 'Unable to resolve module a' },
       { ts: 3, src: 'metro', level: 'error', msg: 'Unable to resolve module b' },
     ]);
     writeLog('client.ndjson', [{ ts: 4, src: 'client', level: 'error', msg: 'Unable to resolve module c' }]);
-    run({ source: ['metro'], level: 'error', grep: 'resolve module', tail: '1', json: true });
+    await run({ source: ['metro'], level: 'error', grep: 'resolve module', tail: '1', json: true });
     expect(parsedMsgs(out)).toEqual(['Unable to resolve module b']);
   });
 
-  test('a bad --since exits 1 with a message naming the accepted forms', () => {
+  test('a bad --since exits 1 with a message naming the accepted forms', async () => {
     writeLog('metro.ndjson', [{ ts: 1, src: 'metro', level: 'info', msg: 'x' }]);
-    run({ since: 'soon' });
+    await run({ since: 'soon' });
     expect(exitCode).toBe(1);
     expect(errOut.join('\n')).toMatch(/soon/);
     expect(errOut.join('\n')).toMatch(/30s|5m|2h/);
     expect(out).toEqual([]);
   });
 
-  test('a typo in --source exits 1 rather than reporting an empty pass', () => {
+  test('a typo in --source exits 1 rather than reporting an empty pass', async () => {
     writeLog('metro.ndjson', [{ ts: 1, src: 'metro', level: 'error', msg: 'boom' }]);
-    run({ source: ['metrro'], errors: true });
+    await run({ source: ['metrro'], errors: true });
     expect(exitCode).toBe(1);
     expect(errOut.join('\n')).toMatch(/metrro/);
     expect(out).toEqual([]);
   });
 
-  test('a bad --level exits 1', () => {
-    run({ level: 'loud' });
+  test('a bad --level exits 1', async () => {
+    await run({ level: 'loud' });
     expect(exitCode).toBe(1);
     expect(errOut.join('\n')).toMatch(/loud/);
   });
 
-  test('a bad --tail exits 1', () => {
-    run({ tail: 'lots' });
+  test('a bad --tail exits 1', async () => {
+    await run({ tail: 'lots' });
     expect(exitCode).toBe(1);
     expect(errOut.join('\n')).toMatch(/--tail/);
   });
 
-  test('a bad --grep exits 1 rather than throwing a RegExp stack', () => {
-    run({ grep: '[unterminated' });
+  test('a bad --grep exits 1 rather than throwing a RegExp stack', async () => {
+    await run({ grep: '[unterminated' });
     expect(exitCode).toBe(1);
     expect(errOut.join('\n')).toMatch(/grep/);
   });
 
-  test('outside a project it exits 1 and says so', () => {
+  test('outside a project it exits 1 and says so', async () => {
     const bare = mkdtempSync(join(tmpdir(), 'stim-logscmd-bare-'));
     process.chdir(bare);
     try {
-      run({});
+      await run({});
     } finally {
       process.chdir(project);
       rmSync(bare, { recursive: true, force: true });
@@ -450,53 +450,53 @@ describe('logs command', () => {
     expect(errOut.join('\n')).toMatch(/project/i);
   });
 
-  test('--since is honoured against real timestamps', () => {
+  test('--since is honoured against real timestamps', async () => {
     const now = Date.now();
     writeLog('metro.ndjson', [
       { ts: now - 3600000, src: 'metro', level: 'info', msg: 'an hour ago' },
       { ts: now - 1000, src: 'metro', level: 'info', msg: 'a second ago' },
     ]);
-    run({ since: '30s', json: true });
+    await run({ since: '30s', json: true });
     expect(parsedMsgs(out)).toEqual(['a second ago']);
   });
 
   describe('--errors, after the field test', () => {
-    test('the device stream is out of scope by default', () => {
+    test('the device stream is out of scope by default', async () => {
       writeLog('device.ndjson', [
         { ts: 1, src: 'device', level: 'error', msg: 'nw_socket_handle_socket_event [C1:2] Socket SO_ERROR [54]' },
         { ts: 2, src: 'device', level: 'fatal', msg: 'UIScene lifecycle will soon be required' },
       ]);
-      run({ errors: true });
+      await run({ errors: true });
       expect(exitCode).toBe(null);
       expect(out).toEqual([]);
     });
 
-    test('--source device puts it back, and so does --source all', () => {
+    test('--source device puts it back, and so does --source all', async () => {
       writeLog('device.ndjson', [{ ts: 1, src: 'device', level: 'error', msg: 'native crash' }]);
       writeLog('client.ndjson', [{ ts: 2, src: 'client', level: 'error', msg: 'js crash' }]);
 
-      run({ errors: true, source: ['device'], json: true });
+      await run({ errors: true, source: ['device'], json: true });
       expect(parsedMsgs(out)).toEqual(['native crash']);
 
       out.length = 0;
-      run({ errors: true, source: ['all'], json: true });
+      await run({ errors: true, source: ['all'], json: true });
       expect(parsedMsgs(out)).toEqual(['native crash', 'js crash']);
     });
 
-    test('a plain logs (no --errors) still prints the device stream', () => {
+    test('a plain logs (no --errors) still prints the device stream', async () => {
       writeLog('device.ndjson', [{ ts: 1, src: 'device', level: 'error', msg: 'device line' }]);
-      run({});
+      await run({});
       expect(out.length).toBe(1);
       expect(out[0]).toMatch(/device line$/);
     });
 
-    test(`--errors prints at most ${ERRORS_PRINT_CAP} errors plus context and says how many are left`, () => {
+    test(`--errors prints at most ${ERRORS_PRINT_CAP} errors plus context and says how many are left`, async () => {
       const many = [];
       for (let i = 0; i < 3004; i += 1) {
         many.push({ ts: 1000 + i, src: 'client', level: 'error', msg: `boom ${i}` });
       }
       writeLog('client.ndjson', many);
-      run({ errors: true });
+      await run({ errors: true });
       expect(out.length).toBe(ERRORS_PRINT_CAP + 1);
       expect(out[0]).toMatch(/boom 0$/);
       expect(out[ERRORS_PRINT_CAP - 1]).toMatch(/boom 19$/);
@@ -506,7 +506,7 @@ describe('logs command', () => {
       expect(out[ERRORS_PRINT_CAP]).toMatch(/--json/);
     });
 
-    test('the error cap includes context around visible errors without counting it as an error', () => {
+    test('the error cap includes context around visible errors without counting it as an error', async () => {
       const symbolication = (ts: number, msg: string) => ({
         ts,
         src: 'client',
@@ -523,37 +523,37 @@ describe('logs command', () => {
       records.push(symbolication(24, 'after hidden error'));
       writeLog('client.ndjson', records);
 
-      run({ errors: true });
+      await run({ errors: true });
       expect(out.join('\n')).toContain('before visible errors');
       expect(out.join('\n')).toContain('after visible errors');
       expect(out.join('\n')).not.toContain('after hidden error');
       expect(out.at(-1)).toMatch(/and 1 more/);
     });
 
-    test('the cap does not apply to --json, or to an explicit --tail', () => {
+    test('the cap does not apply to --json, or to an explicit --tail', async () => {
       const many = [];
       for (let i = 0; i < 25; i += 1) many.push({ ts: 1000 + i, src: 'client', level: 'error', msg: `boom ${i}` });
       writeLog('client.ndjson', many);
 
-      run({ errors: true, json: true });
+      await run({ errors: true, json: true });
       expect(out.length).toBe(25);
 
       out.length = 0;
-      run({ errors: true, tail: '25' });
+      await run({ errors: true, tail: '25' });
       expect(out.length).toBe(25);
     });
 
-    test('a result at the cap prints no trailer', () => {
+    test('a result at the cap prints no trailer', async () => {
       const many = [];
       for (let i = 0; i < ERRORS_PRINT_CAP; i += 1)
         many.push({ ts: 1000 + i, src: 'client', level: 'error', msg: `boom ${i}` });
       writeLog('client.ndjson', many);
-      run({ errors: true });
+      await run({ errors: true });
       expect(out.length).toBe(ERRORS_PRINT_CAP);
       expect(!out.join('\n').includes('more')).toBeTruthy();
     });
 
-    test('a bundle marker one second after a startup crash does not hide it', () => {
+    test('a bundle marker one second after a startup crash does not hide it', async () => {
       const at = (sec: number) => Date.parse(`2026-08-24T16:03:${sec}Z`);
       writeLog('build-ios.ndjson', [{ ts: at(50), src: 'build', level: 'info', msg: 'launched', marker: true }]);
       writeLog('client.ndjson', [
@@ -562,7 +562,7 @@ describe('logs command', () => {
       writeLog('metro.ndjson', [
         { ts: at(55), src: 'metro', level: 'info', msg: 'bundle build done (1)', marker: true },
       ]);
-      run({ errors: true, json: true });
+      await run({ errors: true, json: true });
       expect(parsedMsgs(out)).toEqual(['[Error: Exception in HostFunction]']);
     });
   });

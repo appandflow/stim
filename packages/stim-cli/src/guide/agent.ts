@@ -51,6 +51,10 @@ them. It preserves source, custom launcher settings, and the shared ccache.
   # Reproduce the affected behavior and capture the baseline errors.
   stim logs --errors
 
+  # If a native process exits with no report, inspect the captured device output.
+  # An empty query is not proof that a crashed app was healthy.
+  # See guide logs for JS/native symbolication and capture limits.
+
   # Edit JavaScript or TypeScript; Fast Refresh applies the change.
   # For UI work, wait for the expected UI and repeat the affected interaction
   # on the reported device. Keep using the existing automation session, if any.

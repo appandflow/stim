@@ -20,6 +20,7 @@ import {
   ADB_INSTALL_TIMEOUT_MS,
   RELEASE_VERIFY_WAIT_MS,
   installConflictKind,
+  deviceShellArg,
 } from '../../engine/app-install.ts';
 import { appReadinessMessage, formatDuration, launchErrorReport, phaseLine, stepTimer } from '../../command-output.ts';
 import { launchErrorPreview } from '../../launch-error-preview.ts';
@@ -57,10 +58,14 @@ import { providerUploadOutcome } from '../../build-cache.ts';
 import { detectAndroidPackage } from '../../project.ts';
 import { launchOutcomeRecord } from '../native-runtime.ts';
 import { startCollector } from './collector.ts';
+import { captureNativeCrashes, printNativeCrashReport } from '../../native-crash.ts';
+import { errorDiagnostics } from '../../error-diagnostics.ts';
 
 interface VerifyAndroidRunArgs {
+  root: string;
   release: boolean;
   remoteRelease: boolean;
+  remoteDevice: boolean;
   verifyReleaseLaunched: typeof verifyAndroidReleaseLaunch;
   verifyLaunched: typeof verifyLaunch;
   serial: string;
@@ -77,8 +82,10 @@ interface VerifyAndroidRunArgs {
 }
 
 async function verifyAndroidRun({
+  root,
   release,
   remoteRelease,
+  remoteDevice,
   verifyReleaseLaunched,
   verifyLaunched,
   serial,
@@ -93,6 +100,13 @@ async function verifyAndroidRun({
   scheme,
   phase,
 }: VerifyAndroidRunArgs): Promise<boolean | string> {
+  const readNativeCrashes = () =>
+    remoteDevice
+      ? []
+      : captureNativeCrashes(
+          { root, platform: 'android', deviceId: serial, appId: androidPackage, since: launchedAt },
+          logsDir,
+        );
   if (remoteRelease) {
     phase('verify', chalk.yellow('UNVERIFIED: remote adapter launch accepted; process verification is unavailable'));
     return LAUNCH_UNVERIFIED;
@@ -110,6 +124,16 @@ async function verifyAndroidRun({
       phase('verify', chalk.yellow('UNVERIFIED: the app process check failed'));
       return LAUNCH_UNVERIFIED;
     }
+    const crashes = captureNativeCrashes(
+      { root, platform: 'android', deviceId: serial, appId: androidPackage, since: launchedAt },
+      logsDir,
+    );
+    for (const line of launchErrorPreview(crashes, root)) phase('launch', chalk.red(line));
+    if (!crashes.length)
+      phase(
+        'logs',
+        'Process missing; no attributable native crash report captured. Read `stim logs --source device` for available output.',
+      );
     phase(
       'verify',
       chalk.yellow(
@@ -119,7 +143,7 @@ async function verifyAndroidRun({
     phase(
       '',
       chalk.yellow(
-        'A release app that dies at startup usually crashed loading its embedded bundle; `stim logs --errors` has the device log that says why.',
+        'A release process exited before readiness. Run `stim logs --errors` for captured crash reports, or `stim logs --source device` for the full device output.',
       ),
     );
     return LAUNCH_FATAL;
@@ -133,28 +157,50 @@ async function verifyAndroidRun({
         metroPort,
         platform: 'android',
         mode: isExpo ? MODE_EXPO : MODE_BARE,
+        readNativeCrashes,
         processAlive: () => {
           const pid = androidAppProcess(serial, androidPackage);
           return pid === undefined ? null : pid !== null;
         },
       })
     : { verified: false, skipped: true };
+  const nativeCrashes = verification.errors?.some((record) => record.event === 'native_crash')
+    ? []
+    : readNativeCrashes();
+  if (nativeCrashes.length) {
+    verification.fatal = true;
+  }
+  verification.errors = await errorDiagnostics([...(verification.errors ?? []), ...nativeCrashes], {
+    root,
+    logsDir,
+    port: metroPort,
+    allowRequest: true,
+  });
   if (verification.readiness)
     phase('readiness', appReadinessMessage(verification.readiness, verification.waitedMs ?? 0));
   if (verification?.fatal) {
+    const nativeFatal = verification.errors?.some((record) => record.event === 'native_crash');
     const deliveryFailed = verification.record?.event === 'bundle_response_failed';
-    const reason =
-      verification.processAlive === false
+    const reason = nativeFatal
+      ? 'the app reported a native crash'
+      : verification.processAlive === false
         ? 'the app process exited'
         : deliveryFailed
           ? 'Metro bundle delivery failed'
           : 'Metro could not build the bundle';
     phase('verify', chalk.red(`FATAL after ${formatDuration(verification.waitedMs ?? 0)}: ${reason}`));
-    for (const line of launchErrorPreview(verification.errors ?? [])) phase('', chalk.red(line));
-    if (verification.processAlive === false) {
+    for (const line of launchErrorPreview(verification.errors ?? [], root)) phase('', chalk.red(line));
+    if (verification.processAlive === false && !verification.errors?.some((record) => record.event === 'native_crash'))
+      phase(
+        'logs',
+        'No attributable native crash report captured yet. Run `stim logs --errors` again for delayed reports, or `stim logs --source device` for available output.',
+      );
+    if (nativeFatal || verification.processAlive === false) {
       phase(
         'remedy',
-        chalk.yellow('Fix the crash, then run `stim android` again. A Metro reload cannot restart an exited app.'),
+        chalk.yellow(
+          `Fix the crash, then restart the app: \`adb -s ${deviceShellArg(serial)} shell am force-stop ${deviceShellArg(androidPackage)}\`, then run \`stim android\` again. A crashed Android process can remain alive behind the system crash dialog; Metro reload cannot recover it.`,
+        ),
       );
     } else if (verification.processAlive === true && metroPort !== null) {
       const reloadRemedy = physical
@@ -177,7 +223,7 @@ async function verifyAndroidRun({
         (verification.readiness ? '' : ', stable for 3s -- the first screen may still be rendering') +
         ` (${formatDuration(verification.waitedMs ?? 0)} total)`,
     );
-    const report = launchErrorReport(verification.errors ?? []);
+    const report = launchErrorReport(verification.errors ?? [], root);
     if (report.summary) phase('launch', chalk.dim(report.summary));
     for (const line of report.lines) phase('launch', chalk.yellow(line));
     if (report.lines.length > 0 && verification.processAlive === true && metroPort !== null) {
@@ -468,6 +514,18 @@ export async function finishAndroidRun({
   const scheme = release ? undefined : resolveDevClientScheme(root, apkPath);
   const launchTimer = stepTimer(now);
   const launchedAt = now();
+  writer.write({
+    src: 'build',
+    level: 'info',
+    marker: true,
+    event: 'launch_attempt',
+    ts: launchedAt,
+    platform: 'android',
+    appId: androidPackage,
+    deviceId: serial,
+    remote: Boolean(remoteDevice),
+    msg: `launching ${androidPackage} on ${serial}`,
+  });
   const launched: LaunchResultLike = release
     ? remoteDevice
       ? remoteDevice.launch({ serial, packageName: androidPackage, metroPort: null })
@@ -480,6 +538,12 @@ export async function finishAndroidRun({
         physical,
       });
   if (launched.failed) {
+    printNativeCrashReport(
+      { root, platform: 'android', deviceId: serial, appId: androidPackage, since: launchedAt },
+      logsDir,
+      (line) => phase('launch', chalk.red(line)),
+      Boolean(remoteDevice),
+    );
     return fail(
       launched.code || LAUNCH_FAILED,
       launched.reason,
@@ -491,7 +555,6 @@ export async function finishAndroidRun({
     src: 'build',
     level: 'info',
     event: 'app_launched',
-    marker: true,
     msg: release
       ? `launched ${androidPackage} on ${serial} (${variant}, embedded JS bundle, no Metro)`
       : `launched ${androidPackage} on ${serial} against Metro port ${metroPort}`,
@@ -558,8 +621,10 @@ export async function finishAndroidRun({
 
   if (physical) raiseLeaseFor(release ? RELEASE_VERIFY_WAIT_MS : DEBUG_VERIFY_STEP_MS, false);
   const launchState = await verifyAndroidRun({
+    root,
     release,
     remoteRelease,
+    remoteDevice: Boolean(remoteDevice),
     verifyReleaseLaunched,
     verifyLaunched,
     serial,

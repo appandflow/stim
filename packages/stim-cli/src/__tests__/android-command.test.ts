@@ -2459,8 +2459,8 @@ describe('Contract 1: the launch marker', () => {
     expect(marker).toBeTruthy();
     assert(marker);
     expect(marker.src).toBe('build');
-    expect(marker.event).toBe('app_launched');
-    expect(marker.msg).toMatch(/com\.example\.app on emulator-5584 against Metro port 8082/);
+    expect(marker.event).toBe('launch_attempt');
+    expect(marker.msg).toMatch(/launching com\.example\.app on emulator-5584/);
   });
 });
 
@@ -2728,7 +2728,7 @@ describe('launch verification', () => {
           {
             src: 'client',
             msg: 'a redbox from the app',
-            stack: Array.from({ length: 7 }, (_, i) => ({ file: 'app.tsx', line: i + 1, fn: `frame${i}` })),
+            stack: Array.from({ length: 12 }, (_, i) => ({ file: 'app.tsx', line: i + 1, fn: `frame${i}` })),
           },
         ],
       }),
@@ -2740,8 +2740,8 @@ describe('launch verification', () => {
     );
     expect(text).toMatch(/^  launch {6}a redbox from the app$/m);
     expect(text).toContain('Error stack:');
-    expect(text).toContain('at frame4 (app.tsx:5)');
-    expect(text).not.toContain('at frame5');
+    expect(text).toContain('at frame9 (app.tsx:10)');
+    expect(text).not.toContain('at frame10');
     expect(text).toContain('... 2 more frames');
     expect(text).toContain('stim logs --source all');
     expect(text).not.toMatch(/a native framework error/);
@@ -2759,7 +2759,8 @@ describe('launch verification', () => {
     });
     const result = await h.run();
     expect(result.ok).toBe(false);
-    expect(h.stderr.join('\n')).toMatch(/run `stim android` again.*Metro reload cannot restart an exited app/);
+    expect(h.stderr.join('\n')).toContain("adb -s 'emulator-5584' shell am force-stop 'com.example.app'");
+    expect(h.stderr.join('\n')).toMatch(/run `stim android` again.*Metro reload cannot recover/);
   });
 
   test.each([

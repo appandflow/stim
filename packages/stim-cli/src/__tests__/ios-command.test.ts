@@ -904,7 +904,7 @@ describe('launch verification', () => {
             {
               src: 'client',
               msg: 'a redbox from the app',
-              stack: Array.from({ length: 7 }, (_, i) => ({ file: 'app.tsx', line: i + 1, fn: `frame${i}` })),
+              stack: Array.from({ length: 12 }, (_, i) => ({ file: 'app.tsx', line: i + 1, fn: `frame${i}` })),
             },
           ],
         }),
@@ -916,8 +916,8 @@ describe('launch verification', () => {
     );
     expect(text).toMatch(/^  launch {6}a redbox from the app$/m);
     expect(text).toContain('Error stack:');
-    expect(text).toContain('at frame4 (app.tsx:5)');
-    expect(text).not.toContain('at frame5');
+    expect(text).toContain('at frame9 (app.tsx:10)');
+    expect(text).not.toContain('at frame10');
     expect(text).toContain('... 2 more frames');
     expect(text).toContain('stim logs --source all');
     expect(text).not.toMatch(/Failed to send CA Event/);
@@ -2092,7 +2092,8 @@ describe('success output', () => {
     expect(marker).toBeTruthy();
     assert(marker);
     expect(marker.src).toBe('build');
-    expect(marker.msg).toMatch(/launched com\.example\.app on BF2A.* against Metro port 8082/);
+    expect(marker.event).toBe('launch_attempt');
+    expect(marker.msg).toMatch(/launching com\.example\.app on BF2A/);
   });
 });
 

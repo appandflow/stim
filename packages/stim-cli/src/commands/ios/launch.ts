@@ -43,8 +43,12 @@ import { type ReportIosResultArgs, finishIosUpload, reportIosResult } from './re
 import { providerUploadOutcome } from '../../build-cache.ts';
 import { launchOutcomeRecord } from '../native-runtime.ts';
 import { COLLECTOR_EXIT_WAIT_MS } from './collector.ts';
+import { captureNativeCrashes, printNativeCrashReport, simulatorConsolePaths } from '../../native-crash.ts';
+import { errorDiagnostics } from '../../error-diagnostics.ts';
 
 interface VerifyIosRunArgs {
+  root: string;
+  appPath: string | null;
   d: IosDeps;
   release: boolean;
   launched: ReturnType<IosDeps['launchIosApp']>;
@@ -68,6 +72,8 @@ interface VerifyIosRunArgs {
 }
 
 async function verifyIosRun({
+  root,
+  appPath,
   d,
   release,
   launched,
@@ -89,6 +95,13 @@ async function verifyIosRun({
   remoteDevice,
   metroOrigin,
 }: VerifyIosRunArgs): Promise<boolean | string> {
+  const readNativeCrashes = () =>
+    remoteDevice
+      ? []
+      : captureNativeCrashes(
+          { root, platform: 'ios', deviceId: udid, appId: bundleId, since: launchedAt, appPath, physical },
+          logsDir,
+        );
   const deviceProcess = (): boolean | null => {
     const pid = d.iosDeviceProcess({ udid, appName: appName ?? bundleId });
     return pid === undefined ? null : pid !== null;
@@ -105,6 +118,20 @@ async function verifyIosRun({
       );
       return true;
     }
+    const crashes = remoteDevice
+      ? []
+      : captureNativeCrashes(
+          { platform: 'ios', deviceId: udid, appId: bundleId, since: launchedAt, appPath, physical },
+          logsDir,
+        );
+    for (const line of launchErrorPreview(crashes, root)) note(chalk.red(phaseLine('launch', line)));
+    if (!crashes.length)
+      note(
+        phaseLine(
+          'logs',
+          'No attributable native crash report captured. Read `stim logs --source device` for available output.',
+        ),
+      );
     phase(
       'verify',
       chalk.yellow(
@@ -119,7 +146,7 @@ async function verifyIosRun({
       chalk.yellow(
         phaseLine(
           '',
-          'A release app that dies at startup usually crashed loading its embedded bundle; `stim logs --errors` has the device log that says why.',
+          'A release process exited before readiness. Run `stim logs --errors` for captured crash reports, or `stim logs --source device` for the full device output.',
         ),
       ),
     );
@@ -134,6 +161,7 @@ async function verifyIosRun({
         metroPort,
         platform: 'ios',
         mode: isExpo ? MODE_EXPO : MODE_BARE,
+        readNativeCrashes,
         processAlive: remoteDevice
           ? null
           : physical
@@ -145,19 +173,40 @@ async function verifyIosRun({
               },
       })
     : { verified: false, skipped: true };
+  const nativeCrashes = verification.errors?.some((record) => record.event === 'native_crash')
+    ? []
+    : readNativeCrashes();
+  if (nativeCrashes.length) {
+    verification.fatal = true;
+  }
+  verification.errors = await errorDiagnostics([...(verification.errors ?? []), ...nativeCrashes], {
+    root,
+    logsDir,
+    port: metroPort,
+    allowRequest: true,
+  });
   if (verification.readiness)
     phase('readiness', appReadinessMessage(verification.readiness, verification.waitedMs ?? 0));
   if (verification?.fatal) {
+    const nativeFatal = verification.errors?.some((record) => record.event === 'native_crash');
     const deliveryFailed = verification.record?.event === 'bundle_response_failed';
-    const reason =
-      verification.processAlive === false
+    const reason = nativeFatal
+      ? 'the app reported a native crash'
+      : verification.processAlive === false
         ? 'the app process exited'
         : deliveryFailed
           ? 'Metro bundle delivery failed'
           : 'Metro could not build the bundle';
     phase('verify', chalk.red(`FATAL after ${formatDuration(verification.waitedMs ?? 0)}: ${reason}`));
-    for (const line of launchErrorPreview(verification.errors ?? [])) note(chalk.red(phaseLine('', line)));
-    if (verification.processAlive === false) {
+    for (const line of launchErrorPreview(verification.errors ?? [], root)) note(chalk.red(phaseLine('', line)));
+    if (verification.processAlive === false && !verification.errors?.some((record) => record.event === 'native_crash'))
+      note(
+        phaseLine(
+          'logs',
+          'No attributable native crash report captured yet. Run `stim logs --errors` again for delayed reports, or `stim logs --source device` for available output.',
+        ),
+      );
+    if (nativeFatal || verification.processAlive === false) {
       note(
         chalk.yellow(
           phaseLine('remedy', 'Fix the crash, then run `stim ios` again. A Metro reload cannot restart an exited app.'),
@@ -187,7 +236,7 @@ async function verifyIosRun({
         (verification.readiness ? '' : ', stable for 3s -- the first screen may still be rendering') +
         ` (${formatDuration(verification.waitedMs ?? 0)} total)`,
     );
-    const hasAppErrors = reportLaunchErrors(verification.errors ?? [], note);
+    const hasAppErrors = reportLaunchErrors(verification.errors ?? [], note, root);
     if (hasAppErrors && verification.processAlive === true && metroPort !== null) {
       const reloadRemedy =
         physical || remoteDevice
@@ -248,8 +297,8 @@ async function verifyIosRun({
   return LAUNCH_UNVERIFIED;
 }
 
-function reportLaunchErrors(errors: LaunchErrorRecord[], note: (line: string) => void): boolean {
-  const report = launchErrorReport(errors);
+function reportLaunchErrors(errors: LaunchErrorRecord[], note: (line: string) => void, root: string): boolean {
+  const report = launchErrorReport(errors, root);
   if (report.summary) note(chalk.dim(phaseLine('launch', report.summary)));
   for (const line of report.lines) note(chalk.yellow(phaseLine('launch', line)));
   return report.lines.length > 0;
@@ -514,6 +563,19 @@ export async function finishIosRun({
     const payloadUrl = scheme && metroPort !== null && lanAddress ? devClientUrl(scheme, metroPort, lanAddress) : null;
     const launchTimer = stepTimer(d.now);
     launchedAt = d.now();
+    logWriter().write({
+      src: 'build',
+      level: 'info',
+      marker: true,
+      event: 'launch_attempt',
+      ts: launchedAt,
+      platform: 'ios',
+      appId: bundleId,
+      deviceId: udid,
+      appPath,
+      physical: true,
+      msg: `launching ${bundleId} on ${udid}`,
+    });
     const collector = await d.replaceCollector({
       root,
       udid,
@@ -608,8 +670,37 @@ export async function finishIosRun({
     if (!remoteDevice) await d.replaceCollector({ root, udid, bundleId: bundleId!, appName, appExecutable, note });
     const launchTimer = stepTimer(d.now);
     launchedAt = d.now();
-    launched = d.launchIosApp({ udid, bundleId: bundleId!, metroPort, devClientScheme: scheme });
+    logWriter().write({
+      src: 'build',
+      level: 'info',
+      marker: true,
+      event: 'launch_attempt',
+      ts: launchedAt,
+      platform: 'ios',
+      appId: bundleId,
+      deviceId: udid,
+      appPath,
+      remote: Boolean(remoteDevice),
+      msg: `launching ${bundleId} on ${udid}`,
+    });
+    launched = d.launchIosApp({
+      udid,
+      bundleId: bundleId!,
+      metroPort,
+      devClientScheme: scheme,
+      consolePaths: simulatorConsolePaths(
+        { deviceId: udid, appId: bundleId!, since: launchedAt },
+        true,
+        Boolean(remoteDevice),
+      ),
+    });
     if (launched?.failed) {
+      printNativeCrashReport(
+        { root, platform: 'ios', deviceId: udid, appId: bundleId!, since: launchedAt, appPath },
+        logsDir,
+        (line) => note(chalk.red(phaseLine('launch', line))),
+        Boolean(remoteDevice),
+      );
       return fail({
         code: launched.code || 'STIM_LAUNCH_FAILED',
         message: launched.reason,
@@ -637,7 +728,6 @@ export async function finishIosRun({
   logWriter().write({
     src: 'build',
     level: 'info',
-    marker: true,
     event: 'launch',
     msg: release
       ? `launched ${bundleId} on ${udid} (${configuration}, embedded JS bundle, no Metro)`
@@ -649,6 +739,8 @@ export async function finishIosRun({
 
   if (physical) raiseLeaseFor(release ? RELEASE_VERIFY_WAIT_MS : DEBUG_VERIFY_STEP_MS, false);
   const launchState = await verifyIosRun({
+    root,
+    appPath,
     d,
     release,
     launched,

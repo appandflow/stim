@@ -144,7 +144,7 @@ test('no device record means no count line at all', () => {
 test('launch previews cap a JavaScript stack split across Android log records without hiding the next error', () => {
   const messages = [
     'Error: first failure',
-    ...Array.from({ length: 9 }, (_, i) => `    at frame${i} (app.ts:${i + 1}:2)`),
+    ...Array.from({ length: 14 }, (_, i) => `    at frame${i} (app.ts:${i + 1}:2)`),
     'Error: second failure',
     '    at retry (retry.ts:4:2)',
   ];
@@ -153,20 +153,20 @@ test('launch previews cap a JavaScript stack split across Android log records wi
   expect(report.lines).toEqual([
     'Error: first failure',
     'Error stack:',
-    ...messages.slice(1, 6).map((line) => `  ${line.trim()}`),
+    ...messages.slice(1, 11).map((line) => `  ${line.trim()}`),
     '  ... 4 more frames',
     'Error: second failure',
     'Error stack:',
     '  at retry (retry.ts:4:2)',
     'Full captured stacks: stim logs --source all (add --json for raw records)',
   ]);
-  expect(report.summary).toContain('12 error-level records');
+  expect(report.summary).toContain('17 error-level records');
   expect(records.map((record) => record.msg)).toEqual(messages);
 });
 
 test('launch previews unescape and bound serialized React component stacks while labeling bundle coordinates honestly', () => {
   const frames = Array.from(
-    { length: 7 },
+    { length: 14 },
     (_, i) =>
       `    at Component${i} (http://localhost:8082/index.bundle//&platform=ios&dev=true&transform.engine=hermes:${100 + i}:20)`,
   );
@@ -175,11 +175,8 @@ test('launch previews unescape and bound serialized React component stacks while
   expect(report.lines).toEqual([
     '{ [Error: startup failed]',
     'Component stack:',
-    '  at Component0 (index.bundle:100:20 [unsymbolicated])',
-    '  at Component1 (index.bundle:101:20 [unsymbolicated])',
-    '  at Component2 (index.bundle:102:20 [unsymbolicated])',
+    ...Array.from({ length: 10 }, (_, i) => `  at Component${i} (index.bundle:${100 + i}:20 [unsymbolicated])`),
     '  ... 4 more frames',
-    '  isComponentError: true }',
     'Full captured stacks: stim logs --source all (add --json for raw records)',
   ]);
 });
@@ -189,15 +186,15 @@ test('launch previews preserve structured error and component stacks separately 
     {
       src: 'client',
       msg: 'Error: render failed',
-      stack: Array.from({ length: 8 }, (_, i) => ({ file: 'app.tsx', line: i + 1, column: 3, fn: `fn${i}` })),
+      stack: Array.from({ length: 13 }, (_, i) => ({ file: 'app.tsx', line: i + 1, column: 3, fn: `fn${i}` })),
       componentStack: '\n    at Screen (screen.tsx:10:3)\n    at Root (root.tsx:4:2)',
     },
   ];
   const original = JSON.stringify(records);
   const lines = launchErrorReport(records).lines;
   expect(lines).toContain('  at fn0 (app.tsx:1:3)');
-  expect(lines).toContain('  at fn4 (app.tsx:5:3)');
-  expect(lines).not.toContain('  at fn5 (app.tsx:6:3)');
+  expect(lines).toContain('  at fn9 (app.tsx:10:3)');
+  expect(lines).not.toContain('  at fn10 (app.tsx:11:3)');
   expect(lines).toContain('  ... 3 more frames');
   expect(lines.slice(-4)).toEqual([
     'Component stack:',
@@ -210,24 +207,24 @@ test('launch previews preserve structured error and component stacks separately 
 
 test('launch previews bound JSON-serialized object fields from the Metro client reporter', () => {
   const stack = Array.from(
-    { length: 8 },
+    { length: 13 },
     (_, i) => `    at error${i} (http://localhost:8082/index.bundle?platform=android:${i + 1}:2)`,
   ).join('\n');
   const componentStack = Array.from(
-    { length: 8 },
+    { length: 13 },
     (_, i) => `    at component${i} (http://localhost:8082/index.bundle?platform=android:${i + 1}:3)`,
   ).join('\n');
   const record = { src: 'client', msg: JSON.stringify({ message: 'render failed', stack, componentStack }) };
   const original = JSON.stringify(record);
   const lines = launchErrorReport([record]).lines;
   expect(lines).toContain('Error stack:');
-  expect(lines).toContain('  at error4 (index.bundle:5:2 [unsymbolicated])');
+  expect(lines).toContain('  at error9 (index.bundle:10:2 [unsymbolicated])');
   expect(lines).toContain('  ... 3 more frames');
   expect(lines).toContain('Component stack:');
-  expect(lines).toContain('  at component2 (index.bundle:3:3 [unsymbolicated])');
-  expect(lines).toContain('  ... 5 more frames');
+  expect(lines).toContain('  at component9 (index.bundle:10:3 [unsymbolicated])');
+  expect(lines).toContain('  ... 3 more frames');
   expect(lines.join('\n')).toContain('render failed');
-  expect(lines.join('\n')).not.toMatch(/error5|component3|platform=android|\\n/);
+  expect(lines.join('\n')).not.toMatch(/error10|component10|platform=android|\\n/);
   expect(JSON.stringify(record)).toBe(original);
 });
 
@@ -251,10 +248,8 @@ test('launch previews still bound a component stack whose serialized log record 
   const lines = launchErrorReport([{ src: 'client', msg }]).lines;
   expect(lines).toEqual([
     'Component stack:',
-    '  at Component0 (index.bundle:100:20 [unsymbolicated])',
-    '  at Component1 (index.bundle:101:20 [unsymbolicated])',
-    '  at Component2 (index.bundle:102:20 [unsymbolicated])',
-    '  ... 10 more frames',
+    ...Array.from({ length: 10 }, (_, i) => `  at Component${i} (index.bundle:${100 + i}:20 [unsymbolicated])`),
+    '  ... 3 more frames',
     '[captured stack text is incomplete]',
     'Full captured stacks: stim logs --source all (add --json for raw records)',
   ]);
