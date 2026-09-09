@@ -1,3 +1,5 @@
+import { launchErrorPreview } from './launch-error-preview.ts';
+
 const LABEL_WIDTH = 11;
 
 export function formatDuration(ms: unknown): string {
@@ -127,7 +129,6 @@ export function isOutputLabel(label: unknown): boolean {
   return OUTPUT_LABELS.includes(String(label));
 }
 
-/** The two fields a launch report reads off a collector's NDJSON record. */
 export interface LaunchErrorRecord {
   src?: unknown;
   msg?: unknown;
@@ -149,10 +150,7 @@ export function isAppLaunchError(record: LaunchErrorRecord): boolean {
  */
 export function launchErrorReport(records: readonly LaunchErrorRecord[]): { summary: string | null; lines: string[] } {
   const fromDevice = records.filter((record) => record.src === 'device');
-  const lines = records
-    .filter(isAppLaunchError)
-    .map((record) => (record.msg === undefined || record.msg === null ? '' : String(record.msg)))
-    .filter((msg) => msg !== '');
+  const lines = launchErrorPreview(records.filter(isAppLaunchError));
   const summary =
     fromDevice.length === 0
       ? null

@@ -31,6 +31,20 @@ available. These checks do not prove that a screen rendered correctly.
 A nonfatal error still appears as launch evidence. The agent can read the error
 and decide whether the change caused it.
 
+The human launch summary shows up to **5 error-stack frames** and **3 React
+component-stack frames**, in captured order, followed by the omitted-frame count.
+Error stacks describe the call path; component stacks describe the React parent
+tree. They are labeled separately. Full captured detail remains available through
+`stim logs --source all`; add `--json` for raw records.
+
+Symbolication is best effort. In development, `stim logs --errors` retains Expo's
+printed source excerpt and Call Stack; bare React Native's Metro symbolication
+responses appear as separate context, not as an inferred match to an error.
+Launch previews do not request source maps themselves. Shortened bundle locations
+are explicitly labeled **unsymbolicated**, and a component stack is never used
+to invent a missing error stack. OS logging can truncate text before Stim captures
+it; “full” means the records actually captured, not a recovered original stack.
+
 ### Optional app-declared readiness
 
 No package or monitoring SDK is required. In a debug app, emit this once at

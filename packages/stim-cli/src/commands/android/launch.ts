@@ -22,6 +22,7 @@ import {
   installConflictKind,
 } from '../../engine/app-install.ts';
 import { appReadinessMessage, formatDuration, launchErrorReport, phaseLine, stepTimer } from '../../command-output.ts';
+import { launchErrorPreview } from '../../launch-error-preview.ts';
 import { MODE_BARE, MODE_EXPO, writeWorkspaceLaunch, writeWorkspaceState } from '../../supervisor/state.ts';
 import type {
   VerifyLaunchResultLike,
@@ -149,9 +150,7 @@ async function verifyAndroidRun({
           ? 'Metro bundle delivery failed'
           : 'Metro could not build the bundle';
     phase('verify', chalk.red(`FATAL after ${formatDuration(verification.waitedMs ?? 0)}: ${reason}`));
-    for (const record of verification.errors ?? []) {
-      if (record.msg) phase('', chalk.red(String(record.msg)));
-    }
+    for (const line of launchErrorPreview(verification.errors ?? [])) phase('', chalk.red(line));
     if (verification.processAlive === false) {
       phase(
         'remedy',

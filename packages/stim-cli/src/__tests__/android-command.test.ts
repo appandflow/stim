@@ -2725,7 +2725,11 @@ describe('launch verification', () => {
         waitedMs: 2500,
         errors: [
           { src: 'device', proc: 'ReactNativeJS(1234)', msg: 'a native framework error' },
-          { src: 'client', msg: 'a redbox from the app' },
+          {
+            src: 'client',
+            msg: 'a redbox from the app',
+            stack: Array.from({ length: 7 }, (_, i) => ({ file: 'app.tsx', line: i + 1, fn: `frame${i}` })),
+          },
         ],
       }),
     });
@@ -2735,6 +2739,11 @@ describe('launch verification', () => {
       /^  launch {6}1 error-level record in the device log during launch \(logs --errors --source device\)$/m,
     );
     expect(text).toMatch(/^  launch {6}a redbox from the app$/m);
+    expect(text).toContain('Error stack:');
+    expect(text).toContain('at frame4 (app.tsx:5)');
+    expect(text).not.toContain('at frame5');
+    expect(text).toContain('... 2 more frames');
+    expect(text).toContain('stim logs --source all');
     expect(text).not.toMatch(/a native framework error/);
     expect(text).toContain('stim reload android');
     expect(text).toMatch(/Do not run `stim android` unless native inputs changed or the app process exits/);

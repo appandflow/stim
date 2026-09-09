@@ -23,6 +23,7 @@ import {
   stepTimer,
 } from '../../command-output.ts';
 import { localNetworkPending, DEVICECTL_INSTALL_TIMEOUT_MS, LAUNCH_PROBE_TIMEOUT_MS } from '../../engine/ios-device.ts';
+import { launchErrorPreview } from '../../launch-error-preview.ts';
 import { MODE_BARE, MODE_EXPO } from '../../supervisor/state.ts';
 import type {
   VerifyLaunchResultLike,
@@ -155,9 +156,7 @@ async function verifyIosRun({
           ? 'Metro bundle delivery failed'
           : 'Metro could not build the bundle';
     phase('verify', chalk.red(`FATAL after ${formatDuration(verification.waitedMs ?? 0)}: ${reason}`));
-    for (const record of verification.errors ?? []) {
-      if (record.msg) note(chalk.red(phaseLine('', String(record.msg))));
-    }
+    for (const line of launchErrorPreview(verification.errors ?? [])) note(chalk.red(phaseLine('', line)));
     if (verification.processAlive === false) {
       note(
         chalk.yellow(
