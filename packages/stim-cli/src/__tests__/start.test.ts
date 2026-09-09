@@ -1329,7 +1329,7 @@ describe('action: spawning the supervisor', () => {
           return true;
         },
       }),
-      { pid: 4242 },
+      { pid: IMPOSSIBLE_PID },
     );
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
