@@ -171,14 +171,35 @@ describe('config adjustments', () => {
     expect(ensureNativePlatform({})).toBe(false);
   });
 
-  test('normalizes a project-local Metro transformer path across worktrees', () => {
+  test('rewrites the metro-runtime asyncRequire path to the specifier Metro resolves from any module (#476)', () => {
     const config = {
       transformer: {
         asyncRequireModulePath: join(root, 'node_modules', 'metro-runtime', 'src', 'modules', 'asyncRequire.js'),
       },
     };
     expect(normalizeMetroTransformerPaths(config, root)).toBe(true);
-    expect(config.transformer.asyncRequireModulePath).toBe('./node_modules/metro-runtime/src/modules/asyncRequire.js');
+    expect(config.transformer.asyncRequireModulePath).toBe('metro-runtime/src/modules/asyncRequire');
+  });
+
+  test('keeps an asyncRequire path that is not the hoisted metro-runtime module', () => {
+    for (const path of [
+      join(
+        root,
+        'node_modules',
+        '.pnpm',
+        'metro-runtime@0.84.5',
+        'node_modules',
+        'metro-runtime',
+        'src',
+        'modules',
+        'asyncRequire.js',
+      ),
+      join(root, 'src', 'asyncRequire.js'),
+    ]) {
+      const config = { transformer: { asyncRequireModulePath: path } };
+      expect(normalizeMetroTransformerPaths(config, root)).toBe(false);
+      expect(config.transformer.asyncRequireModulePath).toBe(path);
+    }
   });
 
   test('keeps a Metro transformer path outside the project root', () => {

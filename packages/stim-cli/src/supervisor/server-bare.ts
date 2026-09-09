@@ -180,12 +180,18 @@ function installSharedCacheStore({
   return true;
 }
 
+// Metro's collectDependencies emits this value verbatim as a dependency of every
+// module with an import(), so a project-relative path only resolves from the project root.
+// Metro's default bare specifier resolves from any directory, but only to the copy
+// hoisted to node_modules.
+const ASYNC_REQUIRE_MODULE = 'metro-runtime/src/modules/asyncRequire';
+
 export function normalizeMetroTransformerPaths(config: BareModule, root: string): boolean {
   const current = config?.transformer?.asyncRequireModulePath;
   if (typeof current !== 'string' || !isAbsolute(current)) return false;
-  const local = relative(root, current);
-  if (local === '' || local === '..' || local.startsWith(`..${sep}`) || isAbsolute(local)) return false;
-  config.transformer.asyncRequireModulePath = `./${local.split(sep).join('/')}`;
+  const local = relative(root, current).split(sep).join('/');
+  if (local !== `node_modules/${ASYNC_REQUIRE_MODULE}.js`) return false;
+  config.transformer.asyncRequireModulePath = ASYNC_REQUIRE_MODULE;
   return true;
 }
 
