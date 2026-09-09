@@ -138,6 +138,22 @@ WHAT WRITES WHAT
                        readiness wait even without a client or Metro copy.
                        Client and Metro errors still print individually.
 
+                       Human ios/android output previews up to five frames per
+                       error stack and three per React component stack, in
+                       captured order, with an omitted-frame count. Escaped
+                       component stacks print one frame per line. Long bundle
+                       URLs are shortened and labeled unsymbolicated; shortening
+                       is not source-map resolution. Read full captured detail
+                       with \`stim logs --source all\`, or add \`--json\` for raw
+                       records. This preview does not alter logs or JSON.
+
+                       Symbolication is best effort: Expo's printed code frame
+                       and Call Stack are retained by the human logs query; bare
+                       Metro symbolication responses are separate context. The
+                       launch preview does not request symbolication or invent
+                       a missing error stack from a component stack. Device logs
+                       may be truncated by the platform before Stim sees them.
+
                        The connection refusal \`TCP Conn ... Failed :
                        error 0:61 [61]\` (61 is ECONNREFUSED) is not even
                        counted. The app got its bundle over this workspace's
