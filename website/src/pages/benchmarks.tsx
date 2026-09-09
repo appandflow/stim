@@ -157,60 +157,58 @@ export default function Benchmarks(): ReactNode {
             <div>
               <span className={styles.eyebrow}>Methodology</span>
               <Heading as="h2" id="methodology-title">
-                What these numbers measure
+                How the comparisons work
               </Heading>
               <p>
-                Readiness comparisons use the same clean app fixture, requested model, machine, and fixed code change.
-                The primary endpoint starts at the first recorded agent message or shell-command start and stops only
-                after agent-device finds the expected text on Settings and saves a screenshot. Each current run also
-                records onboarding and navigation from the exact run device.
-              </p>
-              <p>
-                Both arms exclude time before that first activity, including runner startup and any unobserved initial
-                reasoning. Every timeline and milestone uses the same shifted origin; original dispatch timings remain
-                available in the audit. This is not prompt-to-result latency. Tokens and cost still cover the full turn.
-                Existing recordings are unchanged.
+                We compare Stim with standard Expo and native build tools on the same app. The goal is to measure how
+                long an agent takes to complete a task and check the result in a running app.
               </p>
               <a href="https://github.com/appandflow/stim/blob/main/docs/agent-benchmark.md">Read the full protocol</a>
             </div>
             <dl>
               <div>
-                <dt>Separate tasks</dt>
-                <dd>JavaScript-only changes, native changes, and launch-error recovery run as separate passes.</dd>
-              </div>
-              <div>
-                <dt>Two arms</dt>
+                <dt>Same task, same agent</dt>
                 <dd>
-                  Stim uses its pinned published build; control uses local Expo and native platform tooling. iOS reuses
-                  a prepared parked simulator, while both Android arms create a fresh matched AVD.
+                  Each comparison uses the same starting code, requested change, AI model, and model settings. The agent
+                  works with Stim in one run and without it in the other.
                 </dd>
               </div>
               <div>
-                <dt>Proof, not process liveness</dt>
-                <dd>The reported time is the validated Settings screenshot, not the earlier app-process marker.</dd>
-              </div>
-              <div>
-                <dt>Prepared caches</dt>
+                <dt>Same hardware</dt>
                 <dd>
-                  Installed dependencies and cache preparation are outside the timer. Android runs start from clean
-                  generated native state, with a seeded Stim APK and compiler cache and shared warmed Gradle caches.
-                  Both Android arms create their worktree and device inside the timer.
+                  Runs use the same Mac mini and run one at a time, so they do not compete for resources. The device
+                  model and OS version are matched within each comparison.
                 </dd>
               </div>
               <div>
-                <dt>Launch-failure suite</dt>
+                <dt>Both setups start prepared</dt>
                 <dd>
-                  Eight matched comparisons cover Luna, Sol, Sonnet and Opus on iOS and Android. Diagnosis time and
-                  repaired Settings proof are reported separately from readiness results. Runs execute sequentially on a
-                  Mac mini with Apple M4 and 16 GB memory; each audit includes its toolchain details.
+                  Dependencies are installed and build caches are warmed before timing starts. Stim can reuse saved
+                  builds and, on iOS, an existing simulator. We are measuring reuse during development, not first-time
+                  setup.
                 </dd>
               </div>
               <div>
-                <dt>Audited attempts</dt>
+                <dt>Consistent timing</dt>
                 <dd>
-                  Transcript rules, device identity, isolation, and proof are checked; invalid runs are excluded, not
-                  retried simply for a better result. Android native Stim runs also require verified compiler-cache
-                  reuse against a fixed threshold established before dispatch.
+                  Each clock runs from the agent's first recorded action until it has checked the result and saved a
+                  screenshot. The same start and finish rules apply with and without Stim.
+                </dd>
+              </div>
+              <div>
+                <dt>Different kinds of work</dt>
+                <dd>
+                  We test JavaScript changes, native changes, and fixing an app that fails to launch. Results stay
+                  separate by task, model, and platform, so a quick JavaScript change is not compared with a native
+                  rebuild.
+                </dd>
+              </div>
+              <div>
+                <dt>Results you can inspect</dt>
+                <dd>
+                  Each bar represents one checked run, not an average or the fastest of several attempts. Open it to see
+                  the commands, logs, and screenshots. Runs that fail the protocol checks are excluded; the full
+                  protocol explains those rules.
                 </dd>
               </div>
             </dl>
