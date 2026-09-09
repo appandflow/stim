@@ -4,6 +4,7 @@ import { projectMetroSharedCache } from '../settings.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { appendCacheStore, metroStoreRoot, registerMetroStore } from './metro-store.ts';
 import { supervisorError } from './errors.ts';
+import { bundleResponseMiddleware } from '../../shim/bundle-response.cjs';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type BareModule = any;
@@ -346,7 +347,12 @@ export async function startBareServer({
   });
 
   const httpServer = await metro.runServer(config, {
-    unstable_extraMiddleware: [symbolicationReporterMiddleware(reporter), communityMiddleware, middleware],
+    unstable_extraMiddleware: [
+      bundleResponseMiddleware((record) => writer?.write(record)),
+      symbolicationReporterMiddleware(reporter),
+      communityMiddleware,
+      middleware,
+    ],
     websocketEndpoints: { ...communityWebsocketEndpoints, ...websocketEndpoints },
   });
 

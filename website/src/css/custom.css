@@ -1,147 +1,105 @@
-/**
- * Stim site theme: a restrained developer-tool palette over Infima.
- */
+@font-face {
+  font-family: Inter;
+  src: url('./fonts/InterVariable.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: Inter;
+  src: url('./fonts/InterVariable-Italic.woff2') format('woff2');
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('./fonts/JetBrainsMono-Regular.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
 
 :root {
-  --ifm-color-primary: #2563eb;
-  --ifm-color-primary-dark: #1d4ed8;
-  --ifm-color-primary-darker: #1e40af;
-  --ifm-color-primary-darkest: #1e3a8a;
-  --ifm-color-primary-light: #3b82f6;
-  --ifm-color-primary-lighter: #60a5fa;
-  --ifm-color-primary-lightest: #93c5fd;
+  --stim-purple: #5521ff;
+  --stim-lavender: #aa90ff;
+  --stim-ink: #121212;
+  --stim-muted: #6b6b6b;
+  --stim-font-heading: Inter, sans-serif;
+  --ifm-color-primary: var(--stim-purple);
+  --ifm-color-primary-dark: #4312e5;
+  --ifm-color-primary-darker: #3d10d2;
+  --ifm-color-primary-darkest: #320da9;
+  --ifm-color-primary-light: #7045ff;
+  --ifm-color-primary-lighter: #8966ff;
+  --ifm-color-primary-lightest: var(--stim-lavender);
+  --ifm-background-color: #fff;
+  --ifm-background-surface-color: #fff;
+  --ifm-font-color-base: var(--stim-ink);
+  --ifm-font-family-base: Inter, sans-serif;
+  --ifm-heading-font-family: var(--stim-font-heading);
+  --ifm-font-family-monospace: 'JetBrains Mono', monospace;
+  --ifm-heading-font-weight: 650;
   --ifm-code-font-size: 90%;
-  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
-}
-
-.stimHero {
-  padding: 5rem 1rem 4.5rem;
-  text-align: center;
-  background:
-    radial-gradient(circle at 50% 0%, rgba(96, 165, 250, 0.22), transparent 42%),
-    linear-gradient(180deg, #101827 0%, #111827 100%);
-}
-
-.stimHeroLead {
-  max-width: 760px;
-  margin: 0 auto 2rem;
-  color: #dbeafe;
-  font-size: 1.15rem;
-  line-height: 1.7;
-}
-
-.stimQuickStart {
-  --ifm-tabs-color: var(--ifm-color-white);
-  --ifm-tabs-color-active: var(--ifm-color-primary-lightest);
-  --ifm-tabs-color-active-border: var(--ifm-color-primary-lightest);
-  max-width: 760px;
-  margin: 0 auto;
-  text-align: left;
-}
-
-.stimHeroActions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1rem;
-  justify-content: center;
-  margin-top: 1.5rem;
-}
-
-.stimFeatures {
-  padding: 4rem 1rem;
-}
-
-.stimFeatureGrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1.5rem;
-}
-
-.stimFeatureCard {
-  overflow: hidden;
-  padding: 1.5rem;
-  border: 1px solid var(--ifm-color-emphasis-300);
-  border-radius: 1.25rem;
-  background: var(--ifm-background-surface-color);
-}
-
-.stimFeatureCard h3 {
-  margin-top: 1.25rem;
-}
-
-.stimFeatureCard p {
-  margin-bottom: 0;
-  color: var(--ifm-color-emphasis-700);
-  line-height: 1.7;
-}
-
-.featureIllustration {
-  display: block;
-  width: 100%;
-  height: auto;
-  color: var(--ifm-color-primary);
-}
-
-.illustGrid,
-.illustMuted,
-.illustLine,
-.illustAccent {
-  fill: none;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.illustGrid {
-  stroke: var(--ifm-color-emphasis-200);
-  stroke-width: 1;
-}
-
-.illustMuted {
-  stroke: var(--ifm-color-emphasis-400);
-  stroke-width: 2;
-}
-
-.illustLine {
-  stroke: var(--ifm-color-emphasis-600);
-  stroke-width: 3;
-}
-
-.illustAccent {
-  stroke: currentColor;
-  stroke-width: 4;
-}
-
-.illustAccentSoft {
-  fill: color-mix(in srgb, var(--ifm-color-primary) 14%, transparent);
-}
-
-.illustPanel {
-  fill: var(--ifm-background-color);
-  stroke: var(--ifm-color-emphasis-300);
-  stroke-width: 2;
-}
-
-.illustDot {
-  fill: currentColor;
-}
-
-@media (max-width: 768px) {
-  .stimHero {
-    padding: 3.5rem 1rem 3rem;
-  }
-
-  .stimFeatureGrid {
-    grid-template-columns: 1fr;
-  }
+  --ifm-menu-color-active: var(--ifm-color-primary);
+  --ifm-menu-color-background-active: #f3efff;
+  --ifm-navbar-shadow: 0 1px 0 #ece7fa;
+  --docusaurus-highlighted-code-line-bg: rgba(85, 33, 255, 0.08);
 }
 
 [data-theme='dark'] {
-  --ifm-color-primary: #60a5fa;
-  --ifm-color-primary-dark: #3b82f6;
-  --ifm-color-primary-darker: #2563eb;
-  --ifm-color-primary-darkest: #1d4ed8;
-  --ifm-color-primary-light: #93c5fd;
-  --ifm-color-primary-lighter: #bfdbfe;
-  --ifm-color-primary-lightest: #dbeafe;
-  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+  --ifm-color-primary: #b39cff;
+  --ifm-color-primary-dark: #a589ff;
+  --ifm-color-primary-darker: #9776ff;
+  --ifm-color-primary-darkest: #8966ff;
+  --ifm-color-primary-light: #c2b0ff;
+  --ifm-color-primary-lighter: #d1c3ff;
+  --ifm-color-primary-lightest: #e1d8ff;
+  --ifm-background-color: #15121d;
+  --ifm-background-surface-color: #201b2b;
+  --ifm-font-color-base: #f3efff;
+  --ifm-menu-color-background-active: #2e2445;
+  --ifm-navbar-shadow: 0 1px 0 #352a48;
+  --docusaurus-highlighted-code-line-bg: rgba(170, 144, 255, 0.14);
+}
+
+::selection {
+  color: #fff;
+  background: var(--stim-purple);
+}
+
+.navbar__logo {
+  height: 2.25rem;
+}
+
+.navbar__toggle {
+  margin-right: 1rem;
+}
+
+@keyframes stim-logo-wiggle {
+  25% {
+    transform: rotate(-5deg);
+  }
+  60% {
+    transform: rotate(3deg);
+  }
+  85% {
+    transform: rotate(-1deg);
+  }
+  100% {
+    transform: rotate(0);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) and (hover: hover) and (pointer: fine) {
+  .stim-logo:hover img,
+  .navbar__brand:hover .navbar__logo {
+    animation: stim-logo-wiggle 450ms ease-in-out;
+  }
+}
+
+.footer--dark {
+  --ifm-footer-background-color: #20162e;
 }

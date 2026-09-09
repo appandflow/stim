@@ -786,6 +786,272 @@ describe('verifyLaunch', () => {
   });
 });
 
+describe('optional app readiness', () => {
+  test.each(['ready', 'error', 'absent', 'stalled'] as const)(
+    'Android queued evaluation must start before stability: %s',
+    async (outcome) => {
+      const clock = fakeClock();
+      const metro: NdjsonRecord[] = [
+        { ts: 1000, src: 'metro', platform: 'android', event: 'bundle_response_started', requestId: 'a' },
+        { ts: 2000, src: 'metro', platform: 'android', event: 'bundle_build_done' },
+        { ts: 7500, src: 'metro', platform: 'android', event: 'bundle_response_finished', requestId: 'a' },
+      ];
+      const device: NdjsonRecord[] = [
+        {
+          ts: 9000,
+          src: 'device',
+          platform: 'android',
+          proc: 'unknown:BridgelessReact(123)',
+          level: 'warn',
+          msg: 'ReactHost{0}.getOrCreateReactInstanceTask(): Loading JS Bundle',
+        },
+        ...(outcome === 'stalled'
+          ? []
+          : [
+              {
+                ts: 12000,
+                src: 'device',
+                platform: 'android',
+                proc: 'ReactNativeJS(123)',
+                level: 'info',
+                msg: outcome === 'absent' ? 'Running "main"' : '[stim:readiness] pending',
+              },
+              outcome === 'error'
+                ? {
+                    ts: 16000,
+                    src: 'device',
+                    platform: 'android',
+                    proc: 'ReactNativeJS(123)',
+                    level: 'error',
+                    msg: 'startup failed',
+                  }
+                : { ts: 16000, src: 'device', platform: 'android', level: 'info', msg: '[stim:readiness] ready' },
+            ]),
+      ];
+      const result = await verifyLaunch({
+        since: 1000,
+        platform: 'android',
+        now: clock.now,
+        sleep: clock.sleep,
+        readRecords: () => metro.filter((r) => Number(r.ts) <= clock.at()),
+        readDeviceRecords: () => device.filter((r) => Number(r.ts) <= clock.at()),
+        readClientRecords: () => [],
+        processAlive: () => true,
+      });
+      expect(result).toMatchObject(
+        outcome === 'stalled'
+          ? { verified: false, requested: true, timedOut: true, waitedMs: VERIFY_TIMEOUT_MS }
+          : { verified: true, waitedMs: outcome === 'absent' ? 14000 : 15000 },
+      );
+      expect(result.readiness).toBe(outcome === 'ready' || outcome === 'error' ? outcome : undefined);
+    },
+  );
+
+  test.each(['ready', 'error', 'absent'] as const)(
+    'cold delivery does not miss an early-entry signal: %s',
+    async (outcome) => {
+      const clock = fakeClock();
+      const records: NdjsonRecord[] = [
+        { ts: 1000, src: 'metro', platform: 'android', event: 'bundle_response_started', requestId: 'a' },
+        { ts: 2000, src: 'metro', platform: 'android', event: 'bundle_build_done' },
+        { ts: 3000, src: 'metro', platform: 'ios', event: 'bundle_response_finished', requestId: 'a' },
+        { ts: 3500, src: 'metro', platform: 'android', event: 'bundle_response_finished', requestId: 'other' },
+        { ts: 7500, src: 'metro', platform: 'android', event: 'bundle_response_finished', requestId: 'a' },
+      ];
+      const device: NdjsonRecord[] =
+        outcome === 'absent'
+          ? []
+          : [
+              { ts: 9500, src: 'device', platform: 'android', level: 'info', msg: '[stim:readiness] pending' },
+              outcome === 'ready'
+                ? { ts: 14000, src: 'device', platform: 'android', level: 'info', msg: '[stim:readiness] ready' }
+                : {
+                    ts: 14000,
+                    src: 'device',
+                    platform: 'android',
+                    proc: 'ReactNativeJS(123)',
+                    level: 'error',
+                    msg: 'startup failed',
+                  },
+            ];
+      const result = await verifyLaunch({
+        since: 1000,
+        platform: 'android',
+        now: clock.now,
+        sleep: clock.sleep,
+        readRecords: () => records.filter((r) => Number(r.ts) <= clock.at()),
+        readDeviceRecords: () => device.filter((r) => Number(r.ts) <= clock.at()),
+        readClientRecords: () => [],
+        processAlive: () => true,
+      });
+      expect(result).toMatchObject({
+        verified: true,
+        waitedMs: outcome === 'absent' ? 9500 : 13000,
+        record: { event: 'bundle_response_finished', requestId: 'a', ts: 7500 },
+      });
+      expect(result.readiness).toBe(outcome === 'absent' ? undefined : outcome);
+    },
+  );
+
+  test.each(['stalled', 'failed'])(
+    'a %s bundle response cannot become verified from a build marker',
+    async (outcome) => {
+      const clock = fakeClock();
+      const records: NdjsonRecord[] = [
+        { ts: 1000, platform: 'android', event: 'bundle_response_started', requestId: 'a' },
+        { ts: 2000, platform: 'android', event: 'bundle_build_done' },
+        ...(outcome === 'failed'
+          ? [
+              {
+                ts: 2500,
+                platform: 'android',
+                event: 'bundle_response_failed',
+                requestId: 'a',
+                level: 'error',
+                msg: 'delivery failed',
+              },
+            ]
+          : []),
+      ];
+      const result = await verifyLaunch({
+        since: 1000,
+        platform: 'android',
+        now: clock.now,
+        sleep: clock.sleep,
+        readRecords: () => records.filter((r) => Number(r.ts) <= clock.at()),
+        readDeviceRecords: () => [],
+        readClientRecords: () => [],
+      });
+      expect(result.verified).toBe(false);
+      expect(result).toMatchObject(
+        outcome === 'stalled'
+          ? { requested: true, timedOut: true, waitedMs: VERIFY_TIMEOUT_MS }
+          : { fatal: true, waitedMs: 1500, errors: [{ msg: 'delivery failed' }] },
+      );
+    },
+  );
+
+  function signal(ts: number, state: string, extra: Partial<NdjsonRecord> = {}): NdjsonRecord {
+    return { ts, src: 'device', platform: 'ios', level: 'info', msg: `[stim:readiness] ${state}`, ...extra };
+  }
+
+  async function run(records: NdjsonRecord[], options: Partial<Parameters<typeof verifyLaunch>[0]> = {}) {
+    const clock = fakeClock();
+    let pendingNotices = 0;
+    const result = await verifyLaunch({
+      since: 1000,
+      platform: 'ios',
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => [{ ts: 1000, event: 'bundle_build_done', platform: 'ios' }],
+      readDeviceRecords: () => records.filter((record) => Number(record.ts) <= clock.at()),
+      readClientRecords: () => [],
+      processAlive: () => true,
+      onReadinessPending: () => {
+        pendingNotices += 1;
+      },
+      ...options,
+    });
+    return { result, pendingNotices };
+  }
+
+  test.each(['ios', 'android'] as const)('waits past 3 seconds for %s app readiness', async (platform) => {
+    const { result, pendingNotices } = await run(
+      [signal(1500, 'pending', { platform }), signal(6500, 'ready', { platform })],
+      { platform, readRecords: () => [{ ts: 1000, event: 'bundle_build_done', platform }] },
+    );
+    expect(result).toMatchObject({ verified: true, processAlive: true, readiness: 'ready', waitedMs: 5500 });
+    expect(pendingNotices).toBe(1);
+  });
+
+  test('a fast ready replaces the default stability delay', async () => {
+    const { result } = await run([signal(1000, 'pending'), signal(1500, 'ready', { msg: "'[stim:readiness] ready'" })]);
+    expect(result).toMatchObject({ readiness: 'ready', waitedMs: 500 });
+  });
+
+  test('missing ready is bounded and repeated pending cannot extend the deadline', async () => {
+    const { result, pendingNotices } = await run([
+      signal(1000, 'pending'),
+      signal(3000, 'pending'),
+      signal(30000, 'pending'),
+      signal(31500, 'ready'),
+    ]);
+    expect(result).toMatchObject({ verified: true, readiness: 'timed-out', waitedMs: 30000 });
+    expect(pendingNotices).toBe(1);
+  });
+
+  test.each([
+    signal(500, 'pending'),
+    signal(1500, 'pending', { platform: 'android' }),
+    signal(1500, 'pending', { platform: undefined }),
+    signal(1500, 'pending', { src: 'metro' }),
+    signal(1500, 'pending', { src: 'build' }),
+    signal(1500, 'pending', { level: 'error' }),
+    signal(1500, 'pending', { msg: 'example: [stim:readiness] pending' }),
+    signal(1500, 'pending', { msg: '[stim:readiness] pending\nother log' }),
+  ])('does not opt in from stale, ambiguous, or embedded evidence: %j', async (record) => {
+    const { result, pendingNotices } = await run([record, signal(5000, 'ready')]);
+    expect(result).toMatchObject({ verified: true, waitedMs: 3000 });
+    expect(result.readiness).toBeUndefined();
+    expect(pendingNotices).toBe(0);
+  });
+
+  test('ignores a future-dated pending record already present in the log', async () => {
+    const { result } = await run([], { readDeviceRecords: () => [signal(9000, 'pending')] });
+    expect(result).toMatchObject({ verified: true, waitedMs: 3000 });
+    expect(result.readiness).toBeUndefined();
+  });
+
+  test('ready without pending does not opt in, and ready before pending cannot satisfy the wait', async () => {
+    expect((await run([signal(1000, 'ready')])).result).toMatchObject({ waitedMs: 3000 });
+    expect((await run([signal(1000, 'ready'), signal(1500, 'pending')])).result).toMatchObject({
+      readiness: 'timed-out',
+      waitedMs: 30000,
+    });
+  });
+
+  test('an app error interrupts the wait even when ready is present', async () => {
+    const { result } = await run([signal(1000, 'pending'), signal(1500, 'ready')], {
+      readClientRecords: () => [{ ts: 1000, src: 'client', platform: 'ios', level: 'error', msg: 'startup failed' }],
+    });
+    expect(result).toMatchObject({ verified: true, readiness: 'error', processAlive: true, waitedMs: 0 });
+    expect(result.errors?.[0]?.msg).toBe('startup failed');
+  });
+
+  test('a process exit interrupts a pending wait', async () => {
+    const { result } = await run([signal(1000, 'pending')], { processAlive: () => false });
+    expect(result).toMatchObject({ verified: false, fatal: true, readiness: 'error', waitedMs: 0 });
+  });
+
+  test.each([
+    { platform: 'android' as const, proc: 'ReactNativeJS(123)' },
+    { platform: 'ios' as const, subsystem: 'com.facebook.react.log', category: 'javascript' },
+  ])('a device JavaScript error interrupts readiness without a Metro/client copy: %j', async (origin) => {
+    const error = { ts: 6500, src: 'device', level: 'error', msg: 'startup failed', ...origin };
+    const { result } = await run([signal(1000, 'pending', origin), error, signal(7000, 'ready', origin)], {
+      platform: origin.platform,
+      readRecords: () => [{ ts: 1000, event: 'bundle_build_done', platform: origin.platform }],
+    });
+    expect(result).toMatchObject({ readiness: 'error', waitedMs: 5500, errors: [error] });
+  });
+
+  test('unattributed OS error records do not interrupt readiness', async () => {
+    const { result } = await run([
+      signal(1000, 'pending'),
+      { ts: 1500, src: 'device', platform: 'ios', level: 'error', msg: 'OS subsystem warning' },
+      signal(6500, 'ready'),
+    ]);
+    expect(result).toMatchObject({ readiness: 'ready', waitedMs: 5500 });
+    expect(result.errors).toHaveLength(1);
+  });
+
+  test('readiness signals alone cannot prove a bundle launch', async () => {
+    const { result } = await run([signal(1000, 'pending'), signal(1500, 'ready')], { readRecords: () => [] });
+    expect(result).toMatchObject({ verified: false, timedOut: true, waitedMs: 20000 });
+    expect(result.readiness).not.toBe('ready');
+  });
+});
+
 describe('unverifiedLaunchLines', () => {
   test('iOS names the picker and the exact command to retry without an alert step', () => {
     const url = devClientUrl('io.tlon.groups', 8082);
@@ -1605,7 +1871,7 @@ describe('verifyLaunch: still bundling', () => {
       },
     });
     expect(result.verified).toBe(true);
-    expect(deviceReads).toBe(1);
+    expect(deviceReads).toBeGreaterThan(1);
     expect(result.waitedMs).toBe(STABILITY_WINDOW_MS);
   });
 

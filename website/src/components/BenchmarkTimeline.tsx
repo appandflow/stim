@@ -284,6 +284,15 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
         <span>Agent turn {formatSeconds(run.totalSeconds)}</span>
       </div>
 
+      {run.timingOrigin ? (
+        <p>
+          Clock starts at the first recorded agent message or shell command. Excludes{' '}
+          {formatSeconds(run.timingOrigin.dispatchOffsetSeconds)} before that activity, including runner startup and any
+          unobserved initial reasoning. Settings proof from dispatch:{' '}
+          {formatSeconds(run.timingOrigin.dispatchSettingsReadySeconds)}. Tokens and cost cover the full turn.
+        </p>
+      ) : null}
+
       <section className={styles.summary}>
         <span>What the agent did</span>
         <p>{run.summary}</p>
@@ -602,9 +611,6 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
             <span>Run recording</span>
             <h2>Simulator playback</h2>
             <p>The run-scoped recording starts after the app session opens and includes onboarding and navigation.</p>
-            <a href={recordingSrc} download>
-              Download MP4
-            </a>
           </div>
           <video controls preload="metadata" poster={proofSrc} aria-label={`Simulator recording for ${run.id}`}>
             <source src={recordingSrc} type="video/mp4" />

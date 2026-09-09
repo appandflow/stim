@@ -102,6 +102,10 @@ THE RECORD
     event    the producer's own event name (bundle_build_done, client_log, ...)
     stack    frames of { file, line, column, fn }, passed through as reported
     marker   true on the records that close an error window
+    deviceTs Android logcat's original epoch milliseconds; ts is aligned to
+             host time using a bounded clock query at each collector attachment
+    clockOffsetMs the offset added to deviceTs; absent if the query failed.
+             A collector_clock warning then says timestamps retain device time.
     raw      true when the level was inferred from a line of text rather than
              reported by the producer (every expo-child record)
 
@@ -111,39 +115,28 @@ WHAT WRITES WHAT
                        In expo-child mode everything Expo prints lands in
                        metro.ndjson with raw: true, so \`--source client\`
                        returns nothing there.
-  device.ndjson        the device-log collector \`ios\` / \`android\` attaches
-                       after launch: \`simctl log stream\` predicated on the
-                       app, or \`adb logcat\` filtered to the app's pid. This
+  device.ndjson        the device-log collector uses \`simctl log stream\`
+                       predicated on the app, or \`adb logcat\` filtered to
+                       the app's pid. Local iOS simulator capture starts
+                       before launch; Android attaches once the pid is known
+                       and reads buffered logcat records. This
                        is where a native crash that never reached JS shows up
                        -- and, on iOS, where every Apple framework running in
                        the app's process also logs. The proven noise sources
                        are recorded at info rather than error; the rest is why
                        --errors leaves this source out unless asked. A VERIFIED
-                       LAUNCH prints NONE of these records one by one. It counts
-                       them and prints one line instead:
+                       LAUNCH counts these records and prints one line:
 
                          launch      9 error-level records in the device log
                                      during launch
                                      (logs --errors --source device)
 
-                       THE COUNT IS NOT ATTRIBUTED TO ANYTHING, and that is the
-                       point. Both collectors already narrow the stream to the
-                       app: the simulator's \`log stream\` runs under a
-                       processImagePath predicate, and \`adb logcat\` is filtered
-                       to the app's pid. So every record left is MEANT to be
-                       inside the app's own process, and the error-level ones
-                       are the Apple frameworks running there -- "Failed to send
-                       CA Event for app launch measurements", "NSBundle (null)
-                       initWithPath failed", the TCP refusal. Nothing about the
-                       record says which of them wrote it, so the run does not
-                       guess; a count plus the command that shows the records is
-                       the honest report. The iOS predicate matches on a
-                       substring of the process path today, which a short app
-                       name can widen past the app -- appandflow/stim#264
-                       anchors it. Until it lands, read the records rather than
-                       trusting the count to be the app's alone. The app's OWN errors are not in this
-                       number: a redbox or a console.error arrives on the client
-                       or metro source and still prints line by line.
+                       The count does not attribute unknown OS errors to the app.
+                       Known JavaScript errors also print individually: Android
+                       ReactNativeJS records, and iOS com.facebook.react.log /
+                       javascript records. These can interrupt an optional
+                       readiness wait even without a client or Metro copy.
+                       Client and Metro errors still print individually.
 
                        The connection refusal \`TCP Conn ... Failed :
                        error 0:61 [61]\` (61 is ECONNREFUSED) is not even

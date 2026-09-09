@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { createRequire } = require('node:module');
 const { pathToFileURL } = require('node:url');
+const { bundleResponseMiddleware } = require('./bundle-response.cjs');
 
 const projectRoot = process.env.STIM_PROJECT_ROOT;
 const storeRoot = process.env.STIM_METRO_STORE;
@@ -120,9 +121,25 @@ function storeAtRoot(store) {
 function appendStore(config, defaultConfig) {
   const output = config && typeof config === 'object' ? config : {};
   const configuredStores = output.cacheStores != null ? output.cacheStores : defaultConfig.cacheStores;
+  const server = { ...defaultConfig.server, ...output.server };
+  const enhanceMiddleware = server.enhanceMiddleware;
 
-  return {
+  const observed = {
     ...output,
+    server: {
+      ...server,
+      enhanceMiddleware(middleware, metroServer) {
+        const enhanced = enhanceMiddleware ? enhanceMiddleware(middleware, metroServer) : middleware;
+        const observe = bundleResponseMiddleware((record) =>
+          process.stderr.write(`stim-bundle-response: ${JSON.stringify(record)}\n`),
+        );
+        return (req, res, next) => observe(req, res, () => enhanced(req, res, next));
+      },
+    },
+  };
+  if (!storeRoot) return observed;
+  return {
+    ...observed,
     cacheStores(MetroCache) {
       const resolved = typeof configuredStores === 'function' ? configuredStores(MetroCache) : configuredStores;
       const stores = Array.isArray(resolved) ? resolved : [];
@@ -149,7 +166,7 @@ function appendStore(config, defaultConfig) {
   };
 }
 
-if (!projectRoot || !storeRoot) {
+if (!projectRoot) {
   module.exports = {};
 } else {
   const projectRequire = createRequire(path.join(projectRoot, 'package.json'));

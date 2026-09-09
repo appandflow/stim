@@ -12,6 +12,7 @@ import { collectorProcessTitle } from './ownership.ts';
 import {
   type PidResolution,
   type PidWatcher,
+  androidClockOffset,
   parseLogcatLine,
   startAndroidLogcat,
   waitForAppPid,
@@ -146,6 +147,7 @@ export interface RunCollectorOptions {
   pidOf?: ((serial: string, packageName: string, opts: { exec?: Executor | null }) => number | null) | null;
   pidWatchMs?: number | null;
   watchPid?: typeof watchAppPid;
+  resolveClockOffset?: typeof androidClockOffset;
   now?: () => number;
   onExit?: (code: number) => void;
   attachSignals?: boolean;
@@ -207,6 +209,7 @@ export async function runCollector({
   pidOf = null,
   pidWatchMs = null,
   watchPid = watchAppPid,
+  resolveClockOffset = androidClockOffset,
   now = Date.now,
   onExit = (code: number) => process.exit(code),
   attachSignals = true,
@@ -302,14 +305,27 @@ export async function runCollector({
   });
 
   const parse = platform === 'ios' ? (physical ? parseDeviceConsoleLine : parseLogStreamLine) : parseLogcatLine;
-  const onLine = (line: string) => {
-    const record = parse(line, { now });
-    if (!record) return;
-    captured++;
-    writer.write({ ...record, platform });
-  };
-
   const attach = (streamPid: number | null): ChildProcess => {
+    const clockOffsetMs = platform === 'android' ? resolveClockOffset(serial as string, { now }) : null;
+    if (platform === 'android') {
+      writer.write({
+        src: 'device',
+        platform,
+        level: clockOffsetMs === null ? 'warn' : 'debug',
+        event: 'collector_clock',
+        clockOffsetMs,
+        msg:
+          clockOffsetMs === null
+            ? 'Could not align Android device time; log timestamps retain device time and may miss launch filters.'
+            : `Android log timestamps aligned to host time (offset ${clockOffsetMs}ms).`,
+      });
+    }
+    const onLine = (line: string) => {
+      const record = parse(line, { now, clockOffsetMs });
+      if (!record) return;
+      captured++;
+      writer.write({ ...record, platform });
+    };
     const spawned = startStream
       ? startStream({ platform, udid, appName, appExecutable, bundleId, serial, physical, payloadUrl, pid: streamPid })
       : platform === 'ios'

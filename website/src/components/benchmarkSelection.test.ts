@@ -10,7 +10,7 @@ import {
 } from './benchmarkSelection';
 import type { BenchmarkData } from './benchmarkData';
 import { benchmarkSelectionFromSearch, benchmarkSelectionSearch } from './benchmarkData';
-import { benchmarks, linkedBenchmarks } from './benchmarkCatalog';
+import { benchmarks, linkedBenchmarks, readinessIntegrationChecks } from './benchmarkCatalog';
 
 function benchmark(
   stage: string,
@@ -33,6 +33,22 @@ function benchmark(
 }
 
 describe('benchmark catalog selection', () => {
+  it('deep-links Stim-only readiness checks without substituting them into matched comparisons', () => {
+    expect(readinessIntegrationChecks).toHaveLength(4);
+    for (const check of readinessIntegrationChecks) {
+      expect(check.runs).toHaveLength(1);
+      const run = check.runs[0];
+      expect(run).toMatchObject({ valid: true, arm: 'stim', platform: 'android', variant: 'launch-crash' });
+      const selection = { stage: check.stage, runId: run.id };
+      expect(
+        benchmarkSelectionFromSearch(benchmarkSelectionSearch(selection, linkedBenchmarks), linkedBenchmarks),
+      ).toEqual(selection);
+      const comparison = exactBenchmarkForDimensions(benchmarks, benchmarkDimensions(check));
+      expect(comparison?.stage).not.toBe(check.stage);
+      expect(comparison?.runs.map((candidate) => candidate.arm)).toEqual(['stim', 'control']);
+    }
+  });
+
   it('selects each published launch-error pair without choosing the earlier Sol sample', () => {
     for (const model of ['gpt-5.6-luna', 'gpt-5.6-sol', 'sonnet', 'opus']) {
       for (const platform of benchmarkPlatforms) {

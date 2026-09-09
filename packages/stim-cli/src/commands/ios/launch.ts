@@ -16,6 +16,7 @@ import {
 import type { IosDeps } from './dependencies.ts';
 import {
   formatDuration,
+  appReadinessMessage,
   phaseLine,
   launchErrorReport,
   type LaunchErrorRecord,
@@ -126,6 +127,7 @@ async function verifyIosRun({
 
   const verification: VerifyLaunchResultLike = metroCheck
     ? await d.verifyLaunch({
+        onReadinessPending: () => phase('readiness', 'waiting for app readiness (up to 30s after bundle load)'),
         logsDir,
         since: launchedAt,
         metroPort,
@@ -142,8 +144,16 @@ async function verifyIosRun({
               },
       })
     : { verified: false, skipped: true };
+  if (verification.readiness)
+    phase('readiness', appReadinessMessage(verification.readiness, verification.waitedMs ?? 0));
   if (verification?.fatal) {
-    const reason = verification.processAlive === false ? 'the app process exited' : 'Metro could not build the bundle';
+    const deliveryFailed = verification.record?.event === 'bundle_response_failed';
+    const reason =
+      verification.processAlive === false
+        ? 'the app process exited'
+        : deliveryFailed
+          ? 'Metro bundle delivery failed'
+          : 'Metro could not build the bundle';
     phase('verify', chalk.red(`FATAL after ${formatDuration(verification.waitedMs ?? 0)}: ${reason}`));
     for (const record of verification.errors ?? []) {
       if (record.msg) note(chalk.red(phaseLine('', String(record.msg))));
@@ -163,7 +173,7 @@ async function verifyIosRun({
         chalk.yellow(
           phaseLine(
             'remedy',
-            `The native app is still running. Fix the JavaScript or TypeScript error, then ${reloadRemedy} Do not run \`stim ios\` unless native inputs changed or the app process exits.`,
+            `The native app is still running. ${deliveryFailed ? 'Check the Metro logs and device connection, then' : 'Fix the JavaScript or TypeScript error, then'} ${reloadRemedy} Do not run \`stim ios\` unless native inputs changed or the app process exits.`,
           ),
         ),
       );
@@ -175,7 +185,7 @@ async function verifyIosRun({
       'verify',
       `bundle loaded` +
         (verification.processAlive === true ? ', process alive' : '') +
-        `, stable for 3s -- the first screen may still be rendering` +
+        (verification.readiness ? '' : ', stable for 3s -- the first screen may still be rendering') +
         ` (${formatDuration(verification.waitedMs ?? 0)} total)`,
     );
     const hasAppErrors = reportLaunchErrors(verification.errors ?? [], note);
@@ -202,7 +212,7 @@ async function verifyIosRun({
   if (verification?.requested) {
     phase(
       'verify',
-      `BUNDLING: the app asked port ${metroPort} for its bundle and Metro was still building it ` +
+      `BUNDLING: the app asked port ${metroPort} for its bundle; build or delivery was still pending ` +
         `after ${formatDuration(verification.waitedMs ?? 0)} (a cold bundle on a large graph outlasts this window)`,
     );
     note(
@@ -596,6 +606,7 @@ export async function finishIosRun({
 
     dropSwapDir();
 
+    if (!remoteDevice) await d.replaceCollector({ root, udid, bundleId: bundleId!, appName, appExecutable, note });
     const launchTimer = stepTimer(d.now);
     launchedAt = d.now();
     launched = d.launchIosApp({ udid, bundleId: bundleId!, metroPort, devClientScheme: scheme });
@@ -635,7 +646,7 @@ export async function finishIosRun({
         (launched?.mode === 'openurl' || launched?.mode === 'payload-url' ? ' (expo-dev-client)' : ''),
   });
 
-  if (!physical) await d.replaceCollector({ root, udid, bundleId: bundleId!, appName, appExecutable, note });
+  if (remoteDevice) await d.replaceCollector({ root, udid, bundleId: bundleId!, appName, appExecutable, note });
 
   if (physical) raiseLeaseFor(release ? RELEASE_VERIFY_WAIT_MS : DEBUG_VERIFY_STEP_MS, false);
   const launchState = await verifyIosRun({

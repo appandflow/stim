@@ -6,21 +6,17 @@ import styles from './BenchmarkVideo.module.css';
 export default function BenchmarkVideo(): ReactNode {
   const video = useBaseUrl('/benchmarks/luna-rc12/javascript-stim-web.mp4');
   const poster = useBaseUrl('/benchmarks/luna-rc12/javascript-stim-video-poster.png');
-  const social = useBaseUrl('/benchmarks/luna-rc12/javascript-stim-social.mp4');
   const audit = useBaseUrl('/benchmarks/details#audit-title');
 
   return (
     <section className={styles.story} aria-labelledby="benchmark-video-title">
       <div className={styles.heading}>
         <div>
-          <span>Prompt to proof</span>
+          <span>Archived replay</span>
           <Heading as="h2" id="benchmark-video-title">
             Watch the Luna JavaScript run unfold
           </Heading>
         </div>
-        <a href={social} download>
-          Download 4:5 social video
-        </a>
       </div>
       <div className={styles.frame}>
         <video
@@ -35,9 +31,10 @@ export default function BenchmarkVideo(): ReactNode {
         </video>
       </div>
       <p>
-        A continuous, silent replay of the published Luna rc.12 JavaScript run. The clock, commands, output, and proof
-        come from the <a href={audit}>published Luna audit</a>; the matching simulator interaction was recreated with
-        agent-device and plays at 2x speed.
+        A continuous, silent replay of the Luna JavaScript run. This archived video retains the original dispatch clock;
+        the <a href={audit}>interactive audit</a> now starts at first recorded agent activity. Commands, output, and
+        proof come from the recorded run; matching simulator interaction was recreated with agent-device and plays at 2x
+        speed.
       </p>
     </section>
   );

@@ -283,7 +283,7 @@ describe('the ios collector, spawned for real against a fake xcrun', { timeout: 
       'xcrun',
       [
         `case "$*" in`,
-        `  'simctl spawn UDID-1 log stream --style ndjson --predicate processImagePath ENDSWITH "/MyApp.app/MyApp"') ;;`,
+        `  'simctl spawn UDID-1 log stream --style ndjson --predicate processImagePath ENDSWITH "/MyApp.app/MyApp" --level info') ;;`,
         `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
         `esac`,
         `echo "${banner}" >&2`,
@@ -338,7 +338,7 @@ describe('the ios collector, spawned for real against a fake xcrun', { timeout: 
       'xcrun',
       [
         `case "$*" in`,
-        `  'simctl spawn UDID-1 log stream --style ndjson --predicate processImagePath ENDSWITH "/MyAppDev.app/MyApp"') ;;`,
+        `  'simctl spawn UDID-1 log stream --style ndjson --predicate processImagePath ENDSWITH "/MyAppDev.app/MyApp" --level info') ;;`,
         `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
         `esac`,
         ...iosShimLines().map((l) => `cat <<'LINE'\n${l}\nLINE`),
@@ -561,7 +561,7 @@ describe('the android collector, spawned for real against a fake adb', { timeout
         `case "$*" in`,
         `  '-s emulator-5554 shell pidof -s com.example.app')`,
         `    if [ -f "${join(shimDir, 'started')}" ]; then echo 3132; else touch "${join(shimDir, 'started')}"; fi ;;`,
-        `  '-s emulator-5554 logcat --pid 3132 -v time')`,
+        `  '-s emulator-5554 logcat --pid 3132 -v time,epoch')`,
         `    echo '--------- beginning of main'`,
         `    echo '08-21 17:51:19.507 I/ReactNativeJS(  3132): Running "App" with {"rootTag":11}'`,
         `    echo '08-21 17:51:20.100 E/ReactNativeJS(  3132): TypeError: undefined is not a function'`,
@@ -647,6 +647,35 @@ describe('the android collector, spawned for real against a fake adb', { timeout
 });
 
 describe('runCollector seams', () => {
+  test.each([2739, null])(
+    'keeps fresh and buffered device timestamps distinct with clock offset %s',
+    async (offset) => {
+      const child = makeChildProcess({ pid: 3132 });
+      const result = await runCollector({
+        platform: 'android',
+        root,
+        serial: 'test-serial',
+        packageName: 'com.example.app',
+        resolvePid: async () => ({ ok: true, pid: 3132 }),
+        resolveClockOffset: () => offset,
+        startStream: () => child,
+        pidOf: () => 3132,
+        pidWatchMs: 60000,
+        attachSignals: false,
+        onExit: () => {},
+      });
+      assert(result);
+      child.stdout!.emit('data', ' 1788902582.542 I/ReactNativeJS( 3132): [stim:readiness] pending\n');
+      child.stdout!.emit('data', ' 1788902570.542 I/ReactNativeJS( 3132): [stim:readiness] ready\n');
+      const records = deviceLog();
+      expect(records.find((r) => r.event === 'collector_clock')!.level).toBe(offset === null ? 'warn' : 'debug');
+      const logs = records.filter((r) => r.proc === 'ReactNativeJS(3132)');
+      expect(logs.map((r) => r.ts)).toEqual([1788902582542 + (offset ?? 0), 1788902570542 + (offset ?? 0)]);
+      expect(logs.map((r) => r.deviceTs)).toEqual([1788902582542, 1788902570542]);
+      result.finish(0, 'info', 'done', 'collector_stopped');
+    },
+  );
+
   test('an app whose pid never appears is an error record, exit 1, and no registration left behind', async () => {
     let code = null;
     const result = await runCollector({
@@ -704,10 +733,10 @@ describe('the android collector follows the app across a restart', { timeout: 30
         `case "$*" in`,
         `  '-s emulator-5554 shell pidof -s com.example.app')`,
         `    if [ -f "${join(shimDir, 'restarted')}" ]; then echo 4200; else echo 3132; fi ;;`,
-        `  '-s emulator-5554 logcat --pid 3132 -v time')`,
+        `  '-s emulator-5554 logcat --pid 3132 -v time,epoch')`,
         `    echo '08-21 17:51:19.507 I/ReactNativeJS(  3132): before the restart'`,
         `    exec sleep 30 ;;`,
-        `  '-s emulator-5554 logcat --pid 4200 -v time')`,
+        `  '-s emulator-5554 logcat --pid 4200 -v time,epoch')`,
         `    echo '08-21 17:51:29.507 I/ReactNativeJS(  4200): after the restart'`,
         `    exec sleep 30 ;;`,
         `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
@@ -746,7 +775,7 @@ describe('the android collector follows the app across a restart', { timeout: 30
       [
         `case "$*" in`,
         `  '-s emulator-5554 shell pidof -s com.example.app') echo 3132 ;;`,
-        `  '-s emulator-5554 logcat --pid 3132 -v time')`,
+        `  '-s emulator-5554 logcat --pid 3132 -v time,epoch')`,
         `    echo '08-21 17:51:19.507 I/ReactNativeJS(  3132): steady'`,
         `    exec sleep 30 ;;`,
         `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
@@ -772,12 +801,14 @@ describe('runCollector reattach seams', () => {
     const started: ChildProcess[] = [];
     let pid = 3132;
     let code = null;
+    let clockSamples = 0;
     const result = await runCollector({
       platform: 'android',
       root,
       serial: 'emulator-5554',
       packageName: 'com.example.app',
       resolvePid: async () => ({ ok: true, pid: 3132 }),
+      resolveClockOffset: () => (++clockSamples === 1 ? 2700 : 3000),
       pidOf: () => pid,
       pidWatchMs: 60000,
       startStream: ({ pid: streamPid }) => {
@@ -798,6 +829,11 @@ describe('runCollector reattach seams', () => {
     firstStarted.emit('exit', 0, null);
 
     expect(started.map((c) => c.pid)).toEqual([3132, 4200]);
+    expect(
+      deviceLog()
+        .filter((r) => r.event === 'collector_clock')
+        .map((r) => r.clockOffsetMs),
+    ).toEqual([2700, 3000]);
     expect(code).toBe(null);
     expect(deviceLog().some((r) => r.event === 'collector_reattached')).toBeTruthy();
     assert(result);
@@ -812,6 +848,7 @@ describe('runCollector reattach seams', () => {
       serial: 'emulator-5554',
       packageName: 'com.example.app',
       resolvePid: async () => ({ ok: true, pid: 3132 }),
+      resolveClockOffset: () => null,
       pidOf: () => null,
       pidWatchMs: 60000,
       startStream: ({ pid: streamPid }) => fakeChild(streamPid),
@@ -836,6 +873,7 @@ describe('runCollector reattach seams', () => {
       serial: 'emulator-5554',
       packageName: 'com.example.app',
       resolvePid: async () => ({ ok: true, pid: 3132 }),
+      resolveClockOffset: () => null,
       startStream: ({ pid }) => fakeChild(pid),
       watchPid: () => ({
         stop: () => {
@@ -873,6 +911,7 @@ describe('the collector never signals a pid it does not own', () => {
         serial: 'emulator-5554',
         packageName: 'com.example.app',
         resolvePid: async () => ({ ok: true, pid: 3132 }),
+        resolveClockOffset: () => null,
         pidOf: () => pid,
         pidWatchMs: 60000,
         startStream: ({ pid: streamPid }) => {

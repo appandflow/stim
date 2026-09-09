@@ -2329,6 +2329,7 @@ describe('the collector', () => {
     expect(calls.args.replaceCollector.appName).toBe('FixtureDev');
     expect(calls.args.replaceCollector.bundleId).toBe('com.example.app');
     expect(calls.args.replaceCollector.udid).toBe(UDID);
+    expect(calls.order.indexOf('replaceCollector')).toBeLessThan(calls.order.indexOf('launchIosApp'));
   });
 
   test('the command hands the collector CFBundleExecutable, so the log predicate can anchor to it', async () => {

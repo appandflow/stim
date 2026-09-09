@@ -2674,11 +2674,15 @@ describe('launch verification', () => {
     expect(h.stderr.join('\n')).toMatch(/run `stim android` again.*Metro reload cannot restart an exited app/);
   });
 
-  test('a Metro build failure with a live native process recommends reload instead of another native run', async () => {
+  test.each([
+    ['bundle_build_failed', 'Metro could not build the bundle', 'Fix the JavaScript'],
+    ['bundle_response_failed', 'Metro bundle delivery failed', 'Check the Metro logs and device connection'],
+  ])('a Metro failure (%s) with a live process recommends reload', async (event, reason, remedy) => {
     const h = harness({
       verifyLaunched: async () => ({
         fatal: true,
         processAlive: true,
+        record: { event },
         errors: [{ src: 'metro', msg: 'Unable to resolve module ./missing' }],
       }),
     });
@@ -2686,6 +2690,9 @@ describe('launch verification', () => {
     const text = h.stderr.join('\n');
     expect(result.ok).toBe(false);
     expect(text).toMatch(/native app is still running/);
+    expect(text).toContain(reason);
+    expect(text).toContain(remedy);
+    expect(text.includes('Fix the JavaScript')).toBe(event === 'bundle_build_failed');
     expect(text).toContain('stim reload android');
     expect(text).toMatch(/Do not run `stim android` unless native inputs changed or the app process exits/);
   });
