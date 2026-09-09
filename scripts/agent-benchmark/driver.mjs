@@ -909,7 +909,7 @@ function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform 
   const stimSource = variant === launchCrashVariant ? crash.fixtureCheckout : main;
   const worktree =
     arm === 'stim'
-      ? `In ${stimSource}, run exactly \`git worktree add -b worktree-bench/${runId} ${quotedStimPath} HEAD\`. Then change into ${stimPath}, run \`stim worktree warm\`, and wait for its successful exit before running start or a platform command. Work only in that checkout. `
+      ? `In ${stimSource}, run exactly \`git worktree add -b worktree-bench/${runId} ${quotedStimPath} HEAD\`. Then change into ${stimPath}, run \`stim guide agent\`, and follow the guide before using other Stim commands. Run \`stim worktree warm\` and wait for its successful exit before running start or a platform command. Work only in that checkout. `
       : variant === launchCrashVariant
         ? `In ${crash.fixtureCheckout}, create a git worktree for branch bench/${runId} at ${join(worktreeParent, runId)} from the current fixture HEAD and carry installed dependencies and native outputs from the fixture checkout. Then work only in that run worktree. Name the new ${platform === 'ios' ? 'simulator' : 'AVD'} exactly ${JSON.stringify(controlDeviceName)}. `
         : `In ${main}, create a git worktree for branch bench/${runId} at ${join(worktreeParent, runId)} and carry installed dependencies and native outputs from the main checkout. Then work only in that worktree. Name the new ${platform === 'ios' ? 'simulator' : 'AVD'} exactly ${JSON.stringify(controlDeviceName)} so the coordinator can prove ownership and clean it safely. `;
@@ -2716,6 +2716,15 @@ function selftestLaunchCrash() {
     token,
   };
   const prompt = promptFor('stim', launchCrashVariant, runId, state, crash);
+  for (const platform of ['ios', 'android']) {
+    const instructions = promptFor('stim', launchCrashVariant, runId, state, crash, platform);
+    const guide = instructions.indexOf('`stim guide agent`');
+    const warm = instructions.indexOf('`stim worktree warm`');
+    if (guide < 0 || warm < guide) throw new Error(`${platform} prompt must load the guide before warm`);
+    if (promptFor('control', launchCrashVariant, runId, state, crash, platform).includes('`stim guide agent`')) {
+      throw new Error(`${platform} control must not load the Stim guide`);
+    }
+  }
   for (const required of [
     `git worktree add -b worktree-bench/${runId}`,
     'stim worktree warm',
