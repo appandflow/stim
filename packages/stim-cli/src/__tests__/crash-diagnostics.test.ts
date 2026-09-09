@@ -2,7 +2,7 @@ import { afterEach, expect, test } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { symbolicateErrors } from '../error-symbolication.ts';
 import { errorDiagnostics, mergeErrorCopies } from '../error-diagnostics.ts';
-import { captureNativeCrashes, parseAndroidCrashes, parseIosCrash } from '../native-crash.ts';
+import { captureNativeCrashes, captureWorkspaceCrashes, parseAndroidCrashes, parseIosCrash } from '../native-crash.ts';
 import { verifyLaunch } from '../engine/app-install.ts';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,6 +10,10 @@ import { join } from 'node:path';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { launchErrorPreview } from '../launch-error-preview.ts';
 import { buildCriteria, recordMatches } from '../logs-query.ts';
+import { recordFromLine } from '../supervisor/server-expo.ts';
+import { clearWorkspaceStateKeys, writeWorkspaceState } from '../supervisor/state.ts';
+import { upsertProject } from '../config.ts';
+import { deviceLeasePath, fileLeaseIo } from '../engine/device-lease.ts';
 
 let server: Server | undefined;
 afterEach(async () => {
@@ -135,6 +139,7 @@ test('iOS reports cannot leak another simulator, app or previous launch into the
   expect(parseIosCrash(text, { ...target, deviceId: 'other' })).toBeNull();
   expect(parseIosCrash(text, { ...target, appId: 'other' })).toBeNull();
   expect(parseIosCrash(text, { ...target, since: target.since + 2000 })).toBeNull();
+  expect(parseIosCrash(text, { ...target, until: target.since + 500 })).toBeNull();
 });
 
 test('Android crash buffer retains the exception from a dead app but not another process or old crash', () => {
@@ -385,6 +390,131 @@ test('split Android error-object lines remain associated with their own error an
     expect(preview).not.toContain('isComponentError: true');
     expect(preview).toContain('captured stack text is incomplete');
   } finally {
+    delete process.env.STIM_HOME;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('historical Expo errors keep their original coordinates after bundle activity on either Expo log path', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-expo-rebuild-'));
+  process.env.STIM_HOME = root;
+  const original = {
+    ts: 1000,
+    src: 'device',
+    platform: 'android',
+    msg: 'Error: broken\n at fail (http://localhost:8083/index.bundle:10:2)',
+  };
+  try {
+    const events = [
+      { ...recordFromLine('Android Bundling 20%'), ts: 1100 },
+      { ...recordFromLine('Android Bundled 50ms', { stream: 'stderr' }), ts: 1100 },
+      recordFromLine(
+        'stim-bundle-response: ' +
+          JSON.stringify({
+            src: 'metro',
+            event: 'bundle_response_started',
+            platform: 'android',
+            requestId: 'next',
+            ts: 1100,
+          }),
+        { stream: 'stderr' },
+      ),
+    ];
+    for (const event of events) {
+      writeFileSync(join(root, 'metro.ndjson'), JSON.stringify(event) + '\n');
+      const [record] = await errorDiagnostics([original], { root, logsDir: root, port: 8083, allowRequest: true });
+      expect(record?.msg).toBe(original.msg);
+      expect(record?.symbolicationNote).toContain('Metro rebuilt after this error');
+    }
+    writeFileSync(join(root, 'metro.ndjson'), JSON.stringify({ ...events[2], platform: 'ios' }) + '\n');
+    const [otherPlatform] = await errorDiagnostics([original], { root, logsDir: root, port: null });
+    expect(otherPlatform?.symbolicationNote).toBeUndefined();
+  } finally {
+    delete process.env.STIM_HOME;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('live native collection requires the current launch and device claim, not a historical launch marker', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-crash-claim-'));
+  process.env.STIM_HOME = join(root, 'home');
+  const logs = join(root, 'logs');
+  const since = Date.now() - 5000;
+  const launch = {
+    appId: 'app.test',
+    deviceId: 'emulator-5556',
+    metroPort: null,
+    release: true,
+    deepLinkUrl: null,
+    launchedAt: new Date(since).toISOString(),
+  };
+  let reads = 0;
+  let avd = 'stim-own';
+  const marker = {
+    event: 'launch_attempt',
+    platform: 'android',
+    ts: since,
+    appId: launch.appId,
+    deviceId: launch.deviceId,
+  };
+  const raw = [
+    `${Math.floor((since + 1000) / 1000)}.000 E/AndroidRuntime( 44): FATAL EXCEPTION: main`,
+    `${Math.floor((since + 1000) / 1000)}.001 E/AndroidRuntime( 44): Process: app.test, PID: 44`,
+    `${Math.floor((since + 1000) / 1000)}.002 E/AndroidRuntime( 44): java.lang.IllegalStateException: failed`,
+  ].join('\n');
+  try {
+    mkdirSync(logs);
+    writeFileSync(join(logs, 'launch.ndjson'), JSON.stringify(marker) + '\n');
+    writeWorkspaceState(root, { launches: { android: launch } });
+    upsertProject(root, { platforms: { android: { owned: true, avdName: 'stim-own' } } });
+    setExecutor({
+      runFile: () => String(Date.now()),
+      runFileQuiet: (_file, args) => {
+        if (args.includes('emu')) return avd + '\nOK';
+        reads++;
+        return raw;
+      },
+    });
+    captureWorkspaceCrashes(root, logs);
+    expect(reads).toBe(1);
+    expect(readdirSync(logs).filter((name) => name.startsWith('native-crash-'))).toHaveLength(1);
+    clearWorkspaceStateKeys(root, ['launches']);
+    captureWorkspaceCrashes(root, logs);
+    expect(reads).toBe(1);
+    writeWorkspaceState(root, { launches: { android: launch } });
+    avd = 'stim-other-workspace';
+    captureWorkspaceCrashes(root, logs);
+    expect(reads).toBe(1);
+    writeFileSync(join(logs, 'launch.ndjson'), JSON.stringify({ ...marker, physical: true }) + '\n');
+    clearWorkspaceStateKeys(root, ['launches']);
+    fileLeaseIo.writeHolder(root, { android: { id: launch.deviceId, token: 'own-token', kind: 'declared' } });
+    const lease = {
+      version: 1,
+      platform: 'android',
+      id: launch.deviceId,
+      holder: root,
+      token: 'own-token',
+      grantedAt: new Date(since - 1000).toISOString(),
+      expiresAt: new Date(Date.now() + 10000).toISOString(),
+    };
+    fileLeaseIo.writeLease(deviceLeasePath('android', launch.deviceId), JSON.stringify(lease));
+    captureWorkspaceCrashes(root, logs);
+    expect(reads).toBe(2);
+    fileLeaseIo.writeLease(
+      deviceLeasePath('android', launch.deviceId),
+      JSON.stringify({ ...lease, token: 'new-token', holder: root + '-other' }),
+    );
+    captureWorkspaceCrashes(root, logs);
+    expect(reads).toBe(2);
+    expect(
+      parseAndroidCrashes(
+        raw,
+        { platform: 'android', appId: launch.appId, deviceId: launch.deviceId, since, until: since + 1 },
+        0,
+      ),
+    ).toEqual([]);
+  } finally {
+    resetExecutor();
     delete process.env.STIM_HOME;
     rmSync(root, { recursive: true, force: true });
   }

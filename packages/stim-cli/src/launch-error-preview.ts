@@ -4,7 +4,7 @@ type StackKind = 'Error' | 'Component' | 'Native';
 function framePriority(frame: string, root?: string): number {
   const normalized = frame.replaceAll('\\', '/');
   if (/^\s*at (?:android\.|java\.|com\.android\.|dalvik\.)/.test(normalized)) return 2;
-  if (/(?:^|\/)node_modules\//.test(normalized) || /\bnode:internal\//.test(normalized)) return 2;
+  if (/(?:^|[/(\s])node_modules\//.test(normalized) || /\bnode:internal\//.test(normalized)) return 2;
   const paths = [
     ...normalized.matchAll(
       /(?:\(|@|\bat )([^()]+?\.(?:[cm]?[jt]sx?|swift|kt|java|mm?|cpp|cc|c|h))(?::\d+(?::\d+)?)?(?:\)|$)/g,

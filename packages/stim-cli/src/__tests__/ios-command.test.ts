@@ -1,4 +1,6 @@
 import assert from 'node:assert';
+import { vi } from 'vitest';
+import * as crashDiagnostics from '../native-crash.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
@@ -3121,6 +3123,26 @@ describe('configuration resolution', () => {
 });
 
 describe('release skips Metro entirely', () => {
+  test('an attributable native crash overrides a live release process probe', async () => {
+    const read = vi
+      .spyOn(crashDiagnostics, 'captureNativeCrashes')
+      .mockReturnValue([
+        { src: 'device', level: 'fatal', event: 'native_crash', msg: 'App.swift:17: Fatal error: release failed' },
+      ]);
+    try {
+      const { logs, errs, exitCode } = await run(
+        { configuration: 'Release', json: true },
+        {
+          verifyReleaseLaunch: async () => ({ verified: true, waitedMs: 3000 }),
+        },
+      );
+      expect(exitCode).toBe(1);
+      expect(parseFirst(logs).code).toBe('STIM_LAUNCH_FAILED');
+      expect(errs.join('\n')).toContain('FATAL: the app reported a native crash');
+    } finally {
+      read.mockRestore();
+    }
+  });
   test('no gate, no reservation needed, no port wiring, plain launch', async () => {
     const { exitCode, calls, errs } = await run({ configuration: 'Release' });
     expect(exitCode).toBe(null);

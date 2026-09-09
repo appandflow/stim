@@ -1,4 +1,6 @@
 import { hashFile } from '../engine/installed-artifact.ts';
+import { vi } from 'vitest';
+import * as crashDiagnostics from '../native-crash.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import assert from 'node:assert';
 import { captureProcessToken } from '../process-identity.ts';
@@ -3291,7 +3293,7 @@ describe('release skips Metro entirely', () => {
     const result = await h.run();
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe('STIM_LAUNCH_FAILED');
-    expect(h.stderr.join('\n')).toMatch(/UNVERIFIED: no com\.example\.app process/);
+    expect(h.stderr.join('\n')).toMatch(/FATAL: no com\.example\.app process/);
     expect(h.stderr.join('\n')).toMatch(/stim logs --errors/);
   });
 
@@ -3305,6 +3307,29 @@ describe('release skips Metro entirely', () => {
     expect(result.facts?.launched).toBe('unverified');
     expect(h.stderr.join('\n')).toMatch(/UNVERIFIED: the app process check failed/);
     expect(h.stderr.join('\n')).not.toMatch(/no com\.example\.app process/);
+  });
+
+  test('a release native crash overrides a still-live PID behind Android crash UI', async () => {
+    const read = vi.spyOn(crashDiagnostics, 'captureNativeCrashes').mockReturnValue([
+      {
+        src: 'device',
+        level: 'fatal',
+        event: 'native_crash',
+        msg: 'Native crash: java.lang.IllegalStateException: release failed',
+      },
+    ]);
+    try {
+      const h = harness({
+        variant: 'productionRelease',
+        verifyReleaseLaunched: async () => ({ verified: true, waitedMs: 3000, pid: 44 }),
+      });
+      const result = await h.run();
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe('STIM_LAUNCH_FAILED');
+      expect(h.stderr.join('\n')).toContain('FATAL: the app reported a native crash');
+    } finally {
+      read.mockRestore();
+    }
   });
 
   test('the android.variant setting is the repo default, and the flag overrides it back to debug', async () => {
@@ -4361,6 +4386,11 @@ describe('--device refusals found in review', () => {
     const state = JSON.stringify(readState());
     expect(state).not.toContain('RFCR7081Q9L');
     expect(loadConfig()?.projects?.[root]?.platforms?.android).toBeUndefined();
+    const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf8'));
+    expect(records.find((record) => record.event === 'launch_attempt')).toMatchObject({
+      physical: true,
+      deviceId: 'RFCR7081Q9L',
+    });
   });
 });
 

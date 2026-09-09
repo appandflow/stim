@@ -27,14 +27,15 @@ function identity(record: NdjsonRecord): string {
 function attachDeviceErrorContext(timeline: NdjsonRecord[], selected: NdjsonRecord[]): NdjsonRecord[] {
   const consumed = new Set<string>();
   const rendered = selected.map((record) => {
-    if (record.src !== 'device' || !errorTitle(record) || !record.proc) return record;
+    if (record.src !== 'device' || !record.proc) return record;
+    if (!errorTitle(record) && !/^\s+at\s+\S/.test(record.msg ?? '')) return record;
     const index = timeline.findIndex((entry) => identity(entry) === identity(record));
     if (index < 0) return record;
     const context: string[] = [];
     for (const next of timeline.slice(index + 1)) {
-      if (Number(next.ts) - Number(record.ts) > 1000 || context.length >= 10) break;
+      if (Number(next.ts) - Number(record.ts) > 1000 || context.length >= 200) break;
       if (next.src !== 'device' || next.proc !== record.proc || next.platform !== record.platform) continue;
-      if (!/^\s*(?:(?:componentStack|stack):\s*['"]|isComponentError:|[{}],?$)/.test(next.msg ?? '')) break;
+      if (!/^\s*(?:(?:componentStack|stack):\s*['"]|isComponentError:|[{}],?$|at\s+\S)/.test(next.msg ?? '')) break;
       context.push(String(next.msg));
       consumed.add(identity(next));
     }
@@ -183,25 +184,36 @@ export async function errorDiagnostics(
       return record;
     }
   });
-  if (allowRequest && port && (await resolveProjectMetro(port, root)).metro) {
-    const pending = records.flatMap((record, index) => {
-      if (rendered[index] !== record) return [];
-      const rebuilt = timeline.some(
-        (event) =>
-          ['bundle_build_started', 'server_started', 'supervisor_started'].includes(String(event.event)) &&
-          Number(event.ts) > Number(record.ts) &&
-          (!event.platform || !record.platform || event.platform === record.platform),
-      );
-      if (rebuilt && bundleLocations(record).length) {
-        rendered[index] = {
-          ...record,
-          symbolicationNote:
-            'Metro rebuilt after this error; captured coordinates retained rather than mapping against a different bundle.',
-        };
-        return [];
-      }
-      return [{ record, index }];
-    });
+  const pending = records.flatMap((record, index) => {
+    if (rendered[index] !== record || !bundleLocations(record).length) return [];
+    const rebuilt = timeline.some(
+      (event) =>
+        ([
+          'bundle_build_started',
+          'bundle_build_done',
+          'bundle_build_failed',
+          'server_started',
+          'supervisor_started',
+          'bundle_response_started',
+          'bundle_response_finished',
+          'bundle_response_failed',
+        ].includes(String(event.event)) ||
+          (['expo_stdout', 'expo_stderr'].includes(String(event.event)) &&
+            /\bBundl(?:ing|ed)\b/.test(event.msg ?? ''))) &&
+        Number(event.ts) > Number(record.ts) &&
+        (!event.platform || !record.platform || event.platform === record.platform),
+    );
+    if (rebuilt) {
+      rendered[index] = {
+        ...record,
+        symbolicationNote:
+          'Metro rebuilt after this error; captured coordinates retained rather than mapping against a different bundle.',
+      };
+      return [];
+    }
+    return [{ record, index }];
+  });
+  if (pending.length && allowRequest && port && (await resolveProjectMetro(port, root)).metro) {
     const resolved = await symbolicateErrors(
       pending.map(({ record }) => record),
       { port },

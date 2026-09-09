@@ -113,21 +113,18 @@ async function verifyAndroidRun({
   }
   if (release) {
     const processCheck = await verifyReleaseLaunched({ serial, packageName: androidPackage });
-    if (processCheck?.verified) {
+    const crashes = readNativeCrashes();
+    if (processCheck?.verified && !crashes.length) {
       phase(
         'verify',
         `process alive ${formatDuration(processCheck.waitedMs ?? 0)} after launch (${variant}: no bundle fetch to observe)`,
       );
       return true;
     }
-    if (processCheck?.reason === 'probe-failed') {
+    if (processCheck?.reason === 'probe-failed' && !crashes.length) {
       phase('verify', chalk.yellow('UNVERIFIED: the app process check failed'));
       return LAUNCH_UNVERIFIED;
     }
-    const crashes = captureNativeCrashes(
-      { root, platform: 'android', deviceId: serial, appId: androidPackage, since: launchedAt },
-      logsDir,
-    );
     for (const line of launchErrorPreview(crashes, root)) phase('launch', chalk.red(line));
     if (!crashes.length)
       phase(
@@ -137,7 +134,9 @@ async function verifyAndroidRun({
     phase(
       'verify',
       chalk.yellow(
-        `UNVERIFIED: no ${androidPackage} process on ${serial} ${formatDuration(processCheck?.waitedMs ?? 0)} after launch`,
+        crashes.length
+          ? 'FATAL: the app reported a native crash'
+          : `FATAL: no ${androidPackage} process on ${serial} ${formatDuration(processCheck?.waitedMs ?? 0)} after launch`,
       ),
     );
     phase(
@@ -524,6 +523,7 @@ export async function finishAndroidRun({
     appId: androidPackage,
     deviceId: serial,
     remote: Boolean(remoteDevice),
+    physical,
     msg: `launching ${androidPackage} on ${serial}`,
   });
   const launched: LaunchResultLike = release

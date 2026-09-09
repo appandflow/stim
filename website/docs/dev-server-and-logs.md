@@ -79,6 +79,11 @@ reports can be delayed, physical iPhone capture is console-only, and stripped or
 remote builds may not have matching local debug symbols. This does not download
 symbols or replace Xcode/Android Studio's full crash-analysis tooling.
 
+For delayed reports, rerun `stim logs --errors` before stopping or releasing the
+device. Collection requires the workspace's current launch and device ownership
+or lease; after release, already-captured reports remain available without
+collecting another workspace's crashes.
+
 Non-follow human queries enrich errors; `--follow` streams captured records and
 does not continuously poll OS crash reports. `--json` preserves raw evidence.
 Stim does not resymbolicate an older error after a recorded Metro rebuild.

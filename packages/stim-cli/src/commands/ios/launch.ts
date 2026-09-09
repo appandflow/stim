@@ -111,19 +111,14 @@ async function verifyIosRun({
     const processCheck = physical
       ? await d.verifyIosDeviceReleaseLaunch({ udid, appName: appName ?? bundleId })
       : await d.verifyReleaseLaunch({ pid: launched?.pid ?? null });
-    if (processCheck?.verified) {
+    const crashes = readNativeCrashes();
+    if (processCheck?.verified && !crashes.length) {
       phase(
         'verify',
         `process alive ${formatDuration(processCheck.waitedMs ?? 0)} after launch (${configuration}: no bundle fetch to observe)`,
       );
       return true;
     }
-    const crashes = remoteDevice
-      ? []
-      : captureNativeCrashes(
-          { platform: 'ios', deviceId: udid, appId: bundleId, since: launchedAt, appPath, physical },
-          logsDir,
-        );
     for (const line of launchErrorPreview(crashes, root)) note(chalk.red(phaseLine('launch', line)));
     if (!crashes.length)
       note(
@@ -135,22 +130,24 @@ async function verifyIosRun({
     phase(
       'verify',
       chalk.yellow(
-        processCheck?.reason === 'exited'
-          ? `UNVERIFIED: the app process exited within ${formatDuration(processCheck.waitedMs ?? 0)} of launch`
-          : physical
-            ? `UNVERIFIED: devicectl could not read ${udid}'s process list`
-            : 'UNVERIFIED: simctl launch reported no process id to check',
+        crashes.length
+          ? 'FATAL: the app reported a native crash'
+          : processCheck?.reason === 'exited'
+            ? `FATAL: the app process exited within ${formatDuration(processCheck.waitedMs ?? 0)} of launch`
+            : physical
+              ? `UNVERIFIED: devicectl could not read ${udid}'s process list`
+              : 'UNVERIFIED: simctl launch reported no process id to check',
       ),
     );
     note(
       chalk.yellow(
         phaseLine(
           '',
-          'A release process exited before readiness. Run `stim logs --errors` for captured crash reports, or `stim logs --source device` for the full device output.',
+          'Release readiness was not established. Run `stim logs --errors` for captured crash reports, or `stim logs --source device` for the full device output.',
         ),
       ),
     );
-    return processCheck?.reason === 'exited' ? LAUNCH_FATAL : LAUNCH_UNVERIFIED;
+    return crashes.length || processCheck?.reason === 'exited' ? LAUNCH_FATAL : LAUNCH_UNVERIFIED;
   }
 
   const verification: VerifyLaunchResultLike = metroCheck

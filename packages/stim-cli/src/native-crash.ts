@@ -11,6 +11,8 @@ import { deviceConsoleLevel } from './collector/ios-device.ts';
 import { writeDiagnosticOnce } from './diagnostic-store.ts';
 import { readLogRecords } from './logs-query.ts';
 import { readWorkspaceLaunches, readWorkspaceState } from './supervisor/state.ts';
+import { getProject } from './config.ts';
+import { deviceLeasePath, fileLeaseIo, parseLease } from './engine/device-lease.ts';
 
 interface CrashTarget {
   root?: string;
@@ -18,6 +20,7 @@ interface CrashTarget {
   deviceId: string;
   appId: string;
   since: number;
+  until?: number;
   appPath?: string | null;
   physical?: boolean;
 }
@@ -70,7 +73,7 @@ export function parseIosCrash(text: string, target: CrashTarget): { record: Ndjs
       report.coalitionName !== simulator ||
       !Number.isFinite(ts) ||
       ts < target.since ||
-      ts > Date.now() + 1000 ||
+      ts > (target.until ?? Date.now() + 1000) ||
       !report.incident
     )
       return null;
@@ -125,7 +128,10 @@ export function parseAndroidCrashes(text: string, target: CrashTarget, clockOffs
   const entries = text
     .split('\n')
     .map((line) => parseLogcatLine(line, { clockOffsetMs }))
-    .filter((record): record is NdjsonRecord => record !== null && Number(record.ts) >= target.since);
+    .filter(
+      (record): record is NdjsonRecord =>
+        record !== null && Number(record.ts) >= target.since && Number(record.ts) <= (target.until ?? Infinity),
+    );
   const groups: NdjsonRecord[][] = [];
   for (const entry of entries) {
     const last = groups.at(-1);
@@ -327,6 +333,7 @@ function simulatorFatalConsole(target: CrashTarget): NdjsonRecord[] {
   return Object.values(paths ?? {}).flatMap((path) => {
     try {
       if (statSync(path).size > 8 * 1024 * 1024) return [];
+      if (target.until !== undefined && statSync(path).mtimeMs > target.until) return [];
       const text = readFileSync(path, 'utf8');
       const fatal = text.split('\n').filter((line) => deviceConsoleLevel(line) === 'fatal');
       if (!fatal.length) return [];
@@ -414,24 +421,66 @@ export function captureWorkspaceCrashes(root: string, logsDir: string): void {
   const attempts = readLogRecords(logsDir).filter((record) => record.event === 'launch_attempt');
   const launches = readWorkspaceLaunches(root);
   for (const platform of ['ios', 'android'] as const) {
-    const attempt = attempts.findLast((record) => record.platform === platform);
-    if (attempt?.remote) continue;
-    const launch = launches[platform];
-    const deviceId = attempt?.deviceId ?? launch?.deviceId;
-    const appId = attempt?.appId ?? launch?.appId;
-    const since = attempt?.ts ?? Date.parse(launch?.launchedAt ?? '');
-    if (typeof deviceId !== 'string' || typeof appId !== 'string' || !Number.isFinite(since)) continue;
-    captureNativeCrashes(
-      {
-        root,
-        platform,
-        deviceId,
-        appId,
-        since: Number(since),
-        physical: attempt?.physical === true,
-        appPath: (attempt?.appPath ?? readWorkspaceState(root)?.lastBuild?.appPath) as string | undefined,
-      },
-      logsDir,
-    );
+    try {
+      const attempt = attempts.findLast((record) => record.platform === platform);
+      if (!attempt || attempt.remote) continue;
+      const { deviceId, appId } = attempt;
+      const since = attempt.ts;
+      const until = Date.now();
+      if (
+        typeof deviceId !== 'string' ||
+        typeof appId !== 'string' ||
+        typeof since !== 'number' ||
+        !Number.isFinite(since)
+      )
+        continue;
+      if (attempt.physical) {
+        const holder = fileLeaseIo.readHolder(root)[platform];
+        const lease = parseLease(fileLeaseIo.readLease(deviceLeasePath(platform, deviceId)));
+        if (
+          holder?.id !== deviceId ||
+          !lease ||
+          lease.platform !== platform ||
+          lease.id !== deviceId ||
+          lease.holder !== root ||
+          lease.token !== holder.token ||
+          Date.parse(lease.expiresAt) <= until ||
+          !lease.grantedAt ||
+          !Number.isFinite(Date.parse(lease.grantedAt)) ||
+          Date.parse(lease.grantedAt) > since
+        )
+          continue;
+      } else {
+        const launch = launches[platform];
+        if (
+          !launch ||
+          launch.deviceId !== deviceId ||
+          launch.appId !== appId ||
+          Date.parse(launch.launchedAt) !== since
+        )
+          continue;
+        const configured = getProject(root)?.platforms?.[platform];
+        if (!configured?.owned) continue;
+        if (platform === 'ios' && configured.deviceUdid !== deviceId) continue;
+        if (platform === 'android') {
+          if (!configured.avdName) continue;
+          const name = getExecutor().runFileQuiet('adb', ['-s', deviceId, 'emu', 'avd', 'name'], { timeoutMs: 2000 });
+          if (name?.split('\n')[0]?.trim() !== configured.avdName) continue;
+        }
+      }
+      captureNativeCrashes(
+        {
+          root,
+          platform,
+          deviceId,
+          appId,
+          since: Number(since),
+          until,
+          physical: attempt?.physical === true,
+          appPath: (attempt?.appPath ?? readWorkspaceState(root)?.lastBuild?.appPath) as string | undefined,
+        },
+        logsDir,
+      );
+    } catch {}
   }
 }

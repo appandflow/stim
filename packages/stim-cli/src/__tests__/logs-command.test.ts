@@ -303,6 +303,31 @@ describe('logs command', () => {
     expect(parseNdjsonLine(out[0])).toEqual(error);
   });
 
+  test('--errors groups split Android frames before capping errors and prioritizing app frames', async () => {
+    const base = { ts: 1000, src: 'device', level: 'error', platform: 'android', proc: 'ReactNativeJS(42)' };
+    const records = [
+      { ...base, msg: 'Error: broken' },
+      ...Array.from({ length: 25 }, (_, i) => ({
+        ...base,
+        ts: 1001 + i,
+        msg: `    at react${i} (node_modules/react/index.js:${i + 1}:2)`,
+      })),
+      { ...base, ts: 1030, msg: '    at Screen (app/Screen.tsx:5:2)' },
+      { ...base, ts: 1031, msg: 'Error: another failure' },
+    ];
+    writeLog('device.ndjson', records);
+    await run({ errors: true, source: 'device' });
+    expect(out).toHaveLength(2);
+    expect(out[0]).toContain('app/Screen.tsx:5:2');
+    expect(out[0]?.match(/  at /g)).toHaveLength(10);
+    expect(out[0]?.match(/Error stack/g)).toHaveLength(1);
+    expect(out[0]).toContain('16 more frames');
+    expect(out[1]).toContain('another failure');
+    out.length = 0;
+    await run({ errors: true, source: 'device', json: true });
+    expect(out).toHaveLength(records.length);
+  });
+
   test('--errors keeps bare React Native symbolication with its error in human output', async () => {
     const error = { ts: 1, src: 'client', level: 'error', msg: '[Error: STIM_BARE_LAUNCH_CRASH]' };
     writeLog('client.ndjson', [
