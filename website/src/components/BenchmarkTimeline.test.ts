@@ -9,7 +9,13 @@ vi.mock('@docusaurus/useBaseUrl', () => ({ default: (path: string) => path }));
 
 describe('benchmark timeline presentation', () => {
   it('shows full-run Claude usage even when diagnosis usage is absent', () => {
-    const run = opus.runs[0] as BenchmarkRun;
+    const run: BenchmarkRun = {
+      ...(opus.runs[0] as BenchmarkRun),
+      usage: { input_tokens: 360_000, cached_input_tokens: 300_000, output_tokens: 8_000, reasoning_output_tokens: 0 },
+      estimatedTokenCostUsd: 0.54,
+      diagnosisUsage: null,
+      estimatedDiagnosisCostUsd: null,
+    };
     const html = renderToStaticMarkup(createElement(BenchmarkTimeline, { run }));
     expect(html).toContain('Total tokens');
     expect(html).toContain('368k');
@@ -19,7 +25,11 @@ describe('benchmark timeline presentation', () => {
   });
 
   it('labels missing full-run usage unavailable instead of inventing zero cost', () => {
-    const run = opus.runs[1] as BenchmarkRun;
+    const run: BenchmarkRun = {
+      ...(opus.runs[1] as BenchmarkRun),
+      usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0 },
+      estimatedTokenCostUsd: null,
+    };
     const html = renderToStaticMarkup(createElement(BenchmarkTimeline, { run }));
     expect(html).toContain('<span>Total tokens</span><strong>unavailable</strong>');
     expect(html).toContain('<span>Total cost</span><strong>unavailable</strong>');

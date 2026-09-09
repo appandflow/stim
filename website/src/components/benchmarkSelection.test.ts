@@ -44,12 +44,6 @@ describe('benchmark catalog selection', () => {
         expect(selection).toEqual({ stage: `${model}-android-launch-error`, runId: `launch-crash-${arm}` });
         expect(benchmarkSelectionSearch(selection, linkedBenchmarks)).toContain(`${model}-android-launch-error`);
       }
-      const comparison = benchmarks.find((candidate) => candidate.stage === `${model}-android-launch-error`)!;
-      expect(comparison.runs.map((run) => run.appReadinessLogs)).toEqual([true, false]);
-      const run = comparison.runs[0];
-      const initial = run.commands.find((command) => command.id === run.launchCrashAudit?.initialLaunchCommandId);
-      expect(initial?.output).toMatch(/readiness\s+waiting/);
-      expect(initial?.output).toContain('STIM_BENCH_LAUNCH_CRASH_');
     }
   });
 
@@ -59,6 +53,22 @@ describe('benchmark catalog selection', () => {
     for (const entry of linkedBenchmarks) {
       const cells = entry.runs.map((run) => `${run.arm}:${run.variant}`);
       expect(new Set(cells).size).toBe(cells.length);
+    }
+  });
+
+  it('publishes readiness-aware first-command error evidence for every launch-error Stim cell', () => {
+    for (const model of ['gpt-5.6-luna', 'gpt-5.6-sol', 'sonnet', 'opus']) {
+      for (const platform of benchmarkPlatforms) {
+        const entry = exactBenchmarkForDimensions(benchmarks, { model, platform, suite: 'launch-crash' });
+        const stim = entry?.runs.find((run) => run.arm === 'stim');
+        const control = entry?.runs.find((run) => run.arm === 'control');
+        expect(stim).toMatchObject({ valid: true, appReadinessLogs: true });
+        expect(control).toMatchObject({ valid: true, appReadinessLogs: false });
+        const initial = stim?.commands.find((command) => command.id === stim.launchCrashAudit?.initialLaunchCommandId);
+        expect(initial?.output).toMatch(/readiness\s+waiting/);
+        expect(initial?.output).toMatch(/fingerprint .*hit/);
+        expect(initial?.output).toContain('STIM_BENCH_LAUNCH_CRASH_');
+      }
     }
   });
 

@@ -5,7 +5,7 @@
   "suite": "launch-crash",
   "platform": "ios",
   "protocolVersion": 4,
-  "recordedOn": "2026-09-08",
+  "recordedOn": "2026-09-09",
   "primaryMetric": "First recorded agent activity to actionable diagnosis; repaired Settings screenshot reported separately",
   "pricing": {
     "model": "gpt-5.6-sol",
@@ -35,176 +35,153 @@
       "arm": "stim",
       "valid": true,
       "invalidReasons": [],
-      "settingsReadySeconds": 272.359,
-      "appAliveSeconds": 164.837,
-      "diagnosisSeconds": 178.294,
-      "diagnosisCommandCount": 8,
+      "settingsReadySeconds": 197.881,
+      "appAliveSeconds": 125.498,
+      "diagnosisSeconds": 136.516,
+      "diagnosisCommandCount": 7,
       "launchCrashAudit": {
-        "initialLaunchCommandId": "item_10",
-        "errorCaptureCommandId": "item_11",
-        "diagnosisCommandId": "item_11",
-        "screenshotCommandId": "item_28"
+        "initialLaunchCommandId": "item_7",
+        "errorCaptureCommandId": "item_8",
+        "diagnosisCommandId": "item_8",
+        "screenshotCommandId": "item_19"
       },
       "diagnosisUsage": {
-        "input_tokens": 552227,
-        "cached_input_tokens": 515584,
-        "output_tokens": 2407,
-        "reasoning_output_tokens": 459,
-        "total_tokens": 554634
+        "input_tokens": 612484,
+        "cached_input_tokens": 566528,
+        "output_tokens": 2325,
+        "reasoning_output_tokens": 409,
+        "total_tokens": 614809
       },
-      "estimatedDiagnosisCostUsd": 0.40094559999999996,
-      "totalSeconds": 320.435,
-      "commandCount": 28,
+      "estimatedDiagnosisCostUsd": 0.4569352,
+      "totalSeconds": 240.136,
+      "commandCount": 20,
       "usage": {
-        "input_tokens": 1153237,
-        "cached_input_tokens": 1090688,
-        "output_tokens": 7693,
-        "reasoning_output_tokens": 2064
+        "input_tokens": 1070109,
+        "cached_input_tokens": 1001088,
+        "output_tokens": 6436,
+        "reasoning_output_tokens": 1534
       },
-      "estimatedTokenCostUsd": 0.8403312,
-      "summary": "Created an isolated worktree, worked on the JavaScript launch failure, and ran Stim's iOS workflow. It used the captured Stim error log to identify the injected failure before repairing it. It reached Settings and captured valid agent-device proof. The record includes 1 failed command attempt before completion.",
+      "estimatedTokenCostUsd": 0.8052391999999999,
+      "summary": "Created an isolated worktree, worked on the JavaScript launch failure, and ran Stim's iOS workflow. It used the captured Stim error log to identify the injected failure before repairing it. It reached Settings and captured valid agent-device proof.",
       "messages": [
         {
           "id": "item_0",
           "atSeconds": 0,
-          "text": "I’m using the Stim skill for the prescribed build/launch diagnostics and the agent-device skill for simulator navigation and proof capture. I’ll keep all app work confined to the new run checkout and preserve the required command order."
+          "text": "I’m using the Stim skill for the required launch/log workflow and the agent-device skill for simulator interaction and proof capture. I’ll create and warm the isolated worktree first, then reproduce and capture the foreground error before inspecting any project source."
         },
         {
-          "id": "item_4",
-          "atSeconds": 16.444,
-          "text": "The linked checkout was created successfully. I’m warming its ignored dependencies now and will not start Metro or iOS until that finite command has fully exited."
+          "id": "item_5",
+          "atSeconds": 103.995,
+          "text": "The isolated checkout is warm with a successful exit. I’m now starting its owned Metro session and then launching iOS; I won’t inspect project source until the standalone error-log command prints both the launch error and source location."
         },
         {
-          "id": "item_6",
-          "atSeconds": 71.606,
-          "text": "Warm is still copying with no error output; I’m continuing to poll the same finite process handle, as required, rather than starting a duplicate or moving ahead early."
+          "id": "item_9",
+          "atSeconds": 139.766,
+          "text": "The required foreground log capture identified the deterministic failure at `app/_layout.tsx:27`: `RootLayout` throws `STIM_BENCH_LAUNCH_CRASH_9EAE450B59F8` before rendering. I’ll now remove only that injected throw, let Fast Refresh apply it, and verify clean runtime logs before opening the proof session."
         },
         {
-          "id": "item_8",
-          "atSeconds": 139.955,
-          "text": "Warm and the iOS environment check both passed. I’m starting the workspace-owned Metro instance now; once its readiness summary appears, I’ll launch iOS and capture the expected root-render failure before reading any project source."
+          "id": "item_14",
+          "atSeconds": 161.339,
+          "text": "The one-line repair is applied. Because the first failed bundle left an error screen, I requested the Stim-prescribed reload on the same simulator (`<simulator-udid>`). I’m now beginning the eight proof commands in the required order and will keep Metro and the app running throughout."
         },
         {
-          "id": "item_12",
-          "atSeconds": 182.323,
-          "text": "The required foreground log captured the deterministic failure and source location: `RootLayout` throws `STIM_BENCH_LAUNCH_CRASH_DD9D0FFF614B` at `app/_layout.tsx:27:18`. The native process is alive, so I’ll make the minimal JavaScript repair and let Fast Refresh recover the existing session."
+          "id": "item_24",
+          "atSeconds": 225.941,
+          "text": "All eight proof commands succeeded in order: the expected Settings text was found, the screenshot was saved and copied, recording stop reported the MP4 path, the video was copied, and the isolated automation session closed cleanly. I’m doing only final read-only checks on the one-line diff and both proof artifacts; Stim itself remains running."
         },
         {
-          "id": "item_17",
-          "atSeconds": 199.488,
-          "text": "The fix is a one-line deletion of the injected throw. The error query still includes the preserved historical launch record, so I’m now opening the exact simulator from Stim’s launch output to verify the live UI and, if needed, use the documented in-session recovery without restarting Metro or iOS."
-        },
-        {
-          "id": "item_21",
-          "atSeconds": 238.946,
-          "text": "The isolated agent-device session opened correctly and recording is active, but the live surface remained on the splash screen after the original failed render. Following Stim’s recovery guidance, I’m reloading the already-running app through its existing Metro session; this does not restart Metro or the simulator."
-        },
-        {
-          "id": "item_27",
-          "atSeconds": 269.878,
-          "text": "The repaired app is now on the Settings tab in the same adopted simulator, and the required text is present. I’m executing the remaining proof commands in the mandated order, then I’ll verify both copied artifacts exist without stopping Stim."
-        },
-        {
-          "id": "item_37",
-          "atSeconds": 320.205,
-          "text": "Repaired the launch failure by removing the injected throw from [app/_layout.tsx](./worktrees/bench-launch-crash-stim/app/_layout.tsx:27).\n\n- Run worktree: `./worktrees/bench-launch-crash-stim`\n- [Settings screenshot](results/sol-ios-launch-error/launch-crash-stim/proof/settings.png)\n- [Session recording](results/sol-ios-launch-error/launch-crash-stim/proof/session.mp4)\n\nAll eight proof commands succeeded in order. The expected Settings text was found, both artifacts are non-empty, and `git diff --check` passed. Metro remains running on port 8082 and the adopted simulator remains booted."
+          "id": "item_26",
+          "atSeconds": 239.896,
+          "text": "Fixed the launch failure by removing the injected throw in [app/_layout.tsx](./worktrees/bench-launch-crash-stim/app/_layout.tsx:26).\n\n- Run worktree: `./worktrees/bench-launch-crash-stim`\n- [Settings screenshot](results/sol-ios-readiness-entry-error/launch-crash-stim/proof/settings.png)\n- [Session recording](results/sol-ios-readiness-entry-error/launch-crash-stim/proof/session.mp4)\n\nAll eight proof commands succeeded in order. The expected Settings text was found, both artifacts exist, and `git diff --check` passed. Metro and the app remain running."
         }
       ],
       "commands": [
         {
           "id": "item_1",
-          "startSeconds": 2.415,
-          "endSeconds": 2.415,
-          "command": "sed -n '1,240p' results/sol-ios-launch-error/launch-crash-stim/runner-home/.codex/skills/stim/SKILL.md && sed -n '1,280p' results/sol-ios-launch-error/launch-crash-stim/runner-home/.codex/skills/agent-device/SKILL.md",
+          "startSeconds": 2.295,
+          "endSeconds": 2.295,
+          "command": "cat results/sol-ios-readiness-entry-error/launch-crash-stim/runner-home/.codex/skills/stim/SKILL.md && cat results/sol-ios-readiness-entry-error/launch-crash-stim/runner-home/.codex/skills/agent-device/SKILL.md",
           "output": "---\nname: stim\ndescription: The React Native / Expo CLI for AI agents. Use when running or building a React Native or Expo app on a simulator, emulator, or device, including expo run:ios, expo run:android, react-native run-ios, react-native run-android, expo start, and Metro; when reading build, launch, redbox, or runtime errors from the app logs; when working in parallel worktrees; or when identifying the correct device for UI interaction.\n---\n\n# Stim\n\nBefore using Stim, load the workflow guide from the installed CLI:\n\n```bash\nstim guide agent\n```\n\nFollow the version-matched instructions it prints.\n---\nname: agent-device\ndescription: Automates Apple-platform apps (iOS, tvOS, macOS), Android devices, and Amazon Vega OS TV apps in Vega Virtual Devices. Use when navigating apps, taking snapshots/screenshots where supported, driving TV remotes, tapping, typing, scrolling, extracting UI info, collecting evidence, or planning agent-device CLI commands.\n---\n\n# agent-device\n\nFor a normal app-driving task, start immediately. Do not probe first with `--help`, `--version`, `devices`, `appstate`, `snapshot`, or `screenshot`:\n\n```bash\nagent-device open <app> --foreground\n```\n\nThat starts the session and returns the initial interactive snapshot with `@refs`.\n\nLoop: act with `press|click|fill|longpress <target> ... --settle`, `scroll <direction> --settle`, or `back --settle`; continue from the printed diff, verify the named expectation (`wait text \"...\"`, `is`, `get`, or `find`), then run `agent-device close`.\n\nCopy refs byte-for-byte: `@e12`, `@e12~s4` — keep the `@` and any `~sN`. Prefer current refs, then `id`/`label`/`role` selectors; coordinates are a last resort. If snapshot reports sparse/AX-unavailable, its refs and selectors are invalid: run `agent-device screenshot`, inspect the image, use coordinates, then retry `snapshot -i` after navigating. Otherwise run `snapshot -i` only when the diff lacks the next target.\n\nError output includes corrective hints; follow them instead of re-planning. Only when the task is specialized (for example gestures, scripting, TV, macOS, remote, or debugging) or a command shape is unclear, run `agent-device help <topic>`. `agent-device --help` lists topics, but is not a startup step.\n",
           "exitCode": 0
         },
         {
           "id": "item_2",
-          "startSeconds": 8.024,
-          "endSeconds": 8.024,
+          "startSeconds": 6.402,
+          "endSeconds": 6.402,
           "command": "git worktree add -b worktree-bench/launch-crash-stim './worktrees/bench-launch-crash-stim' HEAD",
-          "output": "Preparing worktree (new branch 'worktree-bench/launch-crash-stim')\nHEAD is now at c8a0dbc test: prepare launch failure fixture\n",
+          "output": "Preparing worktree (new branch 'worktree-bench/launch-crash-stim')\nHEAD is now at b7da20c test: prepare launch failure fixture\n",
           "exitCode": 0
         },
         {
           "id": "item_3",
-          "startSeconds": 12.444,
-          "endSeconds": 12.585,
-          "command": "stim guide agent",
-          "output": "Commands use `stim`. If it is not installed globally, replace `stim` with `npx stim-cli`.\n\nAGENT WORKFLOW\n\nUse Stim to run React Native and Expo apps without sharing a Metro port or\ndevice with another workspace. Prefer plain output: it streams each phase and\nends with the facts the next step needs. Use --json only when a script must\nparse a stable payload.\n\nNORMAL WORKFLOW\n\nWork in the current checkout by default. When the task needs another branch or\nan isolated environment, create a linked worktree with Git and warm its\nignored state. If a harness already created this linked worktree, run\nstim worktree warm here instead of creating another one. It copies missing\nignored paths from the main checkout, including eligible .env and local\nconfiguration files. It preserves the branch, tracked files, and every existing\ndestination entry; existing ignored directories are skipped whole, not filled in.\nRead guide lifecycle options for exclusions and incomplete-copy remedies.\n\nWait for warm to exit successfully (exit code 0) before running stim start,\nstim ios, stim android, or a dependency install in that worktree. If the shell\ntool returns a running session or job ID, poll or wait for that job to finish;\nthe ID is not completion. Do not install dependencies while warm is copying.\nIf warm fails or reports incomplete, resolve the reported failure first.\n\nBefore native worktree work, run doctor for the platform in scope. It checks\nthe main checkout from a linked worktree. Fix relevant findings and inspect the\nupstream gap. It also prints the running CLI version and the stim installation\nresolved from PATH. If that resolved installation is older than another one,\nfix PATH or the installation before continuing so commands and guidance match.\nDoctor reports cross-volume staging and build-cache copies; read guide settings\nfor placement overrides and guide lifecycle options for warm behavior.\n\n  stim doctor --platform ios          # or: --platform android\n\nFor stale Android CMake launcher findings, stop native builds and run\nstim doctor --fix --platform android in the affected checkout before warming\nmore worktrees. It removes affected ignored, untracked generated .cxx\nconfigurations, including installed native modules; the next build recreates\nthem. It preserves source, custom launcher settings, and the shared ccache.\n\n  # Skip Git creation if the harness already created this linked worktree.\n  git worktree add -b <branch> <worktree-path> HEAD\n  cd <worktree-path>\n  stim worktree warm\n\n  stim start\n  stim ios                             # or: stim android\n\n  # Reproduce the affected behavior and capture the baseline errors.\n  stim logs --errors\n\n  # Edit JavaScript or TypeScript; Fast Refresh applies the change.\n  # For UI work, wait for the expected UI and repeat the affected interaction\n  # on the reported device. Keep using the existing automation session, if any.\n  stim logs --errors\n  # Retain proof before cleanup: a screenshot, recording, or relevant runtime output.\n\n  stim stop\n  stim worktree remove\n\nRULES DURING THE LOOP\n\n- Run Stim from the app directory: the one whose package.json depends on\n  react-native or expo. Anywhere else -- a monorepo root, a tools package --\n  start, ios and android refuse with STIM_NO_PROJECT naming that package.json,\n  and doctor reports it as a finding.\n- Run start before a debug ios or android build. If it returns STIM_NO_METRO,\n  run stim start and retry.\n- Run ios or android again after a native input changes. A JavaScript-only\n  change does not need one.\n- Reload is not part of the normal workflow. Use stim reload on an owned local\n  simulator or emulator after a failed first bundle load, when an error screen\n  remains after the fix, or when you explicitly need an app restart. For a\n  physical device that reached Metro, use agent-device metro reload with the\n  reported port. The detected iOS Local Network first-load remedy uses UI\n  automation instead because that app never established a Metro connection.\n- A successful stim reload confirms that the request was sent, not that new\n  JavaScript loaded or the screen recovered. Verify the expected UI on the\n  reported device and inspect stim logs --errors before claiming recovery.\n- If launch reports an app error but also says the native process is alive,\n  the app did not crash. Fix JavaScript or TypeScript and use Fast Refresh. If\n  the error screen remains, follow the printed reload remedy instead of\n  running ios or android again. If launch says FATAL because the app process exited,\n  fix the crash and run the platform command again; Metro cannot restart it.\n- A native build can outlive a shell timeout. Retry the same command and\n  follow its printed remedy if waiting times out. See guide lifecycle concurrency.\n- ios and android install the app, launch it, and check readiness. Trust the\n  exact device, app, Metro, and launch facts in the final summary. Use the full\n  reported device ID. Never assume a simulator named booted belongs to this\n  workspace.\n- After each ios or android run, give the user one compact result: exact device,\n  app id, launch state, cache result, total duration, and whether stim logs\n  --errors passed. Include a remedy only when action remains. Do not repeat the\n  phase transcript.\n- An OK summary with no launch qualifier proves the launch. \"bundle requested,\n  still building\" means Metro has not finished; wait and query the logs. For\n  launch UNVERIFIED, follow the printed remedy before claiming success. JSON\n  reports these as true, \"bundling\", and \"unverified\" in launched.\n- A clean logs --errors check requires exit code 0 AND no matching errors in\n  captured logs. Exit code 0 alone means the query succeeded, even when errors\n  were printed. Human output shows \"No matching log records\" on stderr for\n  zero matches; JSON mode prints zero bytes. This does not prove launch or log\n  capture succeeded. Do not read the NDJSON files directly.\n- Use stim status when resuming a workspace or recovering missing device,\n  port, server, or build facts. A normal start and platform run already print\n  them. Use stim doctor when a build is unexpectedly slow or the environment\n  looks incomplete.\n\nOWNERSHIP AND DELETION\n\nStim creates, boots, and deletes only devices it created. Owned simulators use\nthe stim-<label> (<model> <runtime>) name. Never point Stim at a user-created\nemulator or simulator.\n\nworktree remove parks the workspace's simulator for later adoption. A parked\nsimulator is Stim-owned: never delete one by hand. gc --delete clears verified\nentries and keeps failures; see guide lifecycle pool. First launch on a\nphysical iPhone can need the one-time taps named by the remedy.\n\nstim android --device [serial] and stim ios --device [udid] install on a\nconnected physical device. Stim never creates, boots, shuts down, or deletes\nhardware. It records a temporary lease, not an owned-device registry entry.\n\nA --device run leases that device for the run. stim device lock ios --for 10m\nholds it across runs; stim device unlock gives it back. Never delete another\nworkspace's lease file under ~/.stim/device-locks; gc --delete removes expired\nones.\n\nstop and worktree remove release this workspace's leases. On a physical\niPhone, stop also closes the app by ending its log collector; it does not\nshut down the phone or uninstall the app.\n\nTreat a refusal as an ownership or state mismatch: read its code and remedy.\nNever reach for --force first.\nStim leaves externally started servers alone. Stop them with their original\ntool; neither a matching port nor --force grants process ownership.\n\nAsk the user before these actions:\n\n- worktree remove, because it deletes the worktree and gives up its owned\n  device. It works with any linked worktree, warmed or not, without requiring\n  a Stim registry entry. Git-created branches are kept; a branch with an\n  existing Stim ownership record is deleted only when it has no unique commits.\n- worktree remove --force, because it also discards uncommitted and untracked\n  files.\n- gc --delete, because it deletes orphaned resources. gc --delete --cache all\n  empties the shared build caches instead; it inspects nothing else.\n- stop when the workspace owns an EAS session, because it irreversibly ends\n  that remote session. For a local device, stop shuts it down but does not\n  delete it. An explicit stop shuts down a Stim-owned simulator even when\n  another process uses it. It never shuts down an unowned simulator.\n\nSANDBOXES\n\nAn agent harness that sandboxes shell commands usually permits writes inside\nthe project and little else. Stim also needs writes to STIM_HOME (~/.stim by\ndefault), simulator service access, and local access to the adb server. When\nthose sit outside the harness allowlist, the failure looks like an unwritable\ndirectory or unavailable device service rather than a broken machine. Decide\nat the start of a session whether to run Stim outside the sandbox or ask the\nuser to allow those operations. guide errors sandbox lists the exact\nrequirements.\n\nLOAD ADVANCED GUIDANCE WHEN NEEDED\n\n  stim guide                      # list topics\n  stim guide errors               # index of every refusal code and message\n  stim guide errors <CODE>        # one refusal, e.g. stim guide errors STIM_NO_METRO\n  stim guide errors sandbox       # running under a sandboxing harness\n  stim guide errors unverified    # launch unverified, and the Local Network reason\n  stim guide errors fallbacks     # swap, cache, and install notes on a release cache hit\n  stim guide lifecycle            # the ordered flow, consent rules, and capacity\n  stim guide lifecycle verification # reproduce, edit, verify the UI, and retain proof\n  stim guide lifecycle builds     # build optimizations, optional cache warm-up, fingerprints\n  stim guide lifecycle concurrency # shared builds, wait timeouts, capacity limits\n  stim guide lifecycle options    # every flag, Android variants, --device-type, --system-image\n  stim guide lifecycle devices    # ios --device and android --device on a physical phone\n  stim guide lifecycle release    # Release configurations and ...Release variants\n  stim guide facts                # the --json payloads\n  stim guide facts devmenu        # the Expo dev menu or Tools button over the app\n  stim guide metro                # supervisor, custom Metro, tunnels, and remote devices\n  stim guide logs                 # filters, record shape, and capture limits\n  stim guide cleanup              # what reclaims a device, and what deletes\n  stim guide cleanup collector    # an unproven collector pid; why the app on a phone closed\n  stim guide settings             # configuration files and supported keys\n\nA refusal prints a CODE such as STIM_NO_METRO. Run stim guide errors <CODE>\nwith the code exactly as printed and read only that section; every code in a\nshared header (STIM_BAD_ARG / STIM_NO_PROJECT) resolves to the same section. A\nrefusal with no code is quoted by message in stim guide errors. A topic with\nsections called bare prints its section index, so read the narrowest section\nbefore release configurations or Android variants; remote devices; custom\nMetro processes or tunnels; cache misses, bypasses, or concurrent builds;\ncapacity limits; cache statistics from stim stats; worktree carry-over;\nfingerprint exclusions; gc; --force; cleanup failures; or unfamiliar states\nand error codes. Ordinary stim stop and an authorized clean\nstim worktree remove do not need the cleanup guide.\n",
+          "startSeconds": 9.654,
+          "endSeconds": 96.617,
+          "command": "stim worktree warm",
+          "output": "  carry       copied .expo, android/.gradle, android/app/.cxx, +6 from worktree/launch-error-fixture-readiness-entry\n  carry       complete: 9 ignored entries copied, 0 kept, 0 failed\n",
           "exitCode": 0
         },
         {
-          "id": "item_5",
-          "startSeconds": 17.659,
-          "endSeconds": 126.953,
-          "command": "stim worktree warm",
-          "output": "  carry       copied .expo, android/.gradle, android/app/.cxx, +7 from worktree/launch-error-fixture-rc21\n  carry       complete: 10 ignored entries copied, 0 kept, 0 failed\n",
+          "id": "item_4",
+          "startSeconds": 99.321,
+          "endSeconds": 99.465,
+          "command": "stim guide agent",
+          "output": "Commands use `stim`. If it is not installed globally, replace `stim` with `npx stim-cli`.\n\nAGENT WORKFLOW\n\nUse Stim to run React Native and Expo apps without sharing a Metro port or\ndevice with another workspace. Prefer plain output: it streams each phase and\nends with the facts the next step needs. Use --json only when a script must\nparse a stable payload.\n\nNORMAL WORKFLOW\n\nWork in the current checkout by default. When the task needs another branch or\nan isolated environment, create a linked worktree with Git and warm its\nignored state. If a harness already created this linked worktree, run\nstim worktree warm here instead of creating another one. It copies missing\nignored paths from the main checkout, including eligible .env and local\nconfiguration files. It preserves the branch, tracked files, and every existing\ndestination entry; existing ignored directories are skipped whole, not filled in.\nRead guide lifecycle options for exclusions and incomplete-copy remedies.\n\nWait for warm to exit successfully (exit code 0) before running stim start,\nstim ios, stim android, or a dependency install in that worktree. If the shell\ntool returns a running session or job ID, poll or wait for that job to finish;\nthe ID is not completion. Do not install dependencies while warm is copying.\nIf warm fails or reports incomplete, resolve the reported failure first.\n\nBefore native worktree work, run doctor for the platform in scope. It checks\nthe main checkout from a linked worktree. Fix relevant findings and inspect the\nupstream gap. It also prints the running CLI version and the stim installation\nresolved from PATH. If that resolved installation is older than another one,\nfix PATH or the installation before continuing so commands and guidance match.\nDoctor reports cross-volume staging and build-cache copies; read guide settings\nfor placement overrides and guide lifecycle options for warm behavior.\n\n  stim doctor --platform ios          # or: --platform android\n\nFor stale Android CMake launcher findings, stop native builds and run\nstim doctor --fix --platform android in the affected checkout before warming\nmore worktrees. It removes affected ignored, untracked generated .cxx\nconfigurations, including installed native modules; the next build recreates\nthem. It preserves source, custom launcher settings, and the shared ccache.\n\n  # Skip Git creation if the harness already created this linked worktree.\n  git worktree add -b <branch> <worktree-path> HEAD\n  cd <worktree-path>\n  stim worktree warm\n\n  stim start\n  stim ios                             # or: stim android\n\n  # Reproduce the affected behavior and capture the baseline errors.\n  stim logs --errors\n\n  # Edit JavaScript or TypeScript; Fast Refresh applies the change.\n  # For UI work, wait for the expected UI and repeat the affected interaction\n  # on the reported device. Keep using the existing automation session, if any.\n  stim logs --errors\n  # Retain proof before cleanup: a screenshot, recording, or relevant runtime output.\n\n  stim stop\n  stim worktree remove\n\nRULES DURING THE LOOP\n\n- Run Stim from the app directory: the one whose package.json depends on\n  react-native or expo. Anywhere else -- a monorepo root, a tools package --\n  start, ios and android refuse with STIM_NO_PROJECT naming that package.json,\n  and doctor reports it as a finding.\n- Run start before a debug ios or android build. If it returns STIM_NO_METRO,\n  run stim start and retry.\n- Run ios or android again after a native input changes. A JavaScript-only\n  change does not need one.\n- Reload is not part of the normal workflow. Use stim reload on an owned local\n  simulator or emulator after a failed first bundle load, when an error screen\n  remains after the fix, or when you explicitly need an app restart. For a\n  physical device that reached Metro, use agent-device metro reload with the\n  reported port. The detected iOS Local Network first-load remedy uses UI\n  automation instead because that app never established a Metro connection.\n- A successful stim reload confirms that the request was sent, not that new\n  JavaScript loaded or the screen recovered. Verify the expected UI on the\n  reported device and inspect stim logs --errors before claiming recovery.\n- If launch reports an app error but also says the native process is alive,\n  the app did not crash. Fix JavaScript or TypeScript and use Fast Refresh. If\n  the error screen remains, follow the printed reload remedy instead of\n  running ios or android again. If launch says FATAL because the app process exited,\n  fix the crash and run the platform command again; Metro cannot restart it.\n- A native build can outlive a shell timeout. Retry the same command and\n  follow its printed remedy if waiting times out. See guide lifecycle concurrency.\n- ios and android install the app, launch it, and check readiness. Trust the\n  exact device, app, Metro, and launch facts in the final summary. Use the full\n  reported device ID. Never assume a simulator named booted belongs to this\n  workspace.\n- After each ios or android run, give the user one compact result: exact device,\n  app id, launch state, cache result, total duration, and whether stim logs\n  --errors passed. Include a remedy only when action remains. Do not repeat the\n  phase transcript.\n- An OK summary with no launch qualifier proves the launch. \"bundle requested,\n  still building\" means Metro has not finished; wait and query the logs. For\n  launch UNVERIFIED, follow the printed remedy before claiming success. JSON\n  reports these as true, \"bundling\", and \"unverified\" in launched.\n- A clean logs --errors check requires exit code 0 AND no matching errors in\n  captured logs. Exit code 0 alone means the query succeeded, even when errors\n  were printed. Human output shows \"No matching log records\" on stderr for\n  zero matches; JSON mode prints zero bytes. This does not prove launch or log\n  capture succeeded. Do not read the NDJSON files directly.\n- Use stim status when resuming a workspace or recovering missing device,\n  port, server, or build facts. A normal start and platform run already print\n  them. Use stim doctor when a build is unexpectedly slow or the environment\n  looks incomplete.\n\nOWNERSHIP AND DELETION\n\nStim creates, boots, and deletes only devices it created. Owned simulators use\nthe stim-<label> (<model> <runtime>) name. Never point Stim at a user-created\nemulator or simulator.\n\nworktree remove parks the workspace's simulator for later adoption. A parked\nsimulator is Stim-owned: never delete one by hand. gc --delete clears verified\nentries and keeps failures; see guide lifecycle pool. First launch on a\nphysical iPhone can need the one-time taps named by the remedy.\n\nstim android --device [serial] and stim ios --device [udid] install on a\nconnected physical device. Stim never creates, boots, shuts down, or deletes\nhardware. It records a temporary lease, not an owned-device registry entry.\n\nA --device run leases that device for the run. stim device lock ios --for 10m\nholds it across runs; stim device unlock gives it back. Never delete another\nworkspace's lease file under ~/.stim/device-locks; gc --delete removes expired\nones.\n\nstop and worktree remove release this workspace's leases. On a physical\niPhone, stop also closes the app by ending its log collector; it does not\nshut down the phone or uninstall the app.\n\nTreat a refusal as an ownership or state mismatch: read its code and remedy.\nNever reach for --force first.\nStim leaves externally started servers alone. Stop them with their original\ntool; neither a matching port nor --force grants process ownership.\n\nAsk the user before these actions:\n\n- worktree remove, because it deletes the worktree and gives up its owned\n  device. It works with any linked worktree, warmed or not, without requiring\n  a Stim registry entry. Git-created branches are kept; a branch with an\n  existing Stim ownership record is deleted only when it has no unique commits.\n- worktree remove --force, because it also discards uncommitted and untracked\n  files.\n- gc --delete, because it deletes orphaned resources. gc --delete --cache all\n  empties the shared build caches instead; it inspects nothing else.\n- stop when the workspace owns an EAS session, because it irreversibly ends\n  that remote session. For a local device, stop shuts it down but does not\n  delete it. An explicit stop shuts down a Stim-owned simulator even when\n  another process uses it. It never shuts down an unowned simulator.\n\nSANDBOXES\n\nAn agent harness that sandboxes shell commands usually permits writes inside\nthe project and little else. Stim also needs writes to STIM_HOME (~/.stim by\ndefault), simulator service access, and local access to the adb server. When\nthose sit outside the harness allowlist, the failure looks like an unwritable\ndirectory or unavailable device service rather than a broken machine. Decide\nat the start of a session whether to run Stim outside the sandbox or ask the\nuser to allow those operations. guide errors sandbox lists the exact\nrequirements.\n\nLOAD ADVANCED GUIDANCE WHEN NEEDED\n\n  stim guide                      # list topics\n  stim guide errors               # index of every refusal code and message\n  stim guide errors <CODE>        # one refusal, e.g. stim guide errors STIM_NO_METRO\n  stim guide errors sandbox       # running under a sandboxing harness\n  stim guide errors unverified    # launch unverified, and the Local Network reason\n  stim guide errors fallbacks     # swap, cache, and install notes on a release cache hit\n  stim guide lifecycle            # the ordered flow, consent rules, and capacity\n  stim guide lifecycle verification # reproduce, edit, verify the UI, and retain proof\n  stim guide lifecycle readiness  # add optional app readiness logs; no package required\n  stim guide lifecycle builds     # build optimizations, optional cache warm-up, fingerprints\n  stim guide lifecycle concurrency # shared builds, wait timeouts, capacity limits\n  stim guide lifecycle options    # every flag, Android variants, --device-type, --system-image\n  stim guide lifecycle devices    # ios --device and android --device on a physical phone\n  stim guide lifecycle release    # Release configurations and ...Release variants\n  stim guide facts                # the --json payloads\n  stim guide facts devmenu        # the Expo dev menu or Tools button over the app\n  stim guide metro                # supervisor, custom Metro, tunnels, and remote devices\n  stim guide logs                 # filters, record shape, and capture limits\n  stim guide cleanup              # what reclaims a device, and what deletes\n  stim guide cleanup collector    # an unproven collector pid; why the app on a phone closed\n  stim guide settings             # configuration files and supported keys\n\nA refusal prints a CODE such as STIM_NO_METRO. Run stim guide errors <CODE>\nwith the code exactly as printed and read only that section; every code in a\nshared header (STIM_BAD_ARG / STIM_NO_PROJECT) resolves to the same section. A\nrefusal with no code is quoted by message in stim guide errors. A topic with\nsections called bare prints its section index, so read the narrowest section\nbefore release configurations or Android variants; remote devices; custom\nMetro processes or tunnels; cache misses, bypasses, or concurrent builds;\ncapacity limits; cache statistics from stim stats; worktree carry-over;\nfingerprint exclusions; gc; --force; cleanup failures; or unfamiliar states\nand error codes. Ordinary stim stop and an authorized clean\nstim worktree remove do not need the cleanup guide.\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_6",
+          "startSeconds": 105.049,
+          "endSeconds": 107.859,
+          "command": "stim start",
+          "output": "OK: dev server on port 8082, supervisor pid 55163 (expo-child) (2.8s)\n  logs        results/sol-ios-readiness-entry-error/launch-crash-stim/stim-home/workspaces/bench-sol-ios-readiness-entry-error-gpt-5-6-sol---85f885b19ff73514/logs\n",
           "exitCode": 0
         },
         {
           "id": "item_7",
-          "startSeconds": 132.216,
-          "endSeconds": 135.077,
-          "command": "stim doctor --platform ios",
-          "output": "Doctor (iOS)\n  result      PASS\n  findings    0\n  version     1.0.0-rc.21\n  resolved    1.0.0-rc.21 at ./bin/stim\n  installs    1 distinct PATH install\n\nProject\n  project     main checkout, dependencies, local upstream\n  settings    every Stim setting type\n\niOS\n  setup       CocoaPods, warm state, dev client\n  caches      Metro, Xcode compilation, ccache, build provider\n  devices     remote device, SimSlim profile\n\nShared\n  services    EAS session\n  storage     temporary staging and build-cache volume placement\n  fingerprint parity when dependencies are absent\n\nHandled automatically\n  caches      Metro transform store, Xcode compilation cache\n  meaning     missing project cache settings are healthy\n",
+          "startSeconds": 110.989,
+          "endSeconds": 133.713,
+          "command": "stim ios",
+          "output": "  device      booting stim-bench-sol-ios-readiness-entry-error-gp (iPhone 17 26.5) (<simulator-udid>)\n  device      resetting privacy grants and the keychain on <simulator-udid>\n  fingerprint c6cfc3.. hit (8s)\n  device      stim-bench-sol-ios-readiness-entry-error-gp (iPhone 17 26.5) (<simulator-udid-prefix>) adopted (7.7s)\n  install     unchanged (stim-bench-sol-ios-readiness-entry-error-gp (iPhone 17 26.5) already has this build) (795ms)\n  install     dev client prepared (2.9s)\n  launch      com.appandflow.trailhead (1.1s)\n  readiness   waiting for app readiness (up to 30s after bundle load)\n  readiness   not confirmed: an app error or process exit interrupted the readiness wait\n  verify      bundle loaded, process alive (8.3s total)\n  launch      3 error-level records in the device log during launch (logs --errors --source device)\n  launch       ERROR  [Error: STIM_BENCH_LAUNCH_CRASH_9EAE450B59F8]\n  launch      { [Error: STIM_BENCH_LAUNCH_CRASH_9EAE450B59F8]\n  componentStack: '\\n    at RootLayout(./_layout.tsx) (http://localhost:8082/index.bundle//&platform=ios&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.bytecode=1&transform.routerRoot=app&transform.reactCompiler=true&unstable_transformProfile=hermes-stable:312211:20)\\n    at WrappedScreenComponent (http://localhost:8082/index.bundle//&platform=ios&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.bytecode=1&transform.routerRoot=app&transform.reactCompiler=true&unstable_transformProfile=hermes-stable:112085:48)\\n    at Suspense (<anonymous>)\\n    at ZoomTransitionTargetContextProvider (http://localhost:8082/index.bundle//&platform=ios&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.bytecode=1&transform.routerRoot=app&transform.reactCompiler=true&unstable_transformProfile=hermes-stable:112927:3)\\n    at Route (http://localhost:8082/index.bundle//&platform=ios&dev=true&hot=false&lazy=true&transform.engine=hermes&<…>\n  remedy      The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, run `stim reload ios`. Do not run `stim ios` unless native inputs changed or the app process exits.\nOK: com.appandflow.trailhead on stim-bench-sol-ios-readiness-entry-error-gp (iPhone 17 26.5) (<simulator-udid-prefix>), Metro port 8082 (from cache, 22.6s)\n  device      stim-bench-sol-ios-readiness-entry-error-gp (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       from cache\n  compilation cache not run; artifact cache supplied the app\n  logs        results/sol-ios-readiness-entry-error/launch-crash-stim/stim-home/workspaces/bench-sol-ios-readiness-entry-error-gpt-5-6-sol---85f885b19ff73514/logs\n",
           "exitCode": 0
         },
         {
-          "id": "item_9",
-          "startSeconds": 140.703,
-          "endSeconds": 144.094,
-          "command": "stim start",
-          "output": "  metro       starting on port 8082 (expo-child, supervisor pid 84618)\nOK: dev server on port 8082, supervisor pid 84618 (expo-child) (3.3s)\n  logs        results/sol-ios-launch-error/launch-crash-stim/stim-home/workspaces/bench-sol-ios-launch-error-gpt-5-6-sol-launch-cr--1efed7d8caa8d439/logs\n",
+          "id": "item_8",
+          "startSeconds": 136.354,
+          "endSeconds": 136.516,
+          "command": "stim logs --errors",
+          "output": "21:38:44.671 error metro   ERROR  [Error: STIM_BENCH_LAUNCH_CRASH_9EAE450B59F8]\n    Code: _layout.tsx\n      25 |\n      26 | export default function RootLayout() {\n    > 27 |   throw new Error('STIM_BENCH_LAUNCH_CRASH_9EAE450B59F8');\n         |                  ^\n      28 |   const { name, colors } = useTheme();\n      29 |\n      30 |   useEffect(() => {\n    Call Stack\n      RootLayout (app/_layout.tsx:27:18)\n",
           "exitCode": 0
         },
         {
           "id": "item_10",
-          "startSeconds": 146.99,
-          "endSeconds": 175.721,
-          "command": "stim ios",
-          "output": "  device      booting stim-bench-sol-ios-launch-error-gpt-5-6-sol (iPhone 17 26.5) (<simulator-udid>)\n  device      resetting privacy grants and the keychain on <simulator-udid>\n  fingerprint 058f82.. hit (13.2s)\n  device      stim-bench-sol-ios-launch-error-gpt-5-6-sol (iPhone 17 26.5) (<simulator-udid-prefix>) adopted (12.5s)\n  install     unchanged (stim-bench-sol-ios-launch-error-gpt-5-6-sol (iPhone 17 26.5) already has this build) (815ms)\n  install     dev client prepared (1.3s)\n  launch      com.appandflow.trailhead (948ms)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (10.9s total)\nOK: com.appandflow.trailhead on stim-bench-sol-ios-launch-error-gpt-5-6-sol (iPhone 17 26.5) (<simulator-udid-prefix>), Metro port 8082 (from cache, 28.6s)\n  device      stim-bench-sol-ios-launch-error-gpt-5-6-sol (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       from cache\n  compilation cache not run; artifact cache supplied the app\n  logs        results/sol-ios-launch-error/launch-crash-stim/stim-home/workspaces/bench-sol-ios-launch-error-gpt-5-6-sol-launch-cr--1efed7d8caa8d439/logs\n",
+          "startSeconds": 140.961,
+          "endSeconds": 140.961,
+          "command": "git status --short && git diff -- app/_layout.tsx && sed -n '1,90p' app/_layout.tsx",
+          "output": "import { useEffect } from 'react';\nimport { Stack } from 'expo-router';\nimport { StatusBar } from 'expo-status-bar';\nimport { GestureHandlerRootView } from 'react-native-gesture-handler';\nimport { SafeAreaProvider } from 'react-native-safe-area-context';\nimport { QueryClient, QueryClientProvider } from '@tanstack/react-query';\nimport * as SplashScreen from 'expo-splash-screen';\n\nimport { initializeDatabase } from '@/src/db/client';\nimport { seedHikesIfEmpty } from '@/src/db/seed';\nimport { useTheme } from '@/src/theme';\n\nSplashScreen.preventAutoHideAsync().catch(() => {});\n\nconst queryClient = new QueryClient({\n  defaultOptions: { queries: { staleTime: 60_000, retry: 1 } },\n});\n\n// Both are synchronous and idempotent, and the schema has to exist before any\n// screen queries it. Doing this at module scope rather than in an effect means\n// the first render already has a usable database, with no loading state and no\n// setState-in-effect cascade.\ninitializeDatabase();\nseedHikesIfEmpty();\n\nexport default function RootLayout() {\n  throw new Error('STIM_BENCH_LAUNCH_CRASH_9EAE450B59F8');\n  const { name, colors } = useTheme();\n\n  useEffect(() => {\n    let active = true;\n    SplashScreen.hideAsync()\n      .then(() => {\n        if (active && __DEV__) console.info('[stim:readiness] ready');\n      })\n      .catch(console.error);\n    return () => {\n      active = false;\n    };\n  }, []);\n\n  return (\n    <GestureHandlerRootView style={{ flex: 1 }}>\n      <SafeAreaProvider>\n        <QueryClientProvider client={queryClient}>\n          <StatusBar style={name === 'dark' ? 'light' : 'dark'} />\n          <Stack\n            screenOptions={{\n              headerStyle: { backgroundColor: colors.surface },\n              headerTintColor: colors.text,\n              contentStyle: { backgroundColor: colors.background },\n            }}\n          >\n            <Stack.Screen name=\"(tabs)\" options={{ headerShown: false }} />\n            <Stack.Screen name=\"trail/[id]\" options={{ title: 'Trail' }} />\n            <Stack.Screen name=\"hike/[id]\" options={{ title: 'Hike' }} />\n            <Stack.Screen name=\"+not-found\" options={{ title: 'Not found' }} />\n          </Stack>\n        </QueryClientProvider>\n      </SafeAreaProvider>\n    </GestureHandlerRootView>\n  );\n}\n",
           "exitCode": 0
         },
         {
-          "id": "item_11",
-          "startSeconds": 177.986,
-          "endSeconds": 178.294,
+          "id": "item_12",
+          "startSeconds": 148.213,
+          "endSeconds": 148.344,
           "command": "stim logs --errors",
-          "output": "22:10:55.408 error metro   ERROR  [Error: STIM_BENCH_LAUNCH_CRASH_DD9D0FFF614B]\n    Code: _layout.tsx\n      25 |\n      26 | export default function RootLayout() {\n    > 27 |   throw new Error('STIM_BENCH_LAUNCH_CRASH_DD9D0FFF614B');\n         |                  ^\n      28 |   const { name, colors } = useTheme();\n      29 |\n      30 |   useEffect(() => {\n    Call Stack\n      RootLayout (app/_layout.tsx:27:18)\n",
+          "output": "21:38:44.671 error metro   ERROR  [Error: STIM_BENCH_LAUNCH_CRASH_9EAE450B59F8]\n    Code: _layout.tsx\n      25 |\n      26 | export default function RootLayout() {\n    > 27 |   throw new Error('STIM_BENCH_LAUNCH_CRASH_9EAE450B59F8');\n         |                  ^\n      28 |   const { name, colors } = useTheme();\n      29 |\n      30 |   useEffect(() => {\n    Call Stack\n      RootLayout (app/_layout.tsx:27:18)\n",
           "exitCode": 0
         },
         {
           "id": "item_13",
-          "startSeconds": 184.358,
-          "endSeconds": 184.358,
-          "command": "sed -n '1,100p' app/_layout.tsx",
-          "output": "import { useEffect } from 'react';\nimport { Stack } from 'expo-router';\nimport { StatusBar } from 'expo-status-bar';\nimport { GestureHandlerRootView } from 'react-native-gesture-handler';\nimport { SafeAreaProvider } from 'react-native-safe-area-context';\nimport { QueryClient, QueryClientProvider } from '@tanstack/react-query';\nimport * as SplashScreen from 'expo-splash-screen';\n\nimport { initializeDatabase } from '@/src/db/client';\nimport { seedHikesIfEmpty } from '@/src/db/seed';\nimport { useTheme } from '@/src/theme';\n\nSplashScreen.preventAutoHideAsync().catch(() => {});\n\nconst queryClient = new QueryClient({\n  defaultOptions: { queries: { staleTime: 60_000, retry: 1 } },\n});\n\n// Both are synchronous and idempotent, and the schema has to exist before any\n// screen queries it. Doing this at module scope rather than in an effect means\n// the first render already has a usable database, with no loading state and no\n// setState-in-effect cascade.\ninitializeDatabase();\nseedHikesIfEmpty();\n\nexport default function RootLayout() {\n  throw new Error('STIM_BENCH_LAUNCH_CRASH_DD9D0FFF614B');\n  const { name, colors } = useTheme();\n\n  useEffect(() => {\n    SplashScreen.hideAsync().catch(() => {});\n  }, []);\n\n  return (\n    <GestureHandlerRootView style={{ flex: 1 }}>\n      <SafeAreaProvider>\n        <QueryClientProvider client={queryClient}>\n          <StatusBar style={name === 'dark' ? 'light' : 'dark'} />\n          <Stack\n            screenOptions={{\n              headerStyle: { backgroundColor: colors.surface },\n              headerTintColor: colors.text,\n              contentStyle: { backgroundColor: colors.background },\n            }}\n          >\n            <Stack.Screen name=\"(tabs)\" options={{ headerShown: false }} />\n            <Stack.Screen name=\"trail/[id]\" options={{ title: 'Trail' }} />\n            <Stack.Screen name=\"hike/[id]\" options={{ title: 'Hike' }} />\n            <Stack.Screen name=\"+not-found\" options={{ title: 'Not found' }} />\n          </Stack>\n        </QueryClientProvider>\n      </SafeAreaProvider>\n    </GestureHandlerRootView>\n  );\n}\n",
+          "startSeconds": 154.676,
+          "endSeconds": 155.544,
+          "command": "stim reload ios",
+          "output": "Reload requested for com.appandflow.trailhead on stim-bench-sol-ios-readiness-entry-error-gp (iPhone 17 26.5) (<simulator-udid>) via deep-link; ios Metro port 8082. Completion is not observed; verify the expected UI and run stim logs --errors.\n",
           "exitCode": 0
         },
         {
-          "id": "item_14",
-          "startSeconds": 184.469,
-          "endSeconds": 184.469,
-          "command": "git status --short && git diff -- app/_layout.tsx",
-          "output": "",
-          "exitCode": 0
-        },
-        {
-          "id": "item_16",
-          "startSeconds": 195.485,
-          "endSeconds": 195.648,
-          "command": "stim logs --errors",
-          "output": "22:10:55.408 error metro   ERROR  [Error: STIM_BENCH_LAUNCH_CRASH_DD9D0FFF614B]\n    Code: _layout.tsx\n      25 |\n      26 | export default function RootLayout() {\n    > 27 |   throw new Error('STIM_BENCH_LAUNCH_CRASH_DD9D0FFF614B');\n         |                  ^\n      28 |   const { name, colors } = useTheme();\n      29 |\n      30 |   useEffect(() => {\n    Call Stack\n      RootLayout (app/_layout.tsx:27:18)\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_18",
-          "startSeconds": 201.456,
-          "endSeconds": 213.057,
+          "id": "item_15",
+          "startSeconds": 163.369,
+          "endSeconds": 174.866,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
-          "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/launch-crash-stim\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 2 nodes\n@e1 [application] \"Trailhead\"\n@e2 [image] \"SplashScreenLogo\"\n",
+          "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/launch-crash-stim\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 32 visible nodes\n@e1 [application] \"Trailhead\"\n@e2 [other] \"\"\n@e3 [other] \"Trails\"\n@e4 [text-field] \"Search trails\" [editable]\n@e5 [scroll-area] \"All regions\" [scrollable]\n  [content below scroll-area hidden]\n@e6 [other] \"All regions\"\n@e7 [button] \"All regions\" [selected]\n@e8 [button] \"Adirondacks\"\n@e9 [button] \"Bas-Saint-Laurent\"\n@e10 [button] \"Charlevoix\"\n@e11 [scroll-area] \"Any level\" [scrollable]\n  [content below scroll-area hidden]\n@e12 [other] \"Any level\"\n@e13 [button] \"Any level\" [selected]\n@e14 [button] \"Easy\"\n@e15 [button] \"Moderate\"\n@e16 [button] \"Hard\"\n@e17 [button] \"Expert\"\n@e18 [text] \"200 trails\"\n@e19 [button] \"Sort by name\" [selected]\n@e20 [button] \"Sort by distance\"\n@e21 [button] \"Sort by rating\"\n@e22 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\" [scrollable]\n  [content below scroll-area hidden]\n@e23 [other] [same label as parent]\n@e24 [button] [same label as parent]\n@e25 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e26 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n@e27 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n@e28 [other] \"Trails, tab, 1 of 4\"\n@e29 [button] \"Trails, tab, 1 of 4\" [selected]\n@e30 [button] \"Record, tab, 2 of 4\"\n@e31 [button] \"History, tab, 3 of 4\"\n@e32 [button] \"Settings, tab, 4 of 4\"\n",
           "exitCode": 0,
           "presentation": {
             "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
@@ -212,9 +189,9 @@
           }
         },
         {
-          "id": "item_19",
-          "startSeconds": 217.535,
-          "endSeconds": 218.625,
+          "id": "item_16",
+          "startSeconds": 179.903,
+          "endSeconds": 182.189,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device record start tmp/launch-crash-stim-session.mp4 --scope device --quality high --hide-touches",
           "output": "tmp/launch-crash-stim-session.mp4\nSession state: ./state/agent-device/sessions/launch-crash-stim\n",
           "exitCode": 0,
@@ -224,55 +201,11 @@
           }
         },
         {
-          "id": "item_20",
-          "startSeconds": 226.196,
-          "endSeconds": 236.326,
-          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device wait text \"Trails\"",
-          "output": "Error (COMMAND_FAILED): wait timed out for text: Trails. Current surface: Trailhead, SplashScreenLogo.\nHint: Retry with --debug and inspect diagnostics log for details.\nDiagnostic ID: mts1a7l0-c7645bdc\nDiagnostics Log: ./state/agent-device/sessions/launch-crash-stim/requests/3671f29a64b06068.ndjson\n",
-          "exitCode": 1,
-          "presentation": {
-            "command": "agent-device wait text \"Trails\"",
-            "isolatedAgentDevice": true
-          }
-        },
-        {
-          "id": "item_22",
-          "startSeconds": 239.76,
-          "endSeconds": 240.678,
-          "command": "stim reload",
-          "output": "Reload requested for com.appandflow.trailhead on stim-bench-sol-ios-launch-error-gpt-5-6-sol (iPhone 17 26.5) (<simulator-udid>) via deep-link; ios Metro port 8082. Completion is not observed; verify the expected UI and run stim logs --errors.\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_23",
-          "startSeconds": 244.67,
-          "endSeconds": 244.798,
-          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device wait text \"Trails\"",
-          "output": "",
-          "exitCode": 0,
-          "presentation": {
-            "command": "agent-device wait text \"Trails\"",
-            "isolatedAgentDevice": true
-          }
-        },
-        {
-          "id": "item_24",
-          "startSeconds": 249.77,
-          "endSeconds": 249.92,
-          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device snapshot -i",
-          "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 32 visible nodes\n@e1 [application] \"Trailhead\"\n@e2 [other] \"\"\n@e3 [other] \"Trails\"\n@e4 [text-field] \"Search trails\" [editable]\n@e5 [scroll-area] \"All regions\" [scrollable]\n  [content below scroll-area hidden]\n@e6 [other] \"All regions\"\n@e7 [button] \"All regions\" [selected]\n@e8 [button] \"Adirondacks\"\n@e9 [button] \"Bas-Saint-Laurent\"\n@e10 [button] \"Charlevoix\"\n@e11 [scroll-area] \"Any level\" [scrollable]\n  [content below scroll-area hidden]\n@e12 [other] \"Any level\"\n@e13 [button] \"Any level\" [selected]\n@e14 [button] \"Easy\"\n@e15 [button] \"Moderate\"\n@e16 [button] \"Hard\"\n@e17 [button] \"Expert\"\n@e18 [text] \"200 trails\"\n@e19 [button] \"Sort by name\" [selected]\n@e20 [button] \"Sort by distance\"\n@e21 [button] \"Sort by rating\"\n@e22 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\" [scrollable]\n  [content below scroll-area hidden]\n@e23 [other] [same label as parent]\n@e24 [button] [same label as parent]\n@e25 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e26 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n@e27 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n@e28 [other] \"Trails, tab, 1 of 4\"\n@e29 [button] \"Trails, tab, 1 of 4\" [selected]\n@e30 [button] \"Record, tab, 2 of 4\"\n@e31 [button] \"History, tab, 3 of 4\"\n@e32 [button] \"Settings, tab, 4 of 4\"\n",
-          "exitCode": 0,
-          "presentation": {
-            "command": "agent-device snapshot -i",
-            "isolatedAgentDevice": true
-          }
-        },
-        {
-          "id": "item_25",
-          "startSeconds": 254.684,
-          "endSeconds": 257.122,
+          "id": "item_17",
+          "startSeconds": 186.205,
+          "endSeconds": 189.072,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device click @e32 --settle",
-          "output": "Tapped @e32 (352, 816)\nsettled after 1727ms: +29 -28 (~4 unchanged)\n- @e2 [other] \"\"\n- @e3 [other] \"Trails\"\n- @e4 [text-field] \"Search trails\"\n- @e5 [scroll-area] \"All regions\"\n- @e6 [other] \"All regions\"\n- @e7 [button] \"All regions\"\n- @e8 [button] \"Adirondacks\"\n- @e9 [button] \"Bas-Saint-Laurent\"\n- @e10 [button] \"Charlevoix\"\n- @e11 [scroll-area] \"Any level\"\n- @e12 [other] \"Any level\"\n- @e13 [button] \"Any level\"\n- @e14 [button] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [button] \"Hard\"\n- @e17 [button] \"Expert\"\n- @e18 [text] \"200 trails\"\n- @e19 [button] \"Sort by name\"\n- @e20 [button] \"Sort by distance\"\n- @e21 [button] \"Sort by rating\"\n- @e22 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e23 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e24 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e25 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e26 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n- @e27 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n+ @e2~s142165 [other] \"Settings\"\n+ @e3~s142165 [scroll-area] \"UNITS\"\n+ @e4~s142165 [other] \"UNITS\"\n+ @e5~s142165 [cell] \"Distance\"\n+ @e6~s142165 [text] \"\"\n+ @e7~s142165 [button] \"Metric units\"\n+ @e8~s142165 [button] \"Imperial units\"\n+ @e9~s142165 [text] \"Used across the whole app\"\n+ @e10~s142165 [text] \"PREFERENCES\"\n+ @e11~s142165 [other] \"Hike reminders\"\n+ @e12~s142165 [switch] \"Hike reminders\"\n+ @e13~s142165 [text] \"\"\n+ @e14~s142165 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s142165 [text] \"Offline maps\"\n+ @e16~s142165 [switch] \"Offline maps\"\n+ @e17~s142165 [text] \"\"\n+ @e18~s142165 [text] \"Keep map tiles for saved trails on device\"\n+ @e19~s142165 [text] \"STORAGE\"\n+ @e20~s142165 [cell] \"Recorded hikes\"\n+ @e21~s142165 [text] \"\"\n+ @e22~s142165 [text] \"48\"\n+ @e23~s142165 [text] \"Stored in a local database\"\n+ @e24~s142165 [button] \"Reset sample data\"\n+ @e25~s142165 [text] \"ABOUT\"\n+ @e26~s142165 [cell] \"\"\n+ @e27~s142165 [text] \"Version\"\n+ @e28~s142165 [text] \"1.0.0\"\n- @e29 [button] \"Trails, tab, 1 of 4\"\n+ @e30~s142165 [button] \"Trails, tab, 1 of 4\"\n- @e32 [button] \"Settings, tab, 4 of 4\"\n+ @e33~s142165 [button] \"Settings, tab, 4 of 4\"\n",
+          "output": "Tapped @e32 (352, 816)\nsettled after 2247ms: +32 -32 (~0 unchanged)\n- @e1 [application] \"Trailhead\"\n- @e2 [other] \"\"\n- @e3 [other] \"Trails\"\n- @e4 [text-field] \"Search trails\"\n- @e5 [scroll-area] \"All regions\"\n- @e6 [other] \"All regions\"\n- @e7 [button] \"All regions\"\n- @e8 [button] \"Adirondacks\"\n- @e9 [button] \"Bas-Saint-Laurent\"\n- @e10 [button] \"Charlevoix\"\n- @e11 [scroll-area] \"Any level\"\n- @e12 [other] \"Any level\"\n- @e13 [button] \"Any level\"\n- @e14 [button] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [button] \"Hard\"\n- @e17 [button] \"Expert\"\n- @e18 [text] \"200 trails\"\n- @e19 [button] \"Sort by name\"\n- @e20 [button] \"Sort by distance\"\n- @e21 [button] \"Sort by rating\"\n- @e22 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e23 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e24 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e25 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e26 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n- @e27 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n- @e28 [other] \"Trails, tab, 1 of 4\"\n- @e29 [button] \"Trails, tab, 1 of 4\"\n- @e30 [button] \"Record, tab, 2 of 4\"\n- @e31 [button] \"History, tab, 3 of 4\"\n- @e32 [button] \"Settings, tab, 4 of 4\"\n+ @e1~s563456 [application] \"Trailhead\"\n+ @e2~s563456 [text] \"Settings\"\n+ @e3~s563456 [scroll-area]\n+ @e4~s563456 [text] \"UNITS\"\n+ @e5~s563456 [text] \"Distance\"\n+ @e6~s563456 [text] \"\"\n+ @e7~s563456 [button] \"Metric units\"\n+ @e8~s563456 [button] \"Imperial units\"\n+ @e9~s563456 [text] \"Used across the whole app\"\n+ @e10~s563456 [text] \"PREFERENCES\"\n+ @e11~s563456 [text] \"Hike reminders\"\n+ @e12~s563456 [switch] \"Hike reminders\"\n+ @e13~s563456 [text] \"\"\n+ @e14~s563456 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s563456 [text] \"Offline maps\"\n+ @e16~s563456 [switch] \"Offline maps\"\n+ @e17~s563456 [text] \"\"\n+ @e18~s563456 [text] \"Keep map tiles for saved trails on device\"\n+ @e19~s563456 [text] \"STORAGE\"\n+ @e20~s563456 [text] \"Recorded hikes\"\n+ @e21~s563456 [text] \"\"\n+ @e22~s563456 [text] \"48\"\n+ @e23~s563456 [text] \"Stored in a local database\"\n+ @e24~s563456 [button] \"Reset sample data\"\n+ @e25~s563456 [text] \"ABOUT\"\n+ @e26~s563456 [text] \"\"\n+ @e27~s563456 [text] \"Version\"\n+ @e28~s563456 [text] \"1.0.0\"\n+ @e29~s563456 [button] \"Trails, tab, 1 of 4\"\n+ @e30~s563456 [button] \"Record, tab, 2 of 4\"\n+ @e31~s563456 [button] \"History, tab, 3 of 4\"\n+ @e32~s563456 [button] \"Settings, tab, 4 of 4\"\n",
           "exitCode": 0,
           "presentation": {
             "command": "agent-device click @e32 --settle",
@@ -280,9 +213,9 @@
           }
         },
         {
-          "id": "item_26",
-          "startSeconds": 265.07,
-          "endSeconds": 265.208,
+          "id": "item_18",
+          "startSeconds": 193.052,
+          "endSeconds": 193.052,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device wait text \"Keep map tiles for saved trails on device\"",
           "output": "",
           "exitCode": 0,
@@ -292,9 +225,9 @@
           }
         },
         {
-          "id": "item_28",
-          "startSeconds": 271.976,
-          "endSeconds": 272.359,
+          "id": "item_19",
+          "startSeconds": 197.488,
+          "endSeconds": 197.881,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device screenshot tmp/launch-crash-stim-settings.png",
           "output": "tmp/launch-crash-stim-settings.png (402x874 @1x)\n",
           "exitCode": 0,
@@ -304,17 +237,17 @@
           }
         },
         {
-          "id": "item_29",
-          "startSeconds": 277.408,
-          "endSeconds": 277.408,
-          "command": "cp tmp/launch-crash-stim-settings.png results/sol-ios-launch-error/launch-crash-stim/proof/settings.png",
+          "id": "item_20",
+          "startSeconds": 202.117,
+          "endSeconds": 202.117,
+          "command": "cp tmp/launch-crash-stim-settings.png results/sol-ios-readiness-entry-error/launch-crash-stim/proof/settings.png",
           "output": "",
           "exitCode": 0
         },
         {
-          "id": "item_30",
-          "startSeconds": 282.626,
-          "endSeconds": 283.571,
+          "id": "item_21",
+          "startSeconds": 205.677,
+          "endSeconds": 206.614,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device record stop",
           "output": "tmp/launch-crash-stim-session.mp4\n",
           "exitCode": 0,
@@ -324,17 +257,17 @@
           }
         },
         {
-          "id": "item_31",
-          "startSeconds": 286.6,
-          "endSeconds": 286.6,
-          "command": "cp tmp/launch-crash-stim-session.mp4 results/sol-ios-launch-error/launch-crash-stim/proof/session.mp4",
+          "id": "item_22",
+          "startSeconds": 210.81,
+          "endSeconds": 210.81,
+          "command": "cp tmp/launch-crash-stim-session.mp4 results/sol-ios-readiness-entry-error/launch-crash-stim/proof/session.mp4",
           "output": "",
           "exitCode": 0
         },
         {
-          "id": "item_32",
-          "startSeconds": 291.846,
-          "endSeconds": 291.846,
+          "id": "item_23",
+          "startSeconds": 214.705,
+          "endSeconds": 214.809,
           "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device close",
           "output": "Closed: launch-crash-stim\n",
           "exitCode": 0,
@@ -344,35 +277,11 @@
           }
         },
         {
-          "id": "item_33",
-          "startSeconds": 308.009,
-          "endSeconds": 308.009,
-          "command": "stat -f '%N %z bytes' results/sol-ios-launch-error/launch-crash-stim/proof/settings.png results/sol-ios-launch-error/launch-crash-stim/proof/session.mp4",
-          "output": "results/sol-ios-launch-error/launch-crash-stim/proof/settings.png 69852 bytes\nresults/sol-ios-launch-error/launch-crash-stim/proof/session.mp4 659749 bytes\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_34",
-          "startSeconds": 308.031,
-          "endSeconds": 308.031,
-          "command": "git diff -- app/_layout.tsx",
-          "output": "diff --git a/app/_layout.tsx b/app/_layout.tsx\nindex e2f6241..456c461 100644\n--- a/app/_layout.tsx\n+++ b/app/_layout.tsx\n@@ -24,7 +24,6 @@ initializeDatabase();\n seedHikesIfEmpty();\n \n export default function RootLayout() {\n-  throw new Error('STIM_BENCH_LAUNCH_CRASH_DD9D0FFF614B');\n   const { name, colors } = useTheme();\n \n   useEffect(() => {\n",
-          "exitCode": 0
-        },
-        {
-          "id": "item_35",
-          "startSeconds": 308.031,
-          "endSeconds": 308.031,
-          "command": "git diff --check",
-          "output": "",
-          "exitCode": 0
-        },
-        {
-          "id": "item_36",
-          "startSeconds": 308.126,
-          "endSeconds": 308.486,
-          "command": "stim status",
-          "output": "\n* bench-launch-crash-stim (./worktrees/bench-launch-crash-stim)\n  app: com.appandflow.trailhead (expo)\n  metro: port 8082 running (pid 84632)\n  supervisor: pid 84618 (expo-child) healthy\n  logs: results/sol-ios-launch-error/launch-crash-stim/stim-home/workspaces/bench-sol-ios-launch-error-gpt-5-6-sol-launch-cr--1efed7d8caa8d439/logs\n  ios: stim-bench-sol-ios-launch-error-gpt-5-6-sol (iPhone 17 26.5) booted (owned)\n\nWorktrees with no environment (1):\n  ./worktrees/fixture-launch-crash-stim [worktree-fixture/launch-crash-stim]\n\n1 live environment(s), roughly 2.1 GB of 16.0 GB committed.\n39 GB free on /, 1.2 TB free on workspace/ExternalSSD.\n",
+          "id": "item_25",
+          "startSeconds": 228.389,
+          "endSeconds": 228.389,
+          "command": "git diff --check && git diff -- app/_layout.tsx && stat -f '%N %z bytes' results/sol-ios-readiness-entry-error/launch-crash-stim/proof/settings.png results/sol-ios-readiness-entry-error/launch-crash-stim/proof/session.mp4",
+          "output": "diff --git a/app/_layout.tsx b/app/_layout.tsx\nindex cf30f83..c9d63e6 100644\n--- a/app/_layout.tsx\n+++ b/app/_layout.tsx\n@@ -24,7 +24,6 @@ initializeDatabase();\n seedHikesIfEmpty();\n \n export default function RootLayout() {\n-  throw new Error('STIM_BENCH_LAUNCH_CRASH_9EAE450B59F8');\n   const { name, colors } = useTheme();\n \n   useEffect(() => {\nresults/sol-ios-readiness-entry-error/launch-crash-stim/proof/settings.png 70131 bytes\nresults/sol-ios-readiness-entry-error/launch-crash-stim/proof/session.mp4 119183 bytes\n",
           "exitCode": 0
         }
       ],
@@ -382,42 +291,44 @@
           "id": "app-alive",
           "kind": "appAlive",
           "label": "App process alive",
-          "atSeconds": 164.837
+          "atSeconds": 125.498
         },
         {
           "id": "diagnosis",
           "kind": "diagnosis",
           "label": "Actionable diagnosis",
-          "atSeconds": 178.294
+          "atSeconds": 136.516
         },
         {
           "id": "settings-ready",
           "kind": "settingsReady",
           "label": "Settings proof ready",
-          "atSeconds": 272.359
+          "atSeconds": 197.881
         }
       ],
       "proof": {
-        "src": "benchmarks/sol-ios-launch-error/launch-crash-stim.png",
+        "src": "benchmarks/sol-ios-readiness-entry-error/launch-crash-stim.png",
         "expected": "Keep map tiles for saved trails on device",
         "width": 402,
         "height": 874
       },
       "recording": {
-        "src": "benchmarks/sol-ios-launch-error/launch-crash-stim.mp4",
-        "bytes": 659749
+        "src": "benchmarks/sol-ios-readiness-entry-error/launch-crash-stim.mp4",
+        "bytes": 119183
       },
       "timingOrigin": {
         "kind": "first-recorded-activity",
-        "dispatchOffsetSeconds": 4.871,
+        "dispatchOffsetSeconds": 5.924,
         "event": {
           "kind": "message",
           "id": "item_0"
         },
-        "dispatchSettingsReadySeconds": 277.23,
-        "dispatchDiagnosisSeconds": 183.165,
-        "dispatchTotalSeconds": 325.306
-      }
+        "dispatchSettingsReadySeconds": 203.805,
+        "dispatchDiagnosisSeconds": 142.44,
+        "dispatchTotalSeconds": 246.06
+      },
+      "recordedOn": "2026-09-09",
+      "appReadinessLogs": true
     },
     {
       "id": "launch-crash-control",
@@ -918,8 +829,10 @@
         "dispatchSettingsReadySeconds": 719.414,
         "dispatchDiagnosisSeconds": 570.337,
         "dispatchTotalSeconds": 773.082
-      }
+      },
+      "recordedOn": "2026-09-08",
+      "appReadinessLogs": false
     }
   ],
-  "stageAliases": ["sol-launch-crash"]
+  "stageAliases": ["sol-launch-crash", "sol-ios-readiness-entry-error"]
 }

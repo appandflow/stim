@@ -297,6 +297,11 @@ entry or choose whichever attempt is faster. Keep previous raw campaign
 records privately and use `stageAliases` to resolve old shared links to the
 current canonical benchmark. The replaced arm carries its full timeline,
 usage, cost, proof, recording, and per-run `recordedOn` date.
+The exporter selects the newest validated dispatch for each arm and variant
+within a stage, keeps stable run IDs, and removes superseded public proof
+files. A stage contains one model and platform; mixed stages refuse export.
+When a rerun uses a different stage, replace its arm in the canonical
+comparison rather than adding the new stage to the catalog.
 
 Launch-error Stim reruns emit optional early pending and post-splash ready
 logs. Existing control runs without this integration can remain: record

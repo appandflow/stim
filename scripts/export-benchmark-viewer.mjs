@@ -1181,7 +1181,7 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
     .toSorted()
     .map((name) => join(absoluteStageDir, name))
     .filter((runDir) => existsSync(join(runDir, 'run.json')) && existsSync(join(runDir, 'meta.json')));
-  const records = runDirs
+  const validRecords = runDirs
     .map((runDir) => {
       const meta = readJson(join(runDir, 'meta.json'));
       const record = publicationRecord(runDir, meta);
@@ -1222,24 +1222,23 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
         launchCrashValidation !== null
       );
     });
-  if (records.length === 0) throw new Error(`no valid benchmark runs found in ${absoluteStageDir}`);
-  const validCounts = new Map();
-  for (const { record } of records) {
-    if (!record.valid) continue;
-    const base = publicRunId(record);
-    validCounts.set(base, (validCounts.get(base) ?? 0) + 1);
+  if (validRecords.length === 0) throw new Error(`no valid benchmark runs found in ${absoluteStageDir}`);
+  const dimensions = new Set(validRecords.map(({ record, meta }) => `${record.model}:${meta.platform ?? 'ios'}`));
+  if (dimensions.size !== 1) throw new Error('benchmark stage must contain one model and platform');
+  const latestByArm = new Map();
+  for (const candidate of validRecords) {
+    const id = publicRunId(candidate.record);
+    const dispatchedAt = Date.parse(candidate.meta.dispatchAt);
+    if (!Number.isFinite(dispatchedAt)) throw new Error(`missing dispatch timestamp for ${candidate.runDir}`);
+    const previous = latestByArm.get(id);
+    if (!previous || dispatchedAt >= Date.parse(previous.meta.dispatchAt)) latestByArm.set(id, candidate);
   }
-  const attemptCounts = new Map();
+  const records = [...latestByArm.values()];
   const environment = benchmarkEnvironment(readJson(join(records[0].runDir, 'meta.json')), machine);
   const runs = records
     .map(({ runDir, record, meta, launchCrashValidation }) => {
       const appAlive = existsSync(join(runDir, 'app-alive.json')) ? readJson(join(runDir, 'app-alive.json')) : null;
-      const baseId = publicRunId(record);
-      const attemptKind = record.valid ? 'valid' : 'invalid';
-      const countKey = `${baseId}-${attemptKind}`;
-      const attempt = (attemptCounts.get(countKey) ?? 0) + 1;
-      attemptCounts.set(countKey, attempt);
-      const id = record.valid && validCounts.get(baseId) === 1 ? baseId : `${baseId}-${attemptKind}-${attempt}`;
+      const id = publicRunId(record);
       const runNonce = record.runId.match(/-(\d{13})$/)?.[1];
       const replacements = [
         [runDir, `results/${stage}/${id}`],
@@ -1283,6 +1282,7 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
         id,
         model: record.model,
         platform: meta.platform ?? 'ios',
+        recordedOn: meta.dispatchAt.slice(0, 10),
         variant: record.variant,
         arm: record.arm,
         valid: record.valid,
@@ -1357,7 +1357,8 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
   const recordedOn = records
     .map(({ runDir }) => readJson(join(runDir, 'meta.json')).dispatchAt)
     .filter(Boolean)
-    .toSorted()[0]
+    .toSorted()
+    .at(-1)
     ?.slice(0, 10);
   const payload = timeBenchmarkFromFirstActivity({
     schemaVersion: 1,
