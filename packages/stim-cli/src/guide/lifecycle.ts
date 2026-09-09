@@ -79,6 +79,11 @@ new JavaScript or observe the resulting UI. Verify the expected screen or
 interaction on the reported device and inspect \`stim logs --errors\` before
 claiming recovery; exit 0 alone does not prove it.
 
+For an unverified Android launch, follow the emitted device-specific remedy.
+If the app is stuck before loading its first bundle, restart its process with
+the printed force-stop and launcher commands. Foregrounding the same process
+does not restart initialization. Confirm the bundle request and expected UI.
+
 DESTRUCTIVE COMMANDS -- ask the user first
   gc --delete             deletes orphaned stim-* devices, tens of GB
   gc --delete --cache all empties the shared build caches every project uses

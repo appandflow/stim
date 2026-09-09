@@ -1075,7 +1075,7 @@ describe('unverifiedLaunchLines', () => {
     expect(text).toMatch(/xcrun simctl launch --console U1 com\.x/);
   });
 
-  test('Android names its own re-launch, not simctl', () => {
+  test('Android recovery restarts the reported app before launching it again', () => {
     const text = unverifiedLaunchLines({
       platform: 'android',
       metroPort: 8082,
@@ -1083,7 +1083,9 @@ describe('unverifiedLaunchLines', () => {
       serial: 'emulator-5584',
     }).join('\n');
     expect(text).not.toMatch(/simctl/);
-    expect(text).toMatch(/adb -s emulator-5584 shell monkey -p com\.x 1/);
+    expect(text).toContain(
+      'adb -s emulator-5584 shell am force-stop com.x && adb -s emulator-5584 shell monkey -p com.x 1',
+    );
     expect(text).toMatch(/DEVELOPMENT SERVERS/);
   });
 
