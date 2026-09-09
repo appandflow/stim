@@ -59,7 +59,12 @@ Android native Stim cells also require `ccacheMinHitRatePercent`. Establish this
 machine/scenario threshold from a verified warm compiler-cache probe before
 dispatch; the example value is illustrative. Keep it fixed across models.
 Collection records actual hits and misses, accepts proven artifact hits without
-C++ compilation, and flags missing or below-target compiler-cache evidence.
+C++ compilation, and flags missing or below-target compiler-cache evidence. A
+`stim android` invocation that exits 1 with a `STIM_NO_METRO` refusal and no
+build phase output stays in the timeline but does not count as missing
+compiler-cache evidence; another `stim android` invocation must still carry
+compiler statistics or a proven artifact hit, and a failed, interrupted, or
+crashed command that could have compiled still fails closed.
 Completed tool output triggers an immediate `CACHE ALERT` and preserves
 `cache-alerts.json`. A flagged attempt stays available for investigation and is
 excluded from published comparisons; investigate the cause before retrying.
