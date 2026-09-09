@@ -27,12 +27,6 @@
   font-size: 1.5rem;
 }
 
-.heading a {
-  font-size: 0.85rem;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
 .frame {
   overflow: hidden;
   border: 1px solid var(--ifm-color-emphasis-300);
@@ -60,10 +54,5 @@
 
   .heading {
     display: block;
-  }
-
-  .heading a {
-    display: inline-block;
-    margin-top: 0.65rem;
   }
 }

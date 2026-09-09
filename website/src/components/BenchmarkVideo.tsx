@@ -6,7 +6,6 @@ import styles from './BenchmarkVideo.module.css';
 export default function BenchmarkVideo(): ReactNode {
   const video = useBaseUrl('/benchmarks/luna-rc12/javascript-stim-web.mp4');
   const poster = useBaseUrl('/benchmarks/luna-rc12/javascript-stim-video-poster.png');
-  const social = useBaseUrl('/benchmarks/luna-rc12/javascript-stim-social.mp4');
   const audit = useBaseUrl('/benchmarks/details#audit-title');
 
   return (
@@ -18,9 +17,6 @@ export default function BenchmarkVideo(): ReactNode {
             Watch the Luna JavaScript run unfold
           </Heading>
         </div>
-        <a href={social} download>
-          Download 4:5 social video
-        </a>
       </div>
       <div className={styles.frame}>
         <video
