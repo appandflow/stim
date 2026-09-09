@@ -726,7 +726,11 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   Wait for warm to exit successfully (exit code 0) before running start,
   ios, android, or a dependency install in that worktree. If a shell tool
   yields a running session or job ID, poll or wait for completion; empty
-  stdout or a returned job ID does not mean the copy has finished.
+  stdout or a returned job ID does not mean the copy has finished. Concurrent
+  writes to the destination are unsafe: existing entries are checked before
+  copying, not during it. Do not edit files, run another warm, or start any
+  other writer in that worktree until warm finishes. Concurrent files can be
+  overwritten or removed.
 
   Warm copies installed dependencies, Pods, native output, and other ignored
   paths eligible under the main checkout's Git ignore rules, including .env
@@ -737,20 +741,18 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   for the destination checkout on its next build. Warm also skips paths
   overlapping a nested destination worktree or below a symlink ancestor.
 
-  Large copies stage privately outside Git working trees on the destination
-  volume. STIM_TMPDIR or machine tempDir overrides that placement; doctor warns
-  when the source, staging, and destination cross volumes and require full
-  copies. Read guide settings for temporary storage configuration. If no safe
-  writable staging location exists, warm refuses instead of using another
-  volume automatically.
+  Warm copies directly into the destination, without intermediate staging.
+  Keep main and the linked worktree on the same volume to retain copy-on-write
+  cloning where supported. Cross-volume copies require full file data; doctor
+  reports that cost. STIM_TMPDIR and machine tempDir do not affect warming.
 
   Existing entries, including dangling symlinks, stay untouched. An existing
   ignored directory such as node_modules is skipped WHOLE; missing children are not
   filled in. Warm does not copy tracked changes, switch branches, install
   dependencies, or build. stdout stays empty; stderr reports copied, kept,
   and failed entry counts. A copy failure exits 1 and reports incomplete;
-  files published before a failure remain. Inspect the named failed entry
-  before retrying: a partially published directory will be kept on the retry.
+  files copied before a failure remain. Inspect the named failed entry
+  before retrying: a partially copied directory will be kept on the retry.
   A completed copy is not proof that dependencies match this branch. Follow
   any lockfile remedies before building, and install missing dependencies
   with the project's package manager when the source has none to copy.

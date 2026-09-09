@@ -93,6 +93,10 @@ there. Warm copies missing ignored state from main, including eligible `.env`
 and local configuration files. Existing entries are preserved; existing
 ignored directories such as `node_modules` are skipped whole.
 
+Wait for warm to finish before editing, installing dependencies, starting
+Metro/builds, or running another warm in that worktree. Concurrent writes are
+unsafe: entries created after the initial check can be overwritten or removed.
+
 After the work is preserved, `stim worktree remove` removes any linked
 worktree, warmed or not. Git-created branches stay. See the
 [worktree guide](https://appandflow.github.io/stim/docs/worktrees) for exclusions

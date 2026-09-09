@@ -311,8 +311,13 @@ ignored `.env` and local configuration files are included. The main checkout's
 nonempty `.worktreeexclude` replaces its resolved `worktree.exclude` setting.
 See [worktree isolation](./worktrees.md) for exclusions.
 
+Wait for warm to finish before any other process writes to the destination.
+Concurrent writes are unsafe: files created after the initial existence check
+can be overwritten or removed. This includes edits, installs, builds, Metro,
+and another warm invocation.
+
 stdout stays empty. stderr reports copied, kept, and failed entries. Failures
-exit 1; inspect failed paths before retrying, since partially published
+exit 1; inspect failed paths before retrying, since partially copied
 entries remain and existing directories are skipped. Warm does not install
 dependencies or build.
 

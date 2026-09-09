@@ -21,7 +21,10 @@ Read guide lifecycle options for exclusions and incomplete-copy remedies.
 Wait for warm to exit successfully (exit code 0) before running stim start,
 stim ios, stim android, or a dependency install in that worktree. If the shell
 tool returns a running session or job ID, poll or wait for that job to finish;
-the ID is not completion. Do not install dependencies while warm is copying.
+the ID is not completion. Concurrent writes to the destination are unsafe:
+warm checks for existing entries before copying, not during the copy. Do not
+edit files, install dependencies, or run another warm in that worktree until
+it finishes; concurrent files can be overwritten or removed.
 If warm fails or reports incomplete, resolve the reported failure first.
 
 Before native worktree work, run doctor for the platform in scope. It checks

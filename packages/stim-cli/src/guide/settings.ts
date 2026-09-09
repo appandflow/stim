@@ -385,10 +385,11 @@ second one means transforms are being shared. A bare project writes
 \`cache_store_added\` directly, because there Stim adds the store itself.
 
 TEMPORARY STORAGE
-Large temporary copies for worktree warm, iOS app preparation, release JS/APK
+Large temporary copies for iOS app preparation, release JS/APK
 swaps, and the doctor fingerprint checkout select a writable directory on the
-relevant filesystem. Warm uses the destination worktree volume; app/APK
-preparation uses the artifact volume. A system temporary directory on that
+relevant filesystem. App/APK preparation uses the artifact volume. Worktree
+warm copies directly to the destination and does not use temporary storage.
+A system temporary directory on that
 volume is preferred, then a writable ancestor of the relevant path. Staging
 is private and outside Git working trees, so ignored secrets cannot enter
 Git status or git add. If no safe location exists, the operation refuses.

@@ -36,7 +36,11 @@ export function checkStorageLayout(
   try {
     const target = repoRoot(projectRoot) ?? projectRoot;
     const source = listWorktrees(target)[0]?.path ?? target;
-    check('Worktree staging', [source, stagingRoot(target), target], temporaryFix);
+    check(
+      'Worktree copy',
+      [source, target],
+      'Keep the main checkout and linked worktree on the same volume to share file blocks when warming.',
+    );
     const cache = sharedBuildCache();
     check('Cached app/APK staging', [cache, stagingRoot(join(cache, 'artifact.app'))], temporaryFix);
     const cacheFix =
