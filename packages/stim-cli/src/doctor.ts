@@ -739,7 +739,7 @@ export function runDoctor(
   let simslimProfileError: string | null = null;
   if (platform !== 'android') {
     try {
-      simslimProfile = iosSimSlimProfileSetting(projectSettings, settingsRepoRoot);
+      simslimProfile = iosSimSlimProfileSetting(projectSettings, projectRoot);
     } catch (error) {
       simslimProfileError = String((error as Error)?.message || error);
     }

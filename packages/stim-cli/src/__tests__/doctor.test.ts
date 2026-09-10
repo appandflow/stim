@@ -1393,14 +1393,15 @@ test('runDoctor checks one shared backend once', () => {
   }
 });
 
-test('runDoctor resolves a SimSlim profile from the repository root in a monorepo', () => {
+test('runDoctor resolves the app-local SimSlim profile and ignores a monorepo root profile', () => {
   const repo = mkdtempSync(join(tmpdir(), 'stim-doc-monorepo-'));
   const project = join(repo, 'apps', 'mobile');
   try {
     mkdirSync(project, { recursive: true });
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'mobile' }));
-    writeFileSync(join(repo, 'simslim.json'), '{}\n');
-    writeFileSync(join(repo, '.stim.json'), JSON.stringify({ ios: { simslimProfile: 'simslim.json' } }));
+    writeFileSync(join(project, 'simslim.json'), '{}\n');
+    writeFileSync(join(repo, '.stim.json'), JSON.stringify({ ios: { simslimProfile: 'missing.json' } }));
+    writeFileSync(join(project, '.stim.json'), JSON.stringify({ ios: { simslimProfile: 'simslim.json' } }));
     execSync('git init -q', { cwd: repo });
 
     const findings = runDoctor(project, {

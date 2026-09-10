@@ -17,7 +17,7 @@ caching. For an overview of the layers, see [build speed and caches](./build-cac
 Put an `optimizations` object at the top level of `~/.stim/config.json` (or
 `$STIM_HOME/config.json`) to set machine defaults without changing a project.
 Merge it into the existing file, preserving project and device records. The same
-object in the repository's `.stim.json`, or in repository or project settings,
+object in the app's `.stim.json`, or in machine repository or project settings,
 overrides individual values using the [settings layers](./settings.md#settings-layers).
 
 These are the defaults; you only need to include values you want to change:
