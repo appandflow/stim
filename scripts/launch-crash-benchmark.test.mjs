@@ -1047,6 +1047,123 @@ done`;
     ).toMatchObject({ valid: true, commandId: 'logs' });
   });
 
+  it('links persisted runtime output without moving diagnosis before the file read', () => {
+    const token = launchCrashToken('run');
+    const path = '/Users/runner/.claude/projects/run/tool-results/output.txt';
+    const commands = [
+      {
+        id: 'launch',
+        command: 'npx expo run:android --device emulator-5554',
+        output: 'started',
+        exitCode: 0,
+        endedAt: '2026-09-04T12:00:10Z',
+      },
+      {
+        id: 'capture',
+        command: 'adb -s emulator-5554 logcat -d',
+        output: `<persisted-output>\nOutput too large (36KB). Full output saved to: ${path}\n\nPreview (first 2KB):\nnoise\n</persisted-output>`,
+        exitCode: 0,
+        startedAt: '2026-09-04T12:00:11Z',
+        endedAt: '2026-09-04T12:00:12Z',
+      },
+      {
+        id: 'read',
+        command: `rg -i "Exception|error" ${path} | tail -100`,
+        output: `${token}\nRootLayout(./_layout.tsx)`,
+        exitCode: 0,
+        startedAt: '2026-09-04T12:00:13Z',
+        endedAt: '2026-09-04T12:00:14Z',
+      },
+    ];
+    const options = { dispatchAt: '2026-09-04T12:00:00Z', token, arm: 'control', platform: 'android' };
+    expect(launchCrashDiagnosis(commands, options)).toMatchObject({
+      valid: true,
+      commandId: 'read',
+      errorCaptureCommandId: 'read',
+      dispatchToDiagnosisSeconds: 14,
+    });
+    for (const changes of [
+      { command: 'cat /Users/runner/other.txt' },
+      { command: `cat ${path}.different` },
+      { command: `cat ${path} | echo fabricated` },
+      { command: `cat ${path} | cat /Users/runner/notes.txt` },
+      { command: `cat /Users/runner/notes.txt ${path}` },
+      { command: `cat ${path} | grep error /Users/runner/notes.txt` },
+      { command: `cat ${path} | tail -100 /Users/runner/notes.txt` },
+      { command: `cat ${path}; cat app/_layout.tsx` },
+      { exitCode: 1 },
+      { output: 'No crash here' },
+      { startedAt: '2026-09-04T12:00:11Z' },
+    ]) {
+      expect(launchCrashDiagnosis([...commands.slice(0, 2), { ...commands[2], ...changes }], options)).toMatchObject({
+        valid: false,
+      });
+    }
+    for (const changes of [
+      { command: 'cat notes.txt' },
+      { exitCode: 1 },
+      { output: `Full output saved to: ${path}` },
+    ]) {
+      expect(launchCrashDiagnosis([commands[0], { ...commands[1], ...changes }, commands[2]], options)).toMatchObject({
+        valid: false,
+      });
+    }
+  });
+
+  it('requires observed build and launch evidence for a masked Expo pipeline', () => {
+    const token = launchCrashToken('run');
+    const commands = [
+      {
+        id: 'pipeline',
+        command:
+          'RUN_DIR=/workspace/app\ncd "$RUN_DIR" && set -o pipefail && npx expo run:android --device emulator-5554 2>&1 | tee /tmp/build.log; echo "EXPO_RUN_EXIT=$?"',
+        output: 'Output preview',
+        exitCode: 0,
+        endedAt: '2026-09-04T12:00:10Z',
+      },
+      {
+        id: 'launch-proof',
+        command: 'tail -80 /tmp/build.log',
+        output: 'BUILD SUCCESSFUL in 1m\nOpening trailhead://expo-development-client on run-device',
+        exitCode: 0,
+        startedAt: '2026-09-04T12:00:11Z',
+        endedAt: '2026-09-04T12:00:12Z',
+      },
+      {
+        id: 'capture',
+        command: 'adb -s emulator-5554 logcat -d',
+        output: `${token}\nRootLayout`,
+        exitCode: 0,
+        startedAt: '2026-09-04T12:00:13Z',
+        endedAt: '2026-09-04T12:00:14Z',
+      },
+    ];
+    const options = { dispatchAt: '2026-09-04T12:00:00Z', token, arm: 'control', platform: 'android' };
+    expect(launchCrashDiagnosis(commands, options)).toMatchObject({
+      valid: true,
+      initialLaunchCommandId: 'launch-proof',
+      commandId: 'capture',
+    });
+    for (const changes of [
+      { output: 'BUILD SUCCESSFUL' },
+      { output: 'BUILD FAILED\nOpening app on device' },
+      { command: 'tail -80 /tmp/unrelated.log' },
+      { exitCode: 1 },
+      { startedAt: '2026-09-04T12:00:09Z' },
+    ]) {
+      expect(launchCrashDiagnosis([commands[0], { ...commands[1], ...changes }, commands[2]], options)).toMatchObject({
+        valid: false,
+      });
+    }
+    expect(launchCrashDiagnosis([commands[0], commands[2]], options)).toMatchObject({ valid: false });
+    expect(
+      launchCrashDiagnosis(
+        [{ ...commands[0], command: commands[0].command.replace('--device', '--help --device') }, ...commands.slice(1)],
+        options,
+      ),
+    ).toMatchObject({ valid: false });
+  });
+
   it('does not accept source searches as control error capture', () => {
     const token = launchCrashToken('run');
     for (const command of [`rg ${token} app/_layout.tsx`, `rg ${token} .`]) {
