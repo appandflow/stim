@@ -68,6 +68,10 @@ crashed command that could have compiled still fails closed.
 Completed tool output triggers an immediate `CACHE ALERT` and preserves
 `cache-alerts.json`. A flagged attempt stays available for investigation and is
 excluded from published comparisons; investigate the cause before retrying.
+When a completed build fails later during launch, collection can retain the
+owned workspace's timestamped compiler statistics. A literal `cd` to that
+worktree followed by `&& stim android ...; echo "EXIT=$?"` is also eligible;
+additional commands, a different directory, or ambiguous status reports are not.
 
 Android golden preparation and every preflight require a structured doctor
 report without cost findings. Repair the fixture with
