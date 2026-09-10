@@ -125,6 +125,40 @@ test('checkMainCheckout says nothing about the seed when the repository has no l
       'The main checkout has 1 uncommitted tracked change',
       'The main checkout is on feature, not the default branch main',
     ]);
+
+    rmSync(join(base, 'linked'), { recursive: true, force: true });
+    expect(checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('an interrupted rebase is named instead of the dirty and detached remedies git would reject', () => {
+  const { base, main, git } = seedRepo('stim-doctor-rebase-');
+  try {
+    writeFileSync(join(main, 'README.md'), 'theirs\n');
+    git('git commit -q -am theirs');
+    git('git checkout -q -b side HEAD~1');
+    writeFileSync(join(main, 'README.md'), 'ours\n');
+    git('git commit -q -am ours');
+    expect(() => git('git rebase main')).toThrow(/rebase/);
+    git('git worktree add -q -b task ../linked');
+
+    const findings = checkMainCheckout(main, { platform: 'ios' });
+    expect(findings.map((entry) => entry.title)).toEqual(['The main checkout has a rebase in progress']);
+    expect(findings[0]?.fix).toBe(`Finish it, or run \`git -C '${main}' rebase --abort\`.`);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('a tag sharing the branch name does not turn the branch into an ambiguous ref', () => {
+  const { base, main, git } = seedRepo('stim-doctor-ambiguous-');
+  try {
+    git('git tag main HEAD');
+    git('git worktree add -q -b task ../linked');
+
+    expect(checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
@@ -135,6 +169,14 @@ test('seed findings are reported from inside a linked worktree, about the main c
   try {
     writeFileSync(join(main, 'README.md'), 'edited\n');
     git('git worktree add -q -b task ../linked');
+
+    writeFileSync(join(main, 'second.txt'), 'tracked\n');
+    git('git add second.txt');
+    expect(checkMainCheckout(join(base, 'linked'), { platform: 'ios' }).map((entry) => entry.title)).toEqual([
+      'The main checkout has 2 uncommitted tracked changes',
+    ]);
+    git('git rm -q --cached second.txt');
+    rmSync(join(main, 'second.txt'));
 
     const findings = checkMainCheckout(join(base, 'linked'), { platform: 'ios' });
     expect(findings.map((entry) => entry.title)).toEqual(['The main checkout has 1 uncommitted tracked change']);
@@ -170,14 +212,10 @@ test('a main checkout that is ahead of and behind its upstream is reported as di
     git('git worktree add -q -b task ../linked');
 
     const findings = checkMainCheckout(main, { platform: 'ios' });
-    const diverged = findings.find((entry) => entry.title === 'The main checkout has diverged from origin/main');
-    expect(findings.map((entry) => entry.title)).toEqual([
-      'The main checkout is 1 commit behind origin/main',
-      'The main checkout has diverged from origin/main',
-    ]);
-    expect(diverged?.detail).toContain('main is 1 ahead of and 1 behind origin/main');
-    expect(diverged?.detail).toContain('refuses rather than merging or resetting');
-    expect(diverged?.fix).toBe('Rebase or merge main onto origin/main yourself.');
+    expect(findings.map((entry) => entry.title)).toEqual(['The main checkout has diverged from origin/main']);
+    expect(findings[0]?.detail).toContain('main is 1 ahead of and 1 behind origin/main');
+    expect(findings[0]?.detail).toContain('refuses rather than merging or resetting');
+    expect(findings[0]?.fix).toBe('Rebase or merge main onto origin/main yourself.');
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

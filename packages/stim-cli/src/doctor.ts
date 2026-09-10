@@ -182,11 +182,21 @@ function hasIosWarmOutput(root: string): boolean {
 function hasLinkedWorktree(projectRoot: string): boolean {
   const root = repoRoot(projectRoot);
   if (!root) return false;
-  return listWorktrees(root).length > 1;
+  return listWorktrees(root).filter((entry) => !entry.prunable).length > 1;
 }
 
-function headName(root: string): string | null {
-  return getExecutor().runFileQuiet('git', ['-C', root, 'rev-parse', '--abbrev-ref', 'HEAD'])?.trim() || null;
+function headBranch(root: string): string | null {
+  const ref = getExecutor().runFileQuiet('git', ['-C', root, 'symbolic-ref', '--quiet', 'HEAD'])?.trim();
+  return ref?.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : null;
+}
+
+function mainOperation(root: string): 'rebase' | 'merge' | null {
+  const gitDir = getExecutor()
+    .runFileQuiet('git', ['-C', root, 'rev-parse', '--path-format=absolute', '--git-dir'])
+    ?.trim();
+  if (!gitDir) return null;
+  if (existsSync(join(gitDir, 'rebase-merge')) || existsSync(join(gitDir, 'rebase-apply'))) return 'rebase';
+  return existsSync(join(gitDir, 'MERGE_HEAD')) ? 'merge' : null;
 }
 
 function dirtyTrackedPaths(root: string): string[] {
@@ -215,40 +225,54 @@ function resolveDefaultBranch(root: string): string | null {
 
 function seedFindings(mainRoot: string, upstream: UpstreamState | null): Finding[] {
   const findings: Finding[] = [];
-  const quotedMain = quotedPath(mainRoot);
+  const root = repoRoot(mainRoot);
+  const quotedRoot = quotedPath(root ?? mainRoot);
 
-  if (upstream && upstream.behind > 0) {
+  if (upstream && upstream.behind > 0 && upstream.ahead === 0) {
     findings.push(
       finding(
         'note',
-        `The main checkout is ${upstream.behind} commit${upstream.behind === 1 ? '' : 's'} behind ${upstream.name}`,
+        `The main checkout is ${plural(upstream.behind, 'commit')} behind ${upstream.name}`,
         'The count uses the locally known upstream ref. A fetch can reveal additional commits. A later rebase or merge can change native inputs and invalidate work done from the older base.',
-        `Run \`stim worktree warm --refresh\` from a linked worktree to fetch and fast-forward the main checkout, or \`git -C ${quotedMain} fetch --prune\` and inspect the branch yourself.`,
+        `Run \`stim worktree warm --refresh\` from a linked worktree to fetch and fast-forward the main checkout, or \`git -C ${quotedRoot} fetch --prune\` and inspect the branch yourself.`,
       ),
     );
   }
+  if (root === null) return findings;
 
-  const dirty = dirtyTrackedPaths(mainRoot);
+  const operation = mainOperation(root);
+  if (operation) {
+    findings.push(
+      finding(
+        'note',
+        `The main checkout has a ${operation} in progress`,
+        '`stim worktree warm --refresh` refuses a main checkout it cannot move, and the branch stays where the interrupted operation left it.',
+        `Finish it, or run \`git -C ${quotedRoot} ${operation} --abort\`.`,
+      ),
+    );
+    return findings;
+  }
+
+  const dirty = dirtyTrackedPaths(root);
   if (dirty.length) {
     findings.push(
       finding(
         'note',
-        `The main checkout has ${dirty.length} uncommitted tracked change${dirty.length === 1 ? '' : 's'}`,
+        `The main checkout has ${plural(dirty.length, 'uncommitted tracked change')}`,
         `\`stim worktree warm --refresh\` refuses a main checkout it cannot move, so the seed stays where it is until this is cleared. First: ${dirty[0]}.`,
-        `Commit them, or run \`git -C ${quotedMain} stash push -u -m warm-refresh\`.`,
+        `Commit them, or run \`git -C ${quotedRoot} stash push -u -m warm-refresh\`.`,
       ),
     );
   }
 
-  const branch = headName(mainRoot);
-  if (branch === null) return findings;
-  if (branch === 'HEAD') {
+  const branch = headBranch(root);
+  if (branch === null) {
     findings.push(
       finding(
         'note',
         'The main checkout has a detached HEAD',
         '`stim worktree warm --refresh` refuses: there is no branch to fast-forward.',
-        `Run \`git -C ${quotedMain} checkout <branch>\`.`,
+        `Run \`git -C ${quotedRoot} checkout <branch>\`.`,
       ),
     );
     return findings;
@@ -265,14 +289,14 @@ function seedFindings(mainRoot: string, upstream: UpstreamState | null): Finding
     );
   }
 
-  const defaultBranch = resolveDefaultBranch(mainRoot);
+  const defaultBranch = resolveDefaultBranch(root);
   if (defaultBranch !== null && defaultBranch !== branch) {
     findings.push(
       finding(
         'note',
         `The main checkout is on ${branch}, not the default branch ${defaultBranch}`,
         `Every worktree warmed from here carries ${branch}'s dependencies. \`stim worktree warm --refresh\` warns and continues; it never switches a branch under another checkout.`,
-        `Run \`git -C ${quotedMain} checkout ${defaultBranch}\`, or set worktree.defaultBranch in the repository-root .stim.json when ${defaultBranch} is not the branch worktrees should be seeded from.`,
+        `Run \`git -C ${quotedRoot} checkout ${defaultBranch}\`.`,
       ),
     );
   }

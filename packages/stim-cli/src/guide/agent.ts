@@ -11,19 +11,20 @@ TWO WORKFLOWS
 
 SINGLE CHECKOUT: work in place, on whatever branch the task needs, in one
 directory. start, ios, android, logs, stop, and never a linked worktree. That
-directory is your workspace, and no main-checkout rule below applies to it.
+directory is your workspace, and no rule below about keeping the main checkout
+fit as a seed applies to it.
 
 WORKTREE: the checkout you cloned is a seed. It stays clean and on the default
 branch, and every task gets a linked worktree warmed from it. In this workflow
 the main checkout is infrastructure, not a workspace: you edit, build, and run
-in the worktree, and you keep the seed fit to copy. Every main-checkout rule
-below belongs to this workflow.
+in the worktree, and you keep the seed fit to copy. Every rule below about the
+main checkout's fitness as a seed belongs to this workflow.
 
-Doctor reports the main checkout's fitness as a seed -- how far behind it is,
-uncommitted tracked changes, a detached HEAD, a diverged branch, a branch that
-is not the default one -- only once the repository has at least one linked
-worktree. A single-checkout session is never told that its own branch is a
-problem.
+Doctor reports that fitness -- how far behind the seed is, uncommitted tracked
+changes, an interrupted rebase or merge, a detached HEAD, a diverged branch, a
+branch that is not the default one -- only once the repository has at least
+one linked worktree, so read it from inside the worktree. A single-checkout
+session is never told that its own branch is a problem.
 
 NORMAL WORKFLOW
 
