@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -80,6 +81,128 @@ test('checkMainCheckout reports missing dependencies, Pods, and native output', 
     expect(findings[2]?.fix).toMatch(/stim ios/);
   } finally {
     rmSync(project, { recursive: true, force: true });
+  }
+});
+
+function seedRepo(prefix: string) {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  const main = join(base, 'main');
+  mkdirSync(main, { recursive: true });
+  const git = (command: string) => execSync(command, { cwd: main, encoding: 'utf-8' }).trim();
+  git('git init -q -b main');
+  git('git config user.email test@example.com');
+  git('git config user.name test');
+  git('git config commit.gpgsign false');
+  git('git config remote.origin.url ../origin.git');
+  git("git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'");
+  writeFileSync(join(main, 'README.md'), 'seed\n');
+  git('git add -A');
+  git('git commit -q -m first');
+  git('git commit -q --allow-empty -m second');
+  const upstreamHead = git('git rev-parse HEAD');
+  git(`git update-ref refs/remotes/origin/main ${upstreamHead}`);
+  git('git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main');
+  const trackOrigin = (branch: string) => {
+    git(`git config branch.${branch}.remote origin`);
+    git(`git config branch.${branch}.merge refs/heads/main`);
+  };
+  trackOrigin('main');
+  return { base, main, git, trackOrigin };
+}
+
+test('checkMainCheckout says nothing about the seed when the repository has no linked worktree', () => {
+  const { base, main, git, trackOrigin } = seedRepo('stim-doctor-single-checkout-');
+  try {
+    git('git checkout -q -B feature HEAD~1');
+    trackOrigin('feature');
+    writeFileSync(join(main, 'README.md'), 'edited\n');
+
+    expect(checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
+
+    git('git worktree add -q --detach ../linked');
+    expect(checkMainCheckout(main, { platform: 'ios' }).map((entry) => entry.title)).toEqual([
+      'The main checkout is 1 commit behind origin/main',
+      'The main checkout has 1 uncommitted tracked change',
+      'The main checkout is on feature, not the default branch main',
+    ]);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('seed findings are reported from inside a linked worktree, about the main checkout', () => {
+  const { base, main, git } = seedRepo('stim-doctor-from-worktree-');
+  try {
+    writeFileSync(join(main, 'README.md'), 'edited\n');
+    git('git worktree add -q -b task ../linked');
+
+    const findings = checkMainCheckout(join(base, 'linked'), { platform: 'ios' });
+    expect(findings.map((entry) => entry.title)).toEqual(['The main checkout has 1 uncommitted tracked change']);
+    expect(findings[0]?.level).toBe('note');
+    expect(findings[0]?.detail).toContain('stim worktree warm --refresh');
+    expect(findings[0]?.detail).toContain('README.md');
+    expect(findings[0]?.fix).toBe(`Commit them, or run \`git -C '${main}' stash push -u -m warm-refresh\`.`);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('a detached main checkout is reported, and nothing compares its missing branch to the default', () => {
+  const { base, main, git } = seedRepo('stim-doctor-detached-');
+  try {
+    git('git checkout -q --detach HEAD~1');
+    git('git worktree add -q -b task ../linked');
+
+    const findings = checkMainCheckout(main, { platform: 'ios' });
+    expect(findings.map((entry) => entry.title)).toEqual(['The main checkout has a detached HEAD']);
+    expect(findings[0]?.detail).toContain('there is no branch to fast-forward');
+    expect(findings[0]?.fix).toBe(`Run \`git -C '${main}' checkout <branch>\`.`);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('a main checkout that is ahead of and behind its upstream is reported as diverged', () => {
+  const { base, main, git } = seedRepo('stim-doctor-diverged-');
+  try {
+    git('git checkout -q -B main HEAD~1');
+    git('git commit -q --allow-empty -m local');
+    git('git worktree add -q -b task ../linked');
+
+    const findings = checkMainCheckout(main, { platform: 'ios' });
+    const diverged = findings.find((entry) => entry.title === 'The main checkout has diverged from origin/main');
+    expect(findings.map((entry) => entry.title)).toEqual([
+      'The main checkout is 1 commit behind origin/main',
+      'The main checkout has diverged from origin/main',
+    ]);
+    expect(diverged?.detail).toContain('main is 1 ahead of and 1 behind origin/main');
+    expect(diverged?.detail).toContain('refuses rather than merging or resetting');
+    expect(diverged?.fix).toBe('Rebase or merge main onto origin/main yourself.');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('worktree.defaultBranch outranks origin/HEAD, and neither resolving stays silent', () => {
+  const { base, main, git } = seedRepo('stim-doctor-default-branch-');
+  try {
+    git('git worktree add -q -b task ../linked');
+    expect(checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
+
+    writeFileSync(join(main, '.stim.json'), JSON.stringify({ worktree: { defaultBranch: 'release' } }));
+    const configured = checkMainCheckout(main, { platform: 'ios' });
+    expect(configured.map((entry) => entry.title)).toEqual([
+      'The main checkout is on main, not the default branch release',
+    ]);
+    expect(configured[0]?.detail).toContain("carries main's dependencies");
+    expect(configured[0]?.fix).toContain(`git -C '${main}' checkout release`);
+
+    rmSync(join(main, '.stim.json'));
+    git('git symbolic-ref -d refs/remotes/origin/HEAD');
+    git('git checkout -q -b feature');
+    expect(checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
   }
 });
 
@@ -393,6 +516,7 @@ test('checkMainCheckout reports stale dependencies and the locally known upstrea
     const findings = checkMainCheckout(project, {
       npmTreeValid: false,
       upstream: { name: 'origin/main', ahead: 0, behind: 2 },
+      linkedWorktrees: true,
     });
     expect(findings.some((finding) => /dependency tree is stale/.test(finding.title))).toBe(true);
     expect(findings.some((finding) => /2 commits behind origin\/main/.test(finding.title))).toBe(true);

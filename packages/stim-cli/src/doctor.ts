@@ -179,17 +179,120 @@ function hasIosWarmOutput(root: string): boolean {
   }
 }
 
+function hasLinkedWorktree(projectRoot: string): boolean {
+  const root = repoRoot(projectRoot);
+  if (!root) return false;
+  return listWorktrees(root).length > 1;
+}
+
+function headName(root: string): string | null {
+  return getExecutor().runFileQuiet('git', ['-C', root, 'rev-parse', '--abbrev-ref', 'HEAD'])?.trim() || null;
+}
+
+function dirtyTrackedPaths(root: string): string[] {
+  const out = getExecutor().runFileQuiet('git', ['-C', root, 'diff', '--name-only', 'HEAD']);
+  return (out ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function resolveDefaultBranch(root: string): string | null {
+  const settings = resolveSettings({ gitCommonDir: gitCommonDir(root), repoRoot: repoRoot(root) ?? root });
+  const worktree = settings.worktree;
+  const configured =
+    worktree && typeof worktree === 'object' && !Array.isArray(worktree)
+      ? (worktree as { defaultBranch?: unknown }).defaultBranch
+      : undefined;
+  if (typeof configured === 'string' && configured.trim()) return configured.trim();
+  const head = getExecutor()
+    .runFileQuiet('git', ['-C', root, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
+    ?.trim();
+  if (!head) return null;
+  const cut = head.indexOf('/');
+  return cut > 0 ? head.slice(cut + 1) : head;
+}
+
+function seedFindings(mainRoot: string, upstream: UpstreamState | null): Finding[] {
+  const findings: Finding[] = [];
+  const quotedMain = quotedPath(mainRoot);
+
+  if (upstream && upstream.behind > 0) {
+    findings.push(
+      finding(
+        'note',
+        `The main checkout is ${upstream.behind} commit${upstream.behind === 1 ? '' : 's'} behind ${upstream.name}`,
+        'The count uses the locally known upstream ref. A fetch can reveal additional commits. A later rebase or merge can change native inputs and invalidate work done from the older base.',
+        `Run \`stim worktree warm --refresh\` from a linked worktree to fetch and fast-forward the main checkout, or \`git -C ${quotedMain} fetch --prune\` and inspect the branch yourself.`,
+      ),
+    );
+  }
+
+  const dirty = dirtyTrackedPaths(mainRoot);
+  if (dirty.length) {
+    findings.push(
+      finding(
+        'note',
+        `The main checkout has ${dirty.length} uncommitted tracked change${dirty.length === 1 ? '' : 's'}`,
+        `\`stim worktree warm --refresh\` refuses a main checkout it cannot move, so the seed stays where it is until this is cleared. First: ${dirty[0]}.`,
+        `Commit them, or run \`git -C ${quotedMain} stash push -u -m warm-refresh\`.`,
+      ),
+    );
+  }
+
+  const branch = headName(mainRoot);
+  if (branch === null) return findings;
+  if (branch === 'HEAD') {
+    findings.push(
+      finding(
+        'note',
+        'The main checkout has a detached HEAD',
+        '`stim worktree warm --refresh` refuses: there is no branch to fast-forward.',
+        `Run \`git -C ${quotedMain} checkout <branch>\`.`,
+      ),
+    );
+    return findings;
+  }
+
+  if (upstream && upstream.ahead > 0 && upstream.behind > 0) {
+    findings.push(
+      finding(
+        'note',
+        `The main checkout has diverged from ${upstream.name}`,
+        `${branch} is ${upstream.ahead} ahead of and ${upstream.behind} behind ${upstream.name}, so it cannot fast-forward. \`stim worktree warm --refresh\` refuses rather than merging or resetting.`,
+        `Rebase or merge ${branch} onto ${upstream.name} yourself.`,
+      ),
+    );
+  }
+
+  const defaultBranch = resolveDefaultBranch(mainRoot);
+  if (defaultBranch !== null && defaultBranch !== branch) {
+    findings.push(
+      finding(
+        'note',
+        `The main checkout is on ${branch}, not the default branch ${defaultBranch}`,
+        `Every worktree warmed from here carries ${branch}'s dependencies. \`stim worktree warm --refresh\` warns and continues; it never switches a branch under another checkout.`,
+        `Run \`git -C ${quotedMain} checkout ${defaultBranch}\`, or set worktree.defaultBranch in the repository-root .stim.json when ${defaultBranch} is not the branch worktrees should be seeded from.`,
+      ),
+    );
+  }
+
+  return findings;
+}
+
 export function checkMainCheckout(
   projectRoot: string,
   {
     npmTreeValid,
     brokenPods = undefined,
     upstream = undefined,
+    linkedWorktrees = undefined,
     platform,
   }: {
     npmTreeValid?: boolean | null;
     brokenPods?: string[];
     upstream?: UpstreamState | null;
+    linkedWorktrees?: boolean;
     platform?: DoctorPlatform;
   } = {},
 ): Finding[] {
@@ -285,16 +388,9 @@ export function checkMainCheckout(
     );
   }
 
-  const knownUpstream = upstream === undefined ? locallyKnownUpstream(mainRoot) : upstream;
-  if (knownUpstream && knownUpstream.behind > 0) {
-    findings.push(
-      finding(
-        'note',
-        `The main checkout is ${knownUpstream.behind} commit${knownUpstream.behind === 1 ? '' : 's'} behind ${knownUpstream.name}`,
-        'The count uses the locally known upstream ref. A fetch can reveal additional commits. A later rebase or merge can change native inputs and invalidate work done from the older base.',
-        `Run \`stim worktree warm --refresh\` from a linked worktree to fetch and fast-forward the main checkout, or \`git -C ${quotedPath(mainRoot)} fetch --prune\` and inspect the branch yourself.`,
-      ),
-    );
+  const linked = linkedWorktrees === undefined ? hasLinkedWorktree(projectRoot) : linkedWorktrees;
+  if (linked) {
+    findings.push(...seedFindings(mainRoot, upstream === undefined ? locallyKnownUpstream(mainRoot) : upstream));
   }
 
   return findings;

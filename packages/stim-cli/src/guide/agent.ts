@@ -7,18 +7,37 @@ device with another workspace. Prefer plain output: it streams each phase and
 ends with the facts the next step needs. Use --json only when a script must
 parse a stable payload.
 
+TWO WORKFLOWS
+
+SINGLE CHECKOUT: work in place, on whatever branch the task needs, in one
+directory. start, ios, android, logs, stop, and never a linked worktree. That
+directory is your workspace, and no main-checkout rule below applies to it.
+
+WORKTREE: the checkout you cloned is a seed. It stays clean and on the default
+branch, and every task gets a linked worktree warmed from it. In this workflow
+the main checkout is infrastructure, not a workspace: you edit, build, and run
+in the worktree, and you keep the seed fit to copy. Every main-checkout rule
+below belongs to this workflow.
+
+Doctor reports the main checkout's fitness as a seed -- how far behind it is,
+uncommitted tracked changes, a detached HEAD, a diverged branch, a branch that
+is not the default one -- only once the repository has at least one linked
+worktree. A single-checkout session is never told that its own branch is a
+problem.
+
 NORMAL WORKFLOW
 
 Work in the current checkout by default. When the task needs another branch or
-an isolated environment, create a linked worktree with Git and warm its
-ignored state. If a harness already created this linked worktree, run
-stim worktree warm here instead of creating another one. It copies missing
-ignored paths from the main checkout, including eligible .env and local
-configuration files. It preserves the branch, tracked files, and every existing
-destination entry; existing ignored directories are skipped whole, not filled in.
-Add --refresh to fast-forward the main checkout and install what moved there
-before the copy; it refuses a main checkout with local work and never switches
-branches. Read guide lifecycle options for exclusions and incomplete-copy remedies.
+an isolated environment, take the worktree workflow: create a linked worktree
+with Git and warm its ignored state. If a harness already created this linked
+worktree, run stim worktree warm here instead of creating another one. It
+copies missing ignored paths from the main checkout, including eligible .env
+and local configuration files. It preserves the branch, tracked files, and
+every existing destination entry; existing ignored directories are skipped
+whole, not filled in. Add --refresh to fast-forward the main checkout and
+install what moved there before the copy; it refuses a main checkout with local
+work and never switches branches. Read guide lifecycle options for exclusions
+and incomplete-copy remedies.
 
 Wait for warm to exit successfully (exit code 0) before running stim start,
 stim ios, stim android, or a dependency install in that worktree. If the shell
@@ -31,7 +50,8 @@ If warm fails or reports incomplete, resolve the reported failure first.
 
 Before native worktree work, run doctor for the platform in scope. It checks
 the main checkout from a linked worktree. Fix relevant findings and inspect the
-upstream gap. It also prints the running CLI version and the stim installation
+upstream gap; in the single-checkout workflow those seed findings do not
+appear. It also prints the running CLI version and the stim installation
 resolved from PATH. If that resolved installation is older than another one,
 fix PATH or the installation before continuing so commands and guidance match.
 Doctor reports cross-volume staging and build-cache copies; read guide settings
