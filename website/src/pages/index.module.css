@@ -358,10 +358,6 @@
 }
 
 @media (prefers-reduced-motion: no-preference) and (hover: hover) and (pointer: fine) {
-  .heroIllustration img {
-    transform: rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg)) scale(1.1);
-  }
-
   .feature a:hover span,
   .agentSetup a:hover span {
     transform: translate(2px, -2px);
