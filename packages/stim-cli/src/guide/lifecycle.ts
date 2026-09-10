@@ -422,6 +422,14 @@ result as proof instead of requiring an unrelated screenshot.`,
 
   Follow the normal ownership and consent rules in guide agent.
 
+IOS SCHEME SELECTION
+  Stim keeps a scheme matching the workspace/project name, or the sole non-test
+  scheme. When neither identifies one, it also checks the static top-level name
+  in the app directory's app.json against Xcode's listed schemes. It does not
+  execute app config or choose an arbitrary scheme from an ambiguous list.
+  If selection fails, share the intended app scheme in Xcode and make its name
+  match the workspace/project or app.json name. See guide errors STIM_NO_SCHEME.
+
 AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
   Both platforms store the artifact verbatim, so its hash is its identity.
   Before installing, Stim hashes the artifact it is about to install and the

@@ -7,14 +7,20 @@ import Heading from '@theme/Heading';
 import ThemedImage from '@theme/ThemedImage';
 import { StimInstallTabs } from '@site/src/components/StimTabs';
 import ThemeSwitch from '@site/src/components/ThemeSwitch';
+import { canTilt } from '../components/canTilt';
 import styles from './index.module.css';
 
-function tapIllustration({ currentTarget }: MouseEvent<HTMLButtonElement>) {
+function tapIllustration({ currentTarget, clientX, clientY, detail }: MouseEvent<HTMLButtonElement>) {
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
   const illustration = currentTarget.querySelector('img')!;
+  const { x, y } = detail === 0 ? { x: -4, y: 4 } : canTilt(currentTarget.getBoundingClientRect(), clientX, clientY);
+  const angle = Math.hypot(x, y);
   for (const animation of illustration.getAnimations()) animation.cancel();
-  illustration.animate({ rotate: ['0deg', '-5deg', '2deg', '0deg'] }, { duration: 600, easing: 'ease-in-out' });
+  illustration.animate(
+    { rotate: ['0deg', `${x} ${y} 0 ${angle}deg`, `${x} ${y} 0 ${-angle / 3}deg`, '0deg'] },
+    { duration: 600, easing: 'ease-in-out' },
+  );
 }
 
 export default function Home(): ReactNode {
@@ -63,12 +69,8 @@ export default function Home(): ReactNode {
       return;
     }
 
-    const bounds = currentTarget.getBoundingClientRect();
-    setTilt(
-      currentTarget,
-      (0.5 - (clientY - bounds.top) / bounds.height) * 12,
-      ((clientX - bounds.left) / bounds.width - 0.5) * 12,
-    );
+    const { x, y } = canTilt(currentTarget.getBoundingClientRect(), clientX, clientY);
+    setTilt(currentTarget, x, y);
   }
 
   function resetTilt({ currentTarget }: PointerEvent<HTMLButtonElement>) {
@@ -152,6 +154,7 @@ export default function Home(): ReactNode {
             className={styles.heroIllustration}
             data-reveal=""
             onClick={tapIllustration}
+            onContextMenu={(event) => event.preventDefault()}
             onPointerMove={tiltIllustration}
             onPointerLeave={resetTilt}
             onPointerCancel={resetTilt}
@@ -162,6 +165,7 @@ export default function Home(): ReactNode {
               width="520"
               height="520"
               fetchPriority="high"
+              draggable={false}
             />
           </button>
           <section aria-label="Features" className={styles.features}>

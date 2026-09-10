@@ -221,11 +221,16 @@
   border: 1px solid var(--home-border);
   background: transparent;
   cursor: pointer;
+  perspective: 900px;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .heroIllustration img {
   width: 100%;
   height: 100%;
+  pointer-events: none;
 }
 
 .features {
@@ -365,7 +370,7 @@
 
 @media (prefers-reduced-motion: no-preference) and (hover: hover) and (pointer: fine) {
   .heroIllustration img {
-    transform: perspective(900px) rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg)) scale(1.1);
+    transform: rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg)) scale(1.1);
   }
 
   .primaryButton:hover:not(:active) {
