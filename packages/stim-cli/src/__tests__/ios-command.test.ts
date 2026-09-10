@@ -45,6 +45,7 @@ import {
 } from '../commands/ios.ts';
 import { asProcessExit, makeChildProcess, makeError, makeExecutor, makeMetroResolution } from './_factories.ts';
 import { ensureBooted } from '../engine/device.ts';
+import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { RELEASE_VERIFY_WAIT_MS } from '../engine/app-install.ts';
 import { DEVICECTL_INSTALL_TIMEOUT_MS, LAUNCH_PROBE_TIMEOUT_MS } from '../engine/ios-device.ts';
@@ -192,6 +193,7 @@ function harness(overrides: LooseDeps = {}) {
   const appPath = join(root, 'build', 'Fixture.app');
 
   const deps: LooseDeps = {
+    ensureRemoteBootOwned: (args) => ensureRemoteBootOwned({ ...args, ledgerRoot: join(tmpHome, 'machine-eas') }),
     findProjectRoot: () => root,
     gitCommonDir: () => null,
     repoRoot: () => null,
