@@ -39,6 +39,7 @@ import {
 } from './watch-app-selection.mjs';
 import { completedCleanupRecord, durableRunRecord } from './run-record.mjs';
 import { ccacheLogEvidence } from './ccache-evidence.mjs';
+import { retireAndroidRecording } from './recording-cleanup.mjs';
 import {
   isolatedRunnerInvocation,
   prepareRunnerIsolation,
@@ -2405,6 +2406,17 @@ function cleanup(runDir) {
   }
   if (meta.arm === 'stim' && worktree && existsSync(worktree)) {
     const stimHome = join(runDir, 'stim-home');
+    if (meta.platform === 'android') {
+      const serial = appAlive.simulator?.udid;
+      const retired = retireAndroidRecording({
+        runDir,
+        ownerHome: stimHome,
+        ownerWorktree: worktree,
+        serial,
+        adb: (args) => run('adb', ['-s', serial, ...args], { timeout: 10_000 }),
+      });
+      actions.push(`verified completed recording metadata cleared before parking: ${retired.length} manifests`);
+    }
     const env = {
       ...cleanRubyEnvironment(process.env),
       STIM_HOME: stimHome,
