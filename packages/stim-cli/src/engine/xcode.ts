@@ -142,15 +142,23 @@ export function resolveScheme(project: XcodeProject, { exec = null }: { exec?: E
       },
     };
   }
-  const scheme = pickScheme(listing.schemes, listing.name || project.name);
+  let scheme = pickScheme(listing.schemes, listing.name || project.name);
+  if (!scheme && project.dir) {
+    try {
+      const app = JSON.parse(readFileSync(join(project.dir, '..', 'app.json'), 'utf8'));
+      scheme = pickScheme(listing.schemes, app?.name);
+    } catch {}
+  }
   if (!scheme) {
     const found = listing.schemes.length ? listing.schemes.join(', ') : 'none';
     return {
       error: {
         code: 'STIM_NO_SCHEME',
-        message: `No buildable scheme found in ${project.path} (schemes: ${found}).`,
+        message: `Could not select an app scheme in ${project.path} (schemes: ${found}).`,
         remedy:
-          'Share the app scheme in Xcode (Product > Scheme > Manage Schemes, tick Shared) so xcodebuild can see it.',
+          listing.schemes.length > 0
+            ? 'In Xcode (Product > Scheme > Manage Schemes), make the intended shared app scheme match the workspace/project name or the top-level name in app.json. Stim does not guess between unmatched schemes.'
+            : 'Share the app scheme in Xcode (Product > Scheme > Manage Schemes, tick Shared) so xcodebuild can see it.',
       },
     };
   }
