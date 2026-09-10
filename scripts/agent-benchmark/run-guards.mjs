@@ -200,9 +200,30 @@ export function agentDeviceAuxiliarySessions(commands, expectedPrefix, target) {
   });
 }
 
+function failedUnscopedRead(entry) {
+  const source = topLevelShellCommand(entry.command).replace(/\s+2>&1(?=\s*(?:;|$))/g, '');
+  if (/[$`|&]/.test(source)) return false;
+  const segments = shellCommandSegments(source);
+  if (segments.length < 1 || segments.length > 2) return false;
+  const args = literalShellArguments(segments[0]);
+  if (args?.[0] !== 'agent-device') return false;
+  const readOnly =
+    (args[1] === 'screenshot' && args.length === 3 && args[2].startsWith('/tmp/')) ||
+    (args[1] === 'snapshot' && (args.length === 2 || (args.length === 3 && args[2] === '-i')));
+  if (!readOnly) return false;
+  if (segments[1] && literalShellArguments(segments[1])?.[0] !== 'echo') return false;
+  const output = String(entry.output ?? '');
+  return (
+    /^(?:Exit code 1\n)?Error \(SESSION_NOT_FOUND\): No active session\. Run open first\./.test(output) &&
+    !/^(?:Opened:|Session state:|Page:)/m.test(output)
+  );
+}
+
 export function agentDeviceIsolationInvalidReasons(commands, expectedPrefix, target) {
   const segments = commands.flatMap((command) =>
-    shellCommandSegments(command.command).map((segment) => segment.replace(/^do\s+/, '')),
+    failedUnscopedRead(command)
+      ? []
+      : shellCommandSegments(command.command).map((segment) => segment.replace(/^do\s+/, '')),
   );
   const auxiliary = new Set(
     agentDeviceAuxiliarySessions(commands, expectedPrefix, target).flatMap((session) =>

@@ -287,6 +287,11 @@ events and reruns the current session audit. It can clear only the sole
 `agent-device-run-session-not-applied` reason; every evidence check still applies.
 Keep the original verdict and correction provenance private, outside Git.
 
+Literal unscoped screenshot/snapshot attempts that report `SESSION_NOT_FOUND`
+without reaching a device remain visible in timing but do not fail isolation.
+Successful unscoped reads, explicit device/session overrides and ambiguous
+multi-command results still fail the audit.
+
 For launch-error runs, `launch-error-audit-review.json` records a review of each
 unrecognized setup command. It contains `schemaVersion: 1`, `runId`,
 `originalRecordSha256`, `metaSha256`, `policySha256` (the launch-crash audit source),
