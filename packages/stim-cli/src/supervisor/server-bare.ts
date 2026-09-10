@@ -1,10 +1,12 @@
 import { createRequire } from 'node:module';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { projectMetroSharedCache } from '../settings.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { appendCacheStore, metroStoreRoot, registerMetroStore } from './metro-store.ts';
 import { supervisorError } from './errors.ts';
 import { bundleResponseMiddleware } from '../../shim/bundle-response.cjs';
+import { applyMetroCacheGeneration } from '../../shim/metro-cache-generation.cjs';
+import { readWorkspaceState } from './state.ts';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type BareModule = any;
@@ -298,7 +300,11 @@ export async function startBareServer({
   const { metro, devMiddleware, serverApi } = deps || resolveBareDeps(root);
   const makeReporter = reporterFactory === undefined ? loadNdjsonReporter(root) : reporterFactory;
 
-  const config = await metro.loadConfig({ cwd: root, port });
+  const config = applyMetroCacheGeneration(
+    await metro.loadConfig({ cwd: root, port }),
+    readWorkspaceState(root)?.metroCacheGeneration,
+    join(dirname(logsDir), 'metro-file-map'),
+  );
   const sharedStoreInstalled = installSharedCacheStore({
     root,
     config,

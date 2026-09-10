@@ -16,7 +16,7 @@ Stim reads the first value found in this order:
 
 1. Project settings in `~/.stim/config.json`, keyed by absolute path.
 2. Repository settings in the same machine file, keyed by the git common dir.
-3. Committed `.stim.json` at the repository root.
+3. Committed `.stim.json` beside the app's `package.json`.
 4. Machine defaults under top-level `optimizations` in `~/.stim/config.json` (for
    optimization settings only).
 5. The Stim default.
@@ -30,6 +30,12 @@ settings, so a wrong shape never falls back to a default silently. `stim doctor`
 reports it as a finding instead of refusing.
 
 ## Committed settings
+
+Each monorepo app reads its own `.stim.json`; it does not inherit an ancestor's
+runtime configuration. Single-app repositories still use their root file.
+When upgrading, move runtime settings to each relevant app and make profile,
+AVD-fragment and committed-provider paths relative to that app directory.
+Explicit machine project/repository overrides keep their existing precedence.
 
 `.stim.json` supports these keys:
 
@@ -60,15 +66,16 @@ reports it as a finding instead of refusing.
 | `caches`                      | Additional cache paths reported by `gc`                              |
 | `optimizations`               | [Build optimization switches and defaults](./build-optimizations.md) |
 
-`worktree warm` reads settings from the main checkout. A nonempty
+`worktree warm` reads repository-wide copy settings from the main checkout's
+root `.stim.json`, not individual app files. Keep `worktree.exclude` there. A nonempty
 `.worktreeexclude` in main replaces its resolved `worktree.exclude` setting;
 an empty or absent file uses the setting.
 
 Do not put secrets in a committed `.stim.json`. Keep secrets in ignored files
 and carry those files into a worktree.
 
-`cache.provider` names a module that Stim executes in every worktree on the
-repository. Review a committed value the way you review a build script, and
+`cache.provider` names a module that Stim executes in every worktree of the
+app. Review a committed value the way you review a build script, and
 keep provider credentials in the environment or in machine settings. Stim reads
 the module for `stim ios` and `stim android`; Metro uses it only when the
 project's own `metro.config.js` calls `sharedCacheStores()` from

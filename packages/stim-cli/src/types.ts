@@ -126,6 +126,7 @@ export interface IosFacts {
   runtime: string | null;
   fingerprint?: string | null;
   configuration: string | null;
+  scheme?: string;
   cacheKey?: string | null;
   cacheHit: CacheHitLevel;
   cacheSkipped: boolean;

@@ -17,6 +17,46 @@ async function waitForRegistration(dir: string, timeoutMs = 5000) {
   return null;
 }
 
+test('standalone Expo cache artifacts do not cross explicit iOS schemes or the automatic key', async () => {
+  const state = mkdtempSync(join(tmpdir(), 'stim-pkg-schemes-'));
+  process.env.STIM_HOME = state;
+  process.env.STIM_BUILD_CACHE = join(state, 'cache');
+  try {
+    const provider = await import('@stim-cli/expo-build-cache');
+    const schemes = ['App/Stage', 'App_Stage', 'App-Stage', 'app-stage'];
+    for (const [index, scheme] of schemes.entries()) {
+      const app = join(state, `${index}.app`);
+      mkdirSync(app);
+      writeFileSync(join(app, 'identity'), scheme);
+      await provider.uploadBuildCache({
+        platform: 'ios',
+        fingerprintHash: 'same-inputs',
+        buildPath: app,
+        runOptions: { scheme },
+      });
+    }
+    const paths = new Set<string>();
+    for (const scheme of schemes) {
+      const app = await provider.resolveBuildCache({
+        platform: 'ios',
+        fingerprintHash: 'same-inputs',
+        runOptions: { scheme },
+      });
+      assert(app);
+      paths.add(app);
+      expect(readFileSync(join(app, 'identity'), 'utf8')).toBe(scheme);
+    }
+    expect(paths.size).toBe(schemes.length);
+    expect(
+      await provider.resolveBuildCache({ platform: 'ios', fingerprintHash: 'same-inputs', runOptions: {} }),
+    ).toBeNull();
+  } finally {
+    delete process.env.STIM_BUILD_CACHE;
+    delete process.env.STIM_HOME;
+    rmSync(state, { recursive: true, force: true });
+  }
+});
+
 test('the Expo build cache provider registers itself on this Node, at the right depth', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pkg-home-'));
   const cacheRoot = mkdtempSync(join(tmpdir(), 'stim-pkg-bc-'));

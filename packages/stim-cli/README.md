@@ -27,7 +27,9 @@ Node 20.19.4 or later on Node 20, or Node 22.12.0 or later, is required.
 Machine defaults in `~/.stim/config.json` can enable or disable native artifact
 caching, remote caches, Metro sharing, iOS compiler caching and prefix mapping,
 and Android ccache/CAS, PCH, Gradle caching, and target ABI narrowing. Optional
-`.stim.json` overrides apply per repository. Run `stim guide settings` for the
+`.stim.json` runtime overrides apply per app, beside its `package.json`; monorepo
+apps do not inherit the repository-root file. Worktree-copy rules stay at the
+repository root. Run `stim guide settings` for the
 `optimizations` schema; existing defaults remain unchanged.
 
 ## Normal workflow
@@ -45,6 +47,12 @@ errors in the captured logs. Exit code 0 alone means the query succeeded, even
 when it prints errors; an empty result does not prove launch or log capture
 succeeded.
 
+Use `stim start --reset-cache` to recover from stale Metro transforms or file-map
+state. It restarts only this app's verified owned Metro, keeping its port and
+devices. A fresh persistent cache namespace bypasses old entries without deleting
+shared stores or changing other apps or native build caches. Expo requires SDK
+54+ and Stim's config adapter. See `stim guide lifecycle` for scope and limitations.
+
 Use `stim doctor --platform ios` or `stim doctor --platform android` when only
 one native platform is in scope; shared project checks still run. Doctor also
 prints the running CLI version and the `stim` installation resolved from PATH,
@@ -61,6 +69,12 @@ release-swap fallback, or direct Gradle builds; stop all native builds first.
 Stim builds or restores the app, installs it, launches it, and checks launch
 readiness. Plain output streams progress and reports the complete result. Use
 `--json` when a script needs structured data.
+
+Use `stim ios --scheme "App Staging"` when a project has several shared Xcode
+app schemes. Combine it with `--configuration Release` if needed. Without the
+flag, Stim keeps its automatic scheme selection. Explicit schemes use separate
+artifact caches and Xcode build directories; run `stim guide lifecycle builds`
+for provider behavior. This selects an Xcode scheme, not a URL scheme.
 
 Launch evidence does not prove that the UI is interactive. Apps can optionally
 [declare readiness with two debug log messages](https://appandflow.github.io/stim/docs/dev-server-and-logs#optional-app-declared-readiness),

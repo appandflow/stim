@@ -91,40 +91,20 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function repositoryRoot(startDir: string): string | null {
-  let dir = startDir;
-  for (;;) {
-    if (fs.existsSync(path.join(dir, '.git'))) return dir;
-    const parent = path.dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
-}
-
 function committedProviderConfig(startDir: string): CacheProviderConfig | null {
-  const start = path.resolve(startDir);
-  const stop = repositoryRoot(start) ?? start;
-  let dir = start;
-  for (;;) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(fs.readFileSync(path.join(dir, '.stim.json'), 'utf-8'));
-    } catch {
-      parsed = null;
-    }
-    const cache = isPlainObject(parsed) && isPlainObject(parsed.cache) ? parsed.cache : null;
-    const reference = cache?.provider;
-    if (typeof reference === 'string' && reference.trim() !== '') {
-      return {
-        provider: reference.trim(),
-        options: isPlainObject(cache?.options) ? cache.options : {},
-        baseDir: dir,
-      };
-    }
-    const parent = path.dirname(dir);
-    if (dir === stop || parent === dir) return null;
-    dir = parent;
+  let dir: string;
+  let parsed: unknown;
+  try {
+    dir = fs.realpathSync(startDir);
+    parsed = JSON.parse(fs.readFileSync(path.join(dir, '.stim.json'), 'utf-8'));
+  } catch {
+    return null;
   }
+  const cache = isPlainObject(parsed) && isPlainObject(parsed.cache) ? parsed.cache : null;
+  const reference = cache?.provider;
+  return typeof reference === 'string' && reference.trim() !== ''
+    ? { provider: reference.trim(), options: isPlainObject(cache?.options) ? cache.options : {}, baseDir: dir }
+    : null;
 }
 
 function warnToStderr(_code: string, message: string): void {

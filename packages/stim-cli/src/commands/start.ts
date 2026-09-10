@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import type { ChildProcess } from 'node:child_process';
 import { mkdirSync, openSync, readFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import type { Command } from 'commander';
 import { phaseLine, stepTimer } from '../command-output.ts';
 import type { StartError, StartFacts, SupervisorRecord } from '../types.ts';
@@ -21,7 +22,8 @@ import {
   writeWorkspaceState,
 } from '../supervisor/state.ts';
 import { CACHE_PROVIDER_ENV, cacheProviderEnv } from '@stim-cli/cache';
-import { workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
+import { workspaceProcessLockError, withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { resetMetroCache } from '../supervisor/cache-reset.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import {
   publicUrlSetting,
@@ -195,6 +197,7 @@ interface StartOptions {
   json?: boolean;
   wait?: string;
   remote?: boolean;
+  resetCache?: boolean;
 }
 
 interface StartCommandDeps {
@@ -268,6 +271,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
     .option('--wait <seconds>', `How long to wait for the dev server to answer (default ${DEFAULT_WAIT_SECONDS})`)
     .option('--remote', 'Prepare the dev server for a remote device')
+    .option('--reset-cache', 'Restart owned Metro with fresh per-app transform and file-map cache state')
     .action(async (opts: StartOptions) => {
       const json = Boolean(opts.json);
       const waitTimer = stepTimer();
@@ -391,6 +395,20 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           androidPackage: detectAndroidPackage(root) ?? undefined,
           isExpo,
         });
+
+        if (opts.resetCache) {
+          try {
+            await resetMetroCache(root);
+          } catch (error) {
+            const failure = error as Error & { code?: string; remedy?: string };
+            return fail({
+              code: failure.code ?? 'STIM_WORKSPACE_STATE',
+              message: failure.message,
+              remedy: failure.remedy,
+            });
+          }
+          note(phaseLine('cache', 'fresh Metro cache state for this app; shared cache entries and devices preserved'));
+        }
 
         const logsDir = workspaceLogsDir(root);
         const logFile = supervisorLogFile(root);
@@ -870,9 +888,23 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         report({ json, out, port, supervisor, logsDir, alreadyRunning: false, waited: waitTimer() });
       };
 
-      if (!managedRemote) return runStart();
+      const startLocked = async () => {
+        try {
+          return await withWorkspaceProcessLock(dirname(workspaceLogsDir(root)), 'metro-start', runStart, {
+            external: true,
+          });
+        } catch (error) {
+          if (workspaceProcessLockError(error) !== 'timeout') throw error;
+          return fail({
+            code: 'STIM_METRO_TIMEOUT',
+            message: 'Another Metro start or reset is still running for this app.',
+            remedy: 'Wait for it to finish, then retry `stim start`.',
+          });
+        }
+      };
+      if (!managedRemote) return startLocked();
       try {
-        return await d.withWorktreeLock(worktreeRoot, runStart);
+        return await d.withWorktreeLock(worktreeRoot, startLocked);
       } catch (err) {
         const lockError = workspaceProcessLockError(err);
         if (lockError === 'refused') {
