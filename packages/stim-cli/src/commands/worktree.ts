@@ -3,7 +3,13 @@ import { basename, dirname, isAbsolute, relative, resolve } from 'path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, plural, releasedLeaseFact, shortUdid } from '../command-output.ts';
-import { resolveSettings, SETTING_SHAPE_REMEDY, settingShapeErrors, unknownSettingKeys } from '../settings.ts';
+import {
+  resolveSettings,
+  SETTING_SHAPE_REMEDY,
+  settingShapeErrors,
+  unknownSettingKeys,
+  type SettingsObject,
+} from '../settings.ts';
 import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } from '../config.ts';
 import type { ReleasedLease } from '../engine/device-lease.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
@@ -109,29 +115,43 @@ export function registerWarm(worktree: Command): void {
     .action(async (opts: { refresh?: boolean }) => {
       try {
         const { root, target, common } = warmWorktreePaths(process.cwd());
-        const settings = resolveSettings({ gitCommonDir: common, repoRoot: root });
-        const shapeErrors = settingShapeErrors(settings);
-        if (shapeErrors.length) {
-          for (const message of shapeErrors) console.error(chalk.red(message));
-          console.error(chalk.dim(SETTING_SHAPE_REMEDY));
+        const readSettings = (): SettingsObject | null => {
+          const settings = resolveSettings({ gitCommonDir: common, repoRoot: root });
+          const shapeErrors = settingShapeErrors(settings);
+          if (shapeErrors.length) {
+            for (const message of shapeErrors) console.error(chalk.red(message));
+            console.error(chalk.dim(SETTING_SHAPE_REMEDY));
+            return null;
+          }
+          for (const key of unknownSettingKeys(settings)) {
+            console.error(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
+          }
+          return settings;
+        };
+        let settings = readSettings();
+        if (!settings) {
           process.exitCode = 1;
           return;
         }
-        for (const key of unknownSettingKeys(settings)) {
-          console.error(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
-        }
         if (opts.refresh) {
+          const refreshSettings = settings;
           const failure = await withWarmLock({ repositoryRoot: root, mode: 'refresh', out: console.error }, (wait) => {
             console.error(warmLockAcquiredLine(wait));
             return refreshMainCheckout({
               root,
               appDir: mainCheckoutAppDir(root, target),
-              settings,
+              settings: refreshSettings,
               emit: (line) => console.error(line),
             });
           });
           if (failure) {
             reportRefreshFailure(failure);
+            return;
+          }
+          // The fast-forward can have brought in a new repository-root .stim.json.
+          settings = readSettings();
+          if (!settings) {
+            process.exitCode = 1;
             return;
           }
         }

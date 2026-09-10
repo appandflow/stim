@@ -293,8 +293,9 @@ result as proof instead of requiring an unrelated screenshot.`,
     carry       copied node_modules from /w/main
     carry       complete: 1 ignored entries copied, 0 kept, 0 failed
 
-  \`--refresh\` prints its own facts before those, one per step, and the
-  \`lock\` line whenever the copy or the refresh waited for another warm:
+  \`--refresh\` always prints a \`lock\` line, then its own facts, one per
+  step, before those. A plain warm prints the \`lock\` line only when its copy
+  actually waited for another warm:
 
     lock        acquired (waited 12s for stim worktree warm --refresh pid 41233)
     checkout    janic/wip 2 commits behind origin/janic/wip -> fast-forwarded to 4b81e0c

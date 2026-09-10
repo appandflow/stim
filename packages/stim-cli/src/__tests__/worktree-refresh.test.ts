@@ -7,6 +7,7 @@ import { registerWarm } from '../commands/worktree.ts';
 import { acquireWarmLock, warmLocksDir } from '../engine/warm-lock.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import {
+  type MainCheckoutState,
   checkoutPlan,
   defaultBranchNote,
   depsPlan,
@@ -93,19 +94,23 @@ function fallBehind(files: Record<string, string>, message = 'upstream'): string
 }
 
 test('the refresh decisions read off the state without touching git', () => {
-  expect(mainCheckoutRefusal('/w/main', { branch: 'main', operation: null, dirtyTracked: [] })).toBe(null);
-  expect(mainCheckoutRefusal('/w/main', { branch: 'main', operation: 'rebase', dirtyTracked: [] })).toMatchObject({
+  const clean: MainCheckoutState = { branch: 'main', operation: null, dirtyTracked: [], dirtyKnown: true };
+  expect(mainCheckoutRefusal('/w/main', clean)).toBe(null);
+  expect(mainCheckoutRefusal('/w/main', { ...clean, operation: 'rebase' })).toMatchObject({
     code: 'STIM_MAIN_DIRTY',
     remedy: expect.stringContaining('git -C /w/main rebase --abort'),
   });
-  expect(mainCheckoutRefusal('/w/main', { branch: 'main', operation: null, dirtyTracked: ['src/a.ts'] })).toMatchObject(
-    {
-      code: 'STIM_MAIN_DIRTY',
-      lines: ['src/a.ts'],
-      remedy: expect.stringContaining('git -C /w/main stash push -u'),
-    },
-  );
-  expect(mainCheckoutRefusal('/w/main', { branch: null, operation: null, dirtyTracked: [] })).toMatchObject({
+  expect(mainCheckoutRefusal('/w/main', { ...clean, operation: 'am' })?.message).toContain('a git am is in progress');
+  expect(mainCheckoutRefusal('/w/main', { ...clean, dirtyTracked: ['src/a.ts'] })).toMatchObject({
+    code: 'STIM_MAIN_DIRTY',
+    lines: ['src/a.ts'],
+    remedy: expect.stringContaining('git -C /w/main stash push -u'),
+  });
+  expect(mainCheckoutRefusal('/w/main', { ...clean, dirtyKnown: false })).toMatchObject({
+    code: 'STIM_MAIN_DIRTY',
+    message: expect.stringContaining('could not report whether'),
+  });
+  expect(mainCheckoutRefusal('/w/main', { ...clean, branch: null })).toMatchObject({
     code: 'STIM_MAIN_DETACHED',
     remedy: expect.stringContaining('git -C /w/main checkout <branch>'),
   });
@@ -149,6 +154,9 @@ test('the refresh decisions read off the state without touching git', () => {
     reason: 'no ios/ directory',
   });
   expect(podsPlan({ hasIos: true, hasPodfile: false, podfileLockChanged: true, stale: fresh }).run).toBe(false);
+  expect(
+    podsPlan({ hasIos: true, hasPodfile: true, podfileLockChanged: false, stale: { noPods: true, stale: false } }),
+  ).toEqual({ run: false, reason: 'no ios/Pods and no ios/Podfile.lock' });
   expect(podsPlan({ hasIos: true, hasPodfile: true, podfileLockChanged: true, stale: fresh })).toEqual({
     run: true,
     reason: 'ios/Podfile.lock changed',
@@ -234,6 +242,23 @@ test('--refresh refuses a dirty main checkout and names the path, but a plain wa
   expect(plain.stderr).not.toMatch(/checkout|deps|lock/);
   expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
   expect(readFileSync(join(root, 'package.json'), 'utf-8')).toBe('{"name":"edited-in-main"}\n');
+});
+
+test('--refresh refuses a main checkout with a merge in progress', async () => {
+  git(root, 'checkout', '-qb', 'other');
+  write(root, 'package.json', '{"name":"other-side"}\n');
+  commit(root, 'other side');
+  git(root, 'checkout', '-q', 'main');
+  write(root, 'package.json', '{"name":"main-side"}\n');
+  commit(root, 'main side');
+  expect(() => git(root, 'merge', 'other')).toThrow('Command failed');
+  expect(existsSync(join(root, '.git', 'MERGE_HEAD'))).toBe(true);
+
+  const result = await runWarm(target, '--refresh');
+  expect(result.code).toBe(1);
+  expect(result.stderr).toMatch(/a merge is in progress there/);
+  expect(result.stderr).toContain('failed: STIM_MAIN_DIRTY');
+  expect(existsSync(join(root, '.git', 'MERGE_HEAD'))).toBe(true);
 });
 
 test('--refresh refuses a detached main checkout and an untracked file is not a reason to refuse', async () => {

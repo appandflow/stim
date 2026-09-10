@@ -318,7 +318,9 @@ refuses.
 
 `--refresh` updates the main checkout before the copy: it fetches, fast-forwards
 whatever branch is checked out there, and installs dependencies or Pods when the
-new commits moved a lockfile. See [worktree isolation](./worktrees.md#refresh-the-main-checkout-first).
+new commits moved a lockfile, when nothing is installed, or when `ios/Pods` does
+not match `ios/Podfile.lock`. See
+[worktree isolation](./worktrees.md#refresh-the-main-checkout-first).
 
 The branch, tracked files, and existing destination entries stay untouched.
 Existing directories, including `node_modules`, are skipped whole. Eligible

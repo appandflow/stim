@@ -9,10 +9,9 @@ import {
   locallyKnownUpstream,
   type UpstreamState,
 } from './doctor.ts';
-import { podsAreStale, readPodState, runPodInstall } from './engine/deps.ts';
-import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './engine/xcode.ts';
+import { DEPS_ERROR, podsAreStale, readPodState, runCaptured, runPodInstall } from './engine/deps.ts';
+import { HEARTBEAT_INTERVAL_MS } from './engine/xcode.ts';
 import { getExecutor } from './exec.ts';
-import { createLineReader, stripAnsi, waitForChild } from './process-output.ts';
 import type { SettingsObject } from './types.ts';
 import { resolveFullRef } from './worktree.ts';
 
@@ -25,19 +24,30 @@ export interface RefreshFailure {
 
 export interface MainCheckoutState {
   branch: string | null;
-  operation: 'rebase' | 'merge' | null;
+  operation: 'rebase' | 'merge' | 'am' | null;
   dirtyTracked: string[];
+  dirtyKnown: boolean;
 }
 
 const DIRTY_PATHS_SHOWN = 5;
+
+const FETCH_TIMEOUT_MS = 120_000;
 
 export function mainCheckoutRefusal(root: string, state: MainCheckoutState): RefreshFailure | null {
   if (state.operation) {
     return {
       code: 'STIM_MAIN_DIRTY',
-      message: `Refusing to refresh ${root}: a ${state.operation} is in progress there.`,
+      message: `Refusing to refresh ${root}: a ${state.operation === 'am' ? 'git am' : state.operation} is in progress there.`,
       lines: [],
       remedy: `Finish it, or run \`git -C ${root} ${state.operation} --abort\`, then run warm again.`,
+    };
+  }
+  if (!state.dirtyKnown) {
+    return {
+      code: 'STIM_MAIN_DIRTY',
+      message: `Refusing to refresh ${root}: git could not report whether its tracked files are modified.`,
+      lines: [],
+      remedy: `Run \`git -C ${root} status\` to see what it reports, clear it, then run warm again.`,
     };
   }
   if (state.dirtyTracked.length) {
@@ -89,7 +99,7 @@ export function divergedRefusal(
 function checkoutFactLine(branch: string, plan: Exclude<CheckoutPlan, { kind: 'diverged' }>, head: string): string {
   const shortHead = head.slice(0, 7);
   if (plan.kind === 'no-upstream') {
-    return phaseLine('checkout', `${branch} has no upstream -> left at ${shortHead}`);
+    return phaseLine('checkout', `${branch} has no upstream -> left${shortHead ? ` at ${shortHead}` : ' alone'}`);
   }
   if (plan.kind === 'fast-forward') {
     return phaseLine(
@@ -131,6 +141,7 @@ export interface PodsInputs {
 export function podsPlan({ hasIos, hasPodfile, podfileLockChanged, stale }: PodsInputs): StepPlan {
   if (!hasIos) return { run: false, reason: 'no ios/ directory' };
   if (!hasPodfile) return { run: false, reason: 'no ios/Podfile' };
+  if (stale.noPods) return { run: false, reason: 'no ios/Pods and no ios/Podfile.lock' };
   if (podfileLockChanged) return { run: true, reason: 'ios/Podfile.lock changed' };
   if (stale.stale) return { run: true, reason: stale.reason ?? 'ios/Pods does not match ios/Podfile.lock' };
   return { run: false, reason: 'ios/Podfile.lock unchanged' };
@@ -162,23 +173,29 @@ function stepLine(label: string, reason: string, action: string): string {
   return phaseLine(label, `${reason} -> ${action}`);
 }
 
+function inProgressOperation(gitDir: string): MainCheckoutState['operation'] {
+  if (existsSync(join(gitDir, 'rebase-merge'))) return 'rebase';
+  if (existsSync(join(gitDir, 'rebase-apply'))) {
+    // git-rebase--am and git am share rebase-apply; only am writes `applying`.
+    return existsSync(join(gitDir, 'rebase-apply', 'applying')) ? 'am' : 'rebase';
+  }
+  return existsSync(join(gitDir, 'MERGE_HEAD')) ? 'merge' : null;
+}
+
 function readMainCheckoutState(root: string): MainCheckoutState {
   const exec = getExecutor();
   const gitDir = exec.runFileQuiet('git', ['-C', root, 'rev-parse', '--path-format=absolute', '--git-dir'])?.trim();
-  const operation = !gitDir
-    ? null
-    : existsSync(join(gitDir, 'rebase-merge')) || existsSync(join(gitDir, 'rebase-apply'))
-      ? 'rebase'
-      : existsSync(join(gitDir, 'MERGE_HEAD'))
-        ? 'merge'
-        : null;
   const changed = exec.runFileQuiet('git', ['-C', root, 'diff', '--name-only', 'HEAD']);
-  const dirtyTracked = (changed ?? '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
   const branch = exec.runFileQuiet('git', ['-C', root, 'symbolic-ref', '--quiet', '--short', 'HEAD'])?.trim() || null;
-  return { branch, operation, dirtyTracked };
+  return {
+    branch,
+    operation: gitDir ? inProgressOperation(gitDir) : null,
+    dirtyTracked: (changed ?? '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean),
+    dirtyKnown: changed !== null,
+  };
 }
 
 function resolveDefaultBranch(root: string, settings: SettingsObject): string | null {
@@ -204,6 +221,10 @@ function branchRemote(root: string, branch: string): string {
   );
 }
 
+function gitPath(...parts: string[]): string {
+  return parts.filter((part) => part && part !== '.').join('/');
+}
+
 function pathChangedBetween(root: string, from: string, to: string, path: string): boolean {
   if (from === to || !from || !to) return false;
   const out = getExecutor().runFileQuiet('git', ['-C', root, 'diff', '--name-only', from, to, '--', path]);
@@ -214,7 +235,7 @@ type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => C
 
 const LAST_LINES = 20;
 
-interface CommandRun {
+interface InstallRun {
   ok: boolean;
   durationMs: number;
   reason: string | null;
@@ -235,67 +256,31 @@ async function runInstallCommand({
   now: () => number;
   heartbeatMs: number;
   onHeartbeat: (line: string) => void;
-}): Promise<CommandRun> {
+}): Promise<InstallRun> {
   const [bin, ...args] = command.split(' ');
-  const startedAt = now();
-  const tail: string[] = [];
-  const push = (line: unknown): void => {
-    const msg = stripAnsi(String(line)).trimEnd();
-    if (!msg.trim()) return;
-    tail.push(msg);
-    if (tail.length > LAST_LINES) tail.shift();
-  };
-
-  let child: ChildProcess;
-  try {
-    child = spawnFn(String(bin), args, {
-      cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, FORCE_COLOR: '0' },
-    });
-  } catch (error) {
-    return {
-      ok: false,
-      durationMs: now() - startedAt,
-      reason: `Could not run \`${command}\`: ${(error as Error)?.message || error}`,
-      lastLines: [],
-    };
-  }
-
-  const outReader = createLineReader(push);
-  const errReader = createLineReader(push);
-  child.stdout?.setEncoding?.('utf-8');
-  child.stderr?.setEncoding?.('utf-8');
-  child.stdout?.on('data', (chunk) => outReader.push(chunk));
-  child.stderr?.on('data', (chunk) => errReader.push(chunk));
-  const stopHeartbeat = startBuildHeartbeat({
-    intervalMs: heartbeatMs,
-    elapsed: () => now() - startedAt,
-    emit: onHeartbeat,
+  const run = await runCaptured({
+    logWriter: null,
+    spawn: spawnFn,
+    now,
+    heartbeatMs,
+    onHeartbeat,
+    cmd: String(bin),
+    args,
+    cwd,
+    env: { ...process.env, FORCE_COLOR: '0' },
+    event: 'warm_deps_install',
     label: 'deps',
   });
-  let result: Awaited<ReturnType<typeof waitForChild>>;
-  try {
-    result = await waitForChild(child);
-  } finally {
-    stopHeartbeat();
+  const lastLines = run.transcript.slice(-LAST_LINES);
+  if (run.error) {
+    const reason = `Could not run \`${command}\`: ${(run.error as Error)?.message || run.error}`;
+    return { ok: false, durationMs: run.durationMs, reason, lastLines };
   }
-  outReader.flush();
-  errReader.flush();
-  const durationMs = now() - startedAt;
-  if (result.error) {
-    return {
-      ok: false,
-      durationMs,
-      reason: `Could not run \`${command}\`: ${result.error?.message || result.error}`,
-      lastLines: tail.slice(),
-    };
+  if (run.code !== 0) {
+    const how = run.signal ? `signal ${run.signal}` : `exit code ${run.code}`;
+    return { ok: false, durationMs: run.durationMs, reason: `\`${command}\` failed (${how}).`, lastLines };
   }
-  if (result.code !== 0) {
-    const how = result.signal ? `signal ${result.signal}` : `exit code ${result.code}`;
-    return { ok: false, durationMs, reason: `\`${command}\` failed (${how}).`, lastLines: tail.slice() };
-  }
-  return { ok: true, durationMs, reason: null, lastLines: tail.slice() };
+  return { ok: true, durationMs: run.durationMs, reason: null, lastLines };
 }
 
 function fastForward(root: string, upstream: string): { ok: boolean; lines: string[] } {
@@ -341,9 +326,12 @@ export async function refreshMainCheckout({
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
 
   const before = resolveFullRef(root, 'HEAD') ?? '';
-  if (getExecutor().runFileQuiet('git', ['-C', root, 'fetch', '--prune', branchRemote(root, branch)]) === null) {
-    emit(phaseLine('checkout', 'could not fetch; continuing with the local state'));
-  }
+  // A fetch that prompts for credentials would hold the exclusive lock forever.
+  const fetched = getExecutor().runFileQuiet('git', ['-C', root, 'fetch', '--prune', branchRemote(root, branch)], {
+    timeoutMs: FETCH_TIMEOUT_MS,
+    env: { GIT_TERMINAL_PROMPT: '0' },
+  });
+  if (fetched === null) emit(phaseLine('checkout', 'could not fetch; continuing with the local state'));
 
   const plan = checkoutPlan(locallyKnownUpstream(root));
   if (plan.kind === 'diverged') return divergedRefusal(root, branch, plan);
@@ -371,15 +359,13 @@ export async function refreshMainCheckout({
   const deps = depsPlan({
     lockfile: dependencies?.lock ?? null,
     lockfileChanged: dependencies
-      ? pathChangedBetween(root, before, head, join(relative(root, dependencies.root), dependencies.lock))
+      ? pathChangedBetween(root, before, head, gitPath(relative(root, dependencies.root), dependencies.lock))
       : false,
     installed,
     treeValid:
       dependencies?.lock === 'package-lock.json' && installed ? installedNpmTreeIsValid(dependencies.root) : null,
   });
-  if (!deps.run) {
-    emit(stepLine('deps', deps.reason, 'skipped'));
-  } else if (dependencies) {
+  if (deps.run && dependencies) {
     const install = await runInstallCommand({
       command: dependencies.command,
       cwd: dependencies.root,
@@ -391,12 +377,14 @@ export async function refreshMainCheckout({
     emit(stepLine('deps', deps.reason, `${dependencies.command} (${formatDuration(install.durationMs)})`));
     if (!install.ok) {
       return {
-        code: 'STIM_DEPS_FAILED',
+        code: DEPS_ERROR,
         message: String(install.reason),
         lines: install.lastLines,
         remedy: `Run \`cd ${dependencies.root} && ${dependencies.command}\` and fix what it reports, then run warm again.`,
       };
     }
+  } else {
+    emit(stepLine('deps', deps.reason, 'skipped'));
   }
 
   const app = relative(root, appDir) || '.';
@@ -405,7 +393,7 @@ export async function refreshMainCheckout({
   const pods = podsPlan({
     hasIos: existsSync(join(appDir, 'ios')),
     hasPodfile: podState.hasPodfile,
-    podfileLockChanged: pathChangedBetween(root, before, head, join(app === '.' ? '' : app, 'ios', 'Podfile.lock')),
+    podfileLockChanged: pathChangedBetween(root, before, head, gitPath(app, 'ios', 'Podfile.lock')),
     stale: podsAreStale(podState.lockText, podState.manifestText),
   });
   if (!pods.run) {
@@ -413,17 +401,18 @@ export async function refreshMainCheckout({
     return null;
   }
   const result = await runPodInstall(appDir, null, { spawnFn: spawn, now, heartbeatMs, onHeartbeat: emit });
+  const podCommand = result.command ?? 'pod install';
   emit(
     stepLine(
       'pods',
       `${where}${pods.reason}`,
-      `${result.command ?? 'pod install'} (${formatDuration(result.durationMs)})`,
+      result.durationMs === undefined ? podCommand : `${podCommand} (${formatDuration(result.durationMs)})`,
     ),
   );
   for (const podNote of result.notes ?? []) emit(phaseLine('pods', podNote));
   if (!result.ok) {
     return {
-      code: result.code ?? 'STIM_DEPS_FAILED',
+      code: result.code ?? DEPS_ERROR,
       message: result.reason ?? '`pod install` failed.',
       lines: result.lastLines ?? [],
       remedy: result.remedy ?? null,

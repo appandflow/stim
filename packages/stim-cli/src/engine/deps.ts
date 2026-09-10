@@ -236,7 +236,7 @@ function bundlePathInsideProject(root: string, env: NodeJS.ProcessEnv): { path: 
   };
 }
 
-type RunContext = {
+export type RunContext = {
   logWriter: NdjsonWriter | null | undefined;
   spawn: SpawnFn;
   now: () => number;
@@ -244,7 +244,7 @@ type RunContext = {
   onHeartbeat: (line: string) => void;
 };
 
-type CapturedRun = {
+export type CapturedRun = {
   transcript: string[];
   code: number | null;
   signal: NodeJS.Signals | null;
@@ -252,7 +252,7 @@ type CapturedRun = {
   durationMs: number;
 };
 
-async function runCaptured(
+export async function runCaptured(
   ctx: RunContext & {
     cmd: string;
     args: string[];

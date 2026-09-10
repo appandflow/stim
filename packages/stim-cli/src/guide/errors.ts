@@ -751,7 +751,8 @@ captured"  (in metro.ndjson, bare RN)
   \`--refresh\` can hold for a whole dependency install. That wait prints its
   holder every 30 seconds (\`lock        waiting on stim worktree warm
   --refresh (pid 41233, 40s elapsed)\`) and the refusal names the same holder
-  and the lock directory under ~/.stim/warm-locks. A lock whose owner died is taken over automatically (pid
+  and the lock directory under ~/.stim/warm-locks.
+  A lock whose owner died is taken over automatically (pid
   liveness is checked every poll), so this means another Stim command really
   is working on this workspace: wait for it and retry. If nothing is running,
   the message names the lock directory and removing it is safe. The same error
@@ -823,7 +824,7 @@ not on any remote"  (worktree remove)
   refuse -- but git itself refuses a fast-forward that would overwrite one, and
   that reports this code too, quoting git. The remedy is the exact line that
   clears it: commit, \`git -C <main> stash push -u -m warm-refresh\`, or
-  \`git -C <main> rebase --abort\`. Nothing was fetched, installed or copied.
+  \`git -C <main> rebase --abort\`. Nothing was installed or copied.
   Plain \`stim worktree warm\` does not care: it copies from a dirty main
   checkout exactly as it always has.`,
     },

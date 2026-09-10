@@ -1,13 +1,7 @@
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  acquireWarmLock,
-  warmLockAcquiredLine,
-  warmLockPath,
-  warmLockWaitingLine,
-  warmLocksDir,
-} from '../engine/warm-lock.ts';
+import { acquireWarmLock, warmLockAcquiredLine, warmLockPath, warmLocksDir } from '../engine/warm-lock.ts';
 import { IMPOSSIBLE_PID } from './_factories.ts';
 
 let home: string;
@@ -52,6 +46,21 @@ test('a copy waits for a refresh in flight and names it', async () => {
   expect(polls).toBe(3);
   expect(copy.wait.holder).toEqual({ pid: process.pid, mode: 'refresh', startedAt: expect.any(String) });
   copy.release();
+});
+
+test('two refreshes never hold the lock at once', async () => {
+  const first = await acquireWarmLock({ repositoryRoot: REPO, mode: 'refresh' });
+  let polls = 0;
+  const second = await acquireWarmLock({
+    repositoryRoot: REPO,
+    mode: 'refresh',
+    sleep: async () => {
+      if (++polls === 3) first.release();
+    },
+  });
+  expect(polls).toBe(3);
+  expect(second.wait.holder?.mode).toBe('refresh');
+  second.release();
 });
 
 test('a refresh waits for a copy in flight to finish before it starts', async () => {
@@ -133,8 +142,5 @@ test('the acquired line reports a wait only when there was one', () => {
   expect(warmLockAcquiredLine({ waitedMs: 0, holder: null })).toBe(`  ${'lock'.padEnd(11)} acquired`);
   expect(warmLockAcquiredLine({ waitedMs: 12_000, holder: { pid: 41233, mode: 'refresh', startedAt: null } })).toBe(
     `  ${'lock'.padEnd(11)} acquired (waited 12s for stim worktree warm --refresh pid 41233)`,
-  );
-  expect(warmLockWaitingLine({ pid: 41233, mode: 'refresh', startedAt: null }, 40_000)).toBe(
-    `  ${'lock'.padEnd(11)} waiting on stim worktree warm --refresh (pid 41233, 40s elapsed)`,
   );
 });

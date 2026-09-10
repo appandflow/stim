@@ -8,7 +8,7 @@ import { isPidAlive } from '../metro.ts';
 
 type WarmLockMode = 'refresh' | 'copy';
 
-export interface WarmLockHolder {
+interface WarmLockHolder {
   pid: number | null;
   mode: WarmLockMode;
   startedAt: string | null;
@@ -35,7 +35,7 @@ function warmLockCommand(mode: WarmLockMode): string {
   return mode === 'refresh' ? 'stim worktree warm --refresh' : 'stim worktree warm';
 }
 
-export function warmLockWaitingLine(holder: WarmLockHolder, elapsedMs: number): string {
+function warmLockWaitingLine(holder: WarmLockHolder, elapsedMs: number): string {
   return phaseLine(
     'lock',
     `waiting on ${warmLockCommand(holder.mode)} (pid ${holder.pid ?? '?'}, ${formatElapsed(elapsedMs)} elapsed)`,
@@ -113,12 +113,18 @@ function ageMs(path: string, now: number): number | null {
   }
 }
 
-function reap(path: string): void {
+function reap(path: string, observed: string | null): void {
   const aside = `${path}.reap-${process.pid}-${randomUUID()}`;
   try {
     renameSync(path, aside);
   } catch {
     return;
+  }
+  if (readToken(join(aside, RECORD_FILE)) !== observed) {
+    try {
+      renameSync(aside, path);
+      return;
+    } catch {}
   }
   rmSync(aside, { recursive: true, force: true });
 }
@@ -135,22 +141,23 @@ function lockPaths(repositoryRoot: string): LockPaths {
 }
 
 function liveWriter(paths: LockPaths, isAlive: (pid: number) => boolean, now: number): WarmLockHolder | null {
-  const holder = readHolder(join(paths.writer, RECORD_FILE));
+  const record = join(paths.writer, RECORD_FILE);
+  const holder = readHolder(record);
   if (holder) {
     if (holder.pid !== null && isAlive(holder.pid)) return holder;
-    reap(paths.writer);
+    reap(paths.writer, readToken(record));
     return null;
   }
   const age = ageMs(paths.writer, now);
   if (age === null) return null;
   if (age > RECORD_GRACE_MS) {
-    reap(paths.writer);
+    reap(paths.writer, null);
     return null;
   }
   return { pid: null, mode: 'refresh', startedAt: null };
 }
 
-function liveReaders(paths: LockPaths, isAlive: (pid: number) => boolean, skipToken: string | null): WarmLockHolder[] {
+function liveReaders(paths: LockPaths, isAlive: (pid: number) => boolean): WarmLockHolder[] {
   let names: string[];
   try {
     names = readdirSync(paths.readers);
@@ -159,7 +166,7 @@ function liveReaders(paths: LockPaths, isAlive: (pid: number) => boolean, skipTo
   }
   const live: WarmLockHolder[] = [];
   for (const name of names) {
-    if (!name.endsWith('.json') || name === skipToken) continue;
+    if (!name.endsWith('.json')) continue;
     const file = join(paths.readers, name);
     const holder = readHolder(file);
     if (holder && holder.pid !== null && isAlive(holder.pid)) {
@@ -213,20 +220,27 @@ export async function acquireWarmLock({
   mkdirSync(paths.readers, { recursive: true });
 
   if (mode === 'refresh') {
-    for (;;) {
-      try {
-        mkdirSync(paths.writer);
-        writeRecord(join(paths.writer, RECORD_FILE), record);
-        break;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error;
+    const writerRecord = join(paths.writer, RECORD_FILE);
+    const claim = async (): Promise<void> => {
+      for (;;) {
+        try {
+          mkdirSync(paths.writer);
+          writeRecord(writerRecord, record);
+          return;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error;
+        }
+        await step(liveWriter(paths, isAlive, now()) ?? { pid: null, mode: 'refresh', startedAt: null });
       }
-      const holder = liveWriter(paths, isAlive, now());
-      if (holder) await step(holder);
-    }
+    };
+    await claim();
     for (;;) {
-      const readers = liveReaders(paths, isAlive, null);
-      const first = readers[0];
+      // A reaper that read a stale record can take the claim away mid-drain.
+      if (readToken(writerRecord) !== token) {
+        await claim();
+        continue;
+      }
+      const first = liveReaders(paths, isAlive)[0];
       if (!first) break;
       await step(first);
     }
