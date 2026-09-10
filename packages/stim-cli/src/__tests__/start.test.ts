@@ -18,7 +18,7 @@ import {
 } from '../engine/tunnel.ts';
 import { supervisorLogFile, workspaceLogsDir, workspaceMetadataFile } from '../paths.ts';
 import { writeWorkspaceState } from '../supervisor/run.ts';
-import { readMetroTunnel } from '../supervisor/state.ts';
+import { readMetroTunnel, readWorkspaceState } from '../supervisor/state.ts';
 import {
   liveSupervisor,
   parseWait,
@@ -481,6 +481,29 @@ describe('failureEvidence (issue #24)', () => {
 });
 
 describe('action: already running', () => {
+  test('cache reset refuses an external Metro without changing its cache state or device', async () => {
+    const port = 8149;
+    await metroListener(port);
+    setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } }));
+    upsertProject(root, { metroPort: port });
+    writeWorkspaceState(root, { metroCacheGeneration: 'before', lastBuild: { device: 'owned-device' } });
+    const before = readWorkspaceState(root);
+    const result = await runAction({ json: true, resetCache: true });
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.logs[0] ?? '').message).toContain('externally started');
+    expect(readWorkspaceState(root)).toEqual(before);
+    expect(getProject(root)?.metroPort).toBe(port);
+  });
+
+  test('cache reset refuses an unverifiable live supervisor without recording a new generation', async () => {
+    upsertProject(root, { metroPort: 8148 });
+    writeWorkspaceState(root, { supervisor: { pid: process.pid, port: 8148 } });
+    const result = await runAction({ json: true, resetCache: true });
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.logs[0] ?? '').message).toContain('identity');
+    expect(readWorkspaceState(root)?.metroCacheGeneration).toBeUndefined();
+  });
+
   test('a healthy dev server with a live supervisor record is a no-op exit 0', async () => {
     const port = 8151;
     const server = await metroListener(port);
@@ -1862,38 +1885,46 @@ describe('action: spawning the supervisor', () => {
     expect(stderr.includes('noise 4')).toBeTruthy();
   });
 
-  test('a supervisor that exits during startup ends the wait immediately', async () => {
-    const port = 8156;
-    const exec = metroExecutor({ listeners: {} });
-    const handlers: Record<string, (...args: unknown[]) => void> = {};
-    exec.spawn = (cmd, args, opts) => {
-      exec.calls.spawn.push({ cmd, args, opts });
-      const child: ChildStub = {
-        pid: process.pid,
-        unref() {},
-        on(event, cb) {
-          handlers[event] = cb;
-        },
+  test.each([false, true])(
+    'a supervisor that exits during startup ends the wait immediately (reset %s)',
+    async (resetCache) => {
+      const port = 8156;
+      const exec = metroExecutor({ listeners: {} });
+      const handlers: Record<string, (...args: unknown[]) => void> = {};
+      exec.spawn = (cmd, args, opts) => {
+        exec.calls.spawn.push({ cmd, args, opts });
+        const child: ChildStub = {
+          pid: process.pid,
+          unref() {},
+          on(event, cb) {
+            handlers[event] = cb;
+          },
+        };
+        setTimeout(() => handlers.exit?.(1, null), 5);
+        return child;
       };
-      setTimeout(() => handlers.exit?.(1, null), 5);
-      return child;
-    };
-    setExecutor(exec);
-    upsertProject(root, { metroPort: port });
+      setExecutor(exec);
+      upsertProject(root, { metroPort: port });
 
-    const started = Date.now();
-    const result = await runAction({ json: true, wait: '30' });
-    const elapsed = Date.now() - started;
+      const started = Date.now();
+      const result = await runAction({ json: true, wait: '30', resetCache });
+      const elapsed = Date.now() - started;
 
-    expect(result.exitCode).toBe(1);
-    expect(elapsed < 5000).toBeTruthy();
-    expect(result.errs.join('\n')).toMatch(/supervisor exited \(code 1\) before the dev server came up/);
-    const lastLog = result.logs.at(-1);
-    assert(lastLog);
-    const facts = JSON.parse(lastLog);
-    expect(facts.code).toBe('STIM_SUPERVISOR_EXITED');
-    expect(facts.remedy).toMatch(/start` again/);
-  });
+      expect(result.exitCode).toBe(1);
+      expect(elapsed < 5000).toBeTruthy();
+      expect(result.errs.join('\n')).toMatch(/supervisor exited \(code 1\) before the dev server came up/);
+      const lastLog = result.logs.at(-1);
+      assert(lastLog);
+      const facts = JSON.parse(lastLog);
+      expect(facts.code).toBe('STIM_SUPERVISOR_EXITED');
+      expect(facts.remedy).toMatch(/start` again/);
+      const generation = readWorkspaceState(root)?.metroCacheGeneration;
+      expect(typeof generation).toBe(resetCache ? 'string' : 'undefined');
+      const retry = await runAction({ json: true, wait: '30' });
+      expect(retry.exitCode).toBe(1);
+      expect(readWorkspaceState(root)?.metroCacheGeneration).toBe(generation);
+    },
+  );
 });
 
 describe('the error contract', () => {

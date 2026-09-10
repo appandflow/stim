@@ -45,6 +45,12 @@ errors in the captured logs. Exit code 0 alone means the query succeeded, even
 when it prints errors; an empty result does not prove launch or log capture
 succeeded.
 
+Use `stim start --reset-cache` to recover from stale Metro transforms or file-map
+state. It restarts only this app's verified owned Metro, keeping its port and
+devices. A fresh persistent cache namespace bypasses old entries without deleting
+shared stores or changing other apps or native build caches. Expo requires SDK
+54+ and Stim's config adapter. See `stim guide lifecycle` for scope and limitations.
+
 Use `stim doctor --platform ios` or `stim doctor --platform android` when only
 one native platform is in scope; shared project checks still run. Doctor also
 prints the running CLI version and the `stim` installation resolved from PATH,

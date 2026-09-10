@@ -9,6 +9,7 @@ export const MODE_BARE = 'bare-inproc';
 export const MODE_EXPO = 'expo-child';
 
 export interface WorkspaceState {
+  metroCacheGeneration?: string;
   supervisor?: Record<string, unknown>;
   collectors?: Record<string, unknown>;
   lastBuild?: Record<string, unknown>;

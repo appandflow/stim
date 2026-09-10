@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expoMetroConfigPath, metroStoreConfirmedRoot } from '../supervisor/metro-store.ts';
+import { applyMetroCacheGeneration } from '../../shim/metro-cache-generation.cjs';
 
 let project: string;
 let adapter: string;
@@ -52,6 +53,48 @@ function run(extraEnv: Record<string, string> = {}) {
 }
 
 describe('the Expo Metro config adapter', () => {
+  test('reset changes transform and file-map keys without clearing project or shared stores', () => {
+    writeFileSync(
+      join(project, 'metro.config.cjs'),
+      `module.exports = { cacheVersion: 'app-v2', cacheStores: [{ _root: '/project/shared', clear() { throw new Error('shared cache cleared'); } }] };`,
+    );
+    const script = `Promise.resolve(require(process.env.ADAPTER)).then(config => console.log(JSON.stringify({
+      version: config.cacheVersion, map: config.fileMapCacheDirectory,
+      roots: config.cacheStores({ FileStore: class { constructor(opts) { this._root = opts.root; } } }).map(store => store._root)
+    })));`;
+    const load = (generation: string) => {
+      const result = spawnSync(process.execPath, ['-e', script], {
+        cwd: project,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          ADAPTER: adapter,
+          STIM_PROJECT_ROOT: project,
+          STIM_METRO_STORE: '/cache/shared',
+          STIM_METRO_CACHE_GENERATION: generation,
+          STIM_METRO_FILE_MAP: join(project, 'file-map'),
+        },
+      });
+      expect(result.status).toBe(0);
+      return JSON.parse(result.stdout);
+    };
+    const before = load('');
+    const first = load('first');
+    expect(before.version).toBe('app-v2');
+    expect(first.version).not.toBe(before.version);
+    expect(load('first')).toEqual(first);
+    expect(load('second').version).not.toBe(first.version);
+    expect(first.map).toBe(join(project, 'file-map', 'first'));
+    expect(first.roots).toEqual(['/project/shared', '/cache/shared']);
+    expect(load('')).toEqual(before);
+    const config = { cacheVersion: 'app-v2' };
+    expect(applyMetroCacheGeneration(config, 'first', join(project, 'file-map')).cacheVersion).toBe(first.version);
+    expect(applyMetroCacheGeneration({ cacheVersion: 'app-v3' }, 'first', project).cacheVersion).not.toBe(
+      first.version,
+    );
+    expect(applyMetroCacheGeneration(config, undefined, project)).toBe(config);
+  });
+
   test.each(['/cache/adapter-test', ''])(
     'observes delivery without replacing project settings (shared store: %s)',
     (storeRoot) => {
