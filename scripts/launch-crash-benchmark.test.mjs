@@ -315,6 +315,31 @@ done`;
       output: 'BUILD SUCCESSFUL\nPIPELINE_EXIT=0\nShell cwd was reset to /tmp/fixture',
     };
     expect(launchCrashDiagnosis([...before, pipeline, logs], options)).toMatchObject({ valid: true });
+    const forwardedLaunch = {
+      ...launch,
+      command:
+        'set -o pipefail; adb -s emulator-5554 reverse tcp:8081 tcp:8081 && ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a npx expo run:android --device emulator-5554 --no-bundler 2>&1 | tee /tmp/native.log',
+    };
+    for (const flag of ['--help', '-h', '--version', '-v', "'--help'", '"--help"']) {
+      const help = { ...before[0], id: 'help', command: `npx expo run:android ${flag} | sed -n '1,180p'` };
+      expect(launchCrashDiagnosis([help, logs], options)).toMatchObject({
+        valid: false,
+        reason: 'launch-crash-initial-launch-evidence-missing',
+      });
+      expect(launchCrashDiagnosis([help, forwardedLaunch, logs], options)).toMatchObject({
+        valid: true,
+        initialLaunchCommandId: 'launch',
+        commandId: 'logs',
+      });
+    }
+    for (const changed of [
+      { exitCode: 1 },
+      { command: forwardedLaunch.command.replace('&&', ';') },
+      { command: forwardedLaunch.command.replace('&&', '||') },
+      { command: forwardedLaunch.command.replace('&&', '&& cat app/_layout.tsx &&') },
+      { command: forwardedLaunch.command.replace('set -o pipefail', 'set +o pipefail') },
+    ])
+      expect(launchCrashDiagnosis([{ ...forwardedLaunch, ...changed }, logs], options)).toMatchObject({ valid: false });
     expect(
       launchCrashDiagnosis(
         [
