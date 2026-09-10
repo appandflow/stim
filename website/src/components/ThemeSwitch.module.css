@@ -9,6 +9,11 @@
   background: transparent;
   color: inherit;
   cursor: pointer;
+  opacity: 0.75;
+}
+
+.toggle:hover {
+  opacity: 1;
 }
 
 .track {
@@ -33,7 +38,19 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
+  .toggle {
+    transition:
+      opacity 300ms ease,
+      transform 300ms ease;
+  }
+
+  .toggle:hover {
+    transform: scale(1.05);
+  }
+
   .thumb {
-    transition: transform 250ms ease;
+    transition:
+      transform 250ms ease,
+      background-color 250ms ease;
   }
 }
