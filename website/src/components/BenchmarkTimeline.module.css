@@ -430,7 +430,20 @@
 .commandFailed {
   border-color: color-mix(in srgb, #dc2626 45%, var(--bench-line));
   background: color-mix(in srgb, #dc2626 12%, var(--bench-surface));
-  color: #dc2626;
+  color: #b91c1c;
+}
+
+:global([data-theme='dark']) .commandFailed {
+  color: #fca5a5;
+}
+
+:global([data-theme='dark']) .summary span {
+  color: #5eead4;
+}
+
+.viewer :is(button, input, select):focus-visible {
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: 2px;
 }
 
 .terminal {

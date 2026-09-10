@@ -354,6 +354,7 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
             max={Math.max(0.01, run.totalSeconds)}
             step={0.1}
             value={cursorSeconds}
+            aria-valuetext={`${formatSeconds(cursorSeconds)} of ${formatSeconds(run.totalSeconds)}`}
             onChange={(event) => {
               setPlaying(false);
               setPlaybackMode(true);
@@ -394,6 +395,7 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
         ref={timelineScroller}
         className={styles.timelineScroller}
         tabIndex={0}
+        role="region"
         aria-label="Benchmark command timeline"
         onTouchStart={beginPinch}
         onTouchMove={updatePinch}

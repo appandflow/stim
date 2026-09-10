@@ -8,6 +8,13 @@ import type { BenchmarkRun } from './benchmarkData';
 vi.mock('@docusaurus/useBaseUrl', () => ({ default: (path: string) => path }));
 
 describe('benchmark timeline presentation', () => {
+  it('names the keyboard-scrollable timeline and exposes playback time to assistive technology', () => {
+    const run = { ...opus.runs[0], totalSeconds: 90 } as BenchmarkRun;
+    const html = renderToStaticMarkup(createElement(BenchmarkTimeline, { run }));
+    expect(html).toContain('role="region" aria-label="Benchmark command timeline"');
+    expect(html).toContain('aria-valuetext="0.0s of 1m 30s"');
+  });
+
   it('shows full-run Claude usage even when diagnosis usage is absent', () => {
     const run: BenchmarkRun = {
       ...(opus.runs[0] as BenchmarkRun),
