@@ -93,17 +93,6 @@
   margin-right: auto;
 }
 
-.github {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.github img {
-  width: 16px;
-  height: 16px;
-}
-
 .hero h1 {
   margin: 0;
   color: var(--stim-purple);

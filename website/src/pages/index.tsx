@@ -120,13 +120,7 @@ export default function Home(): ReactNode {
           </Link>
           <Link to="/docs/getting-started">Docs</Link>
           <Link to="/benchmarks">Benchmarks</Link>
-          <a href="https://github.com/appandflow/stim" aria-label="Stim on GitHub" className={styles.github}>
-            <ThemedImage
-              sources={{ light: `${assetBase}github.svg`, dark: `${assetBase}github-dark.svg` }}
-              alt=""
-              width="16"
-              height="16"
-            />
+          <a href="https://github.com/appandflow/stim" aria-label="Stim on GitHub">
             GitHub
           </a>
           <ThemeSwitch />
