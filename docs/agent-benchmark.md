@@ -144,7 +144,9 @@ cd <worktree-parent>/bench-<run-id>
 The Stim arm then runs `stim worktree warm`. The control uses branch
 `bench/<run-id>` at `<worktree-parent>/<run-id>` and copies the same installed
 dependencies and native outputs from the fixture main checkout using its own tools.
-Both arms finish copying before starting Metro or native commands. Shell-tool
+Both arms finish copying before starting Metro or native commands. Either arm
+can use persistent shell sessions or detached processes; the benchmark does not
+prescribe one process-management strategy. Shell-tool
 wrappers must preserve session handles and exit status, and agents poll foreground
 finite jobs to completion. Long-lived server sessions remain running after
 readiness is established. The setup audit requires successful warm completion before
