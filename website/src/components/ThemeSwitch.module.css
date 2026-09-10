@@ -12,7 +12,8 @@
   opacity: 0.75;
 }
 
-.toggle:hover {
+.toggle:hover,
+.toggle:focus-visible {
   opacity: 1;
 }
 
@@ -44,7 +45,8 @@
       transform 300ms ease;
   }
 
-  .toggle:hover {
+  .toggle:hover,
+  .toggle:focus-visible {
     transform: scale(1.05);
   }
 
