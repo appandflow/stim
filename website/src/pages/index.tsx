@@ -1,4 +1,4 @@
-import { useEffect, useRef, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
+import { useEffect, useRef, type MouseEvent, type ReactNode } from 'react';
 import Link from '@docusaurus/Link';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 import Layout from '@theme/Layout';
@@ -26,57 +26,6 @@ function tapIllustration({ currentTarget, clientX, clientY, detail }: MouseEvent
 export default function Home(): ReactNode {
   const assetBase = useBaseUrl('/img/branding/');
   const contentRef = useRef<HTMLDivElement>(null);
-  const tilt = useRef({ x: 0, y: 0, targetX: 0, targetY: 0, frame: null as number | null });
-
-  useEffect(() => {
-    const motion = tilt.current;
-    return () => {
-      if (motion.frame !== null) cancelAnimationFrame(motion.frame);
-      motion.frame = null;
-    };
-  }, []);
-
-  function setTilt(element: HTMLButtonElement, x: number, y: number) {
-    const motion = tilt.current;
-    motion.targetX = x;
-    motion.targetY = y;
-    if (motion.frame !== null) return;
-
-    let previousTime: number | undefined;
-    function animate(time: number) {
-      previousTime ??= time;
-      const blend = 1 - Math.exp(-(time - previousTime) / 60);
-      previousTime = time;
-      motion.x += (motion.targetX - motion.x) * blend;
-      motion.y += (motion.targetY - motion.y) * blend;
-      const settled = Math.hypot(motion.targetX - motion.x, motion.targetY - motion.y) < 0.01;
-      if (settled) {
-        motion.x = motion.targetX;
-        motion.y = motion.targetY;
-      }
-      element.style.setProperty('--tilt-x', `${motion.x}deg`);
-      element.style.setProperty('--tilt-y', `${motion.y}deg`);
-      motion.frame = settled ? null : requestAnimationFrame(animate);
-    }
-    motion.frame = requestAnimationFrame(animate);
-  }
-
-  function tiltIllustration({ currentTarget, clientX, clientY, pointerType }: PointerEvent<HTMLButtonElement>) {
-    if (
-      pointerType !== 'mouse' ||
-      !window.matchMedia('(prefers-reduced-motion: no-preference) and (hover: hover) and (pointer: fine)').matches
-    ) {
-      return;
-    }
-
-    const { x, y } = canTilt(currentTarget.getBoundingClientRect(), clientX, clientY);
-    setTilt(currentTarget, x, y);
-  }
-
-  function resetTilt({ currentTarget }: PointerEvent<HTMLButtonElement>) {
-    setTilt(currentTarget, 0, 0);
-  }
-
   useEffect(() => {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
@@ -120,13 +69,7 @@ export default function Home(): ReactNode {
           </Link>
           <Link to="/docs/getting-started">Docs</Link>
           <Link to="/benchmarks">Benchmarks</Link>
-          <a href="https://github.com/appandflow/stim" aria-label="Stim on GitHub" className={styles.github}>
-            <ThemedImage
-              sources={{ light: `${assetBase}github.svg`, dark: `${assetBase}github-dark.svg` }}
-              alt=""
-              width="16"
-              height="16"
-            />
+          <a href="https://github.com/appandflow/stim" aria-label="Stim on GitHub">
             GitHub
           </a>
           <ThemeSwitch />
@@ -155,9 +98,6 @@ export default function Home(): ReactNode {
             data-reveal=""
             onClick={tapIllustration}
             onContextMenu={(event) => event.preventDefault()}
-            onPointerMove={tiltIllustration}
-            onPointerLeave={resetTilt}
-            onPointerCancel={resetTilt}
           >
             <ThemedImage
               sources={{ light: `${assetBase}hero.svg`, dark: `${assetBase}hero-dark.svg` }}
@@ -277,13 +217,12 @@ export default function Home(): ReactNode {
           </section>
         </main>
         <footer className={styles.footer}>
-          <nav aria-label="Footer navigation">
-            <Link to="/docs/why">Why Stim</Link>
-            <Link to="/docs/changelog">Changelog</Link>
-            <a href="https://www.npmjs.com/package/stim">npm</a>
-          </nav>
           <p>
-            MIT License. Built by <a href="https://appandflow.com">AppAndFlow</a>.
+            Made by{' '}
+            <a href="https://appandflow.com" target="_blank" rel="noopener noreferrer">
+              App&amp;Flow
+            </a>{' '}
+            &middot; MIT License
           </p>
         </footer>
         <div className={styles.abstractIllustration} data-reveal="">

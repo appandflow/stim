@@ -9,6 +9,12 @@
   background: transparent;
   color: inherit;
   cursor: pointer;
+  opacity: 0.75;
+}
+
+.toggle:hover,
+.toggle:focus-visible {
+  opacity: 1;
 }
 
 .track {
@@ -26,7 +32,6 @@
   height: 10px;
   border-radius: 50%;
   background: currentColor;
-  view-transition-name: stim-theme-thumb;
 }
 
 :global([data-theme='dark']) .thumb {
@@ -34,7 +39,20 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  :global(html:not(.stim-theme-transition)) .thumb {
-    transition: transform 250ms ease;
+  .toggle {
+    transition:
+      opacity 300ms ease,
+      transform 300ms ease;
+  }
+
+  .toggle:hover,
+  .toggle:focus-visible {
+    transform: scale(1.05);
+  }
+
+  .thumb {
+    transition:
+      transform 250ms ease,
+      background-color 250ms ease;
   }
 }
