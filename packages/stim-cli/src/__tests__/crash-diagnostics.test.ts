@@ -215,6 +215,117 @@ test('Android crash buffer retains the exception from a dead app but not another
   expect(recordMatches(records[0], buildCriteria({ errorsOnly: true, sources: ['metro'] }))).toBe(false);
 });
 
+test('a DebugServerException previews the Metro error it carries instead of the JSON body', () => {
+  const root = '/app/root';
+  const frame =
+    "\\u001b[0m\\u001b[31m\\u001b[1m>\\u001b[22m\\u001b[39m\\u001b[90m 1 |\\u001b[39m \\u001b[36mimport\\u001b[39m \\u001b[32m'./stim-582-missing'\\u001b[39m\\u001b[33m;\\u001b[39m\\n \\u001b[90m   |\\u001b[39m         \\u001b[31m\\u001b[1m^\\u001b[22m\\u001b[39m\\u001b[0m";
+  const body =
+    '{"type":"UnableToResolveError","originModulePath":"/app/root/app/_layout.tsx","targetModuleName":"./stim-582-missing",' +
+    '"message":"Unable to resolve module ./stim-582-missing from /app/root/app/_layout.tsx: \\n\\nNone of these files exist:\\n  * app/stim-582-missing(.android.ts|.native.ts|.ts|.tsx)\\n  * app/stim-582-missing\\n' +
+    frame +
+    '","cause":{"candidates":{"file":{"type":"sourceFile","filePathPrefix":"app/stim-582-missing","candidateExts":["",".android.ts",".ts"]}},' +
+    '"_expoImportStack":"Import stack:\\n\\n app/_layout.tsx\\n | import \\"./stim-582-missing\\"\\n\\n app (require.context)\\n","name":"Error",' +
+    '"message":"The module could not be resolved because none of these files exist:\\n\\n  * /app/root/app/stim-582-missing",' +
+    '"stack":"Error: The module could not be resolved\\n    at resolve (/app/root/node_modules/metro-resolver/src/resolve.js:53:13)\\n    at resolveRequest (/app/root/node_modules/@expo/cli/build/src/start/server/metro/withMetroResolvers.js:75:32)"},' +
+    '"name":"Error","stack":"Error: Unable to resolve module ./stim-582-missing\\n    at ModuleResolver.resolveDependency (/app/root/node_modules/metro/src/node-haste/DependencyGraph/ModuleResolution.js:143:15)",' +
+    '"errors":[{"description":"Unable to resolve module ./stim-582-missing from /app/root/app/_layout.tsx"}]}';
+  const split = body.indexOf('withMetroResolvers.js') + 8;
+  const text = [
+    '1000.000 E/AndroidRuntime( 44): FATAL EXCEPTION: main',
+    '1000.001 E/AndroidRuntime( 44): Process: app.test, PID: 44',
+    '1000.002 E/AndroidRuntime( 44): com.facebook.react.common.DebugServerException: The development server returned response error code: 500',
+    '1000.002 E/AndroidRuntime( 44): URL: http://10.0.2.2:8082/index.bundle?platform=android&dev=true',
+    '1000.002 E/AndroidRuntime( 44): Body:',
+    `1000.002 E/AndroidRuntime( 44): ${body.slice(0, split)}`,
+    `1000.002 E/AndroidRuntime( 44): ${body.slice(split)}`,
+    '1000.003 E/AndroidRuntime( 44): \tat com.facebook.react.devsupport.BundleDownloader.processBundleResult(BundleDownloader.kt:305)',
+    '1000.003 E/AndroidRuntime( 44): \tat okhttp3.internal.connection.RealCall$AsyncCall.run(RealCall.kt:519)',
+  ].join('\n');
+  const target = { platform: 'android' as const, deviceId: 'emulator-5554', appId: 'app.test', since: 1000000 };
+  const [record] = parseAndroidCrashes(text, target, 0);
+  expect(record).toBeDefined();
+  const preview = launchErrorPreview([record!], root).join('\n');
+  expect(preview.match(/DebugServerException: The development server returned response error code: 500/g)).toHaveLength(
+    1,
+  );
+  expect(preview).toContain('UnableToResolveError: Unable to resolve module ./stim-582-missing from app/_layout.tsx:');
+  expect(preview).toContain("> 1 | import './stim-582-missing';");
+  expect(preview).toContain('Import stack:\n app/_layout.tsx\n | import "./stim-582-missing"');
+  expect(preview).toContain('[Metro error body compacted; full text in stim logs]');
+  expect(preview).toContain(
+    'at com.facebook.react.devsupport.BundleDownloader.processBundleResult(BundleDownloader.kt:305)',
+  );
+  expect(preview).not.toContain('\u001b');
+  expect(preview).not.toContain('originModulePath');
+  expect(preview).not.toContain('candidateExts');
+  expect(preview).not.toContain('metro-resolver');
+  expect(preview).not.toContain('Error stack:\n  at resolve');
+  const full = launchErrorPreview([record!], root, { full: true }).join('\n');
+  expect(full).toContain('"originModulePath":"/app/root/app/_layout.tsx"');
+  expect(full).not.toContain('Metro error body compacted');
+  const metroFirst = launchErrorPreview(
+    [
+      {
+        src: 'metro',
+        event: 'bundling_error',
+        msg: 'Unable to resolve module ./stim-582-missing from /app/root/app/_layout.tsx: \n\nNone of these files exist:\n  * app/stim-582-missing',
+      },
+      record!,
+    ],
+    root,
+  ).join('\n');
+  expect(metroFirst).toContain(
+    'UnableToResolveError: Unable to resolve module ./stim-582-missing from app/_layout.tsx: (diagnosis above)',
+  );
+  expect(metroFirst.match(/None of these files exist/g)).toHaveLength(1);
+  expect(metroFirst).not.toContain("> 1 | import './stim-582-missing';");
+  const mentioned = launchErrorPreview(
+    [
+      { src: 'client', msg: 'assertion: expected "Unable to resolve module ./stim-582-missing from app/_layout.tsx:"' },
+      record!,
+    ],
+    root,
+  ).join('\n');
+  expect(mentioned).toContain("> 1 | import './stim-582-missing';");
+  expect(mentioned).not.toContain('(diagnosis above)');
+
+  const rebuild = (variant: string, at: number) =>
+    parseAndroidCrashes(
+      text.replace(body.slice(0, split), variant.slice(0, at)).replace(body.slice(split), variant.slice(at)),
+      target,
+      0,
+    )[0]!;
+  const splitPreview = launchErrorPreview([rebuild(body, body.indexOf('\\n    at ModuleResolver') + 2)], root).join(
+    '\n',
+  );
+  expect(splitPreview).toContain(
+    'UnableToResolveError: Unable to resolve module ./stim-582-missing from app/_layout.tsx:',
+  );
+  expect(splitPreview).not.toContain('ModuleResolution.js');
+  expect(splitPreview).toContain(
+    'at com.facebook.react.devsupport.BundleDownloader.processBundleResult(BundleDownloader.kt:305)',
+  );
+
+  const stackKey = body.replace('None of these files exist:', 'const options = { stack: \\"first\\\\nsecond\\" };');
+  const stackKeyPreview = launchErrorPreview([rebuild(stackKey, split)], root).join('\n');
+  expect(stackKeyPreview).toContain('const options = { stack: "first\\nsecond" };');
+  expect(stackKeyPreview).not.toContain('Error stack:\nfirst');
+
+  const appJson = launchErrorPreview(
+    [
+      {
+        src: 'device',
+        platform: 'android',
+        proc: 'ReactNativeJS(44)',
+        msg: 'API failed: {"type":"HttpError","message":"Unauthorized","status":401}',
+      },
+    ],
+    root,
+  ).join('\n');
+  expect(appJson).toContain('API failed: {"type":"HttpError","message":"Unauthorized","status":401}');
+  expect(appJson).not.toContain('compacted');
+});
+
 test('a native crash before any Metro request ends verification without calling the app healthy or merely unverified', async () => {
   let time = 1000;
   const crash = {
