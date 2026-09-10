@@ -34,6 +34,39 @@ const refusal = (output, exitCode = 1) => [{ id: 'refusal', command: 'stim andro
 describe('agent-device session isolation', () => {
   const prefix = 'env AGENT_DEVICE_STATE_DIR=/tmp/bench-state AGENT_DEVICE_SESSION=bench-run agent-device ';
 
+  it('retains harmless no-session read attempts without allowing successful or ambiguous device use', () => {
+    const output = 'Error (SESSION_NOT_FOUND): No active session. Run open first.\nHint: Run open first.';
+    for (const command of [
+      'agent-device screenshot /tmp/initial.png',
+      'agent-device snapshot -i',
+      'agent-device screenshot /tmp/initial.png 2>&1; echo "retrying with run session"',
+    ]) {
+      expect(agentDeviceIsolationInvalidReasons([{ command, output }], prefix)).toEqual([]);
+      expect(agentDeviceIsolationInvalidReasons([{ command, output: '/tmp/initial.png (320x640)' }], prefix)).toContain(
+        'agent-device-run-session-not-applied',
+      );
+    }
+    for (const command of [
+      'agent-device open app',
+      'agent-device screenshot /tmp/a.png --serial emulator-5554',
+      'agent-device snapshot --session default',
+      'agent-device screenshot /tmp/a.png; agent-device close',
+      'echo "Error (SESSION_NOT_FOUND): No active session. Run open first."; agent-device screenshot /tmp/a.png',
+      'agent-device screenshot /tmp/$(agent-device close).png',
+      'agent-device snapshot | head -1',
+    ]) {
+      expect(agentDeviceIsolationInvalidReasons([{ command, output }], prefix)).toContain(
+        'agent-device-run-session-not-applied',
+      );
+    }
+    expect(
+      agentDeviceIsolationInvalidReasons(
+        [{ command: 'agent-device snapshot', output: `${output}\nPage: other` }],
+        prefix,
+      ),
+    ).toContain('agent-device-run-session-not-applied');
+  });
+
   it('recognizes scoped loop bodies without allowing an unscoped iteration command', () => {
     const scoped = `for i in 1 2 3; do ${prefix}press 'text="Open"' --settle 2>&1 | tail -4; done`;
     expect(agentDeviceIsolationInvalidReasons([{ command: scoped }], prefix)).toEqual([]);
