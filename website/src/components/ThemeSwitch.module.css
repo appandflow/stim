@@ -32,6 +32,7 @@
   height: 10px;
   border-radius: 50%;
   background: currentColor;
+  view-transition-name: stim-theme-thumb;
 }
 
 :global([data-theme='dark']) .thumb {
@@ -50,9 +51,7 @@
     transform: scale(1.05);
   }
 
-  .thumb {
-    transition:
-      transform 250ms ease,
-      background-color 250ms ease;
+  :global(html:not(.stim-theme-transition)) .thumb {
+    transition: transform 250ms ease;
   }
 }
