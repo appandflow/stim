@@ -332,6 +332,7 @@ interface FinishIosRunArgs {
   json: boolean;
   release: boolean;
   configuration: string | null;
+  buildScheme?: string;
   isExpo: boolean;
   metroCheck: boolean;
   metroPort: number | null;
@@ -473,6 +474,7 @@ export async function finishIosRun({
   json,
   release,
   configuration,
+  buildScheme,
   isExpo,
   metroCheck,
   metroPort,
@@ -810,6 +812,7 @@ export async function finishIosRun({
     json,
     release,
     configuration,
+    buildScheme,
     metroCheck,
     metroPort,
     logsDir,

@@ -1,5 +1,6 @@
 import type { ChildProcess } from 'node:child_process';
-import { readdirSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import chalk from 'chalk';
 import { register } from '../cache-manifest.ts';
@@ -131,7 +132,10 @@ export function listSchemes(
   }
 }
 
-export function resolveScheme(project: XcodeProject, { exec = null }: { exec?: Executor | null } = {}): SchemeResult {
+export function resolveScheme(
+  project: XcodeProject,
+  { exec = null, scheme: requested = null }: { exec?: Executor | null; scheme?: string | null } = {},
+): SchemeResult {
   const listing = listSchemes(project, { exec });
   if (listing === null) {
     return {
@@ -139,6 +143,16 @@ export function resolveScheme(project: XcodeProject, { exec = null }: { exec?: E
         code: 'STIM_NO_SCHEME',
         message: `Could not list schemes for ${project.path}.`,
         remedy: `Run \`xcodebuild ${project.flag} ${project.path} -list\` to see what it reports.`,
+      },
+    };
+  }
+  if (requested !== null) {
+    if (listing.schemes.includes(requested)) return { scheme: requested, schemes: listing.schemes };
+    return {
+      error: {
+        code: 'STIM_NO_SCHEME',
+        message: `No shared Xcode scheme named ${JSON.stringify(requested)} in ${project.path}. Available schemes: ${listing.schemes.join(', ') || 'none'}.`,
+        remedy: 'Pass an exact available name with --scheme, or share the intended app scheme in Xcode.',
       },
     };
   }
@@ -157,7 +171,7 @@ export function resolveScheme(project: XcodeProject, { exec = null }: { exec?: E
         message: `Could not select an app scheme in ${project.path} (schemes: ${found}).`,
         remedy:
           listing.schemes.length > 0
-            ? 'In Xcode (Product > Scheme > Manage Schemes), make the intended shared app scheme match the workspace/project name or the top-level name in app.json. Stim does not guess between unmatched schemes.'
+            ? 'Pass --scheme <name> to select the intended shared app scheme. Stim does not guess between unmatched schemes.'
             : 'Share the app scheme in Xcode (Product > Scheme > Manage Schemes, tick Shared) so xcodebuild can see it.',
       },
     };
@@ -592,7 +606,11 @@ export async function buildIos({
   if (!udid && !destination) throw new TypeError('buildIos requires {udid} (or an explicit {destination})');
 
   const executor = exec || getExecutor();
-  const dd = derivedDataPath || workspaceDerivedData(root);
+  const dd =
+    derivedDataPath ||
+    (scheme
+      ? join(workspaceDerivedData(root), `scheme-${createHash('sha256').update(scheme).digest('hex')}`)
+      : workspaceDerivedData(root));
   const startedAt = now();
   const elapsed = () => now() - startedAt;
 
@@ -621,20 +639,16 @@ export async function buildIos({
   }
   const resolvedTarget = target as XcodeProject;
 
-  let chosenScheme: string | null = scheme;
-  if (!chosenScheme) {
-    const resolved = resolveScheme(resolvedTarget, { exec: executor });
-    if (resolved.error) {
-      reportError(resolved.error.message, resolved.error.remedy);
-      return failedResult({
-        code: resolved.error.code,
-        diagnostics: [{ message: resolved.error.message, remedy: resolved.error.remedy }],
-        durationMs: elapsed(),
-      });
-    }
-    chosenScheme = resolved.scheme ?? null;
+  const selected = resolveScheme(resolvedTarget, { exec: executor, scheme });
+  if (selected.error) {
+    reportError(selected.error.message, selected.error.remedy);
+    return failedResult({
+      code: selected.error.code,
+      diagnostics: [{ message: selected.error.message, remedy: selected.error.remedy }],
+      durationMs: elapsed(),
+    });
   }
-  const buildScheme = chosenScheme as string;
+  const buildScheme = selected.scheme as string;
 
   const buildSettings =
     compilationCache === undefined
@@ -771,10 +785,61 @@ export async function buildIos({
   }
 
   const products = productsDir(dd, { configuration, sdk });
-  const appPath = findAppBundle(products, buildScheme);
+  let appPath: string | null = null;
+  if (scheme) {
+    try {
+      const targets = JSON.parse(
+        executor.runFile(
+          'xcodebuild',
+          [
+            resolvedTarget.flag as string,
+            resolvedTarget.path as string,
+            '-scheme',
+            buildScheme,
+            '-configuration',
+            configuration,
+            '-sdk',
+            sdk,
+            '-destination',
+            destination || `id=${udid}`,
+            '-derivedDataPath',
+            dd,
+            ...extraArgs,
+            ...buildSettings,
+            '-showBuildSettings',
+            '-json',
+          ],
+          { timeoutMs: 30_000 },
+        ),
+      );
+      const paths = new Set<string>();
+      for (const item of Array.isArray(targets) ? targets : []) {
+        const settings = item?.buildSettings;
+        if (settings?.PRODUCT_TYPE !== 'com.apple.product-type.application' || settings.PLATFORM_NAME !== sdk) continue;
+        const dir = settings.TARGET_BUILD_DIR;
+        const name = settings.FULL_PRODUCT_NAME;
+        if (
+          typeof dir !== 'string' ||
+          !isAbsolute(dir) ||
+          typeof name !== 'string' ||
+          basename(name) !== name ||
+          !name.endsWith('.app')
+        )
+          continue;
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) paths.add(path);
+      }
+      if (paths.size === 1) appPath = [...paths][0]!;
+    } catch {}
+  } else {
+    appPath = findAppBundle(products, buildScheme);
+  }
   if (!appPath) {
-    const message = `xcodebuild reported success but no .app is in ${products}.`;
-    const remedy = 'Check that the scheme builds an application target, not a library or a test bundle.';
+    const message = scheme
+      ? `xcodebuild succeeded, but the built app for scheme ${JSON.stringify(buildScheme)} could not be identified unambiguously from its build settings.`
+      : `xcodebuild reported success but no .app is in ${products}.`;
+    const remedy =
+      'Check that the scheme builds one application target for this platform, not a library, test bundle, or several apps.';
     reportError(message, remedy);
     return failedResult({
       code: 'STIM_BUILD_FAILED',

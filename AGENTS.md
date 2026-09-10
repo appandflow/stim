@@ -215,7 +215,7 @@ Do not infer and rebuild commands from project scripts. Bare React Native hosts
 Metro from the project's dependencies. Expo runs its fixed start command. iOS
 and Android use fixed `xcodebuild` and Gradle arguments.
 
-The supported build selectors are `ios --configuration <name>` and
+The supported build selectors are `ios --scheme <name>`, `ios --configuration <name>`, and
 `android --variant <name>`. `ios --device-type <name>`, `ios --runtime
 <version>`, and `android --system-image <id>` select the model and version of
 the owned simulator or emulator for one invocation, overriding

@@ -160,6 +160,19 @@ function brokenPodLinks(podsRoot: string): string[] {
   }
 }
 
+function hasIosWarmOutput(root: string): boolean {
+  if (existsSync(join(root, 'ios', 'build'))) return true;
+  const derivedData = workspaceDerivedData(root);
+  if (existsSync(join(derivedData, 'Build', 'Products'))) return true;
+  try {
+    return readdirSync(derivedData).some(
+      (entry) => /^scheme-[a-f0-9]{64}$/.test(entry) && existsSync(join(derivedData, entry, 'Build', 'Products')),
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function checkMainCheckout(
   projectRoot: string,
   {
@@ -247,12 +260,7 @@ export function checkMainCheckout(
   }
 
   const coldPlatforms = [
-    platform !== 'android' &&
-    existsSync(join(mainRoot, 'ios')) &&
-    !existsSync(join(mainRoot, 'ios', 'build')) &&
-    !existsSync(join(workspaceDerivedData(mainRoot), 'Build', 'Products'))
-      ? 'iOS'
-      : null,
+    platform !== 'android' && existsSync(join(mainRoot, 'ios')) && !hasIosWarmOutput(mainRoot) ? 'iOS' : null,
     platform !== 'ios' &&
     existsSync(join(mainRoot, 'android')) &&
     !existsSync(join(mainRoot, 'android', 'build')) &&
@@ -732,7 +740,7 @@ export function runDoctor(
   let simslimProfileError: string | null = null;
   if (platform !== 'android') {
     try {
-      simslimProfile = iosSimSlimProfileSetting(projectSettings, settingsRepoRoot);
+      simslimProfile = iosSimSlimProfileSetting(projectSettings, projectRoot);
     } catch (error) {
       simslimProfileError = String((error as Error)?.message || error);
     }

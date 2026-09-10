@@ -167,7 +167,7 @@ interface RecordedArgs {
   [key: string]: unknown;
   installIosApp: { appPath?: unknown; proveInstalled?: unknown };
   launchIosApp: { devClientScheme?: unknown; metroPort?: unknown; bundleId?: unknown };
-  buildIos: { configuration?: unknown; root?: unknown; optimizations?: unknown };
+  buildIos: { configuration?: unknown; scheme?: unknown; root?: unknown; optimizations?: unknown };
   swapJsBundle: { cachedAppPath?: unknown; isExpo?: unknown; root?: unknown };
   verifyReleaseLaunch: { pid?: unknown };
   readBundleId: unknown;
@@ -3102,6 +3102,79 @@ test('a miss with no prior entry (or a first build) prints the plain miss line, 
   expect(buildRecords().some((r) => r.event === 'fingerprint_diff')).toBe(false);
 });
 
+describe('explicit Xcode schemes', () => {
+  const schemeDeps: LooseDeps = {
+    discoverXcodeProject: () => ({ kind: 'workspace', flag: '-workspace', path: '/app/ios/App.xcworkspace' }),
+    resolveScheme: (_project, options) => ({ scheme: options?.scheme, schemes: ['App', 'App Staging'] }),
+  };
+
+  test('explicit selection separates lookup, lock and storage keys and is not a dev-client URL scheme', async () => {
+    reserve();
+    const normal = await run({ json: true });
+    const selected = await run({ scheme: 'App Staging', json: true }, schemeDeps);
+    expect(selected.exitCode).toBeNull();
+    const key = selected.calls.args.resolveBuild.key;
+    expect(key).not.toBe(normal.calls.args.resolveBuild.key);
+    expect(selected.calls.args.acquireBuildLock.key).toBe(key);
+    expect(selected.calls.args.storeBuild.key).toBe(key);
+    expect(selected.calls.args.buildIos.scheme).toBe('App Staging');
+    expect(selected.calls.args.launchIosApp.devClientScheme).toBeUndefined();
+    expect(parseFirst(selected.logs).scheme).toBe('App Staging');
+    expect(selected.calls.order).not.toContain('loadProjectProvider');
+  });
+
+  test('an unknown explicit scheme refuses before any device, cache lookup, or native build', async () => {
+    reserve();
+    const result = await run(
+      { scheme: 'unknown', json: true },
+      {
+        ...schemeDeps,
+        resolveScheme: () => ({
+          error: {
+            code: 'STIM_NO_SCHEME',
+            message: 'Available: App, App Staging',
+            remedy: 'Choose --scheme from the available names.',
+          },
+        }),
+      },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(parseFirst(result.logs).code).toBe('STIM_NO_SCHEME');
+    expect(result.calls.order).not.toContain('ensureOwnedDevice');
+    expect(result.calls.order).not.toContain('resolveBuild');
+    expect(result.calls.order).not.toContain('buildIos');
+  });
+
+  test('blank schemes refuse instead of silently selecting the default app', async () => {
+    const result = await run({ scheme: '  ', json: true });
+    expect(result.exitCode).toBe(1);
+    expect(parseFirst(result.logs).code).toBe('STIM_BAD_ARG');
+    expect(result.calls.order).not.toContain('buildIos');
+  });
+
+  test('a matching explicit-scheme cache hit still validates selection and skips compilation', async () => {
+    reserve();
+    let validated = false;
+    const result = await run(
+      { scheme: 'App Staging', json: true },
+      {
+        ...schemeDeps,
+        resolveScheme: () => {
+          validated = true;
+          return { scheme: 'App Staging' };
+        },
+        resolveBuild: () => {
+          expect(validated).toBe(true);
+          return join(root, 'build', 'Fixture.app');
+        },
+      },
+    );
+    expect(result.exitCode).toBeNull();
+    expect(parseFirst(result.logs)).toMatchObject({ scheme: 'App Staging', cacheHit: 'local' });
+    expect(result.calls.order).not.toContain('buildIos');
+  });
+});
+
 describe('configuration resolution', () => {
   test('flag > setting > default', () => {
     expect(resolveConfiguration('Release', { ios: { configuration: 'Staging' } })).toBe('Release');
@@ -3367,30 +3440,40 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
     expect(stderr).toContain(`unavailable after ${mutation}; the build will be installed but not cached`);
   });
 
-  test('the store key is the key the NEXT run looks up across a prebuild boundary', async () => {
-    reserve();
-    const lookedUp: string[] = [];
-    const cold = await run(
-      {},
-      {
-        detectIsExpo: () => true,
-        needsPrebuild: () => true,
-        readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
-        fingerprintProject: shifting(),
-        resolveBuild: (_platform, key) => {
-          lookedUp.push(key);
-          return null;
+  test.each([undefined, 'App Staging'])(
+    'post-prebuild storage matches the next lookup with scheme %s',
+    async (scheme) => {
+      reserve();
+      const lookedUp: string[] = [];
+      const cold = await run(
+        { scheme },
+        {
+          detectIsExpo: () => true,
+          needsPrebuild: () => true,
+          readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
+          fingerprintProject: shifting(),
+          resolveBuild: (_platform, key) => {
+            lookedUp.push(key);
+            return null;
+          },
         },
-      },
-    );
-    expect(cold.exitCode).toBe(null);
-    const storedKey = cold.calls.args.storeBuild.key;
-    expect(lookedUp[0]).toMatch(new RegExp(`^${COLD}`));
-    expect(String(storedKey)).toMatch(new RegExp(`^${WARM}`));
+      );
+      expect(cold.exitCode).toBe(null);
+      const storedKey = cold.calls.args.storeBuild.key;
+      expect(lookedUp[0]).toMatch(new RegExp(`^${COLD}`));
+      expect(String(storedKey)).toMatch(new RegExp(`^${WARM}`));
 
-    const warm = await run({}, { fingerprintProject: async () => ({ hash: WARM, sources: [] }) });
-    expect(warm.calls.args.resolveBuild.key).toBe(storedKey);
-  });
+      const warm = await run(
+        { scheme },
+        {
+          fingerprintProject: async () => ({ hash: WARM, sources: [] }),
+          discoverXcodeProject: () => ({ kind: 'workspace', flag: '-workspace', path: '/app/ios/App.xcworkspace' }),
+          resolveScheme: () => ({ scheme: scheme ?? 'App' }),
+        },
+      );
+      expect(warm.calls.args.resolveBuild.key).toBe(storedKey);
+    },
+  );
 
   test('the shift is one dim line naming both short hashes, and the payload reports what was stored', async () => {
     reserve();

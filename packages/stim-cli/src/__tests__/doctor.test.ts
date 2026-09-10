@@ -38,6 +38,7 @@ import doctorCommand, { doctorSuccessLines, parseDoctorPlatform, shadowedStimFin
 import type { Finding } from '../doctor.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import type { EasAuthResult } from '../engine/remote-cache.ts';
+import { workspaceDerivedData } from '../paths.ts';
 import assert from 'node:assert';
 import {
   analyzeStimVersions,
@@ -167,6 +168,22 @@ test('checkMainCheckout filters native warm state and CocoaPods by platform', ()
   } finally {
     rmSync(project, { recursive: true, force: true });
   }
+});
+
+test('doctor recognizes explicit-scheme build products but not an empty scheme directory', () => {
+  const project = join(testHome, 'project');
+  mkdirSync(join(project, 'ios'), { recursive: true });
+  mkdirSync(join(project, 'node_modules'));
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+  const schemeDir = join(
+    workspaceDerivedData(project),
+    `scheme-${createHash('sha256').update('App Staging').digest('hex')}`,
+  );
+  mkdirSync(schemeDir, { recursive: true });
+  const findings = () => checkMainCheckout(project, { platform: 'ios', brokenPods: [], upstream: null });
+  expect(findings().some((finding) => finding.title.includes('iOS warm build output'))).toBe(true);
+  mkdirSync(join(schemeDir, 'Build', 'Products'), { recursive: true });
+  expect(findings()).toEqual([]);
 });
 
 test('parseDoctorPlatform accepts the two native platforms and rejects other values', () => {
@@ -1442,14 +1459,15 @@ test('runDoctor checks one shared backend once', () => {
   }
 });
 
-test('runDoctor resolves a SimSlim profile from the repository root in a monorepo', () => {
+test('runDoctor resolves the app-local SimSlim profile and ignores a monorepo root profile', () => {
   const repo = mkdtempSync(join(tmpdir(), 'stim-doc-monorepo-'));
   const project = join(repo, 'apps', 'mobile');
   try {
     mkdirSync(project, { recursive: true });
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'mobile' }));
-    writeFileSync(join(repo, 'simslim.json'), '{}\n');
-    writeFileSync(join(repo, '.stim.json'), JSON.stringify({ ios: { simslimProfile: 'simslim.json' } }));
+    writeFileSync(join(project, 'simslim.json'), '{}\n');
+    writeFileSync(join(repo, '.stim.json'), JSON.stringify({ ios: { simslimProfile: 'missing.json' } }));
+    writeFileSync(join(project, '.stim.json'), JSON.stringify({ ios: { simslimProfile: 'simslim.json' } }));
     execSync('git init -q', { cwd: repo });
 
     const findings = runDoctor(project, {

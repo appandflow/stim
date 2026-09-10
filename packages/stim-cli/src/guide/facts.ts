@@ -63,6 +63,8 @@ line by design (see \`guide logs\`), not this single-payload contract.`,
   configuration   the Xcode configuration that was built ("Release" from
                   --configuration or the ios.configuration setting); null for
                   the default Debug
+  scheme          the explicit shared Xcode scheme selected by --scheme;
+                  absent for automatic selection; not the app URL scheme
   cacheKey        the shared-build-cache key derived from it (the
                   configuration is part of it: -release-sim vs -debug-sim)
   cacheHit        WHICH LEVEL answered, not a boolean:

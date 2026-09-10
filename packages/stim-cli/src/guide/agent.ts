@@ -77,10 +77,16 @@ RULES DURING THE LOOP
   react-native or expo. Anywhere else -- a monorepo root, a tools package --
   start, ios and android refuse with STIM_NO_PROJECT naming that package.json,
   and doctor reports it as a finding.
+- Put runtime .stim.json beside that app's package.json. Monorepo apps do not
+  inherit a repository-root runtime file. Keep repository-wide worktree-copy
+  rules at the main checkout root; see guide settings for the two scopes.
 - Run start before a debug ios or android build. If it returns STIM_NO_METRO,
   run stim start and retry.
 - Run ios or android again after a native input changes. A JavaScript-only
   change does not need one.
+- For stale Metro transforms or file-map state, use stim start --reset-cache.
+  It restarts only this app's verified owned Metro, preserving devices and other
+  apps' caches. See guide lifecycle for reset scope and Expo requirements.
 - Reload is not part of the normal workflow. Use stim reload on an owned local
   simulator or emulator after a failed first bundle load, when an error screen
   remains after the fix, or when you explicitly need an app restart. For a

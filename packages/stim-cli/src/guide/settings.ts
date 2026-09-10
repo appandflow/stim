@@ -10,13 +10,21 @@ hand or committed; command-line selectors override their matching settings.
 Resolution order, first match wins:
   1. project layer   ~/.stim/config.json, under this project's entry
   2. repo layer      ~/.stim/config.json, under this repo's git common dir
-  3. committed       .stim.json at the repo root  <- normally the one you want
+  3. committed       .stim.json beside the app's package.json
   4. machine defaults  ~/.stim/config.json, top-level optimizations only
   5. Stim default
 
-The committed file is plain JSON and is the only layer that travels with the
-repo, so a device model or a carry-over rule every worktree should share
-belongs there:
+The committed file is plain JSON and travels with the app. Each monorepo app
+reads its own file, never an ancestor's runtime settings. A single-app repository
+still uses its root file. Existing machine project/repository overrides keep
+their precedence. Move root runtime settings into each relevant app when
+upgrading; relative profile/config/provider paths resolve from the app directory.
+
+Worktree copying is repository-wide: worktree warm reads worktree.exclude from
+the main checkout's root .stim.json, not from individual apps. Keep that rule at
+the repository root; runtime files and worktree-copy policy are separate scopes.
+
+An app's .stim.json can contain:
 
   {
     "ios": {
@@ -25,7 +33,6 @@ belongs there:
       "simslimProfile": ".simslim/dev.json"
     },
     "android": { "variant": "productionDebug" },
-    "worktree": { "baseRef": "head" },
     "caches": ["~/.myapp-metro-cache"]
   }
 
@@ -45,15 +52,15 @@ KEYS STIM READS
   ios.configuration     e.g. "Release" -- the Xcode configuration to build
                         (simulator only). Committing
                         { "ios": { "configuration": "Release" } } makes every
-                        \`stim ios\` in the repo a release-shaped build:
+                        \`stim ios\` in the app a release-shaped build:
                         embedded JS, no Metro, cache keyed -release-sim, and
                         a JS-bundle swap on cache hits. The \`--configuration\`
                         flag overrides this per invocation. Unset means Debug.
   ios.remote            "proxy" or "eas" to use that remote backend, the same
                         as passing \`--remote proxy\` or \`--remote eas\`. The
                         build still runs here; only the device is elsewhere.
-  ios.simslimProfile    a SimSlim JSON profile under the repository root (or
-                        project root outside Git), at most 64 KiB. Install the
+  ios.simslimProfile    a SimSlim JSON profile under the app directory,
+                        at most 64 KiB. Install the
                         external tool once with
                         \`brew install mobai-app/tap/simslim\`. SimSlim requires
                         an iOS 18 or newer simulator. Each local \`stim ios\`
@@ -101,12 +108,12 @@ KEYS STIM READS
                         userdata grows but does not shrink. Recreate the
                         environment to adopt a changed value.
   android.avdConfigFile
-                        path under the repository root (or project root
-                        outside Git) to a flat native key=value INI fragment,
+                        path under the app directory to a flat native
+                        key=value INI fragment,
                         at most 64 KiB. Stim parses it and
                         merges supported values into avdmanager's generated
                         config.ini before first boot; it is never used as a
-                        replacement file. Absolute paths, repository or
+                        replacement file. Absolute paths, app-directory or
                         symlink escapes, malformed or duplicate lines, and
                         unsupported keys are refused before AVD creation.
   android.avdConfig     flat object of the same native keys. It merges key by
@@ -174,7 +181,8 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         still gated the same way a managed tunnel's is. Set it
                         before Expo start so the manifest advertises it.
   worktree.exclude      ignored-path skip list for worktree warm. Settings
-                        come from the main checkout. A nonempty
+                        come from the main checkout's repository-root .stim.json.
+                        A nonempty
                         .worktreeexclude in main replaces this setting.
                         Registered nested Git worktrees are always skipped.
   cache.provider        one optional SECOND-TIER cache provider: a module
@@ -186,8 +194,8 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         written after the local write. Failures and timeouts
                         are cache misses, never build or bundle failures.
                         Stim ships no provider and never configures one.
-                        This module is EXECUTABLE CODE that every worktree on
-                        this repository runs; review a committed value the way
+                        This module is EXECUTABLE CODE that every worktree of
+                        this app runs; review a committed value the way
                         you review a build script.
                         \`stim ios\` and \`stim android\` use it unless
                         artifact or remote artifact caching is disabled. Metro
