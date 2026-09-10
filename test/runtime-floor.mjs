@@ -43,3 +43,8 @@ const version = execFileSync(process.execPath, ['packages/stim-cli/dist/cli.mjs'
 }).trim();
 const cliPackage = JSON.parse(readFileSync(join(repositoryRoot, 'packages', 'stim-cli', 'package.json'), 'utf8'));
 assert.equal(version, cliPackage.version);
+
+execFileSync(process.execPath, ['packages/stim-cli/dist/cli.mjs', '--help'], {
+  cwd: repositoryRoot,
+  stdio: 'pipe',
+});
