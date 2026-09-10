@@ -14,6 +14,13 @@ const lifecycle: GuideTopic = {
   # Warm copies missing ignored state from main; it does not install dependencies.
   # In a monorepo, enter the app directory before starting the dev server.
 
+  # Optional: bring the MAIN CHECKOUT up to date first, then copy that.
+  stim worktree warm --refresh
+    lock        acquired
+    checkout    main 3 commits behind origin/main -> fast-forwarded to 9f2c1a3
+    deps        pnpm-lock.yaml changed -> pnpm install (41s)
+    pods        apps/mobile: ios/Podfile.lock unchanged -> skipped
+
   # 2. The dev server, under a detached supervisor. Blocks until it is
   #    verifiably THIS project's, then hands your shell back.
   stim start
@@ -232,10 +239,11 @@ result as proof instead of requiring an unrelated screenshot.`,
   The labels are a closed set, and nothing else is ever printed in that
   column:
 
-    branch      build       cache       caches      carry       device
+    branch      build       cache       caches      carry       checkout
+    deps        device
     devices     error       failed      findings    fingerprint gems
     install     installs    ip.txt      lan         launch      lease
-    log
+    lock        log
     logs        meaning     metro       pods        port        prebuild
     project     readiness   ready       remedy      removed     resolved
     result
@@ -284,6 +292,19 @@ result as proof instead of requiring an unrelated screenshot.`,
 
     carry       copied node_modules from /w/main
     carry       complete: 1 ignored entries copied, 0 kept, 0 failed
+
+  \`--refresh\` prints its own facts before those, one per step, and the
+  \`lock\` line whenever the copy or the refresh waited for another warm:
+
+    lock        acquired (waited 12s for stim worktree warm --refresh pid 41233)
+    checkout    janic/wip 2 commits behind origin/janic/wip -> fast-forwarded to 4b81e0c
+                not the default branch (main); worktrees seeded from this copy
+                carry janic/wip's dependencies
+    deps        pnpm-lock.yaml unchanged -> skipped
+    pods        apps/mobile: ios/Podfile.lock changed -> pod install (1m12s)
+
+  A wait heartbeats like a build wait, naming the holder:
+  \`lock        waiting on stim worktree warm --refresh (pid 41233, 40s elapsed)\`.
 
   \`start\` names the port, the supervisor mode and its pid on one line
   (\`metro       starting on port 8083 (expo-child, supervisor pid 13724)\`),
@@ -769,18 +790,48 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   doctor          --json --fix --platform <ios|android>
                                   (--platform keeps shared checks and filters native findings)
   gc              --delete --older-than <days> --cache <name|all>
-  worktree warm; remove [path] --force
+  worktree warm    --refresh; remove [path] --force
 
   That is the whole surface today, and it is deliberately small. It can grow
   when a flag is genuinely the best answer -- but project-specific knowledge
   (release builds, variants, device targets) belongs in a script the repo owns,
   not in a flag here.
 
-  \`stim worktree warm\` takes no arguments or flags. Run it anywhere inside
+  \`stim worktree warm\` takes one flag, \`--refresh\`. Run it anywhere inside
   the current linked worktree to copy missing ignored entries from its main
   checkout, regardless of either branch's HEAD. Both roots must be registered
   worktrees of the same Git repository; the main checkout
   must be available. Running it in the main checkout refuses.
+
+  \`--refresh\` WRITES TO THE MAIN CHECKOUT before the copy, which is why it
+  is opt-in: it fetches, fast-forwards whatever branch is checked out there to
+  its \`@{upstream}\`, and installs what the new commits moved. It refuses a
+  main checkout it cannot move -- uncommitted changes to tracked files or a
+  rebase or merge in progress (STIM_MAIN_DIRTY), a detached HEAD
+  (STIM_MAIN_DETACHED), or a branch that is both ahead and behind
+  (STIM_MAIN_DIVERGED) -- and each refusal names the git line that clears it.
+  Untracked files are not a reason to refuse. A branch with no upstream is
+  left where it is. A fetch that fails is a fact, not a refusal: the run
+  continues on the local state. It never switches branches, never merges, and
+  never resets; fast-forwarding a feature branch is safe, so it only WARNS
+  that the copy will carry that branch's dependencies. The default branch it
+  compares against is \`worktree.defaultBranch\` in the repository-root
+  .stim.json, else \`git symbolic-ref --short refs/remotes/origin/HEAD\`;
+  when neither answers it says so and makes no warning.
+
+  Dependencies install where the lockfile is, which in a monorepo is the
+  repository root, when the lockfile moved or nothing is installed. Pods run
+  for the app the command was invoked from, and only that app, when its
+  ios/Podfile.lock moved or ios/Pods/Manifest.lock does not match it. Every
+  skipped step still prints its reason. A failed install refuses with
+  STIM_DEPS_FAILED and nothing is copied.
+
+  One lock per repository serialises this, whether or not you pass the flag:
+  \`--refresh\` holds it exclusively, and every copy holds it shared, so a copy
+  can never read a node_modules a refresh is rewriting. Two plain warms of the
+  same repository run together. The lock is keyed on the repository root, so
+  two apps of one monorepo share it. It is PID-held: a holder that dies frees
+  it. A wait prints the holder every 30s and gives up with STIM_LOCK_TIMEOUT.
 
   Wait for warm to exit successfully (exit code 0) before running start,
   ios, android, or a dependency install in that worktree. If a shell tool
@@ -807,8 +858,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
 
   Existing entries, including dangling symlinks, stay untouched. An existing
   ignored directory such as node_modules is skipped WHOLE; missing children are not
-  filled in. Warm does not copy tracked changes, switch branches, install
-  dependencies, or build. stdout stays empty; stderr reports copied, kept,
+  filled in. Warm does not copy tracked changes, switch branches, or build,
+  and it installs dependencies only under \`--refresh\`, in the main checkout. stdout stays empty; stderr reports copied, kept,
   and failed entry counts. A copy failure exits 1 and reports incomplete;
   files copied before a failure remain. Inspect the named failed entry
   before retrying: a partially copied directory will be kept on the retry.

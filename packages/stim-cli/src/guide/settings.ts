@@ -20,9 +20,10 @@ still uses its root file. Existing machine project/repository overrides keep
 their precedence. Move root runtime settings into each relevant app when
 upgrading; relative profile/config/provider paths resolve from the app directory.
 
-Worktree copying is repository-wide: worktree warm reads worktree.exclude from
-the main checkout's root .stim.json, not from individual apps. Keep that rule at
-the repository root; runtime files and worktree-copy policy are separate scopes.
+Worktree copying is repository-wide: worktree warm reads worktree.exclude and
+worktree.defaultBranch from the main checkout's root .stim.json, not from
+individual apps. Keep those rules at the repository root; runtime files and
+worktree-copy policy are separate scopes.
 
 An app's .stim.json can contain:
 
@@ -185,6 +186,15 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         A nonempty
                         .worktreeexclude in main replaces this setting.
                         Registered nested Git worktrees are always skipped.
+  worktree.defaultBranch
+                        the branch the main checkout is expected to sit on,
+                        read only by \`worktree warm --refresh\`, which WARNS
+                        (and continues) when the main checkout is on another
+                        branch, because the copy then carries that branch's
+                        dependencies. Unset, the branch
+                        \`git symbolic-ref --short refs/remotes/origin/HEAD\`
+                        names is used; set it when origin/HEAD is missing or
+                        wrong. Neither answering means no warning, not an error.
   cache.provider        one optional SECOND-TIER cache provider: a module
                         path relative to the settings file that names it, or a
                         package name. It implements the @stim-cli/cache

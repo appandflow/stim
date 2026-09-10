@@ -79,7 +79,12 @@ code, never on the message.`,
   result. Gems themselves are installed wherever BUNDLE_PATH points -- the
   project's own \`.bundle/config\` (vendor/bundle in the React Native template),
   or the environment. When that lands inside the project, Stim says so in a dim
-  note naming which of the two set it; Gemfile.lock is never edited either way.`,
+  note naming which of the two set it; Gemfile.lock is never edited either way.
+  \`worktree warm --refresh\` reports the same code for the install it runs in
+  the MAIN CHECKOUT -- the lockfile's own command (\`pnpm install\`,
+  \`yarn install\`, \`bun install\`, \`npm ci\`) or that same pod ladder. The
+  message names the command, quotes its last lines, and nothing is copied: fix
+  the main checkout, then warm again.`,
     },
     STIM_BUILD_FAILED: {
       summary: 'xcodebuild or gradle failed; the two Android APK refusals; a damaged compilation-cache object',
@@ -742,7 +747,11 @@ captured"  (in metro.ndjson, bare RN)
       body: () => `STIM_LOCK_TIMEOUT
   The same locks, held by an ordinary command that is still running, for
   longer than the wait -- 60s by default, 4 minutes for the remote-session and
-  EAS project locks. A lock whose owner died is taken over automatically (pid
+  EAS project locks, and ~90 minutes for the \`worktree warm\` lock, which one
+  \`--refresh\` can hold for a whole dependency install. That wait prints its
+  holder every 30 seconds (\`lock        waiting on stim worktree warm
+  --refresh (pid 41233, 40s elapsed)\`) and the refusal names the same holder
+  and the lock directory under ~/.stim/warm-locks. A lock whose owner died is taken over automatically (pid
   liveness is checked every poll), so this means another Stim command really
   is working on this workspace: wait for it and retry. If nothing is running,
   the message names the lock directory and removing it is safe. The same error
@@ -805,6 +814,36 @@ not on any remote"  (worktree remove)
   Use --force only when you genuinely intend to discard work; it deletes
   uncommitted and untracked files permanently.`,
     },
+    STIM_MAIN_DIRTY: {
+      summary: 'warm --refresh will not move a main checkout with local work or an operation in progress',
+      body: () => `STIM_MAIN_DIRTY
+  \`worktree warm --refresh\` writes to the MAIN CHECKOUT, and it refuses one
+  it cannot move: tracked files with uncommitted changes (the refusal names
+  them), or a rebase or merge in progress. Untracked files are not a reason to
+  refuse -- but git itself refuses a fast-forward that would overwrite one, and
+  that reports this code too, quoting git. The remedy is the exact line that
+  clears it: commit, \`git -C <main> stash push -u -m warm-refresh\`, or
+  \`git -C <main> rebase --abort\`. Nothing was fetched, installed or copied.
+  Plain \`stim worktree warm\` does not care: it copies from a dirty main
+  checkout exactly as it always has.`,
+    },
+    STIM_MAIN_DETACHED: {
+      summary: 'warm --refresh needs a branch to fast-forward, not a detached HEAD',
+      body: () => `STIM_MAIN_DETACHED
+  The main checkout's HEAD is detached, so there is no branch to fast-forward
+  and no upstream to fast-forward it to. Run \`git -C <main> checkout <branch>\`
+  and warm again. \`--refresh\` never picks a branch for you; a checkout whose
+  job is to seed worktrees should sit on a branch someone chose.`,
+    },
+    STIM_MAIN_DIVERGED: {
+      summary: 'the main checkout is both ahead of and behind its upstream; warm --refresh will not merge',
+      body: () => `STIM_MAIN_DIVERGED
+  The main checkout's branch has commits its upstream does not, AND its
+  upstream has commits it does not. A fast-forward is impossible, and
+  \`--refresh\` will not merge or reset someone else's checkout to make one:
+  that decision is yours. Rebase or merge it yourself, then warm again. The
+  message reports both counts. Nothing was installed or copied.`,
+    },
     carry: {
       summary: 'worktree warm copy results, lockfile mismatches, and remedies',
       body: () => `"carry       incomplete: ... ignored entries copied, ... kept, ... failed"
@@ -832,7 +871,10 @@ not on any remote"  (worktree remove)
   silent; the warning means a real difference.
 
   If main has no dependencies to copy, use this project's package manager to
-  install them. Warm does not install dependencies or prove the app is ready.`,
+  install them. Warm does not install dependencies or prove the app is ready,
+  unless \`--refresh\` installed them in the MAIN CHECKOUT first; even then the
+  copy can still carry a lockfile this branch does not have, which is exactly
+  what these carry warnings report.`,
     },
     environment: {
       summary: 'npx registry E401/E404, the Node floor, no free Metro port, the reservation race',

@@ -423,7 +423,7 @@ export function tailLines(lines: unknown, count = 5): string[] {
 
 export const HEARTBEAT_INTERVAL_MS = 30_000;
 
-const HEARTBEAT_ACTIVITY: Record<string, string> = { build: 'compiling', pods: 'installing' };
+const HEARTBEAT_ACTIVITY: Record<string, string> = { build: 'compiling', deps: 'installing', pods: 'installing' };
 
 export function heartbeatLine(elapsedMs: number, label = 'build', estimateMs: number | null = null): string {
   const activity = HEARTBEAT_ACTIVITY[label] ?? 'running';

@@ -63,6 +63,38 @@ kept on retry. A completed copy does not prove dependencies are installed or
 match the current branch. Install missing dependencies with the project's
 package manager when main has none to copy.
 
+## Refresh the main checkout first
+
+Every worktree is a copy of the main checkout, so a stale main checkout seeds
+stale worktrees. `stim worktree warm --refresh` updates it before the copy:
+
+<StimTabs
+code={`stim worktree warm --refresh`}
+/>
+
+It fetches the branch's remote, fast-forwards **whatever branch the main
+checkout has** to its `@{upstream}`, and then installs only what the new commits
+moved: the lockfile's own install command where the lockfile lives (the
+repository root in a monorepo), and `pod install` for the app you ran the
+command from. Every step prints what it did or why it skipped.
+
+The flag is opt-in because it writes to a checkout you are not standing in. It
+refuses one it cannot move -- uncommitted changes to tracked files or a rebase
+or merge in progress (`STIM_MAIN_DIRTY`), a detached `HEAD`
+(`STIM_MAIN_DETACHED`), or a branch both ahead of and behind its upstream
+(`STIM_MAIN_DIVERGED`) -- and names the git command that clears it. Untracked
+files are not a reason to refuse, a branch with no upstream is left alone, and a
+fetch that fails is reported as a fact while the run continues on local state.
+It never switches branches, merges, or resets. When the main checkout is not on
+the default branch it warns and continues, because the copy then carries that
+branch's dependencies; set `worktree.defaultBranch` in the repository-root
+`.stim.json` when `origin/HEAD` is missing or wrong.
+
+One lock per repository protects this, with or without the flag: `--refresh`
+holds it exclusively, and every copy holds it shared, so no copy can read a
+`node_modules` a refresh is rewriting. Two plain warms still run at the same
+time, and a holder that dies frees the lock.
+
 ## Parallel environments
 
 Each workspace receives a unique Metro port, state directory, and owned

@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from 'fs';
-import { basename, dirname, resolve } from 'path';
+import { basename, dirname, isAbsolute, relative, resolve } from 'path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, plural, releasedLeaseFact, shortUdid } from '../command-output.ts';
@@ -7,10 +7,13 @@ import { resolveSettings, SETTING_SHAPE_REMEDY, settingShapeErrors, unknownSetti
 import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } from '../config.ts';
 import type { ReleasedLease } from '../engine/device-lease.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
+import { findProjectRoot } from '../project.ts';
 import { reclaimProject } from '../reclaim.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../sim-pool.ts';
 import type { ParkedDevice } from '../teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
+import { warmLockAcquiredLine, withWarmLock } from '../engine/warm-lock.ts';
+import { refreshMainCheckout, type RefreshFailure } from '../worktree-refresh.ts';
 import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
 import {
   branchExists,
@@ -79,14 +82,34 @@ function reportCarriedStateHealth(root: string, target: string, copied: string[]
   }
 }
 
+function reportRefreshFailure(failure: RefreshFailure): void {
+  console.error(chalk.red(failure.message));
+  for (const line of failure.lines) console.error(chalk.dim(`  ${line}`));
+  if (failure.remedy) console.error(chalk.dim(failure.remedy));
+  console.error(chalk.red(`failed: ${failure.code}`));
+  process.exitCode = 1;
+}
+
+function mainCheckoutAppDir(root: string, target: string): string {
+  const app = findProjectRoot(process.cwd());
+  if (!app) return root;
+  const rel = relative(target, app);
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return root;
+  return resolve(root, rel);
+}
+
 export function registerWarm(worktree: Command): void {
   worktree
     .command('warm')
     .description('Copy missing ignored paths from the main checkout into the current linked worktree.')
-    .action(() => {
+    .option(
+      '--refresh',
+      'Before copying, fast-forward the main checkout to its upstream and install what the new commits moved.',
+    )
+    .action(async (opts: { refresh?: boolean }) => {
       try {
         const { root, target, common } = warmWorktreePaths(process.cwd());
-        const settings = resolveSettings({ gitCommonDir: common, repoRoot: root }) as WorktreeSettings;
+        const settings = resolveSettings({ gitCommonDir: common, repoRoot: root });
         const shapeErrors = settingShapeErrors(settings);
         if (shapeErrors.length) {
           for (const message of shapeErrors) console.error(chalk.red(message));
@@ -97,28 +120,48 @@ export function registerWarm(worktree: Command): void {
         for (const key of unknownSettingKeys(settings)) {
           console.error(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
         }
-        const excluded = readWorktreeExclude(root);
-        const patterns = excluded?.length ? excluded : settings.worktree?.exclude || [];
-        const result = cloneIgnoredEntries({ root, target, patterns });
-        for (const entry of result.skipped) {
-          console.error(chalk.dim(phaseLine('carry', `kept ${entry.file} (${entry.reason})`)));
+        if (opts.refresh) {
+          const failure = await withWarmLock({ repositoryRoot: root, mode: 'refresh', out: console.error }, (wait) => {
+            console.error(warmLockAcquiredLine(wait));
+            return refreshMainCheckout({
+              root,
+              appDir: mainCheckoutAppDir(root, target),
+              settings,
+              emit: (line) => console.error(line),
+            });
+          });
+          if (failure) {
+            reportRefreshFailure(failure);
+            return;
+          }
         }
-        for (const entry of result.failed) {
-          console.error(chalk.yellow(phaseLine('carry', `could not copy ${entry.file}: ${entry.error}`)));
-        }
-        if (result.copied.length) {
-          console.error(chalk.dim(phaseLine('carry', `copied ${carriedFileList(result.copied)} from ${root}`)));
-          reportCarriedStateHealth(root, target, result.copied);
-        }
-        console.error(
-          phaseLine(
-            'carry',
-            `${result.failed.length ? 'incomplete' : 'complete'}: ${result.copied.length} ignored entries copied, ${result.skipped.length} kept, ${result.failed.length} failed`,
-          ),
-        );
-        if (result.failed.length) process.exitCode = 1;
+        await withWarmLock({ repositoryRoot: root, mode: 'copy', out: console.error }, (wait) => {
+          if (wait.holder) console.error(warmLockAcquiredLine(wait));
+          const excluded = readWorktreeExclude(root);
+          const patterns = excluded?.length ? excluded : (settings as WorktreeSettings).worktree?.exclude || [];
+          const result = cloneIgnoredEntries({ root, target, patterns });
+          for (const entry of result.skipped) {
+            console.error(chalk.dim(phaseLine('carry', `kept ${entry.file} (${entry.reason})`)));
+          }
+          for (const entry of result.failed) {
+            console.error(chalk.yellow(phaseLine('carry', `could not copy ${entry.file}: ${entry.error}`)));
+          }
+          if (result.copied.length) {
+            console.error(chalk.dim(phaseLine('carry', `copied ${carriedFileList(result.copied)} from ${root}`)));
+            reportCarriedStateHealth(root, target, result.copied);
+          }
+          console.error(
+            phaseLine(
+              'carry',
+              `${result.failed.length ? 'incomplete' : 'complete'}: ${result.copied.length} ignored entries copied, ${result.skipped.length} kept, ${result.failed.length} failed`,
+            ),
+          );
+          if (result.failed.length) process.exitCode = 1;
+        });
       } catch (error) {
+        const code = (error as { code?: string })?.code;
         console.error(chalk.red(`Could not warm this worktree: ${(error as Error).message}`));
+        if (typeof code === 'string' && code.startsWith('STIM_')) console.error(chalk.red(`failed: ${code}`));
         process.exitCode = 1;
       }
     });

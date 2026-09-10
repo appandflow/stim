@@ -61,13 +61,17 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `metro.ngrokUrl`              | Existing ngrok URL                                                   |
 | `metro.publicUrl`             | Existing public Metro URL                                            |
 | `worktree.exclude`            | Ignored paths skipped by `worktree warm`                             |
+| `worktree.defaultBranch`      | Branch `worktree warm --refresh` expects the main checkout on        |
 | `cache.provider`              | Optional second-tier cache provider module                           |
 | `cache.options`               | Options passed to that provider                                      |
 | `caches`                      | Additional cache paths reported by `gc`                              |
 | `optimizations`               | [Build optimization switches and defaults](./build-optimizations.md) |
 
 `worktree warm` reads repository-wide copy settings from the main checkout's
-root `.stim.json`, not individual app files. Keep `worktree.exclude` there. A nonempty
+root `.stim.json`, not individual app files. Keep `worktree.exclude` and
+`worktree.defaultBranch` there. `worktree.defaultBranch` is read only by
+`worktree warm --refresh`, which warns when the main checkout sits on another
+branch; unset, it uses the branch `origin/HEAD` names. A nonempty
 `.worktreeexclude` in main replaces its resolved `worktree.exclude` setting;
 an empty or absent file uses the setting.
 
