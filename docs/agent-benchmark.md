@@ -121,6 +121,11 @@ native compatibility adapter compensates. The policy, its digest, and the
 probe results are retained with the private run metadata; a refused run keeps
 its probe results in its run directory.
 
+Recollecting after recorded worktree cleanup can retain a previously passing
+compatibility check when run identity, captured evidence hashes, and the pinned
+manifest are unchanged. Other audit checks and derived timings are recalculated;
+missing or changed evidence does not inherit the earlier verdict.
+
 This boundary prevents accidental benchmark-data access, not adversarial host
 access: native system services and pre-existing processes are not sandboxed by
 the runner policy. Strong isolation from a malicious agent requires a separate

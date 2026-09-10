@@ -211,7 +211,15 @@ export function collectedNativeCompatibility(meta, worktree) {
   try {
     if (!meta.preflight.nativeCompatibilityProbe?.processIdentity)
       throw new Error('sandbox compatibility probe missing');
-    if (!worktree || !existsSync(worktree)) throw new Error('run worktree missing for compatibility validation');
+    if (!worktree || !existsSync(worktree)) {
+      if (fileHash(join(expected.directory, 'manifest.json')) !== expected.manifestSha256)
+        throw new Error('native compatibility manifest changed');
+      return {
+        valid: false,
+        reason: 'run worktree missing for compatibility validation',
+        manifestSha256: expected.manifestSha256,
+      };
+    }
     verifyNativeCompatibility(
       join(expected.directory, 'manifest.json'),
       expected.manifestSha256,
