@@ -160,3 +160,7 @@
 .footer--dark {
   --ifm-footer-background-color: #20162e;
 }
+
+::view-transition {
+  pointer-events: none;
+}
