@@ -38,6 +38,39 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 const evidence = (capture = true) => ccacheLogEvidence({ runDir, meta, commands, worktree, capture });
 
 describe('captured compiler cache evidence', () => {
+  it('retains exact command identity for a scoped build with a reported launch failure', () => {
+    commands[0].command = `cd ${worktree} && stim android --system-image "system-images;android-36;arm64-v8a"; echo "EXIT=$?"`;
+    commands[0].exitCode = 0;
+    commands[0].output += '\nEXIT=1\n';
+    const before = JSON.stringify(commands);
+    expect(evidence()).toMatchObject({ hits: 2, misses: 0, commandId: 'build' });
+    expect(JSON.stringify(commands)).toBe(before);
+    expect(evidence(false)).not.toBeNull();
+  });
+
+  it.each([
+    'wrong directory',
+    'unconditional cd',
+    'extra command',
+    'missing status',
+    'duplicate status',
+    'bad status',
+    'substitution',
+  ])('rejects scoped wrappers with %s', (failure) => {
+    commands[0].command = `cd ${worktree} && stim android; echo "EXIT=$?"`;
+    commands[0].exitCode = 0;
+    commands[0].output += '\nEXIT=1\n';
+    if (failure === 'wrong directory') commands[0].command = commands[0].command.replace(worktree, `${root}/other`);
+    if (failure === 'unconditional cd') commands[0].command = commands[0].command.replace(' && ', '; ');
+    if (failure === 'extra command') commands[0].command += '; echo done';
+    if (failure === 'missing status') commands[0].output = commands[0].output.replace('EXIT=1', '');
+    if (failure === 'duplicate status') commands[0].output += 'EXIT=0\n';
+    if (failure === 'bad status') commands[0].output = commands[0].output.replace('EXIT=1', 'EXIT=143');
+    if (failure === 'substitution')
+      commands[0].command = commands[0].command.replace('stim android', 'stim android "$(echo extra)"');
+    expect(evidence()).toBeNull();
+  });
+
   it('captures the completed build independently of launch and survives cleanup without editing commands', () => {
     const before = JSON.stringify(commands);
     const measurement = evidence();

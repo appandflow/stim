@@ -1,9 +1,26 @@
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
-import { ccacheMeasurements, shellCommandSegments } from './run-guards.mjs';
+import { ccacheMeasurements, shellCommandSegments, topLevelShellCommand } from './run-guards.mjs';
 
 const hash = (value) => createHash('sha256').update(value).digest('hex');
+
+function singleBuildCommand(entry, worktree) {
+  const segments = shellCommandSegments(entry.command);
+  if (segments.length === 1) return true;
+  if (segments.length !== 3 || entry.exitCode !== 0) return false;
+  const [directory, build, report] = segments;
+  const statuses = [...String(entry.output ?? '').matchAll(/^EXIT=([01])\r?$/gm)];
+  return (
+    [worktree, `'${worktree}'`, `"${worktree}"`].some((path) => directory === `cd ${path}`) &&
+    /^stim android(?:\s|$)/.test(build) &&
+    !/[`$\n]/.test(build) &&
+    report === 'echo "EXIT=$?"' &&
+    topLevelShellCommand(entry.command) === `${directory} && ${build}; ${report}` &&
+    statuses.length === 1 &&
+    [...String(entry.output ?? '').matchAll(/^EXIT=.*$/gm)].length === 1
+  );
+}
 
 export function ccacheLogEvidence({ runDir, meta, commands, worktree, capture = false }) {
   if (meta.arm !== 'stim' || meta.platform !== 'android' || !worktree) return null;
@@ -18,7 +35,7 @@ export function ccacheLogEvidence({ runDir, meta, commands, worktree, capture = 
     [...entry.output.matchAll(/build\s+compiling/g)].length !== 1 ||
     !entry.id ||
     entry.parallelTimingAmbiguous ||
-    shellCommandSegments(entry.command).length !== 1 ||
+    !singleBuildCommand(entry, worktree) ||
     ![0, 1].includes(entry.exitCode) ||
     !/build\s+ok\b/.test(entry.output) ||
     ccacheMeasurements(entry.output).length
