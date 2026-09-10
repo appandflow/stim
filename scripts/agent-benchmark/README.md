@@ -95,7 +95,8 @@ or CLI digest mismatch and refuses a control shell that can resolve Stim.
 Golden cache validation hashes the fixture with the pinned CLI's fingerprint
 dependency, not the fixture's potentially different version.
 
-Both arms preserve shell exit status and running-session handles when using code
+Both arms may use persistent shell sessions or detached processes. Neither arm
+is required to background its native build. Both preserve shell exit status and running-session handles when using code
 wrappers, then poll finite jobs to completion before dependent commands. Long-lived
 server sessions stay running and require readiness evidence, not an exit status. A
 wrapper returning is not proof its shell process exited. Collection rejects Stim
