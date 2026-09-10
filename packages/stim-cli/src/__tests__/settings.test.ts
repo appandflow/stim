@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -33,6 +33,7 @@ import {
 } from '../settings.ts';
 import { resolveOptimizations, resolveMetroSharedCache } from '../optimizations.ts';
 import { saveConfig, setProjectSetting, setRepoSetting, upsertProject } from '../config.ts';
+import { findProjectRoot } from '../project.ts';
 
 type SettingsView = {
   caches?: string[];
@@ -106,17 +107,69 @@ test('resolveSettings orders project over repo over committed', () => {
     JSON.stringify({ ios: { deviceType: 'iPhone 17' }, worktree: { exclude: ['.env'] } }),
   );
   setRepoSetting('/repo/.git', 'ios.deviceType', 'iPhone 17 Pro');
-  upsertProject('/proj', {});
-  setProjectSetting('/proj', 'ios.deviceType', 'iPhone 17 Pro Max');
+  upsertProject(tmpHome, {});
+  setProjectSetting(tmpHome, 'ios.deviceType', 'iPhone 17 Pro Max');
 
   const merged = resolveSettings({
-    projectPath: '/proj',
+    projectPath: tmpHome,
     gitCommonDir: '/repo/.git',
     repoRoot: tmpHome,
   }) as SettingsView;
   expect(merged.ios?.deviceType).toBe('iPhone 17 Pro Max');
   assert(merged.worktree);
   expect(merged.worktree.exclude).toEqual(['.env']);
+});
+
+test('monorepo apps use their own committed settings and provider paths without inheriting the root file', () => {
+  const repo = realpathSync(tmpHome);
+  const first = join(repo, 'apps', 'first');
+  const second = join(repo, 'apps', 'second');
+  mkdirSync(first, { recursive: true });
+  mkdirSync(second, { recursive: true });
+  writeFileSync(join(first, 'package.json'), JSON.stringify({ name: 'first' }));
+  writeFileSync(join(second, 'package.json'), JSON.stringify({ name: 'second' }));
+  writeFileSync(
+    join(repo, '.stim.json'),
+    JSON.stringify({
+      ios: { configuration: 'Release' },
+      worktree: { exclude: ['.env'] },
+      cache: { provider: './root.cjs' },
+    }),
+  );
+  writeFileSync(
+    join(first, '.stim.json'),
+    JSON.stringify({ ios: { configuration: 'Debug' }, cache: { provider: './first.cjs' } }),
+  );
+  writeFileSync(
+    join(second, '.stim.json'),
+    JSON.stringify({ android: { variant: 'demoDebug' }, cache: { provider: './second.cjs' } }),
+  );
+  const context = (app: string) => ({ projectPath: app, repoRoot: repo, gitCommonDir: join(repo, '.git') });
+  expect(resolveSettings(context(first))).toEqual({
+    ios: { configuration: 'Debug' },
+    cache: { provider: './first.cjs' },
+  });
+  expect(resolveSettings(context(second))).toEqual({
+    android: { variant: 'demoDebug' },
+    cache: { provider: './second.cjs' },
+  });
+  expect(resolveCacheProviderConfig(context(first))).toEqual({ provider: './first.cjs', options: {}, baseDir: first });
+  expect(resolveCacheProviderConfig(context(second))).toEqual({
+    provider: './second.cjs',
+    options: {},
+    baseDir: second,
+  });
+  rmSync(join(second, '.stim.json'));
+  expect(resolveSettings(context(second))).toEqual({});
+  expect(resolveCacheProviderConfig(context(second))).toBeNull();
+  expect(resolveSettings({ repoRoot: repo, gitCommonDir: join(repo, '.git') }).worktree).toEqual({ exclude: ['.env'] });
+  const alias = join(repo, 'alias');
+  symlinkSync(first, alias, 'dir');
+  upsertProject(first, {});
+  setProjectSetting(first, 'ios.runtime', '26.5');
+  const aliasedApp = findProjectRoot(alias);
+  expect(aliasedApp).toBe(first);
+  expect(resolveSettings(context(aliasedApp!))).toEqual(resolveSettings(context(first)));
 });
 
 test('unknownSettingKeys reports keys Stim no longer reads', () => {
@@ -507,7 +560,7 @@ test('a committed provider resolves from the directory holding .stim.json', () =
   );
   upsertProject('/proj', {});
 
-  expect(resolveCacheProviderConfig({ projectPath: '/proj', gitCommonDir: '/repo/.git', repoRoot: tmpHome })).toEqual({
+  expect(resolveCacheProviderConfig({ projectPath: tmpHome, gitCommonDir: '/repo/.git', repoRoot: '/repo' })).toEqual({
     provider: './tools/cache-provider.cjs',
     options: { bucket: 'mobile' },
     baseDir: tmpHome,
@@ -545,10 +598,10 @@ test('provider options merge across layers with earlier layers winning', () => {
     JSON.stringify({ cache: { provider: './committed.cjs', options: { bucket: 'team', region: 'us' } } }),
   );
   setRepoSetting('/repo/.git', 'cache', { options: { region: 'eu' } });
-  upsertProject('/proj', {});
-  setProjectSetting('/proj', 'cache', { options: { token: 'from-machine' } });
+  upsertProject(tmpHome, {});
+  setProjectSetting(tmpHome, 'cache', { options: { token: 'from-machine' } });
 
-  expect(resolveCacheProviderConfig({ projectPath: '/proj', gitCommonDir: '/repo/.git', repoRoot: tmpHome })).toEqual({
+  expect(resolveCacheProviderConfig({ projectPath: tmpHome, gitCommonDir: '/repo/.git', repoRoot: '/repo' })).toEqual({
     provider: './committed.cjs',
     options: { token: 'from-machine', region: 'eu', bucket: 'team' },
     baseDir: tmpHome,
@@ -559,7 +612,7 @@ test('an invalid provider reference reports no provider and names the error', ()
   writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ cache: { provider: 42, options: { a: 1 } } }));
   upsertProject('/proj', {});
 
-  const context = { projectPath: '/proj', gitCommonDir: '/repo/.git', repoRoot: tmpHome };
+  const context = { projectPath: tmpHome, gitCommonDir: '/repo/.git', repoRoot: '/repo' };
   expect(resolveCacheProviderConfig(context)).toBeNull();
   expect(cacheProviderSettingError(resolveSettings(context))).toBe(
     'Invalid cache.provider setting 42. Expected a module path or package name.',

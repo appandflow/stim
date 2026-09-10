@@ -709,7 +709,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   };
 
   const settingsRepoRoot = repoRoot(root);
-  const settingsRoot = settingsRepoRoot ?? root;
+  const settingsRoot = root;
   const settingsContext = {
     projectPath: root,
     gitCommonDir: gitCommonDir(root),
@@ -757,7 +757,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     return fail(
       'STIM_BAD_ARG',
       avdConfigError,
-      'Use only documented android.avdConfig keys, or an android.avdConfigFile fragment contained by the repository/project settings root.',
+      'Use only documented android.avdConfig keys, or an android.avdConfigFile fragment contained by the app directory.',
     );
   }
   const remoteSettingError = remoteDeviceSettingError(settings);

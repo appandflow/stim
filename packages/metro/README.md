@@ -36,7 +36,8 @@ blocking Metro. Provider failures are misses.
 ```
 
 Under `stim start` the supervisor passes the resolved selection to Metro. A
-Metro process outside Stim reads the nearest committed `.stim.json`. See
+Metro process outside Stim reads `.stim.json` only from its app working directory;
+it does not inherit a monorepo-root provider. See
 [`@stim-cli/cache`](https://www.npmjs.com/package/@stim-cli/cache) for the
 provider contract. `clear()` only clears the local tier.
 

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,7 +24,7 @@ let projectRoot: string;
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-metro-home-'));
   cacheDir = mkdtempSync(join(tmpdir(), 'stim-metro-cache-'));
-  projectRoot = mkdtempSync(join(tmpdir(), 'stim-metro-project-'));
+  projectRoot = realpathSync(mkdtempSync(join(tmpdir(), 'stim-metro-project-')));
   process.env.STIM_HOME = home;
   process.env.STIM_METRO_CACHE = cacheDir;
 });
@@ -110,12 +110,12 @@ test('the supervisor environment adds one tiered store on the same root', async 
   expect(remote.get('ff'.repeat(16))).toEqual(Buffer.from('fresh'));
 });
 
-test('Metro running outside Stim reads the nearest committed provider', async () => {
+test('Metro running outside Stim reads only the app-local committed provider', async () => {
   const app = join(projectRoot, 'apps', 'mobile');
   mkdirSync(app, { recursive: true });
   mkdirSync(join(projectRoot, '.git'), { recursive: true });
   writeFileSync(
-    join(projectRoot, '.stim.json'),
+    join(app, '.stim.json'),
     JSON.stringify({ cache: { provider: './tools/cache.cjs', options: { bucket: 'team' } } }),
   );
   const seen: Array<{ projectRoot: string; config: CacheProviderConfig }> = [];
@@ -134,7 +134,7 @@ test('Metro running outside Stim reads the nearest committed provider', async ()
   expect(seen).toEqual([
     {
       projectRoot: app,
-      config: { provider: './tools/cache.cjs', options: { bucket: 'team' }, baseDir: projectRoot },
+      config: { provider: './tools/cache.cjs', options: { bucket: 'team' }, baseDir: app },
     },
   ]);
 });
@@ -170,12 +170,12 @@ test('the built-in filesystem store satisfies the provider contract', async () =
   expect(results.filter((result) => !result.passed)).toEqual([]);
 });
 
-test('the committed search stops at the repository root', async () => {
+test('a monorepo app does not inherit the repository root provider', async () => {
   const repo = join(projectRoot, 'repo');
   const app = join(repo, 'apps', 'mobile');
   mkdirSync(app, { recursive: true });
   mkdirSync(join(repo, '.git'), { recursive: true });
-  writeFileSync(join(projectRoot, '.stim.json'), JSON.stringify({ cache: { provider: './outside-the-repo.cjs' } }));
+  writeFileSync(join(repo, '.stim.json'), JSON.stringify({ cache: { provider: './root-provider.cjs' } }));
   const seen: unknown[] = [];
 
   const stores = sharedCacheStores('demo', {

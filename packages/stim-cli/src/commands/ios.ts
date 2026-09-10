@@ -565,7 +565,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
         platform: PLATFORM,
         project: proj,
         projectPath: root,
-        settingsRoot: settingsRepoRoot ?? root,
+        settingsRoot: root,
         label,
         settings,
         flags: { deviceType, runtime },

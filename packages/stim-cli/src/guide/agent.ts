@@ -75,6 +75,9 @@ RULES DURING THE LOOP
   react-native or expo. Anywhere else -- a monorepo root, a tools package --
   start, ios and android refuse with STIM_NO_PROJECT naming that package.json,
   and doctor reports it as a finding.
+- Put runtime .stim.json beside that app's package.json. Monorepo apps do not
+  inherit a repository-root runtime file. Keep repository-wide worktree-copy
+  rules at the main checkout root; see guide settings for the two scopes.
 - Run start before a debug ios or android build. If it returns STIM_NO_METRO,
   run stim start and retry.
 - Run ios or android again after a native input changes. A JavaScript-only

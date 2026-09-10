@@ -823,7 +823,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   install on a project with product flavors -- \`--variant productionDebug\`
   runs \`assembleProductionDebug\`, finds the APK in apk/production/debug/ and
   keys the build cache on the variant. It overrides the android.variant
-  setting (see \`guide settings\`), which is the repo-level default; unset,
+  setting (see \`guide settings\`), which is the app-level default; unset,
   the plain \`assembleDebug\` flow is unchanged. The --json payload's
   \`variant\` field reports what was built (null for the default).
   When neither is set and android/app/build.gradle declares more than one
@@ -1134,7 +1134,7 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
 
   \`ios --configuration <name>\` selects the Xcode configuration --
   \`--configuration Release\` builds a SIMULATOR Release app with the JS
-  bundle embedded. It overrides the ios.configuration setting (the repo-level
+  bundle embedded. It overrides the ios.configuration setting (the app-level
   default); unset, the Debug flow is unchanged. A non-Debug configuration
   skips Metro ENTIRELY: no gate, no port wiring, no dev-client deep link (a
   plain \`simctl launch\`), and the payload says \`metroPort: null\` --
