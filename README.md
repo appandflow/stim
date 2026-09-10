@@ -59,12 +59,12 @@ ignored directories such as `node_modules` are skipped whole.
 
 After the work is preserved, `stim worktree remove` removes any linked
 worktree, warmed or not. Git-created branches stay. See the
-[worktree guide](https://appandflow.github.io/stim/docs/worktrees) for exclusions
+[worktree guide](https://stim.appandflow.com/docs/worktrees) for exclusions
 and cleanup rules.
 
 ## Documentation
 
-Read the [Stim documentation](https://appandflow.github.io/stim/) for the
+Read the [Stim documentation](https://stim.appandflow.com/) for the
 motivation, setup, concepts, command reference, and settings reference.
 
 The installed version also includes its own reference:

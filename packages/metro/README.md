@@ -56,5 +56,5 @@ The reporter must be attached to the config passed directly to
 Stim supplies this integration automatically for Stim-managed servers. Add the
 package directly only for Metro processes that run outside Stim.
 
-See the [cache package documentation](https://appandflow.github.io/stim/docs/cache-packages)
+See the [cache package documentation](https://stim.appandflow.com/docs/cache-packages)
 for current usage and cleanup guidance.

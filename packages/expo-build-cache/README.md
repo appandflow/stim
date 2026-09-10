@@ -33,5 +33,5 @@ the provider registers its cache so `stim gc` can report and trim it.
 
 Set `STIM_BUILD_CACHE` to override the cache location.
 
-See the [cache package documentation](https://appandflow.github.io/stim/docs/cache-packages)
+See the [cache package documentation](https://stim.appandflow.com/docs/cache-packages)
 for current setup and cleanup guidance.

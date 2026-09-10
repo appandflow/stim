@@ -11,8 +11,8 @@ const config: Config = {
     v4: true,
   },
 
-  url: 'https://appandflow.github.io',
-  baseUrl: '/stim/',
+  url: 'https://stim.appandflow.com',
+  baseUrl: '/',
 
   organizationName: 'appandflow',
   projectName: 'stim',

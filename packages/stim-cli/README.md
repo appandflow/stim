@@ -77,7 +77,7 @@ artifact caches and Xcode build directories; run `stim guide lifecycle builds`
 for provider behavior. This selects an Xcode scheme, not a URL scheme.
 
 Launch evidence does not prove that the UI is interactive. Apps can optionally
-[declare readiness with two debug log messages](https://appandflow.github.io/stim/docs/dev-server-and-logs#optional-app-declared-readiness),
+[declare readiness with two debug log messages](https://stim.appandflow.com/docs/dev-server-and-logs#optional-app-declared-readiness),
 without a package or SDK. A captured pending message extends the default
 three-second stability window after bundle delivery to a bounded wait for ready.
 Managed Metro response capture distinguishes a finished build from a finished
@@ -113,12 +113,12 @@ unsafe: entries created after the initial check can be overwritten or removed.
 
 After the work is preserved, `stim worktree remove` removes any linked
 worktree, warmed or not. Git-created branches stay. See the
-[worktree guide](https://appandflow.github.io/stim/docs/worktrees) for exclusions
+[worktree guide](https://stim.appandflow.com/docs/worktrees) for exclusions
 and cleanup rules.
 
 ## Reference
 
-The [documentation website](https://appandflow.github.io/stim/) explains the
+The [documentation website](https://stim.appandflow.com/) explains the
 human workflow and all commands.
 
 The installed CLI contains version-matched operational guidance:
