@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { matchesGoldenPreparation, preparedAndroidEmulator } from './golden-state.mjs';
 
 const expected = {
+  locale: 'C.UTF-8',
   fixtureCommit: 'fixture',
   stimVersion: '1.0.0-rc.15',
   stimIntegrity: 'sha512-current',
@@ -20,6 +21,8 @@ describe('golden preparation provenance', () => {
     expect(matchesGoldenPreparation({ ...expected, stimVersion: '1.0.0-rc.14' }, expected)).toBe(false);
     expect(matchesGoldenPreparation({ ...expected, stimIntegrity: 'sha512-old' }, expected)).toBe(false);
     expect(matchesGoldenPreparation({ ...expected, stimCliSha256: 'cli-old' }, expected)).toBe(false);
+    expect(matchesGoldenPreparation({ ...expected, locale: undefined }, expected)).toBe(false);
+    expect(matchesGoldenPreparation({ ...expected, locale: 'en_US.UTF-8' }, expected)).toBe(false);
   });
 });
 
