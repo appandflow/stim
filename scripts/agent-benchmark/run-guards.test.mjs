@@ -560,36 +560,39 @@ describe('benchmark run guards', () => {
     expect(benchmarkSetupInvalidReasons({ arm: 'stim', platform: 'android' }, commands)).toEqual([]);
   });
 
-  it.skipIf(process.platform === 'win32')('uses reported warm status without losing completion ordering', () => {
-    const meta = { arm: 'stim', platform: 'android' };
-    const guide = { command: 'stim guide agent', exitCode: 0 };
-    const start = { command: 'stim start', exitCode: 0, startEventOffset: 3 };
-    for (const code of [0, 7]) {
-      const command = 'cd /tmp && stim worktree warm; echo "EXIT=$?"';
-      const result = spawnSync('/bin/bash', ['-c', `stim() { return ${code}; }; ${command}`], {
-        encoding: 'utf8',
-        timeout: 5000,
-      });
-      expect(result.status).toBe(0);
-      const warm = { command, exitCode: result.status, output: result.stdout, endEventOffset: 2 };
-      expect(benchmarkSetupInvalidReasons(meta, [guide, warm, start])).toEqual(
-        code === 0 ? [] : ['stim-worktree-warm-missing-or-failed'],
-      );
-      if (code !== 0) continue;
-      expect(benchmarkSetupInvalidReasons(meta, [guide, { ...warm, endEventOffset: 4 }, start])).toEqual([
-        'stim-worktree-warm-not-complete-before-use',
-      ]);
-      for (const output of ['', 'EXIT=0\nEXIT=0\n', 'EXIT=7\n']) {
-        expect(benchmarkSetupInvalidReasons(meta, [guide, { ...warm, output }, start])).toContain(
+  it.skipIf(process.platform === 'win32').each(['EXIT', 'exit', 'ExitCode2', '_status'])(
+    'uses reported warm status %s without losing completion ordering',
+    (label) => {
+      const meta = { arm: 'stim', platform: 'android' };
+      const guide = { command: 'stim guide agent', exitCode: 0 };
+      const start = { command: 'stim start', exitCode: 0, startEventOffset: 3 };
+      for (const code of [0, 7]) {
+        const command = `cd /tmp && stim worktree warm; echo "${label}=$?"`;
+        const result = spawnSync('/bin/bash', ['-c', `stim() { return ${code}; }; ${command}`], {
+          encoding: 'utf8',
+          timeout: 5000,
+        });
+        expect(result.status).toBe(0);
+        const warm = { command, exitCode: result.status, output: result.stdout, endEventOffset: 2 };
+        expect(benchmarkSetupInvalidReasons(meta, [guide, warm, start])).toEqual(
+          code === 0 ? [] : ['stim-worktree-warm-missing-or-failed'],
+        );
+        if (code !== 0) continue;
+        expect(benchmarkSetupInvalidReasons(meta, [guide, { ...warm, endEventOffset: 4 }, start])).toEqual([
+          'stim-worktree-warm-not-complete-before-use',
+        ]);
+        for (const output of ['', `${label}=0\n${label}=0\n`, `${label}=7\n`, `${label}Wrong=0\n`]) {
+          expect(benchmarkSetupInvalidReasons(meta, [guide, { ...warm, output }, start])).toContain(
+            'stim-worktree-warm-missing-or-failed',
+          );
+        }
+        const background = { ...warm, command: `stim worktree warm &\necho "${label}=$?"` };
+        expect(benchmarkSetupInvalidReasons(meta, [guide, background, start])).toContain(
           'stim-worktree-warm-missing-or-failed',
         );
       }
-      const background = { ...warm, command: 'stim worktree warm &\necho "EXIT=$?"' };
-      expect(benchmarkSetupInvalidReasons(meta, [guide, background, start])).toContain(
-        'stim-worktree-warm-missing-or-failed',
-      );
-    }
-  });
+    },
+  );
 
   it('audits Claude-style chained commands', () => {
     const commands = [
