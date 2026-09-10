@@ -355,6 +355,15 @@ control, remove its worktree and branch and shut down and delete only the newly
 created benchmark simulator or emulator. Do not touch unrelated physical-device
 leases or automation sessions.
 
+Before stopping a pooled Android emulator, cleanup also retires completed
+agent-device recording manifests. It requires the exact owned device, the
+matching run's hash-verified saved video, absent remote video chunks, and proof
+that every original recording process is gone (including a different process
+start time after PID reuse). It archives the manifest and removes only that
+metadata; it never signals the replacement process. Unknown, incomplete, live,
+or changed evidence stops cleanup. This runs after timing, not by prebooting a
+parked emulator before the next agent starts.
+
 ## JavaScript launch-crash extension
 
 A launch-crash diagnostic is a separate suite, not a fifth performance cell.
