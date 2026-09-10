@@ -9,6 +9,13 @@ The driver runs the iOS and Android readiness suites plus the JavaScript
 launch-failure suite described in [`../../docs/agent-benchmark.md`](../../docs/agent-benchmark.md).
 Runs are sequential. Never dispatch two cells against the same benchmark root.
 
+JavaScript proof combines the retained source edit with the isolated Settings
+screen proof, not a second bundle request. A legacy bundle-watcher timeout is
+retained as a warning only when independently observed app liveness and both
+proofs succeed. Other watcher failures still invalidate the run. Control cleanup
+discovers listening ports and stops only a verified Metro endpoint whose process
+working directory is exactly the canonical run worktree.
+
 ## Machine-local layout
 
 Create a benchmark root outside the repository with these entries:

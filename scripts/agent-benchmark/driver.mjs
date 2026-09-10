@@ -1,3 +1,5 @@
+import { javascriptProof, appAliveErrorIsSuperseded } from './javascript-proof.mjs';
+import { ownedMetroListeners } from './metro-listeners.mjs';
 import {
   chmodSync,
   copyFileSync,
@@ -2069,7 +2071,21 @@ function copyRollout(runDir) {
   return target;
 }
 
-function proofFor(meta, appAlive, runDir, worktree, commandItems) {
+function proofFor(meta, appAlive, runDir, worktree, commandItems, screen) {
+  if (meta.variant === 'javascript') {
+    const sourcePath = worktree ? join(worktree, 'app', '(tabs)', 'settings.tsx') : null;
+    const proof = javascriptProof(
+      sourcePath && existsSync(sourcePath) ? readFileSync(sourcePath, 'utf8') : null,
+      sourcePath,
+      screen,
+    );
+    if (proof.valid) {
+      const target = join(runDir, 'proof', 'settings-source.tsx');
+      copyFileSync(sourcePath, target);
+      return { ...proof, target };
+    }
+    return proof;
+  }
   if (meta.variant === launchCrashVariant) {
     if (!worktree) {
       return { valid: false, reason: 'launch-crash-worktree-missing' };
@@ -2143,33 +2159,6 @@ function proofFor(meta, appAlive, runDir, worktree, commandItems) {
   if (appAlive.error === 'proof-timeout-after-app-alive') {
     return { valid: false, reason: 'changed-metro-bundle-not-found' };
   }
-  if (meta.variant === 'javascript') {
-    const expected = 'Keep saved trail maps available offline';
-    const proofDir = join(runDir, 'proof');
-    const preserved = existsSync(proofDir)
-      ? readdirSync(proofDir)
-          .filter((name) => name.endsWith('.bundle'))
-          .map((name) => join(proofDir, name))
-          .find((path) => {
-            try {
-              run('grep', ['-a', '-F', '-q', expected, path]);
-              return true;
-            } catch {
-              return false;
-            }
-          })
-      : null;
-    if (preserved) {
-      const port = Number(preserved.match(/metro-(\d+)/)?.[1]);
-      return {
-        valid: true,
-        kind: 'preserved-metro-bundle-string',
-        expected,
-        target: preserved,
-        ...(Number.isInteger(port) ? { port } : {}),
-      };
-    }
-  }
   if (!appAlive.simulator?.udid || !worktree) {
     return { valid: false, reason: 'missing-simulator-or-worktree' };
   }
@@ -2187,35 +2176,7 @@ function proofFor(meta, appAlive, runDir, worktree, commandItems) {
       target: eventsPath,
     };
   }
-  const expected = 'Keep saved trail maps available offline';
-  const sourcePath = join(worktree, 'app', '(tabs)', 'settings.tsx');
-  if (!existsSync(sourcePath) || !readFileSync(sourcePath, 'utf8').includes(expected)) {
-    return { valid: false, reason: 'source-edit-missing', sourcePath };
-  }
-  for (let port = 8081; port <= 8090; port += 1) {
-    const target = join(runDir, 'proof', `metro-${port}.bundle`);
-    try {
-      execFileSync(
-        'curl',
-        [
-          '--fail',
-          '--silent',
-          '--show-error',
-          '--max-time',
-          '60',
-          '--output',
-          target,
-          `http://127.0.0.1:${port}/.expo/.virtual-metro-entry.bundle?platform=${meta.platform ?? 'ios'}&dev=true&minify=false`,
-        ],
-        { cwd: worktree, timeout: 70_000 },
-      );
-      run('grep', ['-a', '-F', '-q', expected, target]);
-      return { valid: true, kind: 'metro-bundle-string', expected, target, port };
-    } catch {
-      rmSync(target, { force: true });
-    }
-  }
-  return { valid: false, reason: 'changed-metro-bundle-not-found' };
+  return { valid: false, reason: 'unsupported-proof-variant' };
 }
 
 function completedCleanup(runDir) {
@@ -2267,7 +2228,7 @@ function collect(runDir) {
     ccacheLogEvidence({ runDir, meta, commands: commandAudit.commands, worktree, capture: true }),
   );
   const nativeCompatibility = collectedNativeCompatibility(meta, worktree);
-  const proof = proofFor(meta, appAlive, runDir, worktree, commandAudit.completedEvents);
+  const proof = proofFor(meta, appAlive, runDir, worktree, commandAudit.completedEvents, screen);
   const rollout =
     meta.runner === 'claude'
       ? eventsPath
@@ -2301,7 +2262,7 @@ function collect(runDir) {
     diagnosis?.valid && meta.runner !== 'claude' ? usageAtOrBefore(rollout, diagnosis.observedAt) : null;
   const invalidReasons = [
     ...(nativeCompatibility && !nativeCompatibility.valid ? ['native-compatibility-changed-or-unverified'] : []),
-    ...(appAlive.error ? [appAlive.error] : []),
+    ...(appAlive.error && !appAliveErrorIsSuperseded(appAlive, proof, screen) ? [appAlive.error] : []),
     ...(meta.runnerResult?.code === 0 ? [] : [`runner-exit-${meta.runnerResult?.code}`]),
     ...(runnerMetrics?.isError ? [`runner-${runnerMetrics.terminalReason ?? 'error'}`] : []),
     ...(runnerMetrics?.subagentsSpawned ? ['runner-used-subagents'] : []),
@@ -2338,6 +2299,7 @@ function collect(runDir) {
     valid: invalidReasons.length === 0,
     nativeCompatibility,
     invalidReasons,
+    watcherWarnings: appAliveErrorIsSuperseded(appAlive, proof, screen) ? [appAlive.error] : [],
     dispatchToAppAliveSeconds: appAlive.dispatchToAppAliveSeconds ?? null,
     dispatchToProofSeconds: appAlive.dispatchToProofSeconds ?? null,
     dispatchToScreenReadySeconds: screen.dispatchToScreenReadySeconds ?? null,
@@ -2524,20 +2486,11 @@ function cleanup(runDir) {
       }
     }
     if (worktree && existsSync(worktree)) {
-      for (let port = 8081; port <= 8090; port += 1) {
+      for (const { pid, port } of ownedMetroListeners(worktree)) {
         try {
-          const pids = run('/usr/sbin/lsof', ['-t', `-iTCP:${port}`, '-sTCP:LISTEN'])
-            .split('\n')
-            .filter(Boolean);
-          for (const pid of pids) {
-            const cwd = run('/usr/sbin/lsof', ['-a', '-p', pid, '-d', 'cwd', '-Fn'])
-              .split('\n')
-              .find((line) => line.startsWith('n'))
-              ?.slice(1);
-            if (cwd?.startsWith(worktree)) {
-              process.kill(Number(pid), 'SIGTERM');
-              actions.push(`terminate Metro pid ${pid}`);
-            }
+          if (ownedMetroListeners(worktree).some((candidate) => candidate.pid === pid && candidate.port === port)) {
+            process.kill(pid, 'SIGTERM');
+            actions.push(`terminate Metro pid ${pid}`);
           }
         } catch {}
       }

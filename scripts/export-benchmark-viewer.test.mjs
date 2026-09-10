@@ -1216,6 +1216,29 @@ describe('benchmark viewer export', () => {
     writeFileSync(recordPath, JSON.stringify(record));
 
     expect(exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof')).runs).toHaveLength(1);
+    const sourceProofPath = join(proofDir, 'settings-source.tsx');
+    writeFileSync(sourceProofPath, 'Keep saved trail maps available offline');
+    record.proof = { ...record.proof, kind: 'source-edit-and-settings-screen', target: sourceProofPath };
+    record.evidenceSha256.proof = sha256(sourceProofPath);
+    writeFileSync(recordPath, JSON.stringify(record));
+    const alive = {
+      dispatchToAppAliveSeconds: 5,
+      observedAt: '2026-09-04T12:00:05.000Z',
+      simulator: { udid },
+      error: 'proof-timeout-after-app-alive',
+    };
+    writeFileSync(join(runDir, 'app-alive.json'), JSON.stringify(alive));
+    expect(exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof')).runs).toHaveLength(1);
+    writeFileSync(join(runDir, 'app-alive.json'), JSON.stringify({ ...alive, error: 'wrong-device' }));
+    expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'))).toThrow(
+      'no valid benchmark runs found',
+    );
+    writeFileSync(join(runDir, 'app-alive.json'), JSON.stringify(alive));
+    writeFileSync(sourceProofPath, 'wrong text');
+    expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'))).toThrow(
+      'no valid benchmark runs found',
+    );
+    writeFileSync(sourceProofPath, 'Keep saved trail maps available offline');
     delete record.screen.recordingCopyCommandId;
     writeFileSync(recordPath, JSON.stringify(record));
     expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'))).toThrow(

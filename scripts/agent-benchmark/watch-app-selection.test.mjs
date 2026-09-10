@@ -25,7 +25,7 @@ const device = {
 it('does not wait for an edited APK label or JS marker during launch-error recovery', () => {
   for (const platform of ['ios', 'android']) {
     expect(readinessProofKind(platform, 'launch-crash')).toBeNull();
-    expect(readinessProofKind(platform, 'javascript')).toBe('javascript');
+    expect(readinessProofKind(platform, 'javascript')).toBeNull();
   }
   expect(readinessProofKind('android', 'native')).toBe('android-native');
   expect(readinessProofKind('ios', 'native')).toBeNull();
