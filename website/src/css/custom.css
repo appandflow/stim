@@ -161,13 +161,6 @@
   --ifm-footer-background-color: #20162e;
 }
 
-:where([data-theme], [data-theme] *),
-:where([data-theme] *)::before,
-:where([data-theme] *)::after {
-  transition:
-    background-color 250ms ease,
-    color 250ms ease,
-    border-color 250ms ease,
-    fill 250ms ease,
-    stroke 250ms ease;
+::view-transition {
+  pointer-events: none;
 }

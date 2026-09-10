@@ -128,9 +128,6 @@
   font-size: 14px;
   font-weight: 500;
   transform-origin: bottom center;
-  transition:
-    background-color 250ms ease,
-    color 250ms ease;
 }
 
 .primaryButton:hover {
@@ -158,10 +155,6 @@
   color: var(--stim-muted);
   font-size: 12px;
   line-height: 1.4;
-  transition:
-    background-color 250ms ease,
-    color 250ms ease,
-    border-color 250ms ease;
 }
 
 .install :global(.tabs__item--active) {
@@ -345,8 +338,7 @@
   .page [data-reveal] {
     transition:
       opacity 600ms ease,
-      translate 600ms cubic-bezier(0.22, 1, 0.36, 1),
-      border-color 250ms ease;
+      translate 600ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   .page [data-reveal='pending'] {
