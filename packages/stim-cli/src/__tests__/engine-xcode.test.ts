@@ -1,7 +1,7 @@
 import assert from 'node:assert';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -268,7 +268,7 @@ describe('parseSchemeList', () => {
 });
 
 describe('pickScheme', () => {
-  test('the scheme named after the container wins, which is every generated RN project', () => {
+  test('the scheme named after the container wins', () => {
     expect(pickScheme(['MyApp', 'MyApp-tvOS', 'MyAppTests'], 'MyApp')).toBe('MyApp');
   });
 
@@ -345,7 +345,7 @@ describe('listSchemes and resolveScheme', () => {
     expect(error.remedy).toMatch(/-list/);
   });
 
-  test('resolveScheme names the schemes it did find when none of them is buildable', () => {
+  test('resolveScheme names ambiguous schemes and gives a naming remedy instead of claiming they are not shared', () => {
     setExecutor({
       run: () => '',
       runQuiet: () => null,
@@ -356,7 +356,59 @@ describe('listSchemes and resolveScheme', () => {
     assert(error);
     expect(error.code).toBe('STIM_NO_SCHEME');
     expect(error.message).toMatch(/schemes: one, two/);
-    expect(error.remedy).toMatch(/Shared/);
+    expect(error.remedy).toMatch(/workspace\/project name/);
+  });
+
+  test.each([
+    ['matching app name', '{"name":"safe-area-example"}', 'safe-area-example'],
+    ['missing app.json', null, undefined],
+    ['malformed app.json', '{', undefined],
+    ['null app.json', 'null', undefined],
+    ['non-string app name', '{"name":12}', undefined],
+    ['unlisted app name', '{"name":"absent"}', undefined],
+  ])('resolveScheme handles a renamed workspace with %s', (_label, appJson, expected) => {
+    const ios = join(tmp, 'ios');
+    mkdirSync(ios);
+    if (appJson !== null) writeFileSync(join(tmp, 'app.json'), appJson);
+    setExecutor({
+      run: () => '',
+      runQuiet: () => null,
+      spawn: () => {},
+      runFile: () =>
+        JSON.stringify({
+          workspace: { name: 'RNSACExample', schemes: ['Pods-ReactTestApp', 'ReactTestApp', 'safe-area-example'] },
+        }),
+    });
+    const result = resolveScheme({
+      flag: '-workspace',
+      path: join(ios, 'RNSACExample.xcworkspace'),
+      name: 'RNSACExample',
+      dir: ios,
+    });
+    expect(result.scheme).toBe(expected);
+    expect(result.error?.code).toBe(expected ? undefined : 'STIM_NO_SCHEME');
+  });
+
+  test('the workspace scheme retains priority over an app.json name', () => {
+    mkdirSync(join(tmp, 'ios'));
+    writeFileSync(join(tmp, 'app.json'), '{"name":"OtherApp"}');
+    setExecutor({
+      run: () => '',
+      runQuiet: () => null,
+      spawn: () => {},
+      runFile: () => JSON.stringify({ workspace: { name: 'App', schemes: ['App', 'OtherApp'] } }),
+    });
+    expect(resolveScheme({ ...project, dir: join(tmp, 'ios') }).scheme).toBe('App');
+  });
+
+  test('an empty scheme listing keeps the share-scheme remedy', () => {
+    setExecutor({
+      run: () => '',
+      runQuiet: () => null,
+      spawn: () => {},
+      runFile: () => '{"workspace":{"name":"App","schemes":[]}}',
+    });
+    expect(resolveScheme(project).error?.remedy).toMatch(/tick Shared/);
   });
 
   test('resolveScheme returns the scheme and the full list on success', () => {
@@ -1595,13 +1647,19 @@ const LIVE = xcodebuildAvailable() ? false : 'xcodebuild is not available on thi
 const LIVE_DESTINATION = 'generic/platform=iOS Simulator';
 
 describe('buildIos against a real xcodebuild', { skip: LIVE as unknown as boolean }, () => {
-  test('discovers the workspace and resolves its scheme through a real -list -json', () => {
+  test('resolves a real workspace scheme and uses the app name after the workspace is renamed', () => {
     resetExecutor();
     writeScratchProject(tmp, { workspace: true });
     const project = discoverXcodeProject(tmp);
     expect(project.kind).toBe('workspace');
     expect(project.path).toBe(join(tmp, 'ios', 'Scratch.xcworkspace'));
     expect(resolveScheme(project)).toEqual({ scheme: 'Scratch', schemes: ['Scratch'] });
+    renameSync(join(tmp, 'ios', 'Scratch.xcworkspace'), join(tmp, 'ios', 'Renamed.xcworkspace'));
+    writeFileSync(join(tmp, 'ios', 'Scratch.xcodeproj', 'xcshareddata', 'xcschemes', 'Other.xcscheme'), SCRATCH_SCHEME);
+    const renamed = discoverXcodeProject(tmp);
+    expect(resolveScheme(renamed).error?.code).toBe('STIM_NO_SCHEME');
+    writeFileSync(join(tmp, 'app.json'), '{"name":"Scratch"}');
+    expect(resolveScheme(renamed)).toEqual({ scheme: 'Scratch', schemes: ['Other', 'Scratch'] });
   });
 
   test.each([

@@ -235,10 +235,13 @@ code, never on the message.`,
   signer-conflict retry performs.`,
     },
     STIM_NO_SCHEME: {
-      summary: 'no shared buildable Xcode scheme in ios/',
+      summary: 'Xcode schemes unavailable or no unambiguous app scheme in ios/',
       body: () => `STIM_NO_SCHEME
-  No buildable Xcode scheme was found in ios/. A scheme has to be shared to be
-  visible to xcodebuild.`,
+  Stim could not list or select an app scheme in ios/. Share the intended app
+  scheme so xcodebuild can see it. If it is already listed, make its name match
+  the workspace/project name or the top-level name in app.json. A workspace
+  name match wins; otherwise Stim accepts a sole non-test scheme, or a listed
+  scheme matching app.json. Unmatched ambiguous schemes are refused.`,
     },
     STIM_NO_PROFILE: {
       summary: 'no or undecodable embedded.mobileprovision; build once from Xcode',
