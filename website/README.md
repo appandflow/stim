@@ -17,7 +17,9 @@ GitHub Pages deploys the site from `main` through `.github/workflows/docs.yml`.
 
 The theme and landing page follow the [Stim branding board](https://www.figma.com/design/ENnvWM98Hb0S1jk43T1tx7?node-id=8426-8348)
 and [landing page reference](https://www.figma.com/design/ENnvWM98Hb0S1jk43T1tx7?node-id=8426-12140).
-The Figma SVG exports, optimized with ImageOptim, live in `static/img/branding`. Inter and JetBrains Mono
+The Figma SVG exports, optimized with ImageOptim, live in `static/img/branding`.
+The 1200x630 social card that `themeConfig.image` serves as the `og:image` is the Figma PNG export
+`static/img/branding/social-card.png`; re-export it there when the tagline or artwork changes. Inter and JetBrains Mono
 are bundled with their licenses in `src/css/fonts`.
 
 The reference uses GT Maru Trial Bold for the hero. This prototype uses Inter Bold

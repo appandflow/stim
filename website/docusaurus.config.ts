@@ -48,6 +48,7 @@ const config: Config = {
   ],
 
   themeConfig: {
+    image: 'img/branding/social-card.png',
     colorMode: {
       defaultMode: 'light',
       respectPrefersColorScheme: true,
