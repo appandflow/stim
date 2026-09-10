@@ -1740,7 +1740,7 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as unknown as boolea
     expect(resolveScheme(renamed).error?.code).toBe('STIM_NO_SCHEME');
     writeFileSync(join(tmp, 'app.json'), '{"name":"Scratch"}');
     expect(resolveScheme(renamed)).toEqual({ scheme: 'Scratch', schemes: ['Other', 'Scratch'] });
-  });
+  }, 30_000);
 
   test.each([
     { compilationCache: true, swiftCompilationCache: false, prefixMapping: true },
