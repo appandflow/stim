@@ -131,12 +131,14 @@
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  min-height: 44px;
-  padding: 12px 20px;
+  height: 52px;
+  padding: 0 32px;
+  border-radius: 40px;
   background: var(--stim-purple);
   color: var(--home-background);
   font-size: 14px;
   font-weight: 500;
+  transform-origin: bottom center;
 }
 
 .primaryButton:hover {
@@ -337,6 +339,15 @@
   outline-offset: 4px;
 }
 
+@keyframes squish {
+  33% {
+    transform: scale(1.02, 0.98);
+  }
+  66% {
+    transform: scale(0.99, 1.01);
+  }
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .page [data-reveal] {
     transition:
@@ -349,16 +360,8 @@
     translate: 0 12px;
   }
 
-  .primaryButton {
-    transition:
-      transform 180ms ease,
-      box-shadow 180ms ease,
-      background-color 180ms ease;
-  }
-
-  .primaryButton:active {
-    transform: translateY(0) scale(0.98);
-    box-shadow: none;
+  .primaryButton:hover {
+    animation: squish 300ms ease-out;
   }
 
   .feature a span,
@@ -371,11 +374,6 @@
 @media (prefers-reduced-motion: no-preference) and (hover: hover) and (pointer: fine) {
   .heroIllustration img {
     transform: rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg)) scale(1.1);
-  }
-
-  .primaryButton:hover:not(:active) {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgb(85 33 255 / 20%);
   }
 
   .feature a:hover span,
