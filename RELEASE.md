@@ -217,7 +217,9 @@ it. A major release runs the full matrix on at least two representative real
 repositories.
 
 The manual rows and report format are in
-[`docs/field-test-protocol.md`](./docs/field-test-protocol.md). Do not repeat
+[`docs/field-test-protocol.md`](./docs/field-test-protocol.md). Follow its
+[progress-update cadence](./docs/field-test-protocol.md#progress-updates)
+throughout QA, including long-running automated suites. Do not repeat
 the cache suite by hand: attach its machine-readable summary. Attach the loop
 suite result and log for each loop row. Run manual rows with the built candidate
 CLI as described by the protocol, never `stim@latest`. Every claim in the
