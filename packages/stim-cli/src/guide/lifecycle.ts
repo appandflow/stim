@@ -391,6 +391,10 @@ result as proof instead of requiring an unrelated screenshot.`,
   Incompatible AVDs stay parked until eviction or GC. AVDs created by older
   versions without a recorded creation configuration are deleted at removal.
 
+  When a fresh AVD's preferred name belongs to another workspace or a parked
+  entry, Stim adds a short suffix instead of taking over that device. Always
+  use the actual device name and serial reported by the platform command.
+
   Android cleanup happens AFTER boot, before install or launch: \`adb shell
   pm clear\` clears the adopting app's data while retaining its APK, and
   other third-party apps are uninstalled. Failed cleanup blocks launch and

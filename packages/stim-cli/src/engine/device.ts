@@ -645,7 +645,10 @@ async function ensureOwnedAndroidDevice({
       if (current?.avdName && current.avdName !== record?.avdName) {
         throw new Error(`Another Stim run assigned AVD ${current.avdName} to this workspace. Retry to use it.`);
       }
-      if (readParked('android').some((entry) => entry.name === ownedAvdName(label)))
+      if (
+        readParked('android').some((entry) => entry.name === ownedAvdName(label)) ||
+        findOtherProjectOwningAvd(ownedAvdName(label), projectPath)
+      )
         label = `${label}-${randomUUID().slice(0, 8)}`;
       const result = createOwnedAvd(label, { systemImage: flags.systemImage || settings.android?.systemImage });
       setDevice(projectPath, 'android', {
@@ -669,7 +672,7 @@ async function ensureOwnedAndroidDevice({
         const owner = findOtherProjectOwningAvd(avdName, projectPath);
         if (owner) {
           throw new Error(
-            `AVD ${avdName} already exists and is owned by another project (${owner}). Pass a distinct --label to avoid the collision instead of hijacking it.`,
+            `AVD ${avdName} already exists and is owned by another project (${owner}). Retry to allocate a distinct owned emulator.`,
             { cause: e },
           );
         }

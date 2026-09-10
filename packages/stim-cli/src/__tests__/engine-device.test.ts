@@ -1418,14 +1418,49 @@ describe('ensureOwnedDevice: android', () => {
     }
   });
 
-  test('an existing AVD owned by ANOTHER project errors instead of being hijacked', async () => {
+  test('same-label workspaces receive distinct owned AVDs without touching the existing owner', async () => {
     const other = projectDir();
     const root = projectDir();
     try {
       setDevice(other, 'android', { avdName: 'stim-app', consolePort: 5554, owned: true });
-      const { exec } = androidExecutor({
+      const existing = getProject(other)?.platforms?.android;
+      const { run, spawn, exec } = androidExecutor({ avds: ['stim-app'] });
+      setExecutor(exec);
+      const result = await ensureOwnedDevice({
+        platform: 'android',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {},
+      });
+      expect(result.avdName).toMatch(/^stim-app-[a-f0-9]{8}$/);
+      expect(result.consolePort).toBe(5556);
+      expect(getProject(root)?.platforms?.android).toMatchObject({
+        avdName: result.avdName,
+        owned: true,
+      });
+      expect(getProject(other)?.platforms?.android).toEqual(existing);
+      expect(run.filter((cmd) => /create avd/.test(cmd))).toHaveLength(1);
+      expect(run.some((cmd) => /delete avd| -s emulator-5554 /.test(cmd))).toBe(false);
+      expect(spawn).toHaveLength(1);
+      expect(spawn[0]?.args).toContain(result.avdName);
+      expect(spawn[0]?.args).not.toContain('stim-app');
+    } finally {
+      rmSync(other, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('an AVD claimed by another project during creation errors instead of being hijacked', async () => {
+    const other = projectDir();
+    const root = projectDir();
+    try {
+      const { spawn, exec } = androidExecutor({
         avds: ['stim-app'],
         createAvdError: 'Error: AVD stim-app already exists.',
+        beforeCreateAvdError: () => {
+          setDevice(other, 'android', { avdName: 'stim-app', consolePort: 5554, owned: true });
+        },
       });
       setExecutor(exec);
       await expect(
@@ -1436,7 +1471,10 @@ describe('ensureOwnedDevice: android', () => {
           label: 'app',
           settings: {},
         }),
-      ).rejects.toThrow(/owned by another project/);
+      ).rejects.toThrow(/owned by another project.*Retry to allocate a distinct owned emulator/);
+      expect(spawn).toEqual([]);
+      expect(getProject(root)?.platforms?.android).toBeUndefined();
+      expect(getProject(other)?.platforms?.android).toMatchObject({ avdName: 'stim-app', owned: true });
     } finally {
       rmSync(other, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });
