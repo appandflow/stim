@@ -6,6 +6,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -62,6 +63,22 @@ test('compatibility refuses changed package bytes, permissions, fixture patch, a
     };
     assert.equal(collectedNativeCompatibility(meta, fixture).valid, true);
     assert.equal(collectedNativeCompatibility(meta, null).valid, false);
+    assert.equal(collectedNativeCompatibility(meta, null).manifestSha256, hash);
+    assert.equal(
+      collectedNativeCompatibility(
+        {
+          preflight: {
+            ...meta.preflight,
+            nativeCompatibility: { ...meta.preflight.nativeCompatibility, manifestSha256: 'changed' },
+          },
+        },
+        null,
+      ).manifestSha256,
+      undefined,
+    );
+    writeFileSync(manifest, `${readFileSync(manifest, 'utf8')}\n`);
+    assert.equal(collectedNativeCompatibility(meta, null).manifestSha256, undefined);
+    writeFileSync(manifest, readFileSync(manifest, 'utf8').slice(0, -1));
     assert.equal(collectedNativeCompatibility(meta, join(root, 'removed-worktree')).valid, false);
     assert.equal(
       collectedNativeCompatibility({ preflight: { nativeCompatibility: meta.preflight.nativeCompatibility } }, fixture)
