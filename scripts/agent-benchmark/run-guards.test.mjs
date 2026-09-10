@@ -262,6 +262,49 @@ describe('compiler cache health', () => {
     'fingerprint abcdef.. hit (1s)\ncompilation cache not run; artifact cache supplied the app',
   );
 
+  it('retains an artifact hit when adopted-device cleanup fails before a successful retry', () => {
+    const failed =
+      'fingerprint abcdef.. hit (3.3s)\ndevice seed adopted (71ms)\n  error STIM_LAUNCH_FAILED: Could not clean adopted emulator: pm clear failed';
+    const structured = JSON.stringify({
+      code: 'STIM_LAUNCH_FAILED',
+      facts: { ccache: { status: 'not-run' } },
+    });
+    for (const output of [failed, structured]) {
+      expect(benchmarkCcache(meta, [...refusal(output), ...artifactHit])).toMatchObject({
+        status: 'artifact-hit',
+        builds: [],
+        invalidReasons: [],
+      });
+    }
+  });
+
+  it('does not let a launch failure or a later hit hide missing or unhealthy build evidence', () => {
+    const launchError = '\n  error STIM_LAUNCH_FAILED: App did not launch';
+    for (const output of [
+      launchError,
+      `fingerprint abcdef.. hit\nbuild compiling debug${launchError}`,
+      `fingerprint abcdef.. hit\ncompilation cache unavailable${launchError}`,
+      `fingerprint abcdef.. hit\n${JSON.stringify({ ccache: { status: 'unavailable' } })}${launchError}`,
+      'fingerprint abcdef.. hit\nTypeError: Unexpected failure',
+    ]) {
+      expect(benchmarkCcache(meta, [...refusal(output), ...artifactHit]).invalidReasons).toContain(
+        'ccache-evidence-missing',
+      );
+    }
+    for (const exitCode of [null, 137]) {
+      expect(
+        benchmarkCcache(meta, [...refusal(`fingerprint abcdef.. hit${launchError}`, exitCode), ...artifactHit])
+          .invalidReasons,
+      ).toContain('ccache-evidence-missing');
+    }
+    expect(
+      benchmarkCcache(meta, [
+        ...refusal(`build compiling debug\ncompilation cache 9 hits / 308 misses (2.8%)${launchError}`),
+        ...artifactHit,
+      ]).invalidReasons,
+    ).toContain('ccache-hit-rate-below-target');
+  });
+
   it('does not blame the compiler cache for a STIM_NO_METRO refusal that precedes an artifact hit', () => {
     expect(benchmarkCcache(meta, [...refusal(noMetro), ...artifactHit])).toMatchObject({
       status: 'artifact-hit',
