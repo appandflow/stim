@@ -531,7 +531,11 @@ export function retiredSettingsNote(retired: RetiredSetting[]): string {
   const located = retiredFiles(retired)
     .map((file) => `${retiredKeysFrom(retired, file).join(', ')} in ${file}`)
     .join('; ');
-  return `Ignoring retired ${located}. Android builds use ccache.`;
+  // Only a retired compilerCache makes ccache the certain fallback. When just
+  // the toolchain path is retired, the compilerCache setting still decides, and
+  // it may be `none`.
+  const fellBack = retired.some((entry) => entry.key === RETIRED_ANDROID_COMPILER_CACHE_SETTING);
+  return fellBack ? `Ignoring retired ${located}. Android builds use ccache.` : `Ignoring retired ${located}.`;
 }
 
 export function retiredSettingsRemedy(retired: RetiredSetting[]): string {
