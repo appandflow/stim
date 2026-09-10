@@ -52,6 +52,13 @@ and no unexpected listener on Metro ports 8081 through 8090. Wait for a
 one-minute load average at or below 3.0 for two consecutive 15-second samples.
 Runs are sequential.
 
+Preparation and both agent arms pin `LANG`, `LC_ALL`, and `LC_CTYPE` to
+`C.UTF-8` and unset `LC_MESSAGES`. These variables participate in ccache keys:
+inheriting a different runner locale can turn a warm native build into misses.
+The isolated shell restores the locale for login and non-login commands.
+Preflight checks it, and preparation/run metadata records it. An older golden
+without matching locale provenance needs requalification before dispatch.
+
 Each machine has targets for every platform, change kind, and arm. The
 screen-ready target is a visible performance signal, not a validity gate,
 because agent reasoning time is part of what the benchmark measures. A Stim

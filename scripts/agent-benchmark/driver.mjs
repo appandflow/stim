@@ -40,6 +40,7 @@ import {
 import { completedCleanupRecord, durableRunRecord } from './run-record.mjs';
 import { ccacheLogEvidence } from './ccache-evidence.mjs';
 import { retireAndroidRecording } from './recording-cleanup.mjs';
+import { benchmarkEnvironment, benchmarkLocale, isolatedShellEnvironment } from './shell-environment.mjs';
 import {
   isolatedRunnerInvocation,
   prepareRunnerIsolation,
@@ -99,19 +100,6 @@ function benchmarkTargets() {
   return parseBenchmarkTargets(readFileSync(path, 'utf8'));
 }
 
-function shellQuote(value) {
-  return `'${String(value).replaceAll("'", "'\\''")}'`;
-}
-
-function isolatedShellEnvironment(environment, directory) {
-  const shellHome = join(directory, 'shell-home');
-  mkdirSync(shellHome, { recursive: true });
-  const startup = `export PATH=${shellQuote(environment.PATH)}\n`;
-  writeFileSync(join(shellHome, '.zshenv'), startup);
-  writeFileSync(join(shellHome, '.zprofile'), startup);
-  return { ...environment, ZDOTDIR: shellHome };
-}
-
 function expectedStimShellProvenance() {
   return {
     resolvedPath: join(stimBin, 'stim'),
@@ -131,6 +119,19 @@ function stimShellProvenance(environment) {
 }
 
 function verifyRunnerShell(arm, environment) {
+  for (const mode of ['-lc', '-c']) {
+    const locale = run(
+      '/bin/zsh',
+      [mode, 'test -z "${LC_MESSAGES+x}" && printf "%s\\n" "$LANG" "$LC_ALL" "$LC_CTYPE"'],
+      {
+        cwd: main,
+        env: environment,
+      },
+    );
+    if (locale !== Array(3).fill(benchmarkLocale).join('\n')) {
+      throw new Error(`timed shell locale mismatch: ${locale}`);
+    }
+  }
   if (arm === 'control') {
     const resolved = run('/bin/zsh', ['-lc', 'command -v stim || true'], { cwd: main, env: environment });
     if (resolved) throw new Error(`control login shell resolved Stim: ${resolved}`);
@@ -157,7 +158,7 @@ function run(file, args, options = {}) {
   const output = execFileSync(file, args, {
     cwd: options.cwd ?? main,
     encoding: 'utf8',
-    env: options.env ?? process.env,
+    env: benchmarkEnvironment(options.env ?? process.env),
     timeout: options.timeout ?? 30_000,
     maxBuffer: options.maxBuffer ?? 64 * 1024 * 1024,
     stdio: options.stdio ?? ['ignore', 'pipe', 'pipe'],
@@ -173,17 +174,9 @@ function executablePath(file) {
   return file.includes('/') ? file : run('/usr/bin/which', [file], { cwd: root });
 }
 
-function cleanRubyEnvironment(environment) {
-  const clean = { ...environment };
-  delete clean.GEM_HOME;
-  delete clean.GEM_PATH;
-  delete clean.RUBY_VERSION;
-  return clean;
-}
-
 function agentDeviceEnvironment(session) {
   return {
-    ...cleanRubyEnvironment(process.env),
+    ...benchmarkEnvironment(process.env),
     AGENT_DEVICE_STATE_DIR: agentDeviceState,
     ...(session ? { AGENT_DEVICE_SESSION: session } : {}),
   };
@@ -270,6 +263,10 @@ function sha256(path) {
 }
 
 function verifyGoldenCache(platform, platformGolden = goldenFor(platform)) {
+  const readyPath = join(platformGolden, 'READY.json');
+  if (existsSync(readyPath) && JSON.parse(readFileSync(readyPath, 'utf8')).locale !== benchmarkLocale) {
+    throw new Error('golden cache locale is unverified; requalify preparation before dispatch');
+  }
   const fingerprint = benchmarkFingerprint(main, stimPackage, platform);
   const cacheRoot = join(platformGolden, 'stim-home', 'build-cache', platform);
   const cacheKey = selectBenchmarkCacheKey(platform, fingerprint, existsSync(cacheRoot) ? readdirSync(cacheRoot) : []);
@@ -590,7 +587,7 @@ function preflight(requestedPlatform = 'ios') {
   const shellProbeHome = join(state, 'shell-probe');
   const shellProbeEnvironment = isolatedShellEnvironment(
     {
-      ...cleanRubyEnvironment(process.env),
+      ...benchmarkEnvironment(process.env),
       STIM_HOME: join(shellProbeHome, 'stim-home'),
       BENCH_STIM_HOME: join(shellProbeHome, 'stim-home'),
       PATH: `${stimBin}:${allowedBin}:/usr/bin:/bin:/usr/sbin:/sbin`,
@@ -631,6 +628,7 @@ function preflight(requestedPlatform = 'ios') {
   const parkedEmulator = platform === 'android' && existsSync(readyPath) ? verifyGoldenParkedAndroidEmulator() : null;
   const preflightRecord = {
     checkedAt: new Date().toISOString(),
+    locale: benchmarkLocale,
     actual,
     nativeCompatibility,
     disk,
@@ -687,6 +685,7 @@ function prepare() {
   versionChecks();
   const readyPath = join(golden, 'READY.json');
   if (existsSync(readyPath)) {
+    verifyGoldenCache('ios');
     process.stdout.write(readFileSync(readyPath));
     return;
   }
@@ -714,7 +713,7 @@ function prepare() {
     );
   }
   const seedEnv = {
-    ...cleanRubyEnvironment(process.env),
+    ...benchmarkEnvironment(process.env),
     STIM_HOME: preparingHome,
     STIM_POOL_IOS_PARKED_MAX: '1',
   };
@@ -762,13 +761,14 @@ function prepare() {
   const exportPath = join(golden, 'control-export');
   run('npx', ['expo', 'export', '--platform', 'ios', '--dev', '--output-dir', exportPath], {
     cwd: main,
-    env: { ...cleanRubyEnvironment(process.env), TMPDIR: controlTmp },
+    env: { ...benchmarkEnvironment(process.env), TMPDIR: controlTmp },
     timeout: 10 * 60 * 1000,
     stdio: 'inherit',
   });
   rmSync(exportPath, { recursive: true, force: true });
   const ready = {
     preparedAt: new Date().toISOString(),
+    locale: benchmarkLocale,
     fixtureCommit: git('rev-parse', 'HEAD'),
     stimVersion: pins.STIM_VERSION,
     stimIntegrity: pins.STIM_INTEGRITY,
@@ -786,10 +786,11 @@ function prepareAndroid() {
   ensureDirs();
   prepareAllowedBin();
   versionChecks();
-  androidDoctor(main, { ...cleanRubyEnvironment(process.env), STIM_HOME: join(state, 'doctor-home') });
+  androidDoctor(main, { ...benchmarkEnvironment(process.env), STIM_HOME: join(state, 'doctor-home') });
   const platformGolden = goldenFor('android');
   const readyPath = join(platformGolden, 'READY.json');
   if (existsSync(readyPath)) {
+    verifyGoldenCache('android', platformGolden);
     verifyGoldenParkedAndroidEmulator();
     process.stdout.write(readFileSync(readyPath));
     return;
@@ -802,6 +803,7 @@ function prepareAndroid() {
   mkdirSync(platformGolden, { recursive: true });
   const preparingHome = existsSync(finalHome) ? finalHome : seedHome;
   const preparation = {
+    locale: benchmarkLocale,
     fixtureCommit: git('rev-parse', 'HEAD'),
     stimVersion: pins.STIM_VERSION,
     stimIntegrity: pins.STIM_INTEGRITY,
@@ -826,7 +828,7 @@ function prepareAndroid() {
       throw new Error(`retained Android golden provenance does not match current pins: ${finalHome}`);
     }
   }
-  const seedEnv = { ...cleanRubyEnvironment(process.env), STIM_HOME: preparingHome, STIM_POOL_ANDROID_PARKED_MAX: '1' };
+  const seedEnv = { ...benchmarkEnvironment(process.env), STIM_HOME: preparingHome, STIM_POOL_ANDROID_PARKED_MAX: '1' };
   let preparedDevice = null;
   const worktree = join(worktreeParent, 'bench-golden-android-seed');
   run('git', ['worktree', 'add', '--detach', worktree, 'HEAD'], {
@@ -880,7 +882,7 @@ function prepareAndroid() {
   const exportPath = join(platformGolden, 'control-export');
   run('npx', ['expo', 'export', '--platform', 'android', '--dev', '--output-dir', exportPath], {
     cwd: main,
-    env: { ...cleanRubyEnvironment(process.env), TMPDIR: controlTmp },
+    env: { ...benchmarkEnvironment(process.env), TMPDIR: controlTmp },
     timeout: 10 * 60 * 1000,
     stdio: 'inherit',
   });
@@ -888,6 +890,7 @@ function prepareAndroid() {
   const cache = verifyGoldenCache('android', platformGolden);
   const ready = {
     preparedAt: new Date().toISOString(),
+    locale: benchmarkLocale,
     fixtureCommit: git('rev-parse', 'HEAD'),
     stimVersion: pins.STIM_VERSION,
     stimIntegrity: pins.STIM_INTEGRITY,
@@ -1146,7 +1149,7 @@ function smoke(arm) {
   mkdirSync(runDir, { recursive: true });
   const { codexHome } = makeRunnerHome(runDir, arm);
   const env = {
-    ...cleanRubyEnvironment(process.env),
+    ...benchmarkEnvironment(process.env),
     CODEX_HOME: codexHome,
     STIM_HOME: join(runDir, 'stim-home'),
     AGENT_DEVICE_STATE_DIR: agentDeviceState,
@@ -1180,7 +1183,7 @@ async function runnerSmoke(arm) {
   mkdirSync(runDir, { recursive: true });
   const { codexHome } = makeRunnerHome(runDir, arm);
   const env = {
-    ...cleanRubyEnvironment(process.env),
+    ...benchmarkEnvironment(process.env),
     CODEX_HOME: codexHome,
     STIM_HOME: join(runDir, 'stim-home'),
     TMPDIR: join(runDir, 'tmp'),
@@ -1375,7 +1378,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
     timeout: 5 * 60 * 1000,
   });
   const baseEnv = {
-    ...cleanRubyEnvironment(process.env),
+    ...benchmarkEnvironment(process.env),
     ...runnerEnvironment,
     CODEX_HOME: codexHome,
     STIM_HOME: join(runDir, 'stim-home'),
@@ -1433,6 +1436,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
   const dispatchAt = new Date().toISOString();
   const meta = {
     schemaVersion: 1,
+    locale: benchmarkLocale,
     runId,
     stage,
     runner: runnerKind,
@@ -2418,7 +2422,7 @@ function cleanup(runDir) {
       actions.push(`verified completed recording metadata cleared before parking: ${retired.length} manifests`);
     }
     const env = {
-      ...cleanRubyEnvironment(process.env),
+      ...benchmarkEnvironment(process.env),
       STIM_HOME: stimHome,
       ...(meta.platform === 'android' ? { STIM_POOL_ANDROID_PARKED_MAX: '1' } : { STIM_POOL_IOS_PARKED_MAX: '1' }),
     };
@@ -2552,7 +2556,7 @@ function cleanup(runDir) {
           run('node', [stimCli, 'worktree', 'remove', '--force'], {
             cwd: fixtureCheckout,
             env: {
-              ...cleanRubyEnvironment(process.env),
+              ...benchmarkEnvironment(process.env),
               STIM_HOME: join(runDir, 'stim-home'),
               STIM_POOL_IOS_PARKED_MAX: '1',
             },
