@@ -508,6 +508,21 @@ when a build is blocked or slow. It reports what Stim cannot handle itself
 launcher, a fingerprint no fresh worktree reproduces, a provider on a key this
 SDK ignores) and settings for builds outside Stim.
 
+IOS DEBUG ARCHITECTURES
+Doctor reads Xcode's effective Debug simulator settings for app targets and
+generated Pods, including xcconfig inheritance and SDK-specific overrides.
+It warns when ONLY_ACTIVE_ARCH=NO leaves multiple architectures after ARCHS,
+VALID_ARCHS, and EXCLUDED_ARCHS are combined. A Podfile post_install helper can
+cause this even when the app target already uses ONLY_ACTIVE_ARCH=YES.
+Review that override for local Debug builds; preserve intentional Release and
+distribution settings. Regenerate Pods through the project's normal workflow
+after changing a helper, then rerun \`stim doctor --platform ios\`.
+Doctor never evaluates Podfile Ruby, installs Pods, or changes architecture
+settings, including under --fix. This inspection runs only in doctor, with
+30 seconds per Xcode query and 60 seconds total. Missing generated projects,
+failed metadata queries, and unresolved settings produce an unverified note
+rather than an architecture warning or a verified clean result.
+
 WHY ANDROID NEEDS CCACHE, AND WHAT IT COSTS
 Every AGP CMake task is uncacheable by Gradle, so --build-cache serves not one
 C++ compile. Without a launcher a fresh worktree recompiles every translation

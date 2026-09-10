@@ -34,6 +34,8 @@ resolved from PATH. If that resolved installation is older than another one,
 fix PATH or the installation before continuing so commands and guidance match.
 Doctor reports cross-volume staging and build-cache copies; read guide settings
 for placement overrides and guide lifecycle options for warm behavior.
+For iOS Debug architecture findings, review the project's overrides and imported
+Podfile helpers using guide lifecycle options. Doctor --fix does not change them.
 
   stim doctor --platform ios          # or: --platform android
 

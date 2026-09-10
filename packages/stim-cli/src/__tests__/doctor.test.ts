@@ -440,6 +440,37 @@ test('the ccache finding belongs to the Android group and is filtered out by --p
   }
 });
 
+test('Android doctor skips iOS architecture metadata and findings', () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doc-architectures-platform-'));
+  try {
+    mkdirSync(join(project, 'ios', 'App.xcodeproj'), { recursive: true });
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+    const queries: string[] = [];
+    setExecutor({
+      runFileQuiet: () => null,
+      runFile(file: string) {
+        queries.push(file);
+        return '';
+      },
+      runQuiet: () => null,
+    });
+    const options = { concurrency: { maxBuilds: 0, maxDevices: 0 }, lookupCcache: () => true };
+    expect(
+      runDoctor(project, { ...options, platform: 'android' }).some((f) =>
+        f.code?.startsWith('ios-debug-architectures'),
+      ),
+    ).toBe(false);
+    expect(queries).not.toContain('xcodebuild');
+    expect(
+      runDoctor(project, { ...options, platform: 'ios' }).some((f) => f.code === 'ios-debug-architectures-unknown'),
+    ).toBe(true);
+    expect(queries).toContain('xcodebuild');
+  } finally {
+    resetExecutor();
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
 test('parseCmakeCacheLauncher reads the launcher a configure wrote into CMakeCache.txt', () => {
   const cache = [
     '//Compiler launcher for CXX.',
