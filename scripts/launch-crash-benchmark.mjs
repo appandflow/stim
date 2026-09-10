@@ -55,6 +55,8 @@ function successfulLaunch(command, arm, platform) {
   if (!prefix) return false;
   if (/^cd\s/.test(prefix[0]) && !/&&\s*$/.test(prefix[0])) return false;
   let pipeline = value.slice(prefix[0].length);
+  const logVariable = pipeline.match(/^([A-Za-z_]\w*)=([\w/.-]+)\s*&&\s*/);
+  if (logVariable) pipeline = pipeline.slice(logVariable[0].length);
   const report = /;\s*echo "PIPELINE_EXIT=\$\?"\s*$/.exec(pipeline);
   if (report) {
     const statuses = [...String(command.output ?? '').matchAll(/^PIPELINE_EXIT=(\d+)\s*$/gm)];
@@ -62,6 +64,12 @@ function successfulLaunch(command, arm, platform) {
     pipeline = pipeline.slice(0, report.index);
   }
   let [launch, ...filters] = pipeline.replace(/\s+2>&1(?=\s|$)/g, '').split(/\s*\|\s*/);
+  if (logVariable) {
+    const variablePath = new RegExp(`^(tee(?: -a)?) "([\\w/.-]*)\\$${logVariable[1]}(?=[^A-Za-z0-9_])([\\w/.-]*)"$`);
+    filters = filters.map((filter) =>
+      filter.replace(variablePath, (_, tee, before, after) => `${tee} ${before}${logVariable[2]}${after}`),
+    );
+  }
   if (arm === 'control' && platform === 'android')
     launch = launch.replace(/^adb\s+-s\s+emulator-\d+\s+reverse\s+tcp:\d+\s+tcp:\d+\s*&&\s*/, '');
   const group = /^\{\s*([\s\S]*?);\s*\}$/.exec(launch);
@@ -106,7 +114,11 @@ function errorCaptureCommand(command, arm, platform) {
     /\b(?:tail|rg|grep|sed|cat)\b[\s\S]*(?:\.log\b|(?:^|[\s'"])(?:\.?\/)?(?:tmp|logs?|\.expo\/dev\/logs)\/)/.test(
       command,
     );
-  if (platform === 'android') return /\badb\s+(?:-s\s+\S+\s+)?logcat\b/.test(command) || explicitLogFile;
+  if (platform === 'android')
+    return (
+      shellCommandSegments(command).some((segment) => /^adb\s+(?:-s\s+\S+\s+)?logcat\b/.test(shellCommand(segment))) ||
+      explicitLogFile
+    );
   return /\bxcrun\s+simctl\s+spawn\b|\blog\s+(?:show|stream)\b/.test(command) || explicitLogFile;
 }
 

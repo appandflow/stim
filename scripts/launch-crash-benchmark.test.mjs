@@ -315,6 +315,47 @@ done`;
       output: 'BUILD SUCCESSFUL\nPIPELINE_EXIT=0\nShell cwd was reset to /tmp/fixture',
     };
     expect(launchCrashDiagnosis([...before, pipeline, logs], options)).toMatchObject({ valid: true });
+    const variablePipeline = {
+      ...pipeline,
+      command: pipeline.command
+        .replace('npx expo', 'RUNID=run-123 && CI=1 ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a npx expo')
+        .replace('/tmp/native.log', '"/tmp/$RUNID-native.log"'),
+    };
+    expect(launchCrashDiagnosis([...before, variablePipeline, logs], options)).toMatchObject({
+      valid: true,
+      initialLaunchCommandId: 'launch',
+      commandId: 'logs',
+    });
+    const deviceLogs = {
+      ...logs,
+      command:
+        'sleep 20; "$ANDROID_HOME/platform-tools/adb" -s emulator-5554 logcat -d | rg "ReactNativeJS" | tail -40',
+    };
+    expect(launchCrashDiagnosis([variablePipeline, deviceLogs], options)).toMatchObject({
+      valid: true,
+      commandId: 'logs',
+      observedAt: logs.endedAt,
+    });
+    expect(
+      launchCrashDiagnosis([variablePipeline, { ...deviceLogs, command: 'echo "adb logcat -d"' }], options),
+    ).toMatchObject({ valid: false, reason: 'launch-crash-error-capture-missing' });
+    for (const changed of [
+      { command: variablePipeline.command.replace('RUNID=run-123', 'RUNID=$(cat /tmp/id)') },
+      { command: variablePipeline.command.replace('RUNID=run-123', 'RUNID=`cat /tmp/id`') },
+      { command: variablePipeline.command.replace('$RUNID-native', '$OTHER-native') },
+      { command: variablePipeline.command.replace('$RUNID-native', '$RUNID_suffix-native') },
+      { command: variablePipeline.command.replace('$RUNID-native', '$(cat /tmp/id)-native') },
+      { command: variablePipeline.command.replace('run-123 &&', 'run-123;') },
+      { command: variablePipeline.command.replace('run-123 &&', 'run-123 && cat /tmp/unrelated &&') },
+      { command: variablePipeline.command.replace('tail -40', 'cat /tmp/unrelated') },
+      { output: 'BUILD SUCCESSFUL\nPIPELINE_EXIT=1' },
+      { output: 'BUILD SUCCESSFUL' },
+      { output: 'PIPELINE_EXIT=1\nPIPELINE_EXIT=0' },
+    ])
+      expect(launchCrashDiagnosis([{ ...variablePipeline, ...changed }, logs], options)).toMatchObject({
+        valid: false,
+        reason: 'launch-crash-initial-launch-evidence-missing',
+      });
     const forwardedLaunch = {
       ...launch,
       command:
