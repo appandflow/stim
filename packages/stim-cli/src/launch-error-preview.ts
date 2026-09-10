@@ -1,3 +1,5 @@
+import { stripAnsi } from './process-output.ts';
+
 type RecordLike = { msg?: unknown; stack?: unknown; componentStack?: unknown; [key: string]: unknown };
 type StackKind = 'Error' | 'Component' | 'Native' | 'Caused-by';
 
@@ -40,6 +42,80 @@ function expandStackFields(message: string): string {
       return `${prefix}\n${field === 'componentStack' ? 'Component' : 'Error'} stack:\n${decodeStack(value)}`;
     },
   );
+}
+
+function jsonStringField(blob: string, field: string): string | null {
+  const match = new RegExp(`"${field}":"((?:[^"\\\\]|\\\\.)*)"`).exec(blob);
+  if (!match) return null;
+  try {
+    return JSON.parse(`"${match[1]}"`) as string;
+  } catch {
+    return null;
+  }
+}
+
+function jsonObjectComplete(blob: string): boolean {
+  let depth = 0;
+  let inString = false;
+  for (let i = 0; i < blob.length; i++) {
+    const char = blob[i];
+    if (inString) {
+      if (char === '\\') i++;
+      else if (char === '"') inString = false;
+    } else if (char === '"') inString = true;
+    else if (char === '{') depth++;
+    else if (char === '}' && --depth === 0) return true;
+  }
+  return false;
+}
+
+/**
+ * React Native's DebugServerException embeds Metro's serialized bundling error
+ * after a `Body:` line, and logcat splits that JSON across lines past 4 KiB.
+ */
+function compactMetroErrorBody(
+  text: string,
+  root: string | undefined,
+  printed: readonly string[],
+): { head: string; lines: string[]; tail: string } | null {
+  if (!text.includes('DebugServerException')) return null;
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((line) => line.includes('{"type":"'));
+  if (start < 0) return null;
+  const prefix = lines[start]!.slice(0, lines[start]!.indexOf('{"type":"'));
+  let blob = lines[start]!.slice(prefix.length);
+  let end = start + 1;
+  while (
+    end < lines.length &&
+    !jsonObjectComplete(blob) &&
+    lines[end]!.trim() &&
+    !/^(?:\tat\s|\s*Caused by:)/.test(lines[end]!)
+  )
+    blob += lines[end++]!;
+  const type = /^\{"type":"([^"]*)"/.exec(blob)?.[1];
+  const message = jsonStringField(blob, 'message');
+  if (!type || !message) return null;
+  const stripRoot = (value: string) => (root ? value.replaceAll(`${root}/`, '') : value);
+  const [firstLine = '', ...rest] = stripRoot(stripAnsi(message)).trim().split(/\r?\n/);
+  const first = firstLine.trim();
+  const importStack = stripRoot(stripAnsi(jsonStringField(blob, '_expoImportStack') ?? '')).trim();
+  const diagnosis = [first, ...rest, ...(importStack ? importStack.split(/\r?\n/) : [])];
+  const printedLines = new Set(
+    printed.flatMap((line) =>
+      stripRoot(stripAnsi(line))
+        .split(/\r?\n/)
+        .map((part) => part.trim()),
+    ),
+  );
+  const replacement =
+    first && diagnosis.every((line) => !line.trim() || printedLines.has(line.trim()))
+      ? [`${type}: ${first} (diagnosis above)`]
+      : [`${type}: ${first}`, ...diagnosis.slice(1)];
+  return {
+    head: [...lines.slice(0, start), ...(prefix.trim() ? [prefix] : [])].join('\n'),
+    lines: [...replacement, '[Metro error body compacted; full text in stim logs]'],
+    tail: lines.slice(end).join('\n'),
+  };
 }
 
 function shortFrame(frame: string, root?: string): string {
@@ -133,7 +209,12 @@ export function launchErrorPreview(
     if (source !== nextSource) flush();
     source = nextSource;
     if (record.msg != null) {
-      for (const line of expandStackFields(String(record.msg)).split(/\r?\n/)) consume(line);
+      const msg = String(record.msg);
+      const compacted = full ? null : compactMetroErrorBody(msg, root, lines);
+      const chunks = compacted
+        ? [expandStackFields(compacted.head), ...compacted.lines, expandStackFields(compacted.tail)]
+        : [expandStackFields(msg)];
+      for (const chunk of chunks) for (const line of chunk.split(/\r?\n/)) consume(line);
     }
     const stack = typeof record.stack === 'string' ? record.stack.split(/\r?\n/) : structuredFrames(record.stack);
     if (stack.length) {

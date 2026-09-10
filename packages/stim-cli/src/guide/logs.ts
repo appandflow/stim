@@ -162,7 +162,10 @@ WHAT WRITES WHAT
                        order, with an omitted-frame count. Escaped
                        component stacks print one frame per line. Long bundle
                        URLs are shortened and labeled unsymbolicated; shortening
-                       is not source-map resolution. All logs commands show full
+                       is not source-map resolution. A Metro error body that an
+                       Android DebugServerException embeds prints as the
+                       error's message and import stack, not its JSON. All
+                       logs commands show full
                        captured stacks, including \`stim logs --errors\`.
                        Use \`stim logs --source all\` for all sources/history,
                        or add \`--json\` for raw
