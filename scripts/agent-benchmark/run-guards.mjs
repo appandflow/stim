@@ -401,7 +401,9 @@ function structuredCcaches(output) {
 
 function artifactCacheHit(entry) {
   return (
-    entry.exitCode === 0 &&
+    (entry.exitCode === 0 ||
+      (entry.exitCode === 1 &&
+        /"code"\s*:\s*"STIM_LAUNCH_FAILED"|^\s*error\s+STIM_LAUNCH_FAILED:/m.test(entry.output))) &&
     (structuredCcaches(entry.output).some((cache) => cache.status === 'not-run') ||
       /cache\s+hit\b|fingerprint\s+[0-9a-f]+\.\.\s+hit\b|compilation cache\s+not run; artifact cache supplied the app/.test(
         entry.output,
