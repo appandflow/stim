@@ -297,9 +297,7 @@ export function androidAvdConfigSetting(settings: unknown, settingsRoot: string)
       /[\r\n\0]/.test(android.avdConfigFile) ||
       isAbsolute(android.avdConfigFile)
     ) {
-      throw new Error(
-        'Invalid android.avdConfigFile setting. Expected a relative file path inside the settings root (repository root, or project root outside Git).',
-      );
+      throw new Error('Invalid android.avdConfigFile setting. Expected a relative file path inside the app directory.');
     }
     try {
       const root = realpathSync(settingsRoot);
@@ -351,9 +349,7 @@ export function iosSimSlimProfileSetting(settings: unknown, settingsRoot: string
     /[\r\n\0]/.test(value) ||
     isAbsolute(value)
   ) {
-    throw new Error(
-      'Invalid ios.simslimProfile setting. Expected a relative JSON file path inside the settings root (repository root, or project root outside Git).',
-    );
+    throw new Error('Invalid ios.simslimProfile setting. Expected a relative JSON file path inside the app directory.');
   }
   try {
     const root = realpathSync(settingsRoot);
@@ -450,9 +446,9 @@ export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
   return unknown;
 }
 
-export function readCommittedSettings(repoRoot?: string | null): SettingsObject {
-  if (!repoRoot) return {};
-  const p = join(repoRoot, '.stim.json');
+export function readCommittedSettings(directory?: string | null): SettingsObject {
+  if (!directory) return {};
+  const p = join(directory, '.stim.json');
   if (!existsSync(p)) return {};
   try {
     const parsed = JSON.parse(readFileSync(p, 'utf-8'));
@@ -475,7 +471,7 @@ export function resolveSettings({
   return mergeSettingsLayers([
     projectPath ? getProjectSettings(projectPath) : null,
     gitCommonDir ? getRepoSettings(gitCommonDir) : null,
-    readCommittedSettings(repoRoot),
+    readCommittedSettings(projectPath ?? repoRoot),
     machine?.optimizations === undefined ? null : { optimizations: machine.optimizations },
   ]);
 }
@@ -518,7 +514,7 @@ export function resolveCacheProviderConfig({
   const layers: CacheSettingsLayer[] = [
     { settings: projectPath ? getProjectSettings(projectPath) : {}, baseDir: projectPath ?? null },
     { settings: gitCommonDir ? getRepoSettings(gitCommonDir) : {}, baseDir: repoRoot ?? projectPath ?? null },
-    { settings: readCommittedSettings(repoRoot), baseDir: repoRoot ?? null },
+    { settings: readCommittedSettings(projectPath), baseDir: projectPath ?? null },
   ];
 
   let provider: string | null = null;

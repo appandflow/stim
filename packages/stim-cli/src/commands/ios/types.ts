@@ -70,6 +70,7 @@ export interface IosCommandOptions {
   metroCheck?: boolean;
   buildCache?: boolean;
   configuration?: string;
+  scheme?: string;
   deviceType?: string;
   runtime?: string;
   device?: string | boolean;

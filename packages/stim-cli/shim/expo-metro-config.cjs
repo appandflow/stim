@@ -6,6 +6,7 @@ const path = require('node:path');
 const { createRequire } = require('node:module');
 const { pathToFileURL } = require('node:url');
 const { bundleResponseMiddleware } = require('./bundle-response.cjs');
+const { applyMetroCacheGeneration } = require('./metro-cache-generation.cjs');
 
 const projectRoot = process.env.STIM_PROJECT_ROOT;
 const storeRoot = process.env.STIM_METRO_STORE;
@@ -124,19 +125,24 @@ function appendStore(config, defaultConfig) {
   const server = { ...defaultConfig.server, ...output.server };
   const enhanceMiddleware = server.enhanceMiddleware;
 
-  const observed = {
-    ...output,
-    server: {
-      ...server,
-      enhanceMiddleware(middleware, metroServer) {
-        const enhanced = enhanceMiddleware ? enhanceMiddleware(middleware, metroServer) : middleware;
-        const observe = bundleResponseMiddleware((record) =>
-          process.stderr.write(`stim-bundle-response: ${JSON.stringify(record)}\n`),
-        );
-        return (req, res, next) => observe(req, res, () => enhanced(req, res, next));
+  const observed = applyMetroCacheGeneration(
+    {
+      ...output,
+      cacheVersion: output.cacheVersion ?? defaultConfig.cacheVersion,
+      server: {
+        ...server,
+        enhanceMiddleware(middleware, metroServer) {
+          const enhanced = enhanceMiddleware ? enhanceMiddleware(middleware, metroServer) : middleware;
+          const observe = bundleResponseMiddleware((record) =>
+            process.stderr.write(`stim-bundle-response: ${JSON.stringify(record)}\n`),
+          );
+          return (req, res, next) => observe(req, res, () => enhanced(req, res, next));
+        },
       },
     },
-  };
+    process.env.STIM_METRO_CACHE_GENERATION,
+    process.env.STIM_METRO_FILE_MAP,
+  );
   if (!storeRoot) return observed;
   return {
     ...observed,

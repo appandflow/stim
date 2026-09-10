@@ -25,6 +25,7 @@ import {
   checkFingerprintParity,
   checkMetroCache,
   detectFingerprintParity,
+  detectLinkedLibraryGitMetadata,
   checkRemoteDevice,
   checkSimSlim,
   checkMainCheckout,
@@ -37,6 +38,7 @@ import doctorCommand, { doctorSuccessLines, parseDoctorPlatform, shadowedStimFin
 import type { Finding } from '../doctor.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import type { EasAuthResult } from '../engine/remote-cache.ts';
+import { workspaceDerivedData } from '../paths.ts';
 import assert from 'node:assert';
 import {
   analyzeStimVersions,
@@ -81,6 +83,71 @@ test('checkMainCheckout reports missing dependencies, Pods, and native output', 
   }
 });
 
+test('a fingerprinted library directory that still hashes .git gets both .fingerprintignore entries', async () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-linked-git-'));
+  try {
+    const library = join(project, 'library');
+    mkdirSync(join(library, 'android'), { recursive: true });
+    writeFileSync(join(library, '.git'), 'gitdir: /elsewhere/.git/worktrees/library\n');
+    mkdirSync(join(project, 'node_modules', '@org'), { recursive: true });
+    symlinkSync(library, join(project, 'node_modules', '@org', 'native-lib'));
+    const calls: unknown[] = [];
+    const dir = (filePath: string, children: string[]) => ({
+      type: 'dir',
+      filePath,
+      reasons: [],
+      debugInfo: { path: filePath, hash: 'h', children: children.map((path) => ({ path, hash: 'h' })) },
+    });
+    let sources = [
+      dir('android', ['android/build.gradle']),
+      dir('node_modules/@org/native-lib', [
+        'node_modules/@org/native-lib/.git',
+        'node_modules/@org/native-lib/android',
+      ]),
+      dir('node_modules/ignored-lib', ['node_modules/ignored-lib/android']),
+    ];
+    const createFingerprint = (async (_root: string, options?: unknown) => {
+      calls.push(options);
+      return { hash: 'abc', sources };
+    }) as unknown as typeof import('@expo/fingerprint').createFingerprintAsync;
+
+    const result = await detectLinkedLibraryGitMetadata(project, { createFingerprint, platform: 'android' });
+    expect(calls).toEqual([expect.objectContaining({ platforms: ['android'], debug: true, silent: true })]);
+    expect(result?.code).toBe('linked-library-git-metadata');
+    expect(result?.detail).toContain('node_modules/@org/native-lib/.git');
+    expect(result?.detail).not.toContain('ignored-lib');
+    expect(result?.fix).toContain('`node_modules/@org/native-lib/.git`, `node_modules/@org/native-lib/.git/**/*`');
+
+    sources = [...sources, dir('../other-lib', ['../other-lib/.git', '../other-lib/ios'])];
+    const two = await detectLinkedLibraryGitMetadata(project, { createFingerprint });
+    expect(two?.title).toMatch(/^2 linked/);
+    expect(two?.fix).toContain('`../other-lib/.git`, `../other-lib/.git/**/*`');
+
+    sources = [dir('node_modules/@org/native-lib', ['node_modules/@org/native-lib/android'])];
+    expect(await detectLinkedLibraryGitMetadata(project, { createFingerprint })).toBeNull();
+    const failing = (async () => {
+      throw new Error('no fingerprint');
+    }) as unknown as typeof createFingerprint;
+    expect(await detectLinkedLibraryGitMetadata(project, { createFingerprint: failing })).toBeNull();
+
+    rmSync(join(project, 'node_modules', '@org'), { recursive: true, force: true });
+    const before = calls.length;
+    expect(await detectLinkedLibraryGitMetadata(project, { createFingerprint })).toBeNull();
+    expect(calls.length).toBe(before);
+
+    execSync('git init -q', { cwd: project });
+    const app = join(project, 'apps', 'mobile');
+    mkdirSync(app, { recursive: true });
+    writeFileSync(join(app, 'package.json'), JSON.stringify({ name: 'mobile', dependencies: { 'react-native': '*' } }));
+    symlinkSync(library, join(project, 'node_modules', 'hoisted-lib'));
+    sources = [dir('../../node_modules/hoisted-lib', ['../../node_modules/hoisted-lib/.git'])];
+    const hoisted = await detectLinkedLibraryGitMetadata(app, { createFingerprint });
+    expect(hoisted?.fix).toContain('`../../node_modules/hoisted-lib/.git`, `../../node_modules/hoisted-lib/.git/**/*`');
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
 test('checkMainCheckout filters native warm state and CocoaPods by platform', () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-platform-'));
   try {
@@ -101,6 +168,22 @@ test('checkMainCheckout filters native warm state and CocoaPods by platform', ()
   } finally {
     rmSync(project, { recursive: true, force: true });
   }
+});
+
+test('doctor recognizes explicit-scheme build products but not an empty scheme directory', () => {
+  const project = join(testHome, 'project');
+  mkdirSync(join(project, 'ios'), { recursive: true });
+  mkdirSync(join(project, 'node_modules'));
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+  const schemeDir = join(
+    workspaceDerivedData(project),
+    `scheme-${createHash('sha256').update('App Staging').digest('hex')}`,
+  );
+  mkdirSync(schemeDir, { recursive: true });
+  const findings = () => checkMainCheckout(project, { platform: 'ios', brokenPods: [], upstream: null });
+  expect(findings().some((finding) => finding.title.includes('iOS warm build output'))).toBe(true);
+  mkdirSync(join(schemeDir, 'Build', 'Products'), { recursive: true });
+  expect(findings()).toEqual([]);
 });
 
 test('parseDoctorPlatform accepts the two native platforms and rejects other values', () => {
@@ -436,6 +519,37 @@ test('the ccache finding belongs to the Android group and is filtered out by --p
     expect(android.some((f) => /ccache is not on PATH/.test(f.title))).toBe(true);
     expect(ios.some((f) => /ccache is not on PATH/.test(f.title))).toBe(false);
   } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('Android doctor skips iOS architecture metadata and findings', () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doc-architectures-platform-'));
+  try {
+    mkdirSync(join(project, 'ios', 'App.xcodeproj'), { recursive: true });
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+    const queries: string[] = [];
+    setExecutor({
+      runFileQuiet: () => null,
+      runFile(file: string) {
+        queries.push(file);
+        return '';
+      },
+      runQuiet: () => null,
+    });
+    const options = { concurrency: { maxBuilds: 0, maxDevices: 0 }, lookupCcache: () => true };
+    expect(
+      runDoctor(project, { ...options, platform: 'android' }).some((f) =>
+        f.code?.startsWith('ios-debug-architectures'),
+      ),
+    ).toBe(false);
+    expect(queries).not.toContain('xcodebuild');
+    expect(
+      runDoctor(project, { ...options, platform: 'ios' }).some((f) => f.code === 'ios-debug-architectures-unknown'),
+    ).toBe(true);
+    expect(queries).toContain('xcodebuild');
+  } finally {
+    resetExecutor();
     rmSync(project, { recursive: true, force: true });
   }
 });
@@ -1345,14 +1459,15 @@ test('runDoctor checks one shared backend once', () => {
   }
 });
 
-test('runDoctor resolves a SimSlim profile from the repository root in a monorepo', () => {
+test('runDoctor resolves the app-local SimSlim profile and ignores a monorepo root profile', () => {
   const repo = mkdtempSync(join(tmpdir(), 'stim-doc-monorepo-'));
   const project = join(repo, 'apps', 'mobile');
   try {
     mkdirSync(project, { recursive: true });
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'mobile' }));
-    writeFileSync(join(repo, 'simslim.json'), '{}\n');
-    writeFileSync(join(repo, '.stim.json'), JSON.stringify({ ios: { simslimProfile: 'simslim.json' } }));
+    writeFileSync(join(project, 'simslim.json'), '{}\n');
+    writeFileSync(join(repo, '.stim.json'), JSON.stringify({ ios: { simslimProfile: 'missing.json' } }));
+    writeFileSync(join(project, '.stim.json'), JSON.stringify({ ios: { simslimProfile: 'simslim.json' } }));
     execSync('git init -q', { cwd: repo });
 
     const findings = runDoctor(project, {

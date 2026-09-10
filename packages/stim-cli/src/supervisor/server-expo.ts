@@ -14,6 +14,7 @@ import {
   registerMetroStore,
 } from './metro-store.ts';
 import { supervisorError } from './errors.ts';
+import { readWorkspaceState } from './state.ts';
 
 function delay(ms: number): Promise<void> {
   return new Promise<void>((resolve) => {
@@ -297,6 +298,14 @@ export async function startExpoServer({
 
   const args = tunnel ? ['start', '--port', String(port), '--tunnel'] : ['start', '--port', String(port)];
   const storeEnv = resolveMetroStoreInjection(root, { log, env: process.env });
+  const generation = readWorkspaceState(root)?.metroCacheGeneration;
+  if (generation && !storeEnv) {
+    throw supervisorError(
+      'STIM_BAD_ARG',
+      'The saved Metro cache reset requires the Expo config adapter.',
+      'Use Expo SDK 54 or newer and repair the Stim installation before starting this app.',
+    );
+  }
 
   const child = spawn(bin, args, {
     cwd: root,
@@ -307,6 +316,8 @@ export async function startExpoServer({
       FORCE_COLOR: '0',
       ...expoProxyEnv(process.env),
       ...storeEnv,
+      STIM_METRO_CACHE_GENERATION: generation ?? '',
+      STIM_METRO_FILE_MAP: join(dirname(logsDir), 'metro-file-map'),
       // Expo's legacy tunnel uses port 8081; v2 uses this workspace's reserved port.
       ...(tunnel ? { EXPO_UNSTABLE_TUNNEL_V2: '1' } : {}),
     },

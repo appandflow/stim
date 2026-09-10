@@ -1,13 +1,15 @@
 import { resolveOptimizations, type Optimizations } from './optimizations.ts';
-import { existsSync, readFileSync, realpathSync, rmSync } from 'fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync } from 'fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import { plural } from './command-output.ts';
 import { getExecutor } from './exec.ts';
 import { makeTemporaryDirectory } from './temporary.ts';
 import { checkStorageLayout } from './doctor-storage.ts';
+import { inspectIosDebugArchitectures } from './doctor-ios-architectures.ts';
 import { appProjectProblem, detectIsExpo } from './project.ts';
 import * as expoFingerprint from '@expo/fingerprint';
 import { diffFingerprintSources, fingerprintProject } from './build-cache.ts';
+import type { DebugInfoDir, FingerprintSource } from '@expo/fingerprint';
 import { dirtyFingerprintFiles, gitCommonDir, listWorktrees, repoRoot } from './worktree.ts';
 import { workspaceDerivedData } from './paths.ts';
 import { type Config, type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from './config.ts';
@@ -158,6 +160,19 @@ function brokenPodLinks(podsRoot: string): string[] {
   }
 }
 
+function hasIosWarmOutput(root: string): boolean {
+  if (existsSync(join(root, 'ios', 'build'))) return true;
+  const derivedData = workspaceDerivedData(root);
+  if (existsSync(join(derivedData, 'Build', 'Products'))) return true;
+  try {
+    return readdirSync(derivedData).some(
+      (entry) => /^scheme-[a-f0-9]{64}$/.test(entry) && existsSync(join(derivedData, entry, 'Build', 'Products')),
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function checkMainCheckout(
   projectRoot: string,
   {
@@ -245,12 +260,7 @@ export function checkMainCheckout(
   }
 
   const coldPlatforms = [
-    platform !== 'android' &&
-    existsSync(join(mainRoot, 'ios')) &&
-    !existsSync(join(mainRoot, 'ios', 'build')) &&
-    !existsSync(join(workspaceDerivedData(mainRoot), 'Build', 'Products'))
-      ? 'iOS'
-      : null,
+    platform !== 'android' && existsSync(join(mainRoot, 'ios')) && !hasIosWarmOutput(mainRoot) ? 'iOS' : null,
     platform !== 'ios' &&
     existsSync(join(mainRoot, 'android')) &&
     !existsSync(join(mainRoot, 'android', 'build')) &&
@@ -730,7 +740,7 @@ export function runDoctor(
   let simslimProfileError: string | null = null;
   if (platform !== 'android') {
     try {
-      simslimProfile = iosSimSlimProfileSetting(projectSettings, settingsRepoRoot);
+      simslimProfile = iosSimSlimProfileSetting(projectSettings, projectRoot);
     } catch (error) {
       simslimProfileError = String((error as Error)?.message || error);
     }
@@ -776,6 +786,7 @@ export function runDoctor(
   return [
     checkAppProject(projectRoot),
     ...checkMainCheckout(projectRoot, { platform }),
+    ...(platform === 'android' ? [] : inspectIosDebugArchitectures(mainCheckoutProjectRoot(projectRoot))),
     ...checkStorageLayout(projectRoot, { platform }),
     checkDevClient(pkg, isExpo),
     optimizations?.metroSharedCache ? checkMetroCache(metroConfig) : null,
@@ -887,6 +898,91 @@ export function checkFingerprintParity({
     `A clean detached worktree of HEAD computes a different @expo/fingerprint hash than this checkout, so worktrees will MISS the cache entries this checkout fills (and vice versa) until the two agree.${differing} ${cause} (To measure this, doctor ran a real fingerprint twice and briefly created a temporary git worktree -- .git/worktrees metadata was touched and cleaned up.)`,
     'Commit the dirty fingerprint inputs, or list the build-irrelevant ones in .fingerprintignore (same syntax as .gitignore, at the project root; Stim already ignores android/local.properties and android/.idea). Only the ones that genuinely cannot change the native build belong there -- generated reports, local env files, a lockfile whose checksums embed absolute machine paths. Never ignore a real native input (a Podfile, a gradle file, the app config) to force a hit: that trades a slow build for a wrong one.',
   );
+}
+
+function gitMetadataAt(path: string): boolean {
+  try {
+    const git = lstatSync(join(path, '.git'));
+    return git.isFile() || git.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function listDirectory(dir: string): string[] {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
+}
+
+function hasLinkedPackageWithGit(projectRoot: string): boolean {
+  const root = repoRoot(projectRoot) ?? projectRoot;
+  for (let dir = projectRoot; ; dir = dirname(dir)) {
+    if (linkedPackageWithGitIn(join(dir, 'node_modules'))) return true;
+    if (dir === root || dirname(dir) === dir || relative(root, dirname(dir)).startsWith('..')) return false;
+  }
+}
+
+function linkedPackageWithGitIn(nodeModules: string): boolean {
+  return listDirectory(nodeModules)
+    .filter((entry) => !entry.startsWith('.'))
+    .flatMap((entry) =>
+      entry.startsWith('@') ? listDirectory(join(nodeModules, entry)).map((child) => join(entry, child)) : [entry],
+    )
+    .some((name) => {
+      const root = join(nodeModules, name);
+      try {
+        return lstatSync(root).isSymbolicLink() && gitMetadataAt(root);
+      } catch {
+        return false;
+      }
+    });
+}
+
+/**
+ * A linked native library (a `link:` or `file:` dependency, or a workspace
+ * symlink) brings its checkout's Git metadata into a directory the fingerprint
+ * hashes whole. That metadata changes with every Git operation in the linked
+ * checkout, so workspaces rarely hash alike even when the library's native
+ * sources match. The fingerprint's own debug output says which directories
+ * still hash a .git entry, whatever ignore mechanism the project uses. Linked
+ * packages can be hoisted, so the gate looks at every node_modules from the
+ * app up to the repository root.
+ */
+export async function detectLinkedLibraryGitMetadata(
+  projectRoot: string,
+  {
+    createFingerprint = expoFingerprint.createFingerprintAsync,
+    platform,
+  }: { createFingerprint?: typeof expoFingerprint.createFingerprintAsync; platform?: DoctorPlatform } = {},
+): Promise<Finding | null> {
+  const mainRoot = mainCheckoutProjectRoot(projectRoot);
+  if (!hasLinkedPackageWithGit(mainRoot)) return null;
+  let sources: FingerprintSource[];
+  try {
+    sources = (await fingerprintProject(mainRoot, { platform, createFingerprint, debug: true }))?.sources ?? [];
+  } catch {
+    return null;
+  }
+  const directories = sources.flatMap((source) => {
+    if (source.type !== 'dir' || typeof source.filePath !== 'string') return [];
+    const children = (source.debugInfo as DebugInfoDir | undefined)?.children ?? [];
+    return children.some((child) => child?.path === `${source.filePath}/.git`) ? [source.filePath] : [];
+  });
+  if (!directories.length) return null;
+  const several = directories.length > 1;
+  const entries = directories.flatMap((dir) => [`${dir}/.git`, `${dir}/.git/**/*`]);
+  return {
+    ...finding(
+      'note',
+      `${several ? `${directories.length} linked native libraries carry` : 'A linked native library carries'} Git metadata into the fingerprint`,
+      `${directories.map((dir) => `${dir}/.git`).join(', ')} ${several ? 'are' : 'is'} inside a directory the fingerprint hashes whole. Git rewrites that metadata on every commit, checkout, or worktree of the linked checkout (a worktree turns a .git directory into a pointer file), so this workspace and its worktrees rarely compute the same fingerprint even when the library's native sources match, and each one compiles instead of reusing the artifact.`,
+      `When the native build does not read that Git state, add ${entries.map((entry) => `\`${entry}\``).join(', ')} to .fingerprintignore at the project root: the first form matches the pointer file a worktree has, the second excludes a .git directory's contents. Ignore only the .git entry, not the package: its native sources still have to move the key.`,
+    ),
+    code: 'linked-library-git-metadata',
+  };
 }
 
 export async function detectFingerprintParity(

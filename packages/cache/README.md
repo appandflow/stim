@@ -23,7 +23,8 @@ If Stim is not installed globally, replace `stim` with `npx stim`.
 ```
 
 The reference is a package name or a path relative to the settings file that
-declares it. Machine settings override committed `.stim.json` settings, and the
+declares it. Commit `.stim.json` beside the app's `package.json`; monorepo apps do
+not inherit an ancestor's provider. Machine settings override committed settings, and the
 existing nested merge rules apply to `cache.options`. Keep secrets out of
 committed settings; read them from the environment or from machine settings.
 

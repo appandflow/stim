@@ -274,11 +274,27 @@ test('a DebugServerException previews the Metro error it carries instead of the 
     ],
     root,
   ).join('\n');
-  expect(metroFirst).toContain(
+  expect(metroFirst).not.toContain('(diagnosis above)');
+  expect(metroFirst).toContain("> 1 | import './stim-582-missing';");
+  expect(metroFirst).toContain('Import stack:\n app/_layout.tsx\n | import "./stim-582-missing"');
+  const completeDiagnosis = JSON.parse(body);
+  const completeMetroFirst = launchErrorPreview(
+    [
+      {
+        src: 'metro',
+        event: 'bundling_error',
+        msg: completeDiagnosis.message,
+        codeFrame: completeDiagnosis.cause['_expoImportStack'],
+      },
+      record!,
+    ],
+    root,
+  ).join('\n');
+  expect(completeMetroFirst).toContain(
     'UnableToResolveError: Unable to resolve module ./stim-582-missing from app/_layout.tsx: (diagnosis above)',
   );
-  expect(metroFirst.match(/None of these files exist/g)).toHaveLength(1);
-  expect(metroFirst).not.toContain("> 1 | import './stim-582-missing';");
+  expect(completeMetroFirst.match(/None of these files exist/g)).toHaveLength(1);
+  expect(completeMetroFirst.match(/Import stack:/g)).toHaveLength(1);
   const mentioned = launchErrorPreview(
     [
       { src: 'client', msg: 'assertion: expected "Unable to resolve module ./stim-582-missing from app/_layout.tsx:"' },

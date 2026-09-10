@@ -98,11 +98,19 @@ function compactMetroErrorBody(
   const stripRoot = (value: string) => (root ? value.replaceAll(`${root}/`, '') : value);
   const [firstLine = '', ...rest] = stripRoot(stripAnsi(message)).trim().split(/\r?\n/);
   const first = firstLine.trim();
-  const importStack = jsonStringField(blob, '_expoImportStack')?.trim();
+  const importStack = stripRoot(stripAnsi(jsonStringField(blob, '_expoImportStack') ?? '')).trim();
+  const diagnosis = [first, ...rest, ...(importStack ? importStack.split(/\r?\n/) : [])];
+  const printedLines = new Set(
+    printed.flatMap((line) =>
+      stripRoot(stripAnsi(line))
+        .split(/\r?\n/)
+        .map((part) => part.trim()),
+    ),
+  );
   const replacement =
-    first && printed.some((line) => stripRoot(line).trim() === first)
+    first && diagnosis.every((line) => !line.trim() || printedLines.has(line.trim()))
       ? [`${type}: ${first} (diagnosis above)`]
-      : [`${type}: ${first}`, ...rest, ...(importStack ? importStack.split('\n') : [])];
+      : [`${type}: ${first}`, ...diagnosis.slice(1)];
   return {
     head: [...lines.slice(0, start), ...(prefix.trim() ? [prefix] : [])].join('\n'),
     lines: [...replacement, '[Metro error body compacted; full text in stim logs]'],

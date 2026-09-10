@@ -61,13 +61,20 @@ export async function fingerprintProject(
   {
     platform,
     createFingerprint = expoFingerprint.createFingerprintAsync,
-  }: { platform?: string; createFingerprint?: typeof expoFingerprint.createFingerprintAsync } = {},
+    debug = false,
+  }: { platform?: string; createFingerprint?: typeof expoFingerprint.createFingerprintAsync; debug?: boolean } = {},
 ): Promise<ProjectFingerprint | null> {
   const platforms =
     platform && FINGERPRINT_PLATFORMS.has(platform)
       ? { platforms: [platform] as FingerprintOptions['platforms'] }
       : undefined;
-  const options: FingerprintOptions = { ...platforms, ignorePaths: DEFAULT_FINGERPRINT_IGNORES };
+  // With DEBUG set, @expo/fingerprint profiles sourcers on stdout unless silent.
+  const options: FingerprintOptions = {
+    ...platforms,
+    ...(debug ? { debug } : {}),
+    ignorePaths: DEFAULT_FINGERPRINT_IGNORES,
+    silent: true,
+  };
   const result = await createFingerprint(projectRoot, options);
   const hash = result?.hash ?? null;
   if (!hash) return null;

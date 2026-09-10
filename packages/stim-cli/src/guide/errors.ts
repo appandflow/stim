@@ -238,8 +238,9 @@ code, never on the message.`,
       summary: 'Xcode schemes unavailable or no unambiguous app scheme in ios/',
       body: () => `STIM_NO_SCHEME
   Stim could not list or select an app scheme in ios/. Share the intended app
-  scheme so xcodebuild can see it. If it is already listed, make its name match
-  the workspace/project name or the top-level name in app.json. A workspace
+  scheme so xcodebuild can see it. Select an available exact name with
+  \`stim ios --scheme <name>\`. An unknown explicit name prints available choices.
+  Without an explicit selector, a workspace
   name match wins; otherwise Stim accepts a sole non-test scheme, or a listed
   scheme matching app.json. Unmatched ambiguous schemes are refused.`,
     },
