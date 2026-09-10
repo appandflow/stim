@@ -389,14 +389,16 @@ export function launchCrashDiagnosis(
           if (!path) return false;
           const read = shellCommand(command.command);
           const segments = shellCommandSegments(read);
+          const pattern = String.raw`(?:'[^'\n]*'|"[^"$\x60\n]*"|[^\s'"$\x60;&|<>\\]+)`;
+          const search = String.raw`(?:rg|grep)(?: -[ivEn]+)* ${pattern}`;
+          const count = String.raw`(?:tail|head) -(?:n\s+)?\d+`;
+          const escapedPath = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           return (
-            /^(?:rg|grep|cat|tail)\s/.test(read) &&
             !/[`$;&<>\n]/.test(read) &&
-            segments.every((segment) => /^(?:rg|grep|cat|tail|head)\s/.test(segment)) &&
-            segments[0]
-              .split(/\s+/)
-              .at(-1)
-              .replace(/^['"]|['"]$/g, '') === path
+            new RegExp(`^(?:cat|${count}|${search}) (?:${escapedPath}|'${escapedPath}'|"${escapedPath}")$`).test(
+              segments[0],
+            ) &&
+            segments.slice(1).every((segment) => new RegExp(`^(?:${count}|${search})$`).test(segment))
           );
         })) &&
       typeof command.output === 'string' &&
