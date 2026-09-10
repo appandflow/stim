@@ -6,6 +6,35 @@ log** — every rough edge, confusing output, wrong default, or extra step you
 needed, however small. You are the target user: an agent doing a dev loop.
 Be adversarial. **A PASS you did not actually observe is worse than a FAIL.**
 
+## Progress updates
+
+Before starting, tell the release owner which QA rows are required, their order,
+and what can run safely in parallel. Keep heavy native workloads sequential on
+a resource-constrained host; reviews and report preparation can overlap them.
+
+Send a concise user-facing update at each meaningful phase transition and at
+least once per minute while actively working. During a long unchanged step,
+one sentence naming the step and its elapsed time is enough. Do not replace
+these updates with raw command output or require the owner to ask for status.
+
+Each substantive update states:
+
+- What finished, with its observed result; a running command is not a pass.
+- What is running now and how long it has been running.
+- What remains before release, and any blocker or decision that changes that plan.
+
+Distinguish release QA, publication, and subsequent benchmark runs. Name when
+evidence comes from a fix branch rather than the release candidate. Report a
+new failure promptly, including its effect on the release and the next check;
+do not imply that a retry passed or silently omit a required row. Give timing
+estimates only when grounded in prior runs, and label them as estimates.
+
+Keep a current checkpoint with the exact candidate, active job identifiers,
+completed and pending rows, evidence paths, and owned resources needing cleanup.
+Update it at phase transitions and before handing off. Keep historical attempts
+in a separate log so stale running-job notes cannot be mistaken for current work.
+On resume, inspect the checkpoint and active jobs before starting another run.
+
 ## Setup
 
 Choose exactly one CLI under test and use the `stim` function for every command
