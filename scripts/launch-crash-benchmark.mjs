@@ -61,7 +61,9 @@ function successfulLaunch(command, arm, platform) {
     if (statuses.length !== 1 || statuses[0][1] !== '0') return false;
     pipeline = pipeline.slice(0, report.index);
   }
-  const [launch, ...filters] = pipeline.replace(/\s+2>&1(?=\s|$)/g, '').split(/\s*\|\s*/);
+  let [launch, ...filters] = pipeline.replace(/\s+2>&1(?=\s|$)/g, '').split(/\s*\|\s*/);
+  if (arm === 'control' && platform === 'android')
+    launch = launch.replace(/^adb\s+-s\s+emulator-\d+\s+reverse\s+tcp:\d+\s+tcp:\d+\s*&&\s*/, '');
   const group = /^\{\s*([\s\S]*?);\s*\}$/.exec(launch);
   const launches = group ? shellCommandSegments(group[1]) : [launch];
   return (
@@ -81,6 +83,7 @@ function shellCommand(command) {
 
 function launchCommand(command, arm, platform) {
   command = shellCommand(command);
+  if (/(?:^|\s)["']?(?:--help|--version|-h|-v)["']?(?=\s|$|[;&|])/.test(command)) return false;
   if (arm === 'stim')
     return shellCommandSegments(command).some((segment) => new RegExp(`^stim\\s+${platform}(?:\\s|$)`).test(segment));
   if (platform === 'android') {
