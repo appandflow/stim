@@ -62,7 +62,7 @@ export function benchmarkTarget(config, selection) {
 
 export function topLevelShellCommand(command) {
   const trimmed = String(command ?? '').trim();
-  const match = trimmed.match(/^\/bin\/(?:zsh|bash|sh) -lc\s+([\s\S]+)$/);
+  const match = trimmed.match(/^\/bin\/(?:zsh|bash|sh) -l?c\s+([\s\S]+)$/);
   if (!match) return trimmed;
   const input = match[1];
   let source = '';

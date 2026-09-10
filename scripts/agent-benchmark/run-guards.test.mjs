@@ -438,6 +438,19 @@ describe('benchmark run guards', () => {
     expect(topLevelShellCommand('/bin/zsh -lc "unterminated')).toBe('/bin/zsh -lc "unterminated');
   });
 
+  it.each(['zsh', 'bash', 'sh'])('audits non-login %s proof commands without hiding extra commands', (shell) => {
+    const prefix = 'env AGENT_DEVICE_STATE_DIR=/tmp/bench AGENT_DEVICE_SESSION=run agent-device ';
+    const proof = `${prefix}open com.appandflow.trailhead --foreground --platform android --serial emulator-5554`;
+    const wrapped = `/bin/${shell} -c ${JSON.stringify(proof)}`;
+    expect(topLevelShellCommand(wrapped)).toBe(proof);
+    expect(agentDeviceIsolationInvalidReasons([{ command: wrapped }], prefix)).toEqual([]);
+    const chained = `/bin/${shell} -c ${JSON.stringify(`${proof}; agent-device close`)}`;
+    expect(topLevelShellCommand(chained)).not.toBe(proof);
+    expect(agentDeviceIsolationInvalidReasons([{ command: chained }], prefix)).not.toEqual([]);
+    const suffix = `${wrapped}; echo extra`;
+    expect(topLevelShellCommand(suffix)).toBe(suffix);
+  });
+
   it('rejects setup recovery inside the timer', () => {
     const commands = [
       { command: "/bin/zsh -lc 'stim guide agent'", exitCode: 1 },
