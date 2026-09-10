@@ -29,7 +29,7 @@ import {
 } from '../launch-crash-benchmark.mjs';
 import { benchmarkFingerprint, selectBenchmarkCacheKey } from './cache-key.mjs';
 import { reconstructCommandEvidence } from './command-evidence.mjs';
-import { matchesGoldenPreparation } from './golden-state.mjs';
+import { matchesGoldenPreparation, preparedAndroidEmulator } from './golden-state.mjs';
 import { launchCrashSetup } from './launch-crash-setup.mjs';
 import { collectedNativeCompatibility, probeNativeCompatibility, verifyNativeCompatibility } from './native-compat.mjs';
 import {
@@ -336,6 +336,29 @@ function verifyGoldenParkedSimulator() {
   return verifyParkedSimulator(join(golden, 'stim-home'));
 }
 
+function verifyParkedAndroidEmulator(stimHome, expectedName) {
+  const activeNames = androidEmulatorTransports().map(({ serial }) =>
+    run('adb', ['-s', serial, 'emu', 'avd', 'name']).split('\n')[0].trim(),
+  );
+  return preparedAndroidEmulator({
+    config: JSON.parse(readFileSync(join(stimHome, 'config.json'), 'utf8')),
+    avds: androidAvdSnapshot().map(androidAvdDescription),
+    activeNames,
+    systemImage: pins.ANDROID_SYSTEM_IMAGE,
+    expectedName,
+  });
+}
+
+function verifyGoldenParkedAndroidEmulator() {
+  const platformGolden = goldenFor('android');
+  const readyPath = join(platformGolden, 'READY.json');
+  const expectedName = existsSync(readyPath)
+    ? JSON.parse(readFileSync(readyPath, 'utf8')).parkedEmulator?.name
+    : undefined;
+  if (existsSync(readyPath) && !expectedName) throw new Error('Android golden must be prepared with emulator pooling');
+  return verifyParkedAndroidEmulator(join(platformGolden, 'stim-home'), expectedName);
+}
+
 function ensureDirs() {
   for (const path of [results, state, allowedBin, stimBin, golden]) {
     mkdirSync(path, { recursive: true });
@@ -431,6 +454,15 @@ function androidAvdDescription(name) {
     .replaceAll('/', ';');
   return {
     name,
+    config: Object.fromEntries(
+      config
+        .split(/\r?\n/)
+        .filter((line) => line.includes('='))
+        .map((line) => {
+          const at = line.indexOf('=');
+          return [line.slice(0, at).trim(), line.slice(at + 1).trim()];
+        }),
+    ),
     deviceTypeIdentifier: config.match(/^hw\.device\.name=(.+)$/m)?.[1]?.trim(),
     runtimeIdentifier: `Android-${systemImage?.match(/android-(\d+)/)?.[1]}`,
     systemImage,
@@ -594,6 +626,7 @@ function preflight(requestedPlatform = 'ios') {
   const readyPath = join(platformGolden, 'READY.json');
   const goldenCache = existsSync(readyPath) ? verifyGoldenCache(platform, platformGolden) : null;
   const parkedSimulator = platform === 'ios' && existsSync(readyPath) ? verifyGoldenParkedSimulator() : null;
+  const parkedEmulator = platform === 'android' && existsSync(readyPath) ? verifyGoldenParkedAndroidEmulator() : null;
   const preflightRecord = {
     checkedAt: new Date().toISOString(),
     actual,
@@ -608,6 +641,7 @@ function preflight(requestedPlatform = 'ios') {
     },
     goldenCache,
     parkedSimulator,
+    parkedEmulator,
     shellProvenance,
     doctor,
     stimExecutableSha256: sha256(join(stimBin, 'stim')),
@@ -754,6 +788,7 @@ function prepareAndroid() {
   const platformGolden = goldenFor('android');
   const readyPath = join(platformGolden, 'READY.json');
   if (existsSync(readyPath)) {
+    verifyGoldenParkedAndroidEmulator();
     process.stdout.write(readFileSync(readyPath));
     return;
   }
@@ -777,7 +812,7 @@ function prepareAndroid() {
     mkdirSync(seedHome, { recursive: true });
     writeFileSync(
       join(seedHome, 'config.json'),
-      `${JSON.stringify({ version: 2, projects: {}, repos: {} }, null, 2)}\n`,
+      `${JSON.stringify({ version: 2, projects: {}, repos: {}, pool: { androidParkedMax: 1 } }, null, 2)}\n`,
     );
     writeFileSync(preparationPath, `${JSON.stringify(preparation, null, 2)}\n`);
   } else {
@@ -789,7 +824,7 @@ function prepareAndroid() {
       throw new Error(`retained Android golden provenance does not match current pins: ${finalHome}`);
     }
   }
-  const seedEnv = { ...cleanRubyEnvironment(process.env), STIM_HOME: preparingHome };
+  const seedEnv = { ...cleanRubyEnvironment(process.env), STIM_HOME: preparingHome, STIM_POOL_ANDROID_PARKED_MAX: '1' };
   let preparedDevice = null;
   const worktree = join(worktreeParent, 'bench-golden-android-seed');
   run('git', ['worktree', 'add', '--detach', worktree, 'HEAD'], {
@@ -838,6 +873,7 @@ function prepareAndroid() {
     throw new Error(`Android golden preparation failed; retained ${preparingHome}`, { cause: error });
   }
   if (preparingHome === seedHome) renameSync(seedHome, finalHome);
+  const parkedEmulator = verifyParkedAndroidEmulator(finalHome, preparedDevice?.name);
   mkdirSync(controlTmp, { recursive: true });
   const exportPath = join(platformGolden, 'control-export');
   run('npx', ['expo', 'export', '--platform', 'android', '--dev', '--output-dir', exportPath], {
@@ -858,6 +894,7 @@ function prepareAndroid() {
     agentDeviceSha256: pins.AGENT_DEVICE_SHA256,
     systemImage: pins.ANDROID_SYSTEM_IMAGE,
     deviceTypeIdentifier: preparedDevice?.deviceTypeIdentifier ?? null,
+    parkedEmulator,
     runtimeIdentifier: `Android-${pins.ANDROID_SYSTEM_IMAGE.match(/android-(\d+)/)?.[1]}`,
     buildCacheEntries: [cache.cacheKey],
   };
@@ -960,7 +997,7 @@ function platformLaunchInstructions(arm, platform, runId, startMetro) {
   if (arm === 'stim') {
     return platform === 'ios'
       ? 'Use the Stim skill and only the pinned published command available on PATH as exactly `stim` (never through npx or an absolute path). Keep the inherited STIM_HOME unchanged. Run the iOS app on the prepared parked iPhone 17 simulator running iOS 26.5; Stim must report that it adopted the simulator. Leave Metro running until the screenshot is saved.'
-      : `Use the Stim skill and only the pinned published command available on PATH as exactly \`stim\` (never through npx or an absolute path). Keep the inherited STIM_HOME unchanged. Run \`stim start\`, then run \`stim android --system-image ${JSON.stringify(pins.ANDROID_SYSTEM_IMAGE)}\`. Leave Metro and the changed app running until the screenshot is saved.`;
+      : `Use the Stim skill and only the pinned published command available on PATH as exactly \`stim\` (never through npx or an absolute path). Keep the inherited STIM_HOME unchanged. Run \`stim start\`, then run \`stim android --system-image ${JSON.stringify(pins.ANDROID_SYSTEM_IMAGE)}\`. Use the prepared parked emulator; Stim must report that it adopted it. Leave Metro and the changed app running until the screenshot is saved.`;
   }
   if (platform === 'android') {
     return `Use only the project's local Expo and Android SDK tooling; do not use Stim. Create a new AVD named exactly ${JSON.stringify(`Trailhead_${runId}`)} from ${JSON.stringify(pins.ANDROID_SYSTEM_IMAGE)} using avdmanager's default hardware profile, matching Stim; do not use an existing emulator. Set disk.dataPartition.size=8589934592 in its config.ini, matching Stim's default 8 GiB data partition. Boot it with the emulator's default Quick Boot policy, matching Stim; the fresh AVD cold-boots because no snapshot exists. Wait for Android boot completion. ${startMetro ? 'Start Metro detached. ' : ''}Build, install, and launch only the default Debug variant; do not use a Release variant. Start that native build/install/launch as a shell background process with its PID and log under /tmp, then poll it using repeated short foreground shell calls such as \`kill -0 <pid>\` and \`tail\`; do not use a long blocking shell call or end the turn while waiting. After it finishes successfully, immediately perform the agent-device proof. Leave the emulator${startMetro ? ', Metro,' : ''} and app running. `;
@@ -1299,6 +1336,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
   }
   const expectedBuildCache = verifyGoldenCache(platform, platformGolden);
   const expectedParkedSimulator = platform === 'ios' ? verifyGoldenParkedSimulator() : null;
+  const expectedParkedEmulator = platform === 'android' ? verifyGoldenParkedAndroidEmulator() : null;
   const runId = `${stage}-${model.replaceAll('.', '-')}-${variant}-${arm}-${Date.now()}`;
   const expectedControlSimulator = {
     name: platform === 'ios' ? `Trailhead ${runId}` : `Trailhead_${runId}`,
@@ -1310,7 +1348,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
   const expectedStimDevice =
     platform === 'android'
       ? {
-          namePrefix: 'stim-',
+          name: expectedParkedEmulator.name,
           deviceTypeIdentifier: ready.deviceTypeIdentifier,
           runtimeIdentifier: ready.runtimeIdentifier,
           systemImage: ready.systemImage,
@@ -1344,6 +1382,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
   };
   const env = isolatedShellEnvironment(baseEnv, runDir);
   if (arm === 'stim' && platform === 'ios') env.STIM_POOL_IOS_PARKED_MAX = '1';
+  if (arm === 'stim' && platform === 'android') env.STIM_POOL_ANDROID_PARKED_MAX = '1';
   env.BENCH_STIM_HOME = env.STIM_HOME;
   mkdirSync(env.STIM_HOME, { recursive: true });
   if (arm === 'stim') {
@@ -1410,6 +1449,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
     profile: { ...profile, claudeGuidance, isolation, runnerEnvironment },
     expectedBuildCache,
     expectedParkedSimulator,
+    expectedParkedEmulator,
     expectedStimDevice,
     expectedControlSimulator,
     expectedControlAvdConfig:
@@ -1439,7 +1479,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
       expectedControlSimulator.deviceTypeIdentifier ?? '',
       expectedControlSimulator.runtimeIdentifier,
       platform,
-      expectedStimDevice?.namePrefix ?? '',
+      expectedStimDevice?.name ?? '',
       expectedControlSimulator.systemImage ?? '',
       `Trailhead ${runId}`,
     ],
@@ -1647,7 +1687,10 @@ function commandEvidence(meta, eventsPath, runDir, device) {
     if (isJavascriptVariant(meta.variant) && !/fingerprint\s+[0-9a-f]{6}\.\.\s+hit\b/.test(outputText)) {
       invalidReasons.push('stim-build-cache-hit-missing');
     }
-    if ((meta.platform ?? 'ios') === 'ios' && !/device\s+.+\sadopted\s+\(/.test(outputText)) {
+    if (
+      ((meta.platform ?? 'ios') === 'ios' || meta.expectedParkedEmulator) &&
+      !/device\s+.+\sadopted\s+\(/.test(outputText)
+    ) {
       invalidReasons.push('stim-parked-adoption-missing');
     }
   }
@@ -2360,7 +2403,7 @@ function cleanup(runDir) {
     const env = {
       ...cleanRubyEnvironment(process.env),
       STIM_HOME: stimHome,
-      ...(meta.platform === 'android' ? {} : { STIM_POOL_IOS_PARKED_MAX: '1' }),
+      ...(meta.platform === 'android' ? { STIM_POOL_ANDROID_PARKED_MAX: '1' } : { STIM_POOL_IOS_PARKED_MAX: '1' }),
     };
     for (const args of [['stop'], ['worktree', 'remove', '--force']]) {
       try {
@@ -2375,7 +2418,14 @@ function cleanup(runDir) {
         actions.push(`failed: stim ${args.join(' ')}: ${error}`);
       }
     }
-    if (meta.platform !== 'android') {
+    if (meta.platform === 'android') {
+      try {
+        const parked = verifyParkedAndroidEmulator(stimHome, meta.expectedParkedEmulator?.name);
+        actions.push(`verified parked emulator ${parked.name}`);
+      } catch (error) {
+        actions.push(`failed: parked emulator verification: ${error}`);
+      }
+    } else {
       try {
         const parked = verifyParkedSimulator(stimHome, meta.expectedParkedSimulator?.udid);
         actions.push(`verified parked simulator ${parked.udid}`);

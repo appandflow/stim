@@ -179,7 +179,7 @@ while (Date.now() < deadline) {
             arm,
             baseline,
             expectedControl,
-            expectedStim: { ...expectedControl, name: undefined, namePrefix: expectedStimName },
+            expectedStim: { ...expectedControl, name: expectedStimName },
           })
         : selectIosCandidate(devices(), {
             arm,

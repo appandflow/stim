@@ -137,6 +137,16 @@ describe('benchmark Android emulator selection', () => {
     ).toMatchObject({ error: 'control-emulator-mismatch' });
   });
 
+  it('rejects a different Stim AVD even when its image and profile match the prepared pool', () => {
+    const expectedStim = { ...expectedAndroid, name: 'stim-seed' };
+    const options = { arm: 'stim', baseline: new Set(), expectedControl: expectedAndroid, expectedStim };
+    const prepared = { ...androidDevice, name: 'stim-seed' };
+    expect(selectAndroidCandidate([prepared], options)).toEqual({ candidate: prepared });
+    expect(selectAndroidCandidate([{ ...prepared, name: 'stim-fresh' }], options)).toMatchObject({
+      error: 'stim-emulator-mismatch',
+    });
+  });
+
   it('rejects baseline and ambiguous Android emulators', () => {
     expect(
       selectAndroidCandidate([androidDevice], {
