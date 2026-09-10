@@ -62,7 +62,7 @@ export function doctorSuccessLines(platform: DoctorPlatform | undefined, stim: S
 
   if (platform !== 'android') {
     lines.push('', 'iOS');
-    lines.push(phaseLine('setup', 'CocoaPods, warm state, dev client'));
+    lines.push(phaseLine('setup', 'CocoaPods, warm state, dev client, effective Debug simulator architectures'));
     lines.push(phaseLine('caches', 'Metro, Xcode compilation, ccache, build provider'));
     lines.push(phaseLine('devices', 'remote device, SimSlim profile'));
   }

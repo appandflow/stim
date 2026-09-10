@@ -5,6 +5,7 @@ import { plural } from './command-output.ts';
 import { getExecutor } from './exec.ts';
 import { makeTemporaryDirectory } from './temporary.ts';
 import { checkStorageLayout } from './doctor-storage.ts';
+import { inspectIosDebugArchitectures } from './doctor-ios-architectures.ts';
 import { appProjectProblem, detectIsExpo } from './project.ts';
 import * as expoFingerprint from '@expo/fingerprint';
 import { diffFingerprintSources, fingerprintProject } from './build-cache.ts';
@@ -776,6 +777,7 @@ export function runDoctor(
   return [
     checkAppProject(projectRoot),
     ...checkMainCheckout(projectRoot, { platform }),
+    ...(platform === 'android' ? [] : inspectIosDebugArchitectures(mainCheckoutProjectRoot(projectRoot))),
     ...checkStorageLayout(projectRoot, { platform }),
     checkDevClient(pkg, isExpo),
     optimizations?.metroSharedCache ? checkMetroCache(metroConfig) : null,
