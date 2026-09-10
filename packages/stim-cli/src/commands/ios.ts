@@ -153,6 +153,10 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
         'simulator, wired to the reserved Metro port. Requires a running dev server (`stim start`).',
     )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
+    .option(
+      '--scheme <name>',
+      'Shared Xcode app scheme to build; overrides automatic scheme selection, not the app URL scheme',
+    )
     .option('--no-metro-check', 'Skip the "is this workspace\'s dev server running?" gate and build anyway')
     .option(
       '--no-build-cache',
@@ -199,6 +203,21 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     .action(async (opts: IosCommandOptions) => {
       await runIos({ ...opts, waitConflict: waitFlagConflict(process.argv) }, deps);
     });
+}
+
+function explicitSchemeRefusal(root: string, scheme: string | undefined, isExpo: boolean, d: IosDeps): FailArgs | null {
+  if (scheme === undefined) return null;
+  if (!scheme.trim()) {
+    return {
+      code: 'STIM_BAD_ARG',
+      message: '--scheme must name a non-empty shared Xcode app scheme.',
+      remedy: 'Pass the exact scheme name shown by xcodebuild -list.',
+    };
+  }
+  if (d.needsPrebuild(root, PLATFORM, isExpo)) return null;
+  const project = d.discoverXcodeProject(root);
+  if (project.error) return project.error;
+  return d.resolveScheme(project, { scheme }).error ?? null;
 }
 
 async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> = {}): Promise<IosFacts | null> {
@@ -392,6 +411,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
   }
 
   const configuration = resolveConfiguration(opts.configuration, settings);
+  const buildScheme = opts.scheme;
   const release = isReleaseConfiguration(configuration);
   const cachePolicy = artifactCachePolicy(optimizations, useBuildCache, release);
   useBuildCache = cachePolicy.read;
@@ -445,6 +465,8 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
   const waitSeconds = waitParsed.seconds;
 
   const isExpo = d.detectIsExpo(root);
+  const schemeRefusal = explicitSchemeRefusal(root, buildScheme, isExpo, d);
+  if (schemeRefusal) return fail(schemeRefusal);
   const remoteBackend = physical ? null : (opts.remote ?? remoteIosSetting(settings));
   const modelRefusal = deviceModelRefusal({
     deviceTypeFlag: opts.deviceType,
@@ -757,6 +779,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
     }
     fingerprint = computedFingerprint;
     cacheKey = buildCacheKey(PLATFORM, fingerprint, {
+      scheme: buildScheme,
       ...(configuration ? { configuration } : {}),
       isSimulator: !physical,
       ...(buildProfile ? { buildProfile } : {}),
@@ -810,7 +833,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
   }
 
   async function resolveRemoteArtifact(): Promise<void> {
-    if (physical || !cachePolicy.remote || buildProfile) return;
+    if (physical || !cachePolicy.remote || buildProfile || buildScheme) return;
     if (!appPath) {
       const loaded: LoadProjectProviderResult = await d.loadProjectProvider(root, { isExpo });
       if (loaded?.unavailable) {
@@ -1157,6 +1180,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
             storeHash = after.hash;
             storeSources = after.sources;
             storeKey = buildCacheKey(PLATFORM, after.hash, {
+              scheme: buildScheme,
               ...(configuration ? { configuration } : {}),
               isSimulator: !physical,
               ...(buildProfile ? { buildProfile } : {}),
@@ -1193,6 +1217,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
           phase('build', `compiling ${configuration || 'Debug'} with xcodebuild`);
           const result: BuildIosResultLike = await d.buildIos({
             root,
+            scheme: buildScheme,
             udid,
             destination: remoteDevice ? GENERIC_SIM_DESTINATION : null,
             ...(physical ? { sdk: IPHONEOS_SDK } : {}),
@@ -1319,6 +1344,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
         json,
         release,
         configuration,
+        buildScheme,
         isExpo,
         metroCheck,
         metroPort,

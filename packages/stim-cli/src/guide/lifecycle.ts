@@ -427,12 +427,27 @@ result as proof instead of requiring an unrelated screenshot.`,
   Follow the normal ownership and consent rules in guide agent.
 
 IOS SCHEME SELECTION
+  Pass \`stim ios --scheme "App Staging"\` to select an exact shared Xcode
+  app scheme. Unknown names refuse with the available choices. This is the
+  Xcode scheme, not the app's URL scheme. Combine it with --configuration
+  when choosing both an app scheme and a build configuration.
+
+  Without --scheme, automatic selection is unchanged:
   Stim keeps a scheme matching the workspace/project name, or the sole non-test
   scheme. When neither identifies one, it also checks the static top-level name
   in the app directory's app.json against Xcode's listed schemes. It does not
   execute app config or choose an arbitrary scheme from an ambiguous list.
-  If selection fails, share the intended app scheme in Xcode and make its name
-  match the workspace/project or app.json name. See guide errors STIM_NO_SCHEME.
+  If selection fails, pass --scheme with an available name, or share the app
+  scheme in Xcode first. See guide errors STIM_NO_SCHEME.
+
+  Explicit schemes have separate artifact keys, shared-build locks, and Xcode
+  build directories. Stim identifies the resulting application from Xcode's
+  resolved build settings, even when the scheme and product names differ;
+  ambiguous products refuse rather than installing another app. Local and
+  configured Stim cache providers use the scheme-specific key. The older Expo
+  buildCacheProvider tier is skipped for explicit schemes because a provider
+  may key only on the fingerprint and return another scheme's app. Omitting
+  --scheme retains the existing cache keys and provider behavior.
 
 AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
   Both platforms store the artifact verbatim, so its hash is its identity.
@@ -721,7 +736,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
         'every flag per command, Android variants and flavors, the per-run simulator model, runtime and system image',
       body: () => `THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote
-  ios             --json --no-metro-check --no-build-cache --configuration <name> --device-type <name> --runtime <version> --device [udid] --wait <seconds> --no-wait --remote <proxy|eas>
+  ios             --json --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --device [udid] --wait <seconds> --no-wait --remote <proxy|eas>
   android         --json --no-metro-check --no-build-cache --variant <name> --system-image <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
   reload          [ios|android] --json
   device          lock <ios|android> [id] --for <duration> --wait <seconds> --json;

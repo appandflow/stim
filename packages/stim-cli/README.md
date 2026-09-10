@@ -62,6 +62,12 @@ Stim builds or restores the app, installs it, launches it, and checks launch
 readiness. Plain output streams progress and reports the complete result. Use
 `--json` when a script needs structured data.
 
+Use `stim ios --scheme "App Staging"` when a project has several shared Xcode
+app schemes. Combine it with `--configuration Release` if needed. Without the
+flag, Stim keeps its automatic scheme selection. Explicit schemes use separate
+artifact caches and Xcode build directories; run `stim guide lifecycle builds`
+for provider behavior. This selects an Xcode scheme, not a URL scheme.
+
 Launch evidence does not prove that the UI is interactive. Apps can optionally
 [declare readiness with two debug log messages](https://appandflow.github.io/stim/docs/dev-server-and-logs#optional-app-declared-readiness),
 without a package or SDK. A captured pending message extends the default
