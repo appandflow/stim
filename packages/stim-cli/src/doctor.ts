@@ -1,5 +1,5 @@
 import { resolveOptimizations, type Optimizations } from './optimizations.ts';
-import { existsSync, readFileSync, realpathSync, rmSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, rmSync } from 'fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import { plural } from './command-output.ts';
 import { getExecutor } from './exec.ts';
@@ -158,6 +158,19 @@ function brokenPodLinks(podsRoot: string): string[] {
   }
 }
 
+function hasIosWarmOutput(root: string): boolean {
+  if (existsSync(join(root, 'ios', 'build'))) return true;
+  const derivedData = workspaceDerivedData(root);
+  if (existsSync(join(derivedData, 'Build', 'Products'))) return true;
+  try {
+    return readdirSync(derivedData).some(
+      (entry) => /^scheme-[a-f0-9]{64}$/.test(entry) && existsSync(join(derivedData, entry, 'Build', 'Products')),
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function checkMainCheckout(
   projectRoot: string,
   {
@@ -245,12 +258,7 @@ export function checkMainCheckout(
   }
 
   const coldPlatforms = [
-    platform !== 'android' &&
-    existsSync(join(mainRoot, 'ios')) &&
-    !existsSync(join(mainRoot, 'ios', 'build')) &&
-    !existsSync(join(workspaceDerivedData(mainRoot), 'Build', 'Products'))
-      ? 'iOS'
-      : null,
+    platform !== 'android' && existsSync(join(mainRoot, 'ios')) && !hasIosWarmOutput(mainRoot) ? 'iOS' : null,
     platform !== 'ios' &&
     existsSync(join(mainRoot, 'android')) &&
     !existsSync(join(mainRoot, 'android', 'build')) &&
