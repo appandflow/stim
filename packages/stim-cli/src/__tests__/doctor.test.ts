@@ -25,6 +25,7 @@ import {
   checkFingerprintParity,
   checkMetroCache,
   detectFingerprintParity,
+  detectLinkedLibraryGitMetadata,
   checkRemoteDevice,
   checkSimSlim,
   checkMainCheckout,
@@ -77,6 +78,71 @@ test('checkMainCheckout reports missing dependencies, Pods, and native output', 
     expect(findings[0]?.fix).toMatch(/npm ci/);
     expect(findings[1]?.fix).toMatch(/pod install/);
     expect(findings[2]?.fix).toMatch(/stim ios/);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('a fingerprinted library directory that still hashes .git gets both .fingerprintignore entries', async () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-linked-git-'));
+  try {
+    const library = join(project, 'library');
+    mkdirSync(join(library, 'android'), { recursive: true });
+    writeFileSync(join(library, '.git'), 'gitdir: /elsewhere/.git/worktrees/library\n');
+    mkdirSync(join(project, 'node_modules', '@org'), { recursive: true });
+    symlinkSync(library, join(project, 'node_modules', '@org', 'native-lib'));
+    const calls: unknown[] = [];
+    const dir = (filePath: string, children: string[]) => ({
+      type: 'dir',
+      filePath,
+      reasons: [],
+      debugInfo: { path: filePath, hash: 'h', children: children.map((path) => ({ path, hash: 'h' })) },
+    });
+    let sources = [
+      dir('android', ['android/build.gradle']),
+      dir('node_modules/@org/native-lib', [
+        'node_modules/@org/native-lib/.git',
+        'node_modules/@org/native-lib/android',
+      ]),
+      dir('node_modules/ignored-lib', ['node_modules/ignored-lib/android']),
+    ];
+    const createFingerprint = (async (_root: string, options?: unknown) => {
+      calls.push(options);
+      return { hash: 'abc', sources };
+    }) as unknown as typeof import('@expo/fingerprint').createFingerprintAsync;
+
+    const result = await detectLinkedLibraryGitMetadata(project, { createFingerprint, platform: 'android' });
+    expect(calls).toEqual([expect.objectContaining({ platforms: ['android'], debug: true, silent: true })]);
+    expect(result?.code).toBe('linked-library-git-metadata');
+    expect(result?.detail).toContain('node_modules/@org/native-lib/.git');
+    expect(result?.detail).not.toContain('ignored-lib');
+    expect(result?.fix).toContain('`node_modules/@org/native-lib/.git`, `node_modules/@org/native-lib/.git/**/*`');
+
+    sources = [...sources, dir('../other-lib', ['../other-lib/.git', '../other-lib/ios'])];
+    const two = await detectLinkedLibraryGitMetadata(project, { createFingerprint });
+    expect(two?.title).toMatch(/^2 linked/);
+    expect(two?.fix).toContain('`../other-lib/.git`, `../other-lib/.git/**/*`');
+
+    sources = [dir('node_modules/@org/native-lib', ['node_modules/@org/native-lib/android'])];
+    expect(await detectLinkedLibraryGitMetadata(project, { createFingerprint })).toBeNull();
+    const failing = (async () => {
+      throw new Error('no fingerprint');
+    }) as unknown as typeof createFingerprint;
+    expect(await detectLinkedLibraryGitMetadata(project, { createFingerprint: failing })).toBeNull();
+
+    rmSync(join(project, 'node_modules', '@org'), { recursive: true, force: true });
+    const before = calls.length;
+    expect(await detectLinkedLibraryGitMetadata(project, { createFingerprint })).toBeNull();
+    expect(calls.length).toBe(before);
+
+    execSync('git init -q', { cwd: project });
+    const app = join(project, 'apps', 'mobile');
+    mkdirSync(app, { recursive: true });
+    writeFileSync(join(app, 'package.json'), JSON.stringify({ name: 'mobile', dependencies: { 'react-native': '*' } }));
+    symlinkSync(library, join(project, 'node_modules', 'hoisted-lib'));
+    sources = [dir('../../node_modules/hoisted-lib', ['../../node_modules/hoisted-lib/.git'])];
+    const hoisted = await detectLinkedLibraryGitMetadata(app, { createFingerprint });
+    expect(hoisted?.fix).toContain('`../../node_modules/hoisted-lib/.git`, `../../node_modules/hoisted-lib/.git/**/*`');
   } finally {
     rmSync(project, { recursive: true, force: true });
   }

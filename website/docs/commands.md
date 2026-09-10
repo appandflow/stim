@@ -36,7 +36,8 @@ stim doctor [--platform <ios|android>] [--json] [--fix]
 ```
 
 Inspects the main checkout. It reports missing or stale dependencies, CocoaPods
-state, cache conflicts, device capacity, and remote session problems. On a
+state, cache conflicts, device capacity, remote session problems, and a linked
+native library whose Git metadata enters the fingerprint. On a
 checkout without installed dependencies, it also reports fingerprint
 differences against a fresh worktree. The check is read-only unless `--fix` is
 passed.

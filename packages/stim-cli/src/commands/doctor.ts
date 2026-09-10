@@ -11,7 +11,7 @@ import {
   sandboxAllowance,
   sandboxFinding,
 } from '../sandbox.ts';
-import { detectFingerprintParity, detectXcodeMajor, runDoctor } from '../doctor.ts';
+import { detectFingerprintParity, detectLinkedLibraryGitMetadata, detectXcodeMajor, runDoctor } from '../doctor.ts';
 import type { DoctorPlatform, Finding } from '../doctor.ts';
 import { phaseLine } from '../command-output.ts';
 import { compareStimVersions, inspectStimVersions, type StimVersionReport } from '../stim-installations.ts';
@@ -206,6 +206,8 @@ export default function doctorCommand(
 
       const parity = await detectFingerprintParity(root, { platform: opts.platform });
       if (parity) findings.push(parity);
+      const linkedGit = await detectLinkedLibraryGitMetadata(root, { platform: opts.platform });
+      if (linkedGit) findings.push(linkedGit);
 
       if (detectHarness()) {
         const sandbox = sandboxFinding(repoRoot(root) ?? root);
