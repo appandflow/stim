@@ -1,5 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  rmdirSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { workspaceName } from '@stim-cli/core';
 import { formatElapsed, phaseLine } from '../command-output.ts';
@@ -10,18 +19,24 @@ type WarmLockMode = 'refresh' | 'copy';
 
 interface WarmLockHolder {
   pid: number | null;
+  installerPid: number | null;
   mode: WarmLockMode;
   startedAt: string | null;
 }
 
+interface WarmLockRecord extends WarmLockHolder {
+  token: string;
+}
+
 const WRITER_DIR = 'refresh';
 const READERS_DIR = 'copies';
-const RECORD_FILE = 'owner.json';
-const RECORD_GRACE_MS = 5000;
+const RECORD_SUFFIX = '.json';
 
 const WARM_LOCK_POLL_MS = 250;
 const WARM_LOCK_PROGRESS_MS = 30_000;
 const WARM_LOCK_CEILING_MS = 90 * 60 * 1000;
+
+const OCCUPIED_CODES = new Set(['EEXIST', 'ENOTEMPTY']);
 
 export function warmLocksDir(): string {
   return join(getConfigDir(), 'warm-locks');
@@ -50,9 +65,18 @@ export function warmLockAcquiredLine(waited: WarmLockWait): string {
   );
 }
 
+export function warmLockUnavailableLine(reason: string): string {
+  return phaseLine('lock', `unavailable (${reason}); copying without it`);
+}
+
 export interface WarmLockWait {
   waitedMs: number;
   holder: WarmLockHolder | null;
+}
+
+export interface WarmLockHold {
+  wait: WarmLockWait;
+  trackInstaller: (pid: number | null) => void;
 }
 
 export interface WarmLockOptions {
@@ -71,12 +95,17 @@ function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function errorCode(error: unknown): string | undefined {
+  return (error as NodeJS.ErrnoException)?.code;
+}
+
 function readHolder(file: string): WarmLockHolder | null {
   try {
     const parsed = JSON.parse(readFileSync(file, 'utf-8'));
     if (!parsed || typeof parsed !== 'object') return null;
     return {
       pid: Number.isFinite(parsed.pid) ? parsed.pid : null,
+      installerPid: Number.isFinite(parsed.installerPid) ? parsed.installerPid : null,
       mode: parsed.mode === 'refresh' ? 'refresh' : 'copy',
       startedAt: typeof parsed.startedAt === 'string' ? parsed.startedAt : null,
     };
@@ -85,8 +114,13 @@ function readHolder(file: string): WarmLockHolder | null {
   }
 }
 
-function writeRecord(file: string, record: WarmLockHolder & { token: string }): void {
-  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+function holderIsAlive(holder: WarmLockHolder, isAlive: (pid: number) => boolean): boolean {
+  if (holder.pid !== null && isAlive(holder.pid)) return true;
+  return holder.installerPid !== null && isAlive(holder.installerPid);
+}
+
+function writeRecordFile(file: string, stagingDir: string, record: WarmLockRecord): void {
+  const tmp = join(stagingDir, `.record-${process.pid}-${randomUUID()}.tmp`);
   writeFileSync(tmp, JSON.stringify(record));
   try {
     renameSync(tmp, file);
@@ -94,39 +128,6 @@ function writeRecord(file: string, record: WarmLockHolder & { token: string }): 
     rmSync(tmp, { force: true });
     throw error;
   }
-}
-
-function readToken(file: string): string | null {
-  try {
-    const parsed = JSON.parse(readFileSync(file, 'utf-8'));
-    return typeof parsed?.token === 'string' ? parsed.token : null;
-  } catch {
-    return null;
-  }
-}
-
-function ageMs(path: string, now: number): number | null {
-  try {
-    return now - statSync(path).mtimeMs;
-  } catch {
-    return null;
-  }
-}
-
-function reap(path: string, observed: string | null): void {
-  const aside = `${path}.reap-${process.pid}-${randomUUID()}`;
-  try {
-    renameSync(path, aside);
-  } catch {
-    return;
-  }
-  if (readToken(join(aside, RECORD_FILE)) !== observed) {
-    try {
-      renameSync(aside, path);
-      return;
-    } catch {}
-  }
-  rmSync(aside, { recursive: true, force: true });
 }
 
 interface LockPaths {
@@ -140,21 +141,64 @@ function lockPaths(repositoryRoot: string): LockPaths {
   return { lock, writer: join(lock, WRITER_DIR), readers: join(lock, READERS_DIR) };
 }
 
-function liveWriter(paths: LockPaths, isAlive: (pid: number) => boolean, now: number): WarmLockHolder | null {
-  const record = join(paths.writer, RECORD_FILE);
-  const holder = readHolder(record);
-  if (holder) {
-    if (holder.pid !== null && isAlive(holder.pid)) return holder;
-    reap(paths.writer, readToken(record));
+interface WriterClaim {
+  holder: WarmLockHolder;
+  token: string;
+}
+
+function readWriterClaim(paths: LockPaths): WriterClaim | null {
+  let names: string[];
+  try {
+    names = readdirSync(paths.writer);
+  } catch {
     return null;
   }
-  const age = ageMs(paths.writer, now);
-  if (age === null) return null;
-  if (age > RECORD_GRACE_MS) {
-    reap(paths.writer, null);
-    return null;
+  const name = names.find((entry) => entry.endsWith(RECORD_SUFFIX));
+  if (!name) return null;
+  const token = name.slice(0, -RECORD_SUFFIX.length);
+  const holder = readHolder(join(paths.writer, name));
+  return { token, holder: holder ?? { pid: null, installerPid: null, mode: 'refresh', startedAt: null } };
+}
+
+function claimWriter(paths: LockPaths, record: WarmLockRecord): boolean {
+  const staging = join(paths.lock, `.claim-${process.pid}-${randomUUID()}`);
+  mkdirSync(staging, { recursive: true });
+  try {
+    writeFileSync(join(staging, `${record.token}${RECORD_SUFFIX}`), JSON.stringify(record));
+    try {
+      renameSync(staging, paths.writer);
+      return true;
+    } catch (error) {
+      if (OCCUPIED_CODES.has(String(errorCode(error)))) return false;
+      throw error;
+    }
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
   }
-  return { pid: null, mode: 'refresh', startedAt: null };
+}
+
+function removeWriterClaim(paths: LockPaths, token: string): void {
+  try {
+    unlinkSync(join(paths.writer, `${token}${RECORD_SUFFIX}`));
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return;
+    throw error;
+  }
+  try {
+    rmdirSync(paths.writer);
+  } catch (error) {
+    const code = errorCode(error);
+    if (code === 'ENOENT' || OCCUPIED_CODES.has(String(code))) return;
+    throw error;
+  }
+}
+
+function liveWriter(paths: LockPaths, isAlive: (pid: number) => boolean): WarmLockHolder | null {
+  const claim = readWriterClaim(paths);
+  if (!claim) return null;
+  if (holderIsAlive(claim.holder, isAlive)) return claim.holder;
+  removeWriterClaim(paths, claim.token);
+  return null;
 }
 
 function liveReaders(paths: LockPaths, isAlive: (pid: number) => boolean): WarmLockHolder[] {
@@ -166,10 +210,10 @@ function liveReaders(paths: LockPaths, isAlive: (pid: number) => boolean): WarmL
   }
   const live: WarmLockHolder[] = [];
   for (const name of names) {
-    if (!name.endsWith('.json')) continue;
+    if (!name.endsWith(RECORD_SUFFIX)) continue;
     const file = join(paths.readers, name);
     const holder = readHolder(file);
-    if (holder && holder.pid !== null && isAlive(holder.pid)) {
+    if (holder && holderIsAlive(holder, isAlive)) {
       live.push(holder);
       continue;
     }
@@ -198,10 +242,16 @@ export async function acquireWarmLock({
   progressMs = WARM_LOCK_PROGRESS_MS,
   ceilingMs = WARM_LOCK_CEILING_MS,
   out = () => {},
-}: WarmLockOptions): Promise<{ wait: WarmLockWait; release: () => void }> {
+}: WarmLockOptions): Promise<WarmLockHold & { release: () => void }> {
   const paths = lockPaths(repositoryRoot);
   const token = randomUUID();
-  const record = { pid: process.pid, mode, startedAt: new Date(now()).toISOString(), token };
+  const record: WarmLockRecord = {
+    pid: process.pid,
+    installerPid: null,
+    mode,
+    startedAt: new Date(now()).toISOString(),
+    token,
+  };
   const started = now();
   let lastProgress = started;
   let waitedOn: WarmLockHolder | null = null;
@@ -220,23 +270,24 @@ export async function acquireWarmLock({
   mkdirSync(paths.readers, { recursive: true });
 
   if (mode === 'refresh') {
-    const writerRecord = join(paths.writer, RECORD_FILE);
     const claim = async (): Promise<void> => {
       for (;;) {
-        try {
-          mkdirSync(paths.writer);
-          writeRecord(writerRecord, record);
-          return;
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error;
+        if (claimWriter(paths, record)) return;
+        const observed = readWriterClaim(paths);
+        if (observed && holderIsAlive(observed.holder, isAlive)) {
+          await step(observed.holder);
+          continue;
         }
-        await step(liveWriter(paths, isAlive, now()) ?? { pid: null, mode: 'refresh', startedAt: null });
+        if (observed) {
+          removeWriterClaim(paths, observed.token);
+          continue;
+        }
+        await step({ pid: null, installerPid: null, mode: 'refresh', startedAt: null });
       }
     };
     await claim();
     for (;;) {
-      // A reaper that read a stale record can take the claim away mid-drain.
-      if (readToken(writerRecord) !== token) {
+      if (readWriterClaim(paths)?.token !== token) {
         await claim();
         continue;
       }
@@ -246,39 +297,48 @@ export async function acquireWarmLock({
     }
     return {
       wait: { waitedMs: now() - started, holder: waitedOn },
+      trackInstaller: (installerPid) => {
+        if (readWriterClaim(paths)?.token !== token) return;
+        record.installerPid = installerPid;
+        try {
+          writeRecordFile(join(paths.writer, `${token}${RECORD_SUFFIX}`), paths.lock, record);
+        } catch {}
+      },
       release: () => {
-        if (readToken(join(paths.writer, RECORD_FILE)) === token)
-          rmSync(paths.writer, { recursive: true, force: true });
+        try {
+          removeWriterClaim(paths, token);
+        } catch {}
       },
     };
   }
 
-  const readerFile = join(paths.readers, `${process.pid}-${token}.json`);
+  const readerFile = join(paths.readers, `${process.pid}-${token}${RECORD_SUFFIX}`);
   for (;;) {
-    const holder = liveWriter(paths, isAlive, now());
+    const holder = liveWriter(paths, isAlive);
     if (holder) {
       await step(holder);
       continue;
     }
-    writeRecord(readerFile, record);
-    const raced = liveWriter(paths, isAlive, now());
+    writeRecordFile(readerFile, paths.readers, record);
+    const raced = liveWriter(paths, isAlive);
     if (!raced) break;
     rmSync(readerFile, { force: true });
     await step(raced);
   }
   return {
     wait: { waitedMs: now() - started, holder: waitedOn },
+    trackInstaller: () => {},
     release: () => rmSync(readerFile, { force: true }),
   };
 }
 
 export async function withWarmLock<T>(
   options: WarmLockOptions,
-  fn: (wait: WarmLockWait) => Promise<T> | T,
+  fn: (hold: WarmLockHold) => Promise<T> | T,
 ): Promise<T> {
-  const { wait, release } = await acquireWarmLock(options);
+  const { release, ...hold } = await acquireWarmLock(options);
   try {
-    return await fn(wait);
+    return await fn(hold);
   } finally {
     release();
   }

@@ -1,7 +1,10 @@
 import type { ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { workspaceName } from '@stim-cli/core';
 import { formatDuration, phaseLine } from './command-output.ts';
+import { getConfigDir } from './config.ts';
 import {
   dependencyState,
   hasInstalledDependencies,
@@ -111,11 +114,18 @@ function checkoutFactLine(branch: string, plan: Exclude<CheckoutPlan, { kind: 'd
   return phaseLine('checkout', `${branch} up to date with ${plan.upstream}${ahead}`);
 }
 
+interface InstallEvidence {
+  hash: string;
+  completed: boolean;
+}
+
 export interface DepsInputs {
   lockfile: string | null;
   lockfileChanged: boolean;
   installed: boolean;
   treeValid: boolean | null;
+  lastInstall: InstallEvidence | null;
+  lockHash: string | null;
 }
 
 export interface StepPlan {
@@ -123,11 +133,23 @@ export interface StepPlan {
   reason: string;
 }
 
-export function depsPlan({ lockfile, lockfileChanged, installed, treeValid }: DepsInputs): StepPlan {
+export function depsPlan({
+  lockfile,
+  lockfileChanged,
+  installed,
+  treeValid,
+  lastInstall,
+  lockHash,
+}: DepsInputs): StepPlan {
   if (!lockfile) return { run: false, reason: 'no lockfile in this repository' };
   if (!installed) return { run: true, reason: 'no installed dependencies' };
   if (lockfileChanged) return { run: true, reason: `${lockfile} changed` };
   if (treeValid === false) return { run: true, reason: `the installed tree does not match ${lockfile}` };
+  if (lastInstall && !lastInstall.completed)
+    return { run: true, reason: `the last install of ${lockfile} did not finish` };
+  if (lastInstall && lockHash && lastInstall.hash !== lockHash) {
+    return { run: true, reason: `${lockfile} does not match the last completed install` };
+  }
   return { run: false, reason: `${lockfile} unchanged` };
 }
 
@@ -173,6 +195,44 @@ function stepLine(label: string, reason: string, action: string): string {
   return phaseLine(label, `${reason} -> ${action}`);
 }
 
+function installRecordFile(depsRoot: string): string {
+  return join(getConfigDir(), 'warm-installs', `${workspaceName(depsRoot)}.json`);
+}
+
+function lockfileHash(depsRoot: string, lockfile: string): string | null {
+  try {
+    return createHash('sha256')
+      .update(readFileSync(join(depsRoot, lockfile)))
+      .digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+function readInstallEvidence(depsRoot: string, lockfile: string): InstallEvidence | null {
+  try {
+    const parsed = JSON.parse(readFileSync(installRecordFile(depsRoot), 'utf-8'));
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (parsed.lock !== lockfile || typeof parsed.hash !== 'string') return null;
+    return { hash: parsed.hash, completed: parsed.completed === true };
+  } catch {
+    return null;
+  }
+}
+
+function writeInstallEvidence(depsRoot: string, lockfile: string, hash: string | null, completed: boolean): void {
+  const file = installRecordFile(depsRoot);
+  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  mkdirSync(join(getConfigDir(), 'warm-installs'), { recursive: true });
+  writeFileSync(tmp, JSON.stringify({ lock: lockfile, hash: hash ?? '', completed }));
+  try {
+    renameSync(tmp, file);
+  } catch (error) {
+    rmSync(tmp, { force: true });
+    throw error;
+  }
+}
+
 function inProgressOperation(gitDir: string): MainCheckoutState['operation'] {
   if (existsSync(join(gitDir, 'rebase-merge'))) return 'rebase';
   if (existsSync(join(gitDir, 'rebase-apply'))) {
@@ -185,16 +245,22 @@ function inProgressOperation(gitDir: string): MainCheckoutState['operation'] {
 function readMainCheckoutState(root: string): MainCheckoutState {
   const exec = getExecutor();
   const gitDir = exec.runFileQuiet('git', ['-C', root, 'rev-parse', '--path-format=absolute', '--git-dir'])?.trim();
-  const changed = exec.runFileQuiet('git', ['-C', root, 'diff', '--name-only', 'HEAD']);
+  // `git diff HEAD` compares the working tree to HEAD, so it misses a staged edit
+  // whose working file was restored to the HEAD contents without resetting the index.
+  const worktreeChanged = exec.runFileQuiet('git', ['-C', root, 'diff', '--name-only', 'HEAD']);
+  const indexChanged = exec.runFileQuiet('git', ['-C', root, 'diff', '--name-only', '--cached', 'HEAD']);
   const branch = exec.runFileQuiet('git', ['-C', root, 'symbolic-ref', '--quiet', '--short', 'HEAD'])?.trim() || null;
-  return {
-    branch,
-    operation: gitDir ? inProgressOperation(gitDir) : null,
-    dirtyTracked: (changed ?? '')
+  const paths = [worktreeChanged, indexChanged].flatMap((out) =>
+    (out ?? '')
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean),
-    dirtyKnown: changed !== null,
+  );
+  return {
+    branch,
+    operation: gitDir ? inProgressOperation(gitDir) : null,
+    dirtyTracked: [...new Set(paths)],
+    dirtyKnown: worktreeChanged !== null && indexChanged !== null,
   };
 }
 
@@ -308,6 +374,7 @@ export interface RefreshOptions {
   spawnFn?: SpawnFn | null;
   now?: () => number;
   heartbeatMs?: number;
+  onInstaller?: (pid: number | null) => void;
 }
 
 export async function refreshMainCheckout({
@@ -318,12 +385,19 @@ export async function refreshMainCheckout({
   spawnFn = null,
   now = Date.now,
   heartbeatMs = HEARTBEAT_INTERVAL_MS,
+  onInstaller = () => {},
 }: RefreshOptions): Promise<RefreshFailure | null> {
   const state = readMainCheckoutState(root);
   const refusal = mainCheckoutRefusal(root, state);
   if (refusal) return refusal;
   const branch = String(state.branch);
-  const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
+  const spawnChild: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
+  const spawn: SpawnFn = (cmd, args, opts) => {
+    const child = spawnChild(cmd, args, opts);
+    onInstaller(child.pid ?? null);
+    child.once('exit', () => onInstaller(null));
+    return child;
+  };
 
   const before = resolveFullRef(root, 'HEAD') ?? '';
   // A fetch that prompts for credentials would hold the exclusive lock forever.
@@ -354,7 +428,7 @@ export async function refreshMainCheckout({
   const note = defaultBranchNote(branch, resolveDefaultBranch(root, settings));
   if (note.kind !== 'match') for (const line of note.lines) emit(phaseLine('', line));
 
-  const dependencies = dependencyState(appDir);
+  const dependencies = dependencyState(existsSync(appDir) ? appDir : root);
   const installed = dependencies ? hasInstalledDependencies(dependencies.root, dependencies.installed) : false;
   const deps = depsPlan({
     lockfile: dependencies?.lock ?? null,
@@ -364,8 +438,16 @@ export async function refreshMainCheckout({
     installed,
     treeValid:
       dependencies?.lock === 'package-lock.json' && installed ? installedNpmTreeIsValid(dependencies.root) : null,
+    lastInstall: dependencies ? readInstallEvidence(dependencies.root, dependencies.lock) : null,
+    lockHash: dependencies ? lockfileHash(dependencies.root, dependencies.lock) : null,
   });
   if (deps.run && dependencies) {
+    writeInstallEvidence(
+      dependencies.root,
+      dependencies.lock,
+      lockfileHash(dependencies.root, dependencies.lock),
+      false,
+    );
     const install = await runInstallCommand({
       command: dependencies.command,
       cwd: dependencies.root,
@@ -383,6 +465,12 @@ export async function refreshMainCheckout({
         remedy: `Run \`cd ${dependencies.root} && ${dependencies.command}\` and fix what it reports, then run warm again.`,
       };
     }
+    writeInstallEvidence(
+      dependencies.root,
+      dependencies.lock,
+      lockfileHash(dependencies.root, dependencies.lock),
+      true,
+    );
   } else {
     emit(stepLine('deps', deps.reason, 'skipped'));
   }

@@ -18,7 +18,7 @@ import { reclaimProject } from '../reclaim.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../sim-pool.ts';
 import type { ParkedDevice } from '../teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
-import { warmLockAcquiredLine, withWarmLock } from '../engine/warm-lock.ts';
+import { warmLockAcquiredLine, warmLockUnavailableLine, withWarmLock, type WarmLockWait } from '../engine/warm-lock.ts';
 import { refreshMainCheckout, type RefreshFailure } from '../worktree-refresh.ts';
 import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
 import {
@@ -128,35 +128,36 @@ export function registerWarm(worktree: Command): void {
           }
           return settings;
         };
-        let settings = readSettings();
-        if (!settings) {
-          process.exitCode = 1;
-          return;
-        }
         if (opts.refresh) {
-          const refreshSettings = settings;
-          const failure = await withWarmLock({ repositoryRoot: root, mode: 'refresh', out: console.error }, (wait) => {
-            console.error(warmLockAcquiredLine(wait));
+          const settings = readSettings();
+          if (!settings) {
+            process.exitCode = 1;
+            return;
+          }
+          const failure = await withWarmLock({ repositoryRoot: root, mode: 'refresh', out: console.error }, (hold) => {
+            console.error(warmLockAcquiredLine(hold.wait));
             return refreshMainCheckout({
               root,
               appDir: mainCheckoutAppDir(root, target),
-              settings: refreshSettings,
+              settings,
               emit: (line) => console.error(line),
+              onInstaller: hold.trackInstaller,
             });
           });
           if (failure) {
             reportRefreshFailure(failure);
             return;
           }
-          // The fast-forward can have brought in a new repository-root .stim.json.
-          settings = readSettings();
+        }
+        const copy = (wait: WarmLockWait | null): void => {
+          if (wait?.holder) console.error(warmLockAcquiredLine(wait));
+          // Read under the lock: a refresh that landed while this copy waited can have
+          // brought in a new repository-root .stim.json.
+          const settings = readSettings();
           if (!settings) {
             process.exitCode = 1;
             return;
           }
-        }
-        await withWarmLock({ repositoryRoot: root, mode: 'copy', out: console.error }, (wait) => {
-          if (wait.holder) console.error(warmLockAcquiredLine(wait));
           const excluded = readWorktreeExclude(root);
           const patterns = excluded?.length ? excluded : (settings as WorktreeSettings).worktree?.exclude || [];
           const result = cloneIgnoredEntries({ root, target, patterns });
@@ -177,7 +178,14 @@ export function registerWarm(worktree: Command): void {
             ),
           );
           if (result.failed.length) process.exitCode = 1;
-        });
+        };
+        try {
+          await withWarmLock({ repositoryRoot: root, mode: 'copy', out: console.error }, (hold) => copy(hold.wait));
+        } catch (error) {
+          if ((error as { code?: string })?.code === 'STIM_LOCK_TIMEOUT') throw error;
+          console.error(chalk.dim(warmLockUnavailableLine((error as Error).message)));
+          copy(null);
+        }
       } catch (error) {
         const code = (error as { code?: string })?.code;
         console.error(chalk.red(`Could not warm this worktree: ${(error as Error).message}`));

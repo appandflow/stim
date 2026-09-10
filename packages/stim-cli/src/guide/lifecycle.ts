@@ -833,6 +833,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   same repository run together. The lock is keyed on the repository root, so
   two apps of one monorepo share it. It is PID-held: a holder that dies frees
   it. A wait prints the holder every 30s and gives up with STIM_LOCK_TIMEOUT.
+  A plain warm that cannot take the lock at all -- an unwritable STIM_HOME,
+  say -- says so in one dim line and copies without it, exactly as it did
+  before the lock existed. \`--refresh\` refuses instead, because it needs it.
 
   Wait for warm to exit successfully (exit code 0) before running start,
   ios, android, or a dependency install in that worktree. If a shell tool

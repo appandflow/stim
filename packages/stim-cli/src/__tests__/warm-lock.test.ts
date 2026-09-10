@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { acquireWarmLock, warmLockAcquiredLine, warmLockPath, warmLocksDir } from '../engine/warm-lock.ts';
@@ -44,7 +44,12 @@ test('a copy waits for a refresh in flight and names it', async () => {
     },
   });
   expect(polls).toBe(3);
-  expect(copy.wait.holder).toEqual({ pid: process.pid, mode: 'refresh', startedAt: expect.any(String) });
+  expect(copy.wait.holder).toEqual({
+    pid: process.pid,
+    installerPid: null,
+    mode: 'refresh',
+    startedAt: expect.any(String),
+  });
   copy.release();
 });
 
@@ -140,7 +145,109 @@ test('a wait prints its holder every progress interval, in the shape build waits
 
 test('the acquired line reports a wait only when there was one', () => {
   expect(warmLockAcquiredLine({ waitedMs: 0, holder: null })).toBe(`  ${'lock'.padEnd(11)} acquired`);
-  expect(warmLockAcquiredLine({ waitedMs: 12_000, holder: { pid: 41233, mode: 'refresh', startedAt: null } })).toBe(
-    `  ${'lock'.padEnd(11)} acquired (waited 12s for stim worktree warm --refresh pid 41233)`,
-  );
+  expect(
+    warmLockAcquiredLine({
+      waitedMs: 12_000,
+      holder: { pid: 41233, installerPid: null, mode: 'refresh', startedAt: null },
+    }),
+  ).toBe(`  ${'lock'.padEnd(11)} acquired (waited 12s for stim worktree warm --refresh pid 41233)`);
+});
+
+function writeWriterClaim(token: string, holder: Record<string, unknown>): void {
+  const writer = join(warmLockPath(REPO), 'refresh');
+  mkdirSync(writer, { recursive: true });
+  writeFileSync(join(writer, `${token}.json`), JSON.stringify({ ...holder, mode: 'refresh', token }));
+}
+
+function writerClaimTokens(): string[] {
+  return readdirSync(join(warmLockPath(REPO), 'refresh')).filter((name) => name.endsWith('.json'));
+}
+
+test('a reaper removes only the dead claim it observed, never the live one that replaced it', async () => {
+  writeWriterClaim('dead', { pid: IMPOSSIBLE_PID, installerPid: null, startedAt: null });
+  let swapped = false;
+  let polls = 0;
+  const copy = await acquireWarmLock({
+    repositoryRoot: REPO,
+    mode: 'copy',
+    isAlive: (pid) => {
+      if (pid === IMPOSSIBLE_PID && !swapped) {
+        swapped = true;
+        rmSync(join(warmLockPath(REPO), 'refresh', 'dead.json'));
+        writeWriterClaim('live', { pid: process.pid, installerPid: null, startedAt: null });
+      }
+      return pid === process.pid;
+    },
+    sleep: async () => {
+      if (++polls === 2) rmSync(join(warmLockPath(REPO), 'refresh'), { recursive: true, force: true });
+    },
+  });
+  expect(swapped).toBe(true);
+  expect(polls).toBe(2);
+  expect(copy.wait.holder).toMatchObject({ pid: process.pid, mode: 'refresh' });
+  copy.release();
+});
+
+test('a writer directory with no owner record is free, not an abandoned claim to wait out', async () => {
+  mkdirSync(join(warmLockPath(REPO), 'refresh'), { recursive: true });
+  const refresh = await acquireWarmLock({
+    repositoryRoot: REPO,
+    mode: 'refresh',
+    sleep: async () => {
+      throw new Error('waited on a writer directory that holds no claim');
+    },
+  });
+  expect(refresh.wait.holder).toBe(null);
+  const tokens = writerClaimTokens();
+  expect(tokens).toHaveLength(1);
+  expect(JSON.parse(readFileSync(join(warmLockPath(REPO), 'refresh', String(tokens[0])), 'utf-8'))).toMatchObject({
+    pid: process.pid,
+    mode: 'refresh',
+  });
+  refresh.release();
+});
+
+test('a refresh claim whose installer is still running is not reapable', async () => {
+  writeWriterClaim('dead-stim', { pid: IMPOSSIBLE_PID, installerPid: process.pid, startedAt: null });
+  let polls = 0;
+  const copy = await acquireWarmLock({
+    repositoryRoot: REPO,
+    mode: 'copy',
+    sleep: async () => {
+      if (++polls === 2) rmSync(join(warmLockPath(REPO), 'refresh'), { recursive: true, force: true });
+    },
+  });
+  expect(polls).toBe(2);
+  expect(copy.wait.holder).toMatchObject({ mode: 'refresh', installerPid: process.pid });
+  copy.release();
+});
+
+test('a refresh records the installer it spawns on its claim and clears it again', async () => {
+  const refresh = await acquireWarmLock({ repositoryRoot: REPO, mode: 'refresh' });
+  const claim = (): Record<string, unknown> =>
+    JSON.parse(readFileSync(join(warmLockPath(REPO), 'refresh', String(writerClaimTokens()[0])), 'utf-8'));
+  expect(claim().installerPid).toBe(null);
+  refresh.trackInstaller(IMPOSSIBLE_PID);
+  expect(claim().installerPid).toBe(IMPOSSIBLE_PID);
+  refresh.trackInstaller(null);
+  expect(claim().installerPid).toBe(null);
+  refresh.release();
+});
+
+test('a reap the filesystem refuses is reported instead of leaving the lock unclaimable', async () => {
+  writeWriterClaim('dead', { pid: IMPOSSIBLE_PID, installerPid: null, startedAt: null });
+  const writer = join(warmLockPath(REPO), 'refresh');
+  chmodSync(writer, 0o500);
+  try {
+    const error = await acquireWarmLock({
+      repositoryRoot: REPO,
+      mode: 'refresh',
+      sleep: async () => {
+        throw new Error('waited instead of reporting the reap it could not do');
+      },
+    }).catch((thrown: NodeJS.ErrnoException) => thrown);
+    expect((error as NodeJS.ErrnoException).code).toBe('EACCES');
+  } finally {
+    chmodSync(writer, 0o700);
+  }
 });

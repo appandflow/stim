@@ -1,12 +1,22 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Command } from 'commander';
 import { registerWarm } from '../commands/worktree.ts';
-import { acquireWarmLock, warmLocksDir } from '../engine/warm-lock.ts';
+import { acquireWarmLock, warmLockPath, warmLocksDir } from '../engine/warm-lock.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import {
+  type DepsInputs,
   type MainCheckoutState,
   checkoutPlan,
   defaultBranchNote,
@@ -15,7 +25,7 @@ import {
   mainCheckoutRefusal,
   podsPlan,
 } from '../worktree-refresh.ts';
-import { makeExitingChild } from './_factories.ts';
+import { IMPOSSIBLE_PID, makeChildProcess, makeExitingChild } from './_factories.ts';
 
 let base: string;
 let root: string;
@@ -131,22 +141,29 @@ test('the refresh decisions read off the state without touching git', () => {
     'STIM_MAIN_DIVERGED',
   );
 
-  expect(depsPlan({ lockfile: null, lockfileChanged: false, installed: false, treeValid: null }).run).toBe(false);
-  expect(depsPlan({ lockfile: 'pnpm-lock.yaml', lockfileChanged: true, installed: true, treeValid: null })).toEqual({
+  const deps = (over: Partial<DepsInputs>): DepsInputs => ({
+    lockfile: 'pnpm-lock.yaml',
+    lockfileChanged: false,
+    installed: true,
+    treeValid: null,
+    lastInstall: null,
+    lockHash: null,
+    ...over,
+  });
+  expect(depsPlan(deps({ lockfile: null, installed: false })).run).toBe(false);
+  expect(depsPlan(deps({ lockfileChanged: true }))).toEqual({ run: true, reason: 'pnpm-lock.yaml changed' });
+  expect(depsPlan(deps({ installed: false }))).toEqual({ run: true, reason: 'no installed dependencies' });
+  expect(depsPlan(deps({ lockfile: 'package-lock.json', treeValid: false })).run).toBe(true);
+  expect(depsPlan(deps({}))).toEqual({ run: false, reason: 'pnpm-lock.yaml unchanged' });
+  expect(depsPlan(deps({ lastInstall: { hash: 'a', completed: false }, lockHash: 'a' }))).toEqual({
     run: true,
-    reason: 'pnpm-lock.yaml changed',
+    reason: 'the last install of pnpm-lock.yaml did not finish',
   });
-  expect(depsPlan({ lockfile: 'pnpm-lock.yaml', lockfileChanged: false, installed: false, treeValid: null })).toEqual({
+  expect(depsPlan(deps({ lastInstall: { hash: 'a', completed: true }, lockHash: 'b' }))).toEqual({
     run: true,
-    reason: 'no installed dependencies',
+    reason: 'pnpm-lock.yaml does not match the last completed install',
   });
-  expect(
-    depsPlan({ lockfile: 'package-lock.json', lockfileChanged: false, installed: true, treeValid: false }).run,
-  ).toBe(true);
-  expect(depsPlan({ lockfile: 'pnpm-lock.yaml', lockfileChanged: false, installed: true, treeValid: null })).toEqual({
-    run: false,
-    reason: 'pnpm-lock.yaml unchanged',
-  });
+  expect(depsPlan(deps({ lastInstall: { hash: 'a', completed: true }, lockHash: 'a' })).run).toBe(false);
 
   const fresh = { stale: false } as const;
   expect(podsPlan({ hasIos: false, hasPodfile: false, podfileLockChanged: true, stale: fresh })).toEqual({
@@ -399,4 +416,154 @@ test('warms from two apps of one monorepo share a single lock', async () => {
   process.exitCode = 0;
   await runWarm(join(target, 'apps', 'b'), '--refresh');
   expect(readdirSync(warmLocksDir())).toHaveLength(1);
+});
+
+function claimedInstallerPid(): number | null | undefined {
+  const writer = join(warmLockPath(root), 'refresh');
+  if (!existsSync(writer)) return undefined;
+  const name = readdirSync(writer).find((entry) => entry.endsWith('.json'));
+  if (!name) return undefined;
+  return JSON.parse(readFileSync(join(writer, name), 'utf-8')).installerPid;
+}
+
+test('--refresh records the installer it spawned on the lock, so a crash cannot free the lock under it', async () => {
+  write(root, 'pnpm-lock.yaml', 'lock v1\n');
+  commit(root, 'lockfile');
+  git(root, 'push', '-q', 'origin', 'main');
+  mkdirSync(join(root, 'node_modules'), { recursive: true });
+  fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
+
+  const real = getExecutor();
+  let duringInstall: number | null | undefined;
+  setExecutor({
+    ...real,
+    spawn() {
+      const child = makeChildProcess();
+      setImmediate(() => {
+        duringInstall = claimedInstallerPid();
+        child.emit('exit', 0, null);
+      });
+      return child;
+    },
+  });
+  const result = await runWarm(target, '--refresh');
+  expect(result.code).toBe(0);
+  expect(duringInstall).toBe(IMPOSSIBLE_PID);
+  expect(claimedInstallerPid()).toBe(undefined);
+});
+
+test('a retry after a failed install runs it again instead of copying a half-installed node_modules', async () => {
+  write(root, 'pnpm-lock.yaml', 'lock v1\n');
+  commit(root, 'lockfile');
+  git(root, 'push', '-q', 'origin', 'main');
+  mkdirSync(join(root, 'node_modules'), { recursive: true });
+  fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
+  write(root, '.env', 'main env');
+
+  const real = getExecutor();
+  setExecutor({ ...real, spawn: () => makeExitingChild(1, 'ERR_PNPM_OUTDATED_LOCKFILE\n') });
+  const failed = await runWarm(target, '--refresh');
+  expect(failed.code).toBe(1);
+  expect(failed.stderr).toContain('failed: STIM_DEPS_FAILED');
+
+  process.exitCode = 0;
+  const spawned: string[] = [];
+  setExecutor({
+    ...real,
+    spawn(cmd: string, args: string[]) {
+      spawned.push([cmd, ...args].join(' '));
+      return makeExitingChild(0);
+    },
+  });
+  const retried = await runWarm(target, '--refresh');
+  expect(retried.code).toBe(0);
+  expect(retried.stderr).toContain('checkout    main up to date with origin/main');
+  expect(retried.stderr).toMatch(/deps {8}the last install of pnpm-lock\.yaml did not finish -> pnpm install/);
+  expect(spawned).toEqual(['pnpm install']);
+  expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
+
+  process.exitCode = 0;
+  spawned.length = 0;
+  const settled = await runWarm(target, '--refresh');
+  expect(settled.code).toBe(0);
+  expect(settled.stderr).toContain('deps        pnpm-lock.yaml unchanged -> skipped');
+  expect(spawned).toEqual([]);
+});
+
+test('a plain warm copies without the lock when STIM_HOME cannot be written, and --refresh still refuses', async () => {
+  write(root, '.env', 'main env');
+  const home = String(process.env.STIM_HOME);
+  mkdirSync(home, { recursive: true });
+  chmodSync(home, 0o500);
+  try {
+    const plain = await runWarm(target);
+    expect(plain.code).toBe(0);
+    expect(plain.stdout).toEqual([]);
+    expect(plain.stderr).toMatch(/lock {8}unavailable \(.*\); copying without it/);
+    expect(plain.stderr).toMatch(/carry {7}complete: 1 ignored entries copied/);
+    expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
+
+    process.exitCode = 0;
+    rmSync(join(target, '.env'));
+    const refresh = await runWarm(target, '--refresh');
+    expect(refresh.code).toBe(1);
+    expect(refresh.stderr).toMatch(/Could not warm this worktree/);
+    expect(existsSync(join(target, '.env'))).toBe(false);
+  } finally {
+    chmodSync(home, 0o700);
+  }
+});
+
+test('a copy that waited for the lock reads the exclusions the refresh left behind, not the ones it started with', async () => {
+  write(root, '.env.production', 'secret');
+  const held = await acquireWarmLock({ repositoryRoot: root, mode: 'refresh' });
+  const warm = runWarm(target);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  writeFileSync(join(root, '.stim.json'), '{"worktree":{"exclude":[".env.production"]}}');
+  held.release();
+  const result = await warm;
+  expect(result.code).toBe(0);
+  expect(existsSync(join(target, '.env.production'))).toBe(false);
+  expect(result.stderr).toMatch(/carry {7}complete: 0 ignored entries copied/);
+});
+
+test('--refresh installs at the repository root when upstream removed the app it was invoked from', async () => {
+  write(root, 'pnpm-lock.yaml', 'lock v1\n');
+  write(root, 'apps/mobile/package.json', '{"name":"mobile"}\n');
+  commit(root, 'monorepo');
+  git(root, 'push', '-q', 'origin', 'main');
+  git(target, 'merge', '-q', '--ff-only', 'main');
+  mkdirSync(join(root, 'node_modules'), { recursive: true });
+  rmSync(join(root, 'apps'), { recursive: true, force: true });
+  fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'drop the mobile app');
+
+  const real = getExecutor();
+  const spawned: { cmd: string; cwd: unknown }[] = [];
+  setExecutor({
+    ...real,
+    spawn(cmd: string, _args: string[], opts: { cwd?: unknown }) {
+      spawned.push({ cmd, cwd: opts?.cwd });
+      return makeExitingChild(0);
+    },
+  });
+  const result = await runWarm(join(target, 'apps', 'mobile'), '--refresh');
+  expect(result.code).toBe(0);
+  expect(existsSync(join(root, 'apps', 'mobile'))).toBe(false);
+  expect(result.stderr).toMatch(/deps {8}pnpm-lock\.yaml changed -> pnpm install/);
+  expect(spawned).toEqual([{ cmd: 'pnpm', cwd: root }]);
+});
+
+test('--refresh refuses a main checkout whose only change is staged, with the working file back at HEAD', async () => {
+  write(root, 'package.json', '{"name":"staged"}\n');
+  git(root, 'add', 'package.json');
+  write(root, 'package.json', '{"name":"refresh-fixture"}\n');
+  expect(git(root, 'diff', '--name-only', 'HEAD')).toBe('');
+  const before = git(root, 'rev-parse', 'HEAD');
+
+  const result = await runWarm(target, '--refresh');
+  expect(result.code).toBe(1);
+  expect(result.stderr).toMatch(/uncommitted changes to tracked files/);
+  expect(result.stderr).toContain('package.json');
+  expect(result.stderr).toContain('failed: STIM_MAIN_DIRTY');
+  expect(git(root, 'rev-parse', 'HEAD')).toBe(before);
 });

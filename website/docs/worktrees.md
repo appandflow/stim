@@ -93,7 +93,10 @@ branch's dependencies; set `worktree.defaultBranch` in the repository-root
 One lock per repository protects this, with or without the flag: `--refresh`
 holds it exclusively, and every copy holds it shared, so no copy can read a
 `node_modules` a refresh is rewriting. Two plain warms still run at the same
-time, and a holder that dies frees the lock.
+time, and a holder that dies frees the lock. A plain warm that cannot take the
+lock at all -- an unwritable `STIM_HOME`, say -- says so in one line and copies
+without it, exactly as it did before the lock existed; `--refresh` refuses
+instead, because it needs the lock.
 
 ## Parallel environments
 
