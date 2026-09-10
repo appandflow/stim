@@ -1,4 +1,4 @@
-import { useEffect, useRef, type PointerEvent, type ReactNode } from 'react';
+import { useEffect, useRef, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import Link from '@docusaurus/Link';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 import Layout from '@theme/Layout';
@@ -8,6 +8,14 @@ import ThemedImage from '@theme/ThemedImage';
 import { StimInstallTabs } from '@site/src/components/StimTabs';
 import ThemeSwitch from '@site/src/components/ThemeSwitch';
 import styles from './index.module.css';
+
+function tapIllustration({ currentTarget }: MouseEvent<HTMLButtonElement>) {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  const illustration = currentTarget.querySelector('img')!;
+  for (const animation of illustration.getAnimations()) animation.cancel();
+  illustration.animate({ rotate: ['0deg', '-5deg', '2deg', '0deg'] }, { duration: 600, easing: 'ease-in-out' });
+}
 
 export default function Home(): ReactNode {
   const assetBase = useBaseUrl('/img/branding/');
@@ -22,7 +30,7 @@ export default function Home(): ReactNode {
     };
   }, []);
 
-  function setTilt(element: HTMLDivElement, x: number, y: number) {
+  function setTilt(element: HTMLButtonElement, x: number, y: number) {
     const motion = tilt.current;
     motion.targetX = x;
     motion.targetY = y;
@@ -47,7 +55,7 @@ export default function Home(): ReactNode {
     motion.frame = requestAnimationFrame(animate);
   }
 
-  function tiltIllustration({ currentTarget, clientX, clientY, pointerType }: PointerEvent<HTMLDivElement>) {
+  function tiltIllustration({ currentTarget, clientX, clientY, pointerType }: PointerEvent<HTMLButtonElement>) {
     if (
       pointerType !== 'mouse' ||
       !window.matchMedia('(prefers-reduced-motion: no-preference) and (hover: hover) and (pointer: fine)').matches
@@ -63,7 +71,7 @@ export default function Home(): ReactNode {
     );
   }
 
-  function resetTilt({ currentTarget }: PointerEvent<HTMLDivElement>) {
+  function resetTilt({ currentTarget }: PointerEvent<HTMLButtonElement>) {
     setTilt(currentTarget, 0, 0);
   }
 
@@ -136,9 +144,12 @@ export default function Home(): ReactNode {
             </div>
           </div>
         </header>
-        <div
+        <button
+          type="button"
+          aria-label="Tilt the Stim can"
           className={styles.heroIllustration}
           data-reveal=""
+          onClick={tapIllustration}
           onPointerMove={tiltIllustration}
           onPointerLeave={resetTilt}
           onPointerCancel={resetTilt}
@@ -150,7 +161,7 @@ export default function Home(): ReactNode {
             height="520"
             fetchPriority="high"
           />
-        </div>
+        </button>
         <section aria-label="Features" className={styles.features}>
           <article className={styles.feature}>
             <Heading as="h2">Fast builds across worktrees</Heading>

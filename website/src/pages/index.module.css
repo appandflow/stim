@@ -213,9 +213,14 @@
 }
 
 .heroIllustration {
+  display: block;
+  width: 100%;
+  padding: 0;
   aspect-ratio: 1;
   overflow: hidden;
   border: 1px solid var(--home-border);
+  background: transparent;
+  cursor: pointer;
 }
 
 .heroIllustration img {
