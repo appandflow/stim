@@ -115,6 +115,23 @@ function timestamp(command, field) {
   return Number.isFinite(value) ? value : Number.POSITIVE_INFINITY;
 }
 
+function confirmedAndroidLaunchLog(command, previous) {
+  const read = shellCommand(command.command).match(/^tail\s+-(?:n\s+)?\d+\s+([\w/.-]+)\s*$/);
+  if (!read || !successful(command)) return false;
+  const output = String(command.output ?? '');
+  if (!/\bBUILD SUCCESSFUL\b/.test(output) || !/Opening [^\n]+ on [^\n]+/.test(output)) return false;
+  return previous.some((launch) => {
+    if (timestamp(launch, 'endedAt') > timestamp(command, 'startedAt')) return false;
+    let value = shellCommand(launch.command);
+    const directory = value.match(/^([A-Za-z_]\w*)=([\w/.-]+)\ncd "\$\1" && /);
+    if (directory) value = value.slice(directory[0].length);
+    const pipeline = value.match(
+      /^set -o pipefail && (npx expo run:android [\w\s:/.-]+) 2>&1 \| tee ([\w/.-]+); echo "[A-Z_]+=\$\?"$/,
+    );
+    return pipeline?.[2] === read[1] && launchCommand(pipeline[1], 'control', 'android');
+  });
+}
+
 function orderedCommands(commands) {
   return commands
     .map((command, originalIndex) => ({ ...command, originalIndex }))
@@ -346,7 +363,11 @@ export function launchCrashDiagnosis(
 ) {
   const ordered = orderedCommands(commands);
   const sourceMarkers = ['app/_layout.tsx', 'RootLayout'];
-  const initialLaunchIndex = ordered.findIndex((command) => successfulLaunch(command, arm, platform));
+  const initialLaunchIndex = ordered.findIndex(
+    (command, index) =>
+      successfulLaunch(command, arm, platform) ||
+      (arm === 'control' && platform === 'android' && confirmedAndroidLaunchLog(command, ordered.slice(0, index))),
+  );
   if (initialLaunchIndex === -1) {
     return { valid: false, reason: 'launch-crash-initial-launch-evidence-missing' };
   }
@@ -354,7 +375,30 @@ export function launchCrashDiagnosis(
     (command, index) =>
       index > initialLaunchIndex &&
       successful(command) &&
-      errorCaptureCommand(completedStepCommand(command, arm), arm, platform) &&
+      (errorCaptureCommand(completedStepCommand(command, arm), arm, platform) ||
+        ordered.slice(initialLaunchIndex + 1, index).some((capture) => {
+          if (
+            !successful(capture) ||
+            timestamp(capture, 'endedAt') > timestamp(command, 'startedAt') ||
+            !errorCaptureCommand(completedStepCommand(capture, arm), arm, platform)
+          )
+            return false;
+          const path = String(capture.output ?? '').match(
+            /^<persisted-output>\s*\nOutput too large[^\n]*Full output saved to: (\/[^\s'"`$;&|<>]+)\s*$/m,
+          )?.[1];
+          if (!path) return false;
+          const read = shellCommand(command.command);
+          const segments = shellCommandSegments(read);
+          return (
+            /^(?:rg|grep|cat|tail)\s/.test(read) &&
+            !/[`$;&<>\n]/.test(read) &&
+            segments.every((segment) => /^(?:rg|grep|cat|tail|head)\s/.test(segment)) &&
+            segments[0]
+              .split(/\s+/)
+              .at(-1)
+              .replace(/^['"]|['"]$/g, '') === path
+          );
+        })) &&
       typeof command.output === 'string' &&
       command.output.includes(token),
   );
