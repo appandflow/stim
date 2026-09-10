@@ -1,3 +1,8 @@
+<img width="1200" height="630" alt="OG_Image" src="https://github.com/user-attachments/assets/c3642b3f-3974-448c-89f6-3d87cbfbc5b0" />
+
+### About
+App&Flow is a Montreal-based React Native engineering and consulting studio. We partner with the world’s top companies and are recommended by [Expo](https://expo.dev/consultants). Need a hand? Let’s build together. team@appandflow.com
+
 # Stim
 
 Fast, isolated local React Native environments for coding agents.
