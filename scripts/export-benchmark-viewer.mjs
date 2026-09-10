@@ -16,6 +16,7 @@ import { timeBenchmarkFromFirstActivity } from './benchmark-timing.mjs';
 import { stripVTControlCharacters } from 'node:util';
 import { launchCrashDiagnosis, launchCrashRecovery, podfileChecksumChanges } from './launch-crash-benchmark.mjs';
 import { reconstructCommandEvidence } from './agent-benchmark/command-evidence.mjs';
+import { appAliveErrorIsSuperseded } from './agent-benchmark/javascript-proof.mjs';
 import { ccacheLogEvidence } from './agent-benchmark/ccache-evidence.mjs';
 import { benchmarkCommandPresentation } from './benchmark-command-presentation.mjs';
 import {
@@ -796,7 +797,7 @@ function validateReadinessRecord(runDir, record, meta) {
   if (!existsSync(appAlivePath)) return reject('app-alive evidence missing');
   const appAlive = readJson(appAlivePath);
   if (
-    appAlive.error ||
+    (appAlive.error && !appAliveErrorIsSuperseded(appAlive, record.proof, record.screen)) ||
     appAlive.dispatchToAppAliveSeconds !== record.dispatchToAppAliveSeconds ||
     appAlive.simulator?.udid !== record.simulator?.udid
   ) {
