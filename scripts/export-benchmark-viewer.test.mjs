@@ -933,6 +933,7 @@ describe('benchmark viewer export', () => {
         const stamped = JSON.parse(line);
         const event = JSON.parse(stamped.line);
         event.item.command = event.item.command.replace(/^agent-device /, prefix);
+        event.item.command = `/bin/zsh -c ${JSON.stringify(event.item.command)}`;
         stamped.line = JSON.stringify(event);
         return stamped;
       });
