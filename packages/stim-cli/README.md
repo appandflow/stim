@@ -26,7 +26,7 @@ Node 20.19.4 or later on Node 20, or Node 22.12.0 or later, is required.
 
 Machine defaults in `~/.stim/config.json` can enable or disable native artifact
 caching, remote caches, Metro sharing, iOS compiler caching and prefix mapping,
-and Android ccache, PCH, Gradle caching, and target ABI narrowing. Optional
+and Android ccache/CAS, PCH, Gradle caching, and target ABI narrowing. Optional
 `.stim.json` runtime overrides apply per app, beside its `package.json`; monorepo
 apps do not inherit the repository-root file. Worktree-copy rules stay at the
 repository root. Run `stim guide settings` for the

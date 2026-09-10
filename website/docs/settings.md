@@ -123,16 +123,17 @@ control build optimizations on this machine without changing project files.
 
 ## Environment variables
 
-| Variable                       | Purpose                                                           |
-| ------------------------------ | ----------------------------------------------------------------- |
-| `STIM_HOME`                    | Runtime state root. Default: `~/.stim`                            |
-| `STIM_BUILD_CACHE`             | Native artifact cache root                                        |
-| `STIM_METRO_CACHE`             | Metro transform cache root                                        |
-| `STIM_MAX_BUILDS`              | Maximum concurrent native builds                                  |
-| `STIM_MAX_DEVICES`             | Maximum booted owned devices                                      |
-| `STIM_POOL_ANDROID_PARKED_MAX` | Maximum parked Android emulators; 0 disables parking and adoption |
-| `STIM_POOL_IOS_PARKED_MAX`     | Maximum parked simulators                                         |
-| `STIM_METRO_PUBLIC_URL`        | Public Metro URL for remote use                                   |
+| Variable                       | Purpose                                                                                                  |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `STIM_HOME`                    | Runtime state root. Default: `~/.stim`                                                                   |
+| `STIM_BUILD_CACHE`             | Native artifact cache root                                                                               |
+| `STIM_METRO_CACHE`             | Metro transform cache root                                                                               |
+| `STIM_MAX_BUILDS`              | Maximum concurrent native builds                                                                         |
+| `STIM_MAX_DEVICES`             | Maximum booted owned devices                                                                             |
+| `STIM_POOL_ANDROID_PARKED_MAX` | Maximum parked Android emulators; 0 disables parking and adoption                                        |
+| `STIM_POOL_IOS_PARKED_MAX`     | Maximum parked simulators                                                                                |
+| `STIM_METRO_PUBLIC_URL`        | Public Metro URL for remote use                                                                          |
+| `STIM_ANDROID_CAS_TOOLCHAIN`   | Absolute path to the [Android CAS toolchain manifest](./build-optimizations.md#experimental-android-cas) |
 
 Proxy remote devices also use `AGENT_DEVICE_DAEMON_BASE_URL` and
 `AGENT_DEVICE_DAEMON_AUTH_TOKEN`. Those variables belong to the optional proxy
