@@ -772,40 +772,6 @@ describe('buildAndroid', () => {
     expect(notes.some((line) => line.includes('PCH off by default'))).toBe(true);
   });
 
-  test('CAS injects its toolchain instead of the ccache PCH policy and clears inherited launchers', async () => {
-    makeAndroidProject();
-    const script = join(import.meta.dirname, '../../shim/android-cas.gradle');
-    const result = await buildAndroid(
-      { root },
-      {
-        env: { CMAKE_CXX_COMPILER_LAUNCHER: '/old/ccache' },
-        cas: {
-          id: 'apple-cas-test',
-          dir: join(root, 'cas'),
-          initScript: script,
-          env: { CMAKE_CXX_COMPILER_LAUNCHER: '', STIM_ANDROID_CAS_CONTEXT: join(root, 'context.json') },
-        },
-        spawnFn: (_cmd, args, opts) => {
-          expect(args).toEqual([
-            'assembleDebug',
-            '--build-cache',
-            '--init-script',
-            script,
-            '--init-script',
-            nativeScript,
-          ]);
-          expect((opts.env as NodeJS.ProcessEnv).CMAKE_CXX_COMPILER_LAUNCHER).toBe('');
-          expect((opts.env as NodeJS.ProcessEnv).STIM_ANDROID_CCACHE).toBe('off');
-          expect((opts.env as NodeJS.ProcessEnv).STIM_ANDROID_PCH).toBe('auto');
-          expect((opts.env as NodeJS.ProcessEnv).STIM_ANDROID_CAS_CONTEXT).toBe(join(root, 'context.json'));
-          return fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() });
-        },
-      },
-    );
-    expect(result.ok).toBe(true);
-    expect(result.ccache?.status).toBe('unavailable');
-  });
-
   test('without ccache the project compiler is preserved and no statistics are claimed', async () => {
     makeAndroidProject();
     const calls: { args: string[]; env: NodeJS.ProcessEnv }[] = [];

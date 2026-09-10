@@ -39,6 +39,8 @@ import {
   publicUrlSetting,
   remoteAndroidSetting,
   remoteDeviceSettingError,
+  retiredSettings,
+  retiredSettingsNote,
   settingShapeErrors,
   tunnelModeSetting,
   unknownSettingKeys,
@@ -127,7 +129,6 @@ import { selectFromPool } from '../engine/device-pool.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import { buildAndroid, productFlavorRefusal, readProductFlavors } from '../engine/gradle.ts';
 import { CCACHE_NOT_RUN, CCACHE_UNAVAILABLE, resolveCcache } from '../engine/ccache.ts';
-import { resolveAndroidCas } from '../engine/android-cas.ts';
 import { swapApkBundle, resolveKeystore } from '../engine/apk-swap.ts';
 import { captureAssetManifest } from '../engine/asset-manifest.ts';
 import {
@@ -729,14 +730,11 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   for (const key of unknownSettingKeys(settings)) {
     out(phaseLine('setting', chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`)));
   }
+  const retired = retiredSettings(settingsContext);
+  if (retired.length > 0) out(phaseLine('setting', chalk.dim(retiredSettingsNote(retired))));
   let optimizations: Optimizations;
-  let cas: ReturnType<typeof resolveAndroidCas>;
   try {
     optimizations = resolveOptimizations(settings);
-    cas =
-      optimizations.android.compilerCache === 'cas'
-        ? resolveAndroidCas(root, { ...process.env, STIM_ANDROID_CAS_TOOLCHAIN: optimizations.android.casToolchain! })
-        : null;
   } catch (error) {
     return fail('STIM_BAD_ARG', `Could not configure Android build: ${(error as Error).message}`, SETTING_SHAPE_REMEDY);
   }
@@ -1052,7 +1050,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     device,
     variant,
     deviceAbi,
-    compiler: cas?.id,
     buildProfile,
     targetAbiOnly: optimizations.android.targetAbiOnly,
   });
@@ -1155,7 +1152,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
     async function resolveRemoteArtifact(): Promise<void> {
       // Expo buildCacheProvider run options cannot key Android ABIs, so targeted APKs are unsafe in this tier.
-      if (buildAbi || cas || buildProfile || !cachePolicy.remote) return;
+      if (buildAbi || buildProfile || !cachePolicy.remote) return;
 
       if (!apkPath) {
         const loaded: LoadProjectProviderResult = await loadProvider(root, { isExpo });
@@ -1423,7 +1420,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
               {
                 estimateMs: estimates().coldBuildMs,
                 ccache: optimizations.android.compilerCache === 'ccache' ? ccacheFor({ root, onNote: out }) : null,
-                cas,
                 buildCache: optimizations.android.gradleBuildCache,
                 pch: optimizations.android.pch,
                 compilerCacheDisabled: optimizations.android.compilerCache === 'none',

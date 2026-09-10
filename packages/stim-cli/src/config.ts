@@ -12,7 +12,7 @@ export function getConfigDir(): string {
   return process.env.STIM_HOME || join(homedir(), '.stim');
 }
 
-function getConfigPath() {
+export function getConfigPath(): string {
   return join(getConfigDir(), 'config.json');
 }
 

@@ -572,7 +572,7 @@ describe('the Metro store injected into an Expo child', () => {
             optimizations: {
               metroSharedCache: false,
               ...(layer === 'native-invalid'
-                ? { android: { compilerCache: 'cas' }, ios: { compilationCache: 'false' } }
+                ? { android: { compilerCache: 'sccache' }, ios: { compilationCache: 'false' } }
                 : {}),
             },
           }),

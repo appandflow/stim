@@ -350,16 +350,9 @@ The example shows the defaults. Full setting names and behavior:
     controls Clang source/DerivedData prefix mapping. false clears Stim's
     mappings. The existing Xcode version and project-ccache guards still apply.
   optimizations.android.compilerCache
-    auto uses a CAS manifest if supplied, otherwise the normal ccache setup.
-    ccache explicitly selects that setup; none stops Stim injecting it and
-    disables inherited ccache. Project-defined compiler integrations can still
-    override CMake settings. cas requires the manifest below.
-  optimizations.android.casToolchain
-    absolute path to the experimental Apple Clang toolchain JSON manifest.
-    STIM_ANDROID_CAS_TOOLCHAIN overrides this path. An explicit ccache or none
-    selection overrides automatic CAS selection even with that environment
-    variable set. For prerequisites, see:
-    https://stim.appandflow.com/docs/android-cas
+    auto and ccache both select the normal ccache setup; none stops Stim
+    injecting it and disables inherited ccache. Project-defined compiler
+    integrations can still override CMake settings.
   optimizations.android.pch
     auto keeps library/project policy, with PCH off by default when Stim supplies
     ccache. on/off overrides Gradle CMAKE_DISABLE_PRECOMPILE_HEADERS arguments;
@@ -371,11 +364,11 @@ The example shows the defaults. Full setting names and behavior:
     false stops narrowing Debug builds to the device ABI. Release is always
     universal; project ABI filters still apply.
 
-Android CAS, explicit PCH modes, and changed iOS compiler options use separate
-native artifact keys. Android ccache and none share an artifact key when their
+Explicit PCH modes and changed iOS compiler options use separate native
+artifact keys. Android ccache and none share an artifact key when their
 PCH mode matches; disable artifact caching too to force native compilation. Legacy Expo providers
-cannot key these compiler profiles, so Stim skips that tier for custom profiles
-and Android CAS. Providers implementing the Stim key contract remain usable.
+cannot key these compiler profiles, so Stim skips that tier for custom profiles.
+Providers implementing the Stim key contract remain usable.
 Android compiler/PCH profiles also get separate CMake staging directories under
 <module>/.cxx/stim-<profile>, or under the project's custom staging root. Switching
 backends in Stim selects the matching directory without deleting previous builds.

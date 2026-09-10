@@ -30,7 +30,7 @@ function allBodies(): string[] {
   return bodies;
 }
 
-const NOT_A_REFUSAL_CODE = new Set(['STIM_HOME', 'STIM_ANDROID_CAS_TOOLCHAIN']);
+const NOT_A_REFUSAL_CODE = new Set(['STIM_HOME']);
 
 function scrapedCodes(source: string): Set<string> {
   return new Set(
@@ -379,8 +379,18 @@ test('temporary storage guidance names the override and Git visibility boundary'
   expect(renderSection('lifecycle', 'options')).toContain('STIM_TMPDIR');
 });
 
-test('build guidance names the experimental Android compiler opt-in', () => {
-  expect(renderSection('lifecycle', 'builds')).toContain('STIM_ANDROID_CAS_TOOLCHAIN');
+test('no topic still describes the retired Android CAS backend', () => {
+  for (const body of allBodies()) {
+    for (const retired of [
+      /casToolchain/,
+      /STIM_ANDROID_CAS_TOOLCHAIN/,
+      /android-cas/,
+      /Android CAS/,
+      /compilerCache[^\n]{0,12}cas/,
+    ]) {
+      expect(body).not.toMatch(retired);
+    }
+  }
 });
 
 test('the settings guide documents every configurable optimization', () => {
