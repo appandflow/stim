@@ -697,7 +697,7 @@ describe('startBareServer and the shared store', () => {
             optimizations: {
               metroSharedCache: false,
               ...(layer === 'native-invalid'
-                ? { android: { compilerCache: 'cas' }, ios: { compilationCache: 'false' } }
+                ? { android: { compilerCache: 'sccache' }, ios: { compilationCache: 'false' } }
                 : {}),
             },
           }),

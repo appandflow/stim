@@ -19,7 +19,7 @@ Stim shares four types of work across projects and git worktrees:
 | Metro transform cache    | Transforming the same JavaScript modules in each worktree |
 
 See [build optimizations](./build-optimizations.md) for switches, defaults, and
-tradeoffs for each layer, including Android ccache, PCH, and experimental CAS.
+tradeoffs for each layer, including Android ccache and PCH.
 
 ## Native artifact cache
 

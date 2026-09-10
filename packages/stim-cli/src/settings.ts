@@ -1,9 +1,12 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'fs';
 import { isAbsolute, join, relative, resolve, sep } from 'path';
 import type { CacheProviderConfig } from '@stim-cli/cache';
-import { getProjectSettings, getRepoSettings, loadConfig } from './config.ts';
+import { getConfigPath, getProjectSettings, getRepoSettings, loadConfig } from './config.ts';
 import {
   OPTIMIZATION_SHAPES,
+  RETIRED_ANDROID_COMPILER_CACHE,
+  RETIRED_ANDROID_COMPILER_CACHE_SETTING,
+  RETIRED_ANDROID_TOOLCHAIN_SETTING,
   resolveOptimizations,
   resolveMetroSharedCache,
   type Optimizations,
@@ -436,6 +439,7 @@ export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
   const unknown: string[] = [];
   for (const [key, value] of Object.entries(settings)) {
     const path = prefix ? `${prefix}.${key}` : key;
+    if (path === RETIRED_ANDROID_TOOLCHAIN_SETTING) continue;
     if (KNOWN_SETTINGS.has(path) && ![...KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`))) continue;
     if (isPlainObject(value) && [...KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`))) {
       unknown.push(...unknownSettingKeys(value, path));
@@ -458,22 +462,82 @@ export function readCommittedSettings(directory?: string | null): SettingsObject
   }
 }
 
-export function resolveSettings({
-  projectPath,
-  gitCommonDir,
-  repoRoot,
-}: {
+export interface SettingsContext {
   projectPath?: string | null;
   gitCommonDir?: string | null;
   repoRoot?: string | null;
-}): SettingsObject {
+}
+
+interface SettingsLayer {
+  settings: SettingsObject | null;
+  file: string;
+}
+
+function settingsLayers({ projectPath, gitCommonDir, repoRoot }: SettingsContext): SettingsLayer[] {
   const machine = loadConfig();
-  return mergeSettingsLayers([
-    projectPath ? getProjectSettings(projectPath) : null,
-    gitCommonDir ? getRepoSettings(gitCommonDir) : null,
-    readCommittedSettings(projectPath ?? repoRoot),
-    machine?.optimizations === undefined ? null : { optimizations: machine.optimizations },
-  ]);
+  const committedDir = projectPath ?? repoRoot;
+  return [
+    { settings: projectPath ? getProjectSettings(projectPath) : null, file: getConfigPath() },
+    { settings: gitCommonDir ? getRepoSettings(gitCommonDir) : null, file: getConfigPath() },
+    {
+      settings: readCommittedSettings(committedDir),
+      file: committedDir ? join(committedDir, '.stim.json') : getConfigPath(),
+    },
+    {
+      settings: machine?.optimizations === undefined ? null : { optimizations: machine.optimizations },
+      file: getConfigPath(),
+    },
+  ];
+}
+
+export function resolveSettings(context: SettingsContext): SettingsObject {
+  return mergeSettingsLayers(settingsLayers(context).map((layer) => layer.settings));
+}
+
+export interface RetiredSetting {
+  key: string;
+  file: string;
+}
+
+function retiredKeysIn(settings: unknown): string[] {
+  const keys: string[] = [];
+  if (settingValueAt(settings, RETIRED_ANDROID_COMPILER_CACHE_SETTING) === RETIRED_ANDROID_COMPILER_CACHE) {
+    keys.push(RETIRED_ANDROID_COMPILER_CACHE_SETTING);
+  }
+  if (settingValueAt(settings, RETIRED_ANDROID_TOOLCHAIN_SETTING) !== undefined) {
+    keys.push(RETIRED_ANDROID_TOOLCHAIN_SETTING);
+  }
+  return keys;
+}
+
+export function retiredSettings(context: SettingsContext): RetiredSetting[] {
+  const layers = settingsLayers(context);
+  const merged = mergeSettingsLayers(layers.map((layer) => layer.settings));
+  return retiredKeysIn(merged).map((key) => ({
+    key,
+    file: layers.find((layer) => retiredKeysIn(layer.settings).includes(key))!.file,
+  }));
+}
+
+function retiredKeysFrom(retired: RetiredSetting[], file: string): string[] {
+  return retired.filter((entry) => entry.file === file).map((entry) => entry.key);
+}
+
+function retiredFiles(retired: RetiredSetting[]): string[] {
+  return [...new Set(retired.map((entry) => entry.file))];
+}
+
+export function retiredSettingsNote(retired: RetiredSetting[]): string {
+  const located = retiredFiles(retired)
+    .map((file) => `${retiredKeysFrom(retired, file).join(', ')} in ${file}`)
+    .join('; ');
+  return `Ignoring retired ${located}. Android builds use ccache.`;
+}
+
+export function retiredSettingsRemedy(retired: RetiredSetting[]): string {
+  return retiredFiles(retired)
+    .map((file) => `Delete ${retiredKeysFrom(retired, file).join(' and ')} from ${file}.`)
+    .join(' ');
 }
 
 function settingsForProject(root: string): SettingsObject {

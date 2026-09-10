@@ -572,20 +572,9 @@ on/off applies with any compiler cache selection. A module with an explicit
 CMAKE_DISABLE_PRECOMPILE_HEADERS argument in its default config, build types,
 or product flavors keeps that choice; CMake target-level PCH overrides also
 take precedence. Direct Gradle builds do not receive Stim's init script.
-
-EXPERIMENTAL ANDROID CAS
-optimizations.android.compilerCache="cas" with android.casToolchain under the
-same optimizations object selects a private Apple Clang toolchain manifest
-on macOS. STIM_ANDROID_CAS_TOOLCHAIN also selects CAS in auto mode. It retains
-PCH and replaces the ccache setup for that invocation.
-Compiler results live under $STIM_HOME/android-cas/<toolchain-id>; APK cache
-keys include that ID. This is a development prototype requiring a compatible
-linker and NDK copy, not an automatically installed backend. See
-https://stim.appandflow.com/docs/android-cas for setup, evidence, and limits.
 Compiler/PCH modes have separate generated directories under each module's
 .cxx/stim-<profile> (or custom staging root). Switching modes in Stim selects
 the matching directory; direct Gradle builds keep their own configuration.
-Generated CAS directories still depend on Stim's environment and adapter paths.
 
 For older, unprofiled builds, the launcher persists in the project. AGP writes
 it into each

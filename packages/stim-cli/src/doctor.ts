@@ -33,6 +33,9 @@ import {
   remoteAndroidSetting,
   remoteIosSetting,
   resolveSettings,
+  retiredSettings,
+  retiredSettingsNote,
+  retiredSettingsRemedy,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
 } from './settings.ts';
@@ -701,14 +704,26 @@ export function runDoctor(
   }
 
   const settingsRepoRoot = repoRoot(projectRoot) ?? projectRoot;
-  const projectSettings = resolveSettings({
+  const settingsContext = {
     projectPath: projectRoot,
     gitCommonDir: gitCommonDir(projectRoot),
     repoRoot: settingsRepoRoot,
-  });
+  };
+  const projectSettings = resolveSettings(settingsContext);
   const settingShapeFindings = settingShapeErrors(projectSettings).map((error) =>
     finding('cost', 'A setting has the wrong type', error, SETTING_SHAPE_REMEDY),
   );
+  const retired = retiredSettings(settingsContext);
+  if (retired.length > 0) {
+    settingShapeFindings.push(
+      finding(
+        'note',
+        'A retired Android compiler cache setting is still configured',
+        retiredSettingsNote(retired),
+        retiredSettingsRemedy(retired),
+      ),
+    );
+  }
   let optimizations: Optimizations | null = null;
   try {
     optimizations = resolveOptimizations(projectSettings);

@@ -218,7 +218,7 @@ export function compilationCacheSettings({
   casPath,
   xcodeMajor,
   ccache = false,
-  optimizations = resolveOptimizations({}, {}).ios,
+  optimizations = resolveOptimizations({}).ios,
 }: {
   workspaceRoot: string;
   derivedDataPath: string;
@@ -257,7 +257,7 @@ function resolveCompilationCacheSettings({
   derivedDataPath,
   exec = null,
   casPath = sharedCompilationCache(),
-  optimizations = resolveOptimizations({}, {}).ios,
+  optimizations = resolveOptimizations({}).ios,
   onNote = (line: string) => console.error(line),
 }: {
   root: string;
@@ -573,7 +573,7 @@ export async function buildIos({
   derivedDataPath = null,
   extraArgs = [],
   compilationCache = undefined,
-  optimizations = resolveOptimizations({}, {}).ios,
+  optimizations = resolveOptimizations({}).ios,
   now = () => Date.now(),
   exec = null,
   heartbeatMs = HEARTBEAT_INTERVAL_MS,

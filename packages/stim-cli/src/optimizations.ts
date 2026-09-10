@@ -1,4 +1,3 @@
-import { isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { SettingsObject } from './types.ts';
 
@@ -14,11 +13,14 @@ export const OPTIMIZATION_SHAPES = {
   'optimizations.ios.prefixMapping': 'boolean',
   'optimizations.android': 'object',
   'optimizations.android.compilerCache': 'string',
-  'optimizations.android.casToolchain': 'path',
   'optimizations.android.pch': 'string',
   'optimizations.android.gradleBuildCache': 'boolean',
   'optimizations.android.targetAbiOnly': 'boolean',
 } as const;
+
+export const RETIRED_ANDROID_COMPILER_CACHE = 'cas';
+export const RETIRED_ANDROID_TOOLCHAIN_SETTING = 'optimizations.android.casToolchain';
+export const RETIRED_ANDROID_COMPILER_CACHE_SETTING = 'optimizations.android.compilerCache';
 
 export interface Optimizations {
   buildCache: boolean;
@@ -27,8 +29,7 @@ export interface Optimizations {
   metroSharedCache: boolean;
   ios: { compilationCache: boolean; swiftCompilationCache: boolean; prefixMapping: boolean };
   android: {
-    compilerCache: 'ccache' | 'cas' | 'none';
-    casToolchain: string | null;
+    compilerCache: 'ccache' | 'none';
     pch: 'auto' | 'on' | 'off';
     gradleBuildCache: boolean;
     targetAbiOnly: boolean;
@@ -45,10 +46,7 @@ export function optimizationBuildProfile(platform: 'ios' | 'android', options: O
   return `opt-${createHash('sha256').update(JSON.stringify(selected)).digest('hex').slice(0, 16)}`;
 }
 
-export function resolveOptimizations(
-  settings: SettingsObject = {},
-  env: NodeJS.ProcessEnv = process.env,
-): Optimizations {
+export function resolveOptimizations(settings: SettingsObject = {}): Optimizations {
   function choice<T extends string>(path: string, choices: readonly T[], fallback: T): T {
     const raw = optimizationValue(settings, path);
     if (raw === undefined) return fallback;
@@ -57,17 +55,11 @@ export function resolveOptimizations(
     }
     return raw as T;
   }
-  const compiler = choice('android.compilerCache', ['auto', 'ccache', 'cas', 'none'], 'auto');
-  const manifest = env.STIM_ANDROID_CAS_TOOLCHAIN || optimizationValue(settings, 'android.casToolchain');
-  if (manifest !== undefined && (typeof manifest !== 'string' || !isAbsolute(manifest) || /[\r\n\0]/.test(manifest))) {
-    throw new Error('Invalid Android CAS toolchain. Expected an absolute path to the toolchain JSON manifest.');
-  }
-  const compilerCache = compiler === 'auto' ? (manifest ? 'cas' : 'ccache') : compiler;
-  if (compilerCache === 'cas' && !manifest) {
-    throw new Error(
-      'optimizations.android.compilerCache=cas requires optimizations.android.casToolchain or STIM_ANDROID_CAS_TOOLCHAIN.',
-    );
-  }
+  const compiler =
+    optimizationValue(settings, 'android.compilerCache') === RETIRED_ANDROID_COMPILER_CACHE
+      ? 'auto'
+      : choice('android.compilerCache', ['auto', 'ccache', 'none'], 'auto');
+  const compilerCache = compiler === 'auto' ? 'ccache' : compiler;
   return {
     buildCache: optimizationBoolean(settings, 'buildCache'),
     remoteBuildCache: optimizationBoolean(settings, 'remoteBuildCache'),
@@ -80,7 +72,6 @@ export function resolveOptimizations(
     },
     android: {
       compilerCache,
-      casToolchain: (manifest as string | undefined) ?? null,
       pch: choice('android.pch', ['auto', 'on', 'off'], 'auto'),
       gradleBuildCache: optimizationBoolean(settings, 'android.gradleBuildCache'),
       targetAbiOnly: optimizationBoolean(settings, 'android.targetAbiOnly'),
