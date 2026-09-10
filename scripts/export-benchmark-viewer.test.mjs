@@ -1216,6 +1216,17 @@ describe('benchmark viewer export', () => {
     writeFileSync(recordPath, JSON.stringify(record));
 
     expect(exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof')).runs).toHaveLength(1);
+    const sourceProofPath = join(proofDir, 'settings-source.tsx');
+    writeFileSync(sourceProofPath, 'Keep saved trail maps available offline');
+    record.proof = { ...record.proof, kind: 'source-edit-and-settings-screen', target: sourceProofPath };
+    record.evidenceSha256.proof = sha256(sourceProofPath);
+    writeFileSync(recordPath, JSON.stringify(record));
+    expect(exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof')).runs).toHaveLength(1);
+    writeFileSync(sourceProofPath, 'wrong text');
+    expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'))).toThrow(
+      'no valid benchmark runs found',
+    );
+    writeFileSync(sourceProofPath, 'Keep saved trail maps available offline');
     delete record.screen.recordingCopyCommandId;
     writeFileSync(recordPath, JSON.stringify(record));
     expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'))).toThrow(

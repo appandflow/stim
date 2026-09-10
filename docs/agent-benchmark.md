@@ -236,8 +236,10 @@ the same UDID recorded by the independent app watcher, all required commands
 completed in order after dispatch, the PNG has a valid signature and
 dimensions, its timestamps fit the run, and the copied file exists. It also
 requires an integrity-bound MP4 between the recorded start and stop commands.
-The JavaScript source and captured Metro bundle must contain the changed
-subtitle. iOS native must expose the exact run marker in the live window
+JavaScript runs retain an integrity-bound copy of the edited source and require
+the isolated Settings-screen wait to find the changed subtitle before capturing
+the screenshot and recording. No extra Metro bundle request is required; the
+agent may choose any available Metro port. iOS native must expose the exact run marker in the live window
 accessibility node; Android native must preserve the same marker from the
 installed APK application label.
 Missing proof makes the attempt invalid even when the app process is alive.

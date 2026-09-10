@@ -98,35 +98,6 @@ function alive(udid) {
   }
 }
 
-function captureJavascriptProof() {
-  const expected = 'Keep saved trail maps available offline';
-  for (let port = 8081; port <= 8090; port += 1) {
-    const target = join(dirname(outputPath), 'proof', `metro-${port}-at-app-alive.bundle`);
-    try {
-      execFileSync(
-        'curl',
-        [
-          '--fail',
-          '--silent',
-          '--show-error',
-          '--max-time',
-          '60',
-          '--output',
-          target,
-          `http://127.0.0.1:${port}/.expo/.virtual-metro-entry.bundle?platform=${platform}&dev=true&minify=false`,
-        ],
-        { timeout: 70_000 },
-      );
-      const contents = readFileSync(target);
-      if (contents.includes(Buffer.from(expected))) {
-        return { valid: true, kind: 'metro-bundle-string-at-app-alive', expected, target, port };
-      }
-    } catch {}
-    if (existsSync(target)) rmSync(target);
-  }
-  return { valid: false, reason: 'changed-metro-bundle-not-found-at-app-alive' };
-}
-
 function androidBuildTool(name) {
   const sdk = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;
   if (!sdk) return null;
@@ -197,12 +168,7 @@ while (Date.now() < deadline) {
         simulator: selection.candidate,
       };
       const proofKind = readinessProofKind(platform, variant);
-      const proof =
-        proofKind === 'javascript'
-          ? captureJavascriptProof()
-          : proofKind === 'android-native'
-            ? captureAndroidNativeProof(selection.candidate.udid)
-            : null;
+      const proof = proofKind === 'android-native' ? captureAndroidNativeProof(selection.candidate.udid) : null;
       if (proof && !proof.valid) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
         continue;

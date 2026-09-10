@@ -626,10 +626,12 @@ function readinessApplicationProofFailure({ runDir, record, meta, eventsPath, co
     if (
       !existsSync(applicationProofPath) ||
       record.evidenceSha256?.proof !== fileSha256(applicationProofPath) ||
-      !applicationProofPath.endsWith('.bundle') ||
+      !(record.proof.kind === 'source-edit-and-settings-screen'
+        ? basename(applicationProofPath) === 'settings-source.tsx' && record.proof.expected === record.screen.expected
+        : applicationProofPath.endsWith('.bundle')) ||
       !readFileSync(applicationProofPath).includes(record.proof.expected)
     ) {
-      return 'JavaScript bundle proof mismatch';
+      return 'JavaScript application proof mismatch';
     }
     return null;
   }
