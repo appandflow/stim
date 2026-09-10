@@ -51,7 +51,7 @@ const config: Config = {
     image: 'img/branding/social-card.png',
     colorMode: {
       defaultMode: 'light',
-      respectPrefersColorScheme: true,
+      respectPrefersColorScheme: false,
     },
     navbar: {
       logo: {
