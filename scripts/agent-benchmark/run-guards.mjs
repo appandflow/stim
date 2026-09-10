@@ -252,7 +252,7 @@ function commandSegmentsStartingWith(command, expected) {
 
 export function commandWithReportedStatus(command) {
   const source = topLevelShellCommand(command.command);
-  const report = /(?:;|\n)\s*echo "([A-Z_]+)=\$\?"\s*$/.exec(source);
+  const report = /(?:;|\n)\s*echo "([A-Za-z_][A-Za-z0-9_]*)=\$\?"\s*$/.exec(source);
   if (!report || shellCommandSegments(source).at(-1) !== `echo "${report[1]}=$?"`) return command;
   const body = source.slice(0, report.index).trim();
   const statuses = [...String(command.output ?? '').matchAll(new RegExp(`^${report[1]}=(\\d+)\\s*$`, 'gm'))];

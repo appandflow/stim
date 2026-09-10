@@ -49,6 +49,21 @@ describe('launch crash benchmark', () => {
         valid: false,
         reason: 'launch-crash-error-capture-missing',
       });
+      for (const label of ['EXIT', 'exit', 'ExitCode2']) {
+        const wrap = (entry) => ({
+          ...entry,
+          command: `${entry.command}; echo "${label}=$?"`,
+          output: `${entry.output}\n${label}=0\n`,
+        });
+        expect(launchCrashDiagnosis([wrap(launch), wrap(logs)], options)).toMatchObject({
+          valid: true,
+          commandId: 'launch',
+          observedAt: launch.endedAt,
+        });
+        expect(
+          launchCrashDiagnosis([{ ...wrap(launch), output: `${launch.output}\n${label}=1\n` }, wrap(logs)], options),
+        ).toMatchObject({ valid: false });
+      }
       expect(launchCrashDiagnosis([launch, { ...logs, exitCode: 1 }], options).valid).toBe(false);
       for (const output of [`${token} RootLayout`, `ERROR [Error: ${token}]`, 'ERROR unrelated\nRootLayout']) {
         expect(launchCrashDiagnosis([{ ...launch, output }, logs], options)).toMatchObject({
