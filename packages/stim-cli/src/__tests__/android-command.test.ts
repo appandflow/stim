@@ -2804,7 +2804,9 @@ describe('launch verification', () => {
     const text = h.stderr.join('\n');
     expect(text).toMatch(/UNVERIFIED/);
     expect(text).toMatch(/DEVELOPMENT SERVERS/);
-    expect(text).toMatch(/adb -s emulator-5584 shell monkey -p com\.example\.app 1/);
+    expect(text).toContain(
+      'adb -s emulator-5584 shell am force-stop com.example.app && adb -s emulator-5584 shell am start -n com.example.app/.MainActivity',
+    );
     expect(text).not.toMatch(/simctl/);
     expect(h.stdout.join('\n')).toMatch(/UNVERIFIED/);
     expect(h.stdout[0]).toContain(phaseLine('metro', 'state unverified on port 8082'));

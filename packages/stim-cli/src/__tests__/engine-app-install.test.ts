@@ -1102,18 +1102,36 @@ describe('unverifiedLaunchLines', () => {
     expect(text).toMatch(/xcrun simctl launch --console U1 com\.x/);
   });
 
-  test('Android recovery restarts the reported app before launching it again', () => {
+  test('Android recovery restarts the reported app through its resolved launcher activity', () => {
     const text = unverifiedLaunchLines({
       platform: 'android',
       metroPort: 8082,
       bundleId: 'com.x',
       serial: 'emulator-5584',
+      component: 'com.x/.MainActivity',
     }).join('\n');
     expect(text).not.toMatch(/simctl/);
     expect(text).toContain(
+      'adb -s emulator-5584 shell am force-stop com.x && adb -s emulator-5584 shell am start -n com.x/.MainActivity',
+    );
+    expect(text).not.toMatch(/monkey/);
+    expect(text).toMatch(/DEVELOPMENT SERVERS/);
+  });
+
+  test('a dev-client launch without a resolved activity restarts through the deep link, not monkey', () => {
+    const base = { platform: 'android', metroPort: 8082, bundleId: 'com.x', serial: 'emulator-5584' };
+    const url = devClientUrl('com.x', 8082);
+    const deepLink = unverifiedLaunchLines({ ...base, devClientUrl: url }).join('\n');
+    expect(deepLink).toContain(
+      `adb -s emulator-5584 shell am force-stop com.x && adb -s emulator-5584 shell am start -a android.intent.action.VIEW -d '${url}' --ez EXDevMenuDisableAutoLaunch true`,
+    );
+    expect(deepLink).not.toMatch(/monkey/);
+    const both = unverifiedLaunchLines({ ...base, devClientUrl: url, component: 'com.x/.MainActivity' }).join('\n');
+    expect(both).toContain('am force-stop com.x && adb -s emulator-5584 shell am start -n com.x/.MainActivity');
+    const noActivity = unverifiedLaunchLines(base).join('\n');
+    expect(noActivity).toContain(
       'adb -s emulator-5584 shell am force-stop com.x && adb -s emulator-5584 shell monkey -p com.x 1',
     );
-    expect(text).toMatch(/DEVELOPMENT SERVERS/);
   });
 
   test('every printed retry command carries disableOnboarding inside the project url', () => {
@@ -1194,7 +1212,7 @@ describe('unverifiedLaunchLines: the action comes first', () => {
       serial: 'emulator-5584',
     });
     const picker = lines.findIndex((l) => /DEVELOPMENT SERVERS/.test(l));
-    const relaunch = lines.findIndex((l) => /monkey -p com\.x/.test(l));
+    const relaunch = lines.findIndex((l) => /am force-stop com\.x/.test(l));
     expect(picker !== -1 && relaunch !== -1).toBeTruthy();
     expect(picker < relaunch).toBeTruthy();
     expect(!lines.some((l) => /Open in <app>/.test(l))).toBeTruthy();

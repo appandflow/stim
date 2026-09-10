@@ -78,6 +78,7 @@ interface VerifyAndroidRunArgs {
   isExpo: boolean;
   physical: boolean;
   scheme?: string | null;
+  component?: string | null;
   phase: (label: unknown, text: string) => void;
 }
 
@@ -98,6 +99,7 @@ async function verifyAndroidRun({
   isExpo,
   physical,
   scheme,
+  component = null,
   phase,
 }: VerifyAndroidRunArgs): Promise<{ state: boolean | string; warning?: string }> {
   const readNativeCrashes = () =>
@@ -270,6 +272,7 @@ async function verifyAndroidRun({
     waitedMs: verification?.waitedMs,
     bundleId: androidPackage,
     serial,
+    component,
     devClientUrl: scheme ? androidDevClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT, physical) : null,
     mode: isExpo ? MODE_EXPO : MODE_BARE,
   }))
@@ -645,6 +648,7 @@ export async function finishAndroidRun({
     isExpo,
     physical,
     scheme,
+    component: launched.component ?? null,
     phase,
   });
   if (launchState === LAUNCH_FATAL) {

@@ -1150,6 +1150,7 @@ export function unverifiedLaunchLines({
   lanOrigin = null,
   metroOrigin = null,
   localNetworkPending = false,
+  component = null,
 }: {
   platform: string;
   metroPort: number | string;
@@ -1165,6 +1166,7 @@ export function unverifiedLaunchLines({
   lanOrigin?: string | null;
   metroOrigin?: string | null;
   localNetworkPending?: boolean;
+  component?: string | null;
   // Explicit return type: isolatedDeclarations requires one at every module
   // boundary.
 }): string[] {
@@ -1307,9 +1309,12 @@ export function unverifiedLaunchLines({
     }
     push(picker);
     if (serial && bundleId) {
-      push(
-        `If the app is stuck, restart its process: adb -s ${serial} shell am force-stop ${bundleId} && adb -s ${serial} shell monkey -p ${bundleId} 1`,
-      );
+      const restart = component
+        ? `adb -s ${serial} shell am force-stop ${bundleId} && adb -s ${serial} shell am start -n ${component}`
+        : url
+          ? `adb -s ${serial} shell am force-stop ${bundleId} && adb -s ${serial} shell am start -a android.intent.action.VIEW -d '${url}' --ez ${ANDROID_DISABLE_AUTO_LAUNCH_EXTRA} true`
+          : `adb -s ${serial} shell am force-stop ${bundleId} && adb -s ${serial} shell monkey -p ${bundleId} 1`;
+      push(`If the app is stuck, restart its process: ${restart}`);
     }
   }
   lines.push(`Then check \`stim logs --source metro\`${mode ? ` (${mode})` : ''} for a bundle request.`);
