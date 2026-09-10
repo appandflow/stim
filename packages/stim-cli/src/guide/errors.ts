@@ -614,13 +614,16 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   process-probe remedy.`,
     },
     STIM_RELOAD_FAILED: {
-      summary: 'the deep link, broadcast, or Metro websocket reload failed; press Reload yourself',
+      summary: 'the reload failed; use Reload or the exact-app relaunch remedy',
       body: () => `STIM_RELOAD_FAILED
   The exact deep link, Android reload broadcast, or targeted Metro websocket
   failed. If bare iOS has not connected or Metro cannot identify one iOS peer,
   the remedy tells the agent to continue in its existing automation session on
-  this workspace's exact simulator and press the Reload control. Stim does not
-  take over automation sessions.`,
+  this workspace's exact simulator and press Reload if present. If it is not
+  present, the printed agent-device open command relaunches that app on that
+  simulator with this workspace's Metro port. Keep the existing --session flag;
+  relaunch loses in-memory state. Verify the expected UI afterward. Stim does
+  not broadcast to unidentified peers or take over automation sessions.`,
     },
     STIM_WORKTREE_REMOVAL_IN_PROGRESS: {
       summary: 'a managed remote start found worktree remove holding the lock; wait, then rerun',
