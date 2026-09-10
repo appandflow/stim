@@ -1,6 +1,6 @@
 # Stim documentation website
 
-The Docusaurus source for [appandflow.github.io/stim](https://appandflow.github.io/stim/).
+The Docusaurus source for [stim.appandflow.com](https://stim.appandflow.com/).
 
 The website is the primary human documentation. Package README files stay
 short and link here to avoid duplicate guidance.

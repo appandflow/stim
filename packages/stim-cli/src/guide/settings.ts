@@ -359,7 +359,7 @@ The example shows the defaults. Full setting names and behavior:
     STIM_ANDROID_CAS_TOOLCHAIN overrides this path. An explicit ccache or none
     selection overrides automatic CAS selection even with that environment
     variable set. For prerequisites, see:
-    https://appandflow.github.io/stim/docs/android-cas
+    https://stim.appandflow.com/docs/android-cas
   optimizations.android.pch
     auto keeps library/project policy, with PCH off by default when Stim supplies
     ccache. on/off overrides Gradle CMAKE_DISABLE_PRECOMPILE_HEADERS arguments;
