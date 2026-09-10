@@ -647,6 +647,14 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   embed machine paths -- ignoring a path any project might read turns a slow
   build into a wrong one.
 
+  A linked native library (a \`link:\` or \`file:\` dependency, or a workspace
+  symlink) brings its checkout's .git into a directory the fingerprint hashes
+  whole; Git rewrites that metadata on every commit, checkout, or worktree, so
+  workspaces rarely agree. \`stim doctor\` names the entries to ignore when the
+  native build does not read Git state: the .git path as the fingerprint sees
+  it and its /**/* form, which is what skips a .git directory's contents.
+  Ignore those entries only, never the package.
+
   \`.fingerprintignore\` at the project root (same syntax as .gitignore) is the
   answer. Put in it only what genuinely cannot change the native build: a
   generated report, a local env file, a lockfile whose checksums embed absolute
