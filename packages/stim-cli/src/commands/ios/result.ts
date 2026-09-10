@@ -62,6 +62,7 @@ export function iosFacts({
   runtime = null,
   fingerprint,
   configuration = null,
+  scheme = null,
   cacheKey,
   cacheHit,
   cacheSkipped = false,
@@ -83,6 +84,7 @@ export function iosFacts({
   runtime?: string | null;
   fingerprint?: string | null;
   configuration?: string | null;
+  scheme?: string | null;
   cacheKey?: string | null;
   cacheHit?: boolean | string;
   cacheSkipped?: boolean;
@@ -106,6 +108,7 @@ export function iosFacts({
     runtime: runtime ?? null,
     fingerprint,
     configuration: configuration ?? null,
+    ...(scheme ? { scheme } : {}),
     cacheKey,
     cacheHit: cacheLevel(cacheHit),
     cacheSkipped: Boolean(cacheSkipped),
@@ -170,6 +173,7 @@ export interface ReportIosResultArgs {
   json: boolean;
   release: boolean;
   configuration: string | null;
+  buildScheme?: string | null;
   metroCheck: boolean;
   metroPort: number | null;
   logsDir: string;
@@ -202,6 +206,7 @@ export function reportIosResult({
   json,
   release,
   configuration,
+  buildScheme = null,
   metroCheck,
   metroPort,
   logsDir,
@@ -253,6 +258,7 @@ export function reportIosResult({
     runtime: device?.runtime,
     fingerprint: storeHash,
     configuration,
+    scheme: buildScheme,
     cacheKey: storeKey,
     cacheHit,
     compilationCache,

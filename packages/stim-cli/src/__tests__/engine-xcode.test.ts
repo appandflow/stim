@@ -1,4 +1,5 @@
 import assert from 'node:assert';
+import { makeExecutor } from './_factories.ts';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -345,7 +346,7 @@ describe('listSchemes and resolveScheme', () => {
     expect(error.remedy).toMatch(/-list/);
   });
 
-  test('resolveScheme names ambiguous schemes and gives a naming remedy instead of claiming they are not shared', () => {
+  test('resolveScheme names ambiguous schemes and offers an explicit selector', () => {
     setExecutor({
       run: () => '',
       runQuiet: () => null,
@@ -356,7 +357,18 @@ describe('listSchemes and resolveScheme', () => {
     assert(error);
     expect(error.code).toBe('STIM_NO_SCHEME');
     expect(error.message).toMatch(/schemes: one, two/);
-    expect(error.remedy).toMatch(/workspace\/project name/);
+    expect(error.remedy).toContain('--scheme');
+  });
+
+  test('an explicit scheme wins over the automatic app and unknown names list choices', () => {
+    setExecutor(makeExecutor({ runFile: () => '{"project":{"name":"App","schemes":["App","App Staging"]}}' }));
+    expect(resolveScheme(project, { scheme: 'App Staging' })).toEqual({
+      scheme: 'App Staging',
+      schemes: ['App', 'App Staging'],
+    });
+    const { error } = resolveScheme(project, { scheme: 'app staging' });
+    expect(error?.code).toBe('STIM_NO_SCHEME');
+    expect(error?.message).toContain('App, App Staging');
   });
 
   test.each([
@@ -949,6 +961,49 @@ describe('buildIos with a mocked executor', () => {
     mkdirSync(join(dir, `${name}.app`), { recursive: true });
     return join(dir, `${name}.app`);
   }
+
+  test.each(['ambiguous', 'unavailable'])(
+    'explicit schemes do not guess a product when metadata is %s',
+    async (mode) => {
+      const child = fakeChild();
+      harness(tmp, { child });
+      const dd = join(tmp, 'dd');
+      makeProduct(dd, 'App');
+      makeProduct(dd, 'Other');
+      setExecutor(
+        makeExecutor({
+          runFile: (file, args) => {
+            if (file === 'xcodebuild' && args?.includes('-list')) return '{"project":{"name":"App","schemes":["App"]}}';
+            if (mode === 'unavailable') throw new Error('build settings unavailable');
+            return JSON.stringify(
+              ['App', 'Other'].map((name) => ({
+                buildSettings: {
+                  PRODUCT_TYPE: 'com.apple.product-type.application',
+                  PLATFORM_NAME: 'iphonesimulator',
+                  TARGET_BUILD_DIR: productsDir(dd),
+                  FULL_PRODUCT_NAME: `${name}.app`,
+                },
+              })),
+            );
+          },
+          spawn: () => child as unknown as ChildProcess,
+        }),
+      );
+      const promise = buildIos({
+        root: tmp,
+        scheme: 'App',
+        udid: 'u',
+        logWriter: recordingWriter(),
+        derivedDataPath: dd,
+        compilationCache: [],
+      });
+      child.emit('close', 0, null);
+      const result = asResult(await promise);
+      expect(result.failed).toBe(true);
+      expect(result.code).toBe('STIM_BUILD_FAILED');
+      expect(result.appPath).toBeUndefined();
+    },
+  );
 
   test('an injected set of settings lands on the argv, after the action', async () => {
     const child = fakeChild();
@@ -1647,6 +1702,31 @@ const LIVE = xcodebuildAvailable() ? false : 'xcodebuild is not available on thi
 const LIVE_DESTINATION = 'generic/platform=iOS Simulator';
 
 describe('buildIos against a real xcodebuild', { skip: LIVE as unknown as boolean }, () => {
+  test('an explicitly named scheme builds its actual product even when its name differs', async () => {
+    resetExecutor();
+    writeScratchProject(tmp, { workspace: true });
+    const dir = join(tmp, 'ios', 'Scratch.xcodeproj', 'xcshareddata', 'xcschemes');
+    writeFileSync(join(dir, 'Staging App.xcscheme'), SCRATCH_SCHEME);
+    const writer = createNdjsonWriter(join(workspaceLogsDir(tmp), 'explicit-scheme.ndjson'));
+    try {
+      const result = asResult(
+        await buildIos({
+          root: tmp,
+          scheme: 'Staging App',
+          destination: LIVE_DESTINATION,
+          logWriter: writer,
+          compilationCache: [],
+        }),
+      );
+      expect(result.failed).toBeUndefined();
+      expect(result.scheme).toBe('Staging App');
+      expect(result.appPath).toMatch(/scheme-[a-f0-9]{64}\/Build\/Products\/Debug-iphonesimulator\/Scratch\.app$/);
+      expect(existsSync(result.appPath)).toBe(true);
+      expect(result.bundleId).toBe('com.stimcli.scratch');
+    } finally {
+      writer.close();
+    }
+  }, 120_000);
   test('resolves a real workspace scheme and uses the app name after the workspace is renamed', () => {
     resetExecutor();
     writeScratchProject(tmp, { workspace: true });

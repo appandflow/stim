@@ -42,7 +42,13 @@ import {
 } from '../../engine/remote-cache.ts';
 import { readRunEstimates, recordRunStats } from '../../engine/stats.ts';
 import { swapJsBundle } from '../../engine/js-swap.ts';
-import { buildIos, readBundleExecutable, readBundleId } from '../../engine/xcode.ts';
+import {
+  buildIos,
+  discoverXcodeProject,
+  resolveScheme,
+  readBundleExecutable,
+  readBundleId,
+} from '../../engine/xcode.ts';
 import { isPidAlive, resolveProjectMetro } from '../../metro.ts';
 import { createNdjsonWriter } from '../../ndjson.ts';
 import { detectBundleId, detectIsExpo, findProjectRoot, projectShortcut } from '../../project.ts';
@@ -100,6 +106,8 @@ export interface IosDeps {
   podsAreStale: typeof podsAreStale;
   runPodInstall: typeof runPodInstall;
   buildIos: typeof buildIos;
+  discoverXcodeProject: typeof discoverXcodeProject;
+  resolveScheme: typeof resolveScheme;
   listIosDevices: typeof listIosDevices;
   hostLanCandidates: typeof hostLanCandidates;
   ensureLanReachable: typeof ensureLanReachable;
@@ -180,6 +188,8 @@ export const DEFAULT_DEPS: IosDeps = {
   podsAreStale,
   runPodInstall,
   buildIos,
+  discoverXcodeProject,
+  resolveScheme,
   listIosDevices,
   hostLanCandidates,
   ensureLanReachable,

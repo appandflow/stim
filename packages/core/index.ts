@@ -180,6 +180,7 @@ export interface BuildRunOptions {
   variant?: string;
   abi?: string;
   configuration?: string;
+  scheme?: string;
   buildConfiguration?: string;
   isSimulator?: boolean;
   device?: string | boolean | null;
@@ -216,7 +217,11 @@ export function buildCacheKey(platform: string, fingerprintHash: string, options
   const abi = platform === 'android' && typeof opts.abi === 'string' ? slug(opts.abi) : '';
   const compiler = typeof opts.compiler === 'string' ? slug(opts.compiler) : '';
   const profile = typeof opts.buildProfile === 'string' ? slug(opts.buildProfile) : '';
-  return `${fingerprintHash}-${buildVariant(platform, opts)}-${buildTarget(opts)}${abi ? `-${abi}` : ''}${compiler ? `-${compiler}` : ''}${profile ? `-${profile}` : ''}`;
+  const scheme =
+    platform === 'ios' && typeof opts.scheme === 'string' && opts.scheme
+      ? createHash('sha256').update(opts.scheme).digest('hex')
+      : '';
+  return `${fingerprintHash}-${buildVariant(platform, opts)}-${buildTarget(opts)}${abi ? `-${abi}` : ''}${compiler ? `-${compiler}` : ''}${profile ? `-${profile}` : ''}${scheme ? `-scheme-${scheme}` : ''}`;
 }
 
 export interface RegisterOptions {

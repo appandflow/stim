@@ -71,7 +71,7 @@ project is reused.
 ## `ios`
 
 ```text
-stim ios [--configuration <name>] [--device-type <name>] [--runtime <version>]
+stim ios [--scheme <name>] [--configuration <name>] [--device-type <name>] [--runtime <version>]
          [--device [udid]] [--wait <seconds> | --no-wait] [--remote <proxy|eas>]
          [--no-metro-check] [--no-build-cache] [--json]
 ```
@@ -81,6 +81,9 @@ app, opens it, and checks launch logs. The build always runs on the local
 machine, including remote-device workflows.
 
 - `--configuration <name>` selects an Xcode configuration. The default is Debug.
+- `--scheme <name>` selects an exact shared Xcode scheme when the automatic
+  app selection is not the one you need. Explicit schemes have separate build
+  caches and DerivedData. This is a build scheme, not the app's URL scheme.
 - `--device-type <name>` creates this workspace's owned simulator as that model,
   overriding `ios.deviceType` for one invocation. A model no installed runtime
   can create refuses with `STIM_BAD_ARG` and prints the ones they do offer.
