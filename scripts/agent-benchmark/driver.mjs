@@ -696,6 +696,16 @@ function prepare() {
     throw new Error('partial seed golden exists; inspect it before retrying');
   }
   const preparingHome = existsSync(finalHome) ? finalHome : seedHome;
+  const preparation = {
+    locale: benchmarkLocale,
+    fixtureCommit: git('rev-parse', 'HEAD'),
+    stimVersion: pins.STIM_VERSION,
+    stimIntegrity: pins.STIM_INTEGRITY,
+    stimCliSha256: sha256(stimCli),
+    agentDeviceVersion: pins.AGENT_DEVICE_VERSION,
+    agentDeviceSha256: pins.AGENT_DEVICE_SHA256,
+  };
+  const preparationPath = join(preparingHome, 'benchmark-preparation.json');
   if (!existsSync(finalHome)) {
     mkdirSync(seedHome, { recursive: true });
     writeFileSync(
@@ -711,6 +721,15 @@ function prepare() {
         2,
       )}\n`,
     );
+    writeFileSync(preparationPath, `${JSON.stringify(preparation, null, 2)}\n`);
+  } else {
+    let retainedPreparation = null;
+    try {
+      retainedPreparation = JSON.parse(readFileSync(preparationPath, 'utf8'));
+    } catch {}
+    if (!matchesGoldenPreparation(retainedPreparation, preparation)) {
+      throw new Error(`retained iOS golden provenance does not match current pins: ${finalHome}`);
+    }
   }
   const seedEnv = {
     ...benchmarkEnvironment(process.env),
