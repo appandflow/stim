@@ -271,13 +271,12 @@ export default function Home(): ReactNode {
           </section>
         </main>
         <footer className={styles.footer}>
-          <nav aria-label="Footer navigation">
-            <Link to="/docs/why">Why Stim</Link>
-            <Link to="/docs/changelog">Changelog</Link>
-            <a href="https://www.npmjs.com/package/stim">npm</a>
-          </nav>
           <p>
-            MIT License. Built by <a href="https://appandflow.com">AppAndFlow</a>.
+            Made by{' '}
+            <a href="https://appandflow.com" target="_blank" rel="noopener noreferrer">
+              App&amp;Flow
+            </a>{' '}
+            &middot; MIT License
           </p>
         </footer>
         <div className={styles.abstractIllustration} data-reveal="">
