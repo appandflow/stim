@@ -318,12 +318,13 @@ export async function runReload({
       const stoppedAfterMetro = processFailure(target.platform, target.record, d);
       if (stoppedAfterMetro) return { ok: false, error: stoppedAfterMetro };
       const snapshot = `agent-device snapshot -i --platform ios --udid ${target.record.deviceId}`;
+      const relaunch = `agent-device open ${target.record.appId} --platform ios --udid ${target.record.deviceId} --metro-port ${port} --relaunch`;
       return {
         ok: false,
         error: failure(
           'STIM_RELOAD_FAILED',
           reloaded.reason ?? `No React Native app is connected to Metro on port ${port}.`,
-          `Continue in your existing automation session for ${target.record.appId} on ${target.record.deviceId}. Run \`${snapshot}\`, then press the Reload control by the exact ref or label it reports. Do not open another session or rerun \`stim ios\`.`,
+          `Continue in your existing automation session for ${target.record.appId} on ${target.record.deviceId}. Run \`${snapshot}\`, then press Reload if present. Otherwise run \`${relaunch}\` in that same session; this restarts the app and loses in-memory state. Keep your existing --session flag on these commands. Verify the expected UI afterward. Do not create another session or rerun \`stim ios\`.`,
         ),
       };
     }

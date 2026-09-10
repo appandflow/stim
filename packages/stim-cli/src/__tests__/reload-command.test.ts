@@ -165,6 +165,13 @@ test("bare iOS leaves startup-overlay automation to the agent's existing session
       remedy: expect.stringContaining('agent-device snapshot -i --platform ios --udid U1'),
     },
   });
+  expect(result).toMatchObject({
+    error: {
+      remedy: expect.stringContaining(
+        'agent-device open com.example.ios --platform ios --udid U1 --metro-port 8082 --relaunch',
+      ),
+    },
+  });
 });
 
 test('reload turns owned-device inspection failures into actionable errors', async () => {
