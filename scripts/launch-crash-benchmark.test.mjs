@@ -11,6 +11,61 @@ import {
 } from './launch-crash-benchmark.mjs';
 
 describe('launch crash benchmark', () => {
+  it.each([
+    ['stim', 'ios', 'stim ios', 'stim logs --errors'],
+    ['stim', 'android', 'stim android', 'stim logs --errors'],
+    ['control', 'ios', 'npx expo run:ios', 'tail -40 /tmp/metro.log'],
+    ['control', 'android', 'npx expo run:android', 'adb -s emulator-5554 logcat -d'],
+  ])(
+    'times actionable initial launch output for %s/%s without waiving log capture',
+    (arm, platform, command, logCommand) => {
+      const token = launchCrashToken('initial-diagnosis');
+      const launch = {
+        id: 'launch',
+        command,
+        exitCode: 0,
+        startedAt: '2026-09-04T12:00:01Z',
+        endedAt: '2026-09-04T12:00:10Z',
+        output: `ERROR [Error: ${token}]\nError stack:\n  RootLayout (app/_layout.tsx:27:18)`,
+      };
+      const logs = {
+        id: 'logs',
+        command: logCommand,
+        exitCode: 0,
+        startedAt: '2026-09-04T12:00:11Z',
+        endedAt: '2026-09-04T12:00:15Z',
+        output: `${token}\nRootLayout (app/_layout.tsx:27:18)`,
+      };
+      const options = { dispatchAt: '2026-09-04T12:00:00Z', token, arm, platform };
+      expect(launchCrashDiagnosis([launch, logs], options)).toMatchObject({
+        valid: true,
+        commandId: 'launch',
+        errorCaptureCommandId: 'logs',
+        observedAt: launch.endedAt,
+        dispatchToDiagnosisSeconds: 10,
+        commandCount: 1,
+      });
+      expect(launchCrashDiagnosis([launch], options)).toEqual({
+        valid: false,
+        reason: 'launch-crash-error-capture-missing',
+      });
+      expect(launchCrashDiagnosis([launch, { ...logs, exitCode: 1 }], options).valid).toBe(false);
+      for (const output of [`${token} RootLayout`, `ERROR [Error: ${token}]`, 'ERROR unrelated\nRootLayout']) {
+        expect(launchCrashDiagnosis([{ ...launch, output }, logs], options)).toMatchObject({
+          commandId: 'logs',
+          dispatchToDiagnosisSeconds: 15,
+        });
+      }
+      expect(
+        launchCrashDiagnosis([{ ...launch, command: `echo 'ERROR ${token} RootLayout'; ${command}` }, logs], options)
+          .valid,
+      ).toBe(false);
+      expect(launchCrashDiagnosis([{ ...launch, endedAt: '2026-09-04T12:00:20Z' }, logs], options)).toMatchObject({
+        commandId: 'logs',
+        dispatchToDiagnosisSeconds: 15,
+      });
+    },
+  );
   it('requires explicit coordinator review for diagnostics falsely flagged as source inspection', () => {
     const diagnostic = {
       id: 'diagnostic',

@@ -358,6 +358,9 @@ commands. The injected error text is unique per run so the
 collector can prove that the reported stack and repair refer to this failure.
 The unique token and source location must appear in captured runtime errors;
 the earlier successful launch command does not have to print the token inline.
+When that launch response already contains the runtime error and root-layout
+context, its completion establishes diagnosis time rather than a later log
+query. The separate successful log capture remains required for validation.
 Before capture, normal guide, doctor, worktree warming, and narrowly scoped
 installed-dependency resolution are setup, not application-source inspection.
 
