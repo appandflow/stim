@@ -721,13 +721,14 @@ test('machine optimization defaults merge with committed, repository and project
   setProjectSetting('/proj', 'optimizations.ios.compilationCache', false);
   const options = resolveOptimizations(
     resolveSettings({ projectPath: '/proj', gitCommonDir: '/repo/.git', repoRoot: tmpHome }),
+    {},
   );
   expect(options.buildCache).toBe(false);
   expect(options.android.pch).toBe('auto');
   expect(options.android.gradleBuildCache).toBe(false);
   expect(options.ios).toEqual({ compilationCache: false, swiftCompilationCache: false, prefixMapping: false });
-  expect(resolveOptimizations(resolveSettings({ repoRoot: tmpHome })).android.pch).toBe('off');
-  expect(resolveOptimizations(resolveSettings({})).android.pch).toBe('on');
+  expect(resolveOptimizations(resolveSettings({ repoRoot: tmpHome }), {}).android.pch).toBe('off');
+  expect(resolveOptimizations(resolveSettings({}), {}).android.pch).toBe('on');
 });
 
 test('a repository can enable the shared Metro store over a machine opt-out', () => {

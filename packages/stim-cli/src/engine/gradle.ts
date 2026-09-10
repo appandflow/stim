@@ -13,6 +13,7 @@ import { capDiagnostics, type Diagnostic, extractGradleDiagnostics } from './err
 import { CCACHE_UNAVAILABLE, type CcacheSetup, readCcacheActivity } from './ccache.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
 import type { CcacheActivity } from '../types.ts';
+import type { AndroidCasSetup } from './android-cas.ts';
 
 export const BUILD_ERROR = 'STIM_BUILD_FAILED';
 
@@ -452,6 +453,7 @@ export async function buildAndroid(
     env = process.env,
     buildCache = true,
     ccache = null,
+    cas = null,
     pch = 'auto',
     compilerCacheDisabled = false,
     heartbeatMs = HEARTBEAT_INTERVAL_MS,
@@ -464,6 +466,7 @@ export async function buildAndroid(
     env?: NodeJS.ProcessEnv;
     buildCache?: boolean;
     ccache?: CcacheSetup | null;
+    cas?: AndroidCasSetup | null;
     pch?: 'auto' | 'on' | 'off';
     compilerCacheDisabled?: boolean;
     heartbeatMs?: number;
@@ -487,12 +490,22 @@ export async function buildAndroid(
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
   const task = assembleTaskFor(variant);
   const args = gradleArgs(task, { buildCache, abi });
+  if (cas) {
+    args.push('--init-script', cas.initScript);
+    onNote(chalk.dim(phaseLine('cache', `Apple Clang CAS on (${cas.dir})`)));
+  }
   const nativeScript = ['../shim/android-optimizations.gradle', '../../shim/android-optimizations.gradle']
     .map((path) => fileURLToPath(new URL(path, import.meta.url)))
     .find((path) => existsSync(path));
   if (!nativeScript) throw new Error('Stim installation is missing shim/android-optimizations.gradle.');
   args.push('--init-script', nativeScript);
-  const nativeBackend = ccache ? ccache.env.CMAKE_CXX_COMPILER_LAUNCHER : compilerCacheDisabled ? 'none' : 'project';
+  const nativeBackend = cas
+    ? cas.id
+    : ccache
+      ? ccache.env.CMAKE_CXX_COMPILER_LAUNCHER
+      : compilerCacheDisabled
+        ? 'none'
+        : 'project';
   const profile = createHash('sha256')
     .update(readFileSync(nativeScript))
     .update(JSON.stringify({ backend: nativeBackend, pch }))
@@ -501,12 +514,12 @@ export async function buildAndroid(
   const nativeEnv: Record<string, string> = {
     STIM_ANDROID_NATIVE_PROFILE: profile,
     STIM_ANDROID_PCH: pch,
-    STIM_ANDROID_CCACHE: ccache ? 'on' : compilerCacheDisabled ? 'off' : 'project',
+    STIM_ANDROID_CCACHE: ccache && !cas ? 'on' : compilerCacheDisabled || cas ? 'off' : 'project',
   };
   if (compilerCacheDisabled) {
     Object.assign(nativeEnv, { CCACHE_DISABLE: '1', CMAKE_C_COMPILER_LAUNCHER: '', CMAKE_CXX_COMPILER_LAUNCHER: '' });
   }
-  if (ccache && pch === 'auto') {
+  if (ccache && !cas && pch === 'auto') {
     onNote(
       chalk.dim(phaseLine('cache', 'CMake PCH off by default for ccache reuse (explicit project settings preserved)')),
     );
@@ -544,7 +557,7 @@ export async function buildAndroid(
     child = spawn(project.gradlew as string, args, {
       cwd: project.androidDir,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...env, ...ccache?.env, ...nativeEnv, TERM: 'dumb', FORCE_COLOR: '0' },
+      env: { ...env, ...ccache?.env, ...cas?.env, ...nativeEnv, TERM: 'dumb', FORCE_COLOR: '0' },
     });
   } catch (err) {
     return spawnFailure(err, project, now() - startedAt);

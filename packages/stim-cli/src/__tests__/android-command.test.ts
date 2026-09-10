@@ -5085,6 +5085,7 @@ describe('optimization configuration', () => {
     expect(engine[0]).toMatchObject({ abi: null });
     expect(engine[1]).toMatchObject({
       ccache: null,
+      cas: null,
       compilerCacheDisabled: true,
       pch: 'on',
       buildCache: false,
@@ -5093,58 +5094,70 @@ describe('optimization configuration', () => {
   });
 });
 
-describe('the retired Android CAS settings', () => {
-  const ccache = {
-    dir: '/ccache',
-    statsLog: '/ccache-stats.log',
-    env: { CMAKE_CXX_COMPILER_LAUNCHER: '/opt/homebrew/bin/ccache' },
-  };
+test('CAS Release builds skip the legacy Expo provider that cannot key compiler identity', async () => {
+  const ndk = join(home, 'ndk');
+  mkdirSync(ndk);
+  writeFileSync(join(ndk, 'source.properties'), 'Pkg.Revision = 27.1.12297006\n');
+  const binary = join(home, 'compiler');
+  writeFileSync(binary, 'test compiler bytes');
+  const manifest = join(home, 'toolchain.json');
+  writeFileSync(
+    manifest,
+    JSON.stringify({ clang: binary, clangxx: binary, lld: binary, ar: binary, ranlib: binary, ndk }),
+  );
+  const h = harness({
+    variant: 'release',
+    resolveSettingsFor: () => ({ optimizations: { android: { compilerCache: 'cas', casToolchain: manifest } } }),
+    loadProvider: never('legacy Expo provider'),
+    resolveRemoteBuild: never('legacy lookup'),
+    uploadRemoteBuild: never('legacy upload'),
+  });
+  expect((await h.run()).ok).toBe(true);
+  expect(h.calls.storeCached[0]?.[1]).toMatch(/apple-cas-/);
+});
 
-  function buildingHarness() {
-    const options: Record<string, unknown>[] = [];
-    const h = harness({
-      ccacheFor: () => ccache,
-      build: async (_args: BuildArgs = {}, opts: Record<string, unknown> = {}) => {
-        options.push(opts);
-        return { ok: true, apkPath: fakeApk(), durationMs: 1, lastLines: [] };
-      },
+test('an unavailable CAS manifest returns one JSON refusal before device or build work', async () => {
+  const previous = process.env.STIM_ANDROID_CAS_TOOLCHAIN;
+  process.env.STIM_ANDROID_CAS_TOOLCHAIN = join(home, 'missing-toolchain.json');
+  try {
+    const h = harness({ json: true, ensureDevice: never('device setup'), build: never('build') });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(h.stdout).toHaveLength(1);
+    expect(JSON.parse(h.stdout[0]!)).toMatchObject({
+      code: 'STIM_BAD_ARG',
+      message: expect.stringContaining('Could not configure Android build'),
     });
-    return { options, h };
+  } finally {
+    if (previous === undefined) delete process.env.STIM_ANDROID_CAS_TOOLCHAIN;
+    else process.env.STIM_ANDROID_CAS_TOOLCHAIN = previous;
   }
+});
 
-  test.each([
-    ['a toolchain manifest that exists', 'present'],
-    ['a toolchain manifest whose worktree is gone', 'missing'],
-  ])('build with ccache and report once for %s', async (_label, kind) => {
-    const casToolchain = join(home, kind === 'missing' ? 'deleted-worktree' : '', 'toolchain.json');
-    if (kind === 'present') writeFileSync(casToolchain, '{}');
-    writeFileSync(
-      join(root, '.stim.json'),
-      JSON.stringify({ optimizations: { android: { compilerCache: 'cas', casToolchain } } }),
-    );
-    const { options, h } = buildingHarness();
+test('CAS Release builds skip legacy providers that cannot key compiler identity', async () => {
+  const previous = process.env.STIM_ANDROID_CAS_TOOLCHAIN;
+  const ndk = join(home, 'ndk');
+  mkdirSync(ndk);
+  writeFileSync(join(ndk, 'source.properties'), 'Pkg.Revision = 27.1.12297006\n');
+  const binary = join(home, 'compiler');
+  writeFileSync(binary, 'test compiler bytes');
+  const manifest = join(home, 'toolchain.json');
+  writeFileSync(
+    manifest,
+    JSON.stringify({ clang: binary, clangxx: binary, lld: binary, ar: binary, ranlib: binary, ndk }),
+  );
+  process.env.STIM_ANDROID_CAS_TOOLCHAIN = manifest;
+  try {
+    const h = harness({
+      variant: 'release',
+      loadProvider: never('legacy provider'),
+      resolveRemoteBuild: never('legacy lookup'),
+      uploadRemoteBuild: never('legacy upload'),
+    });
     expect((await h.run()).ok).toBe(true);
-    expect(options[0]).toMatchObject({ ccache, compilerCacheDisabled: false });
-    const notes = h.stderr.filter((line) => line.includes('Ignoring retired'));
-    expect(notes).toHaveLength(1);
-    expect(notes[0]).toContain(
-      `optimizations.android.compilerCache, optimizations.android.casToolchain in ${join(root, '.stim.json')}`,
-    );
-    expect(notes[0]).toContain('Android builds use ccache.');
-    expect(h.stderr.some((line) => line.includes('is not read by Stim'))).toBe(false);
-  });
-
-  test('a set STIM_ANDROID_CAS_TOOLCHAIN changes nothing', async () => {
-    const previous = process.env.STIM_ANDROID_CAS_TOOLCHAIN;
-    process.env.STIM_ANDROID_CAS_TOOLCHAIN = join(home, 'missing-toolchain.json');
-    try {
-      const { options, h } = buildingHarness();
-      expect((await h.run()).ok).toBe(true);
-      expect(options[0]).toMatchObject({ ccache, compilerCacheDisabled: false });
-      expect(h.stderr.some((line) => line.includes('Ignoring retired'))).toBe(false);
-    } finally {
-      if (previous === undefined) delete process.env.STIM_ANDROID_CAS_TOOLCHAIN;
-      else process.env.STIM_ANDROID_CAS_TOOLCHAIN = previous;
-    }
-  });
+    expect(h.calls.storeCached[0]?.[1]).toMatch(/apple-cas-/);
+  } finally {
+    if (previous === undefined) delete process.env.STIM_ANDROID_CAS_TOOLCHAIN;
+    else process.env.STIM_ANDROID_CAS_TOOLCHAIN = previous;
+  }
 });
