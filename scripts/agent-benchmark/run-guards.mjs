@@ -423,7 +423,7 @@ function preBuildRefusal(entry) {
   );
 }
 
-export function benchmarkCcache(meta, commands) {
+export function benchmarkCcache(meta, commands, statsLogMeasurement = null) {
   const minimum = meta.timingTarget?.ccacheMinHitRatePercent ?? null;
   const result = { minimumHitRatePercent: minimum, status: 'not-applicable', builds: [], invalidReasons: [] };
   if (meta.arm !== 'stim' || meta.platform !== 'android') return result;
@@ -433,6 +433,7 @@ export function benchmarkCcache(meta, commands) {
   );
   for (const entry of attemptedBuilds) {
     const measurements = ccacheMeasurements(entry.output);
+    if (!measurements.length && statsLogMeasurement?.commandId === entry.id) measurements.push(statsLogMeasurement);
     result.builds.push(...measurements.map((measurement) => ({ commandId: entry.id ?? null, ...measurement })));
     if (
       /compilation cache\s+unavailable/.test(entry.output) ||

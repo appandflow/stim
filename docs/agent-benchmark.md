@@ -126,6 +126,12 @@ compatibility check when run identity, captured evidence hashes, and the pinned
 manifest are unchanged. Other audit checks and derived timings are recalculated;
 missing or changed evidence does not inherit the earlier verdict.
 
+If a later launch failure omits compiler-cache counters, collection can preserve
+the workspace's per-build ccache log for one unambiguous completed Android build.
+Its modification time must fall within that command, and saved hashes bind it to
+the run, metadata, events, and command. Recollection and website export verify
+those hashes; multiple builds, stale logs, and low hit rates still need investigation.
+
 This boundary prevents accidental benchmark-data access, not adversarial host
 access: native system services and pre-existing processes are not sandboxed by
 the runner policy. Strong isolation from a malicious agent requires a separate

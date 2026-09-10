@@ -38,6 +38,7 @@ import {
   matchesExpectedIosSimulator,
 } from './watch-app-selection.mjs';
 import { completedCleanupRecord, durableRunRecord } from './run-record.mjs';
+import { ccacheLogEvidence } from './ccache-evidence.mjs';
 import {
   isolatedRunnerInvocation,
   prepareRunnerIsolation,
@@ -2226,7 +2227,6 @@ function collect(runDir) {
     : { error: 'missing-app-alive-record' };
   const eventsPath = join(runDir, 'events.jsonl');
   const commandAudit = commandEvidence(meta, eventsPath, runDir, appAlive.simulator);
-  const ccache = benchmarkCcache(meta, commandAudit.commands);
   const screen = screenEvidence(meta, appAlive, commandAudit.commands, runDir);
   const timing = benchmarkTiming(
     meta.timingTarget,
@@ -2237,6 +2237,11 @@ function collect(runDir) {
   const recording = recordingEvidence(meta, commandAudit.commands, runDir, screen);
   const worktreeRecord = worktreeEvidence(runDir, meta, eventsPath);
   const worktree = worktreeRecord?.path ?? null;
+  const ccache = benchmarkCcache(
+    meta,
+    commandAudit.commands,
+    ccacheLogEvidence({ runDir, meta, commands: commandAudit.commands, worktree, capture: true }),
+  );
   const nativeCompatibility = collectedNativeCompatibility(meta, worktree);
   const proof = proofFor(meta, appAlive, runDir, worktree, commandAudit.completedEvents);
   const rollout =
