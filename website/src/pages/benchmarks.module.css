@@ -399,11 +399,24 @@
 }
 
 .gain {
-  color: #16a34a;
+  color: #15803d;
 }
 
 .loss {
   color: #c2410c;
+}
+
+:global([data-theme='dark']) .gain {
+  color: #4ade80;
+}
+
+:global([data-theme='dark']) .loss {
+  color: #fb923c;
+}
+
+:global([data-theme='dark']) .benchmarkPicker button[aria-pressed='true'],
+:global([data-theme='dark']) .runTabs button[aria-pressed='true'] {
+  color: #15121d;
 }
 
 .neutral {
