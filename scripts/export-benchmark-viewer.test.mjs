@@ -921,6 +921,12 @@ describe('benchmark viewer export', () => {
     expect(payload.runs).toHaveLength(1);
     expect(payload.runs[0].commands[0].output).toBe('emulator <simulator-udid>');
 
+    writeFileSync(recordPath, JSON.stringify({ ...record, ccache: { builds: [{ source: 'stats-log' }] } }));
+    expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'))).toThrow(
+      /no valid benchmark runs/,
+    );
+    writeFileSync(recordPath, JSON.stringify(record));
+
     const eventsPath = join(runDir, 'events.jsonl');
     const metaPath = join(runDir, 'meta.json');
     const originalEvents = readFileSync(eventsPath, 'utf8');

@@ -16,11 +16,13 @@ import { timeBenchmarkFromFirstActivity } from './benchmark-timing.mjs';
 import { stripVTControlCharacters } from 'node:util';
 import { launchCrashDiagnosis, launchCrashRecovery, podfileChecksumChanges } from './launch-crash-benchmark.mjs';
 import { reconstructCommandEvidence } from './agent-benchmark/command-evidence.mjs';
+import { ccacheLogEvidence } from './agent-benchmark/ccache-evidence.mjs';
 import { benchmarkCommandPresentation } from './benchmark-command-presentation.mjs';
 import {
   agentDeviceIsolationInvalidReasons,
   agentDeviceAuxiliarySessions,
   benchmarkSetupInvalidReasons,
+  benchmarkCcache,
   topLevelShellCommand,
 } from './agent-benchmark/run-guards.mjs';
 
@@ -1185,6 +1187,16 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
     .map((runDir) => {
       const meta = readJson(join(runDir, 'meta.json'));
       const record = publicationRecord(runDir, meta);
+      if (
+        existsSync(join(runDir, 'ccache-evidence.json')) ||
+        record.ccache?.builds?.some((build) => build.source === 'stats-log')
+      ) {
+        const stamped = readFileSync(join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+        const { commands } = reconstructCommandEvidence(meta.runner, stamped);
+        const evidence = ccacheLogEvidence({ runDir, meta, commands, worktree: record.worktree });
+        if (!evidence || JSON.stringify(benchmarkCcache(meta, commands, evidence)) !== JSON.stringify(record.ccache))
+          record.valid = false;
+      }
       return {
         runDir,
         record,
