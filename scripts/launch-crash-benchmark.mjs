@@ -391,7 +391,7 @@ export function launchCrashDiagnosis(
     typeof capture.output === 'string' &&
     capture.output.includes(token) &&
     sourceMarkers.some((marker) => capture.output.includes(marker));
-  const index = captureIsActionable
+  let index = captureIsActionable
     ? errorCaptureIndex
     : ordered.findIndex(
         (command) =>
@@ -401,6 +401,17 @@ export function launchCrashDiagnosis(
           command.output.includes(token) &&
           sourceMarkers.some((marker) => command.output.includes(marker)),
       );
+  const initialLaunch = ordered[initialLaunchIndex];
+  const launchOutput = String(initialLaunch.output ?? '');
+  const launchIsActionable =
+    launchOutput.split('\n').some((line) => line.includes(token) && /\b(?:Error|Exception)\b/.test(line)) &&
+    sourceMarkers.some((marker) => launchOutput.includes(marker));
+  if (
+    launchIsActionable &&
+    (index === -1 || timestamp(initialLaunch, 'endedAt') <= timestamp(ordered[index], 'endedAt'))
+  ) {
+    index = initialLaunchIndex;
+  }
   if (index === -1) {
     return { valid: false, reason: 'actionable-launch-crash-diagnosis-missing' };
   }
