@@ -46,7 +46,13 @@ import {
 } from '../commands/android.ts';
 import { newestBuildTools } from '../sim/android.ts';
 import { BUILD_ERROR } from '../engine/gradle.ts';
-import { ADB_INSTALL_TIMEOUT_MS, LAUNCH_UNVERIFIED, installAndroidApp } from '../engine/app-install.ts';
+import {
+  ADB_INSTALL_TIMEOUT_MS,
+  LAUNCH_UNVERIFIED,
+  installAndroidApp,
+  deviceShellArg,
+  androidDevClientUrl,
+} from '../engine/app-install.ts';
 import type { AssetManifest } from '../engine/asset-manifest.ts';
 import { PREBUILD_ERROR } from '../engine/prebuild.ts';
 import type { RecordStatsResult, StatsRun } from '../engine/stats.ts';
@@ -2804,7 +2810,9 @@ describe('launch verification', () => {
     const text = h.stderr.join('\n');
     expect(text).toMatch(/UNVERIFIED/);
     expect(text).toMatch(/DEVELOPMENT SERVERS/);
-    expect(text).toMatch(/adb -s emulator-5584 shell monkey -p com\.example\.app 1/);
+    expect(text).toContain(
+      'adb -s emulator-5584 shell am force-stop com.example.app && adb -s emulator-5584 shell am start -n com.example.app/.MainActivity',
+    );
     expect(text).not.toMatch(/simctl/);
     expect(h.stdout.join('\n')).toMatch(/UNVERIFIED/);
     expect(h.stdout[0]).toContain(phaseLine('metro', 'state unverified on port 8082'));
@@ -2960,8 +2968,8 @@ describe('the dev-client deep link', () => {
     const picker = text.indexOf('DEVELOPMENT SERVERS');
     expect(link > 0).toBeTruthy();
     expect(link < picker).toBeTruthy();
-    expect(text).toMatch(
-      /adb -s emulator-5584 shell am start -a android\.intent\.action\.VIEW -d 'exp\+app:\/\/expo-development-client\/\?url=http%3A%2F%2F10\.0\.2\.2%3A8082%2F%3FdisableOnboarding%3D1&disableFab=1' --ez EXDevMenuDisableAutoLaunch true/,
+    expect(text).toContain(
+      `adb -s emulator-5584 shell am start -a android.intent.action.VIEW -d ${deviceShellArg(deviceShellArg(androidDevClientUrl('exp+app', 8082)))} --ez EXDevMenuDisableAutoLaunch true`,
     );
     expect(steps.length >= 2).toBeTruthy();
   });
