@@ -79,6 +79,9 @@ RULES DURING THE LOOP
   run stim start and retry.
 - Run ios or android again after a native input changes. A JavaScript-only
   change does not need one.
+- For stale Metro transforms or file-map state, use stim start --reset-cache.
+  It restarts only this app's verified owned Metro, preserving devices and other
+  apps' caches. See guide lifecycle for reset scope and Expo requirements.
 - Reload is not part of the normal workflow. Use stim reload on an owned local
   simulator or emulator after a failed first bundle load, when an error screen
   remains after the fix, or when you explicitly need an app restart. For a

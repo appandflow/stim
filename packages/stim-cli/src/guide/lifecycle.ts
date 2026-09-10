@@ -20,6 +20,15 @@ const lifecycle: GuideTopic = {
     port       8082 (reserved)
     supervisor pid 41233
 
+  # If stale Metro transforms or file-map state require recovery:
+  stim start --reset-cache
+  # Restarts only this app's verified owned Metro, retaining its port/devices.
+  # Uses a fresh persistent cache namespace, not deletion of shared cache files.
+  # Other apps and worktrees keep their caches. Subsequent starts reuse the new
+  # namespace; another reset changes it again. Native build caches are unchanged.
+  # Expo requires SDK 54+ and Stim's config adapter. Custom file-map cache
+  # managers must honor Metro's fileMapCacheDirectory for file-map invalidation.
+
   # 3. Owned device booted, native inputs fingerprinted, cached build
   #    installed (or built), app launched wired to port 8082, device-log
   #    collector attached.
@@ -750,7 +759,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
       summary:
         'every flag per command, Android variants and flavors, the per-run simulator model, runtime and system image',
       body: () => `THE OPTION SURFACE, IN FULL
-  start           --json --wait <seconds> --remote
+  start           --json --wait <seconds> --remote --reset-cache
   ios             --json --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --device [udid] --wait <seconds> --no-wait --remote <proxy|eas>
   android         --json --no-metro-check --no-build-cache --variant <name> --system-image <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
   reload          [ios|android] --json
