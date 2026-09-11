@@ -541,7 +541,7 @@ async function ensureOwnedAndroidDevice({
   const avdConfig = androidAvdConfigSetting(settings, settingsRoot);
   const configuration = avdPoolConfiguration(androidDataPartitionSizeGbSetting(settings), avdConfig);
   if (record?.setupIncomplete && record.avdName) {
-    const cleanup = teardownAvd(record.avdName, { del: true });
+    const cleanup = teardownAvd(record.avdName, { del: true, owner: { projectPath } });
     if (cleanup.status === 'failed' || cleanup.status === 'skipped') {
       throw new Error(
         `Owned AVD ${record.avdName} has incomplete setup and could not be deleted (${cleanup.reason || cleanup.status}). Fix the cause, then retry; Stim kept the device record for cleanup.`,
@@ -629,7 +629,8 @@ async function ensureOwnedAndroidDevice({
       if (parked.deletionClaim !== undefined) continue;
       const resolved = resolveOwnedAvdSerial(parked.name);
       if (resolved.missing) {
-        dropParked('android', parked.udid);
+        const result = teardownParkedAvd(parked.name);
+        if (result.status === 'failed') out(phaseLine('device', `kept ${parked.name}: ${result.reason}`));
         continue;
       }
       if (resolved.notOwned || resolved.serial) continue;
@@ -732,7 +733,7 @@ async function ensureOwnedAndroidDevice({
         avdConfig,
       });
     } catch (error) {
-      const cleanup = teardownAvd(created.avdName, { del: true });
+      const cleanup = teardownAvd(created.avdName, { del: true, owner: { projectPath } });
       const kept = cleanup.status === 'failed' || cleanup.status === 'skipped';
       if (!kept) clearDevice(projectPath, 'android');
       const orphan = kept

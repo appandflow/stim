@@ -6,7 +6,7 @@ import { plural } from '../../command-output.ts';
 import { directorySize } from '../../fs-util.ts';
 import { leaseIsExpired, listLeaseFiles, type LeaseFileEntry } from '../../engine/device-lease.ts';
 import { listAllIosSims, listIosDeviceTypes, parseRuntimeVersion, type IosSimRecord } from '../../sim/ios.ts';
-import { listAvds, ownedAvdDirectory } from '../../sim/android.ts';
+import { listAvds, ownedAvdDirectory, type OrphanedAvdDirectory } from '../../sim/android.ts';
 import { dropParked, readParked, type ParkedSim } from '../../sim-pool.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd, teardownParkedIosSim, teardownParkedAvd } from '../../teardown.ts';
 import type { Config, OrphanedDevice } from '../../types.ts';
@@ -236,7 +236,9 @@ export function describeUnverifiableDevices(
   ];
 }
 
-export function withAndroidAvdSizes<T extends { kind: 'ios' | 'android'; id: string; bytes?: number }>(
+export function withAndroidAvdSizes<
+  T extends { kind: 'ios' | 'android'; id: string; bytes?: number; orphanedDirectory?: OrphanedAvdDirectory },
+>(
   devices: T[],
   {
     avdDirectory = ownedAvdDirectory,
@@ -245,7 +247,7 @@ export function withAndroidAvdSizes<T extends { kind: 'ios' | 'android'; id: str
 ): T[] {
   return devices.map((device) => {
     if (device.kind !== 'android') return device;
-    const dir = avdDirectory(device.id);
+    const dir = device.orphanedDirectory?.directory ?? avdDirectory(device.id);
     if (!dir) return device;
     try {
       const bytes = size(dir, { timeoutMs: AVD_SIZE_TIMEOUT_MS });
@@ -427,7 +429,11 @@ export function deleteProjectDevices(
     const r =
       d.kind === 'ios'
         ? teardownOwnedIosSim(d.id, { del: true, label: d.name })
-        : teardownOwnedAvd(d.name, { del: true });
+        : teardownOwnedAvd(d.name, {
+            del: true,
+            ...('project' in d ? { owner: { projectPath: d.project } } : {}),
+            ...('orphanedDirectory' in d ? { orphanedDirectory: d.orphanedDirectory } : {}),
+          });
     const what = d.kind === 'ios' ? `ios sim ${d.name} (${d.id})` : `android avd ${d.name}`;
     if (r.status === 'torn-down') {
       console.log(chalk.green(`Deleted ${what}`));

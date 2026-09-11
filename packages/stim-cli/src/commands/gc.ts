@@ -13,7 +13,7 @@ import { describeDereferenced, reclaimProject } from '../reclaim.ts';
 import { SETTING_SHAPE_REMEDY } from '../settings.ts';
 import { listAllIosSims, type IosSimRecord } from '../sim/ios.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../sim-pool.ts';
-import { listAvds, ownedAvdDirectory } from '../sim/android.ts';
+import { listAvds, listOrphanedAvdDirectories, ownedAvdDirectory } from '../sim/android.ts';
 import { declaredCachePaths, discoverCaches, projectSettingShapeErrors, sizeCaches } from '../caches.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import type { GcSkip, OrphanedDevice } from '../types.ts';
@@ -217,9 +217,25 @@ export async function collectGcReport(
       );
     }
 
+    let orphanedAvdDirectories: ReturnType<typeof listOrphanedAvdDirectories> = [];
+    if (avdsChecked) {
+      try {
+        orphanedAvdDirectories = listOrphanedAvdDirectories();
+      } catch (error) {
+        avdsChecked = false;
+        deviceSweepNotices.push(`android data sweep skipped: ${(error as Error).message}`);
+      }
+    }
+    avds = [...new Set([...avds, ...orphanedAvdDirectories.map((entry) => entry.name)])];
     const isMounted = (path: string) => isOnMountedVolume(path, mountedVolumes);
     orphanedDevices = withAndroidAvdSizes(
-      findOrphanedDevices({ sims, avds, config: cfg, isMounted, deadProjects }).orphaned,
+      findOrphanedDevices({ sims, avds, config: cfg, isMounted, deadProjects }).orphaned.flatMap((device) => {
+        const directories =
+          device.kind === 'android' ? orphanedAvdDirectories.filter((entry) => entry.name === device.name) : [];
+        return directories.length
+          ? directories.map((orphanedDirectory) => Object.assign({}, device, { orphanedDirectory }))
+          : [device];
+      }),
       {
         avdDirectory: deps.avdDirectory ?? ownedAvdDirectory,
         size: deps.directorySize ?? directorySize,

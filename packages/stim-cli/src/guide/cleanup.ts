@@ -58,6 +58,18 @@ If a delete fails, the device's config record is KEPT and the command reports
 it. A record is what makes the device findable again, so it outlives a failed
 teardown rather than turning it into an orphan.
 
+ANDROID DATA WITHOUT A REGISTRATION
+  \`gc\` also reports stim-*.avd directories whose .ini registration is
+  gone. \`gc --delete\` rechecks the directory, emulator process locks, and
+  current workspace and pool references before removing that data. A registration
+  under any name that points at the directory protects it. User AVDs, symlinks
+  and unverifiable storage stay. The no-config and scoped-STIM_HOME
+  sweep guards apply to these directories too.
+  A partial avdmanager deletion is a failure even if the tool exits successfully.
+  The owning workspace or pool record stays for a retry. If removing orphan
+  data fails, its remaining directory is reported as stim-gc-<id>.avd on the
+  next sweep.
+
 BUILD LOCKS
   \`gc\` also reports the single-flight build locks (above): the ones whose
   builder is no longer running are debris a reboot or a kill left behind, and

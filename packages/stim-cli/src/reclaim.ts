@@ -239,6 +239,7 @@ function reclaimOwnedDevices(
     const bound = parkedMaxSetting('android');
     const r = teardownOwnedAvd(android.avdName, {
       del: true,
+      owner: { projectPath },
       ...(park && !bound.error && bound.max > 0
         ? {
             park: {

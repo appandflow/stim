@@ -24,15 +24,22 @@ const configuration = avdPoolConfiguration(8, {});
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-android-pool-'));
   saved = Object.fromEntries(
-    ['STIM_HOME', 'STIM_POOL_ANDROID_PARKED_MAX', 'ANDROID_HOME', 'ANDROID_AVD_HOME', 'DISPLAY'].map((key) => [
-      key,
-      process.env[key],
-    ]),
+    [
+      'STIM_HOME',
+      'STIM_POOL_ANDROID_PARKED_MAX',
+      'ANDROID_HOME',
+      'ANDROID_AVD_HOME',
+      'ANDROID_SDK_HOME',
+      'HOME',
+      'DISPLAY',
+    ].map((key) => [key, process.env[key]]),
   );
   process.env.STIM_HOME = home;
   process.env.STIM_POOL_ANDROID_PARKED_MAX = '1';
   process.env.ANDROID_HOME = join(home, 'sdk');
   process.env.ANDROID_AVD_HOME = join(home, 'avd');
+  process.env.ANDROID_SDK_HOME = home;
+  process.env.HOME = home;
   process.env.DISPLAY = ':0';
   mkdirSync(join(home, 'sdk', ...image.split(';')), { recursive: true });
   avds = new Set();
@@ -55,7 +62,10 @@ beforeEach(() => {
     }
     if (cmd.includes('delete avd')) {
       if (failDelete) throw new Error('AVD deletion failed');
-      avds.delete(/-n "([^"]+)"/.exec(cmd)![1]!);
+      const name = /-n "([^"]+)"/.exec(cmd)![1]!;
+      avds.delete(name);
+      rmSync(join(home, 'avd', `${name}.ini`), { force: true });
+      rmSync(join(home, 'avd', `${name}.avd`), { recursive: true, force: true });
       return '';
     }
     if (cmd.includes('create avd')) {
@@ -148,15 +158,25 @@ test.each([
   expect(readParked('android').map((record) => record.name)).toEqual(['stim-source']);
 });
 
-test('a missing parked AVD loses only its pool record before a fresh device is created', async () => {
-  park();
-  avds.clear();
-  upsertProject('/adopter', {});
-  const result = await ensureOwnedDevice({ platform: 'android', projectPath: '/adopter', label: 'new', settings: {} });
-  expect(result.created).toBe(true);
-  expect(readParked('android')).toEqual([]);
-  expect(calls.some((call) => call.includes('delete avd'))).toBe(false);
-});
+test.each([false, true])(
+  'a missing parked AVD reclaims remaining data (%s) before dropping its pool record',
+  async (dataRemains) => {
+    park();
+    avds.clear();
+    rmSync(join(home, 'avd', 'stim-source.ini'));
+    if (!dataRemains) rmSync(join(home, 'avd', 'stim-source.avd'), { recursive: true });
+    upsertProject('/adopter', {});
+    const result = await ensureOwnedDevice({
+      platform: 'android',
+      projectPath: '/adopter',
+      label: 'new',
+      settings: {},
+    });
+    expect(result.created).toBe(true);
+    expect(readParked('android')).toEqual([]);
+    expect(calls.some((call) => call.includes('delete avd'))).toBe(false);
+  },
+);
 
 test('an emulator with a live process but no adb connection stays parked', async () => {
   park();

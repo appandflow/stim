@@ -1,5 +1,6 @@
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -497,6 +498,87 @@ export function parseAvdRootIni(contents: string): { path: string | null; relati
   return { path, relativePath };
 }
 
+function avdIniPaths(root: string, ini: string): string[] {
+  const parsed = parseAvdRootIni(ini);
+  return [
+    parsed.relativePath && !isAbsolute(parsed.relativePath) ? resolve(dirname(root), parsed.relativePath) : null,
+    parsed.path && isAbsolute(parsed.path) ? parsed.path : null,
+  ].filter((candidate): candidate is string => candidate !== null);
+}
+
+export function avdStorageRoots(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string[] {
+  return [
+    ...new Set(
+      [
+        env.ANDROID_AVD_HOME,
+        env.ANDROID_SDK_HOME ? join(env.ANDROID_SDK_HOME, 'avd') : null,
+        join(home, '.android', 'avd'),
+      ].filter((value): value is string => Boolean(value)),
+    ),
+  ];
+}
+
+export interface OrphanedAvdDirectory {
+  name: string;
+  directory: string;
+  dev: number;
+  ino: number;
+}
+
+export function avdPathExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+export function listOrphanedAvdDirectories(avdName?: string): OrphanedAvdDirectory[] {
+  const roots = avdStorageRoots();
+  const stores = roots.filter(avdPathExists).map((root) => ({
+    root,
+    canonicalRoot: realpathSync(root),
+    names: readdirSync(root),
+  }));
+  const registered = new Set<string>();
+  for (const { root, names } of stores) {
+    for (const name of names.filter((entry) => entry.endsWith('.ini'))) {
+      const path = join(root, name);
+      const targets = avdIniPaths(root, readFileSync(path, 'utf8'));
+      if (!targets.length) throw new Error(`Cannot verify AVD registration at ${path}; its data was kept.`);
+      for (const target of targets) {
+        try {
+          registered.add(realpathSync(target));
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
+        }
+      }
+    }
+  }
+  const orphaned: OrphanedAvdDirectory[] = [];
+  for (const { canonicalRoot, names: entries } of stores) {
+    const names = avdName ? [`${avdName}.avd`] : entries;
+    for (const entry of names) {
+      if (!/^stim-[A-Za-z0-9._-]+\.avd$/.test(entry)) continue;
+      const name = entry.slice(0, -4);
+      if (roots.some((candidate) => avdPathExists(join(candidate, `${name}.ini`)))) continue;
+      const directory = join(canonicalRoot, entry);
+      if (registered.has(directory) || !avdPathExists(directory)) continue;
+      const stat = lstatSync(directory);
+      if (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync(directory) !== directory) {
+        throw new Error(`Cannot verify AVD data at ${directory}; it was kept.`);
+      }
+      if (!orphaned.some((candidate) => candidate.directory === directory)) {
+        orphaned.push({ name, directory, dev: stat.dev, ino: stat.ino });
+      }
+    }
+  }
+  return orphaned;
+}
+
 export function ownedAvdDirectory(
   avdName: string,
   {
@@ -514,12 +596,7 @@ export function ownedAvdDirectory(
   } = {},
 ): string | null {
   if (!/^stim-[A-Za-z0-9._-]+$/.test(avdName)) return null;
-  const roots = [
-    env.ANDROID_AVD_HOME,
-    env.ANDROID_SDK_HOME ? join(env.ANDROID_SDK_HOME, 'avd') : null,
-    join(home, '.android', 'avd'),
-  ];
-  for (const root of new Set(roots.filter((value): value is string => Boolean(value)))) {
+  for (const root of avdStorageRoots(env, home)) {
     let ini: string;
     try {
       ini = readFile(join(root, `${avdName}.ini`));
@@ -528,13 +605,7 @@ export function ownedAvdDirectory(
       if (code === 'ENOENT' || code === 'ENOTDIR') continue;
       return null;
     }
-    const parsed = parseAvdRootIni(ini);
-    const candidates = [
-      parsed.relativePath && !isAbsolute(parsed.relativePath) ? resolve(dirname(root), parsed.relativePath) : null,
-      parsed.path && isAbsolute(parsed.path) ? parsed.path : null,
-    ];
-    for (const candidate of candidates) {
-      if (!candidate) continue;
+    for (const candidate of avdIniPaths(root, ini)) {
       try {
         const canonical = realpath(candidate);
         if (isDirectory(canonical)) return canonical;
