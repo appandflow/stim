@@ -233,7 +233,7 @@ export function agentDeviceIsolationInvalidReasons(commands, expectedPrefix, tar
   const reasons = [];
   const lookup =
     /^(?:command\s+-[vV]|which|type|whence)\s+(?:[\w./-]+\s+)*agent-device(?:\s+[\w./-]+)*(?:\s+(?:\d*>|&>)\s*(?:&\d+|[\w./-]+))?$/;
-  const help = /^agent-device(?:\s+--help|\s+help(?:\s+[\w-]+)*)(?:\s+(?:\d*>|&>)\s*(?:&\d+|[\w./-]+))?$/;
+  const help = /^agent-device(?:\s+--(?:help|version)|\s+help(?:\s+[\w-]+)*)(?:\s+(?:\d*>|&>)\s*(?:&\d+|[\w./-]+))?$/;
   const deviceCommands = segments.filter(
     (command) => /(?:^|[\s(`])agent-device(?:\s|[)`]|$)/.test(command) && !lookup.test(command) && !help.test(command),
   );
