@@ -304,7 +304,9 @@ export function reportIosResult({
         phaseLine('app', bundleId),
         phaseLine('metro', metroResult),
         phaseLine('cache', cacheResult),
-        phaseLine('compilation cache', compilationCacheActivityLine(compilationCache)),
+        ...(compilationCache.status === 'not-run'
+          ? [phaseLine('compilation cache', compilationCacheActivityLine(compilationCache))]
+          : []),
         phaseLine('logs', logsDir),
       ].join('\n'),
     );

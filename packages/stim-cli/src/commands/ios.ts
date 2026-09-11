@@ -77,7 +77,11 @@ import {
   type LoadProjectProviderResult,
 } from '../engine/remote-cache.ts';
 import { createRunRecorder, statsProjectKey, type RunEstimates } from '../engine/stats.ts';
-import { COMPILATION_CACHE_NOT_RUN, COMPILATION_CACHE_UNAVAILABLE } from '../engine/xcode.ts';
+import {
+  COMPILATION_CACHE_NOT_RUN,
+  COMPILATION_CACHE_UNAVAILABLE,
+  compilationCacheActivityLine,
+} from '../engine/xcode.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { workspaceDir, workspaceLogsDir } from '../paths.ts';
 import { appProjectProblem } from '../project.ts';
@@ -320,6 +324,8 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
   });
   const recordRun = stats.record;
 
+  let compilationCache: CompilationCacheActivity = COMPILATION_CACHE_NOT_RUN;
+
   const fail = ({ code, message, remedy = null, lines = [], logPath = null, build = null, lease }: FailArgs): null => {
     releaseLock();
     releaseSlot();
@@ -342,6 +348,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
           code,
           message: message ?? null,
           remedy: remedy ?? null,
+          ...(compilationCache.status === 'not-run' ? {} : { compilationCache }),
           ...(lease === undefined ? {} : { lease }),
         }),
       );
@@ -600,7 +607,6 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
   let appPath: string | null = null;
   let bundleId: string | null = null;
   let cacheHit: CacheHitLevel = false;
-  let compilationCache: CompilationCacheActivity = COMPILATION_CACHE_NOT_RUN;
   let remote: LoadProjectProviderResult | null = null;
   let abandonedRemote = false;
   let uploadPending: Promise<RemoteUploadLike> | null = null;
@@ -1226,6 +1232,8 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
             estimateMs: estimates().coldBuildMs,
             optimizations: optimizations.ios,
           });
+          compilationCache = result.compilationCache ?? COMPILATION_CACHE_UNAVAILABLE;
+          phase('cache', `compilation cache ${compilationCacheActivityLine(compilationCache)}`);
           if (result?.failed) {
             phase('build', `FAILED after ${formatDuration(result.durationMs)}`);
             printDiagnostics(note, result);
@@ -1239,7 +1247,6 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
             });
             return false;
           }
-          compilationCache = result.compilationCache ?? COMPILATION_CACHE_UNAVAILABLE;
           stats.setBuildMs(result.durationMs ?? 0);
           phase('build', `ok (${formatDuration(result.durationMs)})`);
           appPath = result.appPath ?? null;

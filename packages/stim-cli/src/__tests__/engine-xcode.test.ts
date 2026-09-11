@@ -1152,7 +1152,7 @@ describe('buildIos with a mocked executor', () => {
     await promise;
   });
 
-  test('streams and returns the Xcode compilation-cache summary', async () => {
+  test.each([0, 65])('keeps Xcode cache statistics on success or failure (exit: %s)', async (exitCode) => {
     const child = fakeChild();
     harness(tmp, { child });
     const writer = recordingWriter();
@@ -1169,7 +1169,7 @@ describe('buildIos with a mocked executor', () => {
 
     child.stdout.emit('data', 'CompilationCacheMetrics\nnote: 1394 hits / 1520 cacheable tasks (91.7%)\n');
     makeProduct(dd);
-    child.emit('close', 0, null);
+    child.emit('close', exitCode, null);
     const result = asResult(await promise);
 
     expect(result.compilationCache).toEqual({
@@ -1178,7 +1178,8 @@ describe('buildIos with a mocked executor', () => {
       cacheableTasks: 1520,
       hitRatePercent: 91.7,
     });
-    expect(notes).toEqual(['  cache       compilation cache 1394/1520 hits (91.7%)']);
+    expect(notes).toEqual([]);
+    expect(Boolean(result.failed)).toBe(exitCode !== 0);
     expect(writer.records).toContainEqual(
       expect.objectContaining({
         event: 'compilation_cache',

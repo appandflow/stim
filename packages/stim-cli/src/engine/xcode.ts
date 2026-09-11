@@ -488,6 +488,7 @@ function failedResult({
   exitCode = null,
   transcriptLines = 0,
   tail = [],
+  compilationCache = COMPILATION_CACHE_UNAVAILABLE,
 }: {
   code: string;
   diagnostics: Diagnostic[];
@@ -495,6 +496,7 @@ function failedResult({
   exitCode?: number | null;
   transcriptLines?: number;
   tail?: string[];
+  compilationCache?: CompilationCacheActivity;
 }) {
   const capped = capDiagnostics(diagnostics);
   return {
@@ -506,6 +508,7 @@ function failedResult({
     exitCode,
     transcriptLines,
     tail,
+    compilationCache,
   };
 }
 
@@ -693,7 +696,6 @@ export async function buildIos({
         cacheableTasks: activity.cacheableTasks,
         hitRatePercent: activity.hitRatePercent,
       });
-      onNote(phaseLine('cache', `compilation cache ${compilationCacheActivityLine(activity)}`));
     }
   };
 
@@ -761,6 +763,7 @@ export async function buildIos({
       durationMs,
       transcriptLines: transcript.length,
       tail: tailLines(transcript),
+      compilationCache: compilationCacheActivity,
     });
   }
 
@@ -781,6 +784,7 @@ export async function buildIos({
       exitCode: outcome.code,
       transcriptLines: transcript.length,
       tail: tailLines(transcript),
+      compilationCache: compilationCacheActivity,
     });
   }
 
@@ -848,6 +852,7 @@ export async function buildIos({
       exitCode: 0,
       transcriptLines: transcript.length,
       tail: tailLines(transcript),
+      compilationCache: compilationCacheActivity,
     });
   }
 
@@ -863,6 +868,7 @@ export async function buildIos({
       exitCode: 0,
       transcriptLines: transcript.length,
       tail: tailLines(transcript),
+      compilationCache: compilationCacheActivity,
     });
   }
 

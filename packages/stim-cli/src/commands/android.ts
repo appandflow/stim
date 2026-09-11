@@ -126,7 +126,7 @@ import { detectProviders } from '../engine/metro-reach.ts';
 import { selectFromPool } from '../engine/device-pool.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import { buildAndroid, productFlavorRefusal, readProductFlavors } from '../engine/gradle.ts';
-import { CCACHE_NOT_RUN, CCACHE_UNAVAILABLE, resolveCcache } from '../engine/ccache.ts';
+import { CCACHE_NOT_RUN, CCACHE_UNAVAILABLE, ccacheActivityLine, resolveCcache } from '../engine/ccache.ts';
 import { resolveAndroidCas } from '../engine/android-cas.ts';
 import { swapApkBundle, resolveKeystore } from '../engine/apk-swap.ts';
 import { captureAssetManifest } from '../engine/asset-manifest.ts';
@@ -677,6 +677,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   });
   const recordRun = stats.record;
 
+  let ccacheActivity: CcacheActivity = CCACHE_NOT_RUN;
+
   const fail = (
     code: string | undefined,
     message?: string | null,
@@ -702,7 +704,15 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     if (logPath) out(phaseLine('log', logPath));
     recordRun({ failed: true, durationMs: now() - started });
     if (json) {
-      emit(JSON.stringify({ code, message, remedy: remedy ?? null, ...(lease === undefined ? {} : { lease }) }));
+      emit(
+        JSON.stringify({
+          code,
+          message,
+          remedy: remedy ?? null,
+          ...(ccacheActivity.status === 'not-run' ? {} : { ccache: ccacheActivity }),
+          ...(lease === undefined ? {} : { lease }),
+        }),
+      );
     }
     writer.close();
     return { ok: false, error: { code, message, remedy: remedy ?? null } };
@@ -1072,7 +1082,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   let storeKey = '';
   let storeSources: FingerprintSource[] = [];
   let apkPath: string | null = null;
-  let ccacheActivity: CcacheActivity = CCACHE_NOT_RUN;
 
   async function resolveInitialFingerprint(): Promise<boolean> {
     const fingerprintTimer = stepTimer(now);
@@ -1430,6 +1439,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
               },
             );
             ccacheActivity = built.ccache ?? CCACHE_UNAVAILABLE;
+            phase('cache', `compilation cache ${ccacheActivityLine(ccacheActivity)}`);
             if (built.failed) {
               const diagnostics = built.diagnostics || [];
               for (const diag of diagnostics) {
