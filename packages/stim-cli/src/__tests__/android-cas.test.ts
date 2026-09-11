@@ -60,6 +60,14 @@ test('workspaces share CAS while compiler replacements invalidate APK and genera
   expect(buildCacheKey('android', 'same-source', { compiler: replaced.id })).not.toBe(key);
 });
 
+test('a manifest that parses but names no compiler says which fields it lacks', () => {
+  const manifest = join(root, 'toolchain.json');
+  writeFileSync(manifest, JSON.stringify({ ndk: join(root, 'ndk'), lld: 5 }));
+  expect(() => resolveAndroidCas(root, { STIM_ANDROID_CAS_TOOLCHAIN: manifest })).toThrow(
+    `${manifest} declares no clang, clangxx, lld, ar, ranlib.`,
+  );
+});
+
 test('compiler evidence waits for inherited stderr to close after the compiler exits', () => {
   const compiler = join(root, 'compiler.cjs');
   writeFileSync(

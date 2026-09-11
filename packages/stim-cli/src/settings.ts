@@ -81,6 +81,8 @@ const SETTING_SHAPES: Record<string, SettingShape> = {
 
 const KNOWN_SETTINGS = new Set(Object.keys(SETTING_SHAPES));
 
+const SETTINGS_WITH_RESOLVE_TIME_FALLBACK = new Set(['optimizations.android.casToolchain']);
+
 export const PATH_SETTINGS: readonly string[] = Object.freeze(
   Object.entries(SETTING_SHAPES)
     .filter(([, shape]) => shape === 'path')
@@ -99,6 +101,7 @@ function settingValueAt(settings: unknown, path: string): unknown {
 export function settingShapeErrors(settings: unknown): string[] {
   const errors: string[] = [];
   for (const [path, shape] of Object.entries(SETTING_SHAPES)) {
+    if (SETTINGS_WITH_RESOLVE_TIME_FALLBACK.has(path)) continue;
     const value = settingValueAt(settings, path);
     if (value === undefined) continue;
     const rule = SETTING_SHAPE_RULES[shape];
@@ -483,8 +486,12 @@ export function settingsLayers({
   const machineFile = getConfigPath();
   const committedDir = projectPath ?? repoRoot;
   return [
-    projectPath ? { file: machineFile, settings: getProjectSettings(projectPath) } : null,
-    gitCommonDir ? { file: machineFile, settings: getRepoSettings(gitCommonDir) } : null,
+    projectPath
+      ? { file: `${machineFile} (projects["${projectPath}"].settings)`, settings: getProjectSettings(projectPath) }
+      : null,
+    gitCommonDir
+      ? { file: `${machineFile} (repos["${gitCommonDir}"].settings)`, settings: getRepoSettings(gitCommonDir) }
+      : null,
     committedDir ? { file: join(committedDir, '.stim.json'), settings: readCommittedSettings(committedDir) } : null,
     machine?.optimizations === undefined
       ? null

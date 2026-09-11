@@ -59,8 +59,14 @@ export function checkMachineSettings({
 }): Finding[] {
   const findings: Finding[] = [];
 
+  const fallback = optimizations?.android.compilerCacheFallback ?? null;
+  const fallbackEntry = fallback ? settingOrigin(layers, fallback.key) : null;
+  const reported = fallback && (fallback.fromEnvironment || fallbackEntry) ? fallback : null;
+  const skip = new Set(reportedElsewhere);
+  if (reported) skip.add(reported.key);
+
   for (const key of PATH_SETTINGS) {
-    if (reportedElsewhere.includes(key)) continue;
+    if (skip.has(key)) continue;
     const entry = settingOrigin(layers, key);
     if (!entry || typeof entry.value !== 'string' || entry.value.trim() === '') continue;
     const value = entry.value.trim();
@@ -69,30 +75,30 @@ export function checkMachineSettings({
     findings.push({
       level: 'note',
       title: 'A setting points at a path that is not there',
-      detail:
-        `${key} in ${entry.file} names ${path}, which does not exist. ` +
-        'A command that reads it reports the missing file, not the setting that named it.',
+      detail: `${key} in ${entry.file} names ${path}, which does not exist.`,
       fix: `Point ${key} at the path it should name, or remove it from ${entry.file}.`,
     });
   }
 
-  const fallback = optimizations?.android.compilerCacheFallback;
-  const fallbackEntry = fallback ? settingOrigin(layers, fallback.key) : null;
-  if (fallback && optimizations && (fallback.fromEnvironment || typeof fallbackEntry?.value === 'string')) {
-    const companion = fallback.key === 'optimizations.android.compilerCache';
+  if (reported && optimizations) {
+    const companion = reported.key === 'optimizations.android.compilerCache';
     findings.push({
       level: 'note',
       title: companion
         ? 'A setting needs a companion this config does not supply'
-        : 'A setting holds a value Stim cannot use',
+        : reported.fromEnvironment
+          ? 'An environment variable holds a value Stim cannot use'
+          : 'A setting holds a value Stim cannot use',
       detail: compilerCacheFallbackMessage({
-        fallback,
+        fallback: reported,
         compilerCache: optimizations.android.compilerCache === 'none' ? 'none' : 'ccache',
         file: fallbackEntry?.file ?? null,
       }),
       fix: companion
         ? 'Set optimizations.android.casToolchain to the toolchain JSON manifest, or set optimizations.android.compilerCache to ccache.'
-        : 'Set optimizations.android.casToolchain to an absolute path to the toolchain JSON manifest, or remove it.',
+        : reported.fromEnvironment
+          ? 'Point STIM_ANDROID_CAS_TOOLCHAIN at an absolute path to the toolchain JSON manifest, or unset it.'
+          : 'Set optimizations.android.casToolchain to an absolute path to the toolchain JSON manifest, or remove it.',
     });
   }
 

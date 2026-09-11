@@ -174,6 +174,30 @@ test('legacy launcher repair preserves managed compiler profiles alongside stale
   expect(existsSync(managed)).toBe(true);
 });
 
+test('a CAS toolchain Stim cannot use leaves the managed CAS profile in place', () => {
+  const legacy = cache('android/app', null);
+  const managed = join(root, 'android/app/.cxx/stim-0123456789abcdef/Debug/abc123/arm64-v8a');
+  mkdirSync(managed, { recursive: true });
+  writeFileSync(
+    join(managed, 'CMakeCache.txt'),
+    'CMAKE_BUILD_TYPE:STRING=Debug\nCMAKE_CXX_COMPILER_LAUNCHER:STRING=\n',
+  );
+  writeFileSync(
+    join(root, '.stim.json'),
+    JSON.stringify({ optimizations: { android: { compilerCache: 'cas', casToolchain: 'relative.json' } } }),
+  );
+  expect(repairCxxLauncherState(root).removed).toEqual(['android/app/.cxx/Debug/abc123/arm64-v8a']);
+  expect(existsSync(legacy)).toBe(false);
+  expect(existsSync(managed)).toBe(true);
+});
+
+test('a config that cannot be read repairs nothing', () => {
+  const path = cache('android/app', null);
+  writeFileSync(join(home, 'config.json'), '{ "projects": ');
+  expect(repairCxxLauncherState(root)).toEqual({ removed: [], refused: [] });
+  expect(existsSync(path)).toBe(true);
+});
+
 test('doctor preserves existing CMake state while CAS is explicitly selected', () => {
   const previous = process.env.STIM_ANDROID_CAS_TOOLCHAIN;
   const path = cache('android/app', null);

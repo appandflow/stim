@@ -17,6 +17,8 @@ interface AndroidCasToolchain {
   resourceDir: string;
 }
 
+const CAS_TOOLCHAIN_FIELDS: readonly (keyof AndroidCasToolchain)[] = ['clang', 'clangxx', 'lld', 'ar', 'ranlib', 'ndk'];
+
 export interface AndroidCasSetup {
   id: string;
   dir: string;
@@ -28,6 +30,8 @@ export function resolveAndroidCas(root: string, env: NodeJS.ProcessEnv = process
   const manifest = env.STIM_ANDROID_CAS_TOOLCHAIN;
   if (!manifest) return null;
   const toolchain = JSON.parse(readFileSync(manifest, 'utf8')) as AndroidCasToolchain;
+  const missing = CAS_TOOLCHAIN_FIELDS.filter((field) => typeof toolchain?.[field] !== 'string');
+  if (missing.length > 0) throw new Error(`${manifest} declares no ${missing.join(', ')}.`);
   const names = [
     'shim/android-cas.gradle',
     'shim/android-cas.toolchain.cmake',

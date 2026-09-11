@@ -378,10 +378,10 @@ The example shows the defaults. Full setting names and behavior:
     absolute path to the experimental Apple Clang toolchain JSON manifest.
     STIM_ANDROID_CAS_TOOLCHAIN overrides this path. An explicit ccache or none
     selection overrides automatic CAS selection even with that environment
-    variable set. A manifest that is missing, unreadable, or not an absolute
-    path degrades to the compiler cache the selection leaves -- ccache, or none
-    when compilerCache is none -- in one warning naming this key and the file it
-    came from. \`stim doctor\` reports the dead path as a note. For
+    variable set. Any value that is not an absolute path, whatever its type,
+    and a manifest that is missing or unreadable, degrade to the compiler cache
+    the selection leaves -- ccache, or none when compilerCache is none -- in one
+    warning naming this key and the file it came from. \`stim doctor\` reports the dead path as a note. For
     prerequisites, see:
     https://stim.appandflow.com/docs/android-cas
   optimizations.android.pch

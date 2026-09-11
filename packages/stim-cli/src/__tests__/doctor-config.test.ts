@@ -5,7 +5,7 @@ import assert from 'node:assert';
 import { checkMachineSettings, readMachineSettings } from '../doctor-config.ts';
 import { runDoctor } from '../doctor.ts';
 import { resolveOptimizations } from '../optimizations.ts';
-import { settingsLayers } from '../settings.ts';
+import { mergeSettingsLayers, settingsLayers } from '../settings.ts';
 import type { SettingsObject } from '../types.ts';
 
 const MACHINE = '/home/.stim/config.json';
@@ -24,10 +24,12 @@ test('a path setting that names a file which is not there is reported once, by k
   const findings = check({ optimizations: { android: { casToolchain: '/gone/toolchain.json' } } });
   expect(findings).toHaveLength(1);
   expect(findings[0]).toMatchObject({ level: 'note', title: 'A setting points at a path that is not there' });
-  expect(findings[0]?.detail).toContain('optimizations.android.casToolchain');
-  expect(findings[0]?.detail).toContain(MACHINE);
-  expect(findings[0]?.detail).toContain('/gone/toolchain.json');
-  expect(findings[0]?.fix).toContain(MACHINE);
+  expect(findings[0]?.detail).toBe(
+    `optimizations.android.casToolchain in ${MACHINE} names /gone/toolchain.json, which does not exist.`,
+  );
+  expect(findings[0]?.fix).toBe(
+    `Point optimizations.android.casToolchain at the path it should name, or remove it from ${MACHINE}.`,
+  );
 });
 
 test('the same path existing reports nothing', () => {
@@ -53,7 +55,57 @@ test('a CAS selection with no toolchain is a finding rather than a refusal mid-b
   });
   expect(findings[0]?.detail).toBe(
     `optimizations.android.compilerCache in ${MACHINE} is "cas", but no optimizations.android.casToolchain or ` +
-      'STIM_ANDROID_CAS_TOOLCHAIN names the toolchain manifest. Android builds use ccache.',
+      'STIM_ANDROID_CAS_TOOLCHAIN names the toolchain manifest. Android builds fall back to ccache when it is ' +
+      'available.',
+  );
+  expect(findings[0]?.fix).toBe(
+    'Set optimizations.android.casToolchain to the toolchain JSON manifest, or set ' +
+      'optimizations.android.compilerCache to ccache.',
+  );
+});
+
+test.each([null, 5, true, {}])(
+  'a casToolchain of %j is named once in every compiler cache state rather than refusing the build',
+  (casToolchain) => {
+    for (const compilerCache of ['auto', 'ccache', 'cas', 'none'] as const) {
+      const findings = check({ optimizations: { android: { compilerCache, casToolchain } } });
+      expect(findings).toHaveLength(1);
+      expect(findings[0]).toMatchObject({ level: 'note', title: 'A setting holds a value Stim cannot use' });
+      expect(findings[0]?.detail).toBe(
+        `optimizations.android.casToolchain in ${MACHINE} is ${JSON.stringify(casToolchain)}, which is not an ` +
+          'absolute path to a toolchain JSON manifest. ' +
+          (compilerCache === 'none'
+            ? 'Android builds use no compiler cache, because optimizations.android.compilerCache is "none".'
+            : 'Android builds fall back to ccache when it is available.'),
+      );
+    }
+  },
+);
+
+test.each(['relative.json', '/abs/toolchain.json\n'])(
+  'a casToolchain of %j is one finding that invents no path the resolver never reads',
+  (casToolchain) => {
+    const findings = check({ optimizations: { android: { casToolchain } } });
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.title).toBe('A setting holds a value Stim cannot use');
+    expect(findings[0]?.detail).not.toContain('/app/');
+  },
+);
+
+test('an unusable toolchain in the environment is fixed by changing the environment, not the config', () => {
+  const settings = { optimizations: { android: { casToolchain: '/there/toolchain.json' } } };
+  const findings = checkMachineSettings({
+    settings,
+    layers: [{ file: MACHINE, settings }],
+    projectRoot: '/app',
+    optimizations: resolveOptimizations(settings, { STIM_ANDROID_CAS_TOOLCHAIN: 'relative.json' }),
+    exists: (path) => path === '/there/toolchain.json',
+  });
+  expect(findings).toHaveLength(1);
+  expect(findings[0]?.title).toBe('An environment variable holds a value Stim cannot use');
+  expect(findings[0]?.detail).toContain('STIM_ANDROID_CAS_TOOLCHAIN in the environment');
+  expect(findings[0]?.fix).toBe(
+    'Point STIM_ANDROID_CAS_TOOLCHAIN at an absolute path to the toolchain JSON manifest, or unset it.',
   );
 });
 
@@ -92,14 +144,42 @@ describe('against a config file on disk', () => {
     writeFileSync(join(home, 'config.json'), JSON.stringify(config));
   }
 
-  test('a projects entry for a checkout that is gone is left to gc', () => {
+  function machineSettings() {
+    const layers = settingsLayers({ projectPath: project, gitCommonDir: null, repoRoot: project });
+    return { layers, settings: mergeSettingsLayers(layers.map((layer) => layer.settings)) };
+  }
+
+  test('a projects entry for a checkout that is gone is left to gc while its settings are swept', () => {
+    const dead = join(home, 'deleted-checkout');
     writeConfig({
       version: 2,
       repos: {},
-      projects: { [join(home, 'deleted-checkout')]: { metroPort: 8081, platforms: {} } },
+      projects: {
+        [dead]: { metroPort: 8081, platforms: {} },
+        [project]: {
+          metroPort: 8082,
+          platforms: {},
+          settings: { android: { keystore: 'app/release.keystore' } },
+        },
+      },
     });
-    const layers = settingsLayers({ projectPath: project, gitCommonDir: null, repoRoot: project });
-    expect(checkMachineSettings({ settings: {}, layers, projectRoot: project })).toEqual([]);
+    const findings = checkMachineSettings({ ...machineSettings(), projectRoot: project });
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.detail).toBe(
+      `android.keystore in ${join(home, 'config.json')} (projects["${project}"].settings) names ` +
+        `${join(project, 'app', 'release.keystore')}, which does not exist.`,
+    );
+  });
+
+  test('a setting committed in .stim.json is reported against that file', () => {
+    writeConfig({ version: 2, repos: {}, projects: {} });
+    writeFileSync(join(project, '.stim.json'), JSON.stringify({ android: { keystore: 'app/release.keystore' } }));
+    const findings = checkMachineSettings({ ...machineSettings(), projectRoot: project });
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.detail).toBe(
+      `android.keystore in ${join(project, '.stim.json')} names ${join(project, 'app', 'release.keystore')}, ` +
+        'which does not exist.',
+    );
   });
 
   test('an unparseable config reports the repair line instead of crashing doctor', () => {

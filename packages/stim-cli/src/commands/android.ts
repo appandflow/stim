@@ -243,7 +243,7 @@ function androidCompilerCache({
       const fromEnvironment = Boolean(process.env.STIM_ANDROID_CAS_TOOLCHAIN);
       fallback = {
         key: fromEnvironment ? 'STIM_ANDROID_CAS_TOOLCHAIN' : 'optimizations.android.casToolchain',
-        reason: `could not be read: ${(error as Error).message}`,
+        reason: `could not be read: ${(error as Error).message.replace(/\.$/, '')}`,
         fromEnvironment,
       };
       resolved = { ...resolved, android: { ...resolved.android, compilerCache: 'ccache' } };

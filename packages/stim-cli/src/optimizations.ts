@@ -55,7 +55,7 @@ export function compilerCacheFallbackMessage({
   const backend =
     compilerCache === 'none'
       ? 'Android builds use no compiler cache, because optimizations.android.compilerCache is "none".'
-      : 'Android builds use ccache.';
+      : 'Android builds fall back to ccache when it is available.';
   return `${fallback.key}${origin ? ` in ${origin}` : ''} ${fallback.reason}. ${backend}`;
 }
 

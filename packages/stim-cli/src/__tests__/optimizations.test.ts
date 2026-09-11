@@ -37,7 +37,7 @@ test('a CAS selection with no toolchain degrades to ccache instead of refusing t
   expect(compilerCacheFallbackMessage({ fallback, compilerCache: 'ccache', file: '/home/.stim/config.json' })).toBe(
     'optimizations.android.compilerCache in /home/.stim/config.json is "cas", but no ' +
       'optimizations.android.casToolchain or STIM_ANDROID_CAS_TOOLCHAIN names the toolchain manifest. ' +
-      'Android builds use ccache.',
+      'Android builds fall back to ccache when it is available.',
   );
 });
 
@@ -62,9 +62,35 @@ test('an unusable toolchain in the environment is named as the environment, not 
   assert(fallback);
   expect(compilerCacheFallbackMessage({ fallback, compilerCache: 'ccache', file: '/home/.stim/config.json' })).toBe(
     'STIM_ANDROID_CAS_TOOLCHAIN in the environment is "relative.json", which is not an absolute path to a ' +
-      'toolchain JSON manifest. Android builds use ccache.',
+      'toolchain JSON manifest. Android builds fall back to ccache when it is available.',
   );
 });
+
+test.each([null, 5, true, {}, []])(
+  'a casToolchain of %j degrades in every compiler cache state and never refuses a build',
+  (casToolchain) => {
+    for (const compilerCache of ['auto', 'ccache', 'cas', 'none'] as const) {
+      const settings = { optimizations: { android: { compilerCache, casToolchain } } };
+      expect(settingShapeErrors(settings)).toEqual([]);
+      const options = resolveOptimizations(settings, {});
+      expect(options.android.compilerCache).toBe(compilerCache === 'none' ? 'none' : 'ccache');
+      expect(options.android.casToolchain).toBeNull();
+      const fallback = options.android.compilerCacheFallback;
+      assert(fallback);
+      expect(fallback).toMatchObject({ key: 'optimizations.android.casToolchain', fromEnvironment: false });
+      expect(
+        compilerCacheFallbackMessage({
+          fallback,
+          compilerCache: options.android.compilerCache === 'none' ? 'none' : 'ccache',
+          file: '/home/.stim/config.json',
+        }),
+      ).toContain(
+        `optimizations.android.casToolchain in /home/.stim/config.json is ${JSON.stringify(casToolchain)}, which is ` +
+          'not an absolute path to a toolchain JSON manifest.',
+      );
+    }
+  },
+);
 
 test('a toolchain that exists keeps CAS selected and reports no fallback', () => {
   const options = resolveOptimizations(
