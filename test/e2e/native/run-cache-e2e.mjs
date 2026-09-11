@@ -74,23 +74,12 @@ const ENV = {
   STIM_POOL_ANDROID_PARKED_MAX: '0',
 };
 process.env.STIM_HOME = HOME_DIR;
-// Android runs get a throwaway gradle home so build-cache-1 starts empty and
-// storing stays measurable (#136). Clones, not symlinks: gradle resolves real
-// paths when it assembles script classpaths, so a symlinked modules-2 breaks
-// buildscript compilation. Created BESIDE the real home so the clones stay
-// same-volume copy-on-write.
-const GRADLE_USER_HOME =
-  PLATFORM === 'android' && !args.dryRun
-    ? seedGradleUserHome(process.env.GRADLE_USER_HOME || join(homedir(), '.gradle'))
-    : process.env.GRADLE_USER_HOME || join(homedir(), '.gradle');
-if (PLATFORM === 'android' && !args.dryRun) {
-  ENV.GRADLE_USER_HOME = GRADLE_USER_HOME;
-  process.env.GRADLE_USER_HOME = GRADLE_USER_HOME;
-}
-const GRADLE_CACHE_DIR = join(GRADLE_USER_HOME, 'caches', 'build-cache-1');
-const GRADLE_HOME_IS_THROWAWAY = PLATFORM === 'android' && !args.dryRun;
+let GRADLE_USER_HOME = process.env.GRADLE_USER_HOME || join(homedir(), '.gradle');
+let GRADLE_CACHE_DIR = join(GRADLE_USER_HOME, 'caches', 'build-cache-1');
+let GRADLE_HOME_IS_THROWAWAY = false;
 
 function seedGradleUserHome(source) {
+  // Gradle resolves script classpath symlinks, so dependency caches are cloned into the disposable home.
   const base = existsSync(source) ? dirname(realpathSync(source)) : tmpdir();
   // A crashed run cannot clean its own home; sweep predecessors only when
   // their recorded owner pid is provably dead.
@@ -221,6 +210,15 @@ function skipCheck(id, reason) {
 
 async function main() {
   preflight(h, PLATFORM);
+
+  if (PLATFORM === 'android') {
+    GRADLE_USER_HOME = seedGradleUserHome(GRADLE_USER_HOME);
+    GRADLE_HOME_IS_THROWAWAY = true;
+    ENV.GRADLE_USER_HOME = GRADLE_USER_HOME;
+    process.env.GRADLE_USER_HOME = GRADLE_USER_HOME;
+    GRADLE_CACHE_DIR = join(GRADLE_USER_HOME, 'caches', 'build-cache-1');
+    log(`gradle build cache=${GRADLE_CACHE_DIR}`);
+  }
 
   const appDir = args.appDir
     ? resolve(args.appDir)
@@ -1012,7 +1010,7 @@ function plan() {
   log(`build cache=${BUILD_CACHE_ROOT} (forced; any inherited STIM_BUILD_CACHE is ignored)`);
   log(`metro cache=${METRO_CACHE_ROOT} (forced; any inherited STIM_METRO_CACHE is ignored)`);
   log(`temp dir=${CACHE_TMP_DIR} (forced so Metro's default store cannot hide shared-store writes)`);
-  log(PLATFORM === 'ios' ? `xcode CAS=${CAS_DIR}` : `gradle build cache=${GRADLE_CACHE_DIR}`);
+  log(PLATFORM === 'ios' ? `xcode CAS=${CAS_DIR}` : `Gradle dependency seed=${GRADLE_USER_HOME}`);
   log(`race build cache=${RACE_CACHE_ROOT}`);
   log(
     args.appDir

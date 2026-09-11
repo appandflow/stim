@@ -94,6 +94,14 @@ The fixture-creation commands are version-sensitive; each is overridable with an
 env var (`STIM_E2E_BARE_INIT`, `STIM_E2E_EXPO_INIT`) so a runner can adjust
 them without touching assertion logic.
 
+Native runners check their environment before preparing the fixture. Android
+requires `ANDROID_HOME` or `ANDROID_SDK_ROOT` pointing to an existing SDK
+directory, even when the app has `android/local.properties`. iOS requires a
+UTF-8 locale; set `LANG=en_US.UTF-8` and `LC_ALL=en_US.UTF-8` when needed.
+The cache runner performs these checks before seeding its disposable Gradle
+home. Worktree names include a digest of the run directory, so separate runs
+use different device names and do not recover a previous run's AVD by name.
+
 ### The simulator pool suite
 
 `test/e2e/native/run-pool-e2e.mjs` runs on iOS. With a pool bound of one, it

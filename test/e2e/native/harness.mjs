@@ -58,10 +58,18 @@ export function preflight(h, platform) {
   assert(v.code === 0, `stim CLI does not run: ${v.stderr}`);
   h.log(`stim ${v.stdout.trim()}`);
   if (platform === 'ios') {
+    const locale = h.sh('locale', ['charmap'], { allowFail: true });
+    assert(
+      locale.code === 0 && /^utf-?8$/i.test(locale.stdout.trim()),
+      'Native iOS tests require a UTF-8 locale for CocoaPods. Set LANG=en_US.UTF-8 and LC_ALL=en_US.UTF-8 before running the suite.',
+    );
     if (process.platform !== 'darwin') h.die('ios variant requires macOS + Xcode; this is not a macOS host.', 2);
     h.requireTool('xcrun', ['--version']);
     h.requireTool('xcodebuild', ['-version']);
   } else {
+    const sdk = h.env.ANDROID_HOME || h.env.ANDROID_SDK_ROOT;
+    assert(sdk, 'Native Android tests require ANDROID_HOME or ANDROID_SDK_ROOT pointing to the Android SDK.');
+    assert(existsSync(sdk) && statSync(sdk).isDirectory(), `Android SDK directory does not exist: ${sdk}`);
     h.requireTool('adb', ['version']);
   }
   return v.stdout.trim();
@@ -157,7 +165,8 @@ export function createFixture({ framework, platform, workDir, h }) {
 }
 
 export function createWarmWorktree({ h, sourceDir, workDir, name, created }) {
-  const requestedPath = join(workDir, name);
+  const runId = createHash('sha256').update(realpathSync(workDir)).digest('hex').slice(0, 12);
+  const requestedPath = join(workDir, `${name}-${runId}`);
   const added = h.sh('git', ['-C', sourceDir, 'worktree', 'add', '--detach', requestedPath, 'HEAD'], {
     allowFail: true,
   });
