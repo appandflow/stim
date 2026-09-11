@@ -10,13 +10,14 @@ import type { SettingsObject } from '../types.ts';
 
 const MACHINE = '/home/.stim/config.json';
 
-function check(settings: SettingsObject, present: string[] = []) {
+function check(settings: SettingsObject, present: string[] = [], env: NodeJS.ProcessEnv = {}) {
   return checkMachineSettings({
     settings,
     layers: [{ file: MACHINE, settings }],
     projectRoot: '/app',
-    optimizations: resolveOptimizations(settings, {}),
+    optimizations: resolveOptimizations(settings, env),
     exists: (path) => present.includes(path),
+    env,
   });
 }
 
@@ -94,18 +95,42 @@ test.each(['relative.json', '/abs/toolchain.json\n'])(
 
 test('an unusable toolchain in the environment is fixed by changing the environment, not the config', () => {
   const settings = { optimizations: { android: { casToolchain: '/there/toolchain.json' } } };
-  const findings = checkMachineSettings({
-    settings,
-    layers: [{ file: MACHINE, settings }],
-    projectRoot: '/app',
-    optimizations: resolveOptimizations(settings, { STIM_ANDROID_CAS_TOOLCHAIN: 'relative.json' }),
-    exists: (path) => path === '/there/toolchain.json',
-  });
+  const findings = check(settings, ['/there/toolchain.json'], { STIM_ANDROID_CAS_TOOLCHAIN: 'relative.json' });
   expect(findings).toHaveLength(1);
   expect(findings[0]?.title).toBe('An environment variable holds a value Stim cannot use');
   expect(findings[0]?.detail).toContain('STIM_ANDROID_CAS_TOOLCHAIN in the environment');
   expect(findings[0]?.fix).toBe(
     'Point STIM_ANDROID_CAS_TOOLCHAIN at an absolute path to the toolchain JSON manifest, or unset it.',
+  );
+});
+
+test('a toolchain the environment names but does not supply is reported against the environment', () => {
+  const findings = check({}, [], { STIM_ANDROID_CAS_TOOLCHAIN: '/missing/toolchain.json' });
+  expect(findings).toHaveLength(1);
+  expect(findings[0]).toMatchObject({
+    level: 'note',
+    title: 'An environment variable points at a path that is not there',
+  });
+  expect(findings[0]?.detail).toBe(
+    'STIM_ANDROID_CAS_TOOLCHAIN in the environment names /missing/toolchain.json, which does not exist.',
+  );
+  expect(findings[0]?.fix).toBe('Point STIM_ANDROID_CAS_TOOLCHAIN at the path it should name, or unset it.');
+});
+
+test('an environment toolchain that is there silences the configured value the build never reads', () => {
+  const settings = { optimizations: { android: { casToolchain: '/gone/toolchain.json' } } };
+  expect(check(settings, ['/there/toolchain.json'], { STIM_ANDROID_CAS_TOOLCHAIN: '/there/toolchain.json' })).toEqual(
+    [],
+  );
+});
+
+test('a path setting is tested verbatim, because the build opens the string the config holds', () => {
+  const settings = { optimizations: { android: { casToolchain: '/there/toolchain.json ' } } };
+  expect(check(settings, ['/there/toolchain.json '])).toEqual([]);
+  const findings = check(settings, ['/there/toolchain.json']);
+  expect(findings).toHaveLength(1);
+  expect(findings[0]?.detail).toBe(
+    `optimizations.android.casToolchain in ${MACHINE} names "/there/toolchain.json ", which does not exist.`,
   );
 });
 
@@ -125,17 +150,22 @@ test('a config with nothing wrong reports nothing', () => {
 describe('against a config file on disk', () => {
   let home: string;
   let project: string;
+  let savedToolchain: string | undefined;
 
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'stim-doctor-config-home-'));
     project = mkdtempSync(join(tmpdir(), 'stim-doctor-config-project-'));
     process.env.STIM_HOME = home;
+    savedToolchain = process.env.STIM_ANDROID_CAS_TOOLCHAIN;
+    delete process.env.STIM_ANDROID_CAS_TOOLCHAIN;
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app', dependencies: {} }));
     mkdirSync(join(project, 'node_modules'));
   });
 
   afterEach(() => {
     delete process.env.STIM_HOME;
+    if (savedToolchain === undefined) delete process.env.STIM_ANDROID_CAS_TOOLCHAIN;
+    else process.env.STIM_ANDROID_CAS_TOOLCHAIN = savedToolchain;
     rmSync(home, { recursive: true, force: true });
     rmSync(project, { recursive: true, force: true });
   });
@@ -192,6 +222,21 @@ describe('against a config file on disk', () => {
       `Repair the file, or move it aside to start over: mv "${join(home, 'config.json')}" "${join(home, 'config.json')}.broken"`,
     );
     expect(runDoctor(project)).toEqual([machine.corrupt]);
+  });
+
+  test('doctor reports a toolchain the environment names but does not supply', () => {
+    writeConfig({ version: 2, repos: {}, projects: {} });
+    const missing = join(home, 'gone', 'toolchain.json');
+    process.env.STIM_ANDROID_CAS_TOOLCHAIN = missing;
+    const findings = runDoctor(project).filter((found) => found.detail.includes('STIM_ANDROID_CAS_TOOLCHAIN'));
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      level: 'note',
+      title: 'An environment variable points at a path that is not there',
+    });
+    expect(findings[0]?.detail).toBe(
+      `STIM_ANDROID_CAS_TOOLCHAIN in the environment names ${missing}, which does not exist.`,
+    );
   });
 
   test('doctor reports a dead machine path on every platform, not only the native one', () => {

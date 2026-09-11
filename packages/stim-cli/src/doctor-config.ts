@@ -42,6 +42,10 @@ export function readMachineSettings(context: {
   }
 }
 
+const PATH_SETTING_ENVIRONMENT: Readonly<Record<string, string>> = {
+  'optimizations.android.casToolchain': 'STIM_ANDROID_CAS_TOOLCHAIN',
+};
+
 export function checkMachineSettings({
   settings,
   layers,
@@ -49,6 +53,7 @@ export function checkMachineSettings({
   optimizations = null,
   reportedElsewhere = [],
   exists = existsSync,
+  env = process.env,
 }: {
   settings: SettingsObject;
   layers: SettingsLayer[];
@@ -56,6 +61,7 @@ export function checkMachineSettings({
   optimizations?: Optimizations | null;
   reportedElsewhere?: readonly string[];
   exists?: (path: string) => boolean;
+  env?: NodeJS.ProcessEnv;
 }): Finding[] {
   const findings: Finding[] = [];
 
@@ -66,16 +72,28 @@ export function checkMachineSettings({
   if (reported) skip.add(reported.key);
 
   for (const key of PATH_SETTINGS) {
-    if (skip.has(key)) continue;
+    const variable = PATH_SETTING_ENVIRONMENT[key];
+    if (skip.has(key) || (variable && skip.has(variable))) continue;
+    const override = variable ? env[variable] : undefined;
+    if (variable && override) {
+      const named = missingPath(override, projectRoot, exists);
+      if (named)
+        findings.push({
+          level: 'note',
+          title: 'An environment variable points at a path that is not there',
+          detail: `${variable} in the environment names ${named}, which does not exist.`,
+          fix: `Point ${variable} at the path it should name, or unset it.`,
+        });
+      continue;
+    }
     const entry = settingOrigin(layers, key);
-    if (!entry || typeof entry.value !== 'string' || entry.value.trim() === '') continue;
-    const value = entry.value.trim();
-    const path = isAbsolute(value) ? value : resolve(projectRoot, value);
-    if (exists(path)) continue;
+    if (!entry || typeof entry.value !== 'string') continue;
+    const named = missingPath(entry.value, projectRoot, exists);
+    if (!named) continue;
     findings.push({
       level: 'note',
       title: 'A setting points at a path that is not there',
-      detail: `${key} in ${entry.file} names ${path}, which does not exist.`,
+      detail: `${key} in ${entry.file} names ${named}, which does not exist.`,
       fix: `Point ${key} at the path it should name, or remove it from ${entry.file}.`,
     });
   }
@@ -113,4 +131,11 @@ export function checkMachineSettings({
   }
 
   return findings;
+}
+
+function missingPath(value: string, projectRoot: string, exists: (path: string) => boolean): string | null {
+  if (value.trim() === '') return null;
+  const path = isAbsolute(value) ? value : resolve(projectRoot, value);
+  if (exists(path)) return null;
+  return value === value.trim() ? path : JSON.stringify(path);
 }
