@@ -38,6 +38,7 @@ import gcCommand, {
   selectCaches,
 } from '../commands/gc.ts';
 import { adoptParked, parkSim, readParked } from '../sim-pool.ts';
+import * as gcDevices from '../commands/gc/devices.ts';
 import {
   makeConfig,
   makeIosSim,
@@ -234,7 +235,7 @@ test('parked deletion keeps ownership records when simulator listing was unavail
   };
   parkSim({ platform: 'ios', projectPath: '/tmp/source', record, max: 3 });
   const report = await collectGcReport(
-    { unsafeAllowScopedDeviceSweep: true },
+    {},
     {
       listAllIosSims: () => {
         throw new Error('simctl unavailable');
@@ -367,6 +368,7 @@ test('a simulator in the parked pool is referenced rather than orphaned', () => 
 });
 
 test('gc sizes only listed owned Android AVDs after ownership classification', async () => {
+  vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
   const now = Date.now();
   const project = join(tmpHome, 'stale-project');
   mkdirSync(project, { recursive: true });
@@ -397,7 +399,6 @@ test('gc sizes only listed owned Android AVDs after ownership classification', a
       olderThan: 30,
       now,
       lastTouched: () => now - 90 * DAY_MS,
-      unsafeAllowScopedDeviceSweep: true,
     },
     {
       avdDirectory: (name) => `/avds/${name}.avd`,
@@ -710,7 +711,12 @@ async function cli(args: string[] = []) {
 }
 
 async function sweepingGc(opts = {}) {
-  await runGc({ unsafeAllowScopedDeviceSweep: true, ...opts });
+  const scope = vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+  try {
+    await runGc(opts);
+  } finally {
+    scope.mockRestore();
+  }
 }
 
 function captureLog(fn: () => unknown) {
@@ -866,6 +872,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const [key, value] of Object.entries(originalAvdRoots)) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
@@ -2064,11 +2071,19 @@ function installDeviceExecutor({
       }
       return '';
     },
+    runFile(file, args: string[] = []) {
+      const cmd = [file, ...args].join(' ');
+      execCalls.push(cmd);
+      if (cmd.includes('simctl list devices --json')) return iosListJson(devices);
+      if (cmd.startsWith('xcrun simctl delete ')) return '';
+      throw new Error(`unexpected runFile: ${cmd}`);
+    },
     runFileQuiet(file: string, args: string[] = []) {
       execCalls.push([file, ...args].join(' '));
       return '';
     },
-    spawn(cmd) {
+    spawn(cmd, args: readonly string[] = []) {
+      execCalls.push([cmd, ...args].join(' '));
       throw new Error(`unexpected spawn: ${cmd}`);
     },
   });
@@ -2154,7 +2169,7 @@ test('gc with no config names Stim devices it cannot verify, but never touches t
     execCalls,
   });
 
-  const output = await captureLog(() => sweepingGc({ delete: true }));
+  const output = await captureLog(() => runGc({ delete: true }));
 
   expect(output).toMatch(/stim-someones-live-env/);
   expect(output).toMatch(/no Stim config found/i);
@@ -2164,31 +2179,36 @@ test('gc with no config names Stim devices it cannot verify, but never touches t
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete'))).toBe(false);
 });
 
-test('a config scoped by STIM_HOME never sweeps machine-global devices', async () => {
-  const execCalls: string[] = [];
-  installDeviceExecutor({
-    devices: [
-      { udid: 'UDID-REAL-1', name: 'stim-real-env-1', state: 'Booted' },
-      { udid: 'UDID-REAL-2', name: 'stim-real-env-2' },
-    ],
-    execCalls,
-  });
-  const livePath = join(fakeHome, 'some-project');
-  mkdirSync(livePath, { recursive: true });
-  saveConfig({
-    version: 2,
-    projects: { [livePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-ELSEWHERE', owned: true } } } },
-    repos: {},
-  });
+test.each(['CLI', 'obsolete internal option'])(
+  'a config scoped by STIM_HOME never sweeps machine-global devices through the %s',
+  async (entry) => {
+    const execCalls: string[] = [];
+    installDeviceExecutor({
+      devices: [
+        { udid: 'UDID-REAL-1', name: 'stim-real-env-1', state: 'Booted' },
+        { udid: 'UDID-REAL-2', name: 'stim-real-env-2' },
+      ],
+      execCalls,
+    });
+    const livePath = join(fakeHome, 'some-project');
+    mkdirSync(livePath, { recursive: true });
+    saveConfig({
+      version: 2,
+      projects: { [livePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-ELSEWHERE', owned: true } } } },
+      repos: {},
+    });
 
-  const output = await captureLog(() => cli(['--delete']));
+    const configBefore = currentConfig();
+    const obsoleteOptions = { delete: true, unsafeAllowScopedDeviceSweep: true };
+    const output = await captureLog(() => (entry === 'CLI' ? cli(['--delete']) : runGc(obsoleteOptions)));
 
-  expect(output).not.toMatch(/Orphaned devices/i);
-  expect(output).toMatch(/STIM_HOME/);
-  expect(output).toMatch(/stim-real-env-1/);
-  expect(execCalls.some((c) => c.startsWith('xcrun simctl shutdown'))).toBe(false);
-  expect(execCalls.some((c) => c.startsWith('xcrun simctl delete'))).toBe(false);
-});
+    expect(output).not.toMatch(/Orphaned devices/i);
+    expect(output).toMatch(/STIM_HOME/);
+    expect(output).toMatch(/stim-real-env-1/);
+    expect(execCalls.filter((cmd) => cmd.includes('UDID-REAL-'))).toEqual([]);
+    expect(currentConfig()).toEqual(configBefore);
+  },
+);
 
 test('the STIM_HOME guard does not disable dead-entry pruning', async () => {
   const localDeadPath = join(fakeHome, 'no-longer-here');

@@ -272,6 +272,9 @@ can continue. `stop` shuts down devices; it never deletes them.
 
 Set `STIM_HOME` to a temporary directory in every test that reads or writes
 global state. Delete the directory and environment variable after each test.
+This redirects Stim state, not machine-global simulators or emulators. Never
+bypass the scoped GC guard for real-tool validation. Clean up only exact devices
+created by that validation, using centralized teardown and retained fixture records.
 
 ### 6. Compare canonical paths
 

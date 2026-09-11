@@ -387,8 +387,8 @@ export function deleteParkedSims(parkedSims: readonly ParkedSimReport[], deps: G
   return failures;
 }
 
-export function deviceSweepIsScoped(unsafeAllowScopedDeviceSweep?: boolean): boolean {
-  return Boolean(process.env.STIM_HOME) && !unsafeAllowScopedDeviceSweep;
+export function deviceSweepIsScoped(): boolean {
+  return Boolean(process.env.STIM_HOME);
 }
 
 export function collectDeviceLeases(now: number): DeviceLeaseGarbage {
