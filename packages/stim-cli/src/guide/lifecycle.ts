@@ -919,7 +919,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   resolve refuses with STIM_CLAIM_REFUSED and names the removal rather than
   waiting on it or removing it.
   A plain warm that cannot record a claim at all -- an unwritable STIM_HOME, a
-  STIM_HOME that is a file, or no \`unique-pid\` build for this platform
+  STIM_HOME on a read-only mount or under a dangling symlink, a STIM_HOME that
+  is a file, or no \`unique-pid\` build for this platform
   (STIM_CLAIM_UNAVAILABLE) -- says so in one dim line and copies without it,
   exactly as it did before the lock existed, because a copy only reads.
   \`--refresh\` refuses instead, because it writes. Before that unsynchronised

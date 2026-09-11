@@ -8,6 +8,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -586,6 +587,28 @@ test('a plain warm copies without the lock when STIM_HOME cannot be written, and
   } finally {
     chmodSync(home, 0o700);
   }
+});
+
+test('a dangling STIM_HOME link permits a plain copy but refuses refresh before changing the source', async () => {
+  write(root, '.env', 'main env');
+  fallBehind({ 'package.json': '{"name":"updated-fixture"}\n' });
+  const before = git(root, 'rev-parse', 'HEAD');
+  symlinkSync(join(base, 'missing-home'), String(process.env.STIM_HOME));
+
+  const plain = await runWarm(target);
+  expect(plain.code).toBe(0);
+  expect(plain.stdout).toEqual([]);
+  expect(plain.stderr).toMatch(/lock {8}unavailable \(ENOENT:.*\); copying without it/);
+  expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
+
+  rmSync(join(target, '.env'));
+  const refresh = await runWarm(target, '--refresh');
+  expect(refresh.code).toBe(1);
+  expect(refresh.stdout).toEqual([]);
+  expect(refresh.stderr).toMatch(/Could not warm this worktree: ENOENT:/);
+  expect(refresh.stderr).not.toContain('another process');
+  expect(existsSync(join(target, '.env'))).toBe(false);
+  expect(git(root, 'rev-parse', 'HEAD')).toBe(before);
 });
 
 test('a copy that waited for the lock reads the exclusions the refresh left behind, not the ones it started with', async () => {
