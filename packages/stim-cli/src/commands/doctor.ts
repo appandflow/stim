@@ -62,13 +62,13 @@ export function doctorSuccessLines(platform: DoctorPlatform | undefined, stim: S
 
   if (platform !== 'android') {
     lines.push('', 'iOS');
-    lines.push(phaseLine('setup', 'CocoaPods, warm state, dev client, effective Debug simulator architectures'));
+    lines.push(phaseLine('setup', 'CocoaPods, warm state, effective Debug simulator architectures'));
     lines.push(phaseLine('caches', 'Metro, Xcode compilation, ccache, build provider'));
     lines.push(phaseLine('devices', 'remote device, SimSlim profile'));
   }
   if (platform !== 'ios') {
     lines.push('', 'Android');
-    lines.push(phaseLine('setup', 'warm state, dev client'));
+    lines.push(phaseLine('setup', 'warm state'));
     lines.push(phaseLine('caches', 'Metro, Gradle, ccache, build provider'));
     lines.push(phaseLine('devices', 'remote device'));
   }

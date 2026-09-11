@@ -19,7 +19,6 @@ Commands use `stim`. If it is not installed globally, replace `stim` with
   runtime.
 - A compatible Ruby and CocoaPods setup when the project uses pods. Install
   Bundler when the project pins CocoaPods in `Gemfile.lock`.
-- `expo-dev-client` for an Expo Debug build on a reserved Metro port.
 
 ## Android
 
