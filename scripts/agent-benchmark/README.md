@@ -315,7 +315,7 @@ log command names the exact file subsequently read. Diagnosis uses the later
 read's timestamp, not the truncated preview. A masked Android Expo pipeline can
 use a subsequent read of its exact build log as launch confirmation only when
 that output reports both build success and opening the app.
-Read-only agent-device help does not need a session. An auxiliary diagnostic
+Read-only agent-device help and `--version` do not need a session. An auxiliary diagnostic
 session must use the exact run namespace and state directory, open the assigned
 device, and close successfully before the pinned proof session opens. Its
 `auxiliarySessions` review entries name each `session` and a nonempty `assessment`.

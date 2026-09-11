@@ -80,10 +80,15 @@ describe('agent-device session isolation', () => {
     }
   });
 
-  it('allows help output without letting help hide an unscoped device command', () => {
+  it('allows help and version output without hiding an unscoped device command', () => {
     expect(
       agentDeviceIsolationInvalidReasons(
-        [{ command: 'which agent-device; agent-device --help 2>&1 | head -20\nagent-device help open' }],
+        [
+          {
+            command:
+              'which agent-device 2>&1; agent-device --version 2>&1 | head -5\nagent-device --help\nagent-device help open',
+          },
+        ],
         prefix,
       ),
     ).toEqual([]);
@@ -91,6 +96,9 @@ describe('agent-device session isolation', () => {
       'agent-device help; agent-device snapshot',
       'agent-device help $(agent-device snapshot)',
       'agent-device --help `agent-device snapshot`',
+      'agent-device --version; agent-device snapshot',
+      'agent-device --version $(agent-device close)',
+      'agent-device --version --session default',
     ]) {
       expect(agentDeviceIsolationInvalidReasons([{ command }], prefix)).toContain(
         'agent-device-run-session-not-applied',
