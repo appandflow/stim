@@ -59,6 +59,11 @@ Doctor reports cross-volume staging and build-cache copies; read guide settings
 for placement overrides and guide lifecycle options for warm behavior.
 For iOS Debug architecture findings, review the project's overrides and imported
 Podfile helpers using guide lifecycle options. Doctor --fix does not change them.
+For parallel iOS work, review the recommended optional SimSlim setup in
+stim guide lifecycle simslim. If simulator process startup times out, check
+host memory pressure and free memory before retrying; do not restart other
+workspaces' devices or close their apps without asking. That guide covers
+the recovery steps and profile tradeoffs.
 For a linked native library carrying Git metadata, add the printed .git entries to
 .fingerprintignore only when the native build does not read Git state.
 

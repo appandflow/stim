@@ -64,7 +64,9 @@ KEYS STIM READS
                         at most 64 KiB. Install the
                         external tool once with
                         \`brew install mobai-app/tap/simslim\`. SimSlim requires
-                        an iOS 18 or newer simulator. Each local \`stim ios\`
+                        iOS 18.5 or newer in SimSlim 0.8. Recommended for parallel
+                        iOS work after reviewing service tradeoffs; see
+                        \`stim guide lifecycle simslim\`. Each local \`stim ios\`
                         reconciles the profile on its Stim-owned simulator.
                         The first change can reboot it; a matching profile is a
                         fast no-op. Removing the setting restores stock services

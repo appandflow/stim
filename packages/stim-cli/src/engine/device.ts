@@ -16,10 +16,13 @@ import {
   type ProjectRecord,
 } from '../config.ts';
 import { pidExists } from '../metro.ts';
+import { getExecutor } from '../exec.ts';
+import { hostMemoryPressureAdvice, readHostMemoryPressure } from '../host-memory.ts';
 import {
   bootIosSim,
   createOwnedIosSim,
   IOS_BOOT_TIMEOUT_MS,
+  iosSimulatorFailureAdvice,
   listAllIosSims,
   iosRuntimeMatches,
   listIosDeviceTypes,
@@ -217,6 +220,8 @@ async function ensureOwnedIosDevice({
   out: Notify;
   reconcileIosSimulator: typeof reconcileSimSlim;
 }): Promise<OwnedDeviceRecord> {
+  const memoryAdvice = hostMemoryPressureAdvice(readHostMemoryPressure());
+  if (memoryAdvice) out(chalk.yellow(phaseLine('memory', memoryAdvice)));
   const simslimProfile = iosSimSlimProfileSetting(settings, settingsRoot);
   if (record?.deviceUdid) {
     if (record.owned) {
@@ -1125,6 +1130,17 @@ async function ensureIosBooted({
 }): Promise<BootResult> {
   const udid = device?.deviceUdid;
   if (!udid) return { failed: true, reason: 'No iOS simulator is recorded for this project.' };
+  const ready = (): BootResult => {
+    try {
+      getExecutor().runFile('xcrun', ['simctl', 'spawn', udid, '/usr/bin/true'], { timeoutMs: 30000 });
+      return { ok: true, udid };
+    } catch (error) {
+      return {
+        failed: true,
+        reason: `Simulator ${udid} failed its process-spawn readiness check: ${(error as Error)?.message || error}. ${iosSimulatorFailureAdvice()}`,
+      };
+    }
+  };
   const booting = device?.booting;
   if (booting?.udid === udid) {
     try {
@@ -1132,7 +1148,7 @@ async function ensureIosBooted({
     } catch (e) {
       return { failed: true, reason: `Could not boot simulator ${udid}: ${(e as Error)?.message || e}` };
     }
-    return { ok: true, udid };
+    return ready();
   }
 
   let resolved;
@@ -1154,7 +1170,7 @@ async function ensureIosBooted({
     };
   }
   const sim = resolved.sim as SimRecord;
-  if (sim.state === 'Booted') return { ok: true, udid };
+  if (sim.state === 'Booted') return ready();
 
   out(chalk.dim(phaseLine('device', `booting ${sim.name} (${udid})`)));
   const bootDeadline = Date.now() + timeoutMs;
@@ -1171,7 +1187,7 @@ async function ensureIosBooted({
     try {
       state = listAllIosSims({ timeoutMs: 30000 }).find((s) => s.udid === udid)?.state ?? null;
     } catch {}
-    if (state === 'Booted') return { ok: true, udid };
+    if (state === 'Booted') return ready();
   }
   return {
     failed: true,

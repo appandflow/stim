@@ -1,7 +1,8 @@
 import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getExecutor } from '../exec.ts';
+import { getExecutor, type Executor } from '../exec.ts';
+import { hostMemoryPressureAdvice, readHostMemoryPressure } from '../host-memory.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
 
 export interface IosSimRecord {
@@ -155,6 +156,13 @@ export const IOS_BOOT_TIMEOUT_MS: number = 600000;
 const BOOTSTATUS_ATTEMPT_MS = 240000;
 const BOOTSTATUS_ATTEMPT_FLOOR_MS = 1000;
 const BOOT_STATE_LIST_TIMEOUT_MS = 30000;
+
+export function iosSimulatorFailureAdvice(exec: Executor = getExecutor()): string {
+  return (
+    hostMemoryPressureAdvice(readHostMemoryPressure(exec)) ??
+    'The simulator may be unresponsive. Check Activity Monitor for memory pressure and free host memory before retrying.'
+  );
+}
 
 function bootstatusTimeout(udid: string): NodeJS.ErrnoException {
   const e = new Error(`xcrun simctl bootstatus ${udid} -b timed out`) as NodeJS.ErrnoException;

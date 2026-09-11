@@ -3016,6 +3016,21 @@ describe('--remote', () => {
     expect(calls.order.includes('installIosApp')).toBeFalsy();
   });
 
+  test.each([false, true])('host-memory recovery is limited to local launch failures (remote=%s)', async (isRemote) => {
+    reserve();
+    const remote = remoteStub();
+    const launchIosApp = () => ({ failed: true, code: 'STIM_LAUNCH_FAILED', reason: 'launch timed out' });
+    const deps = isRemote
+      ? { ...remote.deps, remoteIosDeps: () => ({ ...remote.deps.remoteIosDeps(), launchIosApp }) }
+      : { launchIosApp };
+    const { logs, exitCode } = await run({ json: true, ...(isRemote ? { remote: 'eas' } : {}) }, deps);
+    expect(exitCode).toBe(1);
+    const failure = parseFirst(logs);
+    expect(failure.code).toBe('STIM_LAUNCH_FAILED');
+    expect(failure.remedy.includes('host memory pressure')).toBe(!isRemote);
+    expect(failure.remedy.includes('stim doctor --platform ios')).toBe(!isRemote);
+  });
+
   test('the build still happens locally -- only the device moved', async () => {
     const remote = remoteStub();
     reserve();

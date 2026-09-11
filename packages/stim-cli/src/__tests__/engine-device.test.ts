@@ -72,6 +72,7 @@ function simList(devices: SimEntry[]) {
 describe('ensureBooted: ios', () => {
   test('returns the udid without touching simctl boot when the sim is already Booted', async () => {
     const commands: string[] = [];
+    const probes: unknown[] = [];
     setExecutor({
       run: (cmd) => {
         commands.push(cmd);
@@ -81,7 +82,10 @@ describe('ensureBooted: ios', () => {
         commands.push(cmd);
         return '';
       },
-      runFile: () => '',
+      runFile: (file, args = [], options) => {
+        probes.push([file, ...args, options]);
+        return '';
+      },
       spawn: (cmd: string, args: readonly string[] = []) => {
         commands.push([cmd, ...args].join(' '));
         return makeExitingChild();
@@ -93,6 +97,30 @@ describe('ensureBooted: ios', () => {
     });
     expect(commands.filter((c) => c.includes('simctl boot')).length).toBe(0);
     expect(commands.some((c) => c.includes('simctl bootstatus'))).toBe(false);
+    expect(probes).toEqual([['xcrun', 'simctl', 'spawn', 'U1', '/usr/bin/true', { timeoutMs: 30000 }]]);
+  });
+
+  test.each([false, true])('refuses a simulator that cannot spawn a process after boot (joined=%s)', async (joined) => {
+    setExecutor({
+      run: () => simList([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]),
+      runFile: () => {
+        throw Object.assign(new Error('simctl spawn timed out'), { code: 'ETIMEDOUT' });
+      },
+      runFileQuiet: () => null,
+    });
+    const result = await ensureBooted({
+      platform: 'ios',
+      device: {
+        deviceUdid: 'U1',
+        owned: true,
+        ...(joined ? { booting: { udid: 'U1', done: Promise.resolve() } } : {}),
+      },
+    });
+    expect(result.ok).toBeUndefined();
+    expect(result.failed).toBe(true);
+    expect(result.reason).toMatch(/U1.*process-spawn readiness.*simctl spawn timed out/);
+    expect(result.reason).toContain('Activity Monitor');
+    expect(result.reason).not.toMatch(/out of memory|OOM/i);
   });
 
   test('boots a shut-down owned sim and waits for the Booted state', async () => {
@@ -212,6 +240,7 @@ describe('ensureBooted: ios', () => {
 
   test('joins the boot this run started instead of listing simulators again', async () => {
     const commands: string[] = [];
+    let finished = false;
     setExecutor({
       run: (cmd: string) => {
         commands.push(cmd);
@@ -221,10 +250,13 @@ describe('ensureBooted: ios', () => {
         commands.push(cmd);
         return '';
       },
-      runFile: () => '',
+      runFile: (file, args = []) => {
+        expect(finished).toBe(true);
+        commands.push([file, ...args].join(' '));
+        return '';
+      },
       spawn: () => null,
     });
-    let finished = false;
     const done = new Promise<void>((resolve) =>
       setTimeout(() => {
         finished = true;
@@ -237,7 +269,7 @@ describe('ensureBooted: ios', () => {
     });
     expect(result).toEqual({ ok: true, udid: 'U1' });
     expect(finished).toBe(true);
-    expect(commands).toEqual([]);
+    expect(commands).toEqual(['xcrun simctl spawn U1 /usr/bin/true']);
   });
 
   test('reports the failure of the boot this run started, before anything is installed', async () => {
@@ -622,6 +654,51 @@ function iosExecutor(devices: SimEntry[]) {
 }
 
 describe('ensureOwnedDevice: ios', () => {
+  test.each(['2', '1', 'unknown'])('reports only observed memory pressure before boot (%s)', async (pressure) => {
+    const root = projectDir();
+    const { exec } = iosExecutor([]);
+    const events: string[] = [];
+    setExecutor({
+      ...exec,
+      run(cmd: string) {
+        if (cmd.startsWith('xcrun simctl boot ')) events.push('boot');
+        return exec.run(cmd);
+      },
+      runFile(file, args = [], options) {
+        if (file === '/usr/sbin/sysctl') {
+          events.push('pressure');
+          expect(args).toEqual(['-n', 'kern.memorystatus_vm_pressure_level']);
+          expect(options).toEqual({ timeoutMs: 2000 });
+          return pressure;
+        }
+        return exec.runFile(file, args);
+      },
+    });
+    try {
+      const device = await ensureOwnedDevice({
+        platform: 'ios',
+        projectPath: root,
+        label: 'memory-fixture',
+        settings: {},
+        out: (line) => {
+          if (line.includes('host memory pressure')) events.push('warning');
+        },
+      });
+      await device.booting?.done;
+      expect(events.filter((event) => event === 'pressure')).toHaveLength(process.platform === 'darwin' ? 1 : 0);
+      expect(events).toContain('boot');
+      const expectedEvents =
+        process.platform === 'darwin'
+          ? pressure === '2'
+            ? ['pressure', 'warning', 'boot']
+            : ['pressure', 'boot']
+          : ['boot'];
+      expect(events).toEqual(expectedEvents);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('concurrent allocations disambiguate names after truncation and preserve the suffix on reuse', async () => {
     const roots = [projectDir(), projectDir()];
     const label = 'same-worktree-name-'.repeat(5);

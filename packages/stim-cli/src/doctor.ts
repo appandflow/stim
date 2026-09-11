@@ -16,6 +16,7 @@ import { type Config, type ConcurrencyLimits, getConcurrencyLimits, loadConfig }
 import { podInstallCommand } from './engine/bundler.ts';
 import { liveOwnedDeviceCount } from './engine/device.ts';
 import { simslimIsOnPath } from './engine/simslim.ts';
+import { readHostMemoryPressure, hostMemoryPressureAdvice, type HostMemoryPressure } from './host-memory.ts';
 import { listBuildSlots } from './engine/build-slots.ts';
 import { type IosSimRecord, listAllIosSims } from './sim/ios.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from './sim-pool.ts';
@@ -731,7 +732,15 @@ export function checkSimSlim({
       'Set ios.simslimProfile to a readable JSON profile inside the repository.',
     );
   }
-  if (!configured || onPath) return null;
+  if (!configured) {
+    return finding(
+      'note',
+      'SimSlim is recommended for parallel iOS simulator work',
+      'A reviewed profile can reduce background simulator services and memory use. It is optional: disabling services can affect tests that depend on them, and installing the binary alone does not apply a profile.',
+      'Run `stim guide lifecycle simslim` to install SimSlim and configure ios.simslimProfile. Stim does not enable a profile through doctor --fix.',
+    );
+  }
+  if (onPath) return null;
   return finding(
     'cost',
     'A SimSlim profile is configured, but SimSlim is not installed',
@@ -753,6 +762,7 @@ export function runDoctor(
     lookupAgentDevice = null,
     lookupEasCli = null,
     lookupSimSlim = null,
+    memoryPressure = readHostMemoryPressure,
     lookupCcache = null,
     platform,
   }: {
@@ -766,6 +776,7 @@ export function runDoctor(
     lookupAgentDevice?: (() => boolean) | null;
     lookupEasCli?: (() => boolean) | null;
     lookupSimSlim?: (() => boolean) | null;
+    memoryPressure?: () => HostMemoryPressure | null;
     lookupCcache?: (() => boolean) | null;
     platform?: DoctorPlatform;
   } = {},
@@ -865,7 +876,7 @@ export function runDoctor(
     }
   }
   const simslimFinding =
-    platform === 'android'
+    platform === 'android' || (!simslimProfile && !simslimProfileError && remoteIosSetting(projectSettings))
       ? null
       : checkSimSlim({
           configured: Boolean(simslimProfile),
@@ -902,6 +913,9 @@ export function runDoctor(
     )
     .filter((remoteFinding): remoteFinding is Finding => remoteFinding !== null);
 
+  const memoryAdvice =
+    platform !== 'android' && !remoteIosSetting(projectSettings) ? hostMemoryPressureAdvice(memoryPressure()) : null;
+
   return [
     checkAppProject(projectRoot),
     ...checkMainCheckout(projectRoot, { platform }),
@@ -918,6 +932,14 @@ export function runDoctor(
     remoteBuildCache ? checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig) : null,
     easFinding,
     concurrencyFinding,
+    memoryAdvice
+      ? finding(
+          'cost',
+          'Host memory pressure can stall the iOS simulator',
+          memoryAdvice,
+          'Free host memory, then retry. Run `stim guide lifecycle simslim` for the optional memory reduction setup.',
+        )
+      : null,
     simslimFinding,
     ...remoteFindings,
     ...settingShapeFindings,
