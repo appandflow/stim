@@ -63,6 +63,55 @@ kept on retry. A completed copy does not prove dependencies are installed or
 match the current branch. Install missing dependencies with the project's
 package manager when main has none to copy.
 
+## Refresh the main checkout first
+
+Every worktree is a copy of the main checkout, so a stale main checkout seeds
+stale worktrees. `stim worktree warm --refresh` updates it before the copy:
+
+<StimTabs
+code={`stim worktree warm --refresh`}
+/>
+
+It fetches the branch's remote, fast-forwards **whatever branch the main
+checkout has** to its `@{upstream}`, and then installs only what the new commits
+moved: the lockfile's own install command where the lockfile lives (the
+repository root in a monorepo), and `pod install` for the app you ran the
+command from. Every step prints what it did or why it skipped.
+
+The flag is opt-in because it writes to a checkout you are not standing in. It
+refuses one it cannot move -- uncommitted changes to tracked files or a rebase
+or merge in progress (`STIM_MAIN_DIRTY`), a detached `HEAD`
+(`STIM_MAIN_DETACHED`), or a branch both ahead of and behind its upstream
+(`STIM_MAIN_DIVERGED`) -- and names the git command that clears it. Untracked
+files are not a reason to refuse, a branch with no upstream is left alone, and a
+fetch that fails is reported as a fact while the run continues on local state.
+It never switches branches, merges, or resets. When the main checkout is not on
+the default branch it warns and continues, because the copy then carries that
+branch's dependencies; set `worktree.defaultBranch` in the repository-root
+`.stim.json` when `origin/HEAD` is missing or wrong.
+
+An install that fails is remembered, and a plain warm reads that before it
+copies. The refresh records the install it completed for the lockfile it read;
+when the last install of the lockfile as it stands now did not finish, a plain
+warm refuses with `STIM_DEPS_INCOMPLETE` and copies nothing, because the
+dependencies in the main checkout are partial and only the refresh's own
+terminal ever said so. Run `stim worktree warm --refresh`, which reinstalls for
+the same reason. A record of a different lockfile does not block a copy, and a
+repository with no record copies exactly as it did before.
+
+One lock per repository protects this, with or without the flag: `--refresh`
+holds it exclusively, and every copy holds it shared, so no copy can read a
+`node_modules` a refresh is rewriting. Two plain warms still run at the same
+time, and a holder that dies frees the lock. A refresh whose install runs in a
+spawned process group holds the lock while any member of that group lives, so a
+package manager's postinstall writer cannot outlive the protection.
+
+A plain warm that cannot take the lock at all -- an unwritable `STIM_HOME`, say
+-- says so in one line and copies without it, exactly as it did before the lock
+existed; `--refresh` refuses instead, because it needs the lock. Even that
+unsynchronised copy reads the lock first, which takes nothing: if a refresh is
+holding this repository, it refuses rather than copying a tree being rewritten.
+
 ## Parallel environments
 
 Each workspace receives a unique Metro port, state directory, and owned

@@ -1,7 +1,16 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -170,5 +179,99 @@ for (const warmed of [false, true]) {
       assert.ok(!git(['worktree', 'list', '--porcelain']).includes(linked));
       if (!detached) assert.equal(git(['show-ref', '--verify', `refs/heads/${name}`]).trim().length > 0, true);
     });
+  }
+}
+
+test('a refresh killed mid-install leaves a ledger a plain warm refuses to copy past', async () => {
+  const repo = join(ctx.tmp, 'killed-app');
+  const ready = join(ctx.tmp, 'killed-install-started');
+  const gate = join(ctx.tmp, 'killed-install-may-finish');
+  mkdirSync(repo, { recursive: true });
+  writeFileSync(join(repo, '.gitignore'), 'node_modules/\n.env\n');
+  writeFileSync(
+    join(repo, 'install.cjs'),
+    [
+      'const fs = require("node:fs");',
+      'fs.mkdirSync("node_modules", { recursive: true });',
+      'fs.writeFileSync("node_modules/value", "PARTIAL");',
+      `fs.writeFileSync(${JSON.stringify(ready)}, "started");`,
+      'const timer = setInterval(() => {',
+      `  if (!fs.existsSync(${JSON.stringify(gate)})) return;`,
+      '  clearInterval(timer);',
+      '  fs.writeFileSync("node_modules/value", "COMPLETE");',
+      '}, 20);',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(repo, 'package.json'),
+    `${JSON.stringify({ name: 'killed-fixture', version: '1.0.0', scripts: { postinstall: 'node install.cjs' } })}\n`,
+  );
+  writeFileSync(
+    join(repo, 'package-lock.json'),
+    `${JSON.stringify({
+      name: 'killed-fixture',
+      version: '1.0.0',
+      lockfileVersion: 3,
+      requires: true,
+      packages: { '': { name: 'killed-fixture', version: '1.0.0', hasInstallScript: true } },
+    })}\n`,
+  );
+  for (const args of [
+    ['init', '-b', 'main'],
+    ['config', 'user.email', 'e2e@example.com'],
+    ['config', 'user.name', 'stim-cli e2e'],
+    ['config', 'commit.gpgsign', 'false'],
+    ['add', '-A'],
+    ['commit', '-m', 'an install that can be killed mid-flight'],
+  ]) {
+    execFileSync('git', ['-C', repo, ...args], { encoding: 'utf-8' });
+  }
+  writeFileSync(join(repo, '.env'), 'main env');
+  const linked = create('killed-warmed', repo);
+
+  const refresh = spawn(process.execPath, [CLI, 'worktree', 'warm', '--refresh'], {
+    cwd: linked,
+    env: { ...process.env, STIM_HOME: ctx.home },
+    stdio: 'ignore',
+  });
+  await until('the install to start writing', () => existsSync(ready));
+  refresh.kill('SIGKILL');
+  await until('the killed refresh to be gone', () => refresh.exitCode !== null || refresh.signalCode !== null);
+  writeFileSync(gate, 'go');
+  await until(
+    'the install the killed refresh spawned to finish',
+    () => readFileSync(join(repo, 'node_modules', 'value'), 'utf-8') === 'COMPLETE',
+  );
+
+  assert.equal(ledger(ctx.home).completed, false);
+  const refused = warm(linked);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /the last install of package-lock\.json there did not finish/);
+  assert.match(refused.stderr, /failed: STIM_DEPS_INCOMPLETE/);
+  assert.equal(existsSync(join(linked, 'node_modules')), false);
+  assert.equal(existsSync(join(linked, '.env')), false);
+
+  const reinstalled = spawnSync(process.execPath, [CLI, 'worktree', 'warm', '--refresh'], {
+    cwd: linked,
+    env: { ...process.env, STIM_HOME: ctx.home },
+    encoding: 'utf-8',
+  });
+  assert.equal(reinstalled.status, 0, reinstalled.stderr);
+  assert.equal(ledger(ctx.home).completed, true);
+  assert.equal(readFileSync(join(linked, 'node_modules', 'value'), 'utf-8'), 'COMPLETE');
+});
+
+function ledger(home) {
+  const dir = join(home, 'warm-installs');
+  const name = readdirSync(dir).find((entry) => entry.endsWith('.json'));
+  assert.ok(name, 'no install ledger was written');
+  return JSON.parse(readFileSync(join(dir, name), 'utf-8'));
+}
+
+async function until(what, read, timeoutMs = 60_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!read()) {
+    assert.ok(Date.now() < deadline, `timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
   }
 }

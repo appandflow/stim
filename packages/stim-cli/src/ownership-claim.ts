@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import {
-  existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -10,7 +9,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { quotedPath } from './command-output.ts';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from './process-identity.ts';
 
@@ -83,6 +82,13 @@ export interface ClaimOptions {
 export const CLAIM_REFUSED = 'STIM_CLAIM_REFUSED';
 export const CLAIM_UNAVAILABLE = 'STIM_CLAIM_UNAVAILABLE';
 
+/**
+ * The refusal reason for a claim store whose own path is occupied by a file. It names a filesystem
+ * state that predates any claim, so a caller that only reads can tell it apart from an unresolvable
+ * claim record and fall back to what it did before claims existed.
+ */
+export const CLAIM_PATH_NOT_A_DIRECTORY = 'the claim path is a file, not a claim directory';
+
 const EXCLUSIVE_DIR = 'exclusive';
 const SHARED_DIR = 'shared';
 const CLAIM_SUFFIX = '.claim';
@@ -117,30 +123,6 @@ export class ClaimUnavailableError extends Error {
     super(`Stim could not record a process identity, so it cannot take an ownership claim: ${reason}.`);
     this.reason = reason;
   }
-}
-
-/**
- * A claim store the filesystem will not accept writes to. It carries the filesystem's own errno rather
- * than a STIM_ code, because storage that refuses every write is not a claim Stim cannot resolve: the
- * claim never existed, so a caller that ran the guarded operation unsynchronised before claims existed
- * degrades on it, and one that cannot reports it as the storage failure it is. Retrying cannot help --
- * the condition does not change within a run -- and waiting names a holder that was never there.
- */
-class ClaimStorageError extends Error {
-  readonly code: string;
-  readonly reason: string;
-
-  constructor({ root, label, code, reason }: { root: string; label: string; code: string; reason: string }) {
-    super(`Stim cannot write the ${label} claim store at ${root}: ${reason}`);
-    this.code = code;
-    this.reason = reason;
-  }
-}
-
-function storageFailure(root: string, label: string, err: unknown): Error {
-  const code = (err as NodeJS.ErrnoException)?.code;
-  if (!code) return err instanceof Error ? err : new Error(String(err));
-  return new ClaimStorageError({ root, label, code, reason: (err as Error).message || code });
 }
 
 /**
@@ -258,7 +240,13 @@ function readClaim(path: string, mode: ClaimMode): ClaimHolder | null | 'unreada
   };
 }
 
-function processGroupAlive(pid: number): boolean {
+/**
+ * Whether any member of the process group `pid` leads is alive. A recorded child is resolved through
+ * its group rather than through the one process, so a package manager's postinstall descendant keeps
+ * the claim after the manager exits. A pgid, unlike a ProcessRecord, carries no identity: a recycled
+ * one reads as alive, which holds a claim longer than it needs to be held and never frees a live one.
+ */
+export function processGroupAlive(pid: number): boolean {
   if (!Number.isSafeInteger(pid) || pid <= 1) return false;
   try {
     process.kill(-pid, 0);
@@ -423,7 +411,6 @@ export function clearFreeClaimSet({ root, label = 'ownership' }: { root: string;
     attempt = tryAcquireClaim({ root, mode: 'exclusive', label });
   } catch (err) {
     if (isClaimRefusal(err) || isClaimUnavailable(err)) return { status: 'refused', reason: err.reason };
-    if (err instanceof ClaimStorageError) return { status: 'failed', reason: err.reason };
     throw err;
   }
   if (!attempt.acquired) {
@@ -455,86 +442,35 @@ function contended(code: string | undefined): boolean {
   return code === 'EEXIST' || code === 'ENOTEMPTY' || code === 'ENOENT' || code === 'EINVAL';
 }
 
-// Only those two are proof that there was another claim to lose the race to: they are what a rename
-// onto an occupied claim directory gives. ENOENT and EINVAL are equally what a store that will never
-// accept the write gives, so attempts spent entirely on them are not reported as contention.
-function provesAContender(code: string | undefined): boolean {
-  return code === 'EEXIST' || code === 'ENOTEMPTY';
-}
-
-/**
- * Create a claim directory, reporting the errno the kernel gave for the level it could not create.
- * Node's `mkdirSync(path, { recursive: true })` reports the errno of the `stat` it takes after a failed
- * mkdir rather than the mkdir's own (`MKDirpSync` in node's `node_file.cc`), so a directory on a
- * read-only macOS mount arrives as ENOENT -- indistinguishable from the claim set another process just
- * removed -- where a plain mkdir whose parent is present reports EROFS. So create the missing levels
- * plainly, leaving the errno the one the kernel actually returned for the level that failed.
- */
-function createClaimDir(path: string): void {
-  try {
-    mkdirSync(path, { recursive: true });
-    return;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') throw err;
-  }
-  const missing: string[] = [];
-  for (let level = path; !existsSync(level) && dirname(level) !== level; level = dirname(level)) missing.push(level);
-  for (const level of missing.toReversed()) {
-    try {
-      mkdirSync(level);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException)?.code !== 'EEXIST') throw err;
-    }
-  }
-}
-
-function publishExclusive(
-  root: string,
-  payload: string,
-  claimId: string,
-  label: string,
-  retries: NodeJS.ErrnoException[],
-): string | null {
+function publishExclusive(root: string, payload: string, claimId: string, label: string): string | null {
   const staging = join(root, `${STAGING_PREFIX}${claimId}`);
   const target = exclusiveClaimDir(root);
   try {
-    createClaimDir(staging);
+    mkdirSync(staging, { recursive: true });
     writeFileSync(join(staging, `${claimId}${CLAIM_SUFFIX}`), payload);
     renameSync(staging, target);
     return join(target, `${claimId}${CLAIM_SUFFIX}`);
   } catch (err) {
     rmSync(staging, { recursive: true, force: true });
     const code = (err as NodeJS.ErrnoException)?.code;
-    if (contended(code)) {
-      retries.push(err as NodeJS.ErrnoException);
-      return null;
-    }
-    if (code === 'ENOTDIR') refuse(root, target, label, 'the claim path is a file, not a claim directory');
-    throw storageFailure(root, label, err);
+    if (contended(code)) return null;
+    if (code === 'ENOTDIR') refuse(root, target, label, CLAIM_PATH_NOT_A_DIRECTORY);
+    throw err;
   }
 }
 
-function publishShared(
-  root: string,
-  payload: string,
-  claimId: string,
-  label: string,
-  retries: NodeJS.ErrnoException[],
-): string | null {
+function publishShared(root: string, payload: string, claimId: string): string | null {
   const staging = join(root, `${STAGING_PREFIX}${claimId}`);
   const target = join(sharedClaimDir(root), `${claimId}${CLAIM_SUFFIX}`);
   try {
-    createClaimDir(sharedClaimDir(root));
+    mkdirSync(sharedClaimDir(root), { recursive: true });
     writeFileSync(staging, payload);
     renameSync(staging, target);
     return target;
   } catch (err) {
     rmSync(staging, { force: true });
-    if (contended((err as NodeJS.ErrnoException)?.code)) {
-      retries.push(err as NodeJS.ErrnoException);
-      return null;
-    }
-    throw storageFailure(root, label, err);
+    if (contended((err as NodeJS.ErrnoException)?.code)) return null;
+    throw err;
   }
 }
 
@@ -550,19 +486,17 @@ function settleOrRelease(claim: ClaimHandle): ClaimSetState {
 export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' }: ClaimOptions): ClaimAttempt {
   const owner = selfOwner();
   const reaped: ClaimHolder[] = [];
-  const retries: NodeJS.ErrnoException[] = [];
 
   for (let attempt = 0; attempt < PUBLISH_ATTEMPTS; attempt++) {
     try {
-      createClaimDir(root);
+      mkdirSync(root, { recursive: true });
     } catch (err) {
       const code = (err as NodeJS.ErrnoException)?.code;
       if (code === 'EEXIST' || code === 'ENOTDIR') {
-        refuse(root, root, label, 'the claim path is a file, not a claim directory');
+        refuse(root, root, label, CLAIM_PATH_NOT_A_DIRECTORY);
       }
-      if (!contended(code)) throw storageFailure(root, label, err);
-      retries.push(err as NodeJS.ErrnoException);
-      continue;
+      if (contended(code)) continue;
+      throw err;
     }
     const state = inspectClaimSet(root, { label });
     reaped.push(...state.reaped);
@@ -583,7 +517,7 @@ export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' 
     });
 
     if (mode === 'shared') {
-      const published = publishShared(root, payload, claimId, label, retries);
+      const published = publishShared(root, payload, claimId);
       if (!published) continue;
       const claim = handle(published);
       const settled = settleOrRelease(claim);
@@ -593,7 +527,7 @@ export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' 
       return { held: settled.exclusive, reaped };
     }
 
-    const path = publishExclusive(root, payload, claimId, label, retries);
+    const path = publishExclusive(root, payload, claimId, label);
     if (!path) continue;
     const claim = handle(path);
     const settled = settleOrRelease(claim);
@@ -606,8 +540,6 @@ export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' 
   reaped.push(...contender.reaped);
   const holder = contender.exclusive ?? (mode === 'exclusive' ? contender.shared[0] : undefined);
   if (holder) return { held: holder, reaped };
-  const last = retries.at(-1);
-  if (last && !retries.some((err) => provesAContender(err.code))) throw storageFailure(root, label, last);
   refuse(
     root,
     root,

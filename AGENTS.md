@@ -125,10 +125,7 @@ changes, and wait for the new checks.
   by its own token, whose liveness is the holder's `ProcessRecord` read through
   `inspectProcessIdentity`. No mtime, no heartbeat, no staleness threshold, and
   no second implementation. A state it cannot establish is a refusal naming the
-  claim and the command that removes it, never a silent wait or a reap. A claim
-  store the filesystem refuses -- read-only, full, unwritable -- carries that
-  filesystem error instead, because no claim was recorded there to resolve;
-  retry only a condition another process can change. A
+  claim and the command that removes it, never a silent wait or a reap. A
   process that cannot capture its own identity takes no claim and refuses with
   `STIM_CLAIM_UNAVAILABLE`; it never runs the guarded operation unprotected.
   Removing a claim set is `clearFreeClaimSet`, which takes the set's own claim

@@ -405,6 +405,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'metro.ngrokUrl': { valid: 'https://a.ngrok.app', invalid: {}, expected: 'a string' },
   'metro.publicUrl': { valid: 'https://metro.example', invalid: false, expected: 'a string' },
   'worktree.exclude': { valid: ['node_modules'], invalid: ['ok', 7], expected: 'an array of strings' },
+  'worktree.defaultBranch': { valid: 'main', invalid: ['main'], expected: 'a string' },
   'cache.provider': { valid: './cache.cjs', invalid: {}, expected: 'a string' },
   'cache.options': { valid: { bucket: 'a' }, invalid: 'nope', expected: 'an object' },
   caches: { valid: ['~/.myapp-metro-cache'], invalid: {}, expected: 'an array of strings' },

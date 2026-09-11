@@ -66,7 +66,7 @@ function readJson(path: string): AnyJson | null {
   }
 }
 
-interface UpstreamState {
+export interface UpstreamState {
   name: string;
   ahead: number;
   behind: number;
@@ -87,7 +87,7 @@ function mainCheckoutProjectRoot(projectRoot: string): string {
   }
 }
 
-function installedNpmTreeIsValid(projectRoot: string): boolean {
+export function installedNpmTreeIsValid(projectRoot: string): boolean {
   try {
     getExecutor().runFile('npm', ['ls', '--all', '--json', '--silent'], { cwd: projectRoot, timeoutMs: 30_000 });
     return true;
@@ -104,7 +104,14 @@ const DEPENDENCY_STATES = [
   { lock: 'package-lock.json', installed: ['node_modules'], command: 'npm ci' },
 ];
 
-function dependencyState(projectRoot: string) {
+export interface DependencyState {
+  lock: string;
+  installed: string[];
+  command: string;
+  root: string;
+}
+
+export function dependencyState(projectRoot: string): DependencyState | null {
   const root = repoRoot(projectRoot) ?? projectRoot;
   let dir = projectRoot;
   while (true) {
@@ -117,11 +124,14 @@ function dependencyState(projectRoot: string) {
   }
 }
 
-function hasInstalledDependencies(projectRoot: string, markers: string[] = ['node_modules', '.pnp.cjs', '.pnp.js']) {
+export function hasInstalledDependencies(
+  projectRoot: string,
+  markers: string[] = ['node_modules', '.pnp.cjs', '.pnp.js'],
+): boolean {
   return markers.some((entry) => existsSync(join(projectRoot, entry)));
 }
 
-function locallyKnownUpstream(projectRoot: string): UpstreamState | null {
+export function locallyKnownUpstream(projectRoot: string): UpstreamState | null {
   try {
     const name = getExecutor().runFile(
       'git',
@@ -196,7 +206,7 @@ export function checkMainCheckout(
           'cost',
           'The main checkout has no installed dependencies',
           `A worktree cannot carry dependencies from ${dependencies.root}, so its first build must install them from scratch.`,
-          `Run \`${installCommand}\` before creating native worktrees.`,
+          `Run \`${installCommand}\` before creating native worktrees, or let \`stim worktree warm --refresh\` run it from a linked worktree.`,
         ),
       );
     } else if (dependencies.lock === 'package-lock.json') {
@@ -207,7 +217,7 @@ export function checkMainCheckout(
             'cost',
             'The main checkout dependency tree is stale',
             `npm reports that ${dependencies.root}/node_modules does not match the project dependency graph. Copying it makes each worktree start from the same invalid state.`,
-            `Run \`${installCommand}\` before creating native worktrees.`,
+            `Run \`${installCommand}\` before creating native worktrees, or let \`stim worktree warm --refresh\` run it from a linked worktree.`,
           ),
         );
       }
@@ -235,7 +245,7 @@ export function checkMainCheckout(
           'cost',
           `The main checkout CocoaPods state is ${podsState}`,
           `ios/Pods cannot be reused safely because its Manifest.lock ${podsState === 'missing' ? 'is absent' : 'does not match ios/Podfile.lock'}.`,
-          `Run \`${podCommand}\` before creating native worktrees.`,
+          `Run \`${podCommand}\` before creating native worktrees, or let \`stim worktree warm --refresh\` run it from a linked worktree.`,
         ),
       );
     }
@@ -282,7 +292,7 @@ export function checkMainCheckout(
         'note',
         `The main checkout is ${knownUpstream.behind} commit${knownUpstream.behind === 1 ? '' : 's'} behind ${knownUpstream.name}`,
         'The count uses the locally known upstream ref. A fetch can reveal additional commits. A later rebase or merge can change native inputs and invalidate work done from the older base.',
-        `Run \`git -C ${quotedPath(mainRoot)} fetch --prune\`, then inspect the branch before creating the worktree.`,
+        `Run \`stim worktree warm --refresh\` from a linked worktree to fetch and fast-forward the main checkout, or \`git -C ${quotedPath(mainRoot)} fetch --prune\` and inspect the branch yourself.`,
       ),
     );
   }

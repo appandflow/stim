@@ -79,7 +79,12 @@ code, never on the message.`,
   result. Gems themselves are installed wherever BUNDLE_PATH points -- the
   project's own \`.bundle/config\` (vendor/bundle in the React Native template),
   or the environment. When that lands inside the project, Stim says so in a dim
-  note naming which of the two set it; Gemfile.lock is never edited either way.`,
+  note naming which of the two set it; Gemfile.lock is never edited either way.
+  \`worktree warm --refresh\` reports the same code for the install it runs in
+  the MAIN CHECKOUT -- the lockfile's own command (\`pnpm install\`,
+  \`yarn install\`, \`bun install\`, \`npm ci\`) or that same pod ladder. The
+  message names the command, quotes its last lines, and nothing is copied: fix
+  the main checkout, then warm again.`,
     },
     STIM_BUILD_FAILED: {
       summary: 'xcodebuild or gradle failed; the two Android APK refusals; a damaged compilation-cache object',
@@ -210,10 +215,14 @@ code, never on the message.`,
   message names the claim and the exact, shell-quoted removal that clears it --
   just that claim's file, not the lock directory around it; run that, then
   run the command again. Nothing was built, installed or removed.
-  A lock store the filesystem refuses -- a read-only, full or unwritable
-  \`$STIM_HOME\` -- is NOT this code. No claim was recorded there, so there is
-  none to remove: the message carries the filesystem's own error and names the
-  directory, and the build goes ahead without the lock rather than refusing.`,
+  \`worktree warm\` reports it for the repository-wide warm claim under
+  ~/.stim/warm-locks on both paths, including a \`--refresh\` that spawned its
+  install and was killed before recording which process: nothing was refreshed
+  and nothing was copied. One case is NOT this code for a plain warm: a
+  STIM_HOME (or a warm-locks path under it) that is a file rather than a
+  directory. No claim can be stored there at all, which is a filesystem state
+  that predates claims, so plain \`warm\` degrades to the unsynchronised copy it
+  performed before them and \`--refresh\` still refuses.`,
     },
     STIM_CLAIM_UNAVAILABLE: {
       summary: 'this process has no recordable identity, so no build lock or build slot can be taken at all',
@@ -227,7 +236,17 @@ code, never on the message.`,
   concurrency.maxBuilds would both be off at once, and two builds could compile
   the same fingerprint while each believed it was alone. Reinstall Stim so the
   module for this platform is present, then run the command again. Nothing was
-  built, installed or removed.`,
+  built, installed or removed.
+  \`worktree warm --refresh\` refuses for the same reason, because it writes to
+  the main checkout. Plain \`worktree warm\` does NOT: it prints one dim
+  \`lock        unavailable (...)\` line and copies unsynchronised. A copy only
+  reads, so running it with no claim is what it did before the lock existed,
+  while refusing it would break a warm that works today -- an unwritable
+  STIM_HOME included.
+  It still reads the claim set first, which takes no claim: a live \`--refresh\`
+  claim, or a claim it cannot resolve, makes even the unsynchronised copy
+  refuse, and the line names what it found. Only a repository nothing is
+  warming is copied without a claim.`,
     },
     STIM_INSTALL_FAILED: {
       summary: 'simctl, adb, or devicectl refused the artifact; the one signer-conflict retry',
@@ -779,8 +798,13 @@ captured"  (in metro.ndjson, bare RN)
       body: () => `STIM_LOCK_TIMEOUT
   The same locks, held by an ordinary command that is still running, for
   longer than the wait -- 60s by default, 4 minutes for the remote-session and
-  EAS project locks. A lock whose owner died is taken over automatically (pid
-  liveness is checked every poll), so this means another Stim command really
+  EAS project locks, and ~90 minutes for the \`worktree warm\` lock, which one
+  \`--refresh\` can hold for a whole dependency install. That wait prints its
+  holder every 30 seconds (\`lock        waiting on stim worktree warm
+  --refresh (pid 41233, 40s elapsed)\`) and the refusal names the same holder
+  and the lock directory under ~/.stim/warm-locks.
+  A lock whose owner died is taken over automatically (its recorded
+  process identity is checked every poll), so this means another Stim command really
   is working on this workspace: wait for it and retry. If nothing is running,
   the message names the lock directory and removing it is safe. The same error
   code also covers the short directory-lock timeout below.
@@ -842,6 +866,77 @@ not on any remote"  (worktree remove)
   Use --force only when you genuinely intend to discard work; it deletes
   uncommitted and untracked files permanently.`,
     },
+    STIM_MAIN_DIRTY: {
+      summary: 'warm --refresh will not move a main checkout with local work or an operation in progress',
+      body: () => `STIM_MAIN_DIRTY
+  \`worktree warm --refresh\` writes to the MAIN CHECKOUT, and it refuses one
+  it cannot move: tracked files with uncommitted changes (the refusal names
+  them), or a rebase or merge in progress. Untracked files are not a reason to
+  refuse -- but git itself refuses a fast-forward that would overwrite one, and
+  that reports this code too, quoting git. The remedy is the exact line that
+  clears it: commit, \`git -C <main> stash push -u -m warm-refresh\`, or
+  \`git -C <main> rebase --abort\`. Nothing was installed or copied.
+  Plain \`stim worktree warm\` does not care: it copies from a dirty main
+  checkout exactly as it always has.`,
+    },
+    STIM_MAIN_DETACHED: {
+      summary: 'warm --refresh needs a branch to fast-forward, not a detached HEAD',
+      body: () => `STIM_MAIN_DETACHED
+  The main checkout's HEAD is detached, so there is no branch to fast-forward
+  and no upstream to fast-forward it to. Run \`git -C <main> checkout <branch>\`
+  and warm again. \`--refresh\` never picks a branch for you; a checkout whose
+  job is to seed worktrees should sit on a branch someone chose.`,
+    },
+    STIM_MAIN_DIVERGED: {
+      summary: 'the main checkout is both ahead of and behind its upstream; warm --refresh will not merge',
+      body: () => `STIM_MAIN_DIVERGED
+  The main checkout's branch has commits its upstream does not, AND its
+  upstream has commits it does not. A fast-forward is impossible, and
+  \`--refresh\` will not merge or reset someone else's checkout to make one:
+  that decision is yours. Rebase or merge it yourself, then warm again. The
+  message reports both counts. Nothing was installed or copied.`,
+    },
+    STIM_DEPS_INCOMPLETE: {
+      summary: 'the last install recorded for the lockfile on disk now did not finish, so warm will not copy it',
+      body: () => `STIM_DEPS_INCOMPLETE
+  \`worktree warm\` refuses to copy dependencies the main checkout never
+  finished installing. \`--refresh\` records a COMPLETED install of the lockfile
+  it read under ~/.stim/warm-installs; an install that failed, or whose process
+  was killed, leaves that record saying unfinished. A plain warm reads it after
+  it takes its claim and before it copies, and this code is what it prints when
+  the unfinished install is of the lockfile AS IT STANDS NOW. Without it the
+  copy carries a partial node_modules and exits 0, and nothing else in the run
+  says so: the refresh reported its own STIM_DEPS_FAILED in its own terminal,
+  and a refresh that was killed reported nothing anywhere. Nothing was copied.
+  Run \`stim worktree warm --refresh\`: it reinstalls rather than skipping for
+  exactly the same record, and a plain warm copies once that install completes.
+  Two states deliberately do NOT produce this code. A record of a DIFFERENT
+  lockfile says nothing about the one on disk now, whose dependencies may well
+  have been installed since; and a repository with no record at all -- every
+  repository before its first \`--refresh\` -- copies as it always has.
+  In a monorepo the record is keyed on the directory that owns the lockfile,
+  which is usually the repository root, so every app of it reads the same one.`,
+    },
+    warm: {
+      summary: 'two warm refusals whose text is incomplete, known and not fixed',
+      body: () => `"Could not warm this worktree: EACCES: permission denied, mkdir
+'<home>/warm-locks/<name>.lock'"  (worktree warm --refresh)
+  A STIM_HOME that \`--refresh\` cannot write. The refusal itself is right -- it
+  writes to the main checkout, so it will not run without a claim -- but it
+  carries no \`failed: <CODE>\` line, because EACCES is not a Stim code, and no
+  fix line. Make STIM_HOME writable, or set STIM_HOME to somewhere writable,
+  then run it again. A plain warm degrades in this state rather than refusing.
+
+"... the claim path is a file, not a claim directory", with a \`rm -rf\` that
+changes nothing  (worktree warm --refresh)
+  When \`$STIM_HOME/warm-locks\` or STIM_HOME itself is a regular FILE, the
+  refusal names \`warm-locks/<name>.lock\` -- a path that cannot exist under a
+  file -- so running the printed removal does nothing and the next run refuses
+  identically. Remove the file that is in the way and run it again. A plain
+  warm copies unsynchronised in this state.
+
+  Both are documented rather than fixed: appandflow/stim#696.`,
+    },
     carry: {
       summary: 'worktree warm copy results, lockfile mismatches, and remedies',
       body: () => `"carry       incomplete: ... ignored entries copied, ... kept, ... failed"
@@ -869,7 +964,10 @@ not on any remote"  (worktree remove)
   silent; the warning means a real difference.
 
   If main has no dependencies to copy, use this project's package manager to
-  install them. Warm does not install dependencies or prove the app is ready.`,
+  install them. Warm does not install dependencies or prove the app is ready,
+  unless \`--refresh\` installed them in the MAIN CHECKOUT first; even then the
+  copy can still carry a lockfile this branch does not have, which is exactly
+  what these carry warnings report.`,
     },
     environment: {
       summary: 'npx registry E401/E404, the Node floor, no free Metro port, the reservation race',

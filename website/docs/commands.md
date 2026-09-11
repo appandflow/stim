@@ -308,13 +308,19 @@ moment, minus its own duration, floored at zero.
 ## `worktree warm`
 
 ```text
-stim worktree warm
+stim worktree warm [--refresh]
 ```
 
 Copies missing ignored entries from the repository's main checkout into the
-current linked worktree. It takes no arguments or flags and accepts a current
-subdirectory. The main checkout must be available in the same Git repository;
-running warm in the main checkout refuses.
+current linked worktree. It accepts a current subdirectory. The main checkout
+must be available in the same Git repository; running warm in the main checkout
+refuses.
+
+`--refresh` updates the main checkout before the copy: it fetches, fast-forwards
+whatever branch is checked out there, and installs dependencies or Pods when the
+new commits moved a lockfile, when nothing is installed, or when `ios/Pods` does
+not match `ios/Podfile.lock`. See
+[worktree isolation](./worktrees.md#refresh-the-main-checkout-first).
 
 The branch, tracked files, and existing destination entries stay untouched.
 Existing directories, including `node_modules`, are skipped whole. Eligible
