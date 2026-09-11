@@ -478,7 +478,7 @@ export async function finishAndroidRun({
     try {
       withConfigLock(() => {
         const config = loadConfig();
-        const current = config?.projects[root]?.platforms?.android;
+        const current = config?.projects?.[root]?.platforms?.android;
         if (!config || !current || current.avdName !== device.avdName)
           throw new Error('The adopted emulator assignment changed during installation.');
         delete current.adoptionPending;

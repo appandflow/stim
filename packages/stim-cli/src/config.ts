@@ -35,6 +35,16 @@ export function configCorruptRepair(path: string = getConfigPath()): string {
   return `Repair the file, or move it aside to start over: mv "${path}" "${path}.broken"`;
 }
 
+function configCorrupt(reason: string, path: string = getConfigPath()): Error {
+  const corrupt = new Error(
+    `Stim config at ${path} ${reason}\n` +
+      'It holds the records of the simulators and emulators Stim owns, so it is never reset automatically.\n' +
+      configCorruptRepair(path),
+  );
+  (corrupt as Error & { code?: string }).code = 'STIM_CONFIG_CORRUPT';
+  return corrupt;
+}
+
 export function loadConfig(): Config | null {
   const p = getConfigPath();
   if (!existsSync(p)) return null;
@@ -42,14 +52,26 @@ export function loadConfig(): Config | null {
   try {
     return JSON.parse(raw) as Config;
   } catch (err) {
-    const corrupt = new Error(
-      `Stim config at ${p} is not valid JSON: ${(err as Error).message}\n` +
-        'It holds the records of the simulators and emulators Stim owns, so it is never reset automatically.\n' +
-        configCorruptRepair(p),
-    );
-    (corrupt as Error & { code?: string }).code = 'STIM_CONFIG_CORRUPT';
-    throw corrupt;
+    throw configCorrupt(`is not valid JSON: ${(err as Error).message}`, p);
   }
+}
+
+function isRecord(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * An array or scalar container swallows every write silently: `JSON.stringify` drops a string key set on
+ * an array, so the record is gone by the time the file is written. Absent is created; unusable is refused.
+ */
+function adoptContainer(cfg: Config, key: 'projects' | 'repos'): boolean {
+  const value = cfg[key] as unknown;
+  if (value === undefined || value === null) {
+    cfg[key] = {};
+    return true;
+  }
+  if (!isRecord(value)) throw configCorrupt(`has a ${key} that is not an object: ${JSON.stringify(value)}`);
+  return false;
 }
 
 export function saveConfig(config: Config): void {
@@ -74,10 +96,8 @@ export function ensureConfig(): Config {
     const existing = loadConfig();
     if (existing) {
       let changed = false;
-      if (!existing.repos) {
-        existing.repos = {};
-        changed = true;
-      }
+      if (adoptContainer(existing, 'projects')) changed = true;
+      if (adoptContainer(existing, 'repos')) changed = true;
       if (existing.version !== CONFIG_VERSION) {
         existing.version = CONFIG_VERSION;
         changed = true;

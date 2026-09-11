@@ -673,7 +673,7 @@ async function ensureOwnedAndroidDevice({
   let fresh = false;
   try {
     created = withConfigLock(() => {
-      const current = loadConfig()?.projects[projectPath]?.platforms?.android;
+      const current = loadConfig()?.projects?.[projectPath]?.platforms?.android;
       if (current?.avdName && current.avdName !== record?.avdName) {
         throw new Error(`Another Stim run assigned AVD ${current.avdName} to this workspace. Retry to use it.`);
       }
