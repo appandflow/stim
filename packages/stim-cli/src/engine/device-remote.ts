@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { getExecutor } from '../exec.ts';
-import { isPidAlive } from '../metro.ts';
+import { pidExists } from '../metro.ts';
 import { gateMetroOrigin, REMOTE_METRO_WRONG } from './metro-gate.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
 import { clearRemoteSession, readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
@@ -885,7 +885,7 @@ export async function ensureMetroReachable({
   available = [],
   env = process.env,
   readTunnelRecord = readMetroTunnel,
-  isTunnelAlive = isPidAlive,
+  isTunnelAlive = pidExists,
   gateOrigin = gateMetroOrigin,
 }: {
   ctx: RemoteContext;
@@ -896,7 +896,7 @@ export async function ensureMetroReachable({
   available?: readonly ManagedProvider[];
   env?: NodeJS.ProcessEnv;
   readTunnelRecord?: typeof readMetroTunnel;
-  isTunnelAlive?: typeof isPidAlive;
+  isTunnelAlive?: typeof pidExists;
   gateOrigin?: typeof gateMetroOrigin;
 }): Promise<{ ok: true } | { failed: string; remedy: string; code?: string }> {
   const { root } = ctx;

@@ -1,4 +1,4 @@
-import { isPidAlive } from '../metro.ts';
+import { pidExists } from '../metro.ts';
 import { inspectProcessIdentity, sameProcessRecord, type ProcessRecord } from '../process-identity.ts';
 import { readCollectors } from './state.ts';
 
@@ -12,7 +12,7 @@ export function verifyCollectorOwnership({
   pid,
   platform,
   root,
-  isAlive = isPidAlive,
+  isAlive = pidExists,
   expected,
 }: {
   pid: number;

@@ -82,7 +82,7 @@ import {
 import { isClaimRefusal } from '../ownership-claim.ts';
 import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../engine/build-slots.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
-import { isPidAlive, resolveProjectMetro } from '../metro.ts';
+import { pidExists, resolveProjectMetro } from '../metro.ts';
 import {
   ensureWorkspaceStorageSafely,
   resolveMetroWithRetry,
@@ -326,7 +326,7 @@ interface RunAndroidOptions {
   resolveMetro?: typeof resolveProjectMetro;
   resolveMetroRetrying?: typeof resolveMetroWithRetry;
   readState?: typeof readWorkspaceState;
-  pidAlive?: typeof isPidAlive;
+  pidAlive?: typeof pidExists;
   verifyCollector?: typeof verifyCollectorOwnership;
   verifyLaunched?: typeof verifyLaunch;
   ensureStorage?: typeof ensureWorkspaceStorageSafely;
@@ -405,7 +405,7 @@ function resolveRunAndroidOptions(
     resolveMetro = resolveProjectMetro,
     resolveMetroRetrying = resolveMetroWithRetry,
     readState = readWorkspaceState,
-    pidAlive = isPidAlive,
+    pidAlive = pidExists,
     verifyCollector = verifyCollectorOwnership,
     verifyLaunched = verifyLaunch,
     ensureStorage = ensureWorkspaceStorageSafely,

@@ -7,7 +7,7 @@ import { phaseLine, stepTimer } from '../command-output.ts';
 import type { StartError, StartFacts, SupervisorRecord } from '../types.ts';
 import { getProject, upsertProject } from '../config.ts';
 import { getExecutor } from '../exec.ts';
-import { isPidAlive, resolveProjectMetro } from '../metro.ts';
+import { pidExists, resolveProjectMetro } from '../metro.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { resolveSupervisorTarget, type SupervisorStateRecord } from '../supervisor/ownership.ts';
 import type { MetroResolution } from '../metro.ts';
@@ -119,7 +119,7 @@ export function liveSupervisor({
   state,
   project,
   port,
-  isAlive = isPidAlive,
+  isAlive = pidExists,
   inspectIdentity = inspectProcessIdentity,
 }: {
   state?: { supervisor?: SupervisorCandidate | null } | null;
@@ -226,7 +226,7 @@ function providersOnPath(): ManagedProvider[] {
 const DEFAULT_START_DEPS: StartCommandDeps = {
   providers: providersOnPath,
   startTunnelSequence,
-  isTunnelAlive: isPidAlive,
+  isTunnelAlive: pidExists,
   writeTunnelRecord: writeWorkspaceState,
   stopTunnel,
   writeSupervisorRecord: writeWorkspaceState,
@@ -236,7 +236,7 @@ const DEFAULT_START_DEPS: StartCommandDeps = {
       timeoutMs: 1_000,
       now: Date.now,
       sleep,
-      isAlive: isPidAlive,
+      isAlive: pidExists,
     }),
   withWorktreeLock: withManagedRemoteWorktreeLock,
   withTunnelLock: withManagedTunnelLock,
@@ -481,7 +481,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           while (Date.now() < deadline) {
             const found = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
             if (found?.pid === child.pid) return found;
-            if (childExit !== null || (child.pid ? !isPidAlive(child.pid) : true)) return null;
+            if (childExit !== null || (child.pid ? !pidExists(child.pid) : true)) return null;
             await sleep(25);
           }
           return null;
@@ -830,12 +830,12 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           root,
           port,
           seconds: waitSeconds,
-          aborted: () => childExit !== null || (child.pid ? !isPidAlive(child.pid) : false) || managedTunnelExited(),
+          aborted: () => childExit !== null || (child.pid ? !pidExists(child.pid) : false) || managedTunnelExited(),
         });
 
         if (!healthy) {
           if (managedTunnelExited()) return failExitedManagedTunnel();
-          const gone = childExit !== null || (child.pid ? !isPidAlive(child.pid) : false);
+          const gone = childExit !== null || (child.pid ? !pidExists(child.pid) : false);
           const exitInfo = childExit as ChildExitInfo | null;
           const how = exitInfo
             ? exitInfo.signal
@@ -865,10 +865,10 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           const tunnelReady = await waitForExpoTunnel({
             root,
             seconds: waitSeconds,
-            aborted: () => childExit !== null || (child.pid ? !isPidAlive(child.pid) : false),
+            aborted: () => childExit !== null || (child.pid ? !pidExists(child.pid) : false),
           });
           if (!tunnelReady) {
-            const gone = childExit !== null || (child.pid ? !isPidAlive(child.pid) : false);
+            const gone = childExit !== null || (child.pid ? !pidExists(child.pid) : false);
             return fail({
               code: gone ? 'STIM_SUPERVISOR_EXITED' : 'STIM_METRO_TIMEOUT',
               message: gone

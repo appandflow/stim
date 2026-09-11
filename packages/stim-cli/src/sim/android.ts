@@ -13,7 +13,7 @@ import {
 import { homedir } from 'os';
 import { dirname, isAbsolute, join, resolve } from 'path';
 import { type Executor, getExecutor } from '../exec.ts';
-import { isPidAlive } from '../metro.ts';
+import { pidExists } from '../metro.ts';
 import { androidDataPartitionSizeBytes } from '../settings.ts';
 
 export interface SystemImage {
@@ -848,7 +848,7 @@ function resolveAvdProcess(
 export function assertOwnedAvdStopped(
   avdName: string,
   {
-    processAlive = isPidAlive,
+    processAlive = pidExists,
     ...resolveOptions
   }: {
     platform?: NodeJS.Platform;
@@ -872,7 +872,7 @@ export function waitForAndroidEmulatorShutdown(
     platform = process.platform,
     resolveDirectory = ownedAvdDirectory,
     readProcessId = readAvdProcessId,
-    processAlive = isPidAlive,
+    processAlive = pidExists,
     directoryExists = (path: string) => statSync(path).isDirectory(),
     now = Date.now,
     sleep = sleepSync,

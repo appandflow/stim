@@ -648,7 +648,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
       });
       if (!resolution?.metro) {
         const supervisor = (d.readWorkspaceState(root)?.supervisor ?? null) as SupervisorLike | null;
-        const supervisorAlive = Boolean(supervisor?.pid && d.isPidAlive(supervisor.pid));
+        const supervisorAlive = Boolean(supervisor?.pid && d.pidExists(supervisor.pid));
         fail({
           code: 'STIM_NO_METRO',
           message: noMetroMessage({ port: metroPort, resolution, supervisor, supervisorAlive }),

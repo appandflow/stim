@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { basename, join, resolve as resolvePath, sep } from 'node:path';
 import { getConfigDir } from '../config.ts';
 import { getExecutor } from '../exec.ts';
-import { isPidAlive } from '../metro.ts';
+import { pidExists } from '../metro.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { createLineReader } from '../process-output.ts';
 import type { ManagedProvider } from './metro-reach.ts';
@@ -316,7 +316,7 @@ export async function startTunnel({
   ngrokUrl = null,
   requireReachable = true,
   cleanupTimeoutMs = CLEANUP_TIMEOUT_MS,
-  isChildAlive = isPidAlive,
+  isChildAlive = pidExists,
   readProcessToken = captureProcessToken,
   logFile = null,
 }: StartTunnelOptions): Promise<StartTunnelResult> {
@@ -576,7 +576,7 @@ function isEsrch(err: unknown): boolean {
 export async function stopTunnel(
   record: TunnelRecord | null | undefined,
   {
-    isAlive = isPidAlive,
+    isAlive = pidExists,
     inspectIdentity = inspectProcessIdentity,
     kill = defaultKill,
     now = Date.now,

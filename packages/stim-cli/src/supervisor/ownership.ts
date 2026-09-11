@@ -1,4 +1,4 @@
-import { isPidAlive } from '../metro.ts';
+import { pidExists } from '../metro.ts';
 import { inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
 
 export interface SupervisorStateRecord extends ProcessRecord {
@@ -23,7 +23,7 @@ export function resolveSupervisorTarget({
   state,
   record,
   reservedPort,
-  isAlive = isPidAlive,
+  isAlive = pidExists,
   inspectIdentity = inspectProcessIdentity,
 }: {
   state?: SupervisorStateRecord | null;

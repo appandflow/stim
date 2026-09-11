@@ -4,7 +4,7 @@ import { phaseLine, plural, releasedLeaseFact } from '../command-output.ts';
 import { clearSupervisor, getProject, upsertProject, withConfigLock } from '../config.ts';
 import type { ProjectRecord } from '../config.ts';
 import { findProjectRoot } from '../project.ts';
-import { isPidAlive, killMetroTree, resolveProjectMetro } from '../metro.ts';
+import { pidExists, killMetroTree, resolveProjectMetro } from '../metro.ts';
 import type { MetroResolution } from '../metro.ts';
 import {
   clearManagedMetroTunnel,
@@ -103,7 +103,7 @@ interface CollectorTarget {
 export function resolveCollectorTargets({
   root,
   collectors,
-  isAlive = isPidAlive,
+  isAlive = pidExists,
   selfPid = process.pid,
   verify = verifyCollectorOwnership,
 }: {
@@ -215,7 +215,7 @@ export async function runStop({
   signalCollector = (pid: number) => process.kill(pid, 'SIGTERM'),
   verifyCollector = verifyCollectorOwnership,
   clearCollectors = clearCollectorState,
-  isAlive = isPidAlive,
+  isAlive = pidExists,
   killGroup = killMetroTree,
   inspectIdentity = inspectProcessIdentity,
   waitForDeath = undefined,
