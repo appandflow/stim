@@ -226,8 +226,19 @@ line by design (see \`guide logs\`), not this single-payload contract.`,
   deviceName      the owned simulator or AVD name
   appId           the live bundle id or Android package
   metroPort       the workspace's verified Metro port
-  strategy        "deep-link" for Expo/dev-client, "android-broadcast" for
-                  bare Android, or "metro-websocket" for an identifiable bare iOS peer
+  strategy        how the reload was addressed.
+                  "metro-websocket" -- Metro named its clients and Stim
+                  addressed every peer matching this platform. A workspace
+                  Metro serves one app, so those peers are this app on however
+                  many devices are attached to that port.
+                  "metro-broadcast" -- this Metro cannot name its clients, so
+                  the reload went to all of them and Stim cannot confirm appId
+                  was among them. Verify the UI on deviceId; if it did not
+                  change, reload from the app's own error screen or dev menu
+  targets         how many peers the reload was addressed to, or null when
+                  broadcast. Greater than 1 means several devices are running
+                  this app on that Metro and all of them reloaded, not only
+                  deviceId
 
   stim doctor --json
 

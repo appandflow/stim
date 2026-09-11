@@ -2,8 +2,8 @@ import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine } from '../command-output.ts';
 import { getProject, type ProjectRecord } from '../config.ts';
-import { androidAppProcess, iosAppProcess, openAndroidDevClientUrl } from '../engine/app-install.ts';
-import { openIosDeepLink, reloadAndroidJs, reloadIosThroughMetro } from '../engine/reload.ts';
+import { androidAppProcess, iosAppProcess } from '../engine/app-install.ts';
+import { reloadThroughMetro } from '../engine/reload.ts';
 import { resolveProjectMetro, type MetroResolution } from '../metro.ts';
 import { findProjectRoot } from '../project.ts';
 import { resolveOwnedAvdSerial, type ResolvedAvdSerial } from '../sim/android.ts';
@@ -22,7 +22,8 @@ interface ReloadFacts {
   deviceName: string;
   appId: string;
   metroPort: number;
-  strategy: 'deep-link' | 'android-broadcast' | 'metro-websocket';
+  strategy: 'metro-websocket' | 'metro-broadcast';
+  targets: number | null;
 }
 
 interface ReloadFailure {
@@ -53,10 +54,7 @@ export interface ReloadDeps {
   iosProcess: typeof iosAppProcess;
   androidProcess: typeof androidAppProcess;
   resolveMetro: (port: number, root: string) => Promise<MetroResolution>;
-  openAndroidUrl: typeof openAndroidDevClientUrl;
-  openIosUrl: typeof openIosDeepLink;
-  reloadAndroid: typeof reloadAndroidJs;
-  reloadIosMetro: typeof reloadIosThroughMetro;
+  reloadMetro: typeof reloadThroughMetro;
 }
 
 const DEFAULT_DEPS: ReloadDeps = {
@@ -68,10 +66,7 @@ const DEFAULT_DEPS: ReloadDeps = {
   iosProcess: iosAppProcess,
   androidProcess: androidAppProcess,
   resolveMetro: resolveProjectMetro,
-  openAndroidUrl: openAndroidDevClientUrl,
-  openIosUrl: openIosDeepLink,
-  reloadAndroid: reloadAndroidJs,
-  reloadIosMetro: reloadIosThroughMetro,
+  reloadMetro: reloadThroughMetro,
 };
 
 function failure(code: string, message: string, remedy: string | null): ReloadFailure {
@@ -280,55 +275,26 @@ export async function runReload({
   const stopped = processFailure(target.platform, target.record, d);
   if (stopped) return { ok: false, error: stopped };
 
-  let strategy: ReloadFacts['strategy'];
-  if (target.record.deepLinkUrl) {
-    const opened =
+  const reloaded = await d.reloadMetro(port, { role: target.platform, appId: target.record.appId });
+  if (!reloaded.ok) {
+    const stoppedAfterMetro = processFailure(target.platform, target.record, d);
+    if (stoppedAfterMetro) return { ok: false, error: stoppedAfterMetro };
+    const snapshot = `agent-device snapshot -i --platform ${target.platform} --${target.platform === 'ios' ? 'udid' : 'serial'} ${target.record.deviceId}`;
+    const relaunch = `agent-device open ${target.record.appId} --platform ${target.platform} --${target.platform === 'ios' ? 'udid' : 'serial'} ${target.record.deviceId} --metro-port ${port} --relaunch`;
+    const firstBundle =
       target.platform === 'ios'
-        ? d.openIosUrl(target.record.deviceId, target.record.deepLinkUrl)
-        : d.openAndroidUrl({
-            serial: target.record.deviceId,
-            url: target.record.deepLinkUrl,
-            packageName: target.record.appId,
-          });
-    if (!opened.ok) {
-      return {
-        ok: false,
-        error: failure(
-          'STIM_RELOAD_FAILED',
-          opened.reason ?? `Could not reopen ${target.record.deepLinkUrl}.`,
-          `Run \`stim ${target.platform}\` to re-establish the app launch.`,
-        ),
-      };
-    }
-    strategy = 'deep-link';
-  } else if (target.platform === 'android') {
-    const reloaded = d.reloadAndroid(target.record.deviceId, target.record.appId);
-    if (!reloaded.ok) {
-      return {
-        ok: false,
-        error: failure('STIM_RELOAD_FAILED', reloaded.reason ?? 'The Android reload broadcast failed.', null),
-      };
-    }
-    strategy = 'android-broadcast';
-  } else {
-    const reloaded = await d.reloadIosMetro(port);
-    if (reloaded.ok) {
-      strategy = 'metro-websocket';
-    } else {
-      const stoppedAfterMetro = processFailure(target.platform, target.record, d);
-      if (stoppedAfterMetro) return { ok: false, error: stoppedAfterMetro };
-      const snapshot = `agent-device snapshot -i --platform ios --udid ${target.record.deviceId}`;
-      const relaunch = `agent-device open ${target.record.appId} --platform ios --udid ${target.record.deviceId} --metro-port ${port} --relaunch`;
-      return {
-        ok: false,
-        error: failure(
-          'STIM_RELOAD_FAILED',
-          reloaded.reason ?? `No React Native app is connected to Metro on port ${port}.`,
-          `Continue in your existing automation session for ${target.record.appId} on ${target.record.deviceId}. Run \`${snapshot}\`, then press Reload if present. Otherwise run \`${relaunch}\` in that same session; this restarts the app and loses in-memory state. Keep your existing --session flag on these commands. Verify the expected UI afterward. Do not create another session or rerun \`stim ios\`.`,
-        ),
-      };
-    }
+        ? ' If it stays unreachable, an error in the first bundle leaves iOS without a packager connection at all, and no retry will make it a peer.'
+        : '';
+    const device = `reload from the device in your existing automation session: run \`${snapshot}\`, then press the error screen's Reload button, or open the dev menu and press Reload when no error screen is showing. Only when neither is reachable, run \`${relaunch}\`; that restarts the app and loses in-memory state. Keep your existing --session flag, verify the expected UI afterward, and do not create another session.`;
+    const remedy = reloaded.unreachable
+      ? `Metro is registered for this workspace but did not answer on port ${port}, so nothing is known about ${target.record.appId}. Run \`stim reload ${target.platform}\` again. If it keeps timing out, run \`stim doctor\` to check the dev server before touching the app.`
+      : `Metro reports no peer for ${target.record.appId} right now. Stim broadcast a reload anyway, so check the expected UI on ${target.record.deviceId} first -- it may already have recovered. If not, the app reconnects every 2 seconds, so run \`stim reload ${target.platform}\` once more.${firstBundle} Then ${device}`;
+    return {
+      ok: false,
+      error: failure('STIM_RELOAD_FAILED', reloaded.reason, remedy),
+    };
   }
+  const strategy: ReloadFacts['strategy'] = reloaded.broadcast ? 'metro-broadcast' : 'metro-websocket';
 
   return {
     ok: true,
@@ -339,6 +305,7 @@ export async function runReload({
       appId: target.record.appId,
       metroPort: port,
       strategy,
+      targets: reloaded.targets ?? null,
     },
   };
 }
@@ -395,8 +362,14 @@ export function registerReload(program: Command, deps: Partial<ReloadDeps> = {})
         console.log(JSON.stringify(result.facts));
       } else {
         const facts = result.facts;
+        const scope =
+          facts.strategy === 'metro-broadcast'
+            ? ` This Metro cannot name its connected apps, so the reload went to all of them and Stim cannot confirm ${facts.appId} was one. Check the expected UI on ${facts.deviceId}; if nothing changed, reload from the app's own error screen or dev menu.`
+            : facts.targets && facts.targets > 1
+              ? ` ${facts.targets} devices are running this app on that Metro and every one of them was reloaded, not only ${facts.deviceId}.`
+              : '';
         console.log(
-          `Reload requested for ${facts.appId} on ${facts.deviceName} (${facts.deviceId}) via ${facts.strategy}; ${facts.platform} Metro port ${facts.metroPort}. Completion is not observed; verify the expected UI and run stim logs --errors.`,
+          `Reload requested for ${facts.appId} on ${facts.deviceName} (${facts.deviceId}) via ${facts.strategy}; ${facts.platform} Metro port ${facts.metroPort}.${scope} Completion is not observed; verify the expected UI and run stim logs --errors.`,
         );
       }
     });

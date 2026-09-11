@@ -298,6 +298,16 @@ test('the rendered guide carries the warm --refresh contract, not just its sourc
   expect(options).toContain('appandflow/stim#696');
 });
 
+test('the facts topic documents every reload strategy the command can report', () => {
+  const body = renderSection('facts', 'payloads');
+  assert(body);
+  const src = readFileSync(new URL('../commands/reload.ts', import.meta.url), 'utf-8');
+  const union = src.slice(src.indexOf('strategy:'), src.indexOf(';', src.indexOf('strategy:')));
+  const values = [...union.matchAll(/'([a-z-]+)'/g)].map((m) => m[1] as string);
+  expect(values.length).toBeGreaterThan(0);
+  for (const value of values) expect(body).toContain(`"${value}"`);
+});
+
 test('the settings topic documents every supported setting key', () => {
   const body = renderTopic('settings');
   assert(body);

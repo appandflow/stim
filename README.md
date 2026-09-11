@@ -43,9 +43,11 @@ stim logs --errors
 stim stop
 ```
 
-`stim reload [ios|android]` is a recovery or explicit restart command. Use it
-after a failed first bundle load or when an error screen remains after a fix,
-not after every JavaScript edit.
+`stim reload [ios|android]` is a recovery command that reloads JavaScript in the
+live app and never restarts it. Use it when an error screen remains after a fix,
+not after every JavaScript edit. It also recovers an Android app whose first
+bundle failed; an iOS app in that state never connects to Metro, so reload
+cannot reach it.
 
 Stim needs no project initialization. Runtime state stays under `~/.stim` by
 default.

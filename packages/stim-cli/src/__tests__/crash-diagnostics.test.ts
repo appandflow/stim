@@ -626,7 +626,6 @@ test('live native collection requires the current launch and device claim, not a
     deviceId: 'emulator-5556',
     metroPort: null,
     release: true,
-    deepLinkUrl: null,
     launchedAt: new Date(since).toISOString(),
   };
   let reads = 0;

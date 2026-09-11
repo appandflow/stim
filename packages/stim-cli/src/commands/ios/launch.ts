@@ -228,10 +228,12 @@ async function verifyIosRun({
         ),
       );
     } else if (verification.processAlive === true && metroPort !== null) {
-      const reloadRemedy =
-        physical || remoteDevice
-          ? `run \`agent-device metro reload --metro-port ${metroPort}\`.`
-          : 'run `stim reload ios`.';
+      // Bridgeless RCTInstance resolves DevSettings only in _loadJSBundle's
+      // success callback, and RCTDevSettings.initialize is what opens the
+      // /message socket, so an iOS app whose first bundle failed is not a Metro
+      // peer and no websocket reload can reach it. Fixed by
+      // react/react-native#58352, which has landed but is not in a release yet.
+      const reloadRemedy = `press Reload on the app's own error screen -- run \`agent-device snapshot -i --platform ios --udid ${udid}\` in your existing automation session to reach it. Neither \`stim reload ios\` nor \`agent-device metro reload\` can: this app never connected to Metro.`;
       note(
         chalk.yellow(
           phaseLine(
@@ -436,7 +438,6 @@ function recordIosReloadTarget({
   udid,
   metroPort,
   release,
-  launched,
   launchedAt,
   note,
 }: {
@@ -448,19 +449,16 @@ function recordIosReloadTarget({
   udid: string;
   metroPort: number | null;
   release: boolean;
-  launched: ReturnType<IosDeps['launchIosApp']>;
   launchedAt: number;
   note: (line: string) => void;
 }): void {
   if (physical || remoteDevice) return;
-  const deepLinkUrl = 'url' in launched && typeof launched.url === 'string' ? launched.url : null;
   try {
     d.writeWorkspaceLaunch(root, 'ios', {
       appId: bundleId,
       deviceId: udid,
       metroPort,
       release,
-      deepLinkUrl,
       launchedAt: new Date(launchedAt).toISOString(),
     });
   } catch (error) {
@@ -744,7 +742,6 @@ export async function finishIosRun({
     udid,
     metroPort,
     release,
-    launched: launched!,
     launchedAt,
     note,
   });

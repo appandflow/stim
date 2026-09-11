@@ -25,9 +25,10 @@ stim stop`}
 `ios` and `android` require a running dev server for a Debug build. Release
 builds embed the JavaScript bundle and skip that requirement.
 
-`reload` is a recovery or explicit restart command. Use it after a failed first
-bundle load or when an error screen remains after a fix, not after every
-JavaScript edit.
+`reload` is a recovery command that reloads JavaScript in the live app and never
+restarts it. Use it when an error screen remains after a fix, not after every
+JavaScript edit. It also recovers an Android app whose first bundle failed; an
+iOS app in that state never connects to Metro, so reload cannot reach it.
 
 ## `doctor`
 
@@ -192,12 +193,43 @@ or emulator. It never builds, installs, boots, or cold-launches. Omit the
 platform when exactly one owned app is live; name it when both iOS and Android
 are live.
 
-Expo and dev-client apps reopen the exact project deep link recorded at launch.
-Bare Android apps receive their package-scoped React Native reload broadcast.
-Bare iOS apps reload through the workspace Metro websocket when it can identify
-one iOS peer. Otherwise the command returns instructions to continue in the
-agent's existing automation session on the exact simulator. Stim does not take
-over that stateful session.
+Every reload goes over the workspace Metro websocket, on both platforms. It never
+reopens a development-client URL, because that restarts the app rather than
+reloading its JavaScript.
+
+How the message is addressed depends on the dev server, and `strategy` reports
+which you got. Where Metro can name its clients, Stim addresses every peer
+matching the platform and reports `metro-websocket`. A workspace Metro serves one
+app, so those peers are that app on however many devices are attached to the
+port; `targets` says how many were reloaded. Android peers carry the package
+name and iOS peers carry only `role=ios`, which is enough to keep a reload on one
+platform but not to single out one iOS app among several.
+
+The bare React Native dev server cannot name its clients at all, because
+`@react-native-community/cli-server-api` answers that request out of a `ws`
+property removed in ws 3.0. There Stim broadcasts: `metro-broadcast` means every
+app on that port reloaded, and that Stim could not confirm the recorded app was
+among them. Verify the UI, and fall back to the app's own error screen or dev
+menu if nothing changed.
+
+When Metro names its clients and none match the platform, Stim still broadcasts
+before giving up, because matching is best-effort and an unmatched peer may be
+the app. It reports the miss either way, so verify the UI before acting on the
+remedy.
+
+When Metro reports no peer for the app, retry once first: a client reconnects
+every 2 seconds, which is also this probe's timeout, so a single miss can be a
+reconnect window rather than an app that never connected. If it stays
+unreachable on iOS, an error in the first bundle leaves the app without a
+packager connection at all, and no retry will make it a peer. The command then
+returns instructions to continue in the agent's existing automation session:
+press the error screen's Reload button, or open the dev menu and press Reload
+when no error screen is showing, and relaunch only when neither is reachable.
+Stim does not take over that stateful session.
+
+When Metro itself does not answer within the probe's 2 seconds, nothing is known
+about the app, so the command says to retry and check the dev server rather than
+sending the agent to the device.
 
 The command refuses release builds, stopped or unowned devices, a missing or
 foreign Metro server, and ambiguous selection. `--json` prints one object with

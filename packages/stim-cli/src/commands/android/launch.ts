@@ -573,14 +573,12 @@ export async function finishAndroidRun({
   phase('launch', `${androidPackage} ${launchTimer()}`);
 
   if (!physical && !remoteDevice) {
-    const deepLinkUrl = scheme ? androidDevClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT) : null;
     try {
       writeLaunch(root, 'android', {
         appId: androidPackage,
         deviceId: serial,
         metroPort,
         release,
-        deepLinkUrl,
         launchedAt: new Date(launchedAt).toISOString(),
       });
     } catch (error) {
