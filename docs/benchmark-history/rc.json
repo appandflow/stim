@@ -1,0 +1,359 @@
+{
+  "schemaVersion": 1,
+  "campaign": "rc",
+  "timingOrigin": "first-agent-activity",
+  "runs": [
+    {
+      "model": "gpt-5.6-luna",
+      "platform": "android",
+      "scenario": "javascript",
+      "arm": "control",
+      "settingsReadySeconds": 687.682
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "platform": "android",
+      "scenario": "javascript",
+      "arm": "stim",
+      "settingsReadySeconds": 194.433
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "platform": "android",
+      "scenario": "launch-crash",
+      "arm": "control",
+      "settingsReadySeconds": 552.401,
+      "diagnosisSeconds": 465.217
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "platform": "android",
+      "scenario": "launch-crash",
+      "arm": "stim",
+      "settingsReadySeconds": 234.246,
+      "diagnosisSeconds": 176.264
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "platform": "android",
+      "scenario": "native",
+      "arm": "control",
+      "settingsReadySeconds": 692.316
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "platform": "android",
+      "scenario": "native",
+      "arm": "stim",
+      "settingsReadySeconds": 231.948
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "platform": "ios",
+      "scenario": "javascript",
+      "arm": "control",
+      "settingsReadySeconds": 474.277
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "platform": "ios",
+      "scenario": "javascript",
+      "arm": "stim",
+      "settingsReadySeconds": 127.567
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "platform": "ios",
+      "scenario": "launch-crash",
+      "arm": "control",
+      "settingsReadySeconds": 1019.263,
+      "diagnosisSeconds": 817.325
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "platform": "ios",
+      "scenario": "launch-crash",
+      "arm": "stim",
+      "settingsReadySeconds": 228.666,
+      "diagnosisSeconds": 163.88
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "platform": "ios",
+      "scenario": "native",
+      "arm": "control",
+      "settingsReadySeconds": 497.175
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "platform": "ios",
+      "scenario": "native",
+      "arm": "stim",
+      "settingsReadySeconds": 255.97
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "platform": "android",
+      "scenario": "javascript",
+      "arm": "control",
+      "settingsReadySeconds": 380.703
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "platform": "android",
+      "scenario": "javascript",
+      "arm": "stim",
+      "settingsReadySeconds": 166.784
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "platform": "android",
+      "scenario": "launch-crash",
+      "arm": "control",
+      "settingsReadySeconds": 542.283,
+      "diagnosisSeconds": 460.307
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "platform": "android",
+      "scenario": "launch-crash",
+      "arm": "stim",
+      "settingsReadySeconds": 251.661,
+      "diagnosisSeconds": 194.519
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "platform": "android",
+      "scenario": "native",
+      "arm": "control",
+      "settingsReadySeconds": 433.279
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "platform": "android",
+      "scenario": "native",
+      "arm": "stim",
+      "settingsReadySeconds": 203.54
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "platform": "ios",
+      "scenario": "javascript",
+      "arm": "control",
+      "settingsReadySeconds": 610.771
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "platform": "ios",
+      "scenario": "javascript",
+      "arm": "stim",
+      "settingsReadySeconds": 133.881
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "platform": "ios",
+      "scenario": "launch-crash",
+      "arm": "control",
+      "settingsReadySeconds": 714.275,
+      "diagnosisSeconds": 565.198
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "platform": "ios",
+      "scenario": "launch-crash",
+      "arm": "stim",
+      "settingsReadySeconds": 244.314,
+      "diagnosisSeconds": 167.176
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "platform": "ios",
+      "scenario": "native",
+      "arm": "control",
+      "settingsReadySeconds": 721.239
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "platform": "ios",
+      "scenario": "native",
+      "arm": "stim",
+      "settingsReadySeconds": 249.97
+    },
+    {
+      "model": "opus",
+      "platform": "android",
+      "scenario": "javascript",
+      "arm": "control",
+      "settingsReadySeconds": 290.953
+    },
+    {
+      "model": "opus",
+      "platform": "android",
+      "scenario": "javascript",
+      "arm": "stim",
+      "settingsReadySeconds": 167.241
+    },
+    {
+      "model": "opus",
+      "platform": "android",
+      "scenario": "launch-crash",
+      "arm": "control",
+      "settingsReadySeconds": 378.854,
+      "diagnosisSeconds": 299.73
+    },
+    {
+      "model": "opus",
+      "platform": "android",
+      "scenario": "launch-crash",
+      "arm": "stim",
+      "settingsReadySeconds": 213.758,
+      "diagnosisSeconds": 162.546
+    },
+    {
+      "model": "opus",
+      "platform": "android",
+      "scenario": "native",
+      "arm": "control",
+      "settingsReadySeconds": 376.384
+    },
+    {
+      "model": "opus",
+      "platform": "android",
+      "scenario": "native",
+      "arm": "stim",
+      "settingsReadySeconds": 211.97
+    },
+    {
+      "model": "opus",
+      "platform": "ios",
+      "scenario": "javascript",
+      "arm": "control",
+      "settingsReadySeconds": 362.082
+    },
+    {
+      "model": "opus",
+      "platform": "ios",
+      "scenario": "javascript",
+      "arm": "stim",
+      "settingsReadySeconds": 91.815
+    },
+    {
+      "model": "opus",
+      "platform": "ios",
+      "scenario": "launch-crash",
+      "arm": "control",
+      "settingsReadySeconds": 1091.711,
+      "diagnosisSeconds": 917.401
+    },
+    {
+      "model": "opus",
+      "platform": "ios",
+      "scenario": "launch-crash",
+      "arm": "stim",
+      "settingsReadySeconds": 192.024,
+      "diagnosisSeconds": 131.801
+    },
+    {
+      "model": "opus",
+      "platform": "ios",
+      "scenario": "native",
+      "arm": "control",
+      "settingsReadySeconds": 355.6
+    },
+    {
+      "model": "opus",
+      "platform": "ios",
+      "scenario": "native",
+      "arm": "stim",
+      "settingsReadySeconds": 195.854
+    },
+    {
+      "model": "sonnet",
+      "platform": "android",
+      "scenario": "javascript",
+      "arm": "control",
+      "settingsReadySeconds": 522.052
+    },
+    {
+      "model": "sonnet",
+      "platform": "android",
+      "scenario": "javascript",
+      "arm": "stim",
+      "settingsReadySeconds": 167.834
+    },
+    {
+      "model": "sonnet",
+      "platform": "android",
+      "scenario": "launch-crash",
+      "arm": "control",
+      "settingsReadySeconds": 676.653,
+      "diagnosisSeconds": 602.102
+    },
+    {
+      "model": "sonnet",
+      "platform": "android",
+      "scenario": "launch-crash",
+      "arm": "stim",
+      "settingsReadySeconds": 214.719,
+      "diagnosisSeconds": 161.297
+    },
+    {
+      "model": "sonnet",
+      "platform": "android",
+      "scenario": "native",
+      "arm": "control",
+      "settingsReadySeconds": 404.966
+    },
+    {
+      "model": "sonnet",
+      "platform": "android",
+      "scenario": "native",
+      "arm": "stim",
+      "settingsReadySeconds": 214.519
+    },
+    {
+      "model": "sonnet",
+      "platform": "ios",
+      "scenario": "javascript",
+      "arm": "control",
+      "settingsReadySeconds": 430.682
+    },
+    {
+      "model": "sonnet",
+      "platform": "ios",
+      "scenario": "javascript",
+      "arm": "stim",
+      "settingsReadySeconds": 115.578
+    },
+    {
+      "model": "sonnet",
+      "platform": "ios",
+      "scenario": "launch-crash",
+      "arm": "control",
+      "settingsReadySeconds": 706.225,
+      "diagnosisSeconds": 650.421
+    },
+    {
+      "model": "sonnet",
+      "platform": "ios",
+      "scenario": "launch-crash",
+      "arm": "stim",
+      "settingsReadySeconds": 179.52,
+      "diagnosisSeconds": 128.981
+    },
+    {
+      "model": "sonnet",
+      "platform": "ios",
+      "scenario": "native",
+      "arm": "control",
+      "settingsReadySeconds": 349.612
+    },
+    {
+      "model": "sonnet",
+      "platform": "ios",
+      "scenario": "native",
+      "arm": "stim",
+      "settingsReadySeconds": 194.699
+    }
+  ]
+}

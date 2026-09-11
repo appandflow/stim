@@ -63,7 +63,7 @@ describe('benchmark catalog selection', () => {
         const stim = entry?.runs.find((run) => run.arm === 'stim');
         const control = entry?.runs.find((run) => run.arm === 'control');
         expect(stim).toMatchObject({ valid: true, appReadinessLogs: true });
-        expect(control).toMatchObject({ valid: true, appReadinessLogs: false });
+        expect(control).toMatchObject({ valid: true, appReadinessLogs: true });
         const initial = stim?.commands.find((command) => command.id === stim.launchCrashAudit?.initialLaunchCommandId);
         expect(initial?.output).toMatch(/readiness\s+waiting/);
         expect(initial?.output).toMatch(/fingerprint .*hit/);

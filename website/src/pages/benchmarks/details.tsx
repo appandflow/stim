@@ -168,10 +168,9 @@ export default function BenchmarkDetails(): ReactNode {
           {publishedRuns.some((run) => run.appReadinessLogs) ? (
             <p>
               The current Stim run uses the published CLI with optional early pending and post-splash ready logs. The
-              initial launch reported the injected crash and hit the native artifact cache. The retained control run
-              does not emit these optional logs. This compares the integrated Stim workflow with the standard toolchain,
-              not identical instrumentation. New validated runs replace the previous result for each arm; they are not
-              selected for being faster.
+              initial launch reported the injected crash and hit the native artifact cache. The control run uses the
+              same fixture and optional logs through the standard toolchain. New validated runs replace the previous
+              result for each arm; they are not selected for being faster.
             </p>
           ) : null}
           <div className={styles.benchmarkPickers}>

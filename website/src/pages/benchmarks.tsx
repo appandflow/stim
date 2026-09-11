@@ -137,9 +137,8 @@ export default function Benchmarks(): ReactNode {
                     A deterministic root-render exception is committed before dispatch. The agent must launch first,
                     diagnose from captured errors, repair the source, and prove the unchanged Settings screen. Each
                     comparison shows the latest validated run per arm, not an average or a best-of selection. Stim runs
-                    use optional app readiness logs; retained control runs do not. The crash and recovery task are
-                    unchanged, but this compares integrated Stim with the standard toolchain, not identical
-                    instrumentation.
+                    use the same optional app readiness logs as controls. The crash and recovery task are identical;
+                    Stim can use those signals to report the failure during launch.
                   </p>
                 </div>
               </div>
@@ -173,8 +172,8 @@ export default function Benchmarks(): ReactNode {
                 <dt>Same task, same agent</dt>
                 <dd>
                   Each comparison uses the same app task, AI model, and model settings. The agent works with Stim in one
-                  run and without it in the other. Launch-error Stim reruns add optional readiness logs; the retained
-                  controls use the earlier fixture without those logs.
+                  run and without it in the other. Both arms use the same fixture, including optional app readiness logs
+                  for the launch-error task.
                 </dd>
               </div>
               <div>
@@ -188,8 +187,8 @@ export default function Benchmarks(): ReactNode {
                 <dt>Both setups start prepared</dt>
                 <dd>
                   Dependencies are installed and build caches are warmed before timing starts. Stim can reuse saved
-                  builds and, on iOS, an existing simulator. We are measuring reuse during development, not first-time
-                  setup.
+                  builds and pooled iOS simulators or Android emulators. We are measuring reuse during development, not
+                  first-time setup.
                 </dd>
               </div>
               <div>

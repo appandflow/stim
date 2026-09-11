@@ -9,6 +9,10 @@ The driver runs the iOS and Android readiness suites plus the JavaScript
 launch-failure suite described in [`../../docs/agent-benchmark.md`](../../docs/agent-benchmark.md).
 Runs are sequential. Never dispatch two cells against the same benchmark root.
 
+After a complete campaign passes export audit, replace the canonical website
+results and retain a [timing-only campaign snapshot](../../docs/benchmark-history/README.md).
+Do not snapshot individual retries or partial campaigns.
+
 JavaScript proof combines the retained source edit with the isolated Settings
 screen proof, not a second bundle request. A legacy bundle-watcher timeout is
 retained as a warning only when independently observed app liveness and both
