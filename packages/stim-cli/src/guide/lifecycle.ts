@@ -469,8 +469,10 @@ result as proof instead of requiring an unrelated screenshot.`,
 
   Android cleanup happens AFTER boot, before install or launch: \`adb shell
   pm clear\` clears the adopting app's data while retaining its APK, and
-  other third-party apps are uninstalled. Failed cleanup blocks launch and
-  remains pending for a retry. The installed APK's SHA-256 must match the
+  other third-party apps are uninstalled. If ADB goes offline or closes the
+  connection, Stim waits for boot readiness and retries cleanup for up to 30
+  seconds, verifying the same owned AVD before each destructive command.
+  Failed cleanup blocks launch and remains pending for a retry. The installed APK's SHA-256 must match the
   requested artifact before Stim skips installation; a package name or cache
   key alone is insufficient, including for release builds with swapped JS.
   If the retained APK has a conflicting signer or version, adoption uninstalls

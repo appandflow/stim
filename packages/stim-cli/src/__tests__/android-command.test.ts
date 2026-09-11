@@ -471,7 +471,7 @@ test('an invalid Android pool bound refuses before device creation and emits one
 describe('adopted Android installs', () => {
   afterEach(() => resetExecutor());
 
-  test.each(['same', 'different', 'signature', 'downgrade', 'cleanup-failed', 'install-failed'] as const)(
+  test.each(['same', 'different', 'signature', 'downgrade', 'cleanup-failed', 'error', 'install-failed'] as const)(
     'cleanup precedes install and only matching APK bytes skip installation: %s',
     async (mode) => {
       const apkPath = fakeApk();
@@ -493,7 +493,13 @@ describe('adopted Android installs', () => {
             const cmd = [file, ...args].join(' ');
             commands.push(cmd);
             if (args.includes('list')) return 'package:com.example.app\npackage:com.example.other';
-            if (args.includes('clear')) return mode === 'cleanup-failed' ? 'Failed' : 'Success';
+            if (args.includes('clear')) {
+              if (mode === 'error')
+                throw Object.assign(new Error('adb command failed'), {
+                  stdout: 'SecurityException: permission denied',
+                });
+              return mode === 'cleanup-failed' ? 'Failed' : 'Success';
+            }
             if (args.includes('uninstall')) return 'Success';
             if (args.includes('path')) return 'package:/data/app/base.apk';
             if (args.includes('sha256sum'))
@@ -511,18 +517,22 @@ describe('adopted Android installs', () => {
       );
       const h = harness({ ensureDevice: async () => device, resolveCached: () => apkPath, install: installAndroidApp });
       const result = await h.run();
-      const failed = mode === 'cleanup-failed' || mode === 'install-failed';
+      const cleanupFailed = mode === 'cleanup-failed' || mode === 'error';
+      const failed = cleanupFailed || mode === 'install-failed';
+      expect(result.error?.message?.includes('SecurityException: permission denied')).toBe(
+        mode === 'error' ? true : failed ? false : undefined,
+      );
       expect(result.ok).toBe(!failed);
       expect(result.error?.message?.includes('Could not clean com.example.app')).toBe(
-        mode === 'cleanup-failed' ? true : mode === 'install-failed' ? false : undefined,
+        mode === 'cleanup-failed' ? true : failed ? false : undefined,
       );
       expect(h.calls.launch.length).toBe(failed ? 0 : 1);
       const clear = commands.indexOf('adb -s emulator-5584 shell pm clear com.example.app');
       const hash = commands.indexOf('adb -s emulator-5584 shell pm path com.example.app');
       expect(clear).toBeGreaterThanOrEqual(0);
-      expect(hash > clear).toBe(mode !== 'cleanup-failed');
+      expect(hash > clear).toBe(!cleanupFailed);
       const conflict = mode === 'signature' || mode === 'downgrade';
-      expect(installs).toBe(mode === 'same' || mode === 'cleanup-failed' ? 0 : conflict ? 2 : 1);
+      expect(installs).toBe(mode === 'same' || cleanupFailed ? 0 : conflict ? 2 : 1);
       expect(commands.includes('adb -s emulator-5584 uninstall com.example.app')).toBe(conflict);
       expect(h.stderr.some((line) => line.includes('already has this build'))).toBe(mode === 'same');
       expect(loadConfig()?.projects[root]?.platforms?.android?.adoptionPending).toBe(failed ? true : undefined);

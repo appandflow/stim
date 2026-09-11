@@ -300,8 +300,8 @@ export function listAvds({ timeoutMs }: { timeoutMs?: number } = {}): string[] {
   return parseAvdList(getExecutor().run(`${androidTool('emulator')} -list-avds`, { timeoutMs }));
 }
 
-export function listAdbDevices(): AdbDevices {
-  return parseAdbDevices(getExecutor().run(`${androidTool('adb')} devices`));
+export function listAdbDevices({ timeoutMs }: { timeoutMs?: number } = {}): AdbDevices {
+  return parseAdbDevices(getExecutor().run(`${androidTool('adb')} devices`, { timeoutMs }));
 }
 
 const ADB_PROP_TIMEOUT_MS = 5000;
@@ -645,28 +645,62 @@ export function ownedAvdMatchesConfiguration(avdName: string, configuration: str
   );
 }
 
-export function resetAdoptedAvd(avdName: string, serial: string, keepPackage: string): void {
+export async function resetAdoptedAvd(avdName: string, serial: string, keepPackage: string): Promise<void> {
+  const exec = getExecutor();
+  let recoveryDeadline: number | undefined;
+  let firstFailure: string | undefined;
+  let unavailableTarget = false;
+  const commandTimeout = (timeoutMs: number) =>
+    recoveryDeadline === undefined ? timeoutMs : Math.max(1, Math.min(timeoutMs, recoveryDeadline - Date.now()));
   const assertTarget = () => {
-    const resolved = resolveOwnedAvdSerial(avdName);
+    const resolved = resolveOwnedAvdSerial(avdName, { timeoutMs: commandTimeout(30000) });
+    unavailableTarget = Boolean(resolved.notRunning);
     if (resolved.serial !== serial) throw new Error(`AVD ${avdName} is no longer running on ${serial}.`);
   };
-  assertTarget();
-  const exec = getExecutor();
-  const output = exec.runFile('adb', ['-s', serial, 'shell', 'pm', 'list', 'packages', '-3'], { timeoutMs: 30000 });
-  const packages = output
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const match = /^package:([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+)$/.exec(line);
-      if (!match) throw new Error(`Could not read installed apps on ${avdName}: ${line}`);
-      return match[1]!;
-    });
-  for (const packageName of packages) {
-    assertTarget();
-    const args = packageName === keepPackage ? ['shell', 'pm', 'clear', packageName] : ['uninstall', packageName];
-    const result = exec.runFile('adb', ['-s', serial, ...args], { timeoutMs: 120000 });
-    if (result.trim() !== 'Success') throw new Error(`Could not clean ${packageName} on ${avdName}: ${result.trim()}`);
+  for (;;) {
+    unavailableTarget = false;
+    try {
+      assertTarget();
+      const output = exec.runFile('adb', ['-s', serial, 'shell', 'pm', 'list', 'packages', '-3'], {
+        timeoutMs: commandTimeout(30000),
+      });
+      const packages = output
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+          const match = /^package:([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+)$/.exec(line);
+          if (!match) throw new Error(`Could not read installed apps on ${avdName}: ${line}`);
+          return match[1]!;
+        });
+      for (const packageName of packages) {
+        assertTarget();
+        const args = packageName === keepPackage ? ['shell', 'pm', 'clear', packageName] : ['uninstall', packageName];
+        const result = exec.runFile('adb', ['-s', serial, ...args], { timeoutMs: commandTimeout(120000) });
+        if (result.trim() !== 'Success')
+          throw new Error(`Could not clean ${packageName} on ${avdName}: ${result.trim()}`);
+      }
+      return;
+    } catch (error) {
+      const failed = error as Error & { stderr?: unknown; stdout?: unknown };
+      const detail = [failed?.message || String(error), failed?.stderr, failed?.stdout]
+        .filter(Boolean)
+        .map(String)
+        .join('\n');
+      firstFailure ??= detail;
+      const diagnostic = detail === firstFailure ? detail : `${firstFailure}\nRecovery failed: ${detail}`;
+      const transient = /(?:^|\n)(?:adb: )?(?:error: )?(?:device offline|closed)\s*(?:$|\n)/i.test(detail);
+      recoveryDeadline ??= Date.now() + 30000;
+      if ((!unavailableTarget && !transient) || Date.now() >= recoveryDeadline)
+        throw new Error(diagnostic, { cause: error });
+      const delayMs = Math.min(1000, recoveryDeadline - Date.now());
+      await new Promise((done) => setTimeout(done, delayMs));
+      const ready = await waitForBoot(serial, recoveryDeadline - Date.now(), { commandTimeoutMs: 5000 });
+      if (!ready.ok)
+        throw new Error(`${diagnostic}\nEmulator did not recover: ${JSON.stringify(ready.diagnostic)}`, {
+          cause: error,
+        });
+    }
   }
 }
 
@@ -747,37 +781,50 @@ export function emulatorFailureRemedy(lines: string[]): string {
 // for most of a boot: adb answers "device offline" or "device not found" until
 // the emulator has registered. Null is "not booted yet", so it reads as an
 // empty string and the poll continues.
-function getprop(exec: Executor, serial: string, prop: string): string {
-  const out = exec.runQuiet(`${androidTool('adb')} -s ${serial} shell getprop ${prop}`);
+function getprop(exec: Executor, serial: string, prop: string, timeoutMs?: number): string {
+  const out = exec.runQuiet(`${androidTool('adb')} -s ${serial} shell getprop ${prop}`, { timeoutMs });
   return typeof out === 'string' ? out.trim() : '';
 }
 
 export async function waitForBoot(
   serial: string,
   timeoutMs = 60000,
-  { aborted = () => false, pollMs = 1000 }: { aborted?: () => boolean; pollMs?: number } = {},
+  {
+    aborted = () => false,
+    pollMs = 1000,
+    commandTimeoutMs,
+  }: { aborted?: () => boolean; pollMs?: number; commandTimeoutMs?: number } = {},
 ): Promise<BootResult> {
   const exec = getExecutor();
   const start = Date.now();
   let exited = false;
+  const probeTimeout = () =>
+    commandTimeoutMs === undefined
+      ? undefined
+      : Math.max(1, Math.min(commandTimeoutMs, timeoutMs - (Date.now() - start)));
   while (Date.now() - start < timeoutMs) {
-    if (getprop(exec, serial, 'sys.boot_completed') === '1') return { ok: true };
-    if (getprop(exec, serial, 'dev.bootcomplete') === '1') return { ok: true };
+    if (getprop(exec, serial, 'sys.boot_completed', probeTimeout()) === '1') return { ok: true };
+    if (getprop(exec, serial, 'dev.bootcomplete', probeTimeout()) === '1') return { ok: true };
     if (aborted()) {
       exited = true;
       break;
     }
-    await new Promise((r) => setTimeout(r, pollMs));
+    await new Promise((r) =>
+      setTimeout(
+        r,
+        commandTimeoutMs === undefined ? pollMs : Math.min(pollMs, Math.max(0, timeoutMs - (Date.now() - start))),
+      ),
+    );
   }
-  const devicesOut = exec.runQuiet(`${androidTool('adb')} devices`);
+  const devicesOut = exec.runQuiet(`${androidTool('adb')} devices`, { timeoutMs: probeTimeout() });
   return {
     ok: false,
     ...(exited ? { exited: true as const } : {}),
     diagnostic: {
       devices: typeof devicesOut === 'string' ? devicesOut.trim() : '',
-      sysBoot: getprop(exec, serial, 'sys.boot_completed'),
-      devBoot: getprop(exec, serial, 'dev.bootcomplete'),
-      bootAnim: getprop(exec, serial, 'init.svc.bootanim'),
+      sysBoot: getprop(exec, serial, 'sys.boot_completed', probeTimeout()),
+      devBoot: getprop(exec, serial, 'dev.bootcomplete', probeTimeout()),
+      bootAnim: getprop(exec, serial, 'init.svc.bootanim', probeTimeout()),
     },
   };
 }
@@ -910,21 +957,25 @@ export function waitForAndroidEmulatorShutdown(
   }
 }
 
-export function getAvdNameForSerial(serial: string): string | null {
-  const out = getExecutor().runQuiet(`${androidTool('adb')} -s ${serial} emu avd name`);
+export function getAvdNameForSerial(serial: string, { timeoutMs }: { timeoutMs?: number } = {}): string | null {
+  const out = getExecutor().runQuiet(`${androidTool('adb')} -s ${serial} emu avd name`, { timeoutMs });
   if (!out) return null;
   return out.split('\n')[0]?.trim() || null;
 }
 
-export function resolveOwnedAvdSerial(avdName: string): ResolvedAvdSerial {
-  if (!listAvds().includes(avdName)) return { missing: true };
+export function resolveOwnedAvdSerial(avdName: string, { timeoutMs }: { timeoutMs?: number } = {}): ResolvedAvdSerial {
+  const started = Date.now();
+  const remaining = () => ({
+    timeoutMs: timeoutMs === undefined ? undefined : Math.max(1, timeoutMs - (Date.now() - started)),
+  });
+  if (!listAvds(remaining()).includes(avdName)) return { missing: true };
   if (!avdName?.startsWith('stim-')) return { notOwned: true };
-  const adb = listAdbDevices();
+  const adb = listAdbDevices(remaining());
   const candidates = [
     ...adb.emulators,
     ...adb.unhealthy.filter((entry) => entry.kind === 'emulator' && entry.consolePort !== undefined),
   ];
-  const match = candidates.find((e) => getAvdNameForSerial(e.serial) === avdName);
+  const match = candidates.find((e) => getAvdNameForSerial(e.serial, remaining()) === avdName);
   if (match) return { serial: match.serial };
   return { notRunning: true };
 }
