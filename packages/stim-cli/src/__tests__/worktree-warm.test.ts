@@ -337,30 +337,53 @@ test('warm reports carried dependency and Pods lockfile mismatches against the l
   expect(readFileSync(join(target, 'ios/Podfile.lock'), 'utf-8')).toBe('branch pods\n');
 });
 
-test('warm copies literal ignored filenames and skips Finder and derived data', () => {
-  write(root, '.gitignore', readFileSync(join(root, '.gitignore'), 'utf-8') + '.DS_Store\n');
+test('warm copies literal ignored filenames and skips Finder, IDE, and derived data', () => {
+  write(root, '.gitignore', readFileSync(join(root, '.gitignore'), 'utf-8') + '.DS_Store\n.idea/\n');
+  write(root, 'tracked-app/.idea/codeStyles.xml', 'shared IDE settings');
+  git(root, 'add', '-f', 'tracked-app/.idea/codeStyles.xml');
+  git(root, 'commit', '-qm', 'tracked IDE settings');
+  git(target, 'merge', '--ff-only', 'main');
+  expect(readFileSync(join(target, 'tracked-app/.idea/codeStyles.xml'), 'utf-8')).toBe('shared IDE settings');
+  write(root, 'tracked-app/.idea/codeStyles.xml', 'local source changes');
+  write(root, '.idea/workspace.xml', 'source IDE state');
   write(root, '.DS_Store', 'source Finder metadata');
   write(root, '.env with "quotes"', 'literal env');
   write(root, 'node_modules/pkg/.DS_Store', 'nested Finder metadata');
   write(root, 'node_modules/pkg/.DS_Store.keep', 'package data');
+  write(root, 'node_modules/pkg/.idea/workspace.xml', 'nested IDE state');
+  write(root, 'node_modules/pkg/.idea-extra/keep', 'package IDE data');
   write(root, 'node_modules/pkg/.DerivedData/large', 'skip');
   write(root, 'node_modules/pkg/index.js', 'package');
   const result = warm();
   expect(result.failed).toEqual([]);
   expect(result.copied).not.toContain('.DS_Store');
+  expect(result.copied).not.toContain('.idea');
   expect(readFileSync(join(target, '.env with "quotes"'), 'utf-8')).toBe('literal env');
   expect(existsSync(join(target, '.DS_Store'))).toBe(false);
   expect(existsSync(join(target, 'node_modules/pkg/.DS_Store'))).toBe(false);
   expect(readFileSync(join(target, 'node_modules/pkg/.DS_Store.keep'), 'utf-8')).toBe('package data');
+  expect(existsSync(join(target, '.idea'))).toBe(false);
+  expect(existsSync(join(target, 'node_modules/pkg/.idea'))).toBe(false);
+  expect(readFileSync(join(target, 'node_modules/pkg/.idea-extra/keep'), 'utf-8')).toBe('package IDE data');
+  expect(readFileSync(join(target, 'tracked-app/.idea/codeStyles.xml'), 'utf-8')).toBe('shared IDE settings');
   expect(existsSync(join(target, 'node_modules/pkg/.DerivedData'))).toBe(false);
   expect(readFileSync(join(root, '.DS_Store'), 'utf-8')).toBe('source Finder metadata');
   expect(readFileSync(join(root, 'node_modules/pkg/.DS_Store'), 'utf-8')).toBe('nested Finder metadata');
+  expect(readFileSync(join(root, '.idea/workspace.xml'), 'utf-8')).toBe('source IDE state');
+  expect(readFileSync(join(root, 'node_modules/pkg/.idea/workspace.xml'), 'utf-8')).toBe('nested IDE state');
+  expect(readFileSync(join(root, 'tracked-app/.idea/codeStyles.xml'), 'utf-8')).toBe('local source changes');
 
   write(target, '.DS_Store', 'destination Finder metadata');
   write(target, 'node_modules/pkg/.DS_Store', 'destination nested metadata');
+  write(target, '.idea/workspace.xml', 'destination IDE state');
+  write(target, 'node_modules/pkg/.idea/workspace.xml', 'destination nested IDE state');
   expect(warm().failed).toEqual([]);
   expect(readFileSync(join(target, '.DS_Store'), 'utf-8')).toBe('destination Finder metadata');
   expect(readFileSync(join(target, 'node_modules/pkg/.DS_Store'), 'utf-8')).toBe('destination nested metadata');
+  expect(readFileSync(join(target, '.idea/workspace.xml'), 'utf-8')).toBe('destination IDE state');
+  expect(readFileSync(join(target, 'node_modules/pkg/.idea/workspace.xml'), 'utf-8')).toBe(
+    'destination nested IDE state',
+  );
 });
 
 test.each(['android/build/', 'apps/mobile/'])('warm excludes generated autolinking from ignored %s', (ignored) => {
