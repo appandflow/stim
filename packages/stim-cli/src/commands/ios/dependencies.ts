@@ -55,6 +55,7 @@ import { detectBundleId, detectIsExpo, findProjectRoot, projectShortcut } from '
 import { resolveCacheProviderConfig, resolveSettings } from '../../settings.ts';
 import { readWorkspaceState, writeWorkspaceLaunch, writeWorkspaceState } from '../../supervisor/state.ts';
 import { gitCommonDir, repoRoot } from '../../worktree.ts';
+import { warmMetro } from '../../engine/metro-warmup.ts';
 import { resolveMetroWithRetry, ensureWorkspaceStorageSafely } from '../native-runtime.ts';
 import { devClientScheme } from '../dev-client.ts';
 import { stopPreviousCollector, replaceCollector } from './collector.ts';
@@ -82,6 +83,7 @@ export interface IosDeps {
   ensureBooted: typeof ensureBooted;
   resolveProjectMetro: typeof resolveProjectMetro;
   resolveMetroWithRetry: typeof resolveMetroWithRetry;
+  warmMetro: typeof warmMetro;
   readWorkspaceState: typeof readWorkspaceState;
   pidExists: typeof pidExists;
   getConcurrencyLimits: typeof getConcurrencyLimits;
@@ -163,6 +165,7 @@ export const DEFAULT_DEPS: IosDeps = {
   detectProviders,
   resolveProjectMetro,
   resolveMetroWithRetry,
+  warmMetro,
   readWorkspaceState,
   pidExists,
   getConcurrencyLimits,

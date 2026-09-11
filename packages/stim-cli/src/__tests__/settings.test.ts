@@ -404,6 +404,17 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'metro.tunnel': { valid: 'ngrok', invalid: {}, expected: 'a string' },
   'metro.ngrokUrl': { valid: 'https://a.ngrok.app', invalid: {}, expected: 'a string' },
   'metro.publicUrl': { valid: 'https://metro.example', invalid: false, expected: 'a string' },
+  'metro.warmupUrl': { valid: {}, invalid: '/index.bundle', expected: 'an object' },
+  'metro.warmupUrl.ios': {
+    valid: '/custom.bundle?platform=ios&dev=true',
+    invalid: false,
+    expected: 'an HTTP(S) URL or /path ending in .bundle with a matching platform query and no fragment',
+  },
+  'metro.warmupUrl.android': {
+    valid: 'https://metro.example/custom.bundle?platform=android&dev=true',
+    invalid: false,
+    expected: 'an HTTP(S) URL or /path ending in .bundle with a matching platform query and no fragment',
+  },
   'worktree.exclude': { valid: ['node_modules'], invalid: ['ok', 7], expected: 'an array of strings' },
   'worktree.defaultBranch': { valid: 'main', invalid: ['main'], expected: 'a string' },
   'cache.provider': { valid: './cache.cjs', invalid: {}, expected: 'a string' },
@@ -414,7 +425,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
 test('every known setting has a shape, and a wrong-typed value is one refusal naming the key and the shape', () => {
   const src = readFileSync(new URL('../settings.ts', import.meta.url), 'utf-8');
   const table = src.slice(src.indexOf('const SETTING_SHAPES'), src.indexOf('};', src.indexOf('const SETTING_SHAPES')));
-  const known = [...table.matchAll(/^\s*'?([A-Za-z0-9.]+)'?: '[a-z]+',$/gm)]
+  const known = [...table.matchAll(/^\s*'?([A-Za-z0-9.]+)'?: '[a-z-]+',$/gm)]
     .map((match) => match[1])
     .filter((key): key is string => key !== undefined);
   expect(known.length).toBeGreaterThan(0);
@@ -440,6 +451,24 @@ test('settingShapeErrors reports one line per bad key and ignores absent keys', 
     'Invalid ios.configuration setting {}. Expected a string.',
     'Invalid android.keystore setting 5. Expected a string path.',
   ]);
+});
+
+test.each([
+  '',
+  'custom.bundle?platform=ios',
+  '//metro.example/custom.bundle?platform=ios',
+  'file:///custom.bundle?platform=ios',
+  'http://[invalid/custom.bundle?platform=ios',
+  '/status?platform=ios',
+  '/custom.bundle',
+  '/custom.bundle?platform=android',
+  '/custom.bundle?platform=ios#fragment',
+  '/custom.bundle?platform=ios&custom=unescaped value',
+  '/custom\\entry.bundle?platform=ios',
+])('a malformed or wrong-platform warmup URL is refused: %s', (value) => {
+  const errors = settingShapeErrors({ metro: { warmupUrl: { ios: value } } });
+  expect(errors).toHaveLength(1);
+  expect(errors[0]).toContain('metro.warmupUrl.ios');
 });
 
 test('unknownSettingKeys tolerates empty and malformed input', () => {
@@ -732,9 +761,14 @@ test('machine optimization defaults merge with committed, repository and project
   expect(resolveOptimizations(resolveSettings({}), {}).android.pch).toBe('on');
 });
 
-test('a repository can enable the shared Metro store over a machine opt-out', () => {
-  saveConfig({ version: 2, projects: {}, repos: {}, optimizations: { metroSharedCache: false } });
+test('a repository can enable Metro optimizations over a machine opt-out', () => {
+  saveConfig({ version: 2, projects: {}, repos: {}, optimizations: { metroSharedCache: false, metroWarmup: false } });
   expect(resolveMetroSharedCache(resolveSettings({}))).toBe(false);
-  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ optimizations: { metroSharedCache: true } }));
+  expect(resolveOptimizations(resolveSettings({}), {}).metroWarmup).toBe(false);
+  writeFileSync(
+    join(tmpHome, '.stim.json'),
+    JSON.stringify({ optimizations: { metroSharedCache: true, metroWarmup: true } }),
+  );
   expect(resolveMetroSharedCache(resolveSettings({ repoRoot: tmpHome }))).toBe(true);
+  expect(resolveOptimizations(resolveSettings({ repoRoot: tmpHome }), {}).metroWarmup).toBe(true);
 });

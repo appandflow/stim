@@ -8,6 +8,7 @@ export const OPTIMIZATION_SHAPES = {
   'optimizations.remoteBuildCache': 'boolean',
   'optimizations.releaseBundleSwap': 'boolean',
   'optimizations.metroSharedCache': 'boolean',
+  'optimizations.metroWarmup': 'boolean',
   'optimizations.ios': 'object',
   'optimizations.ios.compilationCache': 'boolean',
   'optimizations.ios.swiftCompilationCache': 'boolean',
@@ -25,6 +26,7 @@ export interface Optimizations {
   remoteBuildCache: boolean;
   releaseBundleSwap: boolean;
   metroSharedCache: boolean;
+  metroWarmup: boolean;
   ios: { compilationCache: boolean; swiftCompilationCache: boolean; prefixMapping: boolean };
   android: {
     compilerCache: 'ccache' | 'cas' | 'none';
@@ -115,6 +117,7 @@ export function resolveOptimizations(
     remoteBuildCache: optimizationBoolean(settings, 'remoteBuildCache'),
     releaseBundleSwap: optimizationBoolean(settings, 'releaseBundleSwap'),
     metroSharedCache: optimizationBoolean(settings, 'metroSharedCache'),
+    metroWarmup: optimizationBoolean(settings, 'metroWarmup'),
     ios: {
       compilationCache: optimizationBoolean(settings, 'ios.compilationCache'),
       swiftCompilationCache: optimizationBoolean(settings, 'ios.swiftCompilationCache', false),

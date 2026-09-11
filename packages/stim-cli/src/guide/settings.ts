@@ -181,6 +181,25 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         did not create it, so a Metro request through it is
                         still gated the same way a managed tunnel's is. Set it
                         before Expo start so the manifest advertises it.
+  metro.warmupUrl       optional object with per-platform bundle URLs:
+  metro.warmupUrl.ios
+  metro.warmupUrl.android
+                        an HTTP(S) URL or a /path ending in .bundle, with the
+                        full query the app uses, including a matching platform.
+                        Unset uses Expo's manifest or bare React Native defaults.
+                        Stim preserves the path and query but always requests
+                        this workspace's verified local Metro port; a supplied
+                        host and port are ignored. No defaults are added to an
+                        override. This only configures prefetch, not the app.
+                        For example, in .stim.json:
+                        { "metro": { "warmupUrl": {
+                          "ios": "/src/main.bundle?platform=ios&dev=true&lazy=true"
+                        } } }
+                        Use the app's complete request for custom options.
+                        URLs must encode spaces and omit fragments. doctor
+                        validates the shape and platform but cannot discover
+                        runtime entry-point or dev-menu overrides or auto-fix
+                        them. See \`guide metro\` for warmup behavior.
   worktree.exclude      ignored-path skip list for worktree warm. Settings
                         come from the source checkout's repository-root
                         .stim.json. A nonempty .worktreeexclude in the source
@@ -331,6 +350,7 @@ key inherits the next layer. Changes apply on the next build or Metro restart.
       "remoteBuildCache": true,
       "releaseBundleSwap": true,
       "metroSharedCache": true,
+      "metroWarmup": true,
       "ios": {
         "compilationCache": true,
         "swiftCompilationCache": false,
@@ -362,6 +382,11 @@ The example shows the defaults. Full setting names and behavior:
     false stops Stim appending its shared Metro store on both dev servers.
     Project-configured stores remain the project's choice. Replace the removed
     machine setting caches.injectMetroStore=false with this setting set false.
+  optimizations.metroWarmup
+    true by default. false skips background development bundle requests during
+    ios/android, including any metro.warmupUrl override. Metro verification and
+    native builds still run. Applies on the next ios/android command; no Metro
+    restart is needed.
   optimizations.ios.compilationCache
     controls Xcode compilation caching (Xcode 26+).
   optimizations.ios.swiftCompilationCache

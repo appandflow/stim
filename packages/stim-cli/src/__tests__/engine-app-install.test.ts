@@ -2525,3 +2525,55 @@ describe('skipping an install the device already holds', () => {
     expect(exec.calls).toContainEqual(['xcrun', 'simctl', 'install', 'U1', appPath]);
   });
 });
+
+describe('launch verification after Metro prefetch', () => {
+  test.each(['bare', 'expo'])('a late %s prefetch completion is not app activity', async (mode) => {
+    const clock = fakeClock();
+    const result = await verifyLaunch({
+      requireBundleResponse: true,
+      platform: 'ios',
+      since: 1000,
+      readRecords: () => [
+        {
+          ts: 1500,
+          src: 'metro',
+          platform: 'ios',
+          event: mode === 'bare' ? 'bundle_build_done' : 'expo_stdout',
+          msg: 'iOS Bundled 500ms index.js',
+        },
+      ],
+      readDeviceRecords: () => [],
+      readClientRecords: () => [],
+      now: clock.now,
+      sleep: clock.sleep,
+      timeoutMs: 2000,
+    });
+    expect(result.verified).toBe(false);
+    expect(result.requested).not.toBe(true);
+  });
+
+  test.each(['bundle_response_finished', 'bundle_response_failed'])('uses the app response: %s', async (event) => {
+    const clock = fakeClock();
+    const records: NdjsonRecord[] = [
+      { ts: 1000, src: 'metro', platform: 'ios', event: 'bundle_response_started', requestId: 'app' },
+      { ts: 1200, src: 'metro', platform: 'ios', event: 'bundling_error', level: 'error', msg: 'prefetch error' },
+      { ts: 1300, src: 'metro', platform: 'ios', event: 'bundle_build_done' },
+      { ts: 1500, src: 'metro', platform: 'ios', event, requestId: 'app' },
+    ];
+    const result = await verifyLaunch({
+      requireBundleResponse: true,
+      platform: 'ios',
+      since: 1000,
+      readRecords: () => records.filter((r) => Number(r.ts) <= clock.now()),
+      readDeviceRecords: () => [],
+      readClientRecords: () => [],
+      now: clock.now,
+      sleep: clock.sleep,
+      timeoutMs: 2000,
+      stabilityMs: 0,
+    });
+    expect(result.verified).toBe(event === 'bundle_response_finished');
+    expect(result.record?.event).toBe(event);
+    expect(Boolean(result.fatal)).toBe(event === 'bundle_response_failed');
+  });
+});

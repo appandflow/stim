@@ -215,6 +215,9 @@ function harness(overrides: LooseDeps = {}) {
       record('resolveProjectMetro', { port, path });
       return { metro: { pid: 1, leader: 1, cwd: root } };
     },
+    warmMetro: async (args) => {
+      record('warmMetro', args);
+    },
     fingerprintProject: async (path) => {
       record('fingerprintProject', path);
       return { hash: FINGERPRINT, sources: [] };
@@ -724,6 +727,64 @@ describe('the boot this run performed', () => {
     );
     expect(exitCode).toBe(null);
     expect(errs.join('\n')).toMatch(/booted \(8s\)/);
+  });
+});
+
+describe('Metro prefetch', () => {
+  test.each([null, '/custom.bundle?platform=ios&dev=true'])(
+    'starts before native work without waiting for the bundle: %s',
+    async (bundleUrl) => {
+      reserve();
+      let warming = false;
+      const { exitCode, calls } = await run(
+        {},
+        {
+          resolveSettings: () =>
+            bundleUrl ? { metro: { warmupUrl: { ios: bundleUrl, android: '/other.bundle?platform=android' } } } : {},
+          warmMetro: (args) => {
+            expect(args).toEqual({ port: 8082, platform: 'ios', isExpo: false, appId: 'com.example.app', bundleUrl });
+            warming = true;
+            return new Promise(() => {});
+          },
+          fingerprintProject: async () => {
+            expect(warming).toBe(true);
+            return { hash: FINGERPRINT, sources: [] };
+          },
+        },
+      );
+      expect(exitCode).toBe(null);
+      expect(calls.args.verifyLaunch).toMatchObject({ requireBundleResponse: true });
+    },
+  );
+
+  test('disabling warmup still verifies Metro and completes the native run', async () => {
+    reserve();
+    const warmMetro = vi.fn<() => Promise<void>>(async () => {});
+    const { exitCode, calls } = await run(
+      {},
+      {
+        warmMetro,
+        resolveSettings: () => ({ optimizations: { metroWarmup: false } }),
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(warmMetro).not.toHaveBeenCalled();
+    expect(calls.order).toContain('resolveProjectMetro');
+    expect(calls.order).toContain('verifyLaunch');
+  });
+
+  test.each([{ configuration: 'Release' }, { metroCheck: false }])('skips prefetch for %j', async (opts) => {
+    reserve();
+    const warmMetro = vi.fn<() => Promise<void>>(async () => {});
+    await run(opts, { warmMetro });
+    expect(warmMetro).not.toHaveBeenCalled();
+  });
+
+  test('does not prefetch a server that fails ownership verification', async () => {
+    reserve();
+    const warmMetro = vi.fn<() => Promise<void>>(async () => {});
+    await run({}, { warmMetro, resolveProjectMetro: async () => ({ missing: true }) });
+    expect(warmMetro).not.toHaveBeenCalled();
   });
 });
 

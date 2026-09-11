@@ -37,6 +37,7 @@ import {
   androidAvdConfigSettingError,
   androidDataPartitionSizeGbSettingError,
   cacheProviderSettingError,
+  metroWarmupUrlSetting,
   publicUrlSetting,
   remoteAndroidSetting,
   remoteDeviceSettingError,
@@ -85,6 +86,7 @@ import { claimFailure } from '../ownership-claim.ts';
 import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../engine/build-slots.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { pidExists, resolveProjectMetro } from '../metro.ts';
+import { warmMetro } from '../engine/metro-warmup.ts';
 import {
   ensureWorkspaceStorageSafely,
   resolveMetroWithRetry,
@@ -355,6 +357,7 @@ interface RunAndroidOptions {
   ensureDevice?: typeof ensureOwnedDevice;
   ensureDeviceBooted?: typeof ensureBooted;
   resolveMetro?: typeof resolveProjectMetro;
+  warmMetro?: typeof warmMetro;
   resolveMetroRetrying?: typeof resolveMetroWithRetry;
   readState?: typeof readWorkspaceState;
   pidAlive?: typeof pidExists;
@@ -434,6 +437,7 @@ function resolveRunAndroidOptions(
     listSystemImages = listInstalledSystemImages,
     ensureDeviceBooted = ensureBooted,
     resolveMetro = resolveProjectMetro,
+    warmMetro: prewarmMetro = warmMetro,
     resolveMetroRetrying = resolveMetroWithRetry,
     readState = readWorkspaceState,
     pidAlive = pidExists,
@@ -512,6 +516,7 @@ function resolveRunAndroidOptions(
     listSystemImages,
     ensureDeviceBooted,
     resolveMetro,
+    prewarmMetro,
     resolveMetroRetrying,
     readState,
     pidAlive,
@@ -592,6 +597,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     listSystemImages,
     ensureDeviceBooted,
     resolveMetro,
+    prewarmMetro,
     resolveMetroRetrying,
     readState,
     pidAlive,
@@ -1186,6 +1192,14 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   }
 
   const runFromFingerprint = async (): Promise<RunAndroidResult> => {
+    if (metroCheck && metroPort !== null && optimizations.metroWarmup)
+      void prewarmMetro({
+        port: metroPort,
+        platform: 'android',
+        isExpo,
+        appId: androidPackage,
+        bundleUrl: metroWarmupUrlSetting(settings, 'android'),
+      });
     if (!(await resolveInitialFingerprint())) return phaseFailure!;
 
     let remote: LoadProjectProviderResult | null = null;
