@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import test from 'node:test';
 import {
   assertMatchingPods,
@@ -64,7 +64,7 @@ test('native worktree creation uses real detached Git paths and records them bef
     return { code: 0, stdout: '', stderr: '' };
   };
   const path = createWarmWorktree({ ...f, name: 'native [one]' });
-  assert.equal(path, join(f.workDir, 'native [one]'));
+  assert.equal(dirname(path), f.workDir);
   assert.equal(warmCalls, 1);
   assert.equal(git(f.sourceDir, 'show-ref', '--heads'), before);
   assert.equal(git(f.sourceDir, 'status', '--porcelain'), '');
@@ -76,7 +76,8 @@ test('a failed native warm keeps its created worktree recorded for diagnostics a
   const f = repoFixture(t);
   f.h.cli = () => ({ code: 1, stdout: '', stderr: 'copy failed' });
   assert.throws(() => createWarmWorktree({ ...f, name: 'failed-warm' }), /warming .* failed: copy failed/);
-  assert.deepEqual(f.created, [join(f.workDir, 'failed-warm')]);
+  assert.equal(f.created.length, 1);
+  assert.equal(dirname(f.created[0]), f.workDir);
   assert.equal(existsSync(f.created[0]), true);
   assert.equal(git(f.sourceDir, 'branch', '--list'), '* main');
   git(f.sourceDir, 'worktree', 'remove', f.created[0]);
@@ -107,12 +108,30 @@ test('native worktrees from a symlinked parent use the same paths as logs and Gi
 
 test('failed Git creation does not warm or claim an existing path', (t) => {
   const f = repoFixture(t);
-  const path = join(f.workDir, 'occupied');
-  writeFileSync(path, 'keep');
+  let path;
+  const sh = f.h.sh;
+  f.h.sh = (file, argv, opts) => {
+    path = argv[5];
+    writeFileSync(path, 'keep');
+    return sh(file, argv, opts);
+  };
   f.h.cli = () => assert.fail('warm must not run after a failed git add');
   assert.throws(() => createWarmWorktree({ ...f, name: 'occupied' }), /git worktree add failed/);
   assert.deepEqual(f.created, []);
   assert.equal(readFileSync(path, 'utf-8'), 'keep');
+});
+
+test('separate native runs cannot claim the same device name for their first worktree', (t) => {
+  const f = repoFixture(t);
+  const anotherRun = join(f.workDir, 'another run');
+  mkdirSync(anotherRun);
+  f.h.cli = () => ({ code: 0, stdout: '', stderr: '' });
+  const first = createWarmWorktree({ ...f, name: 'e2e-cache-1' });
+  const second = createWarmWorktree({ ...f, workDir: anotherRun, name: 'e2e-cache-1' });
+  assert.notEqual(basename(first), basename(second));
+  assert.deepEqual(f.created, [first, second]);
+  git(f.sourceDir, 'worktree', 'remove', second);
+  git(f.sourceDir, 'worktree', 'remove', first);
 });
 
 test('Pods reuse requires both lockfiles and an exact match', (t) => {
