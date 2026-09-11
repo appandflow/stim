@@ -376,11 +376,28 @@ test('the agent and lifecycle guides name both workflows', () => {
   }
 });
 
-test('the agent guide routes to every detailed topic', () => {
+test('the agent guide routes situations to valid sections before listing every topic', () => {
   const agent = renderTopic('agent');
   assert(agent);
+  const [situations, topicList] = agent.split('FULL TOPIC LIST');
+  assert(situations);
+  assert(topicList);
+  const rows = situations
+    .split('\n')
+    .filter((line) => line.startsWith('| '))
+    .slice(2);
+  expect(rows.length).toBeGreaterThan(0);
+  for (const row of rows) {
+    const route = /^stim guide ([a-z]+)(?: ([\w<>]+))?$/.exec(row.split('|')[2]?.trim() ?? '');
+    assert(route, row);
+    const [, topic, section] = route;
+    assert(topic);
+    expect(
+      section ? renderSection(topic, section === '<CODE>' ? 'STIM_NO_METRO' : section) : renderTopic(topic),
+    ).toBeTruthy();
+  }
   for (const topicName of topicNames().filter((name) => name !== 'agent')) {
-    expect(agent).toContain(`guide ${topicName}`);
+    expect(topicList).toContain(`guide ${topicName}`);
   }
   expect(agent).toContain('stim guide errors <CODE>');
   for (const route of [

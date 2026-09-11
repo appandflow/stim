@@ -78,6 +78,11 @@ them. It preserves source, custom launcher settings, and the shared ccache.
   stim start
   stim ios                             # or: stim android
 
+Read stim guide lifecycle concurrency when a build waits on another workspace
+or a build call times out. A native build can outlive a shell timeout; if the
+tool call timed out, retry the same command and follow its printed remedy if
+waiting times out.
+
   # Reproduce the affected behavior and capture the baseline errors.
   stim logs --errors
 
@@ -127,8 +132,6 @@ RULES DURING THE LOOP
   the error screen remains, follow the printed reload remedy instead of
   running ios or android again. If launch says FATAL because the app process exited,
   fix the crash and run the platform command again; Metro cannot restart it.
-- A native build can outlive a shell timeout. Retry the same command and
-  follow its printed remedy if waiting times out. See guide lifecycle concurrency.
 - ios and android install the app, launch it, and check readiness. Trust the
   exact device, app, Metro, and launch facts in the final summary. Use the full
   reported device ID. Never assume a simulator named booted belongs to this
@@ -210,6 +213,34 @@ requirements.
 
 LOAD ADVANCED GUIDANCE WHEN NEEDED
 
+Read the matching guide before acting in these situations:
+
+| Situation                                             | Read                             |
+| ----------------------------------------------------- | -------------------------------- |
+| Build waiting on another workspace or tool timeout    | stim guide lifecycle concurrency |
+| --variant, scheme, or several APKs from assembleDebug | stim guide lifecycle options     |
+| Refusal with a CODE                                   | stim guide errors <CODE>         |
+| Running under a sandbox                               | stim guide errors sandbox        |
+| Release configuration or ...Release variant           | stim guide lifecycle release     |
+| Remote device, custom Metro, or tunnel                | stim guide metro                 |
+| Cache miss, bypass, or fingerprint exclusions         | stim guide lifecycle builds      |
+| Capacity limits                                       | stim guide lifecycle concurrency |
+| Cache statistics from stim stats                      | stim guide facts stats           |
+| Worktree carry-over                                   | stim guide lifecycle options     |
+| gc or orphaned resources                              | stim guide cleanup gc            |
+| worktree remove refusal or --force                    | stim guide errors remove         |
+| Cleanup failure or unverified cleanup ownership       | stim guide errors teardown       |
+| Unfamiliar state or JSON field                        | stim guide facts payloads        |
+| Refusal without a code                                | stim guide errors                |
+
+Use the CODE exactly as printed; codes sharing a header resolve to the same
+section. For a refusal without a code, find its quoted message in the errors
+index. Ordinary stim stop and an authorized clean stim worktree remove do not
+need the cleanup guide. A sectioned topic called without a section prints its
+index; choose the narrowest section.
+
+FULL TOPIC LIST
+
   stim guide                      # list topics
   stim guide errors               # index of every refusal code and message
   stim guide errors <CODE>        # one refusal, e.g. stim guide errors STIM_NO_METRO
@@ -230,17 +261,5 @@ LOAD ADVANCED GUIDANCE WHEN NEEDED
   stim guide logs                 # filters, record shape, and capture limits
   stim guide cleanup              # what reclaims a device, and what deletes
   stim guide cleanup collector    # an unproven collector pid; why the app on a phone closed
-  stim guide settings             # configuration files and supported keys
-
-A refusal prints a CODE such as STIM_NO_METRO. Run stim guide errors <CODE>
-with the code exactly as printed and read only that section; every code in a
-shared header (STIM_BAD_ARG / STIM_NO_PROJECT) resolves to the same section. A
-refusal with no code is quoted by message in stim guide errors. A topic with
-sections called bare prints its section index, so read the narrowest section
-before release configurations or Android variants; remote devices; custom
-Metro processes or tunnels; cache misses, bypasses, or concurrent builds;
-capacity limits; cache statistics from stim stats; worktree carry-over;
-fingerprint exclusions; gc; --force; cleanup failures; or unfamiliar states
-and error codes. Ordinary stim stop and an authorized clean
-stim worktree remove do not need the cleanup guide.`,
+  stim guide settings             # configuration files and supported keys`,
 };
