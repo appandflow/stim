@@ -7,6 +7,7 @@ import { runDoctor } from '../doctor.ts';
 import { resolveOptimizations } from '../optimizations.ts';
 import { mergeSettingsLayers, settingsLayers } from '../settings.ts';
 import type { SettingsObject } from '../types.ts';
+import { writeCasToolchain } from './_factories.ts';
 
 const MACHINE = '/home/.stim/config.json';
 
@@ -134,6 +135,22 @@ test('a path setting is tested verbatim, because the build opens the string the 
   );
 });
 
+test.each(['tc/toolchain.json', '/abs/toolchain.json\n'])(
+  'a casToolchain of %j is not swept when the optimizations it belongs to could not be resolved',
+  (casToolchain) => {
+    const settings = { optimizations: { android: { compilerCache: 'CAS', casToolchain } } };
+    expect(() => resolveOptimizations(settings)).toThrow(/Invalid optimizations\.android\.compilerCache/);
+    expect(
+      checkMachineSettings({
+        settings,
+        layers: [{ file: MACHINE, settings }],
+        projectRoot: '/app',
+        exists: () => false,
+      }),
+    ).toEqual([]);
+  },
+);
+
 test('a key Stim no longer reads is named as inert', () => {
   const findings = check({ optimizations: { android: { gradleCache: false } } });
   expect(findings).toHaveLength(1);
@@ -253,5 +270,60 @@ describe('against a config file on disk', () => {
       expect(findings).toHaveLength(1);
       expect(findings[0]?.level).toBe('note');
     }
+  });
+
+  test('a manifest that is there but cannot be used is reported in the words the build warns with', () => {
+    const manifest = join(home, 'toolchain.json');
+    writeFileSync(manifest, '{}');
+    writeConfig({
+      version: 2,
+      repos: {},
+      projects: {},
+      optimizations: { android: { compilerCache: 'cas', casToolchain: manifest } },
+    });
+    const findings = runDoctor(project).filter((found) => found.detail.includes('optimizations.android.casToolchain'));
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ level: 'note', title: 'A setting holds a value Stim cannot use' });
+    expect(findings[0]?.detail).toBe(
+      `optimizations.android.casToolchain in ${join(home, 'config.json')} could not be used: ${manifest} declares ` +
+        'no clang, clangxx, lld, ar, ranlib, ndk, resourceDir. Android builds fall back to ccache when it is ' +
+        'available.',
+    );
+    expect(findings[0]?.fix).toBe(
+      `Repair ${manifest}, or remove optimizations.android.casToolchain from ${join(home, 'config.json')}.`,
+    );
+  });
+
+  test('the ccache checks follow the backend a dead CAS toolchain leaves the build with', () => {
+    const usable = writeCasToolchain(join(home, 'cas')).manifest;
+    const options = { lookupCcache: () => false, platform: 'android' as const };
+    const ccacheReported = (casToolchain: string) => {
+      writeConfig({
+        version: 2,
+        repos: {},
+        projects: {},
+        optimizations: { android: { compilerCache: 'cas', casToolchain } },
+      });
+      return runDoctor(project, options).some((found) => /ccache is not on PATH/.test(found.title));
+    };
+    expect(ccacheReported(usable)).toBe(false);
+    expect(ccacheReported(join(home, 'gone', 'toolchain.json'))).toBe(true);
+  });
+
+  test('a compilerCache Stim cannot resolve is one finding that invents no toolchain path', () => {
+    writeConfig({
+      version: 2,
+      repos: {},
+      projects: {},
+      optimizations: { android: { compilerCache: 'CAS', casToolchain: 'tc/toolchain.json' } },
+    });
+    const reported = runDoctor(project);
+    const findings = reported.filter(
+      (found) => found.detail.includes('compilerCache') || found.detail.includes('casToolchain'),
+    );
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ level: 'cost', title: 'Invalid optimization setting' });
+    expect(findings[0]?.detail).toBe('Invalid optimizations.android.compilerCache. Expected auto, ccache, cas, none.');
+    expect(reported.some((found) => found.detail.includes(join(project, 'tc')))).toBe(false);
   });
 });

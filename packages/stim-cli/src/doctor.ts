@@ -37,6 +37,7 @@ import {
   settingShapeErrors,
 } from './settings.ts';
 import type { RemoteDeviceBackend } from './types.ts';
+import { readAndroidCasToolchain, resolveAndroidCompilerCache } from './engine/android-cas.ts';
 import { readCxxLauncherStates, type CxxLauncherState } from './doctor-cxx.ts';
 import { checkMachineSettings, readMachineSettings } from './doctor-config.ts';
 export { parseCmakeCacheLauncher } from './doctor-cxx.ts';
@@ -841,7 +842,10 @@ export function runDoctor(
   );
   let optimizations: Optimizations | null = null;
   try {
-    optimizations = resolveOptimizations(projectSettings);
+    optimizations = resolveAndroidCompilerCache({
+      optimizations: resolveOptimizations(projectSettings),
+      use: readAndroidCasToolchain,
+    }).optimizations;
   } catch (error) {
     settingShapeFindings.push(
       finding('cost', 'Invalid optimization setting', (error as Error).message, SETTING_SHAPE_REMEDY),

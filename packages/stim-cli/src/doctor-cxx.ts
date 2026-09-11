@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { getExecutor } from './exec.ts';
+import { readAndroidCasToolchain, resolveAndroidCompilerCache } from './engine/android-cas.ts';
 import { listBuildLocks } from './engine/build-lock.ts';
 import { projectCmakeLauncher } from './engine/ccache.ts';
 import { projectOptimizations } from './settings.ts';
@@ -73,7 +74,8 @@ function contained(root: string, path: string): boolean {
 
 function selectedCompilerCache(root: string): string | null {
   try {
-    return projectOptimizations(root).android.compilerCache;
+    return resolveAndroidCompilerCache({ optimizations: projectOptimizations(root), use: readAndroidCasToolchain })
+      .optimizations.android.compilerCache;
   } catch {
     return null;
   }

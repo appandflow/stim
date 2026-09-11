@@ -4,7 +4,6 @@ import {
   artifactCachePolicy,
   compilerCacheFallbackMessage,
   optimizationBuildProfile,
-  type CompilerCacheFallback,
   type Optimizations,
 } from '../optimizations.ts';
 import { join } from 'node:path';
@@ -131,7 +130,7 @@ import { selectFromPool } from '../engine/device-pool.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import { buildAndroid, productFlavorRefusal, readProductFlavors } from '../engine/gradle.ts';
 import { CCACHE_NOT_RUN, CCACHE_UNAVAILABLE, ccacheActivityLine, resolveCcache } from '../engine/ccache.ts';
-import { resolveAndroidCas } from '../engine/android-cas.ts';
+import { resolveAndroidCas, resolveAndroidCompilerCache } from '../engine/android-cas.ts';
 import { swapApkBundle, resolveKeystore } from '../engine/apk-swap.ts';
 import { captureAssetManifest } from '../engine/asset-manifest.ts';
 import {
@@ -233,22 +232,11 @@ function androidCompilerCache({
   optimizations: Optimizations;
   settingsContext: SettingsContext;
 }): { cas: ReturnType<typeof resolveAndroidCas>; optimizations: Optimizations; warning: string | null } {
-  let cas: ReturnType<typeof resolveAndroidCas> = null;
-  let resolved = optimizations;
-  let fallback: CompilerCacheFallback | null = optimizations.android.compilerCacheFallback;
-  if (resolved.android.compilerCache === 'cas') {
-    try {
-      cas = resolveAndroidCas(root, { ...process.env, STIM_ANDROID_CAS_TOOLCHAIN: resolved.android.casToolchain! });
-    } catch (error) {
-      const fromEnvironment = Boolean(process.env.STIM_ANDROID_CAS_TOOLCHAIN);
-      fallback = {
-        key: fromEnvironment ? 'STIM_ANDROID_CAS_TOOLCHAIN' : 'optimizations.android.casToolchain',
-        reason: `could not be used: ${(error as Error).message.replace(/\.$/, '')}`,
-        fromEnvironment,
-      };
-      resolved = { ...resolved, android: { ...resolved.android, compilerCache: 'ccache' } };
-    }
-  }
+  const { cas, optimizations: resolved } = resolveAndroidCompilerCache({
+    optimizations,
+    use: (manifest) => resolveAndroidCas(root, { ...process.env, STIM_ANDROID_CAS_TOOLCHAIN: manifest }),
+  });
+  const fallback = resolved.android.compilerCacheFallback;
   if (!fallback) return { cas, optimizations: resolved, warning: null };
   const message = compilerCacheFallbackMessage({
     fallback,

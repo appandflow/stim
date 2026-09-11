@@ -2,10 +2,11 @@ import { existsSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { configCorruptRepair } from './config.ts';
 import type { Finding } from './doctor.ts';
-import { compilerCacheFallbackMessage, type Optimizations } from './optimizations.ts';
+import { compilerCacheFallbackMessage, type CompilerCacheFallback, type Optimizations } from './optimizations.ts';
 import {
   mergeSettingsLayers,
   PATH_SETTINGS,
+  SETTINGS_WITH_RESOLVE_TIME_FALLBACK,
   settingOrigin,
   settingsLayers,
   unknownSettingKeys,
@@ -67,9 +68,11 @@ export function checkMachineSettings({
 
   const fallback = optimizations?.android.compilerCacheFallback ?? null;
   const fallbackEntry = fallback ? settingOrigin(layers, fallback.key) : null;
-  const reported = fallback && (fallback.fromEnvironment || fallbackEntry) ? fallback : null;
+  const attributed = fallback && (fallback.fromEnvironment || fallbackEntry) ? fallback : null;
+  const reported = attributed?.manifest && !exists(attributed.manifest) ? null : attributed;
   const skip = new Set(reportedElsewhere);
   if (reported) skip.add(reported.key);
+  if (!optimizations) for (const key of SETTINGS_WITH_RESOLVE_TIME_FALLBACK) skip.add(key);
 
   for (const key of PATH_SETTINGS) {
     const variable = PATH_SETTING_ENVIRONMENT[key];
@@ -99,25 +102,7 @@ export function checkMachineSettings({
   }
 
   if (reported && optimizations) {
-    const companion = reported.key === 'optimizations.android.compilerCache';
-    findings.push({
-      level: 'note',
-      title: companion
-        ? 'A setting needs a companion this config does not supply'
-        : reported.fromEnvironment
-          ? 'An environment variable holds a value Stim cannot use'
-          : 'A setting holds a value Stim cannot use',
-      detail: compilerCacheFallbackMessage({
-        fallback: reported,
-        compilerCache: optimizations.android.compilerCache === 'none' ? 'none' : 'ccache',
-        file: fallbackEntry?.file ?? null,
-      }),
-      fix: companion
-        ? 'Set optimizations.android.casToolchain to the toolchain JSON manifest, or set optimizations.android.compilerCache to ccache.'
-        : reported.fromEnvironment
-          ? 'Point STIM_ANDROID_CAS_TOOLCHAIN at an absolute path to the toolchain JSON manifest, or unset it.'
-          : 'Set optimizations.android.casToolchain to an absolute path to the toolchain JSON manifest, or remove it.',
-    });
+    findings.push(compilerCacheFinding({ fallback: reported, optimizations, file: fallbackEntry?.file ?? null }));
   }
 
   for (const key of unknownSettingKeys(settings)) {
@@ -131,6 +116,47 @@ export function checkMachineSettings({
   }
 
   return findings;
+}
+
+function compilerCacheFinding({
+  fallback,
+  optimizations,
+  file,
+}: {
+  fallback: CompilerCacheFallback;
+  optimizations: Optimizations;
+  file: string | null;
+}): Finding {
+  const detail = compilerCacheFallbackMessage({
+    fallback,
+    compilerCache: optimizations.android.compilerCache === 'none' ? 'none' : 'ccache',
+    file,
+  });
+  if (fallback.key === 'optimizations.android.compilerCache')
+    return {
+      level: 'note',
+      title: 'A setting needs a companion this config does not supply',
+      detail,
+      fix: 'Set optimizations.android.casToolchain to the toolchain JSON manifest, or set optimizations.android.compilerCache to ccache.',
+    };
+  const title = fallback.fromEnvironment
+    ? 'An environment variable holds a value Stim cannot use'
+    : 'A setting holds a value Stim cannot use';
+  if (fallback.manifest)
+    return {
+      level: 'note',
+      title,
+      detail,
+      fix: `Repair ${fallback.manifest}, or ${fallback.fromEnvironment ? `unset ${fallback.key}` : `remove ${fallback.key}${file ? ` from ${file}` : ''}`}.`,
+    };
+  return {
+    level: 'note',
+    title,
+    detail,
+    fix: fallback.fromEnvironment
+      ? 'Point STIM_ANDROID_CAS_TOOLCHAIN at an absolute path to the toolchain JSON manifest, or unset it.'
+      : 'Set optimizations.android.casToolchain to an absolute path to the toolchain JSON manifest, or remove it.',
+  };
 }
 
 function missingPath(value: string, projectRoot: string, exists: (path: string) => boolean): string | null {

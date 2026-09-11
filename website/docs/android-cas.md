@@ -133,9 +133,10 @@ node /absolute/stim-checkout/packages/stim-cli/dist/cli.mjs stop
 ```
 
 The manifest selects the experimental backend. When the setting holds anything
-that is not an absolute path, or the manifest it names is gone or unreadable, the
-build warns once and compiles through the cache the selection leaves instead of
-refusing, and `stim doctor` reports the setting as a note. Compiler remarks and timings
+that is not an absolute path, or the manifest it names is gone, unreadable, or
+does not name a toolchain that can compile, the build warns once and compiles
+through the cache the selection leaves instead of refusing. `stim doctor`
+resolves the same manifest and reports the setting as a note. Compiler remarks and timings
 are recorded in `compiler.jsonl` under the workspace's `android-cas/<id>`
 state directory. CAS results live under `$STIM_HOME/android-cas/<id>`. The
 tool binaries, manifest, NDK version, adapter, and shims contribute to the ID;

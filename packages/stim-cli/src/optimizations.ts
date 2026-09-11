@@ -40,6 +40,7 @@ export interface CompilerCacheFallback {
   key: string;
   reason: string;
   fromEnvironment: boolean;
+  manifest: string | null;
 }
 
 export function compilerCacheFallbackMessage({
@@ -94,6 +95,7 @@ export function resolveOptimizations(
         key: fromEnvironment ? 'STIM_ANDROID_CAS_TOOLCHAIN' : 'optimizations.android.casToolchain',
         reason: `is ${JSON.stringify(manifest)}, which is not an absolute path to a toolchain JSON manifest`,
         fromEnvironment,
+        manifest: null,
       };
     }
   }
@@ -104,6 +106,7 @@ export function resolveOptimizations(
       reason:
         'is "cas", but no optimizations.android.casToolchain or STIM_ANDROID_CAS_TOOLCHAIN names the toolchain manifest',
       fromEnvironment: false,
+      manifest: null,
     };
     compilerCache = 'ccache';
   }

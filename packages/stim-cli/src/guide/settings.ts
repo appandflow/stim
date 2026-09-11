@@ -383,9 +383,10 @@ The example shows the defaults. Full setting names and behavior:
     clang, clangxx, lld, ar and ranlib plus an existing resourceDir, degrade to
     the compiler cache the selection leaves -- ccache, or none when
     compilerCache is none -- in one warning naming this key and the file it came
-    from. \`stim doctor\` reports a path that is not there, from this key or from
-    that environment variable, as a note; it does not read the manifest. For
-    prerequisites, see:
+    from. \`stim doctor\` resolves the same manifest and reports what the build
+    would warn about as a note: a path that is not there, from this key or from
+    that environment variable, or a manifest that is there and cannot be used.
+    For prerequisites, see:
     https://stim.appandflow.com/docs/android-cas
   optimizations.android.pch
     auto keeps library/project policy, with PCH off by default when Stim supplies

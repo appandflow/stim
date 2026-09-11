@@ -81,7 +81,7 @@ const SETTING_SHAPES: Record<string, SettingShape> = {
 
 const KNOWN_SETTINGS = new Set(Object.keys(SETTING_SHAPES));
 
-const SETTINGS_WITH_RESOLVE_TIME_FALLBACK = new Set(['optimizations.android.casToolchain']);
+export const SETTINGS_WITH_RESOLVE_TIME_FALLBACK: ReadonlySet<string> = new Set(['optimizations.android.casToolchain']);
 
 export const PATH_SETTINGS: readonly string[] = Object.freeze(
   Object.entries(SETTING_SHAPES)
