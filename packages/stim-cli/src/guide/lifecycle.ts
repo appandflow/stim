@@ -104,10 +104,11 @@ How the message is addressed depends on the dev server, and \`strategy\` in
 the facts reports which you got. Where Metro can name its clients, Stim
 addresses every peer matching the platform and reports \`metro-websocket\`. A
 workspace Metro serves one app, so those peers are this app on however many
-devices are attached to that port, and \`targets\` says how many were reloaded.
+devices are attached to that port, and \`targets\` says how many peers the request
+addressed.
 The bare React Native dev server cannot name its clients at all, so Stim
 broadcasts: \`metro-broadcast\` means every app connected to that Metro
-reloaded and Stim cannot confirm \`appId\` was among them. Verify the UI on
+was sent a reload request and Stim cannot confirm \`appId\` was among them. Verify the UI on
 \`deviceId\`; if it did not change, reload from the app's own error screen or
 dev menu.
 
@@ -267,7 +268,8 @@ result as proof instead of requiring an unrelated screenshot.`,
     progress: {
       summary: 'phase lines, the label set, heartbeats and their ~ estimate, what warm, start, stop and remove print',
       body: () => `PROGRESS ON A LONG RUN
-  The whole summary is stderr; stdout carries only the \`--json\` payload. Every
+  Native build progress goes to stderr. In \`--json\` mode, stdout carries only
+  the result payload. Plain \`start\` also prints progress on stdout. Every
   progress line has the same shape -- two spaces, a label padded to eleven
   columns, the FACT, and the time the step cost:
 

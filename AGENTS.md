@@ -38,7 +38,9 @@ pnpm run format:check
 pnpm run lint
 pnpm run build
 pnpm run typecheck
+pnpm run knip
 pnpm test
+pnpm run test:runtime
 ```
 
 Use only the checks that apply while iterating. Run all defined checks before a
@@ -47,6 +49,10 @@ authorized expedited RC lane documented in [`RELEASE.md`](./RELEASE.md); that
 commit follows the lane's short preflight, tarball inspection, and exact-commit
 CI requirements. Run `pnpm run test:e2e` when a change affects an end-to-end
 workflow.
+
+Filter unit tests with `pnpm test <file> -t "case name"`. Do not insert `--`
+before the file: pnpm forwards it to Vitest, which then ignores the filter and
+runs the full suite.
 
 ## Tests and abstractions
 
@@ -275,8 +281,11 @@ symlinked worktree must resolve to the same config key as its target.
 ### 7. Preserve stdout contracts
 
 `worktree warm` and `worktree remove` keep stdout empty. JSON commands print
-exactly one parseable payload. Send status, warnings, and progress to
-stderr.
+exactly one parseable payload, except `logs --json`, which emits newline-delimited
+records and stays empty when no records match. In JSON mode, send status,
+warnings, and progress to stderr. Preserve existing plain-command streams:
+native build progress goes to stderr, while plain `start` also prints progress
+on stdout.
 
 ### 8. Fail closed during cleanup
 

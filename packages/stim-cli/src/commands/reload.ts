@@ -364,9 +364,9 @@ export function registerReload(program: Command, deps: Partial<ReloadDeps> = {})
         const facts = result.facts;
         const scope =
           facts.strategy === 'metro-broadcast'
-            ? ` This Metro cannot name its connected apps, so the reload went to all of them and Stim cannot confirm ${facts.appId} was one. Check the expected UI on ${facts.deviceId}; if nothing changed, reload from the app's own error screen or dev menu.`
+            ? ` This Metro cannot name its connected apps, so the reload request was broadcast to all of them and Stim cannot confirm ${facts.appId} was one. Check the expected UI on ${facts.deviceId}; if nothing changed, reload from the app's own error screen or dev menu.`
             : facts.targets && facts.targets > 1
-              ? ` ${facts.targets} devices are running this app on that Metro and every one of them was reloaded, not only ${facts.deviceId}.`
+              ? ` ${facts.targets} devices are running this app on that Metro and the reload request addressed all of them, not only ${facts.deviceId}.`
               : '';
         console.log(
           `Reload requested for ${facts.appId} on ${facts.deviceName} (${facts.deviceId}) via ${facts.strategy}; ${facts.platform} Metro port ${facts.metroPort}.${scope} Completion is not observed; verify the expected UI and run stim logs --errors.`,

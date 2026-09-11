@@ -237,8 +237,8 @@ line by design (see \`guide logs\`), not this single-payload contract.`,
                   change, reload from the app's own error screen or dev menu
   targets         how many peers the reload was addressed to, or null when
                   broadcast. Greater than 1 means several devices are running
-                  this app on that Metro and all of them reloaded, not only
-                  deviceId
+                  this app on that Metro and the request addressed all of
+                  them, not only deviceId. Completion is not observed
 
   stim doctor --json
 

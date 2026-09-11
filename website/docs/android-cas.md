@@ -106,7 +106,8 @@ worktree and a private `STIM_HOME`. Commands use `stim`; replace it with
 
 For persistent selection, merge this into `$STIM_HOME/config.json` (default
 `~/.stim/config.json`). The same `optimizations` object in `.stim.json` can
-override machine defaults per repository. `stim guide settings` lists the
+override machine defaults per app when placed beside the app's `package.json`.
+`stim guide settings` lists the
 Android, iOS, Metro, and artifact-cache switches.
 
 ```json
@@ -134,8 +135,10 @@ node /absolute/stim-checkout/packages/stim-cli/dist/cli.mjs stop
 
 The manifest selects the experimental backend. When the setting holds anything
 that is not an absolute path, or the manifest it names is gone, unreadable, or
-does not name a toolchain that can compile, the build warns once and compiles
-through the cache the selection leaves instead of refusing. `stim doctor`
+fails toolchain validation, the build warns once and uses ccache, or no compiler
+cache when `compilerCache` is `none`. Validation checks the manifest's executable
+tools, resource directory, and NDK version; it does not prove an app will compile.
+`stim doctor`
 resolves the same manifest and reports the setting as a note. Compiler remarks and timings
 are recorded in `compiler.jsonl` under the workspace's `android-cas/<id>`
 state directory. CAS results live under `$STIM_HOME/android-cas/<id>`. The

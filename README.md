@@ -61,7 +61,7 @@ stim worktree warm
 ```
 
 If a harness already created the linked worktree, run only `stim worktree warm`
-there. Warm copies missing ignored state from main, including eligible `.env`
+there. Warm copies missing ignored state from the source checkout, including eligible `.env`
 and local configuration files. Existing entries are preserved; existing
 ignored directories such as `node_modules` are skipped whole.
 

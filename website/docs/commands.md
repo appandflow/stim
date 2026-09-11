@@ -36,7 +36,8 @@ iOS app in that state never connects to Metro, so reload cannot reach it.
 stim doctor [--platform <ios|android>] [--json] [--fix]
 ```
 
-Inspects the source checkout. It reports missing or stale dependencies,
+Inspects the current app and, in a repository with linked worktrees, the source
+checkout's fitness as a seed. It reports missing or stale dependencies,
 CocoaPods state, cache conflicts, device capacity, remote session problems, and
 a linked native library whose Git metadata enters the fingerprint. On a
 checkout without installed dependencies, it also reports fingerprint
@@ -49,12 +50,18 @@ platform while keeping shared project checks.
 `doctor` also flags when an agent harness sandboxes shell commands and Stim is
 not allowed through it, which shows up as unrelated-looking failures against
 the simulator service, the adb server, and Stim's own state directory.
-`--fix` writes the missing allowance into `.claude/settings.local.json` at the
+For that finding, `--fix` writes the missing allowance into `.claude/settings.local.json` at the
 repository root, the per-user file, merging it with whatever is already there
-and touching nothing else. It refuses to change anything under Codex, whose
-sandbox has no per-path allowance to add, and it does nothing when no
+and preserving other settings. It cannot add a Codex allowance because that
+sandbox has no per-path allowance to add. This repair does nothing when no
 sandboxing harness is present. See `stim guide errors sandbox` for the
 failure signatures and the manual settings.
+
+Unless `--platform ios` is selected, `--fix` also removes stale ignored,
+untracked Android `.cxx` configurations with obsolete compiler launchers,
+including those in installed native modules. Stop native builds before this
+repair. The next build recreates these files; source, custom launcher settings,
+and shared ccache entries are preserved. See `stim guide lifecycle options`.
 
 ## `start`
 
@@ -201,14 +208,14 @@ How the message is addressed depends on the dev server, and `strategy` reports
 which you got. Where Metro can name its clients, Stim addresses every peer
 matching the platform and reports `metro-websocket`. A workspace Metro serves one
 app, so those peers are that app on however many devices are attached to the
-port; `targets` says how many were reloaded. Android peers carry the package
+port; `targets` says how many peers the request addressed. Android peers carry the package
 name and iOS peers carry only `role=ios`, which is enough to keep a reload on one
 platform but not to single out one iOS app among several.
 
 The bare React Native dev server cannot name its clients at all, because
 `@react-native-community/cli-server-api` answers that request out of a `ws`
 property removed in ws 3.0. There Stim broadcasts: `metro-broadcast` means every
-app on that port reloaded, and that Stim could not confirm the recorded app was
+app on that port was sent a reload request, and that Stim could not confirm the recorded app was
 among them. Verify the UI, and fall back to the app's own error screen or dev
 menu if nothing changed.
 
@@ -250,9 +257,10 @@ stim logs [--source <metro|client|device|build|all...>]
 Queries the workspace log timeline. No matching records is a successful empty
 result.
 
-- `--errors` selects errors and fatals from Metro, client, and build logs since
-  the last launch marker. A completed bundle attempt resets only older Metro
-  errors. Device logs require an explicit `--source device` or `--source all`.
+- `--errors` selects errors and fatals from Metro, client, and build logs, plus
+  confirmed native app-crash reports, since the last launch marker. A completed
+  bundle attempt resets only older Metro errors. General device logs require
+  an explicit `--source device` or `--source all`.
 - `--source device` includes operating-system device logs.
 - `--follow` streams new matching records.
 - `--json` writes NDJSON. Zero matches writes zero bytes.
@@ -260,12 +268,13 @@ result.
 ## `stop`
 
 ```text
-stim stop [--force] [--json]
+stim stop [--json]
 ```
 
 Stops the supervisor and log collectors. It shuts down the owned local device,
 ends an owned remote session, and frees the port. A local device stays assigned
-for reuse. `--force` can stop an unverified listener on the reserved port.
+for reuse. An external server on the reserved port is left running, and a
+process whose ownership cannot be verified is not signalled.
 
 On a physical iPhone, stopping the log collector closes the running app.
 `stop` also releases this workspace's device leases. It never uninstalls the

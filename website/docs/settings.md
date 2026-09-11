@@ -27,7 +27,10 @@ strings, a number, a boolean, or an object such as `android.avdConfig`,
 `cache.options`, and the nested `optimizations` settings.
 A value of the wrong type is refused by name on every command that resolves
 settings, so a wrong shape never falls back to a default silently. `stim doctor`
-reports it as a finding instead of refusing.
+reports it as a finding instead of refusing. The exception is
+`optimizations.android.casToolchain`: an invalid value warns and falls back to
+ccache, or no compiler cache when `compilerCache` is `none`. `doctor` also
+reports the invalid setting.
 
 ## Committed settings
 
