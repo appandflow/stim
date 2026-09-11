@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, expect, test } from 'vitest';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -248,7 +248,9 @@ test('an absent transportType is not treated as wireless', () => {
   });
 });
 
-test('listIosDevices runs devicectl into a temp file, parses it, and removes the directory', () => {
+test('listIosDevices runs devicectl into a temp file, parses it, and removes the directory', ({ onTestFinished }) => {
+  const unrelated = mkdtempSync(join(tmpdir(), 'stim-devicectl-'));
+  onTestFinished(() => rmSync(unrelated, { recursive: true, force: true }));
   const calls: Array<{ file: string; args: string[] }> = [];
   let outPath = '';
   setExecutor({
@@ -278,9 +280,8 @@ test('listIosDevices runs devicectl into a temp file, parses it, and removes the
   expect(calls[0]?.args.slice(0, 4)).toEqual(['devicectl', 'list', 'devices', '-j']);
   expect(outPath.startsWith(tmpdir()) || outPath.startsWith('/private')).toBe(true);
   expect(existsSync(outPath)).toBe(false);
-  expect(readdirSync(tmpdir()).some((e) => e.startsWith('stim-devicectl-') && existsSync(join(tmpdir(), e)))).toBe(
-    false,
-  );
+  expect(existsSync(dirname(outPath))).toBe(false);
+  expect(existsSync(unrelated)).toBe(true);
 });
 
 test('listIosDevices reports no devices when devicectl fails, and still cleans up', () => {
@@ -297,6 +298,7 @@ test('listIosDevices reports no devices when devicectl fails, and still cleans u
     resetExecutor();
   }
   expect(existsSync(outPath)).toBe(false);
+  expect(existsSync(dirname(outPath))).toBe(false);
 });
 
 function devicectlAvailable(): boolean {
@@ -681,15 +683,29 @@ describe('localNetworkPending', () => {
 });
 
 describe('listIosDevices against a real devicectl', { skip: LIVE as unknown as boolean }, () => {
-  test('the argv is accepted and every entry it returns is well formed', () => {
+  test('the argv is accepted and every entry it returns is well formed', ({ onTestFinished }) => {
     resetExecutor();
-    const devices = listIosDevices();
+    const unrelated = mkdtempSync(join(tmpdir(), 'stim-devicectl-'));
+    onTestFinished(() => rmSync(unrelated, { recursive: true, force: true }));
+    const executor = getExecutor();
+    let outPath = '';
+    const devices = listIosDevices({
+      exec: {
+        ...executor,
+        runFile(file, args, options) {
+          outPath = args?.[args.indexOf('-j') + 1] ?? '';
+          return executor.runFile(file, args, options);
+        },
+      },
+    });
     expect(Array.isArray(devices)).toBe(true);
     for (const found of devices) {
       expect(found.udid.length).toBeGreaterThan(0);
       expect(found.name.length).toBeGreaterThan(0);
     }
-    expect(readdirSync(tmpdir()).filter((e) => e.startsWith('stim-devicectl-'))).toEqual([]);
+    expect(outPath).not.toBe('');
+    expect(existsSync(dirname(outPath))).toBe(false);
+    expect(existsSync(unrelated)).toBe(true);
   }, 60_000);
 
   test('the process-probe argv is accepted by the real devicectl when a phone is connected', () => {
