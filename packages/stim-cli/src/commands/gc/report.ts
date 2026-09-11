@@ -20,8 +20,8 @@ export interface GcReport {
   orphanedDevices: OrphanedDevice[];
   staleDevices: StaleProjectDevice[];
   staleDeviceRecords: StaleDeviceRecord[];
-  buildLocks: { stale: BuildLockInfo[]; live: BuildLockInfo[] };
-  buildSlots: { stale: BuildSlotInfo[]; live: BuildSlotInfo[] };
+  buildLocks: { stale: BuildLockInfo[]; live: BuildLockInfo[]; unresolved?: BuildLockInfo[] };
+  buildSlots: { stale: BuildSlotInfo[]; live: BuildSlotInfo[]; unresolved?: BuildSlotInfo[] };
   deviceLeases: DeviceLeaseGarbage;
   deviceSweepNotices: string[];
   easSessionSweep: EasSessionSweep;
@@ -79,6 +79,19 @@ function projectEntryLines(header: string, paths: string[]): string[] {
   return paths.length ? [header, ...paths.map((path) => `  ${path}`)] : [];
 }
 
+function unresolvedLockLines(
+  locks: { unresolved?: readonly { path: string }[] },
+  slots: { unresolved?: readonly { path: string }[] },
+): string[] {
+  const entries = [...(locks.unresolved ?? []), ...(slots.unresolved ?? [])];
+  if (entries.length === 0) return [];
+  return [
+    `Build locks Stim cannot resolve (${entries.length}) - NOT touched, because a dead holder and a live one cannot be told apart:`,
+    ...entries.map((entry) => `  ${entry.path}`),
+    '              remove one yourself once you know nothing is building with it',
+  ];
+}
+
 export function formatGcReport(
   {
     skipped = [],
@@ -89,8 +102,8 @@ export function formatGcReport(
     orphanedDevices = [],
     staleDevices = [],
     staleDeviceRecords = [],
-    buildLocks = { stale: [], live: [] },
-    buildSlots = { stale: [], live: [] },
+    buildLocks = { stale: [], live: [], unresolved: [] },
+    buildSlots = { stale: [], live: [], unresolved: [] },
     deviceLeases = { expired: [], kept: [] },
     deviceSweepNotices = [],
     easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
@@ -196,6 +209,8 @@ export function formatGcReport(
       lines.push(`              held by ${slot.projectRoot || 'an unrecorded workspace'}`);
     }
   }
+
+  lines.push(...unresolvedLockLines(buildLocks, buildSlots));
 
   if (liveLocks.length) {
     lines.push(`Builds in progress (${liveLocks.length}) - NOT touched, by anything:`);

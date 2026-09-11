@@ -121,9 +121,9 @@ describe('refusing instead of guessing', () => {
     const path = plantClaim(root, 'exclusive', { pid: 4242, processToken: 'not-a-token' }, { claimId: 'mystery' });
     const err = refusal(() => tryAcquireClaim({ root, mode: 'exclusive', label: 'ios build' }));
     expect(err.claimPath).toBe(path);
-    expect(err.removeCommand).toBe(claimRemoveCommand(root));
+    expect(err.removeCommand).toBe(claimRemoveCommand(path));
     expect(err.message).toContain(path);
-    expect(err.message).toContain(`rm -rf ${root}`);
+    expect(err.message).toContain(`rm -rf ${path}`);
     expect(err.message).toContain('ios build');
     expect(existsSync(path)).toBe(true);
   });
@@ -276,6 +276,20 @@ describe('a claim whose work runs in a spawned process group', () => {
     }
   });
 
+  test('a recycled child pid is unresolvable, not a live holder', () => {
+    const got = tryAcquireClaim({ root, mode: 'exclusive' });
+    assert(got.acquired);
+    setClaimChild(got.acquired, recycledClaimOwner());
+    writeFileSync(
+      got.acquired.path,
+      JSON.stringify({ claimId: got.acquired.claimId, mode: 'exclusive', owner: goneClaimOwner(), details: {} }),
+    );
+    const survey = readClaimSet(root);
+    expect(survey.live.length).toBe(0);
+    expect(survey.dead.length).toBe(0);
+    expect(survey.unresolved.length).toBe(1);
+  });
+
   test('clearing the child record hands liveness back to the owner', () => {
     const got = tryAcquireClaim({ root, mode: 'exclusive' });
     assert(got.acquired);
@@ -326,6 +340,70 @@ describe('a real race between real processes', { timeout: 30_000 }, () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test('many processes cycling the same claim set never overlap and never surface a raw errno', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'stim-claim-stress-'));
+    const script = join(dir, 'cycle.mjs');
+    const url = new URL('../ownership-claim.ts', import.meta.url).href;
+    writeFileSync(
+      script,
+      [
+        `const { tryAcquireClaim, releaseClaim } = await import(${JSON.stringify(url)});`,
+        'const { existsSync, writeFileSync, rmSync } = await import("node:fs");',
+        'const [root, witness, mode, rounds] = process.argv.slice(2);',
+        'let acquired = 0;',
+        'let overlaps = 0;',
+        'for (let i = 0; i < Number(rounds); i++) {',
+        '  let got;',
+        '  try {',
+        '    got = tryAcquireClaim({ root, mode });',
+        '  } catch (err) {',
+        '    console.log(JSON.stringify({ threw: err.code ?? String(err), iteration: i }));',
+        '    process.exit(0);',
+        '  }',
+        '  if (got.pending) releaseClaim(got.pending);',
+        '  if (!got.acquired) continue;',
+        '  acquired++;',
+        '  if (mode === "exclusive") {',
+        '    if (existsSync(witness)) overlaps++;',
+        '    writeFileSync(witness, String(process.pid));',
+        '  }',
+        '  if (mode === "exclusive") rmSync(witness, { force: true });',
+        '  releaseClaim(got.acquired);',
+        '}',
+        'console.log(JSON.stringify({ acquired, overlaps }));',
+      ].join('\n'),
+    );
+
+    const run = (mode: string) =>
+      new Promise<{ acquired?: number; overlaps?: number; threw?: string }>((resolve, reject) => {
+        const child = getExecutor().spawn(process.execPath, [script, root, join(dir, 'witness'), mode, '150'], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let out = '';
+        let err = '';
+        child.stdout?.on('data', (d) => (out += d));
+        child.stderr?.on('data', (d) => (err += d));
+        child.on('error', reject);
+        child.on('exit', (code) =>
+          code === 0 ? resolve(JSON.parse(out.trim().split('\n').at(-1)!)) : reject(new Error(err || `exit ${code}`)),
+        );
+      });
+
+    try {
+      const exclusive = await Promise.all(['exclusive', 'exclusive', 'exclusive', 'exclusive'].map(run));
+      for (const answer of exclusive) expect(answer.threw).toBe(undefined);
+      expect(exclusive.reduce((sum, a) => sum + (a.overlaps ?? 0), 0)).toBe(0);
+      expect(exclusive.reduce((sum, a) => sum + (a.acquired ?? 0), 0)).toBeGreaterThan(0);
+
+      rmSync(root, { recursive: true, force: true });
+      const shared = await Promise.all(['shared', 'shared', 'shared', 'shared'].map(run));
+      for (const answer of shared) expect(answer.threw).toBe(undefined);
+      expect(shared.every((a) => (a.acquired ?? 0) > 0)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 
   test('a holder killed without releasing leaves a claim the next process takes over', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'stim-claim-kill-'));

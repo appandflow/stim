@@ -91,8 +91,8 @@ describe('a cache-scoped report', () => {
     expect(report.orphanedDevices).toEqual([]);
     expect(report.staleDevices).toEqual([]);
     expect(report.staleDeviceRecords).toEqual([]);
-    expect(report.buildLocks).toEqual({ stale: [], live: [] });
-    expect(report.buildSlots).toEqual({ stale: [], live: [] });
+    expect(report.buildLocks).toEqual({ stale: [], live: [], unresolved: [] });
+    expect(report.buildSlots).toEqual({ stale: [], live: [], unresolved: [] });
     expect(report.skipped).toEqual([]);
     for (const c of report.caches) {
       expect(`${c.name} ${c.dir}`.toLowerCase()).toContain('compilation cache');
@@ -2712,6 +2712,21 @@ test('--delete removes the stale lock and leaves the live one alone', async () =
   expect(existsSync(stale)).toBe(false);
   expect(existsSync(live)).toBe(true);
   expect(output).toMatch(/build lock/i);
+});
+
+test('--delete keeps a lock whose holder cannot be identified, and says why', async () => {
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  installExecutor();
+  const path = join(tmpHome, 'build-locks', 'ios-unresolved-debug-sim.lock');
+  plantClaim(path, 'exclusive', { pid: 4242, processToken: 'nonsense' });
+
+  const report = await collectGcReport();
+  expect(report.buildLocks.stale).toEqual([]);
+  expect((report.buildLocks.unresolved ?? []).map((l) => l.path)).toEqual([path]);
+
+  const output = await captureLog(() => sweepingGc({ delete: true }));
+  expect(existsSync(join(path, 'exclusive'))).toBe(true);
+  expect(output).toMatch(/cannot resolve/i);
 });
 
 test('a bare gc removes no lock at all', async () => {

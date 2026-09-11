@@ -531,8 +531,9 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   builder's slot is reclaimed within a poll, and a recycled pid does not hold a
   slot, so this is never a slot leaked by a crash; it is either that many
   genuinely long compiles, or a slot directory whose owner is not really
-  building. A slot whose holder cannot be identified at all is
-  STIM_CLAIM_REFUSED rather than a wait. Slots live under ~/.stim/build-slots and
+  building. A slot whose holder cannot be identified at all is skipped while any
+  other slot is merely busy, and becomes STIM_CLAIM_REFUSED only when no slot is
+  left to wait for. Slots live under ~/.stim/build-slots and
   the message names the directory: remove the slot of a builder that is not
   building, or raise concurrency.maxBuilds
   (\`guide lifecycle concurrency\`).`,

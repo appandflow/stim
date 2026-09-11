@@ -92,7 +92,7 @@ export class ClaimRefusedError extends Error {
   readonly removeCommand: string;
 
   constructor({ claimPath, root, reason, label }: { claimPath: string; root: string; reason: string; label: string }) {
-    const removeCommand = claimRemoveCommand(root);
+    const removeCommand = claimRemoveCommand(claimPath.startsWith(root) ? claimPath : root);
     super(
       `Stim cannot tell whether the ${label} claim at ${claimPath} is still held: ${reason}. ` +
         'It will not remove a claim it cannot prove is dead, and it will not wait on one either. ' +
@@ -117,10 +117,6 @@ export function claimRemoveCommand(root: string): string {
 
 export function isClaimRefusal(err: unknown): err is ClaimRefusedError {
   return (err as { code?: string })?.code === CLAIM_REFUSED;
-}
-
-export function isClaimUnavailable(err: unknown): err is ClaimUnavailableError {
-  return (err as { code?: string })?.code === CLAIM_UNAVAILABLE;
 }
 
 export function exclusiveClaimDir(root: string): string {
@@ -200,20 +196,21 @@ function processGroupAlive(pid: number): boolean {
 
 type Liveness = 'live' | 'dead' | 'unknown';
 
-function childLiveness(holder: ClaimHolder): Liveness | 'none' {
-  if (!holder.childDeclared) return 'none';
-  if (!holder.child) return 'unknown';
-  const status = inspectProcessIdentity(holder.child);
+function childLiveness(claimPath: string): Liveness | 'none' {
+  const child = readChild(claimPath);
+  if (child === null) return 'none';
+  if (child === 'unreadable' || !child.record) return 'unknown';
+  const status = inspectProcessIdentity(child.record);
   if (status === 'same') return 'live';
-  if (status === 'unknown') return 'unknown';
-  return processGroupAlive(holder.child.pid) ? 'live' : 'dead';
+  if (status === 'gone') return processGroupAlive(child.record.pid) ? 'live' : 'dead';
+  return 'unknown';
 }
 
 export function claimLiveness(holder: ClaimHolder): Liveness {
   const status = inspectProcessIdentity(holder.owner);
   if (status === 'same') return 'live';
   if (status === 'unknown') return 'unknown';
-  const child = childLiveness(holder);
+  const child = childLiveness(holder.path);
   return child === 'none' ? 'dead' : child;
 }
 
@@ -319,6 +316,13 @@ function selfOwner(): ClaimOwner {
   return { pid: process.pid, processToken };
 }
 
+// A claim set is removed the instant it holds nothing, so any step of a publication can lose the
+// directory it is writing into to another process's cleanup. Those codes mean "try again", never
+// "nobody holds this".
+function contended(code: string | undefined): boolean {
+  return code === 'EEXIST' || code === 'ENOTEMPTY' || code === 'ENOENT' || code === 'EINVAL';
+}
+
 function publishExclusive(root: string, payload: string, claimId: string, label: string): string | null {
   const staging = join(root, `.staging-${claimId}`);
   const target = exclusiveClaimDir(root);
@@ -330,33 +334,47 @@ function publishExclusive(root: string, payload: string, claimId: string, label:
   } catch (err) {
     rmSync(staging, { recursive: true, force: true });
     const code = (err as NodeJS.ErrnoException)?.code;
-    if (code === 'EEXIST' || code === 'ENOTEMPTY') return null;
+    if (contended(code)) return null;
     if (code === 'ENOTDIR') refuse(root, target, label, 'the claim path is a file, not a claim directory');
     throw err;
   }
 }
 
-function publishShared(root: string, payload: string, claimId: string): string {
-  const dir = sharedClaimDir(root);
-  mkdirSync(dir, { recursive: true });
+function publishShared(root: string, payload: string, claimId: string): string | null {
   const staging = join(root, `.staging-${claimId}`);
-  const target = join(dir, `${claimId}${CLAIM_SUFFIX}`);
+  const target = join(sharedClaimDir(root), `${claimId}${CLAIM_SUFFIX}`);
   try {
+    mkdirSync(sharedClaimDir(root), { recursive: true });
     writeFileSync(staging, payload);
     renameSync(staging, target);
     return target;
   } catch (err) {
     rmSync(staging, { force: true });
+    if (contended((err as NodeJS.ErrnoException)?.code)) return null;
+    throw err;
+  }
+}
+
+function settleOrRelease(claim: ClaimHandle): ClaimSetState {
+  try {
+    return inspectClaimSet(claim.root, { label: claim.label });
+  } catch (err) {
+    releaseClaim(claim);
     throw err;
   }
 }
 
 export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' }: ClaimOptions): ClaimAttempt {
   const owner = selfOwner();
-  mkdirSync(root, { recursive: true });
   const reaped: ClaimHolder[] = [];
 
   for (let attempt = 0; attempt < PUBLISH_ATTEMPTS; attempt++) {
+    try {
+      mkdirSync(root, { recursive: true });
+    } catch (err) {
+      if (contended((err as NodeJS.ErrnoException)?.code)) continue;
+      throw err;
+    }
     const state = inspectClaimSet(root, { label });
     reaped.push(...state.reaped);
     if (state.exclusive) return { held: state.exclusive, reaped };
@@ -376,8 +394,10 @@ export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' 
     });
 
     if (mode === 'shared') {
-      const claim = handle(publishShared(root, payload, claimId));
-      const settled = inspectClaimSet(root, { label });
+      const published = publishShared(root, payload, claimId);
+      if (!published) continue;
+      const claim = handle(published);
+      const settled = settleOrRelease(claim);
       reaped.push(...settled.reaped);
       if (!settled.exclusive) return { acquired: claim, reaped };
       releaseClaim(claim);
@@ -387,13 +407,22 @@ export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' 
     const path = publishExclusive(root, payload, claimId, label);
     if (!path) continue;
     const claim = handle(path);
-    const settled = inspectClaimSet(root, { label });
+    const settled = settleOrRelease(claim);
     reaped.push(...settled.reaped);
     if (settled.shared.length === 0) return { acquired: claim, reaped };
     return { waitingFor: settled.shared, pending: claim, reaped };
   }
 
-  refuse(root, exclusiveClaimDir(root), label, 'another process published a claim on every attempt to take it');
+  const contender = inspectClaimSet(root, { label });
+  reaped.push(...contender.reaped);
+  const holder = contender.exclusive ?? contender.shared[0];
+  if (holder) return { held: holder, reaped };
+  refuse(
+    root,
+    root,
+    label,
+    `another process took and gave up the claim on every one of ${PUBLISH_ATTEMPTS} attempts to take it`,
+  );
 }
 
 export function settleClaim(pending: ClaimHandle): ClaimAttempt {

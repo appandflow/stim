@@ -40,11 +40,13 @@ exports[`a cache-scoped report preserves its serialized shape without inspecting
   "staleDeviceRecords": [],
   "buildLocks": {
     "stale": [],
-    "live": []
+    "live": [],
+    "unresolved": []
   },
   "buildSlots": {
     "stale": [],
-    "live": []
+    "live": [],
+    "unresolved": []
   },
   "deviceLeases": {
     "expired": [],

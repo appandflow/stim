@@ -150,8 +150,8 @@ describe('acquireBuildLock', () => {
   test('a lock directory with no claim in it is free, whatever its age', () => {
     const path = buildLockPath(PLATFORM, KEY);
     mkdirSync(path, { recursive: true });
-    const justNow = new Date();
-    utimesSync(path, justNow, justNow);
+    const longAgo = new Date(Date.now() - 6 * 60 * 60 * 1000);
+    utimesSync(path, longAgo, longAgo);
 
     const got = acquireBuildLock(spec());
     expect(got.acquired).toBe(true);

@@ -53,11 +53,15 @@ describe('tryAcquireBuildSlot', () => {
     expect(got.index).toBe(0);
   });
 
-  test('a slot whose holder cannot be identified is skipped, and refuses once no slot is left', () => {
+  test('a slot whose holder cannot be identified is skipped, waits while another is busy, and refuses when neither', () => {
     plantClaim(buildSlotPath(0), 'exclusive', { pid: 4242, processToken: 'nonsense' }, { details: { index: 0 } });
     const got = tryAcquireBuildSlot({ max: 2 });
     assert(got);
     expect(got.index).toBe(1);
+
+    releaseBuildSlot(got);
+    plantClaim(buildSlotPath(1), 'exclusive', liveClaimOwner(), { details: { index: 1 } });
+    expect(tryAcquireBuildSlot({ max: 2 })).toBe(null);
 
     let err: (Error & { code?: string }) | undefined;
     try {

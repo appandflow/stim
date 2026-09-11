@@ -99,6 +99,7 @@ export function tryAcquireBuildSlot({
 }: TryAcquireBuildSlotOptions): BuildSlotHandle | null {
   if (!max || max <= 0) return { acquired: true, unlimited: true };
   let refusal: ClaimRefusedError | null = null;
+  let busy = false;
 
   for (let index = 0; index < max; index++) {
     const path = buildSlotPath(index);
@@ -116,7 +117,10 @@ export function tryAcquireBuildSlot({
       continue;
     }
     if (attempt.pending) releaseClaim(attempt.pending);
-    if (!attempt.acquired) continue;
+    if (!attempt.acquired) {
+      busy = true;
+      continue;
+    }
     return {
       acquired: true,
       path,
@@ -132,7 +136,7 @@ export function tryAcquireBuildSlot({
     };
   }
 
-  if (refusal) throw refusal;
+  if (refusal && !busy) throw refusal;
   return null;
 }
 
