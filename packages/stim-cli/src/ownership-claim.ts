@@ -1,15 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import {
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   renameSync,
   rmSync,
   rmdirSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { quotedPath } from './command-output.ts';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from './process-identity.ts';
 
@@ -435,25 +437,67 @@ function selfOwner(): ClaimOwner {
   return { pid: process.pid, processToken: captured.token };
 }
 
-// A claim set is removed the instant it holds nothing, so any step of a publication can lose the
-// directory it is writing into to another process's cleanup. Those codes mean "try again", never
-// "nobody holds this".
-function contended(code: string | undefined): boolean {
+function contended(error: unknown): boolean {
+  if (error instanceof MissingClaimStoreError) return false;
+  const code = (error as NodeJS.ErrnoException)?.code;
   return code === 'EEXIST' || code === 'ENOTEMPTY' || code === 'ENOENT' || code === 'EINVAL';
+}
+
+class MissingClaimStoreError extends Error {
+  readonly code = 'ENOENT';
+}
+
+// Node recursive mkdir can hide EROFS as ENOENT: https://github.com/nodejs/node/issues/47098.
+function createClaimDir(path: string): void {
+  try {
+    mkdirSync(path, { recursive: true });
+    return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
+  }
+  const missing: string[] = [];
+  for (let level = path; ; level = dirname(level)) {
+    let entry;
+    try {
+      entry = lstatSync(level);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
+      missing.push(level);
+      continue;
+    }
+    if (entry.isSymbolicLink()) {
+      try {
+        statSync(level);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+          throw new MissingClaimStoreError((error as Error).message, { cause: error });
+        }
+        throw error;
+      }
+    }
+    break;
+  }
+  for (const level of missing.toReversed()) {
+    try {
+      mkdirSync(level);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error;
+    }
+  }
 }
 
 function publishExclusive(root: string, payload: string, claimId: string, label: string): string | null {
   const staging = join(root, `${STAGING_PREFIX}${claimId}`);
   const target = exclusiveClaimDir(root);
   try {
-    mkdirSync(staging, { recursive: true });
+    createClaimDir(staging);
     writeFileSync(join(staging, `${claimId}${CLAIM_SUFFIX}`), payload);
     renameSync(staging, target);
     return join(target, `${claimId}${CLAIM_SUFFIX}`);
   } catch (err) {
     rmSync(staging, { recursive: true, force: true });
     const code = (err as NodeJS.ErrnoException)?.code;
-    if (contended(code)) return null;
+    if (contended(err)) return null;
     if (code === 'ENOTDIR') refuse(root, target, label, CLAIM_PATH_NOT_A_DIRECTORY);
     throw err;
   }
@@ -463,13 +507,13 @@ function publishShared(root: string, payload: string, claimId: string): string |
   const staging = join(root, `${STAGING_PREFIX}${claimId}`);
   const target = join(sharedClaimDir(root), `${claimId}${CLAIM_SUFFIX}`);
   try {
-    mkdirSync(sharedClaimDir(root), { recursive: true });
+    createClaimDir(sharedClaimDir(root));
     writeFileSync(staging, payload);
     renameSync(staging, target);
     return target;
   } catch (err) {
     rmSync(staging, { force: true });
-    if (contended((err as NodeJS.ErrnoException)?.code)) return null;
+    if (contended(err)) return null;
     throw err;
   }
 }
@@ -489,13 +533,13 @@ export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' 
 
   for (let attempt = 0; attempt < PUBLISH_ATTEMPTS; attempt++) {
     try {
-      mkdirSync(root, { recursive: true });
+      createClaimDir(root);
     } catch (err) {
       const code = (err as NodeJS.ErrnoException)?.code;
       if (code === 'EEXIST' || code === 'ENOTDIR') {
         refuse(root, root, label, CLAIM_PATH_NOT_A_DIRECTORY);
       }
-      if (contended(code)) continue;
+      if (contended(err)) continue;
       throw err;
     }
     const state = inspectClaimSet(root, { label });

@@ -7,7 +7,9 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -104,6 +106,31 @@ describe('exclusive claims', () => {
   test('an empty claim directory left by a crash blocks nothing', () => {
     mkdirSync(exclusiveClaimDir(root), { recursive: true });
     expect(tryAcquireClaim({ root, mode: 'exclusive' }).acquired).toBeTruthy();
+  });
+});
+
+describe('claim storage failures', () => {
+  test.each(['exclusive', 'shared'] as const)(
+    'a dangling claim-store ancestor reports ENOENT for %s claims',
+    (mode) => {
+      const home = dirname(root);
+      const link = join(home, 'dangling');
+      symlinkSync(join(home, 'missing'), link);
+      const blocked = join(link, 'build.lock');
+      try {
+        expect(() => tryAcquireClaim({ root: blocked, mode })).toThrow(expect.objectContaining({ code: 'ENOENT' }));
+      } finally {
+        rmSync(link);
+      }
+    },
+  );
+
+  test('a dangling shared-publication directory reports ENOENT without replacing it', () => {
+    mkdirSync(root);
+    const link = sharedClaimDir(root);
+    symlinkSync(join(root, 'missing'), link);
+    expect(() => tryAcquireClaim({ root, mode: 'shared' })).toThrow(expect.objectContaining({ code: 'ENOENT' }));
+    expect(readlinkSync(link)).toBe(join(root, 'missing'));
   });
 });
 
