@@ -7,7 +7,16 @@ import { captureProcessToken } from '../process-identity.ts';
 import { ClaimRefusedError, ClaimUnavailableError, claimRemoveCommand } from '../ownership-claim.ts';
 import { once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
@@ -5172,16 +5181,7 @@ describe('optimization configuration', () => {
 });
 
 test('CAS Release builds skip the legacy Expo provider that cannot key compiler identity', async () => {
-  const ndk = join(home, 'ndk');
-  mkdirSync(ndk);
-  writeFileSync(join(ndk, 'source.properties'), 'Pkg.Revision = 27.1.12297006\n');
-  const binary = join(home, 'compiler');
-  writeFileSync(binary, 'test compiler bytes');
-  const manifest = join(home, 'toolchain.json');
-  writeFileSync(
-    manifest,
-    JSON.stringify({ clang: binary, clangxx: binary, lld: binary, ar: binary, ranlib: binary, ndk }),
-  );
+  const { manifest } = writeCasToolchain();
   const h = harness({
     variant: 'release',
     resolveSettingsFor: () => ({ optimizations: { android: { compilerCache: 'cas', casToolchain: manifest } } }),
@@ -5192,6 +5192,31 @@ test('CAS Release builds skip the legacy Expo provider that cannot key compiler 
   expect((await h.run()).ok).toBe(true);
   expect(h.calls.storeCached[0]?.[1]).toMatch(/apple-cas-/);
 });
+
+function writeCasToolchain(toolchain: Record<string, unknown> = {}): { manifest: string; binary: string } {
+  const ndk = join(home, 'ndk');
+  mkdirSync(ndk, { recursive: true });
+  writeFileSync(join(ndk, 'source.properties'), 'Pkg.Revision = 27.1.12297006\n');
+  const binary = join(home, 'compiler');
+  writeFileSync(binary, 'test compiler bytes', { mode: 0o755 });
+  const resourceDir = join(home, 'resource');
+  mkdirSync(resourceDir, { recursive: true });
+  const manifest = join(home, 'toolchain.json');
+  writeFileSync(
+    manifest,
+    JSON.stringify({
+      clang: binary,
+      clangxx: binary,
+      lld: binary,
+      ar: binary,
+      ranlib: binary,
+      ndk,
+      resourceDir,
+      ...toolchain,
+    }),
+  );
+  return { manifest, binary };
+}
 
 function writeMachineOptimizations(optimizations: Record<string, unknown>): string {
   const file = join(home, 'config.json');
@@ -5222,7 +5247,7 @@ test('a CAS toolchain that is gone builds with ccache and says so once', async (
   const warnings = h.stderr.filter((line) => line.includes('optimizations.android.casToolchain'));
   expect(warnings).toHaveLength(1);
   expect(warnings[0]).toBe(
-    `  cache       Warning: optimizations.android.casToolchain in ${file} could not be read: ` +
+    `  cache       Warning: optimizations.android.casToolchain in ${file} could not be used: ` +
       `ENOENT: no such file or directory, open '${missing}'. Android builds fall back to ccache when it is available.`,
   );
   expect(h.calls.storeCached[0]?.[1]).not.toMatch(/apple-cas-/);
@@ -5283,7 +5308,7 @@ test('an unusable CAS manifest in the environment falls back without naming a co
     const h = harness({ ccacheFor: () => CCACHE_SETUP });
     expect((await h.run()).ok).toBe(true);
     expect(h.stderr.filter((line) => line.includes('STIM_ANDROID_CAS_TOOLCHAIN'))).toEqual([
-      '  cache       Warning: STIM_ANDROID_CAS_TOOLCHAIN in the environment could not be read: ' +
+      '  cache       Warning: STIM_ANDROID_CAS_TOOLCHAIN in the environment could not be used: ' +
         `ENOENT: no such file or directory, open '${missing}'. Android builds fall back to ccache when it is ` +
         'available.',
     ]);
@@ -5345,23 +5370,55 @@ test('a CAS manifest that parses but names no compiler falls back with the field
   const h = harness({ ccacheFor: () => CCACHE_SETUP });
   expect((await h.run()).ok).toBe(true);
   expect(h.stderr.filter((line) => line.includes('Warning: optimizations.android.casToolchain'))).toEqual([
-    `  cache       Warning: optimizations.android.casToolchain in ${file} could not be read: ${manifest} declares ` +
-      'no clang, clangxx, lld, ar, ranlib. Android builds fall back to ccache when it is available.',
+    `  cache       Warning: optimizations.android.casToolchain in ${file} could not be used: ${manifest} declares ` +
+      'no clang, clangxx, lld, ar, ranlib, resourceDir. Android builds fall back to ccache when it is available.',
+  ]);
+});
+
+test('a CAS manifest with no resourceDir builds with ccache instead of failing the compile', async () => {
+  const { manifest } = writeCasToolchain({ resourceDir: undefined });
+  const file = writeMachineOptimizations({ android: { compilerCache: 'cas', casToolchain: manifest } });
+  const options: Record<string, unknown>[] = [];
+  const h = harness({
+    ccacheFor: () => CCACHE_SETUP,
+    build: async (_args: BuildArgs = {}, opts: Record<string, unknown> = {}) => {
+      options.push(opts);
+      return { ok: true, apkPath: fakeApk(), durationMs: 1 };
+    },
+  });
+  expect((await h.run()).ok).toBe(true);
+  expect(options[0]).toMatchObject({ cas: null, ccache: CCACHE_SETUP });
+  expect(h.calls.storeCached[0]?.[1]).not.toMatch(/apple-cas-/);
+  expect(h.stderr.filter((line) => line.includes('Warning: optimizations.android.casToolchain'))).toEqual([
+    `  cache       Warning: optimizations.android.casToolchain in ${file} could not be used: ${manifest} declares ` +
+      'no resourceDir. Android builds fall back to ccache when it is available.',
+  ]);
+});
+
+test('a CAS manifest whose compiler is not executable builds with ccache instead of spawning EACCES', async () => {
+  const { manifest, binary } = writeCasToolchain();
+  chmodSync(binary, 0o644);
+  const file = writeMachineOptimizations({ android: { compilerCache: 'cas', casToolchain: manifest } });
+  const options: Record<string, unknown>[] = [];
+  const h = harness({
+    ccacheFor: () => CCACHE_SETUP,
+    build: async (_args: BuildArgs = {}, opts: Record<string, unknown> = {}) => {
+      options.push(opts);
+      return { ok: true, apkPath: fakeApk(), durationMs: 1 };
+    },
+  });
+  expect((await h.run()).ok).toBe(true);
+  expect(options[0]).toMatchObject({ cas: null, ccache: CCACHE_SETUP });
+  expect(h.calls.storeCached[0]?.[1]).not.toMatch(/apple-cas-/);
+  expect(h.stderr.filter((line) => line.includes('Warning: optimizations.android.casToolchain'))).toEqual([
+    `  cache       Warning: optimizations.android.casToolchain in ${file} could not be used: ${manifest} names no ` +
+      'executable clang, clangxx, lld, ar, ranlib. Android builds fall back to ccache when it is available.',
   ]);
 });
 
 test('CAS Release builds skip legacy providers that cannot key compiler identity', async () => {
   const previous = process.env.STIM_ANDROID_CAS_TOOLCHAIN;
-  const ndk = join(home, 'ndk');
-  mkdirSync(ndk);
-  writeFileSync(join(ndk, 'source.properties'), 'Pkg.Revision = 27.1.12297006\n');
-  const binary = join(home, 'compiler');
-  writeFileSync(binary, 'test compiler bytes');
-  const manifest = join(home, 'toolchain.json');
-  writeFileSync(
-    manifest,
-    JSON.stringify({ clang: binary, clangxx: binary, lld: binary, ar: binary, ranlib: binary, ndk }),
-  );
+  const { manifest } = writeCasToolchain();
   process.env.STIM_ANDROID_CAS_TOOLCHAIN = manifest;
   try {
     const h = harness({

@@ -379,9 +379,12 @@ The example shows the defaults. Full setting names and behavior:
     STIM_ANDROID_CAS_TOOLCHAIN overrides this path. An explicit ccache or none
     selection overrides automatic CAS selection even with that environment
     variable set. Any value that is not an absolute path, whatever its type,
-    and a manifest that is missing or unreadable, degrade to the compiler cache
-    the selection leaves -- ccache, or none when compilerCache is none -- in one
-    warning naming this key and the file it came from. \`stim doctor\` reports the dead path as a note. For
+    and a manifest that is missing, unreadable, or does not name an executable
+    clang, clangxx, lld, ar and ranlib plus an existing resourceDir, degrade to
+    the compiler cache the selection leaves -- ccache, or none when
+    compilerCache is none -- in one warning naming this key and the file it came
+    from. \`stim doctor\` reports a path that is not there, from this key or from
+    that environment variable, as a note; it does not read the manifest. For
     prerequisites, see:
     https://stim.appandflow.com/docs/android-cas
   optimizations.android.pch

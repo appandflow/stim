@@ -1,5 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  accessSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { register } from '../cache-manifest.ts';
@@ -17,7 +28,34 @@ interface AndroidCasToolchain {
   resourceDir: string;
 }
 
-const CAS_TOOLCHAIN_FIELDS: readonly (keyof AndroidCasToolchain)[] = ['clang', 'clangxx', 'lld', 'ar', 'ranlib', 'ndk'];
+const CAS_TOOLCHAIN_FIELDS: readonly (keyof AndroidCasToolchain)[] = [
+  'clang',
+  'clangxx',
+  'lld',
+  'ar',
+  'ranlib',
+  'ndk',
+  'resourceDir',
+];
+
+const CAS_TOOLCHAIN_BINARIES: readonly (keyof AndroidCasToolchain)[] = ['clang', 'clangxx', 'lld', 'ar', 'ranlib'];
+
+function executableFile(path: string): boolean {
+  try {
+    accessSync(path, constants.X_OK);
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function directory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
 
 export interface AndroidCasSetup {
   id: string;
@@ -32,6 +70,10 @@ export function resolveAndroidCas(root: string, env: NodeJS.ProcessEnv = process
   const toolchain = JSON.parse(readFileSync(manifest, 'utf8')) as AndroidCasToolchain;
   const missing = CAS_TOOLCHAIN_FIELDS.filter((field) => typeof toolchain?.[field] !== 'string');
   if (missing.length > 0) throw new Error(`${manifest} declares no ${missing.join(', ')}.`);
+  const notExecutable = CAS_TOOLCHAIN_BINARIES.filter((field) => !executableFile(toolchain[field]));
+  if (notExecutable.length > 0) throw new Error(`${manifest} names no executable ${notExecutable.join(', ')}.`);
+  if (!directory(toolchain.resourceDir))
+    throw new Error(`${manifest} names resourceDir ${toolchain.resourceDir}, which is not a directory.`);
   const names = [
     'shim/android-cas.gradle',
     'shim/android-cas.toolchain.cmake',
