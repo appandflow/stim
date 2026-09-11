@@ -19,8 +19,8 @@ not prescribe warm/start/log commands, dependency-copy methods, background jobs,
 or a repair location. Native tasks describe the required observable label or
 identifier rather than the file and line to edit.
 
-The launch-failure task is: "The app fails on launch. Reproduce the failure
-before inspecting application source, fix it, and verify the repair."
+The launch-failure task is: "The app fails on launch. Reproduce it and capture
+the runtime error before inspecting application source, fix it, and verify the repair."
 It does not reveal the injected failure's category, token, or source location.
 
 Both arms retain the same run-scoped agent-device evidence protocol: open,

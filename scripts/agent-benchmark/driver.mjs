@@ -2777,7 +2777,7 @@ function selftestLaunchCrash() {
   for (const required of [
     `worktree-bench/${runId}`,
     'The app fails on launch.',
-    'Reproduce the failure before inspecting application source',
+    'capture the runtime error before inspecting application source',
     'Settings screenshot',
   ]) {
     if (!prompt.includes(required)) {
