@@ -317,7 +317,7 @@ Every item needs a phone and a second workspace on the same machine. Design
 and reasoning: `docs/specs/2026-09-02-device-lease-design.md`. Set up two
 workspaces of one project sharing the phone: the checkout as A with its own
 Metro, and a Git-created linked worktree as B. Run `stim worktree warm` in B
-to copy missing ignored state from main. Both checkouts need signing settings
+to copy missing ignored state from the source checkout. Both checkouts need signing settings
 valid for their tracked source; warm does not copy tracked changes.
 
 **D. Device leases.**

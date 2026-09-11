@@ -201,14 +201,14 @@ How the message is addressed depends on the dev server, and `strategy` reports
 which you got. Where Metro can name its clients, Stim addresses every peer
 matching the platform and reports `metro-websocket`. A workspace Metro serves one
 app, so those peers are that app on however many devices are attached to the
-port; `targets` says how many were reloaded. Android peers carry the package
+port; `targets` says how many peers the request addressed. Android peers carry the package
 name and iOS peers carry only `role=ios`, which is enough to keep a reload on one
 platform but not to single out one iOS app among several.
 
 The bare React Native dev server cannot name its clients at all, because
 `@react-native-community/cli-server-api` answers that request out of a `ws`
 property removed in ws 3.0. There Stim broadcasts: `metro-broadcast` means every
-app on that port reloaded, and that Stim could not confirm the recorded app was
+app on that port was sent a reload request, and that Stim could not confirm the recorded app was
 among them. Verify the UI, and fall back to the app's own error screen or dev
 menu if nothing changed.
 

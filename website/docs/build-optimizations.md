@@ -130,7 +130,8 @@ Merge this into the machine config, replacing the path with your manifest:
 
 CAS keeps the libraries' PCH policy under `"auto"`. Selecting `"ccache"` returns
 to the NDK compiler and the default PCH-off policy even if the manifest path
-remains configured. Selecting `"cas"` without a manifest refuses the build.
+remains configured. Selecting `"cas"` without a manifest warns and falls back
+to ccache when available, or compiles without a compiler cache.
 
 ## Compare compiler settings
 
