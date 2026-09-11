@@ -498,6 +498,14 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   reach a booted state. \`stim doctor\` checks the toolchain; \`stim status\` says what
   Stim thinks it owns. Re-running the command creates a fresh owned device
   when the recorded one is gone.
+  If Android creation says an AVD already exists on disk but is not listed,
+  run \`npx stim gc\` to inspect orphaned owned AVDs, then \`npx stim gc --delete\`
+  to reclaim those safe to delete before retrying. Keep anything GC cannot
+  verify; do not delete AVD directories by hand. A registered unrecorded owned
+  AVD is recovered, reusing its existing emulator when its identity is verified.
+  If recovery cannot verify registration or process state, inspect \`npx stim status\`
+  and \`adb devices\`, then retry after any other run finishes. Keep the AVD and
+  its process locks while its state is unverified.
   On iOS a slow first boot is waited out for up to ten minutes while the
   simulator still reports Booting -- a long silent wait on a loaded machine
   is patience, not a hang. The failure names the udid and the wait.

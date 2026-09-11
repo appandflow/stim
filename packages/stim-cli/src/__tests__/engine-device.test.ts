@@ -9,6 +9,7 @@ import {
   deviceTypeMismatch,
   ensureBooted,
   ensureOwnedDevice,
+  AvdRecoveryError,
   unknownAndroidSystemImageRefusal,
   unknownIosDeviceTypeRefusal,
   unknownIosRuntimeRefusal,
@@ -1238,6 +1239,7 @@ describe('ensureOwnedDevice: android', () => {
     beforeCreateAvdError = () => {},
     bootCompletes = true,
     runningAvdName = '',
+    adbDevices = 'List of devices attached\n',
     onSpawn = () => {},
   }: {
     avds?: string[];
@@ -1246,6 +1248,7 @@ describe('ensureOwnedDevice: android', () => {
     beforeCreateAvdError?: () => void;
     bootCompletes?: boolean;
     runningAvdName?: string;
+    adbDevices?: string | Error;
     onSpawn?: () => void;
   } = {}) {
     const run: string[] = [];
@@ -1282,7 +1285,10 @@ describe('ensureOwnedDevice: android', () => {
             rmSync(join(process.env.ANDROID_AVD_HOME!, `${name}.avd`), { recursive: true, force: true });
             return '';
           }
-          if (cmd === 'adb devices') return 'List of devices attached\n';
+          if (cmd === 'adb devices') {
+            if (adbDevices instanceof Error) throw adbDevices;
+            return adbDevices;
+          }
           if (/emu avd name/.test(cmd)) return runningAvdName;
           if (/getprop sys\.boot_completed/.test(cmd)) return bootCompletes ? '1' : '';
           if (/getprop /.test(cmd)) return '';
@@ -1478,7 +1484,7 @@ describe('ensureOwnedDevice: android', () => {
     writeFileSync(join(avdRoot, 'stim-app.ini'), `path=${content}\n`);
     writeFileSync(join(content, 'config.ini'), 'disk.dataPartition.size=10G\n');
     try {
-      const { exec } = androidExecutor({
+      const { exec, spawn } = androidExecutor({
         avds: ['stim-app'],
         createAvdError: 'Error: AVD stim-app already exists.',
       });
@@ -1493,6 +1499,99 @@ describe('ensureOwnedDevice: android', () => {
           throw new Error('must not configure a recovered AVD');
         },
       });
+      expect(readFileSync(join(content, 'config.ini'), 'utf8')).toBe('disk.dataPartition.size=10G\n');
+      expect(spawn).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test.each(['device', 'offline'])('recovery reuses a %s emulator whose AVD identity is verified', async (state) => {
+    const root = projectDir();
+    try {
+      const { exec, spawn } = androidExecutor({
+        avds: ['stim-app'],
+        createAvdError: 'Error: AVD stim-app already exists.',
+        adbDevices: `List of devices attached\nemulator-5584\t${state}\n`,
+        runningAvdName: 'stim-app',
+      });
+      setExecutor(exec);
+      const result = await ensureOwnedDevice({
+        platform: 'android',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {},
+      });
+      expect(result).toMatchObject({ avdName: 'stim-app', serial: 'emulator-5584', consolePort: 5584, owned: true });
+      expect(getProject(root)?.platforms?.android).toMatchObject({ avdName: 'stim-app', consolePort: 5584 });
+      expect(spawn).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    ['unresolved offline identity', 'List of devices attached\nemulator-5584\toffline\n', /live emulator process/],
+    ['failed ADB query', new Error('cannot connect to daemon'), /cannot connect to daemon/],
+  ])('recovery refuses a live AVD after %s', async (_label, adbDevices, failure) => {
+    const root = projectDir();
+    const content = join(process.env.ANDROID_AVD_HOME!, 'stim-app.avd');
+    mkdirSync(content, { recursive: true });
+    writeFileSync(join(process.env.ANDROID_AVD_HOME!, 'stim-app.ini'), `path=${content}\n`);
+    writeFileSync(join(content, 'hardware-qemu.ini.lock'), String(process.pid));
+    try {
+      const { exec, spawn } = androidExecutor({
+        avds: ['stim-app'],
+        createAvdError: 'Error: AVD stim-app already exists.',
+        adbDevices,
+      });
+      setExecutor(exec);
+      await expect(
+        ensureOwnedDevice({
+          platform: 'android',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: {},
+        }),
+      ).rejects.toMatchObject({
+        constructor: AvdRecoveryError,
+        message: expect.stringMatching(failure),
+        remedy: expect.stringContaining('npx stim status'),
+      });
+      expect(getProject(root)?.platforms?.android).toBeUndefined();
+      expect(spawn).toEqual([]);
+      expect(existsSync(content)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('an unregistered AVD directory refuses creation with a GC remedy and keeps its data', async () => {
+    const root = projectDir();
+    const content = join(process.env.ANDROID_AVD_HOME!, 'stim-app.avd');
+    mkdirSync(content, { recursive: true });
+    writeFileSync(join(content, 'config.ini'), 'disk.dataPartition.size=10G\n');
+    try {
+      const { exec, spawn, run } = androidExecutor({ createAvdError: `Error: ${content} already exists!` });
+      setExecutor(exec);
+      await expect(
+        ensureOwnedDevice({
+          platform: 'android',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: {},
+        }),
+      ).rejects.toMatchObject({
+        constructor: AvdRecoveryError,
+        message: expect.stringContaining(`AVD stim-app already exists on disk but is not listed`),
+        remedy: expect.stringContaining('npx stim gc --delete'),
+      });
+      expect(getProject(root)?.platforms?.android).toBeUndefined();
+      expect(spawn).toEqual([]);
+      expect(run.some((cmd) => cmd.includes('delete avd'))).toBe(false);
       expect(readFileSync(join(content, 'config.ini'), 'utf8')).toBe('disk.dataPartition.size=10G\n');
     } finally {
       rmSync(root, { recursive: true, force: true });

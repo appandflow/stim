@@ -5,6 +5,7 @@ import { resetExecutor, setExecutor } from '../exec.ts';
 import assert from 'node:assert';
 import { captureProcessToken } from '../process-identity.ts';
 import { ClaimRefusedError, ClaimUnavailableError, claimRemoveCommand } from '../ownership-claim.ts';
+import { AvdRecoveryError } from '../engine/device.ts';
 import { once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
 import {
@@ -1694,6 +1695,45 @@ describe('the other refusals', () => {
     expect(result.error.message).toMatch(/ENOSPC/);
     expect(result.error.remedy).toMatch(/~\/.android\/avd/);
     expect(result.error.remedy).not.toMatch(/JAVA_HOME|ANDROID_HOME|sdkmanager/);
+  });
+
+  test('an unregistered AVD collision reports GC recovery even when an earlier boot left a fatal log', async () => {
+    writeEmulatorLog([DISK_FATAL]);
+    const h = harness({
+      ensureDevice: async () => {
+        throw new AvdRecoveryError(
+          'AVD stim-app already exists on disk but is not listed by the emulator.',
+          'Run `npx stim gc` to inspect orphaned owned AVDs, then `npx stim gc --delete` to reclaim those safe to delete.',
+        );
+      },
+      build: never('the build'),
+    });
+    const result = await h.run();
+    assert(result.error);
+    expect(result.error.code).toBe(NO_DEVICE);
+    expect(result.error.message).toMatch(/AVD stim-app.*not listed/);
+    expect(result.error.message).not.toContain(DISK_FATAL);
+    expect(result.error.remedy).toContain('npx stim gc');
+    expect(result.error.remedy).toContain('npx stim gc --delete');
+    expect(result.error.remedy).not.toMatch(/JAVA_HOME|ANDROID_HOME|sdkmanager|rm -rf/);
+  });
+
+  test('a pre-boot recovery refusal keeps its current diagnostic over an earlier fatal boot log', async () => {
+    writeEmulatorLog([DISK_FATAL]);
+    const message = 'Could not recover owned AVD stim-app: still has a live emulator process (1234).';
+    const remedy = 'Inspect `npx stim status` and `adb devices`, then retry when the other run finishes.';
+    const h = harness({
+      ensureDevice: async () => {
+        throw new AvdRecoveryError(message, remedy);
+      },
+      build: never('the build'),
+    });
+    const result = await h.run();
+    assert(result.error);
+    expect(result.error.code).toBe(NO_DEVICE);
+    expect(result.error.message).toContain(message);
+    expect(result.error.message).not.toContain(DISK_FATAL);
+    expect(result.error.remedy).toBe(remedy);
   });
 
   test('the generic remedy stands when emulator.log has no severity markers', async () => {
