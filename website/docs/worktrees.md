@@ -48,13 +48,32 @@ copying, not during it. Concurrent files can be overwritten or removed.
 Stim excludes:
 
 - Nested registered Git worktrees, including ignored parents containing them.
-- Any `.DerivedData` directory.
+- `.DS_Store` files and any `.DerivedData` directory, including inside newly copied directories.
 - `android/build/generated/autolinking`, including in nested apps, so Gradle
   regenerates paths for the new checkout.
 - Paths matched by the source checkout's nonempty `.worktreeexclude`, or its
   resolved `worktree.exclude` setting when that file is absent or empty.
 - Destination paths that overlap a registered nested worktree or have symlink
   ancestors.
+
+Other generated state stays eligible: `.gradle`, `.cxx`, `*.tsbuildinfo`,
+`build` directories, and embedded JavaScript need project-specific decisions
+about regeneration. Native intermediates can record the source checkout's
+paths; warm does not relocate them. Whole `.idea` or `.expo` exclusions can
+also drop useful project settings or generated TypeScript inputs.
+
+Choose exclusions against the entries Git lists from the source checkout's
+repository root:
+
+```sh
+git ls-files --others --ignored --exclude-standard --directory --no-empty-directory
+```
+
+Patterns match these entries with the trailing `/` removed; they do not prune
+children of a whole ignored directory. If Git lists
+`android/app/src/main/assets/`, excluding its `bundle.jsbundle` child has no
+effect. Exclude `android/app/src/main/assets` only when the project regenerates
+everything inside it. Existing destination entries are always preserved.
 
 Warm writes only to stderr: copied, kept, and failed entry counts, plus any
 lockfile remedies. A failure exits 1; files already copied remain. Inspect
