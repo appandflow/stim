@@ -1,6 +1,15 @@
 import { execSync, spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -1156,10 +1165,10 @@ test('action: a concurrent tunnel start cannot publish a replacement during work
 
 test('the worktree removal lock lives outside project workspace state', async () => {
   const key = createHash('sha256').update(resolve(wtDir)).digest('hex');
-  const owner = join(tmpHome, 'process-locks', 'worktrees', key, 'managed-remote.lock', 'owner.json');
+  const claims = join(tmpHome, 'process-locks', 'worktrees', key, 'managed-remote.lock', 'exclusive');
 
   await withManagedRemoteWorktreeLock(wtDir, async () => {
-    expect(existsSync(owner)).toBe(true);
+    expect(readdirSync(claims).filter((name) => name.endsWith('.claim')).length).toBe(1);
   });
 });
 

@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import chalk from 'chalk';
 import { loadConfig } from '../../config.ts';
+import { readClaimSet } from '../../ownership-claim.ts';
 import {
   findOrphanedOwnedSessions,
   getSessionArgs,
@@ -292,12 +293,7 @@ function malformedRemoteSessionLockNotice(roots: readonly string[]): string | nu
   for (const root of roots) {
     const lockPath = join(workspaceDir(root), 'remote-session.lock');
     if (!existsSync(lockPath)) continue;
-    try {
-      const owner = JSON.parse(readFileSync(join(lockPath, 'owner.json'), 'utf-8')) as Record<string, unknown>;
-      if (typeof owner.pid === 'number' && typeof owner.token === 'string') continue;
-    } catch {
-      if (!existsSync(lockPath)) continue;
-    }
+    if (readClaimSet(lockPath).unresolved.length === 0) continue;
     return `EAS session sweep skipped: the remote-session lock at ${lockPath} has a malformed owner record.`;
   }
   return null;

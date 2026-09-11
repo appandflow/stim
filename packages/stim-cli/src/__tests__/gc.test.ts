@@ -1231,10 +1231,8 @@ describe('EAS orphan session sweep', () => {
     registerExpoProject(project);
     installExecutor();
     const lockDir = join(workspaceDir(realpathSync(project)), 'remote-session.lock');
-    mkdirSync(lockDir, { recursive: true });
-    writeFileSync(join(lockDir, 'owner.json'), '{not valid json');
-    const old = new Date(Date.now() - 60_000);
-    utimesSync(lockDir, old, old);
+    mkdirSync(join(lockDir, 'exclusive'), { recursive: true });
+    writeFileSync(join(lockDir, 'exclusive', 'broken.claim'), '{not valid json');
     const harness = easGcHarness({
       project,
       list: easList([{ id: 'drs_hidden', name: 'stim-hidden', status: 'IN_PROGRESS', platform: 'IOS' }]),
