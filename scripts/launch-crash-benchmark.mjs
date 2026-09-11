@@ -44,6 +44,23 @@ function completedStepCommand(command, arm) {
   return /[&|]\s*$/.test(body) ? '' : (shellCommandSegments(body).at(-1) ?? '');
 }
 
+function iosRelaunchGroup(command, output) {
+  const binding = /^([A-Za-z_]\w*)=([A-Fa-f0-9-]{36});\s*([\s\S]+)$/.exec(command);
+  if (!binding) return false;
+  const device = `\\$${binding[1]}(?![A-Za-z0-9_])`;
+  const group = new RegExp(
+    `^\\{\\s*xcrun simctl terminate ${device} ([\\w.]+) 2>/dev/null;\\s*` +
+      `xcrun simctl launch ${device} \\1 && sleep \\d+ && ` +
+      `xcrun simctl openurl ${device} "[^"$\x60\\\\\\n]+" && echo "([A-Z_]+)";\\s*\\}\\s*$`,
+  ).exec(binding[3]);
+  if (!group) return false;
+  const lines = String(output ?? '').split('\n');
+  return (
+    lines.some((line) => new RegExp(`^${group[1].replaceAll('.', '\\.')}: \\d+$`).test(line)) &&
+    lines.includes(group[2])
+  );
+}
+
 function successfulLaunch(command, arm, platform) {
   if (!successful(command)) return false;
   const value = shellCommand(command.command);
@@ -75,8 +92,9 @@ function successfulLaunch(command, arm, platform) {
   const group = /^\{\s*([\s\S]*?);\s*\}$/.exec(launch);
   const launches = group ? shellCommandSegments(group[1]) : [launch];
   return (
-    launches.length > 0 &&
-    launches.every((entry) => launchCommand(entry, arm, platform) && !/[;&\n$`]/.test(entry)) &&
+    ((arm === 'control' && platform === 'ios' && iosRelaunchGroup(launch, command.output)) ||
+      (launches.length > 0 &&
+        launches.every((entry) => launchCommand(entry, arm, platform) && !/[;&\n$`]/.test(entry)))) &&
     filters.length > 0 &&
     filters.every((filter) => /^(?:tee(?: -a)? [\w/.-]+|(?:tail|head) -(?:\d+|n \d+))\s*$/.test(filter))
   );

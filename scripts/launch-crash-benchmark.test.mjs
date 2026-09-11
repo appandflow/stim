@@ -371,6 +371,33 @@ done`;
         valid: false,
         reason: 'launch-crash-initial-launch-evidence-missing',
       });
+    const relaunch = {
+      ...launch,
+      command:
+        'set -o pipefail; UDID=EA54D648-50C7-4ACC-9A69-52A07CF05B95; { xcrun simctl terminate $UDID com.appandflow.trailhead 2>/dev/null; xcrun simctl launch $UDID com.appandflow.trailhead && sleep 3 && xcrun simctl openurl $UDID "trailhead://app" && echo "LAUNCH_OK"; } 2>&1 | tee -a /tmp/native.log; echo "PIPELINE_EXIT=$?"',
+      output: 'com.appandflow.trailhead: 82652\nLAUNCH_OK\nPIPELINE_EXIT=0',
+    };
+    expect(launchCrashDiagnosis([relaunch, logs], { ...options, platform: 'ios' })).toMatchObject({
+      valid: true,
+      initialLaunchCommandId: 'launch',
+      commandId: 'logs',
+    });
+    for (const changed of [
+      { command: relaunch.command.replace('&& sleep', '; sleep') },
+      { command: relaunch.command.replace('&& echo', '; echo') },
+      { command: relaunch.command.replace('launch $UDID', 'launch $OTHER') },
+      { command: relaunch.command.replace('openurl $UDID', 'openurl $OTHER') },
+      { command: relaunch.command.replace('EA54D648-50C7-4ACC-9A69-52A07CF05B95', '$(cat /tmp/udid)') },
+      { command: relaunch.command.replace('trailhead://app', 'trailhead://$(cat /tmp/value)') },
+      { command: relaunch.command.replace('set -o pipefail', 'set +o pipefail') },
+      { output: 'com.appandflow.trailhead: 82652\nLAUNCH_OK\nPIPELINE_EXIT=1' },
+      { output: 'LAUNCH_OK\nPIPELINE_EXIT=0' },
+      { output: 'other.app: 82652\nLAUNCH_OK\nPIPELINE_EXIT=0' },
+    ])
+      expect(launchCrashDiagnosis([{ ...relaunch, ...changed }, logs], { ...options, platform: 'ios' })).toMatchObject({
+        valid: false,
+        reason: 'launch-crash-initial-launch-evidence-missing',
+      });
     const forwardedLaunch = {
       ...launch,
       command:
