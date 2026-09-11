@@ -289,6 +289,7 @@ function harness(overrides = {}) {
       calls.metro.push([port, path]);
       return { metro: { pid: 41233, leader: 41233, cwd: root } };
     },
+    warmMetro: async () => {},
     fingerprint: async (path: string) => {
       calls.fingerprint.push(path);
       return { hash: FINGERPRINT, sources: [] };
@@ -752,6 +753,9 @@ describe('explicit remote backend behavior', () => {
         webPreviewUrl: () => null,
       }),
       resolveEasBin: () => ({ file: '/bin/eas', args: [] }),
+      warmMetro: async () => {
+        order.push('warmMetro');
+      },
       fingerprint: async () => {
         order.push('fingerprint');
         return { hash: FINGERPRINT, sources: [] };
@@ -759,12 +763,13 @@ describe('explicit remote backend behavior', () => {
     });
 
     expect((await h.run()).ok).toBe(true);
-    expect(order.slice(0, 6)).toEqual([
+    expect(order.slice(0, 7)).toEqual([
       'localMetro',
       'resolveBackend',
       'publicMetro',
       'ensureDevice',
       'ensureDeviceBooted',
+      'warmMetro',
       'fingerprint',
     ]);
   });
@@ -804,6 +809,7 @@ describe('explicit remote backend behavior', () => {
         webPreviewUrl: () => null,
       }),
       resolveEasBin: () => ({ file: '/bin/eas', args: [] }),
+      warmMetro: never('prefetch before public Metro verifies'),
       fingerprint: never('fingerprint'),
     });
 
@@ -5418,4 +5424,33 @@ test('CAS Release builds skip legacy providers that cannot key compiler identity
     if (previous === undefined) delete process.env.STIM_ANDROID_CAS_TOOLCHAIN;
     else process.env.STIM_ANDROID_CAS_TOOLCHAIN = previous;
   }
+});
+
+describe('Metro prefetch', () => {
+  test('starts before native work without waiting for the bundle', async () => {
+    let warming = false;
+    const h = harness({
+      warmMetro: (args: unknown) => {
+        expect(args).toEqual({ port: 8082, platform: 'android', isExpo: false, appId: 'com.example.app' });
+        warming = true;
+        return new Promise(() => {});
+      },
+      fingerprint: async () => {
+        expect(warming).toBe(true);
+        return { hash: FINGERPRINT, sources: [] };
+      },
+    });
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.verify[0]).toMatchObject({ requireBundleResponse: true });
+  });
+
+  test.each([{ variant: 'release' }, { metroCheck: false }, { resolveMetro: async () => ({ missing: true }) }])(
+    'skips prefetch when Metro is skipped or refused: %j',
+    async (options) => {
+      const warmMetro = vi.fn<() => Promise<void>>(async () => {});
+      const h = harness({ ...options, warmMetro });
+      await h.run();
+      expect(warmMetro).not.toHaveBeenCalled();
+    },
+  );
 });

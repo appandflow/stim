@@ -21,6 +21,22 @@ Plain \`stim start\` is local and does not create a public tunnel. Remote intent
 comes from \`start --remote\`, \`ios.remote\`, or \`android.remote\`. The
 \`metro.tunnel\` setting selects the provider after remote intent exists.
 
+BUNDLE WARMUP
+  After verifying Metro, \`stim ios\` and \`stim android\` prefetch the
+  platform's development bundle while native work continues. Expo supplies the
+  entry point and bundle options through its manifest; bare React Native uses
+  the standard index entry and development bundle options, including lazy loading.
+  Custom native entry points or dev-menu bundle options are not discovered.
+  Each request times out after 60 seconds and does not keep the command alive.
+  Warmup failures do not fail the native build.
+  Release builds and \`--no-metro-check\` skip warmup. Servers without Stim's
+  prefetch-aware response observer also skip it; restart an older supervisor
+  with the current CLI to enable warmup.
+
+  Prefetch completion is not launch proof. Development launch verification
+  waits for the app's own bundle response. With a bundler started outside Stim,
+  device logs may prove a request, but bundle completion may stay unverified.
+
 REMOTE DEVICE BACKENDS
   Metro exposure and device selection are separate:
 

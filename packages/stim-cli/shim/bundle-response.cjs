@@ -4,6 +4,11 @@ const { randomUUID } = require('node:crypto');
 
 function bundleResponseMiddleware(write) {
   return (req, res, next) => {
+    if (req.method === 'GET' && req.url === '/_stim/metro-warmup') {
+      res.end('ready');
+      return;
+    }
+    if (req.headers['x-stim-metro-warmup'] === '1') return next();
     let url;
     try {
       url = new URL(req.url, 'http://localhost');

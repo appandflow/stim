@@ -684,6 +684,8 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
         return false;
       }
     }
+    if (!release && metroCheck)
+      void d.warmMetro({ port: metroPort as number, platform: 'ios', isExpo, appId: proj?.bundleId });
     return true;
   }
 

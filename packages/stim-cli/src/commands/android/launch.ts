@@ -152,6 +152,7 @@ async function verifyAndroidRun({
 
   const verification: VerifyLaunchResultLike = metroCheck
     ? await verifyLaunched({
+        requireBundleResponse: true,
         onReadinessPending: () => phase('readiness', 'waiting for app readiness (up to 30s after bundle load)'),
         logsDir,
         since: launchedAt,

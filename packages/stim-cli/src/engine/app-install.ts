@@ -826,6 +826,7 @@ export async function verifyLaunch({
   metroPort = null,
   platform = null,
   mode = null,
+  requireBundleResponse,
   timeoutMs = VERIFY_TIMEOUT_MS,
   stabilityMs = STABILITY_WINDOW_MS,
   pollMs = VERIFY_POLL_MS,
@@ -843,6 +844,7 @@ export async function verifyLaunch({
   metroPort?: number | string | null;
   platform?: 'ios' | 'android' | null;
   mode?: string | null;
+  requireBundleResponse?: boolean;
   timeoutMs?: number;
   stabilityMs?: number;
   pollMs?: number;
@@ -870,6 +872,9 @@ export async function verifyLaunch({
   let nextCrashCheck = startedAt + 1000;
   while (true) {
     const metroRecords = read().filter((record) => after(record, since));
+    const bundleRecords = metroRecords.filter(
+      (record) => !requireBundleResponse || String(record.event).startsWith('bundle_response_'),
+    );
     const deviceRecords = readDevice().filter((record) => after(record, since));
     const clientRecords = readClient().filter((record) => after(record, since));
     if (now() >= nextCrashCheck) {
@@ -885,7 +890,7 @@ export async function verifyLaunch({
       if (crash) return crash;
     }
     if (deliveryId === null) {
-      const request = metroRecords.find(
+      const request = bundleRecords.find(
         (record) =>
           record.event === 'bundle_response_started' &&
           typeof record.requestId === 'string' &&
@@ -897,7 +902,7 @@ export async function verifyLaunch({
         stabilityDeadline = null;
       }
     }
-    for (const record of metroRecords) {
+    for (const record of bundleRecords) {
       if (isBundleProof(record, since, platform)) activity = record;
       const completed =
         deliveryId === null
@@ -958,7 +963,7 @@ export async function verifyLaunch({
           Number(record.ts) <= readinessDeadline &&
           appReadinessSignal(record, platform) === 'ready',
       );
-    const bundleErrors = metroRecords.filter(
+    const bundleErrors = bundleRecords.filter(
       (record) =>
         isFatalLaunchError(record, platform) ||
         (deliveryId !== null &&
