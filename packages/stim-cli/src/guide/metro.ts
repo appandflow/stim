@@ -26,7 +26,15 @@ BUNDLE WARMUP
   platform's development bundle while native work continues. Expo supplies the
   entry point and bundle options through its manifest; bare React Native uses
   the standard index entry and development bundle options, including lazy loading.
-  Custom native entry points or dev-menu bundle options are not discovered.
+  Warmup is enabled by default. Set optimizations.metroWarmup=false to disable
+  it on the next ios/android command, using the machine or project settings.
+  For custom entry points or bundle options, set metro.warmupUrl.ios and/or
+  metro.warmupUrl.android to the app's complete bundle URL or /path?query.
+  Stim keeps the path and query and uses the verified local Metro port.
+  Overrides replace discovery and receive no additional query defaults.
+  doctor validates configured URLs, including their platform; it does not
+  infer or auto-fix runtime native entry points or dev-menu bundle options.
+  See \`guide settings\` for configuration examples.
   Each request times out after 60 seconds and does not keep the command alive.
   Warmup failures do not fail the native build.
   Release builds and \`--no-metro-check\` skip warmup. Servers without Stim's

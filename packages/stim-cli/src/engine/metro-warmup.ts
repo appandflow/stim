@@ -37,18 +37,20 @@ export async function warmMetro({
   platform,
   isExpo,
   appId,
+  bundleUrl,
 }: {
   port: number;
   platform: 'ios' | 'android';
   isExpo: boolean;
   appId?: string | null;
+  bundleUrl?: string | null;
 }): Promise<void> {
   try {
     const origin = `http://127.0.0.1:${port}`;
     const supported = await requestLocal(new URL('/_stim/metro-warmup', origin), platform, false);
     if (supported !== 'ready') return;
     // React Native entry-point and dev-menu overrides are runtime inputs; bare prefetch uses template defaults.
-    let url = new URL('/index.bundle', origin);
+    const url = new URL('/index.bundle', origin);
     url.search = new URLSearchParams({
       platform,
       dev: 'true',
@@ -61,14 +63,15 @@ export async function warmMetro({
       sourcePaths: 'url-server',
       ...(appId ? { app: appId } : {}),
     }).toString();
-    if (isExpo) {
+    if (!bundleUrl && isExpo) {
       const body = await requestLocal(new URL(origin), platform, false);
       if (body === null) return;
       const manifest = JSON.parse(body);
-      const bundleUrl = manifest.launchAsset?.url ?? manifest.bundleUrl;
+      bundleUrl = manifest.launchAsset?.url ?? manifest.bundleUrl;
       if (typeof bundleUrl !== 'string') return;
-      const bundle = new URL(bundleUrl);
-      url = new URL(origin);
+    }
+    if (bundleUrl) {
+      const bundle = new URL(bundleUrl, origin);
       url.pathname = bundle.pathname;
       url.search = bundle.search;
     }

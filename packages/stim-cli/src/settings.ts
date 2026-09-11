@@ -32,11 +32,11 @@ export function mergeSettingsLayers(layers: Array<SettingsObject | null | undefi
   return out;
 }
 
-type SettingShape = 'string' | 'path' | 'strings' | 'number' | 'object' | 'boolean';
+type SettingShape = 'string' | 'path' | 'strings' | 'number' | 'object' | 'boolean' | 'bundle-url';
 
 interface SettingShapeRule {
   expected: string;
-  accepts: (value: unknown) => boolean;
+  accepts: (value: unknown, key: string) => boolean;
 }
 
 const SETTING_SHAPE_RULES: Record<SettingShape, SettingShapeRule> = {
@@ -49,6 +49,18 @@ const SETTING_SHAPE_RULES: Record<SettingShape, SettingShapeRule> = {
   },
   number: { expected: 'a number', accepts: (value) => typeof value === 'number' },
   object: { expected: 'an object', accepts: isPlainObject },
+  'bundle-url': {
+    expected: 'an HTTP(S) URL or /path ending in .bundle with a matching platform query and no fragment',
+    accepts: (value, key) => {
+      if (typeof value !== 'string' || !/^(https?:\/\/|\/(?!\/))/.test(value) || /[\s\\#]/.test(value)) return false;
+      try {
+        const url = new URL(value, 'http://localhost');
+        return /\.bundle\/*$/.test(url.pathname) && url.searchParams.get('platform') === key.split('.').at(-1);
+      } catch {
+        return false;
+      }
+    },
+  },
 };
 
 const SETTING_SHAPES: Record<string, SettingShape> = {
@@ -72,6 +84,9 @@ const SETTING_SHAPES: Record<string, SettingShape> = {
   'metro.tunnel': 'string',
   'metro.ngrokUrl': 'string',
   'metro.publicUrl': 'string',
+  'metro.warmupUrl': 'object',
+  'metro.warmupUrl.ios': 'bundle-url',
+  'metro.warmupUrl.android': 'bundle-url',
   'worktree.exclude': 'strings',
   'worktree.defaultBranch': 'string',
   'cache.provider': 'string',
@@ -105,7 +120,7 @@ export function settingShapeErrors(settings: unknown): string[] {
     const value = settingValueAt(settings, path);
     if (value === undefined) continue;
     const rule = SETTING_SHAPE_RULES[shape];
-    if (rule.accepts(value)) continue;
+    if (rule.accepts(value, path)) continue;
     errors.push(`Invalid ${path} setting ${JSON.stringify(value)}. Expected ${rule.expected}.`);
   }
   return errors;
@@ -446,7 +461,11 @@ export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
   const unknown: string[] = [];
   for (const [key, value] of Object.entries(settings)) {
     const path = prefix ? `${prefix}.${key}` : key;
-    if (KNOWN_SETTINGS.has(path) && ![...KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`))) continue;
+    if (
+      KNOWN_SETTINGS.has(path) &&
+      (!isPlainObject(value) || ![...KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`)))
+    )
+      continue;
     if (isPlainObject(value) && [...KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`))) {
       unknown.push(...unknownSettingKeys(value, path));
       continue;
@@ -660,6 +679,11 @@ export function publicUrlSetting(settings: SettingsObject): string | null {
   if (typeof block !== 'object' || block === null) return null;
   const url = (block as { publicUrl?: unknown }).publicUrl;
   return typeof url === 'string' && url.trim() ? url : null;
+}
+
+export function metroWarmupUrlSetting(settings: SettingsObject, platform: 'ios' | 'android'): string | null {
+  const value = settingValueAt(settings, `metro.warmupUrl.${platform}`);
+  return typeof value === 'string' ? value : null;
 }
 
 export function ngrokUrlSetting(settings: SettingsObject): string | null {

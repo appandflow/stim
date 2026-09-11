@@ -5427,21 +5427,35 @@ test('CAS Release builds skip legacy providers that cannot key compiler identity
 });
 
 describe('Metro prefetch', () => {
-  test('starts before native work without waiting for the bundle', async () => {
-    let warming = false;
-    const h = harness({
-      warmMetro: (args: unknown) => {
-        expect(args).toEqual({ port: 8082, platform: 'android', isExpo: false, appId: 'com.example.app' });
-        warming = true;
-        return new Promise(() => {});
-      },
-      fingerprint: async () => {
-        expect(warming).toBe(true);
-        return { hash: FINGERPRINT, sources: [] };
-      },
-    });
+  test.each([null, '/custom.bundle?platform=android&dev=true'])(
+    'starts before native work without waiting for the bundle: %s',
+    async (bundleUrl) => {
+      let warming = false;
+      const h = harness({
+        resolveSettingsFor: () =>
+          bundleUrl ? { metro: { warmupUrl: { android: bundleUrl, ios: '/other.bundle?platform=ios' } } } : {},
+        warmMetro: (args: unknown) => {
+          expect(args).toEqual({ port: 8082, platform: 'android', isExpo: false, appId: 'com.example.app', bundleUrl });
+          warming = true;
+          return new Promise(() => {});
+        },
+        fingerprint: async () => {
+          expect(warming).toBe(true);
+          return { hash: FINGERPRINT, sources: [] };
+        },
+      });
+      expect((await h.run()).ok).toBe(true);
+      expect(h.calls.verify[0]).toMatchObject({ requireBundleResponse: true });
+    },
+  );
+
+  test('disabling warmup still verifies Metro and completes the native run', async () => {
+    const warmMetro = vi.fn<() => Promise<void>>(async () => {});
+    const h = harness({ warmMetro, resolveSettingsFor: () => ({ optimizations: { metroWarmup: false } }) });
     expect((await h.run()).ok).toBe(true);
-    expect(h.calls.verify[0]).toMatchObject({ requireBundleResponse: true });
+    expect(warmMetro).not.toHaveBeenCalled();
+    expect(h.calls.metro).toHaveLength(1);
+    expect(h.calls.verify).toHaveLength(1);
   });
 
   test.each([{ variant: 'release' }, { metroCheck: false }, { resolveMetro: async () => ({ missing: true }) }])(

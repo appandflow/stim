@@ -37,6 +37,7 @@ import {
   androidAvdConfigSettingError,
   androidDataPartitionSizeGbSettingError,
   cacheProviderSettingError,
+  metroWarmupUrlSetting,
   publicUrlSetting,
   remoteAndroidSetting,
   remoteDeviceSettingError,
@@ -1191,8 +1192,14 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   }
 
   const runFromFingerprint = async (): Promise<RunAndroidResult> => {
-    if (metroCheck && metroPort !== null)
-      void prewarmMetro({ port: metroPort, platform: 'android', isExpo, appId: androidPackage });
+    if (metroCheck && metroPort !== null && optimizations.metroWarmup)
+      void prewarmMetro({
+        port: metroPort,
+        platform: 'android',
+        isExpo,
+        appId: androidPackage,
+        bundleUrl: metroWarmupUrlSetting(settings, 'android'),
+      });
     if (!(await resolveInitialFingerprint())) return phaseFailure!;
 
     let remote: LoadProjectProviderResult | null = null;

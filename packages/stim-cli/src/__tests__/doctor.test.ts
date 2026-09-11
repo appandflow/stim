@@ -1256,11 +1256,21 @@ test('runDoctor reports a wrong-typed setting as a finding rather than refusing'
   process.env.STIM_HOME = home;
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
-    writeFileSync(join(project, '.stim.json'), JSON.stringify({ ios: { configuration: {} }, caches: 42 }));
+    writeFileSync(
+      join(project, '.stim.json'),
+      JSON.stringify({
+        ios: { configuration: {} },
+        caches: 42,
+        optimizations: { metroWarmup: 'false' },
+        metro: { warmupUrl: { ios: '/index.bundle?platform=android' } },
+      }),
+    );
     const findings = runDoctor(project, { concurrency: { maxBuilds: 0, maxDevices: 0 } });
     const shapeFindings = findings.filter((finding) => /wrong type/i.test(finding.title));
     expect(shapeFindings.map((finding) => finding.detail)).toEqual([
+      'Invalid optimizations.metroWarmup setting "false". Expected true or false.',
       'Invalid ios.configuration setting {}. Expected a string.',
+      'Invalid metro.warmupUrl.ios setting "/index.bundle?platform=android". Expected an HTTP(S) URL or /path ending in .bundle with a matching platform query and no fragment.',
       'Invalid caches setting 42. Expected an array of strings.',
     ]);
     for (const finding of shapeFindings) {

@@ -27,6 +27,7 @@ import {
   iosSigningIdentitySettingError,
   iosSigningIdentitySha1Setting,
   iosSigningIdentitySha1SettingError,
+  metroWarmupUrlSetting,
   publicUrlSetting,
   remoteDeviceSettingError,
   remoteIosSetting,
@@ -684,8 +685,14 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
         return false;
       }
     }
-    if (!release && metroCheck)
-      void d.warmMetro({ port: metroPort as number, platform: 'ios', isExpo, appId: proj?.bundleId });
+    if (!release && metroCheck && optimizations.metroWarmup)
+      void d.warmMetro({
+        port: metroPort as number,
+        platform: 'ios',
+        isExpo,
+        appId: proj?.bundleId,
+        bundleUrl: metroWarmupUrlSetting(settings, 'ios'),
+      });
     return true;
   }
 

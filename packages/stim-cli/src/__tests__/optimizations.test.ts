@@ -130,7 +130,7 @@ test.each(['ios', 'android'] as const)(
     expect(
       optimizationBuildProfile(
         platform,
-        resolveOptimizations({ optimizations: { remoteBuildCache: false, buildCache: false } }, {}),
+        resolveOptimizations({ optimizations: { remoteBuildCache: false, buildCache: false, metroWarmup: false } }, {}),
       ),
     ).toBeUndefined();
   },

@@ -313,7 +313,7 @@ test('the settings topic documents every supported setting key', () => {
   assert(body);
   const src = readFileSync(new URL('../settings.ts', import.meta.url), 'utf-8');
   const table = src.slice(src.indexOf('const SETTING_SHAPES'), src.indexOf('};', src.indexOf('const SETTING_SHAPES')));
-  const known = [...table.matchAll(/^\s*'?([A-Za-z0-9.]+)'?: '[a-z]+',$/gm)]
+  const known = [...table.matchAll(/^\s*'?([A-Za-z0-9.]+)'?: '[a-z-]+',$/gm)]
     .map((match) => match[1])
     .filter((key): key is string => key !== undefined);
   expect(known.length).toBeGreaterThan(0);

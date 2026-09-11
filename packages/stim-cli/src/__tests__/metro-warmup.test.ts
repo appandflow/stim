@@ -74,6 +74,31 @@ test('uses Expo manifest entry/options on the verified local port', async () => 
   ]);
 });
 
+test.each([
+  { isExpo: false, platform: 'ios', origin: '' },
+  { isExpo: false, platform: 'android', origin: 'http://device.example:8081' },
+  { isExpo: true, platform: 'ios', origin: 'https://public.example' },
+  { isExpo: true, platform: 'android', origin: '' },
+] as const)(
+  'a custom $platform URL overrides bundle discovery for Expo=$isExpo',
+  async ({ isExpo, platform, origin }) => {
+    const path = `/src/native.bundle?platform=${platform}&dev=true&lazy=false&transform.custom=a%2Fb&custom=one&custom=two`;
+    const requests: string[] = [];
+    const records: Record<string, unknown>[] = [];
+    const observe = bundleResponseMiddleware((record) => records.push(record));
+    const port = await listen((req, res) =>
+      observe(req, res, () => {
+        requests.push(req.url!);
+        expect(req.headers.host).toBe(`127.0.0.1:${port}`);
+        res.end('bundle');
+      }),
+    );
+    await warmMetro({ port, platform, isExpo, bundleUrl: `${origin}${path}`, appId: 'not-added-to-override' });
+    expect(requests).toEqual([path]);
+    expect(records).toEqual([]);
+  },
+);
+
 test.each(['invalid JSON', '{}', 'null'])('a missing Expo bundle URL skips prefetch: %s', async (body) => {
   const methods: string[] = [];
   const port = await listen((req, res) => {
