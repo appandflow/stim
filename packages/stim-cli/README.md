@@ -103,17 +103,17 @@ stim worktree warm
 ```
 
 If a harness already created the linked worktree, run only `stim worktree warm`
-there. Warm copies missing ignored state from main, including eligible `.env`
-and local configuration files. Existing entries are preserved; existing
-ignored directories such as `node_modules` are skipped whole.
+there. Warm copies missing ignored state from the source checkout, including
+eligible `.env` and local configuration files. Existing entries are preserved;
+existing ignored directories such as `node_modules` are skipped whole.
 
-`stim worktree warm --refresh` brings the main checkout up to date first: it
+`stim worktree warm --refresh` brings the source checkout up to date first: it
 fetches, fast-forwards whatever branch is checked out there, and installs what
-the new commits moved before copying. It refuses a main checkout it cannot move
-(uncommitted tracked changes, a rebase or merge in progress, a detached HEAD, a
-diverged branch) and never switches branches. One lock per repository keeps a
-copy from reading a `node_modules` a refresh is rewriting; plain warms still run
-side by side. A plain warm also refuses (`STIM_DEPS_INCOMPLETE`) when the last
+the new commits moved before copying. It refuses a source checkout it cannot
+move (uncommitted tracked changes, a rebase or merge in progress, a detached
+HEAD, a diverged branch) and never switches branches. One lock per repository
+keeps a copy from reading a `node_modules` a refresh is rewriting; plain warms
+still run side by side. A plain warm also refuses (`STIM_DEPS_INCOMPLETE`) when the last
 install of the lockfile on disk did not finish, instead of copying a partial
 `node_modules`; `stim worktree warm --refresh` reinstalls it.
 

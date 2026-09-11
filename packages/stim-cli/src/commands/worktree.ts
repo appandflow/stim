@@ -118,10 +118,10 @@ function mainCheckoutAppDir(root: string, target: string): string {
 export function registerWarm(worktree: Command): void {
   worktree
     .command('warm')
-    .description('Copy missing ignored paths from the main checkout into the current linked worktree.')
+    .description('Copy missing ignored paths from the source checkout into the current linked worktree.')
     .option(
       '--refresh',
-      'Before copying, fast-forward the main checkout to its upstream and install what the new commits moved.',
+      'Before copying, fast-forward the source checkout to its upstream and install what the new commits moved.',
     )
     .action(async (opts: { refresh?: boolean }) => {
       try {
@@ -675,7 +675,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
       const branch = pending.worktreeBranch;
       const mainRoot = pending.worktreeMainRoot;
       if (!existsSync(mainRoot)) {
-        console.error(chalk.red(`Cannot finish branch cleanup for ${path}: main worktree ${mainRoot} is missing.`));
+        console.error(chalk.red(`Cannot finish branch cleanup for ${path}: source checkout ${mainRoot} is missing.`));
         console.error(chalk.dim(`Delete ${branch} from the repository, then run \`stim gc --delete\`.`));
         process.exitCode = 1;
         return;
@@ -741,9 +741,9 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
   }
   if (isMainWorkingTree(entry.path)) {
     if (entry.path !== path) {
-      console.error(chalk.dim(`${path} is inside the main checkout ${entry.path}; reclaiming its environment.`));
+      console.error(chalk.dim(`${path} is inside the source checkout ${entry.path}; reclaiming its environment.`));
     }
-    await reclaimEnvironment(entry.path, 'it is the main checkout');
+    await reclaimEnvironment(entry.path, 'it is the source checkout');
     return;
   }
   if (entry.path !== path) {
@@ -805,7 +805,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
         }
         upsertProject(path, { worktreeRemovalComplete: true, worktreePendingBranchSha: approvedBranchSha });
         if (!branchDeleteCwd) {
-          console.error(chalk.yellow(phaseLine('branch', `kept ${branch} (Stim could not find the main worktree)`)));
+          console.error(chalk.yellow(phaseLine('branch', `kept ${branch} (Stim could not find the source checkout)`)));
           console.error(chalk.dim(`  Retry with: stim worktree remove ${path}`));
           process.exitCode = 1;
           finish();
@@ -848,7 +848,7 @@ export function registerRemove(worktree: Command): void {
   worktree
     .command('remove [target]')
     .description(
-      'Remove a worktree, its unused Stim-created branch, build artifacts, owned devices, and Metro port. Defaults to the current workspace. On the main checkout it reclaims the environment only and leaves the tree in place.',
+      'Remove a worktree, its unused Stim-created branch, build artifacts, owned devices, and Metro port. Defaults to the current workspace. On the source checkout it reclaims the environment only and leaves the tree in place.',
     )
     .option('--force', 'remove even when the worktree holds uncommitted or unpushed work')
     .action(runRemove);

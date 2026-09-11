@@ -356,7 +356,7 @@ test('a copy with no claim of its own reads what it would overlap before it copi
   expect(warmClaimBlockedLine('EACCES: permission denied', blocker!)).toMatch(
     /^ {2}lock {8}unavailable \(EACCES: permission denied\); stim worktree warm --refresh \(pid \d+\) holds this repository$/,
   );
-  expect(warmClaimBlockedRefusal(blocker!)).toContain('Refusing to copy from a main checkout a refresh is rewriting');
+  expect(warmClaimBlockedRefusal(blocker!)).toContain('Refusing to copy from a source checkout a refresh is rewriting');
   refresh.release();
 
   plantClaim(warmClaimPath(REPO), 'exclusive', goneClaimOwner(), { claimId: 'dead-refresh' });

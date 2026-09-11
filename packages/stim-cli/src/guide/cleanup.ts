@@ -37,15 +37,16 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   branches stay. A branch with an existing Stim ownership record is deleted
   only when it has no unique commits.
 
-ON THE MAIN CHECKOUT
-  git cannot remove the main working tree, and deleting the source tree is not
-  what anyone meant -- so there, and only there, \`worktree remove\` reclaims
-  the ENVIRONMENT and nothing else: the owned devices are parked or deleted, the Metro
-  port freed, the registry entries (including nested monorepo app dirs)
-  dropped, and the global workspace directory deleted. The tree itself is never touched, which
-  is also why the dirty-tree and unpushed guards do not apply on that path.
+ON THE SOURCE CHECKOUT
+  git cannot remove a repository's main working tree, and deleting the source
+  checkout is not what anyone meant -- so there, and only there,
+  \`worktree remove\` reclaims the ENVIRONMENT and nothing else: the owned
+  devices are parked or deleted, the Metro port freed, the registry entries
+  (including nested monorepo app dirs) dropped, and the global workspace
+  directory deleted. The tree itself is never touched, which is also why the
+  dirty-tree and unpushed guards do not apply on that path.
   It ends with:
-    Reclaimed the environment; the working tree stays (it is the main checkout).
+    Reclaimed the environment; the working tree stays (it is the source checkout).
   A registered project directory that is not a git repo at all gets the same
   environment reclaim -- there is nothing else remove could mean there.
 

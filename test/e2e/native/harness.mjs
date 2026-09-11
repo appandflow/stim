@@ -174,7 +174,7 @@ export function assertMatchingPods(appDir) {
   const lock = join(appDir, 'ios', 'Podfile.lock');
   const manifest = join(appDir, 'ios', 'Pods', 'Manifest.lock');
   const remedy =
-    "Prepare matching Pods in the main checkout before the cache suite: for Expo, run `npx --no-install expo prebuild --platform ios`; for bare React Native, run the project's normal pod install.";
+    "Prepare matching Pods in the source checkout before the cache suite: for Expo, run `npx --no-install expo prebuild --platform ios`; for bare React Native, run the project's normal pod install.";
   assert(
     existsSync(lock) && existsSync(manifest),
     `Pods reuse requires Podfile.lock and Pods/Manifest.lock at ${appDir}. ${remedy}`,
@@ -317,7 +317,7 @@ export async function verifyCleanup({ h, cleanup, appDir, created }) {
   h.log('(3) status is clean of our workspaces');
 
   const porcelain = h.sh('git', ['-C', appDir, 'status', '--porcelain']).stdout.trim();
-  assert(porcelain === '', `main checkout is dirty after the run:\n${porcelain}`);
+  assert(porcelain === '', `source checkout is dirty after the run:\n${porcelain}`);
   const wl = h.sh('git', ['-C', appDir, 'worktree', 'list', '--porcelain']).stdout;
   const registered = new Set(
     wl
@@ -326,7 +326,7 @@ export async function verifyCleanup({ h, cleanup, appDir, created }) {
       .map((line) => line.slice('worktree '.length)),
   );
   assert(!created.some((path) => registered.has(resolve(path))), `a worktree registration survived:\n${wl}`);
-  h.log('(4) main checkout byte-clean, no worktrees linger');
+  h.log('(4) source checkout byte-clean, no worktrees linger');
 
   const gc = h.cli(['gc'], { allowFail: true });
   assert(!created.some((p) => gc.stdout.includes(p)), 'gc reports one of our workspaces as orphaned');

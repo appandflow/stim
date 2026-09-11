@@ -11,14 +11,14 @@ TWO WORKFLOWS
 
 SINGLE CHECKOUT: work in place, on whatever branch the task needs, in one
 directory. start, ios, android, logs, stop, and never a linked worktree. That
-directory is your workspace, and no rule below about keeping the main checkout
+directory is your workspace, and no rule below about keeping the source checkout
 fit as a seed applies to it.
 
 WORKTREE: the checkout you cloned is a seed. It stays clean and on the default
 branch, and every task gets a linked worktree warmed from it. In this workflow
-the main checkout is infrastructure, not a workspace: you edit, build, and run
+the source checkout is infrastructure, not a workspace: you edit, build, and run
 in the worktree, and you keep the seed fit to copy. Every rule below about the
-main checkout's fitness as a seed belongs to this workflow.
+source checkout's fitness as a seed belongs to this workflow.
 
 Doctor reports that fitness -- how far behind the seed is, uncommitted tracked
 changes, an interrupted rebase or merge, a detached HEAD, a diverged branch, a
@@ -32,11 +32,11 @@ Work in the current checkout by default. When the task needs another branch or
 an isolated environment, take the worktree workflow: create a linked worktree
 with Git and warm its ignored state. If a harness already created this linked
 worktree, run stim worktree warm here instead of creating another one. It
-copies missing ignored paths from the main checkout, including eligible .env
+copies missing ignored paths from the source checkout, including eligible .env
 and local configuration files. It preserves the branch, tracked files, and
 every existing destination entry; existing ignored directories are skipped
-whole, not filled in. Add --refresh to fast-forward the main checkout and
-install what moved there before the copy; it refuses a main checkout with local
+whole, not filled in. Add --refresh to fast-forward the source checkout and
+install what moved there before the copy; it refuses a source checkout with local
 work and never switches branches. Read guide lifecycle options for exclusions
 and incomplete-copy remedies.
 
@@ -50,7 +50,7 @@ it finishes; concurrent files can be overwritten or removed.
 If warm fails or reports incomplete, resolve the reported failure first.
 
 Before native worktree work, run doctor for the platform in scope. It checks
-the main checkout from a linked worktree. Fix relevant findings and inspect the
+the source checkout from a linked worktree. Fix relevant findings and inspect the
 upstream gap; in the single-checkout workflow those seed findings do not
 appear. It also prints the running CLI version and the stim installation
 resolved from PATH. If that resolved installation is older than another one,
@@ -102,7 +102,7 @@ RULES DURING THE LOOP
   and doctor reports it as a finding.
 - Put runtime .stim.json beside that app's package.json. Monorepo apps do not
   inherit a repository-root runtime file. Keep repository-wide worktree-copy
-  rules at the main checkout root; see guide settings for the two scopes.
+  rules at the source checkout root; see guide settings for the two scopes.
 - Run start before a debug ios or android build. If it returns STIM_NO_METRO,
   run stim start and retry.
 - Run ios or android again after a native input changes. A JavaScript-only

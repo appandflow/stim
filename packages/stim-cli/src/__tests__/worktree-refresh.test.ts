@@ -224,7 +224,7 @@ test('the refresh decisions read off the state without touching git', () => {
   });
 });
 
-test('--refresh fast-forwards the main checkout, then copies', async () => {
+test('--refresh fast-forwards the source checkout, then copies', async () => {
   const published = fallBehind({ 'src/new.ts': 'upstream work\n' });
   write(root, '.env', 'main env');
   const result = await runWarm(target, '--refresh');
@@ -250,7 +250,7 @@ test('--refresh reports a fetch it could not run and continues with the local st
   expect(result.stderr).toMatch(/checkout {4}main 1 commit behind origin\/main -> fast-forwarded to/);
 });
 
-test('--refresh refuses a diverged main checkout without merging or resetting it', async () => {
+test('--refresh refuses a diverged source checkout without merging or resetting it', async () => {
   fallBehind({ 'src/new.ts': 'upstream work\n' });
   write(root, 'src/local.ts', 'local work\n');
   commit(root, 'local');
@@ -263,7 +263,7 @@ test('--refresh refuses a diverged main checkout without merging or resetting it
   expect(result.stderr).not.toMatch(/carry {7}complete/);
 });
 
-test('--refresh refuses a dirty main checkout and names the path, but a plain warm still copies it', async () => {
+test('--refresh refuses a dirty source checkout and names the path, but a plain warm still copies it', async () => {
   write(root, 'package.json', '{"name":"edited-in-main"}\n');
   write(root, '.env', 'main env');
   const refused = await runWarm(target, '--refresh');
@@ -283,7 +283,7 @@ test('--refresh refuses a dirty main checkout and names the path, but a plain wa
   expect(readFileSync(join(root, 'package.json'), 'utf-8')).toBe('{"name":"edited-in-main"}\n');
 });
 
-test('--refresh refuses a main checkout with a merge in progress', async () => {
+test('--refresh refuses a source checkout with a merge in progress', async () => {
   git(root, 'checkout', '-qb', 'other');
   write(root, 'package.json', '{"name":"other-side"}\n');
   commit(root, 'other side');
@@ -300,7 +300,7 @@ test('--refresh refuses a main checkout with a merge in progress', async () => {
   expect(existsSync(join(root, '.git', 'MERGE_HEAD'))).toBe(true);
 });
 
-test('--refresh refuses a detached main checkout and an untracked file is not a reason to refuse', async () => {
+test('--refresh refuses a detached source checkout and an untracked file is not a reason to refuse', async () => {
   write(root, 'untracked.txt', 'not a reason\n');
   git(root, 'checkout', '-q', '--detach');
   const result = await runWarm(target, '--refresh');
@@ -324,7 +324,7 @@ test('--refresh leaves a branch with no upstream where it is', async () => {
   expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
 });
 
-test('--refresh warns when the main checkout is not on the default branch, and stays quiet when it is', async () => {
+test('--refresh warns when the source checkout is not on the default branch, and stays quiet when it is', async () => {
   const onDefault = await runWarm(target, '--refresh');
   expect(onDefault.stderr).not.toMatch(/default branch/);
 
@@ -618,7 +618,7 @@ test('--refresh installs at the repository root when upstream removed the app it
   expect(spawned).toEqual([{ cmd: 'pnpm', cwd: root }]);
 });
 
-test('--refresh refuses a main checkout whose only change is staged, with the working file back at HEAD', async () => {
+test('--refresh refuses a source checkout whose only change is staged, with the working file back at HEAD', async () => {
   write(root, 'package.json', '{"name":"staged"}\n');
   git(root, 'add', 'package.json');
   write(root, 'package.json', '{"name":"refresh-fixture"}\n');

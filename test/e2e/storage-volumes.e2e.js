@@ -93,7 +93,7 @@ test(
       const warmFinding = findings.find((finding) => finding.title === 'Worktree copy crosses filesystems');
       assert.ok(warmFinding);
       assert.match(warmFinding.detail, /cannot share file blocks across volumes/);
-      assert.match(warmFinding.fix, /main checkout and linked worktree on the same volume/);
+      assert.match(warmFinding.fix, /source checkout and linked worktree on the same volume/);
     } finally {
       resetExecutor();
       for (const [key, value] of Object.entries(previous)) {
