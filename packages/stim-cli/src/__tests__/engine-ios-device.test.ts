@@ -696,7 +696,39 @@ describe('listIosDevices against a real devicectl', { skip: LIVE as unknown as b
     resetExecutor();
     const [connected] = listIosDevices();
     if (!connected) return;
-    const pid = iosDeviceProcess({ udid: connected.udid, appName: 'NoSuchAppStimWouldEverBuild' });
+    const executor = getExecutor();
+    let failure = '';
+    let probedUdid: string | undefined;
+    const pid = iosDeviceProcess(
+      { udid: connected.udid, appName: 'NoSuchAppStimWouldEverBuild' },
+      {
+        exec: {
+          ...executor,
+          runFile(file, args, options) {
+            probedUdid = args?.[args.indexOf('--device') + 1];
+            try {
+              return executor.runFile(file, args, options);
+            } catch (error) {
+              const failed = error as Error & { stderr?: unknown; stdout?: unknown };
+              failure = [failed.message, failed.stderr, failed.stdout].filter(Boolean).join('\n');
+              throw error;
+            }
+          },
+        },
+      },
+    );
+    expect(probedUdid).toBe(connected.udid);
+    if (pid === undefined) {
+      const unavailable =
+        /^ERROR: A connection to this device could not be established\. \(com\.apple\.dt\.CoreDeviceError error 4000 \(0xFA0\)\)$/m.test(
+          failure,
+        ) ||
+        /^ERROR: CoreDeviceService was unable to locate a device matching the requested device identifier\. \(DeviceIdentifier: [^\r\n)]+\) \(com\.apple\.dt\.CoreDeviceError error 1011 \(0x3F3\)\)$/m.test(
+          failure,
+        );
+      if (iosLaunchRefusalKind(failure) !== null || unavailable) return;
+      throw new Error(failure || 'The probe failed without a devicectl error');
+    }
     expect(pid).toBe(null);
   }, 120_000);
 });
