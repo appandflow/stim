@@ -359,6 +359,22 @@ test('ensureConfig creates a v2 config with a repos section', () => {
   expect(cfg.repos).toEqual({});
 });
 
+test('adopts a hand-edited config that has no projects container', () => {
+  writeFileSync(
+    join(tmpHome, 'config.json'),
+    JSON.stringify({ version: 2, optimizations: { android: { compilerCache: 'auto' } } }),
+  );
+
+  const cfg = ensureConfig();
+  expect(cfg.projects).toEqual({});
+
+  expect(() => upsertProject('/a', { metroPort: 8082 })).not.toThrow();
+  expect(getProject('/a')?.metroPort).toBe(8082);
+  expect(JSON.parse(readFileSync(join(tmpHome, 'config.json'), 'utf-8')).optimizations).toEqual({
+    android: { compilerCache: 'auto' },
+  });
+});
+
 test('migrates a v1 config without touching projects', () => {
   saveConfig(
     makeConfig({

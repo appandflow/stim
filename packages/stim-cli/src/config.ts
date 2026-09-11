@@ -74,6 +74,10 @@ export function ensureConfig(): Config {
     const existing = loadConfig();
     if (existing) {
       let changed = false;
+      if (!existing.projects) {
+        existing.projects = {};
+        changed = true;
+      }
       if (!existing.repos) {
         existing.repos = {};
         changed = true;
