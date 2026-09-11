@@ -2717,6 +2717,32 @@ test('--delete removes the stale lock and leaves the live one alone', async () =
   expect(output).toMatch(/build lock/i);
 });
 
+test.skipIf(process.getuid?.() === 0)(
+  '--delete continues after staging cleanup fails and leaves no cleanup claim',
+  async () => {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    installExecutor();
+    const blocked = join(tmpHome, 'build-locks', 'ios-staging.lock');
+    const staging = join(blocked, '.staging-interrupted');
+    const writable = join(tmpHome, 'build-slots', 'slot-0');
+    mkdirSync(staging, { recursive: true });
+    mkdirSync(writable, { recursive: true });
+    writeFileSync(join(staging, 'partial.claim'), '{');
+    chmodSync(staging, 0);
+    try {
+      const output = await captureLog(() => sweepingGc({ delete: true }));
+      expect(output).toContain(`Failed to clear the build lock at ${blocked}: EACCES`);
+      expect(output).toContain('Cleared build slot 0');
+      expect(output).toContain('1 entry could not be deleted');
+      expect(existsSync(staging)).toBe(true);
+      expect(existsSync(writable)).toBe(false);
+      expect(readClaimSet(blocked).live).toEqual([]);
+    } finally {
+      chmodSync(staging, 0o700);
+    }
+  },
+);
+
 test('--delete keeps a lock whose holder cannot be identified, and says why', async () => {
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();

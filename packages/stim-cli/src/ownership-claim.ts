@@ -419,8 +419,13 @@ export function clearFreeClaimSet({ root, label = 'ownership' }: { root: string;
     if (attempt.pending) releaseClaim(attempt.pending);
     return { status: 'held', holder: attempt.held ?? attempt.waitingFor?.[0] ?? null };
   }
-  removeAbandonedStaging(root);
-  releaseClaim(attempt.acquired);
+  try {
+    removeAbandonedStaging(root);
+  } catch (err) {
+    return { status: 'failed', reason: (err as Error)?.message ?? String(err) };
+  } finally {
+    releaseClaim(attempt.acquired);
+  }
   tidySet(root);
   const remaining = names(root);
   if (remaining === 'unreadable') return { status: 'failed', reason: 'its directory could not be read' };
