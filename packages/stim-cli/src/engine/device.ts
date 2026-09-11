@@ -513,6 +513,15 @@ function findOtherProjectOwningAvd(avdName: string, projectPath: string): string
   return null;
 }
 
+export class AvdRecoveryError extends Error {
+  readonly remedy: string;
+
+  constructor(message: string, remedy: string, cause?: unknown) {
+    super(message, { cause });
+    this.remedy = remedy;
+  }
+}
+
 async function ensureOwnedAndroidDevice({
   record,
   projectPath,
@@ -670,7 +679,7 @@ async function ensureOwnedAndroidDevice({
       };
     }
   }
-  let created: { avdName: string; systemImage: string | null };
+  let created: { avdName: string; systemImage: string | null; consolePort?: number; serial?: string };
   let fresh = false;
   try {
     created = withConfigLock(() => {
@@ -697,31 +706,63 @@ async function ensureOwnedAndroidDevice({
   } catch (e) {
     const message = String((e as Error)?.message || e);
     const avdName = ownedAvdName(label);
-    if (message.includes('already exists') && listAvds().includes(avdName)) {
-      created = withConfigLock(() => {
-        if (readParked('android').some((entry) => entry.name === avdName)) {
-          throw new Error(`AVD ${avdName} was parked by another Stim run. Retry to adopt it safely.`, { cause: e });
-        }
-        const owner = findOtherProjectOwningAvd(avdName, projectPath);
-        if (owner) {
-          throw new Error(
-            `AVD ${avdName} already exists and is owned by another project (${owner}). Retry to allocate a distinct owned emulator.`,
-            { cause: e },
+    if (message.includes('already exists')) {
+      try {
+        if (!listAvds().includes(avdName)) {
+          throw new AvdRecoveryError(
+            `AVD ${avdName} already exists on disk but is not listed by the emulator. ${message}`,
+            'Run `npx stim gc` to inspect orphaned owned AVDs, then `npx stim gc --delete` to reclaim those safe to delete. Retry `stim android` after cleanup; keep any AVD that GC cannot verify.',
+            e,
           );
         }
-        const current = loadConfig()?.projects?.[projectPath]?.platforms?.android;
-        if (current?.avdName) {
-          const state = current.setupIncomplete ? 'has incomplete setup' : 'was registered';
-          throw new Error(
-            `AVD ${current.avdName} ${state} by another concurrent Stim run. Retry after that run finishes so the recorded device is resolved safely.`,
-            { cause: e },
-          );
-        }
-        const result = { avdName, systemImage: ownedAvdSystemImage(avdName) };
-        setDevice(projectPath, 'android', { avdName, owned: true, deviceName: avdName });
-        return result;
-      });
+        created = withConfigLock(() => {
+          if (readParked('android').some((entry) => entry.name === avdName)) {
+            throw new Error(`AVD ${avdName} was parked by another Stim run. Retry to adopt it safely.`, { cause: e });
+          }
+          const owner = findOtherProjectOwningAvd(avdName, projectPath);
+          if (owner) {
+            throw new Error(
+              `AVD ${avdName} already exists and is owned by another project (${owner}). Retry to allocate a distinct owned emulator.`,
+              { cause: e },
+            );
+          }
+          const current = loadConfig()?.projects?.[projectPath]?.platforms?.android;
+          if (current?.avdName) {
+            const state = current.setupIncomplete ? 'has incomplete setup' : 'was registered';
+            throw new Error(
+              `AVD ${current.avdName} ${state} by another concurrent Stim run. Retry after that run finishes so the recorded device is resolved safely.`,
+              { cause: e },
+            );
+          }
+          const resolved = resolveOwnedAvdSerial(avdName);
+          if (resolved.missing || resolved.notOwned) {
+            throw new Error(
+              `AVD ${avdName} could not be verified for recovery. Retry after checking its registration.`,
+              {
+                cause: e,
+              },
+            );
+          }
+          if (!resolved.serial) assertOwnedAvdStopped(avdName);
+          const recovered = {
+            avdName,
+            owned: true,
+            deviceName: avdName,
+            ...(resolved.serial ? { consolePort: Number(resolved.serial.replace(/^emulator-/, '')) } : {}),
+          };
+          setDevice(projectPath, 'android', recovered);
+          return { ...recovered, systemImage: ownedAvdSystemImage(avdName), serial: resolved.serial };
+        });
+      } catch (error) {
+        if (error instanceof AvdRecoveryError) throw error;
+        throw new AvdRecoveryError(
+          `Could not recover owned AVD ${avdName}: ${String((error as Error)?.message || error)}`,
+          'Inspect `npx stim status` and `adb devices`. Wait for any other Stim run using this AVD to finish, then retry `stim android`. Keep the AVD and its process locks while its state is unverified.',
+          error,
+        );
+      }
       out(chalk.dim(phaseLine('device', `recovered ${avdName} (unrecorded from a prior run)`)));
+      if (created.serial) return { ...created, owned: true, deviceName: avdName, created: true };
     } else {
       throw e;
     }

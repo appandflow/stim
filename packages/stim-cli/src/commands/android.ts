@@ -118,7 +118,13 @@ import {
   probeEmulatorSerial,
   resolvePhysicalDevice,
 } from '../sim/android.ts';
-import { checkDeviceCapacity, ensureBooted, ensureOwnedDevice, type OwnedDeviceRecord } from '../engine/device.ts';
+import {
+  checkDeviceCapacity,
+  ensureBooted,
+  ensureOwnedDevice,
+  AvdRecoveryError,
+  type OwnedDeviceRecord,
+} from '../engine/device.ts';
 import {
   ensureRemoteBootOwned,
   ensureMetroReachable as ensureRemoteMetroReachable,
@@ -1024,8 +1030,11 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       const diag = noDeviceDiagnostic({
         reason: `Could not ensure an owned Android emulator: ${(err as Error)?.message || err}`,
         logFile: emuLog,
+        localEmulator: !(err instanceof AvdRecoveryError),
         remedy:
-          'Check that JAVA_HOME and ANDROID_HOME are set correctly, and that an arm64 system image is installed (`sdkmanager "system-images;android-36;google_apis;arm64-v8a"`).',
+          err instanceof AvdRecoveryError
+            ? err.remedy
+            : 'Check that JAVA_HOME and ANDROID_HOME are set correctly, and that an arm64 system image is installed (`sdkmanager "system-images;android-36;google_apis;arm64-v8a"`).',
       });
       return fail(NO_DEVICE, diag.message, diag.remedy, {
         lines: diag.lines,
