@@ -698,6 +698,7 @@ describe('listIosDevices against a real devicectl', { skip: LIVE as unknown as b
     if (!connected) return;
     const executor = getExecutor();
     let failure = '';
+    let timedOut = false;
     let probedUdid: string | undefined;
     const pid = iosDeviceProcess(
       { udid: connected.udid, appName: 'NoSuchAppStimWouldEverBuild' },
@@ -709,8 +710,9 @@ describe('listIosDevices against a real devicectl', { skip: LIVE as unknown as b
             try {
               return executor.runFile(file, args, options);
             } catch (error) {
-              const failed = error as Error & { stderr?: unknown; stdout?: unknown };
+              const failed = error as Error & { stderr?: unknown; stdout?: unknown; code?: unknown };
               failure = [failed.message, failed.stderr, failed.stdout].filter(Boolean).join('\n');
+              timedOut = failed.code === 'ETIMEDOUT';
               throw error;
             }
           },
@@ -719,6 +721,7 @@ describe('listIosDevices against a real devicectl', { skip: LIVE as unknown as b
     );
     expect(probedUdid).toBe(connected.udid);
     if (pid === undefined) {
+      if (timedOut) throw new Error(`devicectl process probe timed out\n${failure}`);
       const unavailable =
         /^ERROR: A connection to this device could not be established\. \(com\.apple\.dt\.CoreDeviceError error 4000 \(0xFA0\)\)$/m.test(
           failure,
