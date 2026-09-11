@@ -967,7 +967,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         project,
         projectPath: root,
         settingsRoot,
-        label,
         settings,
         flags: { systemImage },
         note: out,

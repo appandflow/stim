@@ -1,9 +1,12 @@
 import chalk from 'chalk';
 import { randomUUID } from 'node:crypto';
 import { phaseLine } from '../command-output.ts';
+import { ownedDeviceLabel } from '../project.ts';
+import { workspaceId } from '../paths.ts';
 import {
   allConsolePortsAndSerials,
   clearDevice,
+  getConfigDir,
   loadConfig,
   releaseAndroidConsolePort,
   saveConfig,
@@ -54,6 +57,7 @@ import {
 import { androidAvdConfigSetting, androidDataPartitionSizeGbSetting, iosSimSlimProfileSetting } from '../settings.ts';
 import { teardownOwnedAvd, teardownParkedAvd, teardownParkedIosSim } from '../teardown.ts';
 import { reconcileSimSlim } from './simslim.ts';
+import { withWorkspaceProcessLock } from './workspace-process-lock.ts';
 
 export interface OwnedDeviceRecord {
   deviceUdid?: string;
@@ -138,7 +142,7 @@ export async function ensureOwnedDevice({
   project,
   projectPath,
   settingsRoot = projectPath,
-  label,
+  label = ownedDeviceLabel(projectPath),
   settings,
   flags = {},
   note = () => {},
@@ -153,7 +157,7 @@ export async function ensureOwnedDevice({
   project?: ProjectRecord | null;
   projectPath: string;
   settingsRoot?: string;
-  label: string;
+  label?: string;
   settings: DeviceSettings;
   flags?: DeviceFlags;
   note?: Notify;
@@ -239,7 +243,7 @@ async function ensureOwnedIosDevice({
           model: deviceTypes.find((d) => d.identifier === sim.deviceTypeIdentifier)?.name ?? null,
           runtime: parseRuntimeVersion(sim.runtime),
         };
-        const name = renameToOwnedName(sim, label, model);
+        const name = await withIosDeviceNameLock(() => renameToOwnedName(sim, label, model, projectPath));
         const updated = {
           deviceUdid: sim.udid,
           owned: true,
@@ -294,7 +298,10 @@ async function ensureOwnedIosDevice({
     runtime: flags.runtime || settings.ios?.runtime,
   });
 
-  const adopted = parkedMaxSetting('ios').max > 0 ? takeParkedIosSim({ projectPath, label, choice, out }) : null;
+  const adopted =
+    parkedMaxSetting('ios').max > 0
+      ? await withIosDeviceNameLock(() => takeParkedIosSim({ projectPath, label, choice, out }))
+      : null;
   if (adopted) {
     out(chalk.dim(phaseLine('device', `booting ${adopted.deviceName} (${adopted.deviceUdid})`)));
     const booting = startIosBoot(adopted.deviceUdid, async () => {
@@ -310,13 +317,13 @@ async function ensureOwnedIosDevice({
     return { ...adopted, booting, deviceType: choice.deviceType, runtime: choice.runtime };
   }
 
-  const created = createOwnedIosSim(
-    label,
-    { deviceType: flags.deviceType || settings.ios?.deviceType, runtime: flags.runtime || settings.ios?.runtime },
-    choice,
-  );
+  const created = await withIosDeviceNameLock(() => {
+    const suffix = ownedIosNameSuffix(label, { model: choice.deviceType, runtime: choice.runtime }, projectPath);
+    const result = createOwnedIosSim(label, { suffix }, choice);
+    setDevice(projectPath, 'ios', { deviceUdid: result.udid, owned: true, deviceName: result.name });
+    return result;
+  });
   const newRecord = { deviceUdid: created.udid, owned: true, deviceName: created.name };
-  setDevice(projectPath, 'ios', newRecord);
   const booting = startIosBoot(created.udid, () =>
     configureOwnedIosSim({
       record: newRecord,
@@ -335,8 +342,32 @@ async function ensureOwnedIosDevice({
   };
 }
 
-function renameToOwnedName(sim: SimRecord, label: string, model: SimModel): string {
-  const wanted = ownedSimName(label, model);
+function withIosDeviceNameLock<T>(fn: () => T): Promise<T> {
+  return withWorkspaceProcessLock(getConfigDir(), 'ios-device-names', async () => fn(), { external: true });
+}
+
+function ownedIosNameSuffix(label: string, model: SimModel, projectPath: string, udid?: string): string {
+  const names = new Set(
+    listAllIosSims({ includeUnavailable: true })
+      .filter((sim) => sim.udid !== udid)
+      .map((sim) => sim.name),
+  );
+  for (const project of Object.values(loadConfig()?.projects ?? {})) {
+    const record = project.platforms?.ios;
+    if (record?.deviceUdid !== udid && record?.deviceName) names.add(record.deviceName);
+  }
+  for (const parked of readParked('ios')) {
+    if (parked.udid !== udid) names.add(parked.name);
+  }
+  let suffix = '';
+  for (let attempt = 0; names.has(ownedSimName(label, model, suffix)); attempt++) {
+    suffix = ` ${workspaceId(projectPath)}${attempt ? `-${attempt}` : ''}`;
+  }
+  return suffix;
+}
+
+function renameToOwnedName(sim: SimRecord, label: string, model: SimModel, projectPath: string): string {
+  const wanted = ownedSimName(label, model, ownedIosNameSuffix(label, model, projectPath, sim.udid));
   if (sim.name === wanted) return wanted;
   try {
     renameIosSim(sim.udid, wanted);
@@ -371,7 +402,6 @@ function takeParkedIosSim({
   });
   if (candidates.length === 0) return null;
   const listed = new Map(listAllIosSims({ includeUnavailable: true }).map((sim) => [sim.udid, sim]));
-  const name = ownedSimName(label, { model: choice.deviceType, runtime: choice.runtime });
   for (const parked of candidates) {
     const sim = listed.get(parked.udid);
     if (!sim || !sim.available) {
@@ -406,6 +436,8 @@ function takeParkedIosSim({
       );
       continue;
     }
+    const model = { model: choice.deviceType, runtime: choice.runtime };
+    const name = ownedSimName(label, model, ownedIosNameSuffix(label, model, projectPath, parked.udid));
     const device = {
       deviceUdid: parked.udid,
       owned: true,

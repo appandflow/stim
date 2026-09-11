@@ -259,7 +259,13 @@ RULES
   - Never assume "booted" is your simulator. Other agents have theirs booted
     too.
   - Every device Stim creates or boots is one Stim created, named
-    stim-<label> (<model> <runtime>) on iOS. The exceptions are
+    stim-<label> (<model> <runtime>) on iOS. New local device labels combine
+    the git worktree directory and app directory names, e.g.
+    pr6460-tlon-mobile. Equal names collapse to one; outside git, the app
+    directory name is used. An iOS name collision adds the workspace ID
+    after the model and runtime, preserving it when the label is truncated.
+    Existing owned iOS simulators are renamed on reuse. Android keeps
+    existing and adopted AVD names. The exceptions are
     \`android --device\` and
     \`ios --device\`, which use a connected physical device Stim never
     creates, boots, or deletes.`,

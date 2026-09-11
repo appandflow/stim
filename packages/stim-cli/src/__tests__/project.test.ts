@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { resolve, join } from 'path';
 import {
@@ -10,12 +10,44 @@ import {
   detectAndroidPackage,
   resolveRegisteredProject,
   projectShortcut,
+  ownedDeviceLabel,
 } from '../project.ts';
 import { upsertProject, getProject } from '../config.ts';
+import { getExecutor } from '../exec.ts';
 
 const FIXTURES = resolve(import.meta.dirname, 'fixtures');
 const EXPO_PROJ = join(FIXTURES, 'sample-expo-project');
 const BARE_PROJ = join(FIXTURES, 'sample-bare-project');
+
+test('owned device labels distinguish worktrees and apps, collapse equal basenames, and resolve symlinks', () => {
+  const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'stim-labels-')));
+  const main = join(tmp, 'My.App');
+  const worktree = join(tmp, 'pr6460');
+  const git = (cwd: string, ...args: string[]) => getExecutor().runFile('git', ['-C', cwd, ...args]);
+  try {
+    mkdirSync(main);
+    git(main, 'init');
+    git(main, 'config', 'commit.gpgsign', 'false');
+    git(main, '-c', 'user.email=test@example.com', '-c', 'user.name=Test', 'commit', '--allow-empty', '-m', 'init');
+    git(main, 'worktree', 'add', '-b', 'review', worktree);
+    const app = join(worktree, 'apps', 'tlon-mobile');
+    const otherApp = join(worktree, 'apps', 'tlon-desktop');
+    const mainApp = join(main, 'apps', 'tlon-mobile');
+    for (const root of [app, otherApp, mainApp]) mkdirSync(root, { recursive: true });
+    const alias = join(tmp, 'alias');
+    symlinkSync(app, alias);
+    expect(ownedDeviceLabel(main)).toBe('My.App');
+    expect(ownedDeviceLabel(app)).toBe('pr6460-tlon-mobile');
+    expect(ownedDeviceLabel(otherApp)).toBe('pr6460-tlon-desktop');
+    expect(ownedDeviceLabel(mainApp)).toBe('My.App-tlon-mobile');
+    expect(ownedDeviceLabel(alias)).toBe(ownedDeviceLabel(app));
+    const standalone = join(tmp, '@Standalone App');
+    mkdirSync(standalone);
+    expect(ownedDeviceLabel(standalone)).toBe('@Standalone App');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
 
 test('findProjectRoot walks up from cwd to find package.json', () => {
   const nested = join(EXPO_PROJ, 'src');

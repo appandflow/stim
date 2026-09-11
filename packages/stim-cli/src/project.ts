@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, readdirSync, realpathSync } from 'fs';
 import { createRequire } from 'module';
-import { join, dirname, resolve } from 'path';
+import { basename, join, dirname, resolve } from 'path';
 import { type ProjectRecord, loadConfig, findEnclosingWorktreeRoot, getProject } from './config.ts';
+import { repoRoot } from './worktree.ts';
 
 interface PackageJson {
   scripts?: Record<string, unknown>;
@@ -56,6 +57,15 @@ export function projectShortcut(path: string, proj: ProjectRecord | null | undef
     return `${rootLabel}/${base}`;
   }
   return path.split('/').pop() || path;
+}
+
+export function ownedDeviceLabel(projectPath: string): string {
+  const app = realpathSync(projectPath);
+  const root = repoRoot(app);
+  const appLabel = basename(app);
+  if (!root) return appLabel;
+  const worktreeLabel = basename(realpathSync(root));
+  return worktreeLabel === appLabel ? appLabel : `${worktreeLabel}-${appLabel}`;
 }
 
 export function resolveRegisteredProject(arg?: string | null): ResolveResult {
