@@ -5,6 +5,18 @@ const lifecycle: GuideTopic = {
     'The full worktree -> start -> ios/android -> logs -> teardown flow, with sections for builds, devices and flags',
   preamble: () => `ENVIRONMENT LIFECYCLE
 
+Two workflows share steps 2 through 6.
+
+SINGLE CHECKOUT: work in place, on a branch, in one directory. There is no
+step 1, and step 7 reclaims the environment without deleting the tree, which
+stays because it is the main checkout. That directory is your workspace, and
+no rule here about keeping the main checkout fit as a seed applies to it.
+
+WORKTREE: the checkout you cloned is a seed. It stays clean and on the default
+branch so every worktree warmed from it starts current. Here the main checkout
+is infrastructure, not a workspace, and every rule below about its fitness as
+a seed belongs to this workflow.
+
   # 1. Create a linked worktree with Git, unless a harness already did.
   #    Choose the branch, path, and base ref with Git.
   git worktree add -b app/412 ../app-412 HEAD

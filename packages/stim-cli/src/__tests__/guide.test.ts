@@ -357,6 +357,15 @@ test('the agent workflow checks errors before and after edits, before cleanup', 
   expect(renderSection('lifecycle', 'readiness')).toContain('[stim:readiness] ready');
 });
 
+test('the agent and lifecycle guides name both workflows', () => {
+  for (const guide of [renderTopic('agent'), renderTopic('lifecycle')]) {
+    assert(guide);
+    expect(guide).toContain('SINGLE CHECKOUT');
+    expect(guide).toContain('WORKTREE:');
+    expect(guide).toMatch(/is infrastructure, not a workspace/);
+  }
+});
+
 test('the agent guide routes to every detailed topic', () => {
   const agent = renderTopic('agent');
   assert(agent);

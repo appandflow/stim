@@ -450,6 +450,7 @@ export function deleteBranch(cwd: string, branch: string, expectedSha: string): 
 export interface WorktreeEntry {
   path: string;
   branch?: string;
+  prunable?: boolean;
 }
 
 function parseWorktrees(out: string): WorktreeEntry[] {
@@ -461,6 +462,8 @@ function parseWorktrees(out: string): WorktreeEntry[] {
       current = { path: line.slice('worktree '.length) };
     } else if (line.startsWith('branch ')) {
       current.branch = line.slice('branch '.length).replace('refs/heads/', '');
+    } else if (line === 'prunable' || line.startsWith('prunable ')) {
+      current.prunable = true;
     }
   }
   if (current.path) entries.push(current as WorktreeEntry);
