@@ -19,6 +19,7 @@ import {
   claimLiveness,
   claimRemoveCommand,
   clearClaimChild,
+  clearFreeClaimSet,
   exclusiveClaimDir,
   inspectClaimSet,
   isClaimRefusal,
@@ -123,7 +124,7 @@ describe('refusing instead of guessing', () => {
     expect(err.claimPath).toBe(path);
     expect(err.removeCommand).toBe(claimRemoveCommand(path));
     expect(err.message).toContain(path);
-    expect(err.message).toContain(`rm -rf ${path}`);
+    expect(err.message).toContain(`rm -f '${path}'`);
     expect(err.message).toContain('ios build');
     expect(existsSync(path)).toBe(true);
   });
@@ -176,12 +177,64 @@ describe('refusing instead of guessing', () => {
     expect(err.message).toMatch(/is a file, not a claim directory/);
   });
 
+  test('the printed remedy, run as printed, clears the claim and nothing beside it', () => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-claim-remedy-'));
+    const bystander = join(home, 'cache');
+    mkdirSync(bystander, { recursive: true });
+    writeFileSync(join(bystander, 'artifact'), 'not mine to delete');
+    try {
+      for (const awkward of ['cache home', "it's cache"]) {
+        const set = join(home, awkward, 'build.lock');
+        const planted = plantClaim(set, 'exclusive', { pid: 4242, processToken: 'not-a-token' });
+        const err = refusal(() => tryAcquireClaim({ root: set, mode: 'exclusive' }));
+        expect(err.removeCommand).toBe(claimRemoveCommand(planted));
+        getExecutor().run(err.removeCommand);
+        expect(existsSync(planted)).toBe(false);
+        expect(existsSync(join(bystander, 'artifact'))).toBe(true);
+        expect(tryAcquireClaim({ root: set, mode: 'exclusive' }).acquired).toBeTruthy();
+
+        getExecutor().run(claimRemoveCommand(set));
+        expect(existsSync(set)).toBe(false);
+        expect(existsSync(join(bystander, 'artifact'))).toBe(true);
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test('a claim directory holding foreign files refuses rather than being overwritten', () => {
     const dir = exclusiveClaimDir(root);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'notes.txt'), 'hello');
     const err = refusal(() => tryAcquireClaim({ root, mode: 'exclusive' }));
     expect(err.message).toMatch(/files Stim did not write/);
+  });
+});
+
+describe('clearing a claim set that holds nothing', () => {
+  test('clears a set left by an interrupted publication, and keeps content it did not write', () => {
+    plantClaim(root, 'exclusive', goneClaimOwner(), { claimId: 'dead-one' });
+    mkdirSync(join(root, '.staging-interrupted'), { recursive: true });
+    writeFileSync(join(root, '.staging-interrupted', 'half.claim'), '{');
+    writeFileSync(join(root, 'notes.txt'), 'someone else put this here');
+
+    expect(clearFreeClaimSet({ root })).toEqual({ status: 'failed', reason: 'it still holds notes.txt' });
+    expect(existsSync(join(root, 'notes.txt'))).toBe(true);
+    expect(existsSync(join(root, '.staging-interrupted'))).toBe(false);
+    expect(readClaimSet(root).dead).toEqual([]);
+
+    rmSync(join(root, 'notes.txt'));
+    expect(clearFreeClaimSet({ root })).toEqual({ status: 'cleared' });
+    expect(existsSync(root)).toBe(false);
+  });
+
+  test('a set a live process holds is left exactly as it was', () => {
+    const got = tryAcquireClaim({ root, mode: 'exclusive' });
+    assert(got.acquired);
+    const cleared = clearFreeClaimSet({ root });
+    expect(cleared.status).toBe('held');
+    expect(existsSync(got.acquired.path)).toBe(true);
+    expect(readClaimSet(root).live.map((h) => h.claimId)).toEqual([got.acquired.claimId]);
   });
 });
 

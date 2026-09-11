@@ -1,4 +1,4 @@
-import { existsSync, rmSync, statSync } from 'fs';
+import { existsSync, statSync } from 'fs';
 import { isAbsolute } from 'path';
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
@@ -7,7 +7,7 @@ import { directorySize, isOnMountedVolume, listMountedVolumes, volumeRootFor } f
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { removeExpiredLease } from '../engine/device-lease.ts';
-import { readClaimSet } from '../ownership-claim.ts';
+import { clearFreeClaimSet } from '../ownership-claim.ts';
 import { detectIsExpo, findProjectRoot } from '../project.ts';
 import { describeDereferenced, reclaimProject } from '../reclaim.ts';
 import { SETTING_SHAPE_REMEDY } from '../settings.ts';
@@ -457,33 +457,41 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
   deleteFailures += deleteProjectDevices(orphanedDevices, staleDevices, staleDeviceRecords);
 
   for (const lock of buildLocks.stale) {
-    if (readClaimSet(lock.path).live.length > 0) continue;
-    try {
-      rmSync(lock.path, { recursive: true, force: true });
-      console.log(
-        chalk.green(
-          `Cleared the ${lock.platform} build lock left by pid ${lock.pid ?? '?'} (${lock.projectRoot || 'unrecorded workspace'})`,
-        ),
-      );
-    } catch (err) {
-      deleteFailures++;
-      console.log(chalk.red(`Failed to clear the build lock at ${lock.path}: ${(err as Error)?.message || err}`));
+    const cleared = clearFreeClaimSet({ root: lock.path, label: `${lock.platform} build` });
+    if (cleared.status === 'held') continue;
+    if (cleared.status === 'refused') {
+      console.log(chalk.yellow(`Left the build lock at ${lock.path} alone: ${cleared.reason}`));
+      continue;
     }
+    if (cleared.status === 'failed') {
+      deleteFailures++;
+      console.log(chalk.red(`Failed to clear the build lock at ${lock.path}: ${cleared.reason}`));
+      continue;
+    }
+    console.log(
+      chalk.green(
+        `Cleared the ${lock.platform} build lock left by pid ${lock.pid ?? '?'} (${lock.projectRoot || 'unrecorded workspace'})`,
+      ),
+    );
   }
 
   for (const slot of buildSlots.stale) {
-    if (readClaimSet(slot.path).live.length > 0) continue;
-    try {
-      rmSync(slot.path, { recursive: true, force: true });
-      console.log(
-        chalk.green(
-          `Cleared build slot ${slot.index ?? '?'} left by pid ${slot.pid ?? '?'} (${slot.projectRoot || 'unrecorded workspace'})`,
-        ),
-      );
-    } catch (err) {
-      deleteFailures++;
-      console.log(chalk.red(`Failed to clear the build slot at ${slot.path}: ${(err as Error)?.message || err}`));
+    const cleared = clearFreeClaimSet({ root: slot.path, label: 'build slot' });
+    if (cleared.status === 'held') continue;
+    if (cleared.status === 'refused') {
+      console.log(chalk.yellow(`Left the build slot at ${slot.path} alone: ${cleared.reason}`));
+      continue;
     }
+    if (cleared.status === 'failed') {
+      deleteFailures++;
+      console.log(chalk.red(`Failed to clear the build slot at ${slot.path}: ${cleared.reason}`));
+      continue;
+    }
+    console.log(
+      chalk.green(
+        `Cleared build slot ${slot.index ?? '?'} left by pid ${slot.pid ?? '?'} (${slot.projectRoot || 'unrecorded workspace'})`,
+      ),
+    );
   }
 
   for (const entry of deviceLeases.expired) {

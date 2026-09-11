@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { claimRemoveCommand } from '../ownership-claim.ts';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 import {
   acquireBuildSlot,
@@ -54,7 +55,12 @@ describe('tryAcquireBuildSlot', () => {
   });
 
   test('a slot whose holder cannot be identified is skipped, waits while another is busy, and refuses when neither', () => {
-    plantClaim(buildSlotPath(0), 'exclusive', { pid: 4242, processToken: 'nonsense' }, { details: { index: 0 } });
+    const planted = plantClaim(
+      buildSlotPath(0),
+      'exclusive',
+      { pid: 4242, processToken: 'nonsense' },
+      { details: { index: 0 } },
+    );
     const got = tryAcquireBuildSlot({ max: 2 });
     assert(got);
     expect(got.index).toBe(1);
@@ -70,7 +76,7 @@ describe('tryAcquireBuildSlot', () => {
       err = e as Error & { code?: string };
     }
     expect(err?.code).toBe('STIM_CLAIM_REFUSED');
-    expect(err?.message).toContain(`rm -rf ${buildSlotPath(0)}`);
+    expect(err?.message).toContain(claimRemoveCommand(planted));
   });
 });
 

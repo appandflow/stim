@@ -125,7 +125,11 @@ changes, and wait for the new checks.
   by its own token, whose liveness is the holder's `ProcessRecord` read through
   `inspectProcessIdentity`. No mtime, no heartbeat, no staleness threshold, and
   no second implementation. A state it cannot establish is a refusal naming the
-  claim and the command that removes it, never a silent wait or a reap. Device
+  claim and the command that removes it, never a silent wait or a reap. A
+  process that cannot capture its own identity takes no claim and refuses with
+  `STIM_CLAIM_UNAVAILABLE`; it never runs the guarded operation unprotected.
+  Removing a claim set is `clearFreeClaimSet`, which takes the set's own claim
+  first, so no sweep can delete a claim taken since it was surveyed. Device
   leases use a declared expiry because the holder can be an agent with no
   process. `pidExists` answers only "does a process with this pid exist"; it
   cannot answer whether a record on disk still describes its writer.

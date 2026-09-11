@@ -723,7 +723,9 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   long synchronous tool call reads as live -- age is never a reason to take a
   lock. The one state that cannot be decided (a truncated claim, an identity
   token that does not decode) is STIM_CLAIM_REFUSED: Stim names the claim and
-  the command that removes it rather than guessing. The
+  the command that removes it rather than guessing. A process whose own identity
+  cannot be captured takes no lock and no slot, and refuses with
+  STIM_CLAIM_UNAVAILABLE rather than building unprotected. The
   other waiters keep waiting for that holder. All replacement builders share
   one ~90-minute deadline, including lock acquisition between waits; reaching
   it returns STIM_BUILD_WAIT_TIMEOUT naming the current holder and lock.

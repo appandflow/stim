@@ -79,7 +79,7 @@ import {
   type BuildLockHandle,
   type WaitForBuildResult,
 } from '../engine/build-lock.ts';
-import { isClaimRefusal } from '../ownership-claim.ts';
+import { claimFailure } from '../ownership-claim.ts';
 import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../engine/build-slots.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { pidExists, resolveProjectMetro } from '../metro.ts';
@@ -1226,15 +1226,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         try {
           attempt = acquireLock({ platform: PLATFORM, key: cacheKey, root, logFile: buildLog });
         } catch (err) {
-          if (isClaimRefusal(err)) {
-            phaseFailure = fail(
-              'STIM_CLAIM_REFUSED',
-              err.message,
-              `Run \`${err.removeCommand}\`, then run \`stim android\` again.`,
-              {
-                lastBuildStatus: true,
-              },
-            );
+          const refusal = claimFailure(err, 'stim android');
+          if (refusal) {
+            phaseFailure = fail(refusal.code, refusal.message, refusal.remedy, { lastBuildStatus: true });
             return false;
           }
           phase(
@@ -1274,13 +1268,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
             }
             waited = await waitForBuild({ platform: PLATFORM, key: cacheKey, out, ceilingMs });
           } catch (err) {
-            if (isClaimRefusal(err)) {
-              phaseFailure = fail(
-                'STIM_CLAIM_REFUSED',
-                err.message,
-                `Run \`${err.removeCommand}\`, then run \`stim android\` again.`,
-                { lastBuildStatus: true },
-              );
+            const refusal = claimFailure(err, 'stim android');
+            if (refusal) {
+              phaseFailure = fail(refusal.code, refusal.message, refusal.remedy, { lastBuildStatus: true });
               return false;
             }
             const wtErr = err as Error & { code?: string; lockPath?: string };
@@ -1383,13 +1373,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
             try {
               buildSlot = await acquireSlot({ max: limits.maxBuilds, root, logFile: buildLog, out });
             } catch (err) {
-              if (isClaimRefusal(err)) {
-                phaseFailure = fail(
-                  'STIM_CLAIM_REFUSED',
-                  err.message,
-                  `Run \`${err.removeCommand}\`, then run \`stim android\` again.`,
-                  { lastBuildStatus: true },
-                );
+              const refusal = claimFailure(err, 'stim android');
+              if (refusal) {
+                phaseFailure = fail(refusal.code, refusal.message, refusal.remedy, { lastBuildStatus: true });
                 return false;
               }
               phase(

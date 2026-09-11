@@ -81,7 +81,7 @@ import { COMPILATION_CACHE_NOT_RUN, COMPILATION_CACHE_UNAVAILABLE } from '../eng
 import type { NdjsonWriter } from '../ndjson.ts';
 import { workspaceDir, workspaceLogsDir } from '../paths.ts';
 import { appProjectProblem } from '../project.ts';
-import { isClaimRefusal } from '../ownership-claim.ts';
+import { claimFailure } from '../ownership-claim.ts';
 import { type SupervisorLike, noMetroMessage, noMetroRemedy } from './native-runtime.ts';
 import {
   PLATFORM,
@@ -907,11 +907,12 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
       try {
         attempt = d.acquireBuildLock({ platform: PLATFORM, key: cacheKey, root, logFile });
       } catch (e) {
-        if (isClaimRefusal(e)) {
+        const refusal = claimFailure(e, 'stim ios');
+        if (refusal) {
           fail({
-            code: 'STIM_CLAIM_REFUSED',
-            message: e.message,
-            remedy: `Run \`${e.removeCommand}\`, then run \`stim ios\` again.`,
+            code: refusal.code,
+            message: refusal.message,
+            remedy: refusal.remedy,
             build: { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache },
           });
           return false;
@@ -954,11 +955,12 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
           }
           waited = await d.waitForBuild({ platform: PLATFORM, key: cacheKey, out: note, ceilingMs });
         } catch (e) {
-          if (isClaimRefusal(e)) {
+          const refusal = claimFailure(e, 'stim ios');
+          if (refusal) {
             fail({
-              code: 'STIM_CLAIM_REFUSED',
-              message: e.message,
-              remedy: `Run \`${e.removeCommand}\`, then run \`stim ios\` again.`,
+              code: refusal.code,
+              message: refusal.message,
+              remedy: refusal.remedy,
               build: { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache },
             });
             return false;
@@ -1123,13 +1125,9 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
           try {
             buildSlot = await d.acquireBuildSlot({ max: limits.maxBuilds, root, logFile, out: note });
           } catch (e) {
-            if (isClaimRefusal(e)) {
-              fail({
-                code: 'STIM_CLAIM_REFUSED',
-                message: e.message,
-                remedy: `Run \`${e.removeCommand}\`, then run \`stim ios\` again.`,
-                build: buildFailure,
-              });
+            const refusal = claimFailure(e, 'stim ios');
+            if (refusal) {
+              fail({ code: refusal.code, message: refusal.message, remedy: refusal.remedy, build: buildFailure });
               return false;
             }
             note(

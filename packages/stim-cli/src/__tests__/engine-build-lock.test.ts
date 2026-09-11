@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import { claimRemoveCommand } from '../ownership-claim.ts';
 import { goneClaimOwner, liveClaimOwner, plantClaim, recycledClaimOwner } from './_factories.ts';
 import {
   acquireBuildLock,
@@ -139,7 +140,7 @@ describe('acquireBuildLock', () => {
     }
     expect(err?.code).toBe('STIM_CLAIM_REFUSED');
     expect(err?.claimPath).toBe(planted);
-    expect(err?.message).toContain(`rm -rf ${path}`);
+    expect(err?.message).toContain(claimRemoveCommand(planted));
     expect(existsSync(planted)).toBe(true);
   });
 

@@ -60,6 +60,11 @@ export function phaseLine(label: unknown, text: string): string {
   return `  ${String(label).padEnd(LABEL_WIDTH)} ${text}`;
 }
 
+/** Quote a path for a shell command Stim prints for a human to copy and run. */
+export function quotedPath(path: string): string {
+  return `'${path.replaceAll("'", "'\\''")}'`;
+}
+
 export function shortUdid(udid: unknown): string {
   const text = String(udid ?? '');
   return text.length > 4 ? `${text.slice(0, 4)}..` : text;

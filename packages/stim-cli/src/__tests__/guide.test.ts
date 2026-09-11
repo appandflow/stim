@@ -4,6 +4,7 @@ import { readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_FINGERPRINT_IGNORES } from '../build-cache.ts';
 import { OUTPUT_LABELS } from '../command-output.ts';
+import { CLAIM_REFUSED, CLAIM_UNAVAILABLE } from '../ownership-claim.ts';
 import TOPICS from '../guide/index.ts';
 import {
   topicNames,
@@ -246,6 +247,15 @@ test('the errors topic documents every code the engine can emit under a command'
   expect(codes.size).toBeGreaterThan(0);
   for (const code of codes) {
     expect(body.includes(code)).toBeTruthy();
+    expect(sectionLookup('errors')[code]).toBeDefined();
+  }
+});
+
+test('the errors topic documents both codes the ownership-claim primitive raises', () => {
+  const body = renderTopic('errors');
+  assert(body);
+  for (const code of [CLAIM_REFUSED, CLAIM_UNAVAILABLE]) {
+    expect(body).toContain(code);
     expect(sectionLookup('errors')[code]).toBeDefined();
   }
 });

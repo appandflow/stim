@@ -10,7 +10,8 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { captureProcessToken, inspectProcessIdentity, type ProcessRecord } from './process-identity.ts';
+import { quotedPath } from './command-output.ts';
+import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from './process-identity.ts';
 
 export type ClaimMode = 'exclusive' | 'shared';
 
@@ -85,11 +86,13 @@ const EXCLUSIVE_DIR = 'exclusive';
 const SHARED_DIR = 'shared';
 const CLAIM_SUFFIX = '.claim';
 const CHILD_SUFFIX = '.child';
+const STAGING_PREFIX = '.staging-';
 const PUBLISH_ATTEMPTS = 64;
 
 export class ClaimRefusedError extends Error {
   readonly code: string = CLAIM_REFUSED;
   readonly claimPath: string;
+  readonly reason: string;
   readonly removeCommand: string;
 
   constructor({ claimPath, root, reason, label }: { claimPath: string; root: string; reason: string; label: string }) {
@@ -100,24 +103,69 @@ export class ClaimRefusedError extends Error {
         `If nothing is using it, remove the claim and run the command again:\n  ${removeCommand}`,
     );
     this.claimPath = claimPath;
+    this.reason = reason;
     this.removeCommand = removeCommand;
   }
 }
 
 export class ClaimUnavailableError extends Error {
   readonly code: string = CLAIM_UNAVAILABLE;
+  readonly reason: string;
 
   constructor(reason: string) {
     super(`Stim could not record a process identity, so it cannot take an ownership claim: ${reason}.`);
+    this.reason = reason;
   }
 }
 
-export function claimRemoveCommand(root: string): string {
-  return `rm -rf ${root}`;
+/**
+ * The command that clears one surveyed claim: targeted at the claim's own file when the path names one,
+ * and quoted, because this text is printed for a human to copy into a shell and a path with a space in
+ * it would otherwise name several targets.
+ */
+export function claimRemoveCommand(path: string): string {
+  const onlyThisFile = path.endsWith(CLAIM_SUFFIX) || path.endsWith(CHILD_SUFFIX);
+  return `rm ${onlyThisFile ? '-f' : '-rf'} ${quotedPath(path)}`;
 }
 
 export function isClaimRefusal(err: unknown): err is ClaimRefusedError {
   return (err as { code?: string })?.code === CLAIM_REFUSED;
+}
+
+export function isClaimUnavailable(err: unknown): err is ClaimUnavailableError {
+  return (err as { code?: string })?.code === CLAIM_UNAVAILABLE;
+}
+
+export interface ClaimFailure {
+  code: string;
+  message: string;
+  remedy: string;
+}
+
+/**
+ * The refusal a command reports for either error the claim primitive raises, and null for anything else.
+ * Both are refusals: a claim Stim cannot resolve and a process identity it cannot record are the two
+ * states in which it holds no claim, and running the operation a claim serializes without one gives a
+ * competing run no protection at all.
+ */
+export function claimFailure(err: unknown, retryCommand: string): ClaimFailure | null {
+  if (isClaimRefusal(err)) {
+    return {
+      code: CLAIM_REFUSED,
+      message: err.message,
+      remedy: `Run \`${err.removeCommand}\`, then run \`${retryCommand}\` again.`,
+    };
+  }
+  if (isClaimUnavailable(err)) {
+    return {
+      code: CLAIM_UNAVAILABLE,
+      message: err.message,
+      remedy:
+        'Reinstall Stim so the unique-pid native module for this platform is present, then run ' +
+        `\`${retryCommand}\` again.`,
+    };
+  }
+  return null;
 }
 
 export function exclusiveClaimDir(root: string): string {
@@ -318,10 +366,60 @@ export function inspectClaimSet(root: string, { label = 'ownership' }: { label?:
   };
 }
 
+export type ClaimSetClearance =
+  | { status: 'cleared' }
+  | { status: 'held'; holder: ClaimHolder | null }
+  | { status: 'refused'; reason: string }
+  | { status: 'failed'; reason: string };
+
+function tidySet(root: string): void {
+  tidy(exclusiveClaimDir(root));
+  tidy(sharedClaimDir(root));
+  tidy(root);
+}
+
+function removeAbandonedStaging(root: string): void {
+  const listed = names(root);
+  if (listed === 'unreadable') return;
+  for (const name of listed) {
+    if (name.startsWith(STAGING_PREFIX)) rmSync(join(root, name), { recursive: true, force: true });
+  }
+}
+
+/**
+ * Remove a claim set that holds nothing. Takes the set's own exclusive claim first and removes the set
+ * only through the token-verified unlink and empty-directory removals that releasing a claim performs,
+ * so a claim published between the survey that reported the set stale and this call is kept, not
+ * deleted; a set whose state cannot be established is refused rather than removed.
+ */
+export function clearFreeClaimSet({ root, label = 'ownership' }: { root: string; label?: string }): ClaimSetClearance {
+  let attempt: ClaimAttempt;
+  try {
+    attempt = tryAcquireClaim({ root, mode: 'exclusive', label });
+  } catch (err) {
+    if (isClaimRefusal(err) || isClaimUnavailable(err)) return { status: 'refused', reason: err.reason };
+    throw err;
+  }
+  if (!attempt.acquired) {
+    if (attempt.pending) releaseClaim(attempt.pending);
+    return { status: 'held', holder: attempt.held ?? attempt.waitingFor?.[0] ?? null };
+  }
+  removeAbandonedStaging(root);
+  releaseClaim(attempt.acquired);
+  tidySet(root);
+  const remaining = names(root);
+  if (remaining === 'unreadable') return { status: 'failed', reason: 'its directory could not be read' };
+  const after = readClaimSet(root);
+  if (after.live.length > 0) return { status: 'held', holder: after.live[0]! };
+  if (after.unresolved.length > 0) return { status: 'refused', reason: after.unresolved[0]!.reason };
+  if (remaining.length > 0) return { status: 'failed', reason: `it still holds ${remaining.join(', ')}` };
+  return { status: 'cleared' };
+}
+
 function selfOwner(): ClaimOwner {
-  const processToken = captureProcessToken(process.pid);
-  if (!processToken) throw new ClaimUnavailableError('this platform returned no process identity token');
-  return { pid: process.pid, processToken };
+  const captured = captureProcessIdentity(process.pid);
+  if (!captured.ok) throw new ClaimUnavailableError(captured.reason);
+  return { pid: process.pid, processToken: captured.token };
 }
 
 // A claim set is removed the instant it holds nothing, so any step of a publication can lose the
@@ -332,7 +430,7 @@ function contended(code: string | undefined): boolean {
 }
 
 function publishExclusive(root: string, payload: string, claimId: string, label: string): string | null {
-  const staging = join(root, `.staging-${claimId}`);
+  const staging = join(root, `${STAGING_PREFIX}${claimId}`);
   const target = exclusiveClaimDir(root);
   try {
     mkdirSync(staging, { recursive: true });
@@ -349,7 +447,7 @@ function publishExclusive(root: string, payload: string, claimId: string, label:
 }
 
 function publishShared(root: string, payload: string, claimId: string): string | null {
-  const staging = join(root, `.staging-${claimId}`);
+  const staging = join(root, `${STAGING_PREFIX}${claimId}`);
   const target = join(sharedClaimDir(root), `${claimId}${CLAIM_SUFFIX}`);
   try {
     mkdirSync(sharedClaimDir(root), { recursive: true });
@@ -484,7 +582,7 @@ export function clearClaimChild(handle: ClaimHandle): void {
 }
 
 function writeChild(handle: ClaimHandle, body: { record: ClaimOwner | null }): void {
-  const staging = join(handle.root, `.staging-child-${handle.claimId}`);
+  const staging = join(handle.root, `${STAGING_PREFIX}child-${handle.claimId}`);
   try {
     writeFileSync(staging, JSON.stringify(body));
     renameSync(staging, childPath(handle.path));

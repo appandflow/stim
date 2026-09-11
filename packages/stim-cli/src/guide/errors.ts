@@ -207,8 +207,23 @@ code, never on the message.`,
   process doing the work and was killed before recording which one.
   Stim will not remove a claim it cannot prove is dead, and it will not wait on
   one either -- a silent wait on a lock nobody holds is what this replaces. The
-  message names the claim and the exact \`rm -rf\` that clears it; run that, then
+  message names the claim and the exact, shell-quoted removal that clears it --
+  just that claim's file, not the lock directory around it; run that, then
   run the command again. Nothing was built, installed or removed.`,
+    },
+    STIM_CLAIM_UNAVAILABLE: {
+      summary: 'this process has no recordable identity, so no build lock or build slot can be taken at all',
+      body: () => `STIM_CLAIM_UNAVAILABLE
+  Every ownership claim records the holder's process identity, captured through
+  the \`unique-pid\` native module. This code is that capture failing: no
+  prebuilt binary for this platform and architecture, or the OS refusing to
+  report this process's start identity.
+  Stim refuses rather than building without a claim. A run with no claim is
+  invisible to every other run, so the single-flight lock and
+  concurrency.maxBuilds would both be off at once, and two builds could compile
+  the same fingerprint while each believed it was alone. Reinstall Stim so the
+  module for this platform is present, then run the command again. Nothing was
+  built, installed or removed.`,
     },
     STIM_INSTALL_FAILED: {
       summary: 'simctl, adb, or devicectl refused the artifact; the one signer-conflict retry',

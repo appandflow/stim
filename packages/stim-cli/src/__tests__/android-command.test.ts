@@ -4,6 +4,7 @@ import * as crashDiagnostics from '../native-crash.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import assert from 'node:assert';
 import { captureProcessToken } from '../process-identity.ts';
+import { ClaimRefusedError, ClaimUnavailableError, claimRemoveCommand } from '../ownership-claim.ts';
 import { once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -2094,6 +2095,39 @@ describe('single-flight builds', () => {
     expect(h.calls.build.length).toBe(1);
   });
 
+  test('a lock whose claim needs an identity this process cannot record refuses, and builds nothing', async () => {
+    const h = harness({
+      acquireLock: () => {
+        throw new ClaimUnavailableError('NATIVE_UNAVAILABLE (no prebuilt binary for this platform)');
+      },
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_CLAIM_UNAVAILABLE');
+    expect(String(result.error?.remedy)).toMatch(/unique-pid/);
+    expect(h.calls.build).toHaveLength(0);
+    expect(h.stderr.join('\n')).not.toMatch(/building anyway/);
+  });
+
+  test('a lock Stim cannot resolve refuses with the command that clears that claim', async () => {
+    const claim = join(home, 'build-locks', 'android-key.lock', 'exclusive', 'mystery.claim');
+    const h = harness({
+      acquireLock: () => {
+        throw new ClaimRefusedError({
+          claimPath: claim,
+          root: join(home, 'build-locks', 'android-key.lock'),
+          reason: 'its process identity token does not decode',
+          label: 'android build',
+        });
+      },
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_CLAIM_REFUSED');
+    expect(String(result.error?.remedy)).toContain(claimRemoveCommand(claim));
+    expect(h.calls.build).toHaveLength(0);
+  });
+
   test('the loser waits, installs the artifact, and compiles nothing', async () => {
     const waited = join(home, 'build-cache', 'android', CACHE_KEY, 'app-debug.apk');
     const h = harness({
@@ -3196,6 +3230,20 @@ describe('concurrency limits', () => {
     expect(slotArgs.max).toBe(2);
     expect(slotArgs.root).toBe(root);
     expect(released).toBe(1);
+  });
+
+  test('a slot whose claim needs an identity this process cannot record refuses, and builds nothing', async () => {
+    const h = harness({
+      getLimits: () => ({ maxBuilds: 2, maxDevices: 0 }),
+      acquireSlot: async () => {
+        throw new ClaimUnavailableError('NATIVE_UNAVAILABLE (no prebuilt binary for this platform)');
+      },
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_CLAIM_UNAVAILABLE');
+    expect(h.calls.build).toHaveLength(0);
+    expect(h.stderr.join('\n')).not.toMatch(/building anyway/);
   });
 
   test("a waiter that installs another workspace's artifact never consumes a slot", async () => {
