@@ -188,6 +188,27 @@ test('ownedAvdDirectory uses AVD_HOME, SDK_HOME, then HOME precedence', () => {
   expect(ownedAvdDirectory('stim-app', { env: {}, home })).toBe(realpathSync(candidates[2]));
 });
 
+test('extra registration roots cannot override the emulator directory selected by the operational lookup', () => {
+  const sdkHome = join(tmpHome, 'sdk-home');
+  const userHome = join(tmpHome, 'user-home');
+  const emulatorHome = join(tmpHome, 'emulator-home');
+  const home = join(tmpHome, 'home');
+  const selected = join(tmpHome, 'selected.avd');
+  const extra = join(tmpHome, 'extra.avd');
+  mkdirSync(selected, { recursive: true });
+  mkdirSync(extra, { recursive: true });
+  writeAvdRoot(join(sdkHome, 'avd'), 'stim-app', `path=${selected}\n`);
+  for (const root of [join(userHome, 'avd'), join(emulatorHome, 'avd'), join(sdkHome, '.android', 'avd')]) {
+    writeAvdRoot(root, 'stim-app', `path=${extra}\n`);
+  }
+  expect(
+    ownedAvdDirectory('stim-app', {
+      env: { ANDROID_SDK_HOME: sdkHome, ANDROID_USER_HOME: userHome, ANDROID_EMULATOR_HOME: emulatorHome },
+      home,
+    }),
+  ).toBe(realpathSync(selected));
+});
+
 test('ownedAvdDirectory resolves moved, relative, and symlinked content directories', () => {
   const sdkHome = join(tmpHome, 'android-sdk-home');
   const root = join(sdkHome, 'avd');

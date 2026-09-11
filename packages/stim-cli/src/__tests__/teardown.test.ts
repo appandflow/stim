@@ -8,8 +8,22 @@ import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
 
 let savedAndroidHome: string | undefined;
 let savedSdkRoot: string | undefined;
+let avdHome: string;
+let savedAvdRoots: Record<string, string | undefined>;
 
 beforeEach(() => {
+  avdHome = mkdtempSync(join(tmpdir(), 'stim-teardown-avds-'));
+  savedAvdRoots = Object.fromEntries(
+    ['HOME', 'ANDROID_AVD_HOME', 'ANDROID_SDK_HOME', 'ANDROID_USER_HOME', 'ANDROID_EMULATOR_HOME'].map((key) => [
+      key,
+      process.env[key],
+    ]),
+  );
+  process.env.HOME = avdHome;
+  process.env.ANDROID_AVD_HOME = join(avdHome, 'avd');
+  process.env.ANDROID_SDK_HOME = avdHome;
+  process.env.ANDROID_USER_HOME = join(avdHome, '.android');
+  process.env.ANDROID_EMULATOR_HOME = join(avdHome, '.android');
   savedAndroidHome = process.env.ANDROID_HOME;
   savedSdkRoot = process.env.ANDROID_SDK_ROOT;
   process.env.ANDROID_HOME = join(tmpdir(), 'stim-test-no-sdk-here');
@@ -17,6 +31,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  for (const [key, value] of Object.entries(savedAvdRoots)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  rmSync(avdHome, { recursive: true, force: true });
   if (savedAndroidHome === undefined) delete process.env.ANDROID_HOME;
   else process.env.ANDROID_HOME = savedAndroidHome;
   if (savedSdkRoot === undefined) delete process.env.ANDROID_SDK_ROOT;

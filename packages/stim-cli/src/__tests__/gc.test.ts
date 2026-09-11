@@ -678,6 +678,7 @@ let tmpHome: string;
 let fakeHome: string;
 let originalHome: string | undefined;
 let originalTmpdir: string | undefined;
+let originalAvdRoots: Record<string, string | undefined>;
 
 function currentConfig() {
   const cfg = loadConfig();
@@ -849,12 +850,26 @@ beforeEach(() => {
   originalHome = process.env.HOME;
   fakeHome = mkdtempSync(join(tmpdir(), 'stim-fakehome-'));
   process.env.HOME = fakeHome;
+  originalAvdRoots = Object.fromEntries(
+    ['ANDROID_AVD_HOME', 'ANDROID_SDK_HOME', 'ANDROID_USER_HOME', 'ANDROID_EMULATOR_HOME'].map((key) => [
+      key,
+      process.env[key],
+    ]),
+  );
+  process.env.ANDROID_AVD_HOME = join(fakeHome, 'avd');
+  process.env.ANDROID_SDK_HOME = fakeHome;
+  process.env.ANDROID_USER_HOME = join(fakeHome, '.android');
+  process.env.ANDROID_EMULATOR_HOME = join(fakeHome, '.android');
 
   originalTmpdir = process.env.TMPDIR;
   process.env.TMPDIR = fakeHome;
 });
 
 afterEach(() => {
+  for (const [key, value] of Object.entries(originalAvdRoots)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
   resetExecutor();
   if (originalTmpdir === undefined) delete process.env.TMPDIR;
   else process.env.TMPDIR = originalTmpdir;

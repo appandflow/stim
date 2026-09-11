@@ -1200,6 +1200,7 @@ describe('ensureOwnedDevice: android', () => {
   let androidHome: string;
   let prevAndroidHome: string | undefined;
   let prevAndroidAvdHome: string | undefined;
+  let prevFallbackRoots: Record<string, string | undefined>;
 
   beforeEach(() => {
     androidHome = mkdtempSync(join(tmpdir(), 'stim-test-sdk-'));
@@ -1209,10 +1210,21 @@ describe('ensureOwnedDevice: android', () => {
     prevAndroidAvdHome = process.env.ANDROID_AVD_HOME;
     process.env.ANDROID_HOME = androidHome;
     process.env.ANDROID_AVD_HOME = join(androidHome, 'avd');
+    prevFallbackRoots = Object.fromEntries(
+      ['HOME', 'ANDROID_SDK_HOME', 'ANDROID_USER_HOME', 'ANDROID_EMULATOR_HOME'].map((key) => [key, process.env[key]]),
+    );
+    process.env.HOME = androidHome;
+    process.env.ANDROID_SDK_HOME = androidHome;
+    process.env.ANDROID_USER_HOME = join(androidHome, '.android');
+    process.env.ANDROID_EMULATOR_HOME = join(androidHome, '.android');
   });
 
   afterEach(() => {
     rmSync(androidHome, { recursive: true, force: true });
+    for (const [key, value] of Object.entries(prevFallbackRoots)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     if (prevAndroidHome === undefined) delete process.env.ANDROID_HOME;
     else process.env.ANDROID_HOME = prevAndroidHome;
     if (prevAndroidAvdHome === undefined) delete process.env.ANDROID_AVD_HOME;
@@ -1262,7 +1274,14 @@ describe('ensureOwnedDevice: android', () => {
             }
             return '';
           }
-          if (/delete avd/.test(cmd)) return '';
+          if (/delete avd/.test(cmd)) {
+            const name = / -n "([^"]+)"/.exec(cmd)?.[1];
+            assert(name);
+            avds = avds.filter((entry) => entry !== name);
+            rmSync(join(process.env.ANDROID_AVD_HOME!, `${name}.ini`), { force: true });
+            rmSync(join(process.env.ANDROID_AVD_HOME!, `${name}.avd`), { recursive: true, force: true });
+            return '';
+          }
           if (cmd === 'adb devices') return 'List of devices attached\n';
           if (/emu avd name/.test(cmd)) return runningAvdName;
           if (/getprop sys\.boot_completed/.test(cmd)) return bootCompletes ? '1' : '';
