@@ -967,6 +967,7 @@ function validateLaunchCrashRecord(runDir, record, meta, rederive = false, revie
     .match(/STIM_BENCH_LAUNCH_CRASH_[0-9A-F]{12}/)?.[0];
   if (!token) return reject('crash token missing');
   const diagnosis = launchCrashDiagnosis(commands, {
+    initialLaunchCapture: meta.promptPolicy === 'minimal-v1',
     dispatchAt: meta.dispatchAt,
     token,
     arm: record.arm,

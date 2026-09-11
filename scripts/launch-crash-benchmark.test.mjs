@@ -17,7 +17,7 @@ describe('launch crash benchmark', () => {
     ['control', 'ios', 'npx expo run:ios', 'tail -40 /tmp/metro.log'],
     ['control', 'android', 'npx expo run:android', 'adb -s emulator-5554 logcat -d'],
   ])(
-    'times actionable initial launch output for %s/%s without waiving log capture',
+    'accepts actionable initial launch output for %s/%s without a redundant log query',
     (arm, platform, command, logCommand) => {
       const token = launchCrashToken('initial-diagnosis');
       const launch = {
@@ -36,16 +36,21 @@ describe('launch crash benchmark', () => {
         endedAt: '2026-09-04T12:00:15Z',
         output: `${token}\nRootLayout (app/_layout.tsx:27:18)`,
       };
-      const options = { dispatchAt: '2026-09-04T12:00:00Z', token, arm, platform };
+      const options = { dispatchAt: '2026-09-04T12:00:00Z', token, arm, platform, initialLaunchCapture: true };
       expect(launchCrashDiagnosis([launch, logs], options)).toMatchObject({
         valid: true,
         commandId: 'launch',
-        errorCaptureCommandId: 'logs',
+        errorCaptureCommandId: 'launch',
         observedAt: launch.endedAt,
         dispatchToDiagnosisSeconds: 10,
         commandCount: 1,
       });
-      expect(launchCrashDiagnosis([launch], options)).toEqual({
+      expect(launchCrashDiagnosis([launch], options)).toMatchObject({
+        valid: true,
+        errorCaptureCommandId: 'launch',
+        dispatchToDiagnosisSeconds: 10,
+      });
+      expect(launchCrashDiagnosis([launch], { ...options, initialLaunchCapture: false })).toEqual({
         valid: false,
         reason: 'launch-crash-error-capture-missing',
       });
@@ -64,7 +69,7 @@ describe('launch crash benchmark', () => {
           launchCrashDiagnosis([{ ...wrap(launch), output: `${launch.output}\n${label}=1\n` }, wrap(logs)], options),
         ).toMatchObject({ valid: false });
       }
-      expect(launchCrashDiagnosis([launch, { ...logs, exitCode: 1 }], options).valid).toBe(false);
+      expect(launchCrashDiagnosis([launch, { ...logs, exitCode: 1 }], options).valid).toBe(true);
       for (const output of [`${token} RootLayout`, `ERROR [Error: ${token}]`, 'ERROR unrelated\nRootLayout']) {
         expect(launchCrashDiagnosis([{ ...launch, output }, logs], options)).toMatchObject({
           commandId: 'logs',
