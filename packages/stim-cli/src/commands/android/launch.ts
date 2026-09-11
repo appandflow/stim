@@ -442,7 +442,7 @@ export async function finishAndroidRun({
         'Retry once the APK applicationId can be read.',
       );
     try {
-      resetAdoptedAvd(device.avdName, serial, androidPackage);
+      await resetAdoptedAvd(device.avdName, serial, androidPackage);
     } catch (error) {
       return fail(
         LAUNCH_FAILED,

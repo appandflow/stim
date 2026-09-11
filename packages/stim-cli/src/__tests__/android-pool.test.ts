@@ -1,3 +1,4 @@
+import { vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -46,6 +47,7 @@ beforeEach(() => {
     if (cmd === 'adb devices') return `List of devices attached\n${running ? 'emulator-5554\tdevice\n' : ''}`;
     if (cmd.includes('emu avd name')) return `${running}\nOK`;
     if (cmd.includes('getprop sys.boot_completed')) return '1';
+    if (cmd.includes('getprop ')) return '';
     if (cmd.includes('shell sync')) return '';
     if (cmd.includes('emu kill')) {
       running = null;
@@ -270,17 +272,18 @@ test('GC protects parked emulators from the orphan sweep and keeps an unverifiab
   expect(readParked('android')).toHaveLength(1);
 });
 
-test('adoption clears the retained app and uninstalls other third-party apps, with a failed clear refusing reuse', () => {
+test('adoption clears the retained app and uninstalls other third-party apps, with a failed clear refusing reuse', async () => {
   makeAvd('stim-source');
   running = 'stim-source';
-  resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app');
+  await resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app');
   expect(calls).toContain('adb -s emulator-5554 shell pm clear com.example.app');
   expect(calls).toContain('adb -s emulator-5554 uninstall com.example.other');
   expect(calls).not.toContain('adb -s emulator-5554 uninstall com.example.app');
+  expect(calls.some((cmd) => cmd.includes('getprop '))).toBe(false);
   cleanupResult = 'Failed';
-  expect(() => resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app')).toThrow('Could not clean');
+  await expect(resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app')).rejects.toThrow('Could not clean');
   packageOutput = 'Error: package manager unavailable';
-  expect(() => resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app')).toThrow(
+  await expect(resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app')).rejects.toThrow(
     'Could not read installed apps',
   );
 });
@@ -294,4 +297,143 @@ test('an AVD whose configured disk size changed is evicted rather than adopted',
   expect(result.created).toBe(true);
   expect(avds.has('stim-source')).toBe(false);
   expect(readParked('android')).toEqual([]);
+});
+
+describe('adoption transport recovery', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    makeAvd('stim-source');
+    running = 'stim-source';
+  });
+  afterEach(() => vi.useRealTimers());
+
+  test.each(['list', 'clear', 'uninstall'])(
+    're-lists packages after a transient %s failure and waits only on failure',
+    async (operation) => {
+      const exec = getExecutor();
+      let failed = false;
+      setExecutor({
+        ...exec,
+        runFile(file, args = [], options) {
+          if (!failed && args.includes(operation)) {
+            failed = true;
+            if (operation === 'uninstall') packageOutput = 'package:com.example.app';
+            throw Object.assign(new Error('adb command failed'), { stderr: 'error: closed' });
+          }
+          return exec.runFile(file, args, options);
+        },
+      });
+      const cleanup = resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app');
+      await vi.runAllTimersAsync();
+      await cleanup;
+      expect(failed).toBe(true);
+      expect(calls).toContain('adb -s emulator-5554 shell pm clear com.example.app');
+      expect(calls.some((cmd) => cmd.includes('getprop sys.boot_completed'))).toBe(true);
+      expect(calls.includes('adb -s emulator-5554 uninstall com.example.other')).toBe(operation !== 'uninstall');
+    },
+  );
+
+  test('stops before destructive retry when another AVD takes the serial', async () => {
+    const exec = getExecutor();
+    setExecutor({
+      ...exec,
+      runFile() {
+        running = 'stim-replacement';
+        throw Object.assign(new Error('adb command failed'), { stderr: 'adb: device offline' });
+      },
+    });
+    const cleanup = resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app');
+    await Promise.all([expect(cleanup).rejects.toThrow('no longer running'), vi.runAllTimersAsync()]);
+    expect(calls.some((cmd) => cmd.includes('pm clear') || cmd.includes('uninstall'))).toBe(false);
+  });
+
+  test('retries an unavailable identity without touching the device until its identity returns', async () => {
+    const exec = getExecutor();
+    let names = 0;
+    setExecutor({
+      ...exec,
+      runQuiet(cmd, options) {
+        if (cmd.includes('emu avd name') && names++ === 0) return null;
+        return exec.runQuiet(cmd, options);
+      },
+    });
+    const cleanup = resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app');
+    expect(calls.some((cmd) => cmd.includes('pm clear'))).toBe(false);
+    await vi.runAllTimersAsync();
+    await cleanup;
+    expect(calls).toContain('adb -s emulator-5554 shell pm clear com.example.app');
+  });
+
+  test.each(['adb: device offline', 'error: closed'])(
+    'bounds repeated %s failures and retains child diagnostics',
+    async (stderr) => {
+      const exec = getExecutor();
+      let attempts = 0;
+      setExecutor({
+        ...exec,
+        runFile() {
+          attempts++;
+          throw Object.assign(new Error('adb command failed'), { stderr });
+        },
+      });
+      const cleanup = resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app');
+      await Promise.all([expect(cleanup).rejects.toThrow(stderr), vi.runAllTimersAsync()]);
+      expect(attempts).toBeGreaterThan(1);
+      expect(attempts).toBeLessThanOrEqual(31);
+    },
+  );
+
+  test('reports an unrelated command failure without waiting or retrying', async () => {
+    const exec = getExecutor();
+    setExecutor({
+      ...exec,
+      runFile() {
+        throw Object.assign(new Error('adb command failed'), { stdout: 'SecurityException: permission denied' });
+      },
+    });
+    await expect(resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app')).rejects.toThrow(
+      'SecurityException: permission denied',
+    );
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+test('adoption recovery gives ownership and readiness probes the remaining timeout budget', async () => {
+  vi.useFakeTimers();
+  try {
+    makeAvd('stim-source');
+    running = 'stim-source';
+    const exec = getExecutor();
+    const timeouts: number[] = [];
+    let failed = false;
+    setExecutor({
+      ...exec,
+      run(cmd, options) {
+        expect(options?.timeoutMs).toBeGreaterThan(0);
+        timeouts.push(options!.timeoutMs!);
+        return exec.run(cmd, options);
+      },
+      runQuiet(cmd, options) {
+        expect(options?.timeoutMs).toBeGreaterThan(0);
+        timeouts.push(options!.timeoutMs!);
+        return exec.runQuiet(cmd, options);
+      },
+      runFile(file, args, options) {
+        expect(options?.timeoutMs).toBeGreaterThan(0);
+        if (!failed) {
+          failed = true;
+          throw new Error('error: closed');
+        }
+        expect(options!.timeoutMs!).toBeLessThan(30000);
+        return exec.runFile(file, args, options);
+      },
+    });
+    const cleanup = resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app');
+    await vi.runAllTimersAsync();
+    await cleanup;
+    expect(timeouts.every((value) => value <= 30000)).toBe(true);
+    expect(timeouts.at(-1)).toBeLessThan(30000);
+  } finally {
+    vi.useRealTimers();
+  }
 });

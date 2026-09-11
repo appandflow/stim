@@ -70,7 +70,7 @@ async function deviceFor(index) {
   owned.add(device.avdName);
   const ready = performance.now();
   const serial = `emulator-${device.consolePort}`;
-  if (device.adopted) resetAdoptedAvd(device.avdName, serial, packageName);
+  if (device.adopted) await resetAdoptedAvd(device.avdName, serial, packageName);
   const cleaned = performance.now();
   const installed = installAndroidApp({ serial, apkPath, packageName });
   assert(installed.ok, JSON.stringify(installed));
