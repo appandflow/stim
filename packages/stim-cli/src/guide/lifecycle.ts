@@ -268,7 +268,8 @@ result as proof instead of requiring an unrelated screenshot.`,
     progress: {
       summary: 'phase lines, the label set, heartbeats and their ~ estimate, what warm, start, stop and remove print',
       body: () => `PROGRESS ON A LONG RUN
-  Progress goes to stderr; stdout carries the human result or \`--json\` payload. Every
+  Native build progress goes to stderr. In \`--json\` mode, stdout carries only
+  the result payload. Plain \`start\` also prints progress on stdout. Every
   progress line has the same shape -- two spaces, a label padded to eleven
   columns, the FACT, and the time the step cost:
 

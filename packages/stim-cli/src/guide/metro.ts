@@ -117,6 +117,6 @@ STARTING YOUR OWN BUNDLER STILL WORKS
   and finding output is back to redirecting it to a file yourself. Prefer
   \`start\`.
 
-  The same identity check governs teardown: started elsewhere, \`stop\` refuses
-  to kill it without \`--force\`.`,
+  \`stop\` leaves an externally started server running. Stop it with the tool
+  that started it.`,
 };
