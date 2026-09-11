@@ -324,7 +324,7 @@ result as proof instead of requiring an unrelated screenshot.`,
     build       still compiling (4m00s, usually ~3m10s)
     build       still compiling (1m00s)
     pods        still installing (1m30s of ~1m40s)
-    build       waiting on /w/app-411 (pid 41233, 1m30s elapsed)
+    build       waiting on /w/app-411 (pid 41233, 1m30s elapsed) -- stim guide lifecycle concurrency
 
   The \`~\` value is an estimate, never a countdown; the third line is a
   project with no record to estimate from yet. \`guide facts stats\` says where
@@ -340,7 +340,7 @@ result as proof instead of requiring an unrelated screenshot.`,
   step, before those. A plain warm prints the \`lock\` line only when its copy
   actually waited for another warm:
 
-    lock        acquired (waited 12s for stim worktree warm --refresh pid 41233)
+    lock        acquired (waited 12s for stim worktree warm --refresh pid 41233) -- stim guide lifecycle options
     checkout    janic/wip 2 commits behind origin/janic/wip -> fast-forwarded to 4b81e0c
                 not the default branch (main); worktrees seeded from this copy
                 carry janic/wip's dependencies
@@ -348,7 +348,7 @@ result as proof instead of requiring an unrelated screenshot.`,
     pods        source /w/main/apps/mobile: ios/Podfile.lock changed -> pod install (1m12s)
 
   A wait reports how long this caller has waited and names the holder:
-  \`lock        waiting 40s for stim worktree warm --refresh (pid 41233)\`.
+  \`lock        waiting 40s for stim worktree warm --refresh (pid 41233) -- stim guide lifecycle options\`.
 
   \`start\` names the port, the supervisor mode and its pid on one line
   (\`metro       starting on port 8083 (expo-child, supervisor pid 13724)\`),
@@ -777,9 +777,9 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   <fingerprint, platform> (a directory under ~/.stim/build-locks). Exactly
   one workspace compiles; the others print
 
-    build       /w/app-412 is already building a3f9b1.. (pid 41233) -- tail ...
-    build       waiting on /w/app-412 (pid 41233, 4m elapsed) -- tail ...
-    build       waited 12m41s for /w/app-412's build -> installed from cache
+    build       /w/app-412 is already building a3f9b1.. (pid 41233) -- tail ... -- stim guide lifecycle concurrency
+    build       waiting on /w/app-412 (pid 41233, 4m elapsed) -- tail ... -- stim guide lifecycle concurrency
+    build       waited 12m41s for /w/app-412's build -> installed from cache -- stim guide lifecycle concurrency
 
   and install the artifact the builder stored. They report cacheHit: "local"
   plus waitedForBuild: { pid, ms }.

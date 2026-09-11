@@ -263,6 +263,7 @@ describe('waiting for a device another workspace holds', () => {
     const result = await acquire(h, { waitSeconds: 61 });
     assert(result.status === 'refused');
     expect(h.warnings).toHaveLength(3);
+    expect(h.warnings.every((line) => line.endsWith(' -- stim guide lifecycle lease'))).toBe(true);
     expect(h.warnings[0]).toMatch(new RegExp(`waiting for ${OTHER} to release Test Phone \\(${UDID}\\)`));
     expect(h.warnings[0]).toMatch(/its lease runs until \d\d:\d\d:\d\d \(\d+m\d\ds from now\)/);
     expect(h.slept.slice(0, 1)).toEqual([DEVICE_WAIT_POLL_MS]);

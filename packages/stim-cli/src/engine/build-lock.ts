@@ -206,7 +206,7 @@ export function listBuildLocks(): BuildLockInfo[] {
 export function waitingLine({ projectRoot, pid, elapsedMs, logFile }: WaitingLineArgs): string {
   const where = projectRoot || 'another workspace';
   const tail = logFile ? ` -- tail ${logFile}` : '';
-  return `${'build'.padEnd(11)} waiting on ${where} (pid ${pid ?? '?'}, ${formatElapsed(elapsedMs)} elapsed)${tail}`;
+  return `${'build'.padEnd(11)} waiting on ${where} (pid ${pid ?? '?'}, ${formatElapsed(elapsedMs)} elapsed)${tail} -- stim guide lifecycle concurrency`;
 }
 
 export function takeoverLine({

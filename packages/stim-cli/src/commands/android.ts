@@ -1287,7 +1287,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           phase(
             'build',
             `${who} is already building ${shortHash(hash)} (pid ${holder.pid})` +
-              `${holder.logFile ? ` -- tail ${holder.logFile}` : ''}`,
+              `${holder.logFile ? ` -- tail ${holder.logFile}` : ''} -- stim guide lifecycle concurrency`,
           );
 
           let waited: WaitForBuildResult | null = null;
@@ -1326,7 +1326,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
             apkPath = waited.hit ?? null;
             record.cacheHit = 'local';
             waitedForBuild = { pid: holder.pid, ms: waited.waitedMs };
-            phase('build', `waited ${formatDuration(waited.waitedMs)} for ${who}'s build -> installed from cache`);
+            phase(
+              'build',
+              `waited ${formatDuration(waited.waitedMs)} for ${who}'s build -> installed from cache -- stim guide lifecycle concurrency`,
+            );
           } else if (waited?.lockReleased) {
             failedHolder = undefined;
             releasedWait = { facts: { pid: holder.pid, ms: waited.waitedMs }, who };
@@ -1462,7 +1465,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
                     waitedForBuild = releasedWait.facts;
                     phase(
                       'build',
-                      `waited ${formatDuration(waitedForBuild.ms)} for ${releasedWait.who}'s build -> installed from cache`,
+                      `waited ${formatDuration(waitedForBuild.ms)} for ${releasedWait.who}'s build -> installed from cache -- stim guide lifecycle concurrency`,
                     );
                   }
                 }
