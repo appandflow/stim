@@ -282,8 +282,10 @@ symlinked worktree must resolve to the same config key as its target.
 
 `worktree warm` and `worktree remove` keep stdout empty. JSON commands print
 exactly one parseable payload, except `logs --json`, which emits newline-delimited
-records and stays empty when no records match. Send status, warnings, and
-progress to stderr.
+records and stays empty when no records match. In JSON mode, send status,
+warnings, and progress to stderr. Preserve existing plain-command streams:
+native build progress goes to stderr, while plain `start` also prints progress
+on stdout.
 
 ### 8. Fail closed during cleanup
 
