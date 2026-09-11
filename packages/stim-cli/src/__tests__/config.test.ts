@@ -362,7 +362,7 @@ test('ensureConfig creates a v2 config with a repos section', () => {
 test('adopts a hand-edited config that has no projects container', () => {
   writeFileSync(
     join(tmpHome, 'config.json'),
-    JSON.stringify({ version: 2, optimizations: { android: { compilerCache: 'auto' } } }),
+    JSON.stringify({ version: 2, repos: {}, optimizations: { android: { compilerCache: 'auto' } } }),
   );
 
   const cfg = ensureConfig();
@@ -373,6 +373,37 @@ test('adopts a hand-edited config that has no projects container', () => {
   expect(JSON.parse(readFileSync(join(tmpHome, 'config.json'), 'utf-8')).optimizations).toEqual({
     android: { compilerCache: 'auto' },
   });
+});
+
+test.each([
+  ['an array', '[]'],
+  ['a string', '"oops"'],
+  ['a number', '7'],
+])('refuses a config whose projects container is %s', (_label, shape) => {
+  writeFileSync(join(tmpHome, 'config.json'), `{ "version": 2, "projects": ${shape}, "repos": {} }`);
+
+  expect(() => ensureConfig()).toThrow(/projects that is not an object/);
+  const thrown = (() => {
+    try {
+      ensureConfig();
+      return null;
+    } catch (err) {
+      return err as { code?: string };
+    }
+  })();
+  expect(thrown?.code).toBe('STIM_CONFIG_CORRUPT');
+
+  expect(readFileSync(join(tmpHome, 'config.json'), 'utf-8')).toContain(`"projects": ${shape}`);
+});
+
+test('refuses a config whose repos container is an array', () => {
+  writeFileSync(join(tmpHome, 'config.json'), '{ "version": 2, "projects": {}, "repos": [] }');
+  expect(() => ensureConfig()).toThrow(/repos that is not an object/);
+});
+
+test('adopts a null projects container rather than refusing it', () => {
+  writeFileSync(join(tmpHome, 'config.json'), '{ "version": 2, "projects": null, "repos": {} }');
+  expect(ensureConfig().projects).toEqual({});
 });
 
 test('migrates a v1 config without touching projects', () => {
