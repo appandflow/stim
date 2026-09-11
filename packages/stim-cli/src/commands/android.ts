@@ -79,9 +79,10 @@ import {
   type BuildLockHandle,
   type WaitForBuildResult,
 } from '../engine/build-lock.ts';
+import { claimFailure } from '../ownership-claim.ts';
 import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../engine/build-slots.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
-import { isPidAlive, resolveProjectMetro } from '../metro.ts';
+import { pidExists, resolveProjectMetro } from '../metro.ts';
 import {
   ensureWorkspaceStorageSafely,
   resolveMetroWithRetry,
@@ -325,7 +326,7 @@ interface RunAndroidOptions {
   resolveMetro?: typeof resolveProjectMetro;
   resolveMetroRetrying?: typeof resolveMetroWithRetry;
   readState?: typeof readWorkspaceState;
-  pidAlive?: typeof isPidAlive;
+  pidAlive?: typeof pidExists;
   verifyCollector?: typeof verifyCollectorOwnership;
   verifyLaunched?: typeof verifyLaunch;
   ensureStorage?: typeof ensureWorkspaceStorageSafely;
@@ -404,7 +405,7 @@ function resolveRunAndroidOptions(
     resolveMetro = resolveProjectMetro,
     resolveMetroRetrying = resolveMetroWithRetry,
     readState = readWorkspaceState,
-    pidAlive = isPidAlive,
+    pidAlive = pidExists,
     verifyCollector = verifyCollectorOwnership,
     verifyLaunched = verifyLaunch,
     ensureStorage = ensureWorkspaceStorageSafely,
@@ -1233,6 +1234,11 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         try {
           attempt = acquireLock({ platform: PLATFORM, key: cacheKey, root, logFile: buildLog });
         } catch (err) {
+          const refusal = claimFailure(err, 'stim android');
+          if (refusal) {
+            phaseFailure = fail(refusal.code, refusal.message, refusal.remedy, { lastBuildStatus: true });
+            return false;
+          }
           phase(
             'build',
             chalk.yellow(`could not take the build lock: ${(err as Error)?.message || err}; building anyway`),
@@ -1270,6 +1276,11 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
             }
             waited = await waitForBuild({ platform: PLATFORM, key: cacheKey, out, ceilingMs });
           } catch (err) {
+            const refusal = claimFailure(err, 'stim android');
+            if (refusal) {
+              phaseFailure = fail(refusal.code, refusal.message, refusal.remedy, { lastBuildStatus: true });
+              return false;
+            }
             const wtErr = err as Error & { code?: string; lockPath?: string };
             if (wtErr?.code !== 'STIM_BUILD_WAIT_TIMEOUT') throw err;
             phaseFailure = fail(
@@ -1370,6 +1381,11 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
             try {
               buildSlot = await acquireSlot({ max: limits.maxBuilds, root, logFile: buildLog, out });
             } catch (err) {
+              const refusal = claimFailure(err, 'stim android');
+              if (refusal) {
+                phaseFailure = fail(refusal.code, refusal.message, refusal.remedy, { lastBuildStatus: true });
+                return false;
+              }
               phase(
                 'build',
                 chalk.yellow(`could not take a build slot: ${(err as Error)?.message || err}; building anyway`),

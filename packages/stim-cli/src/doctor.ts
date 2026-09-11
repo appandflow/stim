@@ -1,7 +1,7 @@
 import { resolveOptimizations, type Optimizations } from './optimizations.ts';
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync } from 'fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
-import { plural } from './command-output.ts';
+import { plural, quotedPath } from './command-output.ts';
 import { getExecutor } from './exec.ts';
 import { makeTemporaryDirectory } from './temporary.ts';
 import { checkStorageLayout } from './doctor-storage.ts';
@@ -142,10 +142,6 @@ function locallyKnownUpstream(projectRoot: string): UpstreamState | null {
   } catch {
     return null;
   }
-}
-
-function quotedPath(path: string): string {
-  return `'${path.replaceAll("'", "'\\''")}'`;
 }
 
 function brokenPodLinks(podsRoot: string): string[] {

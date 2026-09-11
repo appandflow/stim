@@ -11,6 +11,8 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
+import { once } from 'node:events';
+import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
@@ -21,6 +23,7 @@ import { register } from '../cache-manifest.ts';
 import { ensureRemoteBootOwned, withRemoteSessionLock } from '../engine/device-remote.ts';
 import { deviceLeasePath, deviceLocksDir } from '../engine/device-lease.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
+import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../paths.ts';
 import gcCommand, {
   collectGcReport,
@@ -35,7 +38,16 @@ import gcCommand, {
   selectCaches,
 } from '../commands/gc.ts';
 import { adoptParked, parkSim, readParked } from '../sim-pool.ts';
-import { makeConfig, makeIosSim, makeCacheDescriptor, makeBuildLock, makeBuildSlot } from './_factories.ts';
+import {
+  makeConfig,
+  makeIosSim,
+  makeCacheDescriptor,
+  makeBuildLock,
+  makeBuildSlot,
+  goneClaimOwner,
+  liveClaimOwner,
+  plantClaim,
+} from './_factories.ts';
 
 describe('selectCaches', () => {
   const caches = [
@@ -82,8 +94,8 @@ describe('a cache-scoped report', () => {
     expect(report.orphanedDevices).toEqual([]);
     expect(report.staleDevices).toEqual([]);
     expect(report.staleDeviceRecords).toEqual([]);
-    expect(report.buildLocks).toEqual({ stale: [], live: [] });
-    expect(report.buildSlots).toEqual({ stale: [], live: [] });
+    expect(report.buildLocks).toEqual({ stale: [], live: [], unresolved: [] });
+    expect(report.buildSlots).toEqual({ stale: [], live: [], unresolved: [] });
     expect(report.skipped).toEqual([]);
     for (const c of report.caches) {
       expect(`${c.name} ${c.dir}`.toLowerCase()).toContain('compilation cache');
@@ -1222,10 +1234,8 @@ describe('EAS orphan session sweep', () => {
     registerExpoProject(project);
     installExecutor();
     const lockDir = join(workspaceDir(realpathSync(project)), 'remote-session.lock');
-    mkdirSync(lockDir, { recursive: true });
-    writeFileSync(join(lockDir, 'owner.json'), '{not valid json');
-    const old = new Date(Date.now() - 60_000);
-    utimesSync(lockDir, old, old);
+    mkdirSync(join(lockDir, 'exclusive'), { recursive: true });
+    writeFileSync(join(lockDir, 'exclusive', 'broken.claim'), '{not valid json');
     const harness = easGcHarness({
       project,
       list: easList([{ id: 'drs_hidden', name: 'stim-hidden', status: 'IN_PROGRESS', platform: 'IOS' }]),
@@ -2623,16 +2633,9 @@ function writeLock({
   projectRoot?: string;
 }) {
   const path = join(tmpHome, 'build-locks', `${platform}-${key}.lock`);
-  mkdirSync(path, { recursive: true });
-  writeFileSync(
-    join(path, 'lock.json'),
-    JSON.stringify({
-      pid,
-      projectRoot,
-      startedAt: new Date().toISOString(),
-      logFile: `${projectRoot}/.stim/logs/build-${platform}.ndjson`,
-    }),
-  );
+  plantClaim(path, 'exclusive', pid === process.pid ? liveClaimOwner() : goneClaimOwner(pid), {
+    details: { projectRoot, logFile: `${projectRoot}/.stim/logs/build-${platform}.ndjson` },
+  });
   return path;
 }
 
@@ -2714,6 +2717,21 @@ test('--delete removes the stale lock and leaves the live one alone', async () =
   expect(output).toMatch(/build lock/i);
 });
 
+test('--delete keeps a lock whose holder cannot be identified, and says why', async () => {
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  installExecutor();
+  const path = join(tmpHome, 'build-locks', 'ios-unresolved-debug-sim.lock');
+  plantClaim(path, 'exclusive', { pid: 4242, processToken: 'nonsense' });
+
+  const report = await collectGcReport();
+  expect(report.buildLocks.stale).toEqual([]);
+  expect((report.buildLocks.unresolved ?? []).map((l) => l.path)).toEqual([path]);
+
+  const output = await captureLog(() => sweepingGc({ delete: true }));
+  expect(existsSync(join(path, 'exclusive'))).toBe(true);
+  expect(output).toMatch(/cannot resolve/i);
+});
+
 test('a bare gc removes no lock at all', async () => {
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
@@ -2732,11 +2750,9 @@ function writeSlot({
   projectRoot?: string;
 }) {
   const path = join(tmpHome, 'build-slots', `slot-${index}`);
-  mkdirSync(path, { recursive: true });
-  writeFileSync(
-    join(path, 'slot.json'),
-    JSON.stringify({ pid, index, projectRoot, startedAt: new Date().toISOString() }),
-  );
+  plantClaim(path, 'exclusive', pid === process.pid ? liveClaimOwner() : goneClaimOwner(pid), {
+    details: { index, projectRoot },
+  });
   return path;
 }
 
@@ -2780,6 +2796,182 @@ test('--delete removes the stale build slot and leaves a live one alone', async 
   expect(existsSync(stale)).toBe(false);
   expect(existsSync(live)).toBe(true);
   expect(output).toMatch(/build slot/i);
+});
+
+describe('--delete against a claim taken while gc is deleting', { timeout: 60_000 }, () => {
+  const SRC_URL = new URL('../', import.meta.url).href;
+  const CHILD_TIMEOUT_MS = 40_000;
+  const BARRIER_MS = 25_000;
+
+  let scratch: string;
+
+  beforeEach(() => {
+    scratch = mkdtempSync(join(tmpdir(), 'stim-gc-race-'));
+  });
+
+  afterEach(() => {
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
+  // A barrier the child cannot miss: both sides only ever create files, and the child blocks in a
+  // synchronous spin because every removal it is paused inside runs on its main thread.
+  const WAIT_FOR_FILE = [
+    'const waitForFile = (file) => {',
+    `  const deadline = Date.now() + ${BARRIER_MS};`,
+    '  while (!fs.existsSync(file)) {',
+    "    if (Date.now() > deadline) throw new Error('barrier timed out: ' + file);",
+    '    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);',
+    '  }',
+    '};',
+  ].join('\n');
+
+  function script(name: string, body: string) {
+    const path = join(scratch, name);
+    writeFileSync(path, body);
+    return path;
+  }
+
+  function start(path: string, args: string[]) {
+    const child = spawn(process.execPath, [path, ...args], {
+      env: { ...process.env, STIM_HOME: tmpHome },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let output = '';
+    child.stdout?.on('data', (d) => (output += d));
+    child.stderr?.on('data', (d) => (output += d));
+    const timer = setTimeout(() => child.kill('SIGKILL'), CHILD_TIMEOUT_MS);
+    const done = once(child, 'exit').then(([code]) => {
+      clearTimeout(timer);
+      if (code !== 0) throw new Error(`${path} exited ${code}: ${output}`);
+      return output;
+    });
+    return { child, done };
+  }
+
+  async function waitForFile(file: string) {
+    const deadline = Date.now() + BARRIER_MS;
+    while (!existsSync(file)) {
+      if (Date.now() > deadline) throw new Error(`barrier timed out: ${file}`);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  }
+
+  // gc, paused inside the first removal it makes anywhere under the claim set it decided was stale.
+  const gcScript = () =>
+    script(
+      'gc.mjs',
+      [
+        "import fs from 'node:fs';",
+        "import { syncBuiltinESMExports } from 'node:module';",
+        'const [claimSet, ready, proceed] = process.argv.slice(2);',
+        WAIT_FOR_FILE,
+        'let paused = false;',
+        'const pauseOnce = (path) => {',
+        '  if (paused || !String(path).startsWith(claimSet)) return;',
+        '  paused = true;',
+        '  fs.writeFileSync(ready, String(path));',
+        '  waitForFile(proceed);',
+        '};',
+        'const realRm = fs.rmSync;',
+        'const realRmdir = fs.rmdirSync;',
+        'fs.rmSync = (path, options) => (pauseOnce(path), realRm(path, options));',
+        'fs.rmdirSync = (path, options) => (pauseOnce(path), realRmdir(path, options));',
+        'syncBuiltinESMExports();',
+        `const { setExecutor } = await import(${JSON.stringify(SRC_URL)} + 'exec.ts');`,
+        'setExecutor({',
+        "  run: () => '',",
+        '  runQuiet: () => null,',
+        '  runFileQuiet: () => null,',
+        "  runFile: () => '',",
+        "  spawn: () => { throw new Error('unexpected tool spawn'); },",
+        '});',
+        `const { runGc } = await import(${JSON.stringify(SRC_URL)} + 'commands/gc.ts');`,
+        'await runGc({ delete: true }, { settingShapeErrors: () => [] });',
+      ].join('\n'),
+    );
+
+  // A competing build: takes the claim set while gc is paused, then holds it.
+  const holderScript = () =>
+    script(
+      'holder.mjs',
+      [
+        "import fs from 'node:fs';",
+        'const [claimSet, acquired, proceed] = process.argv.slice(2);',
+        WAIT_FOR_FILE,
+        `const { tryAcquireClaim, releaseClaim } = await import(${JSON.stringify(SRC_URL)} + 'ownership-claim.ts');`,
+        `const deadline = Date.now() + ${BARRIER_MS};`,
+        'let got;',
+        'for (;;) {',
+        "  got = tryAcquireClaim({ root: claimSet, mode: 'exclusive' });",
+        '  if (got.pending) releaseClaim(got.pending);',
+        '  if (got.acquired) break;',
+        "  if (Date.now() > deadline) throw new Error('never acquired the claim');",
+        '  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);',
+        '}',
+        'fs.writeFileSync(acquired, JSON.stringify(got.acquired));',
+        'waitForFile(proceed);',
+      ].join('\n'),
+    );
+
+  const claimSets = [
+    { kind: 'build lock', set: () => writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999 }) },
+    { kind: 'build slot', set: () => writeSlot({ index: 1, pid: 999999 }) },
+  ];
+
+  for (const { kind, set } of claimSets) {
+    test(`a ${kind} taken while gc deletes it keeps its new holder, and no second process takes it`, async () => {
+      saveConfig({ version: 2, projects: {}, repos: {} });
+      installExecutor();
+      const claimSet = set();
+      const file = (name: string) => join(scratch, name);
+
+      const gc = start(gcScript(), [claimSet, file('gc.ready'), file('gc.go')]);
+      await waitForFile(file('gc.ready'));
+
+      const holder = start(holderScript(), [claimSet, file('a.acquired'), file('a.go')]);
+      await waitForFile(file('a.acquired'));
+      const held = JSON.parse(readFileSync(file('a.acquired'), 'utf-8')) as { path: string; claimId: string };
+
+      writeFileSync(file('gc.go'), 'go');
+      const gcOutput = await gc.done;
+
+      try {
+        expect(existsSync(held.path)).toBe(true);
+        expect(readClaimSet(claimSet).live.map((h) => h.claimId)).toEqual([held.claimId]);
+        const second = tryAcquireClaim({ root: claimSet, mode: 'exclusive' });
+        if (second.acquired) releaseClaim(second.acquired);
+        if (second.pending) releaseClaim(second.pending);
+        expect(second.acquired).toBe(undefined);
+        expect(second.held?.claimId).toBe(held.claimId);
+        expect(gcOutput).not.toMatch(/Cleared/);
+      } finally {
+        writeFileSync(file('a.go'), 'go');
+        await holder.done;
+      }
+    });
+  }
+
+  test('a claim that becomes unresolvable while gc deletes it is left alone, not removed', async () => {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    installExecutor();
+    const claimSet = writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999 });
+    const file = (name: string) => join(scratch, name);
+
+    const gc = start(gcScript(), [claimSet, file('gc.ready'), file('gc.go')]);
+    await waitForFile(file('gc.ready'));
+
+    const spawning = plantClaim(claimSet, 'exclusive', goneClaimOwner(), {
+      claimId: 'spawning',
+      child: { record: null },
+    });
+    writeFileSync(file('gc.go'), 'go');
+    const gcOutput = await gc.done;
+
+    expect(existsSync(spawning)).toBe(true);
+    expect(readClaimSet(claimSet).unresolved.map((p) => p.path)).toEqual([spawning]);
+    expect(gcOutput).not.toMatch(/Cleared/);
+    expect(gcOutput).toMatch(/Left the build lock/);
+  });
 });
 
 function writeLeaseFile({

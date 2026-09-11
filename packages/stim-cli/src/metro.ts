@@ -5,7 +5,14 @@ import { sep } from 'path';
 import { inspectProcessIdentity } from './process-identity.ts';
 import { readWorkspaceState } from './supervisor/state.ts';
 
-export function isPidAlive(pid: number): boolean {
+/**
+ * True when some process with this pid exists right now. It cannot tell a recycled pid from the
+ * process that first held it, so it is only valid for a pid this run spawned and still holds a
+ * handle on. For a pid read from a record on disk, decide with `inspectProcessIdentity` on that
+ * record's process token, or take an ownership claim (`ownership-claim.ts`): this answer would keep
+ * a dead holder's record looking live until some unrelated process exits.
+ */
+export function pidExists(pid: number): boolean {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);

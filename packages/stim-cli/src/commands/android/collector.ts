@@ -6,7 +6,7 @@ import { spawnEntry } from '../../spawn-entry.ts';
 import { workspaceLogsDir } from '../../paths.ts';
 import { PLATFORM } from './support.ts';
 import { verifyCollectorOwnership } from '../../collector/ownership.ts';
-import { isPidAlive } from '../../metro.ts';
+import { pidExists } from '../../metro.ts';
 import { readCollectors } from '../../collector/state.ts';
 import { phaseLine } from '../../command-output.ts';
 
@@ -29,7 +29,7 @@ export function killPreviousCollector(
     kill = (pid: number, signal: NodeJS.Signals) => process.kill(pid, signal),
     collectors = null,
     verify = verifyCollectorOwnership,
-    isAlive = isPidAlive,
+    isAlive = pidExists,
     note = (_line: string) => {},
   }: {
     platform?: string;
@@ -67,7 +67,7 @@ export async function startCollector({
   packageName,
   spawn,
   kill,
-  alive = isPidAlive,
+  alive = pidExists,
   verify = verifyCollectorOwnership,
   waitMs = COLLECTOR_EXIT_WAIT_MS,
   sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),

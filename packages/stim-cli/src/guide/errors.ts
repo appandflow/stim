@@ -196,6 +196,39 @@ code, never on the message.`,
   check the pid, and if it is not really building, remove that directory and
   run the command again.`,
     },
+    STIM_CLAIM_REFUSED: {
+      summary: 'a build lock exists whose holder cannot be identified; Stim neither removes it nor waits on it',
+      body: () => `STIM_CLAIM_REFUSED
+  A build lock records the holder's process IDENTITY, not just its pid, so a
+  recycled pid reads as a gone builder rather than a live one, and a builder
+  busy in a long \`simctl\` or gradle call reads as live rather than as stale.
+  This code is the one state that cannot be decided: the claim file is truncated
+  or not JSON, its identity token does not decode, or the holder spawned the
+  process doing the work and was killed before recording which one.
+  Stim will not remove a claim it cannot prove is dead, and it will not wait on
+  one either -- a silent wait on a lock nobody holds is what this replaces. The
+  message names the claim and the exact, shell-quoted removal that clears it --
+  just that claim's file, not the lock directory around it; run that, then
+  run the command again. Nothing was built, installed or removed.
+  A lock store the filesystem refuses -- a read-only, full or unwritable
+  \`$STIM_HOME\` -- is NOT this code. No claim was recorded there, so there is
+  none to remove: the message carries the filesystem's own error and names the
+  directory, and the build goes ahead without the lock rather than refusing.`,
+    },
+    STIM_CLAIM_UNAVAILABLE: {
+      summary: 'this process has no recordable identity, so no build lock or build slot can be taken at all',
+      body: () => `STIM_CLAIM_UNAVAILABLE
+  Every ownership claim records the holder's process identity, captured through
+  the \`unique-pid\` native module. This code is that capture failing: no
+  prebuilt binary for this platform and architecture, or the OS refusing to
+  report this process's start identity.
+  Stim refuses rather than building without a claim. A run with no claim is
+  invisible to every other run, so the single-flight lock and
+  concurrency.maxBuilds would both be off at once, and two builds could compile
+  the same fingerprint while each believed it was alone. Reinstall Stim so the
+  module for this platform is present, then run the command again. Nothing was
+  built, installed or removed.`,
+    },
     STIM_INSTALL_FAILED: {
       summary: 'simctl, adb, or devicectl refused the artifact; the one signer-conflict retry',
       body: () => `STIM_INSTALL_FAILED
@@ -509,14 +542,18 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   See \`guide lifecycle concurrency\`.)`,
     },
     STIM_BUILD_SLOT_TIMEOUT: {
-      summary: 'the maxBuilds wait gave up with every slot held by a live pid',
+      summary: 'the maxBuilds wait gave up with every slot held by a running process',
       body: () => `STIM_BUILD_SLOT_TIMEOUT
   Only when concurrency.maxBuilds is set. The build cap does not refuse, it
   WAITS -- this code is that wait giving up: ~90 minutes elapsed and every one
-  of the N slots was still held by a process that is still alive. A dead
-  builder's slot is reclaimed within a poll, so this is never a slot leaked by
-  a crash; it is either that many genuinely long compiles, or a slot directory
-  whose owner is not really building. Slots live under ~/.stim/build-slots and
+  of the N slots was still held by a running process, or by a holder Stim could
+  not identify. A dead
+  builder's slot is reclaimed within a poll, and a recycled pid does not hold a
+  slot, so this is never a slot leaked by a crash; it is either that many
+  genuinely long compiles, or a slot directory whose owner is not really
+  building. A slot whose holder cannot be identified at all is skipped while any
+  other slot is merely busy, and becomes STIM_CLAIM_REFUSED only when no slot is
+  left to wait for. Slots live under ~/.stim/build-slots and
   the message names the directory: remove the slot of a builder that is not
   building, or raise concurrency.maxBuilds
   (\`guide lifecycle concurrency\`).`,

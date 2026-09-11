@@ -187,7 +187,7 @@ async function verifyIosRun({
           : physical
             ? deviceProcess
             : () => {
-                if (launched?.pid) return d.isPidAlive(launched.pid);
+                if (launched?.pid) return d.pidExists(launched.pid);
                 const pid = iosAppProcess(udid, bundleId);
                 return pid === undefined ? null : pid !== null;
               },

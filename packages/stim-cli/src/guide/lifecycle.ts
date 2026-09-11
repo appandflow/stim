@@ -720,9 +720,16 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   hit retains waitedForBuild. Artifacts remain stored only under their final
   fingerprint, never under the old key.
 
-  Nothing can deadlock on it. The lock is held by a PID, so a builder that
-  crashes, is killed, or whose build simply fails frees it: the waiters see a
-  released lock with no artifact, and one of them takes over and builds. The
+  Nothing can deadlock on it. The lock records the holder's process IDENTITY,
+  so a builder that crashes, is killed, or whose build simply fails frees it:
+  the waiters see a released lock with no artifact, and one of them takes over
+  and builds. A recycled pid reads as a gone builder, and a builder busy in a
+  long synchronous tool call reads as live -- age is never a reason to take a
+  lock. The one state that cannot be decided (a truncated claim, an identity
+  token that does not decode) is STIM_CLAIM_REFUSED: Stim names the claim and
+  the command that removes it rather than guessing. A process whose own identity
+  cannot be captured takes no lock and no slot, and refuses with
+  STIM_CLAIM_UNAVAILABLE rather than building unprotected. The
   other waiters keep waiting for that holder. All replacement builders share
   one ~90-minute deadline, including lock acquisition between waits; reaching
   it returns STIM_BUILD_WAIT_TIMEOUT naming the current holder and lock.
@@ -751,7 +758,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
                             not waiters. A full slate WAITS (this is batch work),
                             printing the same kind of progress line the build
                             lock does, and a dead builder frees its slot within
-                            a poll (pid-liveness, like the lock).
+                            a poll (process identity, like the lock).
 
     concurrency.maxDevices  how many Stim-owned devices are BOOTED at once. Checked
                             at device time, before a sim is created or booted.

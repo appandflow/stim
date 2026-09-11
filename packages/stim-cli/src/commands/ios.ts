@@ -85,6 +85,7 @@ import {
 import type { NdjsonWriter } from '../ndjson.ts';
 import { workspaceDir, workspaceLogsDir } from '../paths.ts';
 import { appProjectProblem } from '../project.ts';
+import { claimFailure } from '../ownership-claim.ts';
 import { type SupervisorLike, noMetroMessage, noMetroRemedy } from './native-runtime.ts';
 import {
   PLATFORM,
@@ -652,7 +653,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
       });
       if (!resolution?.metro) {
         const supervisor = (d.readWorkspaceState(root)?.supervisor ?? null) as SupervisorLike | null;
-        const supervisorAlive = Boolean(supervisor?.pid && d.isPidAlive(supervisor.pid));
+        const supervisorAlive = Boolean(supervisor?.pid && d.pidExists(supervisor.pid));
         fail({
           code: 'STIM_NO_METRO',
           message: noMetroMessage({ port: metroPort, resolution, supervisor, supervisorAlive }),
@@ -911,6 +912,16 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
       try {
         attempt = d.acquireBuildLock({ platform: PLATFORM, key: cacheKey, root, logFile });
       } catch (e) {
+        const refusal = claimFailure(e, 'stim ios');
+        if (refusal) {
+          fail({
+            code: refusal.code,
+            message: refusal.message,
+            remedy: refusal.remedy,
+            build: { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache },
+          });
+          return false;
+        }
         note(
           chalk.yellow(
             phaseLine('build', `could not take the build lock: ${(e as Error)?.message || e}; building anyway`),
@@ -949,6 +960,16 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
           }
           waited = await d.waitForBuild({ platform: PLATFORM, key: cacheKey, out: note, ceilingMs });
         } catch (e) {
+          const refusal = claimFailure(e, 'stim ios');
+          if (refusal) {
+            fail({
+              code: refusal.code,
+              message: refusal.message,
+              remedy: refusal.remedy,
+              build: { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache },
+            });
+            return false;
+          }
           const err = e as Error & { code?: string; lockPath?: string };
           if (err?.code !== 'STIM_BUILD_WAIT_TIMEOUT') throw e;
           fail({
@@ -1109,6 +1130,11 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
           try {
             buildSlot = await d.acquireBuildSlot({ max: limits.maxBuilds, root, logFile, out: note });
           } catch (e) {
+            const refusal = claimFailure(e, 'stim ios');
+            if (refusal) {
+              fail({ code: refusal.code, message: refusal.message, remedy: refusal.remedy, build: buildFailure });
+              return false;
+            }
             note(
               chalk.yellow(
                 phaseLine('build', `could not take a build slot: ${(e as Error)?.message || e}; building anyway`),

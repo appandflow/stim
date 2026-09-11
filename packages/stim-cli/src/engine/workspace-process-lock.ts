@@ -1,21 +1,10 @@
-import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { isPidAlive } from '../metro.ts';
+import { join } from 'node:path';
+import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 
-const LOCK_RECORD = 'owner.json';
 const DEFAULT_WAIT_MS = 60_000;
 const POLL_MS = 25;
-const RECORD_GRACE_MS = 5_000;
-
-interface LockRecord {
-  pid: number;
-  token: string;
-  purpose?: string;
-}
 
 export interface WorkspaceProcessLockOptions {
-  isAlive?: (pid: number) => boolean;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   waitMs?: number;
@@ -33,37 +22,8 @@ export function workspaceProcessLockError(err: unknown): 'refused' | 'timeout' |
   return null;
 }
 
-function readLock(path: string): LockRecord | null {
-  try {
-    const parsed = JSON.parse(readFileSync(join(path, LOCK_RECORD), 'utf-8')) as Partial<LockRecord>;
-    return typeof parsed.pid === 'number' && typeof parsed.token === 'string'
-      ? {
-          pid: parsed.pid,
-          token: parsed.token,
-          purpose: typeof parsed.purpose === 'string' ? parsed.purpose : undefined,
-        }
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function lockAge(path: string, now: number): number | null {
-  try {
-    return now - statSync(path).mtimeMs;
-  } catch {
-    return null;
-  }
-}
-
-function reapLock(path: string): void {
-  const aside = `${path}.reap-${process.pid}-${randomUUID()}`;
-  try {
-    renameSync(path, aside);
-  } catch {
-    return;
-  }
-  rmSync(aside, { recursive: true, force: true });
+function lockPath(root: string, name: string, external: boolean): string {
+  return external ? join(root, `${name}.lock`) : join(root, '.stim', `${name}.lock`);
 }
 
 export async function withWorkspaceProcessLock<T>(
@@ -71,7 +31,6 @@ export async function withWorkspaceProcessLock<T>(
   name: string,
   fn: () => Promise<T>,
   {
-    isAlive = isPidAlive,
     now = Date.now,
     sleep = defaultSleep,
     waitMs = DEFAULT_WAIT_MS,
@@ -80,41 +39,31 @@ export async function withWorkspaceProcessLock<T>(
     external = false,
   }: WorkspaceProcessLockOptions = {},
 ): Promise<T> {
-  const path = external ? join(root, `${name}.lock`) : join(root, '.stim', `${name}.lock`);
+  const path = lockPath(root, name, external);
   const deadline = now() + waitMs;
-  let owned: LockRecord | null = null;
 
-  while (!owned) {
-    try {
-      mkdirSync(dirname(path), { recursive: true });
-      mkdirSync(path);
-      owned = { pid: process.pid, token: randomUUID(), purpose: ownerPurpose };
-      writeFileSync(join(path, LOCK_RECORD), JSON.stringify(owned));
-      break;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException)?.code !== 'EEXIST') {
-        if (owned) rmSync(path, { recursive: true, force: true });
-        throw err;
+  for (;;) {
+    const attempt = tryAcquireClaim({
+      root: path,
+      mode: 'exclusive',
+      label: `${name} lock`,
+      details: ownerPurpose ? { purpose: ownerPurpose } : {},
+    });
+    if (attempt.pending) releaseClaim(attempt.pending);
+    if (attempt.acquired) {
+      try {
+        return await fn();
+      } finally {
+        releaseClaim(attempt.acquired);
       }
     }
 
-    const holder = readLock(path);
-    if (holder && !isAlive(holder.pid)) {
-      reapLock(path);
-      continue;
-    }
-    if (holder?.purpose && rejectOwnerPurposes.includes(holder.purpose)) {
-      const error = new Error(`The ${name} lock at ${path} is held for ${holder.purpose}.`);
+    const holder = attempt.held ?? attempt.waitingFor?.[0];
+    const purpose = holder?.details.purpose;
+    if (typeof purpose === 'string' && rejectOwnerPurposes.includes(purpose)) {
+      const error = new Error(`The ${name} lock at ${path} is held for ${purpose}.`);
       (error as Error & { code?: string }).code = 'STIM_LOCK_REFUSED';
       throw error;
-    }
-    if (!holder) {
-      const age = lockAge(path, now());
-      if (age === null) continue;
-      if (age > RECORD_GRACE_MS) {
-        reapLock(path);
-        continue;
-      }
     }
     if (now() >= deadline) {
       const error = new Error(`Timed out waiting for the ${name} lock at ${path}.`);
@@ -122,13 +71,5 @@ export async function withWorkspaceProcessLock<T>(
       throw error;
     }
     await sleep(POLL_MS);
-  }
-
-  try {
-    return await fn();
-  } finally {
-    if (readLock(path)?.token === owned.token) {
-      rmSync(path, { recursive: true, force: true });
-    }
   }
 }

@@ -1,6 +1,6 @@
 import { type ProjectRecord, getProject, removeProject } from './config.ts';
 import { existsSync, rmSync } from 'node:fs';
-import { resolveProjectMetro, killMetroTree, isPidAlive } from './metro.ts';
+import { resolveProjectMetro, killMetroTree, pidExists } from './metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd, type ParkedDevice, type ParkRequest } from './teardown.ts';
 import { parkedMaxSetting } from './sim-pool.ts';
 import { verifyCollectorOwnership } from './collector/ownership.ts';
@@ -35,7 +35,7 @@ async function reapCollectors(
   for (const [platform, record] of Object.entries(collectors)) {
     const rec = record as ProcessRecord | null;
     const pid = rec?.pid;
-    if (typeof pid !== 'number' || pid <= 0 || pid === process.pid || !isPidAlive(pid)) continue;
+    if (typeof pid !== 'number' || pid <= 0 || pid === process.pid || !pidExists(pid)) continue;
     const ownership = verify({ pid, platform, root, expected: rec });
     if (ownership.status === 'gone') continue;
     if (ownership.status === 'unverified') {

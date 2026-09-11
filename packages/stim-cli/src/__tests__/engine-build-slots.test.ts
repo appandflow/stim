@@ -1,14 +1,17 @@
 import assert from 'node:assert';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { claimRemoveCommand } from '../ownership-claim.ts';
+import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 import {
   acquireBuildSlot,
   buildSlotPath,
   buildSlotsDir,
   listBuildSlots,
   releaseBuildSlot,
+  readBuildSlot,
   tryAcquireBuildSlot,
 } from '../engine/build-slots.ts';
 
@@ -24,52 +27,76 @@ afterEach(() => {
   delete process.env.STIM_HOME;
 });
 
-const alwaysAlive = () => true;
-const neverAlive = () => false;
-
 describe('tryAcquireBuildSlot', () => {
   test('takes the first free slot and records the holder', () => {
-    const got = tryAcquireBuildSlot({ max: 2, root: '/w/a', isAlive: alwaysAlive });
+    const got = tryAcquireBuildSlot({ max: 2, root: '/w/a' });
     assert(got);
     expect(got.acquired).toBe(true);
     expect(got.index).toBe(0);
     expect(existsSync(buildSlotPath(0))).toBeTruthy();
-    const rec = JSON.parse(readFileSync(join(buildSlotPath(0), 'slot.json'), 'utf-8'));
+    const rec = readBuildSlot(buildSlotPath(0));
+    assert(rec);
     expect(rec.pid).toBe(process.pid);
+    expect(rec.index).toBe(0);
     expect(rec.projectRoot).toBe('/w/a');
   });
 
   test('returns null when every slot is held by a LIVE builder', () => {
-    for (const i of [0, 1]) {
-      writeFileSync(join(mkslot(i), 'slot.json'), JSON.stringify({ pid: 999999, index: i }));
-    }
-    expect(tryAcquireBuildSlot({ max: 2, isAlive: alwaysAlive })).toBe(null);
+    for (const i of [0, 1]) plantClaim(buildSlotPath(i), 'exclusive', liveClaimOwner(), { details: { index: i } });
+    expect(tryAcquireBuildSlot({ max: 2 })).toBe(null);
   });
 
-  test('reclaims a slot whose builder is DEAD (pid-liveness, not age)', () => {
-    writeFileSync(join(mkslot(0), 'slot.json'), JSON.stringify({ pid: 999999, index: 0 }));
-    writeFileSync(join(mkslot(1), 'slot.json'), JSON.stringify({ pid: 999998, index: 1 }));
-    const got = tryAcquireBuildSlot({ max: 2, isAlive: neverAlive });
+  test('reclaims a slot whose builder is GONE, whatever its age', () => {
+    for (const i of [0, 1]) plantClaim(buildSlotPath(i), 'exclusive', goneClaimOwner(), { details: { index: i } });
+    const got = tryAcquireBuildSlot({ max: 2 });
     assert(got);
     expect(got.acquired).toBe(true);
     expect(got.index).toBe(0);
+  });
+
+  test('a slot whose holder cannot be identified is skipped, waits while another is busy, and refuses when neither', () => {
+    const planted = plantClaim(
+      buildSlotPath(0),
+      'exclusive',
+      { pid: 4242, processToken: 'nonsense' },
+      { details: { index: 0 } },
+    );
+    const got = tryAcquireBuildSlot({ max: 2 });
+    assert(got);
+    expect(got.index).toBe(1);
+
+    releaseBuildSlot(got);
+    plantClaim(buildSlotPath(1), 'exclusive', liveClaimOwner(), { details: { index: 1 } });
+    expect(tryAcquireBuildSlot({ max: 2 })).toBe(null);
+
+    let err: (Error & { code?: string }) | undefined;
+    try {
+      tryAcquireBuildSlot({ max: 1 });
+    } catch (e) {
+      err = e as Error & { code?: string };
+    }
+    expect(err?.code).toBe('STIM_CLAIM_REFUSED');
+    expect(err?.message).toContain(claimRemoveCommand(planted));
   });
 });
 
 describe('releaseBuildSlot', () => {
   test('removes our slot', () => {
-    const got = tryAcquireBuildSlot({ max: 1, isAlive: alwaysAlive });
+    const got = tryAcquireBuildSlot({ max: 1 });
     assert(got?.path);
     expect(releaseBuildSlot(got)).toBe(true);
     expect(existsSync(got.path)).toBe(false);
   });
 
-  test('refuses to remove a slot another pid now holds', () => {
-    const got = tryAcquireBuildSlot({ max: 1, isAlive: alwaysAlive });
-    assert(got?.path);
-    writeFileSync(join(got.path, 'slot.json'), JSON.stringify({ pid: 424242, index: 0 }));
+  test('refuses to remove a slot another builder now holds', () => {
+    const got = tryAcquireBuildSlot({ max: 1 });
+    assert(got?.claim);
+    writeFileSync(
+      got.claim.path,
+      JSON.stringify({ claimId: 'another-builder', mode: 'exclusive', owner: liveClaimOwner(), details: { index: 0 } }),
+    );
     expect(releaseBuildSlot(got)).toBe(false);
-    expect(existsSync(got.path)).toBeTruthy();
+    expect(existsSync(got.claim.path)).toBeTruthy();
   });
 
   test('an unlimited handle releases to a no-op', () => {
@@ -87,9 +114,9 @@ describe('acquireBuildSlot', () => {
 
 describe('listBuildSlots', () => {
   test('classifies slots by whether the builder is alive', () => {
-    writeFileSync(join(mkslot(0), 'slot.json'), JSON.stringify({ pid: process.pid, index: 0, projectRoot: '/w/live' }));
-    writeFileSync(join(mkslot(1), 'slot.json'), JSON.stringify({ pid: 999999, index: 1, projectRoot: '/w/dead' }));
-    const slots = listBuildSlots({ isAlive: (pid) => pid === process.pid });
+    plantClaim(buildSlotPath(0), 'exclusive', liveClaimOwner(), { details: { index: 0, projectRoot: '/w/live' } });
+    plantClaim(buildSlotPath(1), 'exclusive', goneClaimOwner(), { details: { index: 1, projectRoot: '/w/dead' } });
+    const slots = listBuildSlots();
     const byIndex = Object.fromEntries(slots.map((s) => [s.index, s]));
     expect(byIndex[0].alive).toBe(true);
     expect(byIndex[1].alive).toBe(false);
@@ -172,9 +199,4 @@ async function waitForFile(path: string, timeoutMs = 8000) {
     if (Date.now() >= deadline) throw new Error(`timed out after ${timeoutMs}ms waiting for ${path}`);
     await new Promise((r) => setTimeout(r, 20));
   }
-}
-
-function mkslot(i: number) {
-  mkdirSync(buildSlotPath(i), { recursive: true });
-  return buildSlotPath(i);
 }

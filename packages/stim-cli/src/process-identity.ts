@@ -10,9 +10,17 @@ export function sameProcessRecord(a: ProcessRecord | null | undefined, b: Proces
   return a.pid === b.pid && a.processToken === b.processToken;
 }
 
-export function captureProcessToken(pid: number): string | null {
+export type CapturedIdentity = { ok: true; token: string } | { ok: false; reason: string };
+
+export function captureProcessIdentity(pid: number): CapturedIdentity {
   const result = capture(pid);
-  return result.ok ? result.value : null;
+  if (result.ok) return { ok: true, token: result.value };
+  return { ok: false, reason: `${result.error.code} (${result.error.message})` };
+}
+
+export function captureProcessToken(pid: number): string | null {
+  const captured = captureProcessIdentity(pid);
+  return captured.ok ? captured.token : null;
 }
 
 export type ProcessIdentityStatus = 'same' | 'different' | 'gone' | 'unknown';

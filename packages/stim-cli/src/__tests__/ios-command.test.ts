@@ -2,6 +2,7 @@ import assert from 'node:assert';
 import { vi } from 'vitest';
 import * as crashDiagnostics from '../native-crash.ts';
 import { captureProcessToken } from '../process-identity.ts';
+import { ClaimUnavailableError } from '../ownership-claim.ts';
 import { once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -1590,6 +1591,24 @@ describe('single-flight builds', () => {
     expect(calls.order.includes('buildIos')).toBeTruthy();
   });
 
+  test('a lock whose claim needs an identity this process cannot record refuses, and builds nothing', async () => {
+    reserve();
+    const { exitCode, errs, logs, calls } = await run(
+      { json: true },
+      {
+        acquireBuildLock: () => {
+          throw new ClaimUnavailableError('NATIVE_UNAVAILABLE (no prebuilt binary for this platform)');
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(calls.order).not.toContain('buildIos');
+    const facts = parseFirst(logs);
+    expect(facts.code).toBe('STIM_CLAIM_UNAVAILABLE');
+    expect(String(facts.remedy)).toMatch(/unique-pid/);
+    expect(errs.join('\n')).not.toMatch(/building anyway/);
+  });
+
   test('the loser waits, installs the artifact, and compiles nothing', async () => {
     reserve();
     const waited = '/cache/ios/key/Fixture.app';
@@ -2832,6 +2851,23 @@ describe('concurrency limits', () => {
     expect(exitCode).toBe(null);
     expect(slotAcquired).toBe(0);
     expect(built).toBe(0);
+  });
+
+  test('a slot whose claim needs an identity this process cannot record refuses, and builds nothing', async () => {
+    reserve();
+    const { exitCode, errs, logs, calls } = await run(
+      { json: true },
+      {
+        getConcurrencyLimits: () => ({ maxBuilds: 2, maxDevices: 0 }),
+        acquireBuildSlot: async () => {
+          throw new ClaimUnavailableError('NATIVE_UNAVAILABLE (no prebuilt binary for this platform)');
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(calls.order).not.toContain('buildIos');
+    expect(parseFirst(logs).code).toBe('STIM_CLAIM_UNAVAILABLE');
+    expect(errs.join('\n')).not.toMatch(/building anyway/);
   });
 });
 

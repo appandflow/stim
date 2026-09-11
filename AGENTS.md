@@ -119,9 +119,23 @@ changes, and wait for the new checks.
 - **Pure parsing and decision logic.** Keep parsers and selectors separate from
   thin I/O wrappers. Unit-test the pure functions.
 - **Locked state.** Lock every read-modify-write to global config or workspace
-  state. Use atomic writes. Long-lived build locks use PID liveness, not mtime.
-  Device leases use a declared expiry because the holder can be an agent with no
-  process.
+  state. Use atomic writes. An ownership claim held across a long operation -- a
+  build, an install, a supervisor lifetime -- goes through
+  `src/ownership-claim.ts`: a claim built privately and renamed into place, named
+  by its own token, whose liveness is the holder's `ProcessRecord` read through
+  `inspectProcessIdentity`. No mtime, no heartbeat, no staleness threshold, and
+  no second implementation. A state it cannot establish is a refusal naming the
+  claim and the command that removes it, never a silent wait or a reap. A claim
+  store the filesystem refuses -- read-only, full, unwritable -- carries that
+  filesystem error instead, because no claim was recorded there to resolve;
+  retry only a condition another process can change. A
+  process that cannot capture its own identity takes no claim and refuses with
+  `STIM_CLAIM_UNAVAILABLE`; it never runs the guarded operation unprotected.
+  Removing a claim set is `clearFreeClaimSet`, which takes the set's own claim
+  first, so no sweep can delete a claim taken since it was surveyed. Device
+  leases use a declared expiry because the holder can be an agent with no
+  process. `pidExists` answers only "does a process with this pid exist"; it
+  cannot answer whether a record on disk still describes its writer.
 - **Cache contracts.** The cache packages must work without `Stim` installed.
   Keep their config path, cache root, cache key, and registration behavior
   aligned with the CLI. Resolution order is environment, machine config, then

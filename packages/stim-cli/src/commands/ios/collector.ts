@@ -7,7 +7,7 @@ import { PLATFORM } from './support.ts';
 import { spawnEntry } from '../../spawn-entry.ts';
 import { verifyCollectorOwnership } from '../../collector/ownership.ts';
 import { readWorkspaceState } from '../../supervisor/state.ts';
-import { isPidAlive } from '../../metro.ts';
+import { pidExists } from '../../metro.ts';
 import { sleep } from '../native-runtime.ts';
 import { getExecutor } from '../../exec.ts';
 
@@ -47,7 +47,7 @@ interface ReplaceCollectorArgs {
 export async function stopPreviousCollector({
   root,
   kill = (pid, signal) => process.kill(pid, signal),
-  alive = isPidAlive,
+  alive = pidExists,
   readState = readWorkspaceState,
   verify = verifyCollectorOwnership,
   waitMs = COLLECTOR_EXIT_WAIT_MS,
@@ -105,7 +105,7 @@ export async function replaceCollector({
   payloadUrl = null,
   spawn = (cmd, args, opts) => getExecutor().spawn(cmd, args, opts),
   kill = (pid, signal) => process.kill(pid, signal),
-  alive = isPidAlive,
+  alive = pidExists,
   readState = readWorkspaceState,
   verify = verifyCollectorOwnership,
   waitMs = COLLECTOR_EXIT_WAIT_MS,

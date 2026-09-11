@@ -49,7 +49,7 @@ import {
   readBundleExecutable,
   readBundleId,
 } from '../../engine/xcode.ts';
-import { isPidAlive, resolveProjectMetro } from '../../metro.ts';
+import { pidExists, resolveProjectMetro } from '../../metro.ts';
 import { createNdjsonWriter } from '../../ndjson.ts';
 import { detectBundleId, detectIsExpo, findProjectRoot, projectShortcut } from '../../project.ts';
 import { resolveCacheProviderConfig, resolveSettings } from '../../settings.ts';
@@ -83,7 +83,7 @@ export interface IosDeps {
   resolveProjectMetro: typeof resolveProjectMetro;
   resolveMetroWithRetry: typeof resolveMetroWithRetry;
   readWorkspaceState: typeof readWorkspaceState;
-  isPidAlive: typeof isPidAlive;
+  pidExists: typeof pidExists;
   getConcurrencyLimits: typeof getConcurrencyLimits;
   fingerprintProject: typeof fingerprintProject;
   untrackedNativeFiles: typeof untrackedNativeFiles;
@@ -164,7 +164,7 @@ export const DEFAULT_DEPS: IosDeps = {
   resolveProjectMetro,
   resolveMetroWithRetry,
   readWorkspaceState,
-  isPidAlive,
+  pidExists,
   getConcurrencyLimits,
   fingerprintProject,
   untrackedNativeFiles,

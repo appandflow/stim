@@ -47,7 +47,7 @@ import {
 } from './support.ts';
 import type { CcacheActivity, WaitedForBuild } from '../../types.ts';
 import { verifyCollectorOwnership } from '../../collector/ownership.ts';
-import { isPidAlive } from '../../metro.ts';
+import { pidExists } from '../../metro.ts';
 import type { OwnedDeviceRecord } from '../../engine/device.ts';
 import { remoteAndroidDeps } from '../../engine/device-remote.ts';
 import { type RunLease, DEBUG_VERIFY_STEP_MS, lostLine, lostRefusal } from '../../engine/device-lease-run.ts';
@@ -328,7 +328,7 @@ interface FinishAndroidRunArgs {
   verifyReleaseLaunched: typeof verifyAndroidReleaseLaunch;
   spawn: (cmd: string, args: readonly string[], opts: Record<string, unknown>) => ChildProcess;
   kill: (pid: number, signal: NodeJS.Signals) => boolean;
-  pidAlive: typeof isPidAlive;
+  pidAlive: typeof pidExists;
   verifyCollector: typeof verifyCollectorOwnership;
   writeLaunch: typeof writeWorkspaceLaunch;
   writeState: typeof writeWorkspaceState;

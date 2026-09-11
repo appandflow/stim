@@ -15,7 +15,7 @@ import {
   type Config,
   type ProjectRecord,
 } from '../config.ts';
-import { isPidAlive } from '../metro.ts';
+import { pidExists } from '../metro.ts';
 import {
   bootIosSim,
   createOwnedIosSim,
@@ -148,7 +148,7 @@ export async function ensureOwnedDevice({
   note = () => {},
   out = () => {},
   logFile = null,
-  alive = isPidAlive,
+  alive = pidExists,
   configureAvd = configureNewOwnedAvd,
   teardownAvd = teardownOwnedAvd,
   reconcileIosSimulator = reconcileSimSlim,
@@ -815,7 +815,7 @@ async function bootOwnedAvdOnFreshPort({
   deviceName,
   out,
   logFile = null,
-  alive = isPidAlive,
+  alive = pidExists,
 }: {
   avdName: string;
   metadata?: OwnedDeviceRecord;
@@ -1054,7 +1054,7 @@ export async function ensureBooted({
   pollMs = BOOT_POLL_MS,
   out = () => {},
   logFile = null,
-  alive = isPidAlive,
+  alive = pidExists,
 }: Partial<
   {
     platform: string;
@@ -1142,7 +1142,7 @@ async function ensureAndroidBooted({
   timeoutMs,
   out,
   logFile = null,
-  alive = isPidAlive,
+  alive = pidExists,
 }: {
   device?: OwnedDeviceRecord | null;
   timeoutMs: number;

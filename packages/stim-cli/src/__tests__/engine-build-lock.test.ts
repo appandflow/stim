@@ -3,6 +3,8 @@ import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import { claimRemoveCommand } from '../ownership-claim.ts';
+import { goneClaimOwner, liveClaimOwner, plantClaim, recycledClaimOwner } from './_factories.ts';
 import {
   acquireBuildLock,
   buildLockPath,
@@ -101,45 +103,65 @@ describe('acquireBuildLock', () => {
     expect(second.held.pid).toBe(process.pid);
   });
 
-  test('a lock held by a DEAD pid is taken over', () => {
+  test('a lock whose builder is GONE is taken over', () => {
     const path = buildLockPath(PLATFORM, KEY);
-    mkdirSync(path, { recursive: true });
-    writeFileSync(
-      join(path, 'lock.json'),
-      JSON.stringify({
-        pid: 999999,
-        projectRoot: '/gone/worktree',
-        startedAt: new Date().toISOString(),
-        logFile: '/gone/build.ndjson',
-      }),
-    );
-
-    const got = acquireBuildLock(spec({ isAlive: () => false }));
-    expect(got.acquired).toBe(true);
-    const taken = readBuildLock(path);
-    assert(taken);
-    expect(taken.pid).toBe(process.pid);
-    assert(got.tookOver);
-    expect(got.tookOver.pid).toBe(999999);
-    expect(got.tookOver.projectRoot).toBe('/gone/worktree');
-    expect(got.tookOver.logFile).toBe('/gone/build.ndjson');
-  });
-
-  test('an ordinary acquisition took nothing over, so nothing is reported', () => {
-    expect(acquireBuildLock(spec()).tookOver).toBe(undefined);
-  });
-
-  test('a lock with no lock.json at all is taken over once it has aged', () => {
-    const path = buildLockPath(PLATFORM, KEY);
-    mkdirSync(path, { recursive: true });
-    const longAgo = new Date(Date.now() - 60 * 1000);
-    utimesSync(path, longAgo, longAgo);
+    const gone = goneClaimOwner();
+    plantClaim(path, 'exclusive', gone, {
+      details: { projectRoot: '/gone/worktree', logFile: '/gone/build.ndjson' },
+    });
 
     const got = acquireBuildLock(spec());
     expect(got.acquired).toBe(true);
     const taken = readBuildLock(path);
     assert(taken);
     expect(taken.pid).toBe(process.pid);
+    assert(got.tookOver);
+    expect(got.tookOver.pid).toBe(gone.pid);
+    expect(got.tookOver.projectRoot).toBe('/gone/worktree');
+    expect(got.tookOver.logFile).toBe('/gone/build.ndjson');
+  });
+
+  test('a lock whose pid was recycled by another process is taken over, not waited on', () => {
+    const path = buildLockPath(PLATFORM, KEY);
+    plantClaim(path, 'exclusive', recycledClaimOwner(), { details: { projectRoot: '/recycled' } });
+    const got = acquireBuildLock(spec());
+    expect(got.acquired).toBe(true);
+    expect(got.tookOver?.projectRoot).toBe('/recycled');
+  });
+
+  test('a lock whose holder cannot be identified refuses, naming the lock and how to remove it', () => {
+    const path = buildLockPath(PLATFORM, KEY);
+    const planted = plantClaim(path, 'exclusive', { pid: 4242, processToken: 'nonsense' });
+    let err: (Error & { code?: string; claimPath?: string }) | undefined;
+    try {
+      acquireBuildLock(spec());
+    } catch (e) {
+      err = e as Error & { code?: string; claimPath?: string };
+    }
+    expect(err?.code).toBe('STIM_CLAIM_REFUSED');
+    expect(err?.claimPath).toBe(planted);
+    expect(err?.message).toContain(claimRemoveCommand(planted));
+    expect(existsSync(planted)).toBe(true);
+  });
+
+  test('an ordinary acquisition took nothing over, so nothing is reported', () => {
+    expect(acquireBuildLock(spec()).tookOver).toBe(undefined);
+  });
+
+  test('a lock directory with no claim in it is free, fresh or old', () => {
+    const path = buildLockPath(PLATFORM, KEY);
+    for (const age of [0, 6 * 60 * 60 * 1000]) {
+      mkdirSync(path, { recursive: true });
+      const stamp = new Date(Date.now() - age);
+      utimesSync(path, stamp, stamp);
+
+      const got = acquireBuildLock(spec());
+      expect(got.acquired).toBe(true);
+      const taken = readBuildLock(path);
+      assert(taken);
+      expect(taken.pid).toBe(process.pid);
+      expect(releaseBuildLock(got)).toBe(true);
+    }
   });
 
   test('releaseBuildLock removes the lock and is safe to repeat', () => {
@@ -151,20 +173,21 @@ describe('acquireBuildLock', () => {
     expect(acquireBuildLock(spec()).acquired).toBe(true);
   });
 
-  test('releaseBuildLock refuses to remove a lock another pid took over', () => {
+  test('releaseBuildLock refuses to remove a lock another builder now holds', () => {
     const got = acquireBuildLock(spec());
-    assert(got.path);
+    assert(got.claim);
     writeFileSync(
-      join(got.path, 'lock.json'),
+      got.claim.path,
       JSON.stringify({
-        pid: 424242,
-        projectRoot: '/another/worktree',
+        claimId: 'another-builder',
+        mode: 'exclusive',
+        owner: liveClaimOwner(),
         startedAt: new Date().toISOString(),
-        logFile: null,
+        details: { projectRoot: '/another/worktree' },
       }),
     );
     expect(releaseBuildLock(got)).toBe(false);
-    expect(existsSync(got.path)).toBe(true);
+    expect(existsSync(got.claim.path)).toBe(true);
   });
 
   test('a throw inside a finally-wrapped build still releases', () => {
@@ -189,18 +212,13 @@ describe('listBuildLocks', () => {
   test('classifies each lock by whether its builder is still alive', () => {
     acquireBuildLock(spec());
     const dead = buildLockPath('android', 'deadkey-debug-sim');
-    mkdirSync(dead, { recursive: true });
-    writeFileSync(
-      join(dead, 'lock.json'),
-      JSON.stringify({
-        pid: 999999,
-        projectRoot: '/gone/worktree',
-        startedAt: '2026-08-25T10:00:00.000Z',
-        logFile: '/gone/b.ndjson',
-      }),
-    );
+    const gone = goneClaimOwner();
+    plantClaim(dead, 'exclusive', gone, {
+      startedAt: '2026-08-25T10:00:00.000Z',
+      details: { projectRoot: '/gone/worktree', logFile: '/gone/b.ndjson' },
+    });
 
-    const locks = listBuildLocks({ isAlive: (pid) => pid === process.pid });
+    const locks = listBuildLocks();
     expect(locks.length).toBe(2);
     const live = locks.find((l) => l.alive);
     const stale = locks.find((l) => !l.alive);
@@ -210,33 +228,28 @@ describe('listBuildLocks', () => {
     expect(live.key).toBe(KEY);
     expect(live.projectRoot).toBe(root);
     expect(stale.platform).toBe('android');
-    expect(stale.pid).toBe(999999);
+    expect(stale.pid).toBe(gone.pid);
     expect(stale.path).toBe(dead);
   });
 
-  test('a lock directory with unreadable json is listed with a null pid, not skipped', () => {
+  test('a lock whose claim cannot be read is listed as unresolved, not as a free lock', () => {
     const path = buildLockPath(PLATFORM, KEY);
-    mkdirSync(path, { recursive: true });
-    writeFileSync(join(path, 'lock.json'), 'not json');
+    mkdirSync(join(path, 'exclusive'), { recursive: true });
+    writeFileSync(join(path, 'exclusive', 'broken.claim'), 'not json');
     const [lock] = listBuildLocks();
     assert(lock);
     expect(lock.pid).toBe(null);
     expect(lock.alive).toBe(false);
+    expect(lock.unresolved).toBe(true);
   });
 });
 
 describe('waitForBuild', () => {
-  const held = {
-    pid: process.pid,
-    projectRoot: '/other/worktree',
-    startedAt: new Date().toISOString(),
-    logFile: '/other/build.ndjson',
-  };
+  const details = { projectRoot: '/other/worktree', logFile: '/other/build.ndjson' };
 
-  function lockOn(info = held) {
+  function lockOn(owner = liveClaimOwner()) {
     const path = buildLockPath(PLATFORM, KEY);
-    mkdirSync(path, { recursive: true });
-    writeFileSync(join(path, 'lock.json'), JSON.stringify(info));
+    plantClaim(path, 'exclusive', owner, { details });
     return path;
   }
 
@@ -255,7 +268,6 @@ describe('waitForBuild', () => {
     const result = await waitForBuild(
       opts({
         resolve: () => (++polls < 3 ? null : '/cache/ios/key/Fixture.app'),
-        isAlive: () => true,
         now: () => (clock += 5000),
       }),
     );
@@ -272,7 +284,6 @@ describe('waitForBuild', () => {
     const result = await waitForBuild(
       opts({
         resolve: () => null,
-        isAlive: () => true,
         sleep: async () => {
           if (++polls === 1) rmSync(path, { recursive: true, force: true });
         },
@@ -284,8 +295,8 @@ describe('waitForBuild', () => {
   });
 
   test('a dead builder means the same, without waiting for the lock to go', async () => {
-    lockOn();
-    const result = await waitForBuild(opts({ resolve: () => null, isAlive: () => false }));
+    lockOn(goneClaimOwner());
+    const result = await waitForBuild(opts({ resolve: () => null }));
     expect(result.builderFailed).toBeTruthy();
     expect(result.builderFailed).toMatch(/pid/i);
   });
@@ -296,7 +307,6 @@ describe('waitForBuild', () => {
     const result = await waitForBuild(
       opts({
         resolve: () => stored,
-        isAlive: () => true,
         sleep: async () => {
           stored = '/cache/ios/key/Fixture.app';
           rmSync(path, { recursive: true, force: true });
@@ -312,7 +322,6 @@ describe('waitForBuild', () => {
     const result = await waitForBuild(
       opts({
         resolve: () => '/cache/ios/key/Fixture.app',
-        isAlive: () => true,
         sleep: async () => {
           slept++;
         },
@@ -330,7 +339,6 @@ describe('waitForBuild', () => {
     await waitForBuild(
       opts({
         resolve: () => (++polls < 200 ? null : '/cache/ios/key/Fixture.app'),
-        isAlive: () => true,
         now: () => (clock += 1000),
         out: (l: string) => lines.push(l),
       }),
@@ -350,7 +358,6 @@ describe('waitForBuild', () => {
       await waitForBuild(
         opts({
           resolve: () => null,
-          isAlive: () => true,
           now: () => (clock += 60 * 1000),
           ceilingMs: 90 * 60 * 1000,
         }),
