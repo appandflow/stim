@@ -135,6 +135,14 @@ test('a path setting is tested verbatim, because the build opens the string the 
   );
 });
 
+test('a keystore is tested the way its consumer reads it, which trims the configured value', () => {
+  const settings = { android: { keystore: ' release.keystore ' } };
+  expect(check(settings, ['/app/release.keystore'])).toEqual([]);
+  const findings = check(settings);
+  expect(findings).toHaveLength(1);
+  expect(findings[0]?.detail).toBe(`android.keystore in ${MACHINE} names /app/release.keystore, which does not exist.`);
+});
+
 test.each(['tc/toolchain.json', '/abs/toolchain.json\n'])(
   'a casToolchain of %j is not swept when the optimizations it belongs to could not be resolved',
   (casToolchain) => {

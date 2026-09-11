@@ -47,6 +47,8 @@ const PATH_SETTING_ENVIRONMENT: Readonly<Record<string, string>> = {
   'optimizations.android.casToolchain': 'STIM_ANDROID_CAS_TOOLCHAIN',
 };
 
+const PATH_SETTINGS_TRIMMED_BY_THEIR_CONSUMER: ReadonlySet<string> = new Set(['android.keystore']);
+
 export function checkMachineSettings({
   settings,
   layers,
@@ -91,7 +93,7 @@ export function checkMachineSettings({
     }
     const entry = settingOrigin(layers, key);
     if (!entry || typeof entry.value !== 'string') continue;
-    const named = missingPath(entry.value, projectRoot, exists);
+    const named = missingPath(entry.value, projectRoot, exists, PATH_SETTINGS_TRIMMED_BY_THEIR_CONSUMER.has(key));
     if (!named) continue;
     findings.push({
       level: 'note',
@@ -159,9 +161,15 @@ function compilerCacheFinding({
   };
 }
 
-function missingPath(value: string, projectRoot: string, exists: (path: string) => boolean): string | null {
-  if (value.trim() === '') return null;
-  const path = isAbsolute(value) ? value : resolve(projectRoot, value);
+function missingPath(
+  value: string,
+  projectRoot: string,
+  exists: (path: string) => boolean,
+  trim = false,
+): string | null {
+  const opened = trim ? value.trim() : value;
+  if (opened.trim() === '') return null;
+  const path = isAbsolute(opened) ? opened : resolve(projectRoot, opened);
   if (exists(path)) return null;
-  return value === value.trim() ? path : JSON.stringify(path);
+  return opened === opened.trim() ? path : JSON.stringify(path);
 }
