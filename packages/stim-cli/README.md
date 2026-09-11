@@ -58,6 +58,13 @@ one native platform is in scope; shared project checks still run. Doctor also
 prints the running CLI version and the `stim` installation resolved from PATH,
 and flags a resolved installation that is older than another available one.
 
+For parallel iOS work, SimSlim is recommended as an optional way to reduce
+simulator background services and memory use. Run `stim guide lifecycle simslim`
+to review the service tradeoffs and configure a profile. Doctor recommends the
+setup without installing or enabling it. When a simulator cannot start
+processes, Stim bounds the wait and reports observed host memory pressure when
+available; free memory before retrying. A timeout alone does not prove OOM.
+
 For stale Android CMake launcher findings, stop native builds and run
 `stim doctor --fix --platform android` in the affected checkout. It clears
 affected ignored, untracked generated `.cxx` configurations in the app and

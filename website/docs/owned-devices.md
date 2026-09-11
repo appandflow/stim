@@ -31,6 +31,22 @@ defaults or use `ios --device-type`, `ios --runtime`, and
 assumes that the caller finished all device automation for that Stim session.
 It does not block on other processes attached to the owned device.
 
+## Memory pressure and SimSlim
+
+SimSlim is recommended as an optional way to reduce background services and
+memory use when running several iOS workspaces. Review the profile against
+your app's needs: disabled services can affect tests. Current SimSlim 0.8
+requires iOS 18.5 or newer. Run `stim guide lifecycle simslim` for installation
+and profile setup; `doctor` recommends it without applying it automatically.
+
+A simulator can report Booted and show SpringBoard while process startup is
+stalled. Stim checks a bounded process spawn before installation and bounds
+local launch calls. When macOS reports elevated memory pressure, diagnostics
+recommend freeing memory before retrying. A timeout or existing swap usage
+alone does not establish OOM. Stop only workspaces you own and have finished
+using; ask before closing other agents' simulators or heavy apps. SimSlim can
+reduce future resource use but is not a guaranteed fix for a stalled host.
+
 ## Remote devices
 
 Stim supports two optional remote backends:

@@ -5,7 +5,7 @@ import { getExecutor, type Executor } from '../exec.ts';
 import { parseNdjsonText, type NdjsonRecord } from '../ndjson.ts';
 import { deviceHoldsApk, deviceHoldsBundle } from './installed-artifact.ts';
 import { DEV_MENU_LAUNCH_ARGS } from '../collector/ios-device.ts';
-import { listUserApps, uninstallIosApp } from '../sim/ios.ts';
+import { iosSimulatorFailureAdvice, listUserApps, uninstallIosApp } from '../sim/ios.ts';
 import { APP_READINESS_TIMEOUT_MS, appReadinessSignal, type AppReadiness } from './app-readiness.ts';
 
 export const INSTALL_ERROR = 'STIM_INSTALL_FAILED';
@@ -19,6 +19,13 @@ const IOS_DEV_MENU_OFF_KEYS = ['EXDevMenuShowsAtLaunch', 'EXDevMenuShowFloatingA
 const DEV_CLIENT_ONBOARDING_QUERY = 'disableOnboarding=1';
 const DEV_CLIENT_DISABLE_FAB_QUERY = 'disableFab=1';
 const ANDROID_DISABLE_AUTO_LAUNCH_EXTRA = 'EXDevMenuDisableAutoLaunch';
+
+function describeIosSimulatorFailure(error: unknown, exec: Executor): string {
+  const detail = describe(error);
+  return (error as NodeJS.ErrnoException)?.code === 'ETIMEDOUT'
+    ? `${detail}. ${iosSimulatorFailureAdvice(exec)}`
+    : detail;
+}
 
 interface ExecOpt {
   exec?: Executor | null;
@@ -107,26 +114,22 @@ export function installIosApp(
   if (bundleId && devClientScheme) {
     try {
       for (const key of IOS_DEV_MENU_OFF_KEYS) {
-        e.runFile('xcrun', ['simctl', 'spawn', udid, 'defaults', 'write', bundleId, key, '-bool', 'false']);
+        e.runFile('xcrun', ['simctl', 'spawn', udid, 'defaults', 'write', bundleId, key, '-bool', 'false'], {
+          timeoutMs: 60000,
+        });
       }
       for (const key of iosSchemeApprovalKeys(bundleId, devClientScheme)) {
-        e.runFile('xcrun', [
-          'simctl',
-          'spawn',
-          udid,
-          'defaults',
-          'write',
-          IOS_SCHEME_APPROVAL_DOMAIN,
-          key,
-          '-string',
-          bundleId,
-        ]);
+        e.runFile(
+          'xcrun',
+          ['simctl', 'spawn', udid, 'defaults', 'write', IOS_SCHEME_APPROVAL_DOMAIN, key, '-string', bundleId],
+          { timeoutMs: 60000 },
+        );
       }
     } catch (err) {
       return {
         failed: true,
         code: INSTALL_ERROR,
-        reason: `Installed ${bundleId}, but could not prepare the dev client: ${describe(err)}`,
+        reason: `Installed ${bundleId}, but could not prepare the dev client: ${describeIosSimulatorFailure(err, e)}`,
       };
     }
   }
@@ -245,21 +248,16 @@ export function launchIosApp(
   ];
   if (metroPort !== null) {
     try {
-      e.runFile('xcrun', [
-        'simctl',
-        'spawn',
-        udid,
-        'defaults',
-        'write',
-        bundleId,
-        'RCT_jsLocation',
-        jsLocationValue(metroPort),
-      ]);
+      e.runFile(
+        'xcrun',
+        ['simctl', 'spawn', udid, 'defaults', 'write', bundleId, 'RCT_jsLocation', jsLocationValue(metroPort)],
+        { timeoutMs: 60000 },
+      );
     } catch (err) {
       return {
         failed: true,
         code: LAUNCH_ERROR,
-        reason: `Could not point ${bundleId} at Metro port ${metroPort} (defaults write RCT_jsLocation): ${describe(err)}`,
+        reason: `Could not point ${bundleId} at Metro port ${metroPort} (defaults write RCT_jsLocation): ${describeIosSimulatorFailure(err, e)}`,
       };
     }
 
@@ -275,10 +273,14 @@ export function launchIosApp(
           );
           return { ok: true, mode: 'launch', url, jsLocation: jsLocationValue(metroPort), pid };
         }
-        e.runFile('xcrun', ['simctl', 'openurl', udid, url]);
+        e.runFile('xcrun', ['simctl', 'openurl', udid, url], { timeoutMs: 60000 });
         return { ok: true, mode: 'openurl', url, jsLocation: jsLocationValue(metroPort) };
       } catch (err) {
-        return { failed: true, code: LAUNCH_ERROR, reason: `simctl openurl ${url} failed: ${describe(err)}` };
+        return {
+          failed: true,
+          code: LAUNCH_ERROR,
+          reason: `simctl openurl ${url} failed: ${describeIosSimulatorFailure(err, e)}`,
+        };
       }
     }
   }
@@ -289,7 +291,11 @@ export function launchIosApp(
     if (metroPort !== null) result.jsLocation = jsLocationValue(metroPort);
     return result;
   } catch (err) {
-    return { failed: true, code: LAUNCH_ERROR, reason: `simctl launch ${bundleId} failed: ${describe(err)}` };
+    return {
+      failed: true,
+      code: LAUNCH_ERROR,
+      reason: `simctl launch ${bundleId} failed: ${describeIosSimulatorFailure(err, e)}`,
+    };
   }
 }
 

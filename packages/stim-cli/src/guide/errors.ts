@@ -275,6 +275,11 @@ code, never on the message.`,
       body: () => `STIM_LAUNCH_FAILED
   Installed, but the app would not start. On Android this usually means no
   launchable activity resolved.
+  On a local iOS simulator, a timed-out launch can mean the simulator cannot
+  spawn processes, even while it reports Booted. Check the reported memory
+  pressure and free host memory before retrying; a timeout alone is not an OOM
+  diagnosis. See \`stim guide lifecycle simslim\` for recovery and the optional
+  SimSlim recommendation.
   On a PHONE it means the app never appeared in the device's own process list
   after \`devicectl device process launch\`, and the devicectl lines that
   explain it are quoted under the message. The refusal a first launch usually
@@ -509,6 +514,10 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   On iOS a slow first boot is waited out for up to ten minutes while the
   simulator still reports Booting -- a long silent wait on a loaded machine
   is patience, not a hang. The failure names the udid and the wait.
+  After boot, a process-spawn probe must finish within 30 seconds before
+  installation. If it fails, the refusal includes observed host memory pressure
+  when available. Free memory before retrying under pressure; see
+  \`stim guide lifecycle simslim\`. Booted alone does not prove readiness.
   On Android the emulator's own stdio is captured to
   the global workspace logs/emulator.log (truncated per boot), and when it printed a
   \`FATAL |\` / \`ERROR |\` / \`PANIC:\` line THAT is the message and the remedy

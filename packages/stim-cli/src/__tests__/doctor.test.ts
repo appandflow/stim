@@ -1212,8 +1212,8 @@ test('runDoctor emits one concurrency note when a limit is set', () => {
   rmSync(project, { recursive: true, force: true });
 });
 
-test('checkSimSlim reports only configured profiles that cannot run', () => {
-  expect(checkSimSlim()).toBeNull();
+test('checkSimSlim recommends optional profiles and reports configured profiles that cannot run', () => {
+  expect(checkSimSlim()).toMatchObject({ level: 'note', fix: expect.stringContaining('stim guide lifecycle simslim') });
   expect(checkSimSlim({ configured: true, onPath: true })).toBeNull();
   const missing = checkSimSlim({ configured: true, onPath: false });
   assert(missing);
@@ -1224,6 +1224,34 @@ test('checkSimSlim reports only configured profiles that cannot run', () => {
   assert(invalid);
   expect(invalid.title).toMatch(/invalid/i);
   expect(invalid.detail).toMatch(/missing profile/);
+});
+
+test('runDoctor reports observed local iOS memory pressure without applying SimSlim', () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-memory-'));
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
+    const memoryPressure = vi.fn<() => 'critical'>(() => 'critical');
+    const options = { concurrency: { maxBuilds: 0, maxDevices: 0 }, memoryPressure };
+    const ios = runDoctor(project, { ...options, platform: 'ios' });
+    expect(ios).toContainEqual(
+      expect.objectContaining({
+        level: 'cost',
+        detail: expect.stringContaining('critical host memory pressure'),
+      }),
+    );
+    expect(ios).toContainEqual(expect.objectContaining({ level: 'note', title: expect.stringContaining('SimSlim') }));
+    expect(existsSync(join(project, '.stim.json'))).toBe(false);
+    memoryPressure.mockClear();
+    const android = runDoctor(project, { ...options, platform: 'android' });
+    expect(memoryPressure).not.toHaveBeenCalled();
+    expect(android.some((f) => /memory pressure|SimSlim/.test(f.title))).toBe(false);
+    writeFileSync(join(project, '.stim.json'), JSON.stringify({ ios: { remote: 'eas' } }));
+    const remote = runDoctor(project, { ...options, platform: 'ios' });
+    expect(memoryPressure).not.toHaveBeenCalled();
+    expect(remote.some((f) => /memory pressure|SimSlim/.test(f.title))).toBe(false);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
 });
 
 test('runDoctor reports a configured SimSlim profile when the binary is missing', () => {

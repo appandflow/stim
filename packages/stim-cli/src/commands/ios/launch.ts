@@ -727,7 +727,7 @@ export async function finishIosRun({
       return fail({
         code: launched.code || 'STIM_LAUNCH_FAILED',
         message: launched.reason,
-        remedy: `Run \`xcrun simctl launch --console ${udid} ${bundleId}\` to see what the app reports, and check ${logFile}.`,
+        remedy: `If the simulator timed out, run \`stim doctor --platform ios\` and resolve any reported host memory pressure before retrying. Otherwise run \`xcrun simctl launch --console ${udid} ${bundleId}\` to see what the app reports, and check ${logFile}.`,
         build: { ...buildFailure, appPath, bundleId },
       });
     }

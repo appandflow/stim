@@ -1321,22 +1321,50 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   \`.ipa\` export, store signing and distribution stay out of scope.`,
     },
     simslim: {
-      summary: 'installing SimSlim and what ios.simslimProfile does to an owned simulator',
-      body: () => `OPTIONAL SIMSLIM PROFILE
+      summary: 'recommended SimSlim profiles and recovery from host memory pressure',
+      body: () => `SIMSLIM FOR PARALLEL IOS WORK
+  SimSlim is recommended as an optional way to reduce simulator background
+  services and memory use, especially with several workspaces. Review which
+  services your app and tests need; a slim profile can disable those features.
+  It does not guarantee that a memory stall or crash will be fixed.
+
   Install SimSlim once on each Mac:
 
     brew install mobai-app/tap/simslim
 
-  Then commit a profile and select it in .stim.json:
+  Review the categories and create a profile in an interactive terminal:
+
+    simslim profiles
+    mkdir -p .simslim
+    simslim profile .simslim/dev.json
+
+  Selected categories in the wizard stay enabled. The wizard writes the
+  profile without applying it. Review and commit it, then select it in .stim.json:
 
     { "ios": { "simslimProfile": ".simslim/dev.json" } }
 
-  SimSlim requires an iOS 18 or newer simulator. On each local \`stim ios\`,
+  SimSlim 0.8 requires iOS 18.5 or newer. On each local \`stim ios\`,
   Stim reconciles that profile on the owned simulator before the app build.
   The first change can update services and reboot the simulator. A matching
   profile is a fast no-op on later launches. The settings persist across normal
   shutdowns and reboots. Removing the setting restores stock services when
-  Stim applied the profile. Stim never changes an unowned or remote simulator.`,
+  Stim applied the profile. Stim never changes an unowned or remote simulator.
+  Doctor recommends this setup but never installs SimSlim or applies a profile.
+  Profile schema and service tradeoffs: https://github.com/MobAI-App/simslim
+
+HOST MEMORY PRESSURE AND STALLED SIMULATORS
+  Booted and a working screenshot do not prove that simulator processes can
+  start. Stim checks a bounded process spawn before install and bounds local
+  simulator launch operations. A timeout is not proof of an app crash or OOM.
+  Doctor and failure diagnostics report macOS memory pressure when available;
+  a failed query remains unknown. Existing swap or low free RAM alone is not
+  enough to diagnose pressure.
+
+  If pressure is elevated, free host memory before retrying. Use \`stim stop\`
+  only in workspaces you own and have finished using; ask before closing other
+  agents' simulators or heavy apps. Rebooting a simulator under the same pressure
+  can repeat the stall. Consider fewer concurrent builds/devices (guide lifecycle
+  concurrency) and a reviewed SimSlim profile for future runs.`,
     },
   },
 };

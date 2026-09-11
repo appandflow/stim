@@ -63,20 +63,26 @@ type LaunchResult = {
 
 interface RecordingExec extends Executor {
   calls: string[][];
+  options: Parameters<Executor['runFile']>[2][];
 }
 function recordingExec({
   fail = null,
+  failCode,
   outputs = {},
-}: { fail?: string | null; outputs?: Record<string, string> } = {}): RecordingExec {
+}: { fail?: string | null; failCode?: string; outputs?: Record<string, string> } = {}): RecordingExec {
   const calls: string[][] = [];
+  const options: Parameters<Executor['runFile']>[2][] = [];
   return {
     calls,
-    runFile(file: string, args: string[] = []) {
+    options,
+    runFile(file: string, args: string[] = [], opts) {
       calls.push([file, ...args]);
+      options.push(opts);
       const key = [file, ...args].join(' ');
       if (fail && key.includes(fail)) {
         const err = new Error(`Command failed: ${key}`);
         (err as Error & { stderr?: string }).stderr = 'device not booted';
+        if (failCode) (err as NodeJS.ErrnoException).code = failCode;
         throw err;
       }
       for (const [match, value] of Object.entries(outputs)) {
@@ -275,6 +281,7 @@ describe('ios', () => {
         'com.example.app',
       ],
     ]);
+    expect(exec.options.slice(2)).toEqual(Array.from({ length: 4 }, () => ({ timeoutMs: 60000 })));
   });
 
   test('installIosApp times the artifact step separately from dev-client preparation', () => {
@@ -305,20 +312,24 @@ describe('ios', () => {
     });
   });
 
-  test('a failed dev-client preference write reports a failed install result', () => {
-    const exec = recordingExec({ fail: 'EXDevMenuShowsAtLaunch' });
-    const result = installIosApp(
-      {
-        udid: 'U1',
-        appPath: '/tmp/My App.app',
-        bundleId: 'com.example.app',
-        devClientScheme: 'myapp',
-      },
-      { exec },
-    );
-    expect(result.code).toBe(INSTALL_ERROR);
-    expect(result.reason).toMatch(/prepare the dev client/);
-  });
+  test.each([undefined, 'ETIMEDOUT'])(
+    'a failed dev-client preference write reports a failed install result (%s)',
+    (failCode) => {
+      const exec = recordingExec({ fail: 'EXDevMenuShowsAtLaunch', failCode });
+      const result = installIosApp(
+        {
+          udid: 'U1',
+          appPath: '/tmp/My App.app',
+          bundleId: 'com.example.app',
+          devClientScheme: 'myapp',
+        },
+        { exec },
+      );
+      expect(result.code).toBe(INSTALL_ERROR);
+      expect(result.reason).toMatch(/prepare the dev client/);
+      expect(result.reason?.includes('Activity Monitor')).toBe(failCode === 'ETIMEDOUT');
+    },
+  );
 
   test('a failed scheme approval reports a failed install result', () => {
     const exec = recordingExec({ fail: 'schemeapproval' });
@@ -344,6 +355,7 @@ describe('ios', () => {
       ['xcrun', 'simctl', 'spawn', 'U1', 'defaults', 'write', 'com.example.app', 'RCT_jsLocation', 'localhost:8082'],
       ['xcrun', 'simctl', 'launch', 'U1', 'com.example.app'],
     ]);
+    expect(exec.options).toEqual([{ timeoutMs: 60000 }, { timeoutMs: 60000 }]);
   });
 
   test('launchIosApp opens the preapproved dev-client URL after the RCT defaults write', () => {
@@ -363,6 +375,7 @@ describe('ios', () => {
         'myapp://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082%2F%3FdisableOnboarding%3D1&disableFab=1',
       ],
     ]);
+    expect(exec.options).toEqual([{ timeoutMs: 60000 }, { timeoutMs: 60000 }]);
   });
 
   test('a failed defaults write stops the launch rather than launching unwired', () => {
@@ -371,7 +384,28 @@ describe('ios', () => {
     expect(result.code).toBe(LAUNCH_ERROR);
     expect(result.reason).toMatch(/RCT_jsLocation/);
     expect(exec.calls.length).toBe(1);
+    expect(result.reason).not.toContain('Activity Monitor');
   });
+
+  test.each(['defaults write', 'simctl openurl', 'simctl launch'])(
+    'a timed-out %s keeps the launch refusal and adds simulator recovery advice',
+    (fail) => {
+      const exec = recordingExec({ fail, failCode: 'ETIMEDOUT' });
+      const result = launchIosApp(
+        {
+          udid: 'U1',
+          bundleId: 'com.example.app',
+          metroPort: 8082,
+          ...(fail === 'simctl openurl' ? { devClientScheme: 'myapp' } : {}),
+        },
+        { exec },
+      );
+      expect(result.failed).toBe(true);
+      expect(result.code).toBe(LAUNCH_ERROR);
+      expect(result.reason).toContain('Activity Monitor');
+      expect(result.reason).not.toMatch(/out of memory|OOM/i);
+    },
+  );
 
   test('a cold Expo launch attaches console capture and passes its project URL without launching two React hosts', () => {
     const exec = recordingExec({ outputs: { 'simctl launch': 'com.example.app: 4242' } });
