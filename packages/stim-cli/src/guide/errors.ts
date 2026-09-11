@@ -209,7 +209,11 @@ code, never on the message.`,
   one either -- a silent wait on a lock nobody holds is what this replaces. The
   message names the claim and the exact, shell-quoted removal that clears it --
   just that claim's file, not the lock directory around it; run that, then
-  run the command again. Nothing was built, installed or removed.`,
+  run the command again. Nothing was built, installed or removed.
+  A lock store the filesystem refuses -- a read-only, full or unwritable
+  \`$STIM_HOME\` -- is NOT this code. No claim was recorded there, so there is
+  none to remove: the message carries the filesystem's own error and names the
+  directory, and the build goes ahead without the lock rather than refusing.`,
     },
     STIM_CLAIM_UNAVAILABLE: {
       summary: 'this process has no recordable identity, so no build lock or build slot can be taken at all',
