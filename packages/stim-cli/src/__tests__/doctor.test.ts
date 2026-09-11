@@ -21,7 +21,6 @@ import {
   checkCcacheInstalled,
   checkCxxCompilerLauncher,
   parseCmakeCacheLauncher,
-  checkDevClient,
   checkEasAuth,
   checkFingerprintParity,
   checkMetroCache,
@@ -847,15 +846,29 @@ test('an iOS-only checkout is not told about the Android C++ cache', () => {
   }
 });
 
-test('a bare React Native project is not told to install expo-dev-client', () => {
-  expect(checkDevClient({ dependencies: { 'react-native': '0.86.2' } })).toBe(null);
-});
-
-test('an Expo project without the dev client is flagged, because a reserved port cannot reach it', () => {
-  const f = checkDevClient({ dependencies: { expo: '~57.0.0' } });
-  assert(f);
-  expect(f.level).toBe('cost');
-  expect(f.detail).toMatch(/8081/);
+test.each(['ios', 'android'] as const)('doctor does not require an Expo dev client for %s', (platform) => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doc-expo-native-'));
+  try {
+    writeFileSync(
+      join(project, 'package.json'),
+      JSON.stringify({ dependencies: { expo: '~57.0.0', 'react-native': '0.86.3' } }),
+    );
+    writeFileSync(join(project, 'package-lock.json'), '{}');
+    writeFileSync(join(project, 'app.json'), JSON.stringify({ expo: { name: 'fixture' } }));
+    mkdirSync(join(project, 'ios'));
+    writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
+    mkdirSync(join(project, 'android'));
+    const findings = runDoctor(project, {
+      platform,
+      concurrency: { maxBuilds: 0, maxDevices: 0 },
+      lookupCcache: () => false,
+    });
+    expect(JSON.stringify(findings)).not.toContain('expo-dev-client');
+    expect(findings.some((finding) => finding.title.includes('no installed dependencies'))).toBe(true);
+    expect(findings.some((finding) => finding.title.includes('CocoaPods state is missing'))).toBe(platform === 'ios');
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
 });
 
 test('a project that configures no cacheStores is reported as nothing at all', () => {
@@ -914,27 +927,6 @@ test('detectXcodeMajor reports unknown rather than throwing when xcodebuild is m
   } finally {
     resetExecutor();
   }
-});
-
-test('an expo-dependency project that builds with react-native run-ios is not flagged', () => {
-  const pkg = { dependencies: { expo: '53.0.23', 'react-native': '0.79.6' } };
-  expect(checkDevClient(pkg, false)).toBe(null);
-});
-
-test('the dev client finding still fires for a project that builds with expo run:ios', () => {
-  const pkg = { dependencies: { expo: '~57.0.0' } };
-  const f = checkDevClient(pkg, true);
-  assert(f);
-  expect(f.level).toBe('cost');
-});
-
-test('the dev client fix names the install, the rebuild, and why not to bake the port in', () => {
-  const f = checkDevClient({ dependencies: { expo: '~57.0.0' } });
-  assert(f);
-  expect(f.fix).toMatch(/npx expo install expo-dev-client/);
-  expect(f.fix).toMatch(/rebuild/i);
-  expect(f.fix).toMatch(/NATIVE dependency/);
-  expect(f.fix).toMatch(/RCT_METRO_PORT/);
 });
 
 test('a cacheStores behind an env-var conditional is downgraded to a note, not a pass', () => {
@@ -1721,7 +1713,7 @@ test('doctor success output groups iOS checks and optional capabilities', () => 
   expect(output).toContain('resolved    not found on PATH');
   expect(output).toContain('Project');
   expect(output).toContain('iOS');
-  expect(output).toContain('setup       CocoaPods, warm state, dev client');
+  expect(output).toContain('setup       CocoaPods, warm state, effective Debug simulator architectures');
   expect(output).toContain('caches      Metro, Xcode compilation, ccache, build provider');
   expect(output).toContain('Handled automatically');
   expect(output).toContain('missing project cache settings are healthy');
@@ -1734,7 +1726,7 @@ test('doctor success output scopes native checks to Android', () => {
 
   expect(output).toContain('Doctor (Android)');
   expect(output).toContain('Android');
-  expect(output).toContain('setup       warm state, dev client');
+  expect(output).toContain('setup       warm state');
   expect(output).toContain('caches      Metro, Gradle, ccache, build provider');
   expect(output).not.toContain('Xcode compilation');
   expect(output).not.toContain('SimSlim');

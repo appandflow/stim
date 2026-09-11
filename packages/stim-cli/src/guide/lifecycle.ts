@@ -595,7 +595,7 @@ changing modes selects another profile. See \`guide settings\` for cleanup.
 
 Each reports its cache setup. \`stim doctor\` checks missing or stale setup
 when a build is blocked or slow. It reports what Stim cannot handle itself
-(a missing dev client, ccache absent from PATH or a .cxx that predates the
+(ccache absent from PATH or a .cxx that predates the
 launcher, a fingerprint no fresh worktree reproduces, a provider on a key this
 SDK ignores) and settings for builds outside Stim.
 

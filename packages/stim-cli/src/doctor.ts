@@ -422,21 +422,6 @@ export function checkMainCheckout(
   return findings;
 }
 
-export function checkDevClient(pkg: AnyJson | null, isExpo: boolean = true): Finding | null {
-  const deps = {
-    ...(pkg?.dependencies as AnyJson | undefined),
-    ...(pkg?.devDependencies as AnyJson | undefined),
-  };
-  if (deps['expo-dev-client']) return null;
-  if (!isExpo || !deps.expo) return null;
-  return finding(
-    'cost',
-    'expo-dev-client is not installed',
-    'A Metro port reserved by Stim cannot reach the app without it: the port travels in the dev-client deep link `stim ios` opens, and without the dev client nothing handles that URL. The app falls back to port 8081 and shows "No script URL provided".',
-    'npx expo install expo-dev-client, then rebuild with `stim ios` / `stim android`. It is a NATIVE dependency: an app already on the device will not pick it up, and the first build after installing it is a cache miss by design because the native fingerprint moved. Do not solve this by compiling the port in (RCT_METRO_PORT, or the dev client defaultLaunchURL) -- the build cache does not key on the port, so a binary built for one workspace would silently talk to another workspace bundler.',
-  );
-}
-
 export function checkMetroCache(metroConfigSource: string | null): Finding | null {
   if (metroConfigSource == null) return null;
   const lines = String(metroConfigSource).split('\n');
@@ -922,7 +907,6 @@ export function runDoctor(
     ...checkMainCheckout(projectRoot, { platform }),
     ...(platform === 'android' ? [] : inspectIosDebugArchitectures(mainCheckoutProjectRoot(projectRoot))),
     ...checkStorageLayout(projectRoot, { platform }),
-    checkDevClient(pkg, isExpo),
     optimizations?.metroSharedCache ? checkMetroCache(metroConfig) : null,
     platform === 'android' || !optimizations?.ios.compilationCache ? null : checkCompilationCache(podfile, xcodeMajor),
     platform === 'android' || !optimizations?.ios.compilationCache
