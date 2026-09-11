@@ -9,6 +9,29 @@ The driver runs the iOS and Android readiness suites plus the JavaScript
 launch-failure suite described in [`../../docs/agent-benchmark.md`](../../docs/agent-benchmark.md).
 Runs are sequential. Never dispatch two cells against the same benchmark root.
 
+## Task prompts
+
+Future dispatches use the same outcome-focused task for both arms. Only the tool
+choice and owned-device allocation differ. Worktree creation remains timed;
+the source checkout has installed dependencies and reusable native outputs.
+Stim's installed skill supplies its normal product workflow. The benchmark does
+not prescribe warm/start/log commands, dependency-copy methods, background jobs,
+or a repair location. Native tasks describe the required observable label or
+identifier rather than the file and line to edit.
+
+The launch-failure task is: "The app fails on launch. Reproduce the failure
+before inspecting application source, fix it, and verify the repair."
+It does not reveal the injected failure's category, token, or source location.
+
+Both arms retain the same run-scoped agent-device evidence protocol: open,
+record, verify Settings text, screenshot, retain the media, and close. These
+commands are collection constraints, not instructions for solving the task.
+Pinned tool versions, device configuration, sandbox boundaries, and the proof
+endpoint remain controlled. A short task is not an unconstrained environment.
+
+`meta.promptPolicy` records the new policy. Earlier recordings retain their
+original validation contract and are not relabeled or rewritten by this change.
+
 After a complete campaign passes export audit, replace the canonical website
 results and retain a [timing-only campaign snapshot](../../docs/benchmark-history/README.md).
 Do not snapshot individual retries or partial campaigns.
@@ -197,8 +220,7 @@ before failing.
 Android launch-error control preparation carries dependencies and native outputs
 but leaves out the root `android/build` directory. Its generated autolinking cache
 contains absolute source-checkout paths and package checksums that survive a copy.
-The control prompt also requires excluding `android/build/generated/autolinking`
-when the agent creates its run worktree. Gradle regenerates this metadata locally;
+Gradle regenerates this metadata locally;
 `android/app/build` remains available for native output reuse. Verify the generated
 project and dependency roots belong to the run worktree before accepting a pilot.
 
@@ -232,8 +254,7 @@ validation still requires runtime error evidence before source inspection,
 the exact repair, and Settings-screen screenshot/video proof.
 
 Launch-error control can use runner-managed sessions for Metro, emulators, and
-native commands; it does not have to daemonize shell jobs. It keeps per-run logs
-for the separate completed error query and preserves the inherited Android SDK,
+native commands; it does not have to daemonize shell jobs. It preserves the inherited Android SDK,
 AVD, Gradle, and emulator-report locations so observation and cleanup use the
 same metadata as the agent.
 
@@ -242,7 +263,7 @@ scoped setup operations, including local SDK tools, managed log pipelines, and
 the assigned AVD's configuration edit. Unrecognized setup syntax is retained in
 `diagnosis.setupWarnings` for review, not automatically treated as a failed task.
 Review these commands before publication; a warning is not a safety approval.
-Detected source inspection before completed log capture remains a hard failure,
+Detected source inspection before completed runtime-error capture remains a hard failure,
 with every offending command in `diagnosis.violations` and the first in `commandId`.
 Version, isolation, warm ordering, device, exact repair, timing, screenshot and
 recording gates remain unchanged. This heuristic audit does not prove arbitrary
@@ -254,17 +275,17 @@ The pipeline may follow `cd <worktree> && set -o pipefail && ...`. If it ends
 with `; echo "PIPELINE_EXIT=$?"`, the captured output must contain exactly one
 `PIPELINE_EXIT=0` line: the echo's own zero exit does not prove build success.
 Retained launch-evidence rejections can be reviewed only when re-derived commands
-prove successful launch, separate error capture, repair and Settings proof.
+prove successful launch, runtime-error capture, repair and Settings proof under their recorded prompt policy.
 Ordinary commands may also append `; echo "EXIT=$?"`. The audit uses the single
 captured status line, not the echo's exit code; missing or ambiguous reports do
 not prove success. A retained warm-status rejection requires re-derived setup
 checks, including warm completion before start or build, before publication.
 
-A launch can finish before the JavaScript error reaches its log. Both arms must
-repeat standalone foreground log queries, without separate sleep or wait commands,
-until a completed query prints the error and source location before inspecting or
-editing source. An empty successful query or a redbox visible
-only through device automation does not satisfy this log-first diagnosis measure.
+A launch can finish before the JavaScript error reaches its log. For new runs,
+actionable initial launch output satisfies capture without a second log query.
+Otherwise the agent must obtain runtime error evidence before inspecting or editing
+application source; polling strategy is not prescribed. An empty successful query
+does not establish a diagnosis. Earlier runs still use their separate-capture contract.
 
 `dispatch` creates and commits the broken fixture before the timed turn, gives
 the agent the fixture checkout as its starting directory, and requires the

@@ -381,8 +381,8 @@ Inject a deterministic root-render JavaScript exception before the first app
 screen, then give each agent the same repair task. Compare first recorded activity to the
 first actionable diagnosis, commands and tokens to diagnosis, and first recorded activity to
 a repaired Settings screenshot. Run separate iOS and Android blocks. The Stim
-arm must preserve the matching `stim ios` or `stim android` launch
-output and `stim logs --errors`; control collects the equivalent Metro and
+arm uses the matching `stim ios` or `stim android` launch
+output or `stim logs --errors`; control collects the equivalent Metro and
 device logs manually, using the exact emulator serial for Android `adb`
 commands. The injected error text is unique per run so the
 collector can prove that the reported stack and repair refer to this failure.
@@ -390,7 +390,9 @@ The unique token and source location must appear in captured runtime errors;
 the earlier successful launch command does not have to print the token inline.
 When that launch response already contains the runtime error and root-layout
 context, its completion establishes diagnosis time rather than a later log
-query. The separate successful log capture remains required for validation.
+query. New dispatches accept that response as the capture itself; a separate
+log query is required only when launch output is not actionable. Older recorded
+prompts retain their original separate-capture validation contract.
 Before capture, normal guide, doctor, worktree warming, and narrowly scoped
 installed-dependency resolution are setup, not application-source inspection.
 

@@ -33,6 +33,7 @@ import { benchmarkFingerprint, selectBenchmarkCacheKey } from './cache-key.mjs';
 import { reconstructCommandEvidence } from './command-evidence.mjs';
 import { matchesGoldenPreparation, preparedAndroidEmulator } from './golden-state.mjs';
 import { launchCrashSetup } from './launch-crash-setup.mjs';
+import { benchmarkTaskPrompt } from './task-prompt.mjs';
 import { collectedNativeCompatibility, probeNativeCompatibility, verifyNativeCompatibility } from './native-compat.mjs';
 import {
   androidApplicationLabelFromBadging,
@@ -972,63 +973,47 @@ function prepareLaunchCrashFixture(arm, runId, environment, platform) {
 
 function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform = 'ios') {
   const platform = checkedPlatform(requestedPlatform);
-  const controlDeviceName = platform === 'ios' ? `Trailhead ${runId}` : `Trailhead_${runId}`;
-  const stimPath = join(worktreeParent, `bench-${runId}`);
-  const quotedStimPath = `'${stimPath.replaceAll("'", "'\\''")}'`;
-  const stimSource = variant === launchCrashVariant ? crash.fixtureCheckout : main;
-  const worktree =
-    arm === 'stim'
-      ? `In ${stimSource}, run exactly \`git worktree add -b worktree-bench/${runId} ${quotedStimPath} HEAD\`. Then change into ${stimPath}, run \`stim guide agent\`, and follow the guide before using other Stim commands. Run \`stim worktree warm\` and wait for its successful exit before running start or a platform command. Work only in that checkout. `
-      : variant === launchCrashVariant
-        ? `In ${crash.fixtureCheckout}, create a git worktree for branch bench/${runId} at ${join(worktreeParent, runId)} from the current fixture HEAD and carry installed dependencies and native outputs from the fixture checkout. Then work only in that run worktree. Name the new ${platform === 'ios' ? 'simulator' : 'AVD'} exactly ${JSON.stringify(controlDeviceName)}. `
-        : `In ${main}, create a git worktree for branch bench/${runId} at ${join(worktreeParent, runId)} and carry installed dependencies and native outputs from the main checkout. Then work only in that worktree. Name the new ${platform === 'ios' ? 'simulator' : 'AVD'} exactly ${JSON.stringify(controlDeviceName)} so the coordinator can prove ownership and clean it safely. `;
-  const screenshot = join(runDir, 'proof', 'settings.png');
-  const screenshotScratch = join('/tmp', `${runId}-settings.png`);
-  const recording = join(runDir, 'proof', 'session.mp4');
-  const recordingScratch = join('/tmp', `${runId}-session.mp4`);
-  const expected = settingsProofText(variant);
-  const agentDevicePrefix = `env AGENT_DEVICE_STATE_DIR=${agentDeviceState} AGENT_DEVICE_SESSION=${runId} agent-device`;
-  const targetDescription = platform === 'ios' ? 'simulator UDID' : 'emulator serial';
-  const targetFlag = platform === 'ios' ? '--udid' : '--serial';
-  const deviceProof = ` After the app launches, you MUST use the agent-device skill and CLI. Codex does not forward the coordinator's agent-device environment into shell tools, so every agent-device command below includes the required prefix. Never run a bare \`agent-device\` command. Read the exact run ${targetDescription} from the launch output. Handle any Expo onboarding shown and navigate to the Settings tab using semantic refs or labels between steps 2 and 3 below. Do not stop or restart the agent-device daemon; report a failure if the isolated session refuses to open. The explicit state and session assignments and device identifier prevent cross-run ownership.`;
-  const proofProtocol = `\n\nFINAL PROOF PROTOCOL: The proof directory already exists. For each numbered shell command below, send the displayed line alone as the entire Bash \`command\` string. Do not prepend \`mkdir\`, append \`ls\`, combine it with another command, use redirection, or wrap it in a script or interactive shell. Replace only the angle-bracketed value in step 1.\n\n1. \`${agentDevicePrefix} open com.appandflow.trailhead --foreground --platform ${platform} ${targetFlag} <run ${targetDescription}>\`\n2. \`${agentDevicePrefix} record start ${recordingScratch} --scope device --quality high --hide-touches\`\n3. \`${agentDevicePrefix} wait text ${JSON.stringify(expected)}\`\n4. \`${agentDevicePrefix} screenshot ${screenshotScratch}\`\n5. \`cp ${screenshotScratch} ${screenshot}\`\n6. \`${agentDevicePrefix} record stop\`\n7. \`cp ${recordingScratch} ${recording}\`\n8. \`${agentDevicePrefix} close\`\n\nDo not claim completion before all eight commands succeed in order, the wait finds the expected text, recording stop reports the saved video, and the copied screenshot and recording exist.`;
-  const commandCompletion =
-    'The runner starts in the source checkout because creating your isolated run worktree is part of the timed task. After creating it, use that run worktree as the working directory of subsequent shell calls. If the shell tool has a workdir/cwd parameter, set it explicitly instead of repeating cd prefixes. A cd in one shell call may not persist to the next; when no working-directory parameter is available, keep the explicit cd where needed. Do not change the standalone proof commands below. For shell-tool calls, preserve the full result, including exit status and any running session handle. In a code wrapper around exec_command or write_stdin, print the complete result with text(result), not only result.output. A completed code wrapper or empty output does not mean its shell process finished. For finite commands, if the shell result contains a session_id, poll that session with write_stdin until an exit_code is returned before issuing dependent commands; do not replace polling with another copy of the command. Long-lived Metro/emulator sessions stay running: wait for their readiness evidence, not their exit, before using them. For explicitly detached shell processes, retain separate PID/log monitoring. Finish dependency copying before starting Metro or native commands; do not install dependencies inside the timed run.';
-  const suffix = ` ${commandCompletion} Stay in this turn until the Settings screenshot is saved; do not stop to await a background notification. Do not use subagents. Work only in the fixture checkout, run worktree, and the current run's proof, temporary, runtime, and tool-state paths. Coordinator configuration, golden caches, other worktrees, and other runs' file contents are protected by the runner filesystem policy. Parent directory listings are permitted; do not try to bypass a denied read or use another process or service to access protected files. Report the run worktree and screenshot paths, then stop; the coordinator will verify and clean up.${proofProtocol}`;
-  if (variant === launchCrashVariant) {
-    const launch = launchCrashSetup({ arm, platform, systemImage: pins.ANDROID_SYSTEM_IMAGE }).instructions;
-    return (
-      worktree +
-      'The app has a deterministic JavaScript failure during its initial root render. Diagnose and repair that launch failure without making unrelated product changes. ' +
-      launch +
-      deviceProof +
-      suffix
-    );
-  }
-  if (variant === 'javascript') {
-    const edit =
-      'change the Settings offline-map subtitle from "Keep map tiles for saved trails on device" to "Keep saved trail maps available offline". ';
-    const launch = platformLaunchInstructions(arm, platform, runId, true);
-    return worktree + edit + launch + deviceProof + suffix;
-  }
-  const edit =
+  const source = variant === launchCrashVariant ? crash.fixtureCheckout : main;
+  const worktree = join(worktreeParent, arm === 'stim' ? `bench-${runId}` : runId);
+  const branch = arm === 'stim' ? `worktree-bench/${runId}` : `bench/${runId}`;
+  const deviceName = platform === 'ios' ? `Trailhead ${runId}` : `Trailhead_${runId}`;
+  const device =
     platform === 'ios'
-      ? `edit ios/Trailhead/AppDelegate.swift so that immediately after the existing window assignment it sets the window accessibilityIdentifier to "Trailhead ${runId}". `
-      : `edit android/app/src/main/res/values/strings.xml so the app_name string is exactly "Trailhead ${runId}". `;
-  const launch = platformLaunchInstructions(arm, platform, runId, false);
-  return worktree + edit + launch + deviceProof + suffix;
-}
-
-function platformLaunchInstructions(arm, platform, runId, startMetro) {
-  if (arm === 'stim') {
-    return platform === 'ios'
-      ? 'Use the Stim skill and only the pinned published command available on PATH as exactly `stim` (never through npx or an absolute path). Keep the inherited STIM_HOME unchanged. Run the iOS app on the prepared parked iPhone 17 simulator running iOS 26.5; Stim must report that it adopted the simulator. Leave Metro running until the screenshot is saved.'
-      : `Use the Stim skill and only the pinned published command available on PATH as exactly \`stim\` (never through npx or an absolute path). Keep the inherited STIM_HOME unchanged. Run \`stim start\`, then run \`stim android --system-image ${JSON.stringify(pins.ANDROID_SYSTEM_IMAGE)}\`. Use the prepared parked emulator; Stim must report that it adopted it. Leave Metro and the changed app running until the screenshot is saved.`;
-  }
-  if (platform === 'android') {
-    return `Use only the project's local Expo and Android SDK tooling; do not use Stim. Create a new AVD named exactly ${JSON.stringify(`Trailhead_${runId}`)} from ${JSON.stringify(pins.ANDROID_SYSTEM_IMAGE)} using avdmanager's default hardware profile, matching Stim; do not use an existing emulator. Set disk.dataPartition.size=8589934592 in its config.ini, matching Stim's default 8 GiB data partition. Boot it with the emulator's default Quick Boot policy, matching Stim; the fresh AVD cold-boots because no snapshot exists. Wait for Android boot completion. ${startMetro ? 'Start Metro and verify it is ready. ' : ''}Build, install, and launch only the default Debug variant; do not use a Release variant. Wait for the native build/install/launch to finish successfully, then immediately perform the agent-device proof without ending the turn. Leave the emulator${startMetro ? ', Metro,' : ''} and app running. `;
-  }
-  return `Run the iOS app with the project's local Expo and Apple tooling on a new iPhone 17 simulator running iOS 26.5; do not use an existing simulator. ${startMetro ? 'Start Metro and verify it is ready. ' : ''}Wait for the native build/install/launch to finish successfully, then immediately perform the agent-device proof without ending the turn. Leave the changed app running. Do not use Stim.`;
+      ? `an isolated iPhone 17 simulator with iOS 26.5${arm === 'control' ? `, newly created and named ${JSON.stringify(deviceName)}` : ''}`
+      : `an isolated arm64 Android emulator using ${JSON.stringify(pins.ANDROID_SYSTEM_IMAGE)}${arm === 'control' ? `, newly created and named ${JSON.stringify(deviceName)}, with the default hardware profile and an 8 GiB data partition` : ''}`;
+  const prefix = `env AGENT_DEVICE_STATE_DIR=${agentDeviceState} AGENT_DEVICE_SESSION=${runId} agent-device`;
+  const screenshot = join('/tmp', `${runId}-settings.png`);
+  const recording = join('/tmp', `${runId}-session.mp4`);
+  const target = platform === 'ios' ? '--udid <run simulator UDID>' : '--serial <run emulator serial>';
+  const proof =
+    `Use this run-scoped agent-device prefix: ` +
+    '\n' +
+    prefix +
+    '\n' +
+    `The common evidence protocol below records the same endpoint for both arms. Run each proof command separately; navigate to Settings between recording start and the text check.\n\n` +
+    [
+      `${prefix} open com.appandflow.trailhead --foreground --platform ${platform} ${target}`,
+      `${prefix} record start ${recording} --scope device --quality high --hide-touches`,
+      `${prefix} wait text ${JSON.stringify(settingsProofText(variant))}`,
+      `${prefix} screenshot ${screenshot}`,
+      `cp ${screenshot} ${join(runDir, 'proof', 'settings.png')}`,
+      `${prefix} record stop`,
+      `cp ${recording} ${join(runDir, 'proof', 'session.mp4')}`,
+      `${prefix} close`,
+    ]
+      .map((command, index) => `${index + 1}. \`${command}\``)
+      .join('\n');
+  return benchmarkTaskPrompt({
+    arm,
+    platform,
+    variant,
+    source,
+    worktree,
+    branch,
+    marker: `Trailhead ${runId}`,
+    device,
+    proof,
+  });
 }
 
 function runnerForModel(model) {
@@ -1457,6 +1442,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
   const dispatchAt = new Date().toISOString();
   const meta = {
     schemaVersion: 1,
+    promptPolicy: 'minimal-v1',
     locale: benchmarkLocale,
     runId,
     stage,
@@ -2238,6 +2224,7 @@ function collect(runDir) {
   const diagnosis =
     meta.variant === launchCrashVariant
       ? launchCrashDiagnosis(commandAudit.commands, {
+          initialLaunchCapture: meta.promptPolicy === 'minimal-v1',
           dispatchAt: meta.dispatchAt,
           token: meta.crash.token,
           arm: meta.arm,
@@ -2753,18 +2740,13 @@ function selftestAgentDeviceIsolation() {
     `cp ${recordingScratch} ${recording}`,
     agentDeviceCommand(meta, 'close'),
   ];
-  if (
-    !prompt.includes('The proof directory already exists') ||
-    !prompt.includes('alone as the entire Bash `command` string') ||
-    proofCommands.some((proofCommand, index) => !prompt.includes(`${index + 1}. \`${proofCommand}\``))
-  ) {
+  if (proofCommands.some((proofCommand, index) => !prompt.includes(`${index + 1}. \`${proofCommand}\``))) {
     throw new Error('proof command boundaries are not explicit and ordered');
   }
   if (
     !androidPrompt.includes(
       `1. \`${agentDeviceCommand(meta, 'open com.appandflow.trailhead --foreground --platform android --serial <run emulator serial>')}\``,
-    ) ||
-    !androidPrompt.includes('alone as the entire Bash `command` string')
+    )
   ) {
     throw new Error('Android proof command boundaries are not explicit');
   }
@@ -2782,20 +2764,21 @@ function selftestLaunchCrash() {
   const prompt = promptFor('stim', launchCrashVariant, runId, state, crash);
   for (const platform of ['ios', 'android']) {
     const instructions = promptFor('stim', launchCrashVariant, runId, state, crash, platform);
-    const guide = instructions.indexOf('`stim guide agent`');
-    const warm = instructions.indexOf('`stim worktree warm`');
-    if (guide < 0 || warm < guide) throw new Error(`${platform} prompt must load the guide before warm`);
-    if (promptFor('control', launchCrashVariant, runId, state, crash, platform).includes('`stim guide agent`')) {
+    if (!instructions.includes('Use Stim and its installed skill.'))
+      throw new Error(`${platform} prompt must identify the available Stim skill`);
+    if (
+      promptFor('control', launchCrashVariant, runId, state, crash, platform).includes(
+        'Use Stim and its installed skill.',
+      )
+    ) {
       throw new Error(`${platform} control must not load the Stim guide`);
     }
   }
   for (const required of [
-    `git worktree add -b worktree-bench/${runId}`,
-    'stim worktree warm',
-    'Before inspecting source or git diff',
-    'stim logs --errors',
-    'Make the smallest repair',
-    'demonstrate the repaired Settings screen on the same adopted simulator',
+    `worktree-bench/${runId}`,
+    'The app fails on launch.',
+    'Reproduce the failure before inspecting application source',
+    'Settings screenshot',
   ]) {
     if (!prompt.includes(required)) {
       throw new Error(`launch-crash prompt is missing: ${required}`);
@@ -2837,10 +2820,9 @@ function selftestAndroid() {
   const runId = 'android-selftest';
   const prompt = promptFor('stim', 'native', runId, state, null, 'android');
   for (const required of [
-    `git worktree add -b worktree-bench/${runId}`,
-    'stim worktree warm',
-    'android/app/src/main/res/values/strings.xml',
-    'stim android --system-image',
+    `worktree-bench/${runId}`,
+    'Android application label',
+    pins.ANDROID_SYSTEM_IMAGE,
     '--platform android --serial <run emulator serial>',
     'record start',
     'record stop',

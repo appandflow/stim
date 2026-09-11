@@ -389,7 +389,16 @@ function allowedBeforeErrorCapture(command, arm, platform, setup = {}) {
 
 export function launchCrashDiagnosis(
   commands,
-  { dispatchAt, token, arm = 'stim', platform = 'ios', activities = [], setup = {}, reviewedDiagnostics = [] },
+  {
+    dispatchAt,
+    token,
+    arm = 'stim',
+    platform = 'ios',
+    activities = [],
+    setup = {},
+    reviewedDiagnostics = [],
+    initialLaunchCapture = false,
+  },
 ) {
   const ordered = orderedCommands(commands);
   const sourceMarkers = ['app/_layout.tsx', 'RootLayout'];
@@ -401,7 +410,12 @@ export function launchCrashDiagnosis(
   if (initialLaunchIndex === -1) {
     return { valid: false, reason: 'launch-crash-initial-launch-evidence-missing' };
   }
-  const errorCaptureIndex = ordered.findIndex(
+  const initialLaunch = ordered[initialLaunchIndex];
+  const launchOutput = String(initialLaunch.output ?? '');
+  const launchIsActionable =
+    launchOutput.split('\n').some((line) => line.includes(token) && /\b(?:Error|Exception)\b/.test(line)) &&
+    sourceMarkers.some((marker) => launchOutput.includes(marker));
+  let errorCaptureIndex = ordered.findIndex(
     (command, index) =>
       index > initialLaunchIndex &&
       successful(command) &&
@@ -434,6 +448,14 @@ export function launchCrashDiagnosis(
       typeof command.output === 'string' &&
       command.output.includes(token),
   );
+  if (
+    initialLaunchCapture &&
+    launchIsActionable &&
+    (errorCaptureIndex === -1 ||
+      timestamp(initialLaunch, 'endedAt') <= timestamp(ordered[errorCaptureIndex], 'endedAt'))
+  ) {
+    errorCaptureIndex = initialLaunchIndex;
+  }
   if (errorCaptureIndex === -1) {
     return { valid: false, reason: 'launch-crash-error-capture-missing' };
   }
@@ -480,11 +502,6 @@ export function launchCrashDiagnosis(
           command.output.includes(token) &&
           sourceMarkers.some((marker) => command.output.includes(marker)),
       );
-  const initialLaunch = ordered[initialLaunchIndex];
-  const launchOutput = String(initialLaunch.output ?? '');
-  const launchIsActionable =
-    launchOutput.split('\n').some((line) => line.includes(token) && /\b(?:Error|Exception)\b/.test(line)) &&
-    sourceMarkers.some((marker) => launchOutput.includes(marker));
   if (
     launchIsActionable &&
     (index === -1 || timestamp(initialLaunch, 'endedAt') <= timestamp(ordered[index], 'endedAt'))
