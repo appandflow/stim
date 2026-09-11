@@ -1071,7 +1071,7 @@ describe('benchmark viewer export', () => {
     }
   });
 
-  it('requires isolated iOS readiness commands, recording copy, and owned cleanup', () => {
+  it.each([false, true])('requires isolated iOS readiness evidence (silent close: %s)', (silentClose) => {
     const root = mkdtempSync(join(tmpdir(), 'stim-ios-export-'));
     tempDirs.push(root);
     const runId = 'private-ios-run-id';
@@ -1108,7 +1108,7 @@ describe('benchmark viewer export', () => {
       ['copy', 9, 10, `cp ${screenshotScratch} ${proofPath}`, ''],
       ['record-stop', 11, 12, `${prefix} record stop`, `${recordingScratch}\n`],
       ['record-copy', 13, 14, `cp ${recordingScratch} ${recordingPath}`, ''],
-      ['close', 15, 16, `${prefix} close`, `Closed: ${runId}\n`],
+      ['close', 15, 16, `${prefix} close`, silentClose ? '' : `Closed: ${runId}\n`],
     ];
     writeFileSync(
       join(runDir, 'events.jsonl'),
@@ -1215,7 +1215,59 @@ describe('benchmark viewer export', () => {
     };
     writeFileSync(recordPath, JSON.stringify(record));
 
-    expect(exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof')).runs).toHaveLength(1);
+    const recordedEvents = readFileSync(eventsPath, 'utf8');
+    const payload = exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'));
+    expect(payload.runs).toHaveLength(1);
+    expect(payload.runs[0].commands.find((command) => command.id === 'close')).toMatchObject({
+      output: silentClose ? '' : 'Closed: javascript-stim\n',
+      exitCode: 0,
+      startSeconds: 14,
+      endSeconds: 15,
+    });
+    expect(readFileSync(eventsPath, 'utf8')).toBe(recordedEvents);
+
+    for (const invalidClose of [
+      { exit_code: 1 },
+      { exit_code: null },
+      { command: `env AGENT_DEVICE_STATE_DIR=${stateDir} AGENT_DEVICE_SESSION=other-session agent-device close` },
+    ]) {
+      const events = recordedEvents.trim().split('\n').map(JSON.parse);
+      const completed = events.at(-1);
+      const event = JSON.parse(completed.line);
+      Object.assign(event.item, invalidClose);
+      completed.line = JSON.stringify(event);
+      writeFileSync(eventsPath, `${events.map((entry) => JSON.stringify(entry)).join('\n')}\n`);
+      record.evidenceSha256.events = sha256(eventsPath);
+      writeFileSync(recordPath, JSON.stringify(record));
+      expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'))).toThrow(
+        'no valid benchmark runs found',
+      );
+    }
+    writeFileSync(eventsPath, recordedEvents);
+    record.evidenceSha256.events = sha256(eventsPath);
+    writeFileSync(recordPath, JSON.stringify(record));
+
+    const cleanupPath = join(runDir, 'cleanup.json');
+    const cleanup = readFileSync(cleanupPath, 'utf8');
+    rmSync(cleanupPath);
+    expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'))).toThrow(
+      'no valid benchmark runs found',
+    );
+    const cleanupRecord = JSON.parse(cleanup);
+    for (const missingAction of cleanupRecord.actions) {
+      writeFileSync(
+        cleanupPath,
+        JSON.stringify({
+          ...cleanupRecord,
+          actions: cleanupRecord.actions.filter((action) => action !== missingAction),
+        }),
+      );
+      expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'))).toThrow(
+        'no valid benchmark runs found',
+      );
+    }
+    writeFileSync(cleanupPath, cleanup);
+
     const sourceProofPath = join(proofDir, 'settings-source.tsx');
     writeFileSync(sourceProofPath, 'Keep saved trail maps available offline');
     record.proof = { ...record.proof, kind: 'source-edit-and-settings-screen', target: sourceProofPath };

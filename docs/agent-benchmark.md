@@ -221,8 +221,9 @@ overhead stays symmetric. Record each proof step as its own top-level shell comm
 an interactive shell, script, chained command, or redirected background job.
 Using a bare or mismatched agent-device state directory/session, or restarting
 its daemon inside the timed interval, invalidates the attempt. The collector
-also requires `open` and `close` output to name the exact run session; command
-shape alone is insufficient.
+and exporter require `open` output to name the exact run session. The isolated
+`close` command must exit successfully but can be silent; export also requires
+independent cleanup evidence that the campaign session inventory is empty.
 
 The agent reads `<run-udid>` or `<run-serial>` from the platform launch output.
 The explicit device identifier prevents an existing automation session from

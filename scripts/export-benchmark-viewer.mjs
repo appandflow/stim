@@ -610,10 +610,7 @@ function iosReadinessCommandFailure({ meta, record, proofPath, recordingPath, sc
     return 'agent-device command sequence mismatch';
   }
   const expectedSessionState = sanitizeBenchmarkText(`Session state: ${stateDir}/sessions/${session}`, []);
-  if (
-    !screenCommands[0].output.includes(expectedSessionState) ||
-    !screenCommands.at(-1).output.includes(`Closed: ${session}`)
-  ) {
+  if (!screenCommands[0].output.includes(expectedSessionState)) {
     return 'agent-device session output mismatch';
   }
   return null;
