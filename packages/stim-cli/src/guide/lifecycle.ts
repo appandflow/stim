@@ -86,22 +86,46 @@ and produces an app that cannot load a bundle.
 
 Repeat step 3 whenever a NATIVE input changes. A JS-only edit needs nothing --
 that is what Fast Refresh over the running dev server is for. \`stim reload\` is
-not part of the normal workflow. It is the explicit recovery path after a
-failed first bundle load, when Fast Refresh cannot clear the current screen,
-or when you explicitly need an app restart. Use \`stim reload ios\` or
-\`stim reload android\` to select a platform when both owned apps are live.
-For a physical device that reached Metro, use \`agent-device metro reload
---metro-port <reported-port>\`. The detected iOS Local Network first-load
-remedy uses agent-device UI automation because no Metro peer exists yet.
-It never builds, installs, boots, or cold-launches. It acts only on a live app
-on this workspace's owned local simulator or emulator, and refuses release
+not part of the normal workflow. It is the explicit recovery path when Fast
+Refresh cannot clear the current screen, and on Android after a failed first
+bundle load. It reloads JavaScript and never restarts the app. Use \`stim
+reload ios\` or \`stim reload android\` to select a platform when both owned
+apps are live. For a physical device that reached Metro, use \`agent-device
+metro reload --metro-port <reported-port>\`. The detected iOS Local Network
+first-load remedy uses agent-device UI automation because no Metro peer exists
+yet. It never builds, installs, boots, or cold-launches. It acts only on a live
+app on this workspace's owned local simulator or emulator, and refuses release
 builds, stopped or unowned devices, a missing or foreign Metro, and an
-ambiguous no-platform request. Expo/dev-client reloads resend the exact deep
-link recorded at launch. Bare Android sends the app-scoped React Native reload
-broadcast. Bare iOS reloads through this Metro's sole identifiable iOS peer. If
-Metro cannot identify one iOS peer, the command tells the agent to press Reload
-through its existing automation session on the exact simulator. Stim does not
-take over that stateful session.
+ambiguous no-platform request. Every reload goes over this workspace's Metro
+websocket, on both platforms. It never reopens a development-client URL,
+because that restarts the app rather than reloading its JavaScript.
+
+How the message is addressed depends on the dev server, and \`strategy\` in
+the facts reports which you got. Where Metro can name its clients, Stim
+addresses every peer matching the platform and reports \`metro-websocket\`. A
+workspace Metro serves one app, so those peers are this app on however many
+devices are attached to that port, and \`targets\` says how many were reloaded.
+The bare React Native dev server cannot name its clients at all, so Stim
+broadcasts: \`metro-broadcast\` means every app connected to that Metro
+reloaded and Stim cannot confirm \`appId\` was among them. Verify the UI on
+\`deviceId\`; if it did not change, reload from the app's own error screen or
+dev menu.
+
+When Metro reports no peer for the app, Stim broadcasts a reload anyway before
+giving up, because matching is best-effort and an unmatched peer may still be
+this app. So verify the UI first: it may already have recovered. If it did not,
+retry: a client reconnects every 2 seconds, which is also this probe's timeout,
+so a single miss can be a reconnect window rather than an app that never
+connected. If it stays unreachable on iOS, an error in the first bundle leaves
+the app without a packager connection at all, and no retry will make it a peer.
+The command then routes the agent to the device's own controls in its existing
+automation session: press the error screen's Reload button, or open the dev
+menu and press Reload when no error screen is showing, and relaunch only when
+neither is reachable. Stim does not take over that stateful session.
+
+When Metro itself does not answer within the probe's 2 seconds, nothing is
+known about the app. The command says to retry and check the dev server rather
+than sending the agent to the device.
 
 A successful reload confirms that the request was sent. It does not wait for
 new JavaScript or observe the resulting UI. Verify the expected screen or

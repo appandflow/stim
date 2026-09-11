@@ -31,7 +31,6 @@ function launch(appId: string, deviceId: string): WorkspaceLaunchRecord {
     deviceId,
     metroPort: 8082,
     release: false,
-    deepLinkUrl: null,
     launchedAt: '2026-09-04T12:00:00.000Z',
   };
 }
@@ -57,6 +56,19 @@ test('invalid launch entries are ignored instead of becoming reload targets', ()
   });
 
   expect(readWorkspaceLaunches(root)).toEqual({ android: launch('com.example.android', 'emulator-5554') });
+});
+
+test('a record written before deepLinkUrl was dropped is still a reload target', () => {
+  writeWorkspaceState(root, {
+    launches: {
+      android: {
+        ...launch('com.example.android', 'emulator-5554'),
+        deepLinkUrl: 'example://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082',
+      } as never,
+    },
+  });
+
+  expect(readWorkspaceLaunches(root).android).toMatchObject(launch('com.example.android', 'emulator-5554'));
 });
 
 test('stop clears launch eligibility with the supervisor record', () => {

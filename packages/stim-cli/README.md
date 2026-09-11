@@ -86,10 +86,12 @@ response; servers without capture use the build-complete marker. Run
 expected screen separately.
 
 `stim reload [ios|android]` requests a JavaScript reload in the live app on this
-workspace's owned local device. Use it after a failed first bundle load, when
-an error screen remains after a fix, or when you explicitly need an app
-restart. It is not part of the normal workflow and does not build, install,
-boot, or launch an app. The platform is optional when only one app is live.
+workspace's owned local device. Use it when an error screen remains after a fix,
+and on Android after a failed first bundle load. An iOS app whose first bundle
+failed never connects to Metro, so reload cannot reach it. It reloads
+JavaScript and never restarts the app. It is not part of the normal workflow
+and does not build, install, boot, or launch an app. The platform is optional
+when only one app is live.
 Success confirms that the request was sent; Stim does not observe completion.
 Verify the expected UI on the reported device and inspect `stim logs --errors`
 before claiming recovery.

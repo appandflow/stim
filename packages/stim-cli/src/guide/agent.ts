@@ -111,11 +111,14 @@ RULES DURING THE LOOP
   It restarts only this app's verified owned Metro, preserving devices and other
   apps' caches. See guide lifecycle for reset scope and Expo requirements.
 - Reload is not part of the normal workflow. Use stim reload on an owned local
-  simulator or emulator after a failed first bundle load, when an error screen
-  remains after the fix, or when you explicitly need an app restart. For a
-  physical device that reached Metro, use agent-device metro reload with the
-  reported port. The detected iOS Local Network first-load remedy uses UI
-  automation instead because that app never established a Metro connection.
+  simulator or emulator when an error screen remains after the fix, and on
+  Android after a failed first bundle load. It reloads JavaScript and never
+  restarts the app. An iOS app whose first bundle failed never connects to
+  Metro, so reload cannot reach it and says to use the device's own Reload
+  control. For a physical device that reached Metro, use agent-device metro
+  reload with the reported port. The detected iOS Local Network first-load
+  remedy uses UI automation instead because that app never established a Metro
+  connection.
 - A successful stim reload confirms that the request was sent, not that new
   JavaScript loaded or the screen recovered. Verify the expected UI on the
   reported device and inspect stim logs --errors before claiming recovery.

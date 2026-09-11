@@ -951,7 +951,10 @@ describe('launch verification', () => {
     expect(errs.join('\n')).toContain('Run `stim logs --errors` again');
   });
 
-  test('a Metro build failure with a live native process recommends reload instead of another native run', async () => {
+  // The first bundle never loaded, so this app is not a Metro peer and no
+  // websocket reload reaches it. Sending the agent to `stim reload ios` here
+  // costs it two wasted round trips before it reaches the device's own button.
+  test('a Metro build failure with a live native process routes to the error screen, not a Metro reload', async () => {
     reserve();
     const { errs, exitCode } = await run(
       {},
@@ -966,7 +969,10 @@ describe('launch verification', () => {
     const text = errs.join('\n');
     expect(exitCode).toBe(1);
     expect(text).toMatch(/native app is still running/);
-    expect(text).toContain('stim reload ios');
+    expect(text).toContain("press Reload on the app's own error screen");
+    expect(text).toContain('agent-device snapshot -i --platform ios --udid');
+    expect(text).not.toContain('then run `stim reload ios`');
+    expect(text).not.toContain('agent-device metro reload --metro-port');
     expect(text).toMatch(/Do not run `stim ios` unless native inputs changed or the app process exits/);
   });
 
@@ -3500,7 +3506,6 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       deviceId: UDID,
       metroPort: 8082,
       release: false,
-      deepLinkUrl: null,
       launchedAt: expect.any(String),
     });
     expect(stderr).toContain(`unavailable after ${mutation}; the build will be installed but not cached`);
@@ -4330,7 +4335,10 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(text).not.toMatch(/opened on the dev-client URL/);
   });
 
-  test('a Metro build failure on a live phone recommends Metro reload', async () => {
+  // A phone is in the same state as a simulator here: the first bundle failed,
+  // so the app never opened its packager connection and no Metro reload -- from
+  // Stim or from agent-device -- can reach it.
+  test('a Metro build failure on a live phone routes to the error screen, not a Metro reload', async () => {
     reserve();
     const { errs, exitCode } = await run(
       { device: true },
@@ -4345,8 +4353,31 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     );
     const text = errs.join('\n');
     expect(exitCode).toBe(1);
+    expect(text).toContain("press Reload on the app's own error screen");
+    expect(text).toContain(`agent-device snapshot -i --platform ios --udid ${PHONE}`);
+    expect(text).not.toContain('agent-device metro reload --metro-port');
+  });
+
+  // The counterpart of the test above: this bundle loaded, so the app IS a Metro
+  // peer and a reload does reach it. A phone cannot use `stim reload`, which acts
+  // only on owned local simulators, so agent-device carries the reload instead.
+  test('a runtime error on a live phone still recommends a Metro reload', async () => {
+    reserve();
+    const { errs } = await run(
+      { device: true },
+      {
+        ...connected(),
+        verifyLaunch: async () => ({
+          verified: true,
+          processAlive: true,
+          errors: [{ src: 'metro', msg: 'ERROR [Error: root render failed]' }],
+        }),
+      },
+    );
+    const text = errs.join('\n');
+    expect(text).toMatch(/native app is still running/);
     expect(text).toContain('agent-device metro reload --metro-port 8082');
-    expect(text).not.toContain('agent-device snapshot');
+    expect(text).not.toContain("press Reload on the app's own error screen");
   });
 
   test('the collector is the launch: it carries --physical and the run reads the device pid', async () => {

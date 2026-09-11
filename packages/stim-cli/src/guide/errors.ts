@@ -671,16 +671,33 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   process-probe remedy.`,
     },
     STIM_RELOAD_FAILED: {
-      summary: 'the reload failed; use Reload or the exact-app relaunch remedy',
+      summary: 'the reload failed; the remedy differs by shape -- read it before acting',
       body: () => `STIM_RELOAD_FAILED
-  The exact deep link, Android reload broadcast, or targeted Metro websocket
-  failed. If bare iOS has not connected or Metro cannot identify one iOS peer,
-  the remedy tells the agent to continue in its existing automation session on
-  this workspace's exact simulator and press Reload if present. If it is not
-  present, the printed agent-device open command relaunches that app on that
-  simulator with this workspace's Metro port. Keep the existing --session flag;
-  relaunch loses in-memory state. Verify the expected UI afterward. Stim does
-  not broadcast to unidentified peers or take over automation sessions.`,
+  The Metro websocket reload did not reach a peer Stim could identify. Two
+  shapes reach this code and the remedy differs. Read it rather than assuming.
+
+  METRO DID NOT ANSWER. The probe timed out after 2 seconds, or the socket
+  errored. Nothing is known about the app, so the remedy is to run the same
+  reload again, and to check the dev server with stim doctor if it keeps
+  timing out. Do not touch the device for this one.
+
+  METRO REPORTS NO PEER FOR THE APP. Stim broadcasts a reload anyway before
+  giving up, because matching is best-effort and an unmatched peer may still be
+  this app, so VERIFY THE UI FIRST -- the app may already have recovered. If it
+  did not, retry: a client reconnects to Metro every 2 seconds, which is also
+  this probe's timeout, so a single miss can be a reconnect window rather than
+  an app that never connected. If it stays unreachable on iOS, an error in the
+  first bundle leaves the app without a packager connection at all and no retry
+  will make it a peer. The remedy then routes the agent to the device's own
+  controls in its existing automation session: press the error screen's Reload
+  button, or open the dev menu and press Reload when no error screen is
+  showing. The printed agent-device open command is the last resort; it
+  relaunches that app on that device with this workspace's Metro port and loses
+  in-memory state. Keep the existing --session flag and verify afterward.
+
+  MORE THAN ONE MATCHING PEER IS NOT A FAILURE. A workspace Metro serves one
+  app, so several matching peers are that app on several devices. Stim reloads
+  every one of them and reports the count in the facts as targets.`,
     },
     STIM_WORKTREE_REMOVAL_IN_PROGRESS: {
       summary: 'a managed remote start found worktree remove holding the lock; wait, then rerun',
