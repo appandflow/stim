@@ -86,7 +86,7 @@ function unresolvedLockLines(
   const entries = [...(locks.unresolved ?? []), ...(slots.unresolved ?? [])];
   if (entries.length === 0) return [];
   return [
-    `Build locks Stim cannot resolve (${entries.length}) - NOT touched, because a dead holder and a live one cannot be told apart:`,
+    `Build locks and slots Stim cannot resolve (${entries.length}) - NOT touched, because a dead holder and a live one cannot be told apart:`,
     ...entries.map((entry) => `  ${entry.path}`),
     '              remove one yourself once you know nothing is building with it',
   ];

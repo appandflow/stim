@@ -147,17 +147,20 @@ describe('acquireBuildLock', () => {
     expect(acquireBuildLock(spec()).tookOver).toBe(undefined);
   });
 
-  test('a lock directory with no claim in it is free, whatever its age', () => {
+  test('a lock directory with no claim in it is free, fresh or old', () => {
     const path = buildLockPath(PLATFORM, KEY);
-    mkdirSync(path, { recursive: true });
-    const longAgo = new Date(Date.now() - 6 * 60 * 60 * 1000);
-    utimesSync(path, longAgo, longAgo);
+    for (const age of [0, 6 * 60 * 60 * 1000]) {
+      mkdirSync(path, { recursive: true });
+      const stamp = new Date(Date.now() - age);
+      utimesSync(path, stamp, stamp);
 
-    const got = acquireBuildLock(spec());
-    expect(got.acquired).toBe(true);
-    const taken = readBuildLock(path);
-    assert(taken);
-    expect(taken.pid).toBe(process.pid);
+      const got = acquireBuildLock(spec());
+      expect(got.acquired).toBe(true);
+      const taken = readBuildLock(path);
+      assert(taken);
+      expect(taken.pid).toBe(process.pid);
+      expect(releaseBuildLock(got)).toBe(true);
+    }
   });
 
   test('releaseBuildLock removes the lock and is safe to repeat', () => {

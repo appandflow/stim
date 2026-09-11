@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import {
@@ -159,6 +159,21 @@ describe('refusing instead of guessing', () => {
     } finally {
       chmodSync(exclusiveClaimDir(root), 0o700);
     }
+  });
+
+  test('the remedy for a claim that declared a child clears it in one go', () => {
+    const path = plantClaim(root, 'exclusive', goneClaimOwner(), { claimId: 'spawned', child: { record: null } });
+    refusal(() => tryAcquireClaim({ root, mode: 'exclusive' }));
+    rmSync(path, { force: true });
+    expect(tryAcquireClaim({ root, mode: 'exclusive' }).acquired).toBeTruthy();
+  });
+
+  test('a claim path that is a file says so, rather than retrying until it gives up', () => {
+    rmSync(root, { recursive: true, force: true });
+    mkdirSync(dirname(root), { recursive: true });
+    writeFileSync(root, 'not a claim directory');
+    const err = refusal(() => tryAcquireClaim({ root, mode: 'exclusive' }));
+    expect(err.message).toMatch(/is a file, not a claim directory/);
   });
 
   test('a claim directory holding foreign files refuses rather than being overwritten', () => {

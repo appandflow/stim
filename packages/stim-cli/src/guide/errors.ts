@@ -527,7 +527,8 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
       body: () => `STIM_BUILD_SLOT_TIMEOUT
   Only when concurrency.maxBuilds is set. The build cap does not refuse, it
   WAITS -- this code is that wait giving up: ~90 minutes elapsed and every one
-  of the N slots was still held by a process that is still running. A dead
+  of the N slots was still held by a running process, or by a holder Stim could
+  not identify. A dead
   builder's slot is reclaimed within a poll, and a recycled pid does not hold a
   slot, so this is never a slot leaked by a crash; it is either that many
   genuinely long compiles, or a slot directory whose owner is not really

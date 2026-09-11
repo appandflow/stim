@@ -166,7 +166,7 @@ export async function acquireBuildSlot({
     if (elapsed >= ceilingMs) {
       const err = new Error(
         `Waited ${formatElapsed(elapsed)} for one of ${max} build slots, and every slot is held by a ` +
-          'process that is still running. Slots live under ' +
+          'process that is still running, or by a holder Stim cannot identify. Slots live under ' +
           buildSlotsDir() +
           '; ' +
           'remove a slot directory whose builder is not really building, or raise concurrency.maxBuilds.',

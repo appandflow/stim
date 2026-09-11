@@ -68,6 +68,7 @@ export interface ClaimSurvey {
   live: ClaimHolder[];
   dead: ClaimHolder[];
   unresolved: ClaimProblem[];
+  orphans: string[];
 }
 
 export interface ClaimOptions {
@@ -233,6 +234,11 @@ function survey(dir: string, mode: ClaimMode, into: ClaimSurvey): void {
     into.unresolved.push({ path: dir, reason: 'its directory could not be read' });
     return;
   }
+  const claims = new Set(listed.filter((name) => name.endsWith(CLAIM_SUFFIX)));
+  const orphans = listed.filter(
+    (name) => name.endsWith(CHILD_SUFFIX) && !claims.has(`${name.slice(0, -CHILD_SUFFIX.length)}${CLAIM_SUFFIX}`),
+  );
+  for (const name of orphans) into.orphans.push(join(dir, name));
   for (const name of listed) {
     if (!name.endsWith(CLAIM_SUFFIX)) continue;
     const path = join(dir, name);
@@ -255,14 +261,15 @@ function survey(dir: string, mode: ClaimMode, into: ClaimSurvey): void {
       });
     }
   }
-  if (listed.length > 0 && !listed.some((name) => name.endsWith(CLAIM_SUFFIX))) {
+  const foreign = listed.filter((name) => !orphans.includes(name));
+  if (foreign.length > 0 && claims.size === 0) {
     into.unresolved.push({ path: dir, reason: 'it holds files Stim did not write' });
   }
 }
 
 /** Classify every claim in a claim set without removing anything and without refusing. */
 export function readClaimSet(root: string): ClaimSurvey {
-  const state: ClaimSurvey = { live: [], dead: [], unresolved: [] };
+  const state: ClaimSurvey = { live: [], dead: [], unresolved: [], orphans: [] };
   survey(exclusiveClaimDir(root), 'exclusive', state);
   survey(sharedClaimDir(root), 'shared', state);
   return state;
@@ -298,6 +305,7 @@ export function inspectClaimSet(root: string, { label = 'ownership' }: { label?:
   const unresolved = state.unresolved[0];
   if (unresolved) refuse(root, unresolved.path, label, unresolved.reason);
   const reaped: ClaimHolder[] = [];
+  for (const orphan of state.orphans) removeOrRefuse(orphan, root, orphan, label);
   for (const holder of state.dead) {
     if (reap(holder, root, label)) reaped.push(holder);
   }
@@ -372,7 +380,11 @@ export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' 
     try {
       mkdirSync(root, { recursive: true });
     } catch (err) {
-      if (contended((err as NodeJS.ErrnoException)?.code)) continue;
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code === 'EEXIST' || code === 'ENOTDIR') {
+        refuse(root, root, label, 'the claim path is a file, not a claim directory');
+      }
+      if (contended(code)) continue;
       throw err;
     }
     const state = inspectClaimSet(root, { label });
@@ -415,7 +427,7 @@ export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' 
 
   const contender = inspectClaimSet(root, { label });
   reaped.push(...contender.reaped);
-  const holder = contender.exclusive ?? contender.shared[0];
+  const holder = contender.exclusive ?? (mode === 'exclusive' ? contender.shared[0] : undefined);
   if (holder) return { held: holder, reaped };
   refuse(
     root,
