@@ -25,6 +25,7 @@ export interface SystemImage {
 }
 
 const ANDROID_ABIS = new Set(['armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64']);
+const DEFAULT_AVD_DEVICE = 'pixel_6';
 
 interface AdbEmulatorEntry {
   serial: string;
@@ -206,7 +207,9 @@ export function createOwnedAvd(
     );
   }
   const avdName = ownedAvdName(label);
-  getExecutor().run(`echo no | ${androidTool('avdmanager')} create avd -n "${avdName}" -k "${pick.pkg}"`);
+  getExecutor().run(
+    `echo no | ${androidTool('avdmanager')} create avd -n "${avdName}" -k "${pick.pkg}" --device "${DEFAULT_AVD_DEVICE}"`,
+  );
   return { avdName, systemImage: pick.pkg };
 }
 
@@ -703,6 +706,7 @@ export function avdPoolConfiguration(dataPartitionSizeGb: number, avdConfig: Rec
   return JSON.stringify(
     Object.entries({
       ...avdConfig,
+      'hw.device.name': DEFAULT_AVD_DEVICE,
       'disk.dataPartition.size': String(androidDataPartitionSizeBytes(dataPartitionSizeGb)),
     }).toSorted(([a], [b]) => a.localeCompare(b)),
   );

@@ -90,6 +90,10 @@ project's own `metro.config.js` calls `sharedCacheStores()` from
 
 ### Android AVD overrides
 
+New owned AVDs use the Pixel 6 hardware profile (1080 × 2400 pixels at 420 dpi).
+Existing AVDs keep their display settings. Parked AVDs created with the old generic
+profile are not adopted by new workspaces.
+
 `android.avdConfigFile` reads an Android `config.ini` file. `android.avdConfig`
 provides the same safe keys as JSON. Stim applies these values only when it
 creates a new owned AVD. It never rewrites an existing AVD or changes generated

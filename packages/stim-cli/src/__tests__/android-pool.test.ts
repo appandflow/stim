@@ -110,7 +110,7 @@ function makeAvd(name: string): void {
   writeFileSync(join(home, 'avd', `${name}.ini`), `path=${directory}\n`);
   writeFileSync(
     join(directory, 'config.ini'),
-    `image.sysdir.1=${image.split(';').join('/')}\ndisk.dataPartition.size=8589934592\n`,
+    `image.sysdir.1=${image.split(';').join('/')}\ndisk.dataPartition.size=8589934592\nhw.device.name=pixel_6\n`,
   );
 }
 
@@ -146,6 +146,7 @@ test('a new workspace adopts a compatible stopped AVD and retains cleanup state 
 
 test.each([
   { systemImage: image.replace('android-36', 'android-35') },
+  { configuration: '[["disk.dataPartition.size","8589934592"]]' },
   { configuration: avdPoolConfiguration(10, {}) },
   { configuration: avdPoolConfiguration(8, { 'hw.ramSize': '4096' }) },
 ])('an incompatible parked AVD stays parked and its name cannot be recovered by creation: %j', async (overrides) => {
