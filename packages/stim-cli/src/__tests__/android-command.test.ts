@@ -2193,7 +2193,9 @@ describe('single-flight builds', () => {
     assert(result.facts);
     expect(result.facts.cacheHit).toBe('local');
     expect(result.facts.waitedForBuild).toEqual({ pid: 41233, ms: 761000 });
-    expect(h.stderr.join('\n')).toMatch(/waited 12m41s for \/w\/app-999's build -> installed from cache/);
+    expect(h.stderr.join('\n')).toMatch(
+      /waited 12m41s for \/w\/app-999's build -> installed from cache -- stim guide lifecycle concurrency/,
+    );
   });
 
   test('a run that did not wait reports waitedForBuild: null', async () => {
@@ -2213,7 +2215,7 @@ describe('single-flight builds', () => {
     });
     await h.run();
     const err = h.stderr.join('\n');
-    expect(err).toMatch(/\/w\/app-999 is already building/);
+    expect(err).toMatch(/\/w\/app-999 is already building[^\n]+ -- stim guide lifecycle concurrency/);
     expect(err).toMatch(/waiting on \/w\/app-999 \(pid 41233, 4m elapsed\)/);
     expect(h.stdout.length).toBe(1);
   });

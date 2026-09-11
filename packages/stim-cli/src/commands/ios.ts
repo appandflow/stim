@@ -941,7 +941,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
         phase(
           'build',
           `${who} is already building ${shortHash(fingerprint)} (pid ${held.pid})` +
-            `${held.logFile ? ` -- tail ${held.logFile}` : ''}`,
+            `${held.logFile ? ` -- tail ${held.logFile}` : ''} -- stim guide lifecycle concurrency`,
         );
 
         let waited: WaitForBuildResult | null = null;
@@ -985,7 +985,10 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
           appPath = waited.hit ?? null;
           cacheHit = 'local';
           waitedForBuild = { pid: held.pid, ms: waited.waitedMs };
-          phase('build', `waited ${formatDuration(waited.waitedMs)} for ${who}'s build -> installed from cache`);
+          phase(
+            'build',
+            `waited ${formatDuration(waited.waitedMs)} for ${who}'s build -> installed from cache -- stim guide lifecycle concurrency`,
+          );
         } else if (waited?.lockReleased) {
           failedHolder = undefined;
           releasedWait = { facts: { pid: held.pid, ms: waited.waitedMs }, who };
@@ -1236,7 +1239,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
                   waitedForBuild = releasedWait.facts;
                   phase(
                     'build',
-                    `waited ${formatDuration(waitedForBuild.ms)} for ${releasedWait.who}'s build -> installed from cache`,
+                    `waited ${formatDuration(waitedForBuild.ms)} for ${releasedWait.who}'s build -> installed from cache -- stim guide lifecycle concurrency`,
                   );
                 }
               }

@@ -141,7 +141,7 @@ export function tryAcquireBuildSlot({
 }
 
 export function slotWaitingLine({ max, elapsedMs }: { max: number; elapsedMs: number }): string {
-  return `${'build'.padEnd(11)} waiting for a build slot (all ${max} in use, ${formatElapsed(elapsedMs)} elapsed)`;
+  return `${'build'.padEnd(11)} waiting for a build slot (all ${max} in use, ${formatElapsed(elapsedMs)} elapsed) -- stim guide lifecycle concurrency`;
 }
 
 export async function acquireBuildSlot({

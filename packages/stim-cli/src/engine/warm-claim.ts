@@ -99,14 +99,17 @@ function asHolder(holder: ClaimHolder): WarmClaimHolder {
 }
 
 function waitingLine(holder: WarmClaimHolder, elapsedMs: number): string {
-  return phaseLine('lock', `waiting ${formatElapsed(elapsedMs)} for ${warmCommand(holder.phase)} (pid ${holder.pid})`);
+  return phaseLine(
+    'lock',
+    `waiting ${formatElapsed(elapsedMs)} for ${warmCommand(holder.phase)} (pid ${holder.pid}) -- stim guide lifecycle options`,
+  );
 }
 
 export function warmClaimAcquiredLine(wait: WarmClaimWait): string {
   if (!wait.holder || wait.waitedMs <= 0) return phaseLine('lock', 'acquired');
   return phaseLine(
     'lock',
-    `acquired (waited ${formatElapsed(wait.waitedMs)} for ${warmCommand(wait.holder.phase)} pid ${wait.holder.pid})`,
+    `acquired (waited ${formatElapsed(wait.waitedMs)} for ${warmCommand(wait.holder.phase)} pid ${wait.holder.pid}) -- stim guide lifecycle options`,
   );
 }
 
@@ -179,7 +182,7 @@ export function warmClaimBlockedRefusal(blocker: WarmClaimBlocker): string {
 function installerWaitingLine(pid: number, elapsedMs: number): string {
   return phaseLine(
     'lock',
-    `waiting on the install this refresh spawned (pid ${pid}, ${formatElapsed(elapsedMs)} elapsed)`,
+    `waiting on the install this refresh spawned (pid ${pid}, ${formatElapsed(elapsedMs)} elapsed) -- stim guide lifecycle options`,
   );
 }
 

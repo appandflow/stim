@@ -346,7 +346,7 @@ describe('waitForBuild', () => {
     expect(lines.length >= 5).toBeTruthy();
     expect(lines.length < 20).toBeTruthy();
     expect(lines[0]).toMatch(
-      /^build\s+waiting on \/other\/worktree \(pid \d+, .+ elapsed\) -- tail \/other\/build\.ndjson$/,
+      /^build\s+waiting on \/other\/worktree \(pid \d+, .+ elapsed\) -- tail \/other\/build\.ndjson -- stim guide lifecycle concurrency$/,
     );
   });
 
@@ -381,7 +381,7 @@ describe('waitingLine', () => {
       logFile: '/w/app-412/.stim/logs/build-ios.ndjson',
     });
     expect(line).toBe(
-      'build       waiting on /w/app-412 (pid 41233, 8m00s elapsed) -- tail /w/app-412/.stim/logs/build-ios.ndjson',
+      'build       waiting on /w/app-412 (pid 41233, 8m00s elapsed) -- tail /w/app-412/.stim/logs/build-ios.ndjson -- stim guide lifecycle concurrency',
     );
   });
 

@@ -79,7 +79,7 @@ function facts(lease: DeviceLease): LeaseFacts {
 function waitingLine(lease: DeviceLease, now: number): string {
   return (
     `waiting for ${lease.holder} to release ${describeDevice(lease)}; ` +
-    `its lease runs until ${leaseExpiryText(lease.expiresAt, now)}`
+    `its lease runs until ${leaseExpiryText(lease.expiresAt, now)} -- stim guide lifecycle lease`
   );
 }
 

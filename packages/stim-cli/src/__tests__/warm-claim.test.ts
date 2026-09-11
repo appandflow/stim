@@ -205,8 +205,8 @@ test('a wait attributes elapsed time to the waiter and names its holder every pr
     },
   });
   expect(lines).toEqual([
-    `  lock        waiting 30s for stim worktree warm --refresh (pid ${process.pid})`,
-    `  lock        waiting 1m00s for stim worktree warm --refresh (pid ${process.pid})`,
+    `  lock        waiting 30s for stim worktree warm --refresh (pid ${process.pid}) -- stim guide lifecycle options`,
+    `  lock        waiting 1m00s for stim worktree warm --refresh (pid ${process.pid}) -- stim guide lifecycle options`,
   ]);
   expect(copy.wait.waitedMs).toBe(80_000);
   copy.release();
@@ -215,7 +215,7 @@ test('a wait attributes elapsed time to the waiter and names its holder every pr
 test('the acquired line reports a wait only when there was one', () => {
   expect(warmClaimAcquiredLine({ waitedMs: 0, holder: null })).toBe(`  ${'lock'.padEnd(11)} acquired`);
   expect(warmClaimAcquiredLine({ waitedMs: 12_000, holder: { pid: 41233, phase: 'refresh' } })).toBe(
-    `  ${'lock'.padEnd(11)} acquired (waited 12s for stim worktree warm --refresh pid 41233)`,
+    `  ${'lock'.padEnd(11)} acquired (waited 12s for stim worktree warm --refresh pid 41233) -- stim guide lifecycle options`,
   );
 });
 

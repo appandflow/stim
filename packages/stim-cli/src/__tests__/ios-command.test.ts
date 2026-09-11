@@ -1638,7 +1638,9 @@ describe('single-flight builds', () => {
     const facts = parseFirst(logs);
     expect(facts.cacheHit).toBe('local');
     expect(facts.waitedForBuild).toEqual({ pid: 41233, ms: 761000 });
-    expect(stderr).toMatch(/waited 12m41s for \/w\/app-999's build -> installed from cache/);
+    expect(stderr).toMatch(
+      /waited 12m41s for \/w\/app-999's build -> installed from cache -- stim guide lifecycle concurrency/,
+    );
   });
 
   test('a run that did not wait reports waitedForBuild: null', async () => {
@@ -1658,6 +1660,7 @@ describe('single-flight builds', () => {
     );
     expect(stderr).toMatch(/\/w\/app-999/);
     expect(stderr).toMatch(/41233/);
+    expect(stderr).toMatch(/is already building[^\n]+ -- stim guide lifecycle concurrency/);
     expect(stderr).toMatch(/build-ios\.ndjson/);
   });
 
