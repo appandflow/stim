@@ -752,7 +752,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
                             not waiters. A full slate WAITS (this is batch work),
                             printing the same kind of progress line the build
                             lock does, and a dead builder frees its slot within
-                            a poll (pid-liveness, like the lock).
+                            a poll (process identity, like the lock).
 
     concurrency.maxDevices  how many Stim-owned devices are BOOTED at once. Checked
                             at device time, before a sim is created or booted.

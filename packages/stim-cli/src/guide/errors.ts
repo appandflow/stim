@@ -523,14 +523,16 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   See \`guide lifecycle concurrency\`.)`,
     },
     STIM_BUILD_SLOT_TIMEOUT: {
-      summary: 'the maxBuilds wait gave up with every slot held by a live pid',
+      summary: 'the maxBuilds wait gave up with every slot held by a running process',
       body: () => `STIM_BUILD_SLOT_TIMEOUT
   Only when concurrency.maxBuilds is set. The build cap does not refuse, it
   WAITS -- this code is that wait giving up: ~90 minutes elapsed and every one
-  of the N slots was still held by a process that is still alive. A dead
-  builder's slot is reclaimed within a poll, so this is never a slot leaked by
-  a crash; it is either that many genuinely long compiles, or a slot directory
-  whose owner is not really building. Slots live under ~/.stim/build-slots and
+  of the N slots was still held by a process that is still running. A dead
+  builder's slot is reclaimed within a poll, and a recycled pid does not hold a
+  slot, so this is never a slot leaked by a crash; it is either that many
+  genuinely long compiles, or a slot directory whose owner is not really
+  building. A slot whose holder cannot be identified at all is
+  STIM_CLAIM_REFUSED rather than a wait. Slots live under ~/.stim/build-slots and
   the message names the directory: remove the slot of a builder that is not
   building, or raise concurrency.maxBuilds
   (\`guide lifecycle concurrency\`).`,

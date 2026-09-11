@@ -2734,11 +2734,9 @@ function writeSlot({
   projectRoot?: string;
 }) {
   const path = join(tmpHome, 'build-slots', `slot-${index}`);
-  mkdirSync(path, { recursive: true });
-  writeFileSync(
-    join(path, 'slot.json'),
-    JSON.stringify({ pid, index, projectRoot, startedAt: new Date().toISOString() }),
-  );
+  plantClaim(path, 'exclusive', pid === process.pid ? liveClaimOwner() : goneClaimOwner(pid), {
+    details: { index, projectRoot },
+  });
   return path;
 }
 

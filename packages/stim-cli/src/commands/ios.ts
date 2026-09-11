@@ -1123,6 +1123,15 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
           try {
             buildSlot = await d.acquireBuildSlot({ max: limits.maxBuilds, root, logFile, out: note });
           } catch (e) {
+            if (isClaimRefusal(e)) {
+              fail({
+                code: 'STIM_CLAIM_REFUSED',
+                message: e.message,
+                remedy: `Run \`${e.removeCommand}\`, then run \`stim ios\` again.`,
+                build: buildFailure,
+              });
+              return false;
+            }
             note(
               chalk.yellow(
                 phaseLine('build', `could not take a build slot: ${(e as Error)?.message || e}; building anyway`),

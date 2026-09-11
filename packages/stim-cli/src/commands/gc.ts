@@ -5,9 +5,8 @@ import { InvalidArgumentError, type Command } from 'commander';
 import { loadConfig, removeProject } from '../config.ts';
 import { directorySize, isOnMountedVolume, listMountedVolumes, volumeRootFor } from '../fs-util.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
-import { listBuildSlots, readBuildSlot } from '../engine/build-slots.ts';
+import { listBuildSlots } from '../engine/build-slots.ts';
 import { removeExpiredLease } from '../engine/device-lease.ts';
-import { isPidAlive } from '../metro.ts';
 import { readClaimSet } from '../ownership-claim.ts';
 import { detectIsExpo, findProjectRoot } from '../project.ts';
 import { describeDereferenced, reclaimProject } from '../reclaim.ts';
@@ -471,8 +470,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
   }
 
   for (const slot of buildSlots.stale) {
-    const current = readBuildSlot(slot.path);
-    if (current?.pid && isPidAlive(current.pid)) continue;
+    if (readClaimSet(slot.path).live.length > 0) continue;
     try {
       rmSync(slot.path, { recursive: true, force: true });
       console.log(

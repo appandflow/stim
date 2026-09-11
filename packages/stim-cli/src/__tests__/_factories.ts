@@ -80,6 +80,7 @@ export function makeBuildSlot(overrides: Partial<BuildSlotInfo> = {}): BuildSlot
     startedAt: '2026-01-01T00:00:00.000Z',
     logFile: '/w/.stim/logs/build.log',
     alive: true,
+    unresolved: false,
     ...overrides,
   };
 }

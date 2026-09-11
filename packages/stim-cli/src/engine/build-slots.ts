@@ -1,11 +1,19 @@
-import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { getConfigDir } from '../config.ts';
-import { isPidAlive } from '../metro.ts';
 import { formatElapsed } from '../command-output.ts';
+import {
+  isClaimRefusal,
+  readClaimSet,
+  releaseClaim,
+  tryAcquireClaim,
+  type ClaimHandle,
+  type ClaimHolder,
+  type ClaimRefusedError,
+} from '../ownership-claim.ts';
 
-const SLOT_FILE_NAME = 'slot.json';
 const SLOT_PREFIX = 'slot-';
+const SLOT_LABEL = 'build slot';
 
 export interface BuildSlotRecord {
   pid: number | null;
@@ -19,13 +27,12 @@ interface TryAcquireBuildSlotOptions {
   max: number;
   root?: string | null;
   logFile?: string | null;
-  isAlive?: (pid: number) => boolean;
-  now?: () => number;
 }
 
 interface AcquireBuildSlotOptions extends TryAcquireBuildSlotOptions {
   out?: (line: string) => void;
   sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
   intervalMs?: number;
   progressMs?: number;
   ceilingMs?: number;
@@ -37,10 +44,7 @@ export interface BuildSlotHandle {
   path?: string;
   index?: number;
   slot?: BuildSlotRecord;
-}
-
-interface ListBuildSlotsOptions {
-  isAlive?: (pid: number) => boolean;
+  claim?: ClaimHandle;
 }
 
 export interface BuildSlotInfo {
@@ -52,9 +56,8 @@ export interface BuildSlotInfo {
   startedAt: string | null;
   logFile: string | null;
   alive: boolean;
+  unresolved: boolean;
 }
-
-const RECORD_GRACE_MS = 5000;
 
 export const SLOT_POLL_MS = 1000;
 export const SLOT_PROGRESS_MS = 30000;
@@ -72,79 +75,64 @@ export function buildSlotPath(index: number): string {
   return join(buildSlotsDir(), `${SLOT_PREFIX}${index}`);
 }
 
+function toRecord(holder: ClaimHolder): BuildSlotRecord {
+  const details = holder.details as { index?: unknown; projectRoot?: unknown; logFile?: unknown };
+  return {
+    pid: holder.owner.pid,
+    index: typeof details.index === 'number' ? details.index : null,
+    projectRoot: typeof details.projectRoot === 'string' ? details.projectRoot : null,
+    startedAt: holder.startedAt || null,
+    logFile: typeof details.logFile === 'string' ? details.logFile : null,
+  };
+}
+
 export function readBuildSlot(path: string): BuildSlotRecord | null {
-  try {
-    const parsed = JSON.parse(readFileSync(join(path, SLOT_FILE_NAME), 'utf-8'));
-    if (!parsed || typeof parsed !== 'object') return null;
-    return {
-      pid: Number.isFinite(parsed.pid) ? parsed.pid : null,
-      index: Number.isFinite(parsed.index) ? parsed.index : null,
-      projectRoot: parsed.projectRoot ?? null,
-      startedAt: parsed.startedAt ?? null,
-      logFile: parsed.logFile ?? null,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function dirAgeMs(path: string, now: number): number | null {
-  try {
-    return now - statSync(path).mtimeMs;
-  } catch {
-    return null;
-  }
-}
-
-function claimSlot(path: string, { isAlive, now }: { isAlive: (pid: number) => boolean; now: () => number }): boolean {
-  try {
-    mkdirSync(path);
-    return true;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code !== 'EEXIST') throw err;
-  }
-  const info = readBuildSlot(path);
-  if (info && isAlive(info.pid!)) return false;
-  if (!info) {
-    const age = dirAgeMs(path, now());
-    if (age !== null && age <= RECORD_GRACE_MS) return false;
-  }
-  const aside = `${path}.reap-${process.pid}`;
-  try {
-    rmSync(aside, { recursive: true, force: true });
-    renameSync(path, aside);
-    rmSync(aside, { recursive: true, force: true });
-  } catch {}
-  try {
-    mkdirSync(path);
-    return true;
-  } catch {
-    return false;
-  }
+  const survey = readClaimSet(path);
+  const holder = survey.live[0] ?? survey.dead[0];
+  return holder ? toRecord(holder) : null;
 }
 
 export function tryAcquireBuildSlot({
   max,
   root = null,
   logFile = null,
-  isAlive = isPidAlive,
-  now = Date.now,
 }: TryAcquireBuildSlotOptions): BuildSlotHandle | null {
   if (!max || max <= 0) return { acquired: true, unlimited: true };
-  mkdirSync(buildSlotsDir(), { recursive: true });
+  let refusal: ClaimRefusedError | null = null;
+
   for (let index = 0; index < max; index++) {
     const path = buildSlotPath(index);
-    if (!claimSlot(path, { isAlive, now })) continue;
-    const slot: BuildSlotRecord = {
-      pid: process.pid,
+    let attempt;
+    try {
+      attempt = tryAcquireClaim({
+        root: path,
+        mode: 'exclusive',
+        label: SLOT_LABEL,
+        details: { index, projectRoot: root, logFile },
+      });
+    } catch (err) {
+      if (!isClaimRefusal(err)) throw err;
+      refusal ??= err;
+      continue;
+    }
+    if (attempt.pending) releaseClaim(attempt.pending);
+    if (!attempt.acquired) continue;
+    return {
+      acquired: true,
+      path,
       index,
-      projectRoot: root,
-      startedAt: new Date(now()).toISOString(),
-      logFile,
+      slot: {
+        pid: attempt.acquired.owner.pid,
+        index,
+        projectRoot: root,
+        startedAt: attempt.acquired.startedAt,
+        logFile,
+      },
+      claim: attempt.acquired,
     };
-    writeFileSync(join(path, SLOT_FILE_NAME), JSON.stringify(slot));
-    return { acquired: true, path, index, slot };
   }
+
+  if (refusal) throw refusal;
   return null;
 }
 
@@ -156,7 +144,6 @@ export async function acquireBuildSlot({
   max,
   root = null,
   logFile = null,
-  isAlive = isPidAlive,
   now = Date.now,
   out = () => {},
   sleep = sleepAsync,
@@ -168,14 +155,14 @@ export async function acquireBuildSlot({
   const started = now();
   let lastProgress = started;
   for (;;) {
-    const got = tryAcquireBuildSlot({ max, root, logFile, isAlive, now });
+    const got = tryAcquireBuildSlot({ max, root, logFile });
     if (got) return got;
 
     const elapsed = now() - started;
     if (elapsed >= ceilingMs) {
       const err = new Error(
         `Waited ${formatElapsed(elapsed)} for one of ${max} build slots, and every slot is held by a ` +
-          'process that is still alive. Slots live under ' +
+          'process that is still running. Slots live under ' +
           buildSlotsDir() +
           '; ' +
           'remove a slot directory whose builder is not really building, or raise concurrency.maxBuilds.',
@@ -193,20 +180,10 @@ export async function acquireBuildSlot({
 
 export function releaseBuildSlot(handle?: BuildSlotHandle | null): boolean {
   if (!handle || handle.unlimited) return false;
-  const path = handle.path || (handle.index != null ? buildSlotPath(handle.index) : null);
-  if (!path) return false;
-  const ours = handle.slot?.pid ?? process.pid;
-  const info = readBuildSlot(path);
-  if (info && info.pid !== ours) return false;
-  try {
-    rmSync(path, { recursive: true, force: true });
-    return true;
-  } catch {
-    return false;
-  }
+  return releaseClaim(handle.claim);
 }
 
-export function listBuildSlots({ isAlive = isPidAlive }: ListBuildSlotsOptions = {}): BuildSlotInfo[] {
+export function listBuildSlots(): BuildSlotInfo[] {
   const dir = buildSlotsDir();
   let names;
   try {
@@ -223,7 +200,9 @@ export function listBuildSlots({ isAlive = isPidAlive }: ListBuildSlotsOptions =
     } catch {
       continue;
     }
-    const info = readBuildSlot(path);
+    const survey = readClaimSet(path);
+    const holder = survey.live[0] ?? survey.dead[0];
+    const info = holder ? toRecord(holder) : null;
     const index = Number(name.slice(SLOT_PREFIX.length));
     slots.push({
       path,
@@ -233,7 +212,8 @@ export function listBuildSlots({ isAlive = isPidAlive }: ListBuildSlotsOptions =
       projectRoot: info?.projectRoot ?? null,
       startedAt: info?.startedAt ?? null,
       logFile: info?.logFile ?? null,
-      alive: Boolean(info?.pid) && isAlive(info!.pid!),
+      alive: survey.live.length > 0,
+      unresolved: survey.unresolved.length > 0,
     });
   }
   return slots;

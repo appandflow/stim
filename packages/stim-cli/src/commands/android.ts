@@ -1383,6 +1383,15 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
             try {
               buildSlot = await acquireSlot({ max: limits.maxBuilds, root, logFile: buildLog, out });
             } catch (err) {
+              if (isClaimRefusal(err)) {
+                phaseFailure = fail(
+                  'STIM_CLAIM_REFUSED',
+                  err.message,
+                  `Run \`${err.removeCommand}\`, then run \`stim android\` again.`,
+                  { lastBuildStatus: true },
+                );
+                return false;
+              }
               phase(
                 'build',
                 chalk.yellow(`could not take a build slot: ${(err as Error)?.message || err}; building anyway`),
