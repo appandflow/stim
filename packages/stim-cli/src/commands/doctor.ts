@@ -57,7 +57,7 @@ export function doctorSuccessLines(platform: DoctorPlatform | undefined, stim: S
     '',
     'Project',
     phaseLine('project', 'source checkout, dependencies, local upstream'),
-    phaseLine('settings', 'every Stim setting type'),
+    phaseLine('settings', 'every Stim setting type, machine config paths, companions and inert keys'),
   ];
 
   if (platform !== 'android') {

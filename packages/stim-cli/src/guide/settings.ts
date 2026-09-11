@@ -230,6 +230,14 @@ Anything else is IGNORED, and Stim warns about it by name on every run that
 resolves settings. If you see such a warning, the key was either renamed or
 removed -- check this list rather than assuming it still applies.
 
+\`stim doctor\` checks the settings themselves on every run, whatever
+--platform says, because a rotted machine setting is not a native-platform
+problem. It reports, as notes naming the key, the file it came from, and the
+line that clears it: a setting whose path no longer exists, a setting that needs
+a companion the config does not supply, a key Stim no longer reads, and a
+config file that is not valid JSON. It skips the \`projects\` registry, where an
+entry for a deleted checkout is normal and \`gc\` owns the cleanup.
+
 CONCURRENCY LIMITS ARE MACHINE-LEVEL, NOT A PER-PROJECT SETTING
 The caps above are not in the layered settings -- they are not per-project,
 because the resource they share (cores, RAM, booted simulators) is the whole
@@ -363,12 +371,22 @@ The example shows the defaults. Full setting names and behavior:
     auto uses a CAS manifest if supplied, otherwise the normal ccache setup.
     ccache explicitly selects that setup; none stops Stim injecting it and
     disables inherited ccache. Project-defined compiler integrations can still
-    override CMake settings. cas requires the manifest below.
+    override CMake settings. cas asks for the manifest below; with no usable
+    manifest the build warns once and uses ccache rather than refusing. A value
+    outside auto|ccache|cas|none is still refused by name.
   optimizations.android.casToolchain
     absolute path to the experimental Apple Clang toolchain JSON manifest.
     STIM_ANDROID_CAS_TOOLCHAIN overrides this path. An explicit ccache or none
     selection overrides automatic CAS selection even with that environment
-    variable set. For prerequisites, see:
+    variable set. Any value that is not an absolute path, whatever its type,
+    and a manifest that is missing, unreadable, or does not name an executable
+    clang, clangxx, lld, ar and ranlib plus an existing resourceDir, degrade to
+    the compiler cache the selection leaves -- ccache, or none when
+    compilerCache is none -- in one warning naming this key and the file it came
+    from. \`stim doctor\` resolves the same manifest and reports what the build
+    would warn about as a note: a path that is not there, from this key or from
+    that environment variable, or a manifest that is there and cannot be used.
+    For prerequisites, see:
     https://stim.appandflow.com/docs/android-cas
   optimizations.android.pch
     auto keeps library/project policy, with PCH off by default when Stim supplies

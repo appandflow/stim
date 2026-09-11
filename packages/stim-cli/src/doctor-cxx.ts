@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { getExecutor } from './exec.ts';
+import { readAndroidCasToolchain, resolveAndroidCompilerCache } from './engine/android-cas.ts';
 import { listBuildLocks } from './engine/build-lock.ts';
 import { projectCmakeLauncher } from './engine/ccache.ts';
 import { projectOptimizations } from './settings.ts';
@@ -71,6 +72,15 @@ function contained(root: string, path: string): boolean {
   return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
+function selectedCompilerCache(root: string): string | null {
+  try {
+    return resolveAndroidCompilerCache({ optimizations: projectOptimizations(root), use: readAndroidCasToolchain })
+      .optimizations.android.compilerCache;
+  } catch {
+    return null;
+  }
+}
+
 export interface CxxRepairResult {
   removed: string[];
   refused: { path: string; reason: string }[];
@@ -83,7 +93,7 @@ export interface CxxRepairResult {
 export function repairCxxLauncherState(root: string): CxxRepairResult {
   const canonicalRoot = realpathSync(root);
   const result: CxxRepairResult = { removed: [], refused: [] };
-  if (projectOptimizations(root).android.compilerCache !== 'ccache') return result;
+  if (selectedCompilerCache(root) !== 'ccache') return result;
   const ccache = getExecutor().runQuiet('command -v ccache', { timeoutMs: 5000 });
   if (!ccache) return result;
   const appOverrides = declaredLauncher(join(root, 'android', 'app'));

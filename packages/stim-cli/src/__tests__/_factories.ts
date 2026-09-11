@@ -234,3 +234,31 @@ export function plantClaim(
   if (child !== undefined) writeFileSync(join(dir, `${claimId}.child`), JSON.stringify(child));
   return path;
 }
+
+export function writeCasToolchain(
+  dir: string,
+  toolchain: Record<string, unknown> = {},
+): { manifest: string; binary: string } {
+  const ndk = join(dir, 'ndk');
+  mkdirSync(ndk, { recursive: true });
+  writeFileSync(join(ndk, 'source.properties'), 'Pkg.Revision = 27.1.12297006\n');
+  const binary = join(dir, 'compiler');
+  writeFileSync(binary, 'test compiler bytes', { mode: 0o755 });
+  const resourceDir = join(dir, 'resource');
+  mkdirSync(resourceDir, { recursive: true });
+  const manifest = join(dir, 'toolchain.json');
+  writeFileSync(
+    manifest,
+    JSON.stringify({
+      clang: binary,
+      clangxx: binary,
+      lld: binary,
+      ar: binary,
+      ranlib: binary,
+      ndk,
+      resourceDir,
+      ...toolchain,
+    }),
+  );
+  return { manifest, binary };
+}

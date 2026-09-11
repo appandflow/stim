@@ -12,7 +12,7 @@ export function getConfigDir(): string {
   return process.env.STIM_HOME || join(homedir(), '.stim');
 }
 
-function getConfigPath() {
+export function getConfigPath(): string {
   return join(getConfigDir(), 'config.json');
 }
 
@@ -31,6 +31,10 @@ export function withConfigLock<T>(fn: () => T): T {
   return withDirLock(lockPath(), fn, { ensureParent: ensureDir });
 }
 
+export function configCorruptRepair(path: string = getConfigPath()): string {
+  return `Repair the file, or move it aside to start over: mv "${path}" "${path}.broken"`;
+}
+
 export function loadConfig(): Config | null {
   const p = getConfigPath();
   if (!existsSync(p)) return null;
@@ -41,7 +45,7 @@ export function loadConfig(): Config | null {
     const corrupt = new Error(
       `Stim config at ${p} is not valid JSON: ${(err as Error).message}\n` +
         'It holds the records of the simulators and emulators Stim owns, so it is never reset automatically.\n' +
-        `Repair the file, or move it aside to start over: mv "${p}" "${p}.broken"`,
+        configCorruptRepair(p),
     );
     (corrupt as Error & { code?: string }).code = 'STIM_CONFIG_CORRUPT';
     throw corrupt;

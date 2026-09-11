@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'fs';
 import { isAbsolute, join, relative, resolve, sep } from 'path';
 import type { CacheProviderConfig } from '@stim-cli/cache';
-import { getProjectSettings, getRepoSettings, loadConfig } from './config.ts';
+import { getConfigPath, getProjectSettings, getRepoSettings, loadConfig } from './config.ts';
 import {
   OPTIMIZATION_SHAPES,
   resolveOptimizations,
@@ -81,6 +81,14 @@ const SETTING_SHAPES: Record<string, SettingShape> = {
 
 const KNOWN_SETTINGS = new Set(Object.keys(SETTING_SHAPES));
 
+export const SETTINGS_WITH_RESOLVE_TIME_FALLBACK: ReadonlySet<string> = new Set(['optimizations.android.casToolchain']);
+
+export const PATH_SETTINGS: readonly string[] = Object.freeze(
+  Object.entries(SETTING_SHAPES)
+    .filter(([, shape]) => shape === 'path')
+    .map(([path]) => path),
+);
+
 function settingValueAt(settings: unknown, path: string): unknown {
   let node: unknown = settings;
   for (const segment of path.split('.')) {
@@ -93,6 +101,7 @@ function settingValueAt(settings: unknown, path: string): unknown {
 export function settingShapeErrors(settings: unknown): string[] {
   const errors: string[] = [];
   for (const [path, shape] of Object.entries(SETTING_SHAPES)) {
+    if (SETTINGS_WITH_RESOLVE_TIME_FALLBACK.has(path)) continue;
     const value = settingValueAt(settings, path);
     if (value === undefined) continue;
     const rule = SETTING_SHAPE_RULES[shape];
@@ -459,7 +468,12 @@ export function readCommittedSettings(directory?: string | null): SettingsObject
   }
 }
 
-export function resolveSettings({
+export interface SettingsLayer {
+  file: string;
+  settings: SettingsObject;
+}
+
+export function settingsLayers({
   projectPath,
   gitCommonDir,
   repoRoot,
@@ -467,14 +481,45 @@ export function resolveSettings({
   projectPath?: string | null;
   gitCommonDir?: string | null;
   repoRoot?: string | null;
-}): SettingsObject {
+}): SettingsLayer[] {
   const machine = loadConfig();
-  return mergeSettingsLayers([
-    projectPath ? getProjectSettings(projectPath) : null,
-    gitCommonDir ? getRepoSettings(gitCommonDir) : null,
-    readCommittedSettings(projectPath ?? repoRoot),
-    machine?.optimizations === undefined ? null : { optimizations: machine.optimizations },
-  ]);
+  const machineFile = getConfigPath();
+  const committedDir = projectPath ?? repoRoot;
+  return [
+    projectPath
+      ? { file: `${machineFile} (projects["${projectPath}"].settings)`, settings: getProjectSettings(projectPath) }
+      : null,
+    gitCommonDir
+      ? { file: `${machineFile} (repos["${gitCommonDir}"].settings)`, settings: getRepoSettings(gitCommonDir) }
+      : null,
+    committedDir ? { file: join(committedDir, '.stim.json'), settings: readCommittedSettings(committedDir) } : null,
+    machine?.optimizations === undefined
+      ? null
+      : { file: machineFile, settings: { optimizations: machine.optimizations } },
+  ].filter((layer): layer is SettingsLayer => layer !== null);
+}
+
+export function settingOrigin(layers: SettingsLayer[], dottedKey: string): { file: string; value: unknown } | null {
+  for (const layer of layers) {
+    const value = settingValueAt(layer.settings, dottedKey);
+    if (value !== undefined) return { file: layer.file, value };
+  }
+  return null;
+}
+
+export function settingFile(
+  context: { projectPath?: string | null; gitCommonDir?: string | null; repoRoot?: string | null },
+  dottedKey: string,
+): string | null {
+  return settingOrigin(settingsLayers(context), dottedKey)?.file ?? null;
+}
+
+export function resolveSettings(context: {
+  projectPath?: string | null;
+  gitCommonDir?: string | null;
+  repoRoot?: string | null;
+}): SettingsObject {
+  return mergeSettingsLayers(settingsLayers(context).map((layer) => layer.settings));
 }
 
 function settingsForProject(root: string): SettingsObject {

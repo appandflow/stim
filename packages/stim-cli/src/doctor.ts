@@ -37,7 +37,9 @@ import {
   settingShapeErrors,
 } from './settings.ts';
 import type { RemoteDeviceBackend } from './types.ts';
+import { readAndroidCasToolchain, resolveAndroidCompilerCache } from './engine/android-cas.ts';
 import { readCxxLauncherStates, type CxxLauncherState } from './doctor-cxx.ts';
+import { checkMachineSettings, readMachineSettings } from './doctor-config.ts';
 export { parseCmakeCacheLauncher } from './doctor-cxx.ts';
 
 type AnyJson = Record<string, unknown>;
@@ -793,6 +795,15 @@ export function runDoctor(
     }
   };
 
+  const settingsRepoRoot = repoRoot(projectRoot) ?? projectRoot;
+  const machineSettings = readMachineSettings({
+    projectPath: projectRoot,
+    gitCommonDir: gitCommonDir(projectRoot),
+    repoRoot: settingsRepoRoot,
+  });
+  if (machineSettings.corrupt) return [machineSettings.corrupt];
+  const projectSettings = machineSettings.settings;
+
   const pkg = readJson(join(projectRoot, 'package.json'));
   const appConfig = readJson(join(projectRoot, 'app.json'));
   const dynamicConfig = appConfig
@@ -826,18 +837,15 @@ export function runDoctor(
     });
   }
 
-  const settingsRepoRoot = repoRoot(projectRoot) ?? projectRoot;
-  const projectSettings = resolveSettings({
-    projectPath: projectRoot,
-    gitCommonDir: gitCommonDir(projectRoot),
-    repoRoot: settingsRepoRoot,
-  });
   const settingShapeFindings = settingShapeErrors(projectSettings).map((error) =>
     finding('cost', 'A setting has the wrong type', error, SETTING_SHAPE_REMEDY),
   );
   let optimizations: Optimizations | null = null;
   try {
-    optimizations = resolveOptimizations(projectSettings);
+    optimizations = resolveAndroidCompilerCache({
+      optimizations: resolveOptimizations(projectSettings),
+      use: readAndroidCasToolchain,
+    }).optimizations;
   } catch (error) {
     settingShapeFindings.push(
       finding('cost', 'Invalid optimization setting', (error as Error).message, SETTING_SHAPE_REMEDY),
@@ -929,6 +937,13 @@ export function runDoctor(
     simslimFinding,
     ...remoteFindings,
     ...settingShapeFindings,
+    ...checkMachineSettings({
+      settings: projectSettings,
+      layers: machineSettings.layers,
+      projectRoot,
+      optimizations,
+      reportedElsewhere: simslimProfileError ? ['ios.simslimProfile'] : [],
+    }),
   ].filter((f): f is Finding => Boolean(f));
 }
 

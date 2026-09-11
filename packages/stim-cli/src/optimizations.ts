@@ -29,10 +29,35 @@ export interface Optimizations {
   android: {
     compilerCache: 'ccache' | 'cas' | 'none';
     casToolchain: string | null;
+    compilerCacheFallback: CompilerCacheFallback | null;
     pch: 'auto' | 'on' | 'off';
     gradleBuildCache: boolean;
     targetAbiOnly: boolean;
   };
+}
+
+export interface CompilerCacheFallback {
+  key: string;
+  reason: string;
+  fromEnvironment: boolean;
+  manifest: string | null;
+}
+
+export function compilerCacheFallbackMessage({
+  fallback,
+  compilerCache,
+  file = null,
+}: {
+  fallback: CompilerCacheFallback;
+  compilerCache: 'ccache' | 'none';
+  file?: string | null;
+}): string {
+  const origin = fallback.fromEnvironment ? 'the environment' : file;
+  const backend =
+    compilerCache === 'none'
+      ? 'Android builds use no compiler cache, because optimizations.android.compilerCache is "none".'
+      : 'Android builds fall back to ccache when it is available.';
+  return `${fallback.key}${origin ? ` in ${origin}` : ''} ${fallback.reason}. ${backend}`;
 }
 
 export function optimizationBuildProfile(platform: 'ios' | 'android', options: Optimizations): string | undefined {
@@ -58,15 +83,32 @@ export function resolveOptimizations(
     return raw as T;
   }
   const compiler = choice('android.compilerCache', ['auto', 'ccache', 'cas', 'none'], 'auto');
+  const fromEnvironment = Boolean(env.STIM_ANDROID_CAS_TOOLCHAIN);
   const manifest = env.STIM_ANDROID_CAS_TOOLCHAIN || optimizationValue(settings, 'android.casToolchain');
-  if (manifest !== undefined && (typeof manifest !== 'string' || !isAbsolute(manifest) || /[\r\n\0]/.test(manifest))) {
-    throw new Error('Invalid Android CAS toolchain. Expected an absolute path to the toolchain JSON manifest.');
+  let fallback: CompilerCacheFallback | null = null;
+  let toolchain: string | null = null;
+  if (manifest !== undefined) {
+    if (typeof manifest === 'string' && isAbsolute(manifest) && !/[\r\n\0]/.test(manifest)) {
+      toolchain = manifest;
+    } else {
+      fallback = {
+        key: fromEnvironment ? 'STIM_ANDROID_CAS_TOOLCHAIN' : 'optimizations.android.casToolchain',
+        reason: `is ${JSON.stringify(manifest)}, which is not an absolute path to a toolchain JSON manifest`,
+        fromEnvironment,
+        manifest: null,
+      };
+    }
   }
-  const compilerCache = compiler === 'auto' ? (manifest ? 'cas' : 'ccache') : compiler;
-  if (compilerCache === 'cas' && !manifest) {
-    throw new Error(
-      'optimizations.android.compilerCache=cas requires optimizations.android.casToolchain or STIM_ANDROID_CAS_TOOLCHAIN.',
-    );
+  let compilerCache = compiler === 'auto' ? (toolchain ? 'cas' : 'ccache') : compiler;
+  if (compilerCache === 'cas' && !toolchain) {
+    fallback ??= {
+      key: 'optimizations.android.compilerCache',
+      reason:
+        'is "cas", but no optimizations.android.casToolchain or STIM_ANDROID_CAS_TOOLCHAIN names the toolchain manifest',
+      fromEnvironment: false,
+      manifest: null,
+    };
+    compilerCache = 'ccache';
   }
   return {
     buildCache: optimizationBoolean(settings, 'buildCache'),
@@ -80,7 +122,8 @@ export function resolveOptimizations(
     },
     android: {
       compilerCache,
-      casToolchain: (manifest as string | undefined) ?? null,
+      casToolchain: toolchain,
+      compilerCacheFallback: fallback,
       pch: choice('android.pch', ['auto', 'on', 'off'], 'auto'),
       gradleBuildCache: optimizationBoolean(settings, 'android.gradleBuildCache'),
       targetAbiOnly: optimizationBoolean(settings, 'android.targetAbiOnly'),

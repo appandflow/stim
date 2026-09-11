@@ -619,7 +619,12 @@ on macOS. STIM_ANDROID_CAS_TOOLCHAIN also selects CAS in auto mode. It retains
 PCH and replaces the ccache setup for that invocation.
 Compiler results live under $STIM_HOME/android-cas/<toolchain-id>; APK cache
 keys include that ID. This is a development prototype requiring a compatible
-linker and NDK copy, not an automatically installed backend. See
+linker and NDK copy, not an automatically installed backend. Because the
+manifest lives outside the repository it can rot: when the setting holds any
+value that is not an absolute path, or the manifest it names is missing or
+unreadable, the build warns once naming the setting and the file it came from,
+then compiles through the cache the selection leaves -- ccache, or none when
+compilerCache is none. It never refuses. See
 https://stim.appandflow.com/docs/android-cas for setup, evidence, and limits.
 Compiler/PCH modes have separate generated directories under each module's
 .cxx/stim-<profile> (or custom staging root). Switching modes in Stim selects
@@ -635,7 +640,9 @@ variables existed can keep compiling without them until it is cleared once.
 native modules. Stop native builds, then run \`stim doctor --fix --platform android\`:
 it removes only affected ignored, untracked legacy .cxx configurations and
 reruns the diagnostics. Managed profiles and disabled compiler caches are
-left alone. The next build recreates legacy output. It refuses directories
+left alone. A cas selection Stim cannot use resolves to ccache, so that
+checkout's legacy configurations become eligible for the same repair. A config
+the repair cannot read repairs nothing. The next build recreates legacy output. It refuses directories
 outside the checkout and configured custom launchers. Shared ccache entries and
 source files are preserved. Its cache-lock check cannot detect --no-build-cache,
 release-swap fallback, or direct Gradle builds; stop all native builds and keep
