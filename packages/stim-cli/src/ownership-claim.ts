@@ -413,7 +413,7 @@ export function clearFreeClaimSet({ root, label = 'ownership' }: { root: string;
     attempt = tryAcquireClaim({ root, mode: 'exclusive', label });
   } catch (err) {
     if (isClaimRefusal(err) || isClaimUnavailable(err)) return { status: 'refused', reason: err.reason };
-    throw err;
+    return { status: 'failed', reason: (err as Error)?.message ?? String(err) };
   }
   if (!attempt.acquired) {
     if (attempt.pending) releaseClaim(attempt.pending);

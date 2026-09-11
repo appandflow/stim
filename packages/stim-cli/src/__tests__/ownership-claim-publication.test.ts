@@ -1,7 +1,9 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
-import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { clearFreeClaimSet, readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { runGc } from '../commands/gc.ts';
+import { saveConfig } from '../config.ts';
 
 const faults = vi.hoisted(() => ({
   readOnly: '',
@@ -54,6 +56,33 @@ test.each(['exclusive', 'shared'] as const)('a read-only store preserves EROFS f
   faults.readOnly = home;
   for (const path of [root, present]) {
     expect(() => tryAcquireClaim({ root: path, mode })).toThrow(expect.objectContaining({ code: 'EROFS' }));
+  }
+});
+
+test('clearing a read-only claim store reports failure without throwing', () => {
+  mkdirSync(root);
+  faults.readOnly = root;
+  expect(clearFreeClaimSet({ root })).toEqual({ status: 'failed', reason: expect.stringContaining('EROFS') });
+});
+
+test('gc reports a read-only build lock and still clears a later build slot', async () => {
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  const blocked = join(home, 'build-locks', 'ios-readonly.lock');
+  const writable = join(home, 'build-slots', 'slot-0');
+  mkdirSync(blocked, { recursive: true });
+  mkdirSync(writable, { recursive: true });
+  faults.readOnly = blocked;
+  const lines: string[] = [];
+  const log = vi.spyOn(console, 'log').mockImplementation((line) => lines.push(String(line)));
+  try {
+    await runGc({ delete: true }, { findProjectRoot: () => null });
+    expect(existsSync(blocked)).toBe(true);
+    expect(existsSync(writable)).toBe(false);
+    expect(lines.join('\n')).toContain(`Failed to clear the build lock at ${blocked}: EROFS`);
+    expect(lines.join('\n')).toContain('Cleared build slot 0');
+    expect(lines.join('\n')).toContain('1 entry could not be deleted');
+  } finally {
+    log.mockRestore();
   }
 });
 
