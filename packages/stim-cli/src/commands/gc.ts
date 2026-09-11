@@ -63,14 +63,12 @@ interface CollectGcReportOptions {
   cache?: string | null;
   now?: number;
   lastTouched?: (path: string) => number;
-  unsafeAllowScopedDeviceSweep?: boolean;
 }
 
 interface RunGcOptions {
   olderThan?: number;
   cache?: string;
   delete?: boolean;
-  unsafeAllowScopedDeviceSweep?: boolean;
 }
 
 interface GcDependencies extends EasGcDependencies, GcDeviceDependencies {
@@ -93,13 +91,7 @@ function projectLastTouched(path: string): number {
 }
 
 export async function collectGcReport(
-  {
-    olderThan = null,
-    cache = null,
-    now = Date.now(),
-    lastTouched = projectLastTouched,
-    unsafeAllowScopedDeviceSweep = false,
-  }: CollectGcReportOptions = {},
+  { olderThan = null, cache = null, now = Date.now(), lastTouched = projectLastTouched }: CollectGcReportOptions = {},
   deps: GcDependencies = {},
 ): Promise<GcReport> {
   const scope = typeof cache === 'string' && cache.trim() ? cache : null;
@@ -181,7 +173,7 @@ export async function collectGcReport(
   const unsweepableReason =
     cfg === null
       ? 'no Stim config found'
-      : deviceSweepIsScoped(unsafeAllowScopedDeviceSweep)
+      : deviceSweepIsScoped()
         ? 'STIM_HOME scopes this config, but simulators and AVDs are machine-global'
         : null;
 
@@ -390,7 +382,6 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     {
       olderThan,
       cache,
-      unsafeAllowScopedDeviceSweep: opts.unsafeAllowScopedDeviceSweep,
     },
     deps,
   );

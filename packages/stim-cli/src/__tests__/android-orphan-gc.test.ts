@@ -13,6 +13,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { collectGcReport, runGc } from '../commands/gc.ts';
+import * as gcDevices from '../commands/gc/devices.ts';
 import { ensureConfig, getProject, upsertProject } from '../config.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { listOrphanedAvdDirectories } from '../sim/android.ts';
@@ -131,7 +132,8 @@ test('GC reports and sizes unreferenced owned data even when the emulator listin
   const retained = orphan('stim-retained');
   upsertProject(home, { platforms: { android: { avdName: 'stim-retained', owned: true } } });
 
-  const report = await collectGcReport({ unsafeAllowScopedDeviceSweep: true }, deps);
+  vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+  const report = await collectGcReport({}, deps);
 
   expect(report.orphanedDevices).toEqual([
     expect.objectContaining({
@@ -151,7 +153,8 @@ test('orphan sizing uses the bounded size path and tolerates its failure', async
   const size = vi.fn<typeof import('../fs-util.ts').directorySize>(() => {
     throw new Error('unreadable');
   });
-  const report = await collectGcReport({ unsafeAllowScopedDeviceSweep: true }, { ...deps, directorySize: size });
+  vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+  const report = await collectGcReport({}, { ...deps, directorySize: size });
   expect(size).toHaveBeenCalledWith(join(avdRoot, 'stim-orphan.avd'), { timeoutMs: 5000 });
   expect(report.orphanedDevices).toEqual([expect.objectContaining({ name: 'stim-orphan' })]);
   expect(report.orphanedDevices[0]!.bytes).toBeUndefined();
@@ -160,7 +163,7 @@ test('orphan sizing uses the bounded size path and tolerates its failure', async
 test.each(['scoped', 'no-config'])('orphan discovery preserves the %s GC sweep guard', async (guard) => {
   const directory = orphan();
   if (guard === 'no-config') rmSync(join(process.env.STIM_HOME!, 'config.json'));
-  const report = await collectGcReport({ unsafeAllowScopedDeviceSweep: guard === 'no-config' }, deps);
+  const report = await collectGcReport({}, deps);
   expect(report.orphanedDevices).toEqual([]);
   expect(existsSync(directory)).toBe(true);
 });
@@ -279,14 +282,15 @@ test.skipIf(process.getuid?.() === 0)(
     chmodSync(join(blocked, 'blocked'), 0);
     const removable = orphan('stim-z-removable');
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runGc({ delete: true, unsafeAllowScopedDeviceSweep: true }, deps);
+    vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+    await runGc({ delete: true }, deps);
     expect(existsSync(removable)).toBe(false);
     const leftovers = listOrphanedAvdDirectories();
     expect(leftovers).toHaveLength(1);
     expect(leftovers[0]!.name).toMatch(/^stim-gc-/);
     expect(log.mock.calls.flat().join('\n')).toContain('Failed to delete android device stim-a-blocked');
     chmodSync(join(leftovers[0]!.directory, 'blocked'), 0o700);
-    await runGc({ delete: true, unsafeAllowScopedDeviceSweep: true }, deps);
+    await runGc({ delete: true }, deps);
     expect(listOrphanedAvdDirectories()).toEqual([]);
   },
 );
@@ -296,7 +300,8 @@ test('an unreadable or symlinked orphan prevents stale device records from being
   mkdirSync(outside);
   symlinkSync(outside, join(avdRoot, 'stim-linked.avd'));
   upsertProject(home, { platforms: { android: { avdName: 'stim-linked', owned: true } } });
-  const report = await collectGcReport({ unsafeAllowScopedDeviceSweep: true }, deps);
+  vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+  const report = await collectGcReport({}, deps);
   expect(report.staleDeviceRecords).toEqual([]);
   expect(report.deviceSweepNotices.join('\n')).toContain('Cannot verify AVD data');
 });
@@ -305,7 +310,8 @@ test('GC reclaims orphan data after pruning its dead workspace reference', async
   const directory = orphan();
   upsertProject(join(home, 'gone'), { platforms: { android: { avdName: 'stim-orphan', owned: true } } });
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-  await runGc({ delete: true, unsafeAllowScopedDeviceSweep: true }, deps);
+  vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+  await runGc({ delete: true }, deps);
   expect(existsSync(directory)).toBe(false);
   expect(log.mock.calls.flat().join('\n')).not.toContain('Failed to delete');
 });
@@ -324,7 +330,8 @@ test.each(['absolute', 'relative', 'symlink'])(
     }
     writeFileSync(join(avdRoot, 'Personal_Phone.ini'), registration);
     listed.push('Personal_Phone');
-    const report = await collectGcReport({ unsafeAllowScopedDeviceSweep: true }, deps);
+    vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+    const report = await collectGcReport({}, deps);
     expect(report.orphanedDevices).toEqual([]);
     expect(teardownOwnedAvd('stim-orphan', { del: true, orphanedDirectory: candidate }).status).toBe('failed');
     expect(readFileSync(join(directory, 'userdata.img')).length).toBe(8192);
@@ -337,7 +344,8 @@ describe.skipIf(process.getuid?.() === 0)('unverifiable registrations', () => {
     const registration = join(avdRoot, 'Personal_Phone.ini');
     writeFileSync(registration, failure === 'malformed' ? 'avd.ini.encoding=UTF-8\n' : `path=${directory}\n`);
     if (failure === 'unreadable') chmodSync(registration, 0);
-    const report = await collectGcReport({ unsafeAllowScopedDeviceSweep: true }, deps);
+    vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+    const report = await collectGcReport({}, deps);
     expect(report.orphanedDevices).toEqual([]);
     expect(report.deviceSweepNotices.join('\n')).toContain('android data sweep skipped');
     expect(teardownOwnedAvd('stim-orphan', { del: true }).status).toBe('failed');
@@ -358,7 +366,8 @@ test.each(['ANDROID_USER_HOME', 'ANDROID_EMULATOR_HOME', 'ANDROID_SDK_HOME'])(
     mkdirSync(root, { recursive: true });
     writeFileSync(join(root, 'Personal_Phone.ini'), `path=${directory}\n`);
     listed.push('Personal_Phone');
-    const report = await collectGcReport({ unsafeAllowScopedDeviceSweep: true }, deps);
+    vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+    const report = await collectGcReport({}, deps);
     expect(report.orphanedDevices).toEqual([]);
     expect(teardownOwnedAvd('stim-orphan', { del: true, orphanedDirectory: candidate }).status).toBe('failed');
     expect(existsSync(join(directory, 'userdata.img'))).toBe(true);
@@ -377,7 +386,8 @@ test('a relative alias registration in a symlinked root protects its data when t
     `path=${join(home, 'missing.avd')}\npath.rel=avd/stim-retained.avd\n`,
   );
   listed.push('Personal_Phone');
-  const report = await collectGcReport({ unsafeAllowScopedDeviceSweep: true }, deps);
+  vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+  const report = await collectGcReport({}, deps);
   expect(report.orphanedDevices).toEqual([]);
   expect(teardownOwnedAvd('stim-retained', { del: true, orphanedDirectory: candidate }).status).toBe('failed');
   expect(existsSync(join(directory, 'userdata.img'))).toBe(true);
