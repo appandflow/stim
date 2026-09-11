@@ -467,6 +467,13 @@ function recordIosReloadTarget({
   }
 }
 
+function simulatorLaunchFailureRemedy(remote: boolean, udid: string, bundleId: string, logFile: string): string {
+  const prefix = remote
+    ? 'Run'
+    : 'If the simulator timed out, run `stim doctor --platform ios` and resolve any reported host memory pressure before retrying. Otherwise run';
+  return `${prefix} \`xcrun simctl launch --console ${udid} ${bundleId}\` to see what the app reports, and check ${logFile}.`;
+}
+
 export async function finishIosRun({
   d,
   root,
@@ -727,7 +734,7 @@ export async function finishIosRun({
       return fail({
         code: launched.code || 'STIM_LAUNCH_FAILED',
         message: launched.reason,
-        remedy: `If the simulator timed out, run \`stim doctor --platform ios\` and resolve any reported host memory pressure before retrying. Otherwise run \`xcrun simctl launch --console ${udid} ${bundleId}\` to see what the app reports, and check ${logFile}.`,
+        remedy: simulatorLaunchFailureRemedy(Boolean(remoteDevice), udid, bundleId!, logFile),
         build: { ...buildFailure, appPath, bundleId },
       });
     }
