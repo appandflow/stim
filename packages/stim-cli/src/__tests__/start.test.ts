@@ -2127,10 +2127,14 @@ describe('action: an existing supervisor that is not answering', () => {
     );
     const port = 8167;
     const exec = metroExecutor({ listeners: {} });
-    const held: { server: Server | null } = { server: null };
+    let markMetroHealthy: () => void;
+    const metroHealthy = new Promise<void>((resolve) => {
+      markMetroHealthy = resolve;
+    });
     const base = exec.runQuiet.bind(exec);
     exec.runQuiet = (cmd) => {
       if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5153' : '';
+      if (/lsof -a -p 5153 -d cwd/.test(cmd)) markMetroHealthy();
       return base(cmd);
     };
     setExecutor(exec);
@@ -2144,19 +2148,22 @@ describe('action: an existing supervisor that is not answering', () => {
         startedAt: 'T',
       },
     });
-    metroListener(port).then((server) => {
-      held.server = server;
-      exec.listening = true;
-      return server;
-    });
-
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     let result;
     try {
-      result = await runAction({ json: true, remote: true, wait: '1' });
+      const action = runAction({ json: true, remote: true, wait: '1' });
+      await vi.advanceTimersByTimeAsync(0);
+      await metroListener(port);
+      exec.listening = true;
+      await vi.advanceTimersByTimeAsync(500);
+      await metroHealthy;
+      await vi.runAllTimersAsync();
+      result = await action;
     } finally {
-      held.server?.close();
+      vi.useRealTimers();
     }
 
+    expect(result.errs.join('\n')).toMatch(/already running for this workspace; waiting for it to answer/);
     expect(result.exitCode).toBe(1);
     expect(exec.calls.spawn).toEqual([]);
     expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_REMOTE_START_REQUIRED');
