@@ -76,7 +76,8 @@ It fetches the branch's remote, fast-forwards **whatever branch the source
 checkout has** to its `@{upstream}`, and then installs only what the new commits
 moved: the lockfile's own install command where the lockfile lives (the
 repository root in a monorepo), and `pod install` for the app you ran the
-command from. Every step prints what it did or why it skipped.
+command from. Each dependency and Pods step names its source directory and
+prints what it did or why it skipped.
 
 The flag is opt-in because it writes to a checkout you are not standing in. It
 refuses one it cannot move -- uncommitted changes to tracked files or a rebase
