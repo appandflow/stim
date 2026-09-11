@@ -726,7 +726,7 @@ describe('buildAndroid', () => {
     expect(beats.length).toBe(settled);
   });
 
-  test('ccache opts into the packaged PCH policy, forwards its environment, and reads fresh statistics', async () => {
+  test.each([0, 1])('keeps fresh ccache statistics on success or failure (exit: %s)', async (exitCode) => {
     makeAndroidProject();
     const statsLog = join(root, 'logs', 'ccache-stats.log');
     mkdirSync(join(root, 'logs'), { recursive: true });
@@ -749,7 +749,7 @@ describe('buildAndroid', () => {
           envs.push(opts.env as NodeJS.ProcessEnv);
           expect(existsSync(statsLog)).toBe(false);
           return fakeChild({
-            lines: ['BUILD SUCCESSFUL in 3s'],
+            code: exitCode,
             onExit: () => {
               writeFileSync(statsLog, ['# a.cpp', 'direct_cache_hit', '# b.cpp', 'cache_miss'].join('\n'));
               writeApk();
@@ -759,7 +759,7 @@ describe('buildAndroid', () => {
         onNote: (line) => notes.push(line),
       },
     );
-    expect((result as BuildAndroidResultLike).ok).toBe(true);
+    expect(Boolean(result.failed)).toBe(exitCode !== 0);
     const spawnEnv = envs[0];
     assert(spawnEnv);
     expect(spawnEnv.CMAKE_CXX_COMPILER_LAUNCHER).toBe('/opt/homebrew/bin/ccache');

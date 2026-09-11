@@ -1181,7 +1181,8 @@ describe('a cache miss', () => {
     expect(options[0]?.ccache).toBe(setup);
     assert(result.facts);
     expect(result.facts.ccache).toEqual({ status: 'reported', hits: 176, misses: 204, hitRatePercent: 46.3 });
-    expect(h.stdout.join('\n')).toMatch(/^ {2}compilation cache 176 hits \/ 204 misses \(46\.3%\)$/m);
+    expect(h.stderr).toContain(phaseLine('cache', 'compilation cache 176 hits / 204 misses (46.3%)'));
+    expect(h.stdout.join('\n')).not.toContain('compilation cache');
   });
 
   test('builds only the ABI selected for an owned emulator and scopes the cache key', async () => {
@@ -1248,7 +1249,7 @@ describe('a cache miss', () => {
     });
     const result = await h.run();
     expect(result.ok).toBe(true);
-    expect(labelled(h.stderr, 'cache')[0]).toMatch(/disk full/);
+    expect(labelled(h.stderr, 'cache')).toContainEqual(expect.stringMatching(/disk full/));
   });
 
   test('an Expo project with no android/ prebuilds first, then builds', async () => {
@@ -1711,8 +1712,9 @@ describe('the other refusals', () => {
     expect(readState().lastBuild.errorCode).toBe(PREBUILD_ERROR);
   });
 
-  test('an install failure is reported with the device in the remedy', async () => {
+  test.each([false, true])('an install failure preserves completed cache statistics (json: %s)', async (json) => {
     const h = harness({
+      json,
       install: () => ({
         failed: true,
         code: 'STIM_INSTALL_FAILED',
@@ -1725,14 +1727,31 @@ describe('the other refusals', () => {
     expect(result.error.code).toBe('STIM_INSTALL_FAILED');
     expect(result.error.remedy).toMatch(/emulator-5584/);
     expect(readState().lastBuild.errorCode).toBe('STIM_INSTALL_FAILED');
+    expect(h.stderr).toContain(phaseLine('cache', 'compilation cache 176 hits / 204 misses (46.3%)'));
+    expect(h.stdout).toHaveLength(json ? 1 : 0);
+    expect(json ? JSON.parse(h.stdout[0]!).ccache : undefined).toEqual(
+      json ? { status: 'reported', hits: 176, misses: 204, hitRatePercent: 46.3 } : undefined,
+    );
   });
 
-  test('a launch failure is reported after a successful install', async () => {
-    const h = harness({ launch: () => ({ failed: true, code: 'STIM_LAUNCH_FAILED', reason: 'am start failed' }) });
+  test('a launch failure preserves cache statistics already printed before install', async () => {
+    const h = harness({
+      json: true,
+      install: () => {
+        expect(h.stderr).toContain(phaseLine('cache', 'compilation cache 176 hits / 204 misses (46.3%)'));
+        return { ok: true };
+      },
+      launch: () => ({ failed: true, code: 'STIM_LAUNCH_FAILED', reason: 'am start failed' }),
+    });
     const result = await h.run();
     assert(result.error);
     expect(result.error.code).toBe('STIM_LAUNCH_FAILED');
     expect(readState().lastBuild.status).toBe('failed');
+    expect(h.stdout).toHaveLength(1);
+    expect(JSON.parse(h.stdout[0]!)).toMatchObject({
+      code: 'STIM_LAUNCH_FAILED',
+      ccache: { status: 'reported', hits: 176, misses: 204, hitRatePercent: 46.3 },
+    });
   });
 });
 
@@ -1756,12 +1775,20 @@ describe('a failed build', () => {
   });
 
   test('prints the extracted diagnostic and the log path, never the transcript', async () => {
-    const h = harness({ build: failingBuild, install: never('the install') });
+    const ccache = { status: 'reported' as const, hits: 176, misses: 204, hitRatePercent: 46.3 };
+    const h = harness({
+      json: true,
+      build: async () => ({ ...(await failingBuild()), ccache }),
+      install: never('the install'),
+    });
     const result = await h.run();
 
     expect(result.ok).toBe(false);
     assert(result.error);
     expect(result.error.code).toBe(BUILD_ERROR);
+    expect(h.stdout).toHaveLength(1);
+    expect(JSON.parse(h.stdout[0]!).ccache).toEqual(ccache);
+    expect(h.stderr).toContain(phaseLine('cache', 'compilation cache 176 hits / 204 misses (46.3%)'));
     expect(labelled(h.stderr, 'build')[0]).toMatch(/compiling debug with Gradle/);
     expect(labelled(h.stderr, 'build')[1]).toMatch(/FAILED after 2m41s/);
     const errors = labelled(h.stderr, 'error');
@@ -1838,7 +1865,9 @@ describe('the remote cache', () => {
     expect(result.ok).toBe(true);
     expect(h.calls.resolveRemoteBuild.length).toBe(0);
     expect(h.calls.uploadRemoteBuild.length).toBe(0);
-    expect(labelled(h.stderr, 'cache').length).toBe(0);
+    expect(labelled(h.stderr, 'cache')).toEqual([
+      phaseLine('cache', 'compilation cache 176 hits / 204 misses (46.3%)'),
+    ]);
   });
 
   test('a remote HIT is stored into the local cache and installed, without building', async () => {

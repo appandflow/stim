@@ -585,7 +585,8 @@ export async function buildAndroid(
   const transcript = window.join('\n');
   const ccacheActivity = ccache ? readCcacheActivity(ccache.statsLog) : CCACHE_UNAVAILABLE;
 
-  if (result.error) return { ...spawnFailure(result.error, project, durationMs), lastLines: tail.slice() };
+  if (result.error)
+    return { ...spawnFailure(result.error, project, durationMs), lastLines: tail.slice(), ccache: ccacheActivity };
 
   if (result.code !== 0) {
     const how = result.signal ? `signal ${result.signal}` : `exit code ${result.code}`;
@@ -598,6 +599,7 @@ export async function buildAndroid(
       truncated,
       lastLines: tail.slice(),
       durationMs,
+      ccache: ccacheActivity,
     };
   }
 
@@ -612,6 +614,7 @@ export async function buildAndroid(
       truncated: 0,
       lastLines: located.candidates.map((c) => relative(androidDir(root), c)),
       durationMs,
+      ccache: ccacheActivity,
     };
   }
   if (!located.apkPath) {
@@ -628,6 +631,7 @@ export async function buildAndroid(
       truncated: 0,
       lastLines: tail.slice(),
       durationMs,
+      ccache: ccacheActivity,
     };
   }
   const apkPath = located.apkPath;

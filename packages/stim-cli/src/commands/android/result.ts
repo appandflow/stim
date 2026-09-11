@@ -269,7 +269,7 @@ export function reportAndroidResult({
         phaseLine('app', androidPackage),
         phaseLine('metro', metroResult),
         phaseLine('cache', cacheResult),
-        phaseLine('compilation cache', ccacheActivityLine(ccache)),
+        ...(ccache.status === 'not-run' ? [phaseLine('compilation cache', ccacheActivityLine(ccache))] : []),
         phaseLine('logs', logsDir || 'unavailable (remote device)'),
       ].join('\n'),
     );

@@ -244,8 +244,12 @@ result as proof instead of requiring an unrelated screenshot.`,
     storage     swap        verify      version     workspace
 
   \`app\` and \`compilation cache\` join them in the stdout block a successful
-  run ends with, and nowhere else. A line states a fact; the reason a fact
-  matters lives in this guide, not in the run output. Both platforms use the
+  run ends with. When a native build runs, its compilation-cache result is
+  printed once as a \`cache\` progress line as soon as the build returns,
+  including a failed build. It survives a later install or launch failure.
+  The stdout \`compilation cache\` line is only for an artifact-cache hit
+  (compilation did not run). A line states a fact; the reason a fact matters
+  lives in this guide, not in the run output. Both platforms use the
   same words, so \`build       ok (51.8s)\` and
   \`launch      com.example.app (2s)\` read the same on iOS and Android; the
   artifact name is in the \`--json\` payload.

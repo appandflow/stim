@@ -249,6 +249,11 @@ ON FAILURE
 
     { "code": "STIM_NO_METRO", "message": "...", "remedy": "..." }
 
+  If a native build returned before the failure, this payload also carries
+  \`ccache\` (Android) or \`compilationCache\` (iOS), with the status and
+  counters described above. This includes failed builds and later install
+  or launch failures. The field is absent when no native build returned.
+
   Branch on \`code\`, never on the message text. \`guide errors\` enumerates
   every code.
 

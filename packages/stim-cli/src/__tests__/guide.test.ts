@@ -161,6 +161,14 @@ test('the lifecycle topic grids every label the output vocabulary allows, and no
   );
 });
 
+test('native-build cache fields are documented in the JSON failure contract', () => {
+  const body = renderSection('facts', 'payloads');
+  assert(body);
+  const failure = body.slice(body.indexOf('ON FAILURE'), body.indexOf('RULES'));
+  expect(failure).toContain('`ccache`');
+  expect(failure).toContain('`compilationCache`');
+});
+
 test('an unknown topic renders nothing rather than throwing', () => {
   expect(renderTopic('nope')).toBe(null);
   expect(renderSection('nope', 'anything')).toBe(null);

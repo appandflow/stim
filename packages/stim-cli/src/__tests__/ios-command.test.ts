@@ -1233,7 +1233,9 @@ describe('the remote cache', () => {
     expect(exitCode).toBe(null);
     expect(!calls.order.includes('resolveRemote')).toBeTruthy();
     expect(!calls.order.includes('uploadRemote')).toBeTruthy();
-    expect(!/cache/.test(errs.join('\n'))).toBeTruthy();
+    expect(errs.filter((line) => /cache/.test(line))).toEqual([
+      phaseLine('cache', 'compilation cache unavailable; Xcode did not report reliable statistics'),
+    ]);
   });
 
   test('a remote HIT is stored into the local cache and installed, without building', async () => {
@@ -1919,6 +1921,7 @@ describe('pods', () => {
 describe('failure output', () => {
   test('a failed build prints the extracted diagnostics and the log path, never the transcript', async () => {
     reserve();
+    const compilationCache = { status: 'reported' as const, hits: 1394, cacheableTasks: 1520, hitRatePercent: 91.7 };
     const { errs, logs, exitCode } = await run(
       { json: true },
       {
@@ -1928,6 +1931,7 @@ describe('failure output', () => {
           durationMs: 161000,
           truncated: 3,
           exitCode: 65,
+          compilationCache,
           diagnostics: [
             { file: '/w/ios/AppDelegate.mm', line: 12, column: 4, message: "use of undeclared identifier 'foo'" },
             {
@@ -1943,6 +1947,8 @@ describe('failure output', () => {
     expect(logs.length).toBe(1);
     const payload = parseFirst(logs);
     expect(payload.code).toBe('STIM_BUILD_FAILED');
+    expect(payload.compilationCache).toEqual(compilationCache);
+    expect(errs).toContain(phaseLine('cache', 'compilation cache 1394/1520 hits (91.7%)'));
     expect(payload.message).toMatch(/xcodebuild` failed/);
     expect(payload.message).toMatch(/exit code 65/);
     expect(payload.remedy).toBeTruthy();
@@ -1962,6 +1968,7 @@ describe('failure output', () => {
     expect(logs.length).toBe(1);
     const payload = parseFirst(logs);
     expect(payload.code).toBe('STIM_NO_METRO');
+    expect(payload).not.toHaveProperty('compilationCache');
     expect(payload.message).toMatch(/no dev server/);
     expect(payload.remedy).toMatch(/stim start/);
   });
@@ -2031,11 +2038,17 @@ describe('failure output', () => {
     expect(errs.join('\n')).toMatch(/STIM_NO_DEVICE/);
   });
 
-  test('a failed install is reported with its own code and a failed record', async () => {
+  test.each([false, true])('a failed install preserves completed cache statistics (json: %s)', async (json) => {
     reserve();
-    const { errs, exitCode } = await run(
-      {},
+    const compilationCache = { status: 'reported' as const, hits: 1394, cacheableTasks: 1520, hitRatePercent: 91.7 };
+    const { errs, logs, exitCode } = await run(
+      { json },
       {
+        buildIos: async () => ({
+          appPath: join(root, 'build', 'Fixture.app'),
+          bundleId: 'com.example.app',
+          compilationCache,
+        }),
         installIosApp: () => ({ failed: true, code: 'STIM_INSTALL_FAILED', reason: 'simctl install failed' }),
       },
     );
@@ -2044,13 +2057,27 @@ describe('failure output', () => {
     const stateAfterInstall = readWorkspaceState(root);
     assert(stateAfterInstall?.lastBuild);
     expect(stateAfterInstall.lastBuild.errorCode).toBe('STIM_INSTALL_FAILED');
+    expect(errs).toContain(phaseLine('cache', 'compilation cache 1394/1520 hits (91.7%)'));
+    expect(logs).toHaveLength(json ? 1 : 0);
+    expect(json ? parseFirst(logs).compilationCache : undefined).toEqual(json ? compilationCache : undefined);
   });
 });
 
 describe('success output', () => {
   test('the phase lines stream on stderr and the final stdout block has complete agent facts', async () => {
     reserve();
-    const { logs, errs, exitCode } = await run({});
+    const compilationCache = { status: 'reported' as const, hits: 1394, cacheableTasks: 1520, hitRatePercent: 91.7 };
+    const { logs, errs, exitCode } = await run(
+      {},
+      {
+        buildIos: async () => ({
+          appPath: join(root, 'build', 'Fixture.app'),
+          bundleId: 'com.example.app',
+          durationMs: 161000,
+          compilationCache,
+        }),
+      },
+    );
     expect(exitCode).toBe(null);
     expect(logs.length).toBe(1);
     expect(logs[0]).toMatch(/^OK: com\.example\.app on stim-fixture \(BF2A\.\.\), Metro port 8082/);
@@ -2058,7 +2085,10 @@ describe('success output', () => {
     expect(logs[0]).toContain(phaseLine('app', 'com.example.app'));
     expect(logs[0]).toContain(phaseLine('metro', 'running on port 8082'));
     expect(logs[0]).toContain(phaseLine('cache', 'built'));
-    expect(logs[0]).toContain(phaseLine('compilation cache', 'unavailable; Xcode did not report reliable statistics'));
+    expect(errs.filter((line) => line.includes('compilation cache'))).toEqual([
+      phaseLine('cache', 'compilation cache 1394/1520 hits (91.7%)'),
+    ]);
+    expect(logs[0]).not.toContain('compilation cache');
     expect(logs[0]).toContain(phaseLine('logs', workspaceLogsDir(root)));
     const text = errs.join('\n');
     expect(text).toMatch(/^  device {6}stim-fixture \(BF2A\.\.\) booted \(\d+ms\)$/m);
