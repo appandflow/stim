@@ -233,8 +233,8 @@ test('--refresh fast-forwards the source checkout, then copies', async () => {
   expect(result.stderr).toContain(
     `checkout    main 1 commit behind origin/main -> fast-forwarded to ${published.slice(0, 7)}`,
   );
-  expect(result.stderr).toContain('deps        no lockfile in this repository -> skipped');
-  expect(result.stderr).toContain('pods        no ios/ directory -> skipped');
+  expect(result.stderr).toContain(`deps        source ${root}: no lockfile in this repository -> skipped`);
+  expect(result.stderr).toContain(`pods        source ${root}: no ios/ directory -> skipped`);
   expect(result.stderr).toMatch(/carry {7}complete: 1 ignored entries copied/);
   expect(git(root, 'rev-parse', 'HEAD')).toBe(published);
   expect(git(target, 'branch', '--show-current')).toBe('linked');
@@ -353,44 +353,49 @@ test('worktree.defaultBranch outranks origin/HEAD, and neither resolving says wh
   expect(unknown.stderr).toContain('git remote set-head origin -a');
 });
 
-test('--refresh installs the moved lockfile at the repository root and the pods of the invoking app only', async () => {
-  write(root, 'pnpm-lock.yaml', 'lock v1\n');
-  write(root, 'apps/mobile/package.json', '{"name":"mobile"}\n');
-  write(root, 'apps/mobile/ios/Podfile', "target 'mobile'\n");
-  write(root, 'apps/mobile/ios/Podfile.lock', 'PODFILE CHECKSUM: v1\n');
-  write(root, 'apps/other/package.json', '{"name":"other"}\n');
-  write(root, 'apps/other/ios/Podfile', "target 'other'\n");
-  write(root, 'apps/other/ios/Podfile.lock', 'PODFILE CHECKSUM: v1\n');
-  commit(root, 'monorepo');
-  git(root, 'push', '-q', 'origin', 'main');
-  git(target, 'merge', '-q', '--ff-only', 'main');
-  mkdirSync(join(root, 'node_modules'), { recursive: true });
-  write(root, 'apps/mobile/ios/Pods/Manifest.lock', 'PODFILE CHECKSUM: v0\n');
-  write(root, 'apps/other/ios/Pods/Manifest.lock', 'PODFILE CHECKSUM: v0\n');
-  fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
+test.each(['.', 'apps/mobile'])(
+  '--refresh names the source dependency root at %s and the invoking app for pods',
+  async (dependencyPath) => {
+    const depsRoot = join(root, dependencyPath);
+    write(depsRoot, 'pnpm-lock.yaml', 'lock v1\n');
+    write(root, 'apps/mobile/package.json', '{"name":"mobile"}\n');
+    write(root, 'apps/mobile/ios/Podfile', "target 'mobile'\n");
+    write(root, 'apps/mobile/ios/Podfile.lock', 'PODFILE CHECKSUM: v1\n');
+    write(root, 'apps/other/package.json', '{"name":"other"}\n');
+    write(root, 'apps/other/ios/Podfile', "target 'other'\n");
+    write(root, 'apps/other/ios/Podfile.lock', 'PODFILE CHECKSUM: v1\n');
+    commit(root, 'monorepo');
+    git(root, 'push', '-q', 'origin', 'main');
+    git(target, 'merge', '-q', '--ff-only', 'main');
+    mkdirSync(join(depsRoot, 'node_modules'), { recursive: true });
+    write(root, 'apps/mobile/ios/Pods/Manifest.lock', 'PODFILE CHECKSUM: v0\n');
+    write(root, 'apps/other/ios/Pods/Manifest.lock', 'PODFILE CHECKSUM: v0\n');
+    fallBehind({ [join(dependencyPath, 'pnpm-lock.yaml')]: 'lock v2\n' }, 'bump lockfile');
 
-  const real = getExecutor();
-  const spawned: { cmd: string; args: string[]; cwd: unknown }[] = [];
-  setExecutor({
-    ...real,
-    spawn(cmd: string, args: string[], opts: { cwd?: unknown }) {
-      spawned.push({ cmd, args, cwd: opts?.cwd });
-      return makeExitingChild(0);
-    },
-  });
+    const real = getExecutor();
+    const spawned: { cmd: string; args: string[]; cwd: unknown }[] = [];
+    setExecutor({
+      ...real,
+      spawn(cmd: string, args: string[], opts: { cwd?: unknown }) {
+        spawned.push({ cmd, args, cwd: opts?.cwd });
+        return makeExitingChild(0);
+      },
+    });
 
-  const result = await runWarm(join(target, 'apps', 'mobile'), '--refresh');
-  expect(result.code).toBe(0);
-  expect(spawned).toEqual([
-    { cmd: 'pnpm', args: ['install'], cwd: root },
-    { cmd: 'pod', args: ['install'], cwd: join(root, 'apps', 'mobile', 'ios') },
-  ]);
-  expect(result.stderr).toMatch(/deps {8}pnpm-lock\.yaml changed -> pnpm install \(\d+m?\d*s\)/);
-  expect(result.stderr).toMatch(
-    /pods {8}apps\/mobile: ios\/Podfile\.lock and ios\/Pods\/Manifest\.lock differ -> pod install \(\d+m?\d*s\)/,
-  );
-  expect(result.stderr).not.toMatch(/pods {8}apps\/other/);
-});
+    const result = await runWarm(join(target, 'apps', 'mobile'), '--refresh');
+    expect(result.code).toBe(0);
+    expect(spawned).toEqual([
+      { cmd: 'pnpm', args: ['install'], cwd: depsRoot },
+      { cmd: 'pod', args: ['install'], cwd: join(root, 'apps', 'mobile', 'ios') },
+    ]);
+    expect(result.stderr).toContain(`deps        source ${depsRoot}: pnpm-lock.yaml changed -> pnpm install (`);
+    expect(result.stderr).toContain(
+      `pods        source ${join(root, 'apps', 'mobile')}: ios/Podfile.lock and ios/Pods/Manifest.lock differ -> pod install (`,
+    );
+    expect(result.stderr).not.toContain(`pods        source ${join(root, 'apps', 'other')}`);
+    expect(result.stderr).not.toContain(`deps        source ${target}`);
+  },
+);
 
 test('a failed install refuses with the code the build path uses and does not copy', async () => {
   write(root, 'pnpm-lock.yaml', 'lock v1\n');
@@ -543,7 +548,9 @@ test('a retry after a failed install runs it again instead of copying a half-ins
   const retried = await runWarm(target, '--refresh');
   expect(retried.code).toBe(0);
   expect(retried.stderr).toContain('checkout    main up to date with origin/main');
-  expect(retried.stderr).toMatch(/deps {8}the last install of pnpm-lock\.yaml did not finish -> pnpm install/);
+  expect(retried.stderr).toContain(
+    `deps        source ${root}: the last install of pnpm-lock.yaml did not finish -> pnpm install`,
+  );
   expect(spawned).toEqual(['pnpm install']);
   expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
 
@@ -551,7 +558,9 @@ test('a retry after a failed install runs it again instead of copying a half-ins
   spawned.length = 0;
   const settled = await runWarm(target, '--refresh');
   expect(settled.code).toBe(0);
-  expect(settled.stderr).toContain('deps        pnpm-lock.yaml matches the last completed install -> skipped');
+  expect(settled.stderr).toContain(
+    `deps        source ${root}: pnpm-lock.yaml matches the last completed install -> skipped`,
+  );
   expect(spawned).toEqual([]);
 });
 
@@ -614,7 +623,7 @@ test('--refresh installs at the repository root when upstream removed the app it
   const result = await runWarm(join(target, 'apps', 'mobile'), '--refresh');
   expect(result.code).toBe(0);
   expect(existsSync(join(root, 'apps', 'mobile'))).toBe(false);
-  expect(result.stderr).toMatch(/deps {8}pnpm-lock\.yaml changed -> pnpm install/);
+  expect(result.stderr).toContain(`deps        source ${root}: pnpm-lock.yaml changed -> pnpm install`);
   expect(spawned).toEqual([{ cmd: 'pnpm', cwd: root }]);
 });
 
@@ -722,7 +731,7 @@ test('a real install whose own child outlives it holds the claim until that chil
   }
   const result = await warm;
   expect(result.code).toBe(0);
-  expect(result.stderr).toMatch(/deps {8}no installed dependencies -> npm ci/);
+  expect(result.stderr).toContain(`deps        source ${root}: no installed dependencies -> npm ci`);
   expect(readFileSync(join(root, 'node_modules', 'value'), 'utf-8')).toBe('COMPLETE');
   expect(readFileSync(join(target, 'node_modules', 'value'), 'utf-8')).toBe('COMPLETE');
   expect(installLedger()).toMatchObject({ lock: 'package-lock.json', completed: true });
@@ -762,7 +771,7 @@ test('an install Stim could not record is not abandoned, and its claim outlives 
   expect(result.stderr).toMatch(
     /lock {8}could not record the install this refresh spawned \(.*\); holding the claim here until it exits/,
   );
-  expect(result.stderr).toMatch(/deps {8}pnpm-lock\.yaml changed -> pnpm install/);
+  expect(result.stderr).toContain(`deps        source ${root}: pnpm-lock.yaml changed -> pnpm install`);
   expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
   expect(installLedger()).toMatchObject({ completed: true });
   expect(existsSync(warmClaimPath(root))).toBe(false);
@@ -805,7 +814,9 @@ test('the evidence that an install is owed is written before the fast-forward mo
   const retry = await runWarm(target, '--refresh');
   expect(retry.code).toBe(0);
   expect(retry.stderr).toContain('checkout    main up to date with origin/main');
-  expect(retry.stderr).toMatch(/deps {8}the last install of pnpm-lock\.yaml did not finish -> pnpm install/);
+  expect(retry.stderr).toContain(
+    `deps        source ${root}: the last install of pnpm-lock.yaml did not finish -> pnpm install`,
+  );
   expect(spawned).toEqual(['pnpm install']);
   expect(installLedger()).toMatchObject({ hash: sha256('lock v2\n'), completed: true });
 });
@@ -841,7 +852,9 @@ test('the ledger records the lockfile the installer read, not the one on disk wh
   });
   const second = await runWarm(target, '--refresh');
   expect(second.code).toBe(0);
-  expect(second.stderr).toMatch(/deps {8}pnpm-lock\.yaml does not match the last completed install -> pnpm install/);
+  expect(second.stderr).toContain(
+    `deps        source ${root}: pnpm-lock.yaml does not match the last completed install -> pnpm install`,
+  );
   expect(spawned).toEqual(['pnpm install']);
   expect(installLedger()).toEqual({ lock: 'pnpm-lock.yaml', hash: sha256('lock v3\n'), completed: true });
 });
@@ -922,7 +935,9 @@ test('a plain warm refuses the tree a real failed install left, and copies once 
   writeFileSync(join(root, 'succeed'), 'yes');
   const reinstalled = await runWarm(target, '--refresh');
   expect(reinstalled.code).toBe(0);
-  expect(reinstalled.stderr).toMatch(/deps {8}the last install of package-lock\.json did not finish -> npm ci/);
+  expect(reinstalled.stderr).toContain(
+    `deps        source ${root}: the last install of package-lock.json did not finish -> npm ci`,
+  );
   expect(installLedger()).toMatchObject({ lock: 'package-lock.json', completed: true });
 
   process.exitCode = 0;

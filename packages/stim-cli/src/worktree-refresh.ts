@@ -510,6 +510,7 @@ export async function refreshMainCheckout({
     lastInstall: priorInstall,
     lockHash: consumed,
   });
+  const depsSubject = `source ${dependencies?.root ?? root}: ${deps.reason}`;
   if (deps.run && dependencies) {
     writeInstallEvidence(dependencies.root, dependencies.lock, consumed, false);
     const install = await runInstallCommand({
@@ -520,7 +521,7 @@ export async function refreshMainCheckout({
       heartbeatMs,
       onHeartbeat: emit,
     });
-    emit(stepLine('deps', deps.reason, `${dependencies.command} (${formatDuration(install.durationMs)})`));
+    emit(stepLine('deps', depsSubject, `${dependencies.command} (${formatDuration(install.durationMs)})`));
     const running = await awaitSpawnedWork(`\`${dependencies.command}\``);
     if (!install.ok) {
       return {
@@ -534,11 +535,11 @@ export async function refreshMainCheckout({
     writeInstallEvidence(dependencies.root, dependencies.lock, consumed, true);
   } else {
     if (marked) restoreInstallEvidence(marked.root, priorInstall);
-    emit(stepLine('deps', deps.reason, 'skipped'));
+    emit(stepLine('deps', depsSubject, 'skipped'));
   }
 
   const app = relative(root, appDir) || '.';
-  const where = app === '.' ? '' : `${app}: `;
+  const where = `source ${appDir}: `;
   const podState = readPodState(appDir);
   const pods = podsPlan({
     hasIos: existsSync(join(appDir, 'ios')),

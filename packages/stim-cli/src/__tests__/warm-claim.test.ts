@@ -188,23 +188,27 @@ test('a refresh that gives up while copies drain leaves no claim of its own behi
   after.release();
 });
 
-test('a wait prints its holder every progress interval, in the shape build waits use', async () => {
+test('a wait attributes elapsed time to the waiter and names its holder every progress interval', async () => {
   const refresh = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'refresh', sleep: never });
   const lines: string[] = [];
-  let clock = 0;
+  let clock = 120_000;
   let polls = 0;
   const copy = await acquireWarmClaim({
     repositoryRoot: REPO,
     phase: 'copy',
-    now: () => (clock += 10_000),
+    now: () => clock,
     progressMs: 30_000,
     out: (line) => lines.push(line),
     sleep: async () => {
+      clock += 10_000;
       if (++polls === 8) refresh.release();
     },
   });
-  expect(lines[0]).toMatch(/^ {2}lock {8}waiting on stim worktree warm --refresh \(pid \d+, \d+m?\d*s elapsed\)$/);
-  expect(lines.length).toBeGreaterThan(1);
+  expect(lines).toEqual([
+    `  lock        waiting 30s for stim worktree warm --refresh (pid ${process.pid})`,
+    `  lock        waiting 1m00s for stim worktree warm --refresh (pid ${process.pid})`,
+  ]);
+  expect(copy.wait.waitedMs).toBe(80_000);
   copy.release();
 });
 

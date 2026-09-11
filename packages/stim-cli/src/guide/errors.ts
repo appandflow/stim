@@ -817,8 +817,8 @@ captured"  (in metro.ndjson, bare RN)
   longer than the wait -- 60s by default, 4 minutes for the remote-session and
   EAS project locks, and ~90 minutes for the \`worktree warm\` lock, which one
   \`--refresh\` can hold for a whole dependency install. That wait prints its
-  holder every 30 seconds (\`lock        waiting on stim worktree warm
-  --refresh (pid 41233, 40s elapsed)\`) and the refusal names the same holder
+  elapsed waiting time and holder every 30 seconds (\`lock        waiting 40s
+  for stim worktree warm --refresh (pid 41233)\`) and the refusal names the same holder
   and the lock directory under ~/.stim/warm-locks.
   A lock whose owner died is taken over automatically (its recorded
   process identity is checked every poll), so this means another Stim command really

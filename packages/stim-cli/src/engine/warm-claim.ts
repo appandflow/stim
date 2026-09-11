@@ -99,10 +99,7 @@ function asHolder(holder: ClaimHolder): WarmClaimHolder {
 }
 
 function waitingLine(holder: WarmClaimHolder, elapsedMs: number): string {
-  return phaseLine(
-    'lock',
-    `waiting on ${warmCommand(holder.phase)} (pid ${holder.pid}, ${formatElapsed(elapsedMs)} elapsed)`,
-  );
+  return phaseLine('lock', `waiting ${formatElapsed(elapsedMs)} for ${warmCommand(holder.phase)} (pid ${holder.pid})`);
 }
 
 export function warmClaimAcquiredLine(wait: WarmClaimWait): string {

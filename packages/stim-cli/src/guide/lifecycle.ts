@@ -31,8 +31,8 @@ a seed belongs to this workflow.
   stim worktree warm --refresh
     lock        acquired
     checkout    main 3 commits behind origin/main -> fast-forwarded to 9f2c1a3
-    deps        pnpm-lock.yaml changed -> pnpm install (41s)
-    pods        apps/mobile: ios/Podfile.lock unchanged -> skipped
+    deps        source /w/main: pnpm-lock.yaml changed -> pnpm install (41s)
+    pods        source /w/main/apps/mobile: ios/Podfile.lock unchanged -> skipped
 
   # 2. The dev server, under a detached supervisor. Blocks until it is
   #    verifiably THIS project's, then hands your shell back.
@@ -342,11 +342,11 @@ result as proof instead of requiring an unrelated screenshot.`,
     checkout    janic/wip 2 commits behind origin/janic/wip -> fast-forwarded to 4b81e0c
                 not the default branch (main); worktrees seeded from this copy
                 carry janic/wip's dependencies
-    deps        pnpm-lock.yaml unchanged -> skipped
-    pods        apps/mobile: ios/Podfile.lock changed -> pod install (1m12s)
+    deps        source /w/main: pnpm-lock.yaml unchanged -> skipped
+    pods        source /w/main/apps/mobile: ios/Podfile.lock changed -> pod install (1m12s)
 
-  A wait heartbeats like a build wait, naming the holder:
-  \`lock        waiting on stim worktree warm --refresh (pid 41233, 40s elapsed)\`.
+  A wait reports how long this caller has waited and names the holder:
+  \`lock        waiting 40s for stim worktree warm --refresh (pid 41233)\`.
 
   \`start\` names the port, the supervisor mode and its pid on one line
   (\`metro       starting on port 8083 (expo-child, supervisor pid 13724)\`),
@@ -889,9 +889,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   Dependencies install where the lockfile is, which in a monorepo is the
   repository root, when the lockfile moved or nothing is installed. Pods run
   for the app the command was invoked from, and only that app, when its
-  ios/Podfile.lock moved or ios/Pods/Manifest.lock does not match it. Every
-  skipped step still prints its reason. A failed install refuses with
-  STIM_DEPS_FAILED and nothing is copied.
+  ios/Podfile.lock moved or ios/Pods/Manifest.lock does not match it. Each
+  completed or skipped deps and pods step names its source directory and
+  reason. A failed install refuses with STIM_DEPS_FAILED and nothing is copied.
 
   An install that did not finish is remembered, and a PLAIN warm reads that
   before it copies. The refresh records the completed install of the lockfile it
