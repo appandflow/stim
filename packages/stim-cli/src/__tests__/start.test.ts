@@ -13,6 +13,7 @@ import {
   startTunnel,
   startTunnelSequence,
   terminateChild,
+  withManagedRemoteWorktreeLock,
   withManagedTunnelLock,
   type TunnelRecord,
 } from '../engine/tunnel.ts';
@@ -155,7 +156,50 @@ function metroListener(port: number): Promise<Server> {
     res.end('packager-status:running');
   });
   openServers.push(server);
-  return new Promise<Server>((resolve) => server.listen(port, '127.0.0.1', () => resolve(server)));
+  return new Promise<Server>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => resolve(server));
+  });
+}
+
+async function managedStartExecutor() {
+  const server = await metroListener(0);
+  const address = server.address();
+  assert(address && typeof address === 'object');
+  const port = address.port;
+  const exec = metroExecutor();
+  const base = exec.runQuiet.bind(exec);
+  exec.runQuiet = (cmd) => {
+    if (cmd === `lsof -nP -iTCP:${port} -sTCP:LISTEN -t`) return exec.listening ? String(process.pid) : '';
+    return base(cmd);
+  };
+  exec.spawn = (cmd, args, opts) => {
+    exec.calls.spawn.push({ cmd, args, opts });
+    exec.listening = true;
+    return { pid: process.pid, unref() {}, on() {} };
+  };
+  setExecutor(exec);
+  upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+  return { exec, port };
+}
+
+function contendedRemoteStart() {
+  let markContended!: () => void;
+  let markReleased!: () => void;
+  const contended = new Promise<void>((resolve) => {
+    markContended = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    markReleased = resolve;
+  });
+  const withWorktreeLock: typeof withManagedRemoteWorktreeLock = (workspaceRoot, fn) =>
+    withManagedRemoteWorktreeLock(workspaceRoot, fn, {
+      sleep: () => {
+        markContended();
+        return released;
+      },
+    }).finally(markReleased);
+  return { contended, withWorktreeLock };
 }
 
 async function runAction(opts: Record<string, unknown>, register: (cmd: Command) => void = registerStart) {
@@ -1091,12 +1135,10 @@ describe('action: spawning the supervisor', () => {
   });
 
   test('start --remote records a managed tunnel before starting the bare dev server', async () => {
-    const port = 8174;
-    const exec = metroExecutor({ listeners: {} });
-    const held: { server: Server | null } = { server: null };
+    const { port, exec } = await managedStartExecutor();
     const order: string[] = [];
+    const spawn = exec.spawn;
     exec.spawn = (cmd, args, opts) => {
-      exec.calls.spawn.push({ cmd, args, opts });
       order.push('server');
       expect(readMetroTunnel(root)).toMatchObject({
         kind: 'managed',
@@ -1108,194 +1150,109 @@ describe('action: spawning the supervisor', () => {
         STIM_METRO_PUBLIC_URL: 'https://stable.ngrok.app',
         EXPO_PACKAGER_PROXY_URL: 'https://stable.ngrok.app',
       });
-      writeWorkspaceState(root, {
-        supervisor: {
-          pid: process.pid,
-          processToken: captureProcessToken(process.pid),
-          port,
-          mode: 'bare-inproc',
-          startedAt: 'T',
-        },
-      });
-      metroListener(port).then((server) => {
-        held.server = server;
-        exec.listening = true;
-        return server;
-      });
-      return { pid: process.pid, unref() {}, on() {} };
+      return spawn(cmd, args, opts);
     };
-    const base = exec.runQuiet.bind(exec);
-    exec.runQuiet = (cmd) => {
-      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5155' : '';
-      return base(cmd);
-    };
-    setExecutor(exec);
     upsertProject(root, {
       metroPort: port,
       settings: { metro: { tunnel: 'ngrok', ngrokUrl: 'https://stable.ngrok.app' } },
     });
 
-    let result;
-    try {
-      result = await runAction({ json: true, wait: '10', remote: true }, (cmd) =>
-        registerStart(cmd, {
-          providers: () => ['ngrok', 'cloudflared'],
-          startTunnelSequence: async (options) => {
-            order.push('tunnel');
-            expect(options).toMatchObject({
-              providers: ['ngrok'],
-              port,
-              ngrokUrl: 'https://stable.ngrok.app',
-              requireReachable: false,
-            });
-            return {
-              provider: 'ngrok',
-              url: 'https://stable.ngrok.app',
-              pid: 4242,
-              processToken: 'linux:100',
-              cleanup: successfulTunnelCleanup,
-            };
-          },
-          isTunnelAlive: () => true,
-        }),
-      );
-    } finally {
-      held.server?.close();
-    }
+    const result = await runAction({ json: true, wait: '10', remote: true }, (cmd) =>
+      registerStart(cmd, {
+        providers: () => ['ngrok', 'cloudflared'],
+        startTunnelSequence: async (options) => {
+          order.push('tunnel');
+          expect(options).toMatchObject({
+            providers: ['ngrok'],
+            port,
+            ngrokUrl: 'https://stable.ngrok.app',
+            requireReachable: false,
+          });
+          return {
+            provider: 'ngrok',
+            url: 'https://stable.ngrok.app',
+            pid: 4242,
+            processToken: 'linux:100',
+            cleanup: successfulTunnelCleanup,
+          };
+        },
+        isTunnelAlive: () => true,
+      }),
+    );
 
     expect(result.exitCode).toBe(null);
     expect(order).toEqual(['tunnel', 'server']);
-  });
+  }, 30_000);
 
   test('concurrent remote starts acquire and record one managed tunnel', async () => {
-    const port = 8180;
-    const exec = metroExecutor({ listeners: {} });
-    const held: { server: Server | null; starting: Promise<Server> | null } = { server: null, starting: null };
-    exec.spawn = (cmd, args, opts) => {
-      exec.calls.spawn.push({ cmd, args, opts });
-      writeWorkspaceState(root, {
-        supervisor: {
-          pid: process.pid,
-          processToken: captureProcessToken(process.pid),
-          port,
-          mode: 'bare-inproc',
-          startedAt: 'T',
-        },
-      });
-      held.starting ??= metroListener(port).then((server) => {
-        held.server = server;
-        exec.listening = true;
-        return server;
-      });
-      return { pid: process.pid, unref() {}, on() {} };
-    };
-    const base = exec.runQuiet.bind(exec);
-    exec.runQuiet = (cmd) => {
-      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5156' : '';
-      return base(cmd);
-    };
-    setExecutor(exec);
-    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+    const { exec } = await managedStartExecutor();
+    const { contended, withWorktreeLock } = contendedRemoteStart();
     let tunnelStarts = 0;
     let active = 0;
     let maxActive = 0;
 
-    try {
-      await runConcurrentActions({ json: true, wait: '10', remote: true }, (cmd) =>
-        registerStart(cmd, {
-          providers: () => ['ngrok'],
-          startTunnelSequence: async () => {
-            tunnelStarts += 1;
-            active += 1;
-            maxActive = Math.max(maxActive, active);
-            await new Promise((resolve) => setTimeout(resolve, 20));
-            active -= 1;
-            return {
-              provider: 'ngrok',
-              url: 'https://one.ngrok.app',
-              pid: 4242,
-              processToken: 'linux:100',
-              cleanup: successfulTunnelCleanup,
-            };
-          },
-          isTunnelAlive: () => true,
-        }),
-      );
-    } finally {
-      held.server?.close();
-    }
-
-    expect(tunnelStarts).toBe(1);
-    expect(maxActive).toBe(1);
-    expect(exec.calls.spawn).toHaveLength(1);
-    expect(readMetroTunnel(root)).toMatchObject({ provider: 'ngrok', pid: 4242, url: 'https://one.ngrok.app' });
-  });
-
-  test('concurrent managed starts hand off one supervisor spawn inside the tunnel lock', async () => {
-    const port = 8186;
-    const exec = metroExecutor({ listeners: {} });
-    const held: { server: Server | null } = { server: null };
-    let releaseFirstLock!: () => void;
-    const firstLockGate = new Promise<void>((resolve) => {
-      releaseFirstLock = resolve;
-    });
-    let lockReturns = 0;
-    exec.spawn = (cmd, args, opts) => {
-      exec.calls.spawn.push({ cmd, args, opts });
-      if (exec.calls.spawn.length === 1) {
-        queueMicrotask(releaseFirstLock);
-        setTimeout(() => {
-          writeWorkspaceState(root, {
-            supervisor: {
-              pid: process.pid,
-              processToken: captureProcessToken(process.pid),
-              port,
-              mode: 'bare-inproc',
-              startedAt: 'T',
-            },
-          });
-          metroListener(port).then((server) => {
-            held.server = server;
-            exec.listening = true;
-            return server;
-          });
-        }, 20);
-      }
-      return { pid: process.pid, unref() {}, on() {} };
-    };
-    const base = exec.runQuiet.bind(exec);
-    exec.runQuiet = (cmd) => {
-      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5158' : '';
-      return base(cmd);
-    };
-    setExecutor(exec);
-    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
-
-    try {
-      await runConcurrentActions({ json: true, wait: '10', remote: true }, (cmd) =>
-        registerStart(cmd, {
-          providers: () => ['ngrok'],
-          startTunnelSequence: async () => ({
+    const result = await runConcurrentActions({ json: true, wait: '10', remote: true }, (cmd) =>
+      registerStart(cmd, {
+        providers: () => ['ngrok'],
+        withWorktreeLock,
+        startTunnelSequence: async () => {
+          tunnelStarts += 1;
+          active += 1;
+          maxActive = Math.max(maxActive, active);
+          await contended;
+          active -= 1;
+          return {
             provider: 'ngrok',
             url: 'https://one.ngrok.app',
             pid: 4242,
             processToken: 'linux:100',
             cleanup: successfulTunnelCleanup,
-          }),
-          isTunnelAlive: () => true,
-          withTunnelLock: async (workspaceRoot, fn) => {
-            const result = await withManagedTunnelLock(workspaceRoot, fn);
-            if (++lockReturns === 1) await firstLockGate;
-            return result;
-          },
-        }),
-      );
-    } finally {
-      held.server?.close();
-    }
+          };
+        },
+        isTunnelAlive: () => true,
+      }),
+    );
 
+    expect(result.exits).toEqual([]);
+    expect(result.logs).toHaveLength(2);
+    expect(tunnelStarts).toBe(1);
+    expect(maxActive).toBe(1);
     expect(exec.calls.spawn).toHaveLength(1);
-  });
+    expect(readMetroTunnel(root)).toMatchObject({ provider: 'ngrok', pid: 4242, url: 'https://one.ngrok.app' });
+  }, 30_000);
+
+  test('concurrent managed starts hand off one supervisor spawn inside the tunnel lock', async () => {
+    const { port, exec } = await managedStartExecutor();
+    const { contended, withWorktreeLock } = contendedRemoteStart();
+    const result = await runConcurrentActions({ json: true, wait: '10', remote: true }, (cmd) =>
+      registerStart(cmd, {
+        providers: () => ['ngrok'],
+        withWorktreeLock,
+        startTunnelSequence: async () => {
+          await contended;
+          return {
+            provider: 'ngrok',
+            url: 'https://one.ngrok.app',
+            pid: 4242,
+            processToken: 'linux:100',
+            cleanup: successfulTunnelCleanup,
+          };
+        },
+        isTunnelAlive: () => true,
+        withTunnelLock: (workspaceRoot, fn) =>
+          withManagedTunnelLock(workspaceRoot, async () => {
+            const acquisition = await fn();
+            expect(readWorkspaceState(root)?.supervisor).toMatchObject({ pid: process.pid, port });
+            expect(exec.calls.spawn).toHaveLength(1);
+            return acquisition;
+          }),
+      }),
+    );
+
+    expect(result.exits).toEqual([]);
+    expect(result.logs).toHaveLength(2);
+    expect(exec.calls.spawn).toHaveLength(1);
+  }, 30_000);
 
   test('a tunnel that resists cleanup during an existing-server race keeps its record', async () => {
     const port = 8188;
@@ -1393,69 +1350,42 @@ describe('action: spawning the supervisor', () => {
   });
 
   test('a failed managed tunnel acquisition releases the concurrency lock', async () => {
-    const port = 8181;
-    const exec = metroExecutor({ listeners: {} });
-    const held: { server: Server | null } = { server: null };
-    exec.spawn = (cmd, args, opts) => {
-      exec.calls.spawn.push({ cmd, args, opts });
-      writeWorkspaceState(root, {
-        supervisor: {
-          pid: process.pid,
-          processToken: captureProcessToken(process.pid),
-          port,
-          mode: 'bare-inproc',
-          startedAt: 'T',
-        },
-      });
-      metroListener(port).then((server) => {
-        held.server = server;
-        exec.listening = true;
-        return server;
-      });
-      return { pid: process.pid, unref() {}, on() {} };
-    };
-    const base = exec.runQuiet.bind(exec);
-    exec.runQuiet = (cmd) => {
-      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5157' : '';
-      return base(cmd);
-    };
-    setExecutor(exec);
-    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+    await managedStartExecutor();
+    const { contended, withWorktreeLock } = contendedRemoteStart();
     let attempts = 0;
     let active = 0;
     let maxActive = 0;
 
-    try {
-      await runConcurrentActions({ json: true, wait: '10', remote: true }, (cmd) =>
-        registerStart(cmd, {
-          providers: () => ['ngrok'],
-          startTunnelSequence: async () => {
-            const attempt = ++attempts;
-            active += 1;
-            maxActive = Math.max(maxActive, active);
-            await new Promise((resolve) => setTimeout(resolve, 20));
-            active -= 1;
-            return attempt === 1
-              ? { failed: true, reason: 'authentication failed' }
-              : {
-                  provider: 'ngrok',
-                  url: 'https://retry.ngrok.app',
-                  pid: 4243,
-                  processToken: 'linux:100',
-                  cleanup: successfulTunnelCleanup,
-                };
-          },
-          isTunnelAlive: () => true,
-        }),
-      );
-    } finally {
-      held.server?.close();
-    }
+    const result = await runConcurrentActions({ json: true, wait: '10', remote: true }, (cmd) =>
+      registerStart(cmd, {
+        providers: () => ['ngrok'],
+        withWorktreeLock,
+        startTunnelSequence: async () => {
+          const attempt = ++attempts;
+          active += 1;
+          maxActive = Math.max(maxActive, active);
+          await contended;
+          active -= 1;
+          return attempt === 1
+            ? { failed: true, reason: 'authentication failed' }
+            : {
+                provider: 'ngrok',
+                url: 'https://retry.ngrok.app',
+                pid: 4243,
+                processToken: 'linux:100',
+                cleanup: successfulTunnelCleanup,
+              };
+        },
+        isTunnelAlive: () => true,
+      }),
+    );
 
+    expect(result.exits).toEqual([1]);
+    expect(result.logs).toHaveLength(2);
     expect(attempts).toBe(2);
     expect(maxActive).toBe(1);
     expect(readMetroTunnel(root)).toMatchObject({ pid: 4243, url: 'https://retry.ngrok.app' });
-  });
+  }, 30_000);
 
   test('a failed managed tunnel record stops the process before the dev server starts', async () => {
     const port = 8175;
