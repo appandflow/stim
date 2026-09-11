@@ -3,7 +3,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { getExecutor } from './exec.ts';
 import { removeTemporaryEntry } from './temporary.ts';
 
-const CARRY_SKIP_BASENAMES = new Set(['.DerivedData']);
+const CARRY_SKIP_BASENAMES = new Set(['.DerivedData', '.DS_Store']);
 
 export function isCarrySkipped(rel: string): boolean {
   return (

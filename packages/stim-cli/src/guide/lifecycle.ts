@@ -948,10 +948,26 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   paths eligible under the source checkout's Git ignore rules, including .env
   and local configuration. The source's nonempty
   .worktreeexclude replaces its resolved worktree.exclude setting. Nested
-  registered worktrees, .DerivedData, and android/build/generated/autolinking
-  caches are excluded, including in nested apps. Gradle regenerates autolinking
+  registered worktrees, .DS_Store, .DerivedData, and
+  android/build/generated/autolinking caches are excluded, including inside
+  newly copied directories. Gradle regenerates autolinking
   for the destination checkout on its next build. Warm also skips paths
   overlapping a nested destination worktree or below a symlink ancestor.
+
+  Other generated state stays eligible: .gradle, .cxx, *.tsbuildinfo, build
+  directories, and embedded JavaScript need project-specific decisions about
+  regeneration. Native intermediates can record the source checkout's paths;
+  warm does not relocate them. Whole .idea or .expo exclusions can also drop
+  useful project settings or generated TypeScript inputs.
+
+  To choose exclusions, run this in the source checkout's repository root:
+
+    git ls-files --others --ignored --exclude-standard --directory --no-empty-directory
+
+  Patterns match those entries with the trailing / removed. They do not prune
+  children of a whole ignored directory: if Git lists android/app/src/main/assets/,
+  excluding its bundle.jsbundle child has no effect. Exclude the assets entry
+  only when the project regenerates everything inside it.
 
   Warm copies directly into the destination, without intermediate staging.
   Keep the source checkout and the linked worktree on the same volume to
