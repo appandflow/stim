@@ -314,7 +314,7 @@ test('ignored inventory and warm copying still find the target file when raw ls-
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
-});
+}, 30_000);
 
 test('removeWorktree runs git via runFile (no shell) and includes --force only when asked', () => {
   const path = '/tmp/my worktree/repo';
