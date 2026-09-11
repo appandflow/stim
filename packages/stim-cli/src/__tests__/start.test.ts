@@ -2133,8 +2133,8 @@ describe('action: an existing supervisor that is not answering', () => {
     });
     const base = exec.runQuiet.bind(exec);
     exec.runQuiet = (cmd) => {
-      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5153' : '';
-      if (/lsof -a -p 5153 -d cwd/.test(cmd)) markMetroHealthy();
+      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? String(DEAD_LISTENER_PID) : '';
+      if (new RegExp(`lsof -a -p ${DEAD_LISTENER_PID} -d cwd`).test(cmd)) markMetroHealthy();
       return base(cmd);
     };
     setExecutor(exec);
