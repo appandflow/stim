@@ -171,7 +171,7 @@ export default function doctorCommand(
     )
     .option(
       '--fix',
-      'repair the sandbox allowance and stale Android .cxx configurations in this checkout. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
+      'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in this checkout. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
     )
     .action(async (opts: DoctorOptions) => {
       const root = findProjectRoot(process.cwd());
@@ -182,7 +182,7 @@ export default function doctorCommand(
       }
 
       if (opts.fix) {
-        if (detectHarness() !== 'codex' || sandboxFinding(repoRoot(root) ?? root)) applySandboxFix(root);
+        if (sandboxFinding(repoRoot(root) ?? root)) applySandboxFix(root);
         if (opts.platform !== 'ios') {
           try {
             const repair = repairCxxLauncherState(root);

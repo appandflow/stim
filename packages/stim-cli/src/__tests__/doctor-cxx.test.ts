@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, expect, test } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { acquireBuildLock, releaseBuildLock } from '../engine/build-lock.ts';
 import { readCxxLauncherStates, repairCxxLauncherState } from '../doctor-cxx.ts';
-import { checkCxxCompilerLauncher } from '../doctor.ts';
+import { checkCxxCompilerLauncher, type Finding } from '../doctor.ts';
 import { claudeLocalSettingsPath, missingAllowance } from '../sandbox.ts';
 import { writeCasToolchain } from './_factories.ts';
 
@@ -121,31 +121,59 @@ test('repair follows pnpm package links within the checkout for Git safety check
   expect(existsSync(stale)).toBe(false);
 });
 
+const cli = join(import.meta.dirname, '../../dist/cli.mjs');
+
+function doctorJson(args: string[], env: Record<string, string>, omitEnv: string[] = []): { findings: Finding[] } {
+  return JSON.parse(
+    getExecutor().runFile(process.execPath, [cli, 'doctor', '--json', ...args], { cwd: root, env, omitEnv }),
+  );
+}
+
 test.each(['claude', 'codex'])(
-  'Android doctor --json --fix repairs CMake under %s without a false sandbox failure',
+  'Android doctor --json --fix repairs CMake under unsandboxed %s and leaves the sandbox allowance alone',
   (harness) => {
     writeFileSync(
       join(root, 'package.json'),
       JSON.stringify({ name: 'fixture', dependencies: { 'react-native': '0.81.0' } }),
     );
     const stale = cache('android/app', null);
-    const cli = join(import.meta.dirname, '../../dist/cli.mjs');
-    const plain = JSON.parse(
-      getExecutor().runFile(process.execPath, [cli, 'doctor', '--json', '--platform', 'android'], { cwd: root }),
-    );
-    expect(plain.findings.some((finding: { code?: string }) => finding.code === 'android-cmake-launcher')).toBe(true);
+    const env: Record<string, string> = harness === 'claude' ? { CLAUDECODE: '1' } : { CODEX_SANDBOX: 'seatbelt' };
+    const omitEnv = harness === 'codex' ? ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT'] : [];
+    const plain = doctorJson(['--platform', 'android'], env, omitEnv);
+    expect(plain.findings.some((finding) => finding.code === 'android-cmake-launcher')).toBe(true);
+    expect(plain.findings.some((finding) => finding.title.includes('sandbox'))).toBe(false);
     expect(existsSync(stale)).toBe(true);
-    const fixed = JSON.parse(
-      getExecutor().runFile(process.execPath, [cli, 'doctor', '--json', '--fix', '--platform', 'android'], {
-        cwd: root,
-        env: harness === 'claude' ? { CLAUDECODE: '1' } : { CODEX_SANDBOX: 'seatbelt' },
-        omitEnv: harness === 'codex' ? ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT'] : [],
-      }),
-    );
-    expect(fixed.findings.some((finding: { code?: string }) => finding.code === 'android-cmake-launcher')).toBe(false);
-    expect(missingAllowance([claudeLocalSettingsPath(root)], home)).toHaveLength(harness === 'claude' ? 0 : 3);
-    expect(existsSync(claudeLocalSettingsPath(root))).toBe(harness === 'claude');
+    const fixed = doctorJson(['--fix', '--platform', 'android'], env, omitEnv);
+    expect(fixed.findings.some((finding) => finding.code === 'android-cmake-launcher')).toBe(false);
+    expect(existsSync(claudeLocalSettingsPath(root))).toBe(false);
     expect(existsSync(stale)).toBe(false);
+  },
+);
+
+test.skipIf(process.getuid?.() === 0)(
+  'doctor --fix --platform android writes the allowance the report names when the sandbox blocks STIM_HOME',
+  () => {
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ name: 'fixture', dependencies: { 'react-native': '0.81.0' } }),
+    );
+    const locked = join(home, 'locked');
+    mkdirSync(locked);
+    chmodSync(locked, 0o500);
+    const blockedHome = join(locked, 'stim-home');
+    try {
+      const env = { CLAUDECODE: '1', STIM_HOME: blockedHome };
+      const plain = doctorJson(['--platform', 'android'], env);
+      const reported = plain.findings.find((finding) => finding.title.includes('sandbox'));
+      expect(reported?.fix).toContain(claudeLocalSettingsPath(root));
+      expect(existsSync(claudeLocalSettingsPath(root))).toBe(false);
+
+      const fixed = doctorJson(['--fix', '--platform', 'android'], env);
+      expect(missingAllowance([claudeLocalSettingsPath(root)], blockedHome)).toEqual([]);
+      expect(fixed.findings.some((finding) => finding.title.includes('has not picked it up'))).toBe(true);
+    } finally {
+      chmodSync(locked, 0o700);
+    }
   },
 );
 

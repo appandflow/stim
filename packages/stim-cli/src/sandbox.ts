@@ -257,6 +257,6 @@ export function sandboxFinding(
     level: 'cost',
     title,
     detail: `${symptoms} Missing: ${missing.join(', ')}.`,
-    fix: `Run \`stim doctor --fix\` to add them to ${paths[0]}, or add them by hand. See \`stim guide errors sandbox\`.`,
+    fix: `Run \`stim doctor --fix\` to write sandbox.filesystem.allowWrite, sandbox.network.allowMachLookup, and sandbox.network.allowLocalBinding into ${paths[0]}, merged with what is there, or add the missing keys by hand. See \`stim guide errors sandbox\`.`,
   };
 }

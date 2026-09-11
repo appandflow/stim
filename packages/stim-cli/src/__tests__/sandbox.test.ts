@@ -263,14 +263,31 @@ test('sandboxFinding says nothing when the harness is present but writes go thro
   }
 });
 
-test('sandboxFinding points Claude Code at the one command that fixes it', () => {
+test('sandboxFinding names the file and the three keys doctor --fix writes, whichever are missing', () => {
   const dir = scratch();
   try {
+    const keys = [
+      'sandbox.filesystem.allowWrite',
+      'sandbox.network.allowMachLookup',
+      'sandbox.network.allowLocalBinding',
+    ];
     const f = sandboxFinding(dir, { env: { CLAUDECODE: '1' }, home: dir, blocked: true });
     expect(f?.level).toBe('cost');
-    expect(f?.detail).toContain('sandbox.filesystem.allowWrite');
+    expect(f?.detail).toContain(`Missing: ${keys.join(', ')}.`);
     expect(f?.fix).toContain('stim doctor --fix');
-    expect(f?.fix).toContain(join('.claude', 'settings.local.json'));
+    expect(f?.fix).toContain(claudeLocalSettingsPath(dir));
+    for (const key of keys) expect(f?.fix).toContain(key);
+
+    mkdirSync(join(dir, '.claude'));
+    writeFileSync(
+      join(dir, '.claude', 'settings.json'),
+      JSON.stringify({
+        sandbox: { network: { allowMachLookup: ['com.apple.coresimulator.*'], allowLocalBinding: true } },
+      }),
+    );
+    const partial = sandboxFinding(dir, { env: { CLAUDECODE: '1' }, home: dir, blocked: true });
+    expect(partial?.detail).toContain('Missing: sandbox.filesystem.allowWrite.');
+    for (const key of keys) expect(partial?.fix).toContain(key);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
