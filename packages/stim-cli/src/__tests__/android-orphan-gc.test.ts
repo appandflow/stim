@@ -46,7 +46,16 @@ beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-orphan-avds-')));
   avdRoot = join(home, 'avd');
   mkdirSync(avdRoot);
-  const keys = ['STIM_HOME', 'HOME', 'ANDROID_HOME', 'ANDROID_SDK_ROOT', 'ANDROID_AVD_HOME', 'ANDROID_SDK_HOME'];
+  const keys = [
+    'STIM_HOME',
+    'HOME',
+    'ANDROID_HOME',
+    'ANDROID_SDK_ROOT',
+    'ANDROID_AVD_HOME',
+    'ANDROID_SDK_HOME',
+    'ANDROID_USER_HOME',
+    'ANDROID_EMULATOR_HOME',
+  ];
   saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   Object.assign(process.env, {
     STIM_HOME: join(home, 'stim'),
@@ -55,6 +64,8 @@ beforeEach(() => {
     ANDROID_SDK_ROOT: join(home, 'sdk'),
     ANDROID_AVD_HOME: avdRoot,
     ANDROID_SDK_HOME: home,
+    ANDROID_USER_HOME: join(home, '.android'),
+    ANDROID_EMULATOR_HOME: join(home, '.android'),
   });
   savedExitCode = process.exitCode;
   ensureConfig();
@@ -332,4 +343,42 @@ describe.skipIf(process.getuid?.() === 0)('unverifiable registrations', () => {
     expect(teardownOwnedAvd('stim-orphan', { del: true }).status).toBe('failed');
     expect(existsSync(directory)).toBe(true);
   });
+});
+
+test.each(['ANDROID_USER_HOME', 'ANDROID_EMULATOR_HOME', 'ANDROID_SDK_HOME'])(
+  'a user alias in %s protects data in another AVD root',
+  async (variable) => {
+    const directory = orphan();
+    const candidate = listOrphanedAvdDirectories()[0]!;
+    process.env[variable] = join(home, variable.toLowerCase());
+    const root =
+      variable === 'ANDROID_SDK_HOME'
+        ? join(process.env[variable]!, '.android', 'avd')
+        : join(process.env[variable]!, 'avd');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'Personal_Phone.ini'), `path=${directory}\n`);
+    listed.push('Personal_Phone');
+    const report = await collectGcReport({ unsafeAllowScopedDeviceSweep: true }, deps);
+    expect(report.orphanedDevices).toEqual([]);
+    expect(teardownOwnedAvd('stim-orphan', { del: true, orphanedDirectory: candidate }).status).toBe('failed');
+    expect(existsSync(join(directory, 'userdata.img'))).toBe(true);
+  },
+);
+
+test('a relative alias registration in a symlinked root protects its data when the absolute path is stale', async () => {
+  const root = join(home, 'real', 'avd');
+  const directory = orphan('stim-retained', root);
+  const alias = join(home, 'redirected-avds');
+  symlinkSync(root, alias);
+  process.env.ANDROID_AVD_HOME = alias;
+  const candidate = listOrphanedAvdDirectories()[0]!;
+  writeFileSync(
+    join(root, 'Personal_Phone.ini'),
+    `path=${join(home, 'missing.avd')}\npath.rel=avd/stim-retained.avd\n`,
+  );
+  listed.push('Personal_Phone');
+  const report = await collectGcReport({ unsafeAllowScopedDeviceSweep: true }, deps);
+  expect(report.orphanedDevices).toEqual([]);
+  expect(teardownOwnedAvd('stim-retained', { del: true, orphanedDirectory: candidate }).status).toBe('failed');
+  expect(existsSync(join(directory, 'userdata.img'))).toBe(true);
 });

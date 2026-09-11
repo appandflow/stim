@@ -30,6 +30,8 @@ beforeEach(() => {
       'ANDROID_HOME',
       'ANDROID_AVD_HOME',
       'ANDROID_SDK_HOME',
+      'ANDROID_USER_HOME',
+      'ANDROID_EMULATOR_HOME',
       'HOME',
       'DISPLAY',
     ].map((key) => [key, process.env[key]]),
@@ -39,6 +41,8 @@ beforeEach(() => {
   process.env.ANDROID_HOME = join(home, 'sdk');
   process.env.ANDROID_AVD_HOME = join(home, 'avd');
   process.env.ANDROID_SDK_HOME = home;
+  process.env.ANDROID_USER_HOME = join(home, '.android');
+  process.env.ANDROID_EMULATOR_HOME = join(home, '.android');
   process.env.HOME = home;
   process.env.DISPLAY = ':0';
   mkdirSync(join(home, 'sdk', ...image.split(';')), { recursive: true });

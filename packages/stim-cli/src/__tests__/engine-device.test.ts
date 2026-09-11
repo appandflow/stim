@@ -1210,9 +1210,13 @@ describe('ensureOwnedDevice: android', () => {
     prevAndroidAvdHome = process.env.ANDROID_AVD_HOME;
     process.env.ANDROID_HOME = androidHome;
     process.env.ANDROID_AVD_HOME = join(androidHome, 'avd');
-    prevFallbackRoots = Object.fromEntries(['HOME', 'ANDROID_SDK_HOME'].map((key) => [key, process.env[key]]));
+    prevFallbackRoots = Object.fromEntries(
+      ['HOME', 'ANDROID_SDK_HOME', 'ANDROID_USER_HOME', 'ANDROID_EMULATOR_HOME'].map((key) => [key, process.env[key]]),
+    );
     process.env.HOME = androidHome;
     process.env.ANDROID_SDK_HOME = androidHome;
+    process.env.ANDROID_USER_HOME = join(androidHome, '.android');
+    process.env.ANDROID_EMULATOR_HOME = join(androidHome, '.android');
   });
 
   afterEach(() => {

@@ -506,13 +506,17 @@ function avdIniPaths(root: string, ini: string): string[] {
   ].filter((candidate): candidate is string => candidate !== null);
 }
 
-export function avdStorageRoots(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string[] {
+export function avdStorageRoots(): string[] {
+  const env = process.env;
   return [
     ...new Set(
       [
         env.ANDROID_AVD_HOME,
+        env.ANDROID_EMULATOR_HOME ? join(env.ANDROID_EMULATOR_HOME, 'avd') : null,
+        env.ANDROID_USER_HOME ? join(env.ANDROID_USER_HOME, 'avd') : null,
+        env.ANDROID_SDK_HOME ? join(env.ANDROID_SDK_HOME, '.android', 'avd') : null,
         env.ANDROID_SDK_HOME ? join(env.ANDROID_SDK_HOME, 'avd') : null,
-        join(home, '.android', 'avd'),
+        join(homedir(), '.android', 'avd'),
       ].filter((value): value is string => Boolean(value)),
     ),
   ];
@@ -543,11 +547,12 @@ export function listOrphanedAvdDirectories(avdName?: string): OrphanedAvdDirecto
     names: readdirSync(root),
   }));
   const registered = new Set<string>();
-  for (const { root, names } of stores) {
+  for (const { root, canonicalRoot, names } of stores) {
     for (const name of names.filter((entry) => entry.endsWith('.ini'))) {
       const path = join(root, name);
-      const targets = avdIniPaths(root, readFileSync(path, 'utf8'));
-      if (!targets.length) throw new Error(`Cannot verify AVD registration at ${path}; its data was kept.`);
+      const ini = readFileSync(path, 'utf8');
+      const targets = new Set([...avdIniPaths(root, ini), ...avdIniPaths(canonicalRoot, ini)]);
+      if (!targets.size) throw new Error(`Cannot verify AVD registration at ${path}; its data was kept.`);
       for (const target of targets) {
         try {
           registered.add(realpathSync(target));
@@ -596,7 +601,12 @@ export function ownedAvdDirectory(
   } = {},
 ): string | null {
   if (!/^stim-[A-Za-z0-9._-]+$/.test(avdName)) return null;
-  for (const root of avdStorageRoots(env, home)) {
+  const roots = [
+    env.ANDROID_AVD_HOME,
+    env.ANDROID_SDK_HOME ? join(env.ANDROID_SDK_HOME, 'avd') : null,
+    join(home, '.android', 'avd'),
+  ];
+  for (const root of new Set(roots.filter((value): value is string => Boolean(value)))) {
     let ini: string;
     try {
       ini = readFile(join(root, `${avdName}.ini`));
