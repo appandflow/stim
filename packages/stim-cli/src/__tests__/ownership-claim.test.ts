@@ -255,6 +255,27 @@ describe('clearing a claim set that holds nothing', () => {
     expect(existsSync(root)).toBe(false);
   });
 
+  test.skipIf(process.getuid?.() === 0)(
+    'a staging deletion failure releases the cleanup claim and preserves the payload',
+    () => {
+      const staging = join(root, '.staging-interrupted');
+      const payload = join(staging, 'partial.claim');
+      mkdirSync(staging, { recursive: true });
+      writeFileSync(payload, '{');
+      chmodSync(staging, 0);
+      try {
+        expect(clearFreeClaimSet({ root })).toEqual({ status: 'failed', reason: expect.stringContaining('EACCES') });
+        expect(readClaimSet(root).live).toEqual([]);
+        expect(existsSync(staging)).toBe(true);
+      } finally {
+        chmodSync(staging, 0o700);
+      }
+      expect(readFileSync(payload, 'utf-8')).toBe('{');
+      expect(clearFreeClaimSet({ root })).toEqual({ status: 'cleared' });
+      expect(existsSync(root)).toBe(false);
+    },
+  );
+
   test('a set a live process holds is left exactly as it was', () => {
     const got = tryAcquireClaim({ root, mode: 'exclusive' });
     assert(got.acquired);
