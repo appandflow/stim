@@ -35,7 +35,16 @@ import gcCommand, {
   selectCaches,
 } from '../commands/gc.ts';
 import { adoptParked, parkSim, readParked } from '../sim-pool.ts';
-import { makeConfig, makeIosSim, makeCacheDescriptor, makeBuildLock, makeBuildSlot } from './_factories.ts';
+import {
+  makeConfig,
+  makeIosSim,
+  makeCacheDescriptor,
+  makeBuildLock,
+  makeBuildSlot,
+  goneClaimOwner,
+  liveClaimOwner,
+  plantClaim,
+} from './_factories.ts';
 
 describe('selectCaches', () => {
   const caches = [
@@ -2623,16 +2632,9 @@ function writeLock({
   projectRoot?: string;
 }) {
   const path = join(tmpHome, 'build-locks', `${platform}-${key}.lock`);
-  mkdirSync(path, { recursive: true });
-  writeFileSync(
-    join(path, 'lock.json'),
-    JSON.stringify({
-      pid,
-      projectRoot,
-      startedAt: new Date().toISOString(),
-      logFile: `${projectRoot}/.stim/logs/build-${platform}.ndjson`,
-    }),
-  );
+  plantClaim(path, 'exclusive', pid === process.pid ? liveClaimOwner() : goneClaimOwner(pid), {
+    details: { projectRoot, logFile: `${projectRoot}/.stim/logs/build-${platform}.ndjson` },
+  });
   return path;
 }
 

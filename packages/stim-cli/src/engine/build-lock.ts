@@ -1,11 +1,18 @@
-import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { formatElapsed } from '../command-output.ts';
 import { getConfigDir } from '../config.ts';
 import { resolveBuild } from '../build-cache.ts';
-import { isPidAlive } from '../metro.ts';
+import {
+  ClaimRefusedError,
+  claimRemoveCommand,
+  readClaimSet,
+  releaseClaim,
+  tryAcquireClaim,
+  type ClaimHandle,
+  type ClaimHolder,
+} from '../ownership-claim.ts';
 
-const LOCK_FILE_NAME = 'lock.json';
 const LOCK_SUFFIX = '.lock';
 
 export interface BuildLockRecord {
@@ -25,8 +32,6 @@ interface AcquireBuildLockOptions {
   key: string;
   root?: string | null;
   logFile?: string | null;
-  isAlive?: (pid: number) => boolean;
-  now?: () => number;
 }
 
 export interface BuildLockHandle {
@@ -37,10 +42,7 @@ export interface BuildLockHandle {
   tookOver?: BuildLockRecord;
   platform?: string;
   key?: string;
-}
-
-interface ListBuildLocksOptions {
-  isAlive?: (pid: number) => boolean;
+  claim?: ClaimHandle;
 }
 
 export interface BuildLockInfo {
@@ -53,6 +55,7 @@ export interface BuildLockInfo {
   startedAt: string | null;
   logFile: string | null;
   alive: boolean;
+  unresolved: boolean;
 }
 
 interface WaitingLineArgs {
@@ -66,7 +69,6 @@ interface WaitForBuildOptions {
   platform: string;
   key: string;
   resolve?: (platform: string, key: string) => string | null;
-  isAlive?: (pid: number) => boolean;
   intervalMs?: number;
   progressMs?: number;
   ceilingMs?: number;
@@ -83,20 +85,12 @@ export interface WaitForBuildResult {
   holder?: BuildLockRecord | null;
 }
 
-const RECORD_GRACE_MS = 5000;
-const RECORD_POLL_MS = 25;
-const ACQUIRE_DEADLINE_MS = 8000;
-
 export const WAIT_POLL_MS = 1000;
 export const WAIT_PROGRESS_MS = 30000;
 export const WAIT_CEILING_MS: number = 90 * 60 * 1000;
 
 function sleepAsync(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function sleepSync(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 export function segment(value: string): string {
@@ -115,39 +109,25 @@ export function buildLockPath(platform: string, key: string): string {
   return join(buildLocksDir(), `${segment(platform)}-${segment(key)}${LOCK_SUFFIX}`);
 }
 
+function label(platform: string): string {
+  return `${platform} build`;
+}
+
+function toRecord(holder: ClaimHolder): BuildLockRecord {
+  const details = holder.details as { projectRoot?: unknown; logFile?: unknown };
+  return {
+    pid: holder.owner.pid,
+    projectRoot: typeof details.projectRoot === 'string' ? details.projectRoot : null,
+    startedAt: holder.startedAt || null,
+    logFile: typeof details.logFile === 'string' ? details.logFile : null,
+  };
+}
+
 export function readBuildLock(pathOrSpec: string | BuildLockSpec): BuildLockRecord | null {
   const path = typeof pathOrSpec === 'string' ? pathOrSpec : buildLockPath(pathOrSpec.platform, pathOrSpec.key);
-  try {
-    const parsed = JSON.parse(readFileSync(join(path, LOCK_FILE_NAME), 'utf-8'));
-    if (!parsed || typeof parsed !== 'object') return null;
-    return {
-      pid: Number.isFinite(parsed.pid) ? parsed.pid : null,
-      projectRoot: parsed.projectRoot ?? null,
-      startedAt: parsed.startedAt ?? null,
-      logFile: parsed.logFile ?? null,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function dirAgeMs(path: string, now: number): number | null {
-  try {
-    return now - statSync(path).mtimeMs;
-  } catch {
-    return null;
-  }
-}
-
-function reapStaleLock(path: string): void {
-  const aside = `${path}.reap-${process.pid}`;
-  try {
-    rmSync(aside, { recursive: true, force: true });
-    renameSync(path, aside);
-  } catch {
-    return;
-  }
-  rmSync(aside, { recursive: true, force: true });
+  const survey = readClaimSet(path);
+  const holder = survey.live[0] ?? survey.dead[0];
+  return holder ? toRecord(holder) : null;
 }
 
 export function acquireBuildLock({
@@ -155,68 +135,37 @@ export function acquireBuildLock({
   key,
   root = null,
   logFile = null,
-  isAlive = isPidAlive,
-  now = Date.now,
 }: AcquireBuildLockOptions): BuildLockHandle {
   const path = buildLockPath(platform, key);
-  const deadline = now() + ACQUIRE_DEADLINE_MS;
-  let reaped: BuildLockRecord | null = null;
+  const attempt = tryAcquireClaim({
+    root: path,
+    mode: 'exclusive',
+    label: label(platform),
+    details: { projectRoot: root, logFile },
+  });
+  const reaped = attempt.reaped[0];
 
-  for (;;) {
-    try {
-      mkdirSync(buildLocksDir(), { recursive: true });
-      mkdirSync(path);
-      const lock: BuildLockRecord = {
-        pid: process.pid,
-        projectRoot: root,
-        startedAt: new Date(now()).toISOString(),
-        logFile,
-      };
-      writeFileSync(join(path, LOCK_FILE_NAME), JSON.stringify(lock));
-      return reaped ? { acquired: true, path, lock, tookOver: reaped } : { acquired: true, path, lock };
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException)?.code !== 'EEXIST') throw err;
-    }
-
-    const info = readBuildLock(path);
-    if (info && isAlive(info.pid!)) {
-      return { held: info, path };
-    }
-
-    if (info) {
-      reaped = info;
-      reapStaleLock(path);
-      continue;
-    }
-
-    const age = dirAgeMs(path, now());
-    if (age === null) continue;
-    if (age > RECORD_GRACE_MS) {
-      reapStaleLock(path);
-      continue;
-    }
-    if (now() >= deadline) {
-      return { held: { pid: null, projectRoot: null, startedAt: null, logFile: null }, path };
-    }
-    sleepSync(RECORD_POLL_MS);
+  if (attempt.acquired) {
+    const lock: BuildLockRecord = {
+      pid: attempt.acquired.owner.pid,
+      projectRoot: root,
+      startedAt: attempt.acquired.startedAt,
+      logFile,
+    };
+    const handle: BuildLockHandle = { acquired: true, path, lock, claim: attempt.acquired };
+    return reaped ? { ...handle, tookOver: toRecord(reaped) } : handle;
   }
+
+  if (attempt.pending) releaseClaim(attempt.pending);
+  const holder = attempt.held ?? attempt.waitingFor?.[0];
+  return holder ? { held: toRecord(holder), path } : { path };
 }
 
 export function releaseBuildLock(handle?: BuildLockHandle | null): boolean {
-  if (!handle) return false;
-  const path = handle.path || buildLockPath(handle.platform!, handle.key!);
-  const ours = handle.lock?.pid ?? process.pid;
-  const info = readBuildLock(path);
-  if (info && info.pid !== ours) return false;
-  try {
-    rmSync(path, { recursive: true, force: true });
-    return true;
-  } catch {
-    return false;
-  }
+  return releaseClaim(handle?.claim);
 }
 
-export function listBuildLocks({ isAlive = isPidAlive }: ListBuildLocksOptions = {}): BuildLockInfo[] {
+export function listBuildLocks(): BuildLockInfo[] {
   const dir = buildLocksDir();
   let names;
   try {
@@ -235,7 +184,9 @@ export function listBuildLocks({ isAlive = isPidAlive }: ListBuildLocksOptions =
     }
     const stem = name.slice(0, -LOCK_SUFFIX.length);
     const cut = stem.indexOf('-');
-    const info = readBuildLock(path);
+    const survey = readClaimSet(path);
+    const holder = survey.live[0] ?? survey.dead[0];
+    const info = holder ? toRecord(holder) : null;
     locks.push({
       path,
       name,
@@ -245,7 +196,8 @@ export function listBuildLocks({ isAlive = isPidAlive }: ListBuildLocksOptions =
       projectRoot: info?.projectRoot ?? null,
       startedAt: info?.startedAt ?? null,
       logFile: info?.logFile ?? null,
-      alive: Boolean(info?.pid) && isAlive(info!.pid!),
+      alive: survey.live.length > 0,
+      unresolved: survey.unresolved.length > 0,
     });
   }
   return locks;
@@ -284,7 +236,6 @@ export async function waitForBuild({
   platform,
   key,
   resolve = resolveBuild,
-  isAlive = isPidAlive,
   intervalMs = WAIT_POLL_MS,
   progressMs = WAIT_PROGRESS_MS,
   ceilingMs = WAIT_CEILING_MS,
@@ -301,40 +252,49 @@ export async function waitForBuild({
     const hit = resolve(platform, key);
     if (hit) return { hit, waitedMs: now() - started };
 
-    const info = readBuildLock(path);
-    if (info) holder = info;
-
-    if (!info) {
-      return {
-        lockReleased: true,
-        holder,
-        waitedMs: now() - started,
-      };
+    const survey = readClaimSet(path);
+    const unresolved = survey.unresolved[0];
+    if (unresolved) {
+      throw new ClaimRefusedError({
+        claimPath: unresolved.path,
+        root: path,
+        label: label(platform),
+        reason: unresolved.reason,
+      });
     }
-    if (!isAlive(info.pid!)) {
-      return {
-        builderFailed: `the builder (pid ${info.pid ?? '?'}) is gone`,
-        holder,
-        waitedMs: now() - started,
-      };
+
+    const live = survey.live[0];
+    if (live) holder = toRecord(live);
+    else {
+      const dead = survey.dead[0];
+      if (dead) {
+        return {
+          builderFailed: `the builder (pid ${dead.owner.pid}) is gone`,
+          holder: toRecord(dead),
+          waitedMs: now() - started,
+        };
+      }
+      return { lockReleased: true, holder, waitedMs: now() - started };
     }
 
     const elapsed = now() - started;
     if (elapsed >= ceilingMs) {
       const err = new Error(
-        `Waited ${formatElapsed(elapsed)} for ${info.projectRoot || 'another workspace'}'s ${platform} build of ${key} ` +
-          `without an artifact, and pid ${info.pid} is still alive. The lock is ${path}; ` +
-          'remove that directory if that process is not really building.',
+        `Waited ${formatElapsed(elapsed)} for ${holder?.projectRoot || 'another workspace'}'s ${platform} build of ${key} ` +
+          `without an artifact, and pid ${holder?.pid} is still the live holder. The lock is ${path}; ` +
+          `remove it if that process is not really building:\n  ${claimRemoveCommand(path)}`,
       ) as Error & { code?: string; lockPath?: string; holder?: BuildLockRecord };
       err.code = 'STIM_BUILD_WAIT_TIMEOUT';
       err.lockPath = path;
-      err.holder = info;
+      err.holder = holder ?? undefined;
       throw err;
     }
 
     if (now() - lastProgress >= progressMs) {
       lastProgress = now();
-      out(waitingLine({ projectRoot: info.projectRoot, pid: info.pid, elapsedMs: elapsed, logFile: info.logFile }));
+      out(
+        waitingLine({ projectRoot: holder.projectRoot, pid: holder.pid, elapsedMs: elapsed, logFile: holder.logFile }),
+      );
     }
 
     await sleep(intervalMs);

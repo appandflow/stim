@@ -113,8 +113,12 @@ export function repairCxxLauncherState(root: string): CxxRepairResult {
       });
       if (tracked) throw new Error('directory contains tracked files');
       getExecutor().runFile('git', ['check-ignore', '-q', '--', gitPath], { cwd: canonicalRoot, timeoutMs: 5000 });
-      const active = listBuildLocks().some((lock) => {
-        if (lock.platform !== 'android' || !lock.alive || !lock.projectRoot) return false;
+      const androidLocks = listBuildLocks().filter((lock) => lock.platform === 'android');
+      if (androidLocks.some((lock) => lock.unresolved)) {
+        throw new Error('an Android build lock holder cannot be identified, so a build may be active');
+      }
+      const active = androidLocks.some((lock) => {
+        if (!lock.alive || !lock.projectRoot) return false;
         return realpathSync(lock.projectRoot) === canonicalRoot;
       });
       if (active) throw new Error('an Android build is active in this checkout');

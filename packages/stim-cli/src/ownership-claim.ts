@@ -414,6 +414,7 @@ export function releaseClaim(handle: ClaimHandle | null | undefined): boolean {
     return false;
   }
   tidy(handle.mode === 'exclusive' ? exclusiveClaimDir(handle.root) : sharedClaimDir(handle.root));
+  tidy(handle.root);
   return true;
 }
 

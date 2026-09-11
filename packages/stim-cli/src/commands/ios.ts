@@ -81,6 +81,7 @@ import { COMPILATION_CACHE_NOT_RUN, COMPILATION_CACHE_UNAVAILABLE } from '../eng
 import type { NdjsonWriter } from '../ndjson.ts';
 import { workspaceDir, workspaceLogsDir } from '../paths.ts';
 import { appProjectProblem } from '../project.ts';
+import { isClaimRefusal } from '../ownership-claim.ts';
 import { type SupervisorLike, noMetroMessage, noMetroRemedy } from './native-runtime.ts';
 import {
   PLATFORM,
@@ -906,6 +907,15 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
       try {
         attempt = d.acquireBuildLock({ platform: PLATFORM, key: cacheKey, root, logFile });
       } catch (e) {
+        if (isClaimRefusal(e)) {
+          fail({
+            code: 'STIM_CLAIM_REFUSED',
+            message: e.message,
+            remedy: `Run \`${e.removeCommand}\`, then run \`stim ios\` again.`,
+            build: { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache },
+          });
+          return false;
+        }
         note(
           chalk.yellow(
             phaseLine('build', `could not take the build lock: ${(e as Error)?.message || e}; building anyway`),
@@ -944,6 +954,15 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
           }
           waited = await d.waitForBuild({ platform: PLATFORM, key: cacheKey, out: note, ceilingMs });
         } catch (e) {
+          if (isClaimRefusal(e)) {
+            fail({
+              code: 'STIM_CLAIM_REFUSED',
+              message: e.message,
+              remedy: `Run \`${e.removeCommand}\`, then run \`stim ios\` again.`,
+              build: { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache },
+            });
+            return false;
+          }
           const err = e as Error & { code?: string; lockPath?: string };
           if (err?.code !== 'STIM_BUILD_WAIT_TIMEOUT') throw e;
           fail({

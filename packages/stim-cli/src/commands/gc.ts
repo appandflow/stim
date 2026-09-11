@@ -4,10 +4,11 @@ import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
 import { loadConfig, removeProject } from '../config.ts';
 import { directorySize, isOnMountedVolume, listMountedVolumes, volumeRootFor } from '../fs-util.ts';
-import { listBuildLocks, readBuildLock } from '../engine/build-lock.ts';
+import { listBuildLocks } from '../engine/build-lock.ts';
 import { listBuildSlots, readBuildSlot } from '../engine/build-slots.ts';
 import { removeExpiredLease } from '../engine/device-lease.ts';
 import { isPidAlive } from '../metro.ts';
+import { readClaimSet } from '../ownership-claim.ts';
 import { detectIsExpo, findProjectRoot } from '../project.ts';
 import { describeDereferenced, reclaimProject } from '../reclaim.ts';
 import { SETTING_SHAPE_REMEDY } from '../settings.ts';
@@ -455,8 +456,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
   deleteFailures += deleteProjectDevices(orphanedDevices, staleDevices, staleDeviceRecords);
 
   for (const lock of buildLocks.stale) {
-    const current = readBuildLock(lock.path);
-    if (current?.pid && isPidAlive(current.pid)) continue;
+    if (readClaimSet(lock.path).live.length > 0) continue;
     try {
       rmSync(lock.path, { recursive: true, force: true });
       console.log(

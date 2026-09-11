@@ -79,6 +79,7 @@ import {
   type BuildLockHandle,
   type WaitForBuildResult,
 } from '../engine/build-lock.ts';
+import { isClaimRefusal } from '../ownership-claim.ts';
 import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../engine/build-slots.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { isPidAlive, resolveProjectMetro } from '../metro.ts';
@@ -1225,6 +1226,17 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         try {
           attempt = acquireLock({ platform: PLATFORM, key: cacheKey, root, logFile: buildLog });
         } catch (err) {
+          if (isClaimRefusal(err)) {
+            phaseFailure = fail(
+              'STIM_CLAIM_REFUSED',
+              err.message,
+              `Run \`${err.removeCommand}\`, then run \`stim android\` again.`,
+              {
+                lastBuildStatus: true,
+              },
+            );
+            return false;
+          }
           phase(
             'build',
             chalk.yellow(`could not take the build lock: ${(err as Error)?.message || err}; building anyway`),
@@ -1262,6 +1274,15 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
             }
             waited = await waitForBuild({ platform: PLATFORM, key: cacheKey, out, ceilingMs });
           } catch (err) {
+            if (isClaimRefusal(err)) {
+              phaseFailure = fail(
+                'STIM_CLAIM_REFUSED',
+                err.message,
+                `Run \`${err.removeCommand}\`, then run \`stim android\` again.`,
+                { lastBuildStatus: true },
+              );
+              return false;
+            }
             const wtErr = err as Error & { code?: string; lockPath?: string };
             if (wtErr?.code !== 'STIM_BUILD_WAIT_TIMEOUT') throw err;
             phaseFailure = fail(

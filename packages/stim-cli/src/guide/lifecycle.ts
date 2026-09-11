@@ -716,9 +716,14 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   hit retains waitedForBuild. Artifacts remain stored only under their final
   fingerprint, never under the old key.
 
-  Nothing can deadlock on it. The lock is held by a PID, so a builder that
-  crashes, is killed, or whose build simply fails frees it: the waiters see a
-  released lock with no artifact, and one of them takes over and builds. The
+  Nothing can deadlock on it. The lock records the holder's process IDENTITY,
+  so a builder that crashes, is killed, or whose build simply fails frees it:
+  the waiters see a released lock with no artifact, and one of them takes over
+  and builds. A recycled pid reads as a gone builder, and a builder busy in a
+  long synchronous tool call reads as live -- age is never a reason to take a
+  lock. The one state that cannot be decided (a truncated claim, an identity
+  token that does not decode) is STIM_CLAIM_REFUSED: Stim names the claim and
+  the command that removes it rather than guessing. The
   other waiters keep waiting for that holder. All replacement builders share
   one ~90-minute deadline, including lock acquisition between waits; reaching
   it returns STIM_BUILD_WAIT_TIMEOUT naming the current holder and lock.

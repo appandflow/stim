@@ -13,7 +13,6 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { decode } from 'unique-pid';
 import { getExecutor } from '../exec.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import {
@@ -30,9 +29,8 @@ import {
   settleClaim,
   sharedClaimDir,
   tryAcquireClaim,
-  type ClaimOwner,
 } from '../ownership-claim.ts';
-import { IMPOSSIBLE_PID } from './_factories.ts';
+import { goneClaimOwner, liveClaimOwner, plantClaim, recycledClaimOwner } from './_factories.ts';
 
 let root: string;
 
@@ -43,53 +41,6 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
-
-function liveOwner(): ClaimOwner {
-  const processToken = captureProcessToken(process.pid);
-  assert(processToken);
-  return { pid: process.pid, processToken };
-}
-
-// unique-pid tokens are `upid1.` plus base64url JSON of the identity it decodes; rebuilding one is
-// the only way to get a record for a process that is provably gone or provably replaced.
-function reshape(owner: ClaimOwner, change: (identity: Record<string, unknown>) => Record<string, unknown>) {
-  const parsed = decode(owner.processToken);
-  assert(parsed.ok);
-  const identity = change({ ...parsed.value });
-  return {
-    pid: identity.pid as number,
-    processToken: 'upid1.' + Buffer.from(JSON.stringify(identity)).toString('base64url'),
-  };
-}
-
-function goneOwner(): ClaimOwner {
-  return reshape(liveOwner(), (identity) => ({ ...identity, pid: IMPOSSIBLE_PID }));
-}
-
-function recycledOwner(): ClaimOwner {
-  return reshape(liveOwner(), (identity) => {
-    const start = String(identity.startTime).split(':');
-    start[0] = String(BigInt(start[0]!) + 1n);
-    return { ...identity, startTime: start.join(':') };
-  });
-}
-
-function plant(
-  mode: 'exclusive' | 'shared',
-  owner: ClaimOwner,
-  {
-    claimId = `planted-${mode}-${owner.pid}`,
-    details = {},
-    child,
-  }: { claimId?: string; details?: unknown; child?: unknown } = {},
-) {
-  const dir = mode === 'exclusive' ? exclusiveClaimDir(root) : sharedClaimDir(root);
-  mkdirSync(dir, { recursive: true });
-  const path = join(dir, `${claimId}.claim`);
-  writeFileSync(path, JSON.stringify({ claimId, mode, owner, startedAt: new Date().toISOString(), details }));
-  if (child !== undefined) writeFileSync(join(dir, `${claimId}.child`), JSON.stringify(child));
-  return path;
-}
 
 describe('exclusive claims', () => {
   test('one process holds it and the next reads who holds it', () => {
@@ -118,7 +69,7 @@ describe('exclusive claims', () => {
     assert(first.acquired);
     writeFileSync(
       first.acquired.path,
-      JSON.stringify({ claimId: 'someone-else', mode: 'exclusive', owner: liveOwner() }),
+      JSON.stringify({ claimId: 'someone-else', mode: 'exclusive', owner: liveClaimOwner() }),
     );
     expect(releaseClaim(first.acquired)).toBe(false);
     expect(existsSync(first.acquired.path)).toBe(true);
@@ -134,7 +85,7 @@ describe('exclusive claims', () => {
   });
 
   test('a claim whose holder is gone is reaped and reported', () => {
-    plant('exclusive', goneOwner(), { claimId: 'dead-one', details: { projectRoot: '/gone' } });
+    plantClaim(root, 'exclusive', goneClaimOwner(), { claimId: 'dead-one', details: { projectRoot: '/gone' } });
     const got = tryAcquireClaim({ root, mode: 'exclusive' });
     assert(got.acquired);
     expect(got.reaped.map((h) => h.claimId)).toEqual(['dead-one']);
@@ -143,7 +94,7 @@ describe('exclusive claims', () => {
   });
 
   test('a recycled pid is a gone holder, not a live one', () => {
-    plant('exclusive', recycledOwner(), { claimId: 'recycled' });
+    plantClaim(root, 'exclusive', recycledClaimOwner(), { claimId: 'recycled' });
     const got = tryAcquireClaim({ root, mode: 'exclusive' });
     assert(got.acquired);
     expect(got.reaped.map((h) => h.claimId)).toEqual(['recycled']);
@@ -167,7 +118,7 @@ describe('refusing instead of guessing', () => {
   };
 
   test('a record with no usable process token refuses, names the claim and the command, and removes nothing', () => {
-    const path = plant('exclusive', { pid: 4242, processToken: 'not-a-token' } as ClaimOwner, { claimId: 'mystery' });
+    const path = plantClaim(root, 'exclusive', { pid: 4242, processToken: 'not-a-token' }, { claimId: 'mystery' });
     const err = refusal(() => tryAcquireClaim({ root, mode: 'exclusive', label: 'ios build' }));
     expect(err.claimPath).toBe(path);
     expect(err.removeCommand).toBe(claimRemoveCommand(root));
@@ -186,20 +137,20 @@ describe('refusing instead of guessing', () => {
   });
 
   test('a claim that declared a child and never recorded it refuses', () => {
-    plant('exclusive', goneOwner(), { claimId: 'spawning', child: { record: null } });
+    plantClaim(root, 'exclusive', goneClaimOwner(), { claimId: 'spawning', child: { record: null } });
     const err = refusal(() => tryAcquireClaim({ root, mode: 'exclusive' }));
     expect(err.message).toMatch(/killed before recording which one/);
   });
 
   test('a child marker Stim cannot read is not a claim it may reap', () => {
-    const path = plant('exclusive', goneOwner(), { claimId: 'stuck' });
+    const path = plantClaim(root, 'exclusive', goneClaimOwner(), { claimId: 'stuck' });
     mkdirSync(join(exclusiveClaimDir(root), 'stuck.child', 'not-empty'), { recursive: true });
     refusal(() => tryAcquireClaim({ root, mode: 'exclusive' }));
     expect(existsSync(path)).toBe(true);
   });
 
   test.skipIf(process.getuid?.() === 0)('a reap that fails for any reason but ENOENT refuses', () => {
-    const path = plant('exclusive', goneOwner(), { claimId: 'unremovable' });
+    const path = plantClaim(root, 'exclusive', goneClaimOwner(), { claimId: 'unremovable' });
     chmodSync(exclusiveClaimDir(root), 0o500);
     try {
       const err = refusal(() => tryAcquireClaim({ root, mode: 'exclusive' }));
@@ -257,7 +208,7 @@ describe('shared and exclusive', () => {
   });
 
   test('a shared claim whose holder is gone is reaped', () => {
-    plant('shared', goneOwner(), { claimId: 'dead-reader' });
+    plantClaim(root, 'shared', goneClaimOwner(), { claimId: 'dead-reader' });
     const got = tryAcquireClaim({ root, mode: 'exclusive' });
     assert(got.acquired);
     expect(got.reaped.map((h) => h.claimId)).toEqual(['dead-reader']);
@@ -301,7 +252,7 @@ describe('a claim whose work runs in a spawned process group', () => {
     assert(grandchild > 0);
 
     try {
-      const dead = goneOwner();
+      const dead = goneClaimOwner();
       writeFileSync(
         held.acquired.path,
         JSON.stringify({ claimId: held.acquired.claimId, mode: 'exclusive', owner: dead, startedAt: '', details: {} }),
@@ -349,7 +300,7 @@ describe('a real race between real processes', { timeout: 30_000 }, () => {
         'console.log(JSON.stringify({ acquired: Boolean(got.acquired), held: got.held?.details ?? null }));',
       ].join('\n'),
     );
-    plant('exclusive', goneOwner(), { claimId: 'left-by-a-crash' });
+    plantClaim(root, 'exclusive', goneClaimOwner(), { claimId: 'left-by-a-crash' });
 
     const run = (name: string) =>
       new Promise<string>((resolve, reject) => {

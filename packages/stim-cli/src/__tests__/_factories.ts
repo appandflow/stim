@@ -1,5 +1,10 @@
 import type { ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { decode } from 'unique-pid';
+import { captureProcessToken } from '../process-identity.ts';
+import { exclusiveClaimDir, sharedClaimDir, type ClaimOwner } from '../ownership-claim.ts';
 
 import type { StimConfig } from '../types.ts';
 import type { CacheDescriptor } from '../caches.ts';
@@ -60,6 +65,7 @@ export function makeBuildLock(overrides: Partial<BuildLockInfo> = {}): BuildLock
     startedAt: '2026-01-01T00:00:00.000Z',
     logFile: '/w/.stim/logs/build.log',
     alive: true,
+    unresolved: false,
     ...overrides,
   };
 }
@@ -177,4 +183,53 @@ export function asProcessExit(fn: (code?: string | number | null) => void): type
 
 export function makeError<T extends Record<string, unknown>>(message: string, props: T = {} as T): Error & T {
   return Object.assign(new Error(message), props);
+}
+
+export function liveClaimOwner(): ClaimOwner {
+  const processToken = captureProcessToken(process.pid);
+  if (!processToken) throw new Error('this platform returned no process identity token');
+  return { pid: process.pid, processToken };
+}
+
+// unique-pid encodes a token as `upid1.` plus base64url JSON of the identity it decodes. Rebuilding one
+// is the only way to get a record for a process that is provably gone, or one whose pid was recycled.
+function reshape(change: (identity: Record<string, unknown>) => Record<string, unknown>): ClaimOwner {
+  const parsed = decode(liveClaimOwner().processToken);
+  if (!parsed.ok) throw new Error(parsed.error.message);
+  const identity = change({ ...parsed.value });
+  return {
+    pid: identity.pid as number,
+    processToken: 'upid1.' + Buffer.from(JSON.stringify(identity)).toString('base64url'),
+  };
+}
+
+export function goneClaimOwner(pid: number = IMPOSSIBLE_PID): ClaimOwner {
+  return reshape((identity) => ({ ...identity, pid }));
+}
+
+export function recycledClaimOwner(): ClaimOwner {
+  return reshape((identity) => {
+    const start = String(identity.startTime).split(':');
+    start[0] = String(BigInt(start[0]!) + 1n);
+    return { ...identity, startTime: start.join(':') };
+  });
+}
+
+export function plantClaim(
+  root: string,
+  mode: 'exclusive' | 'shared',
+  owner: ClaimOwner,
+  {
+    claimId = `planted-${mode}-${owner.pid}`,
+    details = {},
+    startedAt = new Date().toISOString(),
+    child,
+  }: { claimId?: string; details?: unknown; startedAt?: string; child?: unknown } = {},
+): string {
+  const dir = mode === 'exclusive' ? exclusiveClaimDir(root) : sharedClaimDir(root);
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `${claimId}.claim`);
+  writeFileSync(path, JSON.stringify({ claimId, mode, owner, startedAt, details }));
+  if (child !== undefined) writeFileSync(join(dir, `${claimId}.child`), JSON.stringify(child));
+  return path;
 }
