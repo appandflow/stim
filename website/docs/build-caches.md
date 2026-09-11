@@ -50,14 +50,14 @@ Provider and build-profile restrictions still apply; see
 [build optimizations](./build-optimizations.md#compare-compiler-settings).
 This caches app artifacts; ccache and Clang CAS use separate compiler caches.
 
-## Keep the main checkout warm
+## Keep the source checkout warm
 
-Run `stim doctor` before native worktree work. It checks whether the main
+Run `stim doctor` before native worktree work. It checks whether the source
 checkout has current dependencies and CocoaPods state. On a checkout without
 installed dependencies, it also checks whether a fresh worktree produces the
 same native fingerprint.
 
-When several native tasks are coming, build the main checkout once:
+When several native tasks are coming, build the source checkout once:
 
 <StimTabs
 code={`stim start
@@ -66,9 +66,9 @@ stim stop`}
 />
 
 Later worktrees can reuse that cache entry. In an existing linked worktree,
-`stim worktree warm` copies missing ignored state from main without replacing
-existing entries. This includes installed dependencies, Pods, and native
-output. See [worktree isolation](./worktrees.md) for its full scope.
+`stim worktree warm` copies missing ignored state from the source checkout
+without replacing existing entries. This includes installed dependencies, Pods,
+and native output. See [worktree isolation](./worktrees.md) for its full scope.
 
 ## Inspect and clean caches
 

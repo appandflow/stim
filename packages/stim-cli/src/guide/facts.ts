@@ -387,7 +387,7 @@ RULES
 HOW A RUN IS COUNTED (\`stats\`)
   Every \`ios\` or \`android\` invocation that got as far as computing a
   cache key is one run, in this project's bucket and in the machine-wide one.
-  The project key is the app's path IN THE MAIN WORKING TREE, so every
+  The project key is the app's path IN THE SOURCE CHECKOUT, so every
   worktree of a repository pools into one bucket and two apps in a monorepo
   do not. A run that ends through an error or an uncaught exception counts
   only as \`failed\`; \`launched: "unverified"\` or \`"bundling"\` is a

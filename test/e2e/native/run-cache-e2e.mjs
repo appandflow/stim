@@ -694,13 +694,13 @@ async function main() {
 
     const after = snapshotRepo(appDir);
     c.ev(
-      `main checkout after the run: porcelain ${after.porcelain === '' ? 'CLEAN' : JSON.stringify(after.porcelain)}`,
+      `source checkout after the run: porcelain ${after.porcelain === '' ? 'CLEAN' : JSON.stringify(after.porcelain)}`,
     );
-    assert(after.porcelain === baseline.porcelain, `the main checkout is not as we found it:\n${after.porcelain}`);
+    assert(after.porcelain === baseline.porcelain, `the source checkout is not as we found it:\n${after.porcelain}`);
     c.ev(
       `.gitignore ${after.gitignore === baseline.gitignore ? 'byte-identical to the baseline' : 'CHANGED'} (${after.gitignore.length} bytes)`,
     );
-    assert(after.gitignore === baseline.gitignore, "the main checkout's .gitignore was left modified");
+    assert(after.gitignore === baseline.gitignore, "the source checkout's .gitignore was left modified");
     for (const wt of created) assert(!existsSync(wt), `worktree directory survived removal: ${wt}`);
     c.ev(`all ${created.length} worktree directories are gone, each removed without --force`);
     return c.pass('runtime state stayed outside the repository and removal restored fixture changes');

@@ -172,7 +172,7 @@ node test/e2e/native/run-cache-e2e.mjs --framework bare --platform android
 # skip the single-flight race (saves one cold compile; that check reports SKIP)
 node test/e2e/native/run-cache-e2e.mjs --framework expo --platform ios --skip-race
 
-# warm-cache parity: use a previously built disposable main checkout with matching Pods
+# warm-cache parity: use a previously built disposable source checkout with matching Pods
 node test/e2e/native/run-cache-e2e.mjs --framework expo --platform ios \
   --app-dir /tmp/my-app-fixture --summary /tmp/cache-summary.json
 

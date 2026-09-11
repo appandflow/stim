@@ -279,7 +279,7 @@ test('the errors topic documents both codes the ownership-claim primitive raises
 test('the rendered guide carries the warm --refresh contract, not just its source', () => {
   const options = renderSection('lifecycle', 'options');
   assert(options);
-  expect(options).toMatch(/--refresh.*WRITES TO THE MAIN CHECKOUT/s);
+  expect(options).toMatch(/--refresh.*WRITES TO THE SOURCE CHECKOUT/s);
   expect(options).toContain('never switches branches');
   expect(options).toContain('keyed on the repository root');
   expect(options).toMatch(/worktree warm {4}--refresh/);

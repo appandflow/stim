@@ -169,7 +169,7 @@ export function warmClaimBlockedLine(reason: string, blocker: WarmClaimBlocker):
 export function warmClaimBlockedRefusal(blocker: WarmClaimBlocker): string {
   if (blocker.kind === 'refresh') {
     return (
-      'Refusing to copy from a main checkout a refresh is rewriting, even without a claim of its own. ' +
+      'Refusing to copy from a source checkout a refresh is rewriting, even without a claim of its own. ' +
       'Wait for that refresh to finish, then run warm again.'
     );
   }

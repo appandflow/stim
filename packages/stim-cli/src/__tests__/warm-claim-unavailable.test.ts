@@ -125,7 +125,7 @@ test('a plain warm with no claim of its own refuses while a refresh holds this r
   expect(result.stderr).toMatch(
     /lock {8}unavailable \(.*\); stim worktree warm --refresh \(pid \d+\) holds this repository/,
   );
-  expect(result.stderr).toContain('Refusing to copy from a main checkout a refresh is rewriting');
+  expect(result.stderr).toContain('Refusing to copy from a source checkout a refresh is rewriting');
   expect(result.stderr).toContain('failed: STIM_CLAIM_UNAVAILABLE');
   expect(existsSync(join(target, '.env'))).toBe(false);
   expect(existsSync(claim)).toBe(true);

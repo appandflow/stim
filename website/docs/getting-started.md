@@ -46,7 +46,7 @@ wrapper.
 The agent normally runs:
 
 <StimTabs
-code={`stim doctor           # inspect the main checkout and warm-state gaps
+code={`stim doctor           # inspect the source checkout and warm-state gaps
 stim start            # start this workspace's dev server
 stim ios              # build or restore, install, launch, and verify
 stim logs --errors    # check for errors in the captured logs
@@ -134,13 +134,14 @@ stim worktree remove`}
 />
 
 If a harness already created the linked worktree, skip Git creation and run
-`stim worktree warm` there. Warm copies missing ignored state from main,
-including dependencies, native output, and eligible `.env` and local config.
-Existing entries stay untouched. See [worktree isolation](./worktrees.md) for
-exclusions and cleanup; removal works whether or not the worktree was warmed.
+`stim worktree warm` there. Warm copies missing ignored state from the source
+checkout, including dependencies, native output, and eligible `.env` and local
+config. Existing entries stay untouched. See
+[worktree isolation](./worktrees.md) for exclusions and cleanup; removal works
+whether or not the worktree was warmed.
 
 The worktree gets a separate port and device. It can still use native and Metro
-cache entries created by the main checkout or another worktree.
+cache entries created by the source checkout or another worktree.
 
 ## What success means
 

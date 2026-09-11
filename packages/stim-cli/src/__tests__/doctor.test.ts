@@ -72,9 +72,9 @@ test('checkMainCheckout reports missing dependencies, Pods, and native output', 
 
     const findings = checkMainCheckout(project, { brokenPods: [], upstream: null });
     expect(findings.map((finding) => finding.title)).toEqual([
-      'The main checkout has no installed dependencies',
-      'The main checkout CocoaPods state is missing',
-      'The main checkout has no iOS warm build output',
+      'The source checkout has no installed dependencies',
+      'The source checkout CocoaPods state is missing',
+      'The source checkout has no iOS warm build output',
     ]);
     expect(findings[0]?.fix).toMatch(/npm ci/);
     expect(findings[1]?.fix).toMatch(/pod install/);
@@ -121,9 +121,9 @@ test('checkMainCheckout says nothing about the seed when the repository has no l
 
     git('git worktree add -q --detach ../linked');
     expect(checkMainCheckout(main, { platform: 'ios' }).map((entry) => entry.title)).toEqual([
-      'The main checkout is 1 commit behind origin/main',
-      'The main checkout has 1 uncommitted tracked change',
-      'The main checkout is on feature, not the default branch main',
+      'The source checkout is 1 commit behind origin/main',
+      'The source checkout has 1 uncommitted tracked change',
+      'The source checkout is on feature, not the default branch main',
     ]);
 
     rmSync(join(base, 'linked'), { recursive: true, force: true });
@@ -145,7 +145,7 @@ test('an interrupted rebase is named instead of the dirty and detached remedies 
     git('git worktree add -q -b task ../linked');
 
     const findings = checkMainCheckout(main, { platform: 'ios' });
-    expect(findings.map((entry) => entry.title)).toEqual(['The main checkout has a rebase in progress']);
+    expect(findings.map((entry) => entry.title)).toEqual(['The source checkout has a rebase in progress']);
     expect(findings[0]?.fix).toBe(`Finish it, or run \`git -C '${main}' rebase --abort\`.`);
   } finally {
     rmSync(base, { recursive: true, force: true });
@@ -164,7 +164,7 @@ test('a tag sharing the branch name does not turn the branch into an ambiguous r
   }
 });
 
-test('seed findings are reported from inside a linked worktree, about the main checkout', () => {
+test('seed findings are reported from inside a linked worktree, about the source checkout', () => {
   const { base, main, git } = seedRepo('stim-doctor-from-worktree-');
   try {
     writeFileSync(join(main, 'README.md'), 'edited\n');
@@ -173,13 +173,13 @@ test('seed findings are reported from inside a linked worktree, about the main c
     writeFileSync(join(main, 'second.txt'), 'tracked\n');
     git('git add second.txt');
     expect(checkMainCheckout(join(base, 'linked'), { platform: 'ios' }).map((entry) => entry.title)).toEqual([
-      'The main checkout has 2 uncommitted tracked changes',
+      'The source checkout has 2 uncommitted tracked changes',
     ]);
     git('git rm -q --cached second.txt');
     rmSync(join(main, 'second.txt'));
 
     const findings = checkMainCheckout(join(base, 'linked'), { platform: 'ios' });
-    expect(findings.map((entry) => entry.title)).toEqual(['The main checkout has 1 uncommitted tracked change']);
+    expect(findings.map((entry) => entry.title)).toEqual(['The source checkout has 1 uncommitted tracked change']);
     expect(findings[0]?.level).toBe('note');
     expect(findings[0]?.detail).toContain('stim worktree warm --refresh');
     expect(findings[0]?.detail).toContain('README.md');
@@ -189,14 +189,14 @@ test('seed findings are reported from inside a linked worktree, about the main c
   }
 });
 
-test('a detached main checkout is reported, and nothing compares its missing branch to the default', () => {
+test('a detached source checkout is reported, and nothing compares its missing branch to the default', () => {
   const { base, main, git } = seedRepo('stim-doctor-detached-');
   try {
     git('git checkout -q --detach HEAD~1');
     git('git worktree add -q -b task ../linked');
 
     const findings = checkMainCheckout(main, { platform: 'ios' });
-    expect(findings.map((entry) => entry.title)).toEqual(['The main checkout has a detached HEAD']);
+    expect(findings.map((entry) => entry.title)).toEqual(['The source checkout has a detached HEAD']);
     expect(findings[0]?.detail).toContain('there is no branch to fast-forward');
     expect(findings[0]?.fix).toBe(`Run \`git -C '${main}' checkout <branch>\`.`);
   } finally {
@@ -204,7 +204,7 @@ test('a detached main checkout is reported, and nothing compares its missing bra
   }
 });
 
-test('a main checkout that is ahead of and behind its upstream is reported as diverged', () => {
+test('a source checkout that is ahead of and behind its upstream is reported as diverged', () => {
   const { base, main, git } = seedRepo('stim-doctor-diverged-');
   try {
     git('git checkout -q -B main HEAD~1');
@@ -212,7 +212,7 @@ test('a main checkout that is ahead of and behind its upstream is reported as di
     git('git worktree add -q -b task ../linked');
 
     const findings = checkMainCheckout(main, { platform: 'ios' });
-    expect(findings.map((entry) => entry.title)).toEqual(['The main checkout has diverged from origin/main']);
+    expect(findings.map((entry) => entry.title)).toEqual(['The source checkout has diverged from origin/main']);
     expect(findings[0]?.detail).toContain('main is 1 ahead of and 1 behind origin/main');
     expect(findings[0]?.detail).toContain('refuses rather than merging or resetting');
     expect(findings[0]?.fix).toBe('Rebase or merge main onto origin/main yourself.');
@@ -230,7 +230,7 @@ test('worktree.defaultBranch outranks origin/HEAD, and neither resolving stays s
     writeFileSync(join(main, '.stim.json'), JSON.stringify({ worktree: { defaultBranch: 'release' } }));
     const configured = checkMainCheckout(main, { platform: 'ios' });
     expect(configured.map((entry) => entry.title)).toEqual([
-      'The main checkout is on main, not the default branch release',
+      'The source checkout is on main, not the default branch release',
     ]);
     expect(configured[0]?.detail).toContain("carries main's dependencies");
     expect(configured[0]?.fix).toContain(`git -C '${main}' checkout release`);
@@ -320,12 +320,12 @@ test('checkMainCheckout filters native warm state and CocoaPods by platform', ()
 
     const ios = checkMainCheckout(project, { platform: 'ios', brokenPods: [], upstream: null });
     expect(ios.map((finding) => finding.title)).toEqual([
-      'The main checkout CocoaPods state is missing',
-      'The main checkout has no iOS warm build output',
+      'The source checkout CocoaPods state is missing',
+      'The source checkout has no iOS warm build output',
     ]);
 
     const android = checkMainCheckout(project, { platform: 'android', brokenPods: [], upstream: null });
-    expect(android.map((finding) => finding.title)).toEqual(['The main checkout has no Android warm build output']);
+    expect(android.map((finding) => finding.title)).toEqual(['The source checkout has no Android warm build output']);
   } finally {
     rmSync(project, { recursive: true, force: true });
   }
@@ -436,7 +436,7 @@ test('checkMainCheckout recognizes non-npm dependency installs', () => {
   }
 });
 
-test('checkMainCheckout reads warm state from the Git main checkout', () => {
+test('checkMainCheckout reads warm state from the repository source checkout', () => {
   resetExecutor();
   const base = mkdtempSync(join(tmpdir(), 'stim-doctor-main-worktree-'));
   const repo = join(base, 'repo');

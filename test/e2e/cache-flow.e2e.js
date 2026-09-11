@@ -222,7 +222,7 @@ test('worktree remove refuses a dirty tree, then removes a clean one and retains
   assert.ok(!Object.keys(projects).some((p) => p.includes('-worktrees')), 'no stray worktree entries remain');
 
   const list = execFileSync('git', ['-C', ctx.repo, 'worktree', 'list'], { encoding: 'utf-8' });
-  assert.ok(!list.includes(ctx.wt1) && !list.includes(ctx.wt2), `only the main checkout remains:\n${list}`);
+  assert.ok(!list.includes(ctx.wt1) && !list.includes(ctx.wt2), `only the source checkout remains:\n${list}`);
   for (const name of ['e2e-wt1', 'e2e-wt2']) {
     const branch = spawnSync('git', ['-C', ctx.repo, 'show-ref', '--verify', '--quiet', `refs/heads/worktree-${name}`]);
     assert.equal(branch.status, 0, `Git-created worktree-${name} branch is retained`);

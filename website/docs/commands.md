@@ -35,9 +35,9 @@ JavaScript edit.
 stim doctor [--platform <ios|android>] [--json] [--fix]
 ```
 
-Inspects the main checkout. It reports missing or stale dependencies, CocoaPods
-state, cache conflicts, device capacity, remote session problems, and a linked
-native library whose Git metadata enters the fingerprint. On a
+Inspects the source checkout. It reports missing or stale dependencies,
+CocoaPods state, cache conflicts, device capacity, remote session problems, and
+a linked native library whose Git metadata enters the fingerprint. On a
 checkout without installed dependencies, it also reports fingerprint
 differences against a fresh worktree. The check is read-only unless `--fix` is
 passed.
@@ -311,22 +311,22 @@ moment, minus its own duration, floored at zero.
 stim worktree warm [--refresh]
 ```
 
-Copies missing ignored entries from the repository's main checkout into the
-current linked worktree. It accepts a current subdirectory. The main checkout
-must be available in the same Git repository; running warm in the main checkout
-refuses.
+Copies missing ignored entries from the repository's source checkout into the
+current linked worktree. It accepts a current subdirectory. The source checkout
+must be available in the same Git repository; running warm in the source
+checkout refuses.
 
-`--refresh` updates the main checkout before the copy: it fetches, fast-forwards
-whatever branch is checked out there, and installs dependencies or Pods when the
-new commits moved a lockfile, when nothing is installed, or when `ios/Pods` does
-not match `ios/Podfile.lock`. See
-[worktree isolation](./worktrees.md#refresh-the-main-checkout-first).
+`--refresh` updates the source checkout before the copy: it fetches,
+fast-forwards whatever branch is checked out there, and installs dependencies or
+Pods when the new commits moved a lockfile, when nothing is installed, or when
+`ios/Pods` does not match `ios/Podfile.lock`. See
+[worktree isolation](./worktrees.md#refresh-the-source-checkout-first).
 
 The branch, tracked files, and existing destination entries stay untouched.
 Existing directories, including `node_modules`, are skipped whole. Eligible
-ignored `.env` and local configuration files are included. The main checkout's
-nonempty `.worktreeexclude` replaces its resolved `worktree.exclude` setting.
-See [worktree isolation](./worktrees.md) for exclusions.
+ignored `.env` and local configuration files are included. The source
+checkout's nonempty `.worktreeexclude` replaces its resolved `worktree.exclude`
+setting. See [worktree isolation](./worktrees.md) for exclusions.
 
 Wait for warm to finish before any other process writes to the destination.
 Concurrent writes are unsafe: files created after the initial existence check
@@ -348,8 +348,8 @@ Reclaims the target environment, build output, port, and owned device. It then
 removes any linked worktree when safe, warmed or not, without requiring a
 Stim registry entry. Git-created branches stay. An existing Stim ownership
 record permits deleting a branch only when it has no unique commits. On the
-main checkout it only reclaims the environment. `--force` permits removal with
-uncommitted, untracked, or unpushed work.
+source checkout it only reclaims the environment. `--force` permits removal
+with uncommitted, untracked, or unpushed work.
 
 ## `gc`
 

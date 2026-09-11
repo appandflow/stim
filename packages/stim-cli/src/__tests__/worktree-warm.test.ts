@@ -213,19 +213,19 @@ test('warm identifies canonical main and linked roots from a symlinked subdirect
   expect(warmWorktreePaths(join(alias, 'ios'))).toEqual({ root, target, common: join(root, '.git') });
 });
 
-test('warm rejects the main checkout and non-repositories without changing them', async () => {
+test('warm rejects the source checkout and non-repositories without changing them', async () => {
   write(root, '.env', 'source env');
   const main = await runWarm(root);
   expect(main.code).toBe(1);
   expect(main.stdout).toEqual([]);
-  expect(main.stderr).toMatch(/linked worktree, not the main checkout/);
+  expect(main.stderr).toMatch(/linked worktree, not the source checkout/);
   process.exitCode = 0;
   const outside = await runWarm(base);
   expect(outside.code).toBe(1);
   expect(outside.stderr).toMatch(/Not a git repository/);
 });
 
-test('warm refuses an unregistered target, missing main checkout, or mismatched Git common directory', () => {
+test('warm refuses an unregistered target, missing source checkout, or mismatched Git common directory', () => {
   const real = getExecutor();
   for (const kind of ['unregistered', 'missing main', 'different common']) {
     setExecutor({

@@ -278,7 +278,7 @@ test('native cleanup preserves registry, checkout, worktree and GC checks', asyn
   const f = fixture(t);
   for (const [field, text, message] of [
     ['status', f.cwd, /status still lists a removed workspace/],
-    ['porcelain', ' M tracked-file', /main checkout is dirty/],
+    ['porcelain', ' M tracked-file', /source checkout is dirty/],
     ['worktrees', `worktree ${f.cwd}\n`, /a worktree registration survived/],
     ['gc', f.cwd, /gc reports one of our workspaces as orphaned/],
   ]) {

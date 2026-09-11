@@ -309,7 +309,7 @@ describe('the stats file', () => {
     expect(existsSync(join(tmpHome, 'config.json'))).toBe(false);
   });
 
-  test('the project key is the app path in the main working tree, canonical', () => {
+  test('the project key is the app path in the source checkout, canonical', () => {
     const repo = realpathSync(mkdtempSync(join(tmpdir(), 'stim-repo-')));
     const worktree = join(repo, 'worktrees', 'agent-1');
 

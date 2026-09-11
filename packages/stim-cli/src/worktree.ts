@@ -46,12 +46,12 @@ export function warmWorktreePaths(cwd: string): { root: string; target: string; 
   if (!currentRoot) throw new Error('Not a git repository.');
   const target = realpathSync(currentRoot);
   if (isMainWorkingTree(target)) {
-    throw new Error('Run stim worktree warm from a linked worktree, not the main checkout.');
+    throw new Error('Run stim worktree warm from a linked worktree, not the source checkout.');
   }
   const entries = listWorktrees(target);
   const current = entries.find((entry) => canonicalPath(entry.path) === target);
   const main = entries.find((entry) => isMainWorkingTree(entry.path));
-  if (!current || !main) throw new Error('Could not identify the linked worktree and its main checkout.');
+  if (!current || !main) throw new Error('Could not identify the linked worktree and its source checkout.');
   const root = realpathSync(main.path);
   const sourceRoot = repoRoot(root);
   const sourceCommon = gitCommonDir(root);
@@ -64,7 +64,7 @@ export function warmWorktreePaths(cwd: string): { root: string; target: string; 
     !targetCommon ||
     realpathSync(sourceCommon) !== realpathSync(targetCommon)
   ) {
-    throw new Error('Could not verify that the main checkout belongs to this linked worktree.');
+    throw new Error('Could not verify that the source checkout belongs to this linked worktree.');
   }
   return { root, target, common: realpathSync(targetCommon) };
 }

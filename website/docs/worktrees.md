@@ -26,14 +26,14 @@ If a harness already created the linked worktree, skip Git creation and run
 
 ## Warm ignored state
 
-Warm uses the repository's main checkout as its source, regardless of either
-branch's `HEAD`. The main checkout must still be available. It copies missing
+Warm copies from the repository's source checkout, regardless of either
+branch's `HEAD`. That checkout must still be available. It copies missing
 ignored entries, including installed dependencies, Pods, native build output,
 `.env`, and local configuration files. APFS clones keep copies space-efficient
 where supported; a normal byte copy is used when cloning is unavailable.
-Copies go directly to the destination with no intermediate staging. Keep main
-and the linked worktree on the same volume to benefit from CoW; `STIM_TMPDIR`
-and `tempDir` do not affect warming.
+Copies go directly to the destination with no intermediate staging. Keep the
+source checkout and the linked worktree on the same volume to benefit from CoW;
+`STIM_TMPDIR` and `tempDir` do not affect warming.
 
 Warm preserves the current branch, tracked files, and every existing
 destination entry, including dangling symlinks. An existing ignored directory
@@ -51,8 +51,8 @@ Stim excludes:
 - Any `.DerivedData` directory.
 - `android/build/generated/autolinking`, including in nested apps, so Gradle
   regenerates paths for the new checkout.
-- Paths matched by main's nonempty `.worktreeexclude`, or its resolved
-  `worktree.exclude` setting when that file is absent or empty.
+- Paths matched by the source checkout's nonempty `.worktreeexclude`, or its
+  resolved `worktree.exclude` setting when that file is absent or empty.
 - Destination paths that overlap a registered nested worktree or have symlink
   ancestors.
 
@@ -61,18 +61,18 @@ lockfile remedies. A failure exits 1; files already copied remain. Inspect
 the named failure before retrying, because a partially copied directory is
 kept on retry. A completed copy does not prove dependencies are installed or
 match the current branch. Install missing dependencies with the project's
-package manager when main has none to copy.
+package manager when the source checkout has none to copy.
 
-## Refresh the main checkout first
+## Refresh the source checkout first
 
-Every worktree is a copy of the main checkout, so a stale main checkout seeds
-stale worktrees. `stim worktree warm --refresh` updates it before the copy:
+Every worktree is a copy of the source checkout, so a stale one seeds stale
+worktrees. `stim worktree warm --refresh` updates it before the copy:
 
 <StimTabs
 code={`stim worktree warm --refresh`}
 />
 
-It fetches the branch's remote, fast-forwards **whatever branch the main
+It fetches the branch's remote, fast-forwards **whatever branch the source
 checkout has** to its `@{upstream}`, and then installs only what the new commits
 moved: the lockfile's own install command where the lockfile lives (the
 repository root in a monorepo), and `pod install` for the app you ran the
@@ -85,8 +85,8 @@ or merge in progress (`STIM_MAIN_DIRTY`), a detached `HEAD`
 (`STIM_MAIN_DIVERGED`) -- and names the git command that clears it. Untracked
 files are not a reason to refuse, a branch with no upstream is left alone, and a
 fetch that fails is reported as a fact while the run continues on local state.
-It never switches branches, merges, or resets. When the main checkout is not on
-the default branch it warns and continues, because the copy then carries that
+It never switches branches, merges, or resets. When the source checkout is not
+on the default branch it warns and continues, because the copy then carries that
 branch's dependencies; set `worktree.defaultBranch` in the repository-root
 `.stim.json` when `origin/HEAD` is missing or wrong.
 
@@ -94,7 +94,7 @@ An install that fails is remembered, and a plain warm reads that before it
 copies. The refresh records the install it completed for the lockfile it read;
 when the last install of the lockfile as it stands now did not finish, a plain
 warm refuses with `STIM_DEPS_INCOMPLETE` and copies nothing, because the
-dependencies in the main checkout are partial and only the refresh's own
+dependencies in the source checkout are partial and only the refresh's own
 terminal ever said so. Run `stim worktree warm --refresh`, which reinstalls for
 the same reason. A record of a different lockfile does not block a copy, and a
 repository with no record copies exactly as it did before.
@@ -137,5 +137,5 @@ It refuses uncommitted, untracked, or unpushed work unless you pass `--force`.
 Git-created branches stay. An existing Stim ownership record permits deleting
 a branch only when it has no unique commits.
 
-On the main checkout, `worktree remove` only reclaims the Stim environment. It
-does not remove the source directory.
+On the source checkout, `worktree remove` only reclaims the Stim environment.
+It does not remove that checkout.

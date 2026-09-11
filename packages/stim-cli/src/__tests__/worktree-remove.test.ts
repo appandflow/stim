@@ -339,7 +339,7 @@ afterEach(() => {
   delete process.env.STIM_HOME;
 });
 
-test('action: on the main checkout, reclaims the environment with the owned device deleted and the tree untouched', async () => {
+test('action: on the source checkout, reclaims the environment with the owned device deleted and the tree untouched', async () => {
   upsertProject(mainDir, {
     metroPort: 8081,
     platforms: { ios: { deviceUdid: 'U9', owned: true, deviceName: 'stim-main' } },
@@ -373,10 +373,10 @@ test('action: on the main checkout, reclaims the environment with the owned devi
   expect(existsSync(workspaceDir(mainDir))).toBe(false);
   expect(readFileSync(join(mainDir, 'keep.txt'), 'utf-8')).toBe('source file');
   expect(![...exec.calls.run, ...exec.calls.runQuiet].some((c) => /worktree remove/.test(c))).toBeTruthy();
-  expect(errs.join('\n')).toMatch(/working tree stays \(it is the main checkout\)/);
+  expect(errs.join('\n')).toMatch(/working tree stays \(it is the source checkout\)/);
 });
 
-test('action: a dirty main checkout still reclaims, without a refusal and without mentioning the dirt', async () => {
+test('action: a dirty source checkout still reclaims, without a refusal and without mentioning the dirt', async () => {
   upsertProject(mainDir, { metroPort: 8084 });
   writeFileSync(join(mainDir, 'uncommitted.txt'), 'not yet committed');
   const exec = makeExecutor({
@@ -406,7 +406,7 @@ test('action: a dirty main checkout still reclaims, without a refusal and withou
   expect(text).toMatch(/working tree stays/);
 });
 
-test('action: --force changes nothing on the main checkout -- reclaim only, tree stays', async () => {
+test('action: --force changes nothing on the source checkout -- reclaim only, tree stays', async () => {
   upsertProject(mainDir, { metroPort: 8085 });
   writeFileSync(join(mainDir, 'keep.txt'), 'source file');
   const exec = makeExecutor({
@@ -432,7 +432,7 @@ test('action: --force changes nothing on the main checkout -- reclaim only, tree
   expect(errs.join('\n')).toMatch(/working tree stays/);
 });
 
-test('action: a failed device teardown on the main checkout keeps the record and exits 1', async () => {
+test('action: a failed device teardown on the source checkout keeps the record and exits 1', async () => {
   upsertProject(mainDir, {
     metroPort: 8086,
     platforms: { ios: { deviceUdid: 'U7', owned: true, deviceName: 'stim-held' } },
@@ -464,7 +464,7 @@ test('action: a failed device teardown on the main checkout keeps the record and
   expect(errs.join('\n')).toMatch(/still tracks/);
 });
 
-test('action: a tunnel verification failure on the main checkout retains its state directory', async () => {
+test('action: a tunnel verification failure on the source checkout retains its state directory', async () => {
   const child = liveUnrelatedProcess();
   upsertProject(mainDir, { label: 'main' });
   writeManagedTunnel(mainDir, child.pid!);
@@ -494,7 +494,7 @@ test('action: a tunnel verification failure on the main checkout retains its sta
   await expect(withManagedTunnelLock(mainDir, async () => true)).resolves.toBe(true);
 });
 
-test('action: main-checkout artifact deletion blocks a concurrent replacement tunnel start', async () => {
+test('action: source-checkout artifact deletion blocks a concurrent replacement tunnel start', async () => {
   upsertProject(mainDir, { label: 'main' });
   ensureWorkspaceStorage(mainDir);
   writeFileSync(workspaceStateFile(mainDir), '{}');
@@ -1347,7 +1347,7 @@ test('action: the dirty-tree remedy names the real worktree, not a placeholder',
   expect(text).toMatch(new RegExp(`git -C ${wtDir} clean -fd`));
 });
 
-test('against a real repo: remove on the main checkout reclaims the environment and leaves the repo intact', async () => {
+test('against a real repo: remove on the source checkout reclaims the environment and leaves the repo intact', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-main-')));
   const repo = join(base, 'repo');
@@ -1382,7 +1382,7 @@ test('against a real repo: remove on the main checkout reclaims the environment 
     expect(execSync('git rev-parse --is-inside-work-tree', { cwd: repo, encoding: 'utf-8' }).trim()).toBe('true');
     expect(existsSync(join(repo, '.stim'))).toBe(true);
     expect(getProject(repo)).toBe(null);
-    expect(errs.join('\n')).toMatch(/working tree stays \(it is the main checkout\)/);
+    expect(errs.join('\n')).toMatch(/working tree stays \(it is the source checkout\)/);
   } finally {
     console.error = originalError;
     console.log = originalLog;

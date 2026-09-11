@@ -81,10 +81,10 @@ code, never on the message.`,
   or the environment. When that lands inside the project, Stim says so in a dim
   note naming which of the two set it; Gemfile.lock is never edited either way.
   \`worktree warm --refresh\` reports the same code for the install it runs in
-  the MAIN CHECKOUT -- the lockfile's own command (\`pnpm install\`,
+  the SOURCE CHECKOUT -- the lockfile's own command (\`pnpm install\`,
   \`yarn install\`, \`bun install\`, \`npm ci\`) or that same pod ladder. The
   message names the command, quotes its last lines, and nothing is copied: fix
-  the main checkout, then warm again.`,
+  the source checkout, then warm again.`,
     },
     STIM_BUILD_FAILED: {
       summary: 'xcodebuild or gradle failed; the two Android APK refusals; a damaged compilation-cache object',
@@ -238,7 +238,7 @@ code, never on the message.`,
   module for this platform is present, then run the command again. Nothing was
   built, installed or removed.
   \`worktree warm --refresh\` refuses for the same reason, because it writes to
-  the main checkout. Plain \`worktree warm\` does NOT: it prints one dim
+  the source checkout. Plain \`worktree warm\` does NOT: it prints one dim
   \`lock        unavailable (...)\` line and copies unsynchronised. A copy only
   reads, so running it with no claim is what it did before the lock existed,
   while refusing it would break a warm that works today -- an unwritable
@@ -867,30 +867,31 @@ not on any remote"  (worktree remove)
   uncommitted and untracked files permanently.`,
     },
     STIM_MAIN_DIRTY: {
-      summary: 'warm --refresh will not move a main checkout with local work or an operation in progress',
+      summary: 'warm --refresh will not move a source checkout with local work or an operation in progress',
       body: () => `STIM_MAIN_DIRTY
-  \`worktree warm --refresh\` writes to the MAIN CHECKOUT, and it refuses one
+  \`worktree warm --refresh\` writes to the SOURCE CHECKOUT, and it refuses one
   it cannot move: tracked files with uncommitted changes (the refusal names
   them), or a rebase or merge in progress. Untracked files are not a reason to
   refuse -- but git itself refuses a fast-forward that would overwrite one, and
   that reports this code too, quoting git. The remedy is the exact line that
-  clears it: commit, \`git -C <main> stash push -u -m warm-refresh\`, or
-  \`git -C <main> rebase --abort\`. Nothing was installed or copied.
-  Plain \`stim worktree warm\` does not care: it copies from a dirty main
-  checkout exactly as it always has.`,
+  clears it: commit, \`git -C <source-checkout> stash push -u -m warm-refresh\`,
+  or \`git -C <source-checkout> rebase --abort\`. Nothing was installed or
+  copied. Plain \`stim worktree warm\` does not care: it copies from a dirty
+  source checkout exactly as it always has.`,
     },
     STIM_MAIN_DETACHED: {
       summary: 'warm --refresh needs a branch to fast-forward, not a detached HEAD',
       body: () => `STIM_MAIN_DETACHED
-  The main checkout's HEAD is detached, so there is no branch to fast-forward
-  and no upstream to fast-forward it to. Run \`git -C <main> checkout <branch>\`
-  and warm again. \`--refresh\` never picks a branch for you; a checkout whose
-  job is to seed worktrees should sit on a branch someone chose.`,
+  The source checkout's HEAD is detached, so there is no branch to fast-forward
+  and no upstream to fast-forward it to. Run
+  \`git -C <source-checkout> checkout <branch>\` and warm again. \`--refresh\`
+  never picks a branch for you; a checkout whose job is to seed worktrees
+  should sit on a branch someone chose.`,
     },
     STIM_MAIN_DIVERGED: {
-      summary: 'the main checkout is both ahead of and behind its upstream; warm --refresh will not merge',
+      summary: 'the source checkout is both ahead of and behind its upstream; warm --refresh will not merge',
       body: () => `STIM_MAIN_DIVERGED
-  The main checkout's branch has commits its upstream does not, AND its
+  The source checkout's branch has commits its upstream does not, AND its
   upstream has commits it does not. A fast-forward is impossible, and
   \`--refresh\` will not merge or reset someone else's checkout to make one:
   that decision is yours. Rebase or merge it yourself, then warm again. The
@@ -899,7 +900,7 @@ not on any remote"  (worktree remove)
     STIM_DEPS_INCOMPLETE: {
       summary: 'the last install recorded for the lockfile on disk now did not finish, so warm will not copy it',
       body: () => `STIM_DEPS_INCOMPLETE
-  \`worktree warm\` refuses to copy dependencies the main checkout never
+  \`worktree warm\` refuses to copy dependencies the source checkout never
   finished installing. \`--refresh\` records a COMPLETED install of the lockfile
   it read under ~/.stim/warm-installs; an install that failed, or whose process
   was killed, leaves that record saying unfinished. A plain warm reads it after
@@ -922,7 +923,7 @@ not on any remote"  (worktree remove)
       body: () => `"Could not warm this worktree: EACCES: permission denied, mkdir
 '<home>/warm-locks/<name>.lock'"  (worktree warm --refresh)
   A STIM_HOME that \`--refresh\` cannot write. The refusal itself is right -- it
-  writes to the main checkout, so it will not run without a claim -- but it
+  writes to the source checkout, so it will not run without a claim -- but it
   carries no \`failed: <CODE>\` line, because EACCES is not a Stim code, and no
   fix line. Make STIM_HOME writable, or set STIM_HOME to somewhere writable,
   then run it again. A plain warm degrades in this state rather than refusing.
@@ -949,9 +950,9 @@ changes nothing  (worktree warm --refresh)
   with empty stdout.
 
 "carry       carried <dir>/Pods does not match the <dir>/Podfile.lock on disk here"
-  Warm copied ignored Pods from main, but their Manifest.lock differs from
-  the tracked Podfile.lock in this worktree. Warm does not change tracked
-  files. Run the printed pod-install command before building directly.
+  Warm copied ignored Pods from the source checkout, but their Manifest.lock
+  differs from the tracked Podfile.lock in this worktree. Warm does not change
+  tracked files. Run the printed pod-install command before building directly.
   \`stim ios\` detects a mismatch and runs \`pod install\` for you.
 
 "carry       carried <dir>/Pods but there is no <dir>/Podfile.lock"
@@ -959,15 +960,15 @@ changes nothing  (worktree warm --refresh)
   pod-install command before building.
 
 "carry       carried dependencies may be stale: they do not match ..."
-  Main's lockfile differs from this branch's lockfile. Run the printed
-  package-manager command before building. A carry whose lockfile matches is
-  silent; the warning means a real difference.
+  The source checkout's lockfile differs from this branch's lockfile. Run the
+  printed package-manager command before building. A carry whose lockfile
+  matches is silent; the warning means a real difference.
 
-  If main has no dependencies to copy, use this project's package manager to
-  install them. Warm does not install dependencies or prove the app is ready,
-  unless \`--refresh\` installed them in the MAIN CHECKOUT first; even then the
-  copy can still carry a lockfile this branch does not have, which is exactly
-  what these carry warnings report.`,
+  If the source checkout has no dependencies to copy, use this project's
+  package manager to install them. Warm does not install dependencies or prove
+  the app is ready, unless \`--refresh\` installed them in the SOURCE CHECKOUT
+  first; even then the copy can still carry a lockfile this branch does not
+  have, which is exactly what these carry warnings report.`,
     },
     environment: {
       summary: 'npx registry E401/E404, the Node floor, no free Metro port, the reservation race',

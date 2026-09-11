@@ -165,7 +165,7 @@ export function depsPlan({
 }
 
 /**
- * Why a copy must not read the main checkout's dependencies: the install recorded for the lockfile as it
+ * Why a copy must not read the source checkout's dependencies: the install recorded for the lockfile as it
  * stands now did not finish, so what is installed there is partial. A record of any other lockfile says
  * nothing about this one, and no record at all is the state of every repository before its first refresh.
  */
@@ -180,7 +180,7 @@ export function incompleteInstallRefusal(root: string, appDir: string): RefreshF
     code: 'STIM_DEPS_INCOMPLETE',
     message: `Refusing to copy from ${dependencies.root}: the last install of ${dependencies.lock} there did not finish, so its dependencies are partial.`,
     lines: [],
-    remedy: `Run \`stim worktree warm --refresh\` to install them in the main checkout -- it reinstalls rather than skipping, because no completed install of this ${dependencies.lock} is recorded -- then warm again.`,
+    remedy: `Run \`stim worktree warm --refresh\` to install them in the source checkout -- it reinstalls rather than skipping, because no completed install of this ${dependencies.lock} is recorded -- then warm again.`,
   };
 }
 
@@ -484,7 +484,7 @@ export async function refreshMainCheckout({
         code: 'STIM_MAIN_DIRTY',
         message: `Refusing to refresh ${root}: git could not fast-forward ${branch} to ${plan.upstream}.`,
         lines: merged.lines,
-        remedy: 'Clear what git reports in the main checkout, then run warm again.',
+        remedy: 'Clear what git reports in the source checkout, then run warm again.',
       };
     }
     head = resolveFullRef(root, 'HEAD') ?? before;

@@ -56,7 +56,7 @@ export function doctorSuccessLines(platform: DoctorPlatform | undefined, stim: S
     ...stimVersionLines(stim),
     '',
     'Project',
-    phaseLine('project', 'main checkout, dependencies, local upstream'),
+    phaseLine('project', 'source checkout, dependencies, local upstream'),
     phaseLine('settings', 'every Stim setting type'),
   ];
 
@@ -161,7 +161,7 @@ export default function doctorCommand(
   program
     .command('doctor')
     .description(
-      'Inspect the main checkout and report project state that can make native worktrees slow or invalid. Read-only unless --fix is passed; --platform filters native findings.',
+      'Inspect the source checkout and report project state that can make native worktrees slow or invalid. Read-only unless --fix is passed; --platform filters native findings.',
     )
     .option('--json', 'print the findings as JSON')
     .option(
@@ -244,7 +244,7 @@ export default function doctorCommand(
 
       console.log(
         chalk.dim(
-          `\n${findings.length} finding(s). Fix relevant "costs time" findings before copying the main checkout into a native worktree.`,
+          `\n${findings.length} finding(s). Fix relevant "costs time" findings before copying the source checkout into a native worktree.`,
         ),
       );
     });

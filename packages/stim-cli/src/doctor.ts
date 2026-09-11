@@ -232,9 +232,9 @@ function seedFindings(mainRoot: string, upstream: UpstreamState | null): Finding
     findings.push(
       finding(
         'note',
-        `The main checkout is ${plural(upstream.behind, 'commit')} behind ${upstream.name}`,
+        `The source checkout is ${plural(upstream.behind, 'commit')} behind ${upstream.name}`,
         'The count uses the locally known upstream ref. A fetch can reveal additional commits. A later rebase or merge can change native inputs and invalidate work done from the older base.',
-        `Run \`stim worktree warm --refresh\` from a linked worktree to fetch and fast-forward the main checkout, or \`git -C ${quotedRoot} fetch --prune\` and inspect the branch yourself.`,
+        `Run \`stim worktree warm --refresh\` from a linked worktree to fetch and fast-forward the source checkout, or \`git -C ${quotedRoot} fetch --prune\` and inspect the branch yourself.`,
       ),
     );
   }
@@ -245,8 +245,8 @@ function seedFindings(mainRoot: string, upstream: UpstreamState | null): Finding
     findings.push(
       finding(
         'note',
-        `The main checkout has a ${operation} in progress`,
-        '`stim worktree warm --refresh` refuses a main checkout it cannot move, and the branch stays where the interrupted operation left it.',
+        `The source checkout has a ${operation} in progress`,
+        '`stim worktree warm --refresh` refuses a source checkout it cannot move, and the branch stays where the interrupted operation left it.',
         `Finish it, or run \`git -C ${quotedRoot} ${operation} --abort\`.`,
       ),
     );
@@ -258,8 +258,8 @@ function seedFindings(mainRoot: string, upstream: UpstreamState | null): Finding
     findings.push(
       finding(
         'note',
-        `The main checkout has ${plural(dirty.length, 'uncommitted tracked change')}`,
-        `\`stim worktree warm --refresh\` refuses a main checkout it cannot move, so the seed stays where it is until this is cleared. First: ${dirty[0]}.`,
+        `The source checkout has ${plural(dirty.length, 'uncommitted tracked change')}`,
+        `\`stim worktree warm --refresh\` refuses a source checkout it cannot move, so the seed stays where it is until this is cleared. First: ${dirty[0]}.`,
         `Commit them, or run \`git -C ${quotedRoot} stash push -u -m warm-refresh\`.`,
       ),
     );
@@ -270,7 +270,7 @@ function seedFindings(mainRoot: string, upstream: UpstreamState | null): Finding
     findings.push(
       finding(
         'note',
-        'The main checkout has a detached HEAD',
+        'The source checkout has a detached HEAD',
         '`stim worktree warm --refresh` refuses: there is no branch to fast-forward.',
         `Run \`git -C ${quotedRoot} checkout <branch>\`.`,
       ),
@@ -282,7 +282,7 @@ function seedFindings(mainRoot: string, upstream: UpstreamState | null): Finding
     findings.push(
       finding(
         'note',
-        `The main checkout has diverged from ${upstream.name}`,
+        `The source checkout has diverged from ${upstream.name}`,
         `${branch} is ${upstream.ahead} ahead of and ${upstream.behind} behind ${upstream.name}, so it cannot fast-forward. \`stim worktree warm --refresh\` refuses rather than merging or resetting.`,
         `Rebase or merge ${branch} onto ${upstream.name} yourself.`,
       ),
@@ -294,7 +294,7 @@ function seedFindings(mainRoot: string, upstream: UpstreamState | null): Finding
     findings.push(
       finding(
         'note',
-        `The main checkout is on ${branch}, not the default branch ${defaultBranch}`,
+        `The source checkout is on ${branch}, not the default branch ${defaultBranch}`,
         `Every worktree warmed from here carries ${branch}'s dependencies. \`stim worktree warm --refresh\` warns and continues; it never switches a branch under another checkout.`,
         `Run \`git -C ${quotedRoot} checkout ${defaultBranch}\`.`,
       ),
@@ -331,7 +331,7 @@ export function checkMainCheckout(
       findings.push(
         finding(
           'cost',
-          'The main checkout has no installed dependencies',
+          'The source checkout has no installed dependencies',
           `A worktree cannot carry dependencies from ${dependencies.root}, so its first build must install them from scratch.`,
           `Run \`${installCommand}\` before creating native worktrees, or let \`stim worktree warm --refresh\` run it from a linked worktree.`,
         ),
@@ -342,7 +342,7 @@ export function checkMainCheckout(
         findings.push(
           finding(
             'cost',
-            'The main checkout dependency tree is stale',
+            'The source checkout dependency tree is stale',
             `npm reports that ${dependencies.root}/node_modules does not match the project dependency graph. Copying it makes each worktree start from the same invalid state.`,
             `Run \`${installCommand}\` before creating native worktrees, or let \`stim worktree warm --refresh\` run it from a linked worktree.`,
           ),
@@ -370,7 +370,7 @@ export function checkMainCheckout(
       findings.push(
         finding(
           'cost',
-          `The main checkout CocoaPods state is ${podsState}`,
+          `The source checkout CocoaPods state is ${podsState}`,
           `ios/Pods cannot be reused safely because its Manifest.lock ${podsState === 'missing' ? 'is absent' : 'does not match ios/Podfile.lock'}.`,
           `Run \`${podCommand}\` before creating native worktrees, or let \`stim worktree warm --refresh\` run it from a linked worktree.`,
         ),
@@ -384,7 +384,7 @@ export function checkMainCheckout(
       findings.push(
         finding(
           'cost',
-          'The main checkout CocoaPods state has broken links',
+          'The source checkout CocoaPods state has broken links',
           `${broken.length} symlink${broken.length === 1 ? '' : 's'} under ios/Pods point to missing files. Worktrees copy these broken links and can fail during compilation. First: ${broken[0]}.`,
           `Run \`${podCommand}\` before creating native worktrees.`,
         ),
@@ -405,8 +405,8 @@ export function checkMainCheckout(
     findings.push(
       finding(
         'note',
-        `The main checkout has no ${coldPlatforms.join(' or ')} warm build output`,
-        'The shared Stim artifact or compilation cache can still be warm. Building the main checkout once gives later native worktrees the strongest warm starting point.',
+        `The source checkout has no ${coldPlatforms.join(' or ')} warm build output`,
+        'The shared Stim artifact or compilation cache can still be warm. Building the source checkout once gives later native worktrees the strongest warm starting point.',
         `When more native worktrees are expected, run \`stim start\`, \`stim ${coldPlatforms[0] === 'iOS' ? 'ios' : 'android'}\`, and \`stim stop\` from ${mainRoot}.`,
       ),
     );

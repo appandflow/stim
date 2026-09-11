@@ -9,11 +9,11 @@ Two workflows share steps 2 through 6.
 
 SINGLE CHECKOUT: work in place, on a branch, in one directory. There is no
 step 1, and step 7 reclaims the environment without deleting the tree, which
-stays because it is the main checkout. That directory is your workspace, and
-no rule here about keeping the main checkout fit as a seed applies to it.
+stays because it is the source checkout. That directory is your workspace, and
+no rule here about keeping the source checkout fit as a seed applies to it.
 
 WORKTREE: the checkout you cloned is a seed. It stays clean and on the default
-branch so every worktree warmed from it starts current. Here the main checkout
+branch so every worktree warmed from it starts current. Here the source checkout
 is infrastructure, not a workspace, and every rule below about its fitness as
 a seed belongs to this workflow.
 
@@ -23,10 +23,11 @@ a seed belongs to this workflow.
   cd ../app-412
   stim worktree warm
 
-  # Warm copies missing ignored state from main; it does not install dependencies.
+  # Warm copies missing ignored state from the source checkout; it does not
+  # install dependencies.
   # In a monorepo, enter the app directory before starting the dev server.
 
-  # Optional: bring the MAIN CHECKOUT up to date first, then copy that.
+  # Optional: bring the SOURCE CHECKOUT up to date first, then copy that.
   stim worktree warm --refresh
     lock        acquired
     checkout    main 3 commits behind origin/main -> fast-forwarded to 9f2c1a3
@@ -346,12 +347,12 @@ result as proof instead of requiring an unrelated screenshot.`,
   Removal works with any linked worktree, whether warmed or not, and does not
   require a Stim registry entry. Git-created branches are kept. An existing
   Stim ownership record permits deleting a branch only when it has no unique
-  commits; otherwise the command reports why it kept it. On the main checkout,
+  commits; otherwise the command reports why it kept it. On the source checkout,
   \`worktree remove\` reclaims only the
   environment -- the same \`device\`, \`lease\` and \`workspace\` lines, ending
   with a sentence instead of a \`removed\` line, because the checkout itself
   is never touched: \`Reclaimed the environment; the working tree stays (it
-  is the main checkout).\`
+  is the source checkout).\`
 
   A GAP BETWEEN HEARTBEATS IS NOT A HANG. Stim runs device tools
   synchronously, so a long \`simctl\`, \`adb\` or copy call holds the timer
@@ -461,10 +462,10 @@ result as proof instead of requiring an unrelated screenshot.`,
       summary:
         'optional cache warm-up, build optimizations, fingerprints, .fingerprintignore, install unchanged, runtime state',
       body: () => `OPTIONAL CACHE WARM-UP FOR REPEATED NATIVE WORK
-  When several native worktrees are coming, build the main checkout once to
+  When several native worktrees are coming, build the source checkout once to
   seed the shared caches before warming the linked worktrees. Skip this extra
   build for one-off or JavaScript-only work. For local simulator or emulator
-  work, run these commands in the main checkout's app directory:
+  work, run these commands in the source checkout's app directory:
 
     stim doctor --platform ios        # or: --platform android
     stim start
@@ -833,15 +834,15 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   not in a flag here.
 
   \`stim worktree warm\` takes one flag, \`--refresh\`. Run it anywhere inside
-  the current linked worktree to copy missing ignored entries from its main
+  the current linked worktree to copy missing ignored entries from its source
   checkout, regardless of either branch's HEAD. Both roots must be registered
-  worktrees of the same Git repository; the main checkout
-  must be available. Running it in the main checkout refuses.
+  worktrees of the same Git repository; the source checkout must be available.
+  Running it in the source checkout refuses.
 
-  \`--refresh\` WRITES TO THE MAIN CHECKOUT before the copy, which is why it
+  \`--refresh\` WRITES TO THE SOURCE CHECKOUT before the copy, which is why it
   is opt-in: it fetches, fast-forwards whatever branch is checked out there to
   its \`@{upstream}\`, and installs what the new commits moved. It refuses a
-  main checkout it cannot move -- uncommitted changes to tracked files or a
+  source checkout it cannot move -- uncommitted changes to tracked files or a
   rebase or merge in progress (STIM_MAIN_DIRTY), a detached HEAD
   (STIM_MAIN_DETACHED), or a branch that is both ahead and behind
   (STIM_MAIN_DIVERGED) -- and each refusal names the git line that clears it.
@@ -908,7 +909,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   overwritten or removed.
 
   Warm copies installed dependencies, Pods, native output, and other ignored
-  paths eligible under the main checkout's Git ignore rules, including .env
+  paths eligible under the source checkout's Git ignore rules, including .env
   and local configuration. The source's nonempty
   .worktreeexclude replaces its resolved worktree.exclude setting. Nested
   registered worktrees, .DerivedData, and android/build/generated/autolinking
@@ -917,14 +918,15 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   overlapping a nested destination worktree or below a symlink ancestor.
 
   Warm copies directly into the destination, without intermediate staging.
-  Keep main and the linked worktree on the same volume to retain copy-on-write
-  cloning where supported. Cross-volume copies require full file data; doctor
-  reports that cost. STIM_TMPDIR and machine tempDir do not affect warming.
+  Keep the source checkout and the linked worktree on the same volume to
+  retain copy-on-write cloning where supported. Cross-volume copies require
+  full file data; doctor reports that cost. STIM_TMPDIR and machine tempDir do
+  not affect warming.
 
   Existing entries, including dangling symlinks, stay untouched. An existing
   ignored directory such as node_modules is skipped WHOLE; missing children are not
   filled in. Warm does not copy tracked changes, switch branches, or build,
-  and it installs dependencies only under \`--refresh\`, in the main checkout. stdout stays empty; stderr reports copied, kept,
+  and it installs dependencies only under \`--refresh\`, in the source checkout. stdout stays empty; stderr reports copied, kept,
   and failed entry counts. A copy failure exits 1 and reports incomplete;
   files copied before a failure remain. Inspect the named failed entry
   before retrying: a partially copied directory will be kept on the retry.
