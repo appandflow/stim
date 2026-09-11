@@ -70,6 +70,10 @@ async function deviceFor(index) {
   owned.add(device.avdName);
   const ready = performance.now();
   const serial = `emulator-${device.consolePort}`;
+  const displaySize = exec.runFile('adb', ['-s', serial, 'shell', 'wm', 'size']);
+  const displayDensity = exec.runFile('adb', ['-s', serial, 'shell', 'wm', 'density']);
+  assert.match(displaySize, /^Physical size: 1080x2400\s*$/);
+  assert.match(displayDensity, /^Physical density: 420\s*$/);
   if (device.adopted) await resetAdoptedAvd(device.avdName, serial, packageName);
   const cleaned = performance.now();
   const installed = installAndroidApp({ serial, apkPath, packageName });
@@ -79,6 +83,8 @@ async function deviceFor(index) {
     name: device.avdName,
     systemImage: device.systemImage,
     adopted: Boolean(device.adopted),
+    displaySize,
+    displayDensity,
     prepareMs: Math.round(ready - started),
     cleanupMs: Math.round(cleaned - ready),
     installMs: Math.round(finished - cleaned),

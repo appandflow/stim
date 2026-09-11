@@ -101,7 +101,10 @@ KEYS STIM READS
                         -- the sdkmanager package id the owned AVD is created
                         from. The \`--system-image\` flag overrides this per
                         invocation, and an id this SDK has not installed is
-                        STIM_BAD_ARG with the installed ids printed
+                        STIM_BAD_ARG with the installed ids printed.
+                        New AVDs use the Pixel 6 hardware profile (1080x2400,
+                        420 dpi). Existing AVDs keep their display settings;
+                        parked AVDs from the old generic profile are not adopted.
   android.dataPartitionSizeGb
                         whole GiB for a newly created owned AVD's data
                         partition. Defaults to 8; accepts 6 through 16384.
