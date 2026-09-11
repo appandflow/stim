@@ -319,9 +319,9 @@ function fitSimName(label: string, { model, runtime }: SimModel, suffix = '', pr
   return `stim-${shortLabel} (${shortModel} ${version})${suffix}`;
 }
 
-export function ownedSimName(label: string, model: SimModel = { model: null, runtime: null }): string {
+export function ownedSimName(label: string, model: SimModel = { model: null, runtime: null }, suffix = ''): string {
   const clean = sanitizeDeviceLabel(label);
-  return fitSimName(clean.startsWith('stim-') ? clean.slice('stim-'.length) : clean, model);
+  return fitSimName(clean.startsWith('stim-') ? clean.slice('stim-'.length) : clean, model, suffix);
 }
 
 export function parkedSimName(udid: string, model: SimModel): string {
@@ -357,10 +357,10 @@ export function resolveIosCreation({
 
 export function createOwnedIosSim(
   label: string,
-  { deviceType, runtime }: { deviceType?: string; runtime?: string } = {},
+  { deviceType, runtime, suffix = '' }: { deviceType?: string; runtime?: string; suffix?: string } = {},
   choice: IosCreationChoice = resolveIosCreation({ deviceType, runtime }),
 ): { udid: string; name: string; deviceType: string | null; runtime: string | null } {
-  const name = ownedSimName(label, { model: choice.deviceType, runtime: choice.runtime });
+  const name = ownedSimName(label, { model: choice.deviceType, runtime: choice.runtime }, suffix);
   const udid = getExecutor().run(`xcrun simctl create "${name}" "${choice.deviceTypeId}" "${choice.runtimeId}"`).trim();
   return { udid, name, deviceType: choice.deviceType, runtime: choice.runtime };
 }

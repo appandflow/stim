@@ -17,6 +17,8 @@ import { allConsolePortsAndSerials, getProject, setDevice, upsertProject } from 
 import type { DeviceRecord } from '../types.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { parkSim, readParked } from '../sim-pool.ts';
+import { workspaceId } from '../paths.ts';
+import { ownedSimName } from '../sim/ios.ts';
 import { makeAdbDevices, makeChildProcess, makeConfig, makeExitingChild, makeIosSim } from './_factories.ts';
 
 type SimEntry = {
@@ -619,7 +621,88 @@ function iosExecutor(devices: SimEntry[]) {
 }
 
 describe('ensureOwnedDevice: ios', () => {
-  test('adopts a matching parked simulator and resets it inside the deferred boot', async () => {
+  test('concurrent allocations disambiguate names after truncation and preserve the suffix on reuse', async () => {
+    const roots = [projectDir(), projectDir()];
+    const label = 'same-worktree-name-'.repeat(5);
+    const { exec } = iosExecutor([]);
+    let nextUdid = 0;
+    setExecutor({
+      ...exec,
+      run(cmd: string) {
+        if (cmd.includes('simctl create')) return `CREATED-${++nextUdid}`;
+        return exec.run(cmd);
+      },
+    });
+    try {
+      const devices = await Promise.all(
+        roots.map((root) =>
+          ensureOwnedDevice({
+            platform: 'ios',
+            projectPath: root,
+            label,
+            settings: {},
+          }),
+        ),
+      );
+      await Promise.all(devices.map((device) => device.booting?.done));
+      expect(devices[0]?.deviceName).toBe(ownedSimName(label, { model: 'iPhone 17 Pro', runtime: '26.2' }));
+      expect(devices[1]?.deviceName).not.toBe(devices[0]?.deviceName);
+      expect(devices[1]?.deviceName).toContain(` ${workspaceId(roots[1]!)}`);
+      for (const device of devices) expect(device.deviceName!.length).toBeLessThanOrEqual(60);
+      const listed = devices.map((device) => ({
+        udid: device.deviceUdid!,
+        name: device.deviceName!,
+        state: 'Booted',
+        isAvailable: true,
+        deviceTypeIdentifier: TYPE_17_PRO.identifier,
+      }));
+      const reuse = iosExecutor(listed);
+      setExecutor(reuse.exec);
+      const second = await ensureOwnedDevice({
+        platform: 'ios',
+        projectPath: roots[1]!,
+        project: getProject(roots[1]!),
+        label,
+        settings: {},
+      });
+      expect(second.deviceName).toBe(devices[1]?.deviceName);
+      expect(reuse.files.some((call) => call.includes('rename'))).toBe(false);
+    } finally {
+      for (const root of roots) rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test.each(['unavailable', 'parked'])('creation avoids a name held by a %s simulator', async (source) => {
+    const root = projectDir();
+    const name = 'stim-app (iPhone 17 Pro 26.2)';
+    try {
+      if (source === 'parked')
+        parkSim({
+          platform: 'ios',
+          projectPath: root,
+          max: 1,
+          record: {
+            udid: 'OTHER',
+            name,
+            deviceTypeIdentifier: TYPE_16.identifier,
+            runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-2',
+            parkedAt: '2026-09-01T10:00:00.000Z',
+            simslimManaged: false,
+          },
+        });
+      const { exec } = iosExecutor(
+        source === 'unavailable' ? [{ udid: 'OTHER', name, state: 'Shutdown', isAvailable: false }] : [],
+      );
+      setExecutor(exec);
+      const device = await ensureOwnedDevice({ platform: 'ios', projectPath: root, label: 'app', settings: {} });
+      await device.booting?.done;
+      expect(device.deviceName).toBe(`${name} ${workspaceId(root)}`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test.each([false, true])('adopts and resets a matching parked simulator (name collision: %s)', async (collision) => {
     const root = projectDir();
     process.env.STIM_POOL_IOS_PARKED_MAX = '3';
     try {
@@ -637,7 +720,7 @@ describe('ensureOwnedDevice: ios', () => {
           cacheKey: 'fingerprint-debug-sim',
         },
       });
-      const { run, files, exec } = iosExecutor([
+      const devices = [
         {
           udid: 'U1',
           name: 'stim-parked (iPhone 17 Pro 26.2) u1',
@@ -645,7 +728,17 @@ describe('ensureOwnedDevice: ios', () => {
           isAvailable: true,
           deviceTypeIdentifier: TYPE_17_PRO.identifier,
         },
-      ]);
+      ];
+      if (collision)
+        devices.push({
+          udid: 'OTHER',
+          name: 'stim-app (iPhone 17 Pro 26.2)',
+          state: 'Booted',
+          isAvailable: true,
+          deviceTypeIdentifier: TYPE_17_PRO.identifier,
+        });
+      const name = `stim-app (iPhone 17 Pro 26.2)${collision ? ` ${workspaceId(root)}` : ''}`;
+      const { run, files, exec } = iosExecutor(devices);
       setExecutor(exec);
       const device = await ensureOwnedDevice({
         platform: 'ios',
@@ -656,14 +749,14 @@ describe('ensureOwnedDevice: ios', () => {
       });
       expect(device).toMatchObject({
         deviceUdid: 'U1',
-        deviceName: 'stim-app (iPhone 17 Pro 26.2)',
+        deviceName: name,
         adopted: true,
         adoptionPending: true,
         parkedCacheKey: 'fingerprint-debug-sim',
       });
       expect(readParked('ios')).toEqual([]);
       expect(run).toContain('xcrun simctl boot U1');
-      expect(files).toContainEqual(['xcrun', 'simctl', 'rename', 'U1', 'stim-app (iPhone 17 Pro 26.2)']);
+      expect(files).toContainEqual(['xcrun', 'simctl', 'rename', 'U1', name]);
       expect(files.some((call) => call.includes('privacy'))).toBe(false);
       await device.booting?.done;
       expect(files).toContainEqual(['xcrun', 'simctl', 'privacy', 'U1', 'reset', 'all']);
