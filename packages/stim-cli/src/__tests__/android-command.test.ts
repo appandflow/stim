@@ -5193,18 +5193,99 @@ test('CAS Release builds skip the legacy Expo provider that cannot key compiler 
   expect(h.calls.storeCached[0]?.[1]).toMatch(/apple-cas-/);
 });
 
-test('an unavailable CAS manifest returns one JSON refusal before device or build work', async () => {
+function writeMachineOptimizations(optimizations: Record<string, unknown>): string {
+  const file = join(home, 'config.json');
+  const current = existsSync(file) ? JSON.parse(readFileSync(file, 'utf-8')) : { version: 2, projects: {}, repos: {} };
+  writeFileSync(file, JSON.stringify({ ...current, optimizations }));
+  return file;
+}
+
+const CCACHE_SETUP = {
+  dir: '/ccache',
+  statsLog: '/ccache/stats.log',
+  env: { CMAKE_CXX_COMPILER_LAUNCHER: '/opt/homebrew/bin/ccache' },
+};
+
+test('a CAS toolchain that is gone builds with ccache and says so once', async () => {
+  const missing = join(home, 'missing-toolchain.json');
+  const file = writeMachineOptimizations({ android: { compilerCache: 'cas', casToolchain: missing } });
+  const options: Record<string, unknown>[] = [];
+  const h = harness({
+    ccacheFor: () => CCACHE_SETUP,
+    build: async (_args: BuildArgs = {}, opts: Record<string, unknown> = {}) => {
+      options.push(opts);
+      return { ok: true, apkPath: fakeApk(), durationMs: 1 };
+    },
+  });
+  expect((await h.run()).ok).toBe(true);
+  expect(options[0]).toMatchObject({ cas: null, ccache: CCACHE_SETUP, compilerCacheDisabled: false });
+  const warnings = h.stderr.filter((line) => line.includes('optimizations.android.casToolchain'));
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]).toBe(
+    `  cache       Warning: optimizations.android.casToolchain in ${file} could not be read: ` +
+      `ENOENT: no such file or directory, open '${missing}'. Android builds use ccache.`,
+  );
+  expect(h.calls.storeCached[0]?.[1]).not.toMatch(/apple-cas-/);
+});
+
+test('a CAS selection with no toolchain at all falls back instead of refusing', async () => {
+  const file = writeMachineOptimizations({ android: { compilerCache: 'cas' } });
+  const options: Record<string, unknown>[] = [];
+  const h = harness({
+    ccacheFor: () => CCACHE_SETUP,
+    build: async (_args: BuildArgs = {}, opts: Record<string, unknown> = {}) => {
+      options.push(opts);
+      return { ok: true, apkPath: fakeApk(), durationMs: 1 };
+    },
+  });
+  expect((await h.run()).ok).toBe(true);
+  expect(options[0]).toMatchObject({ cas: null, ccache: CCACHE_SETUP });
+  expect(h.stderr.filter((line) => line.includes('Warning: optimizations.android.compilerCache'))).toEqual([
+    `  cache       Warning: optimizations.android.compilerCache in ${file} is "cas", but no ` +
+      'optimizations.android.casToolchain or STIM_ANDROID_CAS_TOOLCHAIN names the toolchain manifest. ' +
+      'Android builds use ccache.',
+  ]);
+});
+
+test('a disabled compiler cache keeps a dead toolchain key inert and never claims ccache', async () => {
+  writeMachineOptimizations({ android: { compilerCache: 'none', casToolchain: join(home, 'gone.json') } });
+  const options: Record<string, unknown>[] = [];
+  const h = harness({
+    ccacheFor: never('ccache setup'),
+    build: async (_args: BuildArgs = {}, opts: Record<string, unknown> = {}) => {
+      options.push(opts);
+      return { ok: true, apkPath: fakeApk(), durationMs: 1 };
+    },
+  });
+  expect((await h.run()).ok).toBe(true);
+  expect(options[0]).toMatchObject({ cas: null, ccache: null, compilerCacheDisabled: true });
+  expect(h.stderr.filter((line) => line.includes('ccache'))).toEqual([
+    '  cache       compilation cache unavailable; no C++ compile went through ccache',
+  ]);
+});
+
+test('a toolchain path that is not absolute reports the backend the build actually uses', async () => {
+  const file = writeMachineOptimizations({ android: { compilerCache: 'none', casToolchain: 'relative.json' } });
+  const h = harness({ ccacheFor: never('ccache setup') });
+  expect((await h.run()).ok).toBe(true);
+  expect(h.stderr.filter((line) => line.includes('Warning: optimizations.android.casToolchain'))).toEqual([
+    `  cache       Warning: optimizations.android.casToolchain in ${file} is "relative.json", which is not an ` +
+      'absolute path to a toolchain JSON manifest. Android builds use no compiler cache, because ' +
+      'optimizations.android.compilerCache is "none".',
+  ]);
+});
+
+test('an unusable CAS manifest in the environment falls back without naming a config file', async () => {
   const previous = process.env.STIM_ANDROID_CAS_TOOLCHAIN;
-  process.env.STIM_ANDROID_CAS_TOOLCHAIN = join(home, 'missing-toolchain.json');
+  const missing = join(home, 'missing-toolchain.json');
+  process.env.STIM_ANDROID_CAS_TOOLCHAIN = missing;
   try {
-    const h = harness({ json: true, ensureDevice: never('device setup'), build: never('build') });
-    const result = await h.run();
-    expect(result.ok).toBe(false);
-    expect(h.stdout).toHaveLength(1);
-    expect(JSON.parse(h.stdout[0]!)).toMatchObject({
-      code: 'STIM_BAD_ARG',
-      message: expect.stringContaining('Could not configure Android build'),
-    });
+    const h = harness({ ccacheFor: () => CCACHE_SETUP });
+    expect((await h.run()).ok).toBe(true);
+    expect(h.stderr.filter((line) => line.includes('STIM_ANDROID_CAS_TOOLCHAIN'))).toEqual([
+      '  cache       Warning: STIM_ANDROID_CAS_TOOLCHAIN in the environment could not be read: ' +
+        `ENOENT: no such file or directory, open '${missing}'. Android builds use ccache.`,
+    ]);
   } finally {
     if (previous === undefined) delete process.env.STIM_ANDROID_CAS_TOOLCHAIN;
     else process.env.STIM_ANDROID_CAS_TOOLCHAIN = previous;

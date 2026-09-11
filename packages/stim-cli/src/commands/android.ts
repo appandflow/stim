@@ -2,7 +2,9 @@ import { parkedMaxSetting } from '../sim-pool.ts';
 import {
   resolveOptimizations,
   artifactCachePolicy,
+  compilerCacheFallbackMessage,
   optimizationBuildProfile,
+  type CompilerCacheFallback,
   type Optimizations,
 } from '../optimizations.ts';
 import { join } from 'node:path';
@@ -39,6 +41,7 @@ import {
   publicUrlSetting,
   remoteAndroidSetting,
   remoteDeviceSettingError,
+  settingFile,
   settingShapeErrors,
   tunnelModeSetting,
   unknownSettingKeys,
@@ -214,6 +217,46 @@ interface AndroidCommandOptions {
 }
 
 const FALLBACK_LINES = 5;
+
+interface SettingsContext {
+  projectPath: string;
+  gitCommonDir: string | null;
+  repoRoot: string | null;
+}
+
+function androidCompilerCache({
+  root,
+  optimizations,
+  settingsContext,
+}: {
+  root: string;
+  optimizations: Optimizations;
+  settingsContext: SettingsContext;
+}): { cas: ReturnType<typeof resolveAndroidCas>; optimizations: Optimizations; warning: string | null } {
+  let cas: ReturnType<typeof resolveAndroidCas> = null;
+  let resolved = optimizations;
+  let fallback: CompilerCacheFallback | null = optimizations.android.compilerCacheFallback;
+  if (resolved.android.compilerCache === 'cas') {
+    try {
+      cas = resolveAndroidCas(root, { ...process.env, STIM_ANDROID_CAS_TOOLCHAIN: resolved.android.casToolchain! });
+    } catch (error) {
+      const fromEnvironment = Boolean(process.env.STIM_ANDROID_CAS_TOOLCHAIN);
+      fallback = {
+        key: fromEnvironment ? 'STIM_ANDROID_CAS_TOOLCHAIN' : 'optimizations.android.casToolchain',
+        reason: `could not be read: ${(error as Error).message}`,
+        fromEnvironment,
+      };
+      resolved = { ...resolved, android: { ...resolved.android, compilerCache: 'ccache' } };
+    }
+  }
+  if (!fallback) return { cas, optimizations: resolved, warning: null };
+  const message = compilerCacheFallbackMessage({
+    fallback,
+    compilerCache: resolved.android.compilerCache === 'none' ? 'none' : 'ccache',
+    file: settingFile(settingsContext, fallback.key),
+  });
+  return { cas, optimizations: resolved, warning: `Warning: ${message}` };
+}
 
 export default function androidCommand(program: Command): void {
   registerAndroid(program);
@@ -741,16 +784,15 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     out(phaseLine('setting', chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`)));
   }
   let optimizations: Optimizations;
-  let cas: ReturnType<typeof resolveAndroidCas>;
   try {
     optimizations = resolveOptimizations(settings);
-    cas =
-      optimizations.android.compilerCache === 'cas'
-        ? resolveAndroidCas(root, { ...process.env, STIM_ANDROID_CAS_TOOLCHAIN: optimizations.android.casToolchain! })
-        : null;
   } catch (error) {
     return fail('STIM_BAD_ARG', `Could not configure Android build: ${(error as Error).message}`, SETTING_SHAPE_REMEDY);
   }
+  const compilerCache = androidCompilerCache({ root, optimizations, settingsContext });
+  const cas = compilerCache.cas;
+  optimizations = compilerCache.optimizations;
+  if (compilerCache.warning) out(phaseLine('cache', chalk.yellow(compilerCache.warning)));
   const buildProfile = optimizationBuildProfile('android', optimizations);
   const cacheProviderConfig = resolveCacheProvider(settingsContext);
   const cacheProviderError = cacheProviderSettingError(settings);

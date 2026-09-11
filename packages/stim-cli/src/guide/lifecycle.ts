@@ -619,7 +619,11 @@ on macOS. STIM_ANDROID_CAS_TOOLCHAIN also selects CAS in auto mode. It retains
 PCH and replaces the ccache setup for that invocation.
 Compiler results live under $STIM_HOME/android-cas/<toolchain-id>; APK cache
 keys include that ID. This is a development prototype requiring a compatible
-linker and NDK copy, not an automatically installed backend. See
+linker and NDK copy, not an automatically installed backend. Because the
+manifest lives outside the repository it can rot: when it is missing,
+unreadable, or not an absolute path, the build warns once naming the setting and
+the file it came from, then compiles through the cache the selection leaves --
+ccache, or none when compilerCache is none. It never refuses. See
 https://stim.appandflow.com/docs/android-cas for setup, evidence, and limits.
 Compiler/PCH modes have separate generated directories under each module's
 .cxx/stim-<profile> (or custom staging root). Switching modes in Stim selects

@@ -132,7 +132,9 @@ node /absolute/stim-checkout/packages/stim-cli/dist/cli.mjs android --variant re
 node /absolute/stim-checkout/packages/stim-cli/dist/cli.mjs stop
 ```
 
-The manifest selects the experimental backend. Compiler remarks and timings
+The manifest selects the experimental backend. When it is gone, unreadable, or
+not an absolute path, the build warns once and compiles through ccache instead of
+refusing, and `stim doctor` reports the setting as a note. Compiler remarks and timings
 are recorded in `compiler.jsonl` under the workspace's `android-cas/<id>`
 state directory. CAS results live under `$STIM_HOME/android-cas/<id>`. The
 tool binaries, manifest, NDK version, adapter, and shims contribute to the ID;
