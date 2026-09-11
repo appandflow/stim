@@ -2934,7 +2934,8 @@ describe('--delete against a claim taken while gc is deleting', { timeout: 60_00
         "  if (Date.now() > deadline) throw new Error('never acquired the claim');",
         '  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);',
         '}',
-        'fs.writeFileSync(acquired, JSON.stringify(got.acquired));',
+        "fs.writeFileSync(acquired + '.tmp', JSON.stringify(got.acquired));",
+        "fs.renameSync(acquired + '.tmp', acquired);",
         'waitForFile(proceed);',
       ].join('\n'),
     );
