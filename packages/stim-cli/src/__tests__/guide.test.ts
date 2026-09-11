@@ -233,6 +233,7 @@ test('current guides require completed warming and leave worktree creation to Gi
   const body = allBodies().join('\n');
   expect(body).toContain('git worktree add');
   expect(body).toContain('stim worktree warm');
+  expect(body).toContain('stim worktree warm --refresh');
   expect(body).toContain('stim worktree remove');
   for (const guide of [renderTopic('agent'), renderSection('lifecycle', 'options')]) {
     expect(guide).toContain('Wait for warm to exit successfully (exit code 0)');
@@ -246,7 +247,14 @@ test('current guides require completed warming and leave worktree creation to Gi
 test('the errors topic documents every code the engine can emit under a command', () => {
   const body = renderTopic('errors');
   assert(body);
-  const sources = ['config.ts', 'engine/workspace-process-lock.ts', 'engine/build-slots.ts', 'engine/device-remote.ts']
+  const sources = [
+    'config.ts',
+    'engine/workspace-process-lock.ts',
+    'engine/build-slots.ts',
+    'engine/device-remote.ts',
+    'engine/warm-claim.ts',
+    'worktree-refresh.ts',
+  ]
     .map((f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8'))
     .join('\n');
   const codes = new Set(
@@ -266,6 +274,28 @@ test('the errors topic documents both codes the ownership-claim primitive raises
     expect(body).toContain(code);
     expect(sectionLookup('errors')[code]).toBeDefined();
   }
+});
+
+test('the rendered guide carries the warm --refresh contract, not just its source', () => {
+  const options = renderSection('lifecycle', 'options');
+  assert(options);
+  expect(options).toMatch(/--refresh.*WRITES TO THE MAIN CHECKOUT/s);
+  expect(options).toContain('never switches branches');
+  expect(options).toContain('keyed on the repository root');
+  expect(options).toMatch(/worktree warm {4}--refresh/);
+  expect(renderTopic('settings')).toContain('worktree.defaultBranch');
+  for (const code of ['STIM_MAIN_DIRTY', 'STIM_MAIN_DETACHED', 'STIM_MAIN_DIVERGED']) {
+    const section = renderSection('errors', code);
+    assert(section);
+    expect(section).toContain(code);
+    expect(renderTopic('errors')).toContain(code);
+  }
+  expect(renderSection('errors', 'STIM_LOCK_TIMEOUT')).toContain('warm-locks');
+  // The refusal is on the unflagged path, so the plain-warm contract has to name it where a waiter looks.
+  expect(options).toContain('STIM_DEPS_INCOMPLETE');
+  expect(renderSection('errors', 'STIM_DEPS_INCOMPLETE')).toContain('warm-installs');
+  expect(renderSection('errors', 'warm')).toContain('appandflow/stim#696');
+  expect(options).toContain('appandflow/stim#696');
 });
 
 test('the settings topic documents every supported setting key', () => {

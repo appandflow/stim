@@ -16,7 +16,9 @@ stim worktree warm here instead of creating another one. It copies missing
 ignored paths from the main checkout, including eligible .env and local
 configuration files. It preserves the branch, tracked files, and every existing
 destination entry; existing ignored directories are skipped whole, not filled in.
-Read guide lifecycle options for exclusions and incomplete-copy remedies.
+Add --refresh to fast-forward the main checkout and install what moved there
+before the copy; it refuses a main checkout with local work and never switches
+branches. Read guide lifecycle options for exclusions and incomplete-copy remedies.
 
 Wait for warm to exit successfully (exit code 0) before running stim start,
 stim ios, stim android, or a dependency install in that worktree. If the shell

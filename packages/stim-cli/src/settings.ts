@@ -73,6 +73,7 @@ const SETTING_SHAPES: Record<string, SettingShape> = {
   'metro.ngrokUrl': 'string',
   'metro.publicUrl': 'string',
   'worktree.exclude': 'strings',
+  'worktree.defaultBranch': 'string',
   'cache.provider': 'string',
   'cache.options': 'object',
   caches: 'strings',

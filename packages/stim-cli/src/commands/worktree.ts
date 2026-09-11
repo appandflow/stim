@@ -1,16 +1,36 @@
 import { existsSync, realpathSync } from 'fs';
-import { basename, dirname, resolve } from 'path';
+import { basename, dirname, isAbsolute, relative, resolve } from 'path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, plural, releasedLeaseFact, shortUdid } from '../command-output.ts';
-import { resolveSettings, SETTING_SHAPE_REMEDY, settingShapeErrors, unknownSettingKeys } from '../settings.ts';
+import {
+  resolveSettings,
+  SETTING_SHAPE_REMEDY,
+  settingShapeErrors,
+  unknownSettingKeys,
+  type SettingsObject,
+} from '../settings.ts';
 import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } from '../config.ts';
 import type { ReleasedLease } from '../engine/device-lease.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
+import { findProjectRoot } from '../project.ts';
 import { reclaimProject } from '../reclaim.ts';
+import { claimFailure } from '../ownership-claim.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../sim-pool.ts';
 import type { ParkedDevice } from '../teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
+import {
+  acquireWarmClaim,
+  warmClaimAcquiredLine,
+  warmClaimBlockedLine,
+  warmClaimBlockedRefusal,
+  warmClaimBlocker,
+  warmClaimDegradation,
+  warmClaimUnavailableLine,
+  withWarmClaim,
+  type WarmClaimWait,
+} from '../engine/warm-claim.ts';
+import { incompleteInstallRefusal, refreshMainCheckout, type RefreshFailure } from '../worktree-refresh.ts';
 import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
 import {
   branchExists,
@@ -79,46 +99,138 @@ function reportCarriedStateHealth(root: string, target: string, copied: string[]
   }
 }
 
+function reportRefreshFailure(failure: RefreshFailure): void {
+  console.error(chalk.red(failure.message));
+  for (const line of failure.lines) console.error(chalk.dim(`  ${line}`));
+  if (failure.remedy) console.error(chalk.dim(failure.remedy));
+  console.error(chalk.red(`failed: ${failure.code}`));
+  process.exitCode = 1;
+}
+
+function mainCheckoutAppDir(root: string, target: string): string {
+  const app = findProjectRoot(process.cwd());
+  if (!app) return root;
+  const rel = relative(target, app);
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return root;
+  return resolve(root, rel);
+}
+
 export function registerWarm(worktree: Command): void {
   worktree
     .command('warm')
     .description('Copy missing ignored paths from the main checkout into the current linked worktree.')
-    .action(() => {
+    .option(
+      '--refresh',
+      'Before copying, fast-forward the main checkout to its upstream and install what the new commits moved.',
+    )
+    .action(async (opts: { refresh?: boolean }) => {
       try {
         const { root, target, common } = warmWorktreePaths(process.cwd());
-        const settings = resolveSettings({ gitCommonDir: common, repoRoot: root }) as WorktreeSettings;
-        const shapeErrors = settingShapeErrors(settings);
-        if (shapeErrors.length) {
-          for (const message of shapeErrors) console.error(chalk.red(message));
-          console.error(chalk.dim(SETTING_SHAPE_REMEDY));
-          process.exitCode = 1;
-          return;
+        const readSettings = (): SettingsObject | null => {
+          const settings = resolveSettings({ gitCommonDir: common, repoRoot: root });
+          const shapeErrors = settingShapeErrors(settings);
+          if (shapeErrors.length) {
+            for (const message of shapeErrors) console.error(chalk.red(message));
+            console.error(chalk.dim(SETTING_SHAPE_REMEDY));
+            return null;
+          }
+          for (const key of unknownSettingKeys(settings)) {
+            console.error(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
+          }
+          return settings;
+        };
+        if (opts.refresh) {
+          const settings = readSettings();
+          if (!settings) {
+            process.exitCode = 1;
+            return;
+          }
+          const failure = await withWarmClaim(
+            { repositoryRoot: root, phase: 'refresh', out: console.error },
+            (hold) => {
+              console.error(warmClaimAcquiredLine(hold.wait));
+              return refreshMainCheckout({
+                root,
+                appDir: mainCheckoutAppDir(root, target),
+                settings,
+                emit: (line) => console.error(line),
+                installer: hold.installer,
+              });
+            },
+          );
+          if (failure) {
+            reportRefreshFailure(failure);
+            return;
+          }
         }
-        for (const key of unknownSettingKeys(settings)) {
-          console.error(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
+        const copy = (wait: WarmClaimWait | null): void => {
+          if (wait?.holder) console.error(warmClaimAcquiredLine(wait));
+          const incomplete = incompleteInstallRefusal(root, mainCheckoutAppDir(root, target));
+          if (incomplete) {
+            reportRefreshFailure(incomplete);
+            return;
+          }
+          // Read under the lock: a refresh that landed while this copy waited can have
+          // brought in a new repository-root .stim.json.
+          const settings = readSettings();
+          if (!settings) {
+            process.exitCode = 1;
+            return;
+          }
+          const excluded = readWorktreeExclude(root);
+          const patterns = excluded?.length ? excluded : (settings as WorktreeSettings).worktree?.exclude || [];
+          const result = cloneIgnoredEntries({ root, target, patterns });
+          for (const entry of result.skipped) {
+            console.error(chalk.dim(phaseLine('carry', `kept ${entry.file} (${entry.reason})`)));
+          }
+          for (const entry of result.failed) {
+            console.error(chalk.yellow(phaseLine('carry', `could not copy ${entry.file}: ${entry.error}`)));
+          }
+          if (result.copied.length) {
+            console.error(chalk.dim(phaseLine('carry', `copied ${carriedFileList(result.copied)} from ${root}`)));
+            reportCarriedStateHealth(root, target, result.copied);
+          }
+          console.error(
+            phaseLine(
+              'carry',
+              `${result.failed.length ? 'incomplete' : 'complete'}: ${result.copied.length} ignored entries copied, ${result.skipped.length} kept, ${result.failed.length} failed`,
+            ),
+          );
+          if (result.failed.length) process.exitCode = 1;
+        };
+        // Only the acquisition degrades: an error from the copy itself is not a claim that could not
+        // be recorded, and must not start a second copy.
+        let hold = null;
+        try {
+          hold = await acquireWarmClaim({ repositoryRoot: root, phase: 'copy', out: console.error });
+        } catch (error) {
+          const degraded = opts.refresh ? null : warmClaimDegradation(error);
+          if (degraded === null) throw error;
+          // Copying unsynchronised is what warm did before the claim existed -- but what came before held
+          // no refresh either. Reading the claim set classifies without writing anything and without
+          // refusing, so even a copy that cannot record a claim can see the one state it must not overlap.
+          const blocker = warmClaimBlocker(root);
+          if (blocker) {
+            console.error(chalk.dim(warmClaimBlockedLine(degraded, blocker)));
+            console.error(chalk.red(warmClaimBlockedRefusal(blocker)));
+            throw error;
+          }
+          console.error(chalk.dim(warmClaimUnavailableLine(degraded)));
         }
-        const excluded = readWorktreeExclude(root);
-        const patterns = excluded?.length ? excluded : settings.worktree?.exclude || [];
-        const result = cloneIgnoredEntries({ root, target, patterns });
-        for (const entry of result.skipped) {
-          console.error(chalk.dim(phaseLine('carry', `kept ${entry.file} (${entry.reason})`)));
+        if (!hold) copy(null);
+        else {
+          try {
+            copy(hold.wait);
+          } finally {
+            hold.release();
+          }
         }
-        for (const entry of result.failed) {
-          console.error(chalk.yellow(phaseLine('carry', `could not copy ${entry.file}: ${entry.error}`)));
-        }
-        if (result.copied.length) {
-          console.error(chalk.dim(phaseLine('carry', `copied ${carriedFileList(result.copied)} from ${root}`)));
-          reportCarriedStateHealth(root, target, result.copied);
-        }
-        console.error(
-          phaseLine(
-            'carry',
-            `${result.failed.length ? 'incomplete' : 'complete'}: ${result.copied.length} ignored entries copied, ${result.skipped.length} kept, ${result.failed.length} failed`,
-          ),
-        );
-        if (result.failed.length) process.exitCode = 1;
       } catch (error) {
+        const code = (error as { code?: string })?.code;
         console.error(chalk.red(`Could not warm this worktree: ${(error as Error).message}`));
+        const claim = claimFailure(error, `stim worktree warm${opts.refresh ? ' --refresh' : ''}`);
+        if (claim) console.error(chalk.dim(claim.remedy));
+        if (typeof code === 'string' && code.startsWith('STIM_')) console.error(chalk.red(`failed: ${code}`));
         process.exitCode = 1;
       }
     });
