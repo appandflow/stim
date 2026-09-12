@@ -33,7 +33,7 @@ interface AndroidDeviceRecord {
 
 export type DeviceRecord = IosDeviceRecord | AndroidDeviceRecord;
 
-interface PlatformRecords {
+export interface PlatformRecords {
   ios?: IosDeviceRecord;
   android?: AndroidDeviceRecord;
   [platform: string]: DeviceRecord | undefined;
@@ -42,6 +42,7 @@ interface PlatformRecords {
 export interface ProjectRecord {
   metroPort?: number | null;
   platforms?: PlatformRecords;
+  deviceSlots?: Record<string, PlatformRecords>;
   supervisor?: SupervisorRecord;
   settings?: SettingsObject;
   worktreeRoot?: boolean;

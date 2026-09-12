@@ -1,3 +1,4 @@
+import { assignSlotDevice, deviceSlotPlatforms, projectDeviceSlots, removeSlotDevice } from './device-slots.ts';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs';
 import { isAbsolute, join } from 'path';
 import { homedir } from 'os';
@@ -165,23 +166,22 @@ export function claimMetroPort(projectPath: string, port: number): number | null
   });
 }
 
-export function setDevice(projectPath: string, platform: string, deviceFields: DeviceRecord): void {
+export function setDevice(projectPath: string, platform: string, deviceFields: DeviceRecord, slot = 'default'): void {
   requireAbsoluteProjectPath(projectPath);
   withConfigLock(() => {
     const cfg = ensureConfig();
     if (!cfg.projects[projectPath]) {
       throw new Error(`Project not registered: ${projectPath}`);
     }
-    cfg.projects[projectPath].platforms = cfg.projects[projectPath].platforms || {};
-    cfg.projects[projectPath].platforms[platform] = deviceFields;
+    assignSlotDevice(cfg.projects[projectPath], platform, deviceFields, slot);
     saveConfig(cfg);
   });
 }
 
-export function releaseAndroidConsolePort(projectPath: string, consolePort: number): boolean {
+export function releaseAndroidConsolePort(projectPath: string, consolePort: number, slot = 'default'): boolean {
   return withConfigLock(() => {
     const cfg = loadConfig();
-    const android = cfg?.projects?.[projectPath]?.platforms?.android;
+    const android = deviceSlotPlatforms(cfg?.projects?.[projectPath], slot)?.android;
     if (!cfg || !android || android.consolePort !== consolePort) return false;
     delete android.consolePort;
     saveConfig(cfg);
@@ -189,11 +189,12 @@ export function releaseAndroidConsolePort(projectPath: string, consolePort: numb
   });
 }
 
-export function clearDevice(projectPath: string, platform: string): void {
+export function clearDevice(projectPath: string, platform: string, slot = 'default'): void {
   withConfigLock(() => {
     const cfg = loadConfig();
-    if (!cfg?.projects?.[projectPath]?.platforms) return;
-    delete cfg.projects[projectPath].platforms[platform];
+    const project = cfg?.projects?.[projectPath];
+    if (!cfg || !project) return;
+    removeSlotDevice(project, platform, slot);
     saveConfig(cfg);
   });
 }
@@ -400,12 +401,14 @@ export function allConsolePortsAndSerials({
   if (!cfg) return result;
   for (const [path, proj] of Object.entries(cfg.projects || {})) {
     if (!existsSync(path) && isMounted(path)) continue;
-    const android = proj.platforms?.android;
-    if (typeof android?.consolePort === 'number') {
-      result.androidConsolePorts.push(android.consolePort);
-    }
-    if (android?.serial && !android.avdName) {
-      result.androidPhysicalSerials.push(android.serial);
+    for (const { platforms } of projectDeviceSlots(proj)) {
+      const android = platforms.android;
+      if (typeof android?.consolePort === 'number') {
+        result.androidConsolePorts.push(android.consolePort);
+      }
+      if (android?.serial && !android.avdName) {
+        result.androidPhysicalSerials.push(android.serial);
+      }
     }
   }
   return result;

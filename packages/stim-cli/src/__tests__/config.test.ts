@@ -461,3 +461,47 @@ test('a negative or garbage value reads as unlimited', () => {
     maxDevices: 0,
   });
 });
+
+test('named device slots preserve default assignments and release only their own console ports', () => {
+  const root = liveProjectDir('slots');
+  upsertProject(root, {});
+  setDevice(root, 'ios', { deviceUdid: 'default-ios', owned: true });
+  setDevice(root, 'android', { avdName: 'stim-first', consolePort: 5554, owned: true }, 'first');
+  setDevice(root, 'android', { avdName: 'stim-second', consolePort: 5556, owned: true }, 'second');
+  setDevice(root, 'ios', { deviceUdid: 'first-ios', owned: true }, 'first');
+  expect(getProject(root)?.platforms?.ios?.deviceUdid).toBe('default-ios');
+  expect(allConsolePortsAndSerials().androidConsolePorts).toEqual([5554, 5556]);
+  expect(releaseAndroidConsolePort(root, 5556, 'first')).toBe(false);
+  expect(releaseAndroidConsolePort(root, 5554, 'first')).toBe(true);
+  expect(allConsolePortsAndSerials().androidConsolePorts).toEqual([5556]);
+  clearDevice(root, 'android', 'first');
+  expect(getProject(root)?.deviceSlots?.first).toEqual({ ios: { deviceUdid: 'first-ios', owned: true } });
+  clearDevice(root, 'ios', 'first');
+  expect(getProject(root)?.deviceSlots?.first).toBeUndefined();
+  expect(getProject(root)?.deviceSlots?.second?.android?.avdName).toBe('stim-second');
+  clearDevice(root, 'android', 'second');
+  expect(getProject(root)?.deviceSlots).toBeUndefined();
+  expect(getProject(root)?.platforms?.ios?.deviceUdid).toBe('default-ios');
+});
+
+test('slot registry rejects unsafe names without mutating assignments', () => {
+  const root = liveProjectDir('invalid-slots');
+  upsertProject(root, {});
+  const before = loadConfig();
+  for (const slot of ['', '../phone', '__proto__', 'constructor', 'prototype', 'a'.repeat(65)]) {
+    expect(() => setDevice(root, 'ios', { deviceUdid: 'test' }, slot)).toThrow(/device slot/);
+  }
+  expect(loadConfig()).toEqual(before);
+});
+
+test('slot registry supports arbitrary numbers of identical model assignments', () => {
+  const root = liveProjectDir('many-slots');
+  upsertProject(root, {});
+  for (let i = 0; i < 20; i++) {
+    setDevice(root, 'ios', { deviceUdid: `udid-${i}`, deviceName: 'same model', owned: true }, `phone-${i}`);
+  }
+  expect(Object.keys(getProject(root)?.deviceSlots ?? {})).toHaveLength(20);
+  clearDevice(root, 'ios', 'phone-8');
+  expect(getProject(root)?.deviceSlots?.['phone-9']?.ios?.deviceUdid).toBe('udid-9');
+  expect(Object.keys(getProject(root)?.deviceSlots ?? {})).toHaveLength(19);
+});
