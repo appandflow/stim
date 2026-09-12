@@ -474,11 +474,12 @@ test('the settings guide documents every configurable optimization', () => {
   }
 });
 
-test('EAS guidance routes agents to the profile and preserves the paid-build authorization boundary', () => {
+test('EAS guidance requires profile clarification when needed and authorization for paid builds', () => {
   const agent = renderTopic('agent');
   expect(agent).toContain('stim guide lifecycle eas');
   const eas = renderSection('lifecycle', 'eas');
   expect(eas).toContain('--eas-profile');
+  expect(eas).toMatch(/no\s+compatible profile or the choice is ambiguous, ask the user/);
   expect(eas).toContain('fingerprint:generate uploads fingerprint metadata');
   expect(eas).toMatch(/session authorizes the potentially billable/);
   expect(eas).toContain('STIM_EAS_BUILD_MISSING');
