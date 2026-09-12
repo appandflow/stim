@@ -138,6 +138,7 @@ jobs:
         run: echo "STIM_E2E_WARM_CACHE=$([ -n \"$(ls -A \"$STIM_BUILD_CACHE\" 2>/dev/null)\" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
 
       - name: Monitor host memory during iOS QA
+        continue-on-error: true
         run: |
           node test/e2e/native/monitor-macos-memory.mjs > "$GITHUB_WORKSPACE/ios-memory.jsonl" 2>&1 &
           echo "$!" > "$RUNNER_TEMP/stim-memory-monitor.pid"
@@ -167,6 +168,7 @@ jobs:
         run: node test/e2e/native/run-pool-e2e.mjs --framework ${{ matrix.framework }} --keep --home "$TMPDIR/stim-cli-pool-home"
 
       - name: Stop host memory monitor
+        continue-on-error: true
         if: always()
         run: |
           if [ -f "$RUNNER_TEMP/stim-memory-monitor.pid" ]; then
@@ -174,6 +176,7 @@ jobs:
           fi
 
       - name: Upload iOS host memory diagnostics
+        continue-on-error: true
         if: always()
         uses: actions/upload-artifact@v4
         with:
