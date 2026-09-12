@@ -61,7 +61,9 @@ For iOS Debug architecture findings, review the project's overrides and imported
 Podfile helpers using guide lifecycle options. Doctor --fix does not change them.
 For parallel iOS work, review the recommended optional SimSlim setup in
 stim guide lifecycle simslim. If simulator process startup times out, check
-host memory pressure and free memory before retrying; do not restart other
+host memory pressure and free memory before retrying. Boot progress reports
+current and highest observed pressure; a timeout does not establish OOM.
+Avoid repeated reboots under unchanged pressure; do not restart other
 workspaces' devices or close their apps without asking. That guide covers
 the recovery steps and profile tradeoffs.
 For a linked native library carrying Git metadata, add the printed .git entries to

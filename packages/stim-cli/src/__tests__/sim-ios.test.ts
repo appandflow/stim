@@ -656,6 +656,7 @@ function bootstatusExecutor(outcomes: BootstatusOutcome[], list: () => string) {
       return '';
     },
     spawn: (cmd: string, args: readonly string[] = []) => {
+      if (args[1] === 'boot') return makeExitingChild();
       spawned.push([cmd, ...args].join(' '));
       const outcome = outcomes[spawned.length - 1] ?? outcomes[outcomes.length - 1] ?? 'hang';
       if (outcome === 'hang') {
@@ -730,28 +731,28 @@ test('bootIosSim rethrows a bootstatus failure that is not a timeout', async () 
 });
 
 test('the initial boot request consumes the same deadline as bootstatus', async () => {
-  let now = 1000;
-  const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
-  let spawned = false;
+  vi.useFakeTimers();
+  const commands: string[] = [];
+  const child = makeChildProcess();
+  child.kill = () => {
+    queueMicrotask(() => child.emit('exit', null, 'SIGKILL'));
+    return true;
+  };
   setExecutor({
-    runFile(_file, args = [], options) {
-      if (args[1] === 'boot') {
-        expect(options).toEqual({ timeoutMs: 200, killSignal: 'SIGKILL' });
-        now += 250;
-        return '';
-      }
-      return bootSimList('Booting');
-    },
-    spawn() {
-      spawned = true;
-      return makeExitingChild();
+    runFile: () => '',
+    spawn: (_cmd, args) => {
+      commands.push(args.join(' '));
+      return child;
     },
   });
   try {
-    await expect(bootIosSim('UDID-A', { timeoutMs: 200 })).rejects.toThrow(/did not finish booting/);
-    expect(spawned).toBe(false);
+    const outcome = bootIosSim('UDID-A', { timeoutMs: 200 }).catch((error) => error);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(await outcome).toMatchObject({ message: expect.stringContaining('simctl boot UDID-A timed out') });
+    expect(commands).toEqual(['simctl boot UDID-A']);
   } finally {
-    clock.mockRestore();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
   }
 });
 
@@ -766,7 +767,8 @@ test('bootstatus does not survey or retry until its timed-out child has actually
       return '';
     },
     runFileQuiet: () => '',
-    spawn() {
+    spawn(_cmd, args) {
+      if (args[1] === 'boot') return makeExitingChild();
       if (events.includes('survey')) {
         events.push('retry');
         return makeExitingChild();
@@ -795,7 +797,7 @@ test('bootstatus refuses a retry when termination cannot be confirmed within the
       if (args[1] === 'list') surveys++;
       return '';
     },
-    spawn: () => makeChildProcess(),
+    spawn: (_cmd, args) => (args[1] === 'boot' ? makeExitingChild() : makeChildProcess()),
   });
   try {
     const outcome = bootIosSim('UDID-A', { attemptMs: 100 }).then(
@@ -821,4 +823,47 @@ test('opening the Simulator app is bounded and best-effort after successful boot
     },
   });
   await expect(bootIosSim('UDID-A')).resolves.toBeUndefined();
+});
+
+test('boot diagnostics retain peak pressure after recovery and unknown readings, then stop sampling', async () => {
+  vi.useFakeTimers();
+  const messages: string[] = [];
+  let reads = 0;
+  const levels = ['1', '2', '', '1'];
+  const child = makeChildProcess();
+  child.kill = () => {
+    queueMicrotask(() => child.emit('exit', null, 'SIGKILL'));
+    return true;
+  };
+  setExecutor({
+    runFile: (_file, args) =>
+      args[0] === '-n' ? levels[Math.min(reads++, levels.length - 1)] : bootSimList('Booting'),
+    spawn: () => child,
+  });
+  try {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    const outcome = bootIosSim('UDID-A', {
+      timeoutMs: 45000,
+      label: 'stim-app-tablet',
+      out: (message) => messages.push(message),
+    }).catch((error) => error);
+    child.stdout?.emit('data', 'Waiting on Data Migration\n');
+    await vi.advanceTimersByTimeAsync(45000);
+    const error = await outcome;
+    expect(messages[0]).toContain('stim-app-tablet is still booting after 15s');
+    expect(messages[0]).toContain('Waiting on Data Migration');
+    expect(messages[0]).toContain('Memory pressure: warning');
+    expect(messages[0]).toContain('Boot may be delayed or stalled');
+    expect(messages[1]).toContain('Memory pressure: unknown');
+    expect(error.message).toContain('Highest observed memory pressure: warning');
+    expect(error.message).toContain('unavailable samples: 1');
+    expect(error.message).toContain('Stop unused slots in workspaces you own');
+    const count = reads;
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(reads).toBe(count);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
 });

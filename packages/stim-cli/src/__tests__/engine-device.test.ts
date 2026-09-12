@@ -194,7 +194,7 @@ describe('ensureBooted: ios', () => {
     });
 
     expect(result.ok).toBeUndefined();
-    expect(result.reason).toMatch(/did not finish booting within 1s/);
+    expect(result.reason).toMatch(/simctl boot U1 timed out/);
   });
 
   test('reports boot setup failures instead of treating the Booted state as ready', async () => {
@@ -718,6 +718,7 @@ function iosExecutor(devices: SimEntry[]) {
         return '';
       },
       spawn(cmd: string, args: readonly string[] = []) {
+        if (args[1] === 'boot') run.push([cmd, ...args].join(' '));
         spawned.push([cmd, ...args].join(' '));
         return makeExitingChild();
       },
@@ -733,8 +734,11 @@ describe('ensureOwnedDevice: ios', () => {
     setExecutor({
       ...exec,
 
-      runFile(file, args = [], options) {
+      spawn(file, args = []) {
         if (file === 'xcrun' && args[1] === 'boot') events.push('boot');
+        return exec.spawn(file, args);
+      },
+      runFile(file, args = [], options) {
         if (file === '/usr/sbin/sysctl') {
           events.push('pressure');
           expect(args).toEqual(['-n', 'kern.memorystatus_vm_pressure_level']);
@@ -755,13 +759,13 @@ describe('ensureOwnedDevice: ios', () => {
         },
       });
       await device.booting?.done;
-      expect(events.filter((event) => event === 'pressure')).toHaveLength(process.platform === 'darwin' ? 1 : 0);
+      expect(events.filter((event) => event === 'pressure')).toHaveLength(process.platform === 'darwin' ? 2 : 0);
       expect(events).toContain('boot');
       const expectedEvents =
         process.platform === 'darwin'
           ? pressure === '2'
-            ? ['pressure', 'warning', 'boot']
-            : ['pressure', 'boot']
+            ? ['pressure', 'warning', 'pressure', 'boot']
+            : ['pressure', 'pressure', 'boot']
           : ['boot'];
       expect(events).toEqual(expectedEvents);
     } finally {
@@ -1225,6 +1229,7 @@ describe('ensureOwnedDevice: ios', () => {
       expect(result.owned).toBe(true);
       expect(result.created).toBe(true);
       expect(notes.some((n) => /not Stim-owned by name/i.test(n))).toBeTruthy();
+      await result.booting?.done;
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1251,7 +1256,7 @@ describe('ensureOwnedDevice: ios', () => {
         deviceName: 'stim-app (iPhone 17 Pro 26.2)',
       });
       await result.booting?.done;
-      expect(spawned).toEqual(['xcrun simctl bootstatus NEW-UDID -b']);
+      expect(spawned).toEqual(['xcrun simctl boot NEW-UDID', 'xcrun simctl bootstatus NEW-UDID -b']);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
