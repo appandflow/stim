@@ -67,6 +67,11 @@ line by design (see \`guide logs\`), not this single-payload contract.`,
                   absent for automatic selection; not the app URL scheme
   cacheKey        the shared-build-cache key derived from it (the
                   configuration is part of it: -release-sim vs -debug-sim)
+  With --eas-profile, fingerprint is computed by EAS CLI using the selected
+  profile/environment, and cacheKey identifies the EAS project and build ID
+  separately from local native builds. cacheHit is "remote" for the EAS
+  source, including when EAS CLI reuses its own downloaded artifact cache.
+
   cacheHit        WHICH LEVEL answered, not a boolean:
                     "local"   this machine's shared cache (free, instant)
                     "remote"  the project's own Expo buildCacheProvider (a

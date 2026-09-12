@@ -8,6 +8,24 @@ const errors: GuideTopic = {
 Every refusal from \`ios\` / \`android\` carries a stable CODE. Branch on the
 code, never on the message.`,
   sections: {
+    STIM_EAS_BUILD_MISSING: {
+      summary: 'no completed EAS development build matches; build only with session authorization',
+      body: () => `STIM_EAS_BUILD_MISSING
+  No compatible build matches the selected EAS project, profile, platform and
+  native fingerprint. No device was acquired and no local or cloud build was
+  started. The remedy prints the exact npx eas-cli build command. Check session
+  authorization for its potential cost before running it, then retry Stim.
+  See stim guide lifecycle eas.`,
+    },
+    STIM_EAS_UNAVAILABLE: {
+      summary: 'EAS lookup/download failed, or another run holds the artifact claim',
+      body: () => `STIM_EAS_UNAVAILABLE
+  EAS CLI is unavailable, a profile/fingerprint/list/download operation failed,
+  the response could not be validated, or another run holds the artifact claim.
+  Follow the printed remedy: inspect the named EAS command or retry once the
+  holder finishes. This is not proof that a build is missing. No native build
+  is started. See stim guide lifecycle eas.`,
+    },
     STIM_WORKSPACE_STATE: {
       summary: '$STIM_HOME/workspaces could not be prepared, or the digest directory belongs to another project',
       aliases: ['STIM_WORKSPACE_COLLISION'],
@@ -334,7 +352,10 @@ spending a build or a bundle, that the check can succeed.`,
       profile;
     - it is a development or ad hoc profile whose device list does not name
       this UDID. Register the UDID at developer.apple.com, regenerate the
-      profile, and build once from Xcode.`,
+      profile, and build once from Xcode.
+  With --eas-profile, follow the EAS device:create and build commands in the
+  refusal instead. Registration, signing changes and cloud builds need session
+  authorization. See stim guide lifecycle eas.`,
     },
     STIM_NO_SIGNING_IDENTITY: {
       summary: 'no single keychain identity resolves; ios.signingIdentitySha1 for two certificates',

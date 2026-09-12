@@ -5690,3 +5690,112 @@ describe('Metro prefetch', () => {
     },
   );
 });
+
+describe('EAS development builds', () => {
+  function expoProject() {
+    writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { name: 'Fixture', slug: 'fixture' } }));
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ name: 'app', dependencies: { expo: '55.0.0', 'react-native': '0.83.0' } }),
+    );
+  }
+
+  test('installs the EAS APK on the owned emulator with the reserved Metro port, without a local build', async () => {
+    expoProject();
+    const path = fakeApk();
+    const resolveEasDevelopmentBuild = vi.fn<
+      NonNullable<NonNullable<Parameters<typeof runAndroid>[0]>['resolveEasDevelopmentBuild']>
+    >(async () => ({
+      ok: true as const,
+      path,
+      fingerprint: 'eas-fingerprint',
+      cacheKey: 'eas-key',
+      cacheHit: 'remote' as const,
+    }));
+    const { run, calls, stdout } = harness({
+      json: true,
+      easProfile: 'development',
+      resolveEasDevelopmentBuild,
+      resolveDevClientScheme: () => 'exp+fixture',
+      resolveSettingsFor: () => ({ android: { variant: 'productionRelease' } }),
+    });
+    const result = await run();
+    expect(result.ok).toBe(true);
+    expect(resolveEasDevelopmentBuild).toHaveBeenCalledWith(
+      expect.objectContaining({ platform: 'android', profile: 'development' }),
+    );
+    expect(calls.install[0]).toMatchObject({ apkPath: path, serial: 'emulator-5584' });
+    expect(calls.launch[0]).toMatchObject({ metroPort: 8082, devClientScheme: 'exp+fixture' });
+    expect(JSON.parse(stdout[0]!)).toMatchObject({
+      fingerprint: 'eas-fingerprint',
+      cacheKey: 'eas-key',
+      cacheHit: 'remote',
+      launched: true,
+    });
+    for (const list of [
+      calls.fingerprint,
+      calls.resolveCached,
+      calls.loadProvider,
+      calls.prebuild,
+      calls.build,
+      calls.uploadRemoteBuild,
+    ])
+      expect(list).toHaveLength(0);
+  });
+
+  test('a miss refuses before creating an emulator or compiling locally', async () => {
+    expoProject();
+    const { run, calls } = harness({
+      easProfile: 'development',
+      resolveEasDevelopmentBuild: async () => ({
+        ok: false,
+        code: 'STIM_EAS_BUILD_MISSING',
+        message: 'No match',
+        remedy: 'Run the approved EAS command.',
+      }),
+    });
+    expect(await run()).toMatchObject({ ok: false, error: { code: 'STIM_EAS_BUILD_MISSING' } });
+    for (const list of [calls.ensureDevice, calls.booted, calls.install, calls.build]) expect(list).toHaveLength(0);
+  });
+
+  test('installs the EAS APK on a physical device without creating or building an emulator', async () => {
+    expoProject();
+    const path = fakeApk();
+    const { run, calls } = harness({
+      device: 'RFCR7081Q9L',
+      easProfile: 'development',
+      listDevices: () => ({ emulators: [], physical: [{ serial: 'RFCR7081Q9L' }], unhealthy: [] }),
+      deviceModel: () => 'SM-G996W',
+      isEmulatorDevice: () => false,
+      resolveEasDevelopmentBuild: async () => ({
+        ok: true,
+        path,
+        fingerprint: 'eas-fingerprint',
+        cacheKey: 'eas-key',
+        cacheHit: 'remote',
+      }),
+    });
+    expect((await run()).ok).toBe(true);
+    expect(calls.install[0]).toMatchObject({ apkPath: path, serial: 'RFCR7081Q9L' });
+    for (const list of [calls.ensureDevice, calls.booted, calls.build, calls.fingerprint]) expect(list).toHaveLength(0);
+  });
+
+  test('conflicting local selectors refuse before querying EAS', async () => {
+    expoProject();
+    const { run } = harness({ easProfile: 'development', variant: 'debug' });
+    expect(await run()).toMatchObject({ ok: false, error: { code: 'STIM_BAD_ARG' } });
+  });
+
+  test.each([
+    { device: '' },
+    { device: true, remoteDevice: 'eas' as const },
+    { device: true, wait: 'invalid' },
+    { device: true, systemImage: '' },
+  ])('invalid device options refuse before EAS uploads or downloads: %j', async (options) => {
+    expoProject();
+    const resolveEasDevelopmentBuild = vi.fn<() => Promise<null>>(async () => null);
+    const { run } = harness({ ...options, easProfile: 'development', resolveEasDevelopmentBuild });
+    expect(await run()).toMatchObject({ ok: false, error: { code: 'STIM_BAD_ARG' } });
+    expect(resolveEasDevelopmentBuild).not.toHaveBeenCalled();
+  });
+});

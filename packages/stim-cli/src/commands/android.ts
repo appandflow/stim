@@ -1,3 +1,4 @@
+import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
 import { parkedMaxSetting } from '../sim-pool.ts';
 import {
   resolveOptimizations,
@@ -92,6 +93,7 @@ import {
   resolveMetroWithRetry,
   noMetroMessage,
   noMetroRemedy,
+  isPhysicalDeviceRequest,
 } from './native-runtime.ts';
 import {
   readRunEstimates,
@@ -215,6 +217,7 @@ export {
 export { formatDuration, phaseLine, shortHash } from '../command-output.ts';
 
 interface AndroidCommandOptions {
+  easProfile?: string;
   json?: boolean;
   metroCheck?: boolean;
   buildCache?: boolean;
@@ -267,6 +270,10 @@ export function registerAndroid(program: Command): void {
       "Build (or install from the shared cache), install and launch this workspace's Android app on its owned " +
         'emulator, wired to the reserved Metro port. Never starts the bundler -- run `stim start` first.',
     )
+    .option(
+      '--eas-profile <name>',
+      'Download a matching EAS development build; on a miss, print the build command without running it',
+    )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
     .option(
       '--no-metro-check',
@@ -293,7 +300,7 @@ export function registerAndroid(program: Command): void {
     )
     .option(
       '--remote <backend>',
-      'Install and launch on a remote device with proxy or EAS. The build still happens here.',
+      'Install and launch on a remote device with proxy or EAS. Builds are local unless --eas-profile selects an existing EAS build.',
       (value) => {
         if ((REMOTE_DEVICE_BACKENDS as readonly string[]).includes(value)) return value as RemoteDeviceBackend;
         throw new InvalidArgumentError(`expected one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}`);
@@ -320,6 +327,7 @@ export function registerAndroid(program: Command): void {
         metroCheck: opts.metroCheck !== false,
         useBuildCache: opts.buildCache !== false,
         variant: opts.variant ?? null,
+        easProfile: opts.easProfile,
         systemImage: opts.systemImage ?? null,
         remoteDevice: opts.remote ?? null,
         device: opts.device ?? null,
@@ -331,6 +339,8 @@ export function registerAndroid(program: Command): void {
 }
 
 interface RunAndroidOptions {
+  easProfile?: string;
+  resolveEasDevelopmentBuild?: typeof resolveEasDevelopmentBuild;
   root: string;
   json?: boolean;
   metroCheck?: boolean;
@@ -425,6 +435,8 @@ function resolveRunAndroidOptions(
     detectRemoteProviders = detectProviders,
     metroCheck = true,
     useBuildCache = true,
+    easProfile,
+    resolveEasDevelopmentBuild: resolveEasBuild = resolveEasDevelopmentBuild,
     variant: variantFlag = null,
     systemImage: systemImageFlag = null,
     device: deviceFlag = null,
@@ -506,6 +518,8 @@ function resolveRunAndroidOptions(
     detectRemoteProviders,
     metroCheck,
     useBuildCache,
+    easProfile,
+    resolveEasBuild,
     variantFlag,
     systemImageFlag,
     deviceFlag,
@@ -589,6 +603,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     detectRemoteProviders,
     metroCheck,
     useBuildCache: requestedBuildCache,
+    easProfile,
+    resolveEasBuild,
     variantFlag,
     systemImageFlag,
     deviceFlag,
@@ -832,14 +848,14 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     );
   }
   const systemImage = resolveSystemImage(systemImageFlag, settings);
-  const variant = resolveVariant(variantFlag, settings);
+  const variant = easProfile !== undefined ? 'debug' : resolveVariant(variantFlag, settings);
   const flavorRefusal = productFlavorRefusal({ flavors: readProductFlavors(root), variant });
   if (flavorRefusal) return fail(flavorRefusal.code, flavorRefusal.reason, flavorRefusal.remedy);
   const release = isReleaseVariant(variant);
   const cachePolicy = artifactCachePolicy(optimizations, requestedBuildCache, release);
   const useBuildCache = cachePolicy.read;
   const isExpo = detectIsExpo(root);
-  const physical = deviceFlag !== null && deviceFlag !== undefined && deviceFlag !== false;
+  const physical = isPhysicalDeviceRequest(deviceFlag);
   if (physical && deviceFlag === '') {
     return fail(
       'STIM_BAD_ARG',
@@ -890,6 +906,17 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     listImages: listSystemImages,
   });
   if (imageRefusal) return fail(imageRefusal.code, imageRefusal.message, imageRefusal.remedy);
+  const easBuild = await resolveEasBuild({
+    root,
+    platform: PLATFORM,
+    profile: easProfile,
+    note: out,
+    isExpo,
+    physical,
+    selectors: [variantFlag],
+    buildCache: requestedBuildCache,
+  });
+  if (isEasBuildFailure(easBuild)) return fail(easBuild.code, easBuild.message, easBuild.remedy);
   const requestedSerial = typeof deviceFlag === 'string' ? deviceFlag : null;
   let androidPackage = detectAndroidPackage(root);
   record.bundleId = androidPackage;
@@ -1139,6 +1166,18 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   let apkPath: string | null = null;
 
   async function resolveInitialFingerprint(): Promise<boolean> {
+    if (easBuild?.ok) {
+      hash = storeHash = easBuild.fingerprint;
+      cacheKey = storeKey = easBuild.cacheKey;
+      apkPath = easBuild.path;
+      record.fingerprint = hash;
+      record.cacheKey = cacheKey;
+      record.cacheHit = easBuild.cacheHit;
+      record.cacheSkipped = !useBuildCache;
+      providerName = 'eas';
+      stats.setCacheKey(cacheKey);
+      return true;
+    }
     const fingerprintTimer = stepTimer(now);
     try {
       const computed = await fingerprint(root, { platform: PLATFORM });
@@ -1284,7 +1323,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       }
     }
 
-    await resolveRemoteArtifact();
+    if (!easBuild) await resolveRemoteArtifact();
 
     let waitedForBuild: WaitedForBuild | null = null;
     let releasedWait: { facts: WaitedForBuild; who: string } | null = null;
@@ -1383,7 +1422,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       return true;
     }
 
-    if (!(await waitForSharedBuild())) return phaseFailure!;
+    if (!easBuild && !(await waitForSharedBuild())) return phaseFailure!;
 
     let swapDir: string | null = null;
     let swapFellBack = false;
@@ -1619,8 +1658,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       return true;
     }
 
-    await prepareCachedArtifact();
-    if (!(await buildArtifact())) return phaseFailure!;
+    if (!easBuild) {
+      await prepareCachedArtifact();
+      if (!(await buildArtifact())) return phaseFailure!;
+    }
     record.appPath = apkPath;
 
     let leaseHandle: RunLease | null = null;

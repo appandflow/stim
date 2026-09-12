@@ -232,6 +232,15 @@ Do not infer and rebuild commands from project scripts. Bare React Native hosts
 Metro from the project's dependencies. Expo runs its fixed start command. iOS
 and Android use fixed `xcodebuild` and Gradle arguments.
 
+The explicit `ios|android --eas-profile <name>` path downloads a compatible
+completed EAS development build instead of compiling locally. Delegate profile
+resolution, fingerprinting and artifact caching to fixed EAS CLI invocations.
+Coordinate downloads by EAS project and build ID. A miss prints the EAS build
+command; Stim never starts a cloud build. Physical devices use the existing
+lease and iOS provisioning gates. EAS device failures print EAS registration
+and rebuild remedies; they never register devices or change signing accounts.
+Preserve Stim device ownership, Metro and launch semantics.
+
 The supported build selectors are `ios --scheme <name>`, `ios --configuration <name>`, and
 `android --variant <name>`. `ios --device-type <name>`, `ios --runtime
 <version>`, and `android --system-image <id>` select the model and version of
