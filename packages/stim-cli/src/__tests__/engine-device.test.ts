@@ -1566,7 +1566,7 @@ describe('ensureOwnedDevice: android', () => {
         createAvdError: 'Error: AVD stim-app already exists.',
       });
       setExecutor(exec);
-      await ensureOwnedDevice({
+      const recovered = await ensureOwnedDevice({
         platform: 'android',
         project: getProject(root),
         projectPath: root,
@@ -1578,6 +1578,7 @@ describe('ensureOwnedDevice: android', () => {
       });
       expect(readFileSync(join(content, 'config.ini'), 'utf8')).toBe('disk.dataPartition.size=10G\n');
       expect(spawn).toHaveLength(1);
+      expect(recovered.created).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1600,7 +1601,13 @@ describe('ensureOwnedDevice: android', () => {
         label: 'app',
         settings: {},
       });
-      expect(result).toMatchObject({ avdName: 'stim-app', serial: 'emulator-5584', consolePort: 5584, owned: true });
+      expect(result).toMatchObject({
+        avdName: 'stim-app',
+        serial: 'emulator-5584',
+        consolePort: 5584,
+        owned: true,
+        created: false,
+      });
       expect(getProject(root)?.platforms?.android).toMatchObject({ avdName: 'stim-app', consolePort: 5584 });
       expect(spawn).toEqual([]);
     } finally {
