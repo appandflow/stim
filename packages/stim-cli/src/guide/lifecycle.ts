@@ -1366,8 +1366,8 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   Stim applied the profile. Stim never changes an unowned or remote simulator.
   Each SimSlim operation has a 12-minute outer deadline, including discovery.
   This cap also applies when SimSlim's own timeout is increased. On timeout,
-  Stim attempts to stop only its verified process group, then waits up to
-  10 seconds to confirm termination.
+  Ctrl-C, or SIGTERM, Stim attempts to stop only its verified process group, then waits up to
+  10 seconds to confirm termination before returning or exiting.
   An unconfirmed process group keeps its claim and blocks another reconciliation;
   inspect the named processes before removing the exact claim in the error.
   The simulator's managed settings record is retained, so retrying reconciles an

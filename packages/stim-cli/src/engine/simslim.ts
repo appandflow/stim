@@ -70,14 +70,32 @@ export async function reconcileSimSlim({
   let child: ChildProcess | undefined;
   let result: ChildResult | undefined;
   let identity: ProcessRecord | undefined;
+  let cancellation: 'SIGINT' | 'SIGTERM' | undefined;
+  const stopGroup = () => {
+    if (child?.pid !== undefined && identity && inspectProcessIdentity(identity) === 'same') {
+      try {
+        process.kill(-child.pid, 'SIGKILL');
+      } catch {}
+    }
+  };
+  const cancel = (signal: 'SIGINT' | 'SIGTERM') => {
+    cancellation ??= signal;
+    stopGroup();
+  };
+  const onInterrupt = () => cancel('SIGINT');
+  const onTerminate = () => cancel('SIGTERM');
   const groupAlive = () => child?.pid !== undefined && processGroupAlive(child.pid);
   const settled = () => result !== undefined && !groupAlive();
-  const waitUntil = async (deadline: number) => {
+  const waitUntil = async (deadline: number, cancellable = false) => {
     while (!settled() && Date.now() < deadline) {
+      if (cancellable && cancellation) break;
       await new Promise((resolve) => setTimeout(resolve, Math.min(50, deadline - Date.now())));
     }
     return settled();
   };
+  process.on('SIGINT', onInterrupt);
+  process.on('SIGTERM', onTerminate);
+  process.on('exit', stopGroup);
   try {
     markClaimChildPending(claim);
     try {
@@ -103,12 +121,9 @@ export async function reconcileSimSlim({
         } catch {}
       }
     }
-    if (!(await waitUntil(Date.now() + timeoutMs))) {
-      if (child.pid !== undefined && identity && inspectProcessIdentity(identity) === 'same') {
-        try {
-          process.kill(-child.pid, 'SIGKILL');
-        } catch {}
-      }
+    const completed = await waitUntil(Date.now() + timeoutMs, true);
+    if (cancellation || !completed) {
+      stopGroup();
       const stopped = await waitUntil(Date.now() + cleanupMs);
       const detail = lines.length ? ` ${lines.join(' | ')}` : '';
       const recovery = stopped
@@ -116,12 +131,10 @@ export async function reconcileSimSlim({
         : `Its process group could not be confirmed stopped. The claim remains at ${claim.path}. ` +
           `Inspect the SimSlim process group ${child.pid ?? 'unknown'} before retrying. ` +
           `Only when nothing is using it, remove the claim: ${claimRemoveCommand(claim.path)}`;
-      throw Object.assign(
-        new Error(`SimSlim ${action} exceeded ${Math.round(timeoutMs / 1000)}s. ${recovery}${detail}`),
-        {
-          code: 'ETIMEDOUT',
-        },
-      );
+      const reason = cancellation ? `interrupted by ${cancellation}` : `exceeded ${Math.round(timeoutMs / 1000)}s`;
+      const message = `SimSlim ${action} ${reason}. ${recovery}${detail}`;
+      if (cancellation) out(message);
+      throw Object.assign(new Error(message), { code: cancellation ? 'EINTR' : 'ETIMEDOUT' });
     }
   } finally {
     if (!child || settled()) releaseClaim(claim);
@@ -130,6 +143,10 @@ export async function reconcileSimSlim({
       child.stderr?.destroy?.();
       child.unref();
     }
+    process.off('SIGINT', onInterrupt);
+    process.off('SIGTERM', onTerminate);
+    process.off('exit', stopGroup);
+    if (cancellation) process.exit(cancellation === 'SIGINT' ? 130 : 143);
   }
 
   stdout.flush();
