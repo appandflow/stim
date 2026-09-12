@@ -297,6 +297,14 @@ async function ensureOwnedIosDevice({
         return record;
       }
     }
+    withConfigLock(() => {
+      const current = loadConfig()?.projects?.[projectPath]?.platforms?.ios;
+      if (!current) return;
+      if (current.deviceUdid !== record.deviceUdid || current.owned !== record.owned) {
+        throw new Error('The simulator assignment changed during recovery. Run `stim ios` again.');
+      }
+      clearDevice(projectPath, 'ios');
+    });
   }
 
   const choice = resolveIosCreation({

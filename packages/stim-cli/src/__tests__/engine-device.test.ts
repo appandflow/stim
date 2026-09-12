@@ -852,71 +852,79 @@ describe('ensureOwnedDevice: ios', () => {
     }
   });
 
-  test.each([false, true])('adopts and resets a matching parked simulator (name collision: %s)', async (collision) => {
-    const root = projectDir();
-    process.env.STIM_POOL_IOS_PARKED_MAX = '3';
-    try {
-      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true });
-      parkSim({
-        platform: 'ios',
-        projectPath: root,
-        max: 3,
-        record: {
-          udid: 'U1',
-          name: 'stim-parked (iPhone 17 Pro 26.2) u1',
-          deviceTypeIdentifier: TYPE_17_PRO.identifier,
-          runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-2',
-          parkedAt: '2026-09-01T10:00:00.000Z',
-          simslimManaged: false,
-          cacheKey: 'fingerprint-debug-sim',
-        },
-      });
-      const devices = [
-        {
-          udid: 'U1',
-          name: 'stim-parked (iPhone 17 Pro 26.2) u1',
-          state: 'Shutdown',
-          isAvailable: true,
-          deviceTypeIdentifier: TYPE_17_PRO.identifier,
-        },
-      ];
-      if (collision)
-        devices.push({
-          udid: 'OTHER',
-          name: 'stim-app (iPhone 17 Pro 26.2)',
-          state: 'Booted',
-          isAvailable: true,
-          deviceTypeIdentifier: TYPE_17_PRO.identifier,
+  test.each([
+    { collision: false, stale: false },
+    { collision: true, stale: false },
+    { collision: false, stale: true },
+  ])(
+    'adopts a matching parked simulator (collision: $collision, stale assignment: $stale)',
+    async ({ collision, stale }) => {
+      const root = projectDir();
+      process.env.STIM_POOL_IOS_PARKED_MAX = '3';
+      try {
+        setDevice(root, 'ios', { deviceUdid: 'U1', owned: true });
+        parkSim({
+          platform: 'ios',
+          projectPath: root,
+          max: 3,
+          record: {
+            udid: 'U1',
+            name: 'stim-parked (iPhone 17 Pro 26.2) u1',
+            deviceTypeIdentifier: TYPE_17_PRO.identifier,
+            runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-2',
+            parkedAt: '2026-09-01T10:00:00.000Z',
+            simslimManaged: false,
+            cacheKey: 'fingerprint-debug-sim',
+          },
         });
-      const name = `stim-app (iPhone 17 Pro 26.2)${collision ? ` ${workspaceId(root)}` : ''}`;
-      const { run, files, exec } = iosExecutor(devices);
-      setExecutor(exec);
-      const device = await ensureOwnedDevice({
-        platform: 'ios',
-        project: getProject(root),
-        projectPath: root,
-        label: 'app',
-        settings: {},
-      });
-      expect(device).toMatchObject({
-        deviceUdid: 'U1',
-        deviceName: name,
-        adopted: true,
-        adoptionPending: true,
-        parkedCacheKey: 'fingerprint-debug-sim',
-      });
-      expect(readParked('ios')).toEqual([]);
-      expect(run).toContain('xcrun simctl boot U1');
-      expect(files).toContainEqual(['xcrun', 'simctl', 'rename', 'U1', name]);
-      expect(files.some((call) => call.includes('privacy'))).toBe(false);
-      await device.booting?.done;
-      expect(files).toContainEqual(['xcrun', 'simctl', 'privacy', 'U1', 'reset', 'all']);
-      expect(files).toContainEqual(['xcrun', 'simctl', 'keychain', 'U1', 'reset']);
-    } finally {
-      delete process.env.STIM_POOL_IOS_PARKED_MAX;
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
+        const devices = [
+          {
+            udid: 'U1',
+            name: 'stim-parked (iPhone 17 Pro 26.2) u1',
+            state: 'Shutdown',
+            isAvailable: true,
+            deviceTypeIdentifier: TYPE_17_PRO.identifier,
+          },
+        ];
+        if (collision)
+          devices.push({
+            udid: 'OTHER',
+            name: 'stim-app (iPhone 17 Pro 26.2)',
+            state: 'Booted',
+            isAvailable: true,
+            deviceTypeIdentifier: TYPE_17_PRO.identifier,
+          });
+        if (stale) setDevice(root, 'ios', { deviceUdid: 'MISSING', owned: true });
+        const name = `stim-app (iPhone 17 Pro 26.2)${collision ? ` ${workspaceId(root)}` : ''}`;
+        const { run, files, exec } = iosExecutor(devices);
+        setExecutor(exec);
+        const device = await ensureOwnedDevice({
+          platform: 'ios',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: {},
+        });
+        expect(device).toMatchObject({
+          deviceUdid: 'U1',
+          deviceName: name,
+          adopted: true,
+          adoptionPending: true,
+          parkedCacheKey: 'fingerprint-debug-sim',
+        });
+        expect(readParked('ios')).toEqual([]);
+        expect(run).toContain('xcrun simctl boot U1');
+        expect(files).toContainEqual(['xcrun', 'simctl', 'rename', 'U1', name]);
+        expect(files.some((call) => call.includes('privacy'))).toBe(false);
+        await device.booting?.done;
+        expect(files).toContainEqual(['xcrun', 'simctl', 'privacy', 'U1', 'reset', 'all']);
+        expect(files).toContainEqual(['xcrun', 'simctl', 'keychain', 'U1', 'reset']);
+      } finally {
+        delete process.env.STIM_POOL_IOS_PARKED_MAX;
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   test('keeps a parked record renamed away from Stim ownership and creates a fresh simulator', async () => {
     const root = projectDir();
