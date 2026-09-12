@@ -98,6 +98,9 @@ Native runners check their environment before preparing the fixture. Android
 requires `ANDROID_HOME` or `ANDROID_SDK_ROOT` pointing to an existing SDK
 directory, even when the app has `android/local.properties`. iOS requires a
 UTF-8 locale; set `LANG=en_US.UTF-8` and `LC_ALL=en_US.UTF-8` when needed.
+Its preflight also checks CoreSimulator inventory with a five-minute deadline
+before fixture setup. This read-only check initializes the service without
+booting devices; a failure identifies the command before any app build starts.
 The cache runner performs these checks before seeding its disposable Gradle
 home. Worktree names include a digest of the run directory, so separate runs
 use different device names and do not recover a previous run's AVD by name.
