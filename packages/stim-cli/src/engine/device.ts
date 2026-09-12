@@ -575,6 +575,14 @@ async function ensureOwnedAndroidDevice({
         );
       } else if (resolved.serial) {
         const consolePort = Number(resolved.serial.replace(/^emulator-/, ''));
+        if (record.consolePort && record.consolePort !== consolePort) {
+          out(
+            phaseLine(
+              'device',
+              `${record.avdName} changed serial (emulator-${record.consolePort} -> ${resolved.serial}); reconnecting this run, reopen agent-device on ${resolved.serial}`,
+            ),
+          );
+        }
         const updated = {
           ...record,
           avdName: record.avdName,

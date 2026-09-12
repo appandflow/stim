@@ -4,7 +4,7 @@ import { join } from 'path';
 import { createServer } from 'http';
 import { Command } from 'commander';
 import { setExecutor, resetExecutor } from '../exec.ts';
-import { saveConfig } from '../config.ts';
+import { saveConfig, loadConfig } from '../config.ts';
 import type { AddressInfo } from 'node:net';
 import assert from 'node:assert';
 import { captureProcessToken } from '../process-identity.ts';
@@ -576,3 +576,59 @@ describe('the device lease section', () => {
     expect(payload.deviceLeases[0]).toMatchObject({ parsed: false, holder: null, mine: false, expired: false });
   });
 });
+
+test.each(['moved', 'absent', 'missing', 'unavailable'] as const)(
+  'status observes owned Android serials without changing state (%s)',
+  async (scenario) => {
+    saveConfig(
+      makeConfig({
+        projects: {
+          '/proj/android': {
+            label: 'android',
+            platforms: { android: { avdName: 'stim-app', consolePort: 5554, owned: true } },
+          },
+        },
+      }),
+    );
+    const before = loadConfig();
+    const commands: string[] = [];
+    setExecutor({
+      run(cmd, options) {
+        commands.push(cmd);
+        if (cmd.includes('simctl list')) return '{"devices":{}}';
+        if (cmd.includes('-list-avds')) {
+          expect(options.timeoutMs).toBeGreaterThan(0);
+          expect(options.timeoutMs).toBeLessThanOrEqual(5000);
+          if (scenario === 'unavailable') throw new Error('emulator listing unavailable');
+          return scenario === 'missing' ? '' : 'stim-app\n';
+        }
+        if (cmd.endsWith(' devices'))
+          return scenario === 'moved'
+            ? 'List of devices attached\nemulator-5556\tdevice\n'
+            : 'List of devices attached\n';
+        return '';
+      },
+      runQuiet(cmd) {
+        commands.push(cmd);
+        return cmd.includes('-s emulator-5556 emu avd name') ? 'stim-app\nOK' : null;
+      },
+      runFileQuiet: () => null,
+      spawn() {
+        throw new Error('status must not spawn a device');
+      },
+    });
+    const payload = await runStatusJson();
+    const state = payload.environments[0];
+    const expected = {
+      moved: { serial: 'emulator-5556', state: 'detected', warning: /emulator-5554 -> emulator-5556.*stim android/ },
+      absent: { serial: null, state: 'not-detected', warning: /not detected by adb/ },
+      missing: { serial: null, state: 'missing', warning: /no longer exists/ },
+      unavailable: { serial: null, state: 'unknown', warning: /could not check.*listing unavailable/ },
+    }[scenario];
+    expect(state.android).toMatchObject({ serial: expected.serial, state: expected.state, owned: true });
+    expect(state.warnings.join(' ')).toMatch(expected.warning);
+    expect(state.live).toBe(scenario === 'moved');
+    expect(loadConfig()).toEqual(before);
+    expect(commands.some((cmd) => /reverse|emu kill|\bboot\b/.test(cmd))).toBe(false);
+  },
+);

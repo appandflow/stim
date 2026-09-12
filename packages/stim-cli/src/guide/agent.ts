@@ -159,7 +159,9 @@ RULES DURING THE LOOP
 - Use stim status when resuming a workspace or recovering missing device,
   port, server, or build facts. A normal start and platform run already print
   them. Use stim doctor when a build is unexpectedly slow or the environment
-  looks incomplete.
+  looks incomplete. If status reports a changed Android serial, rerun stim
+  android with the same build options to restore forwarding, then reopen your automation
+  session on the reported serial (guide lifecycle).
 
 OWNERSHIP AND DELETION
 
