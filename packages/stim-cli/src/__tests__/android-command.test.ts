@@ -6,6 +6,7 @@ import assert from 'node:assert';
 import { captureProcessToken } from '../process-identity.ts';
 import { ClaimRefusedError, ClaimUnavailableError, claimRemoveCommand } from '../ownership-claim.ts';
 import { AvdRecoveryError } from '../engine/device.ts';
+import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
 import {
@@ -22,7 +23,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
-import { loadConfig, setProjectSetting, upsertProject } from '../config.ts';
+import { loadConfig, setDevice, setProjectSetting, upsertProject } from '../config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { emulatorLogFile, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
 import { writeWorkspaceState } from '../supervisor/run.ts';
@@ -278,6 +279,8 @@ function harness(overrides = {}) {
   const stdout: string[] = [];
   const options = {
     root,
+    ensureRemoteBootOwned: (args: Parameters<typeof ensureRemoteBootOwned>[0]) =>
+      ensureRemoteBootOwned({ ...args, ledgerRoot: join(home, 'machine-eas') }),
     deviceAbi: () => null,
     ensureDevice: async (args: unknown = {}) => {
       calls.ensureDevice.push(args);
@@ -288,6 +291,8 @@ function harness(overrides = {}) {
       calls.booted.push(args);
       return { ok: true, serial: 'emulator-5584' };
     },
+    resolveAvdSerial: () => ({ serial: 'emulator-5584' }),
+    waitForDeviceBoot: never('an unchanged serial readiness wait'),
     resolveMetro: async (port: number, path: string) => {
       calls.metro.push([port, path]);
       return { metro: { pid: 41233, leader: 41233, cwd: root } };
@@ -454,7 +459,21 @@ function harness(overrides = {}) {
     emit: (line: string) => stdout.push(line),
     ...overrides,
   };
-  return { calls, stderr, stdout, run: () => runAndroid(options) };
+  const ensureDevice = options.ensureDevice;
+  return {
+    calls,
+    stderr,
+    stdout,
+    run: () =>
+      runAndroid({
+        ...options,
+        ensureDevice: async (args) => {
+          const device = await ensureDevice(args);
+          if (device.owned) setDevice(root, 'android', device);
+          return device;
+        },
+      }),
+  };
 }
 
 test('an invalid Android pool bound refuses before device creation and emits one JSON error', async () => {
@@ -566,6 +585,7 @@ describe('explicit remote backend behavior', () => {
         };
       },
       ensureMetroReachable: async () => ({ ok: true as const }),
+      resolveAvdSerial: never('local AVD resolution for a remote device'),
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend, easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
         checkCapacity: () => null,
@@ -1311,6 +1331,87 @@ describe('a cache miss', () => {
     const h = harness({ prebuild: never('prebuild') });
     expect((await h.run()).ok).toBe(true);
   });
+});
+
+describe('owned AVD identity after the build', () => {
+  test('an unchanged serial refuses when the workspace AVD assignment changes during the build', async () => {
+    const replacement = { avdName: 'stim-replacement', consolePort: 5586, owned: true };
+    const h = harness({
+      build: async () => {
+        setDevice(root, 'android', replacement);
+        return { ok: true, apkPath: fakeApk(), durationMs: 161000, lastLines: [] };
+      },
+    });
+    const result = await h.run();
+    expect(result.error?.code).toBe(NO_DEVICE);
+    expect(h.calls.install).toEqual([]);
+    expect(h.calls.launch).toEqual([]);
+    expect(loadConfig()?.projects[root]?.platforms?.android).toEqual(replacement);
+  });
+
+  test('an emulator restart during the build retargets install, launch, collection, and output', async () => {
+    const device = { avdName: 'stim-app-412', consolePort: 5584, owned: true };
+    setDevice(root, 'android', device);
+    let currentSerial = 'emulator-5584';
+    const resolutions: string[] = [];
+    const readySerials: string[] = [];
+    const h = harness({
+      json: true,
+      build: async () => {
+        currentSerial = 'emulator-5586';
+        return { ok: true, apkPath: fakeApk(), durationMs: 161000, lastLines: [] };
+      },
+      resolveAvdSerial: (avdName: string) => {
+        expect(avdName).toBe(device.avdName);
+        resolutions.push(currentSerial);
+        return { serial: currentSerial };
+      },
+      waitForDeviceBoot: async (serial: string) => {
+        readySerials.push(serial);
+        return { ok: true };
+      },
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(resolutions).toEqual(['emulator-5586', 'emulator-5586']);
+    expect(readySerials).toEqual(['emulator-5586']);
+    expect(h.calls.install.map((call) => call.serial)).toEqual(['emulator-5586']);
+    expect(h.calls.launch.map((call) => [call.serial, call.metroPort])).toEqual([['emulator-5586', 8082]]);
+    expect(JSON.stringify(h.calls.spawn)).toContain('emulator-5586');
+    expect(JSON.stringify(h.calls.spawn)).not.toContain('emulator-5584');
+    expect(loadConfig()?.projects[root]?.platforms?.android).toEqual({ ...device, consolePort: 5586 });
+    expect(readState().launches.android.deviceId).toBe('emulator-5586');
+    expect(result.facts?.serial).toBe('emulator-5586');
+    expect(h.stdout).toHaveLength(1);
+    expect(JSON.parse(h.stdout[0]!).serial).toBe('emulator-5586');
+  });
+
+  test.each(['missing', 'notRunning', 'notOwned', 'probe-failed', 'not-ready', 'changed-again'] as const)(
+    '%s refuses installation after the build and retains the owned AVD record',
+    async (failure) => {
+      const device = { avdName: 'stim-app-412', consolePort: 5584, owned: true };
+      setDevice(root, 'android', device);
+      let probes = 0;
+      const h = harness({
+        resolveAvdSerial: () => {
+          probes++;
+          if (failure === 'probe-failed') throw new Error('AVD lookup timed out');
+          if (failure === 'missing' || failure === 'notRunning' || failure === 'notOwned') return { [failure]: true };
+          return { serial: failure === 'changed-again' && probes > 1 ? 'emulator-5588' : 'emulator-5586' };
+        },
+        waitForDeviceBoot: async () => ({ ok: failure !== 'not-ready' }),
+      });
+      const result = await h.run();
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe(NO_DEVICE);
+      expect(h.calls.build).toHaveLength(1);
+      expect(h.calls.install).toEqual([]);
+      expect(h.calls.launch).toEqual([]);
+      expect(h.calls.booted).toHaveLength(1);
+      expect(loadConfig()?.projects[root]?.platforms?.android).toEqual(device);
+      expect(result.error?.remedy).toContain('stim android');
+    },
+  );
 });
 
 describe('product flavors (--variant / android.variant)', () => {
@@ -4443,6 +4544,7 @@ describe('--device (a physical Android device)', () => {
       checkCapacity: never('the device-capacity check'),
       ensureDevice: never('the owned-device path'),
       ensureDeviceBooted: never('the emulator boot'),
+      resolveAvdSerial: never('AVD resolution for a physical device'),
       ...overrides,
     });
   }

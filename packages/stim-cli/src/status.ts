@@ -38,13 +38,25 @@ export interface WorktreeFacts {
   [key: string]: unknown;
 }
 
+export interface AndroidRuntimeFacts {
+  serial: string | null;
+  state: 'detected' | 'not-detected' | 'missing' | 'unknown';
+  error?: string;
+}
+
 export interface EnvironmentState {
   path: string;
   live: boolean;
   memoryMb: number;
   warnings: string[];
   ios?: { name: string | null; udid: string; owned: boolean; state: string } | null;
-  android?: { name: string | undefined; owned: boolean; physical: boolean } | null;
+  android?: {
+    name: string | undefined;
+    owned: boolean;
+    physical: boolean;
+    serial?: string | null;
+    state?: AndroidRuntimeFacts['state'];
+  } | null;
   metro?: { port: number; running: boolean; pid: number | null } | null;
   supervisor?: { pid: number | null; mode: string | null; startedAt: string | null; healthy: boolean } | null;
   logs?: { dir: string; errorsSinceMarker: number } | null;
@@ -80,6 +92,7 @@ export function environmentState(
     metro = null,
     worktrees = [],
     simsAvailable = true,
+    androidRuntime = null,
     supervisor = null,
     logs = null,
   }: {
@@ -87,6 +100,7 @@ export function environmentState(
     metro?: MetroFacts | null;
     worktrees?: WorktreeFacts[];
     simsAvailable?: boolean;
+    androidRuntime?: AndroidRuntimeFacts | null;
     supervisor?: SupervisorFacts | null;
     logs?: LogsFacts | null;
   } = {},
@@ -97,11 +111,12 @@ export function environmentState(
 
   const simBooted = Boolean(sim && sim.state === 'Booted');
   const metroRunning = Boolean(metro?.metro);
-  const live = simBooted || metroRunning || Boolean(android?.serial);
+  const androidDetected = androidRuntime ? Boolean(androidRuntime.serial) : Boolean(android?.serial);
+  const live = simBooted || metroRunning || androidDetected;
 
   let memoryMb = 0;
   if (simBooted) memoryMb += IOS_SIM_MB;
-  if (android?.serial) memoryMb += ANDROID_EMULATOR_MB;
+  if (androidDetected) memoryMb += ANDROID_EMULATOR_MB;
   if (metroRunning) memoryMb += METRO_MB;
 
   const warnings: string[] = [];
@@ -109,6 +124,20 @@ export function environmentState(
   if (ios && !sim && simsAvailable) warnings.push(`recorded sim ${ios.deviceUdid} no longer exists`);
   if (simBooted && project.metroPort && !metroRunning) {
     warnings.push('simulator is booted with no Metro serving it');
+  }
+  if (androidRuntime && android?.avdName) {
+    const recordedSerial = android.consolePort ? `emulator-${android.consolePort}` : android.serial;
+    if (androidRuntime.serial && recordedSerial && androidRuntime.serial !== recordedSerial) {
+      warnings.push(
+        `owned AVD ${android.avdName} changed serial (${recordedSerial} -> ${androidRuntime.serial}); rerun your \`stim android\` command in this workspace to restore Metro forwarding, then reopen agent-device on ${androidRuntime.serial}`,
+      );
+    }
+    if (androidRuntime.state === 'missing') warnings.push(`recorded AVD ${android.avdName} no longer exists`);
+    if (androidRuntime.state === 'not-detected')
+      warnings.push(
+        `owned AVD ${android.avdName} is not detected by adb; rerun your \`stim android\` command in this workspace to reconnect`,
+      );
+    if (androidRuntime.error) warnings.push(`could not check owned AVD ${android.avdName}: ${androidRuntime.error}`);
   }
   if (supervisor && supervisor.alive === false) {
     warnings.push(`stale supervisor record for ${project.__path}`);
@@ -132,6 +161,7 @@ export function environmentState(
           name: android.avdName ?? android.serial,
           owned: Boolean(android.owned),
           physical: Boolean(android.serial && !android.avdName),
+          ...(androidRuntime ? { serial: androidRuntime.serial, state: androidRuntime.state } : {}),
         }
       : null,
     metro: project.metroPort

@@ -149,6 +149,15 @@ emulators, remote targets, and physical devices keep the 20-second budget.
 Bundle delivery still requires the usual stability or app readiness check;
 an observed fatal error ends verification without waiting for the deadline.
 
+ANDROID EMULATOR RESTARTS
+  \`stim status\` resolves owned AVDs to their currently detected adb serial.
+  Its Android JSON adds serial and state (detected, not-detected, missing,
+  or unknown). Detection confirms device identity, not app health. Status
+  reports a serial change without changing forwarding or restarting anything.
+  Rerun \`stim android\` with the same build options in that workspace to restore Metro
+  forwarding, then reopen agent-device on the serial that run reports.
+  Other workspaces' simulators and automation sessions remain theirs.
+
 DESTRUCTIVE COMMANDS -- ask the user first
   gc --delete             deletes orphaned stim-* devices, tens of GB
   gc --delete --cache all empties the shared build caches every project uses

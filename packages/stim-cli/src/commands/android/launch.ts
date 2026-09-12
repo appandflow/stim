@@ -1,4 +1,4 @@
-import { resetAdoptedAvd } from '../../sim/android.ts';
+import { resetAdoptedAvd, type resolveOwnedAvdSerial, type waitForBoot } from '../../sim/android.ts';
 import type { ChildProcess } from 'node:child_process';
 import { rmSync } from 'node:fs';
 import { basename } from 'node:path';
@@ -54,7 +54,7 @@ import { remoteAndroidDeps } from '../../engine/device-remote.ts';
 import { type RunLease, DEBUG_VERIFY_STEP_MS, lostLine, lostRefusal } from '../../engine/device-lease-run.ts';
 import { type LoadProjectProviderResult, exitAfterFlush } from '../../engine/remote-cache.ts';
 import { type ReportAndroidResultArgs, finishAndroidUpload, reportAndroidResult, persistLastBuild } from './result.ts';
-import { loadConfig, saveConfig, withConfigLock, upsertProject } from '../../config.ts';
+import { loadConfig, saveConfig, setDevice, withConfigLock, upsertProject } from '../../config.ts';
 import { providerUploadOutcome } from '../../build-cache.ts';
 import { detectAndroidPackage } from '../../project.ts';
 import { launchOutcomeRecord } from '../native-runtime.ts';
@@ -78,7 +78,7 @@ interface VerifyAndroidRunArgs {
   metroPort: number | null;
   isExpo: boolean;
   physical: boolean;
-  newEmulator: boolean;
+  device: OwnedDeviceRecord;
   scheme?: string | null;
   component?: string | null;
   phase: (label: unknown, text: string) => void;
@@ -100,7 +100,7 @@ async function verifyAndroidRun({
   metroPort,
   isExpo,
   physical,
-  newEmulator,
+  device,
   scheme,
   component = null,
   phase,
@@ -153,6 +153,7 @@ async function verifyAndroidRun({
     return { state: LAUNCH_FATAL };
   }
 
+  const newEmulator = Boolean(device.created && device.owned && !remoteDevice);
   const timeoutMs = newEmulator ? 60000 : VERIFY_TIMEOUT_MS;
   if (metroCheck && newEmulator) phase('verify', 'waiting up to 60s for bundle load (new emulator)');
   const verification: VerifyLaunchResultLike = metroCheck
@@ -304,6 +305,8 @@ interface FinishAndroidRunArgs {
   physical: boolean;
   remoteDevice: ReturnType<typeof remoteAndroidDeps> | null;
   bootPromise: Promise<AndroidBootLike>;
+  resolveAvdSerial: typeof resolveOwnedAvdSerial;
+  waitForDeviceBoot: typeof waitForBoot;
   bootDuration: () => string;
   apkPath: string | null;
   androidPackage: string | null;
@@ -345,6 +348,48 @@ interface FinishAndroidRunArgs {
   recordRun: ReportAndroidResultArgs['recordRun'];
 }
 
+async function resolveInstallSerial({
+  root,
+  device,
+  physical,
+  remoteDevice,
+  serial,
+  resolveAvdSerial,
+  waitForDeviceBoot,
+  phase,
+}: Pick<
+  FinishAndroidRunArgs,
+  'root' | 'device' | 'physical' | 'remoteDevice' | 'resolveAvdSerial' | 'waitForDeviceBoot' | 'phase'
+> & { serial: string }): Promise<string> {
+  if (physical || remoteDevice || !device.owned || !device.avdName) return serial;
+  const resolved = resolveAvdSerial(device.avdName, { timeoutMs: 5000 });
+  if (!resolved.serial) throw new Error(`Could not verify a running owned AVD ${device.avdName} before installation.`);
+  if (resolved.serial !== serial) {
+    phase(
+      'device',
+      `${device.avdName} changed serial (${serial} -> ${resolved.serial}); checking readiness before installation`,
+    );
+    const ready = await waitForDeviceBoot(resolved.serial, 60000, { commandTimeoutMs: 5000 });
+    if (!ready.ok)
+      throw new Error(
+        `Emulator ${resolved.serial} never reported boot completion. Diagnostic: ${JSON.stringify(ready.diagnostic)}`,
+      );
+    if (resolveAvdSerial(device.avdName, { timeoutMs: 5000 }).serial !== resolved.serial)
+      throw new Error(
+        `Could not verify AVD ${device.avdName} still runs on ${resolved.serial} after checking readiness.`,
+      );
+    phase('device', `reopen agent-device on ${resolved.serial}`);
+  }
+  const consolePort = Number(resolved.serial.replace(/^emulator-/, ''));
+  withConfigLock(() => {
+    const current = loadConfig()?.projects?.[root]?.platforms?.android;
+    if (!current?.owned || current.avdName !== device.avdName)
+      throw new Error('The owned emulator assignment changed before installation.');
+    if (current.consolePort !== consolePort) setDevice(root, PLATFORM, { ...current, consolePort });
+  });
+  return resolved.serial;
+}
+
 export async function finishAndroidRun({
   lease,
   releaseLease,
@@ -362,6 +407,8 @@ export async function finishAndroidRun({
   physical,
   remoteDevice,
   bootPromise,
+  resolveAvdSerial,
+  waitForDeviceBoot,
   bootDuration,
   apkPath,
   androidPackage: initialPackage,
@@ -426,7 +473,25 @@ export async function finishAndroidRun({
       logPath: diag.logPath ? displayPath(root, diag.logPath) : null,
     });
   }
-  const serial = booted.serial!;
+  let serial: string;
+  try {
+    serial = await resolveInstallSerial({
+      root,
+      device,
+      physical,
+      remoteDevice,
+      serial: booted.serial!,
+      resolveAvdSerial,
+      waitForDeviceBoot,
+      phase,
+    });
+  } catch (error) {
+    return fail(
+      NO_DEVICE,
+      error instanceof Error ? error.message : String(error),
+      'Run `stim status` to inspect the owned AVD, then retry `stim android`; the APK was not installed.',
+    );
+  }
   phase(
     'device',
     physical
@@ -652,7 +717,7 @@ export async function finishAndroidRun({
     metroPort,
     isExpo,
     physical,
-    newEmulator: Boolean(device.created && device.owned && !remoteDevice),
+    device,
     scheme,
     component: launched.component ?? null,
     phase,

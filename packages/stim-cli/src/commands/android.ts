@@ -116,7 +116,9 @@ import {
   listInstalledSystemImages,
   physicalDeviceModel,
   probeEmulatorSerial,
+  resolveOwnedAvdSerial,
   resolvePhysicalDevice,
+  waitForBoot,
 } from '../sim/android.ts';
 import {
   checkDeviceCapacity,
@@ -362,6 +364,8 @@ interface RunAndroidOptions {
   releaseSlot?: typeof releaseBuildSlot;
   ensureDevice?: typeof ensureOwnedDevice;
   ensureDeviceBooted?: typeof ensureBooted;
+  resolveAvdSerial?: typeof resolveOwnedAvdSerial;
+  waitForDeviceBoot?: typeof waitForBoot;
   resolveMetro?: typeof resolveProjectMetro;
   warmMetro?: typeof warmMetro;
   resolveMetroRetrying?: typeof resolveMetroWithRetry;
@@ -442,6 +446,8 @@ function resolveRunAndroidOptions(
     ensureDevice = ensureOwnedDevice,
     listSystemImages = listInstalledSystemImages,
     ensureDeviceBooted = ensureBooted,
+    resolveAvdSerial = resolveOwnedAvdSerial,
+    waitForDeviceBoot = waitForBoot,
     resolveMetro = resolveProjectMetro,
     warmMetro: prewarmMetro = warmMetro,
     resolveMetroRetrying = resolveMetroWithRetry,
@@ -521,6 +527,8 @@ function resolveRunAndroidOptions(
     ensureDevice,
     listSystemImages,
     ensureDeviceBooted,
+    resolveAvdSerial,
+    waitForDeviceBoot,
     resolveMetro,
     prewarmMetro,
     resolveMetroRetrying,
@@ -602,6 +610,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     ensureDevice,
     listSystemImages,
     ensureDeviceBooted,
+    resolveAvdSerial,
+    waitForDeviceBoot,
     resolveMetro,
     prewarmMetro,
     resolveMetroRetrying,
@@ -1680,6 +1690,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         physical,
         remoteDevice,
         bootPromise,
+        resolveAvdSerial,
+        waitForDeviceBoot,
         bootDuration: () => bootDuration,
         apkPath,
         androidPackage,

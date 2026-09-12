@@ -14,6 +14,7 @@ import { workspaceLogsDir } from '../paths.ts';
 import { readSupervisorState } from './stop.ts';
 import { findProjectRoot, projectShortcut } from '../project.ts';
 import { listAllIosSims } from '../sim/ios.ts';
+import { resolveOwnedAvdSerial } from '../sim/android.ts';
 import type { IosSimRecord } from '../sim/ios.ts';
 import { listWorktrees } from '../worktree.ts';
 import type { WorktreeEntry } from '../worktree.ts';
@@ -31,7 +32,14 @@ import {
   unprovisionedWorktrees,
 } from '../status.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../sim-pool.ts';
-import type { EnvironmentState, VolumeInfo, SimFacts, MetroFacts, WorktreeFacts } from '../status.ts';
+import type {
+  AndroidRuntimeFacts,
+  EnvironmentState,
+  VolumeInfo,
+  SimFacts,
+  MetroFacts,
+  WorktreeFacts,
+} from '../status.ts';
 
 type SupervisorRecordExt = SupervisorRecord & { mode?: string | null };
 
@@ -83,6 +91,10 @@ export default function statusCommand(program: Command): void {
               metro: metro as unknown as MetroFacts | null,
               worktrees: worktrees as unknown as WorktreeFacts[],
               simsAvailable,
+              androidRuntime:
+                proj.platforms?.android?.owned && proj.platforms.android.avdName
+                  ? readAndroidRuntime(proj.platforms.android.avdName)
+                  : null,
               supervisor,
               logs: logFacts(path),
             },
@@ -172,8 +184,11 @@ export default function statusCommand(program: Command): void {
         }
         if (state.android) {
           const kind = state.android.physical ? chalk.dim('(physical)') : chalk.dim('(emulator)');
+          const observed = state.android.state
+            ? ` ${state.android.state}${state.android.serial ? ` (${state.android.serial})` : ''}`
+            : '';
           console.log(
-            `  android: ${chalk.cyan(state.android.name)} ${kind}${state.android.owned ? chalk.dim(' (owned)') : ''}`,
+            `  android: ${chalk.cyan(state.android.name)} ${kind}${observed}${state.android.owned ? chalk.dim(' (owned)') : ''}`,
           );
         }
         for (const w of state.warnings) console.log(chalk.yellow(`  ! ${w}`));
@@ -223,6 +238,24 @@ export default function statusCommand(program: Command): void {
         );
       }
     });
+}
+
+function readAndroidRuntime(avdName: string): AndroidRuntimeFacts {
+  try {
+    const resolved = resolveOwnedAvdSerial(avdName, { timeoutMs: 5000 });
+    return {
+      serial: resolved.serial ?? null,
+      state: resolved.serial
+        ? 'detected'
+        : resolved.missing
+          ? 'missing'
+          : resolved.notRunning
+            ? 'not-detected'
+            : 'unknown',
+    };
+  } catch (error) {
+    return { serial: null, state: 'unknown', error: String((error as Error)?.message || error).split('\n')[0] };
+  }
 }
 
 export function readVolumes(projectPath: string): VolumeInfo[] {
