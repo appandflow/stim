@@ -46,6 +46,11 @@ on:
         type: choice
         default: loop
         options: [loop, caches, pool, all]
+      ios_runner:
+        description: 'iOS runner: standard is free for public repos; large is billed'
+        type: choice
+        default: standard
+        options: [standard, large]
   pull_request:
     # `labeled` is what makes "add the label to run it" work; the others let a
     # push to an already-labeled PR re-run. The `if:` on each job is the actual
@@ -67,7 +72,7 @@ jobs:
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'e2e-native'))
-    runs-on: macos-latest
+    runs-on: ${{ inputs.ios_runner == 'large' && 'macos-latest-xlarge' || 'macos-latest' }}
     # The caches suite adds a second cold compile (the single-flight race) plus a
     # third cache-hit build, so it needs headroom the loop suite never did.
     timeout-minutes: ${{ matrix.suite == 'caches' && 120 || 60 }}

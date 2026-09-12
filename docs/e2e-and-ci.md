@@ -242,6 +242,19 @@ Two workflows under `.github/workflows/`:
   the cross-run cache path is itself exercised; build logs
   (`build-*.ndjson`) are uploaded as artifacts on failure.
 
+Manual dispatches can select `ios_runner=large` to use the 14 GB ARM64
+`macos-latest-xlarge` runner when simulator workloads need more memory:
+
+```bash
+gh workflow run e2e-native.yml --ref <branch> -f suite=all -f ios_runner=large
+```
+
+The default is `standard` (`macos-latest`); scheduled and PR runs also use
+standard runners. Android and the selected suite matrix are unchanged.
+[Larger macOS runners](https://docs.github.com/en/actions/reference/runners/larger-runners)
+are [billed per job-minute](https://docs.github.com/en/billing/reference/actions-runner-pricing),
+including in public repositories. Confirm the run budget before choosing `large`.
+
 ### Assumptions a reviewer must confirm
 
 - The `macos-latest` runner image ships the Xcode that `latest-stable` selects,
