@@ -4,8 +4,12 @@ sidebar_position: 5
 description: 'Optional npm packages for builds that run outside Stim'
 ---
 
+:::note[Command examples]
+
 Commands use `stim`. If it is not installed globally, replace `stim` with
 `npx stim`.
+
+:::
 
 Stim supplies its own cache arguments when it runs Metro and native builds. A
 project does not need these packages for `stim start`, `stim ios`, or

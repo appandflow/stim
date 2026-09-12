@@ -6,8 +6,12 @@ description: 'Download a compatible EAS build and run it with Stim'
 import StimTabs from '@site/src/components/StimTabs';
 import PromptBox from '@site/src/components/PromptBox';
 
+:::note[Command examples]
+
 Commands use `stim`. If it is not installed globally, replace `stim` with
 `npx stim`.
+
+:::
 
 If your Expo project builds with EAS, Stim can download a matching development
 build and run it on a simulator, emulator, or connected phone. EAS supplies the

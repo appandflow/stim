@@ -6,8 +6,12 @@ description: 'Every Stim command and option'
 
 import StimTabs from '@site/src/components/StimTabs';
 
+:::note[Command examples]
+
 Commands use `stim`. If Stim is not installed globally, replace `stim` with
 `npx stim`.
+
+:::
 
 Run `stim <command> --help` for parser help. Run `stim guide` for the full
 reference that ships with the installed version.
