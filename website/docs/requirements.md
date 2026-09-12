@@ -37,3 +37,13 @@ gems and runs `bundle exec pod install`. Run `stim doctor` to check the setup.
 - The `proxy` backend needs an Agent Device daemon URL and token.
 - The `eas` backend needs the EAS CLI, an authenticated Expo account, and a
   configured EAS project. EAS simulator use can be billable.
+
+## EAS development builds
+
+`--eas-profile` needs EAS CLI, an authenticated Expo account, and a linked Expo
+project with an internal development profile. It downloads an existing build
+and skips local native compilation, so CocoaPods and Gradle compilation setup
+are not needed for this path. Keep the host tools needed to run the selected
+device: Xcode and an installed runtime for a local iOS simulator, or the Android
+SDK and system image for an emulator. See [EAS development builds](./eas-builds.md)
+for setup and connected-device requirements.
