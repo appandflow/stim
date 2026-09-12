@@ -492,3 +492,25 @@ describe('releasing what the run took', () => {
     expect(h.holders.get(ROOT)?.ios?.kind).toBe('declared');
   });
 });
+
+test('run leases in different slots coexist and a guard releases only its own slot', async () => {
+  const h = harness();
+  const phone = await acquire(h, { slot: 'phone' });
+  const tablet = await acquire(h, { slot: 'tablet', id: 'TABLET' });
+  assert(phone.status === 'leased' && tablet.status === 'leased');
+  const handle = runLease({
+    root: ROOT,
+    platform: 'ios',
+    slot: 'tablet',
+    kind: tablet.kind,
+    expiresAt: tablet.expiresAt,
+    io: h.io,
+  });
+  expect(handle.raise(120_000).ok).toBe(true);
+  handle.release();
+  expect(Object.keys(h.holders.get(ROOT) ?? {})).toEqual(['ios:phone']);
+  expect(h.read()?.slot).toBe('phone');
+  const duplicate = await acquire(h, { slot: 'duplicate', waitSeconds: 0 });
+  assert(duplicate.status === 'refused');
+  expect(duplicate.refusal.code).toBe('STIM_DEVICE_BUSY');
+});

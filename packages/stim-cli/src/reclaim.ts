@@ -41,7 +41,7 @@ async function reapCollectors(
     if (ownership.status === 'gone') continue;
     if (ownership.status === 'unverified') {
       const name = `${platform} log collector (pid ${pid})`;
-      const platformLabel = platform === 'android' ? 'android' : 'ios';
+      const platformLabel = platform.split(':')[0] === 'android' ? 'android' : 'ios';
       const entry: SkippedDevice = {
         platform: platformLabel,
         name,
@@ -58,7 +58,7 @@ async function reapCollectors(
       if ((error as NodeJS.ErrnoException).code === 'ESRCH') continue;
     }
     const entry: SkippedDevice = {
-      platform: platform === 'android' ? 'android' : 'ios',
+      platform: platform.split(':')[0] === 'android' ? 'android' : 'ios',
       name: `${platform} log collector (pid ${pid})`,
       reason: 'Collector exit could not be confirmed; keeping its ownership record.',
     };
