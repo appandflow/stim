@@ -202,6 +202,15 @@ android.gradleCommand must be a single :app:assemble<Variant>Debug task producin
 an APK. Install eas-cli and authenticate with eas login
 or EXPO_TOKEN. The Expo app must already be linked to the intended EAS project.
 
+Use the profile the user names. Otherwise inspect eas.json, including extends
+and platform overrides, for the requested platform, simulator or physical
+device, and app variant or environment. Choose a profile only when those
+requirements identify one compatible development profile. If there is no
+compatible profile or the choice is ambiguous, ask the user. Profile names
+alone do not establish compatibility. Confirm the resolved settings with
+npx eas-cli config --platform <ios|android> --profile <name> --json --non-interactive.
+Pass the selected name to --eas-profile; the CLI does not infer it.
+
 Stim delegates profile inheritance, environment resolution and fingerprinting
 to EAS CLI. fingerprint:generate uploads fingerprint metadata to EAS. It does
 not start a native build. EAS access is needed even when the artifact is
