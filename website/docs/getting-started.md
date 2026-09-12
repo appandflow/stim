@@ -76,6 +76,13 @@ com.appandflow.trailhead · ready · cache hit · 58.8s · errors clean`}
     {`Run the app on an iPhone 17 simulator with iOS 26.5.`}
   </PromptBox>
   <PromptBox
+    title="Use an EAS build"
+    response={`Trailhead launched on stim-trailhead (iPhone 17 / iOS 26.5).
+com.appandflow.trailhead · ready · EAS build · errors clean`}
+  >
+    {`Use Stim to run this app on an iOS simulator with the EAS profile ios-simulator. Reuse a compatible build. If none matches, show me the EAS build command and ask before starting a cloud build. Check the app logs for errors after launch.`}
+  </PromptBox>
+  <PromptBox
     title="Run on a connected phone"
     response={`Trailhead launched on the connected iPhone.
 com.appandflow.trailhead · ready · device lease released · errors clean`}
@@ -114,6 +121,10 @@ Before and After recordings captured; named assertion passed; PR opened with the
     {`Fix this in a separate worktree. Record the affected flow before and after on iOS with agent-device, then open a PR with the recordings in a Before/After table.`}
   </PromptBox>
 </PromptGrid>
+
+The EAS prompt assumes an `ios-simulator` profile. Replace it with your
+project's profile name; see [EAS development builds](./eas-builds.md) for setup,
+Android and device examples, and build-miss behavior.
 
 ## Run work in parallel
 

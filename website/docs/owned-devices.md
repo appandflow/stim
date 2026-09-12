@@ -54,8 +54,10 @@ Stim supports two optional remote backends:
 - `proxy` connects through an Agent Device daemon that already owns a session.
 - `eas` creates and owns an EAS simulator session.
 
-The app still builds on the local machine. `stim start --remote` creates the
-Metro route required by the remote device. Remote EAS sessions can incur cost.
+The app builds locally by default; `--eas-profile` can instead download an
+[EAS development build](./eas-builds.md). `stim start --remote` creates the
+Metro route required by the remote device. Remote EAS sessions can incur cost
+independently of the build source.
 
 ## Cleanup behavior
 

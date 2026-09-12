@@ -36,6 +36,13 @@ or Android target, Stim regenerates the current workspace's JavaScript and
 assets in a copy of the artifact. If that swap fails, it builds fresh. iOS
 physical-device Release runs always build fresh.
 
+### EAS development builds
+
+With `--eas-profile <name>`, Stim downloads a compatible EAS development build
+and uses EAS CLI's artifact cache directly. It does not add another Stim cache
+copy or compile locally on a miss. See [EAS development builds](./eas-builds.md)
+for profile selection, device support, and cache behavior.
+
 ### Optional artifact providers
 
 The provider integration is implemented, but Stim ships no network provider

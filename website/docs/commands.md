@@ -90,12 +90,12 @@ project is reused.
 ```text
 stim ios [--scheme <name>] [--configuration <name>] [--device-type <name>] [--runtime <version>]
          [--device [udid]] [--wait <seconds> | --no-wait] [--remote <proxy|eas>]
-         [--no-metro-check] [--no-build-cache] [--json]
+         [--eas-profile <name>] [--no-metro-check] [--no-build-cache] [--json]
 ```
 
 Builds or restores the iOS app. Stim then boots an owned simulator, installs the
-app, opens it, and checks launch logs. The build always runs on the local
-machine, including remote-device workflows.
+app, opens it, and checks launch logs. Native builds run locally by default;
+`--eas-profile` downloads an existing EAS development build.
 
 - `--configuration <name>` selects an Xcode configuration. The default is Debug.
 - `--scheme <name>` selects an exact shared Xcode scheme when the automatic
@@ -118,16 +118,21 @@ machine, including remote-device workflows.
   Only with `--device`; cannot be combined with `--wait`.
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote simulator.
+- `--eas-profile <name>` selects a compatible [EAS development build](./eas-builds.md),
+  including with `--device`. A miss stops and prints an EAS build command;
+  cloud builds require authorization. Cannot be combined with `--scheme`,
+  `--configuration`, or `--no-build-cache`.
 - `--no-metro-check` skips the Debug dev-server gate.
 - `--no-build-cache` ignores cached artifacts and replaces the matching entry.
 - `--json` prints one stable result object on stdout.
 
 A non-Debug configuration embeds its JavaScript bundle.
 
-A device build is local-tier only. Its cache key ends `-device`, so it cannot
+A locally compiled device build is local-tier only. Its cache key ends `-device`, so it cannot
 collide with a simulator build, and no build-cache provider or Expo remote cache
-is read or written on a `--device` run, because every entry they hold is keyed
-for the simulator.
+is read or written on that path, because every entry they hold is keyed
+for the simulator. `--eas-profile <name> --device` uses EAS CLI's artifact cache and
+installs the signed app without re-signing it.
 
 A `--device` run installs with `devicectl device install app` and launches with
 `devicectl device process launch`. Every device install is signed, Debug
@@ -163,7 +168,7 @@ into cached iOS physical-device builds.
 ```text
 stim android [--variant <name>] [--system-image <id>] [--device [serial]]
              [--wait <seconds> | --no-wait] [--remote <proxy|eas>]
-             [--no-metro-check] [--no-build-cache] [--json]
+             [--eas-profile <name>] [--no-metro-check] [--no-build-cache] [--json]
 ```
 
 Builds or restores the Android app. Stim then boots an owned emulator, installs
@@ -184,6 +189,10 @@ the app, opens it, and checks launch logs.
   cannot be combined with `--wait`.
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote emulator.
+- `--eas-profile <name>` selects a compatible [EAS development build](./eas-builds.md),
+  including with `--device`. A miss stops and prints an EAS build command;
+  cloud builds require authorization. Cannot be combined with `--variant` or
+  `--no-build-cache`.
 - `--no-metro-check` skips the Debug dev-server gate.
 - `--no-build-cache` ignores cached artifacts and replaces the matching entry.
 - `--json` prints one stable result object on stdout.
