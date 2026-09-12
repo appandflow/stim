@@ -33,3 +33,22 @@ test('runFileQuiet passes arguments without a shell, so metacharacters stay lite
   resetExecutor();
   expect(getExecutor().runFileQuiet('echo', ['$HOME `id` "x"'])).toBe('$HOME `id` "x"');
 });
+
+test('an opt-in hard deadline terminates a child that ignores SIGTERM before returning', () => {
+  resetExecutor();
+  const started = Date.now();
+  let failure: NodeJS.ErrnoException & { pid?: number; signal?: string } = new Error('did not fail');
+  try {
+    getExecutor().runFile(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)'], {
+      timeoutMs: 200,
+      killSignal: 'SIGKILL',
+    });
+  } catch (error) {
+    failure = error as typeof failure;
+  }
+  expect(failure.code).toBe('ETIMEDOUT');
+  expect(failure.signal).toBe('SIGKILL');
+  expect(Date.now() - started).toBeLessThan(3000);
+  expect(failure.pid).toBeGreaterThan(1);
+  expect(() => process.kill(failure.pid!, 0)).toThrow(/ESRCH/);
+});

@@ -268,7 +268,8 @@ test('parked deletion keeps ownership records after malformed simctl list output
   };
   parkSim({ platform: 'ios', projectPath: '/tmp/source', record, max: 3 });
   setExecutor({
-    run(cmd) {
+    runFile(_file, args = []) {
+      const cmd = args.join(' ');
       if (cmd.includes('simctl list devices')) return '[]';
       throw new Error(`unexpected run: ${cmd}`);
     },
@@ -389,6 +390,7 @@ test('gc sizes only listed owned Android AVDs after ownership classification', a
       }
       throw new Error(`unexpected run: ${cmd}`);
     },
+    runFile: () => JSON.stringify({ devices: {} }),
     runQuiet: () => null,
     runFileQuiet: () => null,
     spawn: () => null,

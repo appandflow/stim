@@ -35,7 +35,8 @@ beforeEach(() => {
     },
   });
   setExecutor({
-    run(cmd) {
+    runFile(_file, args = []) {
+      const cmd = args.join(' ');
       if (cmd.includes('simctl list devices --json')) return listJson;
       return '';
     },
@@ -121,7 +122,8 @@ test('status says nothing extra for a project that has only a Metro port', async
 
 test('status reports simctl as unreadable instead of warning that every sim is gone', async () => {
   setExecutor({
-    run(cmd) {
+    runFile(_file, args = []) {
+      const cmd = args.join(' ');
       if (cmd.includes('simctl list devices --json')) throw new Error('xcrun: simctl not found');
       return '';
     },

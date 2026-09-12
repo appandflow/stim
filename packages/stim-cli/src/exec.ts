@@ -2,6 +2,7 @@ import { type ChildProcess, type SpawnOptions, execFileSync, execSync, spawn } f
 
 interface ExecOptions {
   timeoutMs?: number;
+  killSignal?: NodeJS.Signals;
   cwd?: string;
   env?: Record<string, string>;
   omitEnv?: readonly string[];
@@ -18,23 +19,25 @@ export interface Executor {
 const MAX_BUFFER = 64 * 1024 * 1024;
 
 const defaultExecutor: Executor = {
-  run(cmd, { timeoutMs, cwd } = {}) {
+  run(cmd, { timeoutMs, killSignal, cwd } = {}) {
     const opts: Parameters<typeof execSync>[1] = {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
       maxBuffer: MAX_BUFFER,
     };
     if (timeoutMs) opts.timeout = timeoutMs;
+    if (killSignal) opts.killSignal = killSignal;
     if (cwd) opts.cwd = cwd;
     return String(execSync(cmd, opts)).trim();
   },
-  runFile(file, args = [], { timeoutMs, cwd, env, omitEnv } = {}) {
+  runFile(file, args = [], { timeoutMs, killSignal, cwd, env, omitEnv } = {}) {
     const opts: Parameters<typeof execFileSync>[2] = {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
       maxBuffer: MAX_BUFFER,
     };
     if (timeoutMs) opts.timeout = timeoutMs;
+    if (killSignal) opts.killSignal = killSignal;
     if (cwd) opts.cwd = cwd;
     if (env || omitEnv?.length) {
       const childEnv = { ...process.env, ...env };
