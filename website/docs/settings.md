@@ -4,8 +4,12 @@ sidebar_position: 2
 description: 'Project, repository, machine, and environment settings'
 ---
 
+:::note[Command examples]
+
 Commands use `stim`. If it is not installed globally, replace `stim` with
 `npx stim`.
+
+:::
 
 Most projects need no settings. Use `stim guide settings` for descriptions that
 match the installed version.
