@@ -143,6 +143,12 @@ If the app is stuck before loading its first bundle, restart its process with
 the printed force-stop and launcher commands. Foregrounding the same process
 does not restart initialization. Confirm the bundle request and expected UI.
 
+Debug Android launches on an owned emulator created in the same run get up to
+60 seconds for bundle loading; the verify phase names that budget. Existing
+emulators, remote targets, and physical devices keep the 20-second budget.
+Bundle delivery still requires the usual stability or app readiness check;
+an observed fatal error ends verification without waiting for the deadline.
+
 DESTRUCTIVE COMMANDS -- ask the user first
   gc --delete             deletes orphaned stim-* devices, tens of GB
   gc --delete --cache all empties the shared build caches every project uses
