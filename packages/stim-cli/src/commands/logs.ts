@@ -1,3 +1,4 @@
+import { validateDeviceSlot } from '../device-slots.ts';
 import chalk from 'chalk';
 import type { ChalkInstance } from 'chalk';
 import type { Command } from 'commander';
@@ -108,6 +109,7 @@ const LEVEL_COLOURS: Record<string, ChalkInstance> = {
 };
 
 interface LogsOptions {
+  slot?: string;
   source?: string | string[];
   level?: string;
   since?: string;
@@ -124,6 +126,7 @@ export default function logsCommand(program: Command): void {
     .description(
       "Query this workspace's merged NDJSON log timeline (bundler, client, device, build). Prints and exits; nothing matching is a successful, empty result. Use --follow to stream.",
     )
+    .option('--slot <name>', 'Only records attributed to this device slot', validateDeviceSlot)
     .option('--source <s...>', 'Only these sources: metro, client, device, build, or all')
     .option('--level <l>', `Minimum level: ${LEVELS.join(', ')}`)
     .option('--since <d>', 'Only records newer than this, e.g. 30s, 5m, 2h')
@@ -175,6 +178,7 @@ export default function logsCommand(program: Command): void {
       }
 
       const query = {
+        slot: opts.slot,
         dir,
         sources,
         minLevel,
@@ -239,6 +243,7 @@ export default function logsCommand(program: Command): void {
       }
 
       const criteria = buildCriteria({
+        slot: opts.slot,
         sources,
         minLevel,
         since: opts.since,

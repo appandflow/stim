@@ -1,3 +1,4 @@
+import { deviceSlotPlatforms } from '../device-slots.ts';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -98,7 +99,7 @@ describe('ensureBooted: ios', () => {
     });
     expect(commands.filter((c) => c.includes('simctl boot')).length).toBe(0);
     expect(commands.some((c) => c.includes('simctl bootstatus'))).toBe(false);
-    expect(probes).toEqual([['xcrun', 'simctl', 'spawn', 'U1', '/usr/bin/true', { timeoutMs: 30000 }]]);
+    expect(probes).toEqual([['xcrun', 'simctl', 'spawn', 'U1', 'launchctl', 'list', { timeoutMs: 30000 }]]);
   });
 
   test.each([false, true])('refuses a simulator that cannot spawn a process after boot (joined=%s)', async (joined) => {
@@ -323,7 +324,7 @@ describe('ensureBooted: ios', () => {
     });
     expect(result).toEqual({ ok: true, udid: 'U1' });
     expect(finished).toBe(true);
-    expect(commands).toEqual(['xcrun simctl spawn U1 /usr/bin/true']);
+    expect(commands).toEqual(['xcrun simctl spawn U1 launchctl list']);
   });
 
   test('reports the failure of the boot this run started, before anything is installed', async () => {
@@ -824,7 +825,8 @@ describe('ensureOwnedDevice: ios', () => {
     const root = projectDir();
     const name = 'stim-app (iPhone 17 Pro 26.2)';
     try {
-      if (source === 'parked')
+      if (source === 'parked') {
+        setDevice(root, 'ios', { deviceUdid: 'OTHER', owned: true });
         parkSim({
           platform: 'ios',
           projectPath: root,
@@ -838,6 +840,7 @@ describe('ensureOwnedDevice: ios', () => {
             simslimManaged: false,
           },
         });
+      }
       const { exec } = iosExecutor(
         source === 'unavailable' ? [{ udid: 'OTHER', name, state: 'Shutdown', isAvailable: false }] : [],
       );
@@ -850,76 +853,86 @@ describe('ensureOwnedDevice: ios', () => {
     }
   });
 
-  test.each([false, true])('adopts and resets a matching parked simulator (name collision: %s)', async (collision) => {
-    const root = projectDir();
-    process.env.STIM_POOL_IOS_PARKED_MAX = '3';
-    try {
-      parkSim({
-        platform: 'ios',
-        projectPath: root,
-        max: 3,
-        record: {
-          udid: 'U1',
-          name: 'stim-parked (iPhone 17 Pro 26.2) u1',
-          deviceTypeIdentifier: TYPE_17_PRO.identifier,
-          runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-2',
-          parkedAt: '2026-09-01T10:00:00.000Z',
-          simslimManaged: false,
-          cacheKey: 'fingerprint-debug-sim',
-        },
-      });
-      const devices = [
-        {
-          udid: 'U1',
-          name: 'stim-parked (iPhone 17 Pro 26.2) u1',
-          state: 'Shutdown',
-          isAvailable: true,
-          deviceTypeIdentifier: TYPE_17_PRO.identifier,
-        },
-      ];
-      if (collision)
-        devices.push({
-          udid: 'OTHER',
-          name: 'stim-app (iPhone 17 Pro 26.2)',
-          state: 'Booted',
-          isAvailable: true,
-          deviceTypeIdentifier: TYPE_17_PRO.identifier,
+  test.each([
+    { collision: false, stale: false },
+    { collision: true, stale: false },
+    { collision: false, stale: true },
+  ])(
+    'adopts a matching parked simulator (collision: $collision, stale assignment: $stale)',
+    async ({ collision, stale }) => {
+      const root = projectDir();
+      process.env.STIM_POOL_IOS_PARKED_MAX = '3';
+      try {
+        setDevice(root, 'ios', { deviceUdid: 'U1', owned: true });
+        parkSim({
+          platform: 'ios',
+          projectPath: root,
+          max: 3,
+          record: {
+            udid: 'U1',
+            name: 'stim-parked (iPhone 17 Pro 26.2) u1',
+            deviceTypeIdentifier: TYPE_17_PRO.identifier,
+            runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-2',
+            parkedAt: '2026-09-01T10:00:00.000Z',
+            simslimManaged: false,
+            cacheKey: 'fingerprint-debug-sim',
+          },
         });
-      const name = `stim-app (iPhone 17 Pro 26.2)${collision ? ` ${workspaceId(root)}` : ''}`;
-      const { run, files, exec } = iosExecutor(devices);
-      setExecutor(exec);
-      const device = await ensureOwnedDevice({
-        platform: 'ios',
-        project: getProject(root),
-        projectPath: root,
-        label: 'app',
-        settings: {},
-      });
-      expect(device).toMatchObject({
-        deviceUdid: 'U1',
-        deviceName: name,
-        adopted: true,
-        adoptionPending: true,
-        parkedCacheKey: 'fingerprint-debug-sim',
-      });
-      expect(readParked('ios')).toEqual([]);
-      expect(run).toContain('xcrun simctl boot U1');
-      expect(files).toContainEqual(['xcrun', 'simctl', 'rename', 'U1', name]);
-      expect(files.some((call) => call.includes('privacy'))).toBe(false);
-      await device.booting?.done;
-      expect(files).toContainEqual(['xcrun', 'simctl', 'privacy', 'U1', 'reset', 'all']);
-      expect(files).toContainEqual(['xcrun', 'simctl', 'keychain', 'U1', 'reset']);
-    } finally {
-      delete process.env.STIM_POOL_IOS_PARKED_MAX;
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
+        const devices = [
+          {
+            udid: 'U1',
+            name: 'stim-parked (iPhone 17 Pro 26.2) u1',
+            state: 'Shutdown',
+            isAvailable: true,
+            deviceTypeIdentifier: TYPE_17_PRO.identifier,
+          },
+        ];
+        if (collision)
+          devices.push({
+            udid: 'OTHER',
+            name: 'stim-app (iPhone 17 Pro 26.2)',
+            state: 'Booted',
+            isAvailable: true,
+            deviceTypeIdentifier: TYPE_17_PRO.identifier,
+          });
+        if (stale) setDevice(root, 'ios', { deviceUdid: 'MISSING', owned: true });
+        const name = `stim-app (iPhone 17 Pro 26.2)${collision ? ` ${workspaceId(root)}` : ''}`;
+        const { run, files, exec } = iosExecutor(devices);
+        setExecutor(exec);
+        const device = await ensureOwnedDevice({
+          platform: 'ios',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: {},
+        });
+        expect(device).toMatchObject({
+          deviceUdid: 'U1',
+          deviceName: name,
+          adopted: true,
+          adoptionPending: true,
+          parkedCacheKey: 'fingerprint-debug-sim',
+        });
+        expect(readParked('ios')).toEqual([]);
+        expect(run).toContain('xcrun simctl boot U1');
+        expect(files).toContainEqual(['xcrun', 'simctl', 'rename', 'U1', name]);
+        expect(files.some((call) => call.includes('privacy'))).toBe(false);
+        await device.booting?.done;
+        expect(files).toContainEqual(['xcrun', 'simctl', 'privacy', 'U1', 'reset', 'all']);
+        expect(files).toContainEqual(['xcrun', 'simctl', 'keychain', 'U1', 'reset']);
+      } finally {
+        delete process.env.STIM_POOL_IOS_PARKED_MAX;
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   test('keeps a parked record renamed away from Stim ownership and creates a fresh simulator', async () => {
     const root = projectDir();
     process.env.STIM_POOL_IOS_PARKED_MAX = '3';
     const output: string[] = [];
     try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true });
       parkSim({
         platform: 'ios',
         projectPath: root,
@@ -969,6 +982,7 @@ describe('ensureOwnedDevice: ios', () => {
     const root = projectDir();
     process.env.STIM_POOL_IOS_PARKED_MAX = '3';
     try {
+      setDevice(root, 'ios', { deviceUdid: 'GONE', owned: true });
       parkSim({
         platform: 'ios',
         projectPath: root,
@@ -1783,38 +1797,44 @@ describe('ensureOwnedDevice: android', () => {
     }
   });
 
-  test('same-label workspaces receive distinct owned AVDs without touching the existing owner', async () => {
-    const other = projectDir();
-    const root = projectDir();
-    try {
-      setDevice(other, 'android', { avdName: 'stim-app', consolePort: 5554, owned: true });
-      const existing = getProject(other)?.platforms?.android;
-      const { run, spawn, exec } = androidExecutor({ avds: ['stim-app'] });
-      setExecutor(exec);
-      const result = await ensureOwnedDevice({
-        platform: 'android',
-        project: getProject(root),
-        projectPath: root,
-        label: 'app',
-        settings: {},
-      });
-      expect(result.avdName).toMatch(/^stim-app-[a-f0-9]{8}$/);
-      expect(result.consolePort).toBe(5556);
-      expect(getProject(root)?.platforms?.android).toMatchObject({
-        avdName: result.avdName,
-        owned: true,
-      });
-      expect(getProject(other)?.platforms?.android).toEqual(existing);
-      expect(run.filter((cmd) => /create avd/.test(cmd))).toHaveLength(1);
-      expect(run.some((cmd) => /delete avd| -s emulator-5554 /.test(cmd))).toBe(false);
-      expect(spawn).toHaveLength(1);
-      expect(spawn[0]?.args).toContain(result.avdName);
-      expect(spawn[0]?.args).not.toContain('stim-app');
-    } finally {
-      rmSync(other, { recursive: true, force: true });
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
+  test.each([false, true])(
+    'AVD name collisions preserve the existing owner (same workspace: %s)',
+    async (sameWorkspace) => {
+      const root = projectDir();
+      const other = sameWorkspace ? root : projectDir();
+      const existingName = sameWorkspace ? 'stim-app-PHONE' : 'stim-app';
+      const slot = sameWorkspace ? 'phone' : 'default';
+      try {
+        setDevice(other, 'android', { avdName: existingName, consolePort: 5554, owned: true });
+        const existing = getProject(other)?.platforms?.android;
+        const { run, spawn, exec } = androidExecutor({ avds: [existingName] });
+        setExecutor(exec);
+        const result = await ensureOwnedDevice({
+          platform: 'android',
+          slot,
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: {},
+        });
+        expect(result.avdName).toMatch(sameWorkspace ? /^stim-app-phone-[a-f0-9]{8}$/ : /^stim-app-[a-f0-9]{8}$/);
+        expect(result.consolePort).toBe(5556);
+        expect(deviceSlotPlatforms(getProject(root), slot)?.android).toMatchObject({
+          avdName: result.avdName,
+          owned: true,
+        });
+        expect(getProject(other)?.platforms?.android).toEqual(existing);
+        expect(run.filter((cmd) => /create avd/.test(cmd))).toHaveLength(1);
+        expect(run.some((cmd) => /delete avd| -s emulator-5554 /.test(cmd))).toBe(false);
+        expect(spawn).toHaveLength(1);
+        expect(spawn[0]?.args).toContain(result.avdName);
+        expect(spawn[0]?.args).not.toContain('stim-app');
+      } finally {
+        rmSync(other, { recursive: true, force: true });
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   test('an AVD claimed by another project during creation errors instead of being hijacked', async () => {
     const other = projectDir();
@@ -2224,4 +2244,76 @@ describe('ensureOwnedDevice: the requested model against the sim this workspace 
       rmSync(root, { recursive: true, force: true });
     }
   });
+});
+
+test('capacity counts named Android slots and only exempts the selected live slot', () => {
+  const project = {
+    platforms: { android: { avdName: 'stim-default', consolePort: 5554, owned: true } },
+    deviceSlots: { phone: { android: { avdName: 'stim-phone', consolePort: 5556, owned: true } } },
+  };
+  const args = {
+    platform: 'android',
+    project,
+    max: 2,
+    adb: makeAdbDevices({
+      emulators: [
+        { serial: 'emulator-5554', consolePort: 5554 },
+        { serial: 'emulator-5556', consolePort: 5556 },
+      ],
+    }),
+    config: makeConfig({ projects: { '/w/x': project } }),
+  };
+  expect(deviceCapacityRefusal({ ...args, slot: 'phone' })).toBeNull();
+  expect(deviceCapacityRefusal({ ...args, slot: 'tablet' })?.code).toBe('STIM_AT_CAPACITY');
+});
+
+test('identical simulator models have distinct slot assignments and reuse the selected slot', async () => {
+  const root = projectDir();
+  const { exec } = iosExecutor([]);
+  let next = 0;
+  setExecutor({
+    ...exec,
+    run(command) {
+      return command.includes('simctl create') ? `SLOT-${++next}` : exec.run(command);
+    },
+  });
+  try {
+    const devices = [];
+    for (const slot of ['default', 'phone', 'second-phone']) {
+      const device = await ensureOwnedDevice({
+        platform: 'ios',
+        projectPath: root,
+        project: getProject(root),
+        label: 'same',
+        settings: {},
+        slot,
+      });
+      await device.booting?.done;
+      devices.push(device);
+    }
+    expect(new Set(devices.map((device) => device.deviceUdid)).size).toBe(3);
+    expect(new Set(devices.map((device) => device.deviceName)).size).toBe(3);
+    const listed = devices.map((device) => ({
+      udid: device.deviceUdid!,
+      name: device.deviceName!,
+      state: 'Booted',
+      isAvailable: true,
+      deviceTypeIdentifier: TYPE_17_PRO.identifier,
+    }));
+    setExecutor(iosExecutor(listed).exec);
+    const repeated = await ensureOwnedDevice({
+      platform: 'ios',
+      projectPath: root,
+      project: getProject(root),
+      label: 'same',
+      settings: {},
+      slot: 'phone',
+    });
+    expect(repeated.deviceUdid).toBe(devices[1]!.deviceUdid);
+    expect(deviceSlotPlatforms(getProject(root), 'second-phone')?.ios?.deviceUdid).toBe(devices[2]!.deviceUdid);
+    expect(getProject(root)?.platforms?.ios?.deviceUdid).toBe(devices[0]!.deviceUdid);
+    expect(next).toBe(3);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

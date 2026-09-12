@@ -80,3 +80,19 @@ test('stop clears launch eligibility with the supervisor record', () => {
   expect(readWorkspaceLaunches(root)).toEqual({});
   expect(readWorkspaceState(root)).toBeNull();
 });
+
+test('launches in named slots coexist with default launches and share the supervisor', () => {
+  writeWorkspaceState(root, { supervisor: { pid: 42 } });
+  writeWorkspaceLaunch(root, 'ios', launch('app', 'DEFAULT'));
+  writeWorkspaceLaunch(root, 'ios', launch('app', 'PHONE'), 'phone');
+  writeWorkspaceLaunch(root, 'ios', launch('app', 'TABLET'), 'tablet');
+  writeWorkspaceLaunch(root, 'ios', launch('app', 'PHONE-RELAUNCH'), 'phone');
+  expect(Object.entries(readWorkspaceLaunches(root)).map(([key, value]) => [key, value.deviceId])).toEqual([
+    ['ios', 'DEFAULT'],
+    ['ios:phone', 'PHONE-RELAUNCH'],
+    ['ios:tablet', 'TABLET'],
+  ]);
+  expect(readWorkspaceState(root)?.supervisor).toEqual({ pid: 42 });
+  expect(() => writeWorkspaceLaunch(root, 'ios', launch('app', 'INVALID'), '../phone')).toThrow(/device slot/);
+  expect(Object.keys(readWorkspaceLaunches(root))).toHaveLength(3);
+});

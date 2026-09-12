@@ -2629,3 +2629,24 @@ test('a simulator install timeout fails before dev-client preparation and gives 
   expect(exec.options[0]).toEqual({ timeoutMs: 300000, killSignal: 'SIGKILL' });
   expect(exec.calls.some((args) => args.includes('defaults'))).toBe(false);
 });
+
+test.each(['default', 'phone'])('slot %s cannot borrow a sibling or unattributed bundle success', async (slot) => {
+  const clock = fakeClock();
+  const result = await verifyLaunch({
+    slot,
+    since: clock.at(),
+    timeoutMs: 100,
+    pollMs: 25,
+    stabilityMs: 0,
+    now: clock.now,
+    sleep: clock.sleep,
+    readRecords: () => [
+      { ts: clock.at(), event: 'bundle_build_done' },
+      { ts: clock.at(), event: 'bundle_build_done', slot: 'tablet' },
+    ],
+    readDeviceRecords: () => [],
+    readClientRecords: () => [],
+  });
+  expect(result.verified).toBe(false);
+  expect(result.timedOut).toBe(true);
+});

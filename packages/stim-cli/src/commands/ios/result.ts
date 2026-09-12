@@ -56,6 +56,7 @@ export function lastBuildRecord({
 }
 
 export function iosFacts({
+  slot,
   udid,
   deviceName,
   deviceType = null,
@@ -78,6 +79,7 @@ export function iosFacts({
   webPreviewUrl = null,
   lease,
 }: {
+  slot?: string;
   udid: string;
   deviceName?: string | null;
   deviceType?: string | null;
@@ -102,6 +104,7 @@ export function iosFacts({
 }): IosFacts {
   return {
     platform: PLATFORM,
+    ...(slot && slot !== 'default' ? { slot } : {}),
     udid,
     deviceName: deviceName ?? null,
     deviceType: deviceType ?? null,
@@ -168,6 +171,7 @@ export async function finishIosUpload(
 }
 
 export interface ReportIosResultArgs {
+  slot?: string;
   d: IosDeps;
   root: string;
   json: boolean;
@@ -201,6 +205,7 @@ export interface ReportIosResultArgs {
 }
 
 export function reportIosResult({
+  slot,
   d,
   root,
   json,
@@ -252,6 +257,7 @@ export function reportIosResult({
   closeWriter();
 
   const facts = iosFacts({
+    slot,
     udid,
     deviceName: device?.deviceName ?? null,
     deviceType: device?.deviceType,

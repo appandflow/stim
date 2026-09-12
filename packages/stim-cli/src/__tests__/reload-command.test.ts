@@ -422,3 +422,52 @@ test('reload plain output reports a request and retains the target facts', async
   expect(lines[0]).toContain('8082');
   expect(lines[0]).toContain('stim logs --errors');
 });
+
+test('multiple live slots of the same platform use one platform reload', async () => {
+  const calls: unknown[] = [];
+  const result = await runReload({
+    root: '/project',
+    deps: reloadDeps({
+      getProject: () => ({ ...project, deviceSlots: { phone: { ios: { deviceUdid: 'U2', owned: true } } } }),
+      readLaunches: () => ({ ios: iosLaunch, 'ios:phone': { ...iosLaunch, deviceId: 'U2' } }),
+      resolveIos: (udid) => ({ sim: { udid, name: `stim-${udid}`, state: 'Booted' } }) as never,
+      reloadMetro: async (port, options) => {
+        calls.push([port, options]);
+        return { ok: true, peers: 2, targets: 2 };
+      },
+    }),
+  });
+  expect(result.ok).toBe(true);
+  expect(calls).toEqual([[8082, { role: 'ios', appId: iosLaunch.appId }]]);
+});
+
+test.each([true, false])(
+  'a default release or old-port launch does not block a Debug sibling (release: %s)',
+  async (release) => {
+    const result = await runReload({
+      root: '/project',
+      platform: 'ios',
+      deps: reloadDeps({
+        getProject: () => ({ ...project, deviceSlots: { phone: { ios: { deviceUdid: 'U2', owned: true } } } }),
+        readLaunches: () => ({
+          ios: { ...iosLaunch, release, metroPort: release ? null : 8083 },
+          'ios:phone': { ...iosLaunch, deviceId: 'U2' },
+        }),
+        resolveIos: (udid) => ({ sim: { udid, name: `stim-${udid}`, state: 'Booted' } }) as never,
+      }),
+    });
+    expect(result).toMatchObject({ ok: true, facts: { deviceId: 'U2', metroPort: 8082 } });
+  },
+);
+
+test('a stopped named slot keeps its slot in the reload recovery command', async () => {
+  const result = await runReload({
+    root: '/project',
+    deps: reloadDeps({
+      getProject: () => ({ ...project, deviceSlots: { phone: { ios: { deviceUdid: 'U1', owned: true } } } }),
+      readLaunches: () => ({ 'ios:phone': iosLaunch }),
+      iosProcess: () => null,
+    }),
+  });
+  expect(result).toMatchObject({ ok: false, error: { remedy: 'Run `stim ios --slot phone` to launch it.' } });
+});

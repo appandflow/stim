@@ -1,3 +1,4 @@
+import { deviceSlotKey } from '../../device-slots.ts';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { mkdirSync, openSync } from 'node:fs';
@@ -11,8 +12,8 @@ import { pidExists } from '../../metro.ts';
 import { sleep } from '../native-runtime.ts';
 import { getExecutor } from '../../exec.ts';
 
-function collectorLogFile(root: string): string {
-  return join(workspaceLogsDir(root), `collector-${PLATFORM}.log`);
+function collectorLogFile(root: string, slot: string): string {
+  return join(workspaceLogsDir(root), `collector-${deviceSlotKey(PLATFORM, slot)}.log`);
 }
 
 export function collectorEntry(): string {
@@ -25,6 +26,7 @@ const COLLECTOR_POLL_MS = 25;
 
 interface ReplaceCollectorArgs {
   root: string;
+  slot?: string;
   udid: string;
   bundleId: string;
   appName?: string | null;
@@ -46,6 +48,7 @@ interface ReplaceCollectorArgs {
 // collector before it installs, rather than as part of starting its own.
 export async function stopPreviousCollector({
   root,
+  slot = 'default',
   kill = (pid, signal) => process.kill(pid, signal),
   alive = pidExists,
   readState = readWorkspaceState,
@@ -54,6 +57,7 @@ export async function stopPreviousCollector({
   note = (_line: string) => {},
 }: {
   root: string;
+  slot?: string;
   kill?: (pid: number, signal: NodeJS.Signals) => boolean;
   alive?: (pid: number) => boolean;
   readState?: typeof readWorkspaceState;
@@ -61,12 +65,20 @@ export async function stopPreviousCollector({
   waitMs?: number;
   note?: (line: string) => void;
 }): Promise<{ killed: number | null }> {
-  const previous = (readState(root)?.collectors as Record<string, { pid?: number }> | undefined)?.[PLATFORM] || null;
+  const previous =
+    (readState(root)?.collectors as Record<string, { pid?: number }> | undefined)?.[deviceSlotKey(PLATFORM, slot)] ||
+    null;
   const previousPid = Number(previous?.pid) || null;
   let killed: number | null = null;
 
   if (previousPid) {
-    const ownership = verify({ pid: previousPid, platform: PLATFORM, root, isAlive: alive, expected: previous });
+    const ownership = verify({
+      pid: previousPid,
+      platform: deviceSlotKey(PLATFORM, slot),
+      root,
+      isAlive: alive,
+      expected: previous,
+    });
     if (ownership.status === 'ours') {
       try {
         kill(previousPid, 'SIGTERM');
@@ -97,6 +109,7 @@ export async function stopPreviousCollector({
 
 export async function replaceCollector({
   root,
+  slot = 'default',
   udid,
   bundleId,
   appName,
@@ -111,9 +124,10 @@ export async function replaceCollector({
   waitMs = COLLECTOR_EXIT_WAIT_MS,
   note = (_line: string) => {},
 }: ReplaceCollectorArgs): Promise<{ killed: number | null; pid: number | null }> {
-  const { killed } = await stopPreviousCollector({ root, kill, alive, readState, verify, waitMs, note });
+  const { killed } = await stopPreviousCollector({ root, slot, kill, alive, readState, verify, waitMs, note });
 
   const args = [collectorEntry(), '--platform', PLATFORM, '--root', root, '--udid', udid, '--bundle', bundleId];
+  if (slot !== 'default') args.push('--slot', slot);
   if (appName) args.push('--app-name', appName);
   if (appExecutable) args.push('--app-executable', appExecutable);
   if (physical) args.push('--physical');
@@ -122,7 +136,7 @@ export async function replaceCollector({
   let stdio: 'ignore' | (number | 'ignore')[] = 'ignore';
   try {
     mkdirSync(workspaceLogsDir(root), { recursive: true });
-    const fd = openSync(collectorLogFile(root), 'a');
+    const fd = openSync(collectorLogFile(root, slot), 'a');
     stdio = ['ignore', fd, fd];
   } catch {}
 

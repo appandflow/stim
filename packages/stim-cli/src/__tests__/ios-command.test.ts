@@ -993,10 +993,10 @@ describe('launch verification', () => {
     expect(text).not.toMatch(/NSBundle/);
   });
 
-  test('a launch that does not verify still prints every error it collected', async () => {
+  test.each(['default', 'phone'])('an unverified launch reports errors and its recovery slot (%s)', async (slot) => {
     reserve();
     const { errs, exitCode } = await run(
-      {},
+      { slot },
       {
         verifyLaunch: async () => ({
           fatal: true,
@@ -1008,7 +1008,7 @@ describe('launch verification', () => {
     );
     expect(exitCode).toBe(1);
     expect(errs.join('\n')).toMatch(/attention client lost event tag/);
-    expect(errs.join('\n')).toMatch(/run `stim ios` again.*Metro reload cannot restart an exited app/);
+    expect(errs.join('\n')).toContain(`run \`stim ios${slot === 'default' ? '' : ` --slot ${slot}`}\` again`);
     expect(errs.join('\n')).toContain('about a minute or longer');
     expect(errs.join('\n')).toContain('Run `stim logs --errors` again');
   });
@@ -5785,7 +5785,7 @@ describe('EAS development builds', () => {
     for (const step of ['installIosDeviceApp', 'sealAppForDevice', 'buildIos']) expect(calls.order).not.toContain(step);
   });
 
-  test('installs the EAS artifact against the reserved Metro port without entering the local build pipeline', async () => {
+  test.each(['default', 'tablet'])('installs the EAS artifact in slot %s without a local build', async (slot) => {
     reserve();
     const path = join(root, 'Eas.app');
     const resolveEasDevelopmentBuild = vi.fn<NonNullable<IosDeps['resolveEasDevelopmentBuild']>>(async () => ({
@@ -5796,7 +5796,7 @@ describe('EAS development builds', () => {
       cacheHit: 'remote' as const,
     }));
     const { logs, calls } = await run(
-      { json: true, easProfile: 'development-simulator' },
+      { json: true, slot, easProfile: 'development-simulator' },
       {
         detectIsExpo: () => true,
         resolveEasDevelopmentBuild,
@@ -5807,6 +5807,7 @@ describe('EAS development builds', () => {
     expect(resolveEasDevelopmentBuild).toHaveBeenCalledWith(
       expect.objectContaining({ profile: 'development-simulator', platform: 'ios' }),
     );
+    expect(calls.args.ensureOwnedDevice).toMatchObject(slot === 'default' ? {} : { slot });
     expect(calls.args.installIosApp.appPath).toBe(path);
     expect(calls.args.launchIosApp).toMatchObject({ metroPort: 8082, devClientScheme: 'exp+fixture' });
     expect(parseFirst(logs)).toMatchObject({
@@ -5868,4 +5869,17 @@ describe('EAS development builds', () => {
     expect(parseFirst(logs)).toMatchObject({ code: 'STIM_BAD_ARG' });
     expect(resolveEasDevelopmentBuild).not.toHaveBeenCalled();
   });
+});
+
+test('a named iOS run scopes allocation, launch verification, collector and build records', async () => {
+  reserve();
+  const result = await run({ json: true, slot: 'tablet' });
+  expect(result.exitCode).toBe(null);
+  expect(parseFirst(result.logs).slot).toBe('tablet');
+  expect(result.calls.args.ensureOwnedDevice).toMatchObject({ slot: 'tablet' });
+  expect(result.calls.args.replaceCollector).toMatchObject({ slot: 'tablet' });
+  expect(result.calls.args.verifyLaunch).toMatchObject({ slot: 'tablet' });
+  const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-ios:tablet.ndjson'), 'utf8'));
+  expect(records.length).toBeGreaterThan(0);
+  expect(records.every((record) => record.slot === 'tablet')).toBe(true);
 });

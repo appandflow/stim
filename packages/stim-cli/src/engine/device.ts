@@ -1,3 +1,4 @@
+import { deviceSlotPlatforms, projectDeviceSlots } from '../device-slots.ts';
 import chalk from 'chalk';
 import { randomUUID } from 'node:crypto';
 import { phaseLine } from '../command-output.ts';
@@ -144,6 +145,7 @@ export async function ensureOwnedDevice({
   platform,
   project,
   projectPath,
+  slot,
   settingsRoot = projectPath,
   label = ownedDeviceLabel(projectPath),
   settings,
@@ -159,6 +161,7 @@ export async function ensureOwnedDevice({
   platform: string;
   project?: ProjectRecord | null;
   projectPath: string;
+  slot?: string;
   settingsRoot?: string;
   label?: string;
   settings: DeviceSettings;
@@ -169,11 +172,13 @@ export async function ensureOwnedDevice({
   teardownAvd?: typeof teardownOwnedAvd;
   reconcileIosSimulator?: typeof reconcileSimSlim;
 } & EmulatorLogging): Promise<OwnedDeviceRecord> {
-  const record = (project?.platforms?.[platform] as OwnedDeviceRecord | undefined) ?? null;
+  if (slot && slot !== 'default') label = `${label}-${slot}`;
+  const record = (deviceSlotPlatforms(project, slot)?.[platform] as OwnedDeviceRecord | undefined) ?? null;
   if (platform === 'ios') {
     return ensureOwnedIosDevice({
       record,
       projectPath,
+      slot,
       settingsRoot,
       label,
       settings,
@@ -186,6 +191,7 @@ export async function ensureOwnedDevice({
   return ensureOwnedAndroidDevice({
     record,
     projectPath,
+    slot,
     settingsRoot,
     label,
     settings,
@@ -202,6 +208,7 @@ export async function ensureOwnedDevice({
 async function ensureOwnedIosDevice({
   record,
   projectPath,
+  slot,
   settingsRoot,
   label,
   settings,
@@ -212,6 +219,7 @@ async function ensureOwnedIosDevice({
 }: {
   record: OwnedDeviceRecord | null;
   projectPath: string;
+  slot?: string;
   settingsRoot: string;
   label: string;
   settings: DeviceSettings;
@@ -263,6 +271,7 @@ async function ensureOwnedIosDevice({
           return configureOwnedIosSim({
             record: updated,
             projectPath,
+            slot,
             profile: simslimProfile,
             out,
             reconcileIosSimulator,
@@ -296,6 +305,14 @@ async function ensureOwnedIosDevice({
         return record;
       }
     }
+    withConfigLock(() => {
+      const current = deviceSlotPlatforms(loadConfig()?.projects?.[projectPath], slot)?.ios;
+      if (!current) return;
+      if (current.deviceUdid !== record.deviceUdid || current.owned !== record.owned) {
+        throw new Error('The simulator assignment changed during recovery. Run `stim ios` again.');
+      }
+      clearDevice(projectPath, 'ios', slot);
+    });
   }
 
   const choice = resolveIosCreation({
@@ -305,7 +322,7 @@ async function ensureOwnedIosDevice({
 
   const adopted =
     parkedMaxSetting('ios').max > 0
-      ? await withIosDeviceNameLock(() => takeParkedIosSim({ projectPath, label, choice, out }))
+      ? await withIosDeviceNameLock(() => takeParkedIosSim({ projectPath, slot, label, choice, out }))
       : null;
   if (adopted) {
     out(chalk.dim(phaseLine('device', `booting ${adopted.deviceName} (${adopted.deviceUdid})`)));
@@ -314,6 +331,7 @@ async function ensureOwnedIosDevice({
       await configureOwnedIosSim({
         record: adopted,
         projectPath,
+        slot,
         profile: simslimProfile,
         out,
         reconcileIosSimulator,
@@ -325,7 +343,7 @@ async function ensureOwnedIosDevice({
   const created = await withIosDeviceNameLock(() => {
     const suffix = ownedIosNameSuffix(label, { model: choice.deviceType, runtime: choice.runtime }, projectPath);
     const result = createOwnedIosSim(label, { suffix }, choice);
-    setDevice(projectPath, 'ios', { deviceUdid: result.udid, owned: true, deviceName: result.name });
+    setDevice(projectPath, 'ios', { deviceUdid: result.udid, owned: true, deviceName: result.name }, slot);
     return result;
   });
   const newRecord = { deviceUdid: created.udid, owned: true, deviceName: created.name };
@@ -333,6 +351,7 @@ async function ensureOwnedIosDevice({
     configureOwnedIosSim({
       record: newRecord,
       projectPath,
+      slot,
       profile: simslimProfile,
       out,
       reconcileIosSimulator,
@@ -358,8 +377,10 @@ function ownedIosNameSuffix(label: string, model: SimModel, projectPath: string,
       .map((sim) => sim.name),
   );
   for (const project of Object.values(loadConfig()?.projects ?? {})) {
-    const record = project.platforms?.ios;
-    if (record?.deviceUdid !== udid && record?.deviceName) names.add(record.deviceName);
+    for (const { platforms } of projectDeviceSlots(project)) {
+      const record = platforms.ios;
+      if (record?.deviceUdid !== udid && record?.deviceName) names.add(record.deviceName);
+    }
   }
   for (const parked of readParked('ios')) {
     if (parked.udid !== udid) names.add(parked.name);
@@ -392,11 +413,13 @@ type AdoptedRecord = OwnedDeviceRecord & { deviceUdid: string; deviceName: strin
 
 function takeParkedIosSim({
   projectPath,
+  slot,
   label,
   choice,
   out,
 }: {
   projectPath: string;
+  slot?: string;
   label: string;
   choice: IosCreationChoice;
   out: Notify;
@@ -452,7 +475,7 @@ function takeParkedIosSim({
       ...(parked.simslimManaged ? { simslimManaged: true } : {}),
       ...(parked.cacheKey ? { parkedCacheKey: parked.cacheKey } : {}),
     };
-    if (!adoptParked({ platform: 'ios', projectPath, udid: parked.udid, device })) continue;
+    if (!adoptParked({ platform: 'ios', projectPath, slot, udid: parked.udid, device })) continue;
     try {
       renameIosSim(parked.udid, name);
     } catch {}
@@ -461,10 +484,10 @@ function takeParkedIosSim({
   return null;
 }
 
-export function clearIosAdoptionPending(projectPath: string): void {
+export function clearIosAdoptionPending(projectPath: string, slot = 'default'): void {
   withConfigLock(() => {
     const cfg = loadConfig();
-    const ios = cfg?.projects?.[projectPath]?.platforms?.ios;
+    const ios = deviceSlotPlatforms(cfg?.projects?.[projectPath], slot)?.ios;
     if (!cfg || !ios?.adoptionPending) return;
     delete ios.adopted;
     delete ios.adoptionPending;
@@ -476,12 +499,14 @@ export function clearIosAdoptionPending(projectPath: string): void {
 async function configureOwnedIosSim({
   record,
   projectPath,
+  slot,
   profile,
   out,
   reconcileIosSimulator,
 }: {
   record: OwnedDeviceRecord & { deviceUdid: string };
   projectPath: string;
+  slot?: string;
   profile: string | null;
   out: Notify;
   reconcileIosSimulator: typeof reconcileSimSlim;
@@ -493,7 +518,7 @@ async function configureOwnedIosSim({
   const previouslyManaged = Boolean(record.simslimManaged);
   if (profile && !record.simslimManaged) {
     const pending = { ...record, simslimManaged: true };
-    setDevice(projectPath, 'ios', pending);
+    setDevice(projectPath, 'ios', pending, slot);
     record = pending;
   }
   const result = await reconcileIosSimulator({
@@ -505,15 +530,21 @@ async function configureOwnedIosSim({
   const updated = { ...record };
   if (result.managed) updated.simslimManaged = true;
   else delete updated.simslimManaged;
-  setDevice(projectPath, 'ios', updated);
+  setDevice(projectPath, 'ios', updated, slot);
   return updated;
 }
 
-function findOtherProjectOwningAvd(avdName: string, projectPath: string): string | null {
+function findOtherProjectOwningAvd(avdName: string, projectPath: string, selectedSlot = 'default'): string | null {
   const cfg = loadConfig();
   for (const [path, proj] of Object.entries(cfg?.projects || {})) {
-    if (path === projectPath) continue;
-    if (proj?.platforms?.android?.avdName === avdName) return path;
+    if (
+      projectDeviceSlots(proj).some(
+        ({ slot, platforms }) =>
+          (path !== projectPath || slot !== selectedSlot) &&
+          platforms.android?.avdName?.toLowerCase() === avdName.toLowerCase(),
+      )
+    )
+      return path;
   }
   return null;
 }
@@ -530,6 +561,7 @@ export class AvdRecoveryError extends Error {
 async function ensureOwnedAndroidDevice({
   record,
   projectPath,
+  slot,
   settingsRoot,
   label,
   settings,
@@ -543,6 +575,7 @@ async function ensureOwnedAndroidDevice({
 }: {
   record: OwnedDeviceRecord | null;
   projectPath: string;
+  slot?: string;
   settingsRoot: string;
   label: string;
   settings: DeviceSettings;
@@ -561,7 +594,7 @@ async function ensureOwnedAndroidDevice({
         `Owned AVD ${record.avdName} has incomplete setup and could not be deleted (${cleanup.reason || cleanup.status}). Fix the cause, then retry; Stim kept the device record for cleanup.`,
       );
     }
-    clearDevice(projectPath, 'android');
+    clearDevice(projectPath, 'android', slot);
     record = null;
   }
   if (record?.avdName) {
@@ -590,7 +623,7 @@ async function ensureOwnedAndroidDevice({
           owned: true,
           deviceName: record.deviceName ?? record.avdName,
         };
-        setDevice(projectPath, 'android', updated);
+        setDevice(projectPath, 'android', updated, slot);
         return { ...updated, systemImage: ownedAvdSystemImage(record.avdName) };
       } else if (!resolved.missing) {
         out(
@@ -603,6 +636,7 @@ async function ensureOwnedAndroidDevice({
             avdName: record.avdName,
             metadata: record,
             projectPath,
+            slot,
             deviceName: record.deviceName,
             out,
             logFile,
@@ -677,11 +711,12 @@ async function ensureOwnedAndroidDevice({
         poolConfiguration: configuration,
         adoptionPending: true,
       };
-      if (!adoptParked({ platform: 'android', projectPath, udid: parked.udid, device: adopted })) continue;
+      if (!adoptParked({ platform: 'android', projectPath, slot, udid: parked.udid, device: adopted })) continue;
       return {
         ...(await bootOwnedAvdOnFreshPort({
           avdName: parked.name,
           projectPath,
+          slot,
           metadata: adopted,
           out,
           logFile,
@@ -696,23 +731,28 @@ async function ensureOwnedAndroidDevice({
   let fresh = false;
   try {
     created = withConfigLock(() => {
-      const current = loadConfig()?.projects?.[projectPath]?.platforms?.android;
+      const current = deviceSlotPlatforms(loadConfig()?.projects?.[projectPath], slot)?.android;
       if (current?.avdName && current.avdName !== record?.avdName) {
         throw new Error(`Another Stim run assigned AVD ${current.avdName} to this workspace. Retry to use it.`);
       }
       if (
         readParked('android').some((entry) => entry.name === ownedAvdName(label)) ||
-        findOtherProjectOwningAvd(ownedAvdName(label), projectPath)
+        findOtherProjectOwningAvd(ownedAvdName(label), projectPath, slot)
       )
         label = `${label}-${randomUUID().slice(0, 8)}`;
       const result = createOwnedAvd(label, { systemImage: flags.systemImage || settings.android?.systemImage });
-      setDevice(projectPath, 'android', {
-        avdName: result.avdName,
-        owned: true,
-        deviceName: result.avdName,
-        setupIncomplete: true,
-        poolConfiguration: configuration,
-      });
+      setDevice(
+        projectPath,
+        'android',
+        {
+          avdName: result.avdName,
+          owned: true,
+          deviceName: result.avdName,
+          setupIncomplete: true,
+          poolConfiguration: configuration,
+        },
+        slot,
+      );
       return result;
     });
     fresh = true;
@@ -732,14 +772,14 @@ async function ensureOwnedAndroidDevice({
           if (readParked('android').some((entry) => entry.name === avdName)) {
             throw new Error(`AVD ${avdName} was parked by another Stim run. Retry to adopt it safely.`, { cause: e });
           }
-          const owner = findOtherProjectOwningAvd(avdName, projectPath);
+          const owner = findOtherProjectOwningAvd(avdName, projectPath, slot);
           if (owner) {
             throw new Error(
               `AVD ${avdName} already exists and is owned by another project (${owner}). Retry to allocate a distinct owned emulator.`,
               { cause: e },
             );
           }
-          const current = loadConfig()?.projects?.[projectPath]?.platforms?.android;
+          const current = deviceSlotPlatforms(loadConfig()?.projects?.[projectPath], slot)?.android;
           if (current?.avdName) {
             const state = current.setupIncomplete ? 'has incomplete setup' : 'was registered';
             throw new Error(
@@ -763,7 +803,7 @@ async function ensureOwnedAndroidDevice({
             deviceName: avdName,
             ...(resolved.serial ? { consolePort: Number(resolved.serial.replace(/^emulator-/, '')) } : {}),
           };
-          setDevice(projectPath, 'android', recovered);
+          setDevice(projectPath, 'android', recovered, slot);
           return { ...recovered, systemImage: ownedAvdSystemImage(avdName), serial: resolved.serial };
         });
       } catch (error) {
@@ -789,7 +829,7 @@ async function ensureOwnedAndroidDevice({
     } catch (error) {
       const cleanup = teardownAvd(created.avdName, { del: true, owner: { projectPath } });
       const kept = cleanup.status === 'failed' || cleanup.status === 'skipped';
-      if (!kept) clearDevice(projectPath, 'android');
+      if (!kept) clearDevice(projectPath, 'android', slot);
       const orphan = kept
         ? ` The owned AVD remains tracked for cleanup (${cleanup.reason || cleanup.status}); fix the cause, then retry or run \`stim gc --delete\`.`
         : '';
@@ -804,6 +844,7 @@ async function ensureOwnedAndroidDevice({
       avdName: created.avdName,
       metadata: fresh ? { poolConfiguration: configuration } : undefined,
       projectPath,
+      slot,
       deviceName: created.avdName,
       out,
       logFile,
@@ -825,11 +866,19 @@ export interface AndroidConsolePortClaim {
 export function claimAndroidConsolePort(
   {
     projectPath,
+    slot,
     avdName,
     deviceName,
     livePorts = [],
     metadata,
-  }: { projectPath: string; avdName: string; deviceName?: string; livePorts?: number[]; metadata?: OwnedDeviceRecord },
+  }: {
+    projectPath: string;
+    slot?: string;
+    avdName: string;
+    deviceName?: string;
+    livePorts?: number[];
+    metadata?: OwnedDeviceRecord;
+  },
   {
     lock = withConfigLock,
     recordedPorts = () => allConsolePortsAndSerials().androidConsolePorts,
@@ -850,7 +899,7 @@ export function claimAndroidConsolePort(
       owned: true,
       deviceName: deviceName ?? avdName,
     };
-    record(projectPath, 'android', claim);
+    record(projectPath, 'android', claim, slot);
     return claim;
   });
 }
@@ -867,6 +916,7 @@ async function bootOwnedAvdOnFreshPort({
   avdName,
   metadata,
   projectPath,
+  slot,
   deviceName,
   out,
   logFile = null,
@@ -875,11 +925,13 @@ async function bootOwnedAvdOnFreshPort({
   avdName: string;
   metadata?: OwnedDeviceRecord;
   projectPath: string;
+  slot?: string;
   deviceName?: string;
   out: Notify;
 } & EmulatorLogging): Promise<OwnedDeviceRecord> {
   const claim = claimAndroidConsolePort({
     projectPath,
+    slot,
     avdName,
     deviceName,
     livePorts: liveAndroidConsolePorts(),
@@ -903,7 +955,7 @@ async function bootOwnedAvdOnFreshPort({
     }
     return { ...claim, serial };
   } catch (error) {
-    releaseAndroidConsolePort(projectPath, claim.consolePort);
+    releaseAndroidConsolePort(projectPath, claim.consolePort, slot);
     throw error;
   }
 }
@@ -930,14 +982,16 @@ export function liveOwnedDeviceCount({
   }
   const livePorts = new Set(adbEmulators.map((e) => e.consolePort));
   for (const proj of Object.values(config?.projects || {})) {
-    const android = proj?.platforms?.android;
-    if (
-      android?.owned &&
-      android.avdName &&
-      typeof android.consolePort === 'number' &&
-      livePorts.has(android.consolePort)
-    ) {
-      count++;
+    for (const { platforms } of projectDeviceSlots(proj)) {
+      const android = platforms.android;
+      if (
+        android?.owned &&
+        android.avdName &&
+        typeof android.consolePort === 'number' &&
+        livePorts.has(android.consolePort)
+      ) {
+        count++;
+      }
     }
   }
   return count;
@@ -946,16 +1000,18 @@ export function liveOwnedDeviceCount({
 function workspaceHasLiveDevice({
   platform,
   project,
+  slot = 'default',
   sims = [],
   adbEmulators = [],
 }: Partial<{
   platform: string;
   project: ProjectRecord | null;
+  slot: string;
   sims: SimRecord[];
   adbEmulators: EmulatorRecord[];
 }> = {}) {
   if (!platform) return false;
-  const record = project?.platforms?.[platform];
+  const record = deviceSlotPlatforms(project, slot)?.[platform];
   if (!record) return false;
   if (platform === 'ios') {
     return sims.some((s) => s.udid === record.deviceUdid && s.state === 'Booted');
@@ -966,6 +1022,7 @@ function workspaceHasLiveDevice({
 export function deviceCapacityRefusal({
   platform,
   project,
+  slot = 'default',
   max,
   sims = [],
   adb = null,
@@ -973,6 +1030,7 @@ export function deviceCapacityRefusal({
 }: Partial<{
   platform: string;
   project: ProjectRecord | null;
+  slot: string;
   max: number;
   sims: SimRecord[];
   adb: AdbDevices | null;
@@ -980,7 +1038,7 @@ export function deviceCapacityRefusal({
 }> = {}): CapacityRefusal | null {
   if (!max || max <= 0) return null;
   const adbEmulators = adb?.emulators || [];
-  if (workspaceHasLiveDevice({ platform, project, sims, adbEmulators })) return null;
+  if (workspaceHasLiveDevice({ platform, project, slot, sims, adbEmulators })) return null;
   const count = liveOwnedDeviceCount({ sims, adbEmulators, config });
   if (count < max) return null;
   return {
@@ -993,6 +1051,7 @@ export function deviceCapacityRefusal({
 export function checkDeviceCapacity({
   platform,
   project,
+  slot = 'default',
   max,
   sims = listAllIosSims,
   adb = listAdbDevices,
@@ -1000,6 +1059,7 @@ export function checkDeviceCapacity({
 }: Partial<{
   platform: string;
   project: ProjectRecord | null;
+  slot: string;
   max: number;
   sims: SimRecord[] | (() => SimRecord[]);
   adb: AdbDevices | (() => AdbDevices);
@@ -1018,7 +1078,7 @@ export function checkDeviceCapacity({
   try {
     cfg = typeof config === 'function' ? config() : (config ?? null);
   } catch {}
-  return deviceCapacityRefusal({ platform, project, max, sims: simList, adb: adbRes, config: cfg });
+  return deviceCapacityRefusal({ platform, project, slot, max, sims: simList, adb: adbRes, config: cfg });
 }
 
 export function deviceTypeMismatch(
@@ -1140,7 +1200,8 @@ async function ensureIosBooted({
   if (!udid) return { failed: true, reason: 'No iOS simulator is recorded for this project.' };
   const ready = (): BootResult => {
     try {
-      getExecutor().runFile('xcrun', ['simctl', 'spawn', udid, '/usr/bin/true'], { timeoutMs: 30000 });
+      // Apple simctl spawn searches the device PATH for bare names; absolute paths use the host root.
+      getExecutor().runFile('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], { timeoutMs: 30000 });
       return { ok: true, udid };
     } catch (error) {
       return {

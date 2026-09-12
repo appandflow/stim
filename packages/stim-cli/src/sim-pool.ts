@@ -1,3 +1,4 @@
+import { assignSlotDevice, deviceSlotPlatforms, removeSlotDevice } from './device-slots.ts';
 import { randomUUID } from 'node:crypto';
 import { ensureConfig, loadConfig, saveConfig, withConfigLock } from './config.ts';
 import type { Config, DeviceRecord } from './types.ts';
@@ -149,26 +150,27 @@ export function evictOverflow<T extends ParkedRecord>(records: readonly T[], max
 export function parkSim<P extends PoolPlatform>({
   platform,
   projectPath,
+  slot = 'default',
   record,
   max,
 }: {
   platform: P;
   projectPath: string;
+  slot?: string;
   record: PoolRecords[P];
   max: number;
 }): PoolRecords[P][] {
   return withConfigLock(() => {
     const cfg = ensureConfig();
-    if (platform === 'android') {
-      const current = cfg.projects[projectPath]?.platforms?.android;
-      if (!current?.owned || current.avdName !== record.udid)
-        throw new Error('The emulator assignment changed before parking.');
-    }
+    const current = deviceSlotPlatforms(cfg.projects[projectPath], slot)?.[platform];
+    const currentId = platform === 'ios' ? current?.deviceUdid : current?.avdName;
+    if (!current?.owned || currentId !== record.udid)
+      throw new Error(`The ${platform === 'ios' ? 'simulator' : 'emulator'} assignment changed before parking.`);
     const kept = readParked(platform, { config: cfg }).filter((r) => r.udid !== record.udid);
     const { keep, evicted } = evictOverflow([...kept, record], max);
     writeParked(cfg, platform, [...keep, ...evicted]);
-    const platforms = cfg.projects?.[projectPath]?.platforms;
-    if (platforms) delete platforms[platform];
+    const project = cfg.projects[projectPath];
+    if (project) removeSlotDevice(project, platform, slot);
     saveConfig(cfg);
     return evicted;
   });
@@ -177,11 +179,13 @@ export function parkSim<P extends PoolPlatform>({
 export function adoptParked<P extends PoolPlatform>({
   platform,
   projectPath,
+  slot = 'default',
   udid,
   device,
 }: {
   platform: P;
   projectPath: string;
+  slot?: string;
   udid: string;
   device: DeviceRecord;
 }): PoolRecords[P] | null {
@@ -190,7 +194,7 @@ export function adoptParked<P extends PoolPlatform>({
     const records = readParked(platform, { config: cfg });
     const taken = records.find((r) => r.udid === udid);
     if (!taken || taken.deletionClaim !== undefined) return null;
-    if (platform === 'android' && cfg.projects[projectPath]?.platforms?.android) return null;
+    if (deviceSlotPlatforms(cfg.projects[projectPath], slot)?.[platform]) return null;
     writeParked(
       cfg,
       platform,
@@ -198,8 +202,7 @@ export function adoptParked<P extends PoolPlatform>({
     );
     const project = cfg.projects[projectPath];
     if (!project) throw new Error(`Project not registered: ${projectPath}`);
-    project.platforms = project.platforms || {};
-    project.platforms[platform] = device;
+    assignSlotDevice(project, platform, device, slot);
     saveConfig(cfg);
     return taken;
   });
