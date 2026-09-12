@@ -1493,6 +1493,10 @@ HOST MEMORY PRESSURE AND STALLED SIMULATORS
   a final boot-state query can take 30 seconds. Opening the Simulator app after
   boot is best-effort and takes at most 5 seconds. A timeout is not proof of an
   app crash or OOM.
+  During boot, Stim reports elapsed time, the simulator name, last boot output,
+  current pressure and the highest observed pressure roughly every 15 seconds.
+  Failure diagnostics retain the highest pressure and unavailable sample count;
+  they do not infer the cause of a timeout. Monitoring stops when boot ends.
   Doctor and failure diagnostics report macOS memory pressure when available;
   a failed query remains unknown. Existing swap or low free RAM alone is not
   enough to diagnose pressure.
