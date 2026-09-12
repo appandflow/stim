@@ -300,3 +300,8 @@ Cache suites still require a cold artifact miss and race two commands against
 one empty cache. The preparation reduces overlapping first-boot work; it does
 not establish that host memory caused earlier failures or guarantee enough
 capacity for the eventual concurrent workload. Runner sizes are unchanged.
+
+If preparation or its shutdown fails, the suite preserves its temporary
+worktrees and `STIM_HOME` and prints the state location. Inspect the failure
+and use Stim with that home to clean up; do not erase ownership records while
+their simulators still exist.

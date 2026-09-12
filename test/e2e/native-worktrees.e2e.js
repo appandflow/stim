@@ -20,6 +20,7 @@ import {
   createHarness,
   createWarmWorktree,
   prepareIosDevices,
+  cleanupTmp,
   workspaceLogsDir,
 } from './native/harness.mjs';
 
@@ -248,8 +249,18 @@ test('native preparation stops each simulator before the next and stops after a 
           },
         },
       });
-    if (failure) assert.throws(run, /boot timed out/);
-    else run();
+    if (failure) {
+      let observed;
+      try {
+        run();
+      } catch (error) {
+        observed = error;
+      }
+      assert.match(observed.message, /boot timed out/);
+      assert.equal(observed.preserveNativeState, true);
+      cleanupTmp(homes, observed);
+      assert.ok(homes.every((cwd) => existsSync(join(cwd, '.stim.json'))));
+    } else run();
     assert.deepEqual(
       events,
       (failure ? homes.slice(0, 1) : homes).flatMap((cwd) => [

@@ -1044,7 +1044,7 @@ main().then(
     dumpDiagnostics(h, created);
     emitSummary(Date.now() - startedAt, String(err?.message || err));
     if (!args.keep)
-      cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR, GRADLE_HOME_IS_THROWAWAY ? GRADLE_USER_HOME : null]);
+      cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR, GRADLE_HOME_IS_THROWAWAY ? GRADLE_USER_HOME : null], err);
     return process.exit(1);
   },
 );

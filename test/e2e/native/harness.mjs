@@ -204,30 +204,38 @@ export function createWarmWorktree({ h, sourceDir, workDir, name, created }) {
 export function prepareIosDevices({ h, platform, targets, cleanup }) {
   if (platform !== 'ios') return;
   const script = fileURLToPath(new URL('./prepare-ios-device.mjs', import.meta.url));
-  for (const { cwd, slot = 'default', deviceType } of targets) {
-    const settingsPath = join(cwd, '.stim.json');
-    const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, 'utf-8')) : {};
-    if (!settings.ios?.simslimProfile) continue;
-    h.log(`preparing simulator ${slot} in ${cwd} before the multi-device workload`);
-    const result = h.sh(
-      process.execPath,
-      ['--experimental-strip-types', script, cwd, slot, ...(deviceType ? [deviceType] : [])],
-      {
-        cwd,
-        timeout: 25 * 60 * 1000,
-        allowFail: true,
-      },
+  try {
+    for (const { cwd, slot = 'default', deviceType } of targets) {
+      const settingsPath = join(cwd, '.stim.json');
+      const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, 'utf-8')) : {};
+      if (!settings.ios?.simslimProfile) continue;
+      h.log(`preparing simulator ${slot} in ${cwd} before the multi-device workload`);
+      const result = h.sh(
+        process.execPath,
+        ['--experimental-strip-types', script, cwd, slot, ...(deviceType ? [deviceType] : [])],
+        {
+          cwd,
+          timeout: 25 * 60 * 1000,
+          allowFail: true,
+        },
+      );
+      cleanup.recordWorkspace(cwd);
+      const stopped = h.cli(['stop', '--slot', slot, '--json'], { cwd, allowFail: true });
+      assert(stopped.code === 0, `could not stop prepared simulator ${slot}: ${stopped.stderr}`);
+      assert(result.code === 0, `simulator preparation failed for ${slot}: ${result.stderr}`);
+      const { udid } = JSON.parse(result.stdout);
+      const inventory = JSON.parse(h.sh('xcrun', ['simctl', 'list', 'devices', '--json'], { timeout: 30000 }).stdout);
+      const sim = Object.values(inventory.devices)
+        .flat()
+        .find((device) => device.udid === udid);
+      assert(sim?.state === 'Shutdown', `prepared simulator ${slot} was not shut down`);
+    }
+  } catch (error) {
+    error.preserveNativeState = true;
+    h.log(
+      `Simulator preparation failed. Keeping ownership state at ${h.env?.STIM_HOME ?? 'STIM_HOME'} and its worktrees for recovery.`,
     );
-    cleanup.recordWorkspace(cwd);
-    const stopped = h.cli(['stop', '--slot', slot, '--json'], { cwd, allowFail: true });
-    assert(stopped.code === 0, `could not stop prepared simulator ${slot}: ${stopped.stderr}`);
-    assert(result.code === 0, `simulator preparation failed for ${slot}: ${result.stderr}`);
-    const { udid } = JSON.parse(result.stdout);
-    const inventory = JSON.parse(h.sh('xcrun', ['simctl', 'list', 'devices', '--json'], { timeout: 30000 }).stdout);
-    const sim = Object.values(inventory.devices)
-      .flat()
-      .find((device) => device.udid === udid);
-    assert(sim?.state === 'Shutdown', `prepared simulator ${slot} was not shut down`);
+    throw error;
   }
 }
 
@@ -441,7 +449,8 @@ export function dumpDiagnostics(h, created) {
   }
 }
 
-export function cleanupTmp(dirs) {
+export function cleanupTmp(dirs, error) {
+  if (error?.preserveNativeState) return;
   for (const dir of dirs.filter(Boolean)) {
     try {
       rmSync(dir, { recursive: true, force: true });

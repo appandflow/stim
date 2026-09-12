@@ -124,6 +124,17 @@ alone does not establish OOM. Stop only workspaces you own and have finished
 using; ask before closing other agents' simulators or heavy apps. SimSlim can
 reduce future resource use but is not a guaranteed fix for a stalled host.
 
+During a slow local iOS boot, Stim reports the simulator name, elapsed time, last boot
+output, current memory pressure, and highest observed pressure roughly every
+15 seconds. Boot failures retain the highest pressure and the number of
+unavailable readings. Unknown readings are not treated as normal, and pressure
+does not prove the cause of a timeout. The boot deadline remains ten minutes.
+
+An agent should stop unused slots in workspaces it owns, reduce concurrent
+builds, and retry after pressure falls. Ask before closing another agent's
+simulator or a user's app. Repeated reboots under unchanged pressure can repeat
+the stall.
+
 ## Remote devices
 
 Stim supports two optional remote backends:
@@ -163,14 +174,3 @@ App data remains on disk while parked; system apps, shared storage, accounts
 and device settings persist across reuse. Set `pool.androidParkedMax` to `0`
 when a fresh device is required. AVDs created before Stim recorded their
 creation configuration are deleted when removed.
-
-During a slow boot, Stim reports the simulator name, elapsed time, last boot
-output, current memory pressure, and highest observed pressure roughly every
-15 seconds. Boot failures retain the highest pressure and the number of
-unavailable readings. Unknown readings are not treated as normal, and pressure
-does not prove the cause of a timeout. The boot deadline remains ten minutes.
-
-An agent should stop unused slots in workspaces it owns, reduce concurrent
-builds, and retry after pressure falls. Ask before closing another agent's
-simulator or a user's app. Repeated reboots under unchanged pressure can repeat
-the stall.
