@@ -98,7 +98,7 @@ describe('ensureBooted: ios', () => {
     });
     expect(commands.filter((c) => c.includes('simctl boot')).length).toBe(0);
     expect(commands.some((c) => c.includes('simctl bootstatus'))).toBe(false);
-    expect(probes).toEqual([['xcrun', 'simctl', 'spawn', 'U1', '/usr/bin/true', { timeoutMs: 30000 }]]);
+    expect(probes).toEqual([['xcrun', 'simctl', 'spawn', 'U1', 'launchctl', 'list', { timeoutMs: 30000 }]]);
   });
 
   test.each([false, true])('refuses a simulator that cannot spawn a process after boot (joined=%s)', async (joined) => {
@@ -323,7 +323,7 @@ describe('ensureBooted: ios', () => {
     });
     expect(result).toEqual({ ok: true, udid: 'U1' });
     expect(finished).toBe(true);
-    expect(commands).toEqual(['xcrun simctl spawn U1 /usr/bin/true']);
+    expect(commands).toEqual(['xcrun simctl spawn U1 launchctl list']);
   });
 
   test('reports the failure of the boot this run started, before anything is installed', async () => {
