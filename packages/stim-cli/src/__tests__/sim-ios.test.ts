@@ -686,18 +686,21 @@ test('bootIosSim re-enters bootstatus after a timed-out attempt while the sim is
   expect(quiet).toContain('open -a Simulator');
 });
 
-test('bootIosSim treats a timed-out attempt as success when the sim reports Booted', async () => {
-  const { spawned } = bootstatusExecutor(['hang'], () => bootSimList('Booted'));
+test('bootIosSim waits for bootstatus even when a timed-out attempt reports Booted', async () => {
+  const { spawned } = bootstatusExecutor(['hang', { exitCode: 0 }], () => bootSimList('Booted'));
   await bootIosSim('UDID-A', { attemptMs: 20 });
-  expect(spawned.length).toBe(1);
+  expect(spawned.length).toBe(2);
 });
 
-test('bootIosSim names the udid and the wait when the deadline expires while Booting', async () => {
-  bootstatusExecutor(['hang'], () => bootSimList('Booting'));
-  await expect(bootIosSim('UDID-A', { timeoutMs: 1200, attemptMs: 300 })).rejects.toThrow(
-    /UDID-A did not finish booting within 1s/,
-  );
-});
+test.each(['Booting', 'Booted'])(
+  'bootIosSim names the udid and the wait when the deadline expires while %s',
+  async (state) => {
+    bootstatusExecutor(['hang'], () => bootSimList(state));
+    await expect(bootIosSim('UDID-A', { timeoutMs: 1200, attemptMs: 300 })).rejects.toThrow(
+      /UDID-A did not finish booting within 1s/,
+    );
+  },
+);
 
 test('bootIosSim reports a sim that vanished from the device list', async () => {
   bootstatusExecutor(['hang'], () => JSON.stringify({ devices: {} }));
@@ -764,6 +767,10 @@ test('bootstatus does not survey or retry until its timed-out child has actually
     },
     runFileQuiet: () => '',
     spawn() {
+      if (events.includes('survey')) {
+        events.push('retry');
+        return makeExitingChild();
+      }
       const child = makeChildProcess();
       child.kill = () => {
         events.push('signal');
@@ -777,7 +784,7 @@ test('bootstatus does not survey or retry until its timed-out child has actually
     },
   });
   await bootIosSim('UDID-A', { attemptMs: 10 });
-  expect(events).toEqual(['signal', 'exit', 'survey']);
+  expect(events).toEqual(['signal', 'exit', 'survey', 'retry']);
 });
 
 test('bootstatus refuses a retry when termination cannot be confirmed within the cleanup bound', async () => {

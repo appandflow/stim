@@ -254,9 +254,8 @@ export async function bootIosSim(
     } catch {
       state = undefined;
     }
-    if (state === 'Booted') break;
     const waited = Math.round((timeoutMs - Math.max(0, deadline - Date.now())) / 1000);
-    if (state !== 'Booting' && state !== undefined) {
+    if (state !== 'Booting' && state !== 'Booted' && state !== undefined) {
       throw new Error(`Simulator ${udid} reports "${state ?? 'missing'}" after ${waited}s of boot wait.`);
     }
     if (deadline - Date.now() <= 0) {
