@@ -147,6 +147,10 @@ bundle response finishes; build-complete output alone does not close an observed
 request. Without response capture, Stim falls back to the build-complete marker.
 When Android reports queued JavaScript loading, Stim waits for device JavaScript
 activity before starting stability, bounded by the bundle timeout.
+Debug Android launches on an owned emulator created in the same run get a
+60-second bundle timeout, reported in the verify phase. Existing emulators,
+remote targets, and physical devices keep the 20-second budget. Fatal errors
+still end verification immediately.
 A `pending` observed before that window closes opts into waiting for `ready`, up
 to 30 seconds after the same completion signal.
 Repeated `pending` logs do not extend the deadline. A matching `ready` can end

@@ -19,6 +19,7 @@ import {
   launchAndroidReleaseApp,
   ADB_INSTALL_TIMEOUT_MS,
   RELEASE_VERIFY_WAIT_MS,
+  VERIFY_TIMEOUT_MS,
   installConflictKind,
   deviceShellArg,
 } from '../../engine/app-install.ts';
@@ -77,6 +78,7 @@ interface VerifyAndroidRunArgs {
   metroPort: number | null;
   isExpo: boolean;
   physical: boolean;
+  newEmulator: boolean;
   scheme?: string | null;
   component?: string | null;
   phase: (label: unknown, text: string) => void;
@@ -98,6 +100,7 @@ async function verifyAndroidRun({
   metroPort,
   isExpo,
   physical,
+  newEmulator,
   scheme,
   component = null,
   phase,
@@ -150,8 +153,11 @@ async function verifyAndroidRun({
     return { state: LAUNCH_FATAL };
   }
 
+  const timeoutMs = newEmulator ? 60000 : VERIFY_TIMEOUT_MS;
+  if (metroCheck && newEmulator) phase('verify', 'waiting up to 60s for bundle load (new emulator)');
   const verification: VerifyLaunchResultLike = metroCheck
     ? await verifyLaunched({
+        timeoutMs,
         requireBundleResponse: true,
         onReadinessPending: () => phase('readiness', 'waiting for app readiness (up to 30s after bundle load)'),
         logsDir,
@@ -646,6 +652,7 @@ export async function finishAndroidRun({
     metroPort,
     isExpo,
     physical,
+    newEmulator: Boolean(device.created && device.owned && !remoteDevice),
     scheme,
     component: launched.component ?? null,
     phase,

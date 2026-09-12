@@ -63,6 +63,7 @@ import {
   installAndroidApp,
   deviceShellArg,
   androidDevClientUrl,
+  verifyLaunch,
 } from '../engine/app-install.ts';
 import type { AssetManifest } from '../engine/asset-manifest.ts';
 import { PREBUILD_ERROR } from '../engine/prebuild.ts';
@@ -204,6 +205,7 @@ interface VerifyArgs {
   since?: string | number;
   metroPort?: string | number | null;
   platform?: string | null;
+  timeoutMs?: number;
 }
 
 interface Calls {
@@ -602,6 +604,7 @@ describe('explicit remote backend behavior', () => {
       expect(remoteCalls).toEqual(['ensureDevice', 'ensureDeviceBooted', 'install', 'launch']);
       expect(h.calls.ensureDevice).toEqual([]);
       expect(h.calls.fingerprint.length).toBe(2);
+      expect(h.calls.verify[0]?.timeoutMs).toBe(20000);
     },
   );
 
@@ -1555,12 +1558,18 @@ describe('metro is verified before any build work', () => {
     expect(result.error.message).toMatch(/No Metro port is reserved/);
   });
 
-  test('--no-metro-check proceeds without probing anything', async () => {
-    const h = harness({ metroCheck: false, resolveMetro: never('the metro probe') });
+  test('--no-metro-check proceeds without probing anything on a new emulator', async () => {
+    const h = harness({
+      metroCheck: false,
+      resolveMetro: never('the metro probe'),
+      ensureDevice: async () => ({ avdName: 'stim-app-412', consolePort: 5584, owned: true, created: true }),
+    });
     const result = await h.run();
     expect(result.ok).toBe(true);
     expect(labelled(h.stderr, 'metro')[0]).toMatch(/not checked/);
     expect(h.calls.launch[0]?.metroPort).toBe(8082);
+    expect(h.calls.verify).toEqual([]);
+    expect(h.stderr.join('\n')).not.toContain('60s for bundle load');
     expect(h.stdout[0]).toContain(phaseLine('metro', 'check skipped on port 8082'));
   });
 
@@ -2846,6 +2855,69 @@ describe('the device preparation step', () => {
 });
 
 describe('launch verification', () => {
+  test.each([
+    { created: true, event: 'bundle_response_finished', state: true, waitedMs: 26000 },
+    { created: false, event: 'bundle_response_finished', state: 'unverified', waitedMs: 20000 },
+    { created: true, event: null, state: 'unverified', waitedMs: 60000 },
+    { created: true, event: 'bundle_response_started', state: 'bundling', waitedMs: 60000 },
+    { created: true, event: 'bundle_response_failed', state: 'fatal', waitedMs: 23000 },
+  ])(
+    'created=$created, bundle=$event verifies as $state after $waitedMs ms',
+    async ({ created, event, state, waitedMs }) => {
+      const crashes = vi.spyOn(crashDiagnostics, 'captureNativeCrashes').mockReturnValue([]);
+      let elapsed = 0;
+      try {
+        const h = harness({
+          ensureDevice: async () => ({ avdName: 'stim-app-412', consolePort: 5584, owned: true, created }),
+          verifyLaunched: async (args: Parameters<typeof verifyLaunch>[0]) => {
+            const started = Number(args?.since);
+            return verifyLaunch({
+              ...args,
+              now: () => started + elapsed,
+              sleep: async (ms) => {
+                elapsed += ms;
+              },
+              readRecords: () =>
+                elapsed >= 23000 && event
+                  ? [
+                      {
+                        ts: started + 23000,
+                        platform: 'android',
+                        event: 'bundle_response_started',
+                        requestId: 'cold-launch',
+                      },
+                      ...(event === 'bundle_response_started'
+                        ? []
+                        : [
+                            {
+                              ts: started + 23000,
+                              platform: 'android',
+                              event,
+                              requestId: 'cold-launch',
+                              msg: event === 'bundle_response_failed' ? 'Bundle delivery failed' : 'Bundle response',
+                            },
+                          ]),
+                    ]
+                  : [],
+              readDeviceRecords: () => [],
+              readClientRecords: () => [],
+              processAlive: () => true,
+            });
+          },
+        });
+        const result = await h.run();
+        expect(elapsed).toBe(waitedMs);
+        expect(result.ok).toBe(state !== 'fatal');
+        expect(result.error?.code).toBe(state === 'fatal' ? 'STIM_LAUNCH_FAILED' : undefined);
+        expect(result.facts?.launched).toBe(state === 'fatal' ? undefined : state);
+        expect(h.stderr.join('\n').includes('60s for bundle load (new emulator)')).toBe(created);
+        expect(h.stderr.join('\n').includes(`within ${waitedMs / 1000}s`)).toBe(state === 'unverified');
+      } finally {
+        crashes.mockRestore();
+      }
+    },
+  );
+
   test("a verified launch reports launched: true and polls this workspace's timeline", async () => {
     const h = harness();
     const result = await h.run();
@@ -2854,6 +2926,7 @@ describe('launch verification', () => {
     expect(h.calls.verify[0]?.logsDir).toBe(workspaceLogsDir(root));
     expect(Number.isFinite(h.calls.verify[0]?.since)).toBeTruthy();
     expect(h.calls.verify[0]?.platform).toBe('android');
+    expect(h.calls.verify[0]?.timeoutMs).toBe(20000);
     expect(
       h.stderr.some((l) => /verify.*bundle loaded, stable for 3s -- the first screen may still be rendering/.test(l)),
     ).toBeTruthy();
@@ -3404,7 +3477,11 @@ describe('variant resolution', () => {
 
 describe('release skips Metro entirely', () => {
   test('no gate, no reservation needed, no port wiring, plain am start', async () => {
-    const h = harness({ variant: 'productionRelease', resolveMetro: never('the metro probe') });
+    const h = harness({
+      variant: 'productionRelease',
+      resolveMetro: never('the metro probe'),
+      ensureDevice: async () => ({ avdName: 'stim-app-412', consolePort: 5584, owned: true, created: true }),
+    });
     const result = await h.run();
     expect(result.ok).toBe(true);
     expect(h.calls.metro.length).toBe(0);
@@ -4382,6 +4459,7 @@ describe('--device (a physical Android device)', () => {
     expect(result.ok).toBe(true);
     expect(h.calls.install[0]?.serial).toBe('RFCR7081Q9L');
     expect(h.calls.launch[0]?.serial).toBe('RFCR7081Q9L');
+    expect(h.calls.verify[0]?.timeoutMs).toBe(20000);
   });
 
   test('a physical Debug run builds for the device primary ABI', async () => {

@@ -767,7 +767,7 @@ async function ensureOwnedAndroidDevice({
         );
       }
       out(chalk.dim(phaseLine('device', `recovered ${avdName} (unrecorded from a prior run)`)));
-      if (created.serial) return { ...created, owned: true, deviceName: avdName, created: true };
+      if (created.serial) return { ...created, owned: true, deviceName: avdName, created: false };
     } else {
       throw e;
     }
@@ -801,7 +801,7 @@ async function ensureOwnedAndroidDevice({
       logFile,
       alive,
     })),
-    created: true,
+    created: fresh,
     systemImage: created.systemImage,
   };
 }
