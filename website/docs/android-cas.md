@@ -101,8 +101,14 @@ assertion failures stop the script. All fixture data remains available.
 ## Application integration
 
 After building the Stim checkout, use its CLI with a disposable React Native/Expo
-worktree and a private `STIM_HOME`. Commands use `stim`; replace it with
+worktree and a private `STIM_HOME`.
+
+:::note[Command examples]
+
+Commands use `stim`; replace it with
 `npx stim` if it is not installed globally.
+
+:::
 
 For persistent selection, merge this into `$STIM_HOME/config.json` (default
 `~/.stim/config.json`). The same `optimizations` object in `.stim.json` can

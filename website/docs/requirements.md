@@ -4,8 +4,12 @@ sidebar_position: 3
 description: 'Local and optional remote requirements'
 ---
 
+:::note[Command examples]
+
 Commands use `stim`. If it is not installed globally, replace `stim` with
 `npx stim`.
+
+:::
 
 ## All projects
 
