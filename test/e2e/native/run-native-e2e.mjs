@@ -125,11 +125,16 @@ function verifyDeviceSlots(cwd, original) {
   assert(deviceId(repeated) === deviceId(second), 'repeated slot did not reuse its device');
   const flags = [];
   if (PLATFORM === 'ios') {
-    const types = JSON.parse(
-      sh('xcrun', ['simctl', 'list', 'devicetypes', '--json'], { timeout: 30000 }).stdout,
-    ).devicetypes;
-    const tablet = types.findLast((type) => type.name.startsWith('iPad Pro'));
-    assert(tablet, 'native slot QA requires an installed iPad device type');
+    const inventory = JSON.parse(sh('xcrun', ['simctl', 'list', '--json'], { timeout: 30000 }).stdout);
+    const supported = new Set(
+      inventory.runtimes
+        .filter((runtime) => runtime.isAvailable && runtime.identifier.includes('.iOS-'))
+        .flatMap((runtime) => runtime.supportedDeviceTypes.map((type) => type.identifier)),
+    );
+    const tablet = inventory.devicetypes.find(
+      (type) => type.name.startsWith('iPad Pro') && supported.has(type.identifier),
+    );
+    assert(tablet, 'native slot QA requires an iPad device type supported by an available iOS runtime');
     flags.push('--device-type', tablet.name);
   }
   const third = runSlot('third', flags);
