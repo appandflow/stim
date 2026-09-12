@@ -1053,9 +1053,11 @@ changes nothing  (worktree warm --refresh)
   blocks network egress by default, which breaks a cache lookup and a fetch.
 
   \`stim doctor\` names this when a write to STIM_HOME actually fails, not
-  merely when a harness that can sandbox is present, and
-  \`stim doctor --fix\` writes the three keys into .claude/settings.local.json,
-  the per-user file, merging with what is there. It refuses under Codex, which
+  merely when a harness that can sandbox is present. \`stim doctor --fix\`
+  writes only when the report shows that finding, and only what the finding
+  names: the three keys, into .claude/settings.local.json, the per-user file,
+  merging with what is there. A report without the finding, with or without
+  --platform, leaves that file alone. It refuses under Codex, which
   has no per-path allowance to add, and refuses any settings file it cannot
   parse rather than replace it: comments make one unparseable here even though
   Claude Code accepts them. Claude Code reads project settings from the
