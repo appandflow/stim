@@ -290,10 +290,13 @@ result.
 stim stop [--slot <name>] [--json]
 ```
 
-Stops the supervisor and log collectors. It shuts down the owned local device,
-ends an owned remote session, and frees the port. A local device stays assigned
-for reuse. An external server on the reserved port is left running, and a
+Without `--slot`, stops the supervisor and all log collectors, shuts down every
+owned local device, ends an owned remote session, and frees the port. Owned
+local devices stay assigned for reuse. An external server on the reserved port is left running, and a
 process whose ownership cannot be verified is not signalled.
+
+With `--slot <name>`, stops only that slot's owned devices and collectors and
+releases its leases. Metro, the reserved port, and sibling slots keep running.
 
 On a physical iPhone, stopping the log collector closes the running app.
 `stop` also releases this workspace's device leases. It never uninstalls the
@@ -319,7 +322,8 @@ free one in id order. The same rule serves `ios --device` and
 `android --device` with no id, so two devices on one machine no longer refuse.
 
 `unlock` releases every lease this workspace holds, or only the platform
-named; releasing nothing is not an error. A `--device` run takes a lease of
+named. Adding `--slot <name>` restricts release to that slot; releasing nothing
+is not an error. A `--device` run takes a lease of
 its own for the length of the run, so `lock` is for holding a device across
 runs, such as a device-tool session. `stim status` lists every lease on the
 machine.
