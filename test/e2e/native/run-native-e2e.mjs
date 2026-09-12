@@ -305,7 +305,7 @@ main().then(
   (err) => {
     log(`FAIL ${VARIANT}: ${err?.message || err}`);
     dumpDiagnostics(h, created);
-    if (!args.keep) cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR]);
+    if (!args.keep) cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR], err);
     process.exit(1);
   },
 );
