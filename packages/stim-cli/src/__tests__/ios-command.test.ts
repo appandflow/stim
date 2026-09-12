@@ -5715,3 +5715,78 @@ describe('optimization configuration', () => {
     expect(calls.args.storeBuild.key).toMatch(/opt-/);
   });
 });
+
+describe('EAS development builds', () => {
+  test('installs the EAS artifact against the reserved Metro port without entering the local build pipeline', async () => {
+    reserve();
+    const path = join(root, 'Eas.app');
+    const resolveEasDevelopmentBuild = vi.fn<NonNullable<IosDeps['resolveEasDevelopmentBuild']>>(async () => ({
+      ok: true as const,
+      path,
+      fingerprint: 'eas-fingerprint',
+      cacheKey: 'eas-key',
+      cacheHit: 'remote' as const,
+    }));
+    const { logs, calls } = await run(
+      { json: true, easProfile: 'development-simulator' },
+      {
+        detectIsExpo: () => true,
+        resolveEasDevelopmentBuild,
+        devClientScheme: () => 'exp+fixture',
+        resolveSettings: () => ({ ios: { configuration: 'Release' } }),
+      },
+    );
+    expect(resolveEasDevelopmentBuild).toHaveBeenCalledWith(
+      expect.objectContaining({ profile: 'development-simulator', platform: 'ios' }),
+    );
+    expect(calls.args.installIosApp.appPath).toBe(path);
+    expect(calls.args.launchIosApp).toMatchObject({ metroPort: 8082, devClientScheme: 'exp+fixture' });
+    expect(parseFirst(logs)).toMatchObject({
+      fingerprint: 'eas-fingerprint',
+      cacheKey: 'eas-key',
+      cacheHit: 'remote',
+      launched: true,
+    });
+    for (const step of [
+      'fingerprintProject',
+      'resolveBuild',
+      'loadProjectProvider',
+      'runPrebuild',
+      'runPodInstall',
+      'buildIos',
+      'uploadRemote',
+    ]) {
+      expect(calls.order).not.toContain(step);
+    }
+  });
+
+  test('a missing EAS build refuses before creating or booting a simulator', async () => {
+    reserve();
+    const { logs, calls } = await run(
+      { json: true, easProfile: 'development' },
+      {
+        detectIsExpo: () => true,
+        resolveEasDevelopmentBuild: async () => ({
+          ok: false,
+          code: 'STIM_EAS_BUILD_MISSING',
+          message: 'No match',
+          remedy: 'Run the approved EAS build command.',
+        }),
+      },
+    );
+    expect(parseFirst(logs)).toMatchObject({ code: 'STIM_EAS_BUILD_MISSING' });
+    expect(calls.order).not.toContain('ensureOwnedDevice');
+    expect(calls.order).not.toContain('buildIos');
+    expect(calls.order).not.toContain('installIosApp');
+  });
+
+  test('conflicting local selectors refuse before querying EAS', async () => {
+    const { logs } = await run(
+      { json: true, easProfile: 'development', configuration: 'Release' },
+      {
+        detectIsExpo: () => true,
+      },
+    );
+    expect(parseFirst(logs)).toMatchObject({ code: 'STIM_BAD_ARG' });
+  });
+});

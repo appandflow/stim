@@ -1,4 +1,5 @@
 import { loadCacheProvider } from '@stim-cli/cache';
+import { resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
 import { fingerprintProject, resolveBuild, storeBuild, untrackedNativeFiles } from '../../build-cache.ts';
 import { getConcurrencyLimits, getProject, upsertProject } from '../../config.ts';
 import {
@@ -61,6 +62,7 @@ import { devClientScheme } from '../dev-client.ts';
 import { stopPreviousCollector, replaceCollector } from './collector.ts';
 
 export interface IosDeps {
+  resolveEasDevelopmentBuild: typeof resolveEasDevelopmentBuild;
   resolveRemoteContext: typeof resolveRemoteContext;
   ensureMetroReachable: typeof ensureMetroReachable;
   ensureRemoteBootOwned: typeof ensureRemoteBootOwned;
@@ -144,6 +146,7 @@ export interface IosDeps {
 }
 
 export const DEFAULT_DEPS: IosDeps = {
+  resolveEasDevelopmentBuild,
   findProjectRoot,
   resolveSettings,
   gitCommonDir,

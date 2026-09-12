@@ -184,6 +184,58 @@ TWO REPORTS, TWO QUESTIONS
   the machine, with a hit rate and an estimate of the time saved (see
   \`guide facts stats\`).`,
   sections: {
+    eas: {
+      summary: 'download a matching EAS development build; explicit profile, costs, cache and miss remedies',
+      body: () => `EAS DEVELOPMENT BUILDS
+
+  stim ios --eas-profile ios-simulator
+  stim android --eas-profile development
+
+An eas.json file does not select EAS automatically. The flag names the profile
+and selects EAS Build as the artifact source. The profile must resolve to
+"developmentClient": true and "distribution": "internal"; iOS also needs
+"ios": { "simulator": true }. Install eas-cli and authenticate with eas login
+or EXPO_TOKEN. The Expo app must already be linked to the intended EAS project.
+
+Stim delegates profile inheritance, environment resolution and fingerprinting
+to EAS CLI. fingerprint:generate uploads fingerprint metadata to EAS. It does
+not start a native build. EAS access is needed even when the artifact is
+already cached, because the current profile and fingerprint must be resolved.
+
+Stim matches the EAS project, profile, native fingerprint, platform and
+simulator/internal distribution target against a completed build. It downloads
+an iOS .app or Android .apk with EAS CLI, then uses its existing installation,
+Metro connection, log capture and launch verification on the owned device.
+The flag also works with --remote; remote EAS Simulator sessions have their
+own costs, independent of this download path. Physical --device targets and
+local --scheme, --configuration, --variant and --no-build-cache selectors
+cannot be combined with --eas-profile. Local configuration/variant defaults
+are ignored for this development-build run.
+
+Start Metro with stim start as usual. Metro uses the local workspace's
+environment; arrange the appropriate local variables before starting it.
+EAS environment resolution for native fingerprinting does not configure Metro.
+
+The EAS artifact cache is separate from local native builds and includes the
+EAS project, profile, resolved profile settings and fingerprint. A local hit
+reports cacheHit: "local"; a download reports "remote". The fingerprint fact
+is the EAS native fingerprint. Local buildCache settings control local reuse
+and storage; remoteBuildCache settings do not disable an explicitly selected
+EAS build source. Scratch downloads live under the workspace's eas-downloads
+directory and are registered for gc.
+
+On STIM_EAS_BUILD_MISSING, Stim stops before acquiring a device and prints:
+
+  npx eas-cli build --platform ios --profile ios-simulator
+
+Run that command only when the session authorizes the potentially billable
+cloud build. Once it completes, retry the same Stim command. No build-on-miss
+flag exists, and Stim never starts a cloud build or falls back to local
+compilation in this mode. Authentication, network, invalid output or download
+failures produce STIM_EAS_UNAVAILABLE, with the failed EAS command to inspect.
+If another run holds the artifact claim, wait for it to finish and retry.`,
+    },
+
     readiness: {
       summary: 'implement optional pending/ready app logs, deadlines, errors, and platform isolation',
       body: () => `OPTIONAL APP READINESS

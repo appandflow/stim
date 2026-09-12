@@ -136,3 +136,7 @@ export function launchOutcomeRecord({
     msg,
   };
 }
+
+export function isPhysicalDeviceRequest(flag: string | boolean | null | undefined): boolean {
+  return flag !== null && flag !== undefined && flag !== false;
+}

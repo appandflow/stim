@@ -217,7 +217,7 @@ test('the errors topic documents every code the build commands and the iOS signi
   ];
   const sources = [
     ...commandFiles.map((file) => readFileSync(new URL(`../commands/${file}`, import.meta.url), 'utf-8')),
-    ...['engine/ios-profile.ts', 'engine/ios-signing.ts'].map((f) =>
+    ...['engine/ios-profile.ts', 'engine/ios-signing.ts', 'engine/eas-build.ts'].map((f) =>
       readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8'),
     ),
   ].join('\n');
@@ -472,4 +472,15 @@ test('the settings guide documents every configurable optimization', () => {
   for (const key of Object.keys(OPTIMIZATION_SHAPES)) {
     expect(body).toContain(key);
   }
+});
+
+test('EAS guidance routes agents to the profile and preserves the paid-build authorization boundary', () => {
+  const agent = renderTopic('agent');
+  expect(agent).toContain('stim guide lifecycle eas');
+  const eas = renderSection('lifecycle', 'eas');
+  expect(eas).toContain('--eas-profile');
+  expect(eas).toContain('fingerprint:generate uploads fingerprint metadata');
+  expect(eas).toMatch(/session authorizes the potentially billable/);
+  expect(eas).toContain('STIM_EAS_BUILD_MISSING');
+  expect(eas).toContain('STIM_EAS_UNAVAILABLE');
 });

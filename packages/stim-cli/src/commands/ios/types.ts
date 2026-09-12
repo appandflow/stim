@@ -71,6 +71,7 @@ export interface IosCommandOptions {
   buildCache?: boolean;
   configuration?: string;
   scheme?: string;
+  easProfile?: string;
   deviceType?: string;
   runtime?: string;
   device?: string | boolean;

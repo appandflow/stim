@@ -1,3 +1,4 @@
+import { isEasBuildFailure } from '../engine/eas-build.ts';
 import { rmSync } from 'node:fs';
 import {
   resolveOptimizations,
@@ -87,7 +88,7 @@ import type { NdjsonWriter } from '../ndjson.ts';
 import { workspaceDir, workspaceLogsDir } from '../paths.ts';
 import { appProjectProblem } from '../project.ts';
 import { claimFailure } from '../ownership-claim.ts';
-import { type SupervisorLike, noMetroMessage, noMetroRemedy } from './native-runtime.ts';
+import { isPhysicalDeviceRequest, type SupervisorLike, noMetroMessage, noMetroRemedy } from './native-runtime.ts';
 import {
   PLATFORM,
   buildLogFile,
@@ -158,6 +159,10 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
       "Build (or restore from the fingerprint cache), install and launch this workspace's app on its owned " +
         'simulator, wired to the reserved Metro port. Requires a running dev server (`stim start`).',
     )
+    .option(
+      '--eas-profile <name>',
+      'Download a matching EAS development build; on a miss, print the build command without running it',
+    )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
     .option(
       '--scheme <name>',
@@ -192,7 +197,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     )
     .option(
       '--remote <backend>',
-      'Install and launch on a remote device with proxy or EAS. The build still happens here.',
+      'Install and launch on a remote device with proxy or EAS. Builds are local unless --eas-profile selects an existing EAS build.',
       (value) => {
         if ((REMOTE_DEVICE_BACKENDS as readonly string[]).includes(value)) return value as RemoteDeviceBackend;
         throw new InvalidArgumentError(`expected one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}`);
@@ -419,7 +424,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
     }
   }
 
-  const configuration = resolveConfiguration(opts.configuration, settings);
+  const configuration = opts.easProfile !== undefined ? null : resolveConfiguration(opts.configuration, settings);
   const buildScheme = opts.scheme;
   const release = isReleaseConfiguration(configuration);
   const cachePolicy = artifactCachePolicy(optimizations, useBuildCache, release);
@@ -429,7 +434,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
   const runtime = resolveRuntime(opts.runtime, settings);
 
   const deviceFlag = opts.device;
-  const physical = deviceFlag !== null && deviceFlag !== undefined && deviceFlag !== false;
+  const physical = isPhysicalDeviceRequest(deviceFlag);
   if (physical && deviceFlag === '') {
     return fail({
       code: 'STIM_BAD_ARG',
@@ -474,6 +479,18 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
   const waitSeconds = waitParsed.seconds;
 
   const isExpo = d.detectIsExpo(root);
+  const easBuild = await d.resolveEasDevelopmentBuild({
+    root,
+    platform: PLATFORM,
+    profile: opts.easProfile,
+    cache: cachePolicy,
+    note,
+    isExpo,
+    physical,
+    selectors: [opts.scheme, opts.configuration],
+    buildCache: opts.buildCache,
+  });
+  if (isEasBuildFailure(easBuild)) return fail(easBuild);
   const schemeRefusal = explicitSchemeRefusal(root, buildScheme, isExpo, d);
   if (schemeRefusal) return fail(schemeRefusal);
   const remoteBackend = physical ? null : (opts.remote ?? remoteIosSetting(settings));
@@ -774,6 +791,15 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
     });
     udid = (device.deviceUdid as string | undefined) ?? (await bootPromise)?.udid ?? '';
 
+    if (easBuild?.ok) {
+      fingerprint = storeHash = easBuild.fingerprint;
+      cacheKey = storeKey = easBuild.cacheKey;
+      appPath = easBuild.path;
+      cacheHit = easBuild.cacheHit;
+      providerName = 'eas';
+      stats.setCacheKey(cacheKey);
+      return true;
+    }
     const fingerprintTimer = stepTimer(d.now);
     let computedFingerprint: string | null;
     try {
@@ -1338,10 +1364,12 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
 
   try {
     if (!(await resolveInitialFingerprint())) return null;
-    await resolveRemoteArtifact();
-    if (!(await waitForSharedBuild())) return null;
-    await prepareCachedArtifact();
-    if (!(await buildArtifact())) return null;
+    if (!easBuild) {
+      await resolveRemoteArtifact();
+      if (!(await waitForSharedBuild())) return null;
+      await prepareCachedArtifact();
+      if (!(await buildArtifact())) return null;
+    }
 
     if (physicalDevice) {
       const acquired = await d.acquireRunLease({
