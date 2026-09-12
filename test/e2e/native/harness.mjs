@@ -75,6 +75,8 @@ export function preflight(h, platform) {
     if (process.platform !== 'darwin') h.die('ios variant requires macOS + Xcode; this is not a macOS host.', 2);
     h.requireTool('xcrun', ['--version']);
     h.requireTool('xcodebuild', ['-version']);
+    h.log('checking CoreSimulator inventory before fixture setup (up to 5 minutes)');
+    h.sh('xcrun', ['simctl', 'list', '--json'], { timeout: 5 * 60 * 1000 });
   } else {
     const sdk = h.env.ANDROID_HOME || h.env.ANDROID_SDK_ROOT;
     assert(sdk, 'Native Android tests require ANDROID_HOME or ANDROID_SDK_ROOT pointing to the Android SDK.');
