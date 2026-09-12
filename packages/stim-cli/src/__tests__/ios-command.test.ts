@@ -993,10 +993,10 @@ describe('launch verification', () => {
     expect(text).not.toMatch(/NSBundle/);
   });
 
-  test('a launch that does not verify still prints every error it collected', async () => {
+  test.each(['default', 'phone'])('an unverified launch reports errors and its recovery slot (%s)', async (slot) => {
     reserve();
     const { errs, exitCode } = await run(
-      {},
+      { slot },
       {
         verifyLaunch: async () => ({
           fatal: true,
@@ -1008,7 +1008,7 @@ describe('launch verification', () => {
     );
     expect(exitCode).toBe(1);
     expect(errs.join('\n')).toMatch(/attention client lost event tag/);
-    expect(errs.join('\n')).toMatch(/run `stim ios` again.*Metro reload cannot restart an exited app/);
+    expect(errs.join('\n')).toContain(`run \`stim ios${slot === 'default' ? '' : ` --slot ${slot}`}\` again`);
     expect(errs.join('\n')).toContain('about a minute or longer');
     expect(errs.join('\n')).toContain('Run `stim logs --errors` again');
   });

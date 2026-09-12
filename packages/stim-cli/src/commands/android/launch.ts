@@ -1,4 +1,4 @@
-import { launchSlotScope } from '../../engine/slot-launch.ts';
+import { launchSlotScope, nativeRunCommand } from '../../engine/slot-launch.ts';
 import { deviceSlotPlatforms } from '../../device-slots.ts';
 import { resetAdoptedAvd, type resolveOwnedAvdSerial, type waitForBoot } from '../../sim/android.ts';
 import type { ChildProcess } from 'node:child_process';
@@ -109,6 +109,7 @@ async function verifyAndroidRun({
   component = null,
   phase,
 }: VerifyAndroidRunArgs): Promise<{ state: boolean | string; warning?: string }> {
+  const runCommand = nativeRunCommand('android', slot, { physical, deviceId: serial });
   const readNativeCrashes = () =>
     remoteDevice
       ? []
@@ -213,7 +214,7 @@ async function verifyAndroidRun({
       phase(
         'remedy',
         chalk.yellow(
-          `Fix the crash, then restart the app: \`adb -s ${deviceShellArg(serial)} shell am force-stop ${deviceShellArg(androidPackage)}\`, then run \`stim android\` again. A crashed Android process can remain alive behind the system crash dialog; Metro reload cannot recover it.`,
+          `Fix the crash, then restart the app: \`adb -s ${deviceShellArg(serial)} shell am force-stop ${deviceShellArg(androidPackage)}\`, then run \`${runCommand}\` again. A crashed Android process can remain alive behind the system crash dialog; Metro reload cannot recover it.`,
         ),
       );
     } else if (verification.processAlive === true && metroPort !== null) {
@@ -223,7 +224,7 @@ async function verifyAndroidRun({
       phase(
         'remedy',
         chalk.yellow(
-          `The native app is still running. ${deliveryFailed ? 'Check the Metro logs and device connection, then' : 'Fix the JavaScript or TypeScript error, then'} ${reloadRemedy} Do not run \`stim android\` unless native inputs changed or the app process exits.`,
+          `The native app is still running. ${deliveryFailed ? 'Check the Metro logs and device connection, then' : 'Fix the JavaScript or TypeScript error, then'} ${reloadRemedy} Do not run \`${runCommand}\` unless native inputs changed or the app process exits.`,
         ),
       );
     }
@@ -247,7 +248,7 @@ async function verifyAndroidRun({
       phase(
         'remedy',
         chalk.yellow(
-          `The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, ${reloadRemedy} Do not run \`stim android\` unless native inputs changed or the app process exits.`,
+          `The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, ${reloadRemedy} Do not run \`${runCommand}\` unless native inputs changed or the app process exits.`,
         ),
       );
     }
@@ -469,11 +470,12 @@ export async function finishAndroidRun({
   };
 
   const booted = await bootPromise;
+  const runCommand = nativeRunCommand('android', slot, { physical, deviceId: booted.serial });
   if (booted.failed) {
     const diag = noDeviceDiagnostic({
       reason: booted.reason ?? 'The emulator did not boot.',
       logFile: emuLog,
-      remedy: 'Run `stim status` to see what Stim thinks it owns; re-running `stim android` creates a fresh owned AVD.',
+      remedy: `Run \`stim status\` to see what Stim thinks it owns; re-running \`${runCommand}\` creates a fresh owned AVD.`,
       localEmulator: !physical,
     });
     return fail(NO_DEVICE, diag.message, diag.remedy, {
@@ -498,7 +500,7 @@ export async function finishAndroidRun({
     return fail(
       NO_DEVICE,
       error instanceof Error ? error.message : String(error),
-      'Run `stim status` to inspect the owned AVD, then retry `stim android`; the APK was not installed.',
+      `Run \`stim status\` to inspect the owned AVD, then retry \`${runCommand}\`; the APK was not installed.`,
     );
   }
   phase(

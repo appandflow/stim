@@ -1,4 +1,4 @@
-import { launchSlotScope } from '../../engine/slot-launch.ts';
+import { launchSlotScope, nativeRunCommand } from '../../engine/slot-launch.ts';
 import { basename } from 'node:path';
 import { rmSync } from 'node:fs';
 import chalk from 'chalk';
@@ -117,6 +117,7 @@ async function verifyIosRun({
   remoteDevice,
   metroOrigin,
 }: VerifyIosRunArgs): Promise<{ state: boolean | string; warning?: string }> {
+  const runCommand = nativeRunCommand('ios', slot, { physical, deviceId: udid });
   const readNativeCrashes = () =>
     remoteDevice
       ? []
@@ -229,7 +230,10 @@ async function verifyIosRun({
     if (nativeFatal || verification.processAlive === false) {
       note(
         chalk.yellow(
-          phaseLine('remedy', 'Fix the crash, then run `stim ios` again. A Metro reload cannot restart an exited app.'),
+          phaseLine(
+            'remedy',
+            `Fix the crash, then run \`${runCommand}\` again. A Metro reload cannot restart an exited app.`,
+          ),
         ),
       );
     } else if (verification.processAlive === true && metroPort !== null) {
@@ -243,7 +247,7 @@ async function verifyIosRun({
         chalk.yellow(
           phaseLine(
             'remedy',
-            `The native app is still running. ${deliveryFailed ? 'Check the Metro logs and device connection, then' : 'Fix the JavaScript or TypeScript error, then'} ${reloadRemedy} Do not run \`stim ios\` unless native inputs changed or the app process exits.`,
+            `The native app is still running. ${deliveryFailed ? 'Check the Metro logs and device connection, then' : 'Fix the JavaScript or TypeScript error, then'} ${reloadRemedy} Do not run \`${runCommand}\` unless native inputs changed or the app process exits.`,
           ),
         ),
       );
@@ -268,7 +272,7 @@ async function verifyIosRun({
         chalk.yellow(
           phaseLine(
             'remedy',
-            `The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, ${reloadRemedy} Do not run \`stim ios\` unless native inputs changed or the app process exits.`,
+            `The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, ${reloadRemedy} Do not run \`${runCommand}\` unless native inputs changed or the app process exits.`,
           ),
         ),
       );
@@ -529,6 +533,7 @@ export async function finishIosRun({
   releaseLease,
   recordRun,
 }: FinishIosRunArgs): Promise<IosFacts | null> {
+  const runCommand = nativeRunCommand('ios', slot, { physical, deviceId: udid });
   let bundleId = initialBundleId;
   let leaseWarned = false;
   const raiseLeaseFor = (boundMs: number, beforeInstall: boolean): FailArgs | null => {
@@ -562,7 +567,7 @@ export async function finishIosRun({
     return fail({
       code: booted?.code || 'STIM_NO_DEVICE',
       message: booted?.reason || 'The owned simulator could not be booted.',
-      remedy: booted?.remedy || 'Run `stim ios` again to re-establish an owned simulator for this workspace.',
+      remedy: booted?.remedy || `Run \`${runCommand}\` again to re-establish an owned simulator for this workspace.`,
     });
   }
   const deviceOutcome = physical ? 'connected' : `${device?.adopted ? 'adopted' : 'booted'} ${bootDuration()}`;
@@ -669,7 +674,7 @@ export async function finishIosRun({
         return fail({
           code: 'STIM_INSTALL_FAILED',
           message: `${cleanupFailure} Stim kept the adoption cleanup pending and did not install or launch the app.`,
-          remedy: 'Run `stim ios` again after simulator tooling is responsive.',
+          remedy: `Run \`${runCommand}\` again after simulator tooling is responsive.`,
           build: { ...buildFailure, appPath, bundleId },
         });
       }

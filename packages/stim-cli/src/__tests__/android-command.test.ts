@@ -3068,8 +3068,9 @@ describe('launch verification', () => {
     expect(text).toMatch(/Do not run `stim android` unless native inputs changed or the app process exits/);
   });
 
-  test('a native process exit recommends another platform run instead of a Metro reload', async () => {
+  test.each(['default', 'phone'])('a native process exit recommends the same slot (%s)', async (slot) => {
     const h = harness({
+      slot,
       verifyLaunched: async () => ({
         fatal: true,
         processAlive: false,
@@ -3079,7 +3080,7 @@ describe('launch verification', () => {
     const result = await h.run();
     expect(result.ok).toBe(false);
     expect(h.stderr.join('\n')).toContain("adb -s 'emulator-5584' shell am force-stop 'com.example.app'");
-    expect(h.stderr.join('\n')).toMatch(/run `stim android` again.*Metro reload cannot recover/);
+    expect(h.stderr.join('\n')).toContain(`run \`stim android${slot === 'default' ? '' : ` --slot ${slot}`}\` again`);
   });
 
   test.each([
