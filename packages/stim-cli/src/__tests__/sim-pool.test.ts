@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getProject, loadConfig, upsertProject } from '../config.ts';
+import { getProject, loadConfig, setDevice, upsertProject } from '../config.ts';
 import {
   DEFAULT_PARKED_MAX,
   adoptParked,
@@ -109,6 +109,7 @@ test('overflow records stay claimed until deletion succeeds', () => {
     platforms: { ios: { deviceUdid: first.udid, deviceName: 'stim-project', owned: true } },
   });
   parkSim({ platform: 'ios', projectPath: '/tmp/project', record: first, max: 1 });
+  setDevice('/tmp/project', 'ios', { deviceUdid: second.udid, owned: true });
   expect(parkSim({ platform: 'ios', projectPath: '/tmp/project', record: second, max: 1 })).toEqual([first]);
   expect(
     readParked('ios')
@@ -187,6 +188,7 @@ test('a live deletion claim blocks adoption beyond the ordinary lock stale windo
 
 test('adoption takes a pool record and creates the owned project claim in one persisted update', () => {
   upsertProject('/tmp/project', { platforms: {} });
+  setDevice('/tmp/project', 'ios', { deviceUdid: first.udid, owned: true });
   parkSim({ platform: 'ios', projectPath: '/tmp/project', record: first, max: 3 });
   const device = {
     deviceUdid: first.udid,
@@ -207,4 +209,48 @@ test('malformed and non-Stim pool records are ignored', () => {
     parked: { ios: [{ ...first, name: 'My iPhone' }, { nope: true }, first] },
   };
   expect(readParked('ios', { config }).map((record) => record.udid)).toEqual(['FIRST']);
+});
+
+test('parking and adopting a named slot preserve its default and sibling assignments', () => {
+  const device = { deviceUdid: first.udid, owned: true };
+  upsertProject('/tmp/project', {
+    platforms: { ios: { deviceUdid: 'DEFAULT', owned: true } },
+    deviceSlots: {
+      phone: { ios: device },
+      tablet: { ios: { deviceUdid: 'TABLET', owned: true } },
+    },
+  });
+  parkSim({ platform: 'ios', projectPath: '/tmp/project', slot: 'phone', record: first, max: 3 });
+  expect(getProject('/tmp/project')?.deviceSlots?.phone).toBeUndefined();
+  expect(getProject('/tmp/project')?.platforms?.ios?.deviceUdid).toBe('DEFAULT');
+  expect(getProject('/tmp/project')?.deviceSlots?.tablet?.ios?.deviceUdid).toBe('TABLET');
+  expect(
+    adoptParked({ platform: 'ios', projectPath: '/tmp/project', slot: 'second-phone', udid: first.udid, device }),
+  ).toEqual(first);
+  expect(readParked('ios')).toEqual([]);
+  expect(getProject('/tmp/project')?.deviceSlots?.['second-phone']?.ios?.deviceUdid).toBe(first.udid);
+  expect(getProject('/tmp/project')?.platforms?.ios?.deviceUdid).toBe('DEFAULT');
+});
+
+test('pool transfers refuse to overwrite or clear another device in the same slot', () => {
+  const path = '/tmp/project';
+  upsertProject(path, {});
+  setDevice(path, 'ios', { deviceUdid: first.udid, owned: true }, 'phone');
+  expect(() => parkSim({ platform: 'ios', projectPath: path, slot: 'phone', record: second, max: 3 })).toThrow(
+    /assignment changed/,
+  );
+  expect(readParked('ios')).toEqual([]);
+  parkSim({ platform: 'ios', projectPath: path, slot: 'phone', record: first, max: 3 });
+  setDevice(path, 'ios', { deviceUdid: second.udid, owned: true }, 'phone');
+  expect(
+    adoptParked({
+      platform: 'ios',
+      projectPath: path,
+      slot: 'phone',
+      udid: first.udid,
+      device: { deviceUdid: first.udid, owned: true },
+    }),
+  ).toBeNull();
+  expect(getProject(path)?.deviceSlots?.phone?.ios?.deviceUdid).toBe(second.udid);
+  expect(readParked('ios')).toEqual([first]);
 });

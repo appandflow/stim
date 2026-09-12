@@ -1,3 +1,4 @@
+import { projectDeviceSlots } from './device-slots.ts';
 import { type ProjectRecord, getProject, removeProject } from './config.ts';
 import { existsSync, rmSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTree, pidExists } from './metro.ts';
@@ -164,11 +165,13 @@ interface SkippedDevice {
 
 export function describeDereferenced(project: ProjectRecord | null): string[] {
   const devices: string[] = [];
-  const ios = project?.platforms?.ios;
-  if (ios?.deviceUdid) devices.push(`ios sim ${ios.deviceUdid}`);
-  const android = project?.platforms?.android;
-  if (android?.avdName) devices.push(`android avd ${android.avdName}`);
-  else if (android?.serial) devices.push(`android device ${android.serial}`);
+  for (const { platforms } of projectDeviceSlots(project)) {
+    const ios = platforms.ios;
+    if (ios?.deviceUdid) devices.push(`ios sim ${ios.deviceUdid}`);
+    const android = platforms.android;
+    if (android?.avdName) devices.push(`android avd ${android.avdName}`);
+    else if (android?.serial) devices.push(`android device ${android.serial}`);
+  }
   return devices;
 }
 
@@ -178,7 +181,12 @@ export function parkedIosCacheKey(lastBuild: unknown): string | null {
   return build.platform === 'ios' && typeof build.cacheKey === 'string' ? build.cacheKey : null;
 }
 
-function parkRequest(project: ProjectRecord | null, projectPath: string): ParkRequest | undefined {
+function parkRequest(
+  project: ProjectRecord | null,
+  projectPath: string,
+  slot: string,
+  simslimManaged: boolean,
+): ParkRequest | undefined {
   const { max, error } = parkedMaxSetting('ios');
   if (error || max <= 0) return undefined;
   const cacheKey = parkedIosCacheKey(readWorkspaceState(projectPath)?.lastBuild);
@@ -187,7 +195,8 @@ function parkRequest(project: ProjectRecord | null, projectPath: string): ParkRe
     max,
     bundleId: typeof project?.bundleId === 'string' ? project.bundleId : null,
     cacheKey,
-    simslimManaged: Boolean(project?.platforms?.ios?.simslimManaged),
+    simslimManaged,
+    slot,
   };
 }
 
@@ -210,65 +219,67 @@ function reclaimOwnedDevices(
   const skippedDevices: SkippedDevice[] = [];
   const failedDevices: SkippedDevice[] = [];
 
-  const ios = project?.platforms?.ios;
-  if (ios?.owned && ios.deviceUdid) {
-    const udid = ios.deviceUdid as string;
-    const label = (ios.deviceName as string | undefined) || udid;
-    const r = teardownOwnedIosSim(udid, {
-      del: true,
-      label,
-      ...(park ? { park: parkRequest(project, projectPath) } : {}),
-    });
-    if (r.parkFallback) poolNotes.push(`could not park ${label}: ${r.parkFallback} -- deleted it instead`);
-    for (const failure of r.evictionFailures ?? []) poolNotes.push(failure);
-    if (r.parked) {
-      parkedDevices.push(r.parked);
-      evictedDevices.push(...(r.evicted ?? []));
-    } else if (r.status === 'torn-down') deletedDevices.push(r.label as string);
-    if (r.status === 'skipped') {
-      skippedDevices.push({ platform: 'ios', name: label, udid, reason: `${r.reason} -- not touched` });
-    } else if (r.status === 'failed') {
-      const entry: SkippedDevice = { platform: 'ios', name: label, udid, reason: `teardown failed: ${r.reason}` };
-      skippedDevices.push(entry);
-      failedDevices.push(entry);
+  for (const { slot, platforms } of projectDeviceSlots(project)) {
+    const ios = platforms.ios;
+    if (ios?.owned && ios.deviceUdid) {
+      const udid = ios.deviceUdid as string;
+      const label = (ios.deviceName as string | undefined) || udid;
+      const r = teardownOwnedIosSim(udid, {
+        del: true,
+        label,
+        ...(park ? { park: parkRequest(project, projectPath, slot, Boolean(ios.simslimManaged)) } : {}),
+      });
+      if (r.parkFallback) poolNotes.push(`could not park ${label}: ${r.parkFallback} -- deleted it instead`);
+      for (const failure of r.evictionFailures ?? []) poolNotes.push(failure);
+      if (r.parked) {
+        parkedDevices.push(r.parked);
+        evictedDevices.push(...(r.evicted ?? []));
+      } else if (r.status === 'torn-down') deletedDevices.push(r.label as string);
+      if (r.status === 'skipped') {
+        skippedDevices.push({ platform: 'ios', name: label, udid, reason: `${r.reason} -- not touched` });
+      } else if (r.status === 'failed') {
+        const entry: SkippedDevice = { platform: 'ios', name: label, udid, reason: `teardown failed: ${r.reason}` };
+        skippedDevices.push(entry);
+        failedDevices.push(entry);
+      }
+    }
+
+    const android = platforms.android;
+    if (android?.owned && android.avdName) {
+      const bound = parkedMaxSetting('android');
+      const r = teardownOwnedAvd(android.avdName, {
+        del: true,
+        owner: { projectPath },
+        ...(park && !bound.error && bound.max > 0
+          ? {
+              park: {
+                projectPath,
+                slot,
+                max: bound.max,
+                configuration: typeof android.poolConfiguration === 'string' ? android.poolConfiguration : undefined,
+              },
+            }
+          : {}),
+      });
+      if (r.parkFallback) poolNotes.push(`could not park ${android.avdName}: ${r.parkFallback} -- deleted it instead`);
+      for (const failure of r.evictionFailures ?? []) poolNotes.push(failure);
+      if (r.parked) {
+        parkedDevices.push(r.parked);
+        evictedDevices.push(...(r.evicted ?? []));
+      } else if (r.status === 'torn-down') deletedDevices.push(android.avdName);
+      else if (r.status === 'skipped') {
+        skippedDevices.push({ platform: 'android', name: android.avdName, reason: `${r.reason} -- not touched` });
+      } else if (r.status === 'failed') {
+        const entry: SkippedDevice = {
+          platform: 'android',
+          name: android.avdName,
+          reason: `teardown failed: ${r.reason}`,
+        };
+        skippedDevices.push(entry);
+        failedDevices.push(entry);
+      }
     }
   }
-
-  const android = project?.platforms?.android;
-  if (android?.owned && android.avdName) {
-    const bound = parkedMaxSetting('android');
-    const r = teardownOwnedAvd(android.avdName, {
-      del: true,
-      owner: { projectPath },
-      ...(park && !bound.error && bound.max > 0
-        ? {
-            park: {
-              projectPath,
-              max: bound.max,
-              configuration: typeof android.poolConfiguration === 'string' ? android.poolConfiguration : undefined,
-            },
-          }
-        : {}),
-    });
-    if (r.parkFallback) poolNotes.push(`could not park ${android.avdName}: ${r.parkFallback} -- deleted it instead`);
-    for (const failure of r.evictionFailures ?? []) poolNotes.push(failure);
-    if (r.parked) {
-      parkedDevices.push(r.parked);
-      evictedDevices.push(...(r.evicted ?? []));
-    } else if (r.status === 'torn-down') deletedDevices.push(android.avdName);
-    else if (r.status === 'skipped') {
-      skippedDevices.push({ platform: 'android', name: android.avdName, reason: `${r.reason} -- not touched` });
-    } else if (r.status === 'failed') {
-      const entry: SkippedDevice = {
-        platform: 'android',
-        name: android.avdName,
-        reason: `teardown failed: ${r.reason}`,
-      };
-      skippedDevices.push(entry);
-      failedDevices.push(entry);
-    }
-  }
-
   return { deletedDevices, parkedDevices, evictedDevices, poolNotes, skippedDevices, failedDevices };
 }
 

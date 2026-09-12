@@ -1,3 +1,4 @@
+import { projectDeviceSlots } from '../../device-slots.ts';
 import { existsSync } from 'fs';
 import { isAbsolute } from 'path';
 import chalk from 'chalk';
@@ -16,6 +17,7 @@ export interface StaleProjectDevice {
   id: string;
   name: string;
   project: string;
+  slot?: string;
   idleDays: number;
   bytes?: number;
 }
@@ -24,6 +26,7 @@ export interface StaleDeviceRecord {
   kind: 'ios' | 'android';
   id: string;
   project: string;
+  slot?: string;
   owned: boolean;
 }
 
@@ -95,13 +98,15 @@ export function findOrphanedDevices({
   for (const [path, proj] of Object.entries(config?.projects || {})) {
     if (dead.has(path)) continue;
     const mounted = isMounted ? isMounted(path) : true;
-    const ios = proj?.platforms?.ios;
-    if (ios?.deviceUdid) {
-      referenced.set(ios.deviceUdid, { path, mounted });
-    }
-    const android = proj?.platforms?.android;
-    if (android?.avdName) {
-      referenced.set(android.avdName, { path, mounted });
+    for (const { platforms } of projectDeviceSlots(proj)) {
+      const ios = platforms.ios;
+      if (ios?.deviceUdid) {
+        referenced.set(ios.deviceUdid, { path, mounted });
+      }
+      const android = platforms.android;
+      if (android?.avdName) {
+        referenced.set(android.avdName, { path, mounted });
+      }
     }
   }
   for (const sim of readParked('ios', { config })) {
@@ -170,19 +175,29 @@ export function findStaleProjectDevices({
     if (!Number.isFinite(touched) || touched >= cutoff) continue;
     const idleDays = Math.floor((now - touched) / DAY_MS);
 
-    const ios = proj?.platforms?.ios;
-    if (ios?.owned && ios.deviceUdid && liveSims.has(ios.deviceUdid)) {
-      stale.push({
-        kind: 'ios',
-        id: ios.deviceUdid,
-        name: liveSims.get(ios.deviceUdid) as string,
-        project: path,
-        idleDays,
-      });
-    }
-    const android = proj?.platforms?.android;
-    if (android?.owned && android.avdName && liveAvds.has(android.avdName)) {
-      stale.push({ kind: 'android', id: android.avdName, name: android.avdName, project: path, idleDays });
+    for (const { slot, platforms } of projectDeviceSlots(proj)) {
+      const ios = platforms.ios;
+      if (ios?.owned && ios.deviceUdid && liveSims.has(ios.deviceUdid)) {
+        stale.push({
+          kind: 'ios',
+          id: ios.deviceUdid,
+          name: liveSims.get(ios.deviceUdid) as string,
+          project: path,
+          ...(slot === 'default' ? {} : { slot }),
+          idleDays,
+        });
+      }
+      const android = platforms.android;
+      if (android?.owned && android.avdName && liveAvds.has(android.avdName)) {
+        stale.push({
+          kind: 'android',
+          id: android.avdName,
+          name: android.avdName,
+          project: path,
+          idleDays,
+          ...(slot === 'default' ? {} : { slot }),
+        });
+      }
     }
   }
   return stale;
@@ -211,13 +226,27 @@ export function findStaleDeviceRecords({
   for (const [path, proj] of Object.entries(config?.projects || {})) {
     if (dead.has(path)) continue;
 
-    const ios = proj?.platforms?.ios;
-    if (simsChecked && ios?.deviceUdid && !liveSims.has(ios.deviceUdid)) {
-      stale.push({ kind: 'ios', id: ios.deviceUdid, project: path, owned: Boolean(ios.owned) });
-    }
-    const android = proj?.platforms?.android;
-    if (avdsChecked && android?.avdName && !liveAvds.has(android.avdName)) {
-      stale.push({ kind: 'android', id: android.avdName, project: path, owned: Boolean(android.owned) });
+    for (const { slot, platforms } of projectDeviceSlots(proj)) {
+      const ios = platforms.ios;
+      if (simsChecked && ios?.deviceUdid && !liveSims.has(ios.deviceUdid)) {
+        stale.push({
+          kind: 'ios',
+          id: ios.deviceUdid,
+          project: path,
+          ...(slot === 'default' ? {} : { slot }),
+          owned: Boolean(ios.owned),
+        });
+      }
+      const android = platforms.android;
+      if (avdsChecked && android?.avdName && !liveAvds.has(android.avdName)) {
+        stale.push({
+          kind: 'android',
+          id: android.avdName,
+          project: path,
+          ...(slot === 'default' ? {} : { slot }),
+          owned: Boolean(android.owned),
+        });
+      }
     }
   }
   return stale;
@@ -453,13 +482,13 @@ export function deleteProjectDevices(
   for (const d of staleDevices) {
     const status = reap(d);
     if (status === 'torn-down' || status === 'missing') {
-      clearDevice(d.project, d.kind);
+      clearDevice(d.project, d.kind, d.slot);
       console.log(chalk.dim(`  cleared the ${d.kind} record for ${d.project}`));
     }
   }
 
   for (const r of staleDeviceRecords) {
-    clearDevice(r.project, r.kind);
+    clearDevice(r.project, r.kind, r.slot);
     console.log(chalk.green(`Cleared the ${r.kind} record for ${r.project} (${r.id} is not on this machine)`));
   }
 

@@ -824,7 +824,8 @@ describe('ensureOwnedDevice: ios', () => {
     const root = projectDir();
     const name = 'stim-app (iPhone 17 Pro 26.2)';
     try {
-      if (source === 'parked')
+      if (source === 'parked') {
+        setDevice(root, 'ios', { deviceUdid: 'OTHER', owned: true });
         parkSim({
           platform: 'ios',
           projectPath: root,
@@ -838,6 +839,7 @@ describe('ensureOwnedDevice: ios', () => {
             simslimManaged: false,
           },
         });
+      }
       const { exec } = iosExecutor(
         source === 'unavailable' ? [{ udid: 'OTHER', name, state: 'Shutdown', isAvailable: false }] : [],
       );
@@ -854,6 +856,7 @@ describe('ensureOwnedDevice: ios', () => {
     const root = projectDir();
     process.env.STIM_POOL_IOS_PARKED_MAX = '3';
     try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true });
       parkSim({
         platform: 'ios',
         projectPath: root,
@@ -920,6 +923,7 @@ describe('ensureOwnedDevice: ios', () => {
     process.env.STIM_POOL_IOS_PARKED_MAX = '3';
     const output: string[] = [];
     try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true });
       parkSim({
         platform: 'ios',
         projectPath: root,
@@ -969,6 +973,7 @@ describe('ensureOwnedDevice: ios', () => {
     const root = projectDir();
     process.env.STIM_POOL_IOS_PARKED_MAX = '3';
     try {
+      setDevice(root, 'ios', { deviceUdid: 'GONE', owned: true });
       parkSim({
         platform: 'ios',
         projectPath: root,
@@ -2224,4 +2229,25 @@ describe('ensureOwnedDevice: the requested model against the sim this workspace 
       rmSync(root, { recursive: true, force: true });
     }
   });
+});
+
+test('capacity counts named Android slots and only exempts the selected live slot', () => {
+  const project = {
+    platforms: { android: { avdName: 'stim-default', consolePort: 5554, owned: true } },
+    deviceSlots: { phone: { android: { avdName: 'stim-phone', consolePort: 5556, owned: true } } },
+  };
+  const args = {
+    platform: 'android',
+    project,
+    max: 2,
+    adb: makeAdbDevices({
+      emulators: [
+        { serial: 'emulator-5554', consolePort: 5554 },
+        { serial: 'emulator-5556', consolePort: 5556 },
+      ],
+    }),
+    config: makeConfig({ projects: { '/w/x': project } }),
+  };
+  expect(deviceCapacityRefusal({ ...args, slot: 'phone' })).toBeNull();
+  expect(deviceCapacityRefusal({ ...args, slot: 'tablet' })?.code).toBe('STIM_AT_CAPACITY');
 });

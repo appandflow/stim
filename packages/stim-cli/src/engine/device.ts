@@ -1,3 +1,4 @@
+import { deviceSlotPlatforms, projectDeviceSlots } from '../device-slots.ts';
 import chalk from 'chalk';
 import { randomUUID } from 'node:crypto';
 import { phaseLine } from '../command-output.ts';
@@ -358,8 +359,10 @@ function ownedIosNameSuffix(label: string, model: SimModel, projectPath: string,
       .map((sim) => sim.name),
   );
   for (const project of Object.values(loadConfig()?.projects ?? {})) {
-    const record = project.platforms?.ios;
-    if (record?.deviceUdid !== udid && record?.deviceName) names.add(record.deviceName);
+    for (const { platforms } of projectDeviceSlots(project)) {
+      const record = platforms.ios;
+      if (record?.deviceUdid !== udid && record?.deviceName) names.add(record.deviceName);
+    }
   }
   for (const parked of readParked('ios')) {
     if (parked.udid !== udid) names.add(parked.name);
@@ -513,7 +516,7 @@ function findOtherProjectOwningAvd(avdName: string, projectPath: string): string
   const cfg = loadConfig();
   for (const [path, proj] of Object.entries(cfg?.projects || {})) {
     if (path === projectPath) continue;
-    if (proj?.platforms?.android?.avdName === avdName) return path;
+    if (projectDeviceSlots(proj).some(({ platforms }) => platforms.android?.avdName === avdName)) return path;
   }
   return null;
 }
@@ -930,14 +933,16 @@ export function liveOwnedDeviceCount({
   }
   const livePorts = new Set(adbEmulators.map((e) => e.consolePort));
   for (const proj of Object.values(config?.projects || {})) {
-    const android = proj?.platforms?.android;
-    if (
-      android?.owned &&
-      android.avdName &&
-      typeof android.consolePort === 'number' &&
-      livePorts.has(android.consolePort)
-    ) {
-      count++;
+    for (const { platforms } of projectDeviceSlots(proj)) {
+      const android = platforms.android;
+      if (
+        android?.owned &&
+        android.avdName &&
+        typeof android.consolePort === 'number' &&
+        livePorts.has(android.consolePort)
+      ) {
+        count++;
+      }
     }
   }
   return count;
@@ -946,16 +951,18 @@ export function liveOwnedDeviceCount({
 function workspaceHasLiveDevice({
   platform,
   project,
+  slot = 'default',
   sims = [],
   adbEmulators = [],
 }: Partial<{
   platform: string;
   project: ProjectRecord | null;
+  slot: string;
   sims: SimRecord[];
   adbEmulators: EmulatorRecord[];
 }> = {}) {
   if (!platform) return false;
-  const record = project?.platforms?.[platform];
+  const record = deviceSlotPlatforms(project, slot)?.[platform];
   if (!record) return false;
   if (platform === 'ios') {
     return sims.some((s) => s.udid === record.deviceUdid && s.state === 'Booted');
@@ -966,6 +973,7 @@ function workspaceHasLiveDevice({
 export function deviceCapacityRefusal({
   platform,
   project,
+  slot = 'default',
   max,
   sims = [],
   adb = null,
@@ -973,6 +981,7 @@ export function deviceCapacityRefusal({
 }: Partial<{
   platform: string;
   project: ProjectRecord | null;
+  slot: string;
   max: number;
   sims: SimRecord[];
   adb: AdbDevices | null;
@@ -980,7 +989,7 @@ export function deviceCapacityRefusal({
 }> = {}): CapacityRefusal | null {
   if (!max || max <= 0) return null;
   const adbEmulators = adb?.emulators || [];
-  if (workspaceHasLiveDevice({ platform, project, sims, adbEmulators })) return null;
+  if (workspaceHasLiveDevice({ platform, project, slot, sims, adbEmulators })) return null;
   const count = liveOwnedDeviceCount({ sims, adbEmulators, config });
   if (count < max) return null;
   return {
@@ -993,6 +1002,7 @@ export function deviceCapacityRefusal({
 export function checkDeviceCapacity({
   platform,
   project,
+  slot = 'default',
   max,
   sims = listAllIosSims,
   adb = listAdbDevices,
@@ -1000,6 +1010,7 @@ export function checkDeviceCapacity({
 }: Partial<{
   platform: string;
   project: ProjectRecord | null;
+  slot: string;
   max: number;
   sims: SimRecord[] | (() => SimRecord[]);
   adb: AdbDevices | (() => AdbDevices);
@@ -1018,7 +1029,7 @@ export function checkDeviceCapacity({
   try {
     cfg = typeof config === 'function' ? config() : (config ?? null);
   } catch {}
-  return deviceCapacityRefusal({ platform, project, max, sims: simList, adb: adbRes, config: cfg });
+  return deviceCapacityRefusal({ platform, project, slot, max, sims: simList, adb: adbRes, config: cfg });
 }
 
 export function deviceTypeMismatch(

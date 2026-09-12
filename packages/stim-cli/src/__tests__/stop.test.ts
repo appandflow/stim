@@ -1243,3 +1243,27 @@ test('stop --json prints exactly one line of JSON on stdout', async () => {
   expect(typeof payload.root).toBe('string');
   expect(typeof payload.ok).toBe('boolean');
 });
+
+test('stop visits all device slots and reports a named-slot failure without skipping siblings', async () => {
+  const visited: string[] = [];
+  const { opts } = seams({
+    project: {
+      platforms: { ios: { deviceUdid: 'DEFAULT', owned: true } },
+      deviceSlots: {
+        phone: { ios: { deviceUdid: 'PHONE', owned: true } },
+        tablet: { ios: { deviceUdid: 'TABLET', owned: true } },
+        external: { ios: { deviceUdid: 'USER', owned: false } },
+      },
+    },
+    teardownIos: (udid: string) => {
+      visited.push(udid);
+      return udid === 'PHONE' ? { status: 'failed', reason: 'busy' } : { status: 'torn-down', label: udid };
+    },
+  });
+  const result = await runStop(opts);
+  expect(visited).toEqual(['DEFAULT', 'PHONE', 'TABLET']);
+  expect(result.ok).toBe(false);
+  expect(result.outcomes.device['ios:phone']?.status).toBe('failed');
+  expect(result.outcomes.device['ios:tablet']?.status).toBe('shut-down');
+  expect(result.outcomes.device['ios:external']?.status).toBe('skipped');
+});

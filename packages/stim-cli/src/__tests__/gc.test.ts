@@ -3168,3 +3168,28 @@ test('a kept lease file alone is not something to reclaim', () => {
   expect(lines).toMatch(/Nothing to reclaim/);
   expect(lines).toMatch(/Device lease files kept \(1\)/);
 });
+
+test('GC preserves named-slot references on unavailable volumes and identifies stale records by slot', () => {
+  const config = makeConfig({
+    projects: {
+      '/Volumes/offline/app': {
+        platforms: { ios: { deviceUdid: 'DEFAULT', owned: true } },
+        deviceSlots: {
+          phone: { ios: { deviceUdid: 'PHONE', owned: true } },
+          tablet: { ios: { deviceUdid: 'TABLET', owned: true } },
+          emulator: { android: { avdName: 'stim-extra', owned: true } },
+        },
+      },
+    },
+  });
+  const sims = ['DEFAULT', 'PHONE', 'TABLET'].map((udid) => makeIosSim({ udid, name: `stim-${udid}` }));
+  const result = findOrphanedDevices({ config, sims, avds: ['stim-extra'], isMounted: () => false });
+  expect(result.orphaned).toEqual([]);
+  expect(result.kept).toHaveLength(4);
+  const stale = findStaleDeviceRecords({ config, sims: sims.slice(0, 1), avds: [] });
+  expect(stale.map(({ slot, id }) => [slot, id])).toEqual([
+    ['phone', 'PHONE'],
+    ['tablet', 'TABLET'],
+    ['emulator', 'stim-extra'],
+  ]);
+});

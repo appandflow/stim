@@ -1,3 +1,4 @@
+import { projectDeviceSlots } from '../device-slots.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, plural, releasedLeaseFact } from '../command-output.ts';
@@ -173,6 +174,7 @@ interface DeviceOutcomeEntry {
 }
 
 interface DeviceOutcome {
+  [key: string]: DeviceOutcomeEntry | null | undefined;
   ios: DeviceOutcomeEntry | null;
   android: DeviceOutcomeEntry | null;
   remote?: DeviceOutcomeEntry | null;
@@ -377,7 +379,7 @@ export async function runStop({
     report(chalk.dim(phaseLine('device', 'left alone (something is still running)')));
   } else {
     outcomes.device = shutDownDevices(proj, { teardownIos, teardownAvd, report });
-    if ([outcomes.device.ios, outcomes.device.android].some((device) => device?.status === 'failed')) ok = false;
+    if (Object.values(outcomes.device).some((device) => device?.status === 'failed')) ok = false;
   }
 
   const remote = remoteDevice === undefined ? readRemoteSession(root) : remoteDevice;
@@ -629,38 +631,41 @@ function shutDownDevices(
 ): DeviceOutcome {
   const device: DeviceOutcome = { ios: null, android: null };
 
-  const ios = project?.platforms?.ios;
-  const iosUdid = ios?.deviceUdid as string | undefined;
-  const iosName = ios?.deviceName as string | undefined;
-  if (iosUdid) {
-    if (!ios?.owned) {
-      device.ios = {
-        status: 'skipped',
-        kind: 'not-owned',
-        label: iosUdid,
-        reason: 'Stim does not own this device',
-      };
-      report(chalk.dim(phaseLine('device', `${iosUdid} is not Stim-owned, leaving it running`)));
-    } else {
-      device.ios = reportDevice(iosUdid, teardownIos(iosUdid, { del: false, label: iosName }), report);
+  for (const { slot, platforms } of projectDeviceSlots(project)) {
+    const iosKey = slot === 'default' ? 'ios' : `ios:${slot}`;
+    const androidKey = slot === 'default' ? 'android' : `android:${slot}`;
+    const ios = platforms.ios;
+    const iosUdid = ios?.deviceUdid as string | undefined;
+    const iosName = ios?.deviceName as string | undefined;
+    if (iosUdid) {
+      if (!ios?.owned) {
+        device[iosKey] = {
+          status: 'skipped',
+          kind: 'not-owned',
+          label: iosUdid,
+          reason: 'Stim does not own this device',
+        };
+        report(chalk.dim(phaseLine('device', `${iosUdid} is not Stim-owned, leaving it running`)));
+      } else {
+        device[iosKey] = reportDevice(iosUdid, teardownIos(iosUdid, { del: false, label: iosName }), report);
+      }
+    }
+
+    const android = platforms.android;
+    if (android?.avdName) {
+      if (!android.owned) {
+        device[androidKey] = {
+          status: 'skipped',
+          kind: 'not-owned',
+          label: android.avdName,
+          reason: 'Stim does not own this device',
+        };
+        report(chalk.dim(phaseLine('device', `${android.avdName} is not Stim-owned, leaving it running`)));
+      } else {
+        device[androidKey] = reportDevice(android.avdName, teardownAvd(android.avdName, { del: false }), report);
+      }
     }
   }
-
-  const android = project?.platforms?.android;
-  if (android?.avdName) {
-    if (!android.owned) {
-      device.android = {
-        status: 'skipped',
-        kind: 'not-owned',
-        label: android.avdName,
-        reason: 'Stim does not own this device',
-      };
-      report(chalk.dim(phaseLine('device', `${android.avdName} is not Stim-owned, leaving it running`)));
-    } else {
-      device.android = reportDevice(android.avdName, teardownAvd(android.avdName, { del: false }), report);
-    }
-  }
-
   return device;
 }
 
@@ -698,10 +703,7 @@ function summarize(root: string, outcomes: StopOutcomes, ok: boolean): string {
   if (outcomes.metro.status === 'not-managed') parts.push(`external server on port ${outcomes.metro.port} left alone`);
   if (outcomes.metro.status === 'refused') parts.push(`port ${outcomes.metro.port} refused`);
   if (outcomes.metro.status === 'failed') parts.push(`port ${outcomes.metro.port} could not be freed`);
-  const devicesByPlatform: [string, DeviceOutcomeEntry | null][] = [
-    ['ios', outcomes.device.ios],
-    ['android', outcomes.device.android],
-  ];
+  const devicesByPlatform = Object.entries(outcomes.device).filter(([key]) => key !== 'remote');
   for (const [platform, o] of devicesByPlatform) {
     if (!o) continue;
     if (o.status === 'shut-down') parts.push(`${platform} ${o.label} shut down`);
