@@ -189,6 +189,11 @@ actions, safety rules, or topic routing change. The static
 skill changes only when its activation description or single routing command
 changes.
 
+When adding or changing a user-facing feature, update the affected website
+pages under `website/docs/` and their command examples alongside the CLI guides.
+Include a copyable agent prompt when it helps users try the feature. Keep
+website behavior, flags, defaults, and limitations aligned with the implementation.
+
 Document command invocation once in each human-facing installation entry
 point. Show the no-install form, `npx stim <command>`, and the global
 install, `npm install --global stim`. The static skill is only a router and

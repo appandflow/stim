@@ -30,6 +30,15 @@ restarts it. Use it when an error screen remains after a fix, not after every
 JavaScript edit. It also recovers an Android app whose first bundle failed; an
 iOS app in that state never connects to Metro, so reload cannot reach it.
 
+## Named device slots
+
+`ios`, `android`, `device lock`, `device unlock`, `logs`, and `stop` accept
+`--slot <name>`. Omitting it selects the default target for a device run;
+plain `logs` and `stop` still cover the whole workspace. `status` lists every
+slot. Slots can hold multiple simulators of the same model as well as physical
+devices. See [multiple devices with slots](./owned-devices.md#multiple-devices-with-slots)
+for commands, a copyable agent prompt, and shared-server limitations.
+
 ## `doctor`
 
 ```text
@@ -88,7 +97,7 @@ project is reused.
 ## `ios`
 
 ```text
-stim ios [--scheme <name>] [--configuration <name>] [--device-type <name>] [--runtime <version>]
+stim ios [--slot <name>] [--scheme <name>] [--configuration <name>] [--device-type <name>] [--runtime <version>]
          [--device [udid]] [--wait <seconds> | --no-wait] [--remote <proxy|eas>]
          [--eas-profile <name>] [--no-metro-check] [--no-build-cache] [--json]
 ```
@@ -166,7 +175,7 @@ into cached iOS physical-device builds.
 ## `android`
 
 ```text
-stim android [--variant <name>] [--system-image <id>] [--device [serial]]
+stim android [--slot <name>] [--variant <name>] [--system-image <id>] [--device [serial]]
              [--wait <seconds> | --no-wait] [--remote <proxy|eas>]
              [--eas-profile <name>] [--no-metro-check] [--no-build-cache] [--json]
 ```
@@ -258,7 +267,7 @@ device and inspect `stim logs --errors` before claiming recovery.
 ## `logs`
 
 ```text
-stim logs [--source <metro|client|device|build|all...>]
+stim logs [--slot <name>] [--source <metro|client|device|build|all...>]
           [--level <debug|info|warn|error|fatal>] [--since <duration>]
           [--grep <expression>] [--tail <count>] [--errors]
           [--follow] [--json]
@@ -278,7 +287,7 @@ result.
 ## `stop`
 
 ```text
-stim stop [--json]
+stim stop [--slot <name>] [--json]
 ```
 
 Stops the supervisor and log collectors. It shuts down the owned local device,
@@ -293,8 +302,8 @@ app or shuts down the phone; hardware has no owned-device registry entry.
 ## `device lock` and `device unlock`
 
 ```text
-stim device lock <ios|android> [id] [--for <duration>] [--wait <seconds>] [--json]
-stim device unlock [ios|android] [--json]
+stim device lock <ios|android> [id] [--slot <name>] [--for <duration>] [--wait <seconds>] [--json]
+stim device unlock [ios|android] [--slot <name>] [--json]
 ```
 
 Leases a connected physical device to this workspace, so another workspace's
