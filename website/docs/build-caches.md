@@ -6,8 +6,12 @@ description: 'How Stim keeps worktree builds warm'
 
 import StimTabs from '@site/src/components/StimTabs';
 
+:::note[Command examples]
+
 Commands use `stim`. If it is not installed globally, replace `stim` with
 `npx stim`.
+
+:::
 
 Stim shares four types of work across projects and git worktrees:
 

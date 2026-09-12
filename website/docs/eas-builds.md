@@ -6,8 +6,12 @@ description: 'Download a compatible EAS build and run it with Stim'
 import StimTabs from '@site/src/components/StimTabs';
 import PromptBox from '@site/src/components/PromptBox';
 
+:::note[Command examples]
+
 Commands use `stim`. If it is not installed globally, replace `stim` with
 `npx stim`.
+
+:::
 
 If your Expo project builds with EAS, Stim can download a matching development
 build and run it on a simulator, emulator, or connected phone. EAS supplies the
@@ -17,7 +21,7 @@ loading their own JavaScript from Metro.
 
 ## Ask your agent
 
-Replace `ios-simulator` with your project's EAS profile name:
+Name the platform and target you want:
 
 <PromptBox
 title="Run an EAS development build"
@@ -26,12 +30,14 @@ com.appandflow.trailhead · ready · EAS build · errors clean`}
 
 >
 
-{`Use Stim to run this app on an iOS simulator with the EAS profile ios-simulator. Reuse a compatible build. If none matches, show me the EAS build command and ask before starting a cloud build. Check the app logs for errors after launch.`}
+{`Run the app on an iOS simulator using an EAS build.`}
 </PromptBox>
 
-The response is illustrative. For Android, ask for an Android emulator and name
-its profile. For hardware, ask for your connected iPhone or Android phone and
-use a device-compatible profile.
+The response is illustrative. Ask for an Android emulator or connected phone to
+change the target. With the Stim skill installed, the agent can inspect
+`eas.json` and choose a compatible development profile. If none fits or several
+remain plausible, it should ask. You can also name a profile for a specific app
+variant. New cloud builds still require your authorization.
 
 ## Choose a profile
 

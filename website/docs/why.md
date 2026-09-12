@@ -4,8 +4,12 @@ sidebar_position: 1
 description: 'Fast, isolated React Native environments for coding agents'
 ---
 
+:::note[Command examples]
+
 Commands use `stim`. If it is not installed globally, replace `stim` with
 `npx stim`.
+
+:::
 
 Stim gives each coding agent a complete React Native environment. Each project
 or git worktree gets a reserved Metro port and an owned simulator or emulator.

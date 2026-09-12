@@ -80,7 +80,7 @@ com.appandflow.trailhead · ready · cache hit · 58.8s · errors clean`}
     response={`Trailhead launched on stim-trailhead (iPhone 17 / iOS 26.5).
 com.appandflow.trailhead · ready · EAS build · errors clean`}
   >
-    {`Use Stim to run this app on an iOS simulator with the EAS profile ios-simulator. Reuse a compatible build. If none matches, show me the EAS build command and ask before starting a cloud build. Check the app logs for errors after launch.`}
+    {`Run the app on an iOS simulator using an EAS build.`}
   </PromptBox>
   <PromptBox
     title="Run on a connected phone"
@@ -122,9 +122,10 @@ Before and After recordings captured; named assertion passed; PR opened with the
   </PromptBox>
 </PromptGrid>
 
-The EAS prompt assumes an `ios-simulator` profile. Replace it with your
-project's profile name; see [EAS development builds](./eas-builds.md) for setup,
-Android and device examples, and build-miss behavior.
+The agent can choose a compatible EAS profile for the requested target. It
+should ask if none fits or the choice is ambiguous. See
+[EAS development builds](./eas-builds.md) for setup, Android and device examples,
+and build-miss behavior.
 
 ## Run work in parallel
 
