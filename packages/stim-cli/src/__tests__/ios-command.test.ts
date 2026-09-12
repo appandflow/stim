@@ -5785,7 +5785,7 @@ describe('EAS development builds', () => {
     for (const step of ['installIosDeviceApp', 'sealAppForDevice', 'buildIos']) expect(calls.order).not.toContain(step);
   });
 
-  test('installs the EAS artifact against the reserved Metro port without entering the local build pipeline', async () => {
+  test.each(['default', 'tablet'])('installs the EAS artifact in slot %s without a local build', async (slot) => {
     reserve();
     const path = join(root, 'Eas.app');
     const resolveEasDevelopmentBuild = vi.fn<NonNullable<IosDeps['resolveEasDevelopmentBuild']>>(async () => ({
@@ -5796,7 +5796,7 @@ describe('EAS development builds', () => {
       cacheHit: 'remote' as const,
     }));
     const { logs, calls } = await run(
-      { json: true, easProfile: 'development-simulator' },
+      { json: true, slot, easProfile: 'development-simulator' },
       {
         detectIsExpo: () => true,
         resolveEasDevelopmentBuild,
@@ -5807,6 +5807,7 @@ describe('EAS development builds', () => {
     expect(resolveEasDevelopmentBuild).toHaveBeenCalledWith(
       expect.objectContaining({ profile: 'development-simulator', platform: 'ios' }),
     );
+    expect(calls.args.ensureOwnedDevice).toMatchObject(slot === 'default' ? {} : { slot });
     expect(calls.args.installIosApp.appPath).toBe(path);
     expect(calls.args.launchIosApp).toMatchObject({ metroPort: 8082, devClientScheme: 'exp+fixture' });
     expect(parseFirst(logs)).toMatchObject({

@@ -5701,7 +5701,7 @@ describe('EAS development builds', () => {
     );
   }
 
-  test('installs the EAS APK on the owned emulator with the reserved Metro port, without a local build', async () => {
+  test.each(['default', 'phone'])('installs the EAS APK in slot %s without a local build', async (slot) => {
     expoProject();
     const path = fakeApk();
     const resolveEasDevelopmentBuild = vi.fn<
@@ -5715,6 +5715,7 @@ describe('EAS development builds', () => {
     }));
     const { run, calls, stdout } = harness({
       json: true,
+      slot,
       easProfile: 'development',
       resolveEasDevelopmentBuild,
       resolveDevClientScheme: () => 'exp+fixture',
@@ -5725,6 +5726,7 @@ describe('EAS development builds', () => {
     expect(resolveEasDevelopmentBuild).toHaveBeenCalledWith(
       expect.objectContaining({ platform: 'android', profile: 'development' }),
     );
+    expect(calls.ensureDevice[0]).toMatchObject(slot === 'default' ? {} : { slot });
     expect(calls.install[0]).toMatchObject({ apkPath: path, serial: 'emulator-5584' });
     expect(calls.launch[0]).toMatchObject({ metroPort: 8082, devClientScheme: 'exp+fixture' });
     expect(JSON.parse(stdout[0]!)).toMatchObject({
