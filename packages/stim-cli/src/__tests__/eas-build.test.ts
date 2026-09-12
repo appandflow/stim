@@ -44,11 +44,13 @@ function fixture({
   builds = [build],
   config = {},
   failCommand = '',
+  projectFromEnv = false,
 }: {
   platform?: 'ios' | 'android';
   builds?: unknown;
   config?: Record<string, unknown>;
   failCommand?: string;
+  projectFromEnv?: boolean;
 } = {}) {
   const calls: string[][] = [];
   setExecutor({
@@ -71,9 +73,11 @@ function fixture({
             appConfig: { extra: { eas: { projectId } } },
           });
         case 'fingerprint:generate':
+          if (projectFromEnv && options.env?.APP_VARIANT !== 'development')
+            throw new Error('Fingerprint would be uploaded to the wrong project');
           return JSON.stringify({ hash: fingerprint, sources: [] });
         case 'build:list':
-          return JSON.stringify(builds);
+          return JSON.stringify(projectFromEnv && options.env?.APP_VARIANT !== 'development' ? [] : builds);
         case 'build:download': {
           const path = join(options.env.TMPDIR, platform === 'ios' ? 'App.app' : 'App.apk');
           if (platform === 'ios') mkdirSync(path);
@@ -175,6 +179,29 @@ test('changed profile settings do not reuse a previous artifact', async () => {
   if (!first?.ok || !second?.ok) throw new Error('Expected downloads');
   expect(second.cacheKey).not.toBe(first.cacheKey);
   expect(second.cacheHit).toBe('remote');
+});
+
+test('a profile that selects a different EAS project fingerprints and downloads from that project', async () => {
+  const { resolve } = fixture({ config: { env: { APP_VARIANT: 'development' } }, projectFromEnv: true });
+  expect(await resolve()).toMatchObject({ ok: true, cacheHit: 'remote' });
+});
+
+test.each([
+  { platform: 'ios' as const, config: { buildConfiguration: 'Release' } },
+  { platform: 'android' as const, config: { gradleCommand: ':app:assembleRelease' } },
+  { platform: 'android' as const, config: { gradleCommand: ':app:bundleDebug' } },
+])('refuses incompatible development profile overrides: %j', async ({ platform, config }) => {
+  const { resolve, calls } = fixture({ platform, config });
+  expect(await resolve()).toMatchObject({ ok: false, code: 'STIM_BAD_ARG' });
+  expect(calls.map((call) => call[0])).toEqual(['config']);
+});
+
+test.each([
+  { platform: 'ios' as const, config: { buildConfiguration: 'Debug' } },
+  { platform: 'android' as const, config: { gradleCommand: ':app:assembleDevelopmentDebug' } },
+])('accepts explicit development profile overrides: %j', async ({ platform, config }) => {
+  const { resolve } = fixture({ platform, config, builds: [{ ...build, platform: platform.toUpperCase() }] });
+  expect(await resolve()).toMatchObject({ ok: true, cacheHit: 'remote' });
 });
 
 test('disabled local caching leaves the downloaded artifact available for installation', async () => {

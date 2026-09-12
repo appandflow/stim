@@ -194,7 +194,9 @@ TWO REPORTS, TWO QUESTIONS
 An eas.json file does not select EAS automatically. The flag names the profile
 and selects EAS Build as the artifact source. The profile must resolve to
 "developmentClient": true and "distribution": "internal"; iOS also needs
-"ios": { "simulator": true }. Install eas-cli and authenticate with eas login
+"ios": { "simulator": true }. An explicit ios.buildConfiguration must be Debug;
+android.gradleCommand must be a single :app:assemble<Variant>Debug task producing
+an APK. Install eas-cli and authenticate with eas login
 or EXPO_TOKEN. The Expo app must already be linked to the intended EAS project.
 
 Stim delegates profile inheritance, environment resolution and fingerprinting

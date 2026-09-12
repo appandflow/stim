@@ -140,13 +140,14 @@ export async function resolveEasDevelopmentBuild({
         'EAS CLI is not installed.',
         'Install eas-cli, run eas login, then retry.',
       );
+    let profileEnv: Record<string, string> = {};
     const run = (args: string[], timeoutMs = 120_000, env?: Record<string, string>): unknown => {
       try {
         return JSON.parse(
           getExecutor().runFile(cli.file, [...args, '--json', '--non-interactive'], {
             cwd: root,
             timeoutMs,
-            env,
+            env: { ...profileEnv, ...env },
           }),
         );
       } catch {
@@ -160,6 +161,8 @@ export async function resolveEasDevelopmentBuild({
     note(`eas   resolving profile ${profile}`);
     const config = object(run(['config', '--platform', platform, '--profile', profile]));
     const buildProfile = object(config.buildProfile);
+    // EAS build:list treats --build-profile only as a filter; project context uses the process environment.
+    profileEnv = object(buildProfile.env) as Record<string, string>;
     const appConfig = object(config.appConfig);
     const projectId = object(object(appConfig.extra).eas).projectId;
     if (
@@ -178,6 +181,19 @@ export async function resolveEasDevelopmentBuild({
         'STIM_BAD_ARG',
         'The Expo app is not linked to an EAS project.',
         'Link the intended EAS project with eas init, then retry.',
+      );
+    }
+    if (
+      platform === 'ios'
+        ? buildProfile.buildConfiguration !== undefined && buildProfile.buildConfiguration !== 'Debug'
+        : buildProfile.gradleCommand !== undefined &&
+          (typeof buildProfile.gradleCommand !== 'string' ||
+            !/^:app:assemble\w*Debug$/.test(buildProfile.gradleCommand))
+    ) {
+      throw new EasFailure(
+        'STIM_BAD_ARG',
+        `EAS profile ${profile} overrides the development build configuration.`,
+        'Use ios.buildConfiguration: Debug or an android.gradleCommand that assembles a single Debug APK, or remove the override.',
       );
     }
     note(`eas   fingerprinting ${platform} with profile ${profile}`);
