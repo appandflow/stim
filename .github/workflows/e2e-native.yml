@@ -112,6 +112,9 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      - name: Install SimSlim for generated iOS fixtures
+        run: brew install mobai-app/tap/simslim
+
       - name: Install (workspace root)
         run: pnpm install --frozen-lockfile
 
