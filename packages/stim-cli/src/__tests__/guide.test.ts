@@ -486,3 +486,11 @@ test('EAS guidance routes agents to the profile and preserves the paid-build aut
   expect(eas).toContain('npx eas-cli device:create');
   expect(eas).toMatch(/Registration, signing changes and cloud builds need session authorization/);
 });
+
+test('slot selection and shared Metro behavior are discoverable in operational guidance', () => {
+  expect(renderTopic('agent')).toContain('--slot <name>');
+  expect(renderSection('lifecycle', 'options')).toContain('--slot <name>');
+  expect(renderTopic('logs')).toContain('--slot <name>');
+  expect(renderTopic('cleanup')).toContain('stop --slot <name>');
+  expect(renderSection('lifecycle', 'options')).toContain('not a single-slot reload');
+});

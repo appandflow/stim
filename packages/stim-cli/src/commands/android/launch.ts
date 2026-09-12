@@ -1,3 +1,5 @@
+import { launchSlotScope } from '../../engine/slot-launch.ts';
+import { deviceSlotPlatforms } from '../../device-slots.ts';
 import { resetAdoptedAvd, type resolveOwnedAvdSerial, type waitForBoot } from '../../sim/android.ts';
 import type { ChildProcess } from 'node:child_process';
 import { rmSync } from 'node:fs';
@@ -64,6 +66,7 @@ import { errorDiagnostics } from '../../error-diagnostics.ts';
 
 interface VerifyAndroidRunArgs {
   root: string;
+  slot?: string;
   release: boolean;
   remoteRelease: boolean;
   remoteDevice: boolean;
@@ -86,6 +89,7 @@ interface VerifyAndroidRunArgs {
 
 async function verifyAndroidRun({
   root,
+  slot,
   release,
   remoteRelease,
   remoteDevice,
@@ -109,7 +113,7 @@ async function verifyAndroidRun({
     remoteDevice
       ? []
       : captureNativeCrashes(
-          { root, platform: 'android', deviceId: serial, appId: androidPackage, since: launchedAt },
+          { root, slot, platform: 'android', deviceId: serial, appId: androidPackage, since: launchedAt },
           logsDir,
         );
   if (remoteRelease) {
@@ -160,6 +164,7 @@ async function verifyAndroidRun({
     ? await verifyLaunched({
         timeoutMs,
         requireBundleResponse: true,
+        slot: launchSlotScope(root, slot),
         onReadinessPending: () => phase('readiness', 'waiting for app readiness (up to 30s after bundle load)'),
         logsDir,
         since: launchedAt,
@@ -292,6 +297,7 @@ interface FinishAndroidRunArgs {
   lease: RunLease | null;
   releaseLease: () => void;
   root: string;
+  slot?: string;
   json: boolean;
   metroCheck: boolean;
   useBuildCache: boolean;
@@ -350,6 +356,7 @@ interface FinishAndroidRunArgs {
 
 async function resolveInstallSerial({
   root,
+  slot,
   device,
   physical,
   remoteDevice,
@@ -359,7 +366,7 @@ async function resolveInstallSerial({
   phase,
 }: Pick<
   FinishAndroidRunArgs,
-  'root' | 'device' | 'physical' | 'remoteDevice' | 'resolveAvdSerial' | 'waitForDeviceBoot' | 'phase'
+  'root' | 'slot' | 'device' | 'physical' | 'remoteDevice' | 'resolveAvdSerial' | 'waitForDeviceBoot' | 'phase'
 > & { serial: string }): Promise<string> {
   if (physical || remoteDevice || !device.owned || !device.avdName) return serial;
   const resolved = resolveAvdSerial(device.avdName, { timeoutMs: 5000 });
@@ -382,10 +389,10 @@ async function resolveInstallSerial({
   }
   const consolePort = Number(resolved.serial.replace(/^emulator-/, ''));
   withConfigLock(() => {
-    const current = loadConfig()?.projects?.[root]?.platforms?.android;
+    const current = deviceSlotPlatforms(loadConfig()?.projects?.[root], slot)?.android;
     if (!current?.owned || current.avdName !== device.avdName)
       throw new Error('The owned emulator assignment changed before installation.');
-    if (current.consolePort !== consolePort) setDevice(root, PLATFORM, { ...current, consolePort });
+    if (current.consolePort !== consolePort) setDevice(root, PLATFORM, { ...current, consolePort }, slot);
   });
   return resolved.serial;
 }
@@ -394,6 +401,7 @@ export async function finishAndroidRun({
   lease,
   releaseLease,
   root,
+  slot,
   json,
   metroCheck,
   useBuildCache,
@@ -477,6 +485,7 @@ export async function finishAndroidRun({
   try {
     serial = await resolveInstallSerial({
       root,
+      slot,
       device,
       physical,
       remoteDevice,
@@ -550,7 +559,7 @@ export async function finishAndroidRun({
     try {
       withConfigLock(() => {
         const config = loadConfig();
-        const current = config?.projects?.[root]?.platforms?.android;
+        const current = deviceSlotPlatforms(config?.projects?.[root], slot)?.android;
         if (!config || !current || current.avdName !== device.avdName)
           throw new Error('The adopted emulator assignment changed during installation.');
         delete current.adoptionPending;
@@ -622,7 +631,7 @@ export async function finishAndroidRun({
       });
   if (launched.failed) {
     printNativeCrashReport(
-      { root, platform: 'android', deviceId: serial, appId: androidPackage, since: launchedAt },
+      { root, slot, platform: 'android', deviceId: serial, appId: androidPackage, since: launchedAt },
       logsDir,
       (line) => phase('launch', chalk.red(line)),
       Boolean(remoteDevice),
@@ -689,6 +698,7 @@ export async function finishAndroidRun({
     if (physical) raiseLeaseFor(0, false);
     const collectorPid = await startCollector({
       root,
+      slot,
       serial,
       packageName: androidPackage,
       spawn,
@@ -703,6 +713,7 @@ export async function finishAndroidRun({
   if (physical) raiseLeaseFor(release ? RELEASE_VERIFY_WAIT_MS : DEBUG_VERIFY_STEP_MS, false);
   const { state: launchState, warning: launchWarning } = await verifyAndroidRun({
     root,
+    slot,
     release,
     remoteRelease,
     remoteDevice: Boolean(remoteDevice),
@@ -738,6 +749,7 @@ export async function finishAndroidRun({
   releaseLease();
 
   const facts = reportAndroidResult({
+    slot,
     json,
     useBuildCache,
     variant,

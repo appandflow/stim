@@ -1,3 +1,4 @@
+import { launchSlotScope } from '../../engine/slot-launch.ts';
 import { basename } from 'node:path';
 import { rmSync } from 'node:fs';
 import chalk from 'chalk';
@@ -53,6 +54,7 @@ import { errorDiagnostics } from '../../error-diagnostics.ts';
 
 interface VerifyIosRunArgs {
   root: string;
+  slot?: string;
   appPath: string | null;
   d: IosDeps;
   release: boolean;
@@ -92,6 +94,7 @@ function missingCrashReportHint({
 
 async function verifyIosRun({
   root,
+  slot,
   appPath,
   d,
   release,
@@ -118,7 +121,7 @@ async function verifyIosRun({
     remoteDevice
       ? []
       : captureNativeCrashes(
-          { root, platform: 'ios', deviceId: udid, appId: bundleId, since: launchedAt, appPath, physical },
+          { root, slot, platform: 'ios', deviceId: udid, appId: bundleId, since: launchedAt, appPath, physical },
           logsDir,
         );
   const deviceProcess = (): boolean | null => {
@@ -176,6 +179,7 @@ async function verifyIosRun({
   const verification: VerifyLaunchResultLike = metroCheck
     ? await d.verifyLaunch({
         requireBundleResponse: true,
+        slot: launchSlotScope(root, slot),
         onReadinessPending: () => phase('readiness', 'waiting for app readiness (up to 30s after bundle load)'),
         logsDir,
         since: launchedAt,
@@ -332,6 +336,7 @@ function reportLaunchErrors(errors: LaunchErrorRecord[], note: (line: string) =>
 interface FinishIosRunArgs {
   d: IosDeps;
   root: string;
+  slot?: string;
   json: boolean;
   release: boolean;
   configuration: string | null;
@@ -379,6 +384,7 @@ interface FinishIosRunArgs {
 function cleanAdoptedIosApps({
   d,
   root,
+  slot,
   udid,
   bundleId,
   phase,
@@ -386,6 +392,7 @@ function cleanAdoptedIosApps({
 }: {
   d: IosDeps;
   root: string;
+  slot?: string;
   udid: string;
   bundleId: string | null;
   phase: (name: unknown, text: string) => void;
@@ -396,7 +403,7 @@ function cleanAdoptedIosApps({
     phase('install', `removed ${swept.removed.join(', ')}, left by the previous workspace`);
   }
   if (swept.listed && swept.failed.length === 0) {
-    d.clearIosAdoptionPending(root);
+    d.clearIosAdoptionPending(root, slot);
     return null;
   }
   if (!swept.listed) return 'Could not list apps left by the previous workspace.';
@@ -444,6 +451,7 @@ function recordIosReloadTarget({
 }: {
   d: IosDeps;
   root: string;
+  slot?: string;
   physical: boolean;
   remoteDevice: boolean;
   bundleId: string;
@@ -477,6 +485,7 @@ function simulatorLaunchFailureRemedy(remote: boolean, udid: string, bundleId: s
 export async function finishIosRun({
   d,
   root,
+  slot,
   json,
   release,
   configuration,
@@ -608,6 +617,7 @@ export async function finishIosRun({
     });
     const collector = await d.replaceCollector({
       root,
+      slot,
       udid,
       bundleId: bundleId!,
       appName,
@@ -628,7 +638,10 @@ export async function finishIosRun({
       bundleId: bundleId!,
       appName: appName ?? bundleId!,
       collectorPid: collector.pid,
-      readRecords: () => readCollectorRecords(logsDir).filter((entry) => Number(entry.ts) >= launchedAt),
+      readRecords: () =>
+        readCollectorRecords(logsDir).filter(
+          (entry) => Number(entry.ts) >= launchedAt && (entry.slot ?? 'default') === (slot ?? 'default'),
+        ),
     });
     if (started.failed || !started.pid) {
       return fail({
@@ -697,7 +710,8 @@ export async function finishIosRun({
 
     dropSwapDir();
 
-    if (!remoteDevice) await d.replaceCollector({ root, udid, bundleId: bundleId!, appName, appExecutable, note });
+    if (!remoteDevice)
+      await d.replaceCollector({ root, slot, udid, bundleId: bundleId!, appName, appExecutable, note });
     const launchTimer = stepTimer(d.now);
     launchedAt = d.now();
     logWriter().write({
@@ -726,7 +740,7 @@ export async function finishIosRun({
     });
     if (launched?.failed) {
       printNativeCrashReport(
-        { root, platform: 'ios', deviceId: udid, appId: bundleId!, since: launchedAt, appPath },
+        { root, slot, platform: 'ios', deviceId: udid, appId: bundleId!, since: launchedAt, appPath },
         logsDir,
         (line) => note(chalk.red(phaseLine('launch', line))),
         Boolean(remoteDevice),
@@ -744,6 +758,7 @@ export async function finishIosRun({
   recordIosReloadTarget({
     d,
     root,
+    slot,
     physical,
     remoteDevice: Boolean(remoteDevice),
     bundleId: bundleId!,
@@ -764,11 +779,12 @@ export async function finishIosRun({
         (launched?.mode === 'openurl' || launched?.mode === 'payload-url' ? ' (expo-dev-client)' : ''),
   });
 
-  if (remoteDevice) await d.replaceCollector({ root, udid, bundleId: bundleId!, appName, appExecutable, note });
+  if (remoteDevice) await d.replaceCollector({ root, slot, udid, bundleId: bundleId!, appName, appExecutable, note });
 
   if (physical) raiseLeaseFor(release ? RELEASE_VERIFY_WAIT_MS : DEBUG_VERIFY_STEP_MS, false);
   const { state: launchState, warning: launchWarning } = await verifyIosRun({
     root,
+    slot,
     appPath,
     d,
     release,
@@ -814,6 +830,7 @@ export async function finishIosRun({
   const facts = reportIosResult({
     d,
     root,
+    slot,
     json,
     release,
     configuration,

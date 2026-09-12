@@ -89,7 +89,7 @@ test('selection is exact by model and runtime and oldest first', () => {
 });
 
 test('overflow eviction removes the oldest records regardless of insertion order', () => {
-  const third = { ...second, udid: 'THIRD', parkedAt: '2026-09-01T12:00:00.000Z' };
+  const third = { ...second, deviceTypeIdentifier: 'ipad-pro', udid: 'THIRD', parkedAt: '2026-09-01T12:00:00.000Z' };
   const result = evictOverflow([third, first, second], 1);
   expect(result.keep.map((record) => record.udid)).toEqual(['THIRD']);
   expect(result.evicted.map((record) => record.udid)).toEqual(['FIRST', 'SECOND']);
@@ -253,4 +253,14 @@ test('pool transfers refuse to overwrite or clear another device in the same slo
   ).toBeNull();
   expect(getProject(path)?.deviceSlots?.phone?.ios?.deviceUdid).toBe(second.udid);
   expect(readParked('ios')).toEqual([first]);
+});
+
+test('a rare tablet is evicted by later phone parking under the shared platform cap', () => {
+  const root = '/tmp/rare-model';
+  const tablet = { ...first, deviceTypeIdentifier: 'ipad-pro' };
+  upsertProject(root, {});
+  setDevice(root, 'ios', { owned: true, deviceUdid: tablet.udid }, 'tablet');
+  expect(parkSim({ platform: 'ios', projectPath: root, slot: 'tablet', record: tablet, max: 1 })).toEqual([]);
+  setDevice(root, 'ios', { owned: true, deviceUdid: second.udid }, 'phone');
+  expect(parkSim({ platform: 'ios', projectPath: root, slot: 'phone', record: second, max: 1 })).toEqual([tablet]);
 });

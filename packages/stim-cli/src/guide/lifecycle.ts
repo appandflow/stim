@@ -932,19 +932,51 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
         'every flag per command, Android variants and flavors, the per-run simulator model, runtime and system image',
       body: () => `THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote --reset-cache
-  ios             --json --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --device [udid] --wait <seconds> --no-wait --remote <proxy|eas>
-  android         --json --no-metro-check --no-build-cache --variant <name> --system-image <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
+  ios             --slot <name> --json --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --device [udid] --wait <seconds> --no-wait --remote <proxy|eas>
+  android         --slot <name> --json --no-metro-check --no-build-cache --variant <name> --system-image <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
   reload          [ios|android] --json
-  device          lock <ios|android> [id] --for <duration> --wait <seconds> --json;
-                  unlock [ios|android] --json
-  logs            --source --level --since --grep --tail --follow --errors --json
-  stop            --json
+  device          lock <ios|android> [id] --slot <name> --for <duration> --wait <seconds> --json;
+                  unlock [ios|android] --slot <name> --json
+  logs            --slot <name> --source --level --since --grep --tail --follow --errors --json
+  stop            --slot <name> --json
   status          --json          (already machine-wide)
   stats           --json          (this project and machine-wide)
   doctor          --json --fix --platform <ios|android>
                                   (--platform keeps shared checks and filters native findings)
   gc              --delete --older-than <days> --cache <name|all>
   worktree warm    --refresh; remove [path] --force
+
+  DEVICE SLOTS
+  Use --slot <name> on ios or android to keep any number of simulators,
+  emulators, or physical devices in the same workspace. Names are reusable
+  identities, not models: two slots can request identical models. A slot has
+  one target per platform. Omitting the flag selects default and preserves
+  the workspace's existing assignment.
+
+    stim ios --slot phone
+    stim ios --slot tablet --device-type "iPad Pro 13-inch (M4)"
+    stim ios --slot hardware --device <udid>
+    stim android --slot second-phone
+    stim logs --slot tablet --source device
+    stim stop --slot tablet
+
+  All slots share this workspace's Metro server and build cache. Native CLI
+  runs serialize workspace mutations; a waiting run can wait up to 30 minutes.
+  Named slots support local devices; remote sessions use the default slot.
+  Names use 1-64 letters, digits, underscores or hyphens, starting with a letter
+  or digit. Reserved object-property names are refused.
+
+  stop --slot shuts down that slot's owned devices and releases its leases,
+  retaining Metro and sibling slots. Plain stop handles the whole workspace.
+  status reports named devices under slots and counts their memory. Device
+  caps count every slot. Recycling uses the same model/runtime-matched pool
+  for every slot, with one shared cap per platform and oldest-first eviction.
+
+  Metro cannot reliably identify a particular simulator's bundle request.
+  When slots coexist, a shared bundle event is not proof that a particular
+  slot launched: Debug launch can report unverified. Check the reported device
+  directly. Release verification still checks its process. reload ios/android
+  addresses matching Metro peers across slots; it is not a single-slot reload.
 
   That is the whole surface today, and it is deliberately small. It can grow
   when a flag is genuinely the best answer -- but project-specific knowledge

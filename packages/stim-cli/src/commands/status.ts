@@ -1,3 +1,4 @@
+import { projectDeviceSlots } from '../device-slots.ts';
 import chalk from 'chalk';
 import { existsSync } from 'fs';
 import { totalmem } from 'os';
@@ -91,6 +92,16 @@ export default function statusCommand(program: Command): void {
               metro: metro as unknown as MetroFacts | null,
               worktrees: worktrees as unknown as WorktreeFacts[],
               simsAvailable,
+              androidRuntimes: Object.fromEntries(
+                projectDeviceSlots(proj)
+                  .slice(1)
+                  .map(({ slot, platforms }) => [
+                    slot,
+                    platforms.android?.owned && platforms.android.avdName
+                      ? readAndroidRuntime(platforms.android.avdName)
+                      : null,
+                  ]),
+              ),
               androidRuntime:
                 proj.platforms?.android?.owned && proj.platforms.android.avdName
                   ? readAndroidRuntime(proj.platforms.android.avdName)
@@ -176,20 +187,30 @@ export default function statusCommand(program: Command): void {
           const errs = n > 0 ? chalk.yellow(` (${n} error${n === 1 ? '' : 's'} since the last marker)`) : '';
           console.log(chalk.dim(`  logs: ${state.logs.dir}`) + errs);
         }
-        if (state.ios) {
-          const booted =
-            state.ios.state === 'Booted' ? chalk.green('booted') : chalk.dim(state.ios.state.toLowerCase());
-          const owned = state.ios.owned ? chalk.dim(' (owned)') : '';
-          console.log(`  ios: ${chalk.cyan(state.ios.name ?? state.ios.udid)} ${booted}${owned}`);
-        }
-        if (state.android) {
-          const kind = state.android.physical ? chalk.dim('(physical)') : chalk.dim('(emulator)');
-          const observed = state.android.state
-            ? ` ${state.android.state}${state.android.serial ? ` (${state.android.serial})` : ''}`
-            : '';
-          console.log(
-            `  android: ${chalk.cyan(state.android.name)} ${kind}${observed}${state.android.owned ? chalk.dim(' (owned)') : ''}`,
-          );
+        for (const deviceState of [
+          { slot: 'default', ios: state.ios, android: state.android },
+          ...(state.slots ?? []),
+        ]) {
+          const slotLabel = deviceState.slot === 'default' ? '' : ` [${deviceState.slot}]`;
+          if (deviceState.ios) {
+            const booted =
+              deviceState.ios.state === 'Booted'
+                ? chalk.green('booted')
+                : chalk.dim(deviceState.ios.state.toLowerCase());
+            const owned = deviceState.ios.owned ? chalk.dim(' (owned)') : '';
+            console.log(
+              `  ios${slotLabel}: ${chalk.cyan(deviceState.ios.name ?? deviceState.ios.udid)} ${booted}${owned}`,
+            );
+          }
+          if (deviceState.android) {
+            const kind = deviceState.android.physical ? chalk.dim('(physical)') : chalk.dim('(emulator)');
+            const observed = deviceState.android.state
+              ? ` ${deviceState.android.state}${deviceState.android.serial ? ` (${deviceState.android.serial})` : ''}`
+              : '';
+            console.log(
+              `  android${slotLabel}: ${chalk.cyan(deviceState.android.name)} ${kind}${observed}${deviceState.android.owned ? chalk.dim(' (owned)') : ''}`,
+            );
+          }
         }
         for (const w of state.warnings) console.log(chalk.yellow(`  ! ${w}`));
       }

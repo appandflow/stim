@@ -1,3 +1,4 @@
+import { deviceSlotPlatforms, parseDeviceSlotKey } from '../device-slots.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine } from '../command-output.ts';
@@ -208,14 +209,16 @@ export async function runReload({
     };
   }
   const launches = d.readLaunches(root);
-  const platforms: ReloadPlatform[] = platform ? [platform] : ['ios', 'android'];
-  const inspected = platforms.flatMap((candidate) => {
-    const record = launches[candidate];
-    return record ? [inspectTarget(candidate, record, project, d)] : [];
+  const inspected = Object.entries(launches).flatMap(([key, record]) => {
+    const parsed = parseDeviceSlotKey(key);
+    if (!parsed || (platform && parsed.platform !== platform)) return [];
+    return [
+      inspectTarget(parsed.platform, record, { ...project, platforms: deviceSlotPlatforms(project, parsed.slot) }, d),
+    ];
   });
   const live = inspected.filter((target): target is LiveTarget => !isTargetFailure(target));
 
-  if (live.length > 1) {
+  if (new Set(live.map((target) => target.platform)).size > 1) {
     return {
       ok: false,
       error: failure(

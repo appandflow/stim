@@ -16,6 +16,7 @@ import type { RunRecorder } from '../../engine/stats.ts';
 import { writeWorkspaceState } from '../../supervisor/state.ts';
 
 export function androidFacts({
+  slot,
   serial,
   avdName = null,
   deviceName = null,
@@ -39,6 +40,7 @@ export function androidFacts({
   durationMs,
   lease,
 }: {
+  slot?: string;
   serial?: string | null;
   avdName?: string | null;
   deviceName?: string | null;
@@ -64,6 +66,7 @@ export function androidFacts({
 }): AndroidFacts {
   return {
     platform: PLATFORM,
+    ...(slot && slot !== 'default' ? { slot } : {}),
     serial: serial ?? null,
     avdName: avdName ?? null,
     deviceName: deviceName ?? avdName ?? null,
@@ -160,6 +163,7 @@ export async function finishAndroidUpload(
 }
 
 export interface ReportAndroidResultArgs {
+  slot?: string;
   lease?: { kind: string; expiresAt: string } | null;
   json: boolean;
   useBuildCache: boolean;
@@ -187,6 +191,7 @@ export interface ReportAndroidResultArgs {
 }
 
 export function reportAndroidResult({
+  slot,
   json,
   useBuildCache,
   variant,
@@ -214,6 +219,7 @@ export function reportAndroidResult({
 }: ReportAndroidResultArgs): AndroidFacts {
   recordRun({ failed: false, cacheHit: cacheLevel(record.cacheHit), waited: waitedForBuild, durationMs });
   const facts = androidFacts({
+    slot,
     serial,
     avdName: record.avdName,
     deviceName: record.deviceName,

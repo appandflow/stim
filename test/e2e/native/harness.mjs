@@ -239,14 +239,19 @@ export function createCleanupTracker({ h, platform, processExitTimeoutMs = 5000 
   }
 
   function recordWorkspace(cwd) {
-    let device;
+    let assignments = [];
     try {
       const config = JSON.parse(readFileSync(join(h.env.STIM_HOME, 'config.json'), 'utf-8'));
-      device = config.projects?.[resolve(cwd)]?.platforms?.[platform];
+      const project = config.projects?.[resolve(cwd)];
+      assignments = [project?.platforms, ...Object.values(project?.deviceSlots ?? {})].map(
+        (platforms) => platforms?.[platform],
+      );
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
     }
-    if (device?.owned === true) recordBuild({ udid: device.deviceUdid, avdName: device.avdName });
+    for (const device of assignments) {
+      if (device?.owned === true) recordBuild({ udid: device.deviceUdid, avdName: device.avdName });
+    }
 
     let state;
     try {

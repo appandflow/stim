@@ -5869,3 +5869,16 @@ describe('EAS development builds', () => {
     expect(resolveEasDevelopmentBuild).not.toHaveBeenCalled();
   });
 });
+
+test('a named iOS run scopes allocation, launch verification, collector and build records', async () => {
+  reserve();
+  const result = await run({ json: true, slot: 'tablet' });
+  expect(result.exitCode).toBe(null);
+  expect(parseFirst(result.logs).slot).toBe('tablet');
+  expect(result.calls.args.ensureOwnedDevice).toMatchObject({ slot: 'tablet' });
+  expect(result.calls.args.replaceCollector).toMatchObject({ slot: 'tablet' });
+  expect(result.calls.args.verifyLaunch).toMatchObject({ slot: 'tablet' });
+  const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-ios:tablet.ndjson'), 'utf8'));
+  expect(records.length).toBeGreaterThan(0);
+  expect(records.every((record) => record.slot === 'tablet')).toBe(true);
+});

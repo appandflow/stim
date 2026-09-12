@@ -469,7 +469,7 @@ function harness(overrides = {}) {
         ...options,
         ensureDevice: async (args) => {
           const device = await ensureDevice(args);
-          if (device.owned) setDevice(root, 'android', device);
+          if (device.owned) setDevice(root, 'android', device, args.slot);
           return device;
         },
       }),
@@ -5798,4 +5798,15 @@ describe('EAS development builds', () => {
     expect(await run()).toMatchObject({ ok: false, error: { code: 'STIM_BAD_ARG' } });
     expect(resolveEasDevelopmentBuild).not.toHaveBeenCalled();
   });
+});
+
+test('a named Android run scopes allocation, launch verification and collector startup', async () => {
+  const h = harness({ slot: 'phone', json: true });
+  const result = await h.run();
+  expect(result.ok).toBe(true);
+  expect(h.calls.ensureDevice[0]).toMatchObject({ slot: 'phone' });
+  expect(h.calls.verify[0]).toMatchObject({ slot: 'phone' });
+  expect(h.calls.spawn.some((call) => call.args.includes('--slot') && call.args.includes('phone'))).toBe(true);
+  const facts = JSON.parse(h.stdout.at(-1)!);
+  expect(facts.slot).toBe('phone');
 });

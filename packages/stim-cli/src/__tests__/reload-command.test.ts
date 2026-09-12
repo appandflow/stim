@@ -422,3 +422,21 @@ test('reload plain output reports a request and retains the target facts', async
   expect(lines[0]).toContain('8082');
   expect(lines[0]).toContain('stim logs --errors');
 });
+
+test('multiple live slots of the same platform use one platform reload', async () => {
+  const calls: unknown[] = [];
+  const result = await runReload({
+    root: '/project',
+    deps: reloadDeps({
+      getProject: () => ({ ...project, deviceSlots: { phone: { ios: { deviceUdid: 'U2', owned: true } } } }),
+      readLaunches: () => ({ ios: iosLaunch, 'ios:phone': { ...iosLaunch, deviceId: 'U2' } }),
+      resolveIos: (udid) => ({ sim: { udid, name: `stim-${udid}`, state: 'Booted' } }) as never,
+      reloadMetro: async (port, options) => {
+        calls.push([port, options]);
+        return { ok: true, peers: 2, targets: 2 };
+      },
+    }),
+  });
+  expect(result.ok).toBe(true);
+  expect(calls).toEqual([[8082, { role: 'ios', appId: iosLaunch.appId }]]);
+});
