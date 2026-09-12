@@ -541,6 +541,7 @@ async function main() {
     return c.pass(`gc reports ${expected.length} live cache(s) with sizes and calls none of them garbage`);
   });
 
+  stopWorkspace(wt1);
   stopWorkspace(wt2);
 
   let raceOutcome = null;
