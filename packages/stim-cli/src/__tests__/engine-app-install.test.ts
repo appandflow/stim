@@ -2611,3 +2611,21 @@ describe('launch verification after Metro prefetch', () => {
     expect(Boolean(result.fatal)).toBe(event === 'bundle_response_failed');
   });
 });
+
+test('a simulator install timeout fails before dev-client preparation and gives host recovery guidance', () => {
+  const exec = recordingExec({ fail: 'simctl install', failCode: 'ETIMEDOUT' });
+  const result = installIosApp(
+    {
+      udid: 'U1',
+      appPath: '/private/app with spaces.app',
+      bundleId: 'com.example.app',
+      devClientScheme: 'example',
+      proveInstalled: false,
+    },
+    { exec },
+  );
+  expect(result).toMatchObject({ failed: true, code: INSTALL_ERROR });
+  expect(result.reason).toMatch(/simctl install failed.*Activity Monitor/);
+  expect(exec.options[0]).toEqual({ timeoutMs: 300000, killSignal: 'SIGKILL' });
+  expect(exec.calls.some((args) => args.includes('defaults'))).toBe(false);
+});

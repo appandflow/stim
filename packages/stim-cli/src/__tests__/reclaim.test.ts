@@ -97,6 +97,7 @@ test('reclaimProject keeps the config entry when an owned device delete fails', 
       if (cmd.includes('simctl delete')) throw new Error('Unable to delete device');
       return '';
     },
+    runFile: () => listJson,
     runQuiet: (cmd) => (cmd.includes('simctl list devices --json') ? listJson : null),
     spawn: () => {},
   });
@@ -126,6 +127,7 @@ test('reclaimProject removes the entry when the owned device really is deleted',
   });
   setExecutor({
     run: (cmd) => (cmd.includes('simctl list devices --json') ? listJson : ''),
+    runFile: () => listJson,
     runQuiet: (cmd) => (cmd.includes('simctl list devices --json') ? listJson : null),
     spawn: () => {},
   });

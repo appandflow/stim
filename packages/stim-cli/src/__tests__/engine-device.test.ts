@@ -82,7 +82,8 @@ describe('ensureBooted: ios', () => {
         commands.push(cmd);
         return '';
       },
-      runFile: (file, args = [], options) => {
+      runFile(file, args = [], options) {
+        if (file === 'xcrun' && args[1] === 'list') return this.run!([file, ...args].join(' '));
         probes.push([file, ...args, options]);
         return '';
       },
@@ -103,7 +104,8 @@ describe('ensureBooted: ios', () => {
   test.each([false, true])('refuses a simulator that cannot spawn a process after boot (joined=%s)', async (joined) => {
     setExecutor({
       run: () => simList([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]),
-      runFile: () => {
+      runFile(file, args = []) {
+        if (file === 'xcrun' && args[1] === 'list') return this.run!([file, ...args].join(' '));
         throw Object.assign(new Error('simctl spawn timed out'), { code: 'ETIMEDOUT' });
       },
       runFileQuiet: () => null,
@@ -137,7 +139,12 @@ describe('ensureBooted: ios', () => {
         return '';
       },
       runQuiet: () => '',
-      runFile: () => '',
+      runFileQuiet: () => '',
+      runFile(file, args = []) {
+        return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
+          ? this.run!([file, ...args].join(' '))
+          : '';
+      },
       spawn: (cmd: string, args: readonly string[] = []) => {
         commands.push([cmd, ...args].join(' '));
         return makeExitingChild();
@@ -163,8 +170,20 @@ describe('ensureBooted: ios', () => {
         return '';
       },
       runQuiet: () => '',
-      runFile: () => '',
-      spawn: () => makeChildProcess(),
+      runFileQuiet: () => '',
+      runFile(file, args = []) {
+        return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
+          ? this.run!([file, ...args].join(' '))
+          : '';
+      },
+      spawn: () => {
+        const child = makeChildProcess();
+        child.kill = () => {
+          queueMicrotask(() => child.emit('exit', null, 'SIGKILL'));
+          return true;
+        };
+        return child;
+      },
     });
 
     const result = await ensureBooted({
@@ -187,7 +206,12 @@ describe('ensureBooted: ios', () => {
         return '';
       },
       runQuiet: () => '',
-      runFile: () => '',
+      runFileQuiet: () => '',
+      runFile(file, args = []) {
+        return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
+          ? this.run!([file, ...args].join(' '))
+          : '';
+      },
       spawn: () => makeExitingChild(1, 'CoreLocationMigrator failed'),
     });
 
@@ -202,7 +226,12 @@ describe('ensureBooted: ios', () => {
     setExecutor({
       run: () => simList([{ udid: 'U1', name: 'My iPhone', state: 'Shutdown', isAvailable: true }]),
       runQuiet: () => '',
-      runFile: () => '',
+      runFileQuiet: () => '',
+      runFile(file, args = []) {
+        return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
+          ? this.run!([file, ...args].join(' '))
+          : '';
+      },
       spawn: () => {
         throw new Error('must not boot a foreign sim');
       },
@@ -213,7 +242,17 @@ describe('ensureBooted: ios', () => {
   });
 
   test('reports a sim that no longer exists rather than booting a stale udid', async () => {
-    setExecutor({ run: () => simList([]), runQuiet: () => '', runFile: () => '', spawn: () => null });
+    setExecutor({
+      run: () => simList([]),
+      runQuiet: () => '',
+      runFileQuiet: () => '',
+      runFile(file, args = []) {
+        return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
+          ? this.run!([file, ...args].join(' '))
+          : '';
+      },
+      spawn: () => null,
+    });
     const result = await ensureBooted({ platform: 'ios', device: { deviceUdid: 'GONE' } });
     expect(result.reason).toMatch(/no longer exists/);
     expect(result.reason).toMatch(/stim ios/);
@@ -226,7 +265,12 @@ describe('ensureBooted: ios', () => {
           ? simList([{ udid: 'U1', name: 'stim-app', state: 'Booting', isAvailable: true }])
           : '',
       runQuiet: () => '',
-      runFile: () => '',
+      runFileQuiet: () => '',
+      runFile(file, args = []) {
+        return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
+          ? this.run!([file, ...args].join(' '))
+          : '';
+      },
       spawn: () => makeExitingChild(),
     });
     const result = await ensureBooted({ platform: 'ios', device: { deviceUdid: 'U1' }, timeoutMs: 60, pollMs: 5 });
@@ -234,7 +278,17 @@ describe('ensureBooted: ios', () => {
   });
 
   test('reports a missing record rather than throwing', async () => {
-    setExecutor({ run: () => '', runQuiet: () => '', runFile: () => '', spawn: () => null });
+    setExecutor({
+      run: () => '',
+      runQuiet: () => '',
+      runFileQuiet: () => '',
+      runFile(file, args = []) {
+        return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
+          ? this.run!([file, ...args].join(' '))
+          : '';
+      },
+      spawn: () => null,
+    });
     expect((await ensureBooted({ platform: 'ios', device: {} })).reason).toMatch(/No iOS simulator is recorded/);
   });
 
@@ -276,7 +330,12 @@ describe('ensureBooted: ios', () => {
     setExecutor({
       run: () => simList([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]),
       runQuiet: () => '',
-      runFile: () => '',
+      runFileQuiet: () => '',
+      runFile(file, args = []) {
+        return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
+          ? this.run!([file, ...args].join(' '))
+          : '';
+      },
       spawn: () => null,
     });
     const done = Promise.reject(new Error('CoreLocationMigrator failed'));
@@ -297,7 +356,12 @@ describe('ensureBooted: ios', () => {
         return simList([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
       },
       runQuiet: () => '',
-      runFile: () => '',
+      runFileQuiet: () => '',
+      runFile(file, args = []) {
+        return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
+          ? this.run!([file, ...args].join(' '))
+          : '';
+      },
       spawn: () => null,
     });
     const result = await ensureBooted({ platform: 'ios', device: { deviceUdid: 'U1', owned: true } });
@@ -313,7 +377,12 @@ describe('ensureBooted: ios', () => {
         return simList([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
       },
       runQuiet: () => '',
-      runFile: () => '',
+      runFileQuiet: () => '',
+      runFile(file, args = []) {
+        return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
+          ? this.run!([file, ...args].join(' '))
+          : '';
+      },
       spawn: () => null,
     });
     const result = await ensureBooted({
@@ -625,6 +694,7 @@ function iosExecutor(devices: SimEntry[]) {
     files,
     spawned,
     exec: {
+      runFileQuiet: () => '',
       run(cmd: string) {
         run.push(cmd);
         if (/simctl list devicetypes --json/.test(cmd)) return DEVICE_TYPES_JSON;
@@ -643,6 +713,8 @@ function iosExecutor(devices: SimEntry[]) {
       },
       runFile(file: string, args: string[] = []) {
         files.push([file, ...args]);
+        if (file === 'xcrun' && args[0] === 'simctl' && (args[1] === 'list' || args[1] === 'boot'))
+          return this.run!([file, ...args].join(' '));
         return '';
       },
       spawn(cmd: string, args: readonly string[] = []) {
@@ -660,11 +732,9 @@ describe('ensureOwnedDevice: ios', () => {
     const events: string[] = [];
     setExecutor({
       ...exec,
-      run(cmd: string) {
-        if (cmd.startsWith('xcrun simctl boot ')) events.push('boot');
-        return exec.run(cmd);
-      },
+
       runFile(file, args = [], options) {
+        if (file === 'xcrun' && args[1] === 'boot') events.push('boot');
         if (file === '/usr/sbin/sysctl') {
           events.push('pressure');
           expect(args).toEqual(['-n', 'kern.memorystatus_vm_pressure_level']);

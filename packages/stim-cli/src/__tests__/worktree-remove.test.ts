@@ -233,6 +233,7 @@ function makeExecutor({
     runFile(file: string, args: string[] = []) {
       const cmd = [file, ...args].join(' ');
       runCalls.push(cmd);
+      if (/simctl list devices --json/.test(cmd)) return simctlList;
       if (/worktree remove/.test(cmd)) {
         if (worktreeRemoveError) throw new Error(worktreeRemoveError);
         return '';

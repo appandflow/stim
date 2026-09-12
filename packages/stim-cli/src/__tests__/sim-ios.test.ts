@@ -152,8 +152,9 @@ test('parseSimctlList can retain unavailable devices and their data sizes', () =
 
 test('listAllIosSims uses simctl via executor', () => {
   setExecutor({
-    run: (cmd) => {
-      expect(cmd).toMatch(/xcrun simctl list devices --json/);
+    runFile: (file, args, options) => {
+      expect([file, ...args]).toEqual(['xcrun', 'simctl', 'list', 'devices', '--json']);
+      expect(options).toEqual({ timeoutMs: 30000, killSignal: 'SIGKILL' });
       return SIMCTL_OUTPUT;
     },
     runQuiet: () => null,
@@ -165,7 +166,7 @@ test('listAllIosSims uses simctl via executor', () => {
 
 test('listBootedIosSims filters by state', () => {
   setExecutor({
-    run: () => SIMCTL_OUTPUT,
+    runFile: () => SIMCTL_OUTPUT,
     runQuiet: () => null,
     spawn: () => null,
   });
@@ -321,7 +322,7 @@ test('sanitizeDeviceLabel strips characters simctl names should not carry', () =
 
 test('deleteIosSim refuses to delete a sim not owned by Stim', () => {
   setExecutor({
-    run: () =>
+    runFile: () =>
       JSON.stringify({
         devices: {
           'com.apple.CoreSimulator.SimRuntime.iOS-17-2': [
@@ -362,8 +363,9 @@ test('deleteIosSim deletes a Stim-owned sim', () => {
   setExecutor({
     run: (cmd) => {
       ran.push(cmd);
-      return cmd.includes('list devices') ? OWNED_SIM_LIST : null;
+      return null;
     },
+    runFile: () => OWNED_SIM_LIST,
     runQuiet: () => null,
     spawn: () => null,
   });
@@ -373,8 +375,8 @@ test('deleteIosSim deletes a Stim-owned sim', () => {
 
 test('deleteIosSim propagates a simctl failure instead of swallowing it', () => {
   setExecutor({
-    run: (cmd) => {
-      if (cmd.includes('list devices')) return OWNED_SIM_LIST;
+    runFile: () => OWNED_SIM_LIST,
+    run: () => {
       throw new Error('simctl: Unable to delete device');
     },
     runQuiet: () => null,
@@ -386,7 +388,7 @@ test('deleteIosSim propagates a simctl failure instead of swallowing it', () => 
 test('deleteIosSim no-ops quietly when the udid is already gone', () => {
   let ranQuiet = false;
   setExecutor({
-    run: () => JSON.stringify({ devices: {} }),
+    runFile: () => JSON.stringify({ devices: {} }),
     runQuiet: () => {
       ranQuiet = true;
       return null;
@@ -431,7 +433,7 @@ test('occupyingApps reports a shut-down device free without probing', async () =
   });
   let probed = false;
   setExecutor({
-    run: () => devices,
+    runFile: () => devices,
     runQuiet: () => {
       probed = true;
       return null;
@@ -574,8 +576,9 @@ test('parked app data cleanup fails closed on unreadable metadata and invalid co
 test('deleteParkedIosSim bounds ownership revalidation and deletion', () => {
   const calls: Array<{ kind: 'run' | 'runFile'; timeoutMs?: number }> = [];
   setExecutor({
-    run(_cmd, options) {
-      calls.push({ kind: 'run', timeoutMs: options?.timeoutMs });
+    runFile(_file, args, options) {
+      calls.push({ kind: 'runFile', timeoutMs: options?.timeoutMs });
+      if (args?.includes('delete')) return '';
       return JSON.stringify({
         devices: {
           'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
@@ -590,10 +593,6 @@ test('deleteParkedIosSim bounds ownership revalidation and deletion', () => {
         },
       });
     },
-    runFile(_file, _args, options) {
-      calls.push({ kind: 'runFile', timeoutMs: options?.timeoutMs });
-      return '';
-    },
     runQuiet: () => null,
     spawn: () => null,
   });
@@ -601,7 +600,7 @@ test('deleteParkedIosSim bounds ownership revalidation and deletion', () => {
   deleteParkedIosSim('U1');
 
   expect(calls).toEqual([
-    { kind: 'run', timeoutMs: 30000 },
+    { kind: 'runFile', timeoutMs: 30000 },
     { kind: 'runFile', timeoutMs: 30000 },
   ]);
 });
@@ -609,8 +608,9 @@ test('deleteParkedIosSim bounds ownership revalidation and deletion', () => {
 test('deleteParkedIosSim re-resolves the name before deletion', () => {
   const calls: string[][] = [];
   setExecutor({
-    run: () =>
-      JSON.stringify({
+    runFile(file, args = []) {
+      calls.push([file, ...args]);
+      return JSON.stringify({
         devices: {
           'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
             {
@@ -622,16 +622,13 @@ test('deleteParkedIosSim re-resolves the name before deletion', () => {
             },
           ],
         },
-      }),
-    runFile(file, args = []) {
-      calls.push([file, ...args]);
-      return '';
+      });
     },
     runQuiet: () => null,
     spawn: () => null,
   });
   expect(() => deleteParkedIosSim('U1')).toThrow(/not Stim-owned/);
-  expect(calls).toEqual([]);
+  expect(calls).toEqual([['xcrun', 'simctl', 'list', 'devices', '--json']]);
 });
 
 function bootSimList(state: string) {
@@ -650,19 +647,25 @@ function bootstatusExecutor(outcomes: BootstatusOutcome[], list: () => string) {
   const spawned: string[] = [];
   const quiet: string[] = [];
   setExecutor({
-    run: (cmd: string) => {
-      if (cmd.includes('list devices')) return list();
+    runFile: (_file, args = []) => {
+      if (args.includes('devices')) return list();
       return '';
     },
-    runQuiet: (cmd: string) => {
-      quiet.push(cmd);
+    runFileQuiet: (file, args = []) => {
+      quiet.push([file, ...args].join(' '));
       return '';
     },
-    runFile: () => '',
     spawn: (cmd: string, args: readonly string[] = []) => {
       spawned.push([cmd, ...args].join(' '));
       const outcome = outcomes[spawned.length - 1] ?? outcomes[outcomes.length - 1] ?? 'hang';
-      if (outcome === 'hang') return makeChildProcess();
+      if (outcome === 'hang') {
+        const child = makeChildProcess();
+        child.kill = () => {
+          queueMicrotask(() => child.emit('exit', null, 'SIGKILL'));
+          return true;
+        };
+        return child;
+      }
       return makeExitingChild(outcome.exitCode, outcome.stderr);
     },
   });
@@ -721,4 +724,94 @@ test('bootIosSim rethrows a bootstatus failure that is not a timeout', async () 
   );
   await expect(bootIosSim('UDID-A')).rejects.toThrow(/CoreLocationMigrator failed/);
   expect(spawned.length).toBe(1);
+});
+
+test('the initial boot request consumes the same deadline as bootstatus', async () => {
+  let now = 1000;
+  const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+  let spawned = false;
+  setExecutor({
+    runFile(_file, args = [], options) {
+      if (args[1] === 'boot') {
+        expect(options).toEqual({ timeoutMs: 200, killSignal: 'SIGKILL' });
+        now += 250;
+        return '';
+      }
+      return bootSimList('Booting');
+    },
+    spawn() {
+      spawned = true;
+      return makeExitingChild();
+    },
+  });
+  try {
+    await expect(bootIosSim('UDID-A', { timeoutMs: 200 })).rejects.toThrow(/did not finish booting/);
+    expect(spawned).toBe(false);
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+test('bootstatus does not survey or retry until its timed-out child has actually exited', async () => {
+  const events: string[] = [];
+  setExecutor({
+    runFile(_file, args = []) {
+      if (args[1] === 'list') {
+        events.push('survey');
+        return bootSimList('Booted');
+      }
+      return '';
+    },
+    runFileQuiet: () => '',
+    spawn() {
+      const child = makeChildProcess();
+      child.kill = () => {
+        events.push('signal');
+        setTimeout(() => {
+          events.push('exit');
+          child.emit('exit', null, 'SIGKILL');
+        }, 20);
+        return true;
+      };
+      return child;
+    },
+  });
+  await bootIosSim('UDID-A', { attemptMs: 10 });
+  expect(events).toEqual(['signal', 'exit', 'survey']);
+});
+
+test('bootstatus refuses a retry when termination cannot be confirmed within the cleanup bound', async () => {
+  vi.useFakeTimers();
+  let surveys = 0;
+  setExecutor({
+    runFile(_file, args = []) {
+      if (args[1] === 'list') surveys++;
+      return '';
+    },
+    spawn: () => makeChildProcess(),
+  });
+  try {
+    const outcome = bootIosSim('UDID-A', { attemptMs: 100 }).then(
+      () => null,
+      (error) => error,
+    );
+    await vi.advanceTimersByTimeAsync(10100);
+    expect(await outcome).toMatchObject({ message: expect.stringMatching(/could not be confirmed stopped/) });
+    expect(surveys).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('opening the Simulator app is bounded and best-effort after successful boot', async () => {
+  setExecutor({
+    runFile: () => '',
+    spawn: () => makeExitingChild(),
+    runFileQuiet(file, args, options) {
+      expect([file, ...args]).toEqual(['open', '-a', 'Simulator']);
+      expect(options).toEqual({ timeoutMs: 5000, killSignal: 'SIGKILL' });
+      return null;
+    },
+  });
+  await expect(bootIosSim('UDID-A')).resolves.toBeUndefined();
 });

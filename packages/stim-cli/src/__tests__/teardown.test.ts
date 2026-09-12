@@ -69,7 +69,13 @@ function iosExecutor({ sims = [], occupied = '', throwOn = null }: IosExecutorOp
     if (/simctl spawn .* launchctl list/.test(cmd)) return occupied;
     return '';
   };
-  return { calls, run: answer, runQuiet: answer, spawn: () => {} };
+  return {
+    calls,
+    run: answer,
+    runFile: (file: string, args: string[] = []) => answer([file, ...args].join(' ')),
+    runQuiet: answer,
+    spawn: () => {},
+  };
 }
 
 const OWNED = { udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true };
@@ -201,6 +207,7 @@ test('teardownOwnedIosSim parks an owned simulator and clears its project claim'
         return '';
       },
       runFile(file, args = []) {
+        if (file === 'xcrun' && args[1] === 'list') return this.run!([file, ...args].join(' '));
         calls.push([file, ...args]);
         return '';
       },
@@ -277,6 +284,7 @@ test('a failed overflow eviction retains its parked ownership record', () => {
         return '';
       },
       runFile(_file, args = []) {
+        if (_file === 'xcrun' && args[1] === 'list') return this.run!([_file, ...args].join(' '));
         if (args[1] === 'delete' && args[2] === 'U0') throw new Error('simctl busy');
         return '';
       },
@@ -332,7 +340,9 @@ test('teardownOwnedIosSim falls back to deletion when parking fails', () => {
         }
         return '';
       },
-      runFile: () => '',
+      runFile(file, args = []) {
+        return this.run!([file, ...args].join(' '));
+      },
       runQuiet: () => '',
       spawn: () => null,
     });
@@ -383,7 +393,8 @@ test('teardownOwnedIosSim deletes instead of parking when app data cannot be pro
         }
         return '';
       },
-      runFile(file) {
+      runFile(file, args = []) {
+        if (file === 'xcrun' && args[1] === 'list') return this.run!([file, ...args].join(' '));
         if (file === 'plutil') throw new Error('container metadata unreadable');
         return '';
       },
@@ -465,7 +476,9 @@ test('parking fallback re-resolves ownership immediately before deletion', () =>
         if (cmd.includes('list devicetypes')) throw new Error('device types unavailable');
         return '';
       },
-      runFile: () => '',
+      runFile(file, args = []) {
+        return this.run!([file, ...args].join(' '));
+      },
       runQuiet: () => '',
       spawn: () => null,
     });
@@ -512,6 +525,7 @@ test('teardownOwnedIosSim does not park a simulator that remains booted', () => 
         return '';
       },
       runFile(file, args = []) {
+        if (file === 'xcrun' && args[1] === 'list') return this.run!([file, ...args].join(' '));
         calls.push([file, ...args].join(' '));
         return '';
       },
@@ -549,7 +563,13 @@ function androidExecutor({ avds = [], adb = '', avdName = null, throwOn = null }
     if (/emu avd name/.test(cmd)) return avdName ? `${avdName}\nOK` : '';
     return '';
   };
-  return { calls, run: answer, runQuiet: answer, spawn: () => {} };
+  return {
+    calls,
+    run: answer,
+    runFile: (file: string, args: string[] = []) => answer([file, ...args].join(' ')),
+    runQuiet: answer,
+    spawn: () => {},
+  };
 }
 
 test('teardownOwnedAvd shuts down the running emulator and deletes the AVD', () => {

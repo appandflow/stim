@@ -100,9 +100,13 @@ export function installIosApp(
   const skipped = bundleId && proveInstalled ? deviceHoldsBundle({ udid, bundleId, appPath }, { exec: e }) : false;
   if (!skipped) {
     try {
-      e.runFile('xcrun', ['simctl', 'install', udid, appPath]);
+      e.runFile('xcrun', ['simctl', 'install', udid, appPath], { timeoutMs: 300000, killSignal: 'SIGKILL' });
     } catch (err) {
-      return { failed: true, code: INSTALL_ERROR, reason: `simctl install failed for ${appPath}: ${describe(err)}` };
+      return {
+        failed: true,
+        code: INSTALL_ERROR,
+        reason: `simctl install failed for ${appPath}: ${describeIosSimulatorFailure(err, e)}`,
+      };
     }
   }
   const artifactFinishedAt = now?.();

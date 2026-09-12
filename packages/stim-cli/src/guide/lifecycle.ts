@@ -1364,13 +1364,26 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   profile is a fast no-op on later launches. The settings persist across normal
   shutdowns and reboots. Removing the setting restores stock services when
   Stim applied the profile. Stim never changes an unowned or remote simulator.
+  Each SimSlim operation has a 12-minute outer deadline, including discovery.
+  This cap also applies when SimSlim's own timeout is increased. On timeout,
+  Ctrl-C, or SIGTERM, Stim attempts to stop only its verified process group, then waits up to
+  10 seconds to confirm termination before returning or exiting.
+  An unconfirmed process group keeps its claim and blocks another reconciliation;
+  inspect the named processes before removing the exact claim in the error.
+  The simulator's managed settings record is retained, so retrying reconciles an
+  interrupted apply or restore. Stim does not assume partial changes rolled back.
   Doctor recommends this setup but never installs SimSlim or applies a profile.
   Profile schema and service tradeoffs: https://github.com/MobAI-App/simslim
 
 HOST MEMORY PRESSURE AND STALLED SIMULATORS
   Booted and a working screenshot do not prove that simulator processes can
   start. Stim checks a bounded process spawn before install and bounds local
-  simulator launch operations. A timeout is not proof of an app crash or OOM.
+  simulator launch operations. Simulator discovery waits up to 30 seconds,
+  boot (including the initial boot request) up to 10 minutes, and app installation
+  up to 5 minutes. Process termination confirmation can take another 10 seconds;
+  a final boot-state query can take 30 seconds. Opening the Simulator app after
+  boot is best-effort and takes at most 5 seconds. A timeout is not proof of an
+  app crash or OOM.
   Doctor and failure diagnostics report macOS memory pressure when available;
   a failed query remains unknown. Existing swap or low free RAM alone is not
   enough to diagnose pressure.

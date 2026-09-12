@@ -668,7 +668,8 @@ function simctlClock(step: number) {
   const state = { now: 1_000_000 };
   setExecutor(
     makeExecutor({
-      run: (cmd: string) => {
+      runFile: (file, args = []) => {
+        const cmd = [file, ...args].join(' ');
         if (!cmd.includes('simctl list devices')) return '';
         state.now += step;
         return JSON.stringify({

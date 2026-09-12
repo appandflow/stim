@@ -104,10 +104,13 @@ export function parseSimctlList(
 }
 
 export function listAllIosSims({
-  timeoutMs,
+  timeoutMs = 30000,
   includeUnavailable = false,
 }: { timeoutMs?: number; includeUnavailable?: boolean } = {}): IosSimRecord[] {
-  const out = getExecutor().run('xcrun simctl list devices --json', { timeoutMs });
+  const out = getExecutor().runFile('xcrun', ['simctl', 'list', 'devices', '--json'], {
+    timeoutMs,
+    killSignal: 'SIGKILL',
+  });
   return parseSimctlList(out, { includeUnavailable });
 }
 
@@ -187,11 +190,29 @@ async function awaitBootstatus(udid: string, attemptMs: number): Promise<void> {
   const attempt = new Promise<'timeout'>((resolve) => {
     timer = setTimeout(() => resolve('timeout'), attemptMs);
   });
+  const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
   const result = await Promise.race([waitForChild(child), attempt]);
   clearTimeout(timer);
   reader.flush();
   if (result === 'timeout') {
-    child.kill('SIGKILL');
+    try {
+      child.kill('SIGKILL');
+    } catch {}
+    const stopped = await Promise.race([
+      exited.then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), 10000);
+      }),
+    ]);
+    clearTimeout(timer);
+    if (!stopped) {
+      child.stdout?.destroy?.();
+      child.stderr?.destroy?.();
+      child.unref();
+      throw new Error(
+        `Timed out waiting for simctl bootstatus ${udid}; its process could not be confirmed stopped. Inspect pid ${child.pid ?? 'unknown'} before retrying.`,
+      );
+    }
     throw bootstatusTimeout(udid);
   }
   if (result.error) throw result.error;
@@ -208,12 +229,12 @@ export async function bootIosSim(
   }: { timeoutMs?: number; attemptMs?: number } = {},
 ): Promise<void> {
   const exec = getExecutor();
+  const deadline = Date.now() + timeoutMs;
   try {
-    exec.run(`xcrun simctl boot ${udid}`);
+    exec.runFile('xcrun', ['simctl', 'boot', udid], { timeoutMs, killSignal: 'SIGKILL' });
   } catch (e) {
     if (!String((e as Error)?.message || e).includes('Booted')) throw e;
   }
-  const deadline = Date.now() + timeoutMs;
   // `simctl bootstatus -b` blocks until the boot finishes, and a first boot on a
   // CPU-starved host (a CI runner sharing cores with xcodebuild) can legitimately
   // outlast one attempt (#128).
@@ -242,7 +263,7 @@ export async function bootIosSim(
       throw new Error(`Simulator ${udid} did not finish booting within ${Math.round(timeoutMs / 1000)}s.`);
     }
   }
-  exec.runQuiet('open -a Simulator');
+  exec.runFileQuiet('open', ['-a', 'Simulator'], { timeoutMs: 5000, killSignal: 'SIGKILL' });
 }
 
 export function shutdownIosSim(udid: string): void {
@@ -251,7 +272,10 @@ export function shutdownIosSim(udid: string): void {
 
 export function listIosDeviceTypes(): IosDeviceType[] {
   const exec = getExecutor();
-  const out = exec.run('xcrun simctl list devicetypes --json');
+  const out = exec.runFile('xcrun', ['simctl', 'list', 'devicetypes', '--json'], {
+    timeoutMs: 30000,
+    killSignal: 'SIGKILL',
+  });
   const data = JSON.parse(out) as { devicetypes?: Array<{ identifier: string; name: string }> };
   return (data.devicetypes || []).map((dt) => ({
     identifier: dt.identifier,
@@ -495,7 +519,10 @@ export function deleteParkedIosSim(udid: string): void {
 }
 
 export function listIosRuntimes(): IosRuntime[] {
-  const out = getExecutor().run('xcrun simctl list runtimes --json');
+  const out = getExecutor().runFile('xcrun', ['simctl', 'list', 'runtimes', '--json'], {
+    timeoutMs: 30000,
+    killSignal: 'SIGKILL',
+  });
   const data = JSON.parse(out) as {
     runtimes?: Array<{
       identifier: string;
