@@ -1,5 +1,5 @@
 import { realpathSync } from 'node:fs';
-import { getProject } from '../../../packages/stim-cli/src/config.ts';
+import { upsertProject } from '../../../packages/stim-cli/src/config.ts';
 import { ensureOwnedDevice, ensureBooted } from '../../../packages/stim-cli/src/engine/device.ts';
 import { readCommittedSettings } from '../../../packages/stim-cli/src/settings.ts';
 
@@ -11,7 +11,7 @@ if (!settings.ios?.simslimProfile) throw new Error('Native QA preparation requir
 const out = (message) => process.stderr.write(`${message}\n`);
 const device = await ensureOwnedDevice({
   platform: 'ios',
-  project: getProject(projectPath),
+  project: upsertProject(projectPath, {}),
   projectPath,
   slot,
   settings,
