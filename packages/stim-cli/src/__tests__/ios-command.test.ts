@@ -5717,6 +5717,74 @@ describe('optimization configuration', () => {
 });
 
 describe('EAS development builds', () => {
+  async function runEasDevice(overrides: Partial<IosDeps> = {}) {
+    reserve();
+    const udid = '00008030-001A2B3C4D5E802E';
+    return run(
+      { json: true, device: udid, easProfile: 'development-device' },
+      {
+        detectIsExpo: () => true,
+        listIosDevices: () => [
+          {
+            udid,
+            name: 'Test Phone',
+            bootState: 'booted',
+            developerModeStatus: 'enabled',
+            pairingState: 'paired',
+            transportType: 'wired',
+          },
+        ],
+        resolveEasDevelopmentBuild: async () => ({
+          ok: true,
+          path: join(root, 'Eas.app'),
+          fingerprint: 'eas-fingerprint',
+          cacheKey: 'eas-device-key',
+          cacheHit: 'remote',
+        }),
+        devClientScheme: () => 'exp+fixture',
+        ...overrides,
+      },
+    );
+  }
+
+  test('installs an EAS device app after the provisioning gate without modifying its signature', async () => {
+    const { logs, calls } = await runEasDevice();
+    expect(calls.args.gateProfileForDevice).toMatchObject({
+      appPath: join(root, 'Eas.app'),
+      udid: '00008030-001A2B3C4D5E802E',
+    });
+    expect(calls.args.installIosDeviceApp).toMatchObject({
+      appPath: join(root, 'Eas.app'),
+      udid: '00008030-001A2B3C4D5E802E',
+    });
+    expect(calls.order.indexOf('gateProfileForDevice')).toBeLessThan(calls.order.indexOf('installIosDeviceApp'));
+    expect(parseFirst(logs)).toMatchObject({ launched: true, cacheHit: 'remote' });
+    for (const step of ['sealAppForDevice', 'buildIos', 'ensureOwnedDevice']) expect(calls.order).not.toContain(step);
+  });
+
+  test('an EAS provisioning refusal points to EAS registration and rebuilding', async () => {
+    const { logs, calls } = await runEasDevice({
+      gateProfileForDevice: () => ({
+        ok: false,
+        code: 'STIM_PROFILE_MISMATCH',
+        reason: 'Device is not in the profile.',
+        remedy: 'Xcode remedy.',
+      }),
+    });
+    expect(parseFirst(logs)).toMatchObject({ code: 'STIM_PROFILE_MISMATCH' });
+    expect(parseFirst(logs).remedy).toContain('npx eas-cli device:create');
+    expect(parseFirst(logs).remedy).toContain('npx eas-cli build --platform ios --profile development-device');
+    expect(parseFirst(logs).remedy).not.toContain('Xcode');
+    for (const step of ['installIosDeviceApp', 'sealAppForDevice', 'buildIos']) expect(calls.order).not.toContain(step);
+  });
+
+  test('an EAS device app without a dev-client scheme refuses instead of re-signing', async () => {
+    const { logs, calls } = await runEasDevice({ devClientScheme: () => undefined });
+    expect(parseFirst(logs)).toMatchObject({ code: 'STIM_BAD_ARG' });
+    expect(parseFirst(logs).remedy).toContain('npx expo install expo-dev-client');
+    for (const step of ['installIosDeviceApp', 'sealAppForDevice', 'buildIos']) expect(calls.order).not.toContain(step);
+  });
+
   test('installs the EAS artifact against the reserved Metro port without entering the local build pipeline', async () => {
     reserve();
     const path = join(root, 'Eas.app');
@@ -5788,5 +5856,16 @@ describe('EAS development builds', () => {
       },
     );
     expect(parseFirst(logs)).toMatchObject({ code: 'STIM_BAD_ARG' });
+  });
+
+  test('an empty simulator selector on an EAS device run refuses before EAS uploads or downloads', async () => {
+    reserve();
+    const resolveEasDevelopmentBuild = vi.fn<() => Promise<null>>(async () => null);
+    const { logs } = await run(
+      { json: true, device: true, easProfile: 'development-device', deviceType: '' },
+      { detectIsExpo: () => true, resolveEasDevelopmentBuild },
+    );
+    expect(parseFirst(logs)).toMatchObject({ code: 'STIM_BAD_ARG' });
+    expect(resolveEasDevelopmentBuild).not.toHaveBeenCalled();
   });
 });

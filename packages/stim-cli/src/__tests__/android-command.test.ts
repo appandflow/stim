@@ -5758,9 +5758,44 @@ describe('EAS development builds', () => {
     for (const list of [calls.ensureDevice, calls.booted, calls.install, calls.build]) expect(list).toHaveLength(0);
   });
 
+  test('installs the EAS APK on a physical device without creating or building an emulator', async () => {
+    expoProject();
+    const path = fakeApk();
+    const { run, calls } = harness({
+      device: 'RFCR7081Q9L',
+      easProfile: 'development',
+      listDevices: () => ({ emulators: [], physical: [{ serial: 'RFCR7081Q9L' }], unhealthy: [] }),
+      deviceModel: () => 'SM-G996W',
+      isEmulatorDevice: () => false,
+      resolveEasDevelopmentBuild: async () => ({
+        ok: true,
+        path,
+        fingerprint: 'eas-fingerprint',
+        cacheKey: 'eas-key',
+        cacheHit: 'remote',
+      }),
+    });
+    expect((await run()).ok).toBe(true);
+    expect(calls.install[0]).toMatchObject({ apkPath: path, serial: 'RFCR7081Q9L' });
+    for (const list of [calls.ensureDevice, calls.booted, calls.build, calls.fingerprint]) expect(list).toHaveLength(0);
+  });
+
   test('conflicting local selectors refuse before querying EAS', async () => {
     expoProject();
     const { run } = harness({ easProfile: 'development', variant: 'debug' });
     expect(await run()).toMatchObject({ ok: false, error: { code: 'STIM_BAD_ARG' } });
+  });
+
+  test.each([
+    { device: '' },
+    { device: true, remoteDevice: 'eas' as const },
+    { device: true, wait: 'invalid' },
+    { device: true, systemImage: '' },
+  ])('invalid device options refuse before EAS uploads or downloads: %j', async (options) => {
+    expoProject();
+    const resolveEasDevelopmentBuild = vi.fn<() => Promise<null>>(async () => null);
+    const { run } = harness({ ...options, easProfile: 'development', resolveEasDevelopmentBuild });
+    expect(await run()).toMatchObject({ ok: false, error: { code: 'STIM_BAD_ARG' } });
+    expect(resolveEasDevelopmentBuild).not.toHaveBeenCalled();
   });
 });

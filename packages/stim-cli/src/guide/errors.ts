@@ -352,7 +352,10 @@ spending a build or a bundle, that the check can succeed.`,
       profile;
     - it is a development or ad hoc profile whose device list does not name
       this UDID. Register the UDID at developer.apple.com, regenerate the
-      profile, and build once from Xcode.`,
+      profile, and build once from Xcode.
+  With --eas-profile, follow the EAS device:create and build commands in the
+  refusal instead. Registration, signing changes and cloud builds need session
+  authorization. See stim guide lifecycle eas.`,
     },
     STIM_NO_SIGNING_IDENTITY: {
       summary: 'no single keychain identity resolves; ios.signingIdentitySha1 for two certificates',

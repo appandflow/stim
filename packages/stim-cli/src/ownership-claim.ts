@@ -157,21 +157,20 @@ export interface ClaimFailure {
  * states in which it holds no claim, and running the operation a claim serializes without one gives a
  * competing run no protection at all.
  */
-export function claimFailure(err: unknown, retryCommand: string): ClaimFailure | null {
+export function claimFailure(err: unknown, retryCommand: string | null): ClaimFailure | null {
+  const retry = retryCommand === null ? 'retry the same Stim command' : `run \`${retryCommand}\` again`;
   if (isClaimRefusal(err)) {
     return {
       code: CLAIM_REFUSED,
       message: err.message,
-      remedy: `Run \`${err.removeCommand}\`, then run \`${retryCommand}\` again.`,
+      remedy: `Run \`${err.removeCommand}\`, then ${retry}.`,
     };
   }
   if (isClaimUnavailable(err)) {
     return {
       code: CLAIM_UNAVAILABLE,
       message: err.message,
-      remedy:
-        'Reinstall Stim so the unique-pid native module for this platform is present, then run ' +
-        `\`${retryCommand}\` again.`,
+      remedy: `Reinstall Stim so the unique-pid native module for this platform is present, then ${retry}.`,
     };
   }
   return null;

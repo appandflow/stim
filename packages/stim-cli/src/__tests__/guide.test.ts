@@ -483,4 +483,6 @@ test('EAS guidance routes agents to the profile and preserves the paid-build aut
   expect(eas).toMatch(/session authorizes the potentially billable/);
   expect(eas).toContain('STIM_EAS_BUILD_MISSING');
   expect(eas).toContain('STIM_EAS_UNAVAILABLE');
+  expect(eas).toContain('npx eas-cli device:create');
+  expect(eas).toMatch(/Registration, signing changes and cloud builds need session authorization/);
 });

@@ -190,11 +190,14 @@ TWO REPORTS, TWO QUESTIONS
 
   stim ios --eas-profile ios-simulator
   stim android --eas-profile development
+  stim ios --eas-profile development-device --device <udid>
+  stim android --eas-profile development --device <serial>
 
 An eas.json file does not select EAS automatically. The flag names the profile
 and selects EAS Build as the artifact source. The profile must resolve to
-"developmentClient": true and "distribution": "internal"; iOS also needs
-"ios": { "simulator": true }. An explicit ios.buildConfiguration must be Debug;
+"developmentClient": true and "distribution": "internal". For iOS, set
+"ios.simulator": true for a simulator, or false (or omit it) for --device.
+An explicit ios.buildConfiguration must be Debug;
 android.gradleCommand must be a single :app:assemble<Variant>Debug task producing
 an APK. Install eas-cli and authenticate with eas login
 or EXPO_TOKEN. The Expo app must already be linked to the intended EAS project.
@@ -207,24 +210,35 @@ already cached, because the current profile and fingerprint must be resolved.
 Stim matches the EAS project, profile, native fingerprint, platform and
 simulator/internal distribution target against a completed build. It downloads
 an iOS .app or Android .apk with EAS CLI, then uses its existing installation,
-Metro connection, log capture and launch verification on the owned device.
+Metro connection, log capture and launch verification on the selected device.
 The flag also works with --remote; remote EAS Simulator sessions have their
-own costs, independent of this download path. Physical --device targets and
-local --scheme, --configuration, --variant and --no-build-cache selectors
+own costs, independent of this download path. Local --scheme, --configuration,
+--variant and --no-build-cache selectors
 cannot be combined with --eas-profile. Local configuration/variant defaults
 are ignored for this development-build run.
+
+Physical devices use Stim's usual selection and lease rules. An iOS app must
+have a development-client URL scheme and a valid embedded provisioning profile
+that includes the target UDID. Stim installs the signed app without re-signing
+it. If the profile does not admit the device, the remedy points to
+npx eas-cli device:create and npx eas-cli build --platform ios --profile <name>.
+Registration, signing changes and cloud builds need session authorization.
+Run the EAS build interactively when its provisioning profile needs refreshing,
+then retry the same Stim command.
 
 Start Metro with stim start as usual. Metro uses the local workspace's
 environment; arrange the appropriate local variables before starting it.
 EAS environment resolution for native fingerprinting does not configure Metro.
 
-The EAS artifact cache is separate from local native builds and includes the
-EAS project, profile, resolved profile settings and fingerprint. A local hit
-reports cacheHit: "local"; a download reports "remote". The fingerprint fact
-is the EAS native fingerprint. Local buildCache settings control local reuse
-and storage; remoteBuildCache settings do not disable an explicitly selected
-EAS build source. Scratch downloads live under the workspace's eas-downloads
-directory and are registered for gc.
+EAS CLI caches extracted artifacts by project and build ID in its own temporary
+cache. Stim calls build:download and uses the returned artifact without making
+another cache copy. Every run queries the latest matching build, so a rebuild
+with a refreshed provisioning profile is selected even if its native fingerprint
+is unchanged. Stim coordinates concurrent downloads by project and build ID.
+cacheHit: "remote" identifies the EAS source, including when EAS CLI reuses its
+disk cache. The fingerprint fact is the EAS native fingerprint. Stim's local
+buildCache and remoteBuildCache settings do not control EAS CLI's cache.
+EAS cache files are managed by EAS CLI and are outside Stim gc.
 
 On STIM_EAS_BUILD_MISSING, Stim stops before acquiring a device and prints:
 

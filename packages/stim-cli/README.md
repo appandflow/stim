@@ -79,8 +79,11 @@ readiness. Plain output streams progress and reports the complete result. Use
 
 To use an existing EAS development build, run `stim ios --eas-profile ios-simulator`
 or `stim android --eas-profile development` with your project's profile name.
-The profile must be an internal development build; iOS requires `ios.simulator: true`.
+The profile must be an internal development build. Add `--device` for a connected
+phone; iOS requires `ios.simulator: true` for a simulator and false for a phone.
 Stim downloads a matching native build and connects it to the workspace's Metro.
+EAS CLI manages the downloaded artifact cache. An iOS provisioning failure
+points to EAS device registration and rebuild commands.
 On a miss it stops and prints the EAS build command, which may incur charges;
 it never triggers the build automatically. See `stim guide lifecycle eas` for
 setup, environment handling, and cache behavior.

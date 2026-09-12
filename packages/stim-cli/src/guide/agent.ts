@@ -89,6 +89,8 @@ Read stim guide lifecycle eas before using this path. A miss stops with
 STIM_EAS_BUILD_MISSING and an EAS build command. Run that command only when the
 session authorizes the potentially billable build, then retry Stim. The
 presence of eas.json does not select EAS or authorize building.
+Physical --device targets are supported. Follow EAS device-registration and
+rebuild remedies only when the session authorizes those account changes.
 
 Read stim guide lifecycle concurrency when a build waits on another workspace
 or a build call times out. A native build can outlive a shell timeout; if the

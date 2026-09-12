@@ -1,11 +1,7 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync } from 'node:fs';
-import { isAbsolute, join, relative, sep } from 'node:path';
-import { resolveBuild, storeBuild } from '../build-cache.ts';
-import { register } from '../cache-manifest.ts';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import { getExecutor } from '../exec.ts';
 import { claimFailure } from '../ownership-claim.ts';
-import { workspaceDir } from '../paths.ts';
 import { acquireBuildLock, releaseBuildLock } from './build-lock.ts';
 import { resolveEasCliBin } from './remote-cache.ts';
 
@@ -20,7 +16,7 @@ interface Refusal {
 
 export type EasBuildResult =
   | ({ ok: false } & Refusal)
-  | { ok: true; path: string; fingerprint: string; cacheKey: string; cacheHit: 'local' | 'remote' };
+  | { ok: true; path: string; fingerprint: string; cacheKey: string; cacheHit: 'remote' };
 
 export function isEasBuildFailure(result: EasBuildResult | null): result is { ok: false } & Refusal {
   return result?.ok === false;
@@ -29,23 +25,20 @@ export function isEasBuildFailure(result: EasBuildResult | null): result is { ok
 export function easOptionRefusal({
   profile,
   isExpo,
-  physical,
   buildSelector,
   buildCache,
 }: {
   profile?: string;
   isExpo: boolean;
-  physical: boolean;
   buildSelector?: string;
   buildCache?: boolean;
 }): Refusal | null {
   if (profile === undefined) return null;
-  if (profile.trim() && isExpo && !physical && buildSelector === undefined && buildCache !== false) return null;
+  if (profile.trim() && isExpo && buildSelector === undefined && buildCache !== false) return null;
   return {
     code: 'STIM_BAD_ARG',
-    message:
-      '--eas-profile requires an Expo project, a non-empty development profile, and a simulator or emulator target.',
-    remedy: 'Use --eas-profile <name> without --device, --scheme, --configuration, --variant, or --no-build-cache.',
+    message: '--eas-profile requires an Expo project and a non-empty development profile.',
+    remedy: 'Use --eas-profile <name> without --scheme, --configuration, --variant, or --no-build-cache.',
   };
 }
 
@@ -55,6 +48,10 @@ function object(value: unknown): JsonObject {
 
 function shellArg(value: string): string {
   return /^[a-zA-Z0-9_.-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+export function easDeviceBuildRemedy(profile: string): string {
+  return `If the device is not registered, run npx eas-cli device:create. With approval for cloud build costs and signing changes, run npx eas-cli build --platform ios --profile ${shellArg(profile)} to produce a build with a valid profile for this device, then retry the same Stim command.`;
 }
 
 class EasFailure extends Error {
@@ -75,7 +72,8 @@ export function selectEasBuild(
     profile,
     fingerprint,
     projectId,
-  }: { platform: Platform; profile: string; fingerprint: string; projectId: string },
+    physical = false,
+  }: { platform: Platform; profile: string; fingerprint: string; projectId: string; physical?: boolean },
 ): string | null {
   if (!Array.isArray(builds)) throw new Error('EAS build:list did not return an array.');
   for (const value of builds) {
@@ -88,7 +86,8 @@ export function selectEasBuild(
       build.buildProfile === profile &&
       object(build.fingerprint).hash === fingerprint &&
       object(build.project).id === projectId &&
-      (platform === 'ios' ? build.isForIosSimulator === true : build.distribution === 'INTERNAL') &&
+      (platform !== 'ios' || build.isForIosSimulator === !physical) &&
+      build.distribution === 'INTERNAL' &&
       typeof object(build.artifacts).applicationArchiveUrl === 'string'
     )
       return build.id;
@@ -100,7 +99,6 @@ export async function resolveEasDevelopmentBuild({
   root,
   platform,
   profile,
-  cache,
   note,
   isExpo = true,
   physical = false,
@@ -114,23 +112,18 @@ export async function resolveEasDevelopmentBuild({
   physical?: boolean;
   selectors?: (string | null | undefined)[];
   buildCache?: boolean;
-  cache: { read: boolean; write: boolean };
   note: (line: string) => void;
 }): Promise<EasBuildResult | null> {
   if (profile === undefined) return null;
   const refusal = easOptionRefusal({
     profile,
     isExpo,
-    physical,
     buildSelector: selectors.find((value) => value != null) ?? undefined,
     buildCache,
   });
   if (refusal) return { ok: false, ...refusal };
-  const retry = `stim ${platform} --eas-profile ${shellArg(profile)}`;
+  const retry = 'the same Stim command';
   const buildCommand = `npx eas-cli build --platform ${platform} --profile ${shellArg(profile)}`;
-  const scratchRoot = join(workspaceDir(root), 'eas-downloads');
-  let scratch: string | null = null;
-  let keepScratch = false;
   let lock: ReturnType<typeof acquireBuildLock> | null = null;
   try {
     const cli = resolveEasCliBin(root);
@@ -141,13 +134,13 @@ export async function resolveEasDevelopmentBuild({
         'Install eas-cli, run eas login, then retry.',
       );
     let profileEnv: Record<string, string> = {};
-    const run = (args: string[], timeoutMs = 120_000, env?: Record<string, string>): unknown => {
+    const run = (args: string[], timeoutMs = 120_000): unknown => {
       try {
         return JSON.parse(
           getExecutor().runFile(cli.file, [...args, '--json', '--non-interactive'], {
             cwd: root,
             timeoutMs,
-            env: { ...profileEnv, ...env },
+            env: profileEnv,
           }),
         );
       } catch {
@@ -168,12 +161,12 @@ export async function resolveEasDevelopmentBuild({
     if (
       buildProfile.developmentClient !== true ||
       buildProfile.distribution !== 'internal' ||
-      (platform === 'ios' && buildProfile.simulator !== true)
+      (platform === 'ios' && (buildProfile.simulator === true) !== !physical)
     ) {
       throw new EasFailure(
         'STIM_BAD_ARG',
-        `EAS profile ${profile} is not an internal development build for ${platform}.`,
-        `Set developmentClient: true and distribution: internal${platform === 'ios' ? ', with ios.simulator: true' : ''} in that eas.json profile.`,
+        `EAS profile ${profile} is not an internal development build for this ${platform} target.`,
+        `Set developmentClient: true and distribution: internal${platform === 'ios' ? `, with ios.simulator: ${!physical}` : ''} in that eas.json profile.`,
       );
     }
     if (typeof projectId !== 'string' || !projectId) {
@@ -205,25 +198,6 @@ export async function resolveEasDevelopmentBuild({
         `Run npx eas-cli fingerprint:generate --platform ${platform} --build-profile ${shellArg(profile)} to inspect the result.`,
       );
     }
-    const identity = createHash('sha256')
-      .update(JSON.stringify({ projectId, profile, buildProfile, fingerprint }))
-      .digest('hex');
-    const cacheKey = `eas-${identity}-debug-sim`;
-    const local = cache.read ? resolveBuild(platform, cacheKey) : null;
-    if (local) {
-      note(`eas   local hit ${fingerprint.slice(0, 8)}`);
-      return { ok: true, path: local, fingerprint, cacheKey, cacheHit: 'local' };
-    }
-    lock = acquireBuildLock({ platform, key: cacheKey, root });
-    if (!lock.acquired) {
-      throw new EasFailure(
-        'STIM_EAS_UNAVAILABLE',
-        `Another run holds the EAS artifact claim at ${lock.path}.`,
-        `Wait for that run to finish, then retry ${retry}.`,
-      );
-    }
-    const rechecked = cache.read ? resolveBuild(platform, cacheKey) : null;
-    if (rechecked) return { ok: true, path: rechecked, fingerprint, cacheKey, cacheHit: 'local' };
     note(`eas   looking for ${fingerprint.slice(0, 8)}`);
     const builds = run([
       'build:list',
@@ -235,11 +209,11 @@ export async function resolveEasDevelopmentBuild({
       fingerprint,
       '--status',
       'finished',
-      ...(platform === 'ios' ? ['--simulator'] : ['--distribution', 'internal']),
+      ...(platform === 'ios' && !physical ? ['--simulator'] : ['--distribution', 'internal']),
       '--limit',
       '1',
     ]);
-    const buildId = selectEasBuild(builds, { platform, profile, fingerprint, projectId });
+    const buildId = selectEasBuild(builds, { platform, profile, fingerprint, projectId, physical });
     if (!buildId) {
       throw new EasFailure(
         'STIM_EAS_BUILD_MISSING',
@@ -247,31 +221,32 @@ export async function resolveEasDevelopmentBuild({
         `A cloud build may incur charges. With approval to run it, use ${buildCommand}, then retry ${retry}.`,
       );
     }
-    mkdirSync(scratchRoot, { recursive: true });
-    register({ dir: scratchRoot, name: 'EAS downloads', prune: 'entries', note: 'downloaded development builds' });
-    scratch = mkdtempSync(join(scratchRoot, 'download-'));
-    note(`eas   downloading build ${buildId}`);
-    const result = object(run(['build:download', '--build-id', buildId], 10 * 60_000, { TMPDIR: scratch }));
+    const identity = createHash('sha256').update(JSON.stringify({ projectId, buildId })).digest('hex');
+    const cacheKey = `eas-${identity}-debug-${physical && platform === 'ios' ? 'device' : 'sim'}`;
+    lock = acquireBuildLock({ platform, key: cacheKey, root });
+    if (!lock.acquired) {
+      throw new EasFailure(
+        'STIM_EAS_UNAVAILABLE',
+        `Another run holds the EAS artifact claim at ${lock.path}.`,
+        `Wait for that run to finish, then retry ${retry}.`,
+      );
+    }
+    note(`eas   resolving artifact for build ${buildId}`);
+    const result = object(run(['build:download', '--build-id', buildId], 10 * 60_000));
     if (typeof result.path !== 'string' || !existsSync(result.path))
       throw new Error('EAS returned no downloaded artifact.');
     const path = realpathSync(result.path);
-    const within = relative(realpathSync(scratch), path);
     if (
-      isAbsolute(within) ||
-      within === '..' ||
-      within.startsWith(`..${sep}`) ||
-      (platform === 'ios'
+      platform === 'ios'
         ? !path.endsWith('.app') || !statSync(path).isDirectory()
-        : !path.endsWith('.apk') || !statSync(path).isFile())
+        : !path.endsWith('.apk') || !statSync(path).isFile()
     ) {
       throw new Error('EAS returned an unexpected artifact path or type.');
     }
-    const stored = cache.write ? storeBuild(platform, cacheKey, path) : null;
-    keepScratch = !stored;
-    note(`eas   downloaded ${fingerprint.slice(0, 8)}${stored ? ' -> stored locally' : ''}`);
-    return { ok: true, path: stored ?? path, fingerprint, cacheKey, cacheHit: 'remote' };
+    note(`eas   artifact ready ${fingerprint.slice(0, 8)}`);
+    return { ok: true, path, fingerprint, cacheKey, cacheHit: 'remote' };
   } catch (error) {
-    const claim = claimFailure(error, retry);
+    const claim = claimFailure(error, null);
     if (claim) return { ok: false, code: claim.code, message: claim.message, remedy: claim.remedy };
     if (error instanceof EasFailure)
       return { ok: false, code: error.code, message: error.message, remedy: error.remedy };
@@ -282,10 +257,6 @@ export async function resolveEasDevelopmentBuild({
       remedy: `Retry ${retry}. No cloud build was started.`,
     };
   } finally {
-    try {
-      if (scratch && !keepScratch) rmSync(scratch, { recursive: true, force: true });
-    } finally {
-      releaseBuildLock(lock);
-    }
+    releaseBuildLock(lock);
   }
 }

@@ -1,4 +1,4 @@
-import { isEasBuildFailure } from '../engine/eas-build.ts';
+import { easDeviceBuildRemedy, isEasBuildFailure } from '../engine/eas-build.ts';
 import { rmSync } from 'node:fs';
 import {
   resolveOptimizations,
@@ -479,18 +479,6 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
   const waitSeconds = waitParsed.seconds;
 
   const isExpo = d.detectIsExpo(root);
-  const easBuild = await d.resolveEasDevelopmentBuild({
-    root,
-    platform: PLATFORM,
-    profile: opts.easProfile,
-    cache: cachePolicy,
-    note,
-    isExpo,
-    physical,
-    selectors: [opts.scheme, opts.configuration],
-    buildCache: opts.buildCache,
-  });
-  if (isEasBuildFailure(easBuild)) return fail(easBuild);
   const schemeRefusal = explicitSchemeRefusal(root, buildScheme, isExpo, d);
   if (schemeRefusal) return fail(schemeRefusal);
   const remoteBackend = physical ? null : (opts.remote ?? remoteIosSetting(settings));
@@ -504,6 +492,17 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
     listRuntimes: d.listIosRuntimes,
   });
   if (modelRefusal) return fail(modelRefusal);
+  const easBuild = await d.resolveEasDevelopmentBuild({
+    root,
+    platform: PLATFORM,
+    profile: opts.easProfile,
+    note,
+    isExpo,
+    physical,
+    selectors: [opts.scheme, opts.configuration],
+    buildCache: opts.buildCache,
+  });
+  if (isEasBuildFailure(easBuild)) return fail(easBuild);
   const registerProject = () => d.upsertProject(root, { bundleId: d.detectBundleId(root) ?? undefined, isExpo });
   if (remoteBackend !== 'eas') registerProject();
   const proj = d.getProject(root);
@@ -798,6 +797,22 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
       cacheHit = easBuild.cacheHit;
       providerName = 'eas';
       stats.setCacheKey(cacheKey);
+      if (physical) {
+        const gate = d.gateProfileForDevice({ appPath, udid, configuration });
+        if (!gate.ok) {
+          fail({ code: gate.code, message: gate.reason, remedy: easDeviceBuildRemedy(opts.easProfile!) });
+          return false;
+        }
+        if (!d.devClientScheme(root, appPath)) {
+          fail({
+            code: 'STIM_BAD_ARG',
+            message: 'The EAS device app has no development-client URL scheme.',
+            remedy:
+              'Install expo-dev-client with npx expo install expo-dev-client, then rebuild the EAS profile and retry.',
+          });
+          return false;
+        }
+      }
       return true;
     }
     const fingerprintTimer = stepTimer(d.now);

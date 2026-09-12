@@ -1,10 +1,11 @@
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
 import { easOptionRefusal, resolveEasDevelopmentBuild, selectEasBuild } from '../engine/eas-build.ts';
 import * as locks from '../engine/build-lock.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
+import { ClaimUnavailableError } from '../ownership-claim.ts';
 
 const fingerprint = 'a'.repeat(40);
 const projectId = 'project-1';
@@ -45,21 +46,19 @@ function fixture({
   config = {},
   failCommand = '',
   projectFromEnv = false,
+  physical = false,
 }: {
   platform?: 'ios' | 'android';
   builds?: unknown;
   config?: Record<string, unknown>;
   failCommand?: string;
   projectFromEnv?: boolean;
+  physical?: boolean;
 } = {}) {
   const calls: string[][] = [];
   setExecutor({
     runQuiet: () => '/eas',
     runFile: (file, args, options) => {
-      if (file === 'cp') {
-        cpSync(args.at(-2), args.at(-1), { recursive: true });
-        return '';
-      }
       expect(file).toBe('/eas');
       expect(options.cwd).toBe(root);
       expect(args).toContain('--json');
@@ -69,7 +68,7 @@ function fixture({
       switch (args[0]) {
         case 'config':
           return JSON.stringify({
-            buildProfile: { developmentClient: true, distribution: 'internal', simulator: true, ...config },
+            buildProfile: { developmentClient: true, distribution: 'internal', simulator: !physical, ...config },
             appConfig: { extra: { eas: { projectId } } },
           });
         case 'fingerprint:generate':
@@ -79,9 +78,10 @@ function fixture({
         case 'build:list':
           return JSON.stringify(projectFromEnv && options.env?.APP_VARIANT !== 'development' ? [] : builds);
         case 'build:download': {
-          const path = join(options.env.TMPDIR, platform === 'ios' ? 'App.app' : 'App.apk');
-          if (platform === 'ios') mkdirSync(path);
-          else writeFileSync(path, 'apk bytes');
+          const path = join(home, 'eas-run-cache', `${args[2]}.${platform === 'ios' ? 'app' : 'apk'}`);
+          mkdirSync(join(home, 'eas-run-cache'), { recursive: true });
+          if (platform === 'ios') mkdirSync(path, { recursive: true });
+          else if (!existsSync(path)) writeFileSync(path, 'apk bytes');
           return JSON.stringify({ path });
         }
         default:
@@ -89,8 +89,7 @@ function fixture({
       }
     },
   });
-  const resolve = (cache = { read: true, write: true }) =>
-    resolveEasDevelopmentBuild({ root, platform, profile, cache, note: () => {} });
+  const resolve = () => resolveEasDevelopmentBuild({ root, platform, profile, physical, note: () => {} });
   return { calls, resolve };
 }
 
@@ -107,13 +106,14 @@ test.each([
 });
 
 test.each(['ios', 'android'] as const)(
-  'downloads the matching %s build, then reuses its local artifact',
+  'uses the matching %s artifact from EAS CLI without copying or deleting it',
   async (platform) => {
     const { resolve, calls } = fixture({ platform, builds: [{ ...build, platform: platform.toUpperCase() }] });
     const first = await resolve();
     expect(first).toMatchObject({ ok: true, cacheHit: 'remote', fingerprint });
     if (!first?.ok) throw new Error(JSON.stringify(first));
     expect(existsSync(first.path)).toBe(true);
+    expect(first.path).toBe(realpathSync(join(home, 'eas-run-cache', `build-1.${platform === 'ios' ? 'app' : 'apk'}`)));
     expect(first.cacheKey).toMatch(/^eas-/);
     expect(calls.find((call) => call[0] === 'fingerprint:generate')).toContain('--build-profile');
     expect(calls.find((call) => call[0] === 'build:list')).toEqual([
@@ -139,8 +139,8 @@ test.each(['ios', 'android'] as const)(
       '--json',
       '--non-interactive',
     ]);
-    expect(await resolve()).toEqual({ ...first, cacheHit: 'local' });
-    expect(calls.filter((call) => call[0] === 'build:download')).toHaveLength(1);
+    expect(await resolve()).toEqual(first);
+    expect(calls.filter((call) => call[0] === 'build:download')).toHaveLength(2);
   },
 );
 
@@ -173,12 +173,13 @@ test.each([{ developmentClient: false }, { distribution: 'store' }, { simulator:
   },
 );
 
-test('changed profile settings do not reuse a previous artifact', async () => {
+test('a newly signed build uses a new identity even when its native fingerprint is unchanged', async () => {
   const first = await fixture().resolve();
-  const second = await fixture({ config: { env: { APP_VARIANT: 'another' } } }).resolve();
+  const second = await fixture({ builds: [{ ...build, id: 'build-2' }] }).resolve();
   if (!first?.ok || !second?.ok) throw new Error('Expected downloads');
   expect(second.cacheKey).not.toBe(first.cacheKey);
   expect(second.cacheHit).toBe('remote');
+  expect(second.path).not.toBe(first.path);
 });
 
 test('a profile that selects a different EAS project fingerprints and downloads from that project', async () => {
@@ -204,12 +205,20 @@ test.each([
   expect(await resolve()).toMatchObject({ ok: true, cacheHit: 'remote' });
 });
 
-test('disabled local caching leaves the downloaded artifact available for installation', async () => {
-  const { resolve } = fixture();
-  const result = await resolve({ read: false, write: false });
-  if (!result?.ok) throw new Error(JSON.stringify(result));
-  expect(existsSync(result.path)).toBe(true);
-  expect(result.path).toContain('eas-downloads');
+test.each(['ios', 'android'] as const)('resolves a physical %s development build', async (platform) => {
+  const { resolve, calls } = fixture({
+    physical: true,
+    platform,
+    builds: [{ ...build, isForIosSimulator: false, platform: platform.toUpperCase() }],
+  });
+  expect(await resolve()).toMatchObject({ ok: true, cacheHit: 'remote' });
+  const list = calls.find((call) => call[0] === 'build:list');
+  expect(list).toContain('--distribution');
+  expect(list).not.toContain('--simulator');
+});
+
+test('a simulator build is not selected for an iOS device', () => {
+  expect(selectEasBuild([build], { ...target, physical: true })).toBeNull();
 });
 
 test('a held claim prevents downloading or storing an artifact', async () => {
@@ -219,17 +228,26 @@ test('a held claim prevents downloading or storing an artifact', async () => {
     held: { pid: 12, projectRoot: root, startedAt: null, logFile: null },
   });
   expect(await resolve()).toMatchObject({ ok: false, code: 'STIM_EAS_UNAVAILABLE' });
-  expect(calls.map((call) => call[0])).toEqual(['config', 'fingerprint:generate']);
+  expect(calls.map((call) => call[0])).toEqual(['config', 'fingerprint:generate', 'build:list']);
 });
 
-test.each([
-  { physical: true },
-  { isExpo: false },
-  { buildSelector: 'Release' },
-  { buildCache: false },
-  { profile: '' },
-])('refuses incompatible EAS options before side effects: %j', (change) => {
-  expect(easOptionRefusal({ profile, isExpo: true, physical: false, ...change })).toMatchObject({
-    code: 'STIM_BAD_ARG',
+test('a failed device claim preserves the original device selection in its retry guidance', async () => {
+  const { resolve } = fixture({ physical: true, builds: [{ ...build, isForIosSimulator: false }] });
+  vi.mocked(locks.acquireBuildLock).mockImplementation(() => {
+    throw new ClaimUnavailableError('identity unavailable');
   });
+  const result = await resolve();
+  expect(result).toMatchObject({ ok: false, code: 'STIM_CLAIM_UNAVAILABLE' });
+  if (result?.ok !== false) throw new Error('Expected a refusal');
+  expect(result.remedy).toContain('retry the same Stim command');
+  expect(result.remedy).not.toContain('--device');
 });
+
+test.each([{ isExpo: false }, { buildSelector: 'Release' }, { buildCache: false }, { profile: '' }])(
+  'refuses incompatible EAS options before side effects: %j',
+  (change) => {
+    expect(easOptionRefusal({ profile, isExpo: true, ...change })).toMatchObject({
+      code: 'STIM_BAD_ARG',
+    });
+  },
+);

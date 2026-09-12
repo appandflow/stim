@@ -856,18 +856,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const useBuildCache = cachePolicy.read;
   const isExpo = detectIsExpo(root);
   const physical = isPhysicalDeviceRequest(deviceFlag);
-  const easBuild = await resolveEasBuild({
-    root,
-    platform: PLATFORM,
-    profile: easProfile,
-    cache: cachePolicy,
-    note: out,
-    isExpo,
-    physical,
-    selectors: [variantFlag],
-    buildCache: requestedBuildCache,
-  });
-  if (isEasBuildFailure(easBuild)) return fail(easBuild.code, easBuild.message, easBuild.remedy);
   if (physical && deviceFlag === '') {
     return fail(
       'STIM_BAD_ARG',
@@ -918,6 +906,17 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     listImages: listSystemImages,
   });
   if (imageRefusal) return fail(imageRefusal.code, imageRefusal.message, imageRefusal.remedy);
+  const easBuild = await resolveEasBuild({
+    root,
+    platform: PLATFORM,
+    profile: easProfile,
+    note: out,
+    isExpo,
+    physical,
+    selectors: [variantFlag],
+    buildCache: requestedBuildCache,
+  });
+  if (isEasBuildFailure(easBuild)) return fail(easBuild.code, easBuild.message, easBuild.remedy);
   const requestedSerial = typeof deviceFlag === 'string' ? deviceFlag : null;
   let androidPackage = detectAndroidPackage(root);
   record.bundleId = androidPackage;
