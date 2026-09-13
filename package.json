@@ -21,7 +21,8 @@
     "knip": "knip",
     "benchmark:agent": "node scripts/agent-benchmark/driver.mjs",
     "release:prep": "node scripts/release-prep.mjs",
-    "preinstall": "npx only-allow pnpm"
+    "preinstall": "npx only-allow pnpm",
+    "test:prompts": "node scripts/prompt-eval/run.mjs"
   },
   "devDependencies": {
     "@types/node": "26.3.0",
