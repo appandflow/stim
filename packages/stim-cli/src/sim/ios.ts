@@ -2,7 +2,7 @@ import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
-import { hostMemoryPressureAdvice, readHostMemoryPressure } from '../host-memory.ts';
+import { hostMemoryPressureAdvice, readHostMemoryPressure, type HostMemoryPressure } from '../host-memory.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
 
 export interface IosSimRecord {
@@ -167,21 +167,23 @@ export function iosSimulatorFailureAdvice(exec: Executor = getExecutor()): strin
   );
 }
 
-function bootstatusTimeout(udid: string): NodeJS.ErrnoException {
-  const e = new Error(`xcrun simctl bootstatus ${udid} -b timed out`) as NodeJS.ErrnoException;
+function bootstatusTimeout(command: string): NodeJS.ErrnoException {
+  const e = new Error(`${command} timed out`) as NodeJS.ErrnoException;
   e.code = 'ETIMEDOUT';
   return e;
 }
 
-async function awaitBootstatus(udid: string, attemptMs: number): Promise<void> {
+async function awaitBootCommand(args: string[], attemptMs: number, onLine: (line: string) => void): Promise<void> {
+  const command = `xcrun ${args.join(' ')}`;
   const lines: string[] = [];
   const reader = createLineReader((raw) => {
     const line = stripAnsi(raw).trim();
     if (!line) return;
+    onLine(line);
     lines.push(line);
     if (lines.length > 10) lines.shift();
   });
-  const child = getExecutor().spawn('xcrun', ['simctl', 'bootstatus', udid, '-b'], {
+  const child = getExecutor().spawn('xcrun', args, {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stdout?.on('data', (chunk) => reader.push(chunk));
@@ -210,15 +212,15 @@ async function awaitBootstatus(udid: string, attemptMs: number): Promise<void> {
       child.stderr?.destroy?.();
       child.unref();
       throw new Error(
-        `Timed out waiting for simctl bootstatus ${udid}; its process could not be confirmed stopped. Inspect pid ${child.pid ?? 'unknown'} before retrying.`,
+        `Timed out waiting for ${command}; its process could not be confirmed stopped. Inspect pid ${child.pid ?? 'unknown'} before retrying.`,
       );
     }
-    throw bootstatusTimeout(udid);
+    throw bootstatusTimeout(command);
   }
   if (result.error) throw result.error;
   if (result.code === 0) return;
   const detail = lines.length ? `: ${lines.join(' | ')}` : '';
-  throw new Error(`xcrun simctl bootstatus ${udid} -b failed with exit code ${result.code ?? 'unknown'}${detail}`);
+  throw new Error(`${command} failed with exit code ${result.code ?? 'unknown'}${detail}`);
 }
 
 export async function bootIosSim(
@@ -226,41 +228,92 @@ export async function bootIosSim(
   {
     timeoutMs = IOS_BOOT_TIMEOUT_MS,
     attemptMs = BOOTSTATUS_ATTEMPT_MS,
-  }: { timeoutMs?: number; attemptMs?: number } = {},
+    label = udid,
+    out = () => {},
+  }: { timeoutMs?: number; attemptMs?: number; label?: string; out?: (message: string) => void } = {},
 ): Promise<void> {
   const exec = getExecutor();
-  const deadline = Date.now() + timeoutMs;
+  const started = Date.now();
+  const deadline = started + timeoutMs;
+  let worst: HostMemoryPressure | null = null;
+  let unknown = 0;
+  let sampledAt = started;
+  let longestGapMs = 0;
+  let phase = 'requesting boot';
+  const ranks = { normal: 0, warning: 1, critical: 2 };
+  const sample = () => {
+    const now = Date.now();
+    longestGapMs = Math.max(longestGapMs, now - sampledAt);
+    sampledAt = now;
+    const pressure = readHostMemoryPressure(exec);
+    if (pressure === null) unknown++;
+    else if (worst === null || ranks[pressure] > ranks[worst]) worst = pressure;
+    return pressure;
+  };
+  const recovery =
+    "Stop unused slots in workspaces you own with `stim stop --slot <name>`, reduce concurrent builds, and retry after pressure falls. Ask before closing other agents' devices or apps. Repeated reboots under unchanged pressure may stall again.";
+  const coverage = () =>
+    longestGapMs > 30000
+      ? ` Observations were delayed: longest gap ${Math.round(longestGapMs / 1000)}s. Pressure during gaps is unobserved; blocking CLI work can also delay progress and timeout handling.`
+      : '';
+  const report = () => {
+    const pressure = sample();
+    out(
+      `Simulator ${label} is still booting after ${Math.round((Date.now() - started) / 1000)}s. Last boot output: ${phase}. Memory pressure: ${pressure ?? 'unknown'}; highest observed: ${worst ?? 'unknown'}. Boot deadline: ${Math.round(timeoutMs / 1000)}s.${coverage()}${pressure === 'warning' || pressure === 'critical' ? ` Boot may be delayed or stalled. ${recovery}` : ''}`,
+    );
+  };
+  const onLine = (line: string) => {
+    phase = line.slice(0, 240);
+  };
+  sample();
+  const monitor = setInterval(report, 15000);
+  monitor.unref();
   try {
-    exec.runFile('xcrun', ['simctl', 'boot', udid], { timeoutMs, killSignal: 'SIGKILL' });
-  } catch (e) {
-    if (!String((e as Error)?.message || e).includes('Booted')) throw e;
-  }
-  // `simctl bootstatus -b` blocks until the boot finishes, and a first boot on a
-  // CPU-starved host (a CI runner sharing cores with xcodebuild) can legitimately
-  // outlast one attempt (#128).
-  for (;;) {
-    const remaining = deadline - Date.now();
-    if (remaining > 0) {
+    try {
+      await awaitBootCommand(['simctl', 'boot', udid], Math.max(1, deadline - Date.now()), onLine);
+      phase = 'waiting for boot completion';
+    } catch (e) {
+      if (!String((e as Error)?.message || e).includes('Booted')) throw e;
+    }
+    // `simctl bootstatus -b` blocks until the boot finishes, and a first boot on a
+    // CPU-starved host (a CI runner sharing cores with xcodebuild) can legitimately
+    // outlast one attempt (#128).
+    for (;;) {
+      const remaining = deadline - Date.now();
+      if (remaining > 0) {
+        try {
+          await awaitBootCommand(
+            ['simctl', 'bootstatus', udid, '-b'],
+            Math.min(Math.max(remaining, BOOTSTATUS_ATTEMPT_FLOOR_MS), attemptMs),
+            onLine,
+          );
+          break;
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException)?.code !== 'ETIMEDOUT') throw e;
+        }
+      }
+      let state: string | null | undefined;
       try {
-        await awaitBootstatus(udid, Math.min(Math.max(remaining, BOOTSTATUS_ATTEMPT_FLOOR_MS), attemptMs));
-        break;
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException)?.code !== 'ETIMEDOUT') throw e;
+        state = listAllIosSims({ timeoutMs: BOOT_STATE_LIST_TIMEOUT_MS }).find((s) => s.udid === udid)?.state ?? null;
+      } catch {
+        state = undefined;
+      }
+      const waited = Math.round((timeoutMs - Math.max(0, deadline - Date.now())) / 1000);
+      if (state !== 'Booting' && state !== 'Booted' && state !== undefined) {
+        throw new Error(`Simulator ${udid} reports "${state ?? 'missing'}" after ${waited}s of boot wait.`);
+      }
+      if (deadline - Date.now() <= 0) {
+        throw new Error(`Simulator ${udid} did not finish booting within ${Math.round(timeoutMs / 1000)}s.`);
       }
     }
-    let state: string | null | undefined;
-    try {
-      state = listAllIosSims({ timeoutMs: BOOT_STATE_LIST_TIMEOUT_MS }).find((s) => s.udid === udid)?.state ?? null;
-    } catch {
-      state = undefined;
-    }
-    const waited = Math.round((timeoutMs - Math.max(0, deadline - Date.now())) / 1000);
-    if (state !== 'Booting' && state !== 'Booted' && state !== undefined) {
-      throw new Error(`Simulator ${udid} reports "${state ?? 'missing'}" after ${waited}s of boot wait.`);
-    }
-    if (deadline - Date.now() <= 0) {
-      throw new Error(`Simulator ${udid} did not finish booting within ${Math.round(timeoutMs / 1000)}s.`);
-    }
+  } catch (error) {
+    sample();
+    throw new Error(
+      `${(error as Error)?.message || error} Last boot output: ${phase}. Highest observed memory pressure: ${worst ?? 'unknown'}; unavailable samples: ${unknown}.${coverage()} ${recovery} These observations do not establish an OOM crash.`,
+      { cause: error },
+    );
+  } finally {
+    clearInterval(monitor);
   }
   exec.runFileQuiet('open', ['-a', 'Simulator'], { timeoutMs: 5000, killSignal: 'SIGKILL' });
 }
