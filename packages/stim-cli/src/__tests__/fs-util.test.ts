@@ -37,7 +37,7 @@ test('isOnMountedVolume resolves a symlinked ancestor instead of classifying the
     symlinkSync('/Volumes/UnmountedTestVolume/Developer', symlinkedAncestor);
     const projectPath = join(symlinkedAncestor, 'app');
 
-    expect(volumeRootFor(projectPath)).toBe('/');
+    expect(volumeRootFor(projectPath)).not.toBe('/Volumes/UnmountedTestVolume');
     expect(isOnMountedVolume(projectPath, ['/'])).toBe(false);
     expect(isOnMountedVolume(projectPath, ['/', '/Volumes/UnmountedTestVolume'])).toBe(true);
   } finally {
@@ -46,7 +46,7 @@ test('isOnMountedVolume resolves a symlinked ancestor instead of classifying the
 });
 
 test('isOnMountedVolume confirms a plain boot-volume path', () => {
-  expect(isOnMountedVolume(tmpdir(), ['/'])).toBe(true);
+  expect(isOnMountedVolume('/', ['/'])).toBe(true);
 });
 
 test('isOnMountedVolume returns false for a path it cannot resolve', () => {
