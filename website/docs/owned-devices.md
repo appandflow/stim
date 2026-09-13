@@ -178,6 +178,15 @@ independently of the build source.
 - `stim gc --delete` removes verified resources from the report, including
   parked simulators, emulators, and expired device lease files.
 
+Before shutting down, parking or deleting an owned simulator or emulator, Stim
+attempts to close local `agent-device` sessions on that exact iOS UDID or live
+Android serial. It rechecks ownership and asks agent-device to reject a close if
+the session now targets another device. Sessions on other devices and physical
+devices stay open. The integration is optional: a missing binary skips cleanup;
+failures print a warning and device teardown continues. Agent-device calls have
+a combined 15-second budget per device and require local socket transport and
+support for `--session-lock reject`. Remote daemons are never used.
+
 If deletion fails, Stim keeps the ownership record and exits with an error. A
 later cleanup can then retry without losing track of the resource.
 
