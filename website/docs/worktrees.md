@@ -137,11 +137,13 @@ A refresh whose install runs in a
 spawned process group holds the lock while any member of that group lives, so a
 package manager's postinstall writer cannot outlive the protection.
 
-A plain warm that cannot take the lock at all -- an unwritable `STIM_HOME`, say
--- says so in one line and copies without it, exactly as it did before the lock
-existed; `--refresh` refuses instead, because it needs the lock. Even that
-unsynchronised copy reads the lock first, which takes nothing: if a refresh is
-holding this repository, it refuses rather than copying a tree being rewritten.
+Both plain warm and `--refresh` refuse before copying when they cannot record a
+claim. Missing process identity, denied write access or read-only claim storage
+report `STIM_CLAIM_UNAVAILABLE` with recovery instructions. Restore access to the
+same claim store before retrying; a different `STIM_HOME` would hide concurrent
+warm operations. A non-directory claim path reports `STIM_CLAIM_REFUSED`, names
+the blocking file and prints a move-aside command that preserves its contents.
+Inspect that file first, and preserve any existing backup when prompted.
 
 ## Parallel environments
 

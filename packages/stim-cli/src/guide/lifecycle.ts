@@ -1068,20 +1068,13 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   holder every 30s and gives up with STIM_LOCK_TIMEOUT; a claim Stim cannot
   resolve refuses with STIM_CLAIM_REFUSED and names the removal rather than
   waiting on it or removing it.
-  A plain warm that cannot record a claim at all -- an unwritable STIM_HOME, a
-  STIM_HOME on a read-only mount or under a dangling symlink, a STIM_HOME that
-  is a file, or no \`unique-pid\` build for this platform
-  (STIM_CLAIM_UNAVAILABLE) -- says so in one dim line and copies without it,
-  exactly as it did before the lock existed, because a copy only reads.
-  \`--refresh\` refuses instead, because it writes. Before that unsynchronised
-  copy starts, warm still READS the claim set, which needs no claim of its own:
-  if a refresh holds this repository, or a claim in it cannot be resolved, the
-  copy refuses rather than reading a tree that is being rewritten. That read is
-  not a lock, so a refresh that starts after it is not covered; it closes the
-  window in which one is already installing. Closing the rest needs a claim,
-  which is the one thing that state cannot record, so the residual is
-  documented rather than fixed (appandflow/stim#696), as is the
-  \`acquired (waited 0s ...)\` a contended-but-fast wait prints.
+  Both plain warm and --refresh refuse before copying when no claim can be
+  recorded. Missing process identity, denied write access and read-only storage
+  report STIM_CLAIM_UNAVAILABLE with recovery instructions. Restore access to the
+  same claim store before retrying; choosing a different STIM_HOME would hide
+  concurrent warm operations. A non-directory claim path reports
+  STIM_CLAIM_REFUSED and names the blocking file with a move-aside command that
+  preserves its contents. Sub-second waits omit the elapsed-time suffix.
 
   Wait for warm to exit successfully (exit code 0) before running start,
   ios, android, or a dependency install in that worktree. If a shell tool

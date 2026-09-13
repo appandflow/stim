@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Command } from 'commander';
@@ -13,8 +13,6 @@ const identity = vi.hoisted(() => ({
 }));
 const REASON = identity.reason;
 
-// Toggleable so a test can plant a claim another process would hold -- which needs a real captured
-// identity -- and then run warm on a Stim that cannot capture one.
 vi.mock('../process-identity.ts', async (importOriginal) => {
   const real = await importOriginal<typeof import('../process-identity.ts')>();
   return {
@@ -87,23 +85,14 @@ afterEach(() => {
   rmSync(base, { recursive: true, force: true });
 });
 
-test('a plain warm with no recordable process identity copies unsynchronised and says so', async () => {
-  const result = await runWarm(target);
-  expect(result.code).toBe(0);
-  expect(result.stdout).toEqual([]);
-  expect(result.stderr).toContain(REASON);
-  expect(result.stderr).toMatch(/lock {8}unavailable \(.*\); copying without it/);
-  expect(result.stderr).toMatch(/carry {7}complete: 1 ignored entries copied/);
-  expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
-});
-
-test('--refresh with no recordable process identity refuses and names unique-pid', async () => {
+test.each([[], ['--refresh']])('warm %j refuses before copying when identity cannot be recorded', async (...args) => {
   const head = git(root, 'rev-parse', 'HEAD');
-  const result = await runWarm(target, '--refresh');
+  const result = await runWarm(target, ...args);
   expect(result.code).toBe(1);
+  expect(result.stdout).toEqual([]);
   expect(result.stderr).toContain('failed: STIM_CLAIM_UNAVAILABLE');
   expect(result.stderr).toContain(REASON);
-  expect(result.stderr).toContain('unique-pid');
+  expect(result.stderr).toContain('Reinstall Stim');
   expect(result.stderr).not.toMatch(/checkout|carry/);
   expect(existsSync(join(target, '.env'))).toBe(false);
   expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
@@ -118,38 +107,14 @@ function plant(owner: () => { pid: number; processToken: string }, claimId: stri
   }
 }
 
-test('a plain warm with no claim of its own refuses while a refresh holds this repository', async () => {
-  const claim = plant(liveClaimOwner, 'refresh-in-flight');
-  const result = await runWarm(target);
-  expect(result.code).toBe(1);
-  expect(result.stderr).toMatch(
-    /lock {8}unavailable \(.*\); stim worktree warm --refresh \(pid \d+\) holds this repository/,
-  );
-  expect(result.stderr).toContain('Refusing to copy from a source checkout a refresh is rewriting');
-  expect(result.stderr).toContain('failed: STIM_CLAIM_UNAVAILABLE');
-  expect(existsSync(join(target, '.env'))).toBe(false);
-  expect(existsSync(claim)).toBe(true);
-});
-
-test('a plain warm with no claim of its own refuses past a claim it cannot resolve', async () => {
-  identity.available = true;
-  const owner = goneClaimOwner();
-  identity.available = false;
-  const claim = plantClaim(warmClaimPath(root), 'exclusive', owner, {
-    claimId: 'half-spawned',
-    child: { record: null },
-  });
-  const result = await runWarm(target);
-  expect(result.code).toBe(1);
-  expect(result.stderr).toContain('cannot be resolved');
-  expect(result.stderr).toContain(claim);
-  expect(existsSync(join(target, '.env'))).toBe(false);
-});
-
-test('a claim whose holder is gone does not stop the unsynchronised copy', async () => {
-  plant(() => goneClaimOwner(), 'dead-refresh');
-  const result = await runWarm(target);
-  expect(result.code).toBe(0);
-  expect(result.stderr).toMatch(/lock {8}unavailable \(.*\); copying without it/);
-  expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
-});
+test.each([liveClaimOwner, goneClaimOwner])(
+  'identity-unavailable warm refuses regardless of existing holder liveness',
+  async (owner) => {
+    const claim = plant(owner, 'existing-refresh');
+    const result = await runWarm(target);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('failed: STIM_CLAIM_UNAVAILABLE');
+    expect(existsSync(join(target, '.env'))).toBe(false);
+    expect(existsSync(claim)).toBe(true);
+  },
+);

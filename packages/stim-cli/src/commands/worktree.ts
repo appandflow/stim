@@ -19,17 +19,7 @@ import { claimFailure } from '../ownership-claim.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../sim-pool.ts';
 import type { ParkedDevice } from '../teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
-import {
-  acquireWarmClaim,
-  warmClaimAcquiredLine,
-  warmClaimBlockedLine,
-  warmClaimBlockedRefusal,
-  warmClaimBlocker,
-  warmClaimDegradation,
-  warmClaimUnavailableLine,
-  withWarmClaim,
-  type WarmClaimWait,
-} from '../engine/warm-claim.ts';
+import { acquireWarmClaim, warmClaimAcquiredLine, withWarmClaim, type WarmClaimWait } from '../engine/warm-claim.ts';
 import { incompleteInstallRefusal, refreshMainCheckout, type RefreshFailure } from '../worktree-refresh.ts';
 import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
 import {
@@ -231,33 +221,7 @@ export function registerWarm(worktree: Command): void {
           }
           if (process.exitCode) return;
         }
-        // Only the acquisition degrades: an error from the copy itself is not a claim that could not
-        // be recorded, and must not start a second copy.
-        let hold = null;
-        try {
-          hold = await acquireWarmClaim({ repositoryRoot: root, phase: 'copy', out: console.error });
-        } catch (error) {
-          const degraded = opts.refresh ? null : warmClaimDegradation(error);
-          if (degraded === null) throw error;
-          // Copying unsynchronised is what warm did before the claim existed -- but what came before held
-          // no refresh either. Reading the claim set classifies without writing anything and without
-          // refusing, so even a copy that cannot record a claim can see the one state it must not overlap.
-          const blocker = warmClaimBlocker(root);
-          if (blocker) {
-            console.error(chalk.dim(warmClaimBlockedLine(degraded, blocker)));
-            console.error(chalk.red(warmClaimBlockedRefusal(blocker)));
-            throw error;
-          }
-          console.error(chalk.dim(warmClaimUnavailableLine(degraded)));
-        }
-        if (!hold) copy(null);
-        else {
-          try {
-            copy(hold.wait);
-          } finally {
-            hold.release();
-          }
-        }
+        await withWarmClaim({ repositoryRoot: root, phase: 'copy', out: console.error }, (hold) => copy(hold.wait));
       } catch (error) {
         const code = (error as { code?: string })?.code;
         console.error(chalk.red(`Could not warm this worktree: ${(error as Error).message}`));

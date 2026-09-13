@@ -57,6 +57,8 @@ warm checks for existing entries before copying, not during the copy. Do not
 edit files, install dependencies, or run another warm in that worktree until
 it finishes; concurrent files can be overwritten or removed.
 If warm fails or reports incomplete, resolve the reported failure first.
+A warm that cannot record its ownership claim refuses before copying. Follow
+the printed remedy and keep concurrent runs on the same STIM_HOME.
 
 Before native worktree work, run doctor for the platform in scope. It checks
 the source checkout from a linked worktree. Fix relevant findings and inspect the

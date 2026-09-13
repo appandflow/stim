@@ -552,7 +552,7 @@ test('a refresh in flight blocks a plain warm from another app of the same repos
   held.release();
   const result = await warm;
   expect(result.code).toBe(0);
-  expect(result.stderr).toMatch(/lock {8}acquired \(waited \d+m?\d*s for stim worktree warm --refresh pid \d+\)/);
+  expect(result.stderr).toMatch(/lock {8}acquired/);
   expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
 });
 
@@ -687,50 +687,44 @@ test('a retry after a failed install runs it again instead of copying a half-ins
   expect(spawned).toEqual([]);
 });
 
-test('a plain warm copies without the lock when STIM_HOME cannot be written, and --refresh still refuses', async () => {
+test('both warm paths refuse an unwritable claim store before copying and report recovery', async () => {
   write(root, '.env', 'main env');
   const home = String(process.env.STIM_HOME);
   mkdirSync(home, { recursive: true });
   chmodSync(home, 0o500);
   try {
-    const plain = await runWarm(target);
-    expect(plain.code).toBe(0);
-    expect(plain.stdout).toEqual([]);
-    expect(plain.stderr).toMatch(/lock {8}unavailable \(.*\); copying without it/);
-    expect(plain.stderr).toMatch(/carry {7}complete: 1 ignored entries copied/);
-    expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
-
-    process.exitCode = 0;
-    rmSync(join(target, '.env'));
-    const refresh = await runWarm(target, '--refresh');
-    expect(refresh.code).toBe(1);
-    expect(refresh.stderr).toMatch(/Could not warm this worktree/);
-    expect(existsSync(join(target, '.env'))).toBe(false);
+    for (const args of [[], ['--refresh']]) {
+      process.exitCode = 0;
+      const result = await runWarm(target, ...args);
+      expect(result.code).toBe(1);
+      expect(result.stdout).toEqual([]);
+      expect(result.stderr).toContain('failed: STIM_CLAIM_UNAVAILABLE');
+      expect(result.stderr).toContain('Restore write access to the existing claim store');
+      expect(result.stderr).toContain(home);
+      expect(existsSync(join(target, '.env'))).toBe(false);
+    }
   } finally {
     chmodSync(home, 0o700);
   }
 });
 
-test('a dangling STIM_HOME link permits a plain copy but refuses refresh before changing the source', async () => {
+test('a dangling STIM_HOME link refuses both warm paths before copying or changing the source', async () => {
   write(root, '.env', 'main env');
   fallBehind({ 'package.json': '{"name":"updated-fixture"}\n' });
   const before = git(root, 'rev-parse', 'HEAD');
   symlinkSync(join(base, 'missing-home'), String(process.env.STIM_HOME));
 
-  const plain = await runWarm(target);
-  expect(plain.code).toBe(0);
-  expect(plain.stdout).toEqual([]);
-  expect(plain.stderr).toMatch(/lock {8}unavailable \(ENOENT:.*\); copying without it/);
-  expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
-
-  rmSync(join(target, '.env'));
-  const refresh = await runWarm(target, '--refresh');
-  expect(refresh.code).toBe(1);
-  expect(refresh.stdout).toEqual([]);
-  expect(refresh.stderr).toMatch(/Could not warm this worktree: ENOENT:/);
-  expect(refresh.stderr).not.toContain('another process');
-  expect(existsSync(join(target, '.env'))).toBe(false);
-  expect(git(root, 'rev-parse', 'HEAD')).toBe(before);
+  for (const args of [[], ['--refresh']]) {
+    process.exitCode = 0;
+    const result = await runWarm(target, ...args);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toEqual([]);
+    expect(result.stderr).toContain('failed: STIM_CLAIM_UNAVAILABLE');
+    expect(result.stderr).toContain('ENOENT:');
+    expect(result.stderr).toContain('symlink targets');
+    expect(existsSync(join(target, '.env'))).toBe(false);
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(before);
+  }
 });
 
 test('a copy that waited for the lock reads the exclusions the refresh left behind, not the ones it started with', async () => {
@@ -1004,27 +998,22 @@ test('the ledger records the lockfile the installer read, not the one on disk wh
   expect(installLedger()).toEqual({ lock: 'pnpm-lock.yaml', hash: sha256('lock v3\n'), completed: true });
 });
 
-test('a STIM_HOME that is a regular file degrades a plain warm and still refuses a --refresh', async () => {
+test('a STIM_HOME that is a regular file refuses both warm paths and names the blocking file', async () => {
   write(root, '.env', 'main env');
   const home = String(process.env.STIM_HOME);
   rmSync(home, { recursive: true, force: true });
   writeFileSync(home, 'not a directory');
 
-  const plain = await runWarm(target);
-  expect(plain.code).toBe(0);
-  expect(plain.stdout).toEqual([]);
-  expect(plain.stderr).toMatch(
-    /lock {8}unavailable \(.*: the claim path is a file, not a claim directory\); copying without it/,
-  );
-  expect(plain.stderr).toMatch(/carry {7}complete: 1 ignored entries copied, 0 kept, 0 failed/);
-  expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
-
-  process.exitCode = 0;
-  rmSync(join(target, '.env'));
-  const refresh = await runWarm(target, '--refresh');
-  expect(refresh.code).toBe(1);
-  expect(refresh.stderr).toContain('failed: STIM_CLAIM_REFUSED');
-  expect(existsSync(join(target, '.env'))).toBe(false);
+  for (const args of [[], ['--refresh']]) {
+    process.exitCode = 0;
+    const result = await runWarm(target, ...args);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toEqual([]);
+    expect(result.stderr).toContain('failed: STIM_CLAIM_REFUSED');
+    expect(result.stderr).toContain(`mv -i '${home}' '${home}.stim-backup'`);
+    expect(readFileSync(home, 'utf8')).toBe('not a directory');
+    expect(existsSync(join(target, '.env'))).toBe(false);
+  }
 });
 
 test('a plain warm refuses the tree a real failed install left, and copies once a refresh finishes it', async () => {
