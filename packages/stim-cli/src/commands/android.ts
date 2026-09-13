@@ -129,6 +129,7 @@ import {
   ensureBooted,
   ensureOwnedDevice,
   AvdRecoveryError,
+  AvdBootError,
   type OwnedDeviceRecord,
 } from '../engine/device.ts';
 import {
@@ -1099,7 +1100,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         logFile: emuLog,
         localEmulator: !(err instanceof AvdRecoveryError),
         remedy:
-          err instanceof AvdRecoveryError
+          err instanceof AvdBootError
             ? err.remedy
             : 'Check that JAVA_HOME and ANDROID_HOME are set correctly, and that an arm64 system image is installed (`sdkmanager "system-images;android-36;google_apis;arm64-v8a"`).',
       });

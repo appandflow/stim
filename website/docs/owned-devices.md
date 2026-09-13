@@ -138,6 +138,21 @@ builds, and retry after pressure falls. Ask before closing another agent's
 simulator or a user's app. Repeated reboots under unchanged pressure can repeat
 the stall.
 
+Local Android emulator boots also print a memory phase line when macOS reports
+warning or critical pressure. If boot times out under that pressure, Stim
+extends the wait once by up to 240 seconds while the process it started is
+still alive. It waits on the same emulator and never launches a duplicate.
+New-device preparation waits 120 seconds initially; the later boot check uses
+240 seconds. Normal or unavailable pressure, an exited process, or unavailable
+process liveness does not trigger the extra wait. adb probes are bounded.
+
+Timeout remedies include observed pressure and the running Stim-owned device
+count when available. Device count alone does not prove memory pressure or
+trigger the extra wait. Specific emulator log errors keep their own remedies.
+Stop an unneeded device with `stim stop` only in a workspace you own, then rerun
+`stim android` with the same build options. Read
+`stim guide errors STIM_NO_DEVICE` for recovery details.
+
 ## Remote devices
 
 Stim supports two optional remote backends:

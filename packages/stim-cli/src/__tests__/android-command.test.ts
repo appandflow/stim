@@ -5,7 +5,7 @@ import { resetExecutor, setExecutor } from '../exec.ts';
 import assert from 'node:assert';
 import { captureProcessToken } from '../process-identity.ts';
 import { ClaimRefusedError, ClaimUnavailableError, claimRemoveCommand } from '../ownership-claim.ts';
-import { AvdRecoveryError } from '../engine/device.ts';
+import { AvdBootError, AvdRecoveryError } from '../engine/device.ts';
 import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
@@ -1790,6 +1790,29 @@ describe('the other refusals', () => {
     expect(result.error.code).toBe(NO_DEVICE);
     expect(result.error.message).toMatch(/Missing emulator engine program/);
     expect(result.error.remedy).not.toMatch(/JAVA_HOME/);
+  });
+
+  test.each(['prepare', 'boot'] as const)('preserves the pressure remedy from %s in STIM_NO_DEVICE', async (stage) => {
+    const reason = 'Emulator emulator-5554 did not finish booting within 360s.';
+    const remedy =
+      'macOS reports warning host memory pressure. Stop an unneeded device with `stim stop` only in a workspace you own, then run `stim android` again.';
+    const h = harness(
+      stage === 'prepare'
+        ? {
+            ensureDevice: async () => {
+              throw new AvdBootError(reason, remedy);
+            },
+            build: never('the build'),
+          }
+        : {
+            ensureDeviceBooted: async () => ({ failed: true, reason, remedy }),
+            install: never('the install'),
+          },
+    );
+    const result = await h.run();
+    assert(result.error);
+    expect(result.error.code).toBe(NO_DEVICE);
+    expect(result.error.remedy).toBe(remedy);
   });
 
   test('an ENOSPC ensureDevice throw uses the disk-space remedy without an emulator log', async () => {

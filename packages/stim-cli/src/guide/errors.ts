@@ -549,6 +549,19 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   normally live under ~/.android/avd, and a booted AVD can use several GB. A
   boot whose emulator process exited is also reported at once rather than after
   the full cold-boot timeout.
+  Before a local Android emulator boot, a memory phase line reports observed
+  warning or critical macOS host memory pressure. If the initial boot wait
+  times out under that pressure and the process this run started is still
+  alive, Stim retries the WAIT once for up to 240 seconds more on the same
+  serial; it never starts a second emulator. New-device preparation normally
+  waits 120 seconds first; the later boot check waits 240 seconds. There is
+  no extra wait for normal or unavailable pressure, a process that exited,
+  or a process whose liveness this run cannot check. adb probes are bounded.
+  A timeout remedy reports observed pressure and the running owned-device
+  count when available. Device count alone does not establish memory pressure
+  or trigger the extra wait. Stop an unneeded device with \`stim stop\` only
+  in a workspace you own, then retry \`stim android\`; ask before closing
+  other apps or devices. Specific emulator log errors retain their remedies.
 
 "this project's sim is X, but --device-type asked for Y"
   The project already owns a simulator of a different model, and Stim will

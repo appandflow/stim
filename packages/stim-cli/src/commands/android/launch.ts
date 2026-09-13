@@ -472,12 +472,7 @@ export async function finishAndroidRun({
   const booted = await bootPromise;
   const runCommand = nativeRunCommand('android', slot, { physical, deviceId: booted.serial });
   if (booted.failed) {
-    const diag = noDeviceDiagnostic({
-      reason: booted.reason ?? 'The emulator did not boot.',
-      logFile: emuLog,
-      remedy: `Run \`stim status\` to see what Stim thinks it owns; re-running \`${runCommand}\` creates a fresh owned AVD.`,
-      localEmulator: !physical,
-    });
+    const diag = diagnoseBootFailure(booted, emuLog, runCommand, physical);
     return fail(NO_DEVICE, diag.message, diag.remedy, {
       lines: diag.lines,
       logPath: diag.logPath ? displayPath(root, diag.logPath) : null,
@@ -779,4 +774,15 @@ export async function finishAndroidRun({
   });
   if (remoteWasAbandoned || uploadWasAbandoned) exitAfterFlush(0);
   return { ok: true, facts };
+}
+
+function diagnoseBootFailure(booted: AndroidBootLike, logFile: string, runCommand: string, physical: boolean) {
+  return noDeviceDiagnostic({
+    reason: booted.reason ?? 'The emulator did not boot.',
+    logFile,
+    remedy:
+      booted.remedy ??
+      `Run \`stim status\` to see what Stim thinks it owns; re-running \`${runCommand}\` creates a fresh owned AVD.`,
+    localEmulator: !physical,
+  });
 }

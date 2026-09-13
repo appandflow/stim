@@ -157,6 +157,12 @@ ANDROID EMULATOR RESTARTS
   Rerun \`stim android\` with the same build options in that workspace to restore Metro
   forwarding, then reopen agent-device on the serial that run reports.
   Other workspaces' simulators and automation sessions remain theirs.
+  A local emulator boot reports observed warning or critical macOS memory
+  pressure before starting. A timeout under elevated pressure gets one
+  additional wait of up to 240 seconds only while the process this run
+  started is alive. Stim keeps waiting on the same emulator; it never
+  launches a duplicate. See \`stim guide errors STIM_NO_DEVICE\` for the
+  wait windows, diagnostics, and recovery steps.
 
 DESTRUCTIVE COMMANDS -- ask the user first
   gc --delete             deletes orphaned stim-* devices, tens of GB
