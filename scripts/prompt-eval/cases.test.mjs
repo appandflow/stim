@@ -67,6 +67,7 @@ describe('website prompt command selection', () => {
   it('requires warming the newly created worktree instead of the original checkout', () => {
     const { run } = driver('warm');
     run(['guide', 'agent']);
+    expect(run(['log', '-1', '--oneline', '--decorate'], workspace, 'git').output).toContain('update the example UI');
     expect(() => run(['worktree', 'warm'])).toThrow('new worktree');
     run(['worktree', 'add', '-b', 'feature', '../feature', 'HEAD'], workspace, 'git');
     expect(() => run(['worktree', 'warm'])).toThrow('new worktree');

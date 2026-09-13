@@ -45,7 +45,8 @@ function readGitFixture(args, workspace) {
     return { output: '0000001 fix: update the example UI\n App.tsx | 2 +-' };
   if (args[0] === 'diff' && args.slice(1).every((arg) => ['--stat', '--cached', '--name-only'].includes(arg)))
     return { output: '' };
-  if (args.join(' ') === 'log -1 --oneline') return { output: '0000001 fix: update the example UI' };
+  if (args[0] === 'log' && args.slice(1).every((arg) => ['-1', '--oneline', '--decorate', 'HEAD'].includes(arg)))
+    return { output: '0000001 fix: update the example UI' };
   if (args.join(' ') === 'branch --show-current') return { output: 'main' };
   if (
     args[0] === 'status' &&
