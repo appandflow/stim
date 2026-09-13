@@ -285,3 +285,23 @@ setup timings, seeds and clears app data, verifies an unchanged APK skips
 installation, and checks that GC deletes the parked AVD. It uses separate launch
 and cleanup processes, like the CLI. The test removes its own devices and prints
 the temporary directory containing `result.json` and emulator logs.
+
+### Sequential iOS simulator preparation
+
+When an iOS fixture declares a SimSlim profile, the loop and cache suites
+prepare their required simulator assignments one at a time before starting
+the workload. Preparation creates or reuses an owned simulator, waits for boot
+and profile reconciliation, then shuts it down through Stim. It does not start
+Metro, build the app, or populate the native artifact cache. Stock fixtures
+and Android do not take this preparation path.
+
+The loop still asserts three distinct simulators are booted simultaneously.
+Cache suites still require a cold artifact miss and race two commands against
+one empty cache. The preparation reduces overlapping first-boot work; it does
+not establish that host memory caused earlier failures or guarantee enough
+capacity for the eventual concurrent workload. Runner sizes are unchanged.
+
+If preparation or its shutdown fails, the suite preserves its temporary
+worktrees and `STIM_HOME` and prints the state location. Inspect the failure
+and use Stim with that home to clean up; do not erase ownership records while
+their simulators still exist.
