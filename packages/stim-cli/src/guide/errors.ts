@@ -556,7 +556,8 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   serial; it never starts a second emulator. New-device preparation normally
   waits 120 seconds first; the later boot check waits 240 seconds. There is
   no extra wait for normal or unavailable pressure, a process that exited,
-  or a process whose liveness this run cannot check. adb probes are bounded.
+  or a process whose liveness this run cannot check. adb probes are bounded;
+  final diagnostic queries share a separate budget of up to five seconds.
   A timeout remedy reports observed pressure and the running owned-device
   count when available. Device count alone does not establish memory pressure
   or trigger the extra wait. Stop an unneeded device with \`stim stop\` only

@@ -901,15 +901,21 @@ export async function waitForBoot(
       ),
     );
   }
-  const devicesOut = exec.runQuiet(`${androidTool('adb')} devices`, { timeoutMs: probeTimeout() });
+  const diagnosticDeadline = Date.now() + Math.min(commandTimeoutMs ?? 5000, 5000);
+  const diagnosticQuery = (args: string): string => {
+    const remaining = diagnosticDeadline - Date.now();
+    if (remaining <= 0) return '';
+    const value = exec.runQuiet(`${androidTool('adb')} ${args}`, { timeoutMs: remaining });
+    return typeof value === 'string' ? value.trim() : '';
+  };
   return {
     ok: false,
     ...(exited ? { exited: true as const } : {}),
     diagnostic: {
-      devices: typeof devicesOut === 'string' ? devicesOut.trim() : '',
-      sysBoot: getprop(exec, serial, 'sys.boot_completed', probeTimeout()),
-      devBoot: getprop(exec, serial, 'dev.bootcomplete', probeTimeout()),
-      bootAnim: getprop(exec, serial, 'init.svc.bootanim', probeTimeout()),
+      devices: diagnosticQuery('devices'),
+      sysBoot: diagnosticQuery(`-s ${serial} shell getprop sys.boot_completed`),
+      devBoot: diagnosticQuery(`-s ${serial} shell getprop dev.bootcomplete`),
+      bootAnim: diagnosticQuery(`-s ${serial} shell getprop init.svc.bootanim`),
     },
   };
 }
