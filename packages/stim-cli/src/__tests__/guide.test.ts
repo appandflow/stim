@@ -367,6 +367,19 @@ test('the agent workflow checks errors before and after edits, before cleanup', 
   expect(renderSection('lifecycle', 'readiness')).toContain('[stim:readiness] ready');
 });
 
+test('the logs guides distinguish an unused workspace from an empty filtered timeline', () => {
+  const logs = renderTopic('logs');
+  const agent = renderTopic('agent');
+  const lifecycle = renderTopic('lifecycle');
+  const noProject = renderSection('errors', 'STIM_NO_PROJECT');
+  for (const guide of [logs, agent, lifecycle, noProject]) {
+    expect(guide).toContain('STIM_NO_PROJECT');
+  }
+  expect(logs).toContain('nearest registered descendant app');
+  expect(logs).toMatch(/zero matches after filtering means STDOUT IS EMPTY,\s+exit code 0/);
+  expect(noProject).toContain('nearest registered descendant app');
+});
+
 test('the agent and lifecycle guides name both workflows', () => {
   for (const guide of [renderTopic('agent'), renderTopic('lifecycle')]) {
     assert(guide);

@@ -10,10 +10,12 @@ discovered, not enumerated.
 
 EXIT 0 MEANS THE QUERY SUCCEEDED, whether or not records matched. A clean
 \`stim logs --errors\` check requires exit code 0 AND no matching errors in
-captured logs. An empty result does not prove launch or log capture succeeded;
-a workspace with no log directory also returns an empty result.
+captured logs. A workspace that has never produced a timeline refuses with
+STIM_NO_PROJECT instead of passing with an empty result. In a monorepo the
+refusal names the nearest registered descendant app with logs, when there is one.
 
-For zero matches: STDOUT IS EMPTY, exit code 0, and
+Once a timeline file exists, zero matches after filtering means STDOUT IS EMPTY,
+exit code 0, and
 one dim note on STDERR reading \`No matching log records in <logs dir>\`
 (human mode only -- \`--json\` prints nothing at all, on either stream).
 The only exit-1 paths are a malformed query and no project.

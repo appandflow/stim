@@ -175,8 +175,9 @@ RULES DURING THE LOOP
 - A clean logs --errors check requires exit code 0 AND no matching errors in
   captured logs. Exit code 0 alone means the query succeeded, even when errors
   were printed. Human output shows "No matching log records" on stderr for
-  zero matches; JSON mode prints zero bytes. This does not prove launch or log
-  capture succeeded. Do not read the NDJSON files directly.
+  zero matches; JSON mode prints zero bytes. A workspace with no captured
+  timeline refuses with STIM_NO_PROJECT and, in a monorepo, names the nearest
+  registered descendant app with logs. Do not read the NDJSON files directly.
 - Use stim status when resuming a workspace or recovering missing device,
   port, server, or build facts. A normal start and platform run already print
   them. Use stim doctor when a build is unexpectedly slow or the environment

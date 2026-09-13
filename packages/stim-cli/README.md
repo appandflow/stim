@@ -44,8 +44,9 @@ stim stop
 
 For `stim logs --errors`, a clean check requires exit code 0 and no matching
 errors in the captured logs. Exit code 0 alone means the query succeeded, even
-when it prints errors; an empty result does not prove launch or log capture
-succeeded.
+when it prints errors. A workspace that has never produced a log timeline
+refuses with `STIM_NO_PROJECT`; in a monorepo, the error names the nearest
+registered descendant app with logs when one exists.
 
 Use `stim start --reset-cache` to recover from stale Metro transforms or file-map
 state. It restarts only this app's verified owned Metro, keeping its port and

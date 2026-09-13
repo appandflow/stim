@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
@@ -14,6 +14,7 @@ import logsCommand, {
   validateLevel,
   validateSources,
 } from '../commands/logs.ts';
+import { getConfigPath, upsertProject } from '../config.ts';
 
 type ActionFn = (opts: Record<string, unknown>) => void | Promise<void>;
 
@@ -277,11 +278,53 @@ describe('logs command', () => {
     expect(out).toEqual([]);
   });
 
-  test('exits 0 when the workspace has no log directory at all', async () => {
+  test.each([{}, { json: true }])(
+    'refuses logs %j without a timeline and does not create workspace state',
+    async (options) => {
+      rmSync(workspaceDir(project), { recursive: true, force: true });
+      await run(options);
+      expect(exitCode).toBe(1);
+      expect(out).toEqual([]);
+      expect(errOut.join('\n')).toContain('STIM_NO_PROJECT');
+      expect(errOut.join('\n')).toContain(`No Stim workspace has run in ${project}`);
+      expect(existsSync(workspaceDir(project))).toBe(false);
+      expect(existsSync(getConfigPath())).toBe(false);
+    },
+  );
+
+  test('refuses an existing logs directory that has never captured a timeline', async () => {
+    await run({});
+    expect(exitCode).toBe(1);
+    expect(out).toEqual([]);
+    expect(errOut.join('\n')).toContain('STIM_NO_PROJECT');
+    expect(existsSync(logsDir)).toBe(true);
+    expect(existsSync(getConfigPath())).toBe(false);
+  });
+
+  test('suggests the nearest registered descendant app that has logs', async () => {
+    const app = join(project, 'apps', 'mobile');
+    const deeperApp = join(app, 'example');
+    for (const path of [app, deeperApp]) {
+      mkdirSync(path, { recursive: true });
+      writeFileSync(join(path, 'package.json'), JSON.stringify({ dependencies: { expo: '54.0.0' } }));
+      mkdirSync(workspaceLogsDir(path), { recursive: true });
+      writeFileSync(join(workspaceLogsDir(path), 'metro.ndjson'), '');
+      upsertProject(realpathSync(path), {});
+    }
     rmSync(workspaceDir(project), { recursive: true, force: true });
     await run({});
+    expect(exitCode).toBe(1);
+    expect(out).toEqual([]);
+    expect(errOut.join('\n')).toContain(`The nearest registered app with logs is ${realpathSync(app)}`);
+    expect(errOut.join('\n')).not.toContain(realpathSync(deeperApp));
+  });
+
+  test('a zero-byte timeline is a valid empty workspace query', async () => {
+    writeFileSync(join(logsDir, 'metro.ndjson'), '');
+    await run({ errors: true });
     expect(exitCode).toBe(null);
     expect(out).toEqual([]);
+    expect(errOut.join('\n')).toContain('No matching log records');
   });
 
   test('--errors applies the marker window across sources', async () => {

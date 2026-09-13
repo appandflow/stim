@@ -2,11 +2,14 @@ import { validateDeviceSlot } from '../device-slots.ts';
 import chalk from 'chalk';
 import type { ChalkInstance } from 'chalk';
 import type { Command } from 'commander';
+import { realpathSync } from 'node:fs';
+import { relative, sep } from 'node:path';
+import { isPathPrefix, loadConfig } from '../config.ts';
 import { findProjectRoot } from '../project.ts';
 import { workspaceLogsDir } from '../paths.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
-import { buildCriteria, compileGrep, fileSizes, followLogs, parseSince, queryLogs } from '../logs-query.ts';
+import { buildCriteria, compileGrep, fileSizes, followLogs, logFiles, parseSince, queryLogs } from '../logs-query.ts';
 import { errorDiagnostics } from '../error-diagnostics.ts';
 import { launchErrorPreview } from '../launch-error-preview.ts';
 import { readWorkspaceState } from '../supervisor/state.ts';
@@ -100,6 +103,38 @@ export function validateLevel(level: string): LevelResult {
 
 export const ERRORS_PRINT_CAP = 20;
 
+function nearestRegisteredLogsProject(root: string, candidates: string[]): string | null {
+  return (
+    candidates
+      .filter((candidate) => candidate !== root && isPathPrefix(root, candidate))
+      .toSorted((a, b) => {
+        const depth = (path: string) => relative(root, path).split(sep).length;
+        return depth(a) - depth(b) || a.length - b.length || a.localeCompare(b);
+      })[0] ?? null
+  );
+}
+
+function registeredDescendantWithLogs(root: string): string | null {
+  const candidates = Object.keys(loadConfig()?.projects ?? {}).flatMap((path) => {
+    try {
+      const canonical = realpathSync(path);
+      return logFiles(workspaceLogsDir(canonical)).length > 0 ? [canonical] : [];
+    } catch {
+      return [];
+    }
+  });
+  return nearestRegisteredLogsProject(root, [...new Set(candidates)]);
+}
+
+function requireLogsWorkspace(root: string, dir: string): void {
+  if (logFiles(dir).length > 0) return;
+  const descendant = registeredDescendantWithLogs(root);
+  const remedy = descendant
+    ? ` The nearest registered app with logs is ${descendant}; run this command from there.`
+    : ' Run `stim start`, `stim ios`, or `stim android` in the app first.';
+  fail(`STIM_NO_PROJECT: No Stim workspace has run in ${root}.${remedy}`);
+}
+
 const LEVEL_COLOURS: Record<string, ChalkInstance> = {
   debug: chalk.dim,
   info: chalk.reset,
@@ -124,7 +159,7 @@ export default function logsCommand(program: Command): void {
   program
     .command('logs')
     .description(
-      "Query this workspace's merged NDJSON log timeline (bundler, client, device, build). Prints and exits; nothing matching is a successful, empty result. Use --follow to stream.",
+      "Query this workspace's merged NDJSON log timeline (bundler, client, device, build). Prints and exits; an existing timeline with nothing matching is a successful, empty result. Use --follow to stream.",
     )
     .option('--slot <name>', 'Only records attributed to this device slot', validateDeviceSlot)
     .option('--source <s...>', 'Only these sources: metro, client, device, build, or all')
@@ -176,6 +211,8 @@ export default function logsCommand(program: Command): void {
         const compiled = compileGrep(opts.grep);
         if (compiled.error) fail(compiled.error);
       }
+
+      requireLogsWorkspace(root, dir);
 
       const query = {
         slot: opts.slot,
