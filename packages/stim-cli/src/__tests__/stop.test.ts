@@ -1215,9 +1215,17 @@ test('stop releases the leases this workspace holds and lists them', async () =>
 });
 
 test('stop says nothing about leases when this workspace holds none', async () => {
-  const r = await runStop({ root: tmpRoot, project: null, state: null, collectors: {}, report: () => {} });
+  const reported: string[] = [];
+  const r = await runStop({
+    root: tmpRoot,
+    project: null,
+    state: null,
+    collectors: {},
+    report: (line) => reported.push(line),
+  });
   expect(r.outcomes.releasedLeases).toEqual([]);
-  expect(r.summary).not.toMatch(/lease/);
+  expect(r.summary).toBe(`Stopped: nothing was running (${tmpRoot})`);
+  expect(reported.join('\n')).not.toMatch(/^  lease\s/m);
 });
 
 test('stop --json prints exactly one line of JSON on stdout', async () => {
