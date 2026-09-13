@@ -18,15 +18,18 @@ it('records attempted commands, interrupts a passing run, and fails a seeded wro
 import { createInterface } from 'node:readline';
 import { writeFileSync } from 'node:fs';
 if (process.argv.includes('--version')) { console.log('fake-protocol-server'); process.exit(); }
+writeFileSync(process.env.TMPDIR + '/server-pid', String(process.pid));
 let cwd;
 const send = (message) => console.log(JSON.stringify(message));
 createInterface({ input: process.stdin }).on('line', (line) => {
   const request = JSON.parse(line);
   if (process.argv.includes('hang')) return;
+  if (process.argv.includes('null') && request.method === 'initialize') { send(null); return; }
   if (request.method === 'initialize') send({ id: request.id, result: {} });
   if (request.method === 'thread/start') { cwd = request.params.cwd; send({ id: request.id, result: { thread: { id: 'thread' } } }); }
   if (request.method === 'turn/start') {
     send({ id: request.id, result: { turn: { id: 'turn' } } });
+    if (process.argv.includes('malformed')) { send({ id: 100, method: 'item/tool/call' }); return; }
     send({ id: 100, method: 'item/tool/call', params: { tool: 'run_command', arguments: { file: 'stim', args: ['guide', 'agent'], cwd } } });
   }
   if (request.id === 100) send({ id: 101, method: 'item/tool/call', params: { tool: 'run_command', arguments: { file: 'stim', args: ['logs', '--errors', '--since', process.argv.includes('wrong') ? '1m' : '10m'], cwd } } });
@@ -63,15 +66,25 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     const hang = join(directory, 'hang');
     writeFileSync(hang, `#!/bin/sh\nexec '${fake}' "$@" hang\n`);
     chmodSync(hang, 0o755);
-    expect(run(hang, 100)).toContain('deadline exceeded');
+    expect(run(hang, 1000)).toContain('deadline exceeded');
+    for (const mode of ['null', 'malformed']) {
+      const peer = join(directory, mode);
+      writeFileSync(peer, `#!/bin/sh\nexec '${fake}' "$@" ${mode}\n`);
+      chmodSync(peer, 0o755);
+      expect(run(peer)).toContain('Malformed');
+    }
     expect(readFileSync(auth, 'utf8')).toBe('{}');
     for (const runName of readdirSync(join(directory, 'tmp')).filter((name) => name.startsWith('stim-prompt-eval-'))) {
       const evidence = join(directory, 'tmp', runName, 'logs');
       const result = JSON.parse(readFileSync(join(evidence, 'result.json'), 'utf8'));
-      const timedOut = result.reason.includes('deadline exceeded');
+      const timedOut = result.reason.includes('deadline exceeded') || result.reason === 'Malformed protocol envelope';
       const interrupt = timedOut ? null : readFileSync(join(evidence, 'app/interrupted'), 'utf8');
       expect(interrupt).toBe(timedOut ? null : 'yes');
-      expect(result.trace.map((command) => command.args[0])).toEqual(timedOut ? [] : ['guide', 'logs']);
+      expect(result.trace.map((command) => command.args[0])).toEqual(
+        timedOut || result.reason === 'Malformed tool-call parameters' ? [] : ['guide', 'logs'],
+      );
+      const pid = Number(readFileSync(join(evidence, 'server-pid'), 'utf8'));
+      expect(() => process.kill(pid, 0)).toThrow('ESRCH');
       expect(readdirSync(join(evidence, 'codex-home'))).not.toContain('auth.json');
     }
   } finally {

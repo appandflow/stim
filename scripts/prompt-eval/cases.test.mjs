@@ -55,8 +55,10 @@ describe('website prompt command selection', () => {
     run(['guide', 'agent']);
     run(['start']);
     expect(() => run(['ios', '--slot', 'tablet'])).toThrow('requires an iPad');
+    expect(() => run(['ios', '--slot', 'tablet', '--device-type', 'iPad imaginary'])).toThrow('requires an iPad');
     expect(() => run(['ios', '--slot', 'hardware'])).toThrow('physical-device slot');
     expect(run(['ios', '--slot', 'phone']).done).toBeUndefined();
+    expect(JSON.parse(run(['--help'], workspace, 'agent-device').output).exitCode).toBe(127);
     expect(() => run(['ios', '--slot', 'phone'])).toThrow('repeated');
     expect(run(['ios', '--slot', 'tablet', '--device-type', 'iPad Pro 13-inch (M5)']).done).toBeUndefined();
     expect(run(['ios', '--slot', 'hardware', '--device'])).toEqual({ done: true });

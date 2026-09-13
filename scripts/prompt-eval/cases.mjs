@@ -41,6 +41,8 @@ function parseArguments(args) {
 }
 
 function readGitFixture(args, workspace) {
+  if (args[0] === 'show' && args.slice(1).every((arg) => ['--stat', '--oneline', 'HEAD'].includes(arg)))
+    return { output: '0000001 fix: update the example UI\n App.tsx | 2 +-' };
   if (args[0] === 'diff' && args.slice(1).every((arg) => ['--stat', '--cached', '--name-only'].includes(arg)))
     return { output: '' };
   if (args.join(' ') === 'log -1 --oneline') return { output: '0000001 fix: update the example UI' };
@@ -69,7 +71,7 @@ export function commandState(id, workspace) {
     if (!['phone', 'tablet', 'hardware'].includes(slot) || slots.has(slot))
       throw new Error('Missing, repeated, or wrong slot');
     if ((slot === 'hardware') !== flags.has('--device')) throw new Error('Wrong physical-device slot');
-    if (slot === 'tablet' && !String(flags.get('--device-type')).startsWith('iPad'))
+    if (slot === 'tablet' && flags.get('--device-type') !== 'iPad Pro 13-inch (M5)')
       throw new Error('Tablet slot requires an iPad');
     if (slot === 'hardware' && (flags.has('--device-type') || flags.has('--runtime')))
       throw new Error('Unexpected hardware model selector');
@@ -102,7 +104,7 @@ export function commandState(id, workspace) {
     if (trace.length > 30) throw new Error('Command budget exceeded');
     if (cwd !== workspace && cwd !== worktree) throw new Error(`Wrong workspace: ${cwd}`);
     if (file === 'pwd' && !args.length) return { output: cwd };
-    if (file === 'git' && id === 'warm') {
+    if (file === 'git') {
       const read = readGitFixture(args, workspace);
       if (read) return read;
     }
@@ -121,6 +123,14 @@ export function commandState(id, workspace) {
       if (worktree === workspace) throw new Error('Worktree must be separate');
       return { output: 'Prepared isolated worktree.' };
     }
+    if (file === 'agent-device' && id === 'slots' && slots.size > 0)
+      return {
+        output: JSON.stringify({
+          exitCode: 127,
+          stderr:
+            'agent-device is unavailable in this simulated command-selection fixture; UI verification cannot be performed.',
+        }),
+      };
     if (file !== 'stim') throw new Error(`Unexpected command: ${file}`);
     if (args[0] === 'guide') {
       if (args.length < 2 || args.length > 3 || args.slice(1).some((arg) => !/^[a-zA-Z0-9_-]+$/.test(arg)))

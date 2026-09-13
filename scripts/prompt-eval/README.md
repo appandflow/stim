@@ -44,7 +44,9 @@ The git revision identifies the checkout; rebuild after changing guides.
 A pass requires observable command attempts, never an answer containing a
 command. The coordinator refuses unexpected tools, executables, flags,
 workspaces, or ordering. It returns synthetic `doctor`, `start`, worktree, and
-slot-launch results so the agent can continue. The final target command is
+slot-launch results so the agent can continue. Agent-device requests after a
+slot launch return an explicit unavailable-tool result; UI operations and
+their arguments are outside this evaluation. The final target command is
 intercepted without execution or a synthetic success response, then the turn
 is interrupted and the app server is terminated.
 

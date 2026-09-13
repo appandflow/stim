@@ -91,6 +91,7 @@ async function runCase(entry) {
     if (settled) return;
     settled = true;
     complete(result);
+    rejectPending(new Error(result.reason));
   }
   function rejectPending(error) {
     for (const waiter of pending.values()) waiter.reject(error);
@@ -115,6 +116,22 @@ async function runCase(entry) {
       return;
     }
     transcript.push(message);
+    if (
+      !message ||
+      typeof message !== 'object' ||
+      Array.isArray(message) ||
+      (message.id === undefined && typeof message.method !== 'string')
+    ) {
+      finish({ passed: false, reason: 'Malformed protocol envelope' });
+      return;
+    }
+    if (
+      message.method === 'item/tool/call' &&
+      (!message.params || typeof message.params !== 'object' || Array.isArray(message.params))
+    ) {
+      finish({ passed: false, reason: 'Malformed tool-call parameters' });
+      return;
+    }
     if (transcript.length > 2000) {
       finish({ passed: false, reason: 'Protocol event budget exceeded' });
       child.kill('SIGTERM');
