@@ -2,6 +2,7 @@ import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -67,6 +68,65 @@ test('Git creates a clean checkout and warm copies ignored dependencies and nati
   assert.equal(readFileSync(join(linked, 'node_modules/pkg/index.js'), 'utf-8'), 'dependency');
   assert.equal(readFileSync(join(linked, 'ios/Pods/Manifest.lock'), 'utf-8'), 'pods');
   assert.equal(readFileSync(join(linked, 'ios/build/generated.cpp'), 'utf-8'), 'native');
+});
+
+test('warm refuses an unwritable claim store before copying, with a code and access remedy', () => {
+  write('node_modules/pkg/index.js', 'dependency');
+  const home = join(ctx.tmp, 'permission-home');
+  mkdirSync(home, { mode: 0o500 });
+  try {
+    for (const refresh of [false, true]) {
+      const linked = create(`permission-${refresh}`);
+      const result = spawnSync(process.execPath, [CLI, 'worktree', 'warm', ...(refresh ? ['--refresh'] : [])], {
+        cwd: linked,
+        env: { ...process.env, STIM_HOME: home },
+        encoding: 'utf-8',
+      });
+      assert.equal(result.status, 1, result.stderr);
+      assert.equal(result.stdout, '');
+      assert.match(result.stderr, /failed: STIM_CLAIM_UNAVAILABLE/);
+      assert.match(result.stderr, /EACCES|EPERM/);
+      assert.match(result.stderr, /Restore write access to the existing claim store/);
+      assert.equal(existsSync(join(linked, 'node_modules')), false);
+    }
+  } finally {
+    chmodSync(home, 0o700);
+  }
+});
+
+test('warm names a file blocking the claim store and preserves it with the printed remedy', () => {
+  write('node_modules/pkg/index.js', 'dependency');
+  for (const level of ['home', 'warm-locks']) {
+    const home = join(ctx.tmp, `blocked-${level}`);
+    if (level === 'warm-locks') mkdirSync(home);
+    const blocker = level === 'home' ? home : join(home, 'warm-locks');
+    writeFileSync(blocker, 'preserve this file');
+    const linked = create(`blocked-worktree-${level}`);
+    const invoke = (args = []) =>
+      spawnSync(process.execPath, [CLI, 'worktree', 'warm', ...args], {
+        cwd: linked,
+        env: { ...process.env, STIM_HOME: home },
+        encoding: 'utf-8',
+      });
+    for (const args of [[], ['--refresh']]) {
+      const result = invoke(args);
+      assert.equal(result.status, 1, result.stderr);
+      assert.equal(result.stdout, '');
+      assert.match(result.stderr, /failed: STIM_CLAIM_REFUSED/);
+      assert.equal(existsSync(join(linked, 'node_modules')), false);
+      const remedy = result.stderr.split('\n').find((line) => line.trimStart().startsWith('mv -i '));
+      assert.ok(remedy, result.stderr);
+      assert.ok(remedy.includes(`'${blocker}'`), remedy);
+    }
+    const remedy = invoke()
+      .stderr.split('\n')
+      .find((line) => line.trimStart().startsWith('mv -i '));
+    execFileSync('/bin/sh', ['-c', remedy], { encoding: 'utf-8' });
+    assert.equal(readFileSync(`${blocker}.stim-backup`, 'utf8'), 'preserve this file');
+    const recovered = invoke();
+    assert.equal(recovered.status, 0, recovered.stderr);
+    assert.equal(readFileSync(join(linked, 'node_modules/pkg/index.js'), 'utf8'), 'dependency');
+  }
 });
 
 test('warm leaves the selected tracked base unchanged and reports mismatched copied Pods', () => {

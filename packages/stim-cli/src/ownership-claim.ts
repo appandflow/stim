@@ -84,13 +84,6 @@ export interface ClaimOptions {
 export const CLAIM_REFUSED = 'STIM_CLAIM_REFUSED';
 export const CLAIM_UNAVAILABLE = 'STIM_CLAIM_UNAVAILABLE';
 
-/**
- * The refusal reason for a claim store whose own path is occupied by a file. It names a filesystem
- * state that predates any claim, so a caller that only reads can tell it apart from an unresolvable
- * claim record and fall back to what it did before claims existed.
- */
-export const CLAIM_PATH_NOT_A_DIRECTORY = 'the claim path is a file, not a claim directory';
-
 const EXCLUSIVE_DIR = 'exclusive';
 const SHARED_DIR = 'shared';
 const CLAIM_SUFFIX = '.claim';
@@ -104,12 +97,28 @@ export class ClaimRefusedError extends Error {
   readonly reason: string;
   readonly removeCommand: string;
 
-  constructor({ claimPath, root, reason, label }: { claimPath: string; root: string; reason: string; label: string }) {
-    const removeCommand = claimRemoveCommand(claimPath.startsWith(root) ? claimPath : root);
+  constructor({
+    claimPath,
+    root,
+    reason,
+    label,
+    blockingFile = false,
+  }: {
+    claimPath: string;
+    root: string;
+    reason: string;
+    label: string;
+    blockingFile?: boolean;
+  }) {
+    const removeCommand = blockingFile
+      ? `mv -i ${quotedPath(claimPath)} ${quotedPath(`${claimPath}.stim-backup`)}`
+      : claimRemoveCommand(claimPath.startsWith(root) ? claimPath : root);
     super(
-      `Stim cannot tell whether the ${label} claim at ${claimPath} is still held: ${reason}. ` +
-        'It will not remove a claim it cannot prove is dead, and it will not wait on one either. ' +
-        `If nothing is using it, remove the claim and run the command again:\n  ${removeCommand}`,
+      blockingFile
+        ? `The ${label} claim store is blocked by a non-directory path at ${claimPath}. Inspect it before moving it aside; its contents may be unrelated to Stim. Preserve it with the command below (an existing backup prompts before overwriting), then run the command again:\n  ${removeCommand}`
+        : `Stim cannot tell whether the ${label} claim at ${claimPath} is still held: ${reason}. ` +
+            'It will not remove a claim it cannot prove is dead, and it will not wait on one either. ' +
+            `If nothing is using it, remove the claim and run the command again:\n  ${removeCommand}`,
     );
     this.claimPath = claimPath;
     this.reason = reason;
@@ -120,10 +129,18 @@ export class ClaimRefusedError extends Error {
 export class ClaimUnavailableError extends Error {
   readonly code: string = CLAIM_UNAVAILABLE;
   readonly reason: string;
+  readonly remedy: string;
 
-  constructor(reason: string) {
-    super(`Stim could not record a process identity, so it cannot take an ownership claim: ${reason}.`);
+  constructor(reason: string, { claimPath }: { claimPath?: string } = {}) {
+    super(
+      claimPath
+        ? `Stim could not write the ownership claim at ${claimPath}: ${reason}.`
+        : `Stim could not record a process identity, so it cannot take an ownership claim: ${reason}.`,
+    );
     this.reason = reason;
+    this.remedy = claimPath
+      ? `Restore write access to the existing claim store at ${quotedPath(claimPath)} (check parent permissions, symlink targets, mount access and sandbox rules)`
+      : 'Reinstall Stim so the unique-pid native module for this platform is present';
   }
 }
 
@@ -151,12 +168,7 @@ export interface ClaimFailure {
   remedy: string;
 }
 
-/**
- * The refusal a command reports for either error the claim primitive raises, and null for anything else.
- * Both are refusals: a claim Stim cannot resolve and a process identity it cannot record are the two
- * states in which it holds no claim, and running the operation a claim serializes without one gives a
- * competing run no protection at all.
- */
+/** Convert an unresolved claim, unavailable identity or inaccessible warm claim store into command recovery guidance. */
 export function claimFailure(err: unknown, retryCommand: string | null): ClaimFailure | null {
   const retry = retryCommand === null ? 'retry the same Stim command' : `run \`${retryCommand}\` again`;
   if (isClaimRefusal(err)) {
@@ -170,7 +182,7 @@ export function claimFailure(err: unknown, retryCommand: string | null): ClaimFa
     return {
       code: CLAIM_UNAVAILABLE,
       message: err.message,
-      remedy: `Reinstall Stim so the unique-pid native module for this platform is present, then ${retry}.`,
+      remedy: `${err.remedy}, then ${retry}.`,
     };
   }
   return null;
@@ -279,6 +291,35 @@ export function claimLiveness(holder: ClaimHolder): Liveness {
 
 function refuse(root: string, claimPath: string, label: string, reason: string): never {
   throw new ClaimRefusedError({ claimPath, root, label, reason });
+}
+
+function refuseNonDirectory(root: string, path: string, label: string): never {
+  let blocking: string | null = null;
+  for (let level = path; ; level = dirname(level)) {
+    try {
+      if (!statSync(level).isDirectory()) {
+        blocking = level;
+        break;
+      }
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') break;
+    }
+    if (dirname(level) === level) break;
+  }
+  if (blocking === null) {
+    throw new ClaimUnavailableError(
+      'the non-directory path could not be identified; the claim store may have changed',
+      { claimPath: root },
+    );
+  }
+  throw new ClaimRefusedError({
+    root,
+    claimPath: blocking,
+    label,
+    reason: 'the claim path is a file, not a claim directory',
+    blockingFile: true,
+  });
 }
 
 function names(dir: string): string[] | 'unreadable' {
@@ -502,7 +543,7 @@ function publishExclusive(root: string, payload: string, claimId: string, label:
     rmSync(staging, { recursive: true, force: true });
     const code = (err as NodeJS.ErrnoException)?.code;
     if (contended(err)) return null;
-    if (code === 'ENOTDIR') refuse(root, target, label, CLAIM_PATH_NOT_A_DIRECTORY);
+    if (code === 'ENOTDIR') refuseNonDirectory(root, target, label);
     throw err;
   }
 }
@@ -541,7 +582,7 @@ export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' 
     } catch (err) {
       const code = (err as NodeJS.ErrnoException)?.code;
       if (code === 'EEXIST' || code === 'ENOTDIR') {
-        refuse(root, root, label, CLAIM_PATH_NOT_A_DIRECTORY);
+        refuseNonDirectory(root, root, label);
       }
       if (contended(err)) continue;
       throw err;

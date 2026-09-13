@@ -2,25 +2,9 @@ import { once } from 'node:events';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  acquireWarmClaim,
-  warmClaimAcquiredLine,
-  warmClaimBlockedLine,
-  warmClaimBlockedRefusal,
-  warmClaimBlocker,
-  warmClaimDegradation,
-  warmClaimPath,
-  warmClaimsDir,
-} from '../engine/warm-claim.ts';
+import { acquireWarmClaim, warmClaimAcquiredLine, warmClaimPath, warmClaimsDir } from '../engine/warm-claim.ts';
 import { getExecutor } from '../exec.ts';
-import {
-  CLAIM_PATH_NOT_A_DIRECTORY,
-  ClaimRefusedError,
-  ClaimUnavailableError,
-  exclusiveClaimDir,
-  readClaimSet,
-  sharedClaimDir,
-} from '../ownership-claim.ts';
+import { ClaimRefusedError, exclusiveClaimDir, readClaimSet, sharedClaimDir } from '../ownership-claim.ts';
 import { IMPOSSIBLE_PID, goneClaimOwner, plantClaim, recycledClaimOwner } from './_factories.ts';
 
 let home: string;
@@ -214,24 +198,14 @@ test('a wait attributes elapsed time to the waiter and names its holder every pr
 
 test('the acquired line reports a wait only when there was one', () => {
   expect(warmClaimAcquiredLine({ waitedMs: 0, holder: null })).toBe(`  ${'lock'.padEnd(11)} acquired`);
+  for (const waitedMs of [1, 250, 999]) {
+    expect(warmClaimAcquiredLine({ waitedMs, holder: { pid: 41233, phase: 'refresh' } })).toBe(
+      `  ${'lock'.padEnd(11)} acquired`,
+    );
+  }
   expect(warmClaimAcquiredLine({ waitedMs: 12_000, holder: { pid: 41233, phase: 'refresh' } })).toBe(
     `  ${'lock'.padEnd(11)} acquired (waited 12s for stim worktree warm --refresh pid 41233) -- stim guide lifecycle options`,
   );
-});
-
-test('a copy proceeds without a claim only when no claim could be recorded at all', () => {
-  expect(warmClaimDegradation(new ClaimUnavailableError('ENOSYS (no prebuild for this platform)'))).toContain(
-    'ENOSYS (no prebuild for this platform)',
-  );
-  expect(warmClaimDegradation(Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }))).toBe(
-    'EACCES: permission denied',
-  );
-  expect(
-    warmClaimDegradation(
-      new ClaimRefusedError({ claimPath: '/h/a.claim', root: '/h', reason: 'truncated', label: 'worktree warm' }),
-    ),
-  ).toBe(null);
-  expect(warmClaimDegradation(Object.assign(new Error('waited'), { code: 'STIM_LOCK_TIMEOUT' }))).toBe(null);
 });
 
 test('the installer process group keeps the claim after the refresh that spawned it is gone', async () => {
@@ -325,53 +299,6 @@ test('a pid that no longer exists is not a writer to hold the claim for', async 
   expect(lines).toEqual([]);
   refresh.release();
   expect(existsSync(warmClaimPath(REPO))).toBe(false);
-});
-
-test('a claim store whose own path is a file degrades a copy; an unresolvable claim in it does not', () => {
-  const notADirectory = new ClaimRefusedError({
-    claimPath: '/h/warm-locks/main--a.lock',
-    root: '/h/warm-locks/main--a.lock',
-    reason: CLAIM_PATH_NOT_A_DIRECTORY,
-    label: 'worktree warm',
-  });
-  expect(warmClaimDegradation(notADirectory)).toBe(`/h/warm-locks/main--a.lock: ${CLAIM_PATH_NOT_A_DIRECTORY}`);
-  expect(
-    warmClaimDegradation(
-      new ClaimRefusedError({
-        claimPath: '/h/warm-locks/main--a.lock/exclusive/x.claim',
-        root: '/h/warm-locks/main--a.lock',
-        reason: 'its record is missing, truncated or not valid JSON',
-        label: 'worktree warm',
-      }),
-    ),
-  ).toBe(null);
-});
-
-test('a copy with no claim of its own reads what it would overlap before it copies', async () => {
-  expect(warmClaimBlocker(REPO)).toBe(null);
-
-  const copy = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'copy', sleep: never });
-  expect(warmClaimBlocker(REPO)).toBe(null);
-  copy.release();
-
-  const refresh = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'refresh', sleep: never });
-  const blocker = warmClaimBlocker(REPO);
-  expect(blocker).toEqual({ kind: 'refresh', holder: { pid: process.pid, phase: 'refresh' } });
-  expect(warmClaimBlockedLine('EACCES: permission denied', blocker!)).toMatch(
-    /^ {2}lock {8}unavailable \(EACCES: permission denied\); stim worktree warm --refresh \(pid \d+\) holds this repository$/,
-  );
-  expect(warmClaimBlockedRefusal(blocker!)).toContain('Refusing to copy from a source checkout a refresh is rewriting');
-  refresh.release();
-
-  plantClaim(warmClaimPath(REPO), 'exclusive', goneClaimOwner(), { claimId: 'dead-refresh' });
-  expect(warmClaimBlocker(REPO)).toBe(null);
-
-  const path = plantClaim(warmClaimPath(REPO), 'exclusive', goneClaimOwner(), {
-    claimId: 'half-spawned',
-    child: { record: null },
-  });
-  expect(warmClaimBlocker(REPO)).toEqual({ kind: 'unresolved', path, reason: expect.any(String) });
-  expect(warmClaimBlockedRefusal(warmClaimBlocker(REPO)!)).toContain(path);
 });
 
 test('settling the installer waits for its process group, not for the process that led it', async () => {

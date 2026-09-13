@@ -201,8 +201,36 @@ describe('refusing instead of guessing', () => {
     mkdirSync(dirname(root), { recursive: true });
     writeFileSync(root, 'not a claim directory');
     const err = refusal(() => tryAcquireClaim({ root, mode: 'exclusive' }));
-    expect(err.message).toMatch(/is a file, not a claim directory/);
+    expect(err.claimPath).toBe(root);
+    expect(err.message).toContain('blocked by a non-directory path');
   });
+
+  test.each(['exclusive', 'shared'] as const)(
+    'a %s claim remedy preserves the actual blocking ancestor and its siblings',
+    (mode) => {
+      const home = dirname(root);
+      const blocker = join(home, "warm locks' file");
+      const bystander = join(home, 'keep');
+      writeFileSync(blocker, 'unrelated contents');
+      writeFileSync(bystander, 'keep');
+      const blocked = join(blocker, 'repository.lock');
+      try {
+        const err = refusal(() => tryAcquireClaim({ root: blocked, mode }));
+        expect(err.claimPath).toBe(blocker);
+        expect(err.removeCommand).toMatch(/^mv -i /);
+        getExecutor().run(err.removeCommand);
+        expect(readFileSync(`${blocker}.stim-backup`, 'utf8')).toBe('unrelated contents');
+        expect(readFileSync(bystander, 'utf8')).toBe('keep');
+        const acquired = tryAcquireClaim({ root: blocked, mode }).acquired;
+        expect(acquired).toBeDefined();
+        releaseClaim(acquired);
+      } finally {
+        rmSync(blocker, { recursive: true, force: true });
+        rmSync(`${blocker}.stim-backup`, { force: true });
+        rmSync(bystander, { force: true });
+      }
+    },
+  );
 
   test('the printed remedy, run as printed, clears the claim and nothing beside it', () => {
     const home = mkdtempSync(join(tmpdir(), 'stim-claim-remedy-'));

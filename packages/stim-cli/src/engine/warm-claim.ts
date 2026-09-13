@@ -4,14 +4,11 @@ import { formatElapsed, phaseLine } from '../command-output.ts';
 import { getConfigDir } from '../config.ts';
 import { captureProcessIdentity } from '../process-identity.ts';
 import {
-  CLAIM_PATH_NOT_A_DIRECTORY,
+  ClaimUnavailableError,
   claimRemoveCommand,
   clearClaimChild,
-  isClaimRefusal,
-  isClaimUnavailable,
   markClaimChildPending,
   processGroupAlive,
-  readClaimSet,
   releaseClaim,
   setClaimChild,
   settleClaim,
@@ -108,76 +105,10 @@ function waitingLine(holder: WarmClaimHolder, elapsedMs: number): string {
 
 export function warmClaimAcquiredLine(wait: WarmClaimWait, detail = ''): string {
   const acquired = `acquired${detail ? ` ${detail}` : ''}`;
-  if (!wait.holder || wait.waitedMs <= 0) return phaseLine('lock', acquired);
+  if (!wait.holder || wait.waitedMs < 1000) return phaseLine('lock', acquired);
   return phaseLine(
     'lock',
     `${acquired} (waited ${formatElapsed(wait.waitedMs)} for ${warmCommand(wait.holder.phase)} pid ${wait.holder.pid}) -- stim guide lifecycle options`,
-  );
-}
-
-export function warmClaimUnavailableLine(reason: string): string {
-  return phaseLine('lock', `unavailable (${reason}); copying without it`);
-}
-
-/**
- * The reason a copy may proceed without the claim, or null when it must refuse. Plain `warm` worked on an
- * unwritable STIM_HOME before any claim existed and only reads, so the states in which no claim can be
- * recorded at all degrade to an unsynchronised copy: no process identity, a claim store the filesystem
- * rejects, and a claim store whose own path holds a file. A claim record Stim cannot resolve and a wait
- * that ran out are refusals: neither state can exist unless the claim does, so refusing them takes
- * nothing away.
- */
-export function warmClaimDegradation(error: unknown): string | null {
-  if (isClaimUnavailable(error)) return error.message;
-  if (isClaimRefusal(error)) {
-    return error.reason === CLAIM_PATH_NOT_A_DIRECTORY ? `${error.claimPath}: ${error.reason}` : null;
-  }
-  const code = (error as { code?: string })?.code;
-  if (typeof code === 'string' && code.startsWith('STIM_')) return null;
-  return (error as Error)?.message ?? String(error);
-}
-
-export type WarmClaimBlocker =
-  | { kind: 'refresh'; holder: WarmClaimHolder }
-  | { kind: 'unresolved'; path: string; reason: string };
-
-/**
- * What a copy that could not record a claim of its own would overlap if it went ahead anyway. Reading the
- * claim set classifies without writing anything and without refusing, so it works in exactly the states
- * that made the claim unrecordable -- a read-only STIM_HOME included. It is a read before a copy rather
- * than a held claim, so a refresh that starts after it is not covered; it closes the window in which one
- * is already installing, which is the window a refresh actually occupies.
- */
-export function warmClaimBlocker(repositoryRoot: string): WarmClaimBlocker | null {
-  const survey = readClaimSet(warmClaimPath(repositoryRoot));
-  const refresh = survey.live.find((holder) => holder.mode === 'exclusive');
-  if (refresh) return { kind: 'refresh', holder: asHolder(refresh) };
-  // A claim record whose state cannot be established may be a refresh that was killed between spawning
-  // its install and recording it. A directory that could not be read is the storage failure already
-  // being degraded on, not a claim.
-  const unresolved = survey.unresolved.find((problem) => problem.path.endsWith('.claim'));
-  if (unresolved) return { kind: 'unresolved', path: unresolved.path, reason: unresolved.reason };
-  return null;
-}
-
-export function warmClaimBlockedLine(reason: string, blocker: WarmClaimBlocker): string {
-  const what =
-    blocker.kind === 'refresh'
-      ? `${warmCommand(blocker.holder.phase)} (pid ${blocker.holder.pid}) holds this repository`
-      : `a claim at ${blocker.path} cannot be resolved: ${blocker.reason}`;
-  return phaseLine('lock', `unavailable (${reason}); ${what}`);
-}
-
-export function warmClaimBlockedRefusal(blocker: WarmClaimBlocker): string {
-  if (blocker.kind === 'refresh') {
-    return (
-      'Refusing to copy from a source checkout a refresh is rewriting, even without a claim of its own. ' +
-      'Wait for that refresh to finish, then run warm again.'
-    );
-  }
-  return (
-    'Refusing to copy past a claim Stim cannot resolve. If nothing is warming, remove it and run warm ' +
-    `again:\n  ${claimRemoveCommand(blocker.path)}`
   );
 }
 
@@ -335,6 +266,9 @@ export async function acquireWarmClaim({
     }
   } catch (error) {
     releaseClaim(pending);
+    if (['EACCES', 'EPERM', 'EROFS', 'ENOENT'].includes((error as NodeJS.ErrnoException)?.code ?? '')) {
+      throw new ClaimUnavailableError((error as Error).message, { claimPath: root });
+    }
     throw error;
   }
 }

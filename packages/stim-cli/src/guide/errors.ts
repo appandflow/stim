@@ -236,14 +236,13 @@ code, never on the message.`,
   \`worktree warm\` reports it for the repository-wide warm claim under
   ~/.stim/warm-locks on both paths, including a \`--refresh\` that spawned its
   install and was killed before recording which process: nothing was refreshed
-  and nothing was copied. One case is NOT this code for a plain warm: a
-  STIM_HOME (or a warm-locks path under it) that is a file rather than a
-  directory. No claim can be stored there at all, which is a filesystem state
-  that predates claims, so plain \`warm\` degrades to the unsynchronised copy it
-  performed before them and \`--refresh\` still refuses.`,
+  and nothing was copied. A STIM_HOME or warm-locks ancestor that is a file
+  also refuses. The message names that blocking path and prints a shell-quoted
+  move-aside command. Inspect it first: the file may contain unrelated data.
+  An existing backup prompts before overwriting; preserve both files.`,
     },
     STIM_CLAIM_UNAVAILABLE: {
-      summary: 'this process has no recordable identity, so no build lock or build slot can be taken at all',
+      summary: 'a process identity or warm claim store is unavailable, so the protected operation refuses',
       body: () => `STIM_CLAIM_UNAVAILABLE
   Every ownership claim records the holder's process identity, captured through
   the \`unique-pid\` native module. This code is that capture failing: no
@@ -255,16 +254,15 @@ code, never on the message.`,
   the same fingerprint while each believed it was alone. Reinstall Stim so the
   module for this platform is present, then run the command again. Nothing was
   built, installed or removed.
-  \`worktree warm --refresh\` refuses for the same reason, because it writes to
-  the source checkout. Plain \`worktree warm\` does NOT: it prints one dim
-  \`lock        unavailable (...)\` line and copies unsynchronised. A copy only
-  reads, so running it with no claim is what it did before the lock existed,
-  while refusing it would break a warm that works today -- an unwritable
-  STIM_HOME included.
-  It still reads the claim set first, which takes no claim: a live \`--refresh\`
-  claim, or a claim it cannot resolve, makes even the unsynchronised copy
-  refuse, and the line names what it found. Only a repository nothing is
-  warming is copied without a claim.`,
+  Both plain \`worktree warm\` and \`worktree warm --refresh\` refuse before
+  copying for the same reason. A copy without a claim would be invisible to a
+  refresh starting after it, allowing the source dependencies to change while
+  they are read.
+  Warm also reports this code for EACCES, EPERM, EROFS and ENOENT while taking a claim.
+  The message names the claim path and original filesystem error. Restore write
+  access to the existing claim store, checking parent permissions, symlink
+  targets, mount access and sandbox rules, then retry. Do not switch STIM_HOME to evade a claim:
+  concurrent runs must coordinate through the same store.`,
     },
     STIM_INSTALL_FAILED: {
       summary: 'simctl, adb, or devicectl refused the artifact; the one signer-conflict retry',
@@ -990,24 +988,14 @@ not on any remote"  (worktree remove)
   which is usually the repository root, so every app of it reads the same one.`,
     },
     warm: {
-      summary: 'two warm refusals whose text is incomplete, known and not fixed',
-      body: () => `"Could not warm this worktree: EACCES: permission denied, mkdir
-'<home>/warm-locks/<name>.lock'"  (worktree warm --refresh)
-  A STIM_HOME that \`--refresh\` cannot write. The refusal itself is right -- it
-  writes to the source checkout, so it will not run without a claim -- but it
-  carries no \`failed: <CODE>\` line, because EACCES is not a Stim code, and no
-  fix line. Make STIM_HOME writable, or set STIM_HOME to somewhere writable,
-  then run it again. A plain warm degrades in this state rather than refusing.
-
-"... the claim path is a file, not a claim directory", with a \`rm -rf\` that
-changes nothing  (worktree warm --refresh)
-  When \`$STIM_HOME/warm-locks\` or STIM_HOME itself is a regular FILE, the
-  refusal names \`warm-locks/<name>.lock\` -- a path that cannot exist under a
-  file -- so running the printed removal does nothing and the next run refuses
-  identically. Remove the file that is in the way and run it again. A plain
-  warm copies unsynchronised in this state.
-
-  Both are documented rather than fixed: appandflow/stim#696.`,
+      summary: 'worktree warm claim storage refusals and recovery',
+      body: () => `Both plain warm and --refresh require an ownership claim.
+  Permission-denied or read-only claim storage reports STIM_CLAIM_UNAVAILABLE
+  and names the path. Restore access to the existing claim store and retry.
+  A non-directory claim ancestor reports STIM_CLAIM_REFUSED and names the
+  blocking file. Inspect it and use the printed move-aside command to preserve
+  its contents before retrying. See guide errors STIM_CLAIM_UNAVAILABLE and
+  guide errors STIM_CLAIM_REFUSED for the recovery details.`,
     },
     carry: {
       summary: 'worktree warm copy results, lockfile mismatches, and remedies',

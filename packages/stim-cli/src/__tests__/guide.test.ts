@@ -294,8 +294,10 @@ test('the rendered guide carries the warm --refresh contract, not just its sourc
   // The refusal is on the unflagged path, so the plain-warm contract has to name it where a waiter looks.
   expect(options).toContain('STIM_DEPS_INCOMPLETE');
   expect(renderSection('errors', 'STIM_DEPS_INCOMPLETE')).toContain('warm-installs');
-  expect(renderSection('errors', 'warm')).toContain('appandflow/stim#696');
-  expect(options).toContain('appandflow/stim#696');
+  for (const code of [CLAIM_REFUSED, CLAIM_UNAVAILABLE]) {
+    expect(renderSection('errors', 'warm')).toContain(code);
+    expect(options).toContain(code);
+  }
 });
 
 test('the facts topic documents every reload strategy the command can report', () => {
