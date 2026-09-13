@@ -150,9 +150,11 @@ test('the disposable Expo iOS fixture prepares matching Pods before committing i
   const workDir = scratch(t);
   const tools = join(workDir, 'tools');
   mkdirSync(tools);
-  const npm = join(tools, 'npm');
-  writeFileSync(npm, '#!/bin/sh\nexit 0\n');
-  chmodSync(npm, 0o755);
+  for (const name of ['npm', 'simslim']) {
+    const tool = join(tools, name);
+    writeFileSync(tool, '#!/bin/sh\nexit 0\n');
+    chmodSync(tool, 0o755);
+  }
   const init = join(workDir, 'init.mjs');
   writeFileSync(
     init,
@@ -161,6 +163,7 @@ import { join } from 'node:path';
 const app = process.argv[2];
 mkdirSync(app);
 writeFileSync(join(app, 'package.json'), '{"name":"fixture"}\\n');
+writeFileSync(join(app, '.stim.json'), JSON.stringify({ios:{deviceType:'iPhone 17'},android:{systemImage:'keep-image'}}));
 `,
   );
   const previousInit = process.env.STIM_E2E_EXPO_INIT;
@@ -195,4 +198,11 @@ writeFileSync(join(app, 'package.json'), '{"name":"fixture"}\\n');
   assert.equal(git(app, 'status', '--porcelain'), '');
   assert.equal(git(app, 'show', 'HEAD:package.json'), '{"name":"prepared-fixture"}');
   assert.equal(git(app, 'ls-files', 'ios'), '');
+  const settings = JSON.parse(git(app, 'show', 'HEAD:.stim.json'));
+  assert.equal(settings.ios.deviceType, 'iPhone 17');
+  assert.equal(settings.android.systemImage, 'keep-image');
+  assert.equal(
+    git(app, 'show', `HEAD:${settings.ios.simslimProfile}`),
+    readFileSync(new URL('./native/simslim-profile.json', import.meta.url), 'utf8').trim(),
+  );
 });

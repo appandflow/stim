@@ -1,5 +1,14 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -107,6 +116,7 @@ function withDir(tmplStr, appDir) {
 }
 
 export function createFixture({ framework, platform, workDir, h }) {
+  if (platform === 'ios') h.requireTool('simslim', ['--version']);
   const appDir = join(workDir, 'app');
   const cmd = FIXTURE_COMMANDS[framework](appDir);
   h.log(`creating ${framework} fixture: ${cmd.map(quote).join(' ')}`);
@@ -158,6 +168,15 @@ export function createFixture({ framework, platform, workDir, h }) {
     h.log('preparing the disposable Expo iOS fixture and Pods before its initial commit');
     h.sh('npx', ['--no-install', 'expo', 'prebuild', '--platform', 'ios'], { cwd: appDir, timeout: 20 * 60 * 1000 });
     assertMatchingPods(appDir);
+  }
+
+  if (platform === 'ios') {
+    const settingsPath = join(appDir, '.stim.json');
+    const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, 'utf8')) : {};
+    settings.ios = { ...settings.ios, simslimProfile: '.stim-simslim.json' };
+    copyFileSync(new URL('./simslim-profile.json', import.meta.url), join(appDir, '.stim-simslim.json'));
+    writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+    h.log('generated iOS fixture uses the native QA SimSlim profile');
   }
 
   gitInitWithRemote({ appDir, workDir, framework, h });

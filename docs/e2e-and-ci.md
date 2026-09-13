@@ -102,6 +102,17 @@ The cache runner performs these checks before seeding its disposable Gradle
 home. Worktree names include a digest of the run directory, so separate runs
 use different device names and do not recover a previous run's AVD by name.
 
+Generated iOS fixtures use the committed
+[`simslim-profile.json`](../test/e2e/native/simslim-profile.json) to reduce
+background services while running several simulators. Install the prerequisite
+with `brew install mobai-app/tap/simslim`; CI does this automatically. The profile
+keeps App Store/push/media, web/universal links, connectivity, diagnostics, and
+miscellaneous system services. It disables widgets, Siri, search, account sync,
+PIM, family, health, photos, bundled apps, and messaging, which these blank-app
+scenarios do not exercise. Review the profile when adding feature-specific QA.
+Supplied `--app-dir` projects retain their own settings. Stock simulator boot
+and memory behavior require a separate run against a project without a profile.
+
 ### The simulator pool suite
 
 `test/e2e/native/run-pool-e2e.mjs` runs on iOS. With a pool bound of one, it
