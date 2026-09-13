@@ -25,6 +25,7 @@ export default defineConfig({
       'scripts/**/*.test.mjs',
       'website/src/**/*.test.ts',
     ],
+    exclude: ['**/*.compat.test.ts'],
     pool: 'forks',
   },
 });

@@ -143,6 +143,10 @@ preparation, `git status --short` may show only the draft
    expedited RC lane in section 3 replaces this command list with its short
    preflight; do not combine the two lanes informally.
 
+   The native compatibility stage requires the tools and connected iPhone listed
+   in [docs/testing.md](./docs/testing.md). Record unavailable prerequisites
+   explicitly; a unit-only pass does not satisfy that stage.
+
    ```bash
    pnpm install --frozen-lockfile
    pnpm run format:check
@@ -153,6 +157,7 @@ preparation, `git status --short` may show only the draft
    pnpm test
    pnpm run test:e2e
    pnpm run test:runtime
+   pnpm run test:compat
    node packages/stim-cli/dist/cli.mjs --help
    node packages/stim-cli/dist/cli.mjs guide agent
    test "$(node packages/stim-cli/dist/cli.mjs --version)" = "X.Y.Z"
