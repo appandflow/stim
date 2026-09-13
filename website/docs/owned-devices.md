@@ -51,7 +51,10 @@ During a slow local iOS boot, Stim reports the simulator name, elapsed time, las
 output, current memory pressure, and highest observed pressure roughly every
 15 seconds. Boot failures retain the highest pressure and the number of
 unavailable readings. Unknown readings are not treated as normal, and pressure
-does not prove the cause of a timeout. The boot deadline remains ten minutes.
+does not prove the cause of a timeout. The boot deadline remains ten minutes,
+but synchronous CLI work can delay observations, progress, and timeout handling.
+Diagnostics report observation gaps over 30 seconds; pressure during those gaps
+is unobserved, even when surrounding readings are normal.
 
 An agent should stop unused slots in workspaces it owns, reduce concurrent
 builds, and retry after pressure falls. Ask before closing another agent's

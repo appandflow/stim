@@ -237,9 +237,14 @@ export async function bootIosSim(
   const deadline = started + timeoutMs;
   let worst: HostMemoryPressure | null = null;
   let unknown = 0;
+  let sampledAt = started;
+  let longestGapMs = 0;
   let phase = 'requesting boot';
   const ranks = { normal: 0, warning: 1, critical: 2 };
   const sample = () => {
+    const now = Date.now();
+    longestGapMs = Math.max(longestGapMs, now - sampledAt);
+    sampledAt = now;
     const pressure = readHostMemoryPressure(exec);
     if (pressure === null) unknown++;
     else if (worst === null || ranks[pressure] > ranks[worst]) worst = pressure;
@@ -247,10 +252,14 @@ export async function bootIosSim(
   };
   const recovery =
     "Stop unused slots in workspaces you own with `stim stop --slot <name>`, reduce concurrent builds, and retry after pressure falls. Ask before closing other agents' devices or apps. Repeated reboots under unchanged pressure may stall again.";
+  const coverage = () =>
+    longestGapMs > 30000
+      ? ` Observations were delayed: longest gap ${Math.round(longestGapMs / 1000)}s. Pressure during gaps is unobserved; blocking CLI work can also delay progress and timeout handling.`
+      : '';
   const report = () => {
     const pressure = sample();
     out(
-      `Simulator ${label} is still booting after ${Math.round((Date.now() - started) / 1000)}s. Last boot output: ${phase}. Memory pressure: ${pressure ?? 'unknown'}; highest observed: ${worst ?? 'unknown'}. Boot deadline: ${Math.round(timeoutMs / 1000)}s.${pressure === 'warning' || pressure === 'critical' ? ` Boot may be delayed or stalled. ${recovery}` : ''}`,
+      `Simulator ${label} is still booting after ${Math.round((Date.now() - started) / 1000)}s. Last boot output: ${phase}. Memory pressure: ${pressure ?? 'unknown'}; highest observed: ${worst ?? 'unknown'}. Boot deadline: ${Math.round(timeoutMs / 1000)}s.${coverage()}${pressure === 'warning' || pressure === 'critical' ? ` Boot may be delayed or stalled. ${recovery}` : ''}`,
     );
   };
   const onLine = (line: string) => {
@@ -300,7 +309,7 @@ export async function bootIosSim(
   } catch (error) {
     sample();
     throw new Error(
-      `${(error as Error)?.message || error} Last boot output: ${phase}. Highest observed memory pressure: ${worst ?? 'unknown'}; unavailable samples: ${unknown}. ${recovery} These observations do not establish an OOM crash.`,
+      `${(error as Error)?.message || error} Last boot output: ${phase}. Highest observed memory pressure: ${worst ?? 'unknown'}; unavailable samples: ${unknown}.${coverage()} ${recovery} These observations do not establish an OOM crash.`,
       { cause: error },
     );
   } finally {
