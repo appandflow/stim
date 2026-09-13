@@ -1,3 +1,6 @@
+import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { workspaceDir } from '../paths.ts';
+import { deviceSlotPlatforms, parseDeviceSlotKey, projectDeviceSlots, validateDeviceSlot } from '../device-slots.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, plural, releasedLeaseFact } from '../command-output.ts';
@@ -173,6 +176,7 @@ interface DeviceOutcomeEntry {
 }
 
 interface DeviceOutcome {
+  [key: string]: DeviceOutcomeEntry | null | undefined;
   ios: DeviceOutcomeEntry | null;
   android: DeviceOutcomeEntry | null;
   remote?: DeviceOutcomeEntry | null;
@@ -207,7 +211,52 @@ function defaultTeardownRemoteSession(
   return endRecordedSession({ root, sessionId, easBin: resolveEasCliBin(root)?.file ?? null });
 }
 
-export async function runStop({
+type StopArgs = Parameters<typeof stopWorkspace>[0];
+
+export async function runStop(options: StopArgs & { slot?: string }): ReturnType<typeof stopWorkspace> {
+  if (options.slot === undefined) return stopWorkspace(options);
+  const slot = validateDeviceSlot(options.slot);
+  const root = options.root;
+  const project = options.project === undefined ? getProject(root) : options.project;
+  const records = options.collectors === undefined ? readCollectorState(root) : options.collectors;
+  const collectors = Object.fromEntries(
+    Object.entries(records ?? {}).filter(([key]) => parseDeviceSlotKey(key)?.slot === slot),
+  );
+  const result = await stopWorkspace({
+    ...options,
+    project: project
+      ? {
+          ...project,
+          platforms: deviceSlotPlatforms(project, slot),
+          deviceSlots: undefined,
+          supervisor: undefined,
+          metroPort: null,
+        }
+      : null,
+    state: null,
+    collectors,
+    remoteDevice: null,
+    metroTunnel: null,
+    clearCollectors: (projectRoot, expected) =>
+      withWorkspaceStateLock(projectRoot, () => {
+        clearCollectorState(projectRoot, expected);
+        return !Object.keys(readCollectorState(projectRoot)).some((key) => parseDeviceSlotKey(key)?.slot === slot);
+      }),
+    clearState: () => true,
+    clearRegistration: async () => true,
+    releaseLeases: (projectRoot) => releaseWorkspaceLeases(projectRoot, { slot }),
+  });
+  result.outcomes.port = {
+    status: 'kept',
+    port: project?.metroPort ?? null,
+    reason: 'The workspace server is shared by all slots.',
+  };
+  result.outcomes.metro = { status: 'skipped', reason: 'The workspace server is shared by all slots.' };
+  result.summary = summarize(root, result.outcomes, result.ok);
+  return result;
+}
+
+async function stopWorkspace({
   root,
   project = undefined,
   state = undefined,
@@ -377,7 +426,7 @@ export async function runStop({
     report(chalk.dim(phaseLine('device', 'left alone (something is still running)')));
   } else {
     outcomes.device = shutDownDevices(proj, { teardownIos, teardownAvd, report });
-    if ([outcomes.device.ios, outcomes.device.android].some((device) => device?.status === 'failed')) ok = false;
+    if (Object.values(outcomes.device).some((device) => device?.status === 'failed')) ok = false;
   }
 
   const remote = remoteDevice === undefined ? readRemoteSession(root) : remoteDevice;
@@ -629,38 +678,41 @@ function shutDownDevices(
 ): DeviceOutcome {
   const device: DeviceOutcome = { ios: null, android: null };
 
-  const ios = project?.platforms?.ios;
-  const iosUdid = ios?.deviceUdid as string | undefined;
-  const iosName = ios?.deviceName as string | undefined;
-  if (iosUdid) {
-    if (!ios?.owned) {
-      device.ios = {
-        status: 'skipped',
-        kind: 'not-owned',
-        label: iosUdid,
-        reason: 'Stim does not own this device',
-      };
-      report(chalk.dim(phaseLine('device', `${iosUdid} is not Stim-owned, leaving it running`)));
-    } else {
-      device.ios = reportDevice(iosUdid, teardownIos(iosUdid, { del: false, label: iosName }), report);
+  for (const { slot, platforms } of projectDeviceSlots(project)) {
+    const iosKey = slot === 'default' ? 'ios' : `ios:${slot}`;
+    const androidKey = slot === 'default' ? 'android' : `android:${slot}`;
+    const ios = platforms.ios;
+    const iosUdid = ios?.deviceUdid as string | undefined;
+    const iosName = ios?.deviceName as string | undefined;
+    if (iosUdid) {
+      if (!ios?.owned) {
+        device[iosKey] = {
+          status: 'skipped',
+          kind: 'not-owned',
+          label: iosUdid,
+          reason: 'Stim does not own this device',
+        };
+        report(chalk.dim(phaseLine('device', `${iosUdid} is not Stim-owned, leaving it running`)));
+      } else {
+        device[iosKey] = reportDevice(iosUdid, teardownIos(iosUdid, { del: false, label: iosName }), report);
+      }
+    }
+
+    const android = platforms.android;
+    if (android?.avdName) {
+      if (!android.owned) {
+        device[androidKey] = {
+          status: 'skipped',
+          kind: 'not-owned',
+          label: android.avdName,
+          reason: 'Stim does not own this device',
+        };
+        report(chalk.dim(phaseLine('device', `${android.avdName} is not Stim-owned, leaving it running`)));
+      } else {
+        device[androidKey] = reportDevice(android.avdName, teardownAvd(android.avdName, { del: false }), report);
+      }
     }
   }
-
-  const android = project?.platforms?.android;
-  if (android?.avdName) {
-    if (!android.owned) {
-      device.android = {
-        status: 'skipped',
-        kind: 'not-owned',
-        label: android.avdName,
-        reason: 'Stim does not own this device',
-      };
-      report(chalk.dim(phaseLine('device', `${android.avdName} is not Stim-owned, leaving it running`)));
-    } else {
-      device.android = reportDevice(android.avdName, teardownAvd(android.avdName, { del: false }), report);
-    }
-  }
-
   return device;
 }
 
@@ -698,10 +750,7 @@ function summarize(root: string, outcomes: StopOutcomes, ok: boolean): string {
   if (outcomes.metro.status === 'not-managed') parts.push(`external server on port ${outcomes.metro.port} left alone`);
   if (outcomes.metro.status === 'refused') parts.push(`port ${outcomes.metro.port} refused`);
   if (outcomes.metro.status === 'failed') parts.push(`port ${outcomes.metro.port} could not be freed`);
-  const devicesByPlatform: [string, DeviceOutcomeEntry | null][] = [
-    ['ios', outcomes.device.ios],
-    ['android', outcomes.device.android],
-  ];
+  const devicesByPlatform = Object.entries(outcomes.device).filter(([key]) => key !== 'remote');
   for (const [platform, o] of devicesByPlatform) {
     if (!o) continue;
     if (o.status === 'shut-down') parts.push(`${platform} ${o.label} shut down`);
@@ -737,6 +786,7 @@ async function defaultClearRegistration(root: string, expected?: ProcessRecord |
 }
 
 interface StopOptions {
+  slot?: string;
   json?: boolean;
 }
 
@@ -746,6 +796,7 @@ export default function stopCommand(program: Command): void {
     .description(
       "The inverse of `start`: halt this workspace's supervisor, shut the owned device down (never deleted), and free the reserved port. Non-destructive -- the device stays assigned, so coming back costs a boot. Acts on the current workspace.",
     )
+    .option('--slot <name>', 'Stop only this device slot, keeping the shared server running', validateDeviceSlot)
     .option('--json', 'print the per-step outcomes as JSON')
     .action(async (opts: StopOptions) => {
       const root = findProjectRoot(process.cwd());
@@ -754,7 +805,12 @@ export default function stopCommand(program: Command): void {
         process.exit(1);
       }
 
-      const { ok, outcomes, summary } = await runStop({ root });
+      const { ok, outcomes, summary } = await withWorkspaceProcessLock(
+        workspaceDir(root),
+        'native-run',
+        () => runStop({ root, slot: opts.slot }),
+        { external: true, waitMs: 30 * 60_000 },
+      );
 
       if (opts.json) {
         console.log(JSON.stringify({ root, ok, ...outcomes }));

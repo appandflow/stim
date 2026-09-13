@@ -98,9 +98,23 @@ Native runners check their environment before preparing the fixture. Android
 requires `ANDROID_HOME` or `ANDROID_SDK_ROOT` pointing to an existing SDK
 directory, even when the app has `android/local.properties`. iOS requires a
 UTF-8 locale; set `LANG=en_US.UTF-8` and `LC_ALL=en_US.UTF-8` when needed.
+Its preflight also checks CoreSimulator inventory with a five-minute deadline
+before fixture setup. This read-only check initializes the service without
+booting devices; a failure identifies the command before any app build starts.
 The cache runner performs these checks before seeding its disposable Gradle
 home. Worktree names include a digest of the run directory, so separate runs
 use different device names and do not recover a previous run's AVD by name.
+
+Generated iOS fixtures use the committed
+[`simslim-profile.json`](../test/e2e/native/simslim-profile.json) to reduce
+background services while running several simulators. Install the prerequisite
+with `brew install mobai-app/tap/simslim`; CI does this automatically. The profile
+keeps App Store/push/media, web/universal links, connectivity, diagnostics, and
+miscellaneous system services. It disables widgets, Siri, search, account sync,
+PIM, family, health, photos, bundled apps, and messaging, which these blank-app
+scenarios do not exercise. Review the profile when adding feature-specific QA.
+Supplied `--app-dir` projects retain their own settings. Stock simulator boot
+and memory behavior require a separate run against a project without a profile.
 
 ### The simulator pool suite
 
@@ -271,3 +285,23 @@ setup timings, seeds and clears app data, verifies an unchanged APK skips
 installation, and checks that GC deletes the parked AVD. It uses separate launch
 and cleanup processes, like the CLI. The test removes its own devices and prints
 the temporary directory containing `result.json` and emulator logs.
+
+### Sequential iOS simulator preparation
+
+When an iOS fixture declares a SimSlim profile, the loop and cache suites
+prepare their required simulator assignments one at a time before starting
+the workload. Preparation creates or reuses an owned simulator, waits for boot
+and profile reconciliation, then shuts it down through Stim. It does not start
+Metro, build the app, or populate the native artifact cache. Stock fixtures
+and Android do not take this preparation path.
+
+The loop still asserts three distinct simulators are booted simultaneously.
+Cache suites still require a cold artifact miss and race two commands against
+one empty cache. The preparation reduces overlapping first-boot work; it does
+not establish that host memory caused earlier failures or guarantee enough
+capacity for the eventual concurrent workload. Runner sizes are unchanged.
+
+If preparation or its shutdown fails, the suite preserves its temporary
+worktrees and `STIM_HOME` and prints the state location. Inspect the failure
+and use Stim with that home to clean up; do not erase ownership records while
+their simulators still exist.

@@ -1,3 +1,4 @@
+import { projectDeviceSlots } from './device-slots.ts';
 import { clockTime, formatElapsed, plural } from './command-output.ts';
 import type { ProjectRecord } from './config.ts';
 import type { LeaseFileEntry } from './engine/device-lease.ts';
@@ -45,6 +46,7 @@ export interface AndroidRuntimeFacts {
 }
 
 export interface EnvironmentState {
+  slots?: { slot: string; ios: EnvironmentState['ios']; android: EnvironmentState['android'] }[];
   path: string;
   live: boolean;
   memoryMb: number;
@@ -93,6 +95,7 @@ export function environmentState(
     worktrees = [],
     simsAvailable = true,
     androidRuntime = null,
+    androidRuntimes = {},
     supervisor = null,
     logs = null,
   }: {
@@ -101,6 +104,7 @@ export function environmentState(
     worktrees?: WorktreeFacts[];
     simsAvailable?: boolean;
     androidRuntime?: AndroidRuntimeFacts | null;
+    androidRuntimes?: Record<string, AndroidRuntimeFacts | null>;
     supervisor?: SupervisorFacts | null;
     logs?: LogsFacts | null;
   } = {},
@@ -112,7 +116,7 @@ export function environmentState(
   const simBooted = Boolean(sim && sim.state === 'Booted');
   const metroRunning = Boolean(metro?.metro);
   const androidDetected = androidRuntime ? Boolean(androidRuntime.serial) : Boolean(android?.serial);
-  const live = simBooted || metroRunning || androidDetected;
+  let live = simBooted || metroRunning || androidDetected;
 
   let memoryMb = 0;
   if (simBooted) memoryMb += IOS_SIM_MB;
@@ -143,8 +147,21 @@ export function environmentState(
     warnings.push(`stale supervisor record for ${project.__path}`);
   }
 
+  const slots: NonNullable<EnvironmentState['slots']> = [];
+  for (const { slot, platforms } of projectDeviceSlots(project).slice(1)) {
+    const deviceState = environmentState(
+      { ...project, platforms, deviceSlots: undefined },
+      { simsByUdid, simsAvailable, metro, androidRuntime: androidRuntimes[slot] },
+    );
+    slots.push({ slot, ios: deviceState.ios, android: deviceState.android });
+    memoryMb += deviceState.memoryMb - (metroRunning ? METRO_MB : 0);
+    live ||= deviceState.live;
+    warnings.push(...deviceState.warnings.map((warning) => `${slot}: ${warning}`));
+  }
+
   return {
     path: project.__path,
+    ...(slots.length ? { slots } : {}),
     live,
     memoryMb,
     warnings,
@@ -242,6 +259,7 @@ export function unprovisionedWorktrees(worktrees: WorktreeFacts[], projectPaths:
 }
 
 export interface DeviceLeaseState {
+  slot?: string;
   path: string;
   platform: string;
   id: string | null;
@@ -263,6 +281,7 @@ export function deviceLeaseStates(
     return {
       path: entry.path,
       platform: entry.platform,
+      ...(lease?.slot ? { slot: lease.slot } : {}),
       id: entry.id,
       deviceName: lease?.deviceName ?? null,
       holder: lease?.holder ?? null,
@@ -279,7 +298,7 @@ export function deviceLeaseLines(states: readonly DeviceLeaseState[], now: numbe
   if (states.length === 0) return [];
   const lines = [`Device leases (${states.length}):`];
   for (const state of states) {
-    const device = `${state.platform} ${state.id ?? state.path}${state.deviceName ? ` (${state.deviceName})` : ''}`;
+    const device = `${state.platform}${state.slot ? ` [${state.slot}]` : ''} ${state.id ?? state.path}${state.deviceName ? ` (${state.deviceName})` : ''}`;
     if (!state.parsed || state.expiresAt === null) {
       lines.push(`  ${device} -- unreadable lease file, so nothing may take the device: ${state.path}`);
       continue;

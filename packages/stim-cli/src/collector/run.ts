@@ -1,3 +1,4 @@
+import { deviceSlotKey, validateDeviceSlot } from '../device-slots.ts';
 import type { ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
@@ -22,6 +23,7 @@ import {
 export const PLATFORMS: string[] = ['ios', 'android'];
 
 export interface ParsedCollectorArgs {
+  slot?: string;
   platform?: string;
   root?: string;
   udid?: string;
@@ -36,6 +38,7 @@ export interface ParsedCollectorArgs {
 }
 
 export function parseArgs(argv: string[]): ParsedCollectorArgs {
+  let slot: string | undefined;
   let platform: string | undefined;
   let root: string | undefined;
   let udid: string | undefined;
@@ -48,6 +51,16 @@ export function parseArgs(argv: string[]): ParsedCollectorArgs {
   let payloadUrl: string | null = null;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
+    if (arg === '--slot') {
+      slot = argv[++i];
+      if (!slot) return { error: '--slot needs a name.' };
+      try {
+        validateDeviceSlot(slot);
+      } catch (error) {
+        return { error: String((error as Error).message) };
+      }
+      continue;
+    }
     if (arg === '--platform') {
       platform = argv[++i];
       continue;
@@ -109,7 +122,19 @@ export function parseArgs(argv: string[]): ParsedCollectorArgs {
   if (payloadUrl && !physical) {
     return { error: '--payload-url only applies to --physical, which launches the app itself.' };
   }
-  return { platform, root, udid, bundleId, appName, appExecutable, serial, packageName, physical, payloadUrl };
+  return {
+    platform,
+    root,
+    udid,
+    bundleId,
+    appName,
+    appExecutable,
+    serial,
+    packageName,
+    physical,
+    payloadUrl,
+    ...(slot ? { slot } : {}),
+  };
 }
 
 import { readCollectors, registerCollector, unregisterCollector } from './state.ts';
@@ -117,6 +142,7 @@ import { captureProcessToken } from '../process-identity.ts';
 export { readCollectors, registerCollector, unregisterCollector };
 
 export interface RunCollectorOptions {
+  slot?: string;
   platform: string;
   root: string;
   udid?: string | null;
@@ -193,6 +219,7 @@ function startMessage({
 }
 
 export async function runCollector({
+  slot = 'default',
   platform,
   root,
   udid = null,
@@ -215,6 +242,8 @@ export async function runCollector({
   attachSignals = true,
   stderr = (line: string) => console.error(line),
 }: RunCollectorOptions): Promise<RunCollectorHandle | null> {
+  const key = deviceSlotKey(platform, slot);
+  const attribution = slot === 'default' ? {} : { slot, deviceId: udid ?? serial };
   const writer = createNdjsonWriter(join(workspaceLogsDir(root), 'device.ndjson'));
   const startedAt = new Date(now()).toISOString();
   const processToken = captureProcessToken(process.pid);
@@ -234,6 +263,7 @@ export async function runCollector({
     watcher?.stop();
     if (physical && captured === 0 && !signalled) {
       writer.write({
+        ...attribution,
         src: 'device',
         platform,
         level: 'warn',
@@ -241,9 +271,9 @@ export async function runCollector({
         msg: `the device console produced no output for ${bundleId}; devicectl only connects the app's streams when it starts the app, and os_log below the info level never reaches them`,
       });
     }
-    writer.write({ src: 'device', platform, level, event, msg });
+    writer.write({ ...attribution, src: 'device', platform, level, event, msg });
     try {
-      unregisterCollector(root, platform, process.pid, processToken);
+      unregisterCollector(root, key, process.pid, processToken);
     } catch {}
     const closed = writer.close();
     if (closed.dropped > 0) {
@@ -267,7 +297,7 @@ export async function runCollector({
   }
 
   try {
-    registerCollector(root, platform, { pid: process.pid, processToken, startedAt });
+    registerCollector(root, key, { ...attribution, pid: process.pid, processToken, startedAt });
   } catch (err) {
     stderr(`Stim collector: could not record the collector in ${root}: ${describe(err)}`);
     finish(1, 'error', 'Could not persist collector identity', 'collector_failed');
@@ -287,6 +317,7 @@ export async function runCollector({
   }
 
   writer.write({
+    ...attribution,
     src: 'device',
     platform,
     level: 'info',
@@ -309,6 +340,7 @@ export async function runCollector({
     const clockOffsetMs = platform === 'android' ? resolveClockOffset(serial as string, { now }) : null;
     if (platform === 'android') {
       writer.write({
+        ...attribution,
         src: 'device',
         platform,
         level: clockOffsetMs === null ? 'warn' : 'debug',
@@ -324,7 +356,7 @@ export async function runCollector({
       const record = parse(line, { now, clockOffsetMs });
       if (!record) return;
       captured++;
-      writer.write({ ...record, platform });
+      writer.write({ ...attribution, ...record, platform });
     };
     const spawned = startStream
       ? startStream({ platform, udid, appName, appExecutable, bundleId, serial, physical, payloadUrl, pid: streamPid })
@@ -343,6 +375,7 @@ export async function runCollector({
             const text = String(line).trimEnd();
             if (text.trim()) {
               writer.write({
+                ...attribution,
                 src: 'device',
                 platform,
                 level: 'debug',
@@ -391,6 +424,7 @@ export async function runCollector({
     killChild(child);
     child = null;
     writer.write({
+      ...attribution,
       src: 'device',
       platform,
       level: 'info',

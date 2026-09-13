@@ -56,18 +56,26 @@ export function resolveSystemImage(
 }
 
 export function systemImageRefusal({
+  slot,
   flag,
   resolved,
   physical,
   remoteBackend,
   listImages,
 }: {
+  slot?: string;
   flag: string | null | undefined;
   resolved: string | null;
   physical: boolean;
   remoteBackend: string | null;
   listImages: typeof listInstalledSystemImages;
 }): { code: string; message: string; remedy: string } | null {
+  if (slot && slot !== 'default' && remoteBackend)
+    return {
+      code: 'STIM_BAD_ARG',
+      message: 'Named slots currently support local simulators and physical devices.',
+      remedy: 'Use the default slot for a remote session.',
+    };
   if (typeof flag === 'string' && flag.trim() === '') {
     return {
       code: 'STIM_BAD_ARG',

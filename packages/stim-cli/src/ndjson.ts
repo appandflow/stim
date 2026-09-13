@@ -61,7 +61,10 @@ export function formatNdjsonLine(record: unknown): string | null {
   }
 }
 
-export function createNdjsonWriter(file: string, { truncate = false }: { truncate?: boolean } = {}): NdjsonWriter {
+export function createNdjsonWriter(
+  file: string,
+  { truncate = false, fields = {} }: { truncate?: boolean; fields?: Record<string, unknown> } = {},
+): NdjsonWriter {
   let fd: number | null = null;
   let freshFile = truncate;
   let written = 0;
@@ -80,7 +83,7 @@ export function createNdjsonWriter(file: string, { truncate = false }: { truncat
       dropped += 1;
       return false;
     }
-    const line = formatNdjsonLine(stamp(record));
+    const line = formatNdjsonLine({ ...stamp(record), ...fields });
     if (line === null) {
       dropped += 1;
       lastError = new TypeError('record could not be serialized to JSON');

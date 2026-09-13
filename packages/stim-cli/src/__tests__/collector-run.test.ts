@@ -626,9 +626,11 @@ describe('the android collector, spawned for real against a fake adb', { timeout
     await exited(child);
   });
 
-  test('a SIGTERM during the pid wait still clears the registration', async () => {
+  test('a SIGTERM during the pid wait clears a named-slot registration', async () => {
     writeShim('adb', 'exit 1\n');
     const child = spawnCollector([
+      '--slot',
+      'phone',
       '--platform',
       'android',
       '--root',
@@ -638,7 +640,7 @@ describe('the android collector, spawned for real against a fake adb', { timeout
       '--package',
       'com.example.app',
     ]);
-    await until(() => readCollectors(root).android, { label: 'the android registration' });
+    await until(() => readCollectors(root)['android:phone'], { label: 'the android registration' });
     process.kill(childPid(child), 'SIGTERM');
     expect(await exited(child)).toEqual({ code: 0, signal: null });
     expect('collectors' in (state() || {})).toBe(false);
@@ -943,4 +945,44 @@ describe('the collector never signals a pid it does not own', () => {
       process.kill = origKill;
     }
   });
+});
+
+test('named collectors attribute their output and finish without unregistering a sibling', async () => {
+  const streams = [makeChildProcess({ pid: 3132 }), makeChildProcess({ pid: 3133 })];
+  const handles = [];
+  for (const [index, slot] of ['phone', 'tablet'].entries()) {
+    const handle = await runCollector({
+      platform: 'android',
+      root,
+      slot,
+      serial: slot,
+      packageName: 'com.example.app',
+      resolvePid: async () => ({ ok: true, pid: 3132 + index }),
+      resolveClockOffset: () => 0,
+      startStream: () => streams[index]!,
+      pidOf: () => 3132 + index,
+      pidWatchMs: 60_000,
+      attachSignals: false,
+      onExit: () => {},
+    });
+    assert(handle);
+    handles.push(handle);
+  }
+  try {
+    expect(Object.keys(readCollectors(root))).toEqual(['android:phone', 'android:tablet']);
+    streams[0]!.stdout!.emit('data', ' 1788902582.542 I/ReactNativeJS( 3132): phone-output\n');
+    streams[1]!.stdout!.emit('data', ' 1788902582.542 I/ReactNativeJS( 3133): tablet-output\n');
+    expect(
+      deviceLog()
+        .filter((r) => String(r.msg).endsWith('-output'))
+        .map((r) => [r.slot, r.deviceId]),
+    ).toEqual([
+      ['phone', 'phone'],
+      ['tablet', 'tablet'],
+    ]);
+    handles[0]!.finish(0, 'info', 'done', 'collector_stopped');
+    expect(Object.keys(readCollectors(root))).toEqual(['android:tablet']);
+  } finally {
+    for (const handle of handles) handle.finish(0, 'info', 'done', 'collector_stopped');
+  }
 });

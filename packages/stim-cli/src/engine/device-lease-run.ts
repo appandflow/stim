@@ -1,3 +1,4 @@
+import { deviceSlotKey } from '../device-slots.ts';
 import { clockTime, formatElapsed } from '../command-output.ts';
 import { VERIFY_TIMEOUT_MS } from './app-install.ts';
 import { APP_READINESS_TIMEOUT_MS } from './app-readiness.ts';
@@ -193,12 +194,14 @@ export interface RunLease {
 export function runLease({
   root,
   platform,
+  slot = 'default',
   kind,
   expiresAt,
   io = fileLeaseIo,
 }: {
   root: string;
   platform: LeasePlatform;
+  slot?: string;
   kind: LeaseKind | null;
   expiresAt: string | null;
   io?: LeaseIo;
@@ -211,7 +214,7 @@ export function runLease({
       if (handle.kind === null || handle.lost) {
         return { ok: !handle.lost, holder: null, expiresAt: handle.expiresAt };
       }
-      const result = raiseLease({ root, platform, minMs: leaseStepMs(boundMs) }, io);
+      const result = raiseLease({ root, platform, slot, minMs: leaseStepMs(boundMs) }, io);
       if (result.status === 'raised') {
         handle.expiresAt = result.lease.expiresAt;
         return { ok: true, holder: result.lease.holder, expiresAt: result.lease.expiresAt };
@@ -222,7 +225,7 @@ export function runLease({
     },
     release() {
       if (handle.kind === null) return;
-      releaseRunLease({ root, platform }, io);
+      releaseRunLease({ root, platform, slot }, io);
     },
     facts() {
       if (handle.kind === null || handle.lost || handle.expiresAt === null) return null;
@@ -279,6 +282,7 @@ export type LeaseWaitOutcome =
 export async function waitForDevice({
   root,
   platform,
+  slot = 'default',
   id,
   idLabel,
   waitSeconds,
@@ -294,6 +298,7 @@ export async function waitForDevice({
 }: {
   root: string;
   platform: LeasePlatform;
+  slot?: string;
   id: string;
   idLabel: string;
   waitSeconds: number;
@@ -313,7 +318,7 @@ export async function waitForDevice({
     const current = parseLease(raw);
     if (raw !== null && !current) return { status: 'refused', refusal: unreadableRefusal(path) };
     if (!current || leaseIsExpired(current, now())) return { status: 'free' };
-    if (current.holder === root) return { status: 'ours', lease: current };
+    if (current.holder === root && (current.slot ?? 'default') === slot) return { status: 'ours', lease: current };
     if (noWait) {
       for (const line of bypassLines(current, now(), appIdMatch(appId, holderAppId(current.holder)))) warn(line);
       return { status: 'bypassed', lease: current };
@@ -332,6 +337,7 @@ export async function waitForDevice({
 export async function acquireRunLease({
   root,
   platform,
+  slot = 'default',
   id,
   deviceName = null,
   idLabel,
@@ -347,6 +353,7 @@ export async function acquireRunLease({
 }: {
   root: string;
   platform: LeasePlatform;
+  slot?: string;
   id: string;
   deviceName?: string | null;
   idLabel: string;
@@ -360,7 +367,7 @@ export async function acquireRunLease({
   warn?: (line: string) => void;
   io?: LeaseIo;
 }): Promise<AcquireRunLeaseResult> {
-  const recorded = io.readHolder(root)[platform];
+  const recorded = io.readHolder(root)[deviceSlotKey(platform, slot)];
   let held = recorded;
   if (recorded && recorded.id !== id) {
     const other = parseLease(io.readLease(deviceLeasePath(platform, recorded.id)));
@@ -378,7 +385,7 @@ export async function acquireRunLease({
     const current = parseLease(io.readLease(path));
     const mine = current && held && current.token === held.token ? { lease: current, record: held } : null;
     if (mine && (mine.record.kind === 'run' || !leaseIsExpired(mine.lease, now()))) {
-      const raised = raiseLease({ root, platform, minMs: leaseStepMs(installBoundMs) }, io);
+      const raised = raiseLease({ root, platform, slot, minMs: leaseStepMs(installBoundMs) }, io);
       if (raised.status === 'raised') {
         return { status: 'leased', kind: mine.record.kind, expiresAt: raised.lease.expiresAt };
       }
@@ -387,6 +394,7 @@ export async function acquireRunLease({
     const outcome = await waitForDevice({
       root,
       platform,
+      slot,
       id,
       idLabel,
       waitSeconds,
@@ -405,7 +413,7 @@ export async function acquireRunLease({
     if (outcome.status === 'ours') return { status: 'refused', refusal: untokenedRefusal(outcome.lease, now()) };
 
     const taken = takeLease(
-      { root, platform, id, deviceName, kind: 'run', durationMs: leaseStepMs(installBoundMs) },
+      { root, platform, slot, id, deviceName, kind: 'run', durationMs: leaseStepMs(installBoundMs) },
       io,
     );
     if (taken.status === 'unreadable') return { status: 'refused', refusal: unreadableRefusal(taken.path) };

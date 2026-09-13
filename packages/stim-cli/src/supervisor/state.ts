@@ -1,3 +1,4 @@
+import { deviceSlotKey, parseDeviceSlotKey } from '../device-slots.ts';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { withDirLock } from '../dir-lock.ts';
@@ -13,7 +14,7 @@ export interface WorkspaceState {
   supervisor?: Record<string, unknown>;
   collectors?: Record<string, unknown>;
   lastBuild?: Record<string, unknown>;
-  launches?: Partial<Record<WorkspaceLaunchPlatform, WorkspaceLaunchRecord>>;
+  launches?: Record<string, WorkspaceLaunchRecord>;
   remoteDevice?: Record<string, unknown>;
   metroTunnel?: Record<string, unknown>;
   [key: string]: unknown;
@@ -105,23 +106,27 @@ function parseWorkspaceLaunchRecord(value: unknown): WorkspaceLaunchRecord | nul
   return record as WorkspaceLaunchRecord;
 }
 
-export function readWorkspaceLaunches(root: string): Partial<Record<WorkspaceLaunchPlatform, WorkspaceLaunchRecord>> {
+export function readWorkspaceLaunches(root: string): Record<string, WorkspaceLaunchRecord> {
   const launches = readWorkspaceState(root)?.launches;
   if (!launches || typeof launches !== 'object' || Array.isArray(launches)) return {};
-  const ios = parseWorkspaceLaunchRecord(launches.ios);
-  const android = parseWorkspaceLaunchRecord(launches.android);
-  return { ...(ios ? { ios } : {}), ...(android ? { android } : {}) };
+  const records: Record<string, WorkspaceLaunchRecord> = {};
+  for (const [key, value] of Object.entries(launches)) {
+    const record = parseWorkspaceLaunchRecord(value);
+    if (parseDeviceSlotKey(key) && record) records[key] = record;
+  }
+  return records;
 }
 
 export function writeWorkspaceLaunch(
   root: string,
   platform: WorkspaceLaunchPlatform,
   record: WorkspaceLaunchRecord,
+  slot = 'default',
 ): void {
   withWorkspaceStateLock(root, () => {
     const state = readWorkspaceState(root) ?? {};
     const launches = state.launches && typeof state.launches === 'object' ? state.launches : {};
-    replaceWorkspaceState(root, { ...state, launches: { ...launches, [platform]: record } });
+    replaceWorkspaceState(root, { ...state, launches: { ...launches, [deviceSlotKey(platform, slot)]: record } });
   });
 }
 

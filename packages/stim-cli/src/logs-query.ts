@@ -22,6 +22,7 @@ interface MarkerWindow {
 }
 
 export interface QueryCriteria {
+  slot?: string;
   includeNativeCrashes?: boolean;
   sources?: string[];
   minLevel?: string;
@@ -78,6 +79,7 @@ export function markerWindow(records: NdjsonRecord[]): MarkerWindow {
 
 export function recordMatches(record: NdjsonRecord | null | undefined, criteria: QueryCriteria = {}): boolean {
   if (!record) return false;
+  if (criteria.slot !== undefined && (record.slot ?? 'default') !== criteria.slot) return false;
   const { sources, minLevel, grep, sinceTs, errorsOnly, markerTs, bundleMarkerTs } = criteria;
 
   if (
@@ -115,6 +117,7 @@ export function recordMatches(record: NdjsonRecord | null | undefined, criteria:
 }
 
 export function buildCriteria({
+  slot,
   sources,
   minLevel,
   since,
@@ -124,6 +127,7 @@ export function buildCriteria({
   bundleMarkerTs,
   now,
 }: {
+  slot?: string;
   sources?: string[];
   minLevel?: string;
   since?: string | null;
@@ -134,6 +138,7 @@ export function buildCriteria({
   now?: number;
 } = {}): QueryCriteria {
   const criteria: QueryCriteria = {
+    ...(slot === undefined ? {} : { slot }),
     errorsOnly: Boolean(errorsOnly),
     includeNativeCrashes: Boolean(errorsOnly && !sources?.length),
   };
@@ -257,7 +262,19 @@ function includeBareErrorContext(
   return sortByTs([...matched, ...renderedContext]);
 }
 
+function launchMarkersBySlot(records: NdjsonRecord[]): Map<unknown, number> {
+  const markers = new Map<unknown, number>();
+  for (const record of records) {
+    if (record.marker !== true || record.src === 'metro') continue;
+    const ts = tsOf(record);
+    const slot = record.slot ?? 'default';
+    if (ts !== null && ts > (markers.get(slot) ?? -Infinity)) markers.set(slot, ts);
+  }
+  return markers;
+}
+
 export function queryLogs({
+  slot,
   dir,
   sources,
   minLevel,
@@ -268,6 +285,7 @@ export function queryLogs({
   errorContext,
   now,
 }: {
+  slot?: string;
   dir?: string;
   sources?: string[];
   minLevel?: string;
@@ -278,11 +296,14 @@ export function queryLogs({
   errorContext?: boolean;
   now?: number;
 } = {}): NdjsonRecord[] {
-  const all = readLogRecords(dir as string);
+  const all = readLogRecords(dir as string).filter(
+    (record) => slot === undefined || (record.slot ?? 'default') === slot,
+  );
   if (all.length === 0) return [];
 
   const { launchTs, bundleTs } = errorsOnly ? markerWindow(all) : { launchTs: null, bundleTs: null };
   const criteria = buildCriteria({
+    slot,
     sources,
     minLevel,
     since,
@@ -293,7 +314,16 @@ export function queryLogs({
     bundleMarkerTs: bundleTs === null ? undefined : bundleTs,
   });
 
-  let matched = all.filter((r) => recordMatches(r, criteria));
+  const slotMarkers = launchMarkersBySlot(all);
+  let matched = all.filter((record) =>
+    recordMatches(record, {
+      ...criteria,
+      markerTs:
+        record.src === 'metro' || record.src === 'client'
+          ? criteria.markerTs
+          : slotMarkers.get(record.slot ?? 'default'),
+    }),
+  );
   if (typeof tail === 'number' && tail >= 0 && matched.length > tail) {
     matched = matched.slice(matched.length - tail);
   }

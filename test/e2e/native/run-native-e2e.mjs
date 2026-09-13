@@ -16,6 +16,7 @@ import {
   dumpDiagnostics,
   lastLines,
   preflight,
+  prepareIosDevices,
   quote,
   verifyCleanup,
   workspaceLogsDir,
@@ -64,6 +65,32 @@ async function main() {
   }
 
   const wt1 = worktreeCreate('e2e-1', appDir);
+  const wt2 = worktreeCreate('e2e-2', appDir);
+  const flags = [];
+  if (PLATFORM === 'ios') {
+    const inventory = JSON.parse(sh('xcrun', ['simctl', 'list', '--json'], { timeout: 30000 }).stdout);
+    const supported = new Set(
+      inventory.runtimes
+        .filter((runtime) => runtime.isAvailable && runtime.identifier.includes('.iOS-'))
+        .flatMap((runtime) => runtime.supportedDeviceTypes.map((type) => type.identifier)),
+    );
+    const tablet = inventory.devicetypes.find(
+      (type) => type.name.startsWith('iPad Pro') && supported.has(type.identifier),
+    );
+    assert(tablet, 'native slot QA requires an iPad device type supported by an available iOS runtime');
+    flags.push('--device-type', tablet.name);
+  }
+  prepareIosDevices({
+    h,
+    platform: PLATFORM,
+    cleanup,
+    targets: [
+      { cwd: wt1 },
+      { cwd: wt1, slot: 'second' },
+      { cwd: wt1, slot: 'third', deviceType: flags[1] },
+      { cwd: wt2 },
+    ],
+  });
   const start1 = startAndAssertMode(wt1);
   log(`wt1 start mode: ${start1.mode}`);
   const build1 = buildAndAssert(wt1, { expectCacheHit: false });
@@ -79,7 +106,6 @@ async function main() {
   assertArtifact(build1.appPath);
   handleLaunch(build1, 'wt1');
 
-  const wt2 = worktreeCreate('e2e-2', appDir);
   const start2 = startAndAssertMode(wt2);
   log(`wt2 start mode: ${start2.mode}`);
   const build2 = buildAndAssert(wt2, { expectCacheHit: true });
@@ -94,11 +120,66 @@ async function main() {
 
   cleanup.recordWorkspace(wt2);
   cli(['stop'], { cwd: wt2 });
+  verifyDeviceSlots(wt1, build1, flags);
   cleanup.recordWorkspace(wt1);
   cli(['stop'], { cwd: wt1 });
   worktreeRemove(wt2);
   worktreeRemove(wt1);
   await verifyCleanup({ h, cleanup, appDir, created });
+}
+
+function verifyDeviceSlots(cwd, original, thirdFlags) {
+  banner('named slots: distinct devices, cached installs, reuse and scoped stop');
+  const deviceId = (facts) => (PLATFORM === 'ios' ? facts.udid : facts.avdName);
+  const runSlot = (slot, flags = []) => {
+    const facts = cliJson([PLATFORM, '--slot', slot, ...flags, '--json'], { cwd, timeout: 40 * 60 * 1000 });
+    cleanup.recordBuild(facts);
+    cleanup.recordWorkspace(cwd);
+    assert(facts.slot === slot, `launch facts did not identify ${slot}`);
+    assert(facts.cacheHit === 'local' || facts.cacheHit === 'remote', `slot ${slot} did not reuse the native build`);
+    const records = cli(['logs', '--slot', slot, '--source', 'build', '--json'], { cwd })
+      .stdout.trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    assert(records.length && records.every((record) => record.slot === slot), `build records escaped slot ${slot}`);
+    return facts;
+  };
+  const second = runSlot('second');
+  assert(deviceId(second) !== deviceId(original), 'two same-model slots shared a device');
+  const repeated = runSlot('second');
+  assert(deviceId(repeated) === deviceId(second), 'repeated slot did not reuse its device');
+  const third = runSlot('third', thirdFlags);
+  assert(new Set([original, second, third].map(deviceId)).size === 3, 'three slots did not get distinct devices');
+  if (PLATFORM === 'ios') {
+    const inventory = JSON.parse(sh('xcrun', ['simctl', 'list', 'devices', '--json'], { timeout: 30000 }).stdout);
+    const booted = new Set(
+      Object.values(inventory.devices)
+        .flat()
+        .filter((device) => device.state === 'Booted')
+        .map((device) => device.udid),
+    );
+    assert(
+      [original, second, third].every((facts) => booted.has(facts.udid)),
+      'all three slots must be booted simultaneously',
+    );
+  }
+  const status = () =>
+    cliJson(['status', '--json'], { cwd }).environments.find((environment) => environment.path === cwd);
+  const before = status();
+  assert(before?.slots?.length === 2, 'status omitted named slots');
+  const stopped = cliJson(['stop', '--slot', 'second', '--json'], { cwd });
+  assert(stopped.ok && stopped.port.status === 'kept', 'slot stop failed or released the shared port');
+  const after = status();
+  assert(after?.metro?.running && after.metro.port === before.metro.port, 'slot stop disturbed Metro');
+  const sibling = after.slots.find((slot) => slot.slot === 'third');
+  assert(
+    PLATFORM === 'ios' ? sibling?.ios?.state === 'Booted' : sibling?.android?.serial === third.serial,
+    'slot stop disturbed its sibling',
+  );
+  const resumed = runSlot('second');
+  assert(deviceId(resumed) === deviceId(second), 'stopped slot lost its assignment');
+  log('SLOT PROOF: three assignments, reuse, cache hits, attributed logs and isolated stop.');
 }
 
 function worktreeCreate(name, sourceDir) {
@@ -224,7 +305,7 @@ main().then(
   (err) => {
     log(`FAIL ${VARIANT}: ${err?.message || err}`);
     dumpDiagnostics(h, created);
-    if (!args.keep) cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR]);
+    if (!args.keep) cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR], err);
     process.exit(1);
   },
 );

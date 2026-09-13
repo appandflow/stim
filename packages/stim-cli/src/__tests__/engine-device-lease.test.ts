@@ -21,7 +21,7 @@ import {
   type LeaseIo,
   type WorkspaceLeases,
 } from '../engine/device-lease.ts';
-import { writeWorkspaceState } from '../supervisor/state.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../supervisor/state.ts';
 
 const ROOT_A = '/worktree/a';
 const ROOT_B = '/worktree/b';
@@ -462,6 +462,25 @@ describe('the real file protocol', { timeout: 30_000 }, () => {
     writeFileSync(join(scratch, name), '');
   }
 
+  test('concurrent slots preserve both workspace holder tokens', async () => {
+    const racer = script(
+      'slot-race.mjs',
+      [
+        `const { takeLease } = await import(${JSON.stringify(LEASE_URL)});`,
+        ...barrier('slots-go'),
+        'console.log(JSON.stringify(takeLease({ root: process.argv[2], platform: "ios", slot: process.argv[3], id: process.argv[3], kind: "run" })));',
+      ].join('\n'),
+    );
+    const root = join(scratch, 'shared');
+    const runs = [runNode(racer, [root, 'phone']), runNode(racer, [root, 'tablet'])];
+    release('slots-go');
+    const answers = (await Promise.all(runs)).map((r) => JSON.parse(r.stdout.trim()));
+    expect(answers.map((r) => r.status)).toEqual(['taken', 'taken']);
+    const holders = readWorkspaceState(root)?.deviceLeases as WorkspaceLeases;
+    expect(Object.keys(holders).toSorted()).toEqual(['ios:phone', 'ios:tablet']);
+    for (const result of answers) expect(holders[`ios:${result.lease.slot}`]?.token).toBe(result.lease.token);
+  });
+
   test('two processes racing for one free device leave exactly one holder', async () => {
     const racer = script(
       'racer.mjs',
@@ -572,4 +591,23 @@ describe('the real file protocol', { timeout: 30_000 }, () => {
     expect(releaseWorkspaceLeases(join(scratch, 'a')).map((r) => r.id)).toEqual([UDID]);
     expect(listLeaseFiles()).toEqual([]);
   });
+});
+
+test('named leases coexist, renew independently and release only the requested slot', () => {
+  const phone = takeLease({ root: ROOT_A, platform: 'ios', slot: 'phone', id: 'PHONE', kind: 'declared' });
+  const tablet = takeLease({ root: ROOT_A, platform: 'ios', slot: 'tablet', id: 'TABLET', kind: 'run' });
+  expect(phone.status).toBe('taken');
+  expect(tablet.status).toBe('taken');
+  expect(
+    listLeaseFiles()
+      .map(({ lease }) => lease?.slot)
+      .toSorted(),
+  ).toEqual(['phone', 'tablet']);
+  expect(takeLease({ root: ROOT_A, platform: 'ios', slot: 'duplicate', id: 'PHONE', kind: 'run' }).status).toBe('held');
+  expect(raiseLease({ root: ROOT_A, platform: 'ios', slot: 'phone', minMs: 600_000 }).status).toBe('raised');
+  expect(releaseRunLease({ root: ROOT_A, platform: 'ios', slot: 'tablet' })?.id).toBe('TABLET');
+  expect(listLeaseFiles().map(({ lease }) => lease?.id)).toEqual(['PHONE']);
+  expect(releaseWorkspaceLeases(ROOT_A, { slot: 'tablet' })).toEqual([]);
+  expect(releaseWorkspaceLeases(ROOT_A).map(({ id }) => id)).toEqual(['PHONE']);
+  expect(listLeaseFiles()).toEqual([]);
 });

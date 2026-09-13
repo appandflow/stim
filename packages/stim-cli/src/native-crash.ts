@@ -1,3 +1,4 @@
+import { deviceSlotKey, deviceSlotPlatforms } from './device-slots.ts';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -18,6 +19,7 @@ export const IOS_CRASH_REPORT_RETRY =
   'iOS crash reports can take about a minute or longer to appear. Run `stim logs --errors` again for the native stack.';
 
 interface CrashTarget {
+  slot?: string;
   root?: string;
   platform: 'ios' | 'android';
   deviceId: string;
@@ -399,9 +401,10 @@ export function captureNativeCrashes(target: CrashTarget, logsDir: string): Ndjs
     }
   } catch {}
   for (const record of records) {
+    if (target.slot && target.slot !== 'default') record.slot = target.slot;
     try {
       const key = createHash('sha256')
-        .update(JSON.stringify([record.deviceId, record.incident ?? record.deviceTs, record.rawReport]))
+        .update(JSON.stringify([record.slot, record.deviceId, record.incident ?? record.deviceTs, record.rawReport]))
         .digest('hex');
       writeDiagnosticOnce(join(logsDir, `native-crash-${key}.ndjson`), `${JSON.stringify(record)}\n`);
     } catch {}
@@ -422,9 +425,15 @@ export function printNativeCrashReport(
 export function captureWorkspaceCrashes(root: string, logsDir: string): void {
   const attempts = readLogRecords(logsDir).filter((record) => record.event === 'launch_attempt');
   const launches = readWorkspaceLaunches(root);
-  for (const platform of ['ios', 'android'] as const) {
+  const latest = new Map<string, NdjsonRecord>();
+  for (const attempt of attempts) {
+    if (attempt.platform === 'ios' || attempt.platform === 'android')
+      latest.set(deviceSlotKey(attempt.platform, String(attempt.slot ?? 'default')), attempt);
+  }
+  for (const [key, attempt] of latest) {
+    const platform = attempt.platform as 'ios' | 'android';
+    const slot = String(attempt.slot ?? 'default');
     try {
-      const attempt = attempts.findLast((record) => record.platform === platform);
       if (!attempt || attempt.remote) continue;
       const { deviceId, appId } = attempt;
       const since = attempt.ts;
@@ -437,7 +446,7 @@ export function captureWorkspaceCrashes(root: string, logsDir: string): void {
       )
         continue;
       if (attempt.physical) {
-        const holder = fileLeaseIo.readHolder(root)[platform];
+        const holder = fileLeaseIo.readHolder(root)[key];
         const lease = parseLease(fileLeaseIo.readLease(deviceLeasePath(platform, deviceId)));
         if (
           holder?.id !== deviceId ||
@@ -453,7 +462,7 @@ export function captureWorkspaceCrashes(root: string, logsDir: string): void {
         )
           continue;
       } else {
-        const launch = launches[platform];
+        const launch = launches[key];
         if (
           !launch ||
           launch.deviceId !== deviceId ||
@@ -461,7 +470,7 @@ export function captureWorkspaceCrashes(root: string, logsDir: string): void {
           Date.parse(launch.launchedAt) !== since
         )
           continue;
-        const configured = getProject(root)?.platforms?.[platform];
+        const configured = deviceSlotPlatforms(getProject(root), slot)?.[platform];
         if (!configured?.owned) continue;
         if (platform === 'ios' && configured.deviceUdid !== deviceId) continue;
         if (platform === 'android') {
@@ -473,6 +482,7 @@ export function captureWorkspaceCrashes(root: string, logsDir: string): void {
       captureNativeCrashes(
         {
           root,
+          slot,
           platform,
           deviceId,
           appId,

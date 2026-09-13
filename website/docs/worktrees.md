@@ -6,8 +6,12 @@ description: 'Parallel worktrees that share expensive build caches'
 
 import StimTabs from '@site/src/components/StimTabs';
 
+:::note[Command examples]
+
 Commands use `stim`. If it is not installed globally, replace `stim` with
 `npx stim`.
+
+:::
 
 ## Create with Git
 
