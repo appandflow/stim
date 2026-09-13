@@ -40,6 +40,39 @@ or Android target, Stim regenerates the current workspace's JavaScript and
 assets in a copy of the artifact. If that swap fails, it builds fresh. iOS
 physical-device Release runs always build fresh.
 
+### Generated dependency output and cache misses
+
+If identical worktrees build instead of reusing an artifact, compare their
+fingerprint sources before adding exclusions. A project-level
+`.fingerprintignore` can exclude generated output that does not affect native
+inputs. Never ignore an entire native dependency, its build scripts, or source
+files to force a cache hit.
+
+React Native Test App can put checkout-specific generated Android files under
+`node_modules/react-native-test-app/android/support/build`. When the differences
+are confined to that directory, add these entries to the app root's
+`.fingerprintignore`:
+
+```gitignore
+node_modules/react-native-test-app/android/support/build
+node_modules/react-native-test-app/android/support/build/**/*
+```
+
+Use the dependency path shown in the fingerprint sources; hoisted or linked
+layouts may differ. Keep `android/support/build.gradle` and native sources
+included. Verify that built worktrees agree and that changing a real native
+input still changes the fingerprint. Stim does not add these exclusions by
+default.
+
+A prompt to investigate a miss:
+
+> Investigate why these two worktrees do not share Stim's Android artifact
+> cache. Compare their fingerprint sources. If only React Native Test App's
+> generated support/build output differs, add a narrowly scoped
+> .fingerprintignore entry at the app root. Verify fingerprint parity and that
+> a real native input change still invalidates the cache. Do not ignore the
+> package, build scripts, or native sources. Report the evidence.
+
 ### EAS development builds
 
 With `--eas-profile <name>`, Stim downloads a compatible EAS development build
