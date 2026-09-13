@@ -467,14 +467,16 @@ function dfExecutor(byVolume: Record<string, string>) {
   return asked;
 }
 
-test('a project on the boot volume reports one volume', async () => {
+test('a project and STIM_HOME on the boot volume report one volume', () => {
+  process.env.STIM_HOME = '/Users/someone/.stim';
   const asked = dfExecutor({ '/': dfOutput({ totalKb: 926 * 1024 * 1024, availableKb: 38 * 1024 * 1024 }) });
   const volumes = readVolumes('/Users/someone/code/app');
   expect(asked).toEqual(['/']);
   expect(volumes.map((v) => v.volume)).toEqual(['/']);
 });
 
-test('a project on another volume reports that volume alongside the boot one', async () => {
+test('a project on another volume reports that volume alongside the boot one', () => {
+  process.env.STIM_HOME = '/Users/someone/.stim';
   const asked = dfExecutor({
     '/': dfOutput({ totalKb: 926 * 1024 * 1024, availableKb: 38 * 1024 * 1024 }),
     '/Volumes/ExternalSSD': dfOutput({ totalKb: 2048 * 1024 * 1024, availableKb: 1536 * 1024 * 1024 }),

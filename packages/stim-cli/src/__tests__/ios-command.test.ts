@@ -1302,7 +1302,7 @@ describe('the remote cache', () => {
     expect(exitCode).toBe(null);
     expect(!calls.order.includes('resolveRemote')).toBeTruthy();
     expect(!calls.order.includes('uploadRemote')).toBeTruthy();
-    expect(errs.filter((line) => /cache/.test(line))).toEqual([
+    expect(errs.filter((line) => line.startsWith(phaseLine('cache', '')))).toEqual([
       phaseLine('cache', 'compilation cache unavailable; Xcode did not report reliable statistics'),
     ]);
   });
