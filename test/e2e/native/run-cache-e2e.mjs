@@ -13,6 +13,7 @@ import {
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { removeGradleHome } from './gradle-home.mjs';
 import {
   FIXTURE_COMMANDS,
   assert,
@@ -78,21 +79,22 @@ process.env.STIM_HOME = HOME_DIR;
 let GRADLE_USER_HOME = process.env.GRADLE_USER_HOME || join(homedir(), '.gradle');
 let GRADLE_CACHE_DIR = join(GRADLE_USER_HOME, 'caches', 'build-cache-1');
 let GRADLE_HOME_IS_THROWAWAY = false;
+let preserveGradleHome = false;
 
 function seedGradleUserHome(source) {
   // Gradle resolves script classpath symlinks, so dependency caches are cloned into the disposable home.
   const base = existsSync(source) ? dirname(realpathSync(source)) : tmpdir();
-  // A crashed run cannot clean its own home; sweep predecessors only when
-  // their recorded owner pid is provably dead.
   for (const stale of readdirSync(base).filter((n) => n.startsWith('.stim-e2e-gradle-'))) {
     if (ownerIsAlive(join(base, stale))) continue;
-    cleanupTmp([join(base, stale)]);
+    try {
+      removeGradleHome(join(base, stale));
+    } catch (error) {
+      process.stderr.write(`[cache-e2e] preserving Gradle home: ${error.message}\n`);
+    }
   }
   const target = mkdtempSync(join(base, '.stim-e2e-gradle-'));
   try {
     writeFileSync(join(target, 'owner.pid'), String(process.pid));
-    // Daemons rooted in a deleted home can never be reused; a short idle
-    // timeout reaps them soon after each build.
     writeFileSync(join(target, 'gradle.properties'), 'org.gradle.daemon.idletimeout=30000\n');
     mkdirSync(join(target, 'caches'), { recursive: true });
     for (const [rel, dest] of [
@@ -116,7 +118,14 @@ function seedGradleUserHome(source) {
     throw err;
   }
   process.on('exit', () => {
-    if (!args.keep) rmSync(target, { recursive: true, force: true });
+    if (!args.keep && !preserveGradleHome) {
+      try {
+        removeGradleHome(target);
+      } catch (error) {
+        process.stderr.write(`[cache-e2e] Gradle cleanup failed: ${error.message}\n`);
+        process.exitCode = 1;
+      }
+    }
   });
   return target;
 }
@@ -1032,19 +1041,25 @@ if (args.dryRun) {
 }
 
 const startedAt = Date.now();
-main().then(
-  () => {
-    const summary = emitSummary(Date.now() - startedAt, null);
-    if (!args.keep)
-      cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR, GRADLE_HOME_IS_THROWAWAY ? GRADLE_USER_HOME : null]);
-    return process.exit(summary.ok ? 0 : 1);
-  },
-  (err) => {
-    log(`FATAL: ${err?.message || err}`);
+function finishRun(error) {
+  preserveGradleHome = Boolean(error?.preserveNativeState);
+  if (!args.keep && !preserveGradleHome && GRADLE_HOME_IS_THROWAWAY) {
+    try {
+      removeGradleHome(GRADLE_USER_HOME);
+    } catch (cleanupError) {
+      preserveGradleHome = true;
+      error = error
+        ? new AggregateError([error, cleanupError], `${error.message}; ${cleanupError.message}`)
+        : cleanupError;
+    }
+  }
+  if (error) {
+    log(`FATAL: ${error?.message || error}`);
     dumpDiagnostics(h, created);
-    emitSummary(Date.now() - startedAt, String(err?.message || err));
-    if (!args.keep)
-      cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR, GRADLE_HOME_IS_THROWAWAY ? GRADLE_USER_HOME : null], err);
-    return process.exit(1);
-  },
-);
+  }
+  const summary = emitSummary(Date.now() - startedAt, error ? String(error?.message || error) : null);
+  if (!args.keep && !preserveGradleHome) cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR], error);
+  process.exit(summary.ok ? 0 : 1);
+}
+
+main().then(() => finishRun(null), finishRun);
