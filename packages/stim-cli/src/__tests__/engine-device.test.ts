@@ -1,3 +1,4 @@
+import * as hostMemory from '../host-memory.ts';
 import { deviceSlotPlatforms } from '../device-slots.ts';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -48,6 +49,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.STIM_HOME;
   if (savedAndroidHome === undefined) delete process.env.ANDROID_HOME;
@@ -564,6 +567,120 @@ describe('ensureBooted: android', () => {
     });
     expect(result).toEqual({ ok: true, serial: 'emulator-5556' });
     expect(probes >= 5).toBeTruthy();
+  });
+
+  test.each([
+    ['warning', 'late boot', true, 121000, true],
+    ['critical', 'timeout', true, Infinity, true],
+    ['normal', 'timeout', true, Infinity, false],
+    [null, 'timeout', true, Infinity, false],
+    ['warning', 'process exit', false, Infinity, false],
+    ['warning', 'exit at timeout', true, Infinity, false],
+    ['warning', 'exit during extension', true, Infinity, true],
+    ['warning', 'unknown process', null, Infinity, false],
+  ] as const)('Android boot under %s pressure: %s', async (pressure, outcome, live, bootAt, extended) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    vi.spyOn(hostMemory, 'readHostMemoryPressure').mockReturnValue(pressure);
+    const events: string[] = [];
+    const probes: number[] = [];
+    const spawn = vi.fn<() => { pid?: number; unref: () => void }>(() => {
+      events.push('spawn');
+      return { pid: live === null ? undefined : 987654, unref() {} };
+    });
+    setExecutor({
+      run: (cmd) => (cmd === 'emulator -list-avds' ? 'stim-app' : 'List of devices attached'),
+      runQuiet: (cmd, opts) => {
+        if (cmd.includes('getprop')) {
+          probes.push(opts?.timeoutMs ?? 0);
+          return Date.now() >= bootAt && cmd.includes('sys.boot_completed') ? '1' : '';
+        }
+        return '';
+      },
+      runFile: () => '{"devices":{}}',
+      spawn,
+    });
+    const resultPromise = ensureBooted({
+      platform: 'android',
+      device: { avdName: 'stim-app', consolePort: 5556, owned: true },
+      timeoutMs: 120000,
+      alive: () =>
+        live === true &&
+        (outcome !== 'exit at timeout' || Date.now() < 120000) &&
+        (outcome !== 'exit during extension' || Date.now() < 130000),
+      out: (line) => events.push(line),
+    });
+    await vi.runAllTimersAsync();
+    const result = await resultPromise;
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(events.filter((line) => line.includes('retrying the boot wait'))).toHaveLength(extended ? 1 : 0);
+    expect(probes.every((timeout) => timeout > 0 && timeout <= 5000)).toBe(true);
+    const pressured = pressure === 'warning' || pressure === 'critical';
+    expect(events.some((line) => line.includes(`${pressure} host memory pressure`))).toBe(pressured);
+    expect(events.findIndex((line) => line.includes('host memory pressure'))).toBe(pressured ? 0 : -1);
+    const exited = ['process exit', 'exit at timeout', 'exit during extension'].includes(outcome);
+    const success = outcome === 'late boot';
+    expect(Boolean(result.ok)).toBe(success);
+    expect(Boolean(result.failed)).toBe(!success);
+    const expectedReason = success ? undefined : exited ? 'exited before' : extended ? 'within 360s' : 'within 120s';
+    expect(expectedReason === undefined ? result.reason : result.reason?.includes(expectedReason)).toBe(
+      success ? undefined : true,
+    );
+    const expectedRemedy = success
+      ? undefined
+      : exited
+        ? 'process exit'
+        : pressured
+          ? 'only in a workspace you own'
+          : 'stim doctor';
+    expect(expectedRemedy === undefined ? result.remedy : result.remedy?.includes(expectedRemedy)).toBe(
+      success ? undefined : true,
+    );
+    const expectedTime = success
+      ? 121000
+      : outcome === 'process exit'
+        ? 0
+        : outcome === 'exit at timeout'
+          ? 120000
+          : outcome === 'exit during extension'
+            ? 130000
+            : extended
+              ? 360000
+              : 120000;
+    expect(Date.now()).toBe(expectedTime);
+  });
+
+  test('running owned devices add context without claiming memory pressure or extending an untracked boot', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(hostMemory, 'readHostMemoryPressure').mockReturnValue(null);
+    upsertProject(tmpHome, {});
+    setDevice(tmpHome, 'android', { owned: true, avdName: 'stim-app', consolePort: 5556 });
+    const spawn = vi.fn<() => void>();
+    setExecutor({
+      run: (cmd) => {
+        if (cmd === 'emulator -list-avds') return 'stim-app';
+        if (cmd === 'adb devices') return 'List of devices attached\nemulator-5556\tdevice';
+        if (cmd.includes('emu avd name')) return 'stim-app';
+        return '';
+      },
+      runQuiet: (cmd) => (cmd.includes('emu avd name') ? 'stim-app\nOK' : ''),
+      runFile: () => '{"devices":{}}',
+      spawn,
+    });
+    const lines: string[] = [];
+    const pending = ensureBooted({
+      platform: 'android',
+      device: { avdName: 'stim-app', owned: true },
+      timeoutMs: 1000,
+      out: (line) => lines.push(line),
+    });
+    await vi.runAllTimersAsync();
+    const result = await pending;
+    expect(result.failed).toBe(true);
+    expect(result.remedy).toContain('1 Stim-owned device is running');
+    expect(result.remedy).not.toMatch(/reports.*pressure|JAVA_HOME/);
+    expect(lines.join('')).not.toContain('retrying');
+    expect(spawn).not.toHaveBeenCalled();
   });
 
   test('ensureBooted hands the caller log file to the emulator spawn', async () => {

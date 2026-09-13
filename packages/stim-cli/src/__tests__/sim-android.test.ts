@@ -789,6 +789,43 @@ test('waitForBoot reports a timeout diagnostic when adb never answers', async ()
   expect(result.diagnostic).toEqual({ devices: '', sysBoot: '', devBoot: '', bootAnim: '' });
 });
 
+test.each([25, 2000])('boot timeout retains diagnostics within a separate budget (query cost %sms)', async (costMs) => {
+  vi.useFakeTimers();
+  vi.setSystemTime(0);
+  const calls: { cmd: string; at: number; timeoutMs: number }[] = [];
+  setExecutor({
+    runQuiet: (cmd, opts) => {
+      const at = Date.now();
+      const timeoutMs = opts?.timeoutMs ?? Infinity;
+      calls.push({ cmd, at, timeoutMs });
+      vi.setSystemTime(at + Math.min(costMs, timeoutMs));
+      if (costMs > timeoutMs) return null;
+      if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\toffline\n';
+      return cmd.includes('init.svc.bootanim') ? 'running\n' : '0\n';
+    },
+  });
+  try {
+    const pending = waitForBoot('emulator-5554', 10, { commandTimeoutMs: 5000 });
+    await vi.runAllTimersAsync();
+    const result = await pending;
+    const diagnostics = calls.filter(({ at }) => at >= 11);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostic).toEqual({
+      devices: 'List of devices attached\nemulator-5554\toffline',
+      sysBoot: '0',
+      devBoot: costMs === 25 ? '0' : '',
+      bootAnim: costMs === 25 ? 'running' : '',
+    });
+    expect(diagnostics[0]).toEqual({ cmd: 'adb devices', at: 11, timeoutMs: 5000 });
+    expect(diagnostics.map(({ timeoutMs }) => timeoutMs)).toEqual(
+      costMs === 25 ? [5000, 4975, 4950, 4925] : [5000, 3000, 1000],
+    );
+    expect(Date.now() - diagnostics[0]!.at).toBeLessThanOrEqual(5000);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test('androidToolPath resolves each tool inside ANDROID_HOME when it exists', () => {
   const sdk = makeFakeSdk(tmpHome);
   process.env.ANDROID_HOME = sdk;

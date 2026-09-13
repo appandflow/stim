@@ -75,6 +75,12 @@ current and highest observed pressure; a timeout does not establish OOM.
 Avoid repeated reboots under unchanged pressure; do not restart other
 workspaces' devices or close their apps without asking. That guide covers
 the recovery steps and profile tradeoffs.
+An Android boot timeout under observed elevated memory pressure gets one
+extra wait while the emulator process this run started is alive. It never
+launches a second emulator. For a timeout, read guide errors STIM_NO_DEVICE
+and free memory by stopping only unneeded devices in workspaces you own;
+ask before closing other apps or devices. Device count alone is not evidence
+of memory pressure.
 For a linked native library carrying Git metadata, add the printed .git entries to
 .fingerprintignore only when the native build does not read Git state.
 

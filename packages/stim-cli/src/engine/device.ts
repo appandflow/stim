@@ -18,7 +18,7 @@ import {
 } from '../config.ts';
 import { pidExists } from '../metro.ts';
 import { getExecutor } from '../exec.ts';
-import { hostMemoryPressureAdvice, readHostMemoryPressure } from '../host-memory.ts';
+import { hostMemoryPressureAdvice, readHostMemoryPressure, type HostMemoryPressure } from '../host-memory.ts';
 import {
   bootIosSim,
   createOwnedIosSim,
@@ -558,7 +558,7 @@ function findOtherProjectOwningAvd(avdName: string, projectPath: string, selecte
   return null;
 }
 
-export class AvdRecoveryError extends Error {
+export class AvdBootError extends Error {
   readonly remedy: string;
 
   constructor(message: string, remedy: string, cause?: unknown) {
@@ -566,6 +566,8 @@ export class AvdRecoveryError extends Error {
     this.remedy = remedy;
   }
 }
+
+export class AvdRecoveryError extends AvdBootError {}
 
 async function ensureOwnedAndroidDevice({
   record,
@@ -948,14 +950,11 @@ async function bootOwnedAvdOnFreshPort({
   });
   const serial = `emulator-${claim.consolePort}`;
   try {
+    reportAndroidMemoryPressure(out);
     const pid = bootAndroidEmulator(avdName, claim.consolePort, { logFile });
     out(chalk.dim(phaseLine('device', `waiting for ${serial} to finish booting`)));
-    const result = await waitForBoot(serial, 120000, { aborted: emulatorGone(pid, alive) });
-    if (!result.ok) {
-      throw new Error(
-        `${bootFailurePrefix(serial, result.exited, 120000)} Diagnostic: ${JSON.stringify(result.diagnostic)}`,
-      );
-    }
+    const result = await waitForAndroidBoot({ serial, timeoutMs: 120000, pid, alive, out });
+    if (result.failed) throw new AvdBootError(result.reason!, result.remedy!);
     const running = getAvdNameForSerial(serial);
     if (running && running !== avdName) {
       throw new Error(
@@ -969,15 +968,83 @@ async function bootOwnedAvdOnFreshPort({
   }
 }
 
-function emulatorGone(pid: number | null, alive: Liveness): () => boolean {
-  if (!pid) return () => false;
-  return () => !alive(pid);
+function reportAndroidMemoryPressure(out: Notify): void {
+  const pressure = readHostMemoryPressure();
+  if (pressure === 'warning' || pressure === 'critical') {
+    out(
+      chalk.dim(
+        phaseLine(
+          'memory',
+          `macOS reports ${pressure} host memory pressure; emulator boot may be slow. Free memory with \`stim stop\` only in workspaces you own; ask before closing other apps or devices.`,
+        ),
+      ),
+    );
+  }
 }
 
-function bootFailurePrefix(serial: string, exited: boolean | undefined, timeoutMs: number): string {
-  return exited
+function androidBootRemedy(pressure: HostMemoryPressure | null): string {
+  let count: number | null = null;
+  try {
+    count = liveOwnedDeviceCount({
+      sims: process.platform === 'darwin' ? listAllIosSims({ timeoutMs: 2000 }) : [],
+      adbEmulators: listAdbDevices({ timeoutMs: 2000 }).emulators,
+      config: loadConfig(),
+    });
+  } catch {}
+  const observation =
+    pressure === 'warning' || pressure === 'critical' ? `macOS reports ${pressure} host memory pressure. ` : '';
+  const devices = count ? `${count} Stim-owned ${count === 1 ? 'device is' : 'devices are'} running. ` : '';
+  if (observation || devices) {
+    return `${observation}${devices}Stop an unneeded device with \`stim stop\` only in a workspace you own, then run \`stim android\` again; ask before closing other apps or devices. These observations do not establish the cause of the timeout or an OOM crash.`;
+  }
+  return 'Inspect the emulator log and run `stim doctor` to check JAVA_HOME, ANDROID_HOME, and installed system images, then run `stim android` again.';
+}
+
+async function waitForAndroidBoot({
+  serial,
+  timeoutMs,
+  pid = null,
+  alive = pidExists,
+  out,
+}: {
+  serial: string;
+  timeoutMs: number;
+  pid?: number | null;
+  alive?: Liveness;
+  out: Notify;
+}): Promise<BootResult> {
+  const aborted = () => pid !== null && !alive(pid);
+  const wait = (windowMs: number) => waitForBoot(serial, windowMs, { aborted, commandTimeoutMs: 5000 });
+  let result = await wait(timeoutMs);
+  if (result.ok) return { ok: true, serial };
+  let pressure = readHostMemoryPressure();
+  let elapsedMs = timeoutMs;
+  if (!result.exited && pid !== null && !aborted() && (pressure === 'warning' || pressure === 'critical')) {
+    const extensionMs = 240000;
+    out(
+      chalk.dim(
+        phaseLine(
+          'memory',
+          `macOS reports ${pressure} host memory pressure; retrying the boot wait once for the same live emulator ${serial} (up to ${extensionMs / 1000}s more).`,
+        ),
+      ),
+    );
+    result = await wait(extensionMs);
+    if (result.ok) return { ok: true, serial };
+    elapsedMs += extensionMs;
+    pressure = readHostMemoryPressure();
+  }
+  const exited = result.exited || aborted();
+  const reason = exited
     ? `The emulator process for ${serial} exited before the device finished booting.`
-    : `Emulator ${serial} did not finish booting within ${Math.round(timeoutMs / 1000)}s.`;
+    : `Emulator ${serial} did not finish booting within ${Math.round(elapsedMs / 1000)}s.`;
+  return {
+    failed: true,
+    reason: `${reason} Diagnostic: ${JSON.stringify(result.diagnostic)}`,
+    remedy: exited
+      ? 'Inspect the emulator log for the process exit, fix what it reports, then run `stim android` again.'
+      : androidBootRemedy(pressure),
+  };
 }
 
 export function liveOwnedDeviceCount({
@@ -1169,6 +1236,7 @@ interface BootResult {
   serial?: string;
   failed?: boolean;
   reason?: string;
+  remedy?: string;
 }
 
 export async function ensureBooted({
@@ -1304,27 +1372,16 @@ async function ensureAndroidBooted({
     return { failed: true, reason: `AVD ${device.avdName} is not Stim-owned by name; refusing to boot it.` };
   }
   if (resolved.serial) {
-    const ready = await waitForBoot(resolved.serial, timeoutMs);
-    if (!ready.ok) {
-      return {
-        failed: true,
-        reason: `Emulator ${resolved.serial} never reported boot completion. Diagnostic: ${JSON.stringify(ready.diagnostic)}`,
-      };
-    }
-    return { ok: true, serial: resolved.serial };
+    return waitForAndroidBoot({ serial: resolved.serial, timeoutMs, out });
   }
 
   const freshSerial = `emulator-${device.consolePort}`;
   if (device.owned && device.serial === freshSerial) {
-    const ready = await waitForBoot(freshSerial, timeoutMs);
-    if (ready.ok) return { ok: true, serial: freshSerial };
-    return {
-      failed: true,
-      reason: `Emulator ${freshSerial} never reported boot completion. Diagnostic: ${JSON.stringify(ready.diagnostic)}`,
-    };
+    return waitForAndroidBoot({ serial: freshSerial, timeoutMs, out });
   }
 
   const serial = `emulator-${pickConsolePort(device.consolePort)}`;
+  reportAndroidMemoryPressure(out);
   out(chalk.dim(phaseLine('device', `booting ${device.avdName} as ${serial}`)));
   let pid: number | null = null;
   try {
@@ -1335,14 +1392,7 @@ async function ensureAndroidBooted({
       reason: `Could not start emulator for AVD ${device.avdName}: ${(e as Error)?.message || e}`,
     };
   }
-  const ready = await waitForBoot(serial, timeoutMs, { aborted: emulatorGone(pid, alive) });
-  if (!ready.ok) {
-    return {
-      failed: true,
-      reason: `${bootFailurePrefix(serial, ready.exited, timeoutMs)} Diagnostic: ${JSON.stringify(ready.diagnostic)}`,
-    };
-  }
-  return { ok: true, serial };
+  return waitForAndroidBoot({ serial, timeoutMs, pid, alive, out });
 }
 
 function pickConsolePort(recorded: number | undefined) {
