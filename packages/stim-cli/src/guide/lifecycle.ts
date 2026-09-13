@@ -855,6 +855,20 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   Never ignore a real native input -- a Podfile, a gradle file, the app config
   -- to force a hit: that trades a slow build for a wrong one.
 
+
+  React Native Test App can generate checkout-specific Android output under
+  node_modules/react-native-test-app/android/support/build. If fingerprint
+  differences point only there, add these project-specific entries:
+
+    node_modules/react-native-test-app/android/support/build
+    node_modules/react-native-test-app/android/support/build/**/*
+
+  Put them in the app root's .fingerprintignore and use the path as it appears
+  in the fingerprint sources; a hoisted or linked dependency may differ.
+  Keep android/support/build.gradle and native sources included. Confirm equal
+  fingerprints across built worktrees, and confirm a real native input edit
+  still changes the hash. These exclusions are not Stim defaults.
+
   \`stim doctor\` measures this directly rather than reading the file: it
   fingerprints HEAD in a temporary clean worktree, compares, and reports a
   mismatch naming the differing sources. Untracked, non-gitignored files under
