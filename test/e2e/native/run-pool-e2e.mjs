@@ -47,6 +47,7 @@ async function main() {
   const wt1 = worktreeCreate('pool-1', appDir);
   const first = runIos(wt1);
   assert(first.adopted === false, `wt1 ran on an empty pool and must have created, not adopted:\n${first.deviceLine}`);
+  cli(['stop'], { cwd: wt1 });
   const wt2 = worktreeCreate('pool-2', appDir);
   const second = runIos(wt2);
   assert(second.adopted === false, `wt2 must have created its own sim, not adopted:\n${second.deviceLine}`);
@@ -54,7 +55,6 @@ async function main() {
 
   banner('remove: the first parks');
   cleanup.recordWorkspace(wt1);
-  cli(['stop'], { cwd: wt1 });
   const removed1 = worktreeRemove(wt1);
   assert(/ {2}device {6}parked stim-parked /.test(removed1), `worktree remove did not park:\n${removed1}`);
   assertPoolSize(1);
