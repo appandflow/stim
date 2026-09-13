@@ -274,7 +274,13 @@ export function createCleanupTracker({ h, platform, processExitTimeoutMs = 5000 
         ? Object.values(JSON.parse(inspect(h, 'xcrun', ['simctl', 'list', 'devices', '--json'])).devices)
             .flat()
             .map((device) => device.udid)
-        : inspect(h, 'emulator', ['-list-avds'])
+        : inspect(
+            h,
+            h.env.ANDROID_HOME || h.env.ANDROID_SDK_ROOT
+              ? join(h.env.ANDROID_HOME || h.env.ANDROID_SDK_ROOT, 'emulator', 'emulator')
+              : 'emulator',
+            ['-list-avds'],
+          )
             .split('\n')
             .map((name) => name.trim());
     return ids.filter((id) => devices.has(id));
