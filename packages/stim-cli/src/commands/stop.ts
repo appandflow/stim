@@ -1,4 +1,6 @@
-import { projectDeviceSlots } from '../device-slots.ts';
+import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { workspaceDir } from '../paths.ts';
+import { deviceSlotPlatforms, parseDeviceSlotKey, projectDeviceSlots, validateDeviceSlot } from '../device-slots.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, plural, releasedLeaseFact } from '../command-output.ts';
@@ -209,7 +211,52 @@ function defaultTeardownRemoteSession(
   return endRecordedSession({ root, sessionId, easBin: resolveEasCliBin(root)?.file ?? null });
 }
 
-export async function runStop({
+type StopArgs = Parameters<typeof stopWorkspace>[0];
+
+export async function runStop(options: StopArgs & { slot?: string }): ReturnType<typeof stopWorkspace> {
+  if (options.slot === undefined) return stopWorkspace(options);
+  const slot = validateDeviceSlot(options.slot);
+  const root = options.root;
+  const project = options.project === undefined ? getProject(root) : options.project;
+  const records = options.collectors === undefined ? readCollectorState(root) : options.collectors;
+  const collectors = Object.fromEntries(
+    Object.entries(records ?? {}).filter(([key]) => parseDeviceSlotKey(key)?.slot === slot),
+  );
+  const result = await stopWorkspace({
+    ...options,
+    project: project
+      ? {
+          ...project,
+          platforms: deviceSlotPlatforms(project, slot),
+          deviceSlots: undefined,
+          supervisor: undefined,
+          metroPort: null,
+        }
+      : null,
+    state: null,
+    collectors,
+    remoteDevice: null,
+    metroTunnel: null,
+    clearCollectors: (projectRoot, expected) =>
+      withWorkspaceStateLock(projectRoot, () => {
+        clearCollectorState(projectRoot, expected);
+        return !Object.keys(readCollectorState(projectRoot)).some((key) => parseDeviceSlotKey(key)?.slot === slot);
+      }),
+    clearState: () => true,
+    clearRegistration: async () => true,
+    releaseLeases: (projectRoot) => releaseWorkspaceLeases(projectRoot, { slot }),
+  });
+  result.outcomes.port = {
+    status: 'kept',
+    port: project?.metroPort ?? null,
+    reason: 'The workspace server is shared by all slots.',
+  };
+  result.outcomes.metro = { status: 'skipped', reason: 'The workspace server is shared by all slots.' };
+  result.summary = summarize(root, result.outcomes, result.ok);
+  return result;
+}
+
+async function stopWorkspace({
   root,
   project = undefined,
   state = undefined,
@@ -739,6 +786,7 @@ async function defaultClearRegistration(root: string, expected?: ProcessRecord |
 }
 
 interface StopOptions {
+  slot?: string;
   json?: boolean;
 }
 
@@ -748,6 +796,7 @@ export default function stopCommand(program: Command): void {
     .description(
       "The inverse of `start`: halt this workspace's supervisor, shut the owned device down (never deleted), and free the reserved port. Non-destructive -- the device stays assigned, so coming back costs a boot. Acts on the current workspace.",
     )
+    .option('--slot <name>', 'Stop only this device slot, keeping the shared server running', validateDeviceSlot)
     .option('--json', 'print the per-step outcomes as JSON')
     .action(async (opts: StopOptions) => {
       const root = findProjectRoot(process.cwd());
@@ -756,7 +805,12 @@ export default function stopCommand(program: Command): void {
         process.exit(1);
       }
 
-      const { ok, outcomes, summary } = await runStop({ root });
+      const { ok, outcomes, summary } = await withWorkspaceProcessLock(
+        workspaceDir(root),
+        'native-run',
+        () => runStop({ root, slot: opts.slot }),
+        { external: true, waitMs: 30 * 60_000 },
+      );
 
       if (opts.json) {
         console.log(JSON.stringify({ root, ok, ...outcomes }));

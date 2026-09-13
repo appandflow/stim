@@ -831,6 +831,7 @@ function nativeLaunchFailure({
 }
 
 export async function verifyLaunch({
+  slot,
   logsDir,
   since,
   metroPort = null,
@@ -849,6 +850,7 @@ export async function verifyLaunch({
   now = Date.now,
   sleep = (ms: number) => new Promise((r) => setTimeout(r, ms)),
 }: {
+  slot?: string;
   logsDir?: string;
   since?: number | string;
   metroPort?: number | string | null;
@@ -881,12 +883,18 @@ export async function verifyLaunch({
   let runtimeStartedAt: number | null = null;
   let nextCrashCheck = startedAt + 1000;
   while (true) {
-    const metroRecords = read().filter((record) => after(record, since));
+    const metroRecords = read().filter(
+      (record) => after(record, since) && (slot === undefined || record.slot === slot),
+    );
     const bundleRecords = metroRecords.filter(
       (record) => !requireBundleResponse || String(record.event).startsWith('bundle_response_'),
     );
-    const deviceRecords = readDevice().filter((record) => after(record, since));
-    const clientRecords = readClient().filter((record) => after(record, since));
+    const deviceRecords = readDevice().filter(
+      (record) => after(record, since) && (slot === undefined || (record.slot ?? 'default') === slot),
+    );
+    const clientRecords = readClient().filter(
+      (record) => after(record, since) && (slot === undefined || record.slot === slot),
+    );
     if (now() >= nextCrashCheck) {
       nextCrashCheck = now() + 2000;
       const crash = nativeLaunchFailure({

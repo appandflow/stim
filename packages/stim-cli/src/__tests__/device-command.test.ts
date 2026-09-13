@@ -491,12 +491,12 @@ describe('the command surface', () => {
 
     const lock = device.commands.find((command) => command.name() === 'lock');
     assert(lock);
-    expect(lock.options.map((option) => option.long).toSorted()).toEqual(['--for', '--json', '--wait']);
+    expect(lock.options.map((option) => option.long).toSorted()).toEqual(['--for', '--json', '--slot', '--wait']);
     expect(lock.usage()).toMatch(/<platform> \[id\]/);
 
     const unlock = device.commands.find((command) => command.name() === 'unlock');
     assert(unlock);
-    expect(unlock.options.map((option) => option.long)).toEqual(['--json']);
+    expect(unlock.options.map((option) => option.long)).toEqual(['--slot', '--json']);
     expect(unlock.usage()).toMatch(/\[platform\]/);
   });
 

@@ -18,7 +18,13 @@ one dim note on STDERR reading \`No matching log records in <logs dir>\`
 (human mode only -- \`--json\` prints nothing at all, on either stream).
 The only exit-1 paths are a malformed query and no project.
 
+Device collectors and build records carry their named slot. Use --slot phone
+for that slot's timeline; its launch marker cannot hide a sibling's errors.
+Untagged legacy records belong to default. Metro/client records are shared and
+usually untagged: use an unfiltered workspace query to inspect those errors.
+
 FLAGS
+  --slot <name>   only this slot's records (default includes untagged records)
   --source <s...>  metro, client, device, build (one or more), or all. An
                    unknown value is REJECTED rather than quietly matching
                    nothing.

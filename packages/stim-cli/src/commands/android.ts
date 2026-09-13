@@ -1,4 +1,6 @@
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
+import { deviceSlotKey, validateDeviceSlot } from '../device-slots.ts';
+import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { parkedMaxSetting } from '../sim-pool.ts';
 import {
   resolveOptimizations,
@@ -218,6 +220,7 @@ export { formatDuration, phaseLine, shortHash } from '../command-output.ts';
 
 interface AndroidCommandOptions {
   easProfile?: string;
+  slot?: string;
   json?: boolean;
   metroCheck?: boolean;
   buildCache?: boolean;
@@ -274,6 +277,7 @@ export function registerAndroid(program: Command): void {
       '--eas-profile <name>',
       'Download a matching EAS development build; on a miss, print the build command without running it',
     )
+    .option('--slot <name>', 'Reusable device slot within this workspace (default: default)', validateDeviceSlot)
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
     .option(
       '--no-metro-check',
@@ -321,19 +325,26 @@ export function registerAndroid(program: Command): void {
         process.exit(1);
         return;
       }
-      const result = await runAndroid({
-        root,
-        json: Boolean(opts.json),
-        metroCheck: opts.metroCheck !== false,
-        useBuildCache: opts.buildCache !== false,
-        variant: opts.variant ?? null,
-        easProfile: opts.easProfile,
-        systemImage: opts.systemImage ?? null,
-        remoteDevice: opts.remote ?? null,
-        device: opts.device ?? null,
-        wait: opts.wait,
-        waitConflict: waitFlagConflict(process.argv),
-      });
+      const result = await withWorkspaceProcessLock(
+        workspaceDir(root),
+        'native-run',
+        () =>
+          runAndroid({
+            root,
+            slot: opts.slot,
+            easProfile: opts.easProfile,
+            json: Boolean(opts.json),
+            metroCheck: opts.metroCheck !== false,
+            useBuildCache: opts.buildCache !== false,
+            variant: opts.variant ?? null,
+            systemImage: opts.systemImage ?? null,
+            remoteDevice: opts.remote ?? null,
+            device: opts.device ?? null,
+            wait: opts.wait,
+            waitConflict: waitFlagConflict(process.argv),
+          }),
+        { external: true, waitMs: 30 * 60_000 },
+      );
       if (!result.ok) process.exit(1);
     });
 }
@@ -341,6 +352,7 @@ export function registerAndroid(program: Command): void {
 interface RunAndroidOptions {
   easProfile?: string;
   resolveEasDevelopmentBuild?: typeof resolveEasDevelopmentBuild;
+  slot?: string;
   root: string;
   json?: boolean;
   metroCheck?: boolean;
@@ -589,6 +601,22 @@ function resolveRunAndroidOptions(
   };
 }
 
+function androidSlotOptions(options: RunAndroidOptions) {
+  const base = resolveRunAndroidOptions(options);
+  const slot = validateDeviceSlot(options.slot);
+  if (slot === 'default') return base;
+  return {
+    ...base,
+    ensureDevice: (args: Parameters<typeof base.ensureDevice>[0]) => base.ensureDevice({ ...args, slot }),
+    checkCapacity: (args: Parameters<typeof base.checkCapacity>[0]) => base.checkCapacity({ ...args, slot }),
+    selectPool: (args: Parameters<typeof base.selectPool>[0]) => base.selectPool({ ...args, slot }),
+    acquireLease: (args: Parameters<typeof base.acquireLease>[0]) => base.acquireLease({ ...args, slot }),
+    makeRunLease: (args: Parameters<typeof base.makeRunLease>[0]) => base.makeRunLease({ ...args, slot }),
+    writeLaunch: ((projectRoot, platform, record) =>
+      base.writeLaunch(projectRoot, platform, record, slot)) as typeof base.writeLaunch,
+  };
+}
+
 export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOptions): Promise<RunAndroidResult> {
   let {
     root,
@@ -671,7 +699,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     now,
     out,
     emit,
-  } = resolveRunAndroidOptions(options);
+  } = androidSlotOptions(options);
+  const slot = validateDeviceSlot(options.slot);
   const started = now();
   const startedAt = new Date(started).toISOString();
   const projectProblem = appProjectProblem(root);
@@ -695,8 +724,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     return { ok: false, error: { code, message, remedy } };
   }
   const logsDir = workspaceLogsDir(root);
-  const buildLog = join(logsDir, 'build-android.ndjson');
-  const writer = createWriter(buildLog, { truncate: true });
+  const buildLog = join(logsDir, `build-${deviceSlotKey('android', slot)}.ndjson`);
+  const writer = createWriter(buildLog, { truncate: true, fields: { slot } });
 
   const record: AndroidRecord = {
     fingerprint: null,
@@ -899,6 +928,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
   const remoteBackend = physical ? null : (commandRemoteBackend ?? remoteAndroidSetting(settings));
   const imageRefusal = systemImageRefusal({
+    slot,
     flag: systemImageFlag,
     resolved: systemImage,
     physical,
@@ -1715,6 +1745,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
     try {
       return await finishAndroidRun({
+        slot,
         lease: leaseHandle,
         releaseLease,
         root,

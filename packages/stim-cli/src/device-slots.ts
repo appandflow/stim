@@ -2,7 +2,7 @@ import type { DeviceRecord, PlatformRecords, ProjectRecord } from './types.ts';
 
 const DEFAULT_DEVICE_SLOT = 'default';
 
-export function validateDeviceSlot(slot: string): string {
+export function validateDeviceSlot(slot: string = 'default'): string {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(slot) || ['constructor', 'prototype', '__proto__'].includes(slot)) {
     const error = new Error(
       'A device slot must be 1-64 letters, digits, underscores or hyphens, starting with a letter or digit.',

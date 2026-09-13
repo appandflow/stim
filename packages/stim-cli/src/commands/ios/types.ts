@@ -66,6 +66,7 @@ export interface VerifyLaunchResultLike {
 }
 
 export interface IosCommandOptions {
+  slot?: string;
   json?: boolean;
   metroCheck?: boolean;
   buildCache?: boolean;

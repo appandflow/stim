@@ -1,3 +1,4 @@
+import { deviceSlotPlatforms } from '../device-slots.ts';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1796,38 +1797,44 @@ describe('ensureOwnedDevice: android', () => {
     }
   });
 
-  test('same-label workspaces receive distinct owned AVDs without touching the existing owner', async () => {
-    const other = projectDir();
-    const root = projectDir();
-    try {
-      setDevice(other, 'android', { avdName: 'stim-app', consolePort: 5554, owned: true });
-      const existing = getProject(other)?.platforms?.android;
-      const { run, spawn, exec } = androidExecutor({ avds: ['stim-app'] });
-      setExecutor(exec);
-      const result = await ensureOwnedDevice({
-        platform: 'android',
-        project: getProject(root),
-        projectPath: root,
-        label: 'app',
-        settings: {},
-      });
-      expect(result.avdName).toMatch(/^stim-app-[a-f0-9]{8}$/);
-      expect(result.consolePort).toBe(5556);
-      expect(getProject(root)?.platforms?.android).toMatchObject({
-        avdName: result.avdName,
-        owned: true,
-      });
-      expect(getProject(other)?.platforms?.android).toEqual(existing);
-      expect(run.filter((cmd) => /create avd/.test(cmd))).toHaveLength(1);
-      expect(run.some((cmd) => /delete avd| -s emulator-5554 /.test(cmd))).toBe(false);
-      expect(spawn).toHaveLength(1);
-      expect(spawn[0]?.args).toContain(result.avdName);
-      expect(spawn[0]?.args).not.toContain('stim-app');
-    } finally {
-      rmSync(other, { recursive: true, force: true });
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
+  test.each([false, true])(
+    'AVD name collisions preserve the existing owner (same workspace: %s)',
+    async (sameWorkspace) => {
+      const root = projectDir();
+      const other = sameWorkspace ? root : projectDir();
+      const existingName = sameWorkspace ? 'stim-app-PHONE' : 'stim-app';
+      const slot = sameWorkspace ? 'phone' : 'default';
+      try {
+        setDevice(other, 'android', { avdName: existingName, consolePort: 5554, owned: true });
+        const existing = getProject(other)?.platforms?.android;
+        const { run, spawn, exec } = androidExecutor({ avds: [existingName] });
+        setExecutor(exec);
+        const result = await ensureOwnedDevice({
+          platform: 'android',
+          slot,
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: {},
+        });
+        expect(result.avdName).toMatch(sameWorkspace ? /^stim-app-phone-[a-f0-9]{8}$/ : /^stim-app-[a-f0-9]{8}$/);
+        expect(result.consolePort).toBe(5556);
+        expect(deviceSlotPlatforms(getProject(root), slot)?.android).toMatchObject({
+          avdName: result.avdName,
+          owned: true,
+        });
+        expect(getProject(other)?.platforms?.android).toEqual(existing);
+        expect(run.filter((cmd) => /create avd/.test(cmd))).toHaveLength(1);
+        expect(run.some((cmd) => /delete avd| -s emulator-5554 /.test(cmd))).toBe(false);
+        expect(spawn).toHaveLength(1);
+        expect(spawn[0]?.args).toContain(result.avdName);
+        expect(spawn[0]?.args).not.toContain('stim-app');
+      } finally {
+        rmSync(other, { recursive: true, force: true });
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   test('an AVD claimed by another project during creation errors instead of being hijacked', async () => {
     const other = projectDir();
@@ -2258,4 +2265,55 @@ test('capacity counts named Android slots and only exempts the selected live slo
   };
   expect(deviceCapacityRefusal({ ...args, slot: 'phone' })).toBeNull();
   expect(deviceCapacityRefusal({ ...args, slot: 'tablet' })?.code).toBe('STIM_AT_CAPACITY');
+});
+
+test('identical simulator models have distinct slot assignments and reuse the selected slot', async () => {
+  const root = projectDir();
+  const { exec } = iosExecutor([]);
+  let next = 0;
+  setExecutor({
+    ...exec,
+    run(command) {
+      return command.includes('simctl create') ? `SLOT-${++next}` : exec.run(command);
+    },
+  });
+  try {
+    const devices = [];
+    for (const slot of ['default', 'phone', 'second-phone']) {
+      const device = await ensureOwnedDevice({
+        platform: 'ios',
+        projectPath: root,
+        project: getProject(root),
+        label: 'same',
+        settings: {},
+        slot,
+      });
+      await device.booting?.done;
+      devices.push(device);
+    }
+    expect(new Set(devices.map((device) => device.deviceUdid)).size).toBe(3);
+    expect(new Set(devices.map((device) => device.deviceName)).size).toBe(3);
+    const listed = devices.map((device) => ({
+      udid: device.deviceUdid!,
+      name: device.deviceName!,
+      state: 'Booted',
+      isAvailable: true,
+      deviceTypeIdentifier: TYPE_17_PRO.identifier,
+    }));
+    setExecutor(iosExecutor(listed).exec);
+    const repeated = await ensureOwnedDevice({
+      platform: 'ios',
+      projectPath: root,
+      project: getProject(root),
+      label: 'same',
+      settings: {},
+      slot: 'phone',
+    });
+    expect(repeated.deviceUdid).toBe(devices[1]!.deviceUdid);
+    expect(deviceSlotPlatforms(getProject(root), 'second-phone')?.ios?.deviceUdid).toBe(devices[2]!.deviceUdid);
+    expect(getProject(root)?.platforms?.ios?.deviceUdid).toBe(devices[0]!.deviceUdid);
+    expect(next).toBe(3);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

@@ -1267,3 +1267,40 @@ test('stop visits all device slots and reports a named-slot failure without skip
   expect(result.outcomes.device['ios:tablet']?.status).toBe('shut-down');
   expect(result.outcomes.device['ios:external']?.status).toBe('skipped');
 });
+
+test('stopping a slot preserves sibling collectors, leases and the shared server', async () => {
+  const phone = { pid: 111, processToken: 'phone' };
+  const tablet = { pid: 222, processToken: 'tablet' };
+  writeFileSync(
+    workspaceStateFile(tmpRoot),
+    JSON.stringify({
+      collectors: { 'ios:phone': phone, 'ios:tablet': tablet },
+      supervisor: { pid: 333, processToken: 'metro' },
+    }),
+  );
+  takeLease({ root: tmpRoot, platform: 'ios', slot: 'phone', id: 'PHONE-HW', kind: 'declared', durationMs: 60000 });
+  takeLease({ root: tmpRoot, platform: 'ios', slot: 'tablet', id: 'TABLET-HW', kind: 'declared', durationMs: 60000 });
+  const { calls, opts } = seams({
+    root: tmpRoot,
+    project: {
+      metroPort: 8083,
+      platforms: { ios: { deviceUdid: 'DEFAULT', owned: true } },
+      deviceSlots: {
+        phone: { ios: { deviceUdid: 'PHONE', owned: true } },
+        tablet: { ios: { deviceUdid: 'TABLET', owned: true } },
+      },
+    },
+    collectors: undefined,
+    isAlive: () => true,
+  });
+  const result = await runStop({ ...opts, slot: 'phone' });
+  expect(result.ok).toBe(true);
+  expect(calls.collectorSignals).toEqual([111]);
+  expect(calls.teardowns.map((call) => ('udid' in call ? call.udid : call.avd))).toEqual(['PHONE']);
+  expect(calls.signals).toEqual([]);
+  expect(calls.freed).toEqual([]);
+  expect(readCollectorState(tmpRoot)).toEqual({ 'ios:tablet': tablet });
+  expect(readSupervisorState(tmpRoot)?.pid).toBe(333);
+  expect(listLeaseFiles().map((entry) => entry.id)).toEqual(['TABLET-HW']);
+  expect(result.outcomes.port).toMatchObject({ status: 'kept', port: 8083 });
+});

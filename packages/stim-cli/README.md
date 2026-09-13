@@ -178,3 +178,22 @@ Update programmatic imports from `stim-cli/cache-manifest` to
 `stim/cache-manifest`. The `@stim-cli/*` packages keep their names.
 
 MIT License.
+
+### Multiple devices in one workspace
+
+Use a stable slot name for each simulator, emulator, or physical device. Slots
+can use identical models and all share the workspace's Metro server and build
+cache. Omit `--slot` to reuse your existing default device.
+
+```sh
+stim ios --slot phone
+stim ios --slot tablet --device-type "iPad Pro 13-inch (M4)"
+stim ios --slot hardware --device <udid>
+stim logs --slot tablet --source device
+stim stop --slot tablet
+```
+
+`stim status` shows every slot. Plain `stim stop` stops the whole workspace;
+`--slot` preserves the shared server and other devices. `stim reload ios` or
+`stim reload android` can reload multiple connected devices. Read
+`stim guide lifecycle options` for launch verification and recycling behavior.

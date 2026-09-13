@@ -1,3 +1,5 @@
+import { nativeRunCommand } from '../engine/slot-launch.ts';
+import { deviceSlotPlatforms, parseDeviceSlotKey } from '../device-slots.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine } from '../command-output.ts';
@@ -35,6 +37,7 @@ interface ReloadFailure {
 type ReloadResult = { ok: true; facts: ReloadFacts } | { ok: false; error: ReloadFailure };
 
 interface LiveTarget {
+  slot: string;
   platform: ReloadPlatform;
   record: WorkspaceLaunchRecord;
   deviceName: string;
@@ -77,7 +80,12 @@ function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function processFailure(platform: ReloadPlatform, record: WorkspaceLaunchRecord, d: ReloadDeps): ReloadFailure | null {
+function processFailure(
+  platform: ReloadPlatform,
+  record: WorkspaceLaunchRecord,
+  d: ReloadDeps,
+  slot = 'default',
+): ReloadFailure | null {
   const process =
     platform === 'ios' ? d.iosProcess(record.deviceId, record.appId) : d.androidProcess(record.deviceId, record.appId);
   if (process === undefined) {
@@ -95,7 +103,7 @@ function processFailure(platform: ReloadPlatform, record: WorkspaceLaunchRecord,
     return failure(
       'STIM_RELOAD_STOPPED',
       `${record.appId} is not running on ${record.deviceId}.`,
-      `Run \`stim ${platform}\` to launch it.`,
+      `Run \`${nativeRunCommand(platform, slot)}\` to launch it.`,
     );
   }
   return null;
@@ -106,7 +114,9 @@ function inspectTarget(
   record: WorkspaceLaunchRecord,
   project: ProjectRecord,
   d: ReloadDeps,
+  slot = 'default',
 ): LiveTarget | TargetFailure {
+  const runCommand = nativeRunCommand(platform, slot);
   if (platform === 'ios') {
     const configured = project.platforms?.ios;
     if (!configured?.owned || configured.deviceUdid !== record.deviceId) {
@@ -115,7 +125,7 @@ function inspectTarget(
         error: failure(
           'STIM_RELOAD_UNOWNED',
           `The recorded iOS launch on ${record.deviceId} is not this workspace's current owned simulator.`,
-          "Run `stim ios` to launch the app on this workspace's owned simulator.",
+          `Run \`${runCommand}\` to launch the app on this workspace's owned simulator.`,
         ),
       };
     }
@@ -138,13 +148,13 @@ function inspectTarget(
         error: failure(
           'STIM_RELOAD_STOPPED',
           `The recorded iOS app is not running on a booted owned simulator.`,
-          'Run `stim ios` to boot, install, and launch it.',
+          `Run \`${runCommand}\` to boot, install, and launch it.`,
         ),
       };
     }
-    const stopped = processFailure(platform, record, d);
+    const stopped = processFailure(platform, record, d, slot);
     if (stopped) return { platform, error: stopped };
-    return { platform, record, deviceName: resolved.sim.name };
+    return { platform, slot, record, deviceName: resolved.sim.name };
   }
 
   const configured = project.platforms?.android;
@@ -154,7 +164,7 @@ function inspectTarget(
       error: failure(
         'STIM_RELOAD_UNOWNED',
         `The recorded Android launch on ${record.deviceId} is not this workspace's current owned emulator.`,
-        "Run `stim android` to launch the app on this workspace's owned emulator.",
+        `Run \`${runCommand}\` to launch the app on this workspace's owned emulator.`,
       ),
     };
   }
@@ -177,13 +187,13 @@ function inspectTarget(
       error: failure(
         'STIM_RELOAD_STOPPED',
         `The recorded Android app is not running on this workspace's owned emulator.`,
-        'Run `stim android` to boot, install, and launch it.',
+        `Run \`${runCommand}\` to boot, install, and launch it.`,
       ),
     };
   }
-  const stopped = processFailure(platform, record, d);
+  const stopped = processFailure(platform, record, d, slot);
   if (stopped) return { platform, error: stopped };
-  return { platform, record, deviceName: configured.avdName };
+  return { platform, slot, record, deviceName: configured.avdName };
 }
 
 function isTargetFailure(value: LiveTarget | TargetFailure): value is TargetFailure {
@@ -208,14 +218,22 @@ export async function runReload({
     };
   }
   const launches = d.readLaunches(root);
-  const platforms: ReloadPlatform[] = platform ? [platform] : ['ios', 'android'];
-  const inspected = platforms.flatMap((candidate) => {
-    const record = launches[candidate];
-    return record ? [inspectTarget(candidate, record, project, d)] : [];
+  const inspected = Object.entries(launches).flatMap(([key, record]) => {
+    const parsed = parseDeviceSlotKey(key);
+    if (!parsed || (platform && parsed.platform !== platform)) return [];
+    return [
+      inspectTarget(
+        parsed.platform,
+        record,
+        { ...project, platforms: deviceSlotPlatforms(project, parsed.slot) },
+        d,
+        parsed.slot,
+      ),
+    ];
   });
   const live = inspected.filter((target): target is LiveTarget => !isTargetFailure(target));
 
-  if (live.length > 1) {
+  if (new Set(live.map((target) => target.platform)).size > 1) {
     return {
       ok: false,
       error: failure(
@@ -239,14 +257,15 @@ export async function runReload({
     };
   }
 
-  const target = live[0]!;
+  const target =
+    live.find((candidate) => !candidate.record.release && candidate.record.metroPort === project.metroPort) ?? live[0]!;
   if (target.record.release) {
     return {
       ok: false,
       error: failure(
         'STIM_RELOAD_RELEASE',
         `${target.record.appId} was launched with an embedded release bundle.`,
-        `Run \`stim ${target.platform}\` with a Debug configuration or variant before reloading JavaScript.`,
+        `Run \`${nativeRunCommand(target.platform, target.slot)}\` with a Debug configuration or variant before reloading JavaScript.`,
       ),
     };
   }
@@ -272,12 +291,12 @@ export async function runReload({
       ),
     };
   }
-  const stopped = processFailure(target.platform, target.record, d);
+  const stopped = processFailure(target.platform, target.record, d, target.slot);
   if (stopped) return { ok: false, error: stopped };
 
   const reloaded = await d.reloadMetro(port, { role: target.platform, appId: target.record.appId });
   if (!reloaded.ok) {
-    const stoppedAfterMetro = processFailure(target.platform, target.record, d);
+    const stoppedAfterMetro = processFailure(target.platform, target.record, d, target.slot);
     if (stoppedAfterMetro) return { ok: false, error: stoppedAfterMetro };
     const snapshot = `agent-device snapshot -i --platform ${target.platform} --${target.platform === 'ios' ? 'udid' : 'serial'} ${target.record.deviceId}`;
     const relaunch = `agent-device open ${target.record.appId} --platform ${target.platform} --${target.platform === 'ios' ? 'udid' : 'serial'} ${target.record.deviceId} --metro-port ${port} --relaunch`;

@@ -1,3 +1,4 @@
+import { validateDeviceSlot } from '../device-slots.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { clockTime } from '../command-output.ts';
@@ -66,12 +67,14 @@ const DEFAULT_DEPS: DeviceDeps = {
 };
 
 interface LockOptions {
+  slot?: string;
   for?: string;
   wait?: string;
   json?: boolean;
 }
 
 interface UnlockOptions {
+  slot?: string;
   json?: boolean;
 }
 
@@ -83,6 +86,7 @@ export interface DeviceFailure {
 }
 
 export interface LockFacts {
+  slot?: string;
   platform: LeasePlatform;
   id: string;
   deviceName: string | null;
@@ -97,7 +101,7 @@ export function grantLine(facts: LockFacts, durationText: string): string {
   const device = facts.deviceName ? `${facts.deviceName} (${facts.id})` : facts.id;
   return (
     `locked ${device} for ${facts.holder} until ${clockTime(facts.expiresAt)} (${durationText}). ` +
-    `Renew: stim device lock ${facts.platform} --for ${durationText}. Release: stim device unlock.`
+    `Renew: stim device lock ${facts.platform}${facts.slot ? ` --slot ${facts.slot}` : ''} --for ${durationText}. Release: stim device unlock${facts.slot ? ` --slot ${facts.slot}` : ''}.`
   );
 }
 
@@ -145,9 +149,11 @@ async function poolDevice(
   deadline: number,
   root: string,
   d: DeviceDeps,
+  slot?: string,
 ): Promise<ResolvedDevice | DeviceFailure> {
   const isEmulator = memoizeEmulatorProbe(d.probeEmulatorSerial);
   const pooled = await d.selectFromPool({
+    ...(slot ? { slot } : {}),
     root,
     platform,
     idLabel,
@@ -249,11 +255,12 @@ export async function runLock(
 
   const device = idArg
     ? resolveDevice(platform, idArg, d)
-    : await poolDevice(platform, idLabel, wait.seconds, deadline, root, d);
+    : await poolDevice(platform, idLabel, wait.seconds, deadline, root, d, opts.slot);
   if (isFailure(device)) return report(device);
 
   for (;;) {
     const outcome = await d.waitForDevice({
+      ...(opts.slot ? { slot: opts.slot } : {}),
       root,
       platform,
       id: device.id,
@@ -272,6 +279,7 @@ export async function runLock(
 
     const taken = d.takeLease(
       {
+        ...(opts.slot ? { slot: opts.slot } : {}),
         root,
         platform,
         id: device.id,
@@ -292,6 +300,7 @@ export async function runLock(
     if (taken.status === 'held') continue;
 
     const facts: LockFacts = {
+      ...(taken.lease.slot ? { slot: taken.lease.slot } : {}),
       platform,
       id: taken.lease.id,
       deviceName: taken.lease.deviceName,
@@ -339,7 +348,7 @@ export async function runUnlock(
     });
   }
 
-  const released = d.releaseLeases(root, { platform }, d.io);
+  const released = d.releaseLeases(root, { platform, ...(opts.slot ? { slot: opts.slot } : {}) }, d.io);
   if (released.length === 0) {
     d.note(
       chalk.dim(
@@ -374,6 +383,7 @@ export function registerDevice(program: Command, deps: Partial<DeviceDeps> = {})
       '--wait <seconds>',
       'How long to wait for a device another workspace holds, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once)',
     )
+    .option('--slot <name>', 'Use this workspace device slot', validateDeviceSlot)
     .option('--json', 'print the lease as JSON on stdout')
     .action(async (platform: string, id: string | undefined, opts: LockOptions) => {
       const result = await runLock(platform, id, opts, deps);
@@ -384,6 +394,7 @@ export function registerDevice(program: Command, deps: Partial<DeviceDeps> = {})
     .command('unlock')
     .argument('[platform]', 'ios or android; without one, every lease this workspace holds is released')
     .description('Release the device lease or leases this workspace holds. Releasing nothing is not an error.')
+    .option('--slot <name>', 'Use this workspace device slot', validateDeviceSlot)
     .option('--json', 'print the released leases as JSON on stdout')
     .action(async (platform: string | undefined, opts: UnlockOptions) => {
       const result = await runUnlock(platform, opts, deps);

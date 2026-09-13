@@ -71,6 +71,7 @@ export function resolveRuntime(
 }
 
 export function deviceModelRefusal({
+  slot,
   deviceTypeFlag,
   runtimeFlag,
   deviceType,
@@ -79,6 +80,7 @@ export function deviceModelRefusal({
   remoteBackend,
   listRuntimes,
 }: {
+  slot?: string;
   deviceTypeFlag: string | undefined;
   runtimeFlag: string | undefined;
   deviceType: string | null;
@@ -87,6 +89,12 @@ export function deviceModelRefusal({
   remoteBackend: RemoteDeviceBackend | null;
   listRuntimes: typeof listIosRuntimes;
 }): { code: string; message: string; remedy: string } | null {
+  if (slot && slot !== 'default' && remoteBackend)
+    return {
+      code: 'STIM_BAD_ARG',
+      message: 'Named slots currently support local simulators and physical devices.',
+      remedy: 'Use the default slot for a remote session.',
+    };
   if (typeof deviceTypeFlag === 'string' && deviceTypeFlag.trim() === '') {
     return {
       code: 'STIM_BAD_ARG',

@@ -120,6 +120,7 @@ interface RunLeaseFacts {
 }
 
 export interface IosFacts {
+  slot?: string;
   platform: string;
   udid: string;
   deviceName: string | null;
@@ -145,6 +146,7 @@ export interface IosFacts {
 }
 
 export interface AndroidFacts {
+  slot?: string;
   platform: string;
   serial: string | null;
   avdName: string | null;
