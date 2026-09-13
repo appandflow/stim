@@ -1,4 +1,4 @@
-import { existsSync, globSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, globSync, lstatSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { getExecutor } from '../../../packages/stim-cli/src/exec.ts';
 
@@ -13,7 +13,9 @@ function isAlive(pid) {
 }
 
 export function removeGradleHome(home) {
-  if (!existsSync(home)) return;
+  const entry = lstatSync(home, { throwIfNoEntry: false });
+  if (!entry) return;
+  if (entry.isSymbolicLink()) throw new Error(`Cannot remove a symlink Gradle home: ${home}`);
   const canonical = realpathSync(home);
   const owner = Number(readFileSync(join(canonical, 'owner.pid'), 'utf8').trim());
   if (!Number.isInteger(owner) || owner <= 0 || (owner !== process.pid && isAlive(owner))) {

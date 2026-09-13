@@ -188,8 +188,8 @@ Android cache runs also own a disposable Gradle home. Cleanup runs each cached
 Gradle version's `--stop` against that home and waits for its recorded daemons
 to exit before removal. A shutdown failure fails the run and preserves its
 state for diagnosis. The same check protects cleanup of an earlier run whose
-owner has exited; homes with missing ownership or linked daemon registries
-are preserved. `--keep` retains the home without stopping its daemons.
+owner has exited. Symlink homes and homes with missing ownership records or
+linked daemon registries are preserved. `--keep` retains the home without stopping its daemons.
 
 Run it by hand:
 

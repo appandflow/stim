@@ -143,3 +143,22 @@ test('Gradle cleanup refuses a registry linked outside its home', (t) => {
   assert.equal(existsSync(unrelated), true);
   assert.equal(existsSync(home), true);
 });
+
+test('Gradle cleanup preserves a symlink home target but accepts symlinked parents', { timeout: 5000 }, async (t) => {
+  const { root, home } = fixture(t);
+  const owner = await child(t, '');
+  await once(owner, 'close');
+  writeFileSync(join(home, 'owner.pid'), String(owner.pid));
+  const marker = join(home, 'retained');
+  writeFileSync(marker, 'preserve');
+  const alias = join(root, '.stim-e2e-gradle-alias');
+  symlinkSync(home, alias);
+  assert.throws(() => removeGradleHome(alias), /symlink/);
+  assert.equal(readFileSync(marker, 'utf8'), 'preserve');
+  assert.equal(existsSync(alias), true);
+
+  const parent = join(root, 'linked-parent');
+  symlinkSync(root, parent);
+  removeGradleHome(join(parent, 'owned'));
+  assert.equal(existsSync(home), false);
+});
