@@ -469,7 +469,7 @@ function harness(overrides = {}) {
         ...options,
         ensureDevice: async (args) => {
           const device = await ensureDevice(args);
-          if (device.owned) setDevice(root, 'android', device);
+          if (device.owned) setDevice(root, 'android', device, args.slot);
           return device;
         },
       }),
@@ -3068,8 +3068,9 @@ describe('launch verification', () => {
     expect(text).toMatch(/Do not run `stim android` unless native inputs changed or the app process exits/);
   });
 
-  test('a native process exit recommends another platform run instead of a Metro reload', async () => {
+  test.each(['default', 'phone'])('a native process exit recommends the same slot (%s)', async (slot) => {
     const h = harness({
+      slot,
       verifyLaunched: async () => ({
         fatal: true,
         processAlive: false,
@@ -3079,7 +3080,7 @@ describe('launch verification', () => {
     const result = await h.run();
     expect(result.ok).toBe(false);
     expect(h.stderr.join('\n')).toContain("adb -s 'emulator-5584' shell am force-stop 'com.example.app'");
-    expect(h.stderr.join('\n')).toMatch(/run `stim android` again.*Metro reload cannot recover/);
+    expect(h.stderr.join('\n')).toContain(`run \`stim android${slot === 'default' ? '' : ` --slot ${slot}`}\` again`);
   });
 
   test.each([
@@ -5700,7 +5701,7 @@ describe('EAS development builds', () => {
     );
   }
 
-  test('installs the EAS APK on the owned emulator with the reserved Metro port, without a local build', async () => {
+  test.each(['default', 'phone'])('installs the EAS APK in slot %s without a local build', async (slot) => {
     expoProject();
     const path = fakeApk();
     const resolveEasDevelopmentBuild = vi.fn<
@@ -5714,6 +5715,7 @@ describe('EAS development builds', () => {
     }));
     const { run, calls, stdout } = harness({
       json: true,
+      slot,
       easProfile: 'development',
       resolveEasDevelopmentBuild,
       resolveDevClientScheme: () => 'exp+fixture',
@@ -5724,6 +5726,7 @@ describe('EAS development builds', () => {
     expect(resolveEasDevelopmentBuild).toHaveBeenCalledWith(
       expect.objectContaining({ platform: 'android', profile: 'development' }),
     );
+    expect(calls.ensureDevice[0]).toMatchObject(slot === 'default' ? {} : { slot });
     expect(calls.install[0]).toMatchObject({ apkPath: path, serial: 'emulator-5584' });
     expect(calls.launch[0]).toMatchObject({ metroPort: 8082, devClientScheme: 'exp+fixture' });
     expect(JSON.parse(stdout[0]!)).toMatchObject({
@@ -5798,4 +5801,15 @@ describe('EAS development builds', () => {
     expect(await run()).toMatchObject({ ok: false, error: { code: 'STIM_BAD_ARG' } });
     expect(resolveEasDevelopmentBuild).not.toHaveBeenCalled();
   });
+});
+
+test('a named Android run scopes allocation, launch verification and collector startup', async () => {
+  const h = harness({ slot: 'phone', json: true });
+  const result = await h.run();
+  expect(result.ok).toBe(true);
+  expect(h.calls.ensureDevice[0]).toMatchObject({ slot: 'phone' });
+  expect(h.calls.verify[0]).toMatchObject({ slot: 'phone' });
+  expect(h.calls.spawn.some((call) => call.args.includes('--slot') && call.args.includes('phone'))).toBe(true);
+  const facts = JSON.parse(h.stdout.at(-1)!);
+  expect(facts.slot).toBe('phone');
 });

@@ -1,3 +1,5 @@
+import { launchSlotScope, nativeRunCommand } from '../../engine/slot-launch.ts';
+import { deviceSlotPlatforms } from '../../device-slots.ts';
 import { resetAdoptedAvd, type resolveOwnedAvdSerial, type waitForBoot } from '../../sim/android.ts';
 import type { ChildProcess } from 'node:child_process';
 import { rmSync } from 'node:fs';
@@ -64,6 +66,7 @@ import { errorDiagnostics } from '../../error-diagnostics.ts';
 
 interface VerifyAndroidRunArgs {
   root: string;
+  slot?: string;
   release: boolean;
   remoteRelease: boolean;
   remoteDevice: boolean;
@@ -86,6 +89,7 @@ interface VerifyAndroidRunArgs {
 
 async function verifyAndroidRun({
   root,
+  slot,
   release,
   remoteRelease,
   remoteDevice,
@@ -105,11 +109,12 @@ async function verifyAndroidRun({
   component = null,
   phase,
 }: VerifyAndroidRunArgs): Promise<{ state: boolean | string; warning?: string }> {
+  const runCommand = nativeRunCommand('android', slot, { physical, deviceId: serial });
   const readNativeCrashes = () =>
     remoteDevice
       ? []
       : captureNativeCrashes(
-          { root, platform: 'android', deviceId: serial, appId: androidPackage, since: launchedAt },
+          { root, slot, platform: 'android', deviceId: serial, appId: androidPackage, since: launchedAt },
           logsDir,
         );
   if (remoteRelease) {
@@ -160,6 +165,7 @@ async function verifyAndroidRun({
     ? await verifyLaunched({
         timeoutMs,
         requireBundleResponse: true,
+        slot: launchSlotScope(root, slot),
         onReadinessPending: () => phase('readiness', 'waiting for app readiness (up to 30s after bundle load)'),
         logsDir,
         since: launchedAt,
@@ -208,7 +214,7 @@ async function verifyAndroidRun({
       phase(
         'remedy',
         chalk.yellow(
-          `Fix the crash, then restart the app: \`adb -s ${deviceShellArg(serial)} shell am force-stop ${deviceShellArg(androidPackage)}\`, then run \`stim android\` again. A crashed Android process can remain alive behind the system crash dialog; Metro reload cannot recover it.`,
+          `Fix the crash, then restart the app: \`adb -s ${deviceShellArg(serial)} shell am force-stop ${deviceShellArg(androidPackage)}\`, then run \`${runCommand}\` again. A crashed Android process can remain alive behind the system crash dialog; Metro reload cannot recover it.`,
         ),
       );
     } else if (verification.processAlive === true && metroPort !== null) {
@@ -218,7 +224,7 @@ async function verifyAndroidRun({
       phase(
         'remedy',
         chalk.yellow(
-          `The native app is still running. ${deliveryFailed ? 'Check the Metro logs and device connection, then' : 'Fix the JavaScript or TypeScript error, then'} ${reloadRemedy} Do not run \`stim android\` unless native inputs changed or the app process exits.`,
+          `The native app is still running. ${deliveryFailed ? 'Check the Metro logs and device connection, then' : 'Fix the JavaScript or TypeScript error, then'} ${reloadRemedy} Do not run \`${runCommand}\` unless native inputs changed or the app process exits.`,
         ),
       );
     }
@@ -242,7 +248,7 @@ async function verifyAndroidRun({
       phase(
         'remedy',
         chalk.yellow(
-          `The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, ${reloadRemedy} Do not run \`stim android\` unless native inputs changed or the app process exits.`,
+          `The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, ${reloadRemedy} Do not run \`${runCommand}\` unless native inputs changed or the app process exits.`,
         ),
       );
     }
@@ -292,6 +298,7 @@ interface FinishAndroidRunArgs {
   lease: RunLease | null;
   releaseLease: () => void;
   root: string;
+  slot?: string;
   json: boolean;
   metroCheck: boolean;
   useBuildCache: boolean;
@@ -350,6 +357,7 @@ interface FinishAndroidRunArgs {
 
 async function resolveInstallSerial({
   root,
+  slot,
   device,
   physical,
   remoteDevice,
@@ -359,7 +367,7 @@ async function resolveInstallSerial({
   phase,
 }: Pick<
   FinishAndroidRunArgs,
-  'root' | 'device' | 'physical' | 'remoteDevice' | 'resolveAvdSerial' | 'waitForDeviceBoot' | 'phase'
+  'root' | 'slot' | 'device' | 'physical' | 'remoteDevice' | 'resolveAvdSerial' | 'waitForDeviceBoot' | 'phase'
 > & { serial: string }): Promise<string> {
   if (physical || remoteDevice || !device.owned || !device.avdName) return serial;
   const resolved = resolveAvdSerial(device.avdName, { timeoutMs: 5000 });
@@ -382,10 +390,10 @@ async function resolveInstallSerial({
   }
   const consolePort = Number(resolved.serial.replace(/^emulator-/, ''));
   withConfigLock(() => {
-    const current = loadConfig()?.projects?.[root]?.platforms?.android;
+    const current = deviceSlotPlatforms(loadConfig()?.projects?.[root], slot)?.android;
     if (!current?.owned || current.avdName !== device.avdName)
       throw new Error('The owned emulator assignment changed before installation.');
-    if (current.consolePort !== consolePort) setDevice(root, PLATFORM, { ...current, consolePort });
+    if (current.consolePort !== consolePort) setDevice(root, PLATFORM, { ...current, consolePort }, slot);
   });
   return resolved.serial;
 }
@@ -394,6 +402,7 @@ export async function finishAndroidRun({
   lease,
   releaseLease,
   root,
+  slot,
   json,
   metroCheck,
   useBuildCache,
@@ -461,11 +470,12 @@ export async function finishAndroidRun({
   };
 
   const booted = await bootPromise;
+  const runCommand = nativeRunCommand('android', slot, { physical, deviceId: booted.serial });
   if (booted.failed) {
     const diag = noDeviceDiagnostic({
       reason: booted.reason ?? 'The emulator did not boot.',
       logFile: emuLog,
-      remedy: 'Run `stim status` to see what Stim thinks it owns; re-running `stim android` creates a fresh owned AVD.',
+      remedy: `Run \`stim status\` to see what Stim thinks it owns; re-running \`${runCommand}\` creates a fresh owned AVD.`,
       localEmulator: !physical,
     });
     return fail(NO_DEVICE, diag.message, diag.remedy, {
@@ -477,6 +487,7 @@ export async function finishAndroidRun({
   try {
     serial = await resolveInstallSerial({
       root,
+      slot,
       device,
       physical,
       remoteDevice,
@@ -489,7 +500,7 @@ export async function finishAndroidRun({
     return fail(
       NO_DEVICE,
       error instanceof Error ? error.message : String(error),
-      'Run `stim status` to inspect the owned AVD, then retry `stim android`; the APK was not installed.',
+      `Run \`stim status\` to inspect the owned AVD, then retry \`${runCommand}\`; the APK was not installed.`,
     );
   }
   phase(
@@ -550,7 +561,7 @@ export async function finishAndroidRun({
     try {
       withConfigLock(() => {
         const config = loadConfig();
-        const current = config?.projects?.[root]?.platforms?.android;
+        const current = deviceSlotPlatforms(config?.projects?.[root], slot)?.android;
         if (!config || !current || current.avdName !== device.avdName)
           throw new Error('The adopted emulator assignment changed during installation.');
         delete current.adoptionPending;
@@ -622,7 +633,7 @@ export async function finishAndroidRun({
       });
   if (launched.failed) {
     printNativeCrashReport(
-      { root, platform: 'android', deviceId: serial, appId: androidPackage, since: launchedAt },
+      { root, slot, platform: 'android', deviceId: serial, appId: androidPackage, since: launchedAt },
       logsDir,
       (line) => phase('launch', chalk.red(line)),
       Boolean(remoteDevice),
@@ -689,6 +700,7 @@ export async function finishAndroidRun({
     if (physical) raiseLeaseFor(0, false);
     const collectorPid = await startCollector({
       root,
+      slot,
       serial,
       packageName: androidPackage,
       spawn,
@@ -703,6 +715,7 @@ export async function finishAndroidRun({
   if (physical) raiseLeaseFor(release ? RELEASE_VERIFY_WAIT_MS : DEBUG_VERIFY_STEP_MS, false);
   const { state: launchState, warning: launchWarning } = await verifyAndroidRun({
     root,
+    slot,
     release,
     remoteRelease,
     remoteDevice: Boolean(remoteDevice),
@@ -738,6 +751,7 @@ export async function finishAndroidRun({
   releaseLease();
 
   const facts = reportAndroidResult({
+    slot,
     json,
     useBuildCache,
     variant,

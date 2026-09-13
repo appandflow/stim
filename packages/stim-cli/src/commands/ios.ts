@@ -1,5 +1,8 @@
 import { easDeviceBuildRemedy, isEasBuildFailure } from '../engine/eas-build.ts';
+import { deviceSlotKey, validateDeviceSlot } from '../device-slots.ts';
+import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   resolveOptimizations,
   artifactCachePolicy,
@@ -163,6 +166,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
       '--eas-profile <name>',
       'Download a matching EAS development build; on a miss, print the build command without running it',
     )
+    .option('--slot <name>', 'Reusable device slot within this workspace (default: default)', validateDeviceSlot)
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
     .option(
       '--scheme <name>',
@@ -212,7 +216,11 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
       "Install on a phone another workspace leases instead of waiting: this run takes no lease and, when both workspaces build the same app id, the install terminates the holder's running app. Only with --device.",
     )
     .action(async (opts: IosCommandOptions) => {
-      await runIos({ ...opts, waitConflict: waitFlagConflict(process.argv) }, deps);
+      const root = (deps.findProjectRoot ?? DEFAULT_DEPS.findProjectRoot)(process.cwd());
+      const run = () => runIos({ ...opts, waitConflict: waitFlagConflict(process.argv) }, deps);
+      if (!root) await run();
+      else
+        await withWorkspaceProcessLock(workspaceDir(root), 'native-run', run, { external: true, waitMs: 30 * 60_000 });
     });
 }
 
@@ -231,8 +239,35 @@ function explicitSchemeRefusal(root: string, scheme: string | undefined, isExpo:
   return d.resolveScheme(project, { scheme }).error ?? null;
 }
 
+function iosSlotLogFile(root: string, slot: string): string {
+  return slot === 'default'
+    ? buildLogFile(root)
+    : join(workspaceLogsDir(root), `build-${deviceSlotKey('ios', slot)}.ndjson`);
+}
+
+function iosSlotDeps(d: IosDeps, slot: string): IosDeps {
+  if (slot !== 'default') {
+    const base = d;
+    d = {
+      ...base,
+      ensureOwnedDevice: (args) => base.ensureOwnedDevice({ ...args, slot }),
+      checkDeviceCapacity: (args) => base.checkDeviceCapacity({ ...args, slot }),
+      selectFromPool: (args) => base.selectFromPool({ ...args, slot }),
+      acquireRunLease: (args) => base.acquireRunLease({ ...args, slot }),
+      runLease: (args) => base.runLease({ ...args, slot }),
+      replaceCollector: (args) => base.replaceCollector({ ...args, slot }),
+      stopPreviousCollector: (args) => base.stopPreviousCollector({ ...args, slot }),
+      clearIosAdoptionPending: (root) => base.clearIosAdoptionPending(root, slot),
+      writeWorkspaceLaunch: (root, platform, record) => base.writeWorkspaceLaunch(root, platform, record, slot),
+      createWriter: (file, options) => base.createWriter(file, { ...options, fields: { slot } }),
+    };
+  }
+  return d;
+}
+
 async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> = {}): Promise<IosFacts | null> {
-  let d: typeof DEFAULT_DEPS = { ...DEFAULT_DEPS, ...overrides };
+  const slot = validateDeviceSlot(opts.slot);
+  let d = iosSlotDeps({ ...DEFAULT_DEPS, ...overrides }, slot);
   const json = Boolean(opts.json);
   const metroCheck = opts.metroCheck !== false;
   let useBuildCache = opts.buildCache !== false;
@@ -280,7 +315,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
   }
 
   const logsDir = workspaceLogsDir(root);
-  const logFile = buildLogFile(root);
+  const logFile = iosSlotLogFile(root, slot);
   let writer = null as NdjsonWriter | null;
   const logWriter = () => (writer ||= d.createWriter(logFile, { truncate: true }));
 
@@ -483,6 +518,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
   if (schemeRefusal) return fail(schemeRefusal);
   const remoteBackend = physical ? null : (opts.remote ?? remoteIosSetting(settings));
   const modelRefusal = deviceModelRefusal({
+    slot,
     deviceTypeFlag: opts.deviceType,
     runtimeFlag: opts.runtime,
     deviceType,
@@ -1426,6 +1462,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
 
     try {
       return await finishIosRun({
+        slot,
         d,
         root,
         json,

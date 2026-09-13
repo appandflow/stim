@@ -6,8 +6,12 @@ description: 'A supervised Metro server and a queryable launch timeline'
 
 import StimTabs from '@site/src/components/StimTabs';
 
+:::note[Command examples]
+
 Commands use `stim`. If it is not installed globally, replace `stim` with
 `npx stim`.
+
+:::
 
 `stim start` reserves a port for the workspace and starts its React Native or
 Expo dev server under a detached supervisor. The command exits only after the

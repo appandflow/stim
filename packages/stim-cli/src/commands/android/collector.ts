@@ -1,3 +1,4 @@
+import { deviceSlotKey } from '../../device-slots.ts';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { mkdirSync, openSync } from 'node:fs';
@@ -14,8 +15,8 @@ function collectorEntry(): string {
   return spawnEntry('collector-run');
 }
 
-export function collectorLogFile(root: string): string {
-  return join(workspaceLogsDir(root), `collector-${PLATFORM}.log`);
+export function collectorLogFile(root: string, slot = 'default'): string {
+  return join(workspaceLogsDir(root), `collector-${deviceSlotKey(PLATFORM, slot)}.log`);
 }
 
 const COLLECTOR_EXIT_WAIT_MS = 2000;
@@ -26,6 +27,7 @@ export function killPreviousCollector(
   root: string,
   {
     platform = PLATFORM,
+    slot = 'default',
     kill = (pid: number, signal: NodeJS.Signals) => process.kill(pid, signal),
     collectors = null,
     verify = verifyCollectorOwnership,
@@ -33,6 +35,7 @@ export function killPreviousCollector(
     note = (_line: string) => {},
   }: {
     platform?: string;
+    slot?: string;
     kill?: (pid: number, signal: NodeJS.Signals) => boolean;
     collectors?: Record<string, { pid?: number }> | null;
     verify?: typeof verifyCollectorOwnership;
@@ -40,10 +43,10 @@ export function killPreviousCollector(
     note?: (line: string) => void;
   } = {},
 ): number | null {
-  const record = (collectors ?? readCollectors(root))?.[platform] as { pid?: number } | undefined;
+  const record = (collectors ?? readCollectors(root))?.[deviceSlotKey(platform, slot)] as { pid?: number } | undefined;
   const pid = Number(record?.pid);
   if (!Number.isFinite(pid) || pid <= 0 || pid === process.pid) return null;
-  const ownership = verify({ pid, platform, root, isAlive, expected: record });
+  const ownership = verify({ pid, platform: deviceSlotKey(platform, slot), root, isAlive, expected: record });
   if (ownership.status === 'gone') return null;
   if (ownership.status === 'unverified') {
     note(
@@ -63,6 +66,7 @@ export function killPreviousCollector(
 
 export async function startCollector({
   root,
+  slot = 'default',
   serial,
   packageName,
   spawn,
@@ -74,6 +78,7 @@ export async function startCollector({
   out,
 }: {
   root: string;
+  slot?: string;
   serial?: string;
   packageName: string;
   spawn: (cmd: string, args: readonly string[], opts: Record<string, unknown>) => ChildProcess;
@@ -85,6 +90,7 @@ export async function startCollector({
   out: (line: string) => void;
 }): Promise<number | null> {
   const previousPid = killPreviousCollector(root, {
+    slot,
     kill,
     isAlive: alive,
     verify,
@@ -100,14 +106,25 @@ export async function startCollector({
   let stdio: 'ignore' | (number | 'ignore')[] = 'ignore';
   try {
     mkdirSync(workspaceLogsDir(root), { recursive: true });
-    const fd = openSync(collectorLogFile(root), 'a');
+    const fd = openSync(collectorLogFile(root, slot), 'a');
     stdio = ['ignore', fd, fd];
   } catch {}
 
   try {
     const child = spawn(
       process.execPath,
-      [collectorEntry(), '--platform', PLATFORM, '--root', root, '--serial', serial!, '--package', packageName],
+      [
+        collectorEntry(),
+        '--platform',
+        PLATFORM,
+        '--root',
+        root,
+        ...(slot === 'default' ? [] : ['--slot', slot]),
+        '--serial',
+        serial!,
+        '--package',
+        packageName,
+      ],
       {
         cwd: root,
         detached: true,

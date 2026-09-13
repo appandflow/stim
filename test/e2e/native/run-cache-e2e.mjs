@@ -30,6 +30,7 @@ import {
   growth,
   lastLines,
   preflight,
+  prepareIosDevices,
   quote,
   readNdjson,
   topFileNames,
@@ -235,6 +236,8 @@ async function main() {
   const dirtyByWorktree = [];
 
   const wt1 = worktreeCreate('e2e-cache-1', appDir);
+  const wt2 = worktreeCreate('e2e-cache-2', appDir);
+  prepareIosDevices({ h, platform: PLATFORM, cleanup, targets: [{ cwd: wt1 }, { cwd: wt2 }] });
   const start1 = startAndAssertMode(wt1);
   log(`wt1 start mode=${start1.mode} port=${start1.port}`);
 
@@ -266,7 +269,6 @@ async function main() {
           .filter((m) => /FROM-CACHE/.test(m))
       : [];
 
-  const wt2 = worktreeCreate('e2e-cache-2', appDir);
   const start2 = startAndAssertMode(wt2);
   log(`wt2 start mode=${start2.mode} port=${start2.port}`);
   const storeRoot2 = metroStoreRootFrom(wt2);
@@ -541,6 +543,7 @@ async function main() {
     return c.pass(`gc reports ${expected.length} live cache(s) with sizes and calls none of them garbage`);
   });
 
+  stopWorkspace(wt1);
   stopWorkspace(wt2);
 
   let raceOutcome = null;
@@ -549,6 +552,7 @@ async function main() {
   } else {
     const wt3 = worktreeCreate('e2e-cache-3', appDir);
     const wt4 = worktreeCreate('e2e-cache-4', appDir);
+    prepareIosDevices({ h, platform: PLATFORM, cleanup, targets: [{ cwd: wt3 }, { cwd: wt4 }] });
     if (PLATFORM === 'ios') {
       assertMatchingPods(wt3);
       assertMatchingPods(wt4);
@@ -1040,7 +1044,7 @@ main().then(
     dumpDiagnostics(h, created);
     emitSummary(Date.now() - startedAt, String(err?.message || err));
     if (!args.keep)
-      cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR, GRADLE_HOME_IS_THROWAWAY ? GRADLE_USER_HOME : null]);
+      cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR, GRADLE_HOME_IS_THROWAWAY ? GRADLE_USER_HOME : null], err);
     return process.exit(1);
   },
 );

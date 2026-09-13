@@ -102,10 +102,11 @@ test('reclaimProject keeps the config entry when an owned device delete fails', 
     spawn: () => {},
   });
   upsertProject('/proj', { metroPort: 8082 });
-  setDevice('/proj', 'ios', { deviceUdid: 'U1', owned: true });
+  setDevice('/proj', 'ios', { deviceUdid: 'U1', owned: true }, 'phone');
 
   const result = await reclaimProject('/proj', { deleteOwnedDevices: true });
   expect(result.keptEntry).toBe(true);
+  expect(getProject('/proj')?.deviceSlots?.phone?.ios?.deviceUdid).toBe('U1');
   expect(result.deletedDevices.length).toBe(0);
   expect(result.failedDevices[0]?.reason).toMatch(/Unable to delete device/);
   expect(getProject('/proj')).toBeTruthy();

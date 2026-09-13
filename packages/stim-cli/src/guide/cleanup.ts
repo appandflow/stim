@@ -2,7 +2,16 @@ import type { GuideTopic } from './types.ts';
 
 const cleanup: GuideTopic = {
   summary: 'Where simulators come from, and how they get reclaimed',
-  preamble: () => `CLEANUP AND DISK
+  preamble: () => `DEVICE SLOTS
+
+Cleanup enumerates every slot. stop --slot <name> keeps the shared server and
+other slots; plain stop and worktree remove handle the whole workspace.
+An upgrade retains existing device assignments as the default slot. Do not
+wipe state to upgrade: it records ownership needed for safe teardown. Use the
+same slot-aware CLI for all commands while named assignments exist; older
+versions cannot reliably manage their assignments.
+
+CLEANUP AND DISK
 
 WHAT RECLAIMS AN OWNED DEVICE
   stim worktree remove    parks eligible owned simulators and emulators

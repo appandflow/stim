@@ -1,3 +1,4 @@
+import { deviceSlotKey } from '../device-slots.ts';
 import {
   deviceLeasePath,
   fileLeaseIo,
@@ -32,8 +33,9 @@ export function heldPoolId(
   platform: LeasePlatform,
   now: number,
   io: LeaseIo = fileLeaseIo,
+  slot = 'default',
 ): string | null {
-  const record = io.readHolder(root)[platform];
+  const record = io.readHolder(root)[deviceSlotKey(platform, slot)];
   if (!record) return null;
   const lease = parseLease(io.readLease(deviceLeasePath(platform, record.id)));
   if (!lease || lease.token !== record.token || leaseIsExpired(lease, now)) return null;
@@ -122,6 +124,7 @@ function poolBusyRefusal(
 export async function selectFromPool({
   root,
   platform,
+  slot = 'default',
   idLabel,
   list,
   noCandidates,
@@ -135,6 +138,7 @@ export async function selectFromPool({
 }: {
   root: string;
   platform: LeasePlatform;
+  slot?: string;
   idLabel: string;
   list: () => PoolCandidate[];
   noCandidates: () => PoolRefusalText;
@@ -146,7 +150,7 @@ export async function selectFromPool({
   warn?: (line: string) => void;
   io?: LeaseIo;
 }): Promise<PoolResult> {
-  const held = heldPoolId(root, platform, now(), io);
+  const held = heldPoolId(root, platform, now(), io, slot);
   const until = deadline ?? now() + waitSeconds * 1000;
   let lastLine: number | null = null;
 

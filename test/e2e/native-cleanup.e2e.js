@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -264,8 +264,32 @@ for (const [platform, tool] of [
   });
 }
 
+for (const setting of ['ANDROID_HOME', 'ANDROID_SDK_ROOT']) {
+  test(`native cleanup finds the emulator through ${setting} without PATH`, (t) => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-native-sdk-'));
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const executable = join(home, 'sdk with spaces', 'emulator', 'emulator');
+    mkdirSync(dirname(executable), { recursive: true });
+    writeFileSync(
+      executable,
+      `#!${process.execPath}\nif (process.argv[2] !== '-list-avds') process.exit(2);\nconsole.log('stim-owned\\nuser-avd');\n`,
+    );
+    chmodSync(executable, 0o755);
+    const h = createHarness({
+      env: { STIM_HOME: home, PATH: '', [setting]: join(home, 'sdk with spaces') },
+      cliPath: '/unused',
+      label: 'sdk-inspection',
+    });
+    const cleanup = createCleanupTracker({ h, platform: 'android' });
+    cleanup.recordBuild({ avdName: 'stim-owned' });
+    assert.deepEqual(cleanup.remainingDevices(), ['stim-owned']);
+    rmSync(executable);
+    assert.throws(() => cleanup.remainingDevices(), /could not inspect .*emulator:.*ENOENT/);
+  });
+}
+
 test('missing executables remain inspection failures with allowFail enabled', async () => {
-  const h = createHarness({ env: { ...process.env, PATH: '' }, cliPath: '/unused', label: 'missing-inspection' });
+  const h = createHarness({ env: { PATH: '' }, cliPath: '/unused', label: 'missing-inspection' });
   const result = h.sh('stim-native-cleanup-unavailable-tool', [], { allowFail: true });
   assert.equal(result.code, 1);
   assert.match(result.stderr, /ENOENT/);

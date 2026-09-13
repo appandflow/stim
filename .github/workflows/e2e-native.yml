@@ -112,6 +112,9 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      - name: Install SimSlim for generated iOS fixtures
+        run: brew install mobai-app/tap/simslim
+
       - name: Install (workspace root)
         run: pnpm install --frozen-lockfile
 
@@ -137,6 +140,12 @@ jobs:
         if: matrix.suite == 'loop'
         run: echo "STIM_E2E_WARM_CACHE=$([ -n \"$(ls -A \"$STIM_BUILD_CACHE\" 2>/dev/null)\" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
 
+      - name: Monitor host memory during iOS QA
+        continue-on-error: true
+        run: |
+          node test/e2e/native/monitor-macos-memory.mjs > "$GITHUB_WORKSPACE/ios-memory.jsonl" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/stim-memory-monitor.pid"
+
       - name: Loop suite (ios, ${{ matrix.framework }})
         if: matrix.suite == 'loop'
         # --keep leaves the temp worktrees in place on this ephemeral runner so
@@ -160,6 +169,24 @@ jobs:
       - name: Simulator pool suite (ios, ${{ matrix.framework }})
         if: matrix.suite == 'pool'
         run: node test/e2e/native/run-pool-e2e.mjs --framework ${{ matrix.framework }} --keep --home "$TMPDIR/stim-cli-pool-home"
+
+      - name: Stop host memory monitor
+        continue-on-error: true
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/stim-memory-monitor.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/stim-memory-monitor.pid")" 2>/dev/null || true
+          fi
+
+      - name: Upload iOS host memory diagnostics
+        continue-on-error: true
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-memory-ios-${{ matrix.framework }}-${{ matrix.suite }}
+          path: ios-memory.jsonl
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Upload the cache-suite summary
         # `always()`: a FAILING cache run is exactly when the per-check evidence

@@ -1,5 +1,15 @@
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -66,6 +76,8 @@ export function preflight(h, platform) {
     if (process.platform !== 'darwin') h.die('ios variant requires macOS + Xcode; this is not a macOS host.', 2);
     h.requireTool('xcrun', ['--version']);
     h.requireTool('xcodebuild', ['-version']);
+    h.log('checking CoreSimulator inventory before fixture setup (up to 5 minutes)');
+    h.sh('xcrun', ['simctl', 'list', '--json'], { timeout: 5 * 60 * 1000 });
   } else {
     const sdk = h.env.ANDROID_HOME || h.env.ANDROID_SDK_ROOT;
     assert(sdk, 'Native Android tests require ANDROID_HOME or ANDROID_SDK_ROOT pointing to the Android SDK.');
@@ -107,6 +119,7 @@ function withDir(tmplStr, appDir) {
 }
 
 export function createFixture({ framework, platform, workDir, h }) {
+  if (platform === 'ios') h.requireTool('simslim', ['--version']);
   const appDir = join(workDir, 'app');
   const cmd = FIXTURE_COMMANDS[framework](appDir);
   h.log(`creating ${framework} fixture: ${cmd.map(quote).join(' ')}`);
@@ -160,6 +173,15 @@ export function createFixture({ framework, platform, workDir, h }) {
     assertMatchingPods(appDir);
   }
 
+  if (platform === 'ios') {
+    const settingsPath = join(appDir, '.stim.json');
+    const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, 'utf8')) : {};
+    settings.ios = { ...settings.ios, simslimProfile: '.stim-simslim.json' };
+    copyFileSync(new URL('./simslim-profile.json', import.meta.url), join(appDir, '.stim-simslim.json'));
+    writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+    h.log('generated iOS fixture uses the native QA SimSlim profile');
+  }
+
   gitInitWithRemote({ appDir, workDir, framework, h });
   return appDir;
 }
@@ -177,6 +199,44 @@ export function createWarmWorktree({ h, sourceDir, workDir, name, created }) {
   assert(warmed.code === 0, `warming ${path} failed: ${warmed.stderr}`);
   h.log(`worktree ${name} (from ${sourceDir}) -> ${path}`);
   return path;
+}
+
+export function prepareIosDevices({ h, platform, targets, cleanup }) {
+  if (platform !== 'ios') return;
+  const script = fileURLToPath(new URL('./prepare-ios-device.mjs', import.meta.url));
+  try {
+    for (const { cwd, slot = 'default', deviceType } of targets) {
+      const settingsPath = join(cwd, '.stim.json');
+      const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, 'utf-8')) : {};
+      if (!settings.ios?.simslimProfile) continue;
+      h.log(`preparing simulator ${slot} in ${cwd} before the multi-device workload`);
+      const result = h.sh(
+        process.execPath,
+        ['--experimental-strip-types', script, cwd, slot, ...(deviceType ? [deviceType] : [])],
+        {
+          cwd,
+          timeout: 25 * 60 * 1000,
+          allowFail: true,
+        },
+      );
+      cleanup.recordWorkspace(cwd);
+      const stopped = h.cli(['stop', '--slot', slot, '--json'], { cwd, allowFail: true });
+      assert(stopped.code === 0, `could not stop prepared simulator ${slot}: ${stopped.stderr}`);
+      assert(result.code === 0, `simulator preparation failed for ${slot}: ${result.stderr}`);
+      const { udid } = JSON.parse(result.stdout);
+      const inventory = JSON.parse(h.sh('xcrun', ['simctl', 'list', 'devices', '--json'], { timeout: 30000 }).stdout);
+      const sim = Object.values(inventory.devices)
+        .flat()
+        .find((device) => device.udid === udid);
+      assert(sim?.state === 'Shutdown', `prepared simulator ${slot} was not shut down`);
+    }
+  } catch (error) {
+    error.preserveNativeState = true;
+    h.log(
+      `Simulator preparation failed. Keeping ownership state at ${h.env?.STIM_HOME ?? 'STIM_HOME'} and its worktrees for recovery.`,
+    );
+    throw error;
+  }
 }
 
 export function assertMatchingPods(appDir) {
@@ -239,14 +299,19 @@ export function createCleanupTracker({ h, platform, processExitTimeoutMs = 5000 
   }
 
   function recordWorkspace(cwd) {
-    let device;
+    let assignments = [];
     try {
       const config = JSON.parse(readFileSync(join(h.env.STIM_HOME, 'config.json'), 'utf-8'));
-      device = config.projects?.[resolve(cwd)]?.platforms?.[platform];
+      const project = config.projects?.[resolve(cwd)];
+      assignments = [project?.platforms, ...Object.values(project?.deviceSlots ?? {})].map(
+        (platforms) => platforms?.[platform],
+      );
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
     }
-    if (device?.owned === true) recordBuild({ udid: device.deviceUdid, avdName: device.avdName });
+    for (const device of assignments) {
+      if (device?.owned === true) recordBuild({ udid: device.deviceUdid, avdName: device.avdName });
+    }
 
     let state;
     try {
@@ -274,7 +339,13 @@ export function createCleanupTracker({ h, platform, processExitTimeoutMs = 5000 
         ? Object.values(JSON.parse(inspect(h, 'xcrun', ['simctl', 'list', 'devices', '--json'])).devices)
             .flat()
             .map((device) => device.udid)
-        : inspect(h, 'emulator', ['-list-avds'])
+        : inspect(
+            h,
+            h.env.ANDROID_HOME || h.env.ANDROID_SDK_ROOT
+              ? join(h.env.ANDROID_HOME || h.env.ANDROID_SDK_ROOT, 'emulator', 'emulator')
+              : 'emulator',
+            ['-list-avds'],
+          )
             .split('\n')
             .map((name) => name.trim());
     return ids.filter((id) => devices.has(id));
@@ -378,7 +449,8 @@ export function dumpDiagnostics(h, created) {
   }
 }
 
-export function cleanupTmp(dirs) {
+export function cleanupTmp(dirs, error) {
+  if (error?.preserveNativeState) return;
   for (const dir of dirs.filter(Boolean)) {
     try {
       rmSync(dir, { recursive: true, force: true });

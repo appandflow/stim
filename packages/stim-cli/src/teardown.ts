@@ -1,3 +1,4 @@
+import { projectDeviceSlots } from './device-slots.ts';
 import { randomUUID } from 'node:crypto';
 import { lstatSync, renameSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -51,6 +52,7 @@ export interface TeardownOutcome {
 }
 
 export interface ParkRequest {
+  slot?: string;
   projectPath: string;
   max: number;
   bundleId?: string | null;
@@ -111,7 +113,7 @@ function parkOwnedIosSim(udid: string, park: ParkRequest): { record: ParkedSim; 
     ...(park.bundleId ? { bundleId: park.bundleId } : {}),
     ...(park.cacheKey ? { cacheKey: park.cacheKey } : {}),
   };
-  const evicted = parkSim({ platform: 'ios', projectPath: park.projectPath, record, max: park.max });
+  const evicted = parkSim({ platform: 'ios', projectPath: park.projectPath, slot: park.slot, record, max: park.max });
   return { record, evicted };
 }
 
@@ -178,14 +180,11 @@ function removeOrphanedAvdDirectory(candidate: OrphanedAvdDirectory, owner?: Avd
     const config = loadConfig();
     if (!config) throw new Error('Cannot verify AVD references without a Stim config; the data was kept.');
     for (const [projectPath, project] of Object.entries(config.projects)) {
-      if (project.platforms?.android?.avdName !== candidate.name) continue;
-      if (
-        !owner ||
-        !('projectPath' in owner) ||
-        owner.projectPath !== projectPath ||
-        !project.platforms.android.owned
-      ) {
-        throw new Error(`AVD ${candidate.name} is referenced by ${projectPath}; its data was kept.`);
+      for (const { platforms } of projectDeviceSlots(project)) {
+        if (platforms.android?.avdName !== candidate.name) continue;
+        if (!owner || !('projectPath' in owner) || owner.projectPath !== projectPath || !platforms.android.owned) {
+          throw new Error(`AVD ${candidate.name} is referenced by ${projectPath}; its data was kept.`);
+        }
       }
     }
     if (
@@ -290,6 +289,7 @@ export function teardownOwnedAvd(
           const evicted = parkSim({
             platform: 'android',
             projectPath: park.projectPath,
+            slot: park.slot,
             max: park.max,
             record: {
               udid: avdName,

@@ -19,6 +19,8 @@ import {
   createFixture,
   createHarness,
   createWarmWorktree,
+  prepareIosDevices,
+  cleanupTmp,
   workspaceLogsDir,
 } from './native/harness.mjs';
 
@@ -150,9 +152,11 @@ test('the disposable Expo iOS fixture prepares matching Pods before committing i
   const workDir = scratch(t);
   const tools = join(workDir, 'tools');
   mkdirSync(tools);
-  const npm = join(tools, 'npm');
-  writeFileSync(npm, '#!/bin/sh\nexit 0\n');
-  chmodSync(npm, 0o755);
+  for (const name of ['npm', 'simslim']) {
+    const tool = join(tools, name);
+    writeFileSync(tool, '#!/bin/sh\nexit 0\n');
+    chmodSync(tool, 0o755);
+  }
   const init = join(workDir, 'init.mjs');
   writeFileSync(
     init,
@@ -161,6 +165,7 @@ import { join } from 'node:path';
 const app = process.argv[2];
 mkdirSync(app);
 writeFileSync(join(app, 'package.json'), '{"name":"fixture"}\\n');
+writeFileSync(join(app, '.stim.json'), JSON.stringify({ios:{deviceType:'iPhone 17'},android:{systemImage:'keep-image'}}));
 `,
   );
   const previousInit = process.env.STIM_E2E_EXPO_INIT;
@@ -195,4 +200,74 @@ writeFileSync(join(app, 'package.json'), '{"name":"fixture"}\\n');
   assert.equal(git(app, 'status', '--porcelain'), '');
   assert.equal(git(app, 'show', 'HEAD:package.json'), '{"name":"prepared-fixture"}');
   assert.equal(git(app, 'ls-files', 'ios'), '');
+  const settings = JSON.parse(git(app, 'show', 'HEAD:.stim.json'));
+  assert.equal(settings.ios.deviceType, 'iPhone 17');
+  assert.equal(settings.android.systemImage, 'keep-image');
+  assert.equal(
+    git(app, 'show', `HEAD:${settings.ios.simslimProfile}`),
+    readFileSync(new URL('./native/simslim-profile.json', import.meta.url), 'utf8').trim(),
+  );
+});
+
+test('native preparation stops each simulator before the next and stops after a failed preparation', (t) => {
+  const root = scratch(t);
+  const homes = [join(root, 'first'), join(root, 'second')];
+  for (const cwd of homes) {
+    mkdirSync(cwd);
+    writeFileSync(join(cwd, '.stim.json'), JSON.stringify({ ios: { simslimProfile: 'profile.json' } }));
+  }
+  for (const failure of [false, true]) {
+    const events = [];
+    const h = {
+      log() {},
+      sh(file, args, { cwd } = {}) {
+        if (file === 'xcrun')
+          return { code: 0, stdout: JSON.stringify({ devices: { ios: [{ udid: 'owned', state: 'Shutdown' }] } }) };
+        assert.equal(file, process.execPath);
+        assert.equal(args[2], cwd);
+        events.push(['prepare', cwd]);
+        return {
+          code: failure ? 1 : 0,
+          stdout: JSON.stringify({ udid: 'owned' }),
+          stderr: failure ? 'boot timed out' : '',
+        };
+      },
+      cli(args, { cwd }) {
+        assert.deepEqual(args, ['stop', '--slot', 'default', '--json']);
+        events.push(['stop', cwd]);
+        return { code: 0, stderr: '' };
+      },
+    };
+    const run = () =>
+      prepareIosDevices({
+        h,
+        platform: 'ios',
+        targets: homes.map((cwd) => ({ cwd })),
+        cleanup: {
+          recordWorkspace(cwd) {
+            events.push(['record', cwd]);
+          },
+        },
+      });
+    if (failure) {
+      let observed;
+      try {
+        run();
+      } catch (error) {
+        observed = error;
+      }
+      assert.match(observed.message, /boot timed out/);
+      assert.equal(observed.preserveNativeState, true);
+      cleanupTmp(homes, observed);
+      assert.ok(homes.every((cwd) => existsSync(join(cwd, '.stim.json'))));
+    } else run();
+    assert.deepEqual(
+      events,
+      (failure ? homes.slice(0, 1) : homes).flatMap((cwd) => [
+        ['prepare', cwd],
+        ['record', cwd],
+        ['stop', cwd],
+      ]),
+    );
+  }
 });
