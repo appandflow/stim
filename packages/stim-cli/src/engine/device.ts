@@ -1200,7 +1200,8 @@ async function ensureIosBooted({
   if (!udid) return { failed: true, reason: 'No iOS simulator is recorded for this project.' };
   const ready = (): BootResult => {
     try {
-      getExecutor().runFile('xcrun', ['simctl', 'spawn', udid, '/usr/bin/true'], { timeoutMs: 30000 });
+      // Apple simctl spawn searches the device PATH for bare names; absolute paths use the host root.
+      getExecutor().runFile('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], { timeoutMs: 30000 });
       return { ok: true, udid };
     } catch (error) {
       return {
