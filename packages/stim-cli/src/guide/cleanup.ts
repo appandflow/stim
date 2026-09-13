@@ -28,6 +28,16 @@ Those are the only two commands that delete. \`stim stop\` shuts a device
 DOWN and leaves it assigned, which is what makes returning to a branch cost a
 boot rather than a create, a provision and a reinstall.
 
+Before shutting down, parking or deleting an owned device, Stim best-effort
+closes local agent-device sessions bound to its exact iOS UDID or live Android
+serial. It rechecks device ownership and uses agent-device's rejecting session
+target guard; sessions on other devices stay open. Physical devices are outside
+this cleanup. agent-device is optional: a missing binary skips this step, and a
+failed or timed-out list/close prints a device line on stderr while teardown
+continues. Cleanup allows at most 15 seconds of agent-device calls per device.
+A local daemon that cannot use socket transport or a CLI without the target guard
+skips cleanup with a warning; no remote daemon is used.
+
 Neither touches $STIM_HOME/stats.json: \`gc\` never reports or trims the run
 counters \`stats\` prints, and there is no reset flag. Delete that one file to
 start the counters over. A file this version cannot read -- unparseable, or

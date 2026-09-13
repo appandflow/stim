@@ -1,3 +1,4 @@
+import { closeOwnedDeviceSessions } from './agent-device-cleanup.ts';
 import { projectDeviceSlots } from './device-slots.ts';
 import { randomUUID } from 'node:crypto';
 import { lstatSync, renameSync, rmSync } from 'node:fs';
@@ -80,7 +81,10 @@ export function teardownParkedIosSim(
   { label, deleteSim = deleteParkedIosSim }: { label?: string; deleteSim?: typeof deleteParkedIosSim } = {},
 ): TeardownOutcome {
   try {
-    const removed = removeParkedAfter('ios', udid, () => deleteSim(udid));
+    const removed = removeParkedAfter('ios', udid, () => {
+      closeOwnedDeviceSessions({ platform: 'ios', id: udid }, () => Boolean(resolveOwnedIosSim(udid).sim));
+      deleteSim(udid);
+    });
     if (!removed) return { status: 'skipped', kind: 'not-parked', reason: 'simulator is no longer parked' };
     return { status: 'torn-down', label: label ?? removed.name };
   } catch (error) {
@@ -132,6 +136,11 @@ export function teardownOwnedIosSim(
       };
     }
     if (resolved.missing) return { status: 'missing' };
+    closeOwnedDeviceSessions({ platform: 'ios', id: udid }, () => Boolean(resolveOwnedIosSim(udid).sim));
+    const current = resolveOwnedIosSim(udid);
+    if (current.missing) return { status: 'missing' };
+    if (current.notOwned)
+      return { status: 'skipped', kind: 'not-owned', reason: 'simulator ownership changed before shutdown' };
     shutdownIosSim(udid);
     const sim = resolved.sim as IosSimRecord;
     if (del && park && park.max > 0) {
@@ -268,6 +277,12 @@ export function teardownOwnedAvd(
     if (orphanedDirectory) return { status: 'skipped', reason: 'AVD registration appeared; its data was kept.' };
     const serial = resolved.serial;
     if (serial) {
+      const stillOwned = () => {
+        const current = resolveAvd(avdName);
+        return !current.notOwned && !current.missing && current.serial === serial;
+      };
+      closeOwnedDeviceSessions({ platform: 'android', id: serial }, stillOwned);
+      if (!stillOwned()) throw new Error(`Owned AVD ${avdName} changed before shutdown; it was kept.`);
       waitForShutdown(avdName, (timeoutMs) => shutdownAndroidEmulator(serial, timeoutMs));
     } else {
       assertStopped(avdName);

@@ -428,6 +428,8 @@ test('the agent and cleanup guides shut down owned simulators without an occupan
   expect(cleanup).toMatch(/do not check simulator occupancy/i);
   expect(cleanup).toMatch(/never shuts down an unowned simulator/i);
   expect(agent).not.toContain('agent-device close --shutdown');
+  expect(renderTopic('cleanup')).toMatch(/exact iOS UDID or live Android\nserial/);
+  expect(renderTopic('cleanup')).toContain('Physical devices are outside');
 });
 
 test('the guide names every path Stim ignores by default', () => {

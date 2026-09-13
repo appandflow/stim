@@ -191,6 +191,8 @@ the stim-<label> (<model> <runtime>) name. Never point Stim at a user-created
 emulator or simulator.
 
 worktree remove parks the workspace's simulator or emulator for later adoption.
+Before owned-device teardown, Stim best-effort closes local agent-device sessions
+on that exact device; failures warn and teardown continues (guide cleanup).
 A parked device is Stim-owned: never delete one by hand. gc --delete clears verified
 entries and keeps failures; see guide lifecycle pool. First launch on a
 physical iPhone can need the one-time taps named by the remedy.

@@ -578,7 +578,7 @@ test('teardownOwnedAvd shuts down the running emulator and deletes the AVD', () 
     adb: 'List of devices attached\nemulator-5554\tdevice\n',
     avdName: 'stim-app',
   });
-  const resolutions = [{ serial: 'emulator-5554' }, { notRunning: true as const }];
+  const resolutions = [{ serial: 'emulator-5554' }, { serial: 'emulator-5554' }, { notRunning: true as const }];
   setExecutor(exec);
   const r = teardownOwnedAvd('stim-app', {
     del: true,
@@ -616,7 +616,7 @@ test('teardownOwnedAvd contains a throw instead of propagating it', () => {
       throwOn: 'delete avd',
     }),
   );
-  const resolutions = [{ serial: 'emulator-5554' }, { notRunning: true as const }];
+  const resolutions = [{ serial: 'emulator-5554' }, { serial: 'emulator-5554' }, { notRunning: true as const }];
   const r = teardownOwnedAvd('stim-app', {
     del: true,
     waitForShutdown: (_avdName, shutdown) => shutdown(60_000),
@@ -667,7 +667,7 @@ test('teardownOwnedAvd refuses an AVD with a live process that adb cannot resolv
 
 test('teardownOwnedAvd refuses deletion when the AVD restarts after shutdown', () => {
   const exec = androidExecutor({ avds: ['stim-app'], adb: 'List of devices attached\n' });
-  const resolutions = [{ serial: 'emulator-5554' }, { serial: 'emulator-5556' }];
+  const resolutions = [{ serial: 'emulator-5554' }, { serial: 'emulator-5554' }, { serial: 'emulator-5556' }];
   setExecutor(exec);
 
   const r = teardownOwnedAvd('stim-app', {
@@ -683,7 +683,7 @@ test('teardownOwnedAvd refuses deletion when the AVD restarts after shutdown', (
 
 test('teardownOwnedAvd rechecks the process lock immediately before deletion', () => {
   const exec = androidExecutor({ avds: ['stim-app'], adb: 'List of devices attached\n' });
-  const resolutions = [{ serial: 'emulator-5554' }, { notRunning: true as const }];
+  const resolutions = [{ serial: 'emulator-5554' }, { serial: 'emulator-5554' }, { notRunning: true as const }];
   setExecutor(exec);
 
   const r = teardownOwnedAvd('stim-app', {
@@ -707,4 +707,62 @@ test('ownership skip outcomes carry a machine-readable kind', () => {
 
   setExecutor(androidExecutor({ avds: ['Pixel_6'], adb: 'List of devices attached\n' }));
   expect(teardownOwnedAvd('Pixel_6', { del: true }).kind).toBe('not-owned');
+});
+
+test('iOS session close failure warns but shutdown still follows', () => {
+  const exec = iosExecutor({ sims: [OWNED] });
+  const write = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+  setExecutor({
+    ...exec,
+    runQuiet: (command) => (command === 'command -v agent-device' ? '/bin/agent-device' : exec.runQuiet(command)),
+    runFile: (file, args) => {
+      if (file !== 'agent-device') return exec.runFile(file, args);
+      exec.calls.push([file, ...args].join(' '));
+      if (args[0] === 'close') throw new Error('close timed out');
+      return JSON.stringify({
+        success: true,
+        data: { sessions: [{ name: 'ui-task', platform: 'ios', device_udid: 'U1', id: 'U1', createdAt: 1 }] },
+      });
+    },
+  });
+  try {
+    expect(teardownOwnedIosSim('U1').status).toBe('torn-down');
+    const close = exec.calls.findIndex((command) => command.startsWith('agent-device close'));
+    expect(close).toBeGreaterThan(-1);
+    expect(close).toBeLessThan(exec.calls.findIndex((command) => command.includes('simctl shutdown')));
+    expect(write).toHaveBeenCalledWith(expect.stringContaining('could not close agent-device session'));
+  } finally {
+    write.mockRestore();
+  }
+});
+
+test('iOS ownership loss during session inventory prevents close and shutdown', () => {
+  const exec = iosExecutor({ sims: [OWNED] });
+  const renamed = iosExecutor({ sims: [{ ...OWNED, name: 'User simulator' }] });
+  let listed = false;
+  setExecutor({
+    ...exec,
+    runQuiet: (command) => (command === 'command -v agent-device' ? '/bin/agent-device' : exec.runQuiet(command)),
+    runFile: (file, args) => {
+      if (file !== 'agent-device') return (listed ? renamed : exec).runFile(file, args);
+      exec.calls.push([file, ...args].join(' '));
+      listed = true;
+      return JSON.stringify({
+        success: true,
+        data: { sessions: [{ name: 'ui-task', platform: 'ios', device_udid: 'U1', id: 'U1', createdAt: 1 }] },
+      });
+    },
+  });
+  expect(teardownOwnedIosSim('U1').kind).toBe('not-owned');
+  expect(exec.calls.some((command) => /agent-device close|simctl shutdown/.test(command))).toBe(false);
+});
+
+test('Android serial reuse before shutdown keeps the device', () => {
+  const exec = androidExecutor({ avds: ['stim-app'] });
+  const resolutions = [{ serial: 'emulator-5554' }, { serial: 'emulator-5556' }];
+  setExecutor(exec);
+  const result = teardownOwnedAvd('stim-app', { resolveAvd: () => resolutions.shift()! });
+  expect(result.status).toBe('failed');
+  expect(result.reason).toMatch(/changed before shutdown/);
+  expect(exec.calls.some((command) => /emu kill|delete avd/.test(command))).toBe(false);
 });
