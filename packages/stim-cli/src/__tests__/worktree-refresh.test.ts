@@ -37,7 +37,7 @@ let root: string;
 let target: string;
 
 function git(cwd: string, ...args: string[]): string {
-  return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8' }).trim();
+  return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8', timeout: 15_000 }).trim();
 }
 
 function write(dir: string, rel: string, value: string): void {
@@ -79,7 +79,7 @@ beforeEach(() => {
   root = join(base, 'main');
   target = join(base, 'linked');
   git(base, 'init', '-q', '--bare', '-b', 'main', origin);
-  execFileSync('git', ['clone', '-q', origin, root], { encoding: 'utf-8' });
+  execFileSync('git', ['clone', '-q', origin, root], { encoding: 'utf-8', timeout: 15_000 });
   git(root, 'config', 'user.name', 'test');
   git(root, 'config', 'user.email', 'test@example.com');
   git(root, 'config', 'commit.gpgsign', 'false');
@@ -89,7 +89,7 @@ beforeEach(() => {
   git(root, 'push', '-q', '-u', 'origin', 'main');
   git(root, 'remote', 'set-head', 'origin', '-a');
   git(root, 'worktree', 'add', '-qb', 'linked', target);
-});
+}, 30_000);
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -240,7 +240,7 @@ test('--refresh fast-forwards the source checkout, then copies', async () => {
   expect(git(root, 'rev-parse', 'HEAD')).toBe(published);
   expect(git(target, 'branch', '--show-current')).toBe('linked');
   expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
-});
+}, 30_000);
 
 test('a current refresh copies under its shared claim while a sibling copy still holds the seed', async () => {
   write(root, '.env', 'main env');
@@ -286,7 +286,7 @@ test('a current refresh copies under its shared claim while a sibling copy still
   expect(fetched).toBe(false);
   expect(modes).toEqual([['shared', 'shared']]);
   expect(copyModes).toEqual([['shared', 'shared']]);
-});
+}, 30_000);
 
 test.each(['fast-forward', 'remote changes', 'dependencies', 'pods'])(
   'a refresh needing %s drains copies before fetching or installing',
@@ -362,7 +362,7 @@ test('a refresh rechecks checkout safety after releasing shared and waiting for 
   expect(result.stderr).toContain('failed: STIM_MAIN_DIRTY');
   expect(git(root, 'rev-parse', 'HEAD')).toBe(before);
   expect(existsSync(join(target, '.env'))).toBe(false);
-});
+}, 30_000);
 
 test('--refresh reports a fetch it could not run and continues with the local state', async () => {
   fallBehind({ 'src/new.ts': 'upstream work\n' });
@@ -371,7 +371,7 @@ test('--refresh reports a fetch it could not run and continues with the local st
   expect(result.code).toBe(0);
   expect(result.stderr).toContain('checkout    could not fetch; continuing with the local state');
   expect(result.stderr).toMatch(/checkout {4}main 1 commit behind origin\/main -> fast-forwarded to/);
-});
+}, 30_000);
 
 test('--refresh refuses a diverged source checkout without merging or resetting it', async () => {
   fallBehind({ 'src/new.ts': 'upstream work\n' });
@@ -384,7 +384,7 @@ test('--refresh refuses a diverged source checkout without merging or resetting 
   expect(result.stderr).toContain('failed: STIM_MAIN_DIVERGED');
   expect(git(root, 'rev-parse', 'HEAD')).toBe(before);
   expect(result.stderr).not.toMatch(/carry {7}complete/);
-});
+}, 30_000);
 
 test('--refresh refuses a dirty source checkout and names the path, but a plain warm still copies it', async () => {
   write(root, 'package.json', '{"name":"edited-in-main"}\n');
@@ -404,7 +404,7 @@ test('--refresh refuses a dirty source checkout and names the path, but a plain 
   expect(plain.stderr).not.toMatch(/checkout|deps|lock/);
   expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
   expect(readFileSync(join(root, 'package.json'), 'utf-8')).toBe('{"name":"edited-in-main"}\n');
-});
+}, 30_000);
 
 test('--refresh refuses a source checkout with a merge in progress', async () => {
   git(root, 'checkout', '-qb', 'other');
@@ -421,7 +421,7 @@ test('--refresh refuses a source checkout with a merge in progress', async () =>
   expect(result.stderr).toMatch(/a merge is in progress there/);
   expect(result.stderr).toContain('failed: STIM_MAIN_DIRTY');
   expect(existsSync(join(root, '.git', 'MERGE_HEAD'))).toBe(true);
-});
+}, 30_000);
 
 test('--refresh refuses a detached source checkout and an untracked file is not a reason to refuse', async () => {
   write(root, 'untracked.txt', 'not a reason\n');
@@ -436,7 +436,7 @@ test('--refresh refuses a detached source checkout and an untracked file is not 
   const attached = await runWarm(target, '--refresh');
   expect(attached.code).toBe(0);
   expect(attached.stderr).toContain('checkout    main up to date with origin/main');
-});
+}, 30_000);
 
 test('--refresh leaves a branch with no upstream where it is', async () => {
   git(root, 'checkout', '-qb', 'solo');
@@ -445,7 +445,7 @@ test('--refresh leaves a branch with no upstream where it is', async () => {
   expect(result.code).toBe(0);
   expect(result.stderr).toContain(`checkout    solo has no upstream -> left at ${head.slice(0, 7)}`);
   expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
-});
+}, 30_000);
 
 test('--refresh warns when the source checkout is not on the default branch, and stays quiet when it is', async () => {
   const onDefault = await runWarm(target, '--refresh');
@@ -458,7 +458,7 @@ test('--refresh warns when the source checkout is not on the default branch, and
   expect(onFeature.code).toBe(0);
   expect(onFeature.stderr).toContain('            not the default branch (main); worktrees seeded from this copy');
   expect(onFeature.stderr).toContain("            carry wip's dependencies");
-});
+}, 30_000);
 
 test('worktree.defaultBranch outranks origin/HEAD, and neither resolving says why instead of warning', async () => {
   write(root, '.stim.json', '{"worktree":{"defaultBranch":"release"}}');
@@ -474,7 +474,7 @@ test('worktree.defaultBranch outranks origin/HEAD, and neither resolving says wh
   expect(unknown.code).toBe(0);
   expect(unknown.stderr).toMatch(/could not tell the default branch: no worktree.defaultBranch setting and no/);
   expect(unknown.stderr).toContain('git remote set-head origin -a');
-});
+}, 30_000);
 
 test.each(['.', 'apps/mobile'])(
   '--refresh names the source dependency root at %s and the invoking app for pods',
@@ -535,7 +535,7 @@ test('a failed install refuses with the code the build path uses and does not co
   expect(result.stderr).toContain('ERR_PNPM_OUTDATED_LOCKFILE');
   expect(result.stderr).toContain('failed: STIM_DEPS_FAILED');
   expect(existsSync(join(target, '.env'))).toBe(false);
-});
+}, 30_000);
 
 test('a refresh in flight blocks a plain warm from another app of the same repository', async () => {
   write(root, 'apps/a/package.json', '{"name":"a"}\n');
@@ -554,7 +554,7 @@ test('a refresh in flight blocks a plain warm from another app of the same repos
   expect(result.code).toBe(0);
   expect(result.stderr).toMatch(/lock {8}acquired/);
   expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
-});
+}, 30_000);
 
 test('warms from two apps of one monorepo resolve one claim, keyed on the repository root', async () => {
   write(root, 'apps/a/package.json', '{"name":"a"}\n');
@@ -572,7 +572,7 @@ test('warms from two apps of one monorepo resolve one claim, keyed on the reposi
     held.release();
   }
   expect(existsSync(warmClaimPath(root))).toBe(false);
-});
+}, 30_000);
 
 function claimedInstaller(): { pid?: number } | null | undefined {
   const dir = exclusiveClaimDir(warmClaimPath(root));
@@ -610,7 +610,7 @@ test('--refresh records the installer process group it spawned, so its own death
   expect(leadsItsOwnGroup).toBe(true);
   expect(duringInstall).toEqual({ pid: spawnedPid, processToken: expect.any(String) });
   expect(claimedInstaller()).toBe(undefined);
-});
+}, 30_000);
 
 test('an error from the copy itself is not an unavailable claim, and does not start a second copy', async () => {
   write(root, '.env', 'main env');
@@ -622,7 +622,7 @@ test('an error from the copy itself is not an unavailable claim, and does not st
   expect(result.stderr).not.toMatch(/carry {7}complete/);
   expect(existsSync(join(target, '.env'))).toBe(false);
   expect(existsSync(warmClaimPath(root))).toBe(false);
-});
+}, 30_000);
 
 test('a warm claim Stim cannot resolve refuses both paths instead of copying past it', async () => {
   write(root, '.env', 'main env');
@@ -643,7 +643,7 @@ test('a warm claim Stim cannot resolve refuses both paths instead of copying pas
   expect(refresh.stderr).toContain('failed: STIM_CLAIM_REFUSED');
   expect(existsSync(join(target, '.env'))).toBe(false);
   expect(existsSync(claim)).toBe(true);
-});
+}, 30_000);
 
 test('a retry after a failed install runs it again instead of copying a half-installed node_modules', async () => {
   write(root, 'pnpm-lock.yaml', 'lock v1\n');
@@ -685,7 +685,7 @@ test('a retry after a failed install runs it again instead of copying a half-ins
     `deps        source ${root}: pnpm-lock.yaml matches the last completed install -> skipped`,
   );
   expect(spawned).toEqual([]);
-});
+}, 30_000);
 
 test('both warm paths refuse an unwritable claim store before copying and report recovery', async () => {
   write(root, '.env', 'main env');
@@ -706,7 +706,7 @@ test('both warm paths refuse an unwritable claim store before copying and report
   } finally {
     chmodSync(home, 0o700);
   }
-});
+}, 30_000);
 
 test('a dangling STIM_HOME link refuses both warm paths before copying or changing the source', async () => {
   write(root, '.env', 'main env');
@@ -725,7 +725,7 @@ test('a dangling STIM_HOME link refuses both warm paths before copying or changi
     expect(existsSync(join(target, '.env'))).toBe(false);
     expect(git(root, 'rev-parse', 'HEAD')).toBe(before);
   }
-});
+}, 30_000);
 
 test('a copy that waited for the lock reads the exclusions the refresh left behind, not the ones it started with', async () => {
   write(root, '.env.production', 'secret');
@@ -738,7 +738,7 @@ test('a copy that waited for the lock reads the exclusions the refresh left behi
   expect(result.code).toBe(0);
   expect(existsSync(join(target, '.env.production'))).toBe(false);
   expect(result.stderr).toMatch(/carry {7}complete: 0 ignored entries copied/);
-});
+}, 30_000);
 
 test('--refresh installs at the repository root when upstream removed the app it was invoked from', async () => {
   write(root, 'pnpm-lock.yaml', 'lock v1\n');
@@ -764,7 +764,7 @@ test('--refresh installs at the repository root when upstream removed the app it
   expect(existsSync(join(root, 'apps', 'mobile'))).toBe(false);
   expect(result.stderr).toContain(`deps        source ${root}: pnpm-lock.yaml changed -> pnpm install`);
   expect(spawned).toEqual([{ cmd: 'pnpm', cwd: root }]);
-});
+}, 30_000);
 
 test('--refresh refuses a source checkout whose only change is staged, with the working file back at HEAD', async () => {
   write(root, 'package.json', '{"name":"staged"}\n');
@@ -779,7 +779,7 @@ test('--refresh refuses a source checkout whose only change is staged, with the 
   expect(result.stderr).toContain('package.json');
   expect(result.stderr).toContain('failed: STIM_MAIN_DIRTY');
   expect(git(root, 'rev-parse', 'HEAD')).toBe(before);
-});
+}, 30_000);
 
 async function waitUntil<T>(what: string, read: () => T | null | undefined, timeoutMs = 20_000): Promise<T> {
   const deadline = Date.now() + timeoutMs;
@@ -914,7 +914,7 @@ test('an install Stim could not record is not abandoned, and its claim outlives 
   expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
   expect(installLedger()).toMatchObject({ completed: true });
   expect(existsSync(warmClaimPath(root))).toBe(false);
-});
+}, 30_000);
 
 test('the evidence that an install is owed is written before the fast-forward moves HEAD', async () => {
   write(root, 'pnpm-lock.yaml', 'lock v1\n');
@@ -958,7 +958,7 @@ test('the evidence that an install is owed is written before the fast-forward mo
   );
   expect(spawned).toEqual(['pnpm install']);
   expect(installLedger()).toMatchObject({ hash: sha256('lock v2\n'), completed: true });
-});
+}, 30_000);
 
 test('the ledger records the lockfile the installer read, not the one on disk when it finished', async () => {
   write(root, 'pnpm-lock.yaml', 'lock v1\n');
@@ -996,7 +996,7 @@ test('the ledger records the lockfile the installer read, not the one on disk wh
   );
   expect(spawned).toEqual(['pnpm install']);
   expect(installLedger()).toEqual({ lock: 'pnpm-lock.yaml', hash: sha256('lock v3\n'), completed: true });
-});
+}, 30_000);
 
 test('a STIM_HOME that is a regular file refuses both warm paths and names the blocking file', async () => {
   write(root, '.env', 'main env');
@@ -1014,7 +1014,7 @@ test('a STIM_HOME that is a regular file refuses both warm paths and names the b
     expect(readFileSync(home, 'utf8')).toBe('not a directory');
     expect(existsSync(join(target, '.env'))).toBe(false);
   }
-});
+}, 30_000);
 
 test('a plain warm refuses the tree a real failed install left, and copies once a refresh finishes it', async () => {
   write(
@@ -1105,7 +1105,7 @@ test('an incomplete install of a superseded lockfile does not block a copy', asy
   expect(result.stderr).toMatch(/carry {7}complete: 2 ignored entries copied/);
   expect(readFileSync(join(target, 'node_modules', 'value'), 'utf-8')).toBe('INSTALLED');
   expect(installLedger()).toMatchObject({ completed: false });
-});
+}, 30_000);
 
 test('a repository with no install ledger copies exactly as it did before the ledger existed', async () => {
   write(root, 'pnpm-lock.yaml', 'lock v1\n');
@@ -1119,7 +1119,7 @@ test('a repository with no install ledger copies exactly as it did before the le
   expect(result.code).toBe(0);
   expect(result.stderr).toMatch(/carry {7}complete: 2 ignored entries copied, 0 kept, 0 failed/);
   expect(readFileSync(join(target, 'node_modules', 'value'), 'utf-8')).toBe('INSTALLED');
-});
+}, 30_000);
 
 test('a warm from a monorepo app reads the ledger of the repository root that owns the lockfile', async () => {
   write(root, 'pnpm-lock.yaml', 'lock v1\n');
@@ -1144,4 +1144,4 @@ test('a warm from a monorepo app reads the ledger of the repository root that ow
   expect(refused.stderr).toContain(`Refusing to copy from ${root}`);
   expect(refused.stderr).toContain('failed: STIM_DEPS_INCOMPLETE');
   expect(existsSync(join(target, 'node_modules'))).toBe(false);
-});
+}, 30_000);

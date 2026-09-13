@@ -13,6 +13,7 @@
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "test": "vitest run",
+    "test:compat": "vitest run --config vitest.compat.config.ts",
     "test:runtime": "node test/runtime-floor.mjs",
     "test:watch": "vitest",
     "build": "pnpm -r --filter \"./packages/*\" run build",

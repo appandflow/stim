@@ -1357,7 +1357,7 @@ test('against a real repo: remove on the source checkout reclaims the environmen
   const originalLog = console.log;
   try {
     mkdirSync(repo, { recursive: true });
-    const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
+    const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8', timeout: 15_000 });
     git('git init -q');
     git('git config user.email test@example.com');
     git('git config user.name test');
@@ -1380,7 +1380,9 @@ test('against a real repo: remove on the source checkout reclaims the environmen
     expect(process.exitCode).not.toBe(1);
     expect(readFileSync(join(repo, 'package.json'), 'utf-8')).toBe('{}');
     expect(readFileSync(join(repo, 'marker.txt'), 'utf-8')).toBe('still here');
-    expect(execSync('git rev-parse --is-inside-work-tree', { cwd: repo, encoding: 'utf-8' }).trim()).toBe('true');
+    expect(
+      execSync('git rev-parse --is-inside-work-tree', { cwd: repo, encoding: 'utf-8', timeout: 15_000 }).trim(),
+    ).toBe('true');
     expect(existsSync(join(repo, '.stim'))).toBe(true);
     expect(getProject(repo)).toBe(null);
     expect(errs.join('\n')).toMatch(/working tree stays \(it is the source checkout\)/);
@@ -1390,7 +1392,7 @@ test('against a real repo: remove on the source checkout reclaims the environmen
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });
   }
-});
+}, 30_000);
 
 test('excludePodChurn takes the whole set when every dirty path is pod churn', () => {
   const { lines, restore } = excludePodChurn([
@@ -1449,9 +1451,9 @@ function podChurnRepo(base: string, { extraDirt = false }: { extraDirt?: boolean
   const repo = join(base, 'repo');
   const bareRemote = join(base, 'remote.git');
   mkdirSync(bareRemote, { recursive: true });
-  execSync(`git init -q --bare "${bareRemote}"`);
+  execSync(`git init -q --bare "${bareRemote}"`, { timeout: 15_000 });
   mkdirSync(join(repo, 'apps', 'app', 'ios', 'Tlon.xcodeproj'), { recursive: true });
-  const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
+  const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8', timeout: 15_000 });
   git('git init -q');
   git('git config user.email test@example.com');
   git('git config user.name test');
@@ -1484,7 +1486,7 @@ test('against a real repo: a worktree dirty only with pod-install churn is resto
   const originalLog = console.log;
   try {
     const wt = podChurnRepo(base);
-    expect(execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8' }).trim()).toBe(
+    expect(execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8', timeout: 15_000 }).trim()).toBe(
       'M apps/app/ios/Podfile.lock\n M apps/app/ios/Tlon.xcodeproj/project.pbxproj',
     );
 
@@ -1507,7 +1509,7 @@ test('against a real repo: a worktree dirty only with pod-install churn is resto
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });
   }
-});
+}, 30_000);
 
 test('against a real repo: pod churn PLUS a modified source file is refused exactly as before', async () => {
   resetExecutor();
@@ -1539,7 +1541,7 @@ test('against a real repo: pod churn PLUS a modified source file is refused exac
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });
   }
-});
+}, 30_000);
 
 test('action: removal releases this workspace lease and leaves another workspace lease alone', async () => {
   upsertProject(mainDir, { metroPort: 8086 });

@@ -1,8 +1,9 @@
 import assert from 'node:assert';
+import { once } from 'node:events';
 import { mkdtempSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { resetExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor } from '../exec.ts';
 import { upsertProject, setDevice, saveConfig, getProject, claimMetroPort } from '../config.ts';
 import { computeNextPort, findReclaimablePort, allocatePort, reserveMetroPort } from '../ports.ts';
 
@@ -111,25 +112,27 @@ test('computeNextPort throws rather than returning an occupied port when the ran
 });
 
 test('isPortFree detects a listener held by ANOTHER process', async () => {
-  const { spawn } = await import('node:child_process');
   const { isPortFree } = await import('../ports.ts');
-  const port = 8131;
-  const child = spawn(
+  const child = getExecutor().spawn(
     process.execPath,
-    ['-e', `require('http').createServer((q,r)=>r.end('x')).listen(${port},'127.0.0.1')`],
-    { stdio: 'ignore' },
+    [
+      '-e',
+      `const server = require('http').createServer((q,r)=>r.end('x'));
+      server.listen(0, '127.0.0.1', () => process.send(server.address().port));`,
+    ],
+    { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] },
   );
+  const exited = once(child, 'exit', { signal: AbortSignal.timeout(20_000) });
   try {
-    for (let i = 0; i < 40; i++) {
-      if (!(await isPortFree(port))) break;
-      await new Promise((r) => setTimeout(r, 100));
-    }
+    const [port] = await once(child, 'message', { signal: AbortSignal.timeout(15_000) });
+    expect(typeof port).toBe('number');
     expect(await isPortFree(port)).toBe(false);
-    expect(await isPortFree(8132)).toBe(true);
+    expect(await isPortFree(0)).toBe(true);
   } finally {
     child.kill('SIGKILL');
+    await exited;
   }
-});
+}, 30_000);
 
 test('findReclaimablePort skips a project whose volume is not mounted', async () => {
   const unmounted = '/Volumes/NotPluggedIn/worktree';

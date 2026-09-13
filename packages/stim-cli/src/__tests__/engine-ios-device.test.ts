@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, expect, test } from 'vitest';
-import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { resetExecutor, setExecutor } from '../exec.ts';
 import {
   awaitIosDeviceLaunch,
   collectorRecordsFor,
@@ -300,13 +300,6 @@ test('listIosDevices reports no devices when devicectl fails, and still cleans u
   expect(existsSync(outPath)).toBe(false);
   expect(existsSync(dirname(outPath))).toBe(false);
 });
-
-function devicectlAvailable(): boolean {
-  if (process.platform !== 'darwin') return false;
-  return getExecutor().runQuiet('command -v xcrun') !== null;
-}
-
-const LIVE = devicectlAvailable() ? false : 'xcrun is not available on this machine';
 
 const APP = '/private/var/containers/Bundle/Application/9C1/Fixture.app/Fixture';
 
@@ -680,74 +673,4 @@ describe('localNetworkPending', () => {
     localNetworkPending(pending, { since: 0, pid: APP_PID, lanOrigin: LAN_ORIGIN });
     expect(JSON.stringify(pending)).toBe(before);
   });
-});
-
-describe('listIosDevices against a real devicectl', { skip: LIVE as unknown as boolean }, () => {
-  test('the argv is accepted and every entry it returns is well formed', ({ onTestFinished }) => {
-    resetExecutor();
-    const unrelated = mkdtempSync(join(tmpdir(), 'stim-devicectl-'));
-    onTestFinished(() => rmSync(unrelated, { recursive: true, force: true }));
-    const executor = getExecutor();
-    let outPath = '';
-    const devices = listIosDevices({
-      exec: {
-        ...executor,
-        runFile(file, args, options) {
-          outPath = args?.[args.indexOf('-j') + 1] ?? '';
-          return executor.runFile(file, args, options);
-        },
-      },
-    });
-    expect(Array.isArray(devices)).toBe(true);
-    for (const found of devices) {
-      expect(found.udid.length).toBeGreaterThan(0);
-      expect(found.name.length).toBeGreaterThan(0);
-    }
-    expect(outPath).not.toBe('');
-    expect(existsSync(dirname(outPath))).toBe(false);
-    expect(existsSync(unrelated)).toBe(true);
-  }, 60_000);
-
-  test('the process-probe argv is accepted by the real devicectl when a phone is connected', () => {
-    resetExecutor();
-    const [connected] = listIosDevices();
-    if (!connected) return;
-    const executor = getExecutor();
-    let failure = '';
-    let timedOut = false;
-    let probedUdid: string | undefined;
-    const pid = iosDeviceProcess(
-      { udid: connected.udid, appName: 'NoSuchAppStimWouldEverBuild' },
-      {
-        exec: {
-          ...executor,
-          runFile(file, args, options) {
-            probedUdid = args?.[args.indexOf('--device') + 1];
-            try {
-              return executor.runFile(file, args, options);
-            } catch (error) {
-              const failed = error as Error & { stderr?: unknown; stdout?: unknown; code?: unknown };
-              failure = [failed.message, failed.stderr, failed.stdout].filter(Boolean).join('\n');
-              timedOut = failed.code === 'ETIMEDOUT';
-              throw error;
-            }
-          },
-        },
-      },
-    );
-    expect(probedUdid).toBe(connected.udid);
-    if (pid === undefined) {
-      if (timedOut) throw new Error(`devicectl process probe timed out\n${failure}`);
-      const unavailable =
-        /^ERROR: A connection to this device could not be established\. \(com\.apple\.dt\.CoreDeviceError error 4000 \(0xFA0\)\)$/m.test(
-          failure,
-        ) ||
-        /^ERROR: CoreDeviceService was unable to locate a device matching the requested device identifier\. \(DeviceIdentifier: [^\r\n)]+\) \(com\.apple\.dt\.CoreDeviceError error 1011 \(0x3F3\)\)$/m.test(
-          failure,
-        );
-      if (iosLaunchRefusalKind(failure) !== null || unavailable) return;
-      throw new Error(failure || 'The probe failed without a devicectl error');
-    }
-    expect(pid).toBe(null);
-  }, 120_000);
 });

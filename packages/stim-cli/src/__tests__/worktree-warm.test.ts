@@ -27,7 +27,7 @@ let root: string;
 let target: string;
 
 function git(cwd: string, ...args: string[]): string {
-  return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8' }).trim();
+  return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8', timeout: 15_000 }).trim();
 }
 
 function write(dir: string, rel: string, value: string): void {
@@ -51,7 +51,7 @@ beforeEach(() => {
   git(root, 'add', '.');
   git(root, 'commit', '-qm', 'fixture');
   git(root, 'worktree', 'add', '-qb', 'linked', target);
-});
+}, 30_000);
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -79,7 +79,7 @@ test('missing-only copy preserves existing directories, files, and dangling syml
   expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('destination env');
   expect(readlinkSync(join(target, '.env.local'))).toBe('absent-env');
   expect(readdirSync(join(target, 'node_modules'))).toEqual(['own']);
-});
+}, 30_000);
 
 test('missing-only copy refuses destination symlink ancestors', () => {
   write(root, 'ios/Pods/Manifest.lock', 'source pods');
@@ -91,7 +91,7 @@ test('missing-only copy refuses destination symlink ancestors', () => {
   expect(result.copied).toEqual([]);
   expect(result.skipped).toEqual([{ file: 'ios/Pods', reason: 'symlink ancestor: ios' }]);
   expect(readdirSync(outside)).toEqual([]);
-});
+}, 30_000);
 
 test('missing-only copy skips registered nested worktrees and their ignored parents on either side', () => {
   const sourceNested = join(root, '.worktrees', 'source');
@@ -105,7 +105,7 @@ test('missing-only copy skips registered nested worktrees and their ignored pare
   expect(existsSync(join(target, '.worktrees'))).toBe(false);
   expect(existsSync(join(target, 'local/source.txt'))).toBe(false);
   expect(git(targetNested, 'branch', '--show-current')).toBe('target-nested');
-});
+}, 30_000);
 
 test('missing-only copy discards partial clone output before byte-copy fallback', () => {
   write(root, 'node_modules/pkg/index.js', 'source package');
@@ -126,7 +126,7 @@ test('missing-only copy discards partial clone output before byte-copy fallback'
   expect(result.copied).toEqual(['node_modules']);
   expect(readdirSync(join(target, 'node_modules'))).toEqual(['pkg']);
   expect(readFileSync(join(target, 'node_modules/pkg/index.js'), 'utf-8')).toBe('source package');
-});
+}, 30_000);
 
 test('failed direct copies report partial output and keep existing files on retry', () => {
   write(root, 'node_modules/pkg/index.js', 'source package');
@@ -146,7 +146,7 @@ test('failed direct copies report partial output and keep existing files on retr
   expect(result.failed).toEqual([{ file: 'node_modules', error: 'copy failed' }]);
   expect(readFileSync(join(target, 'node_modules/partial'), 'utf-8')).toBe('incomplete');
   expect(warm().skipped).toEqual([{ file: 'node_modules', reason: 'exists' }]);
-});
+}, 30_000);
 
 test('missing-only copy preserves relative symlinks without linking files back to the source', () => {
   write(root, 'node_modules/pkg/index.js', 'source package');
@@ -172,7 +172,7 @@ test('missing-only copy preserves relative symlinks without linking files back t
   expect(readFileSync(join(target, 'node_modules/pkg/sibling.js'), 'utf-8')).toBe('source package');
   writeFileSync(source, 'edited source');
   expect(readFileSync(destination, 'utf-8')).toBe('edited destination');
-});
+}, 30_000);
 
 test.skipIf(process.platform !== 'darwin')('direct cloning preserves source timestamps', () => {
   write(root, '.env', 'source config');
@@ -211,7 +211,7 @@ test('warm identifies canonical main and linked roots from a symlinked subdirect
   const alias = join(base, 'alias');
   symlinkSync(target, alias);
   expect(warmWorktreePaths(join(alias, 'ios'))).toEqual({ root, target, common: join(root, '.git') });
-});
+}, 30_000);
 
 test('warm rejects the source checkout and non-repositories without changing them', async () => {
   write(root, '.env', 'source env');
@@ -223,7 +223,7 @@ test('warm rejects the source checkout and non-repositories without changing the
   const outside = await runWarm(base);
   expect(outside.code).toBe(1);
   expect(outside.stderr).toMatch(/Not a git repository/);
-});
+}, 30_000);
 
 test('warm refuses an unregistered target, missing source checkout, or mismatched Git common directory', () => {
   const real = getExecutor();
@@ -248,7 +248,7 @@ test('warm refuses an unregistered target, missing source checkout, or mismatche
     });
     expect(() => warmWorktreePaths(target)).toThrow(/Could not/);
   }
-});
+}, 30_000);
 
 test('warm copies main ignored state but preserves the linked branch and tracked edits', async () => {
   write(root, 'node_modules/pkg/index.js', 'main dependency');
@@ -266,7 +266,7 @@ test('warm copies main ignored state but preserves the linked branch and tracked
   expect(git(target, 'branch', '--show-current')).toBe('linked');
   expect(existsSync(join(base, 'home/config.json'))).toBe(false);
   expect((await runWarm(target)).stderr).toMatch(/complete: 0 ignored entries copied, 2 kept, 0 failed/);
-});
+}, 30_000);
 
 test('warm reads main exclusion settings and lets its nonempty pattern file replace them', async () => {
   write(root, '.env', 'source env');
@@ -283,7 +283,7 @@ test('warm reads main exclusion settings and lets its nonempty pattern file repl
   expect(patterns.code).toBe(0);
   expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('source env');
   expect(existsSync(join(target, '.env.local'))).toBe(false);
-});
+}, 30_000);
 
 test('warm reports copy failures with nonzero status and no ready claim', async () => {
   write(root, '.env', 'source env');
@@ -301,7 +301,7 @@ test('warm reports copy failures with nonzero status and no ready claim', async 
   expect(result.stderr).toMatch(/could not copy .env: disk full/);
   expect(result.stderr).toMatch(/incomplete: 0 ignored entries copied, 0 kept, 1 failed/);
   expect(result.stderr).not.toMatch(/ready|warmed/);
-});
+}, 30_000);
 
 test('warm refuses unreadable source or destination inventories instead of reporting an empty success', async () => {
   const real = getExecutor();
@@ -323,7 +323,7 @@ test('warm refuses unreadable source or destination inventories instead of repor
     expect(result.stderr).toMatch(/Could not warm/);
     expect(result.stderr).not.toMatch(/complete:/);
   }
-});
+}, 30_000);
 
 test('warm reports carried dependency and Pods lockfile mismatches against the linked branch', async () => {
   write(root, 'package-lock.json', 'main lock');
@@ -335,7 +335,7 @@ test('warm reports carried dependency and Pods lockfile mismatches against the l
   expect(result.stderr).toMatch(/carried dependencies may be stale.*package-lock.json/);
   expect(result.stderr).toMatch(/carried ios\/Pods does not match/);
   expect(readFileSync(join(target, 'ios/Podfile.lock'), 'utf-8')).toBe('branch pods\n');
-});
+}, 30_000);
 
 test('warm copies literal ignored filenames and skips Finder, IDE, and derived data', () => {
   write(root, '.gitignore', readFileSync(join(root, '.gitignore'), 'utf-8') + '.DS_Store\n.idea/\n');
@@ -384,7 +384,7 @@ test('warm copies literal ignored filenames and skips Finder, IDE, and derived d
   expect(readFileSync(join(target, 'node_modules/pkg/.idea/workspace.xml'), 'utf-8')).toBe(
     'destination nested IDE state',
   );
-});
+}, 30_000);
 
 test.each(['android/build/', 'apps/mobile/'])('warm excludes generated autolinking from ignored %s', (ignored) => {
   write(root, '.gitignore', `${ignored}\n`);
@@ -413,7 +413,7 @@ test('missing-only copy preserves executable file modes', () => {
   const result = warm();
   expect(result.failed).toEqual([]);
   expect(lstatSync(join(target, 'node_modules/pkg/bin')).mode & 0o777).toBe(0o755);
-});
+}, 30_000);
 
 test('warm removes excluded copies from read-only directories and restores their modes', async () => {
   write(root, 'node_modules/pkg/index.js', 'read-only package');
@@ -430,7 +430,7 @@ test('warm removes excluded copies from read-only directories and restores their
     const pkg = join(target, 'node_modules/pkg');
     if (existsSync(pkg)) chmodSync(pkg, 0o755);
   }
-});
+}, 30_000);
 
 test('missing-only copy does not restore a deleted tracked file from ignored main state', () => {
   write(target, '.env', 'tracked linked env');
@@ -442,7 +442,7 @@ test('missing-only copy does not restore a deleted tracked file from ignored mai
   expect(result.copied).toEqual([]);
   expect(result.skipped).toEqual([{ file: '.env', reason: 'tracked' }]);
   expect(existsSync(join(target, '.env'))).toBe(false);
-});
+}, 30_000);
 
 test('warm copies project-owned .stim directories unless the main exclusion file skips them', async () => {
   write(root, '.gitignore', readFileSync(join(root, '.gitignore'), 'utf-8') + '.stim/\n');
@@ -453,7 +453,7 @@ test('warm copies project-owned .stim directories unless the main exclusion file
   expect(result.code).toBe(0);
   expect(existsSync(join(target, '.stim'))).toBe(false);
   expect(readFileSync(join(target, 'apps/mobile/.stim/project.json'), 'utf-8')).toBe('nested project data');
-});
+}, 30_000);
 
 test('directly copied ignored files stay invisible to Git status and git add', async () => {
   write(root, '.env', 'source secret');
@@ -477,7 +477,7 @@ test('directly copied ignored files stay invisible to Git status and git add', a
   expect(result.code).toBe(0);
   expect(observations).toEqual([{ status: '', add: '', staged: 'source secret' }]);
   expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('source secret');
-});
+}, 30_000);
 
 test('warm preserves a deleted tracked file when main has ignored descendants at that path', () => {
   write(root, 'local/README', 'main readme');
@@ -494,7 +494,7 @@ test('warm preserves a deleted tracked file when main has ignored descendants at
   expect(result.failed).toEqual([]);
   expect(existsSync(join(target, 'local'))).toBe(false);
   expect(git(target, 'diff', '--name-status')).toBe('D\tlocal');
-});
+}, 30_000);
 
 test('warm permits ignored siblings under a directory containing tracked files', () => {
   write(root, 'local/README', 'main readme');
@@ -510,4 +510,4 @@ test('warm permits ignored siblings under a directory containing tracked files',
   expect(result.failed).toEqual([]);
   expect(readFileSync(join(target, 'local/data.cache'), 'utf-8')).toBe('main cache');
   expect(readFileSync(join(target, 'local/README'), 'utf-8')).toBe('linked readme');
-});
+}, 30_000);

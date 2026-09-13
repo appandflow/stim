@@ -54,6 +54,11 @@ Filter unit tests with `pnpm test <file> -t "case name"`. Do not insert `--`
 before the file: pnpm forwards it to Vitest, which then ignores the filter and
 runs the full suite.
 
+Native tool compatibility runs separately with `pnpm run test:compat`. Follow
+[the test-stage prerequisites and evidence rules](./docs/testing.md) when changing
+native tool calls or preparing a release. Missing hardware is unavailable
+validation, never a compatibility pass.
+
 ## Tests and abstractions
 
 Before adding a test, name the concrete failure it catches. Assert observable

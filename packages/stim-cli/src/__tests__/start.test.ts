@@ -20,6 +20,7 @@ import {
 import { supervisorLogFile, workspaceLogsDir, workspaceMetadataFile } from '../paths.ts';
 import { writeWorkspaceState } from '../supervisor/run.ts';
 import { readMetroTunnel, readWorkspaceState } from '../supervisor/state.ts';
+import * as supervisorState from '../supervisor/state.ts';
 import {
   liveSupervisor,
   parseWait,
@@ -46,8 +47,16 @@ beforeEach(() => {
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws', dependencies: { 'react-native': '0.81.0' } }));
 });
 
-afterEach(() => {
-  for (const server of openServers.splice(0)) server.close();
+afterEach(async () => {
+  await Promise.all(
+    openServers.splice(0).map(
+      (server) =>
+        new Promise<void>((resolve) => {
+          server.closeAllConnections();
+          server.close(() => resolve());
+        }),
+    ),
+  );
   resetExecutor();
   rmSync(tmpHome, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
@@ -150,23 +159,23 @@ function metroExecutor({
 
 const openServers: Server[] = [];
 
-function metroListener(port: number): Promise<Server> {
+async function metroListener() {
   const server = createServer((_req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('packager-status:running');
   });
   openServers.push(server);
-  return new Promise<Server>((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(port, '127.0.0.1', () => resolve(server));
+    server.listen(0, '127.0.0.1', resolve);
   });
+  const address = server.address();
+  assert(address && typeof address === 'object');
+  return { server, port: address.port };
 }
 
 async function managedStartExecutor() {
-  const server = await metroListener(0);
-  const address = server.address();
-  assert(address && typeof address === 'object');
-  const port = address.port;
+  const { port } = await metroListener();
   const exec = metroExecutor();
   const base = exec.runQuiet.bind(exec);
   exec.runQuiet = (cmd) => {
@@ -202,7 +211,11 @@ function contendedRemoteStart() {
   return { contended, withWorktreeLock };
 }
 
-async function runAction(opts: Record<string, unknown>, register: (cmd: Command) => void = registerStart) {
+async function runAction(
+  opts: Record<string, unknown>,
+  register: (cmd: Command) => void = registerStart,
+  onStderr?: (line: string) => void,
+) {
   const run = captureAction(register);
   const logs: string[] = [];
   const errs: string[] = [];
@@ -211,7 +224,10 @@ async function runAction(opts: Record<string, unknown>, register: (cmd: Command)
   const origExit = process.exit;
   let exitCode = null;
   console.log = (l) => logs.push(String(l));
-  console.error = (l) => errs.push(String(l));
+  console.error = (l) => {
+    errs.push(String(l));
+    onStderr?.(String(l));
+  };
   process.exit = asProcessExit((c) => {
     exitCode = c;
   });
@@ -251,13 +267,11 @@ async function runConcurrentActions(opts: Record<string, unknown>, register: (cm
 }
 
 async function runSpawnedExpoStart({
-  port,
   options = {},
   settings,
   tunnelDelayMs,
   exitAfterTunnel = false,
 }: {
-  port: number;
   options?: Record<string, unknown>;
   settings?: Record<string, unknown>;
   tunnelDelayMs?: number;
@@ -267,8 +281,8 @@ async function runSpawnedExpoStart({
     join(root, 'package.json'),
     JSON.stringify({ name: 'ws', dependencies: { expo: '54.0.0' }, scripts: { ios: 'expo run:ios' } }),
   );
+  const { server, port } = await metroListener();
   const exec = metroExecutor({ listeners: {} });
-  const held: { server: Server | null } = { server: null };
   const childHandlers: Record<string, (...args: unknown[]) => void> = {};
   let tunnelWritten: Promise<number | null> = Promise.resolve(null);
   exec.spawn = (cmd, args, opts) => {
@@ -282,11 +296,7 @@ async function runSpawnedExpoStart({
         startedAt: 'T',
       },
     });
-    metroListener(port).then((server) => {
-      held.server = server;
-      exec.listening = true;
-      return server;
-    });
+    exec.listening = true;
     if (tunnelDelayMs !== undefined) {
       tunnelWritten = new Promise((resolve) => {
         setTimeout(() => {
@@ -315,9 +325,9 @@ async function runSpawnedExpoStart({
   try {
     const result = await runAction(options);
     const completedAt = Date.now();
-    return { result, exec, completedAt, tunnelWrittenAt: await tunnelWritten };
+    return { result, exec, port, completedAt, tunnelWrittenAt: await tunnelWritten };
   } finally {
-    held.server?.close();
+    server.close();
   }
 }
 
@@ -524,10 +534,9 @@ describe('failureEvidence (issue #24)', () => {
   });
 });
 
-describe('action: already running', () => {
+describe('action: already running', { timeout: 30_000 }, () => {
   test('cache reset refuses an external Metro without changing its cache state or device', async () => {
-    const port = 8149;
-    await metroListener(port);
+    const { port } = await metroListener();
     setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } }));
     upsertProject(root, { metroPort: port });
     writeWorkspaceState(root, { metroCacheGeneration: 'before', lastBuild: { device: 'owned-device' } });
@@ -549,8 +558,7 @@ describe('action: already running', () => {
   });
 
   test('a healthy dev server with a live supervisor record is a no-op exit 0', async () => {
-    const port = 8151;
-    const server = await metroListener(port);
+    const { server, port } = await metroListener();
     setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } }));
     upsertProject(root, { metroPort: port });
     writeWorkspaceState(root, {
@@ -583,8 +591,7 @@ describe('action: already running', () => {
   });
 
   test('a healthy dev server the agent started itself is reported, not fought', async () => {
-    const port = 8152;
-    const server = await metroListener(port);
+    const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
     setExecutor(exec);
     upsertProject(root, { metroPort: port });
@@ -609,8 +616,7 @@ describe('action: already running', () => {
       join(root, 'package.json'),
       JSON.stringify({ name: 'ws', dependencies: { expo: '54.0.0' }, scripts: { ios: 'expo run:ios' } }),
     );
-    const port = 8169;
-    const server = await metroListener(port);
+    const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
     setExecutor(exec);
     upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'expo' } } });
@@ -632,8 +638,7 @@ describe('action: already running', () => {
       join(root, 'package.json'),
       JSON.stringify({ name: 'ws', dependencies: { expo: '54.0.0' }, scripts: { ios: 'expo run:ios' } }),
     );
-    const port = 8170;
-    const server = await metroListener(port);
+    const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
     setExecutor(exec);
     upsertProject(root, {
@@ -657,8 +662,7 @@ describe('action: already running', () => {
     ['owned', true],
     ['external', false],
   ])('start --remote refuses to add a managed tunnel to an existing %s bare server', async (_kind, owned) => {
-    const port = owned ? 8176 : 8177;
-    const server = await metroListener(port);
+    const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
     setExecutor(exec);
     upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
@@ -708,8 +712,7 @@ describe('action: already running', () => {
   });
 
   test('two starts in a row leave one supervisor', async () => {
-    const port = 8153;
-    const server = await metroListener(port);
+    const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
     setExecutor(exec);
     upsertProject(root, { metroPort: port });
@@ -737,8 +740,7 @@ describe('action: already running', () => {
       join(root, 'package.json'),
       JSON.stringify({ name: 'ws', dependencies: { expo: '54.0.0' }, scripts: { ios: 'expo run:ios' } }),
     );
-    const port = 8166;
-    const server = await metroListener(port);
+    const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
     setExecutor(exec);
     upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'expo' } } });
@@ -773,8 +775,7 @@ describe('action: already running', () => {
       join(root, 'package.json'),
       JSON.stringify({ name: 'ws', dependencies: { expo: '54.0.0' }, scripts: { ios: 'expo run:ios' } }),
     );
-    const port = 8173;
-    const server = await metroListener(port);
+    const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
     setExecutor(exec);
     upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'expo' } } });
@@ -812,11 +813,10 @@ describe('action: already running', () => {
   });
 });
 
-describe('action: spawning the supervisor', () => {
+describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
   test('spawns node run.js --root --port detached, with stdio into supervisor.log, and waits for health', async () => {
-    const port = 8154;
+    const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: {} });
-    const held: { server: Server | null } = { server: null };
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
       writeWorkspaceState(root, {
@@ -828,11 +828,7 @@ describe('action: spawning the supervisor', () => {
           startedAt: 'T',
         },
       });
-      metroListener(port).then((s) => {
-        held.server = s;
-        exec.listening = true;
-        return s;
-      });
+      exec.listening = true;
       return { pid: process.pid, unref() {}, on() {} };
     };
     const base = exec.runQuiet.bind(exec);
@@ -847,7 +843,7 @@ describe('action: spawning the supervisor', () => {
     try {
       result = await runAction({ json: true, wait: '10' });
     } finally {
-      held.server?.close();
+      server.close();
     }
 
     expect(result.exitCode).toBe(null);
@@ -872,13 +868,12 @@ describe('action: spawning the supervisor', () => {
   });
 
   test('a configured cache provider reaches the supervisor through the environment', async () => {
-    const port = 8155;
+    const { server, port } = await metroListener();
     writeFileSync(
       join(root, '.stim.json'),
       JSON.stringify({ cache: { provider: './tools/cache-provider.cjs', options: { bucket: 'mobile' } } }),
     );
     const exec = metroExecutor({ listeners: {} });
-    const held: { server: Server | null } = { server: null };
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
       writeWorkspaceState(root, {
@@ -890,11 +885,7 @@ describe('action: spawning the supervisor', () => {
           startedAt: 'T',
         },
       });
-      metroListener(port).then((s) => {
-        held.server = s;
-        exec.listening = true;
-        return s;
-      });
+      exec.listening = true;
       return { pid: process.pid, unref() {}, on() {} };
     };
     const base = exec.runQuiet.bind(exec);
@@ -908,7 +899,7 @@ describe('action: spawning the supervisor', () => {
     try {
       await runAction({ json: true, wait: '10' });
     } finally {
-      held.server?.close();
+      server.close();
     }
 
     const spawned = exec.calls.spawn[0];
@@ -923,10 +914,9 @@ describe('action: spawning the supervisor', () => {
   });
 
   test('no configured provider hands the supervisor an explicit none', async () => {
-    const port = 8157;
+    const { server, port } = await metroListener();
     process.env[CACHE_PROVIDER_ENV] = 'stale';
     const exec = metroExecutor({ listeners: {} });
-    const held: { server: Server | null } = { server: null };
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
       writeWorkspaceState(root, {
@@ -938,11 +928,7 @@ describe('action: spawning the supervisor', () => {
           startedAt: 'T',
         },
       });
-      metroListener(port).then((s) => {
-        held.server = s;
-        exec.listening = true;
-        return s;
-      });
+      exec.listening = true;
       return { pid: process.pid, unref() {}, on() {} };
     };
     const base = exec.runQuiet.bind(exec);
@@ -956,7 +942,7 @@ describe('action: spawning the supervisor', () => {
     try {
       await runAction({ json: true, wait: '10' });
     } finally {
-      held.server?.close();
+      server.close();
       delete process.env[CACHE_PROVIDER_ENV];
     }
 
@@ -968,20 +954,18 @@ describe('action: spawning the supervisor', () => {
   });
 
   test('start --remote passes --tunnel to an Expo supervisor in explicit expo mode', async () => {
-    const { exec } = await runSpawnedExpoStart({
-      port: 8156,
+    const { exec, port } = await runSpawnedExpoStart({
       options: { json: true, wait: '10', remote: true },
       tunnelDelayMs: 0,
       settings: { metro: { tunnel: 'expo' } },
     });
     const spawned = exec.calls.spawn[0];
     assert(spawned);
-    expect(spawned.args).toEqual([supervisorEntry(), '--root', root, '--port', '8156', '--tunnel']);
+    expect(spawned.args).toEqual([supervisorEntry(), '--root', root, '--port', String(port), '--tunnel']);
   });
 
   test('start --remote waits for the Expo tunnel URL after Metro becomes healthy', async () => {
     const { result, completedAt, tunnelWrittenAt } = await runSpawnedExpoStart({
-      port: 8168,
       options: { json: true, wait: '10', remote: true },
       tunnelDelayMs: 1000,
       settings: { metro: { tunnel: 'expo' } },
@@ -994,7 +978,6 @@ describe('action: spawning the supervisor', () => {
 
   test('start --remote refuses when the tunnel URL and supervisor exit arrive together', async () => {
     const { result } = await runSpawnedExpoStart({
-      port: 8172,
       options: { json: true, wait: '10', remote: true },
       tunnelDelayMs: 1000,
       exitAfterTunnel: true,
@@ -1006,15 +989,14 @@ describe('action: spawning the supervisor', () => {
   });
 
   test('plain start does not pass --tunnel to an Expo supervisor in auto mode', async () => {
-    const { exec } = await runSpawnedExpoStart({ port: 8163, options: { json: true, wait: '10' } });
+    const { exec, port } = await runSpawnedExpoStart({ options: { json: true, wait: '10' } });
     const spawned = exec.calls.spawn[0];
     assert(spawned);
-    expect(spawned.args).toEqual([supervisorEntry(), '--root', root, '--port', '8163']);
+    expect(spawned.args).toEqual([supervisorEntry(), '--root', root, '--port', String(port)]);
   });
 
   test('plain start does not inject a configured public URL into the dev server', async () => {
     const { exec } = await runSpawnedExpoStart({
-      port: 8178,
       options: { json: true, wait: '10' },
       settings: { metro: { publicUrl: 'https://operator.example.test' } },
     });
@@ -1076,9 +1058,7 @@ describe('action: spawning the supervisor', () => {
   });
 
   test.each(['ios', 'android'])('%s.remote gives plain start remote intent', async (platform) => {
-    const port = platform === 'ios' ? 8164 : 8165;
-    const { exec } = await runSpawnedExpoStart({
-      port,
+    const { exec, port } = await runSpawnedExpoStart({
       options: { json: true, wait: '10' },
       settings: { [platform]: { remote: 'proxy' }, metro: { tunnel: 'expo' } },
       tunnelDelayMs: 0,
@@ -1087,9 +1067,8 @@ describe('action: spawning the supervisor', () => {
   });
 
   test('plain start does not start an explicitly configured managed provider', async () => {
-    const port = 8157;
+    const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: {} });
-    const held: { server: Server | null } = { server: null };
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
       writeWorkspaceState(root, {
@@ -1101,11 +1080,7 @@ describe('action: spawning the supervisor', () => {
           startedAt: 'T',
         },
       });
-      metroListener(port).then((s) => {
-        held.server = s;
-        exec.listening = true;
-        return s;
-      });
+      exec.listening = true;
       return { pid: process.pid, unref() {}, on() {} };
     };
     const base = exec.runQuiet.bind(exec);
@@ -1126,7 +1101,7 @@ describe('action: spawning the supervisor', () => {
         }),
       );
     } finally {
-      held.server?.close();
+      server.close();
     }
 
     const spawned = exec.calls.spawn[0];
@@ -1255,7 +1230,7 @@ describe('action: spawning the supervisor', () => {
   }, 30_000);
 
   test('a tunnel that resists cleanup during an existing-server race keeps its record', async () => {
-    const port = 8188;
+    const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: {} });
     let listening = false;
     const base = exec.runQuiet.bind(exec);
@@ -1265,13 +1240,11 @@ describe('action: spawning the supervisor', () => {
     };
     setExecutor(exec);
     upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
-    let server: Server | null = null;
 
     const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
       registerStart(cmd, {
         providers: () => ['ngrok'],
         startTunnelSequence: async () => {
-          server = await metroListener(port);
           listening = true;
           return {
             provider: 'ngrok',
@@ -1546,9 +1519,8 @@ describe('action: spawning the supervisor', () => {
   });
 
   test('a managed provider that exits before Metro readiness fails and clears its record', async () => {
-    const port = 8182;
+    const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: {} });
-    const held: { server: Server | null } = { server: null };
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
       writeWorkspaceState(root, {
@@ -1560,11 +1532,7 @@ describe('action: spawning the supervisor', () => {
           startedAt: 'T',
         },
       });
-      metroListener(port).then((server) => {
-        held.server = server;
-        exec.listening = true;
-        return server;
-      });
+      exec.listening = true;
       return { pid: process.pid, unref() {}, on() {} };
     };
     const base = exec.runQuiet.bind(exec);
@@ -1597,7 +1565,7 @@ describe('action: spawning the supervisor', () => {
         }),
       );
     } finally {
-      held.server?.close();
+      server.close();
     }
 
     expect(result.exitCode).toBe(1);
@@ -1701,9 +1669,8 @@ describe('action: spawning the supervisor', () => {
   });
 
   test('managed provider exit cleanup preserves a replacement tunnel record', async () => {
-    const port = 8183;
+    const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: {} });
-    const held: { server: Server | null } = { server: null };
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
       writeWorkspaceState(root, {
@@ -1715,11 +1682,7 @@ describe('action: spawning the supervisor', () => {
           startedAt: 'T',
         },
       });
-      metroListener(port).then((server) => {
-        held.server = server;
-        exec.listening = true;
-        return server;
-      });
+      exec.listening = true;
       return { pid: process.pid, unref() {}, on() {} };
     };
     const base = exec.runQuiet.bind(exec);
@@ -1765,7 +1728,7 @@ describe('action: spawning the supervisor', () => {
         }),
       );
     } finally {
-      held.server?.close();
+      server.close();
     }
 
     expect(readMetroTunnel(root)).toMatchObject({
@@ -1909,10 +1872,9 @@ describe('the error contract', () => {
   });
 });
 
-describe('global workspace storage', () => {
+describe('global workspace storage', { timeout: 30_000 }, () => {
   test('creates ownership metadata under STIM_HOME and never touches .gitignore', async () => {
-    const port = 8161;
-    const server = await metroListener(port);
+    const { server, port } = await metroListener();
     setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } }));
     upsertProject(root, { metroPort: port });
     try {
@@ -1928,10 +1890,9 @@ describe('global workspace storage', () => {
   });
 });
 
-describe('action: the reserved port', () => {
+describe('action: the reserved port', { timeout: 30_000 }, () => {
   test('a FOREIGN holder of the reserved port moves the reservation instead of counting as healthy', async () => {
-    const port = 8157;
-    const server = await metroListener(port);
+    const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID }, cwd: '/somewhere/else' });
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
@@ -1984,7 +1945,7 @@ describe('action: the reserved port', () => {
   });
 });
 
-describe('action: an existing supervisor that is not answering', () => {
+describe('action: an existing supervisor that is not answering', { timeout: 30_000 }, () => {
   test('waits on the one that exists rather than spawning a second', async () => {
     const port = 8158;
     const exec = metroExecutor({ listeners: {} });
@@ -2011,12 +1972,17 @@ describe('action: an existing supervisor that is not answering', () => {
   });
 
   test('and reports success once that supervisor answers', async () => {
-    const port = 8159;
+    const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: {} });
-    const held: { server: Server | null } = { server: null };
+    let markWaiting!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      markWaiting = resolve;
+    });
     const base = exec.runQuiet.bind(exec);
     exec.runQuiet = (cmd) => {
-      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5152' : '';
+      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) {
+        return exec.listening ? '5152' : '';
+      }
       return base(cmd);
     };
     setExecutor(exec);
@@ -2030,19 +1996,20 @@ describe('action: an existing supervisor that is not answering', () => {
         startedAt: 'T',
       },
     });
-    metroListener(port).then((s) => {
-      held.server = s;
-      exec.listening = true;
-      return undefined;
-    });
 
     let result;
     try {
-      result = await runAction({ json: true, wait: '10' });
+      const action = runAction({ json: true, wait: '10' }, registerStart, (line) => {
+        if (line.includes('waiting for it to answer')) markWaiting();
+      });
+      await waiting;
+      exec.listening = true;
+      result = await action;
     } finally {
-      held.server?.close();
+      server.close();
     }
 
+    expect(result.errs.join('\n')).toMatch(/already running for this workspace; waiting for it to answer/);
     expect(result.exitCode).toBe(null);
     const facts = JSON.parse(result.logs[0] ?? '');
     expect(facts.supervisorPid).toBe(process.pid);
@@ -2055,7 +2022,7 @@ describe('action: an existing supervisor that is not answering', () => {
       join(root, 'package.json'),
       JSON.stringify({ name: 'ws', dependencies: { expo: '54.0.0' }, scripts: { ios: 'expo run:ios' } }),
     );
-    const port = 8167;
+    const { port } = await metroListener();
     const exec = metroExecutor({ listeners: {} });
     let markMetroHealthy: () => void;
     const metroHealthy = new Promise<void>((resolve) => {
@@ -2083,7 +2050,6 @@ describe('action: an existing supervisor that is not answering', () => {
     try {
       const action = runAction({ json: true, remote: true, wait: '1' });
       await vi.advanceTimersByTimeAsync(0);
-      await metroListener(port);
       exec.listening = true;
       await vi.advanceTimersByTimeAsync(500);
       await metroHealthy;
@@ -2105,12 +2071,22 @@ describe('action: an existing supervisor that is not answering', () => {
       join(root, 'package.json'),
       JSON.stringify({ name: 'ws', dependencies: { expo: '54.0.0' }, scripts: { ios: 'expo run:ios' } }),
     );
-    const port = 8171;
+    const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: {} });
-    const held: { server: Server | null } = { server: null };
+    let markWaiting!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      markWaiting = resolve;
+    });
+    let markHealthy!: () => void;
+    const healthy = new Promise<void>((resolve) => {
+      markHealthy = resolve;
+    });
     const base = exec.runQuiet.bind(exec);
     exec.runQuiet = (cmd) => {
-      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5154' : '';
+      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) {
+        return exec.listening ? '5154' : '';
+      }
+      if (cmd === 'lsof -a -p 5154 -d cwd -Fn') markHealthy();
       return base(cmd);
     };
     setExecutor(exec);
@@ -2124,36 +2100,59 @@ describe('action: an existing supervisor that is not answering', () => {
         startedAt: 'T',
       },
     });
-    metroListener(port).then((server) => {
-      held.server = server;
-      exec.listening = true;
-      return server;
-    });
-    const tunnelWritten = new Promise<void>((resolve) => {
-      setTimeout(() => {
-        writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url: 'exp://concurrent.exp.direct' } });
-        resolve();
-      }, 1000);
-    });
 
+    let markAbsentTunnelPoll!: () => void;
+    const absentTunnelPoll = new Promise<void>((resolve) => {
+      markAbsentTunnelPoll = resolve;
+    });
+    const readTunnel = supervisorState.readMetroTunnel;
+    let observeTunnelPolls = false;
+    const tunnelReads = vi.spyOn(supervisorState, 'readMetroTunnel').mockImplementation((workspaceRoot) => {
+      const record = readTunnel(workspaceRoot);
+      if (observeTunnelPolls && record === null) markAbsentTunnelPoll();
+      return record;
+    });
+    let settled = false;
     let result;
     try {
-      result = await runAction({ json: true, remote: true, wait: '10' });
-      await tunnelWritten;
+      const action = runAction({ json: true, remote: true, wait: '10' }, registerStart, (line) => {
+        if (line.includes('waiting for it to answer')) markWaiting();
+      }).then((value) => {
+        settled = true;
+        return value;
+      });
+      await waiting;
+      exec.listening = true;
+      await healthy;
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      observeTunnelPolls = true;
+      await absentTunnelPoll;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+      const readsBeforeNextPoll = tunnelReads.mock.calls.length;
+      await vi.advanceTimersToNextTimerAsync();
+      expect(tunnelReads.mock.calls.length).toBeGreaterThan(readsBeforeNextPoll);
+      expect(tunnelReads.mock.results.at(-1)?.value).toBeNull();
+      expect(settled).toBe(false);
+      writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url: 'exp://concurrent.exp.direct' } });
+      await vi.advanceTimersToNextTimerAsync();
+      result = await action;
     } finally {
-      held.server?.close();
+      vi.useRealTimers();
+      tunnelReads.mockRestore();
+      server.close();
     }
 
+    expect(result.errs.join('\n')).toMatch(/already running for this workspace; waiting for it to answer/);
     expect(result.exitCode).toBe(null);
     expect(exec.calls.spawn).toEqual([]);
     expect(JSON.parse(result.logs[0] ?? '').alreadyRunning).toBe(true);
   });
 });
 
-describe('output contract', () => {
+describe('output contract', { timeout: 30_000 }, () => {
   test('without --json every line is human and nothing is JSON', async () => {
-    const port = 8160;
-    const server = await metroListener(port);
+    const { server, port } = await metroListener();
     setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } }));
     upsertProject(root, { metroPort: port });
     writeWorkspaceState(root, {
@@ -2174,7 +2173,7 @@ describe('output contract', () => {
     }
 
     expect(result.exitCode).toBe(null);
-    expect(result.logs.join('\n')).toMatch(/OK: dev server on port 8160.* \(\d+m?\d*s\)/);
+    expect(result.logs.join('\n')).toMatch(new RegExp(`OK: dev server on port ${port}.* \\(\\d+m?\\d*s\\)`));
     expect(result.logs.join('\n')).toMatch(/expo-child/);
     expect(result.logs.join('\n')).toMatch(new RegExp(workspaceLogsDir(root).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     for (const line of result.logs) {
