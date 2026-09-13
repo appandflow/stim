@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { workspaceLogsDir } from '../../packages/stim-cli/src/paths.ts';
+import { workspaceDir, workspaceLogsDir } from '../../packages/stim-cli/src/paths.ts';
 
 const CLI = fileURLToPath(new URL('../../packages/stim-cli/bin/cli.ts', import.meta.url));
 let home;
@@ -51,11 +51,14 @@ test('matching errors also exit 0, so a successful query alone is not a clean ch
   assert.equal(json.stderr, '');
 });
 
-test('no log directory is a successful empty query without evidence of capture', () => {
+test('no log directory refuses without creating workspace state', () => {
   const result = run(['--json']);
-  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.status, 1);
   assert.equal(result.stdout, '');
-  assert.equal(result.stderr, '');
+  assert.match(result.stderr, /STIM_NO_PROJECT/);
+  assert.match(result.stderr, /No Stim workspace has run/);
+  assert.equal(existsSync(workspaceDir(project)), false);
+  assert.equal(existsSync(join(home, 'config.json')), false);
 });
 
 test('an invalid query exits 1 with empty stdout and a diagnostic on stderr', () => {

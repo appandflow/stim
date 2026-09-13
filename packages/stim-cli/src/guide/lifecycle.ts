@@ -62,6 +62,7 @@ a seed belongs to this workflow.
   #    For a clean check, require exit 0 AND no matching errors.
   #    Human mode prints "No matching log records" on stderr for zero matches.
   #    Exit 0 alone means the query succeeded, even when it printed errors.
+  #    A workspace with no captured timeline refuses with STIM_NO_PROJECT.
   stim logs --errors
 
   # 5. Edit the JS. Fast Refresh applies it; no Stim command is involved.

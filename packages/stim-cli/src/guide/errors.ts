@@ -816,7 +816,9 @@ captured"  (in metro.ndjson, bare RN)
   with no package.json above it, or one whose nearest package.json does not
   parse or depends on neither react-native nor expo, so the directory is not
   an app (the refusal names that package.json and says which of the two it
-  is; \`doctor\` reports the same directory as a finding), an
+  is; \`doctor\` reports the same directory as a finding), a \`logs\` query in
+  a workspace that has never produced a log timeline (the refusal names the
+  nearest registered descendant app with logs when one exists), an
   android/app/build.gradle that declares product flavors with
   no variant selected (the refusal names the debug variants), or a
   \`--device-type\`, \`--runtime\` or \`--system-image\` name that is BLANK or
