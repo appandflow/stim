@@ -242,6 +242,128 @@ test('--refresh fast-forwards the source checkout, then copies', async () => {
   expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
 });
 
+test('a current refresh copies under its shared claim while a sibling copy still holds the seed', async () => {
+  write(root, '.env', 'main env');
+  const held = await acquireWarmClaim({ repositoryRoot: root, phase: 'copy' });
+  const real = getExecutor();
+  const modes: string[][] = [];
+  const copyModes: string[][] = [];
+  let fetched = false;
+  setExecutor({
+    ...real,
+    runFile(cmd, args, options) {
+      if (cmd === 'git' && args.includes('--ignored')) {
+        copyModes.push(readClaimSet(warmClaimPath(root)).live.map((claim) => claim.mode));
+      }
+      return real.runFile(cmd, args, options);
+    },
+    runFileQuiet(cmd, args, options) {
+      if (cmd === 'git' && args.includes('fetch')) fetched = true;
+      if (cmd === 'git' && args.includes('ls-remote')) {
+        modes.push(readClaimSet(warmClaimPath(root)).live.map((claim) => claim.mode));
+      }
+      return real.runFileQuiet(cmd, args, options);
+    },
+  });
+  let completed = false;
+  const warming = runWarm(target, '--refresh').then((result) => {
+    completed = true;
+    return result;
+  });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(completed).toBe(true);
+    expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
+    expect(readClaimSet(warmClaimPath(root)).live).toHaveLength(1);
+  } finally {
+    held.release();
+    await warming;
+  }
+  const result = await warming;
+  expect(result.code).toBe(0);
+  expect(result.stdout).toEqual([]);
+  expect(result.stderr).toContain('acquired shared (seed current)');
+  expect(fetched).toBe(false);
+  expect(modes).toEqual([['shared', 'shared']]);
+  expect(copyModes).toEqual([['shared', 'shared']]);
+});
+
+test.each(['fast-forward', 'remote changes', 'dependencies', 'pods'])(
+  'a refresh needing %s drains copies before fetching or installing',
+  async (change) => {
+    if (change === 'dependencies') {
+      write(root, 'pnpm-lock.yaml', 'lock v1\n');
+      commit(root, 'dependencies');
+      git(root, 'push', '-q', 'origin', 'main');
+    } else if (change === 'pods') {
+      write(root, 'ios/Podfile', "target 'mobile'\n");
+      write(root, 'ios/Podfile.lock', 'PODFILE CHECKSUM: v1\n');
+      commit(root, 'pods');
+      git(root, 'push', '-q', 'origin', 'main');
+    } else {
+      fallBehind({ 'src/new.ts': 'upstream work\n' });
+      if (change === 'remote changes') git(root, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+    }
+    write(root, '.env', 'main env');
+    const before = git(root, 'rev-parse', 'HEAD');
+    const held = await acquireWarmClaim({ repositoryRoot: root, phase: 'copy' });
+    const real = getExecutor();
+    const writes: string[] = [];
+    const modes: string[][] = [];
+    setExecutor({
+      ...real,
+      runFileQuiet(cmd, args, options) {
+        if (cmd === 'git' && args.includes('fetch')) {
+          writes.push('fetch');
+          modes.push(readClaimSet(warmClaimPath(root)).live.map((claim) => claim.mode));
+        }
+        return real.runFileQuiet(cmd, args, options);
+      },
+      spawn(cmd) {
+        writes.push(cmd);
+        modes.push(readClaimSet(warmClaimPath(root)).live.map((claim) => claim.mode));
+        return makeExitingChild(0);
+      },
+    });
+    const warming = runWarm(target, '--refresh');
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(writes).toEqual([]);
+      expect(git(root, 'rev-parse', 'HEAD')).toBe(before);
+      expect(existsSync(join(target, '.env'))).toBe(false);
+    } finally {
+      held.release();
+    }
+    const result = await warming;
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain('acquired exclusive (');
+    expect(writes).toEqual(
+      ['fast-forward', 'remote changes'].includes(change) ? ['fetch'] : ['fetch', change === 'pods' ? 'pod' : 'pnpm'],
+    );
+    expect(modes.every((mode) => mode.length === 1 && mode[0] === 'exclusive')).toBe(true);
+    expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
+  },
+);
+
+test('a refresh rechecks checkout safety after releasing shared and waiting for exclusive', async () => {
+  fallBehind({ 'src/new.ts': 'upstream work\n' });
+  const before = git(root, 'rev-parse', 'HEAD');
+  write(root, '.env', 'main env');
+  const held = await acquireWarmClaim({ repositoryRoot: root, phase: 'copy' });
+  const warming = runWarm(target, '--refresh');
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    write(root, 'package.json', '{"name":"edited-while-waiting"}\n');
+  } finally {
+    held.release();
+  }
+  const result = await warming;
+  expect(result.code).toBe(1);
+  expect(result.stderr).toContain('failed: STIM_MAIN_DIRTY');
+  expect(git(root, 'rev-parse', 'HEAD')).toBe(before);
+  expect(existsSync(join(target, '.env'))).toBe(false);
+});
+
 test('--refresh reports a fetch it could not run and continues with the local state', async () => {
   fallBehind({ 'src/new.ts': 'upstream work\n' });
   git(root, 'remote', 'set-url', 'origin', join(base, 'gone.git'));
