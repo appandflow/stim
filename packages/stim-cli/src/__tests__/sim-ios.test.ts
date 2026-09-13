@@ -867,3 +867,35 @@ test('boot diagnostics retain peak pressure after recovery and unknown readings,
     vi.restoreAllMocks();
   }
 });
+
+test('delayed boot observations report missing coverage without inventing unknown readings', async () => {
+  vi.useFakeTimers();
+  const messages: string[] = [];
+  const child = makeChildProcess();
+  child.kill = () => {
+    queueMicrotask(() => child.emit('exit', null, 'SIGKILL'));
+    return true;
+  };
+  setExecutor({
+    runFile: (_file, args) => (args[0] === '-n' ? '1' : bootSimList('Booting')),
+    spawn: () => child,
+  });
+  try {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    const outcome = bootIosSim('UDID-A', {
+      timeoutMs: 45000,
+      out: (message) => messages.push(message),
+    }).catch((error) => error);
+    vi.setSystemTime(Date.now() + 60000);
+    await vi.advanceTimersByTimeAsync(45000);
+    const error = await outcome;
+    expect(messages[0]).toContain('longest gap 75s');
+    expect(messages[0]).toContain('Pressure during gaps is unobserved');
+    expect(error.message).toContain('longest gap 75s');
+    expect(error.message).toContain('Highest observed memory pressure: normal; unavailable samples: 0');
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
+});

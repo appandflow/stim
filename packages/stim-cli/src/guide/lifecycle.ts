@@ -1497,6 +1497,9 @@ HOST MEMORY PRESSURE AND STALLED SIMULATORS
   current pressure and the highest observed pressure roughly every 15 seconds.
   Failure diagnostics retain the highest pressure and unavailable sample count;
   they do not infer the cause of a timeout. Monitoring stops when boot ends.
+  Monitoring and timeout handling are best-effort: synchronous CLI work can
+  delay them. Diagnostics report observation gaps over 30 seconds; pressure
+  during a gap is unobserved, even when the surrounding readings are normal.
   Doctor and failure diagnostics report macOS memory pressure when available;
   a failed query remains unknown. Existing swap or low free RAM alone is not
   enough to diagnose pressure.
