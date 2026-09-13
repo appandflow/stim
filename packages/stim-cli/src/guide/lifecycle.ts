@@ -430,9 +430,11 @@ result as proof instead of requiring an unrelated screenshot.`,
 
   \`--refresh\` always prints a \`lock\` line, then its own facts, one per
   step, before those. A plain warm prints the \`lock\` line only when its copy
-  actually waited for another warm:
+  actually waited for another warm. A current refresh reports
+  \`lock        acquired shared (seed current)\`; a refresh needing changes
+  reports \`acquired exclusive\` with the reason from its initial check:
 
-    lock        acquired (waited 12s for stim worktree warm --refresh pid 41233) -- stim guide lifecycle options
+    lock        acquired exclusive (fast-forward 2 commits) (waited 12s for stim worktree warm --refresh pid 41233) -- stim guide lifecycle options
     checkout    janic/wip 2 commits behind origin/janic/wip -> fast-forwarded to 4b81e0c
                 not the default branch (main); worktrees seeded from this copy
                 carry janic/wip's dependencies
@@ -999,8 +1001,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   Running it in the source checkout refuses.
 
   \`--refresh\` WRITES TO THE SOURCE CHECKOUT before the copy, which is why it
-  is opt-in: it fetches, fast-forwards whatever branch is checked out there to
-  its \`@{upstream}\`, and installs what the new commits moved. It refuses a
+  is opt-in: it checks the upstream, fetches changes when needed, and fast-forwards
+  whatever branch is checked out there to its \`@{upstream}\`, and installs
+  what the new commits moved. It refuses a
   source checkout it cannot move -- uncommitted changes to tracked files or a
   rebase or merge in progress (STIM_MAIN_DIRTY), a detached HEAD
   (STIM_MAIN_DETACHED), or a branch that is both ahead and behind
@@ -1034,9 +1037,15 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   writes no failure anywhere -- is recovered the same way a failed one is.
 
   One lock per repository serialises this, whether or not you pass the flag:
-  \`--refresh\` holds it exclusively, and every copy holds it shared, so a copy
-  can never read a node_modules a refresh is rewriting. Two plain warms of the
-  same repository run together. The lock is keyed on the repository root, so
+  \`--refresh\` first checks under a shared claim. It uses \`git ls-remote\`
+  to compare the upstream's advertised commit with the local tracking ref without
+  updating Git refs or FETCH_HEAD. When the checkout, dependencies and Pods are
+  current, it keeps that shared claim through the copy, overlapping other copies.
+  A changed or unconfirmed upstream, fast-forward, dependency install or Pods
+  install requires an exclusive claim. It releases shared before waiting for
+  exclusive, then checks the checkout again before fetching or writing. Every
+  copy holds shared, so no copy reads a node_modules a refresh is rewriting.
+  The lock is keyed on the repository root, so
   two apps of one monorepo share it. It is the same ownership claim the build
   locks take: the holder's process IDENTITY decides, so a holder that dies frees
   it, a recycled pid cannot keep it, and a refresh whose install runs in a

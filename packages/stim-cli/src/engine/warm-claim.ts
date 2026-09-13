@@ -64,6 +64,7 @@ export interface WarmClaimHold {
 export interface WarmClaimOptions {
   repositoryRoot: string;
   phase: WarmPhase;
+  mode?: 'shared' | 'exclusive';
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   pollMs?: number;
@@ -105,11 +106,12 @@ function waitingLine(holder: WarmClaimHolder, elapsedMs: number): string {
   );
 }
 
-export function warmClaimAcquiredLine(wait: WarmClaimWait): string {
-  if (!wait.holder || wait.waitedMs <= 0) return phaseLine('lock', 'acquired');
+export function warmClaimAcquiredLine(wait: WarmClaimWait, detail = ''): string {
+  const acquired = `acquired${detail ? ` ${detail}` : ''}`;
+  if (!wait.holder || wait.waitedMs <= 0) return phaseLine('lock', acquired);
   return phaseLine(
     'lock',
-    `acquired (waited ${formatElapsed(wait.waitedMs)} for ${warmCommand(wait.holder.phase)} pid ${wait.holder.pid}) -- stim guide lifecycle options`,
+    `${acquired} (waited ${formatElapsed(wait.waitedMs)} for ${warmCommand(wait.holder.phase)} pid ${wait.holder.pid}) -- stim guide lifecycle options`,
   );
 }
 
@@ -281,6 +283,7 @@ function timeoutError(holder: WarmClaimHolder | null, elapsedMs: number, root: s
 export async function acquireWarmClaim({
   repositoryRoot,
   phase,
+  mode = phase === 'refresh' ? 'exclusive' : 'shared',
   now = Date.now,
   sleep = defaultSleep,
   pollMs = WARM_CLAIM_POLL_MS,
@@ -300,7 +303,7 @@ export async function acquireWarmClaim({
         ? settleClaim(pending)
         : tryAcquireClaim({
             root,
-            mode: phase === 'refresh' ? 'exclusive' : 'shared',
+            mode,
             label: WARM_CLAIM_LABEL,
           });
       const acquired = attempt.acquired;

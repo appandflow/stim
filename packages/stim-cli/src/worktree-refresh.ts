@@ -323,6 +323,27 @@ function branchRemote(root: string, branch: string): string {
   );
 }
 
+function remoteUpstreamIsCurrent(root: string, branch: string): boolean {
+  const exec = getExecutor();
+  const merge = exec.runFileQuiet('git', ['-C', root, 'config', '--get-all', `branch.${branch}.merge`])?.trim();
+  if (!merge) return true;
+  if (!merge.startsWith('refs/') || merge.includes('\n')) return false;
+  const remote = branchRemote(root, branch);
+  if (remote === '.') return true;
+  const local = resolveFullRef(root, '@{upstream}');
+  if (!local) return false;
+  const advertised = exec.runFileQuiet('git', ['-C', root, 'ls-remote', '--exit-code', '--refs', '--', remote, merge], {
+    timeoutMs: FETCH_TIMEOUT_MS,
+    env: { GIT_TERMINAL_PROMPT: '0' },
+  });
+  if (advertised === null) return false;
+  const refs = advertised
+    .trim()
+    .split('\n')
+    .map((line) => line.split(/\s+/));
+  return refs.length === 1 && refs[0]?.[0] === local && refs[0]?.[1] === merge;
+}
+
 function gitPath(...parts: string[]): string {
   return parts.filter((part) => part && part !== '.').join('/');
 }
@@ -411,8 +432,17 @@ export interface RefreshOptions {
   now?: () => number;
   heartbeatMs?: number;
   installer?: InstallerClaim;
+  inspectOnly?: boolean;
 }
 
+export interface RefreshMutation {
+  mutation: string;
+}
+
+export function refreshMainCheckout(
+  options: RefreshOptions & { inspectOnly: true },
+): Promise<RefreshFailure | RefreshMutation | null>;
+export function refreshMainCheckout(options: RefreshOptions & { inspectOnly?: false }): Promise<RefreshFailure | null>;
 export async function refreshMainCheckout({
   root,
   appDir,
@@ -422,7 +452,8 @@ export async function refreshMainCheckout({
   now = Date.now,
   heartbeatMs = HEARTBEAT_INTERVAL_MS,
   installer = NO_INSTALLER_CLAIM,
-}: RefreshOptions): Promise<RefreshFailure | null> {
+  inspectOnly = false,
+}: RefreshOptions): Promise<RefreshFailure | RefreshMutation | null> {
   const state = readMainCheckoutState(root);
   const refusal = mainCheckoutRefusal(root, state);
   if (refusal) return refusal;
@@ -458,15 +489,21 @@ export async function refreshMainCheckout({
   };
 
   const before = resolveFullRef(root, 'HEAD') ?? '';
-  // A fetch that prompts for credentials would hold the exclusive lock forever.
-  const fetched = getExecutor().runFileQuiet('git', ['-C', root, 'fetch', '--prune', branchRemote(root, branch)], {
-    timeoutMs: FETCH_TIMEOUT_MS,
-    env: { GIT_TERMINAL_PROMPT: '0' },
-  });
-  if (fetched === null) emit(phaseLine('checkout', 'could not fetch; continuing with the local state'));
+  if (inspectOnly) {
+    if (!remoteUpstreamIsCurrent(root, branch)) return { mutation: 'fetch upstream' };
+  } else {
+    const fetched = getExecutor().runFileQuiet('git', ['-C', root, 'fetch', '--prune', branchRemote(root, branch)], {
+      timeoutMs: FETCH_TIMEOUT_MS,
+      env: { GIT_TERMINAL_PROMPT: '0' },
+    });
+    if (fetched === null) emit(phaseLine('checkout', 'could not fetch; continuing with the local state'));
+  }
 
   const plan = checkoutPlan(locallyKnownUpstream(root));
   if (plan.kind === 'diverged') return divergedRefusal(root, branch, plan);
+  if (inspectOnly && plan.kind === 'fast-forward') {
+    return { mutation: `fast-forward ${plan.behind} commit${plan.behind === 1 ? '' : 's'}` };
+  }
 
   // The evidence that an install may be owed has to be durable before HEAD moves: the fast-forward runs
   // the repository's own hooks, and a retry that finds HEAD already moved, a node_modules present and no
@@ -512,6 +549,7 @@ export async function refreshMainCheckout({
   });
   const depsSubject = `source ${dependencies?.root ?? root}: ${deps.reason}`;
   if (deps.run && dependencies) {
+    if (inspectOnly) return { mutation: deps.reason };
     writeInstallEvidence(dependencies.root, dependencies.lock, consumed, false);
     const install = await runInstallCommand({
       command: dependencies.command,
@@ -551,6 +589,7 @@ export async function refreshMainCheckout({
     emit(stepLine('pods', `${where}${pods.reason}`, 'skipped'));
     return null;
   }
+  if (inspectOnly) return { mutation: pods.reason };
   const result = await runPodInstall(appDir, null, { spawnFn: spawn, now, heartbeatMs, onHeartbeat: emit });
   const podCommand = result.command ?? 'pod install';
   emit(

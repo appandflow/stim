@@ -139,30 +139,6 @@ export function registerWarm(worktree: Command): void {
           }
           return settings;
         };
-        if (opts.refresh) {
-          const settings = readSettings();
-          if (!settings) {
-            process.exitCode = 1;
-            return;
-          }
-          const failure = await withWarmClaim(
-            { repositoryRoot: root, phase: 'refresh', out: console.error },
-            (hold) => {
-              console.error(warmClaimAcquiredLine(hold.wait));
-              return refreshMainCheckout({
-                root,
-                appDir: mainCheckoutAppDir(root, target),
-                settings,
-                emit: (line) => console.error(line),
-                installer: hold.installer,
-              });
-            },
-          );
-          if (failure) {
-            reportRefreshFailure(failure);
-            return;
-          }
-        }
         const copy = (wait: WarmClaimWait | null): void => {
           if (wait?.holder) console.error(warmClaimAcquiredLine(wait));
           const incomplete = incompleteInstallRefusal(root, mainCheckoutAppDir(root, target));
@@ -198,6 +174,63 @@ export function registerWarm(worktree: Command): void {
           );
           if (result.failed.length) process.exitCode = 1;
         };
+        if (opts.refresh) {
+          const inspect = await acquireWarmClaim({
+            repositoryRoot: root,
+            phase: 'refresh',
+            mode: 'shared',
+            out: console.error,
+          });
+          let mutation: string;
+          try {
+            const settings = readSettings();
+            if (!settings) {
+              process.exitCode = 1;
+              return;
+            }
+            const lines: string[] = [];
+            const result = await refreshMainCheckout({
+              root,
+              appDir: mainCheckoutAppDir(root, target),
+              settings,
+              emit: (line) => lines.push(line),
+              inspectOnly: true,
+            });
+            if (!result || !('mutation' in result)) {
+              console.error(warmClaimAcquiredLine(inspect.wait, result ? 'shared' : 'shared (seed current)'));
+              for (const line of lines) console.error(line);
+              if (result) reportRefreshFailure(result);
+              else copy(null);
+              return;
+            }
+            mutation = result.mutation;
+          } finally {
+            inspect.release();
+          }
+          const failure = await withWarmClaim(
+            { repositoryRoot: root, phase: 'refresh', out: console.error },
+            async (hold) => {
+              console.error(warmClaimAcquiredLine(hold.wait, `exclusive (${mutation})`));
+              const settings = readSettings();
+              if (!settings) {
+                process.exitCode = 1;
+                return null;
+              }
+              return refreshMainCheckout({
+                root,
+                appDir: mainCheckoutAppDir(root, target),
+                settings,
+                emit: (line) => console.error(line),
+                installer: hold.installer,
+              });
+            },
+          );
+          if (failure) {
+            reportRefreshFailure(failure);
+            return;
+          }
+          if (process.exitCode) return;
+        }
         // Only the acquisition degrades: an error from the copy itself is not a claim that could not
         // be recorded, and must not start a second copy.
         let hold = null;

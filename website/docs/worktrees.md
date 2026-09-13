@@ -97,8 +97,8 @@ worktrees. `stim worktree warm --refresh` updates it before the copy:
 code={`stim worktree warm --refresh`}
 />
 
-It fetches the branch's remote, fast-forwards **whatever branch the source
-checkout has** to its `@{upstream}`, and then installs only what the new commits
+It checks the branch's upstream, fetches changes when needed, and fast-forwards
+**whatever branch the source checkout has** to its `@{upstream}`, and then installs only what the new commits
 moved: the lockfile's own install command where the lockfile lives (the
 repository root in a monorepo), and `pod install` for the app you ran the
 command from. Each dependency and Pods step names its source directory and
@@ -125,10 +125,15 @@ terminal ever said so. Run `stim worktree warm --refresh`, which reinstalls for
 the same reason. A record of a different lockfile does not block a copy, and a
 repository with no record copies exactly as it did before.
 
-One lock per repository protects this, with or without the flag: `--refresh`
-holds it exclusively, and every copy holds it shared, so no copy can read a
-`node_modules` a refresh is rewriting. Two plain warms still run at the same
-time, and a holder that dies frees the lock. A refresh whose install runs in a
+One lock per repository protects this, with or without the flag. A refresh
+first checks under a shared claim: `git ls-remote` confirms the upstream commit
+without changing local Git refs. If the checkout, dependencies and Pods are
+current, it reports `acquired shared (seed current)` and copies alongside other
+warms. It takes an exclusive claim only when it needs to fetch changes,
+fast-forward or install, or cannot confirm the upstream. After waiting, it
+checks the checkout again before writing. Every copy holds shared, so no copy
+reads a `node_modules` a refresh is rewriting. A holder that dies frees the lock.
+A refresh whose install runs in a
 spawned process group holds the lock while any member of that group lives, so a
 package manager's postinstall writer cannot outlive the protection.
 

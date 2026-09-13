@@ -384,7 +384,7 @@ current linked worktree. It accepts a current subdirectory. The source checkout
 must be available in the same Git repository; running warm in the source
 checkout refuses.
 
-`--refresh` updates the source checkout before the copy: it fetches,
+`--refresh` updates the source checkout before the copy: it checks the upstream, fetches changes when needed,
 fast-forwards whatever branch is checked out there, and installs dependencies or
 Pods when the new commits moved a lockfile, when nothing is installed, or when
 `ios/Pods` does not match `ios/Podfile.lock`. See
