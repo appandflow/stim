@@ -104,7 +104,8 @@ import {
   statsProjectKey,
   type RunEstimates,
 } from '../engine/stats.ts';
-import { readWorkspaceState, writeWorkspaceLaunch, writeWorkspaceState } from '../supervisor/state.ts';
+import { writeWorkspaceLaunch } from '../supervisor/state.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace-state.ts';
 import {
   installAndroidApp,
   launchAndroidApp,

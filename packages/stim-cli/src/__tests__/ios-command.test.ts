@@ -13,8 +13,8 @@ import { collectorProcessTitle } from '../collector/ownership.ts';
 import { getProject, upsertProject } from '../config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
-import type { WorkspaceState } from '../supervisor/run.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../supervisor/run.ts';
+import type { WorkspaceState } from '../workspace-state.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace-state.ts';
 import {
   appNameFromPath,
   buildLogFile,

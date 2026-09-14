@@ -10,9 +10,9 @@ import {
   clearRemoteSession,
   readMetroTunnel,
   readRemoteSessionId,
-  readWorkspaceState,
   type ManagedTunnelRecord,
 } from './supervisor/state.ts';
+import { readWorkspaceState } from './workspace-state.ts';
 import { endRecordedSession } from './engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from './engine/device-lease.ts';
 import { resolveEasCliBin } from './engine/remote-cache.ts';

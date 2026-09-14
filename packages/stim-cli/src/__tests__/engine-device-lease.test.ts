@@ -21,7 +21,7 @@ import {
   type LeaseIo,
   type WorkspaceLeases,
 } from '../engine/device-lease.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../supervisor/state.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace-state.ts';
 
 const ROOT_A = '/worktree/a';
 const ROOT_B = '/worktree/b';

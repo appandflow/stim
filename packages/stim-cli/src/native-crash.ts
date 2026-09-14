@@ -11,7 +11,8 @@ import { launchErrorPreview } from './launch-error-preview.ts';
 import { deviceConsoleLevel } from './collector/ios-device.ts';
 import { writeDiagnosticOnce } from './diagnostic-store.ts';
 import { readLogRecords } from './logs-query.ts';
-import { readWorkspaceLaunches, readWorkspaceState } from './supervisor/state.ts';
+import { readWorkspaceLaunches } from './supervisor/state.ts';
+import { readWorkspaceState } from './workspace-state.ts';
 import { getProject } from './config.ts';
 import { deviceLeasePath, fileLeaseIo, parseLease } from './engine/device-lease.ts';
 

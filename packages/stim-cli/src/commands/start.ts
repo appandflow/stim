@@ -15,12 +15,8 @@ import { queryLogs } from '../logs-query.ts';
 import { ensureWorkspaceStorage, supervisorLogFile, workspaceLogsDir } from '../paths.ts';
 import { reserveMetroPort } from '../ports.ts';
 import { appProjectProblem, detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot } from '../project.ts';
-import {
-  clearManagedMetroTunnel,
-  readMetroTunnel,
-  readWorkspaceState,
-  writeWorkspaceState,
-} from '../supervisor/state.ts';
+import { clearManagedMetroTunnel, readMetroTunnel } from '../supervisor/state.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace-state.ts';
 import { CACHE_PROVIDER_ENV, cacheProviderEnv } from '@stim-cli/cache';
 import { workspaceProcessLockError, withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { resetMetroCache } from '../supervisor/cache-reset.ts';

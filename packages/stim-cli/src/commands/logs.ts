@@ -12,7 +12,7 @@ import type { NdjsonRecord } from '../ndjson.ts';
 import { buildCriteria, compileGrep, fileSizes, followLogs, logFiles, parseSince, queryLogs } from '../logs-query.ts';
 import { errorDiagnostics } from '../error-diagnostics.ts';
 import { launchErrorPreview } from '../launch-error-preview.ts';
-import { readWorkspaceState } from '../supervisor/state.ts';
+import { readWorkspaceState } from '../workspace-state.ts';
 import { captureWorkspaceCrashes } from '../native-crash.ts';
 
 const LEVEL_WIDTH = 5;

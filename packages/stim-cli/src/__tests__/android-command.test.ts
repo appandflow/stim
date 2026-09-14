@@ -26,7 +26,7 @@ import { collectorProcessTitle } from '../collector/ownership.ts';
 import { loadConfig, setDevice, setProjectSetting, upsertProject } from '../config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { emulatorLogFile, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
-import { writeWorkspaceState } from '../supervisor/run.ts';
+import { writeWorkspaceState } from '../workspace-state.ts';
 import { resolveMetroWithRetry } from '../commands/ios.ts';
 import {
   NO_DEVICE,
