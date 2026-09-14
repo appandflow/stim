@@ -1,92 +1,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 
-const DEFAULT_LOCK_WAIT_MS = 12000;
-const DEFAULT_LOCK_POLL_MS = 25;
-const lockDepths = new Map<string, number>();
-
-export interface DirLockOptions {
-  /** @deprecated Occupied locks are never expired. */
-  staleMs?: number;
-  waitMs?: number;
-  pollMs?: number;
-  ensureParent?: () => void;
-}
-
-function sleepSync(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-function acquireDirLock(
-  lockPath: string,
-  {
-    waitMs,
-    pollMs,
-    ensureParent,
-  }: Required<Pick<DirLockOptions, 'waitMs' | 'pollMs'>> & Pick<DirLockOptions, 'ensureParent'>,
-): string {
-  ensureParent?.();
-  const deadline = Date.now() + waitMs;
-  for (;;) {
-    try {
-      fs.mkdirSync(lockPath);
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error;
-    }
-    if (Date.now() >= deadline) {
-      const error = new Error(
-        `Timed out waiting for the lock at ${lockPath}. ` +
-          'Another Stim process is holding it; if none is running, remove that directory.',
-      );
-      (error as Error & { code?: string; lockPath?: string }).code = 'STIM_LOCK_TIMEOUT';
-      (error as Error & { code?: string; lockPath?: string }).lockPath = lockPath;
-      throw error;
-    }
-    sleepSync(pollMs);
-  }
-  const ownerPath = path.join(lockPath, randomUUID());
-  try {
-    fs.writeFileSync(ownerPath, '', { flag: 'wx' });
-    return ownerPath;
-  } catch (error) {
-    fs.rmdirSync(lockPath);
-    throw error;
-  }
-}
-
-function releaseDirLock(lockPath: string, ownerPath: string): void {
-  try {
-    fs.unlinkSync(ownerPath);
-    fs.rmdirSync(lockPath);
-  } catch {}
-}
-
-export function withDirLock<T>(
-  lockPath: string,
-  fn: () => T,
-  { waitMs = DEFAULT_LOCK_WAIT_MS, pollMs = DEFAULT_LOCK_POLL_MS, ensureParent }: DirLockOptions = {},
-): T {
-  const depth = lockDepths.get(lockPath) || 0;
-  if (depth > 0) {
-    lockDepths.set(lockPath, depth + 1);
-    try {
-      return fn();
-    } finally {
-      lockDepths.set(lockPath, (lockDepths.get(lockPath) ?? 1) - 1);
-    }
-  }
-  const ownerPath = acquireDirLock(lockPath, { waitMs, pollMs, ensureParent });
-  lockDepths.set(lockPath, 1);
-  try {
-    return fn();
-  } finally {
-    lockDepths.set(lockPath, 0);
-    releaseDirLock(lockPath, ownerPath);
-  }
-}
+import { withDirLock } from './dir-lock.ts';
+export { withDirLock, type DirLockOptions } from './dir-lock.ts';
+export { quotedPath } from './quoted-path.ts';
 
 export function configDir(): string {
   return process.env.STIM_HOME || path.join(os.homedir(), '.stim');

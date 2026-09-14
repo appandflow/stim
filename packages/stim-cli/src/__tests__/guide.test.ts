@@ -287,6 +287,9 @@ test('short lock recovery requires checking the holder before manual removal', (
   const body = renderSection('errors', 'STIM_LOCK_TIMEOUT');
   expect(body).toMatch(/never expire based on age/);
   expect(body).toMatch(/if none is running, remove the named directory/);
+  expect(body).toMatch(/proven-dead owner is recovered automatically/);
+  expect(body).toContain('STIM_CLAIM_UNAVAILABLE');
+  expect(body).toMatch(/empty directory.*before publication/s);
 });
 
 test('the rendered guide carries the warm --refresh contract, not just its source', () => {

@@ -21,10 +21,23 @@
       "types": "./dist/index.d.mts",
       "module-sync": "./dist/index.mjs",
       "default": "./dist/index.mjs"
+    },
+    "./ownership-claim": {
+      "types": "./dist/ownership-claim.d.mts",
+      "module-sync": "./dist/ownership-claim.mjs",
+      "default": "./dist/ownership-claim.mjs"
+    },
+    "./process-identity": {
+      "types": "./dist/process-identity.d.mts",
+      "module-sync": "./dist/process-identity.mjs",
+      "default": "./dist/process-identity.mjs"
     }
   },
   "scripts": {
     "build": "tsdown"
+  },
+  "dependencies": {
+    "unique-pid": "0.1.1"
   },
   "engines": {
     "node": "^20.19.4 || >=22.12.0"

@@ -1,8 +1,39 @@
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { once } from 'node:events';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withDirLock } from '../index.ts';
+
+const faults = vi.hoisted(() => ({
+  created: null as null | ((path: string) => void),
+  removed: null as null | ((path: string) => void),
+}));
+
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...fs,
+    mkdirSync: (...args: Parameters<typeof fs.mkdirSync>) => {
+      const result = fs.mkdirSync(...args);
+      faults.created?.(String(args[0]));
+      return result;
+    },
+    rmSync: (...args: Parameters<typeof fs.rmSync>) => {
+      fs.rmSync(...args);
+      faults.removed?.(String(args[0]));
+    },
+  };
+});
 
 const CORE_URL = new URL('../index.ts', import.meta.url).href;
 const CHILD_SCRIPT = `
@@ -25,6 +56,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  faults.created = null;
+  faults.removed = null;
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
 });
@@ -48,8 +81,9 @@ test('a competing process cannot take an aged lock while its holder is inside', 
   expect(withDirLock(lock, () => 'released')).toBe('released');
 });
 
-test('an abandoned directory needs explicit removal even when it is old', () => {
+test.each(['empty', 'legacy'])('an unidentified %s directory needs explicit removal even when it is old', (kind) => {
   mkdirSync(lock);
+  if (kind === 'legacy') writeFileSync(join(lock, 'old-owner-token'), '');
   const old = new Date(Date.now() - 60_000);
   utimesSync(lock, old, old);
   const body = vi.fn<() => void>();
@@ -64,6 +98,123 @@ test('an abandoned directory needs explicit removal even when it is old', () => 
   expect(withDirLock(lock, () => 'recovered')).toBe('recovered');
 });
 
+function contender(): unknown {
+  return JSON.parse(
+    execFileSync(process.execPath, ['--input-type=module', '-e', CHILD_SCRIPT, CORE_URL, lock], {
+      env: process.env,
+      encoding: 'utf8',
+      timeout: 5000,
+    }),
+  );
+}
+
+test('a contender cannot enter the empty root before the first owner publishes its claim', () => {
+  faults.created = (path) => {
+    if (path !== lock) return;
+    faults.created = null;
+    expect(contender()).toEqual({ code: 'STIM_LOCK_TIMEOUT', lockPath: lock });
+    expect(readdirSync(lock)).toEqual([]);
+  };
+  expect(withDirLock(lock, () => 'published')).toBe('published');
+  expect(existsSync(lock)).toBe(false);
+});
+
+test('a contender cannot enter the empty root between claim removal and directory removal', () => {
+  faults.removed = (path) => {
+    if (!path.startsWith(lock) || !path.endsWith('.claim')) return;
+    faults.removed = null;
+    expect(contender()).toEqual({ code: 'STIM_LOCK_TIMEOUT', lockPath: lock });
+  };
+  withDirLock(lock, () => {});
+  expect(existsSync(lock)).toBe(false);
+  expect(withDirLock(lock, () => 'released')).toBe('released');
+});
+
+test('nested calls retain the outer claim when the inner body throws', () => {
+  withDirLock(lock, () => {
+    expect(() =>
+      withDirLock(lock, () => {
+        throw new Error('inner');
+      }),
+    ).toThrow('inner');
+    expect(contender()).toEqual({ code: 'STIM_LOCK_TIMEOUT', lockPath: lock });
+  });
+  expect(existsSync(lock)).toBe(false);
+});
+
+async function killHolder(): Promise<void> {
+  const child = spawn(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `
+    const { withDirLock } = await import(process.argv[1]);
+    withDirLock(process.argv[2], () => {
+      process.stdout.write('held');
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30000);
+    });
+  `,
+      CORE_URL,
+      lock,
+    ],
+    { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  const done = once(child, 'exit');
+  try {
+    await once(child.stdout!, 'data');
+    child.kill('SIGKILL');
+    await done;
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  }
+}
+
+test('a killed owner with a published identity is recovered without waiting', async () => {
+  await killHolder();
+  expect(existsSync(lock)).toBe(true);
+  expect(withDirLock(lock, () => 'recovered', { waitMs: 0 })).toBe('recovered');
+  expect(existsSync(lock)).toBe(false);
+});
+
+test('concurrent dead-owner reapers preserve each replacement owner and serialize updates', async () => {
+  await killHolder();
+  const counter = join(home, 'counter');
+  writeFileSync(counter, '0');
+  const workers = Array.from({ length: 4 }, () =>
+    spawn(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `
+    const { withDirLock } = await import(process.argv[1]);
+    const { readFileSync, writeFileSync } = await import('node:fs');
+    for (let i = 0; i < 10; i++) {
+      withDirLock(process.argv[2], () => {
+        const value = Number(readFileSync(process.argv[3], 'utf8'));
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
+        writeFileSync(process.argv[3], String(value + 1));
+      }, { waitMs: 5000, pollMs: 2 });
+    }
+  `,
+        CORE_URL,
+        lock,
+        counter,
+      ],
+      { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] },
+    ),
+  );
+  try {
+    const exits = await Promise.all(workers.map((child) => once(child, 'exit')));
+    expect(exits).toEqual(workers.map(() => [0, null]));
+    expect(readFileSync(counter, 'utf8')).toBe('40');
+    expect(existsSync(lock)).toBe(false);
+  } finally {
+    for (const child of workers) if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  }
+});
+
 test('release keeps a replacement directory and its owner', () => {
   withDirLock(lock, () => {
     rmSync(lock, { recursive: true });
@@ -72,4 +223,23 @@ test('release keeps a replacement directory and its owner', () => {
   });
 
   expect(readdirSync(lock)).toEqual(['replacement-owner']);
+});
+
+test('a missing parent retains its filesystem error and never enters the body', () => {
+  const body = vi.fn<() => void>();
+  expect(() => withDirLock(join(home, 'missing', 'entry.lock'), body)).toThrow(
+    expect.objectContaining({ code: 'ENOENT' }),
+  );
+  expect(body).not.toHaveBeenCalled();
+});
+
+test('a malformed published record refuses with its claim path and keeps the record', () => {
+  const directory = join(lock, 'exclusive');
+  mkdirSync(directory, { recursive: true });
+  const claimPath = join(directory, 'broken.claim');
+  writeFileSync(claimPath, 'partial');
+  const body = vi.fn<() => void>();
+  expect(() => withDirLock(lock, body)).toThrow(expect.objectContaining({ code: 'STIM_CLAIM_REFUSED', claimPath }));
+  expect(body).not.toHaveBeenCalled();
+  expect(readFileSync(claimPath, 'utf8')).toBe('partial');
 });

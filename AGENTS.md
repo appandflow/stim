@@ -132,13 +132,21 @@ changes, and wait for the new checks.
 - **Locked state.** Lock every read-modify-write to global config or workspace
   state. Use atomic writes. An ownership claim held across a long operation -- a
   build, an install, a supervisor lifetime -- goes through
-  `src/ownership-claim.ts`: a claim built privately and renamed into place, named
+  `@stim-cli/core/ownership-claim` (re-exported by the CLI): a claim built privately
+  and renamed into place, named
   by its own token, whose liveness is the holder's `ProcessRecord` read through
   `inspectProcessIdentity`. No mtime, no heartbeat, no staleness threshold, and
   no second implementation. A state it cannot establish is a refusal naming the
   claim and the command that removes it, never a silent wait or a reap. A
   process that cannot capture its own identity takes no claim and refuses with
   `STIM_CLAIM_UNAVAILABLE`; it never runs the guarded operation unprotected.
+  Short synchronous transactions use core `withDirLock`, which shares that
+  claim protocol and retains reentrant nesting and bounded waiting. Keep
+  subprocess work outside short locks and protect it with a child-aware claim.
+  An empty or legacy lock directory has no verifiable owner and stays blocked;
+  only a complete claim whose owner is proven gone is automatically recovered.
+  Core owns the `unique-pid` dependency and process-identity implementation;
+  cache packages remain usable without the CLI.
   Removing a claim set is `clearFreeClaimSet`, which takes the set's own claim
   first, so no sweep can delete a claim taken since it was surveyed. Device
   leases use a declared expiry because the holder can be an agent with no

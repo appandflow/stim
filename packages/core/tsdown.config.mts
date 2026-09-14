@@ -1,7 +1,7 @@
 import { defineConfig } from 'tsdown';
 
 export default defineConfig({
-  entry: { index: 'index.ts' },
+  entry: { index: 'index.ts', 'ownership-claim': 'ownership-claim.ts', 'process-identity': 'process-identity.ts' },
   format: 'esm',
   dts: true,
   outDir: 'dist',
