@@ -141,7 +141,11 @@ changes, and wait for the new checks.
   process that cannot capture its own identity takes no claim and refuses with
   `STIM_CLAIM_UNAVAILABLE`; it never runs the guarded operation unprotected.
   Short synchronous transactions use core `withDirLock`, which shares that
-  claim protocol and retains reentrant nesting and bounded waiting. Keep
+  claim protocol at `<lock>.claims` and retains reentrant nesting and bounded
+  waiting. It holds that claim while acquiring, using, and releasing the
+  legacy-visible lock directory. Recover a recognized compatibility marker
+  only under that exclusive claim, and remove a visible directory only after
+  successfully unlinking the matching marker. Keep
   subprocess work outside short locks and protect it with a child-aware claim.
   An empty or legacy lock directory has no verifiable owner and stays blocked;
   only a complete claim whose owner is proven gone is automatically recovered.

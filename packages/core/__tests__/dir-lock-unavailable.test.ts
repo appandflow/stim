@@ -23,6 +23,7 @@ test('unavailable identity neither creates a lock nor runs an unprotected body',
   const body = vi.fn<() => void>();
   expect(() => withDirLock(lock, body)).toThrow(expect.objectContaining({ code: 'STIM_CLAIM_UNAVAILABLE' }));
   expect(existsSync(lock)).toBe(false);
+  expect(existsSync(`${lock}.claims`)).toBe(false);
   expect(body).not.toHaveBeenCalled();
 });
 

@@ -572,43 +572,13 @@ function settleOrRelease(claim: ClaimHandle): ClaimSetState {
   }
 }
 
-function prepareDirClaimRoot(root: string): boolean {
-  try {
-    mkdirSync(root);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
-      throw new MissingClaimStoreError((error as Error).message, { cause: error });
-    }
-    if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error;
-    if (!statSync(root).isDirectory()) throw error;
-  }
-  return [exclusiveClaimDir(root), sharedClaimDir(root)].some((dir) => {
-    const listed = names(dir);
-    return listed === 'unreadable' || listed.some((name) => name.endsWith(CLAIM_SUFFIX));
-  });
-}
-
-export function tryAcquireDirClaim(root: string): ClaimAttempt {
-  return acquireClaim({ root, mode: 'exclusive', label: 'directory lock' }, true);
-}
-
-export function tryAcquireClaim(options: ClaimOptions): ClaimAttempt {
-  return acquireClaim(options, false);
-}
-
-function acquireClaim(
-  { root, mode, details = {}, label = 'ownership' }: ClaimOptions,
-  directoryLock: boolean,
-): ClaimAttempt {
+export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' }: ClaimOptions): ClaimAttempt {
   const owner = selfOwner();
   const reaped: ClaimHolder[] = [];
 
   for (let attempt = 0; attempt < PUBLISH_ATTEMPTS; attempt++) {
     try {
-      if (directoryLock) {
-        if (!prepareDirClaimRoot(root)) return { reaped };
-      } else createClaimDir(root);
+      createClaimDir(root);
     } catch (err) {
       const code = (err as NodeJS.ErrnoException)?.code;
       if (code === 'EEXIST' || code === 'ENOTDIR') {

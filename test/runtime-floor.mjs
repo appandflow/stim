@@ -54,7 +54,7 @@ try {
   const lock = join(home, 'runtime.lock');
   assert.equal(
     core.withDirLock(lock, () => {
-      assert.equal(claims.readClaimSet(lock).live[0].owner.pid, process.pid);
+      assert.equal(claims.readClaimSet(`${lock}.claims`).live[0].owner.pid, process.pid);
       return importedCore.withDirLock(lock, () => 'nested', { waitMs: 0 });
     }),
     'nested',
