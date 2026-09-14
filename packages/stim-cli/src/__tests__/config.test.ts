@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, existsSync, utimesSync, writeFileSync } from 'fs';
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, existsSync, writeFileSync } from 'fs';
 import { execFile } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -118,15 +118,6 @@ test('withConfigLock releases the lock when the body throws', () => {
   ).toThrow(/boom/);
   expect(existsSync(join(tmpHome, 'config.lock'))).toBe(false);
   expect(withConfigLock(() => 'ok')).toBe('ok');
-});
-
-test('withConfigLock takes over a stale lock left by a dead process', () => {
-  const lock = join(tmpHome, 'config.lock');
-  mkdirSync(lock);
-  const longAgo = new Date(Date.now() - 60000);
-  utimesSync(lock, longAgo, longAgo);
-  expect(withConfigLock(() => 'taken over')).toBe('taken over');
-  expect(existsSync(lock)).toBe(false);
 });
 
 test('concurrent processes each keep their record', async () => {

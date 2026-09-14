@@ -1,14 +1,14 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
-const DEFAULT_LOCK_STALE_MS = 10000;
 const DEFAULT_LOCK_WAIT_MS = 12000;
 const DEFAULT_LOCK_POLL_MS = 25;
 const lockDepths = new Map<string, number>();
 
 export interface DirLockOptions {
+  /** @deprecated Occupied locks are never expired. */
   staleMs?: number;
   waitMs?: number;
   pollMs?: number;
@@ -22,32 +22,19 @@ function sleepSync(ms: number): void {
 function acquireDirLock(
   lockPath: string,
   {
-    staleMs,
     waitMs,
     pollMs,
     ensureParent,
-  }: Required<Pick<DirLockOptions, 'staleMs' | 'waitMs' | 'pollMs'>> & Pick<DirLockOptions, 'ensureParent'>,
-): void {
+  }: Required<Pick<DirLockOptions, 'waitMs' | 'pollMs'>> & Pick<DirLockOptions, 'ensureParent'>,
+): string {
   ensureParent?.();
   const deadline = Date.now() + waitMs;
   for (;;) {
     try {
       fs.mkdirSync(lockPath);
-      return;
+      break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error;
-    }
-    let ageMs: number | null = null;
-    try {
-      ageMs = Date.now() - fs.statSync(lockPath).mtimeMs;
-    } catch {
-      continue;
-    }
-    if (ageMs > staleMs) {
-      try {
-        fs.rmSync(lockPath, { recursive: true, force: true });
-      } catch {}
-      continue;
     }
     if (Date.now() >= deadline) {
       const error = new Error(
@@ -60,23 +47,27 @@ function acquireDirLock(
     }
     sleepSync(pollMs);
   }
+  const ownerPath = path.join(lockPath, randomUUID());
+  try {
+    fs.writeFileSync(ownerPath, '', { flag: 'wx' });
+    return ownerPath;
+  } catch (error) {
+    fs.rmdirSync(lockPath);
+    throw error;
+  }
 }
 
-function releaseDirLock(lockPath: string): void {
+function releaseDirLock(lockPath: string, ownerPath: string): void {
   try {
-    fs.rmSync(lockPath, { recursive: true, force: true });
+    fs.unlinkSync(ownerPath);
+    fs.rmdirSync(lockPath);
   } catch {}
 }
 
 export function withDirLock<T>(
   lockPath: string,
   fn: () => T,
-  {
-    staleMs = DEFAULT_LOCK_STALE_MS,
-    waitMs = DEFAULT_LOCK_WAIT_MS,
-    pollMs = DEFAULT_LOCK_POLL_MS,
-    ensureParent,
-  }: DirLockOptions = {},
+  { waitMs = DEFAULT_LOCK_WAIT_MS, pollMs = DEFAULT_LOCK_POLL_MS, ensureParent }: DirLockOptions = {},
 ): T {
   const depth = lockDepths.get(lockPath) || 0;
   if (depth > 0) {
@@ -87,13 +78,13 @@ export function withDirLock<T>(
       lockDepths.set(lockPath, (lockDepths.get(lockPath) ?? 1) - 1);
     }
   }
-  acquireDirLock(lockPath, { staleMs, waitMs, pollMs, ensureParent });
+  const ownerPath = acquireDirLock(lockPath, { waitMs, pollMs, ensureParent });
   lockDepths.set(lockPath, 1);
   try {
     return fn();
   } finally {
     lockDepths.set(lockPath, 0);
-    releaseDirLock(lockPath);
+    releaseDirLock(lockPath, ownerPath);
   }
 }
 

@@ -881,8 +881,10 @@ captured"  (in metro.ndjson, bare RN)
 "Timed out waiting for the lock at <path>."
   Short directory locks serialize writes to config, workspace state, device
   leases, ownership records, metadata, and cache manifests. The path identifies
-  the lock. A lock older than 10s is taken over automatically. Wait for the
-  command holding it; if none is running, remove the named directory.`,
+  the lock. These locks wait up to 12s and never expire based on age. Wait for
+  the command holding it; if none is running, remove the named directory.
+  A crash can leave one of these short locks behind; it needs the same manual
+  recovery because the lock does not record a process identity.`,
     },
     teardown: {
       summary: 'an unmanaged port, an unverified supervisor, and a failed device teardown',

@@ -276,6 +276,12 @@ test('the errors topic documents both codes the ownership-claim primitive raises
   }
 });
 
+test('short lock recovery requires checking the holder before manual removal', () => {
+  const body = renderSection('errors', 'STIM_LOCK_TIMEOUT');
+  expect(body).toMatch(/never expire based on age/);
+  expect(body).toMatch(/if none is running, remove the named directory/);
+});
+
 test('the rendered guide carries the warm --refresh contract, not just its source', () => {
   const options = renderSection('lifecycle', 'options');
   assert(options);
