@@ -101,16 +101,28 @@ test.each([
   { app: { id: 'another-project' } },
   { app: undefined },
   { app: {} },
+  { app: undefined, project: { id: 'another-project' } },
+  { app: undefined, project: {} },
+  { app: { id: 'another-project' }, project: { id: projectId } },
+  { app: { id: '' }, project: { id: projectId } },
   { isForIosSimulator: false },
   { artifacts: {} },
 ])('does not select an incompatible EAS artifact: %j', (change) => {
   expect(selectEasBuild([{ ...build, ...change }], target)).toBeNull();
 });
 
-test.each(['ios', 'android'] as const)(
-  'uses the matching %s artifact from EAS CLI without copying or deleting it',
-  async (platform) => {
-    const { resolve, calls } = fixture({ platform, builds: [{ ...build, platform: platform.toUpperCase() }] });
+test.each([
+  ['ios', 'app'],
+  ['android', 'app'],
+  ['ios', 'project'],
+  ['android', 'project'],
+] as const)(
+  'uses the matching %s artifact with %s identity from EAS CLI without copying or deleting it',
+  async (platform, identity) => {
+    const { resolve, calls } = fixture({
+      platform,
+      builds: [{ ...build, platform: platform.toUpperCase(), app: undefined, [identity]: { id: projectId } }],
+    });
     const first = await resolve();
     expect(first).toMatchObject({ ok: true, cacheHit: 'remote', fingerprint });
     if (!first?.ok) throw new Error(JSON.stringify(first));

@@ -85,7 +85,7 @@ export function selectEasBuild(
       build.platform === platform.toUpperCase() &&
       build.buildProfile === profile &&
       object(build.fingerprint).hash === fingerprint &&
-      object(build.app).id === projectId &&
+      (object(build.app).id ?? object(build.project).id) === projectId &&
       (platform !== 'ios' || build.isForIosSimulator === !physical) &&
       build.distribution === 'INTERNAL' &&
       typeof object(build.artifacts).applicationArchiveUrl === 'string'
