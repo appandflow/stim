@@ -270,6 +270,7 @@ test('parking retains a busy eviction for later GC without deleting or losing ei
     removeParkedAfter('android', 'stim-old', () => {
       const result = teardownOwnedAvd('stim-new', {
         del: true,
+        owner: { projectPath: '/source' },
         park: { projectPath: '/source', max: 1, configuration },
       });
       expect(result.parked?.name).toBe('stim-new');
