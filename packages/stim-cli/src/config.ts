@@ -148,6 +148,11 @@ export function removeProject(projectPath: string): void {
   withConfigLock(() => {
     const cfg = loadConfig();
     if (!cfg?.projects?.[projectPath]) return;
+    if (Object.keys(cfg.projects[projectPath].ports ?? {}).length) {
+      throw new Error(
+        `Named ports remain for ${projectPath}; stop or release them before removing its registry entry.`,
+      );
+    }
     for (const { platforms } of projectDeviceSlots(cfg.projects[projectPath])) {
       if (platforms.android?.owned && platforms.android.avdName) {
         releaseClaim(acquireAvdClaim(platforms.android.avdName));
@@ -166,6 +171,7 @@ export function claimMetroPort(projectPath: string, port: number): number | null
     }
     for (const [path, proj] of Object.entries(cfg.projects)) {
       if (path !== projectPath && proj?.metroPort === port) return null;
+      if (Object.values(proj?.ports ?? {}).includes(port)) return null;
     }
     cfg.projects[projectPath].metroPort = port;
     saveConfig(cfg);

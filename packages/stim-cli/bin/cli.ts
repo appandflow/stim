@@ -8,6 +8,7 @@ const commands = new Map<string, () => Promise<CommandModule>>([
   ['doctor', () => import('../src/commands/doctor.ts')],
   ['worktree', () => import('../src/commands/worktree.ts')],
   ['start', () => import('../src/commands/start.ts')],
+  ['ports', () => import('../src/commands/ports.ts')],
   ['stop', () => import('../src/commands/stop.ts')],
   ['ios', () => import('../src/commands/ios.ts')],
   ['android', () => import('../src/commands/android.ts')],

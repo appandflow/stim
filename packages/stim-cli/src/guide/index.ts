@@ -1,6 +1,7 @@
 import agent from './agent.ts';
 import facts from './facts.ts';
 import metro from './metro.ts';
+import ports from './ports.ts';
 import logs from './logs.ts';
 import errors from './errors.ts';
 import lifecycle from './lifecycle.ts';
@@ -13,6 +14,7 @@ const TOPICS: Record<string, GuideTopic> = {
   agent,
   facts,
   metro,
+  ports,
   logs,
   errors,
   lifecycle,

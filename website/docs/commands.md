@@ -77,6 +77,36 @@ including those in installed native modules. Stop native builds before this
 repair. The next build recreates these files; source, custom launcher settings,
 and shared ccache entries are preserved. See `stim guide lifecycle options`.
 
+## `ports`
+
+```text
+stim ports
+stim ports get <label>
+stim ports stop [label] [--dry-run]
+stim ports release [label]
+```
+
+Reserves TCP ports 8900–8999 for web, Cosmos, or API servers started by the
+project. `get` prints only the number and reuses an existing allocation.
+New allocations skip reserved and occupied ports; retry notices go to stderr.
+`ports` lists named allocations and Metro, marked managed.
+
+Labels start with a letter and contain up to 64 letters, digits, underscores,
+or hyphens. `metro` is reserved for `stim start` and `stim stop`.
+
+`stop` terminates listeners on the selected named ports, including processes
+outside the workspace, and prints their PIDs and commands. It sends SIGTERM,
+then SIGKILL after two seconds if needed. `--dry-run` previews without killing
+or releasing. Failed stops retain the allocation. `release` removes the
+reservation without signalling the server. Omit the label to select all named
+ports. Neither command touches Metro; `stim stop` leaves named ports alone.
+
+`worktree remove` stops and releases named ports. `gc` reports allocations for
+missing workspaces, and `gc --delete` stops and releases them. Unmounted or
+unresolved workspace paths remain registered.
+
+See [server examples and limitations](./dev-server-and-logs.md#named-server-ports).
+
 ## `start`
 
 ```text

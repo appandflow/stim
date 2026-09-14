@@ -173,3 +173,8 @@ a branch only when it has no unique commits.
 
 On the source checkout, `worktree remove` only reclaims the Stim environment.
 It does not remove that checkout.
+
+Named ports allocated by `stim ports get <label>` belong to the workspace.
+`worktree remove` stops their TCP listeners and releases the allocations;
+`gc --delete` does the same for missing workspaces. `stim stop` leaves them
+alone. See [named server ports](./dev-server-and-logs.md#named-server-ports).
