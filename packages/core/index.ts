@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { withDirLock } from './dir-lock.ts';
 export { withDirLock, type DirLockOptions } from './dir-lock.ts';
 export { quotedPath } from './quoted-path.ts';
+export { artifactIn, resolveArtifact, storeArtifact, type StoreArtifactOptions } from './artifact-store.ts';
 
 export function configDir(): string {
   return process.env.STIM_HOME || path.join(os.homedir(), '.stim');

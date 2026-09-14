@@ -3,7 +3,7 @@
 Shared internal contracts for Stim and its cache packages.
 
 The package contains runtime-path resolution, cache-key generation, cache
-registration, and identity-aware ownership claims. It is not a user-facing API.
+registration, filesystem artifact storage, and identity-aware ownership claims. It is not a user-facing API.
 
 `withDirLock` runs short synchronous, reentrant transactions with a bounded wait
 for a live holder. It shares the claim protocol in `@stim-cli/core/ownership-claim`

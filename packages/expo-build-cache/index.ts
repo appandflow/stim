@@ -1,6 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { buildCacheRoot, buildCacheKey, registerCache } from '@stim-cli/core';
+import {
+  artifactIn,
+  buildCacheRoot,
+  buildCacheKey,
+  registerCache,
+  resolveArtifact,
+  storeArtifact,
+} from '@stim-cli/core';
 import type { BuildRunOptions as RunOptions } from '@stim-cli/core';
 
 export { buildCacheKey };
@@ -18,17 +25,6 @@ function entryDir(platform: string, key: string): string {
 
 function shortKey(key: string, fingerprintHash: string): string {
   return `${String(fingerprintHash).slice(0, 12)}${key.slice(String(fingerprintHash).length)}`;
-}
-
-function artifactIn(dir: string): string | null {
-  if (!fs.existsSync(dir)) return null;
-  let found;
-  try {
-    found = fs.readdirSync(dir).find((f) => f.endsWith('.app') || f.endsWith('.apk'));
-  } catch {
-    return null;
-  }
-  return found ? path.join(dir, found) : null;
 }
 
 function registerOnce(): void {
@@ -55,12 +51,9 @@ export async function resolveBuildCache({
 }): Promise<string | null> {
   registerOnce();
   const key = buildCacheKey(platform, fingerprintHash, runOptions);
-  const hit = artifactIn(entryDir(platform, key));
+  const hit = resolveArtifact(entryDir(platform, key));
   if (hit) {
     console.log(`[build-cache] hit ${platform} ${shortKey(key, fingerprintHash)}`);
-    try {
-      fs.utimesSync(path.dirname(hit), new Date(), new Date());
-    } catch {}
     return hit;
   }
   console.log(`[build-cache] miss ${platform} ${shortKey(key, fingerprintHash)}`);
@@ -85,23 +78,11 @@ export async function uploadBuildCache({
   const dest = entryDir(platform, key);
   if (artifactIn(dest)) return artifactIn(dest);
 
-  const staging = `${dest}.staging-${process.pid}`;
-  fs.rmSync(staging, { recursive: true, force: true });
-  fs.mkdirSync(staging, { recursive: true });
-  try {
-    execFileSync('cp', ['-c', '-R', buildPath, path.join(staging, path.basename(buildPath))]);
-  } catch {
-    execFileSync('cp', ['-R', buildPath, path.join(staging, path.basename(buildPath))]);
-  }
-
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.rmSync(dest, { recursive: true, force: true });
-  try {
-    fs.renameSync(staging, dest);
-  } catch {
-    fs.rmSync(staging, { recursive: true, force: true });
-  }
+  const stored = storeArtifact(dest, buildPath, {
+    runFile: execFileSync,
+    onRenameError: (staging) => fs.rmSync(staging, { recursive: true, force: true }),
+  });
 
   console.log(`[build-cache] stored ${platform} ${shortKey(key, fingerprintHash)}`);
-  return artifactIn(dest);
+  return stored;
 }
