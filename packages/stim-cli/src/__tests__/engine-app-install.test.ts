@@ -1131,9 +1131,10 @@ describe('unverifiedLaunchLines', () => {
     expect(text.includes(url)).toBeTruthy();
   });
 
-  test('with no scheme it offers the launch command instead of a deep link', () => {
+  test('with no scheme it restarts the exact app without attaching a console', () => {
     const text = unverifiedLaunchLines({ platform: 'ios', metroPort: 8082, bundleId: 'com.x', udid: 'U1' }).join('\n');
-    expect(text).toMatch(/xcrun simctl launch --console U1 com\.x/);
+    expect(text).toContain('Re-launch: xcrun simctl launch --terminate-running-process U1 com.x');
+    expect(text).not.toContain('--console');
   });
 
   test('Android recovery restarts the reported app through its resolved launcher activity', () => {

@@ -1322,7 +1322,7 @@ export function unverifiedLaunchLines({
     if (url && udid) {
       push(`Retry the deep link: xcrun simctl openurl ${udid} '${url}'`);
     } else if (udid && bundleId) {
-      push(`Re-launch: xcrun simctl launch --console ${udid} ${bundleId}`);
+      push(`Re-launch: xcrun simctl launch --terminate-running-process ${udid} ${bundleId}`);
     }
   } else {
     if (url && serial) {
