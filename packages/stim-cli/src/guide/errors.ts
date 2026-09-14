@@ -892,8 +892,19 @@ captured"  (in metro.ndjson, bare RN)
   leases, ownership records, metadata, and cache manifests. The path identifies
   the lock. These locks wait up to 12s and never expire based on age. Wait for
   the command holding it; if none is running, remove the named directory.
-  A crash can leave one of these short locks behind; it needs the same manual
-  recovery because the lock does not record a process identity.`,
+  Short locks use the same process-identity claims as long operations, stored
+  beside the visible directory at <path>.claims. An opaque marker in the visible
+  directory also excludes older Stim versions. Only the exclusive claim holder
+  can recover a recognized marker. A
+  complete claim left by a proven-dead owner is recovered automatically on
+  the next attempt. An unreadable or undecodable record instead reports
+  STIM_CLAIM_REFUSED and names the claim to inspect; an unavailable native
+  identity reports STIM_CLAIM_UNAVAILABLE without running the protected work.
+  Older lock directories have no process identity. A visible directory left
+  empty before marker publication or during final removal also cannot prove it is free.
+  These paths still time out; verify that no holder is running before removing
+  only the named directory. Standalone Metro and Expo cache packages use the
+  same core protocol and do not require the Stim CLI.`,
     },
     teardown: {
       summary: 'an unmanaged port, an unverified supervisor, and a failed device teardown',
