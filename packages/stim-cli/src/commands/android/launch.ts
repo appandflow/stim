@@ -27,7 +27,8 @@ import {
 } from '../../engine/app-install.ts';
 import { appReadinessMessage, formatDuration, launchErrorReport, phaseLine, stepTimer } from '../../command-output.ts';
 import { launchErrorPreview } from '../../launch-error-preview.ts';
-import { MODE_BARE, MODE_EXPO, writeWorkspaceLaunch, writeWorkspaceState } from '../../supervisor/state.ts';
+import { MODE_BARE, MODE_EXPO, writeWorkspaceLaunch } from '../../supervisor/state.ts';
+import { writeWorkspaceState } from '../../workspace-state.ts';
 import type {
   VerifyLaunchResultLike,
   RemoteUploadLike,

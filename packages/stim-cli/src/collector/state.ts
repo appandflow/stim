@@ -1,4 +1,4 @@
-import { readWorkspaceState, withWorkspaceStateLock, writeWorkspaceState } from '../supervisor/state.ts';
+import { readWorkspaceState, withWorkspaceStateLock, writeWorkspaceState } from '../workspace-state.ts';
 import { realpathSync } from 'node:fs';
 
 function collectorRoot(root: string): string {

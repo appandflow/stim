@@ -7,16 +7,8 @@ import { workspaceLogsDir } from '../paths.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { detectIsExpo } from '../project.ts';
 import { describeError } from './errors.ts';
-import {
-  MODE_BARE,
-  MODE_EXPO,
-  clearExpoMetroTunnel,
-  clearWorkspaceSupervisor,
-  writePidFile,
-  writeWorkspaceState,
-  readWorkspaceState,
-  withWorkspaceStateLock,
-} from './state.ts';
+import { MODE_BARE, MODE_EXPO, clearExpoMetroTunnel, clearWorkspaceSupervisor, writePidFile } from './state.ts';
+import { writeWorkspaceState, readWorkspaceState, withWorkspaceStateLock } from '../workspace-state.ts';
 
 export {
   MODE_BARE,
@@ -24,12 +16,8 @@ export {
   clearExpoMetroTunnel,
   clearWorkspaceSupervisor,
   readPidFile,
-  readWorkspaceState,
-  withWorkspaceStateLock,
   writePidFile,
-  writeWorkspaceState,
 } from './state.ts';
-export type { WorkspaceState } from './state.ts';
 
 interface ParsedSupervisorArgs {
   root?: string;

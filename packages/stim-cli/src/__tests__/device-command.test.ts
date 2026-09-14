@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { Command } from 'commander';
 import { grantLine, registerDevice, releasedLine, runLock, runUnlock, type DeviceDeps } from '../commands/device.ts';
 import { fileLeaseIo, listLeaseFiles, takeLease, type DeviceLease, type LeaseIo } from '../engine/device-lease.ts';
-import { readWorkspaceState } from '../supervisor/state.ts';
+import { readWorkspaceState } from '../workspace-state.ts';
 
 const PHONE = '00008101-000A10913C89001E';
 const SERIAL = 'RFCR7081Q9L';

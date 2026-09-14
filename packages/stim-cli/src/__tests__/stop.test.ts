@@ -467,7 +467,7 @@ test('clearSupervisorState removes a state file that held only the supervisor', 
 test('state-key cleanup waits for a concurrent state writer and retains its new session', async () => {
   writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: { pid: 7 } }));
   const script = join(tmpRoot, 'write-session-under-lock.mjs');
-  const stateModule = new URL('../supervisor/state.ts', import.meta.url).href;
+  const stateModule = new URL('../workspace-state.ts', import.meta.url).href;
   writeFileSync(
     script,
     `import { withWorkspaceStateLock, writeWorkspaceState } from ${JSON.stringify(stateModule)};

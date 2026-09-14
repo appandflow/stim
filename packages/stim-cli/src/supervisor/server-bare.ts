@@ -6,7 +6,7 @@ import { appendCacheStore, metroStoreRoot, registerMetroStore } from './metro-st
 import { supervisorError } from './errors.ts';
 import { bundleResponseMiddleware } from '../../shim/bundle-response.cjs';
 import { applyMetroCacheGeneration } from '../../shim/metro-cache-generation.cjs';
-import { readWorkspaceState } from './state.ts';
+import { readWorkspaceState } from '../workspace-state.ts';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type BareModule = any;

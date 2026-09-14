@@ -6,7 +6,8 @@ import { detectIsExpo } from '../project.ts';
 import { resolveSupervisorTarget } from './ownership.ts';
 import { expoSdkMajor } from './server-expo.ts';
 import { expoMetroConfigPath } from './metro-store.ts';
-import { clearWorkspaceSupervisor, readWorkspaceState, writeWorkspaceState } from './state.ts';
+import { clearWorkspaceSupervisor } from './state.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace-state.ts';
 import { supervisorError } from './errors.ts';
 
 export async function resetMetroCache(root: string): Promise<void> {

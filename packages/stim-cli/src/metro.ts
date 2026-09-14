@@ -3,7 +3,7 @@ import { isMetroRunning } from './ports.ts';
 import { readlinkSync, realpathSync } from 'fs';
 import { sep } from 'path';
 import { inspectProcessIdentity } from './process-identity.ts';
-import { readWorkspaceState } from './supervisor/state.ts';
+import { readWorkspaceState } from './workspace-state.ts';
 
 /**
  * True when some process with this pid exists right now. It cannot tell a recycled pid from the

@@ -14,7 +14,7 @@ import {
   registerMetroStore,
 } from './metro-store.ts';
 import { supervisorError } from './errors.ts';
-import { readWorkspaceState } from './state.ts';
+import { readWorkspaceState } from '../workspace-state.ts';
 
 function delay(ms: number): Promise<void> {
   return new Promise<void>((resolve) => {
