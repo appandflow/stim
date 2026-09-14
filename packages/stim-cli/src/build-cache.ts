@@ -1,14 +1,15 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, utimesSync, writeFileSync } from 'fs';
-import { basename, dirname, join } from 'path';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { join } from 'path';
 import * as expoFingerprint from '@expo/fingerprint';
 import type { Fingerprint, FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
 import { buildUploadTimeoutMs, type BuildCacheCapability, type ProviderCallResult } from '@stim-cli/cache';
+import { resolveArtifact, storeArtifact } from '@stim-cli/core';
 import { getExecutor } from './exec.ts';
 import { register } from './cache-manifest.ts';
 import { ASSET_MANIFEST_FILE, parseAssetManifest, type AssetManifest } from './engine/asset-manifest.ts';
 import { sharedBuildCache as cacheRoot } from './paths.ts';
 
-export { buildCacheKey } from '@stim-cli/core';
+export { artifactIn, buildCacheKey } from '@stim-cli/core';
 export { cacheRoot };
 
 export interface BuildRunOptions {
@@ -22,17 +23,6 @@ export interface BuildRunOptions {
 
 export function entryDir(platform: string, key: string, root: string = cacheRoot()): string {
   return join(root, platform, key);
-}
-
-export function artifactIn(dir: string): string | null {
-  if (!existsSync(dir)) return null;
-  let found;
-  try {
-    found = readdirSync(dir).find((f) => f.endsWith('.app') || f.endsWith('.apk'));
-  } catch {
-    return null;
-  }
-  return found ? join(dir, found) : null;
 }
 
 export type ProjectFingerprint = Fingerprint;
@@ -95,12 +85,7 @@ function registerOnce(root: string): void {
 }
 
 export function resolveBuild(platform: string, key: string, root: string = cacheRoot()): string | null {
-  const hit = artifactIn(entryDir(platform, key, root));
-  if (!hit) return null;
-  try {
-    utimesSync(dirname(hit), new Date(), new Date());
-  } catch {}
-  return hit;
+  return resolveArtifact(entryDir(platform, key, root));
 }
 
 export function storeBuild(
@@ -118,42 +103,27 @@ export function storeBuild(
 ): string | null {
   const options = typeof rootOrOptions === 'string' ? { root: rootOrOptions } : rootOrOptions || {};
   const root = options.root || cacheRoot();
-  const overwrite = Boolean(options.overwrite);
-
   if (!buildPath || !existsSync(buildPath)) {
     throw new Error(`No build to store at ${buildPath}`);
   }
   registerOnce(root);
 
-  const dest = entryDir(platform, key, root);
-  const existing = artifactIn(dest);
-  if (existing && !overwrite) return existing;
-
-  const staging = `${dest}.staging-${process.pid}`;
-  rmSync(staging, { recursive: true, force: true });
-  mkdirSync(staging, { recursive: true });
-  try {
-    getExecutor().runFile('cp', ['-c', '-R', buildPath, join(staging, basename(buildPath))]);
-  } catch {
-    getExecutor().runFile('cp', ['-R', buildPath, join(staging, basename(buildPath))]);
-  }
-
-  if (Array.isArray(options.sources)) {
-    try {
-      writeFileSync(join(staging, SOURCES_FILE), JSON.stringify(options.sources));
-    } catch {}
-  }
-
-  if (options.assetManifest) {
-    try {
-      writeFileSync(join(staging, ASSET_MANIFEST_FILE), JSON.stringify(options.assetManifest));
-    } catch {}
-  }
-
-  mkdirSync(dirname(dest), { recursive: true });
-  rmSync(dest, { recursive: true, force: true });
-  renameSync(staging, dest);
-  return artifactIn(dest);
+  return storeArtifact(entryDir(platform, key, root), buildPath, {
+    runFile: getExecutor().runFile,
+    overwrite: Boolean(options.overwrite),
+    writeMetadata: (staging) => {
+      if (Array.isArray(options.sources)) {
+        try {
+          writeFileSync(join(staging, SOURCES_FILE), JSON.stringify(options.sources));
+        } catch {}
+      }
+      if (options.assetManifest) {
+        try {
+          writeFileSync(join(staging, ASSET_MANIFEST_FILE), JSON.stringify(options.assetManifest));
+        } catch {}
+      }
+    },
+  });
 }
 
 export const PROVIDER_DOWNLOAD_DIR = 'cache-provider';

@@ -3,6 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 
+export { artifactIn, resolveArtifact, storeArtifact, type StoreArtifactOptions } from './artifact-store.ts';
+
 const DEFAULT_LOCK_STALE_MS = 10000;
 const DEFAULT_LOCK_WAIT_MS = 12000;
 const DEFAULT_LOCK_POLL_MS = 25;
