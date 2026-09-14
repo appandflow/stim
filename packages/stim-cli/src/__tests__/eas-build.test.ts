@@ -11,17 +11,17 @@ const fingerprint = 'a'.repeat(40);
 const projectId = 'project-1';
 const profile = 'development';
 const target = { platform: 'ios' as const, profile, fingerprint, projectId };
-const build = {
+const listedBuild = {
   id: 'build-1',
   status: 'FINISHED',
   platform: 'IOS',
-  buildProfile: profile,
   fingerprint: { hash: fingerprint },
-  project: { id: projectId },
+  app: { id: projectId },
   isForIosSimulator: true,
   distribution: 'INTERNAL',
   artifacts: { applicationArchiveUrl: 'https://example.com/app.tar.gz' },
 };
+const build = { ...listedBuild, buildProfile: profile };
 let home: string;
 let root: string;
 
@@ -98,7 +98,9 @@ test.each([
   { platform: 'ANDROID' },
   { buildProfile: 'production' },
   { fingerprint: { hash: 'b'.repeat(40) } },
-  { project: { id: 'another-project' } },
+  { app: { id: 'another-project' } },
+  { app: undefined },
+  { app: {} },
   { isForIosSimulator: false },
   { artifacts: {} },
 ])('does not select an incompatible EAS artifact: %j', (change) => {
