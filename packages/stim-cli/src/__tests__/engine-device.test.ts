@@ -1543,23 +1543,6 @@ describe('ensureOwnedDevice: android', () => {
         run(cmd: string) {
           run.push(cmd);
           if (cmd === 'emulator -list-avds') return avds.length ? `${avds.join('\n')}\n` : '';
-          if (/create avd/.test(cmd)) {
-            if (createAvdError) {
-              beforeCreateAvdError();
-              throw new Error(createAvdError);
-            }
-            const name = / -n "([^"]+)"/.exec(cmd)?.[1];
-            assert(name);
-            avds.push(name);
-            const root = process.env.ANDROID_AVD_HOME!;
-            const content = join(root, `${name}.avd`);
-            mkdirSync(content, { recursive: true });
-            writeFileSync(join(root, `${name}.ini`), `path=${content}\n`);
-            if (writeAvdFiles) {
-              writeFileSync(join(content, 'config.ini'), 'hw.cpu.ncore=4\ndisk.dataPartition.size=10G\n');
-            }
-            return '';
-          }
           if (/delete avd/.test(cmd)) {
             const name = / -n "([^"]+)"/.exec(cmd)?.[1];
             assert(name);
@@ -1588,6 +1571,24 @@ describe('ensureOwnedDevice: android', () => {
           return '';
         },
         spawn(cmd: string, args: readonly string[], opts?: object) {
+          if (args[0] === 'create') {
+            run.push([cmd, ...args].join(' '));
+            if (createAvdError) {
+              beforeCreateAvdError();
+              return makeExitingChild(1, createAvdError);
+            }
+            const name = args[args.indexOf('-n') + 1];
+            assert(name);
+            avds.push(name);
+            const root = process.env.ANDROID_AVD_HOME!;
+            const content = join(root, `${name}.avd`);
+            mkdirSync(content, { recursive: true });
+            writeFileSync(join(root, `${name}.ini`), `path=${content}\n`);
+            if (writeAvdFiles) {
+              writeFileSync(join(content, 'config.ini'), 'hw.cpu.ncore=4\ndisk.dataPartition.size=10G\n');
+            }
+            return makeExitingChild();
+          }
           onSpawn();
           spawn.push({ cmd, args, opts });
           return { pid: 9999, unref() {} };

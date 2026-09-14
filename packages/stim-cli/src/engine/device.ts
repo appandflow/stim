@@ -718,7 +718,7 @@ async function ensureOwnedAndroidDevice({
       };
     }
   }
-  const created = prepareOwnedAvd({
+  const created = await prepareOwnedAvd({
     projectPath,
     slot,
     label,

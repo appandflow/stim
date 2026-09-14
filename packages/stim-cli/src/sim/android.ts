@@ -195,10 +195,13 @@ export function pickDefaultSystemImage(
   );
 }
 
-export function createOwnedAvd(
+export async function createOwnedAvd(
   label: string,
-  { systemImage }: { systemImage?: string } = {},
-): { avdName: string; systemImage: string } {
+  {
+    systemImage,
+    spawn = (...args) => getExecutor().spawn(...args),
+  }: { systemImage?: string; spawn?: Executor['spawn'] } = {},
+): Promise<{ avdName: string; systemImage: string }> {
   const pick = pickDefaultSystemImage(listInstalledSystemImages(), { systemImage });
   if (!pick) {
     const arch = hostSystemImageArch();
@@ -207,9 +210,24 @@ export function createOwnedAvd(
     );
   }
   const avdName = ownedAvdName(label);
-  getExecutor().run(
-    `echo no | ${androidTool('avdmanager')} create avd -n "${avdName}" -k "${pick.pkg}" --device "${DEFAULT_AVD_DEVICE}"`,
-  );
+  const tool = androidToolPath('avdmanager');
+  const args = ['create', 'avd', '-n', avdName, '-k', pick.pkg, '--device', DEFAULT_AVD_DEVICE];
+  const child = spawn(tool, args, { detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  let stderr = '';
+  child.stdout?.on('data', () => {});
+  child.stderr?.on('data', (chunk) => {
+    stderr = (stderr + String(chunk)).slice(-64 * 1024 * 1024);
+  });
+  const completed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((finish, reject) => {
+    child.once('error', reject);
+    child.once('close', (code, signal) => finish({ code, signal }));
+  });
+  child.stdin?.on('error', () => {});
+  child.stdin?.end('no\n');
+  const result = await completed;
+  if (result.code !== 0) {
+    throw new Error(`Command failed: ${tool} ${args.join(' ')} (${result.signal ?? result.code})\n${stderr.trim()}`);
+  }
   return { avdName, systemImage: pick.pkg };
 }
 

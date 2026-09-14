@@ -241,8 +241,10 @@ code, never on the message.`,
   move-aside command. Inspect it first: the file may contain unrelated data.
   An existing backup prompts before overwriting; preserve both files.
   Android creation, recovery and teardown use per-AVD claims under
-  ~/.stim/avd-locks. Retry after a live creator or cleanup finishes. An
-  interrupted native operation can leave a pending child with no verifiable
+  ~/.stim/avd-locks. Creation records the avdmanager process group, so a claim
+  left by a killed creator becomes recoverable after that group exits. Retry
+  after a live creator or cleanup finishes. An interruption before the child
+  is recorded, or during synchronous teardown, can leave no verifiable
   identity: inspect the named claim and confirm that neither Stim nor its
   avdmanager or adb child is still using the AVD before removing only that
   claim. Keep the AVD and its incomplete workspace record. Once the claim is

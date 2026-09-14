@@ -170,6 +170,7 @@ export function makeExitingChild(code = 0, stderr = ''): ChildProcess {
   setImmediate(() => {
     if (stderr) child.stderr?.emit('data', Buffer.from(stderr));
     child.emit('exit', code, null);
+    child.emit('close', code, null);
   });
   return child;
 }
