@@ -618,6 +618,30 @@ function androidSlotOptions(options: RunAndroidOptions) {
   };
 }
 
+function avdSetupFailure(
+  error: unknown,
+  root: string,
+  logFile: string,
+): { code: string; message: string; remedy: string; extra?: FailExtra } {
+  const refusal = claimFailure(error, 'stim android');
+  if (refusal) return refusal;
+  const diag = noDeviceDiagnostic({
+    reason: `Could not ensure an owned Android emulator: ${(error as Error)?.message || error}`,
+    logFile,
+    localEmulator: !(error instanceof AvdRecoveryError),
+    remedy:
+      error instanceof AvdBootError
+        ? error.remedy
+        : 'Check that JAVA_HOME and ANDROID_HOME are set correctly, and that an arm64 system image is installed (`sdkmanager "system-images;android-36;google_apis;arm64-v8a"`).',
+  });
+  return {
+    code: NO_DEVICE,
+    message: diag.message,
+    remedy: diag.remedy,
+    extra: { lines: diag.lines, logPath: diag.logPath ? displayPath(root, diag.logPath) : null },
+  };
+}
+
 export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOptions): Promise<RunAndroidResult> {
   let {
     root,
@@ -1095,19 +1119,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         logFile: emuLog,
       });
     } catch (err) {
-      const diag = noDeviceDiagnostic({
-        reason: `Could not ensure an owned Android emulator: ${(err as Error)?.message || err}`,
-        logFile: emuLog,
-        localEmulator: !(err instanceof AvdRecoveryError),
-        remedy:
-          err instanceof AvdBootError
-            ? err.remedy
-            : 'Check that JAVA_HOME and ANDROID_HOME are set correctly, and that an arm64 system image is installed (`sdkmanager "system-images;android-36;google_apis;arm64-v8a"`).',
-      });
-      return fail(NO_DEVICE, diag.message, diag.remedy, {
-        lines: diag.lines,
-        logPath: diag.logPath ? displayPath(root, diag.logPath) : null,
-      });
+      const failure = avdSetupFailure(err, root, emuLog);
+      return fail(failure.code, failure.message, failure.remedy, failure.extra);
     }
     const prepareMs = prepare();
     if (device.created || prepareMs >= SLOW_STEP_MS) {

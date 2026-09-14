@@ -246,6 +246,7 @@ test('parking shuts down an owned AVD and overflow deletion failures keep both o
   failDelete = true;
   const result = teardownOwnedAvd('stim-new', {
     del: true,
+    owner: { projectPath: '/source' },
     park: { projectPath: '/source', max: 1, configuration },
     waitForShutdown: (_name, shutdown) => shutdown(1000),
   });

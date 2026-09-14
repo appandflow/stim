@@ -108,6 +108,15 @@ defaults or use `ios --device-type`, `ios --runtime`, and
 assumes that the caller finished all device automation for that Stim session.
 It does not block on other processes attached to the owned device.
 
+Android creation records an owned reservation before running native tools.
+Other workspaces can update Stim config during creation, while GC and teardown
+keep that reservation. An interruption leaves an incomplete record; retry
+`stim android` to reconcile it through owned-device cleanup. If a per-AVD claim
+under `~/.stim/avd-locks` is live or unresolved, cleanup refuses. Wait for live
+work to finish. Before removing an unresolved claim, verify that neither Stim
+nor its native child is still using the AVD, and remove only the named claim.
+Keep the AVD data and follow `stim guide errors STIM_CLAIM_REFUSED`.
+
 ## Memory pressure and SimSlim
 
 SimSlim is recommended as an optional way to reduce background services and

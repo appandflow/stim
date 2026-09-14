@@ -220,7 +220,7 @@ code, never on the message.`,
   run the command again.`,
     },
     STIM_CLAIM_REFUSED: {
-      summary: 'a build lock exists whose holder cannot be identified; Stim neither removes it nor waits on it',
+      summary: 'an ownership claim blocks the operation; inspect its holder before removing an unresolved claim',
       body: () => `STIM_CLAIM_REFUSED
   A build lock records the holder's process IDENTITY, not just its pid, so a
   recycled pid reads as a gone builder rather than a live one, and a builder
@@ -239,7 +239,16 @@ code, never on the message.`,
   and nothing was copied. A STIM_HOME or warm-locks ancestor that is a file
   also refuses. The message names that blocking path and prints a shell-quoted
   move-aside command. Inspect it first: the file may contain unrelated data.
-  An existing backup prompts before overwriting; preserve both files.`,
+  An existing backup prompts before overwriting; preserve both files.
+  Android creation, recovery and teardown use per-AVD claims under
+  ~/.stim/avd-locks. Retry after a live creator or cleanup finishes. An
+  interrupted native operation can leave a pending child with no verifiable
+  identity: inspect the named claim and confirm that neither Stim nor its
+  avdmanager or adb child is still using the AVD before removing only that
+  claim. Keep the AVD and its incomplete workspace record. Once the claim is
+  safe to clear, retry \`stim android\` to reconcile incomplete setup through
+  owned-device teardown. GC and project removal refuse while the claim is
+  live or unresolved.`,
     },
     STIM_CLAIM_UNAVAILABLE: {
       summary: 'a process identity or warm claim store is unavailable, so the protected operation refuses',

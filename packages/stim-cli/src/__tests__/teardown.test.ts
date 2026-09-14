@@ -1,7 +1,7 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { getProject, upsertProject } from '../config.ts';
+import { ensureConfig, getProject, upsertProject } from '../config.ts';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { parkSim, readParked } from '../sim-pool.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
@@ -14,12 +14,13 @@ let savedAvdRoots: Record<string, string | undefined>;
 beforeEach(() => {
   avdHome = mkdtempSync(join(tmpdir(), 'stim-teardown-avds-'));
   savedAvdRoots = Object.fromEntries(
-    ['HOME', 'ANDROID_AVD_HOME', 'ANDROID_SDK_HOME', 'ANDROID_USER_HOME', 'ANDROID_EMULATOR_HOME'].map((key) => [
-      key,
-      process.env[key],
-    ]),
+    ['STIM_HOME', 'HOME', 'ANDROID_AVD_HOME', 'ANDROID_SDK_HOME', 'ANDROID_USER_HOME', 'ANDROID_EMULATOR_HOME'].map(
+      (key) => [key, process.env[key]],
+    ),
   );
   process.env.HOME = avdHome;
+  process.env.STIM_HOME = join(avdHome, 'stim');
+  ensureConfig();
   process.env.ANDROID_AVD_HOME = join(avdHome, 'avd');
   process.env.ANDROID_SDK_HOME = avdHome;
   process.env.ANDROID_USER_HOME = join(avdHome, '.android');
