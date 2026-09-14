@@ -242,7 +242,8 @@ code, never on the message.`,
   An existing backup prompts before overwriting; preserve both files.
   Parked-device adoption and deletion use claims under $STIM_HOME/pool-locks.
   If a holder dies during a synchronous native callback, its child cannot be
-  identified and the device stays protected. Verify that the old Stim process
+  identified and the device stays protected, including from older CLIs through
+  an opaque inline marker. Verify that the old Stim process
   and its native children have finished before removing the named claim.
   Legacy inline \`deletionClaim\` fields in config.json have no process
   identity and require separate manual inspection; \`stim guide lifecycle pool\`

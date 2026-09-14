@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getProject, loadConfig, saveConfig, setDevice, upsertProject, withConfigLock } from '../config.ts';
@@ -203,6 +203,41 @@ describe('pool operation recovery', () => {
     parkSim({ platform: 'ios', projectPath: '/tmp/source', record: first, max: 3 });
   });
 
+  function legacyAttempt(action: 'adopt' | 'delete'): unknown {
+    const source = readFileSync(new URL('fixtures/legacy-sim-pool-968ad85b6.ts.txt', import.meta.url), 'utf8');
+    const module = join(stimHome, 'legacy-sim-pool.ts');
+    writeFileSync(module, source.replaceAll("from './", `from '${new URL('../', import.meta.url).href}`));
+    return JSON.parse(
+      execFileSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `const { adoptParked, removeParkedAfter } = await import(process.argv[1]);
+           const request = JSON.parse(process.argv[2]);
+           let deleted = false;
+           const result = process.argv[3] === 'adopt'
+             ? adoptParked(request)
+             : removeParkedAfter(request.platform, request.udid, () => { deleted = true; });
+           process.stdout.write(JSON.stringify({ result, deleted }));`,
+          module,
+          JSON.stringify(request),
+          action,
+        ],
+        { encoding: 'utf8', env: process.env, timeout: 5000 },
+      ),
+    );
+  }
+
+  test.each(['adopt', 'delete'] as const)('an older CLI cannot %s during a new deletion', (action) => {
+    const removed = removeParkedAfter('ios', first.udid, () => {
+      expect(legacyAttempt(action)).toEqual({ result: null, deleted: false });
+      expect(getProject('/tmp/adopter')?.platforms?.ios).toBeUndefined();
+    });
+    expect(removed).toEqual(first);
+    expect(readParked('ios')).toEqual([]);
+  });
+
   test.each(['adopt', 'delete'])(
     '%s recovers a claim after its owner is killed outside native work',
     async (action) => {
@@ -210,16 +245,29 @@ describe('pool operation recovery', () => {
       const { tryAcquireClaim } = await import(process.argv[1]);
       const claim = tryAcquireClaim({ root: process.argv[2], mode: 'exclusive' });
       if (!claim.acquired) throw new Error('fixture did not acquire the claim');
+      const { loadConfig, saveConfig, withConfigLock } = await import(process.argv[3]);
+      withConfigLock(() => {
+        const config = loadConfig();
+        config.parked.ios[0].deletionClaim = { kind: 'ownership-claim', claimId: claim.acquired.claimId };
+        saveConfig(config);
+      });
       process.kill(process.pid, 'SIGKILL');
     `;
       const child = getExecutor().spawn(
         process.execPath,
-        ['--input-type=module', '-e', script, new URL('../ownership-claim.ts', import.meta.url).href, claimRoot()],
+        [
+          '--input-type=module',
+          '-e',
+          script,
+          new URL('../ownership-claim.ts', import.meta.url).href,
+          claimRoot(),
+          new URL('../config.ts', import.meta.url).href,
+        ],
         { stdio: 'ignore' },
       );
       expect(await once(child, 'exit')).toEqual([null, 'SIGKILL']);
       expect(readClaimSet(claimRoot()).dead).toHaveLength(1);
-      expect(selectParked(readParked('ios'), first)).toEqual([first]);
+      expect(selectParked(readParked('ios'), first)).toMatchObject([first]);
       let deleted = false;
       const result =
         action === 'adopt'
@@ -230,6 +278,7 @@ describe('pool operation recovery', () => {
       expect(result).toEqual(first);
       expect(deleted).toBe(action === 'delete');
       expect(readParked('ios')).toEqual([]);
+      expect(readClaimSet(claimRoot()).dead).toEqual([]);
       expect(getProject('/tmp/adopter')?.platforms?.ios).toEqual(action === 'adopt' ? device : undefined);
     },
   );
@@ -286,15 +335,27 @@ describe('pool operation recovery', () => {
       }),
     ).toThrow(claimRoot());
     expect(deleted).toBe(false);
-    expect(readParked('ios')).toEqual([first]);
+    expect(readParked('ios')).toMatchObject([{ ...first, deletionClaim: { kind: 'ownership-claim' } }]);
+    expect(legacyAttempt('adopt')).toEqual({ result: null, deleted: false });
+    expect(legacyAttempt('delete')).toEqual({ result: null, deleted: false });
   });
 
-  test.each([false, true])('a replacement pool record survives a removal callback (throws: %s)', (fails) => {
-    const replacement = { ...first, parkedAt: second.parkedAt };
+  test.each([
+    ['record', false],
+    ['record', true],
+    ['marker', false],
+    ['marker', true],
+  ] as const)('a replacement pool %s survives a removal callback (throws: %s)', (change, fails) => {
+    let replacement: ParkedSim | undefined;
     const remove = () =>
       removeParkedAfter('ios', first.udid, () => {
         withConfigLock(() => {
           const config = loadConfig()!;
+          const marked = readParked('ios', { config })[0]!;
+          replacement =
+            change === 'record'
+              ? { ...marked, parkedAt: second.parkedAt }
+              : { ...marked, deletionClaim: { kind: 'ownership-claim', claimId: 'replacement' } };
           config.parked = { ios: [replacement] };
           saveConfig(config);
         });
@@ -308,7 +369,9 @@ describe('pool operation recovery', () => {
     }
     expect(result).toBe(fails ? 'simctl failed' : null);
     expect(readParked('ios')).toEqual([replacement]);
-    expect(adoptParked(request)).toEqual(replacement);
+    const adopted = adoptParked(request);
+    expect(adopted).toMatchObject({ ...first, parkedAt: replacement?.parkedAt });
+    expect(adopted?.deletionClaim).toBeUndefined();
   });
 
   test.each([

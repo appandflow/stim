@@ -529,8 +529,10 @@ result as proof instead of requiring an unrelated screenshot.`,
   Adoption and deletion share a process-identity claim for each parked iOS
   simulator or Android emulator under $STIM_HOME/pool-locks. A live owner
   excludes both operations. A proven dead or different owner is recovered on
-  the next attempt, unless it may have left native work running. A crash
-  during a synchronous device-tool call leaves that work unverifiable; inspect
+  the next attempt, unless it may have left native work running. Deletion also
+  puts an opaque marker on the pool record so older Stim versions keep it
+  protected. New versions resolve that marker through the same identity claim.
+  A crash during a synchronous device-tool call leaves that work unverifiable; inspect
   the old process and its native children before following the claim's removal
   remedy. See \`stim guide errors STIM_CLAIM_REFUSED\`.
 

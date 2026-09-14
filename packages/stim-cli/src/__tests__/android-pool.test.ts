@@ -9,6 +9,7 @@ import { adoptParked, parkSim, readParked, removeParkedAfter } from '../sim-pool
 import { avdPoolConfiguration, hostSystemImageArch, resetAdoptedAvd } from '../sim/android.ts';
 import { teardownOwnedAvd, teardownParkedAvd } from '../teardown.ts';
 import { collectParkedAvds, deleteParkedAvds, findOrphanedDevices } from '../commands/gc/devices.ts';
+import { goneClaimOwner, plantClaim } from './_factories.ts';
 
 let home: string;
 let saved: Record<string, string | undefined>;
@@ -125,8 +126,10 @@ function park(name = 'stim-source', overrides = {}) {
   });
 }
 
-test('a new workspace adopts a compatible stopped AVD and retains cleanup state across a retry', async () => {
-  park();
+test('adoption recovers a stopped AVD from a dead deletion owner and retains cleanup state across a retry', async () => {
+  const claimId = 'dead-deletion';
+  park('stim-source', { deletionClaim: { kind: 'ownership-claim', claimId } });
+  plantClaim(join(home, 'pool-locks', 'android', 'stim-source.lock'), 'exclusive', goneClaimOwner(), { claimId });
   upsertProject('/adopter', {});
   const options = { platform: 'android', projectPath: '/adopter', label: 'adopter', settings: {} };
   const adopted = await ensureOwnedDevice(options);

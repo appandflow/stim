@@ -192,7 +192,8 @@ later cleanup can then retry without losing track of the resource.
 
 Parked-device adoption and deletion share a process-identity claim. The next
 attempt recovers a proven dead or different owner, while a live owner keeps
-the device protected. If Stim dies during a device-tool call, its native child
+the device protected. An opaque deletion marker also protects the device from
+older Stim versions. If Stim dies during a device-tool call, its native child
 may still be running: inspect both before following the claim's removal remedy.
 Older inline `deletionClaim` fields require manual inspection and removal of
 only that field; keep the device and pool record. Run `stim guide lifecycle pool`
