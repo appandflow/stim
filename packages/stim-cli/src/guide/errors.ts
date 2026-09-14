@@ -220,7 +220,7 @@ code, never on the message.`,
   run the command again.`,
     },
     STIM_CLAIM_REFUSED: {
-      summary: 'a build lock exists whose holder cannot be identified; Stim neither removes it nor waits on it',
+      summary: 'an ownership claim exists whose holder cannot be identified; Stim neither removes it nor waits on it',
       body: () => `STIM_CLAIM_REFUSED
   A build lock records the holder's process IDENTITY, not just its pid, so a
   recycled pid reads as a gone builder rather than a live one, and a builder
@@ -239,7 +239,14 @@ code, never on the message.`,
   and nothing was copied. A STIM_HOME or warm-locks ancestor that is a file
   also refuses. The message names that blocking path and prints a shell-quoted
   move-aside command. Inspect it first: the file may contain unrelated data.
-  An existing backup prompts before overwriting; preserve both files.`,
+  An existing backup prompts before overwriting; preserve both files.
+  Parked-device adoption and deletion use claims under $STIM_HOME/pool-locks.
+  If a holder dies during a synchronous native callback, its child cannot be
+  identified and the device stays protected. Verify that the old Stim process
+  and its native children have finished before removing the named claim.
+  Legacy inline \`deletionClaim\` fields in config.json have no process
+  identity and require separate manual inspection; \`stim guide lifecycle pool\`
+  describes their field-only recovery.`,
     },
     STIM_CLAIM_UNAVAILABLE: {
       summary: 'a process identity or warm claim store is unavailable, so the protected operation refuses',

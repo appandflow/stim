@@ -259,6 +259,33 @@ test('parking shuts down an owned AVD and overflow deletion failures keep both o
   expect(readParked('android').map((record) => record.name)).toEqual(['stim-new']);
 });
 
+test('parking retains a busy eviction for later GC without deleting or losing either device', () => {
+  park('stim-old');
+  makeAvd('stim-new');
+  setDevice('/source', 'android', { avdName: 'stim-new', owned: true });
+  expect(() =>
+    removeParkedAfter('android', 'stim-old', () => {
+      const result = teardownOwnedAvd('stim-new', {
+        del: true,
+        park: { projectPath: '/source', max: 1, configuration },
+      });
+      expect(result.parked?.name).toBe('stim-new');
+      expect(result.evicted).toEqual([]);
+      expect(calls.some((call) => call.includes('delete avd'))).toBe(false);
+      expect(
+        readParked('android')
+          .map((record) => record.name)
+          .toSorted(),
+      ).toEqual(['stim-new', 'stim-old']);
+      throw new Error('retain the busy eviction');
+    }),
+  ).toThrow('retain the busy eviction');
+  expect(getProject('/source')?.platforms?.android).toBeUndefined();
+  expect(avds).toEqual(new Set(['stim-new', 'stim-old']));
+  expect(teardownParkedAvd('stim-old').status).toBe('torn-down');
+  expect(readParked('android').map((record) => record.name)).toEqual(['stim-new']);
+});
+
 test('pool deletion excludes adoption and an adopted emulator cannot be deleted by a stale GC report', () => {
   park();
   upsertProject('/adopter', {});

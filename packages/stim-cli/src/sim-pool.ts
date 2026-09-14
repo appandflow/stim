@@ -1,6 +1,8 @@
 import { assignSlotDevice, deviceSlotPlatforms, removeSlotDevice } from './device-slots.ts';
-import { randomUUID } from 'node:crypto';
-import { ensureConfig, loadConfig, saveConfig, withConfigLock } from './config.ts';
+import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+import { ensureConfig, getConfigDir, getConfigPath, loadConfig, saveConfig, withConfigLock } from './config.ts';
+import { clearClaimChild, markClaimChildPending, releaseClaim, tryAcquireClaim } from './ownership-claim.ts';
 import type { Config, DeviceRecord } from './types.ts';
 
 export type PoolPlatform = 'ios' | 'android';
@@ -189,84 +191,39 @@ export function adoptParked<P extends PoolPlatform>({
   udid: string;
   device: DeviceRecord;
 }): PoolRecords[P] | null {
-  return withConfigLock(() => {
-    const cfg = ensureConfig();
-    const records = readParked(platform, { config: cfg });
-    const taken = records.find((r) => r.udid === udid);
-    if (!taken || taken.deletionClaim !== undefined) return null;
-    if (deviceSlotPlatforms(cfg.projects[projectPath], slot)?.[platform]) return null;
-    writeParked(
-      cfg,
-      platform,
-      records.filter((r) => r.udid !== udid),
-    );
-    const project = cfg.projects[projectPath];
-    if (!project) throw new Error(`Project not registered: ${projectPath}`);
-    assignSlotDevice(project, platform, device, slot);
-    saveConfig(cfg);
-    return taken;
-  });
-}
-
-function isProcessAlive(pid: number): boolean {
+  const claim = claimParkedOperation(platform, udid);
+  if (!claim) return null;
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
+    return withConfigLock(() => {
+      const cfg = ensureConfig();
+      const records = readParked(platform, { config: cfg });
+      const taken = records.find((r) => r.udid === udid);
+      if (!taken || taken.deletionClaim !== undefined) return null;
+      if (deviceSlotPlatforms(cfg.projects[projectPath], slot)?.[platform]) return null;
+      writeParked(
+        cfg,
+        platform,
+        records.filter((r) => r.udid !== udid),
+      );
+      const project = cfg.projects[projectPath];
+      if (!project) throw new Error(`Project not registered: ${projectPath}`);
+      assignSlotDevice(project, platform, device, slot);
+      saveConfig(cfg);
+      return taken;
+    });
+  } finally {
+    releaseClaim(claim);
   }
 }
 
-function parseDeletionClaim(value: unknown): { pid: number; token: string } | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  const claim = value as Record<string, unknown>;
-  if (!Number.isSafeInteger(claim.pid) || (claim.pid as number) <= 0) return null;
-  if (typeof claim.token !== 'string' || claim.token.length === 0) return null;
-  return { pid: claim.pid as number, token: claim.token };
-}
-
-function claimParkedRemoval<P extends PoolPlatform>(
-  platform: P,
-  udid: string,
-): { record: PoolRecords[P]; token: string } | null {
-  return withConfigLock(() => {
-    const cfg = loadConfig();
-    if (!cfg) return null;
-    const records = readParked(platform, { config: cfg });
-    const record = records.find((candidate) => candidate.udid === udid);
-    if (!record) return null;
-    const existingClaim = parseDeletionClaim(record.deletionClaim);
-    if (record.deletionClaim !== undefined && (!existingClaim || isProcessAlive(existingClaim.pid))) return null;
-    const token = randomUUID();
-    const claimedRecord = { ...record, deletionClaim: { pid: process.pid, token } };
-    writeParked(
-      cfg,
-      platform,
-      records.map((candidate) => (candidate.udid === udid ? claimedRecord : candidate)),
-    );
-    saveConfig(cfg);
-    const claimed = { ...record };
-    delete claimed.deletionClaim;
-    return { record: claimed, token };
+function claimParkedOperation(platform: PoolPlatform, udid: string) {
+  const attempt = tryAcquireClaim({
+    root: join(getConfigDir(), 'pool-locks', platform, `${encodeURIComponent(udid.toLowerCase())}.lock`),
+    mode: 'exclusive',
+    label: `parked ${platform} device ${udid}`,
   });
-}
-
-function clearParkedRemovalClaim(platform: PoolPlatform, udid: string, token: string): void {
-  withConfigLock(() => {
-    const cfg = loadConfig();
-    if (!cfg) return;
-    const records = readParked(platform, { config: cfg });
-    const record = records.find((candidate) => candidate.udid === udid);
-    if (!record || parseDeletionClaim(record.deletionClaim)?.token !== token) return;
-    const restored = { ...record };
-    delete restored.deletionClaim;
-    writeParked(
-      cfg,
-      platform,
-      records.map((candidate) => (candidate.udid === udid ? restored : candidate)),
-    );
-    saveConfig(cfg);
-  });
+  if (attempt.pending) releaseClaim(attempt.pending);
+  return attempt.acquired ?? null;
 }
 
 export function removeParkedAfter<P extends PoolPlatform>(
@@ -274,30 +231,44 @@ export function removeParkedAfter<P extends PoolPlatform>(
   udid: string,
   beforeRemove: (record: PoolRecords[P]) => void,
 ): PoolRecords[P] | null {
-  const claim = claimParkedRemoval(platform, udid);
+  const claim = claimParkedOperation(platform, udid);
   if (!claim) return null;
   try {
-    beforeRemove(claim.record);
-  } catch (error) {
+    const record = withConfigLock(() => {
+      const current = readParked(platform).find((candidate) => candidate.udid === udid);
+      if (current?.deletionClaim !== undefined) {
+        throw new Error(
+          `Parked ${platform} device ${udid} has a legacy deletionClaim in ${getConfigPath()}. ` +
+            'Its PID does not establish whether the original operation finished. Keep the device and pool record; after verifying that ' +
+            "neither the old Stim process nor its native child is using it, remove only that record's deletionClaim field and retry.",
+        );
+      }
+      return current;
+    });
+    if (!record) return null;
+    markClaimChildPending(claim);
     try {
-      clearParkedRemovalClaim(platform, udid, claim.token);
-    } catch {}
-    throw error;
+      beforeRemove(record);
+    } finally {
+      clearClaimChild(claim);
+    }
+    return withConfigLock(() => {
+      const cfg = loadConfig();
+      if (!cfg) return null;
+      const records = readParked(platform, { config: cfg });
+      const current = records.find((candidate) => candidate.udid === udid);
+      if (!isDeepStrictEqual(current, record)) return null;
+      writeParked(
+        cfg,
+        platform,
+        records.filter((candidate) => candidate.udid !== udid),
+      );
+      saveConfig(cfg);
+      return record;
+    });
+  } finally {
+    releaseClaim(claim);
   }
-  return withConfigLock(() => {
-    const cfg = loadConfig();
-    if (!cfg) return null;
-    const records = readParked(platform, { config: cfg });
-    const record = records.find((candidate) => candidate.udid === udid);
-    if (parseDeletionClaim(record?.deletionClaim)?.token !== claim.token) return null;
-    writeParked(
-      cfg,
-      platform,
-      records.filter((candidate) => candidate.udid !== udid),
-    );
-    saveConfig(cfg);
-    return claim.record;
-  });
 }
 
 export function dropParked(platform: PoolPlatform, udid: string): boolean {

@@ -310,6 +310,11 @@ test('the facts topic documents every reload strategy the command can report', (
   for (const value of values) expect(body).toContain(`"${value}"`);
 });
 
+test('pool recovery guidance routes claim refusals to the error remedy and back', () => {
+  expect(renderSection('lifecycle', 'pool')).toContain(`stim guide errors ${CLAIM_REFUSED}`);
+  expect(renderSection('errors', CLAIM_REFUSED)).toContain('stim guide lifecycle pool');
+});
+
 test('the settings topic documents every supported setting key', () => {
   const body = renderTopic('settings');
   assert(body);
