@@ -678,3 +678,19 @@ test('reclaimProject releases a lease whose token the recreated workspace lost',
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('worktree reclaim releases named ports and keeps the entry when listener inspection fails', async () => {
+  const root = join(tmpHome, 'named-project');
+  upsertProject(root, { ports: { web: 8900 } });
+  setExecutor({
+    runFile: () => {
+      throw new Error('lsof unavailable');
+    },
+  });
+  await expect(reclaimProject(root)).rejects.toThrow('lsof unavailable');
+  expect(getProject(root)?.ports).toEqual({ web: 8900 });
+  setExecutor({ runFile: () => '' });
+  const result = await reclaimProject(root);
+  expect(result.keptEntry).toBe(false);
+  expect(getProject(root)).toBeNull();
+});

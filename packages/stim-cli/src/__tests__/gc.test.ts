@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
 import { Command } from 'commander';
-import { setExecutor, resetExecutor } from '../exec.ts';
+import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { getProject, saveConfig, loadConfig, upsertProject } from '../config.ts';
 import { register } from '../cache-manifest.ts';
 import { ensureRemoteBootOwned, withRemoteSessionLock } from '../engine/device-remote.ts';
@@ -3192,4 +3192,32 @@ test('GC preserves named-slot references on unavailable volumes and identifies s
     ['tablet', 'TABLET'],
     ['emulator', 'stim-extra'],
   ]);
+});
+
+test('gc reports and reclaims named ports only for confirmed missing workspaces', async () => {
+  const missing = join(fakeHome, 'missing-ports');
+  const unmounted = '/Volumes/StimTestVolumeThatDoesNotExist/named-ports';
+  upsertProject(missing, { ports: { web: 8900 } });
+  upsertProject(unmounted, { ports: { web: 8901 } });
+  installExecutor();
+  const original = getExecutor();
+  const inspected: string[] = [];
+  setExecutor({
+    ...original,
+    runFile: (file, args, opts) => {
+      if (file === 'lsof') {
+        inspected.push(args[1]);
+        return '';
+      }
+      return original.runFile(file, args, opts);
+    },
+  });
+  const report = await collectGcReport();
+  expect(report.orphanedPorts).toEqual([{ project: missing, label: 'web', port: 8900 }]);
+  expect(formatGcReport(report).join('\n')).toContain('web (8900)');
+  expect(inspected).toEqual([]);
+  await cli(['--delete']);
+  expect(getProject(missing)).toBeNull();
+  expect(getProject(unmounted)?.ports).toEqual({ web: 8901 });
+  expect(inspected).toEqual(['-iTCP:8900', '-iTCP:8900']);
 });

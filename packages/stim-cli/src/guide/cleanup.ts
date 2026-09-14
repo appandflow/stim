@@ -56,6 +56,13 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   branches stay. A branch with an existing Stim ownership record is deleted
   only when it has no unique commits.
 
+NAMED SERVER PORTS
+  worktree remove stops TCP listeners on each named allocation and releases
+  the ports. gc reports named allocations for missing workspaces; gc --delete
+  stops their listeners and releases them. Unmounted or unresolved paths stay
+  registered. Failed stops retain their allocations for a later retry.
+  stim stop does not touch named ports. See guide ports.
+
 ON THE SOURCE CHECKOUT
   git cannot remove a repository's main working tree, and deleting the source
   checkout is not what anyone meant -- so there, and only there,

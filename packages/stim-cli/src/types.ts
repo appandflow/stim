@@ -40,6 +40,7 @@ export interface PlatformRecords {
 }
 
 export interface ProjectRecord {
+  ports?: Record<string, number>;
   metroPort?: number | null;
   platforms?: PlatformRecords;
   deviceSlots?: Record<string, PlatformRecords>;

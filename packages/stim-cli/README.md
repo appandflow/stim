@@ -198,3 +198,16 @@ stim stop --slot tablet
 `--slot` preserves the shared server and other devices. `stim reload ios` or
 `stim reload android` can reload multiple connected devices. Read
 `stim guide lifecycle options` for launch verification and recycling behavior.
+
+### Named server ports
+
+Use `stim ports get web` to reserve a workspace port for a server Stim does not
+manage, then pass that number to the server, for example
+`pnpm exec vite --port "$(stim ports get web)" --strictPort`.
+`stim ports` lists named allocations and managed Metro. `stim ports stop web`
+stops the TCP listener and releases its port; `--dry-run` previews the action.
+`stim ports release web` releases without stopping. Omitting the label selects
+all named ports. These commands leave Metro alone, and `stim stop` leaves
+named ports alone. Worktree removal and `gc --delete` stop and release named
+ports for removed workspaces. Read `stim guide ports` for the reserved band,
+listener ownership, and allocation limits.

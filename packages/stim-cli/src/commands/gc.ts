@@ -267,6 +267,9 @@ export async function collectGcReport(
   return {
     skipped,
     deadProjects,
+    orphanedPorts: deadProjects.flatMap((project) =>
+      Object.entries(cfg?.projects[project]?.ports ?? {}).map(([label, port]) => ({ project, label, port })),
+    ),
     invalidProjects,
     parkedSims,
     parkedAvds,
@@ -439,6 +442,10 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
   removeInvalidProjectEntries(invalidProjects);
 
   for (const path of deadProjects) {
+    if (existsSync(path) || !isOnMountedVolume(path)) {
+      console.log(chalk.yellow(`Kept ${path}: its absence can no longer be confirmed.`));
+      continue;
+    }
     const result = await reclaimProject(path).catch((error: unknown) => {
       deleteFailures++;
       console.log(chalk.red(`Could not prune ${path}; its registry entry was kept: ${(error as Error).message}`));

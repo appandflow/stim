@@ -71,6 +71,7 @@ export async function findReclaimablePort(
   const candidates: ReclaimableCandidate[] = [];
   for (const [path, proj] of Object.entries(cfg.projects)) {
     if (path === excludeProjectPath) continue;
+    if (Object.keys(proj.ports ?? {}).length) continue;
     if (existsSync(path)) continue;
     if (!isMounted(path, mounted)) continue;
     if (typeof proj.metroPort === 'number') {

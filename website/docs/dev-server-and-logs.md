@@ -214,3 +214,48 @@ and, in a monorepo, names the nearest registered descendant app with logs.
 
 `stim stop` ends the supervisor and log collectors. It also frees the reserved
 port and shuts down the owned local device.
+
+## Named server ports
+
+Allocate a port in the workspace whose server you want to isolate:
+
+<StimTabs
+code={`stim ports get web
+pnpm exec vite --port "$(stim ports get web)" --strictPort
+
+# In another terminal in this workspace:
+
+stim ports
+stim ports stop web --dry-run
+stim ports stop web`}
+/>
+
+For Cosmos, use `npx cosmos --port "$(stim ports get cosmos)"`. Stim keeps
+allocations in its machine registry and never starts or supervises these
+servers. It checks new allocations for existing listeners and skips busy
+ports in the 8900–8999 band, announcing retries on stderr. Install `lsof` if
+your system does not provide it.
+
+A repeated `get` returns the same number even while the server is listening.
+The reservation does not hold a socket open: another process can bind it
+between allocation and launch. Use the server's strict-port option when
+available, and check that it actually bound the supplied port.
+
+`ports stop` kills the TCP listener regardless of its working directory and
+prints its PID and command. Reserve a port only for a service this workspace
+may stop. Use `ports release` to forget the allocation without killing the
+server. Both leave Metro alone. `worktree remove` and `gc --delete` also stop
+listeners before releasing their named allocations.
+
+Allocations belong to the nearest directory with a `package.json`, resolved
+through symlinks. Run the commands from the same package in a monorepo.
+Shared services are not modeled: pass a shared service's port through the
+environment instead of allocating one per worktree.
+
+Copy this prompt into your agent:
+
+```text
+Read stim guide ports. Allocate a web port for this workspace, start the web
+server using that exact port, and verify it is serving this checkout. When
+finished, stop its named port with stim ports stop web.
+```

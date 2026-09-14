@@ -534,3 +534,11 @@ test('slot selection and shared Metro behavior are discoverable in operational g
   expect(renderTopic('cleanup')).toContain('stop --slot <name>');
   expect(renderSection('lifecycle', 'options')).toContain('not a single-slot reload');
 });
+
+test('named ports guidance is routed and separates named listener cleanup from Metro', () => {
+  expect(renderTopic('agent')).toContain('stim guide ports');
+  expect(renderTopic('ports')).toContain('ports stop [label]');
+  expect(renderTopic('ports')).toContain('--dry-run');
+  expect(renderTopic('ports')).toContain('stim stop leaves');
+  expect(renderSection('cleanup', 'gc')).toContain('guide ports');
+});

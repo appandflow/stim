@@ -221,8 +221,10 @@ shut down the phone or uninstall the app.
 
 Treat a refusal as an ownership or state mismatch: read its code and remedy.
 Never reach for --force first.
-Stim leaves externally started servers alone. Stop them with their original
-tool; neither a matching port nor --force grants process ownership.
+Stim leaves externally started Metro servers alone. Stop them with their original
+tool; neither a matching Metro port nor --force grants process ownership.
+Named ports are separate: ports stop kills TCP listeners on the workspace's
+reserved named ports, even outside the workspace. Read guide ports before use.
 
 Ask the user before these actions:
 
@@ -261,6 +263,7 @@ Read the matching guide before acting in these situations:
 | Refusal with a CODE                                   | stim guide errors <CODE>         |
 | Running under a sandbox                               | stim guide errors sandbox        |
 | Release configuration or ...Release variant           | stim guide lifecycle release     |
+| Web, Cosmos, or API server ports                      | stim guide ports                 |
 | Remote device, custom Metro, or tunnel                | stim guide metro                 |
 | Cache miss, bypass, or fingerprint exclusions         | stim guide lifecycle builds      |
 | Capacity limits                                       | stim guide lifecycle concurrency |
@@ -296,6 +299,7 @@ FULL TOPIC LIST
   stim guide lifecycle release    # Release configurations and ...Release variants
   stim guide facts                # the --json payloads
   stim guide facts devmenu        # the Expo dev menu or Tools button over the app
+  stim guide ports                # named ports for web, Cosmos, and API servers
   stim guide metro                # supervisor, custom Metro, tunnels, and remote devices
   stim guide logs                 # filters, record shape, and capture limits
   stim guide cleanup              # what reclaims a device, and what deletes

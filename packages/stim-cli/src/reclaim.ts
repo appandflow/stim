@@ -1,3 +1,4 @@
+import { clearNamedPorts } from './named-ports.ts';
 import { projectDeviceSlots } from './device-slots.ts';
 import { type ProjectRecord, getProject, removeProject } from './config.ts';
 import { existsSync, rmSync } from 'node:fs';
@@ -166,7 +167,7 @@ interface SkippedDevice {
 }
 
 export function describeDereferenced(project: ProjectRecord | null): string[] {
-  const devices: string[] = [];
+  const devices: string[] = Object.entries(project?.ports ?? {}).map(([label, port]) => `port ${label} (${port})`);
   for (const { platforms } of projectDeviceSlots(project)) {
     const ios = platforms.ios;
     if (ios?.deviceUdid) devices.push(`ios sim ${ios.deviceUdid}`);
@@ -325,6 +326,7 @@ export async function reclaimProject(
     verifyCollector?: typeof verifyCollectorOwnership;
   } = {},
 ): Promise<ReclaimResult> {
+  await clearNamedPorts(path, { stop: true });
   const project = getProject(path);
   for (const { platforms } of projectDeviceSlots(project)) {
     if (platforms.android?.owned && platforms.android.avdName) {

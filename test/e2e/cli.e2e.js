@@ -63,7 +63,7 @@ for (const entry of entries) {
   });
 
   test(`${entry}: direct and help-command routes retain the same options`, () => {
-    for (const command of ['guide', 'start', 'worktree', 'device', 'ios', 'android']) {
+    for (const command of ['guide', 'start', 'worktree', 'device', 'ios', 'android', 'ports']) {
       const direct = run(entry, [command, '--help']);
       const help = run(entry, ['help', command]);
       assert.equal(direct.status, 0, direct.stderr);

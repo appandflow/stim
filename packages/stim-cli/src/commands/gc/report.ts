@@ -14,6 +14,7 @@ import type { EasSessionSweep } from './eas-sessions.ts';
 export interface GcReport {
   skipped: GcSkip[];
   deadProjects: string[];
+  orphanedPorts?: { project: string; label: string; port: number }[];
   invalidProjects: string[];
   parkedSims: ParkedSimReport[];
   parkedAvds: ParkedAvdReport[];
@@ -96,6 +97,7 @@ export function formatGcReport(
   {
     skipped = [],
     deadProjects = [],
+    orphanedPorts,
     invalidProjects = [],
     parkedSims = [],
     parkedAvds = [],
@@ -158,6 +160,8 @@ export function formatGcReport(
       invalidProjects,
     ),
   );
+
+  lines.push(...namedPortLines(orphanedPorts));
 
   lines.push(...formatParkedSimReport(parkedSims, now));
   lines.push(...formatParkedAvdReport(parkedAvds, now));
@@ -281,4 +285,13 @@ function leaseGarbageLines({ expired, kept }: DeviceLeaseGarbage): string[] {
 
 function deviceSizeSuffix(device: { kind: 'ios' | 'android'; bytes?: number }): string {
   return device.kind === 'android' && device.bytes !== undefined ? ` - ${formatBytes(device.bytes)} on disk` : '';
+}
+
+function namedPortLines(ports: NonNullable<GcReport['orphanedPorts']> = []): string[] {
+  if (!ports.length) return [];
+  return [
+    `Orphaned named ports (${ports.length}):`,
+    ...ports.map(({ project, label, port }) => `  ${project}: ${label} (${port})`),
+    '              --delete stops TCP listeners and releases these allocations.',
+  ];
 }
