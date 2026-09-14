@@ -1,9 +1,19 @@
 import { randomUUID } from 'node:crypto';
+import type { ChildProcess } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
 import { acquireAvdClaim } from '../avd-claim.ts';
 import { clearDevice, loadConfig, setDevice, withConfigLock } from '../config.ts';
 import { deviceSlotPlatforms, projectDeviceSlots } from '../device-slots.ts';
-import { clearClaimChild, markClaimChildPending, releaseClaim } from '../ownership-claim.ts';
+import {
+  claimRemoveCommand,
+  clearClaimChild,
+  markClaimChildPending,
+  processGroupAlive,
+  releaseClaim,
+  setClaimChild,
+} from '@stim-cli/core/ownership-claim';
+import { captureProcessIdentity } from '@stim-cli/core/process-identity';
+import { getExecutor } from '../exec.ts';
 import { readParked } from '../sim-pool.ts';
 import {
   assertOwnedAvdStopped,
@@ -48,7 +58,7 @@ function findOtherOwner(avdName: string, projectPath: string, selectedSlot = 'de
   return null;
 }
 
-export function prepareOwnedAvd({
+export async function prepareOwnedAvd({
   projectPath,
   slot,
   label,
@@ -66,7 +76,7 @@ export function prepareOwnedAvd({
   configuration: string;
   configure: (avdName: string) => void;
   teardown?: typeof teardownOwnedAvd;
-}): PreparedAvd {
+}): Promise<PreparedAvd> {
   const allocation = withConfigLock(() => {
     const previous = deviceSlotPlatforms(loadConfig()?.projects?.[projectPath], slot)?.android;
     if (previous?.avdName && previous.avdName !== previousAvdName) {
@@ -115,15 +125,40 @@ export function prepareOwnedAvd({
     }
   };
   let prepared: PreparedAvd;
+  let child: ChildProcess | undefined;
+  const creationRunning = () => child?.pid !== undefined && processGroupAlive(child.pid);
   let configurationFailure: { error: unknown } | undefined;
   try {
     try {
-      markClaimChildPending(claim);
-      try {
-        prepared = { ...createOwnedAvd(label, { systemImage }), created: true };
-      } finally {
-        clearClaimChild(claim);
+      const creation = await createOwnedAvd(label, {
+        systemImage,
+        spawn: (...args) => {
+          markClaimChildPending(claim);
+          child = getExecutor().spawn(...args);
+          if (child.pid !== undefined) {
+            const captured = captureProcessIdentity(child.pid);
+            if (captured.ok) {
+              try {
+                setClaimChild(claim, { pid: child.pid, processToken: captured.token });
+              } catch {}
+            }
+          }
+          return child;
+        },
+      }).then(
+        (result) => ({ result }),
+        (error: unknown) => ({ error }),
+      );
+      if (creationRunning()) {
+        throw new AvdRecoveryError(
+          `AVD ${avdName} creation left its process group running (pid ${child!.pid}); its reservation remains incomplete.`,
+          `Wait for process group ${child!.pid} to finish before retrying stim android. ` +
+            `If its identity could not be recorded, inspect the group and remove the claim only after it stops: ${claimRemoveCommand(claim.path)}`,
+        );
       }
+      clearClaimChild(claim);
+      if ('error' in creation) throw creation.error;
+      prepared = { ...creation.result, created: true };
     } catch (error) {
       const message = String((error as Error)?.message || error);
       if (!message.includes('already exists')) throw error;
@@ -190,7 +225,12 @@ export function prepareOwnedAvd({
       });
     }
   } finally {
-    releaseClaim(claim);
+    if (!creationRunning()) releaseClaim(claim);
+    else {
+      child?.stdout?.destroy();
+      child?.stderr?.destroy();
+      child?.unref();
+    }
   }
   if (configurationFailure) {
     const { error } = configurationFailure;

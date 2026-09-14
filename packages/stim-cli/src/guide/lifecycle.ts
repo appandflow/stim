@@ -571,8 +571,9 @@ result as proof instead of requiring an unrelated screenshot.`,
   use the actual device name and serial reported by the platform command.
   Creation reserves the owned AVD before running native tools, so other
   workspaces can update config while GC and teardown retain that reservation.
-  Interrupted creation keeps an incomplete record. Retry \`stim android\` for
-  owned-device cleanup and recreation; a live or unresolved per-AVD claim
+  Interrupted creation keeps an incomplete record and protects its recorded
+  native process group until it exits. Retry \`stim android\` for owned-device
+  cleanup and recreation; a live or unresolved per-AVD claim
   refuses cleanup. Follow \`stim guide errors STIM_CLAIM_REFUSED\` before
   manually clearing a claim, and keep the AVD data while its process state
   cannot be verified.
