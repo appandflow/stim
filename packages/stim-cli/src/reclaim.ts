@@ -3,6 +3,8 @@ import { type ProjectRecord, getProject, removeProject } from './config.ts';
 import { existsSync, rmSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTree, pidExists } from './metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd, type ParkedDevice, type ParkRequest } from './teardown.ts';
+import { acquireAvdClaim } from './avd-claim.ts';
+import { releaseClaim } from './ownership-claim.ts';
 import { parkedMaxSetting } from './sim-pool.ts';
 import { verifyCollectorOwnership } from './collector/ownership.ts';
 import {
@@ -10,9 +12,9 @@ import {
   clearRemoteSession,
   readMetroTunnel,
   readRemoteSessionId,
-  readWorkspaceState,
   type ManagedTunnelRecord,
 } from './supervisor/state.ts';
+import { readWorkspaceState } from './workspace-state.ts';
 import { endRecordedSession } from './engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from './engine/device-lease.ts';
 import { resolveEasCliBin } from './engine/remote-cache.ts';
@@ -249,7 +251,7 @@ function reclaimOwnedDevices(
       const bound = parkedMaxSetting('android');
       const r = teardownOwnedAvd(android.avdName, {
         del: true,
-        owner: { projectPath },
+        owner: { projectPath, slot },
         ...(park && !bound.error && bound.max > 0
           ? {
               park: {
@@ -324,6 +326,11 @@ export async function reclaimProject(
   } = {},
 ): Promise<ReclaimResult> {
   const project = getProject(path);
+  for (const { platforms } of projectDeviceSlots(project)) {
+    if (platforms.android?.owned && platforms.android.avdName) {
+      releaseClaim(acquireAvdClaim(platforms.android.avdName));
+    }
+  }
   const dereferenced = describeDereferenced(project);
   const initialState = readWorkspaceState(path);
 

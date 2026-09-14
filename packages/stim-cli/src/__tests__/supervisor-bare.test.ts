@@ -25,7 +25,7 @@ import {
 } from '../supervisor/server-bare.ts';
 import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import { asRequire, makeError, makeWriter } from './_factories.ts';
-import { writeWorkspaceState } from '../supervisor/state.ts';
+import { writeWorkspaceState } from '../workspace-state.ts';
 
 function caught(fn: () => unknown): Error & Record<string, unknown> {
   try {

@@ -9,7 +9,7 @@ import {
   readWorkspaceState,
   withWorkspaceStateLock,
   writeWorkspaceState,
-} from '../supervisor/state.ts';
+} from '../workspace-state.ts';
 import { segment } from './build-lock.ts';
 
 export const LEASE_VERSION = 1;

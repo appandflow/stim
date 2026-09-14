@@ -26,7 +26,7 @@ import { collectorProcessTitle } from '../collector/ownership.ts';
 import { loadConfig, setDevice, setProjectSetting, upsertProject } from '../config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { emulatorLogFile, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
-import { writeWorkspaceState } from '../supervisor/run.ts';
+import { writeWorkspaceState } from '../workspace-state.ts';
 import { resolveMetroWithRetry } from '../commands/ios.ts';
 import {
   NO_DEVICE,
@@ -57,7 +57,7 @@ import {
   shortHash,
 } from '../commands/android.ts';
 import { newestBuildTools } from '../sim/android.ts';
-import { BUILD_ERROR } from '../engine/gradle.ts';
+import { BUILD_ERROR, type BuildAndroidResult } from '../engine/gradle.ts';
 import {
   ADB_INSTALL_TIMEOUT_MS,
   LAUNCH_UNVERIFIED,
@@ -242,7 +242,24 @@ interface Calls {
   order: string[];
 }
 
-function harness(overrides = {}) {
+type AndroidBuildSuccess = Extract<BuildAndroidResult, { ok: true }>;
+type AndroidBuildFailure = Extract<BuildAndroidResult, { ok: false }>;
+
+function makeAndroidBuildSuccess(
+  fields: Pick<AndroidBuildSuccess, 'apkPath'> & Partial<Omit<AndroidBuildSuccess, 'ok'>>,
+): AndroidBuildSuccess {
+  return { ok: true, apkNote: null, durationMs: 0, lastLines: [], ...fields };
+}
+
+function makeAndroidBuildFailure(
+  fields: Pick<AndroidBuildFailure, 'code' | 'reason'> & Partial<Omit<AndroidBuildFailure, 'ok'>>,
+): AndroidBuildFailure {
+  return { ok: false, diagnostics: [], truncated: 0, durationMs: 0, lastLines: [], ...fields };
+}
+
+function harness(
+  overrides: Record<string, unknown> & Pick<NonNullable<Parameters<typeof runAndroid>[0]>, 'build'> = {},
+) {
   const calls: Calls = {
     ensureDevice: [],
     booted: [],
@@ -373,13 +390,12 @@ function harness(overrides = {}) {
     build: async (args: BuildArgs = {}) => {
       calls.order.push('build');
       calls.build.push(args);
-      return {
-        ok: true,
+      return makeAndroidBuildSuccess({
         apkPath: fakeApk(),
         durationMs: 161000,
         lastLines: [],
         ccache: { status: 'reported' as const, hits: 176, misses: 204, hitRatePercent: 46.3 },
-      };
+      });
     },
     ccacheFor: () => null,
     install: (args: InstallArgs = {}) => {
@@ -879,7 +895,7 @@ describe('explicit remote backend behavior', () => {
       },
       build: async () => {
         order.push('build');
-        return { failed: true, code: BUILD_ERROR, reason: 'Gradle failed.', durationMs: 1, lastLines: [] };
+        return makeAndroidBuildFailure({ code: BUILD_ERROR, reason: 'Gradle failed.', durationMs: 1, lastLines: [] });
       },
     });
 
@@ -1217,13 +1233,12 @@ describe('a cache miss', () => {
       ccacheFor: () => setup,
       build: async (_args: BuildArgs = {}, opts: Record<string, unknown> = {}) => {
         options.push(opts);
-        return {
-          ok: true,
+        return makeAndroidBuildSuccess({
           apkPath: fakeApk(),
           durationMs: 161000,
           lastLines: [],
           ccache: { status: 'reported' as const, hits: 176, misses: 204, hitRatePercent: 46.3 },
-        };
+        });
       },
     });
     const result = await h.run();
@@ -1317,7 +1332,7 @@ describe('a cache miss', () => {
       },
       build: async () => {
         order.push('build');
-        return { ok: true, apkPath: fakeApk(), durationMs: 1000 };
+        return makeAndroidBuildSuccess({ apkPath: fakeApk(), durationMs: 1000 });
       },
     });
     const result = await h.run();
@@ -1339,7 +1354,7 @@ describe('owned AVD identity after the build', () => {
     const h = harness({
       build: async () => {
         setDevice(root, 'android', replacement);
-        return { ok: true, apkPath: fakeApk(), durationMs: 161000, lastLines: [] };
+        return makeAndroidBuildSuccess({ apkPath: fakeApk(), durationMs: 161000, lastLines: [] });
       },
     });
     const result = await h.run();
@@ -1359,7 +1374,7 @@ describe('owned AVD identity after the build', () => {
       json: true,
       build: async () => {
         currentSerial = 'emulator-5586';
-        return { ok: true, apkPath: fakeApk(), durationMs: 161000, lastLines: [] };
+        return makeAndroidBuildSuccess({ apkPath: fakeApk(), durationMs: 161000, lastLines: [] });
       },
       resolveAvdSerial: (avdName: string) => {
         expect(avdName).toBe(device.avdName);
@@ -1430,7 +1445,7 @@ describe('product flavors (--variant / android.variant)', () => {
     const h = harness({
       build: async (args: BuildArgs = {}) => {
         h.calls.build.push(args);
-        return { ok: true, apkPath: flavoredApk(), durationMs: 494000, lastLines: [] };
+        return makeAndroidBuildSuccess({ apkPath: flavoredApk(), durationMs: 494000, lastLines: [] });
       },
     });
     const result = await h.run();
@@ -1792,6 +1807,25 @@ describe('the other refusals', () => {
     expect(result.error.remedy).not.toMatch(/JAVA_HOME/);
   });
 
+  test('AVD claim refusal preserves its claim remedy instead of reporting an SDK problem', async () => {
+    const claim = join(home, 'avd-locks', 'stim-app.lock', 'exclusive', 'creator.claim');
+    const h = harness({
+      ensureDevice: async () => {
+        throw new ClaimRefusedError({
+          claimPath: claim,
+          root: join(home, 'avd-locks', 'stim-app.lock'),
+          reason: 'the creator was killed before recording its child identity',
+          label: 'AVD stim-app',
+        });
+      },
+      build: never('the build'),
+    });
+    const result = await h.run();
+    expect(result.error?.code).toBe('STIM_CLAIM_REFUSED');
+    expect(String(result.error?.remedy)).toContain(claimRemoveCommand(claim));
+    expect(result.error?.remedy).not.toMatch(/JAVA_HOME|sdkmanager/);
+  });
+
   test.each(['prepare', 'boot'] as const)('preserves the pressure remedy from %s in STIM_NO_DEVICE', async (stage) => {
     const reason = 'Emulator emulator-5554 did not finish booting within 360s.';
     const remedy =
@@ -1955,23 +1989,23 @@ describe('the other refusals', () => {
 });
 
 describe('a failed build', () => {
-  const failingBuild = async () => ({
-    failed: true,
-    code: BUILD_ERROR,
-    reason: '`./gradlew assembleDebug` failed (exit code 1).',
-    diagnostics: [
-      { message: 'Task :app:compileDebugKotlin FAILED' },
-      {
-        file: '/p/android/app/src/main/java/com/app/MainActivity.kt',
-        line: 23,
-        column: 9,
-        message: "Unresolved reference 'Foo'.",
-      },
-    ],
-    truncated: 3,
-    lastLines: ['> Task :app:compileDebugKotlin FAILED', 'BUILD FAILED in 2m41s'],
-    durationMs: 161000,
-  });
+  const failingBuild = async () =>
+    makeAndroidBuildFailure({
+      code: BUILD_ERROR,
+      reason: '`./gradlew assembleDebug` failed (exit code 1).',
+      diagnostics: [
+        { message: 'Task :app:compileDebugKotlin FAILED' },
+        {
+          file: '/p/android/app/src/main/java/com/app/MainActivity.kt',
+          line: 23,
+          column: 9,
+          message: "Unresolved reference 'Foo'.",
+        },
+      ],
+      truncated: 3,
+      lastLines: ['> Task :app:compileDebugKotlin FAILED', 'BUILD FAILED in 2m41s'],
+      durationMs: 161000,
+    });
 
   test('prints the extracted diagnostic and the log path, never the transcript', async () => {
     const ccache = { status: 'reported' as const, hits: 176, misses: 204, hitRatePercent: 46.3 };
@@ -2490,13 +2524,13 @@ describe('single-flight builds', () => {
 
   test('a FAILED build releases the lock', async () => {
     const h = harness({
-      build: async () => ({
-        failed: true,
-        code: BUILD_ERROR,
-        reason: 'gradle said no',
-        diagnostics: [],
-        lastLines: [],
-      }),
+      build: async () =>
+        makeAndroidBuildFailure({
+          code: BUILD_ERROR,
+          reason: 'gradle said no',
+          diagnostics: [],
+          lastLines: [],
+        }),
     });
     const result = await h.run();
     expect(result.ok).toBe(false);
@@ -3553,7 +3587,7 @@ describe('concurrency limits', () => {
       },
       build: async () => {
         built++;
-        return { ok: true, apkPath: fakeApk(), durationMs: 1 };
+        return makeAndroidBuildSuccess({ apkPath: fakeApk(), durationMs: 1 });
       },
     });
     const result = await h.run();
@@ -4103,7 +4137,7 @@ describe('re-fingerprint after Gradle', () => {
       fingerprint,
       build: async () => {
         writeFileSync(manifest, 'after');
-        return { ok: true, apkPath: fakeApk(), durationMs: 161000, lastLines: [] };
+        return makeAndroidBuildSuccess({ apkPath: fakeApk(), durationMs: 161000, lastLines: [] });
       },
       resolveCacheProvider: () => ({ provider: './cache.cjs', options: {}, baseDir: root }),
       loadCacheProviderModule: async () => ({
@@ -5263,7 +5297,7 @@ describe('run statistics', () => {
       readEstimates: () => ({ coldBuildMs: 190_000, podsMs: null }),
       build: async (_args: BuildArgs = {}, options: { estimateMs?: number | null } = {}) => {
         seen.push(options.estimateMs);
-        return { ok: true, apkPath: fakeApk(), durationMs: 161000, lastLines: [] };
+        return makeAndroidBuildSuccess({ apkPath: fakeApk(), durationMs: 161000, lastLines: [] });
       },
     });
 
@@ -5279,7 +5313,7 @@ describe('run statistics', () => {
       recordStats,
       build: async (_args: BuildArgs = {}, options: { estimateMs?: number | null } = {}) => {
         seen.push(options.estimateMs);
-        return { ok: true, apkPath: fakeApk(), durationMs: 161000, lastLines: [] };
+        return makeAndroidBuildSuccess({ apkPath: fakeApk(), durationMs: 161000, lastLines: [] });
       },
     });
 
@@ -5302,7 +5336,8 @@ describe('run statistics', () => {
     const { runs, recordStats } = recorder();
     const h = harness({
       recordStats,
-      build: async () => ({ failed: true, code: BUILD_ERROR, reason: 'Gradle failed.', durationMs: 1, lastLines: [] }),
+      build: async () =>
+        makeAndroidBuildFailure({ code: BUILD_ERROR, reason: 'Gradle failed.', durationMs: 1, lastLines: [] }),
     });
 
     expect((await h.run()).ok).toBe(false);
@@ -5342,7 +5377,8 @@ describe('run statistics', () => {
 
     const failed = harness({
       recordStats: throwing,
-      build: async () => ({ failed: true, code: BUILD_ERROR, reason: 'Gradle failed.', durationMs: 1, lastLines: [] }),
+      build: async () =>
+        makeAndroidBuildFailure({ code: BUILD_ERROR, reason: 'Gradle failed.', durationMs: 1, lastLines: [] }),
     });
     expect((await failed.run()).ok).toBe(false);
   });
@@ -5426,7 +5462,7 @@ describe('optimization configuration', () => {
       }),
       build: async (args: unknown, opts: unknown) => {
         engine.push(args, opts);
-        return { ok: true, apkPath: fakeApk(), durationMs: 1 };
+        return makeAndroidBuildSuccess({ apkPath: fakeApk(), durationMs: 1 });
       },
     });
     expect((await h.run()).ok).toBe(true);
@@ -5476,7 +5512,7 @@ test('a CAS toolchain that is gone builds with ccache and says so once', async (
     ccacheFor: () => CCACHE_SETUP,
     build: async (_args: BuildArgs = {}, opts: Record<string, unknown> = {}) => {
       options.push(opts);
-      return { ok: true, apkPath: fakeApk(), durationMs: 1 };
+      return makeAndroidBuildSuccess({ apkPath: fakeApk(), durationMs: 1 });
     },
   });
   expect((await h.run()).ok).toBe(true);
@@ -5497,7 +5533,7 @@ test('a CAS selection with no toolchain at all falls back instead of refusing', 
     ccacheFor: () => CCACHE_SETUP,
     build: async (_args: BuildArgs = {}, opts: Record<string, unknown> = {}) => {
       options.push(opts);
-      return { ok: true, apkPath: fakeApk(), durationMs: 1 };
+      return makeAndroidBuildSuccess({ apkPath: fakeApk(), durationMs: 1 });
     },
   });
   expect((await h.run()).ok).toBe(true);
@@ -5516,7 +5552,7 @@ test('a disabled compiler cache keeps a dead toolchain key inert and never claim
     ccacheFor: never('ccache setup'),
     build: async (_args: BuildArgs = {}, opts: Record<string, unknown> = {}) => {
       options.push(opts);
-      return { ok: true, apkPath: fakeApk(), durationMs: 1 };
+      return makeAndroidBuildSuccess({ apkPath: fakeApk(), durationMs: 1 });
     },
   });
   expect((await h.run()).ok).toBe(true);
@@ -5564,7 +5600,7 @@ test.each(['auto', 'ccache', 'cas', 'none'] as const)(
       ccacheFor: () => CCACHE_SETUP,
       build: async (_args: BuildArgs = {}, opts: Record<string, unknown> = {}) => {
         options.push(opts);
-        return { ok: true, apkPath: fakeApk(), durationMs: 1 };
+        return makeAndroidBuildSuccess({ apkPath: fakeApk(), durationMs: 1 });
       },
     });
     expect((await h.run()).ok).toBe(true);
@@ -5590,7 +5626,7 @@ test('the fallback warning does not promise ccache when ccache is not installed'
     ccacheFor: () => null,
     build: async (_args: BuildArgs = {}, opts: Record<string, unknown> = {}) => {
       options.push(opts);
-      return { ok: true, apkPath: fakeApk(), durationMs: 1 };
+      return makeAndroidBuildSuccess({ apkPath: fakeApk(), durationMs: 1 });
     },
   });
   expect((await h.run()).ok).toBe(true);
@@ -5620,7 +5656,7 @@ test('a CAS manifest with no resourceDir builds with ccache instead of failing t
     ccacheFor: () => CCACHE_SETUP,
     build: async (_args: BuildArgs = {}, opts: Record<string, unknown> = {}) => {
       options.push(opts);
-      return { ok: true, apkPath: fakeApk(), durationMs: 1 };
+      return makeAndroidBuildSuccess({ apkPath: fakeApk(), durationMs: 1 });
     },
   });
   expect((await h.run()).ok).toBe(true);
@@ -5641,7 +5677,7 @@ test('a CAS manifest whose compiler is not executable builds with ccache instead
     ccacheFor: () => CCACHE_SETUP,
     build: async (_args: BuildArgs = {}, opts: Record<string, unknown> = {}) => {
       options.push(opts);
-      return { ok: true, apkPath: fakeApk(), durationMs: 1 };
+      return makeAndroidBuildSuccess({ apkPath: fakeApk(), durationMs: 1 });
     },
   });
   expect((await h.run()).ok).toBe(true);

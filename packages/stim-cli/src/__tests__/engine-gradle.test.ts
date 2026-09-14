@@ -79,7 +79,7 @@ function writeFlavoredApk(flavor: string, buildType: string, name: string, conte
 describe('discoverAndroidProject', () => {
   test('names prebuild when there is no android directory', () => {
     const result = discoverAndroidProject(root);
-    expect(result.failed).toBe(true);
+    assert(result.failed);
     expect(result.code).toBe(BUILD_ERROR);
     expect(result.reason).toMatch(/No android\/ directory/);
     expect(result.remedy).toMatch(/prebuild/);
@@ -88,7 +88,7 @@ describe('discoverAndroidProject', () => {
   test('names the wrapper when android/ exists without gradlew', () => {
     makeAndroidProject({ gradlew: false });
     const result = discoverAndroidProject(root);
-    expect(result.failed).toBe(true);
+    assert(result.failed);
     expect(result.reason).toMatch(/gradlew/);
     expect(result.remedy).toMatch(/wrapper/);
   });
@@ -339,16 +339,6 @@ function recordingWriter(): NdjsonWriter & { records: NdjsonRecord[] } {
   return Object.assign(writer, { records });
 }
 
-type BuildAndroidResultLike = {
-  ok?: boolean;
-  apkPath?: string;
-  failed?: boolean;
-  code?: string;
-  reason?: string;
-  remedy?: string;
-  durationMs?: number;
-};
-
 describe('gradleArgs', () => {
   test('is the assemble task plus --build-cache', () => {
     expect(gradleArgs('assembleDebug')).toEqual(['assembleDebug', '--build-cache']);
@@ -403,8 +393,8 @@ describe('buildAndroid', () => {
     assert(Array.isArray(stdio));
     expect(stdio[0]).toBe('ignore');
 
-    expect((result as BuildAndroidResultLike).ok).toBe(true);
-    expect((result as BuildAndroidResultLike).apkPath).toBe(join(debugApkDir(root), 'app-debug.apk'));
+    assert(result.ok);
+    expect(result.apkPath).toBe(join(debugApkDir(root), 'app-debug.apk'));
     expect(result.durationMs).toBe(41000);
     const [start, ...transcript] = writer.records;
     assert(start);
@@ -482,7 +472,7 @@ describe('buildAndroid', () => {
       },
     );
 
-    expect(result.failed).toBe(true);
+    assert(!result.ok);
     expect(result.code).toBe(BUILD_ERROR);
     expect(result.reason).toMatch(/exit code 1/);
     expect(result.durationMs).toBe(2000);
@@ -502,7 +492,7 @@ describe('buildAndroid', () => {
         spawnFn: () => fakeChild({ lines: ['> Task :app:compileDebugKotlin'], code: null, signal: 'SIGKILL' }),
       },
     );
-    expect(result.failed).toBe(true);
+    assert(!result.ok);
     expect(result.reason).toMatch(/signal SIGKILL/);
   });
 
@@ -514,9 +504,9 @@ describe('buildAndroid', () => {
         spawnFn: () => fakeChild({ lines: ['BUILD SUCCESSFUL in 3s'] }),
       },
     );
-    expect(result.failed).toBe(true);
+    assert(!result.ok);
     expect(result.reason).toMatch(/produced no APK/);
-    expect((result as BuildAndroidResultLike).remedy).toMatch(/assembleDebug/);
+    expect(result.remedy).toMatch(/assembleDebug/);
   });
 
   test('the build cache is announced once, and buildCache: false drops the flag and the note', async () => {
@@ -533,7 +523,7 @@ describe('buildAndroid', () => {
         onNote: (line) => notes.push(line),
       },
     );
-    expect((on as BuildAndroidResultLike).ok).toBe(true);
+    assert(on.ok);
     expect(notes.length).toBe(1);
     expect(notes[0]).toMatch(/^ {2}cache {7}gradle build cache on \(--build-cache/);
 
@@ -570,10 +560,8 @@ describe('buildAndroid', () => {
       },
     );
     expect(calls).toEqual([['assembleProductionDebug', '--build-cache', '--init-script', nativeScript]]);
-    expect((result as BuildAndroidResultLike).ok).toBe(true);
-    expect((result as BuildAndroidResultLike).apkPath).toBe(
-      join(apkOutputsDir(root), 'production', 'debug', 'app-production-debug.apk'),
-    );
+    assert(result.ok);
+    expect(result.apkPath).toBe(join(apkOutputsDir(root), 'production', 'debug', 'app-production-debug.apk'));
   });
 
   test('a flavored build with NO variant configured still succeeds, with the note on the result', async () => {
@@ -588,8 +576,8 @@ describe('buildAndroid', () => {
           }),
       },
     );
-    expect((result as BuildAndroidResultLike & { apkNote?: string }).ok).toBe(true);
-    expect((result as BuildAndroidResultLike & { apkNote?: string }).apkNote).toMatch(/android\.variant/);
+    assert(result.ok);
+    expect(result.apkNote).toMatch(/android\.variant/);
   });
 
   test('two flavored debug APKs and no variant is a refusal listing them, never a guess', async () => {
@@ -605,10 +593,10 @@ describe('buildAndroid', () => {
           }),
       },
     );
-    expect(result.failed).toBe(true);
+    assert(!result.ok);
     expect(result.code).toBe(BUILD_ERROR);
     expect(result.reason).toMatch(/2 debug APKs/);
-    expect((result as BuildAndroidResultLike).remedy).toMatch(/android\.variant/);
+    expect(result.remedy).toMatch(/android\.variant/);
     expect(result.lastLines.some((l) => l.includes('app-preview-debug.apk'))).toBeTruthy();
     expect(result.lastLines.some((l) => l.includes('app-production-debug.apk'))).toBeTruthy();
   });
@@ -627,8 +615,8 @@ describe('buildAndroid', () => {
           }),
       },
     );
-    expect((result as BuildAndroidResultLike).ok).toBe(true);
-    expect((result as BuildAndroidResultLike).apkPath).toBe(apk);
+    assert(result.ok);
+    expect(result.apkPath).toBe(apk);
   });
 
   test('a wrapper that will not execute names the permission bit', async () => {
@@ -642,8 +630,8 @@ describe('buildAndroid', () => {
         },
       },
     );
-    expect(result.failed).toBe(true);
-    expect((result as BuildAndroidResultLike).remedy).toMatch(/chmod \+x/);
+    assert(!result.ok);
+    expect(result.remedy).toMatch(/chmod \+x/);
   });
 
   test('a spawn that errors after starting still resolves', async () => {
@@ -654,7 +642,7 @@ describe('buildAndroid', () => {
         spawnFn: () => fakeChild({ lines: ['starting'], error: new Error('boom') }),
       },
     );
-    expect(result.failed).toBe(true);
+    assert(!result.ok);
     expect(result.reason).toMatch(/boom/);
     expect(result.lastLines).toEqual(['starting']);
   });
@@ -671,8 +659,8 @@ describe('buildAndroid', () => {
       },
     );
     expect(spawned).toBe(false);
-    expect(result.failed).toBe(true);
-    expect((result as BuildAndroidResultLike).remedy).toMatch(/prebuild/);
+    assert(!result.ok);
+    expect(result.remedy).toMatch(/prebuild/);
     expect(result.diagnostics).toEqual([]);
   });
 
@@ -690,8 +678,8 @@ describe('buildAndroid', () => {
       },
     );
     expect(spawned).toBe(false);
-    expect(result.failed).toBe(true);
-    expect((result as BuildAndroidResultLike).remedy).toMatch(/ANDROID_HOME/);
+    assert(!result.ok);
+    expect(result.remedy).toMatch(/ANDROID_HOME/);
   });
 
   test('a slow gradle build emits heartbeats carrying the latest transcript line', async () => {
@@ -720,7 +708,7 @@ describe('buildAndroid', () => {
     writeApk();
     child.emit('exit', 0, null);
     const result = await promise;
-    expect((result as BuildAndroidResultLike).ok).toBe(true);
+    assert(result.ok);
     const settled = beats.length;
     await new Promise((r) => setTimeout(r, 40));
     expect(beats.length).toBe(settled);
@@ -759,7 +747,7 @@ describe('buildAndroid', () => {
         onNote: (line) => notes.push(line),
       },
     );
-    expect(Boolean(result.failed)).toBe(exitCode !== 0);
+    expect(result.ok).toBe(exitCode === 0);
     const spawnEnv = envs[0];
     assert(spawnEnv);
     expect(spawnEnv.CMAKE_CXX_COMPILER_LAUNCHER).toBe('/opt/homebrew/bin/ccache');
@@ -802,7 +790,7 @@ describe('buildAndroid', () => {
         },
       },
     );
-    expect(result.ok).toBe(true);
+    assert(result.ok);
     expect(result.ccache?.status).toBe('unavailable');
   });
 
@@ -818,7 +806,7 @@ describe('buildAndroid', () => {
         },
       },
     );
-    expect((result as BuildAndroidResultLike).ok).toBe(true);
+    assert(result.ok);
     const call = calls[0];
     assert(call);
     expect(call.args).toEqual(['assembleDebug', '--build-cache', '--init-script', nativeScript]);
@@ -850,7 +838,7 @@ describe('buildAndroid', () => {
         spawnFn: () => fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() }),
       },
     );
-    expect((result as BuildAndroidResultLike).ok).toBe(true);
+    assert(result.ok);
   });
 });
 
@@ -1087,7 +1075,7 @@ test('uncached PCH modes pass explicit policy and distinct CMake profiles to Gra
         },
       },
     );
-    expect(result.ok).toBe(true);
+    assert(result.ok);
   }
   expect(profiles[0]).toMatch(/^[a-f0-9]{16}$/);
   expect(profiles[0]).not.toBe(profiles[1]);

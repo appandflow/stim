@@ -10,7 +10,15 @@ import { appProjectProblem, detectIsExpo } from './project.ts';
 import * as expoFingerprint from '@expo/fingerprint';
 import { diffFingerprintSources, fingerprintProject } from './build-cache.ts';
 import type { DebugInfoDir, FingerprintSource } from '@expo/fingerprint';
-import { dirtyFingerprintFiles, gitCommonDir, listWorktrees, repoRoot } from './worktree.ts';
+import {
+  dirtyFingerprintFiles,
+  gitCommonDir,
+  listWorktrees,
+  locallyKnownUpstream,
+  repoRoot,
+  type UpstreamState,
+} from './worktree.ts';
+import { dependencyState, hasInstalledDependencies, installedNpmTreeIsValid } from './dependency-state.ts';
 import { workspaceDerivedData } from './paths.ts';
 import { type Config, type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from './config.ts';
 import { podInstallCommand } from './engine/bundler.ts';
@@ -69,12 +77,6 @@ function readJson(path: string): AnyJson | null {
   }
 }
 
-export interface UpstreamState {
-  name: string;
-  ahead: number;
-  behind: number;
-}
-
 function mainCheckoutProjectRoot(projectRoot: string): string {
   const currentRepoRoot = repoRoot(projectRoot);
   if (!currentRepoRoot) return projectRoot;
@@ -87,73 +89,6 @@ function mainCheckoutProjectRoot(projectRoot: string): string {
     return resolve(main.path, projectRel);
   } catch {
     return projectRoot;
-  }
-}
-
-export function installedNpmTreeIsValid(projectRoot: string): boolean {
-  try {
-    getExecutor().runFile('npm', ['ls', '--all', '--json', '--silent'], { cwd: projectRoot, timeoutMs: 30_000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const DEPENDENCY_STATES = [
-  { lock: 'pnpm-lock.yaml', installed: ['node_modules'], command: 'pnpm install' },
-  { lock: 'yarn.lock', installed: ['node_modules', '.pnp.cjs', '.pnp.js'], command: 'yarn install' },
-  { lock: 'bun.lock', installed: ['node_modules'], command: 'bun install' },
-  { lock: 'bun.lockb', installed: ['node_modules'], command: 'bun install' },
-  { lock: 'package-lock.json', installed: ['node_modules'], command: 'npm ci' },
-];
-
-export interface DependencyState {
-  lock: string;
-  installed: string[];
-  command: string;
-  root: string;
-}
-
-export function dependencyState(projectRoot: string): DependencyState | null {
-  const root = repoRoot(projectRoot) ?? projectRoot;
-  let dir = projectRoot;
-  while (true) {
-    const state = DEPENDENCY_STATES.find((candidate) => existsSync(join(dir, candidate.lock)));
-    if (state) return { ...state, root: dir };
-    if (dir === root) return null;
-    const parent = dirname(dir);
-    if (parent === dir || relative(root, parent).startsWith('..')) return null;
-    dir = parent;
-  }
-}
-
-export function hasInstalledDependencies(
-  projectRoot: string,
-  markers: string[] = ['node_modules', '.pnp.cjs', '.pnp.js'],
-): boolean {
-  return markers.some((entry) => existsSync(join(projectRoot, entry)));
-}
-
-export function locallyKnownUpstream(projectRoot: string): UpstreamState | null {
-  try {
-    const name = getExecutor().runFile(
-      'git',
-      ['-C', projectRoot, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'],
-      { timeoutMs: 5000 },
-    );
-    const counts = getExecutor()
-      .runFile('git', ['-C', projectRoot, 'rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], {
-        timeoutMs: 5000,
-      })
-      .trim()
-      .split(/\s+/)
-      .map(Number);
-    const ahead = counts[0] ?? NaN;
-    const behind = counts[1] ?? NaN;
-    if (!name || !Number.isInteger(ahead) || !Number.isInteger(behind)) return null;
-    return { name, ahead, behind };
-  } catch {
-    return null;
   }
 }
 

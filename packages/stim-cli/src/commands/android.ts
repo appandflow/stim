@@ -1,14 +1,6 @@
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
 import { deviceSlotKey, validateDeviceSlot } from '../device-slots.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
-import { parkedMaxSetting } from '../sim-pool.ts';
-import {
-  resolveOptimizations,
-  artifactCachePolicy,
-  compilerCacheFallbackMessage,
-  optimizationBuildProfile,
-  type Optimizations,
-} from '../optimizations.ts';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { type Command, InvalidArgumentError } from 'commander';
@@ -29,25 +21,15 @@ import {
   findProjectRoot,
   detectAndroidPackage,
   detectBundleId,
-  detectIsExpo,
   projectShortcut,
 } from '../project.ts';
 import {
   REMOTE_DEVICE_BACKENDS,
   resolveCacheProviderConfig,
   resolveSettings,
-  SETTING_SHAPE_REMEDY,
-  androidAvdConfigSettingError,
-  androidDataPartitionSizeGbSettingError,
-  cacheProviderSettingError,
   metroWarmupUrlSetting,
   publicUrlSetting,
-  remoteAndroidSetting,
-  remoteDeviceSettingError,
-  settingFile,
-  settingShapeErrors,
   tunnelModeSetting,
-  unknownSettingKeys,
 } from '../settings.ts';
 import {
   waitFlagConflict,
@@ -55,7 +37,6 @@ import {
   releaseLeaseOnSignal,
   runLease,
   leaseExpiryText,
-  parseDeviceWait,
   type RunLease,
 } from '../engine/device-lease-run.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
@@ -95,7 +76,6 @@ import {
   resolveMetroWithRetry,
   noMetroMessage,
   noMetroRemedy,
-  isPhysicalDeviceRequest,
 } from './native-runtime.ts';
 import {
   readRunEstimates,
@@ -104,7 +84,8 @@ import {
   statsProjectKey,
   type RunEstimates,
 } from '../engine/stats.ts';
-import { readWorkspaceState, writeWorkspaceLaunch, writeWorkspaceState } from '../supervisor/state.ts';
+import { writeWorkspaceLaunch } from '../supervisor/state.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace-state.ts';
 import {
   installAndroidApp,
   launchAndroidApp,
@@ -143,9 +124,8 @@ import {
 import { detectProviders } from '../engine/metro-reach.ts';
 import { selectFromPool } from '../engine/device-pool.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
-import { buildAndroid, productFlavorRefusal, readProductFlavors } from '../engine/gradle.ts';
+import { buildAndroid } from '../engine/gradle.ts';
 import { CCACHE_NOT_RUN, CCACHE_UNAVAILABLE, ccacheActivityLine, resolveCcache } from '../engine/ccache.ts';
-import { resolveAndroidCas, resolveAndroidCompilerCache } from '../engine/android-cas.ts';
 import { swapApkBundle, resolveKeystore } from '../engine/apk-swap.ts';
 import { captureAssetManifest } from '../engine/asset-manifest.ts';
 import {
@@ -165,10 +145,6 @@ import {
   dumpApkManifest,
   apkPackage,
   PLATFORM,
-  resolveVariant,
-  resolveSystemImage,
-  systemImageRefusal,
-  isReleaseVariant,
   NO_METRO,
   NO_FINGERPRINT,
   NO_DEVICE,
@@ -185,7 +161,6 @@ import type {
   SupervisorLike,
   RemoteUploadLike,
   PrebuildResultLike,
-  BuildAndroidResultLike,
   FailExtra,
   AndroidRecord,
   RunAndroidResult,
@@ -193,6 +168,7 @@ import type {
 } from './android/types.ts';
 import { persistLastBuild } from './android/result.ts';
 import { finishAndroidRun } from './android/launch.ts';
+import { resolveAndroidRunPlan } from './android/plan.ts';
 
 export { androidFacts, lastBuildRecord } from './android/result.ts';
 
@@ -233,35 +209,6 @@ interface AndroidCommandOptions {
 }
 
 const FALLBACK_LINES = 5;
-
-interface SettingsContext {
-  projectPath: string;
-  gitCommonDir: string | null;
-  repoRoot: string | null;
-}
-
-function androidCompilerCache({
-  root,
-  optimizations,
-  settingsContext,
-}: {
-  root: string;
-  optimizations: Optimizations;
-  settingsContext: SettingsContext;
-}): { cas: ReturnType<typeof resolveAndroidCas>; optimizations: Optimizations; warning: string | null } {
-  const { cas, optimizations: resolved } = resolveAndroidCompilerCache({
-    optimizations,
-    use: (manifest) => resolveAndroidCas(root, { ...process.env, STIM_ANDROID_CAS_TOOLCHAIN: manifest }),
-  });
-  const fallback = resolved.android.compilerCacheFallback;
-  if (!fallback) return { cas, optimizations: resolved, warning: null };
-  const message = compilerCacheFallbackMessage({
-    fallback,
-    compilerCache: resolved.android.compilerCache === 'none' ? 'none' : 'ccache',
-    file: settingFile(settingsContext, fallback.key),
-  });
-  return { cas, optimizations: resolved, warning: `Warning: ${message}` };
-}
 
 export default function androidCommand(program: Command): void {
   registerAndroid(program);
@@ -618,6 +565,30 @@ function androidSlotOptions(options: RunAndroidOptions) {
   };
 }
 
+function avdSetupFailure(
+  error: unknown,
+  root: string,
+  logFile: string,
+): { code: string; message: string; remedy: string; extra?: FailExtra } {
+  const refusal = claimFailure(error, 'stim android');
+  if (refusal) return refusal;
+  const diag = noDeviceDiagnostic({
+    reason: `Could not ensure an owned Android emulator: ${(error as Error)?.message || error}`,
+    logFile,
+    localEmulator: !(error instanceof AvdRecoveryError),
+    remedy:
+      error instanceof AvdBootError
+        ? error.remedy
+        : 'Check that JAVA_HOME and ANDROID_HOME are set correctly, and that an arm64 system image is installed (`sdkmanager "system-images;android-36;google_apis;arm64-v8a"`).',
+  });
+  return {
+    code: NO_DEVICE,
+    message: diag.message,
+    remedy: diag.remedy,
+    extra: { lines: diag.lines, logPath: diag.logPath ? displayPath(root, diag.logPath) : null },
+  };
+}
+
 export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOptions): Promise<RunAndroidResult> {
   let {
     root,
@@ -830,113 +801,29 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   let estimatesRead: RunEstimates | null = null;
   const estimates = (): RunEstimates => (estimatesRead ??= readEstimates({ projectKey, platform: PLATFORM }));
   const settings = resolveSettingsFor(settingsContext);
-  const [shapeError, ...moreShapeErrors] = [parkedMaxSetting('android').error, ...settingShapeErrors(settings)].filter(
-    (error): error is string => Boolean(error),
+  const planned = resolveAndroidRunPlan(
+    {
+      settings,
+      settingsContext,
+      slot,
+      easProfile,
+      variant: variantFlag,
+      systemImage: systemImageFlag,
+      device: deviceFlag,
+      wait: waitFlag,
+      waitConflict,
+      remote: commandRemoteBackend,
+      buildCache: requestedBuildCache,
+    },
+    { resolveCacheProvider, listSystemImages, warn: (label, message) => out(phaseLine(label, chalk.yellow(message))) },
   );
-  if (shapeError) {
-    return fail('STIM_BAD_ARG', shapeError, SETTING_SHAPE_REMEDY, { lines: moreShapeErrors });
-  }
-  for (const key of unknownSettingKeys(settings)) {
-    out(phaseLine('setting', chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`)));
-  }
-  let optimizations: Optimizations;
-  try {
-    optimizations = resolveOptimizations(settings);
-  } catch (error) {
-    return fail('STIM_BAD_ARG', `Could not configure Android build: ${(error as Error).message}`, SETTING_SHAPE_REMEDY);
-  }
-  const compilerCache = androidCompilerCache({ root, optimizations, settingsContext });
-  const cas = compilerCache.cas;
-  optimizations = compilerCache.optimizations;
-  if (compilerCache.warning) out(phaseLine('cache', chalk.yellow(compilerCache.warning)));
-  const buildProfile = optimizationBuildProfile('android', optimizations);
-  const cacheProviderConfig = resolveCacheProvider(settingsContext);
-  const cacheProviderError = cacheProviderSettingError(settings);
-  if (cacheProviderError) out(phaseLine('cache', chalk.yellow(`${cacheProviderError} Using the local cache.`)));
-  const dataPartitionSizeError = androidDataPartitionSizeGbSettingError(settings);
-  if (dataPartitionSizeError) {
-    return fail(
-      'STIM_BAD_ARG',
-      dataPartitionSizeError,
-      'Set android.dataPartitionSizeGb to a whole number of GiB from 6 through 16384.',
-    );
-  }
-  const avdConfigError = androidAvdConfigSettingError(settings, settingsRoot);
-  if (avdConfigError) {
-    return fail(
-      'STIM_BAD_ARG',
-      avdConfigError,
-      'Use only documented android.avdConfig keys, or an android.avdConfigFile fragment contained by the app directory.',
-    );
-  }
-  const remoteSettingError = remoteDeviceSettingError(settings);
-  if (remoteSettingError) {
-    return fail(
-      'STIM_BAD_ARG',
-      remoteSettingError,
-      `Set ios.remote and android.remote to one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}.`,
-    );
-  }
-  const systemImage = resolveSystemImage(systemImageFlag, settings);
-  const variant = easProfile !== undefined ? 'debug' : resolveVariant(variantFlag, settings);
-  const flavorRefusal = productFlavorRefusal({ flavors: readProductFlavors(root), variant });
-  if (flavorRefusal) return fail(flavorRefusal.code, flavorRefusal.reason, flavorRefusal.remedy);
-  const release = isReleaseVariant(variant);
-  const cachePolicy = artifactCachePolicy(optimizations, requestedBuildCache, release);
+  if (!planned.ok) return fail(planned.code, planned.message, planned.remedy, { lines: planned.lines });
+  const { plan } = planned;
+  const { build: buildPlan, target, isExpo, cacheProviderConfig } = plan;
+  const { variant, release, profile: buildProfile, cas, cache: cachePolicy } = buildPlan;
   const useBuildCache = cachePolicy.read;
-  const isExpo = detectIsExpo(root);
-  const physical = isPhysicalDeviceRequest(deviceFlag);
-  if (physical && deviceFlag === '') {
-    return fail(
-      'STIM_BAD_ARG',
-      '--device was given an empty serial.',
-      'Pass `--device` on its own to take the first connected device this workspace can lease, or ' +
-        '`--device <serial>` to name one.',
-    );
-  }
-  if (physical && commandRemoteBackend) {
-    return fail(
-      'STIM_BAD_ARG',
-      '--device installs on a device connected to this machine, and --remote installs on a remote one.',
-      'Pass only one of --device and --remote.',
-    );
-  }
-  const noWait = waitFlag === false;
-  const waitFlagged = waitFlag !== undefined;
-  if (waitConflict) {
-    return fail(
-      'STIM_BAD_ARG',
-      '--wait and --no-wait ask for opposite things.',
-      'Pass `--wait <seconds>` to wait for the lease, or `--no-wait` to install without one.',
-    );
-  }
-  if (waitFlagged && !physical) {
-    return fail(
-      'STIM_BAD_ARG',
-      '--wait and --no-wait only apply to a `--device` run.',
-      'This workspace owns its emulator, so nothing contends for it. Drop the flag, or pass `--device`.',
-    );
-  }
-  const waitParsed = parseDeviceWait(noWait ? undefined : waitFlag);
-  if ('error' in waitParsed) {
-    return fail(
-      'STIM_BAD_ARG',
-      waitParsed.error,
-      'Pass a whole number of seconds, e.g. --wait 90. `--wait 0` refuses a leased device at once.',
-    );
-  }
-  const waitSeconds = waitParsed.seconds;
-
-  const remoteBackend = physical ? null : (commandRemoteBackend ?? remoteAndroidSetting(settings));
-  const imageRefusal = systemImageRefusal({
-    slot,
-    flag: systemImageFlag,
-    resolved: systemImage,
-    physical,
-    remoteBackend,
-    listImages: listSystemImages,
-  });
-  if (imageRefusal) return fail(imageRefusal.code, imageRefusal.message, imageRefusal.remedy);
+  const physical = target.kind === 'physical';
+  const remoteBackend = target.kind === 'remote' ? target.backend : null;
   const easBuild = await resolveEasBuild({
     root,
     platform: PLATFORM,
@@ -948,7 +835,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     buildCache: requestedBuildCache,
   });
   if (isEasBuildFailure(easBuild)) return fail(easBuild.code, easBuild.message, easBuild.remedy);
-  const requestedSerial = typeof deviceFlag === 'string' ? deviceFlag : null;
   let androidPackage = detectAndroidPackage(root);
   record.bundleId = androidPackage;
   const registerProject = () =>
@@ -1049,23 +935,23 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   let bootDuration = '';
   let bootPromise: Promise<AndroidBootLike>;
 
-  if (physical && !requestedSerial) {
+  if (target.kind === 'physical' && !target.serial) {
     const pooled = await pooledAndroidDevice({
       root,
       selectPool,
       listDevices,
       isEmulatorDevice,
       deviceModel,
-      waitSeconds,
-      noWait,
+      waitSeconds: target.lease.waitSeconds,
+      noWait: target.lease.noWait,
       now,
       warn: (line: string) => out(phaseLine('lease', chalk.yellow(line))),
     });
     if ('code' in pooled) return fail(pooled.code, pooled.message, pooled.remedy, pooled.extra);
     device = pooled.device;
     bootPromise = Promise.resolve({ ok: true, serial: pooled.device.serial });
-  } else if (physical) {
-    const resolved = resolvePhysicalDevice(requestedSerial, listDevices(), isEmulatorDevice);
+  } else if (target.kind === 'physical') {
+    const resolved = resolvePhysicalDevice(target.serial, listDevices(), isEmulatorDevice);
     if (!resolved.serial) return fail(NO_DEVICE, resolved.error!, resolved.remedy!);
     device = {
       serial: resolved.serial,
@@ -1089,25 +975,14 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         projectPath: root,
         settingsRoot,
         settings,
-        flags: { systemImage },
+        flags: { systemImage: target.systemImage },
         note: out,
         out,
         logFile: emuLog,
       });
     } catch (err) {
-      const diag = noDeviceDiagnostic({
-        reason: `Could not ensure an owned Android emulator: ${(err as Error)?.message || err}`,
-        logFile: emuLog,
-        localEmulator: !(err instanceof AvdRecoveryError),
-        remedy:
-          err instanceof AvdBootError
-            ? err.remedy
-            : 'Check that JAVA_HOME and ANDROID_HOME are set correctly, and that an arm64 system image is installed (`sdkmanager "system-images;android-36;google_apis;arm64-v8a"`).',
-      });
-      return fail(NO_DEVICE, diag.message, diag.remedy, {
-        lines: diag.lines,
-        logPath: diag.logPath ? displayPath(root, diag.logPath) : null,
-      });
+      const failure = avdSetupFailure(err, root, emuLog);
+      return fail(failure.code, failure.message, failure.remedy, failure.extra);
     }
     const prepareMs = prepare();
     if (device.created || prepareMs >= SLOW_STEP_MS) {
@@ -1177,7 +1052,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     deviceAbi,
     compiler: cas?.id,
     buildProfile,
-    targetAbiOnly: optimizations.android.targetAbiOnly,
+    targetAbiOnly: buildPlan.targetAbiOnly,
   });
 
   let hash = '';
@@ -1281,7 +1156,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   }
 
   const runFromFingerprint = async (): Promise<RunAndroidResult> => {
-    if (metroCheck && metroPort !== null && optimizations.metroWarmup)
+    if (metroCheck && metroPort !== null && plan.metroWarmup)
       void prewarmMetro({
         port: metroPort,
         platform: 'android',
@@ -1578,30 +1453,29 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
           if (!apkPath) {
             phase('build', `compiling ${variant || 'debug'} with Gradle`);
-            const built: BuildAndroidResultLike = await build(
+            const built = await build(
               { root, logWriter: writer, variant, abi: buildAbi },
               {
                 estimateMs: estimates().coldBuildMs,
-                ccache: optimizations.android.compilerCache === 'ccache' ? ccacheFor({ root, onNote: out }) : null,
+                ccache: buildPlan.compilerCache === 'ccache' ? ccacheFor({ root, onNote: out }) : null,
                 cas,
-                buildCache: optimizations.android.gradleBuildCache,
-                pch: optimizations.android.pch,
-                compilerCacheDisabled: optimizations.android.compilerCache === 'none',
+                buildCache: buildPlan.gradleBuildCache,
+                pch: buildPlan.pch,
+                compilerCacheDisabled: buildPlan.compilerCache === 'none',
               },
             );
             ccacheActivity = built.ccache ?? CCACHE_UNAVAILABLE;
             phase('cache', `compilation cache ${ccacheActivityLine(ccacheActivity)}`);
-            if (built.failed) {
-              const diagnostics = built.diagnostics || [];
+            if (!built.ok) {
+              const diagnostics = built.diagnostics;
               for (const diag of diagnostics) {
                 writer.write({ src: 'build', level: 'error', event: 'gradle_diagnostic', msg: formatDiagnostic(diag) });
               }
               phase('build', chalk.red(`FAILED after ${formatDuration(built.durationMs)}`));
               const extracted = diagnostics.map(formatDiagnostic);
-              if ((built.truncated ?? 0) > 0)
-                extracted.push(`... and ${built.truncated} more diagnostic(s) in the log`);
+              if (built.truncated > 0) extracted.push(`... and ${built.truncated} more diagnostic(s) in the log`);
               phaseFailure = fail(
-                built.code!,
+                built.code,
                 built.reason,
                 diagnostics.find((d) => d.remedy)?.remedy || built.remedy || null,
                 {
@@ -1613,8 +1487,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
               );
               return false;
             }
-            apkPath = built.apkPath ?? null;
-            stats.setBuildMs(built.durationMs ?? 0);
+            apkPath = built.apkPath;
+            stats.setBuildMs(built.durationMs);
             phase('build', `ok (${formatDuration(built.durationMs)})`);
             if (built.apkNote) phase('build', chalk.yellow(built.apkNote));
 
@@ -1716,8 +1590,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         id: device.serial!,
         deviceName: device.deviceName ?? null,
         idLabel: 'serial',
-        waitSeconds,
-        noWait,
+        waitSeconds: target.lease.waitSeconds,
+        noWait: target.lease.noWait,
         installBoundMs: ADB_INSTALL_TIMEOUT_MS,
         appId: androidPackage,
         holderAppId: (holder: string) => getProject(holder)?.androidPackage ?? null,

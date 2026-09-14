@@ -41,6 +41,35 @@ export function repoRoot(cwd: string): string | null {
   return out ? out.trim() : null;
 }
 
+export interface UpstreamState {
+  name: string;
+  ahead: number;
+  behind: number;
+}
+
+export function locallyKnownUpstream(projectRoot: string): UpstreamState | null {
+  try {
+    const name = getExecutor().runFile(
+      'git',
+      ['-C', projectRoot, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'],
+      { timeoutMs: 5000 },
+    );
+    const counts = getExecutor()
+      .runFile('git', ['-C', projectRoot, 'rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], {
+        timeoutMs: 5000,
+      })
+      .trim()
+      .split(/\s+/)
+      .map(Number);
+    const ahead = counts[0] ?? NaN;
+    const behind = counts[1] ?? NaN;
+    if (!name || !Number.isInteger(ahead) || !Number.isInteger(behind)) return null;
+    return { name, ahead, behind };
+  } catch {
+    return null;
+  }
+}
+
 export function warmWorktreePaths(cwd: string): { root: string; target: string; common: string } {
   const currentRoot = repoRoot(cwd);
   if (!currentRoot) throw new Error('Not a git repository.');

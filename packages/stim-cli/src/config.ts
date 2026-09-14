@@ -4,6 +4,8 @@ import { isAbsolute, join } from 'path';
 import { homedir } from 'os';
 import { isOnMountedVolume } from './fs-util.ts';
 import { withDirLock } from './dir-lock.ts';
+import { acquireAvdClaim } from './avd-claim.ts';
+import { releaseClaim } from './ownership-claim.ts';
 
 import type { Config, ConcurrencyLimits, DeviceRecord, ProjectRecord, RepoRecord, SupervisorRecord } from './types.ts';
 import { sameProcessRecord, type ProcessRecord } from './process-identity.ts';
@@ -146,6 +148,11 @@ export function removeProject(projectPath: string): void {
   withConfigLock(() => {
     const cfg = loadConfig();
     if (!cfg?.projects?.[projectPath]) return;
+    for (const { platforms } of projectDeviceSlots(cfg.projects[projectPath])) {
+      if (platforms.android?.owned && platforms.android.avdName) {
+        releaseClaim(acquireAvdClaim(platforms.android.avdName));
+      }
+    }
     delete cfg.projects[projectPath];
     saveConfig(cfg);
   });
@@ -189,13 +196,17 @@ export function releaseAndroidConsolePort(projectPath: string, consolePort: numb
   });
 }
 
-export function clearDevice(projectPath: string, platform: string, slot = 'default'): void {
-  withConfigLock(() => {
+export function clearDevice(projectPath: string, platform: string, slot = 'default', expectedId?: string): boolean {
+  return withConfigLock(() => {
     const cfg = loadConfig();
     const project = cfg?.projects?.[projectPath];
-    if (!cfg || !project) return;
+    if (!cfg || !project) return false;
+    const current = deviceSlotPlatforms(project, slot)?.[platform];
+    if (expectedId !== undefined && (platform === 'ios' ? current?.deviceUdid : current?.avdName) !== expectedId)
+      return false;
     removeSlotDevice(project, platform, slot);
     saveConfig(cfg);
+    return true;
   });
 }
 

@@ -276,6 +276,23 @@ test('the errors topic documents both codes the ownership-claim primitive raises
   }
 });
 
+test('AVD claim recovery requires checking native processes and keeping incomplete ownership', () => {
+  const body = renderSection('errors', 'STIM_CLAIM_REFUSED');
+  expect(body).toContain('~/.stim/avd-locks');
+  expect(body).toMatch(/confirm that neither Stim nor its\s+avdmanager or adb child is still using the AVD/);
+  expect(body).toContain('Keep the AVD and its incomplete workspace record');
+});
+
+test('short lock recovery requires checking the holder before manual removal', () => {
+  const body = renderSection('errors', 'STIM_LOCK_TIMEOUT');
+  expect(body).toMatch(/never expire based on age/);
+  expect(body).toMatch(/if none is running, remove the named directory/);
+  expect(body).toMatch(/proven-dead owner is recovered automatically/);
+  expect(body).toContain('STIM_CLAIM_UNAVAILABLE');
+  expect(body).toContain('<path>.claims');
+  expect(body).toMatch(/empty before marker publication/);
+});
+
 test('the rendered guide carries the warm --refresh contract, not just its source', () => {
   const options = renderSection('lifecycle', 'options');
   assert(options);

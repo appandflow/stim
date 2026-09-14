@@ -220,7 +220,7 @@ code, never on the message.`,
   run the command again.`,
     },
     STIM_CLAIM_REFUSED: {
-      summary: 'a build lock exists whose holder cannot be identified; Stim neither removes it nor waits on it',
+      summary: 'an ownership claim blocks the operation; inspect its holder before removing an unresolved claim',
       body: () => `STIM_CLAIM_REFUSED
   A build lock records the holder's process IDENTITY, not just its pid, so a
   recycled pid reads as a gone builder rather than a live one, and a builder
@@ -239,7 +239,18 @@ code, never on the message.`,
   and nothing was copied. A STIM_HOME or warm-locks ancestor that is a file
   also refuses. The message names that blocking path and prints a shell-quoted
   move-aside command. Inspect it first: the file may contain unrelated data.
-  An existing backup prompts before overwriting; preserve both files.`,
+  An existing backup prompts before overwriting; preserve both files.
+  Android creation, recovery and teardown use per-AVD claims under
+  ~/.stim/avd-locks. Creation records the avdmanager process group, so a claim
+  left by a killed creator becomes recoverable after that group exits. Retry
+  after a live creator or cleanup finishes. An interruption before the child
+  is recorded, or during synchronous teardown, can leave no verifiable
+  identity: inspect the named claim and confirm that neither Stim nor its
+  avdmanager or adb child is still using the AVD before removing only that
+  claim. Keep the AVD and its incomplete workspace record. Once the claim is
+  safe to clear, retry \`stim android\` to reconcile incomplete setup through
+  owned-device teardown. GC and project removal refuse while the claim is
+  live or unresolved.`,
     },
     STIM_CLAIM_UNAVAILABLE: {
       summary: 'a process identity or warm claim store is unavailable, so the protected operation refuses',
@@ -881,8 +892,21 @@ captured"  (in metro.ndjson, bare RN)
 "Timed out waiting for the lock at <path>."
   Short directory locks serialize writes to config, workspace state, device
   leases, ownership records, metadata, and cache manifests. The path identifies
-  the lock. A lock older than 10s is taken over automatically. Wait for the
-  command holding it; if none is running, remove the named directory.`,
+  the lock. These locks wait up to 12s and never expire based on age. Wait for
+  the command holding it; if none is running, remove the named directory.
+  Short locks use the same process-identity claims as long operations, stored
+  beside the visible directory at <path>.claims. An opaque marker in the visible
+  directory also excludes older Stim versions. Only the exclusive claim holder
+  can recover a recognized marker. A
+  complete claim left by a proven-dead owner is recovered automatically on
+  the next attempt. An unreadable or undecodable record instead reports
+  STIM_CLAIM_REFUSED and names the claim to inspect; an unavailable native
+  identity reports STIM_CLAIM_UNAVAILABLE without running the protected work.
+  Older lock directories have no process identity. A visible directory left
+  empty before marker publication or during final removal also cannot prove it is free.
+  These paths still time out; verify that no holder is running before removing
+  only the named directory. Standalone Metro and Expo cache packages use the
+  same core protocol and do not require the Stim CLI.`,
     },
     teardown: {
       summary: 'an unmanaged port, an unverified supervisor, and a failed device teardown',

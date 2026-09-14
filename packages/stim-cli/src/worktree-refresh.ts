@@ -5,19 +5,13 @@ import { join, relative } from 'node:path';
 import { workspaceName } from '@stim-cli/core';
 import { formatDuration, formatElapsed, phaseLine } from './command-output.ts';
 import { getConfigDir } from './config.ts';
-import {
-  dependencyState,
-  hasInstalledDependencies,
-  installedNpmTreeIsValid,
-  locallyKnownUpstream,
-  type UpstreamState,
-} from './doctor.ts';
+import { dependencyState, hasInstalledDependencies, installedNpmTreeIsValid } from './dependency-state.ts';
 import { DEPS_ERROR, podsAreStale, readPodState, runCaptured, runPodInstall } from './engine/deps.ts';
 import { NO_INSTALLER_CLAIM, type InstallerClaim } from './engine/warm-claim.ts';
 import { HEARTBEAT_INTERVAL_MS } from './engine/xcode.ts';
 import { getExecutor } from './exec.ts';
 import type { SettingsObject } from './types.ts';
-import { resolveFullRef } from './worktree.ts';
+import { locallyKnownUpstream, resolveFullRef, type UpstreamState } from './worktree.ts';
 
 export interface RefreshFailure {
   code: string;

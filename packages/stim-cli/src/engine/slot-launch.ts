@@ -1,7 +1,7 @@
 import { deviceShellArg } from './app-install.ts';
 import { fileLeaseIo } from './device-lease.ts';
 import { getProject } from '../config.ts';
-import { readWorkspaceState } from '../supervisor/state.ts';
+import { readWorkspaceState } from '../workspace-state.ts';
 
 export function launchSlotScope(root: string, slot = 'default'): string | undefined {
   if (slot !== 'default') return slot;
