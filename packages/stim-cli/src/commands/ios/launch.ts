@@ -1,8 +1,7 @@
+import type { PreparedIosArtifact } from './artifact.ts';
 import { launchSlotScope, nativeRunCommand } from '../../engine/slot-launch.ts';
 import { basename } from 'node:path';
-import { rmSync } from 'node:fs';
 import chalk from 'chalk';
-import type { ProviderCallResult } from '@stim-cli/cache';
 import {
   DEFAULT_METRO_PORT,
   LAUNCH_BUNDLING,
@@ -26,22 +25,12 @@ import {
 import { localNetworkPending, DEVICECTL_INSTALL_TIMEOUT_MS, LAUNCH_PROBE_TIMEOUT_MS } from '../../engine/ios-device.ts';
 import { launchErrorPreview } from '../../launch-error-preview.ts';
 import { MODE_BARE, MODE_EXPO } from '../../supervisor/state.ts';
-import type {
-  VerifyLaunchResultLike,
-  DeviceLike,
-  IosBootLike,
-  RemoteUploadLike,
-  WaitedForBuild,
-  FailArgs,
-  BuildFailureFields,
-} from './types.ts';
+import type { VerifyLaunchResultLike, DeviceLike, IosBootLike, FailArgs } from './types.ts';
 import { PLATFORM, deviceLabel, deviceShortName, appNameFromPath } from './support.ts';
 import { type RunLease, DEBUG_VERIFY_STEP_MS, lostLine, lostRefusal } from '../../engine/device-lease-run.ts';
-import { type LoadProjectProviderResult, exitAfterFlush } from '../../engine/remote-cache.ts';
-import type { CacheHitLevel, CompilationCacheActivity, IosFacts } from '../../types.ts';
+import type { IosFacts } from '../../types.ts';
 import type { NdjsonWriter } from '../../ndjson.ts';
-import { type ReportIosResultArgs, finishIosUpload, reportIosResult } from './result.ts';
-import { providerUploadOutcome } from '../../build-cache.ts';
+import { type ReportIosResultArgs, reportIosResult } from './result.ts';
 import { launchOutcomeRecord } from '../native-runtime.ts';
 import { COLLECTOR_EXIT_WAIT_MS } from './collector.ts';
 import {
@@ -337,7 +326,13 @@ function reportLaunchErrors(errors: LaunchErrorRecord[], note: (line: string) =>
   return report.lines.length > 0;
 }
 
+export interface IosRunCompletion {
+  facts: IosFacts;
+  uploadsAbandoned: boolean;
+}
+
 interface FinishIosRunArgs {
+  artifact: PreparedIosArtifact;
   d: IosDeps;
   root: string;
   slot?: string;
@@ -358,27 +353,12 @@ interface FinishIosRunArgs {
   remoteDevice: ReturnType<IosDeps['remoteIosDeps']> | null;
   bootPromise: Promise<IosBootLike | null | undefined>;
   bootDuration: () => string;
-  appPath: string | null;
-  bundleId: string | null;
-  swapDir: string | null;
-  buildFailure: BuildFailureFields;
   fail: (args: FailArgs) => null;
   phase: (name: unknown, text: string) => void;
   note: (line: string) => void;
   logWriter: () => NdjsonWriter;
-  uploadPending: Promise<RemoteUploadLike> | null;
-  providerUpload: Promise<ProviderCallResult<void>> | null;
-  providerName: string | null;
-  remote: LoadProjectProviderResult | null;
-  abandonedRemote: boolean;
   elapsed: () => number;
   startedAt: string;
-  storeHash: string | null;
-  storeKey: string | null;
-  cacheHit: CacheHitLevel;
-  compilationCache: CompilationCacheActivity;
-  useBuildCache: boolean;
-  waitedForBuild: WaitedForBuild | null;
   closeWriter: () => void;
   lease: RunLease | null;
   releaseLease: () => void;
@@ -420,13 +400,6 @@ function cleanAdoptedIosApps({
 function resolveRunBundleId(d: IosDeps, root: string, appPath: string | null, bundleId: string | null): string | null {
   if (!appPath || bundleId) return bundleId;
   return d.readBundleId(appPath) || d.detectBundleId(root);
-}
-
-function removeSwapDirectory(swapDir: string | null): void {
-  if (!swapDir) return;
-  try {
-    rmSync(swapDir, { recursive: true, force: true });
-  } catch {}
 }
 
 function readRunExecutable(d: IosDeps, appPath: string | null, note: (line: string) => void): string | null {
@@ -487,6 +460,7 @@ function simulatorLaunchFailureRemedy(remote: boolean, udid: string, bundleId: s
 }
 
 export async function finishIosRun({
+  artifact,
   d,
   root,
   slot,
@@ -507,32 +481,27 @@ export async function finishIosRun({
   remoteDevice,
   bootPromise,
   bootDuration,
-  appPath,
-  bundleId: initialBundleId,
-  swapDir,
-  buildFailure,
   fail,
   phase,
   note,
   logWriter,
-  uploadPending,
-  providerUpload,
-  providerName,
-  remote,
-  abandonedRemote: remoteWasAbandoned,
   elapsed,
   startedAt,
-  storeHash,
-  storeKey,
-  cacheHit,
-  compilationCache,
-  useBuildCache,
-  waitedForBuild,
   closeWriter,
   lease,
   releaseLease,
   recordRun,
-}: FinishIosRunArgs): Promise<IosFacts | null> {
+}: FinishIosRunArgs): Promise<IosRunCompletion | null> {
+  const { path: appPath, bundleId: initialBundleId, failureFields: buildFailure, cache } = artifact;
+  const {
+    hit: cacheHit,
+    providerName,
+    readEnabled: useBuildCache,
+    waitedForBuild,
+    compilation: compilationCache,
+  } = cache;
+  const storeHash = cache.identity?.fingerprint ?? null;
+  const storeKey = cache.identity?.key ?? null;
   const runCommand = nativeRunCommand('ios', slot, { physical, deviceId: udid });
   let bundleId = initialBundleId;
   let leaseWarned = false;
@@ -576,7 +545,7 @@ export async function finishIosRun({
   const scheme = release ? undefined : d.devClientScheme(root, appPath);
   const appName = appNameFromPath(appPath);
   const appExecutable = readRunExecutable(d, appPath, note);
-  const dropSwapDir = () => removeSwapDirectory(swapDir);
+  const dropSwapDir = artifact.release;
   let installSkipped = false;
   let launched: ReturnType<IosDeps['launchIosApp']> | null = null;
   let launchedAt = d.now();
@@ -826,12 +795,7 @@ export async function finishIosRun({
   const leaseFacts = lease?.facts() ?? null;
   releaseLease();
 
-  const uploadWasAbandoned = await finishIosUpload(uploadPending, remote, phase, note);
-  const providerOutcome = providerUploadOutcome(providerUpload ? await providerUpload : null, providerName);
-  if (providerOutcome) {
-    if (providerOutcome.warn) note(chalk.yellow(phaseLine('cache', providerOutcome.line)));
-    else phase('cache', providerOutcome.line);
-  }
+  const uploadsAbandoned = await artifact.completeUploads();
   const facts = reportIosResult({
     d,
     root,
@@ -858,13 +822,11 @@ export async function finishIosRun({
     waitedForBuild,
     launchState,
     launchWarning,
-    remote,
     providerName,
     closeWriter,
     webPreviewUrl: remoteDevice?.webPreviewUrl() ?? null,
     lease: physical ? leaseFacts : undefined,
     recordRun,
   });
-  if (remoteWasAbandoned || uploadWasAbandoned) exitAfterFlush(0);
-  return facts;
+  return { facts, uploadsAbandoned };
 }
