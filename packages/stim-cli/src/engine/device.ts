@@ -1,6 +1,5 @@
 import { deviceSlotPlatforms, projectDeviceSlots } from '../device-slots.ts';
 import chalk from 'chalk';
-import { randomUUID } from 'node:crypto';
 import { phaseLine } from '../command-output.ts';
 import { ownedDeviceLabel } from '../project.ts';
 import { workspaceId } from '../paths.ts';
@@ -47,12 +46,10 @@ import {
   listInstalledSystemImages,
   bootAndroidEmulator,
   configureNewOwnedAvd,
-  createOwnedAvd,
   getAvdNameForSerial,
   listAdbDevices,
   listAvds,
   nextConsolePort,
-  ownedAvdName,
   ownedAvdSystemImage,
   resolveOwnedAvdSerial,
   waitForBoot,
@@ -62,6 +59,8 @@ import { androidAvdConfigSetting, androidDataPartitionSizeGbSetting, iosSimSlimP
 import { teardownOwnedAvd, teardownParkedAvd, teardownParkedIosSim } from '../teardown.ts';
 import { reconcileSimSlim } from './simslim.ts';
 import { withWorkspaceProcessLock } from './workspace-process-lock.ts';
+import { AvdBootError, AvdRecoveryError, prepareOwnedAvd } from './android-avd-setup.ts';
+export { AvdBootError, AvdRecoveryError } from './android-avd-setup.ts';
 
 export interface OwnedDeviceRecord {
   deviceUdid?: string;
@@ -543,32 +542,6 @@ async function configureOwnedIosSim({
   return updated;
 }
 
-function findOtherProjectOwningAvd(avdName: string, projectPath: string, selectedSlot = 'default'): string | null {
-  const cfg = loadConfig();
-  for (const [path, proj] of Object.entries(cfg?.projects || {})) {
-    if (
-      projectDeviceSlots(proj).some(
-        ({ slot, platforms }) =>
-          (path !== projectPath || slot !== selectedSlot) &&
-          platforms.android?.avdName?.toLowerCase() === avdName.toLowerCase(),
-      )
-    )
-      return path;
-  }
-  return null;
-}
-
-export class AvdBootError extends Error {
-  readonly remedy: string;
-
-  constructor(message: string, remedy: string, cause?: unknown) {
-    super(message, { cause });
-    this.remedy = remedy;
-  }
-}
-
-export class AvdRecoveryError extends AvdBootError {}
-
 async function ensureOwnedAndroidDevice({
   record,
   projectPath,
@@ -599,13 +572,20 @@ async function ensureOwnedAndroidDevice({
   const avdConfig = androidAvdConfigSetting(settings, settingsRoot);
   const configuration = avdPoolConfiguration(androidDataPartitionSizeGbSetting(settings), avdConfig);
   if (record?.setupIncomplete && record.avdName) {
-    const cleanup = teardownAvd(record.avdName, { del: true, owner: { projectPath } });
+    const avdName = record.avdName;
+    const cleanup = teardownAvd(avdName, {
+      del: true,
+      owner: { projectPath, slot, expectedRecord: record },
+      onRemoved: () => {
+        clearDevice(projectPath, 'android', slot, avdName);
+      },
+    });
     if (cleanup.status === 'failed' || cleanup.status === 'skipped') {
-      throw new Error(
+      throw new AvdRecoveryError(
         `Owned AVD ${record.avdName} has incomplete setup and could not be deleted (${cleanup.reason || cleanup.status}). Fix the cause, then retry; Stim kept the device record for cleanup.`,
+        'Wait for any active AVD operation to finish. If the refusal names an unresolved claim, inspect its creator and native processes before removing only that claim. Retry `stim android` to reconcile the incomplete device.',
       );
     }
-    clearDevice(projectPath, 'android', slot);
     record = null;
   }
   if (record?.avdName) {
@@ -738,122 +718,28 @@ async function ensureOwnedAndroidDevice({
       };
     }
   }
-  let created: { avdName: string; systemImage: string | null; consolePort?: number; serial?: string };
-  let fresh = false;
-  try {
-    created = withConfigLock(() => {
-      const current = deviceSlotPlatforms(loadConfig()?.projects?.[projectPath], slot)?.android;
-      if (current?.avdName && current.avdName !== record?.avdName) {
-        throw new Error(`Another Stim run assigned AVD ${current.avdName} to this workspace. Retry to use it.`);
-      }
-      if (
-        readParked('android').some((entry) => entry.name === ownedAvdName(label)) ||
-        findOtherProjectOwningAvd(ownedAvdName(label), projectPath, slot)
-      )
-        label = `${label}-${randomUUID().slice(0, 8)}`;
-      const result = createOwnedAvd(label, { systemImage: flags.systemImage || settings.android?.systemImage });
-      setDevice(
-        projectPath,
-        'android',
-        {
-          avdName: result.avdName,
-          owned: true,
-          deviceName: result.avdName,
-          setupIncomplete: true,
-          poolConfiguration: configuration,
-        },
-        slot,
-      );
-      return result;
-    });
-    fresh = true;
-  } catch (e) {
-    const message = String((e as Error)?.message || e);
-    const avdName = ownedAvdName(label);
-    if (message.includes('already exists')) {
-      try {
-        if (!listAvds().includes(avdName)) {
-          throw new AvdRecoveryError(
-            `AVD ${avdName} already exists on disk but is not listed by the emulator. ${message}`,
-            'Run `npx stim gc` to inspect orphaned owned AVDs, then `npx stim gc --delete` to reclaim those safe to delete. Retry `stim android` after cleanup; keep any AVD that GC cannot verify.',
-            e,
-          );
-        }
-        created = withConfigLock(() => {
-          if (readParked('android').some((entry) => entry.name === avdName)) {
-            throw new Error(`AVD ${avdName} was parked by another Stim run. Retry to adopt it safely.`, { cause: e });
-          }
-          const owner = findOtherProjectOwningAvd(avdName, projectPath, slot);
-          if (owner) {
-            throw new Error(
-              `AVD ${avdName} already exists and is owned by another project (${owner}). Retry to allocate a distinct owned emulator.`,
-              { cause: e },
-            );
-          }
-          const current = deviceSlotPlatforms(loadConfig()?.projects?.[projectPath], slot)?.android;
-          if (current?.avdName) {
-            const state = current.setupIncomplete ? 'has incomplete setup' : 'was registered';
-            throw new Error(
-              `AVD ${current.avdName} ${state} by another concurrent Stim run. Retry after that run finishes so the recorded device is resolved safely.`,
-              { cause: e },
-            );
-          }
-          const resolved = resolveOwnedAvdSerial(avdName);
-          if (resolved.missing || resolved.notOwned) {
-            throw new Error(
-              `AVD ${avdName} could not be verified for recovery. Retry after checking its registration.`,
-              {
-                cause: e,
-              },
-            );
-          }
-          if (!resolved.serial) assertOwnedAvdStopped(avdName);
-          const recovered = {
-            avdName,
-            owned: true,
-            deviceName: avdName,
-            ...(resolved.serial ? { consolePort: Number(resolved.serial.replace(/^emulator-/, '')) } : {}),
-          };
-          setDevice(projectPath, 'android', recovered, slot);
-          return { ...recovered, systemImage: ownedAvdSystemImage(avdName), serial: resolved.serial };
-        });
-      } catch (error) {
-        if (error instanceof AvdRecoveryError) throw error;
-        throw new AvdRecoveryError(
-          `Could not recover owned AVD ${avdName}: ${String((error as Error)?.message || error)}`,
-          'Inspect `npx stim status` and `adb devices`. Wait for any other Stim run using this AVD to finish, then retry `stim android`. Keep the AVD and its process locks while its state is unverified.',
-          error,
-        );
-      }
-      out(chalk.dim(phaseLine('device', `recovered ${avdName} (unrecorded from a prior run)`)));
-      if (created.serial) return { ...created, owned: true, deviceName: avdName, created: false };
-    } else {
-      throw e;
-    }
-  }
-  if (fresh) {
-    try {
-      configureAvd(created.avdName, {
+  const created = prepareOwnedAvd({
+    projectPath,
+    slot,
+    label,
+    previousAvdName: record?.avdName,
+    systemImage: flags.systemImage || settings.android?.systemImage || undefined,
+    configuration,
+    configure: (avdName) =>
+      configureAvd(avdName, {
         dataPartitionSizeGb: androidDataPartitionSizeGbSetting(settings),
         avdConfig,
-      });
-    } catch (error) {
-      const cleanup = teardownAvd(created.avdName, { del: true, owner: { projectPath } });
-      const kept = cleanup.status === 'failed' || cleanup.status === 'skipped';
-      if (!kept) clearDevice(projectPath, 'android', slot);
-      const orphan = kept
-        ? ` The owned AVD remains tracked for cleanup (${cleanup.reason || cleanup.status}); fix the cause, then retry or run \`stim gc --delete\`.`
-        : '';
-      throw new Error(
-        `Created owned AVD ${created.avdName}, but could not configure its AVD settings: ${String((error as Error)?.message || error)}${orphan}`,
-        { cause: error },
-      );
-    }
+      }),
+    teardown: teardownAvd,
+  });
+  if (!created.created) {
+    out(chalk.dim(phaseLine('device', `recovered ${created.avdName} (unrecorded from a prior run)`)));
+    if (created.serial) return { ...created, owned: true, deviceName: created.avdName };
   }
   return {
     ...(await bootOwnedAvdOnFreshPort({
       avdName: created.avdName,
-      metadata: fresh ? { poolConfiguration: configuration } : undefined,
+      metadata: created.created ? { poolConfiguration: configuration } : undefined,
       projectPath,
       slot,
       deviceName: created.avdName,
@@ -861,7 +747,7 @@ async function ensureOwnedAndroidDevice({
       logFile,
       alive,
     })),
-    created: fresh,
+    created: created.created,
     systemImage: created.systemImage,
   };
 }

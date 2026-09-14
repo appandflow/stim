@@ -1792,6 +1792,25 @@ describe('the other refusals', () => {
     expect(result.error.remedy).not.toMatch(/JAVA_HOME/);
   });
 
+  test('AVD claim refusal preserves its claim remedy instead of reporting an SDK problem', async () => {
+    const claim = join(home, 'avd-locks', 'stim-app.lock', 'exclusive', 'creator.claim');
+    const h = harness({
+      ensureDevice: async () => {
+        throw new ClaimRefusedError({
+          claimPath: claim,
+          root: join(home, 'avd-locks', 'stim-app.lock'),
+          reason: 'the creator was killed before recording its child identity',
+          label: 'AVD stim-app',
+        });
+      },
+      build: never('the build'),
+    });
+    const result = await h.run();
+    expect(result.error?.code).toBe('STIM_CLAIM_REFUSED');
+    expect(String(result.error?.remedy)).toContain(claimRemoveCommand(claim));
+    expect(result.error?.remedy).not.toMatch(/JAVA_HOME|sdkmanager/);
+  });
+
   test.each(['prepare', 'boot'] as const)('preserves the pressure remedy from %s in STIM_NO_DEVICE', async (stage) => {
     const reason = 'Emulator emulator-5554 did not finish booting within 360s.';
     const remedy =

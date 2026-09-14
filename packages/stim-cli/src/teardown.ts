@@ -1,6 +1,7 @@
 import { closeOwnedDeviceSessions } from './agent-device-cleanup.ts';
-import { projectDeviceSlots } from './device-slots.ts';
+import { deviceSlotPlatforms, projectDeviceSlots } from './device-slots.ts';
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { lstatSync, renameSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { loadConfig, withConfigLock } from './config.ts';
@@ -32,6 +33,8 @@ import {
   ownedAvdSystemImage,
 } from './sim/android.ts';
 import { parkSim, readParked, removeParkedAfter, type ParkedSim } from './sim-pool.ts';
+import { acquireAvdClaim } from './avd-claim.ts';
+import { clearClaimChild, markClaimChildPending, releaseClaim, type ClaimHandle } from './ownership-claim.ts';
 
 export interface ParkedDevice {
   udid: string;
@@ -178,31 +181,61 @@ export function teardownOwnedIosSim(
   }
 }
 
-type AvdOwner = { projectPath: string } | { pool: true };
+type AvdOwner = { projectPath: string; slot?: string; expectedRecord?: object } | { pool: true };
 
-function removeOrphanedAvdDirectory(candidate: OrphanedAvdDirectory, owner?: AvdOwner): void {
-  const detached = withConfigLock(() => {
-    const current = listOrphanedAvdDirectories(candidate.name).find((entry) => entry.directory === candidate.directory);
-    if (!current || current.name !== candidate.name || current.dev !== candidate.dev || current.ino !== candidate.ino) {
-      throw new Error(`AVD data at ${candidate.directory} changed or is registered; it was kept.`);
-    }
-    const config = loadConfig();
-    if (!config) throw new Error('Cannot verify AVD references without a Stim config; the data was kept.');
-    for (const [projectPath, project] of Object.entries(config.projects)) {
-      for (const { platforms } of projectDeviceSlots(project)) {
-        if (platforms.android?.avdName !== candidate.name) continue;
-        if (!owner || !('projectPath' in owner) || owner.projectPath !== projectPath || !platforms.android.owned) {
-          throw new Error(`AVD ${candidate.name} is referenced by ${projectPath}; its data was kept.`);
-        }
+function assertAvdReferences(avdName: string, owner?: AvdOwner): void {
+  const config = loadConfig();
+  if (!config) throw new Error('Cannot verify AVD references without a Stim config; the data was kept.');
+  if (
+    owner &&
+    'projectPath' in owner &&
+    owner.expectedRecord &&
+    !isDeepStrictEqual(
+      deviceSlotPlatforms(config.projects[owner.projectPath], owner.slot)?.android,
+      owner.expectedRecord,
+    )
+  ) {
+    throw new Error(`AVD ${avdName} has a changed workspace record; its data was kept.`);
+  }
+  for (const [projectPath, project] of Object.entries(config.projects)) {
+    for (const { slot, platforms } of projectDeviceSlots(project)) {
+      if (platforms.android?.avdName?.toLowerCase() !== avdName.toLowerCase()) continue;
+      if (
+        !owner ||
+        !('projectPath' in owner) ||
+        owner.projectPath !== projectPath ||
+        (owner.slot ?? 'default') !== slot ||
+        !platforms.android.owned
+      ) {
+        throw new Error(`AVD ${avdName} is referenced by ${projectPath} (${slot}); its data was kept.`);
       }
     }
-    if (
-      readParked('android', { config }).some((entry) => entry.name === candidate.name) &&
-      !(owner && 'pool' in owner)
-    ) {
-      throw new Error(`AVD ${candidate.name} is in the emulator pool; its data was kept.`);
+  }
+  if (
+    readParked('android', { config }).some((entry) => entry.name.toLowerCase() === avdName.toLowerCase()) &&
+    !(owner && 'pool' in owner)
+  ) {
+    throw new Error(`AVD ${avdName} is in the emulator pool; its data was kept.`);
+  }
+}
+
+function removeOrphanedAvdDirectory(candidate: OrphanedAvdDirectory, owner?: AvdOwner): void {
+  const surveyed = listOrphanedAvdDirectories(candidate.name).find((entry) => entry.directory === candidate.directory);
+  if (
+    !surveyed ||
+    surveyed.name !== candidate.name ||
+    surveyed.dev !== candidate.dev ||
+    surveyed.ino !== candidate.ino
+  ) {
+    throw new Error(`AVD data at ${candidate.directory} changed or is registered; it was kept.`);
+  }
+  assertOwnedAvdStopped(candidate.name, { resolveDirectory: () => candidate.directory });
+  const detached = withConfigLock(() => {
+    const current = lstatSync(candidate.directory);
+    if (!current.isDirectory() || current.dev !== candidate.dev || current.ino !== candidate.ino) {
+      throw new Error(`AVD data at ${candidate.directory} changed or is registered; it was kept.`);
     }
-    assertOwnedAvdStopped(candidate.name, { resolveDirectory: () => candidate.directory });
+    assertAvdReferences(candidate.name, owner);
     const destination = join(dirname(candidate.directory), `stim-gc-${randomUUID()}.avd`);
     renameSync(candidate.directory, destination);
     return destination;
@@ -244,36 +277,58 @@ function teardownUnregisteredAvd(
   return { status: 'torn-down', label: avdName };
 }
 
-export function teardownOwnedAvd(
+interface AvdTeardownOptions {
+  del?: boolean;
+  park?: ParkRequest;
+  owner?: AvdOwner;
+  orphanedDirectory?: OrphanedAvdDirectory;
+  onlyIfMissing?: boolean;
+  onRemoved?: () => void;
+  waitForShutdown?: typeof waitForAndroidEmulatorShutdown;
+  assertStopped?: typeof assertOwnedAvdStopped;
+  resolveAvd?: typeof resolveOwnedAvdSerial;
+}
+
+export function teardownOwnedAvd(avdName: string, options: AvdTeardownOptions = {}): TeardownOutcome {
+  if (!/^stim-[A-Za-z0-9._-]+$/.test(avdName)) {
+    return { status: 'skipped', kind: 'not-owned', reason: `AVD ${avdName} is not Stim-owned by name` };
+  }
+  let claim: ClaimHandle | undefined;
+  try {
+    claim = acquireAvdClaim(avdName);
+    const result = teardownClaimedAvd(avdName, claim, options);
+    if (result.status === 'torn-down' || result.status === 'missing') options.onRemoved?.();
+    return result;
+  } catch (error) {
+    return { status: 'failed', reason: String((error as Error)?.message || error) };
+  } finally {
+    releaseClaim(claim);
+  }
+}
+
+function teardownClaimedAvd(
   avdName: string,
+  claim: ClaimHandle,
   {
     del = false,
     park,
     owner,
     orphanedDirectory,
+    onlyIfMissing = false,
     waitForShutdown = waitForAndroidEmulatorShutdown,
     assertStopped = assertOwnedAvdStopped,
     resolveAvd = resolveOwnedAvdSerial,
-  }: {
-    del?: boolean;
-    park?: ParkRequest;
-    owner?: AvdOwner;
-    orphanedDirectory?: OrphanedAvdDirectory;
-    waitForShutdown?: typeof waitForAndroidEmulatorShutdown;
-    assertStopped?: typeof assertOwnedAvdStopped;
-    resolveAvd?: typeof resolveOwnedAvdSerial;
-  } = {},
+  }: AvdTeardownOptions,
 ): TeardownOutcome {
   let parkFallback: string | undefined;
   try {
-    if (!/^stim-[A-Za-z0-9._-]+$/.test(avdName)) {
-      return { status: 'skipped', kind: 'not-owned', reason: `AVD ${avdName} is not Stim-owned by name` };
-    }
+    if (del) withConfigLock(() => assertAvdReferences(avdName, owner));
     const resolved = resolveAvd(avdName);
     if (resolved.notOwned) {
       return { status: 'skipped', kind: 'not-owned', reason: `AVD ${avdName} is not Stim-owned by name` };
     }
     if (resolved.missing) return teardownUnregisteredAvd(avdName, del, owner, orphanedDirectory);
+    if (onlyIfMissing) return { status: 'skipped', reason: 'AVD registration appeared; its record was kept.' };
     if (orphanedDirectory) return { status: 'skipped', reason: 'AVD registration appeared; its data was kept.' };
     const serial = resolved.serial;
     if (serial) {
@@ -283,7 +338,14 @@ export function teardownOwnedAvd(
       };
       closeOwnedDeviceSessions({ platform: 'android', id: serial }, stillOwned);
       if (!stillOwned()) throw new Error(`Owned AVD ${avdName} changed before shutdown; it was kept.`);
-      waitForShutdown(avdName, (timeoutMs) => shutdownAndroidEmulator(serial, timeoutMs));
+      waitForShutdown(avdName, (timeoutMs) => {
+        markClaimChildPending(claim);
+        try {
+          shutdownAndroidEmulator(serial, timeoutMs);
+        } finally {
+          clearClaimChild(claim);
+        }
+      });
     } else {
       assertStopped(avdName);
     }
@@ -295,6 +357,7 @@ export function teardownOwnedAvd(
       if (current.missing) return teardownUnregisteredAvd(avdName, del, owner);
       if (current.serial) throw new Error(`Owned AVD ${avdName} started again before deletion.`);
       assertStopped(avdName);
+      withConfigLock(() => assertAvdReferences(avdName, owner));
       if (park && park.max > 0) {
         try {
           const systemImage = ownedAvdSystemImage(avdName);
@@ -337,7 +400,12 @@ export function teardownOwnedAvd(
       const directory = ownedAvdDirectory(avdName);
       const paths = avdStorageRoots().map((root) => join(root, `${avdName}.ini`));
       if (directory) paths.push(directory);
-      deleteAvd(avdName);
+      markClaimChildPending(claim);
+      try {
+        deleteAvd(avdName);
+      } finally {
+        clearClaimChild(claim);
+      }
       const remaining = paths.filter(avdPathExists);
       if (remaining.length)
         throw new Error(`AVD ${avdName} was only partially deleted; data remains at ${remaining.join(', ')}.`);
