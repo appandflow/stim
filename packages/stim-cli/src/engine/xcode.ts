@@ -497,10 +497,10 @@ function failedResult({
   transcriptLines?: number;
   tail?: string[];
   compilationCache?: CompilationCacheActivity;
-}) {
+}): Extract<BuildIosResult, { ok: false }> {
   const capped = capDiagnostics(diagnostics);
   return {
-    failed: true,
+    ok: false,
     code,
     diagnostics: capped.diagnostics,
     truncated: capped.truncated,
@@ -513,22 +513,28 @@ function failedResult({
 }
 
 export type BuildIosResult = {
-  failed?: boolean;
-  code?: string;
-  diagnostics?: Diagnostic[];
-  truncated?: number;
-  exitCode?: number | null;
-  tail?: string[];
-  appPath?: string;
-  bundleId?: string;
-  scheme?: string;
-  project?: XcodeProject;
-  derivedDataPath?: string;
-  productsDir?: string;
   durationMs: number;
   transcriptLines: number;
-  compilationCache?: CompilationCacheActivity;
-};
+  compilationCache: CompilationCacheActivity;
+} & (
+  | {
+      ok: true;
+      appPath: string;
+      bundleId: string;
+      scheme: string;
+      project: XcodeProject;
+      derivedDataPath: string;
+      productsDir: string;
+    }
+  | {
+      ok: false;
+      code: string;
+      diagnostics: Diagnostic[];
+      truncated: number;
+      exitCode: number | null;
+      tail: string[];
+    }
+);
 
 export const COMPILATION_CACHE_UNAVAILABLE: CompilationCacheActivity = {
   status: 'unavailable',
@@ -880,6 +886,7 @@ export async function buildIos({
   });
 
   return {
+    ok: true,
     appPath,
     bundleId,
     durationMs,

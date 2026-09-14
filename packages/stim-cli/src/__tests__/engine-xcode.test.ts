@@ -9,7 +9,6 @@ import { resetExecutor, setExecutor } from '../exec.ts';
 import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import { workspaceDerivedData } from '../paths.ts';
 import { readManifest } from '../cache-manifest.ts';
-import type { CompilationCacheActivity } from '../types.ts';
 import {
   buildIos,
   ccacheEnabled,
@@ -116,34 +115,6 @@ function fakeChild(): FakeChild {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   return child;
-}
-
-type BuildIosResultLike = {
-  failed?: boolean;
-  code?: string;
-  exitCode?: number | null;
-  appPath: string;
-  bundleId: string;
-  scheme: string;
-  durationMs: number;
-  transcriptLines: number;
-  truncated: number;
-  tail: string[];
-  reason?: string;
-  remedy?: string;
-  diagnostics: Array<{
-    message?: string;
-    file?: string;
-    line?: number;
-    column?: number;
-    remedy?: string;
-    [key: string]: unknown;
-  }>;
-  compilationCache?: CompilationCacheActivity;
-};
-
-function asResult(value: unknown): BuildIosResultLike {
-  return value as BuildIosResultLike;
 }
 
 type BuildIosArgs = Parameters<typeof buildIos>[0];
@@ -997,10 +968,10 @@ describe('buildIos with a mocked executor', () => {
         compilationCache: [],
       });
       child.emit('close', 0, null);
-      const result = asResult(await promise);
-      expect(result.failed).toBe(true);
+      const result = await promise;
+      assert(!result.ok);
       expect(result.code).toBe('STIM_BUILD_FAILED');
-      expect(result.appPath).toBeUndefined();
+      expect(result).not.toHaveProperty('appPath');
     },
   );
 
@@ -1169,7 +1140,7 @@ describe('buildIos with a mocked executor', () => {
     child.stdout.emit('data', 'CompilationCacheMetrics\nnote: 1394 hits / 1520 cacheable tasks (91.7%)\n');
     makeProduct(dd);
     child.emit('close', exitCode, null);
-    const result = asResult(await promise);
+    const result = await promise;
 
     expect(result.compilationCache).toEqual({
       status: 'reported',
@@ -1178,7 +1149,7 @@ describe('buildIos with a mocked executor', () => {
       hitRatePercent: 91.7,
     });
     expect(notes).toEqual([]);
-    expect(Boolean(result.failed)).toBe(exitCode !== 0);
+    expect(result.ok).toBe(exitCode === 0);
     expect(writer.records).toContainEqual(
       expect.objectContaining({
         event: 'compilation_cache',
@@ -1196,8 +1167,8 @@ describe('buildIos with a mocked executor', () => {
     const promise = buildIos({ root: tmp, udid: 'u', logWriter: writer, derivedDataPath: join(tmp, 'dd') });
     child.stdout.emit('data', 'error: died mid-line with no newline');
     child.emit('close', 65, null);
-    const result = asResult(await promise);
-    expect(result.failed).toBe(true);
+    const result = await promise;
+    assert(!result.ok);
     expect(result.diagnostics.map((d) => d.message)).toEqual(['died mid-line with no newline']);
   });
 
@@ -1210,7 +1181,7 @@ describe('buildIos with a mocked executor', () => {
     child.stdout.emit('data', 'one\n\n\ntwo\n');
     makeProduct(dd);
     child.emit('close', 0, null);
-    const result = asResult(await promise);
+    const result = await promise;
     expect(result.transcriptLines).toBe(4);
     expect(writer.records.filter((r) => r.level === 'debug').length).toBe(2);
   });
@@ -1231,9 +1202,9 @@ describe('buildIos with a mocked executor', () => {
     });
     clock = 161500;
     child.emit('close', 0, null);
-    const result = asResult(await promise);
+    const result = await promise;
 
-    expect(result.failed).toBe(undefined);
+    assert(result.ok);
     expect(result.appPath).toBe(app);
     expect(result.bundleId).toBe('com.example.app');
     expect(result.durationMs).toBe(160500);
@@ -1260,9 +1231,9 @@ describe('buildIos with a mocked executor', () => {
       ].join('\n'),
     );
     child.emit('close', 65, null);
-    const result = asResult(await promise);
+    const result = await promise;
 
-    expect(result.failed).toBe(true);
+    assert(!result.ok);
     expect(result.code).toBe('STIM_BUILD_FAILED');
     expect(result.exitCode).toBe(65);
     expect(result.diagnostics).toEqual([
@@ -1283,7 +1254,8 @@ describe('buildIos with a mocked executor', () => {
     const lines = Array.from({ length: 13 }, (_, i) => `/src/File${i}.m:${i + 1}:1: error: broken ${i}`);
     child.stdout.emit('data', `${lines.join('\n')}\n** BUILD FAILED **\n`);
     child.emit('close', 65, null);
-    const result = asResult(await promise);
+    const result = await promise;
+    assert(!result.ok);
     expect(result.diagnostics.length).toBe(10);
     expect(result.truncated).toBe(3);
     expect(writer.records.filter((r) => r.level === 'error').length).toBe(10);
@@ -1296,7 +1268,8 @@ describe('buildIos with a mocked executor', () => {
     const promise = buildIos({ root: tmp, udid: 'u', logWriter: writer, derivedDataPath: join(tmp, 'dd') });
     child.stdout.emit('data', 'something\nwent\n\nwrong\nsomehow\nentirely\n');
     child.emit('close', 70, null);
-    const result = asResult(await promise);
+    const result = await promise;
+    assert(!result.ok);
     expect(result.diagnostics).toEqual([]);
     expect(result.tail).toEqual(['something', 'went', 'wrong', 'somehow', 'entirely']);
     const error = writer.records.find((r) => r.level === 'error');
@@ -1307,8 +1280,8 @@ describe('buildIos with a mocked executor', () => {
     const child = fakeChild();
     const spawnCalls = harness(join(tmp, 'elsewhere'), { child });
     const writer = recordingWriter();
-    const result = asResult(await buildIos({ root: join(tmp, 'nothing-here'), udid: 'u', logWriter: writer }));
-    expect(result.failed).toBe(true);
+    const result = await buildIos({ root: join(tmp, 'nothing-here'), udid: 'u', logWriter: writer });
+    assert(!result.ok);
     expect(result.code).toBe('STIM_BUILD_FAILED');
     expect(result.diagnostics[0]?.remedy).toMatch(/prebuild/);
     expect(spawnCalls).toEqual([]);
@@ -1318,8 +1291,8 @@ describe('buildIos with a mocked executor', () => {
   test('an unresolvable scheme fails as STIM_NO_SCHEME before anything is spawned', async () => {
     const child = fakeChild();
     const spawnCalls = harness(tmp, { child, listing: '{"project":{"name":"App","schemes":["one","two"]}}' });
-    const result = asResult(await buildIos({ root: tmp, udid: 'u', logWriter: recordingWriter() }));
-    expect(result.failed).toBe(true);
+    const result = await buildIos({ root: tmp, udid: 'u', logWriter: recordingWriter() });
+    assert(!result.ok);
     expect(result.code).toBe('STIM_NO_SCHEME');
     expect(spawnCalls).toEqual([]);
   });
@@ -1334,8 +1307,8 @@ describe('buildIos with a mocked executor', () => {
         throw Object.assign(new Error('spawn xcodebuild ENOENT'), { code: 'ENOENT' });
       },
     });
-    const result = asResult(await buildIos({ root: tmp, udid: 'u', logWriter: recordingWriter() }));
-    expect(result.failed).toBe(true);
+    const result = await buildIos({ root: tmp, udid: 'u', logWriter: recordingWriter() });
+    assert(!result.ok);
     expect(result.diagnostics[0]?.message).toMatch(/Could not run xcodebuild/);
     expect(result.diagnostics[0]?.remedy).toMatch(/xcode-select/);
   });
@@ -1345,8 +1318,8 @@ describe('buildIos with a mocked executor', () => {
     harness(tmp, { child });
     const promise = buildIos({ root: tmp, udid: 'u', logWriter: recordingWriter(), derivedDataPath: join(tmp, 'dd') });
     child.emit('error', new Error('spawn xcodebuild EACCES'));
-    const result = asResult(await promise);
-    expect(result.failed).toBe(true);
+    const result = await promise;
+    assert(!result.ok);
     expect(result.diagnostics[0]?.message).toMatch(/EACCES/);
   });
 
@@ -1355,8 +1328,8 @@ describe('buildIos with a mocked executor', () => {
     harness(tmp, { child });
     const promise = buildIos({ root: tmp, udid: 'u', logWriter: recordingWriter(), derivedDataPath: join(tmp, 'dd') });
     child.emit('close', 0, null);
-    const result = asResult(await promise);
-    expect(result.failed).toBe(true);
+    const result = await promise;
+    assert(!result.ok);
     expect(result.exitCode).toBe(0);
     expect(result.diagnostics[0]?.message).toMatch(/no \.app is in/);
   });
@@ -1368,8 +1341,8 @@ describe('buildIos with a mocked executor', () => {
     makeProduct(dd);
     const promise = buildIos({ root: tmp, udid: 'u', logWriter: recordingWriter(), derivedDataPath: dd });
     child.emit('close', 0, null);
-    const result = asResult(await promise);
-    expect(result.failed).toBe(true);
+    const result = await promise;
+    assert(!result.ok);
     expect(result.diagnostics[0]?.message).toMatch(/No readable CFBundleIdentifier/);
   });
 
