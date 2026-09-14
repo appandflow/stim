@@ -86,7 +86,7 @@ stim ports stop [label] [--dry-run]
 stim ports release [label]
 ```
 
-Reserves TCP ports 8900–8999 for web, Cosmos, or API servers started by the
+Reserves TCP ports 8900–8999 for web or API servers started by the
 project. `get` prints only the number and reuses an existing allocation.
 New allocations skip reserved and occupied ports; retry notices go to stderr.
 `ports` lists named allocations and Metro, marked managed.

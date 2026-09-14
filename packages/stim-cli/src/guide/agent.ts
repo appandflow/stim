@@ -263,7 +263,7 @@ Read the matching guide before acting in these situations:
 | Refusal with a CODE                                   | stim guide errors <CODE>         |
 | Running under a sandbox                               | stim guide errors sandbox        |
 | Release configuration or ...Release variant           | stim guide lifecycle release     |
-| Web, Cosmos, or API server ports                      | stim guide ports                 |
+| Web or API server ports                              | stim guide ports                 |
 | Remote device, custom Metro, or tunnel                | stim guide metro                 |
 | Cache miss, bypass, or fingerprint exclusions         | stim guide lifecycle builds      |
 | Capacity limits                                       | stim guide lifecycle concurrency |
@@ -299,7 +299,7 @@ FULL TOPIC LIST
   stim guide lifecycle release    # Release configurations and ...Release variants
   stim guide facts                # the --json payloads
   stim guide facts devmenu        # the Expo dev menu or Tools button over the app
-  stim guide ports                # named ports for web, Cosmos, and API servers
+  stim guide ports                # named ports for web and API servers
   stim guide metro                # supervisor, custom Metro, tunnels, and remote devices
   stim guide logs                 # filters, record shape, and capture limits
   stim guide cleanup              # what reclaims a device, and what deletes

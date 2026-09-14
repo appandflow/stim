@@ -1,12 +1,11 @@
 export default {
-  summary: 'Workspace ports for web, Cosmos, and API servers that Stim does not manage',
+  summary: 'Workspace ports for web and API servers that Stim does not manage',
   body: () => `NAMED SERVER PORTS
 
 If Stim is not installed globally, replace stim with npx stim.
 
   stim ports get web
   pnpm exec vite --port "$(stim ports get web)" --strictPort
-  npx cosmos --port "$(stim ports get cosmos)"
   stim ports
   stim ports stop web --dry-run
   stim ports stop web
