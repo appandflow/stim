@@ -3088,6 +3088,9 @@ describe('--remote', () => {
     expect(failure.code).toBe('STIM_LAUNCH_FAILED');
     expect(failure.remedy.includes('host memory pressure')).toBe(!isRemote);
     expect(failure.remedy.includes('stim doctor --platform ios')).toBe(!isRemote);
+    expect(failure.remedy).toContain(
+      `xcrun simctl launch --terminate-running-process --console ${isRemote ? 'drs_42' : UDID} com.example.app`,
+    );
   });
 
   test('the build still happens locally -- only the device moved', async () => {

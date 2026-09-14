@@ -456,7 +456,7 @@ function simulatorLaunchFailureRemedy(remote: boolean, udid: string, bundleId: s
   const prefix = remote
     ? 'Run'
     : 'If the simulator timed out, run `stim doctor --platform ios` and resolve any reported host memory pressure before retrying. Otherwise run';
-  return `${prefix} \`xcrun simctl launch --console ${udid} ${bundleId}\` to see what the app reports, and check ${logFile}.`;
+  return `${prefix} \`xcrun simctl launch --terminate-running-process --console ${udid} ${bundleId}\` to see what the app reports, and check ${logFile}.`;
 }
 
 export async function finishIosRun({
