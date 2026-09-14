@@ -1,8 +1,12 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { once } from 'node:events';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getProject, loadConfig, setDevice, upsertProject } from '../config.ts';
+import { getProject, loadConfig, saveConfig, setDevice, upsertProject, withConfigLock } from '../config.ts';
+import { getExecutor } from '../exec.ts';
+import { readClaimSet } from '../ownership-claim.ts';
+import { IMPOSSIBLE_PID, liveClaimOwner, plantClaim, recycledClaimOwner } from './_factories.ts';
 import {
   DEFAULT_PARKED_MAX,
   adoptParked,
@@ -163,9 +167,11 @@ test('a live deletion claim blocks adoption beyond the ordinary lock stale windo
   const removed = removeParkedAfter('ios', first.udid, () => {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10_250);
     const script = `
-        const { adoptParked } = await import(process.argv[1]);
-        const result = adoptParked(JSON.parse(process.argv[2]));
-        process.stdout.write(JSON.stringify(result));
+        const { adoptParked, removeParkedAfter } = await import(process.argv[1]);
+        const request = JSON.parse(process.argv[2]);
+        let deleted = false;
+        const result = removeParkedAfter(request.platform, request.udid, () => { deleted = true; });
+        process.stdout.write(JSON.stringify({ adopted: adoptParked(request), removed: result, deleted }));
       `;
     childResult = execFileSync(
       process.execPath,
@@ -180,11 +186,224 @@ test('a live deletion claim blocks adoption beyond the ordinary lock stale windo
     );
   });
 
-  expect(JSON.parse(childResult)).toBe(null);
+  expect(JSON.parse(childResult)).toEqual({ adopted: null, removed: null, deleted: false });
   expect(removed).toEqual(first);
   expect(getProject('/tmp/adopter')?.platforms?.ios).toBeUndefined();
   expect(readParked('ios')).toEqual([]);
 }, 20_000);
+
+describe('pool operation recovery', () => {
+  const device = { deviceUdid: first.udid, deviceName: 'stim-adopter', owned: true };
+  const request = { platform: 'ios' as const, projectPath: '/tmp/adopter', udid: first.udid, device };
+  const claimRoot = () => join(stimHome, 'pool-locks', 'ios', 'first.lock');
+
+  beforeEach(() => {
+    upsertProject('/tmp/source', { platforms: { ios: { deviceUdid: first.udid, owned: true } } });
+    upsertProject('/tmp/adopter', {});
+    parkSim({ platform: 'ios', projectPath: '/tmp/source', record: first, max: 3 });
+  });
+
+  function legacyAttempt(action: 'adopt' | 'delete'): unknown {
+    const source = readFileSync(new URL('fixtures/legacy-sim-pool-968ad85b6.ts.txt', import.meta.url), 'utf8');
+    const module = join(stimHome, 'legacy-sim-pool.ts');
+    writeFileSync(module, source.replaceAll("from './", `from '${new URL('../', import.meta.url).href}`));
+    return JSON.parse(
+      execFileSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `const { adoptParked, removeParkedAfter } = await import(process.argv[1]);
+           const request = JSON.parse(process.argv[2]);
+           let deleted = false;
+           const result = process.argv[3] === 'adopt'
+             ? adoptParked(request)
+             : removeParkedAfter(request.platform, request.udid, () => { deleted = true; });
+           process.stdout.write(JSON.stringify({ result, deleted }));`,
+          module,
+          JSON.stringify(request),
+          action,
+        ],
+        { encoding: 'utf8', env: process.env, timeout: 5000 },
+      ),
+    );
+  }
+
+  test.each(['adopt', 'delete'] as const)('an older CLI cannot %s during a new deletion', (action) => {
+    const removed = removeParkedAfter('ios', first.udid, () => {
+      expect(legacyAttempt(action)).toEqual({ result: null, deleted: false });
+      expect(getProject('/tmp/adopter')?.platforms?.ios).toBeUndefined();
+    });
+    expect(removed).toEqual(first);
+    expect(readParked('ios')).toEqual([]);
+  });
+
+  test.each(['adopt', 'delete'])(
+    '%s recovers a claim after its owner is killed outside native work',
+    async (action) => {
+      const script = `
+      const { tryAcquireClaim } = await import(process.argv[1]);
+      const claim = tryAcquireClaim({ root: process.argv[2], mode: 'exclusive' });
+      if (!claim.acquired) throw new Error('fixture did not acquire the claim');
+      const { loadConfig, saveConfig, withConfigLock } = await import(process.argv[3]);
+      withConfigLock(() => {
+        const config = loadConfig();
+        config.parked.ios[0].deletionClaim = { kind: 'ownership-claim', claimId: claim.acquired.claimId };
+        saveConfig(config);
+      });
+      process.kill(process.pid, 'SIGKILL');
+    `;
+      const child = getExecutor().spawn(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          script,
+          new URL('../ownership-claim.ts', import.meta.url).href,
+          claimRoot(),
+          new URL('../config.ts', import.meta.url).href,
+        ],
+        { stdio: 'ignore' },
+      );
+      expect(await once(child, 'exit')).toEqual([null, 'SIGKILL']);
+      expect(readClaimSet(claimRoot()).dead).toHaveLength(1);
+      expect(selectParked(readParked('ios'), first)).toMatchObject([first]);
+      let deleted = false;
+      const result =
+        action === 'adopt'
+          ? adoptParked(request)
+          : removeParkedAfter('ios', first.udid, () => {
+              deleted = true;
+            });
+      expect(result).toEqual(first);
+      expect(deleted).toBe(action === 'delete');
+      expect(readParked('ios')).toEqual([]);
+      expect(readClaimSet(claimRoot()).dead).toEqual([]);
+      expect(getProject('/tmp/adopter')?.platforms?.ios).toEqual(action === 'adopt' ? device : undefined);
+    },
+  );
+
+  test('a reused owner PID does not prevent adoption or deletion', () => {
+    plantClaim(claimRoot(), 'exclusive', recycledClaimOwner());
+    expect(adoptParked(request)).toEqual(first);
+    parkSim({ platform: 'ios', projectPath: '/tmp/adopter', record: first, max: 3 });
+    plantClaim(claimRoot(), 'exclusive', recycledClaimOwner());
+    let deleted = false;
+    expect(
+      removeParkedAfter('ios', first.udid, () => {
+        deleted = true;
+      }),
+    ).toEqual(first);
+    expect(deleted).toBe(true);
+    expect(readParked('ios')).toEqual([]);
+  });
+
+  test('an unreadable owner identity protects the pool record from adoption and native deletion', () => {
+    const path = plantClaim(claimRoot(), 'exclusive', { pid: process.pid, processToken: 'unverifiable' });
+    expect(() => adoptParked(request)).toThrow(path);
+    let deleted = false;
+    expect(() =>
+      removeParkedAfter('ios', first.udid, () => {
+        deleted = true;
+      }),
+    ).toThrow(path);
+    expect(deleted).toBe(false);
+    expect(readParked('ios')).toEqual([first]);
+    expect(getProject('/tmp/adopter')?.platforms?.ios).toBeUndefined();
+  });
+
+  test('an owner killed inside the native callback leaves an unresolved claim protecting the device', async () => {
+    const child = getExecutor().spawn(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `const { removeParkedAfter } = await import(process.argv[1]);
+         removeParkedAfter('ios', process.argv[2], () => process.kill(process.pid, 'SIGKILL'));`,
+        new URL('../sim-pool.ts', import.meta.url).href,
+        first.udid,
+      ],
+      { stdio: 'ignore' },
+    );
+    expect(await once(child, 'exit')).toEqual([null, 'SIGKILL']);
+    expect(readClaimSet(claimRoot()).unresolved).toHaveLength(1);
+    expect(() => adoptParked(request)).toThrow(claimRoot());
+    let deleted = false;
+    expect(() =>
+      removeParkedAfter('ios', first.udid, () => {
+        deleted = true;
+      }),
+    ).toThrow(claimRoot());
+    expect(deleted).toBe(false);
+    expect(readParked('ios')).toMatchObject([{ ...first, deletionClaim: { kind: 'ownership-claim' } }]);
+    expect(legacyAttempt('adopt')).toEqual({ result: null, deleted: false });
+    expect(legacyAttempt('delete')).toEqual({ result: null, deleted: false });
+  });
+
+  test.each([
+    ['record', false],
+    ['record', true],
+    ['marker', false],
+    ['marker', true],
+  ] as const)('a replacement pool %s survives a removal callback (throws: %s)', (change, fails) => {
+    let replacement: ParkedSim | undefined;
+    const remove = () =>
+      removeParkedAfter('ios', first.udid, () => {
+        withConfigLock(() => {
+          const config = loadConfig()!;
+          const marked = readParked('ios', { config })[0]!;
+          replacement =
+            change === 'record'
+              ? { ...marked, parkedAt: second.parkedAt }
+              : { ...marked, deletionClaim: { kind: 'ownership-claim', claimId: 'replacement' } };
+          config.parked = { ios: [replacement] };
+          saveConfig(config);
+        });
+        if (fails) throw new Error('simctl failed');
+      });
+    let result: unknown;
+    try {
+      result = remove();
+    } catch (error) {
+      result = (error as Error).message;
+    }
+    expect(result).toBe(fails ? 'simctl failed' : null);
+    expect(readParked('ios')).toEqual([replacement]);
+    const adopted = adoptParked(request);
+    expect(adopted).toMatchObject({ ...first, parkedAt: replacement?.parkedAt });
+    expect(adopted?.deletionClaim).toBeUndefined();
+  });
+
+  test.each([
+    { pid: process.pid, token: 'legacy-live' },
+    { pid: IMPOSSIBLE_PID, token: 'legacy-gone' },
+    { invalid: 'legacy' },
+  ])('a legacy inline deletion claim requires field-only manual recovery: %j', (deletionClaim) => {
+    withConfigLock(() => {
+      const config = loadConfig()!;
+      config.parked = { ios: [{ ...first, deletionClaim }] };
+      saveConfig(config);
+    });
+    expect(adoptParked(request)).toBeNull();
+    expect(selectParked(readParked('ios'), first)).toEqual([]);
+    let deleted = false;
+    expect(() =>
+      removeParkedAfter('ios', first.udid, () => {
+        deleted = true;
+      }),
+    ).toThrow(/remove only that record's deletionClaim field/);
+    expect(deleted).toBe(false);
+    expect(readParked('ios')).toEqual([{ ...first, deletionClaim }]);
+  });
+
+  test('a nonblocking refusal releases its waiting fence without touching the active holder', () => {
+    plantClaim(claimRoot(), 'shared', liveClaimOwner());
+    expect(adoptParked(request)).toBeNull();
+    const claims = readClaimSet(claimRoot());
+    expect(claims.live.map((claim) => claim.mode)).toEqual(['shared']);
+    expect(readParked('ios')).toEqual([first]);
+  });
+});
 
 test('adoption takes a pool record and creates the owned project claim in one persisted update', () => {
   upsertProject('/tmp/project', { platforms: {} });

@@ -526,6 +526,22 @@ result as proof instead of requiring an unrelated screenshot.`,
   retry it. The reported pool can temporarily exceed the bound rather than
   orphaning a simulator.
 
+  Adoption and deletion share a process-identity claim for each parked iOS
+  simulator or Android emulator under $STIM_HOME/pool-locks. A live owner
+  excludes both operations. A proven dead or different owner is recovered on
+  the next attempt, unless it may have left native work running. Deletion also
+  puts an opaque marker on the pool record so older Stim versions keep it
+  protected. New versions resolve that marker through the same identity claim.
+  A crash during a synchronous device-tool call leaves that work unverifiable; inspect
+  the old process and its native children before following the claim's removal
+  remedy. See \`stim guide errors STIM_CLAIM_REFUSED\`.
+
+  Older inline \`deletionClaim\` markers contain only a pid and stay protected,
+  even when that pid is absent. After verifying that neither the old Stim
+  process nor its native child is using the device, remove only that parked
+  record's \`deletionClaim\` field from config.json, then retry. Keep the pool
+  record and device; do not remove the whole config.
+
   and an adopting run says so where a plain boot would say \`booted\`:
 
     device      stim-app-412 (iPhone 17 26.5) (9C1F..) adopted (11s)

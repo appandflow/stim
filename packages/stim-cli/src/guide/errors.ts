@@ -250,7 +250,15 @@ code, never on the message.`,
   claim. Keep the AVD and its incomplete workspace record. Once the claim is
   safe to clear, retry \`stim android\` to reconcile incomplete setup through
   owned-device teardown. GC and project removal refuse while the claim is
-  live or unresolved.`,
+  live or unresolved.
+  Parked-device adoption and deletion use claims under $STIM_HOME/pool-locks.
+  If a holder dies during a synchronous native callback, its child cannot be
+  identified and the device stays protected, including from older CLIs through
+  an opaque inline marker. Verify that the old Stim process
+  and its native children have finished before removing the named claim.
+  Legacy inline \`deletionClaim\` fields in config.json have no process
+  identity and require separate manual inspection; \`stim guide lifecycle pool\`
+  describes their field-only recovery.`,
     },
     STIM_CLAIM_UNAVAILABLE: {
       summary: 'a process identity or warm claim store is unavailable, so the protected operation refuses',

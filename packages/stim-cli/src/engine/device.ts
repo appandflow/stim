@@ -37,7 +37,14 @@ import {
   type IosRuntime,
   type SimModel,
 } from '../sim/ios.ts';
-import { adoptParked, dropParked, parkedMaxSetting, readParked, selectParked } from '../sim-pool.ts';
+import {
+  adoptParked,
+  dropParked,
+  isLegacyDeletionClaim,
+  parkedMaxSetting,
+  readParked,
+  selectParked,
+} from '../sim-pool.ts';
 import {
   assertOwnedAvdStopped,
   avdPoolConfiguration,
@@ -673,7 +680,7 @@ async function ensureOwnedAndroidDevice({
       .filter((entry) => entry.systemImage === systemImage && entry.configuration === configuration)
       .toSorted((a, b) => a.parkedAt.localeCompare(b.parkedAt));
     for (const parked of candidates) {
-      if (parked.deletionClaim !== undefined) continue;
+      if (isLegacyDeletionClaim(parked.deletionClaim)) continue;
       const resolved = resolveOwnedAvdSerial(parked.name);
       if (resolved.missing) {
         const result = teardownParkedAvd(parked.name);
