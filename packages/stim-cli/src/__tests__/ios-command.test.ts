@@ -2,7 +2,7 @@ import assert from 'node:assert';
 import { vi } from 'vitest';
 import * as crashDiagnostics from '../native-crash.ts';
 import { captureProcessToken } from '../process-identity.ts';
-import { ClaimUnavailableError } from '../ownership-claim.ts';
+import { ClaimUnavailableError, readClaimSet } from '../ownership-claim.ts';
 import { once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -123,6 +123,7 @@ afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
   delete process.env.STIM_HOME;
+  delete process.env.STIM_TMPDIR;
   resetExecutor();
 });
 
@@ -395,7 +396,7 @@ function harness(overrides: LooseDeps = {}) {
   return { deps, calls, appPath };
 }
 
-async function run(opts: Record<string, unknown> = {}, overrides: LooseDeps = {}) {
+async function run(opts: Record<string, unknown> = {}, overrides: LooseDeps = {}, onExit?: () => void) {
   const { deps, calls, appPath } = harness(overrides);
   const action = captureAction(registerIos, deps);
   const logs: string[] = [];
@@ -403,18 +404,23 @@ async function run(opts: Record<string, unknown> = {}, overrides: LooseDeps = {}
   const origLog = console.log;
   const origErr = console.error;
   const origExit = process.exit;
+  const previousExitCode = process.exitCode;
+  process.exitCode = undefined;
   let exitCode: string | number | null | undefined = null;
   console.log = (l) => logs.push(String(l));
   console.error = (l) => errs.push(String(l));
   process.exit = asProcessExit((c) => {
+    onExit?.();
     exitCode = c;
   });
   try {
     await action(opts);
+    exitCode ??= process.exitCode ?? null;
   } finally {
     console.log = origLog;
     console.error = origErr;
     process.exit = origExit;
+    process.exitCode = previousExitCode;
   }
   return { logs, errs, exitCode, calls, appPath, stderr: errs.join('\n') };
 }
@@ -1429,31 +1435,40 @@ describe('the remote cache', () => {
     expect(errs.join('\n')).toMatch(/cache.*EAS session expired.*building instead/);
   });
 
-  test('a provider that TIMES OUT does not stall the loop, and the command stops holding the process open', async () => {
+  test('a provider timeout exits only after releasing the native-run claim, even when stdout flushes immediately', async () => {
     reserve();
-    const exits: (string | number | null | undefined)[] = [];
-    const originalExit = process.exit;
-    process.exit = asProcessExit((code) => {
-      exits.push(code);
-    });
-    let errs;
-    let calls;
+    const claimsAtExit: number[] = [];
+    const flush = vi
+      .spyOn(process.stdout, 'write')
+      .mockImplementation(
+        (
+          _chunk,
+          encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
+          callback?: (error?: Error | null) => void,
+        ) => {
+          if (typeof encodingOrCallback === 'function') encodingOrCallback();
+          else callback?.();
+          return true;
+        },
+      );
+    let result;
     try {
-      ({ errs, calls } = await run(
+      result = await run(
         {},
         {
           detectIsExpo: () => true,
           loadProjectProvider: async () => provider(),
           resolveRemote: async () => ({ timedOut: true }),
         },
-      ));
-      await new Promise((r) => setTimeout(r, 20));
+        () => claimsAtExit.push(readClaimSet(join(workspaceDir(root), 'native-run.lock')).live.length),
+      );
     } finally {
-      process.exit = originalExit;
+      flush.mockRestore();
     }
-    expect(calls.order.includes('buildIos')).toBeTruthy();
-    expect(errs.join('\n')).toMatch(/did not answer within 30s; building instead/);
-    expect(exits).toEqual([0]);
+    expect(result.calls.order.includes('buildIos')).toBeTruthy();
+    expect(result.errs.join('\n')).toMatch(/did not answer within 30s; building instead/);
+    expect(result.exitCode).toBe(0);
+    expect(claimsAtExit).toEqual([0]);
   });
 
   test('a provider that cannot be loaded says so ONCE and builds', async () => {
@@ -3506,6 +3521,59 @@ describe('the release cache key and the JS swap', () => {
     expect(errs.join('\n')).toMatch(/^  swap {8}/m);
   });
 
+  test.each(['boot refusal', 'install refusal', 'install exception'])(
+    'a prepared release copy is removed after %s',
+    async (failure) => {
+      const cached = join(root, 'cache', 'Fixture.app');
+      const temporaryDir = join(root, 'prepared-release');
+      const preparedApp = join(temporaryDir, 'Fixture.app');
+      const atExit: { claims: number; copyExists: boolean }[] = [];
+      mkdirSync(cached, { recursive: true });
+      const result = run(
+        { configuration: 'Release', json: true },
+        {
+          resolveBuild: () => cached,
+          swapJsBundle: async () => {
+            mkdirSync(preparedApp, { recursive: true });
+            return { ok: true, appPath: preparedApp, tmpDir: temporaryDir, hermes: true, durationMs: 1 };
+          },
+          ensureBooted: async () => ({ ok: failure !== 'boot refusal', udid: UDID, reason: 'boot refused' }),
+          installIosApp: () => {
+            expect(existsSync(preparedApp)).toBe(true);
+            if (failure === 'install exception') throw new Error('install threw');
+            return { failed: true, code: 'STIM_INSTALL_FAILED', reason: 'install refused' };
+          },
+        },
+        () =>
+          atExit.push({
+            claims: readClaimSet(join(workspaceDir(root), 'native-run.lock')).live.length,
+            copyExists: existsSync(temporaryDir),
+          }),
+      );
+      const outcome = await result.then(
+        (completed) => ({
+          error: null,
+          exitCode: completed.exitCode,
+          payloads: completed.logs.map((line) => JSON.parse(line)),
+        }),
+        (error: Error) => ({ error: error.message, exitCode: null, payloads: [] }),
+      );
+      expect(outcome.error).toBe(failure === 'install exception' ? 'install threw' : null);
+      expect(outcome.exitCode).toBe(failure === 'install exception' ? null : 1);
+      expect(outcome.payloads).toHaveLength(failure === 'install exception' ? 0 : 1);
+      expect(outcome.payloads[0]?.code).toBe(
+        failure === 'install exception'
+          ? undefined
+          : failure === 'boot refusal'
+            ? 'STIM_NO_DEVICE'
+            : 'STIM_INSTALL_FAILED',
+      );
+      expect(existsSync(temporaryDir)).toBe(false);
+      expect(existsSync(cached)).toBe(true);
+      expect(atExit).toEqual(failure === 'install exception' ? [] : [{ claims: 0, copyExists: false }]);
+    },
+  );
+
   test('a debug cache hit never swaps', async () => {
     reserve();
     const cached = '/cache/ios/entry/Fixture.app';
@@ -4585,6 +4653,40 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(existsSync(join(root, 'build', 'Fixture.app', 'ip.txt'))).toBe(false);
     const installed = calls.args.installIosDeviceApp as { appPath: string };
     expect(existsSync(installed.appPath)).toBe(false);
+  });
+
+  test('a signing exception removes the install copy and releases build ownership', async () => {
+    reserve();
+    process.env.STIM_TMPDIR = join(tmpHome, 'temporary-copies');
+    const copied: string[] = [];
+    const released: string[] = [];
+    await expect(
+      run(
+        { device: true },
+        {
+          ...connected(),
+          getConcurrencyLimits: () => ({ maxBuilds: 1, maxDevices: 0 }),
+          acquireBuildSlot: async () => ({ acquired: true, path: '/slot', index: 0, slot: { pid: process.pid } }),
+          releaseBuildLock: () => {
+            released.push('lock');
+            return true;
+          },
+          releaseBuildSlot: () => {
+            released.push('slot');
+            return true;
+          },
+          sealAppForDevice: ({ appPath }) => {
+            copied.push(appPath);
+            expect(existsSync(appPath)).toBe(true);
+            throw new Error('signing threw');
+          },
+        },
+      ),
+    ).rejects.toThrow('signing threw');
+    expect(copied).toHaveLength(1);
+    expect(existsSync(copied[0]!)).toBe(false);
+    expect(existsSync(join(root, 'build', 'Fixture.app'))).toBe(true);
+    expect(released).toEqual(['lock', 'slot']);
   });
 
   test('an unavailable fingerprint after pods still seals and installs the device app', async () => {
