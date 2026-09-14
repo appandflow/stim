@@ -58,3 +58,6 @@ still answers afterward. Run this deliberate contention check with the host's
 other full-suite and native validation work paused. Do not use retries, change
 the repository's worker defaults, or serialize the suites to call this proof a
 pass.
+
+The opt-in [website prompt evaluation](../scripts/prompt-eval/README.md) checks
+real-agent command selection against the shipped guides without native builds.
