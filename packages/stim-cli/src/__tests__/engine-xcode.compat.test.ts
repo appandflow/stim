@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { getExecutor, resetExecutor } from '../exec.ts';
 import { createNdjsonWriter, parseNdjsonText } from '../ndjson.ts';
 import { workspaceDerivedData, workspaceLogsDir } from '../paths.ts';
-import type { CompilationCacheActivity } from '../types.ts';
 import { buildIos, discoverXcodeProject, resolveScheme } from '../engine/xcode.ts';
 
 let tmp: string;
@@ -24,34 +23,6 @@ afterEach(() => {
   if (previousStateHome === undefined) delete process.env.STIM_HOME;
   else process.env.STIM_HOME = previousStateHome;
 });
-
-type BuildIosResultLike = {
-  failed?: boolean;
-  code?: string;
-  exitCode?: number | null;
-  appPath: string;
-  bundleId: string;
-  scheme: string;
-  durationMs: number;
-  transcriptLines: number;
-  truncated: number;
-  tail: string[];
-  reason?: string;
-  remedy?: string;
-  diagnostics: Array<{
-    message?: string;
-    file?: string;
-    line?: number;
-    column?: number;
-    remedy?: string;
-    [key: string]: unknown;
-  }>;
-  compilationCache?: CompilationCacheActivity;
-};
-
-function asResult(value: unknown): BuildIosResultLike {
-  return value as BuildIosResultLike;
-}
 
 const SCRATCH_PBXPROJ = `// !$*UTF8*$!
 {
@@ -330,16 +301,14 @@ describe('buildIos against a real xcodebuild', { timeout: 180_000 }, () => {
     writeFileSync(join(dir, 'Staging App.xcscheme'), SCRATCH_SCHEME);
     const writer = createNdjsonWriter(join(workspaceLogsDir(tmp), 'explicit-scheme.ndjson'));
     try {
-      const result = asResult(
-        await buildIos({
-          root: tmp,
-          scheme: 'Staging App',
-          destination: LIVE_DESTINATION,
-          logWriter: writer,
-          compilationCache: [],
-        }),
-      );
-      expect(result.failed).toBeUndefined();
+      const result = await buildIos({
+        root: tmp,
+        scheme: 'Staging App',
+        destination: LIVE_DESTINATION,
+        logWriter: writer,
+        compilationCache: [],
+      });
+      assert(result.ok);
       expect(result.scheme).toBe('Staging App');
       expect(result.appPath).toMatch(/scheme-[a-f0-9]{64}\/Build\/Products\/Debug-iphonesimulator\/Scratch\.app$/);
       expect(existsSync(result.appPath)).toBe(true);
@@ -375,18 +344,16 @@ describe('buildIos against a real xcodebuild', { timeout: 180_000 }, () => {
       writeScratchProject(tmp);
       const logFile = join(workspaceLogsDir(tmp), 'build-ios.ndjson');
       const writer = createNdjsonWriter(logFile);
-      const result = asResult(
-        await buildIos({
-          root: tmp,
-          udid: 'unused-with-an-explicit-destination',
-          destination: LIVE_DESTINATION,
-          logWriter: writer,
-          optimizations,
-        }),
-      );
+      const result = await buildIos({
+        root: tmp,
+        udid: 'unused-with-an-explicit-destination',
+        destination: LIVE_DESTINATION,
+        logWriter: writer,
+        optimizations,
+      });
       writer.close();
 
-      expect(result.failed).toBe(undefined);
+      assert(result.ok);
       expect(result.scheme).toBe('Scratch');
       expect(result.appPath).toBe(
         join(workspaceDerivedData(tmp), 'Build', 'Products', 'Debug-iphonesimulator', 'Scratch.app'),
@@ -416,18 +383,16 @@ describe('buildIos against a real xcodebuild', { timeout: 180_000 }, () => {
     writeScratchProject(tmp);
     const logFile = join(workspaceLogsDir(tmp), 'build-ios-device.ndjson');
     const writer = createNdjsonWriter(logFile);
-    const result = asResult(
-      await buildIos({
-        root: tmp,
-        udid: 'unused-with-an-explicit-destination',
-        sdk: 'iphoneos',
-        destination: 'generic/platform=iOS',
-        logWriter: writer,
-      }),
-    );
+    const result = await buildIos({
+      root: tmp,
+      udid: 'unused-with-an-explicit-destination',
+      sdk: 'iphoneos',
+      destination: 'generic/platform=iOS',
+      logWriter: writer,
+    });
     writer.close();
 
-    expect(result.failed).toBe(undefined);
+    assert(result.ok);
     expect(result.appPath).toBe(join(workspaceDerivedData(tmp), 'Build', 'Products', 'Debug-iphoneos', 'Scratch.app'));
     expect(existsSync(result.appPath)).toBeTruthy();
     expect(result.bundleId).toBe('com.stimcli.scratch');
@@ -444,17 +409,15 @@ describe('buildIos against a real xcodebuild', { timeout: 180_000 }, () => {
     writeScratchProject(tmp, { main: BROKEN_MAIN });
     const logFile = join(workspaceLogsDir(tmp), 'build-ios.ndjson');
     const writer = createNdjsonWriter(logFile);
-    const result = asResult(
-      await buildIos({
-        root: tmp,
-        udid: 'unused-with-an-explicit-destination',
-        destination: LIVE_DESTINATION,
-        logWriter: writer,
-      }),
-    );
+    const result = await buildIos({
+      root: tmp,
+      udid: 'unused-with-an-explicit-destination',
+      destination: LIVE_DESTINATION,
+      logWriter: writer,
+    });
     writer.close();
 
-    expect(result.failed).toBe(true);
+    assert(!result.ok);
     expect(result.code).toBe('STIM_BUILD_FAILED');
     expect(result.exitCode).toBe(65);
     expect(result.diagnostics.length).toBe(1);

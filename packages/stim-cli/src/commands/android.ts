@@ -185,7 +185,6 @@ import type {
   SupervisorLike,
   RemoteUploadLike,
   PrebuildResultLike,
-  BuildAndroidResultLike,
   FailExtra,
   AndroidRecord,
   RunAndroidResult,
@@ -1591,7 +1590,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
           if (!apkPath) {
             phase('build', `compiling ${variant || 'debug'} with Gradle`);
-            const built: BuildAndroidResultLike = await build(
+            const built = await build(
               { root, logWriter: writer, variant, abi: buildAbi },
               {
                 estimateMs: estimates().coldBuildMs,
@@ -1604,17 +1603,16 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
             );
             ccacheActivity = built.ccache ?? CCACHE_UNAVAILABLE;
             phase('cache', `compilation cache ${ccacheActivityLine(ccacheActivity)}`);
-            if (built.failed) {
-              const diagnostics = built.diagnostics || [];
+            if (!built.ok) {
+              const diagnostics = built.diagnostics;
               for (const diag of diagnostics) {
                 writer.write({ src: 'build', level: 'error', event: 'gradle_diagnostic', msg: formatDiagnostic(diag) });
               }
               phase('build', chalk.red(`FAILED after ${formatDuration(built.durationMs)}`));
               const extracted = diagnostics.map(formatDiagnostic);
-              if ((built.truncated ?? 0) > 0)
-                extracted.push(`... and ${built.truncated} more diagnostic(s) in the log`);
+              if (built.truncated > 0) extracted.push(`... and ${built.truncated} more diagnostic(s) in the log`);
               phaseFailure = fail(
-                built.code!,
+                built.code,
                 built.reason,
                 diagnostics.find((d) => d.remedy)?.remedy || built.remedy || null,
                 {
@@ -1626,8 +1624,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
               );
               return false;
             }
-            apkPath = built.apkPath ?? null;
-            stats.setBuildMs(built.durationMs ?? 0);
+            apkPath = built.apkPath;
+            stats.setBuildMs(built.durationMs);
             phase('build', `ok (${formatDuration(built.durationMs)})`);
             if (built.apkNote) phase('build', chalk.yellow(built.apkNote));
 

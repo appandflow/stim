@@ -1,7 +1,6 @@
-import type { Diagnostic } from '../../engine/errors-gradle.ts';
 import type { LaunchErrorRecord } from '../../command-output.ts';
 import type { LeaseFacts } from '../../engine/device-lease-run.ts';
-import type { AndroidFacts, CcacheActivity } from '../../types.ts';
+import type { AndroidFacts } from '../../types.ts';
 import type { createNdjsonWriter } from '../../ndjson.ts';
 
 export interface SupervisorLike {
@@ -23,20 +22,6 @@ export interface PrebuildResultLike {
   remedy?: string;
   lastLines?: string[];
   durationMs?: number;
-}
-
-export interface BuildAndroidResultLike {
-  failed?: boolean;
-  code?: string;
-  reason?: string;
-  remedy?: string;
-  diagnostics?: Diagnostic[];
-  truncated?: number;
-  lastLines?: string[];
-  durationMs?: number;
-  apkPath?: string;
-  apkNote?: string | null;
-  ccache?: CcacheActivity;
 }
 
 export interface InstallResultLike {

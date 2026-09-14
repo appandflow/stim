@@ -2,12 +2,13 @@ import { join, basename } from 'node:path';
 import chalk from 'chalk';
 import { workspaceLogsDir } from '../../paths.ts';
 import { shortUdid, phaseLine } from '../../command-output.ts';
-import type { DeviceLike, PodStateLike, PodVerdictLike, BuildIosResultLike } from './types.ts';
+import type { DeviceLike, PodStateLike, PodVerdictLike } from './types.ts';
+import type { BuildIosResult } from '../../engine/xcode.ts';
 import type { SettingsObject } from '../../settings.ts';
 import { unknownIosDeviceTypeRefusal, unknownIosRuntimeRefusal } from '../../engine/device.ts';
 import { listIosRuntimes } from '../../sim/ios.ts';
 import type { RemoteDeviceBackend } from '../../types.ts';
-import { type Diagnostic, describeDiagnostic } from '../../engine/errors-xcode.ts';
+import { describeDiagnostic } from '../../engine/errors-xcode.ts';
 
 export const PLATFORM = 'ios';
 
@@ -144,10 +145,13 @@ export function podAction(
   return { install: false };
 }
 
-export function xcodeFailureReport(result: BuildIosResultLike, logPath: string): { message: string; remedy: string } {
-  const diagnostics = (Array.isArray(result?.diagnostics) ? result.diagnostics : []) as Diagnostic[];
-  const code = result?.exitCode;
-  const how = code === null || code === undefined ? '' : ` (exit code ${code})`;
+export function xcodeFailureReport(
+  result: Extract<BuildIosResult, { ok: false }>,
+  logPath: string,
+): { message: string; remedy: string } {
+  const diagnostics = result.diagnostics;
+  const code = result.exitCode;
+  const how = code === null ? '' : ` (exit code ${code})`;
   const message = diagnostics.length
     ? `\`xcodebuild\` failed${how} with ${diagnostics.length} diagnostic${diagnostics.length === 1 ? '' : 's'}.`
     : `\`xcodebuild\` failed${how} with no recognizable diagnostic.`;
@@ -155,18 +159,18 @@ export function xcodeFailureReport(result: BuildIosResultLike, logPath: string):
   return { message, remedy };
 }
 
-export function printDiagnostics(note: (line: string) => void, result: BuildIosResultLike): void {
-  const diagnostics = (Array.isArray(result?.diagnostics) ? result.diagnostics : []) as Diagnostic[];
+export function printDiagnostics(note: (line: string) => void, result: Extract<BuildIosResult, { ok: false }>): void {
+  const diagnostics = result.diagnostics;
   const shown = diagnostics.slice(0, MAX_PRINTED_DIAGNOSTICS);
   for (const diagnostic of shown) {
     note(chalk.red(phaseLine('error', describeDiagnostic(diagnostic))));
   }
-  const hidden = diagnostics.length - shown.length + (result?.truncated || 0);
+  const hidden = diagnostics.length - shown.length + result.truncated;
   if (hidden > 0) {
     note(chalk.dim(phaseLine('error', `... and ${hidden} more diagnostic${hidden === 1 ? '' : 's'} in the log`)));
   }
   if (diagnostics.length === 0) {
     note(chalk.red(phaseLine('error', 'xcodebuild failed with no recognizable diagnostic; last lines:')));
-    for (const line of (result?.tail || []).slice(-5)) note(chalk.dim(phaseLine('', line)));
+    for (const line of result.tail.slice(-5)) note(chalk.dim(phaseLine('', line)));
   }
 }

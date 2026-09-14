@@ -44,7 +44,6 @@ import type {
   IosCommandOptions,
   IosBootLike,
   RemoteUploadLike,
-  BuildIosResultLike,
   WaitedForBuild,
   FailArgs,
   BuildFailureFields,
@@ -82,11 +81,7 @@ import {
   type LoadProjectProviderResult,
 } from '../engine/remote-cache.ts';
 import { createRunRecorder, statsProjectKey, type RunEstimates } from '../engine/stats.ts';
-import {
-  COMPILATION_CACHE_NOT_RUN,
-  COMPILATION_CACHE_UNAVAILABLE,
-  compilationCacheActivityLine,
-} from '../engine/xcode.ts';
+import { COMPILATION_CACHE_NOT_RUN, compilationCacheActivityLine } from '../engine/xcode.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { workspaceDir, workspaceLogsDir } from '../paths.ts';
 import { appProjectProblem } from '../project.ts';
@@ -1335,7 +1330,7 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
 
         if (!appPath) {
           phase('build', `compiling ${configuration || 'Debug'} with xcodebuild`);
-          const result: BuildIosResultLike = await d.buildIos({
+          const result = await d.buildIos({
             root,
             scheme: buildScheme,
             udid,
@@ -1346,14 +1341,14 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
             estimateMs: estimates().coldBuildMs,
             optimizations: optimizations.ios,
           });
-          compilationCache = result.compilationCache ?? COMPILATION_CACHE_UNAVAILABLE;
+          compilationCache = result.compilationCache;
           phase('cache', `compilation cache ${compilationCacheActivityLine(compilationCache)}`);
-          if (result?.failed) {
+          if (!result.ok) {
             phase('build', `FAILED after ${formatDuration(result.durationMs)}`);
             printDiagnostics(note, result);
             const report = xcodeFailureReport(result, logFile);
             fail({
-              code: result.code || 'STIM_BUILD_FAILED',
+              code: result.code,
               message: report.message,
               remedy: report.remedy,
               logPath: logFile,
@@ -1361,10 +1356,10 @@ async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> 
             });
             return false;
           }
-          stats.setBuildMs(result.durationMs ?? 0);
+          stats.setBuildMs(result.durationMs);
           phase('build', `ok (${formatDuration(result.durationMs)})`);
-          appPath = result.appPath ?? null;
-          bundleId = result.bundleId ?? null;
+          appPath = result.appPath;
+          bundleId = result.bundleId;
 
           if (storeKey && cachePolicy.write) {
             try {

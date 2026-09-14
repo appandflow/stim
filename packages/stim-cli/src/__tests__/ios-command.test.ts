@@ -48,6 +48,7 @@ import { asProcessExit, makeChildProcess, makeError, makeExecutor, makeMetroReso
 import { ensureBooted } from '../engine/device.ts';
 import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
+import { COMPILATION_CACHE_UNAVAILABLE, type BuildIosResult } from '../engine/xcode.ts';
 import { RELEASE_VERIFY_WAIT_MS } from '../engine/app-install.ts';
 import { DEVICECTL_INSTALL_TIMEOUT_MS, LAUNCH_PROBE_TIMEOUT_MS } from '../engine/ios-device.ts';
 import type { RecordStatsResult, StatsRun } from '../engine/stats.ts';
@@ -92,9 +93,11 @@ const PROFILE = {
 type IosDeps = NonNullable<Parameters<typeof registerIos>[1]>;
 
 type LooseDeps = {
-  [K in keyof Required<IosDeps>]?: Required<IosDeps>[K] extends (...args: infer A) => unknown
-    ? (...args: A) => unknown
-    : Required<IosDeps>[K];
+  [K in keyof Required<IosDeps>]?: K extends 'buildIos'
+    ? Required<IosDeps>[K]
+    : Required<IosDeps>[K] extends (...args: infer A) => unknown
+      ? (...args: A) => unknown
+      : Required<IosDeps>[K];
 };
 
 type ReplaceCollectorArgs = Parameters<typeof replaceCollector>[0];
@@ -183,6 +186,41 @@ interface RecordedArgs {
   acquireBuildLock: { root?: unknown; platform?: unknown; logFile?: unknown; key?: unknown };
   untrackedNativeFiles: { projectRoot?: unknown };
   ensureWorkspaceStorage: unknown;
+}
+
+type IosBuildSuccess = Extract<BuildIosResult, { ok: true }>;
+type IosBuildFailure = Extract<BuildIosResult, { ok: false }>;
+
+function makeIosBuildSuccess(
+  fields: Pick<IosBuildSuccess, 'appPath' | 'bundleId'> & Partial<Omit<IosBuildSuccess, 'ok'>>,
+): IosBuildSuccess {
+  return {
+    ok: true,
+    durationMs: 0,
+    transcriptLines: 0,
+    compilationCache: COMPILATION_CACHE_UNAVAILABLE,
+    scheme: 'Fixture',
+    project: { kind: 'project', flag: '-project', path: join(root, 'ios', 'Fixture.xcodeproj') },
+    derivedDataPath: join(root, 'build'),
+    productsDir: join(root, 'build', 'Build', 'Products', 'Debug-iphonesimulator'),
+    ...fields,
+  };
+}
+
+function makeIosBuildFailure(
+  fields: Pick<IosBuildFailure, 'code'> & Partial<Omit<IosBuildFailure, 'ok'>>,
+): IosBuildFailure {
+  return {
+    ok: false,
+    durationMs: 0,
+    transcriptLines: 0,
+    compilationCache: COMPILATION_CACHE_UNAVAILABLE,
+    diagnostics: [],
+    truncated: 0,
+    exitCode: null,
+    tail: [],
+    ...fields,
+  };
 }
 
 function harness(overrides: LooseDeps = {}) {
@@ -274,7 +312,7 @@ function harness(overrides: LooseDeps = {}) {
     },
     buildIos: async (args) => {
       record('buildIos', args);
-      return { appPath, bundleId: 'com.example.app', durationMs: 161000, scheme: 'Fixture' };
+      return makeIosBuildSuccess({ appPath, bundleId: 'com.example.app', durationMs: 161000, scheme: 'Fixture' });
     },
     readBundleId: (path) => {
       record('readBundleId', path);
@@ -1851,7 +1889,7 @@ describe('single-flight builds', () => {
     const { exitCode, calls } = await run(
       {},
       {
-        buildIos: async () => ({ failed: true, code: 'STIM_BUILD_FAILED', durationMs: 90000, diagnostics: [] }),
+        buildIos: async () => makeIosBuildFailure({ code: 'STIM_BUILD_FAILED', durationMs: 90000, diagnostics: [] }),
       },
     );
     expect(exitCode).toBe(1);
@@ -2015,22 +2053,22 @@ describe('failure output', () => {
     const { errs, logs, exitCode } = await run(
       { json: true },
       {
-        buildIos: async () => ({
-          failed: true,
-          code: 'STIM_BUILD_FAILED',
-          durationMs: 161000,
-          truncated: 3,
-          exitCode: 65,
-          compilationCache,
-          diagnostics: [
-            { file: '/w/ios/AppDelegate.mm', line: 12, column: 4, message: "use of undeclared identifier 'foo'" },
-            {
-              message: 'The sandbox is not in sync with the Podfile.lock',
-              remedy: 'Run `pod install` in ios/ and build again.',
-            },
-          ],
-          tail: ['** BUILD FAILED **'],
-        }),
+        buildIos: async () =>
+          makeIosBuildFailure({
+            code: 'STIM_BUILD_FAILED',
+            durationMs: 161000,
+            truncated: 3,
+            exitCode: 65,
+            compilationCache,
+            diagnostics: [
+              { file: '/w/ios/AppDelegate.mm', line: 12, column: 4, message: "use of undeclared identifier 'foo'" },
+              {
+                message: 'The sandbox is not in sync with the Podfile.lock',
+                remedy: 'Run `pod install` in ios/ and build again.',
+              },
+            ],
+            tail: ['** BUILD FAILED **'],
+          }),
       },
     );
     expect(exitCode).toBe(1);
@@ -2074,14 +2112,14 @@ describe('failure output', () => {
     const { errs } = await run(
       {},
       {
-        buildIos: async () => ({
-          failed: true,
-          code: 'STIM_BUILD_FAILED',
-          durationMs: 1000,
-          truncated: 0,
-          diagnostics: [],
-          tail: ['xcodebuild: error: something inscrutable'],
-        }),
+        buildIos: async () =>
+          makeIosBuildFailure({
+            code: 'STIM_BUILD_FAILED',
+            durationMs: 1000,
+            truncated: 0,
+            diagnostics: [],
+            tail: ['xcodebuild: error: something inscrutable'],
+          }),
       },
     );
     expect(errs.join('\n')).toMatch(/no recognizable diagnostic/);
@@ -2093,13 +2131,13 @@ describe('failure output', () => {
     await run(
       {},
       {
-        buildIos: async () => ({
-          failed: true,
-          code: 'STIM_BUILD_FAILED',
-          durationMs: 5000,
-          diagnostics: [],
-          tail: [],
-        }),
+        buildIos: async () =>
+          makeIosBuildFailure({
+            code: 'STIM_BUILD_FAILED',
+            durationMs: 5000,
+            diagnostics: [],
+            tail: [],
+          }),
       },
     );
     const stateAfterFail = readWorkspaceState(root);
@@ -2134,11 +2172,12 @@ describe('failure output', () => {
     const { errs, logs, exitCode } = await run(
       { json },
       {
-        buildIos: async () => ({
-          appPath: join(root, 'build', 'Fixture.app'),
-          bundleId: 'com.example.app',
-          compilationCache,
-        }),
+        buildIos: async () =>
+          makeIosBuildSuccess({
+            appPath: join(root, 'build', 'Fixture.app'),
+            bundleId: 'com.example.app',
+            compilationCache,
+          }),
         installIosApp: () => ({ failed: true, code: 'STIM_INSTALL_FAILED', reason: 'simctl install failed' }),
       },
     );
@@ -2160,12 +2199,13 @@ describe('success output', () => {
     const { logs, errs, exitCode } = await run(
       {},
       {
-        buildIos: async () => ({
-          appPath: join(root, 'build', 'Fixture.app'),
-          bundleId: 'com.example.app',
-          durationMs: 161000,
-          compilationCache,
-        }),
+        buildIos: async () =>
+          makeIosBuildSuccess({
+            appPath: join(root, 'build', 'Fixture.app'),
+            bundleId: 'com.example.app',
+            durationMs: 161000,
+            compilationCache,
+          }),
       },
     );
     expect(exitCode).toBe(null);
@@ -2458,11 +2498,12 @@ describe('the collector', () => {
     const { calls } = await run(
       {},
       {
-        buildIos: async () => ({
-          appPath: '/tmp/dd/Build/Products/Debug-iphonesimulator/FixtureDev.app',
-          bundleId: 'com.example.app',
-          durationMs: 1000,
-        }),
+        buildIos: async () =>
+          makeIosBuildSuccess({
+            appPath: '/tmp/dd/Build/Products/Debug-iphonesimulator/FixtureDev.app',
+            bundleId: 'com.example.app',
+            durationMs: 1000,
+          }),
       },
     );
     expect(calls.args.replaceCollector.appName).toBe('FixtureDev');
@@ -2477,11 +2518,12 @@ describe('the collector', () => {
     const { calls, stderr } = await run(
       {},
       {
-        buildIos: async () => ({
-          appPath: '/tmp/dd/Build/Products/Debug-iphonesimulator/FixtureDev.app',
-          bundleId: 'com.example.app',
-          durationMs: 1000,
-        }),
+        buildIos: async () =>
+          makeIosBuildSuccess({
+            appPath: '/tmp/dd/Build/Products/Debug-iphonesimulator/FixtureDev.app',
+            bundleId: 'com.example.app',
+            durationMs: 1000,
+          }),
         readBundleExecutable: (path) => {
           seenAppPath = path;
           return 'Fixture';
@@ -2499,11 +2541,12 @@ describe('the collector', () => {
     const { calls, stderr } = await run(
       {},
       {
-        buildIos: async () => ({
-          appPath: '/tmp/dd/Build/Products/Debug-iphonesimulator/FixtureDev.app',
-          bundleId: 'com.example.app',
-          durationMs: 1000,
-        }),
+        buildIos: async () =>
+          makeIosBuildSuccess({
+            appPath: '/tmp/dd/Build/Products/Debug-iphonesimulator/FixtureDev.app',
+            bundleId: 'com.example.app',
+            durationMs: 1000,
+          }),
       },
     );
     expect(calls.args.replaceCollector.appExecutable).toBe(null);
@@ -2790,15 +2833,15 @@ test('--json says so when a build failed with no recognizable diagnostic', async
   const { logs, exitCode } = await run(
     { json: true },
     {
-      buildIos: async () => ({
-        failed: true,
-        code: 'STIM_BUILD_FAILED',
-        durationMs: 1000,
-        truncated: 0,
-        exitCode: 70,
-        diagnostics: [],
-        tail: ['xcodebuild: error: something inscrutable'],
-      }),
+      buildIos: async () =>
+        makeIosBuildFailure({
+          code: 'STIM_BUILD_FAILED',
+          durationMs: 1000,
+          truncated: 0,
+          exitCode: 70,
+          diagnostics: [],
+          tail: ['xcodebuild: error: something inscrutable'],
+        }),
     },
   );
   expect(exitCode).toBe(1);
@@ -2878,12 +2921,12 @@ describe('concurrency limits', () => {
         },
         buildIos: async () => {
           seq.push('build');
-          return {
+          return makeIosBuildSuccess({
             appPath: join(root, 'build', 'Fixture.app'),
             bundleId: 'com.example.app',
             durationMs: 1000,
             scheme: 'Fixture',
-          };
+          });
         },
       },
     );
@@ -2910,12 +2953,12 @@ describe('concurrency limits', () => {
         },
         buildIos: async () => {
           built++;
-          return {
+          return makeIosBuildSuccess({
             appPath: join(root, 'build', 'Fixture.app'),
             bundleId: 'com.example.app',
             durationMs: 1,
             scheme: 'F',
-          };
+          });
         },
       },
     );
@@ -3179,7 +3222,11 @@ describe('--remote', () => {
         ...remote.deps,
         buildIos: async (args: Record<string, unknown>) => {
           seen = args;
-          return { ok: true, appPath: join(root, 'build', 'Fixture.app'), bundleId: 'com.example.app', durationMs: 1 };
+          return makeIosBuildSuccess({
+            appPath: join(root, 'build', 'Fixture.app'),
+            bundleId: 'com.example.app',
+            durationMs: 1,
+          });
         },
       },
     );
@@ -3194,7 +3241,11 @@ describe('--remote', () => {
       {
         buildIos: async (args: Record<string, unknown>) => {
           seen = args;
-          return { ok: true, appPath: join(root, 'build', 'Fixture.app'), bundleId: 'com.example.app', durationMs: 1 };
+          return makeIosBuildSuccess({
+            appPath: join(root, 'build', 'Fixture.app'),
+            bundleId: 'com.example.app',
+            durationMs: 1,
+          });
         },
       },
     );
@@ -4831,7 +4882,11 @@ describe('ios --device: selecting a phone and building the device slice', () => 
         ...connected(),
         buildIos: async () => {
           builds += 1;
-          return { appPath: join(root, 'build', 'Fixture.app'), bundleId: 'com.example.app', durationMs: 1000 };
+          return makeIosBuildSuccess({
+            appPath: join(root, 'build', 'Fixture.app'),
+            bundleId: 'com.example.app',
+            durationMs: 1000,
+          });
         },
         sealAppForDevice: () => ({
           ok: false as const,
@@ -5495,12 +5550,12 @@ describe('run statistics', () => {
         },
         buildIos: async (args) => {
           seen.build = (args as { estimateMs?: number | null }).estimateMs;
-          return {
+          return makeIosBuildSuccess({
             appPath: join(root, 'build', 'Fixture.app'),
             bundleId: 'com.example.app',
             durationMs: 161000,
             scheme: 'Fixture',
-          };
+          });
         },
       },
     );
@@ -5522,12 +5577,12 @@ describe('run statistics', () => {
         recordStats,
         buildIos: async (args) => {
           seen.push((args as { estimateMs?: number | null }).estimateMs);
-          return {
+          return makeIosBuildSuccess({
             appPath: join(root, 'build', 'Fixture.app'),
             bundleId: 'com.example.app',
             durationMs: 161000,
             scheme: 'Fixture',
-          };
+          });
         },
       },
     );
@@ -5554,7 +5609,7 @@ describe('run statistics', () => {
       {},
       {
         recordStats,
-        buildIos: async () => ({ failed: true, code: 'STIM_BUILD_FAILED', durationMs: 90000, diagnostics: [] }),
+        buildIos: async () => makeIosBuildFailure({ code: 'STIM_BUILD_FAILED', durationMs: 90000, diagnostics: [] }),
       },
     );
 
@@ -5604,7 +5659,7 @@ describe('run statistics', () => {
       {},
       {
         recordStats: throwing,
-        buildIos: async () => ({ failed: true, code: 'STIM_BUILD_FAILED', durationMs: 90000, diagnostics: [] }),
+        buildIos: async () => makeIosBuildFailure({ code: 'STIM_BUILD_FAILED', durationMs: 90000, diagnostics: [] }),
       },
     );
     expect(failed.exitCode).toBe(1);
