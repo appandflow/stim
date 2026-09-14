@@ -230,8 +230,7 @@ stim ports stop web --dry-run
 stim ports stop web`}
 />
 
-For Cosmos, use `npx cosmos --port "$(stim ports get cosmos)"`. Stim keeps
-allocations in its machine registry and never starts or supervises these
+Stim keeps allocations in its machine registry and never starts or supervises these
 servers. It checks new allocations for existing listeners and skips busy
 ports in the 8900–8999 band, announcing retries on stderr. Install `lsof` if
 your system does not provide it.
