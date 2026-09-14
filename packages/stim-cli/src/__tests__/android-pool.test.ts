@@ -9,7 +9,7 @@ import { adoptParked, parkSim, readParked, removeParkedAfter } from '../sim-pool
 import { avdPoolConfiguration, hostSystemImageArch, resetAdoptedAvd } from '../sim/android.ts';
 import { teardownOwnedAvd, teardownParkedAvd } from '../teardown.ts';
 import { collectParkedAvds, deleteParkedAvds, findOrphanedDevices } from '../commands/gc/devices.ts';
-import { goneClaimOwner, plantClaim } from './_factories.ts';
+import { goneClaimOwner, makeExitingChild, plantClaim } from './_factories.ts';
 
 let home: string;
 let saved: Record<string, string | undefined>;
@@ -73,10 +73,6 @@ beforeEach(() => {
       rmSync(join(home, 'avd', `${name}.avd`), { recursive: true, force: true });
       return '';
     }
-    if (cmd.includes('create avd')) {
-      makeAvd(/-n "([^"]+)"/.exec(cmd)![1]!);
-      return '';
-    }
     throw new Error(`Unexpected command: ${cmd}`);
   };
   setExecutor({
@@ -89,6 +85,11 @@ beforeEach(() => {
       throw new Error(`Unexpected file command: ${file} ${args.join(' ')}`);
     },
     spawn(_file, args = []) {
+      if (args[0] === 'create') {
+        calls.push([_file, ...args].join(' '));
+        makeAvd(args[args.indexOf('-n') + 1]!);
+        return makeExitingChild();
+      }
       running = args[args.indexOf('-avd') + 1]!;
       return { pid: 9999, unref() {} };
     },
@@ -221,11 +222,14 @@ test('an AVD parked between failed creation and recovery cannot bypass adoption'
   let creationFailed = false;
   setExecutor({
     ...previous,
-    run(cmd) {
-      if (cmd.includes('create avd')) {
+    spawn(file, args = [], options) {
+      if (args[0] === 'create') {
         creationFailed = true;
-        throw new Error('AVD stim-source already exists');
+        return makeExitingChild(1, 'AVD stim-source already exists');
       }
+      return previous.spawn(file, args, options);
+    },
+    run(cmd) {
       if (cmd === 'emulator -list-avds' && creationFailed) {
         creationFailed = false;
         park();
@@ -249,6 +253,7 @@ test('parking shuts down an owned AVD and overflow deletion failures keep both o
   failDelete = true;
   const result = teardownOwnedAvd('stim-new', {
     del: true,
+    owner: { projectPath: '/source' },
     park: { projectPath: '/source', max: 1, configuration },
     waitForShutdown: (_name, shutdown) => shutdown(1000),
   });

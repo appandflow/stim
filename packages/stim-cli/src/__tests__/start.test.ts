@@ -18,8 +18,8 @@ import {
   type TunnelRecord,
 } from '../engine/tunnel.ts';
 import { supervisorLogFile, workspaceLogsDir, workspaceMetadataFile } from '../paths.ts';
-import { writeWorkspaceState } from '../supervisor/run.ts';
-import { readMetroTunnel, readWorkspaceState } from '../supervisor/state.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace-state.ts';
+import { readMetroTunnel } from '../supervisor/state.ts';
 import * as supervisorState from '../supervisor/state.ts';
 import {
   liveSupervisor,

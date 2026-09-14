@@ -1,24 +1,18 @@
+import {
+  readWorkspaceState,
+  withWorkspaceStateLock,
+  updateWorkspaceState,
+  clearWorkspaceStateKey,
+} from '../workspace-state.ts';
 import { deviceSlotKey, parseDeviceSlotKey } from '../device-slots.ts';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { withDirLock } from '../dir-lock.ts';
-import { ensureWorkspaceStorage, supervisorPidFile, workspaceStateFile, workspaceStateLock } from '../paths.ts';
+import { supervisorPidFile, workspaceStateFile } from '../paths.ts';
 import type { ManagedProvider } from '../engine/metro-reach.ts';
 import { sameProcessRecord, type ProcessRecord } from '../process-identity.ts';
 
 export const MODE_BARE = 'bare-inproc';
 export const MODE_EXPO = 'expo-child';
-
-export interface WorkspaceState {
-  metroCacheGeneration?: string;
-  supervisor?: Record<string, unknown>;
-  collectors?: Record<string, unknown>;
-  lastBuild?: Record<string, unknown>;
-  launches?: Record<string, WorkspaceLaunchRecord>;
-  remoteDevice?: Record<string, unknown>;
-  metroTunnel?: Record<string, unknown>;
-  [key: string]: unknown;
-}
 
 export type WorkspaceLaunchPlatform = 'ios' | 'android';
 
@@ -85,16 +79,6 @@ export function readMetroTunnel(root: string): MetroTunnelRecord | null {
   return null;
 }
 
-export function readWorkspaceState(root: string): WorkspaceState | null {
-  try {
-    const parsed = JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8'));
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    return parsed as WorkspaceState;
-  } catch {
-    return null;
-  }
-}
-
 function parseWorkspaceLaunchRecord(value: unknown): WorkspaceLaunchRecord | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Partial<WorkspaceLaunchRecord>;
@@ -123,10 +107,9 @@ export function writeWorkspaceLaunch(
   record: WorkspaceLaunchRecord,
   slot = 'default',
 ): void {
-  withWorkspaceStateLock(root, () => {
-    const state = readWorkspaceState(root) ?? {};
+  updateWorkspaceState(root, (state) => {
     const launches = state.launches && typeof state.launches === 'object' ? state.launches : {};
-    replaceWorkspaceState(root, { ...state, launches: { ...launches, [deviceSlotKey(platform, slot)]: record } });
+    return { ...state, launches: { ...launches, [deviceSlotKey(platform, slot)]: record } };
   });
 }
 
@@ -153,29 +136,6 @@ export function clearRemoteSession(root: string, expectedSessionId: string): voi
     if (typeof value !== 'object' || value === null) return false;
     return (value as { sessionId?: unknown }).sessionId === expectedSessionId;
   });
-}
-
-export function withWorkspaceStateLock<T>(root: string, fn: () => T): T {
-  const file = workspaceStateFile(root);
-  return withDirLock(workspaceStateLock(root), fn, {
-    ensureParent: () => {
-      ensureWorkspaceStorage(root);
-      mkdirSync(dirname(file), { recursive: true });
-    },
-  });
-}
-
-export function writeWorkspaceState(root: string, patch: WorkspaceState): WorkspaceState {
-  return withWorkspaceStateLock(root, () => replaceWorkspaceState(root, { ...readWorkspaceState(root), ...patch }));
-}
-
-function replaceWorkspaceState(root: string, state: WorkspaceState): WorkspaceState {
-  const file = workspaceStateFile(root);
-  mkdirSync(dirname(file), { recursive: true });
-  const tmp = `${file}.tmp-${process.pid}`;
-  writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
-  renameSync(tmp, file);
-  return state;
 }
 
 export function clearWorkspaceSupervisor(root: string, expected?: ProcessRecord | null): boolean {
@@ -210,54 +170,6 @@ export function clearManagedMetroTunnel(root: string, expected: Omit<ManagedTunn
       (record.processToken ?? null) === (expected.processToken ?? null) &&
       (record.logFile ?? null) === (expected.logFile ?? null)
     );
-  });
-}
-
-export function clearWorkspaceStateKeys(root: string, keys: readonly string[]): void {
-  if (!existsSync(workspaceStateFile(root))) return;
-  withWorkspaceStateLock(root, () => {
-    const state = readWorkspaceState(root);
-    const file = workspaceStateFile(root);
-    if (!state) {
-      try {
-        rmSync(file, { force: true });
-      } catch {
-        /* already gone */
-      }
-      return;
-    }
-    let changed = false;
-    for (const key of keys) {
-      if (!(key in state)) continue;
-      delete state[key];
-      changed = true;
-    }
-    if (!changed) return;
-    if (Object.keys(state).length === 0) {
-      rmSync(file, { force: true });
-      return;
-    }
-    replaceWorkspaceState(root, state);
-  });
-}
-
-function clearWorkspaceStateKey(root: string, key: string, shouldClear: (value: unknown) => boolean): boolean {
-  return withWorkspaceStateLock(root, () => {
-    const state = readWorkspaceState(root);
-    if (!state || !(key in state)) return true;
-    if (!shouldClear(state[key])) return false;
-    delete state[key];
-    const file = workspaceStateFile(root);
-    if (Object.keys(state).length === 0) {
-      try {
-        rmSync(file, { force: true });
-      } catch {
-        /* already gone */
-      }
-      return true;
-    }
-    replaceWorkspaceState(root, state);
-    return true;
   });
 }
 

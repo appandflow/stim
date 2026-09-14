@@ -16,7 +16,7 @@ import { getProject, upsertProject } from '../config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { supervisorPidFile, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
 import { describeError, supervisorError } from '../supervisor/errors.ts';
-import { writeWorkspaceState } from '../supervisor/state.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace-state.ts';
 import {
   MODE_BARE,
   MODE_EXPO,
@@ -24,7 +24,6 @@ import {
   clearWorkspaceSupervisor,
   parseArgs,
   readPidFile,
-  readWorkspaceState,
   runSupervisor,
   writePidFile,
 } from '../supervisor/run.ts';
@@ -190,7 +189,7 @@ describe('Contract 2: the workspace state file', () => {
 describe('state.json concurrent writers (Contract 2 lock)', () => {
   test('4+ processes writing different keys never lose an update', async () => {
     const script = join(tmpHome, 'state-writer.mjs');
-    const runUrl = new URL('../supervisor/state.ts', import.meta.url).href;
+    const runUrl = new URL('../workspace-state.ts', import.meta.url).href;
     writeFileSync(
       script,
       [

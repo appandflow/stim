@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -25,6 +26,8 @@ for (const directory of packageDirs) {
 
 const entrypoints = [
   ['@stim-cli/core', 'configDir'],
+  ['@stim-cli/core/process-identity', 'captureProcessIdentity'],
+  ['@stim-cli/core/ownership-claim', 'tryAcquireClaim'],
   ['@stim-cli/cache', 'loadCacheProvider'],
   ['@stim-cli/expo-build-cache', 'cacheRoot'],
   ['@stim-cli/metro', 'sharedCacheStores'],
@@ -35,6 +38,32 @@ for (const [specifier, exportName] of entrypoints) {
   assert.equal(typeof require(specifier)[exportName], 'function', `require(${specifier}) must load ESM synchronously`);
   const resolved = pathToFileURL(require.resolve(specifier)).href;
   assert.equal(typeof (await import(resolved))[exportName], 'function', `import(${specifier}) must load ESM`);
+}
+
+const core = require('@stim-cli/core');
+const importedCore = await import(pathToFileURL(require.resolve('@stim-cli/core')).href);
+const identity = require('@stim-cli/core/process-identity');
+const claims = await import(pathToFileURL(require.resolve('@stim-cli/core/ownership-claim')).href);
+const previousHome = process.env.STIM_HOME;
+const home = mkdtempSync(join(tmpdir(), 'stim-runtime-lock-'));
+process.env.STIM_HOME = home;
+try {
+  const captured = identity.captureProcessIdentity(process.pid);
+  assert.equal(captured.ok, true, `process identity must work: ${captured.reason}`);
+  assert.equal(identity.inspectProcessIdentity({ pid: process.pid, processToken: captured.token }), 'same');
+  const lock = join(home, 'runtime.lock');
+  assert.equal(
+    core.withDirLock(lock, () => {
+      assert.equal(claims.readClaimSet(`${lock}.claims`).live[0].owner.pid, process.pid);
+      return importedCore.withDirLock(lock, () => 'nested', { waitMs: 0 });
+    }),
+    'nested',
+  );
+  assert.equal(existsSync(lock), false);
+} finally {
+  if (previousHome === undefined) delete process.env.STIM_HOME;
+  else process.env.STIM_HOME = previousHome;
+  rmSync(home, { recursive: true, force: true });
 }
 
 const version = execFileSync(process.execPath, ['packages/stim-cli/dist/cli.mjs', '--version'], {

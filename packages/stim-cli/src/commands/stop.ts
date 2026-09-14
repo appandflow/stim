@@ -12,14 +12,16 @@ import type { MetroResolution } from '../metro.ts';
 import {
   clearManagedMetroTunnel,
   clearRemoteSession,
-  clearWorkspaceStateKeys,
   readMetroTunnel,
   readRemoteSession,
-  readWorkspaceState,
   clearWorkspaceSupervisor,
+} from '../supervisor/state.ts';
+import {
+  clearWorkspaceStateKeys,
+  readWorkspaceState,
   withWorkspaceStateLock,
   writeWorkspaceState,
-} from '../supervisor/state.ts';
+} from '../workspace-state.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';

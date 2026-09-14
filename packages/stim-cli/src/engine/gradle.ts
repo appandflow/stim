@@ -19,14 +19,9 @@ export const BUILD_ERROR = 'STIM_BUILD_FAILED';
 
 type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
 
-interface AndroidProjectResult {
-  failed?: boolean;
-  code?: string;
-  reason?: string;
-  remedy?: string;
-  androidDir?: string;
-  gradlew?: string;
-}
+type AndroidProjectResult =
+  | { failed?: never; androidDir: string; gradlew: string }
+  | { failed: true; code: string; reason: string; remedy: string };
 
 export const ASSEMBLE_TASK = 'assembleDebug';
 
@@ -413,21 +408,20 @@ export function productFlavorRefusal({
 }
 
 export type BuildAndroidResult = {
-  ok?: boolean;
-  apkPath?: string;
-  apkNote?: string | null;
-  failed?: boolean;
-  code?: string;
-  reason?: string;
-  remedy?: string;
-  androidDir?: string;
-  gradlew?: string;
-  diagnostics?: Diagnostic[];
-  truncated?: number;
   lastLines: string[];
   durationMs: number;
   ccache?: CcacheActivity;
-};
+} & (
+  | { ok: true; apkPath: string; apkNote: string | null }
+  | {
+      ok: false;
+      code: string;
+      reason: string;
+      remedy?: string;
+      diagnostics: Diagnostic[];
+      truncated: number;
+    }
+);
 
 export function gradleArgs(
   task: string,
@@ -476,16 +470,26 @@ export async function buildAndroid(
   } = {},
 ): Promise<BuildAndroidResult> {
   const project = discoverAndroidProject(root);
-  if (project.failed) return { ...project, diagnostics: [], truncated: 0, lastLines: [] as string[], durationMs: 0 };
+  if (project.failed) {
+    return {
+      ok: false,
+      code: project.code,
+      reason: project.reason,
+      remedy: project.remedy,
+      diagnostics: [],
+      truncated: 0,
+      lastLines: [],
+      durationMs: 0,
+    };
+  }
 
   const sdk = androidHome();
   const refusal = androidSdkRefusal({
     sdkPath: sdk,
     sdkExists: existsSync(sdk),
-    hasLocalProperties: existsSync(join(project.androidDir as string, 'local.properties')),
+    hasLocalProperties: existsSync(join(project.androidDir, 'local.properties')),
   });
-  if (refusal)
-    return { failed: true, ...refusal, diagnostics: [], truncated: 0, lastLines: [] as string[], durationMs: 0 };
+  if (refusal) return { ok: false, ...refusal, diagnostics: [], truncated: 0, lastLines: [], durationMs: 0 };
 
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
   const task = assembleTaskFor(variant);
@@ -533,7 +537,7 @@ export async function buildAndroid(
   logWriter?.write?.({
     src: 'build',
     level: 'info',
-    msg: `${project.gradlew as string} ${args.join(' ')}`,
+    msg: `${project.gradlew} ${args.join(' ')}`,
     event: 'build_start',
   });
 
@@ -554,7 +558,7 @@ export async function buildAndroid(
 
   let child: ChildProcess;
   try {
-    child = spawn(project.gradlew as string, args, {
+    child = spawn(project.gradlew, args, {
       cwd: project.androidDir,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...env, ...ccache?.env, ...cas?.env, ...nativeEnv, TERM: 'dumb', FORCE_COLOR: '0' },
@@ -592,7 +596,7 @@ export async function buildAndroid(
     const how = result.signal ? `signal ${result.signal}` : `exit code ${result.code}`;
     const { shown, truncated } = capDiagnostics(extractGradleDiagnostics(transcript));
     return {
-      failed: true,
+      ok: false,
       code: BUILD_ERROR,
       reason: `\`./gradlew ${task}\` failed (${how}).`,
       diagnostics: shown,
@@ -606,7 +610,7 @@ export async function buildAndroid(
   const located = locateApk(root, transcript, variant);
   if (!located.apkPath && located.candidates?.length) {
     return {
-      failed: true,
+      ok: false,
       code: BUILD_ERROR,
       reason: `\`./gradlew ${task}\` left ${located.candidates.length} debug APKs under ${apkOutputsDir(root)}, and nothing says which flavor to install.`,
       remedy: `Set the android.variant setting to the variant to install -- e.g. {"android": {"variant": "${variantNameOf(relative(apkOutputsDir(root), located.candidates[0]!).split('/').slice(0, -1))}"}} in .stim.json.`,
@@ -619,7 +623,7 @@ export async function buildAndroid(
   }
   if (!located.apkPath) {
     return {
-      failed: true,
+      ok: false,
       code: BUILD_ERROR,
       reason: variant
         ? `\`./gradlew ${task}\` succeeded but produced no APK under ${apkOutputsDir(root)} for variant "${variant}".`
@@ -653,12 +657,16 @@ function resetStatsLog(statsLog: string): void {
   } catch {}
 }
 
-function spawnFailure(err: unknown, project: AndroidProjectResult, durationMs: number) {
+function spawnFailure(
+  err: unknown,
+  project: Extract<AndroidProjectResult, { gradlew: string }>,
+  durationMs: number,
+): Extract<BuildAndroidResult, { ok: false }> {
   const nodeErr = err as NodeJS.ErrnoException;
   const message = String(nodeErr?.message || err || '');
   const permissionDenied = nodeErr?.code === 'EACCES' || /EACCES|permission denied/i.test(message);
   return {
-    failed: true,
+    ok: false,
     code: BUILD_ERROR,
     reason: `Could not run ${project.gradlew}: ${message}`,
     remedy: permissionDenied

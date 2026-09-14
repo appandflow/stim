@@ -439,7 +439,12 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
   removeInvalidProjectEntries(invalidProjects);
 
   for (const path of deadProjects) {
-    const result = await reclaimProject(path);
+    const result = await reclaimProject(path).catch((error: unknown) => {
+      deleteFailures++;
+      console.log(chalk.red(`Could not prune ${path}; its registry entry was kept: ${(error as Error).message}`));
+      return null;
+    });
+    if (!result) continue;
     if (result.keptEntry) console.log(chalk.yellow(`Could not fully prune ${path}; its registry entry was kept.`));
     else console.log(chalk.green(`Pruned ${path}`));
     for (const dir of result.removedWorkspaceDirs) console.log(chalk.dim(`  removed workspace output ${dir}`));

@@ -1,8 +1,8 @@
-import { projectDeviceSlots } from '../../device-slots.ts';
+import { deviceSlotPlatforms, projectDeviceSlots } from '../../device-slots.ts';
 import { existsSync } from 'fs';
 import { isAbsolute } from 'path';
 import chalk from 'chalk';
-import { clearDevice } from '../../config.ts';
+import { clearDevice, getProject, withConfigLock } from '../../config.ts';
 import { plural } from '../../command-output.ts';
 import { directorySize } from '../../fs-util.ts';
 import { leaseIsExpired, listLeaseFiles, type LeaseFileEntry } from '../../engine/device-lease.ts';
@@ -454,13 +454,22 @@ export function deleteProjectDevices(
   staleDeviceRecords: StaleDeviceRecord[],
 ): number {
   let deleteFailures = 0;
-  function reap(d: OrphanedDevice | StaleProjectDevice) {
+  function reap(d: OrphanedDevice | StaleProjectDevice, onlyIfMissing = false) {
     const r =
       d.kind === 'ios'
         ? teardownOwnedIosSim(d.id, { del: true, label: d.name })
         : teardownOwnedAvd(d.name, {
             del: true,
-            ...('project' in d ? { owner: { projectPath: d.project } } : {}),
+            onlyIfMissing,
+            ...('project' in d ? { owner: { projectPath: d.project, slot: d.slot } } : {}),
+            ...('project' in d
+              ? {
+                  onRemoved: () => {
+                    if (clearDevice(d.project, d.kind, d.slot, d.id))
+                      console.log(chalk.dim(`  cleared the ${d.kind} record for ${d.project}`));
+                  },
+                }
+              : {}),
             ...('orphanedDirectory' in d ? { orphanedDirectory: d.orphanedDirectory } : {}),
           });
     const what = d.kind === 'ios' ? `ios sim ${d.name} (${d.id})` : `android avd ${d.name}`;
@@ -481,15 +490,23 @@ export function deleteProjectDevices(
 
   for (const d of staleDevices) {
     const status = reap(d);
-    if (status === 'torn-down' || status === 'missing') {
-      clearDevice(d.project, d.kind, d.slot);
+    if (d.kind === 'ios' && (status === 'torn-down' || status === 'missing')) {
+      clearDevice(d.project, d.kind, d.slot, d.id);
       console.log(chalk.dim(`  cleared the ${d.kind} record for ${d.project}`));
     }
   }
 
   for (const r of staleDeviceRecords) {
-    clearDevice(r.project, r.kind, r.slot);
-    console.log(chalk.green(`Cleared the ${r.kind} record for ${r.project} (${r.id} is not on this machine)`));
+    if (r.kind === 'android' && r.owned) {
+      reap({ ...r, name: r.id, idleDays: 0 }, true);
+    } else {
+      const removed = withConfigLock(() => {
+        if (r.kind === 'android' && deviceSlotPlatforms(getProject(r.project), r.slot)?.android?.owned) return false;
+        return clearDevice(r.project, r.kind, r.slot, r.id);
+      });
+      if (removed)
+        console.log(chalk.green(`Cleared the ${r.kind} record for ${r.project} (${r.id} is not on this machine)`));
+    }
   }
 
   return deleteFailures;

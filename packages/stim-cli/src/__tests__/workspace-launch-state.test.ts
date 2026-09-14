@@ -2,13 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { clearSupervisorState } from '../commands/stop.ts';
-import {
-  readWorkspaceLaunches,
-  readWorkspaceState,
-  writeWorkspaceLaunch,
-  writeWorkspaceState,
-  type WorkspaceLaunchRecord,
-} from '../supervisor/state.ts';
+import { readWorkspaceLaunches, writeWorkspaceLaunch, type WorkspaceLaunchRecord } from '../supervisor/state.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace-state.ts';
 
 let stimHome: string;
 let root: string;
@@ -50,7 +45,7 @@ test('workspace launch writes preserve the other platform under the state lock',
 test('invalid launch entries are ignored instead of becoming reload targets', () => {
   writeWorkspaceState(root, {
     launches: {
-      ios: { appId: 'com.example.ios' } as never,
+      ios: { appId: 'com.example.ios' },
       android: launch('com.example.android', 'emulator-5554'),
     },
   });
@@ -64,7 +59,7 @@ test('a record written before deepLinkUrl was dropped is still a reload target',
       android: {
         ...launch('com.example.android', 'emulator-5554'),
         deepLinkUrl: 'example://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082',
-      } as never,
+      },
     },
   });
 

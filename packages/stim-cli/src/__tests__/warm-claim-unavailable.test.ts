@@ -13,12 +13,14 @@ const identity = vi.hoisted(() => ({
 }));
 const REASON = identity.reason;
 
-vi.mock('../process-identity.ts', async (importOriginal) => {
-  const real = await importOriginal<typeof import('../process-identity.ts')>();
+vi.mock('unique-pid', async (importOriginal) => {
+  const real = await importOriginal<typeof import('unique-pid')>();
   return {
     ...real,
-    captureProcessIdentity: (pid: number) =>
-      identity.available ? real.captureProcessIdentity(pid) : { ok: false, reason: identity.reason },
+    capture: (pid: number) =>
+      identity.available
+        ? real.capture(pid)
+        : { ok: false, error: { code: 'ENOSYS', message: 'no unique-pid prebuild for this platform' } },
   };
 });
 

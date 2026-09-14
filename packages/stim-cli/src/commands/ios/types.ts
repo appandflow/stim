@@ -1,4 +1,4 @@
-import type { CompilationCacheActivity, RemoteDeviceBackend } from '../../types.ts';
+import type { RemoteDeviceBackend } from '../../types.ts';
 import type { LaunchErrorRecord } from '../../command-output.ts';
 import type { LeaseFacts } from '../../engine/device-lease-run.ts';
 
@@ -38,19 +38,6 @@ export interface RemoteUploadLike {
   uploaded?: boolean;
   timedOut?: boolean;
   failed?: string | null;
-}
-
-export interface BuildIosResultLike {
-  failed?: boolean;
-  code?: string;
-  durationMs?: number;
-  diagnostics?: unknown[];
-  truncated?: number;
-  tail?: string[];
-  exitCode?: number | null;
-  appPath?: string;
-  bundleId?: string;
-  compilationCache?: CompilationCacheActivity;
 }
 
 export interface VerifyLaunchResultLike {

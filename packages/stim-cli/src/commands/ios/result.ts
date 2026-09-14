@@ -11,7 +11,7 @@ import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../../engine/app-install.ts'
 import { COMPILATION_CACHE_NOT_RUN, compilationCacheActivityLine } from '../../engine/xcode.ts';
 import type { CompilationCacheActivity, IosFacts, CacheHitLevel } from '../../types.ts';
 import type { WaitedForBuild, RemoteUploadLike, DeviceLike } from './types.ts';
-import { writeWorkspaceState } from '../../supervisor/state.ts';
+import { writeWorkspaceState } from '../../workspace-state.ts';
 import { formatDuration, phaseLine } from '../../command-output.ts';
 import type { RunRecorder } from '../../engine/stats.ts';
 import type { IosDeps } from './dependencies.ts';
@@ -196,7 +196,6 @@ export interface ReportIosResultArgs {
   waitedForBuild: WaitedForBuild | null;
   launchState: boolean | string;
   launchWarning?: string;
-  remote: LoadProjectProviderResult | null;
   providerName: string | null;
   closeWriter: () => void;
   webPreviewUrl: string | null;
@@ -230,7 +229,6 @@ export function reportIosResult({
   waitedForBuild,
   launchState,
   launchWarning,
-  remote,
   providerName,
   closeWriter,
   webPreviewUrl,
@@ -286,7 +284,7 @@ export function reportIosResult({
     const summary =
       `${launchWarning ? 'WARNING' : 'OK'}: ${bundleId} on ${deviceLabel(device, udid)}, ` +
       (release ? `${configuration} (embedded JS, no Metro)` : `Metro port ${metroPort}`) +
-      ` (${cacheDescription(cacheHit, remote?.name ?? providerName)}, ${formatDuration(durationMs)})`;
+      ` (${cacheDescription(cacheHit, providerName)}, ${formatDuration(durationMs)})`;
     const outcome = launchWarning
       ? chalk.yellow(`${summary} -- ${launchWarning}`)
       : launchState === LAUNCH_UNVERIFIED
@@ -295,7 +293,7 @@ export function reportIosResult({
           ? chalk.green(`${summary} -- bundle requested, still building`)
           : chalk.green(summary);
     const deviceName = device?.deviceName ?? device?.name ?? udid;
-    const cacheResult = useBuildCache ? cacheDescription(cacheHit, remote?.name ?? providerName) : 'bypassed; built';
+    const cacheResult = useBuildCache ? cacheDescription(cacheHit, providerName) : 'bypassed; built';
     const metroResult = release
       ? `embedded (${configuration})`
       : !metroCheck
