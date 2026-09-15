@@ -137,62 +137,111 @@
   background: var(--ifm-color-primary);
 }
 
-.playbackControls {
-  display: grid;
-  grid-template-columns: auto auto minmax(8rem, 1fr) auto auto;
-  gap: 0.6rem;
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
   align-items: center;
-  margin-bottom: 1rem;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
 }
 
-.playbackControls button,
-.playbackControls select {
-  padding: 0.45rem 0.7rem;
+.transport,
+.toolbarOptions,
+.zoomControl {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.toolbarOptions {
+  gap: 1rem;
+  color: var(--bench-muted);
+  font-size: 0.78rem;
+}
+
+.toolbarOptions label {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.toolbar button,
+.toolbar select {
+  height: 2rem;
+  padding: 0 0.7rem;
   border: 1px solid var(--bench-line);
   border-radius: 0.5rem;
   background: var(--bench-surface);
   color: var(--ifm-font-color-base);
   cursor: pointer;
+  font-size: 0.8rem;
 }
 
-.playbackControls label,
-.playbackControls input {
-  width: 100%;
+.toolbar button:disabled {
+  color: var(--bench-muted);
+  cursor: default;
+  opacity: 0.5;
 }
 
-.playbackControls strong {
-  font-size: 0.76rem;
+.toolbar .playButton {
+  min-width: 4.2rem;
+  border-color: var(--ifm-color-primary);
+  background: var(--ifm-color-primary);
+  color: var(--ifm-color-primary-contrast-background);
+  font-weight: 600;
+}
+
+:global([data-theme='dark']) .toolbar .playButton {
+  color: #15121d;
+}
+
+.transport strong {
+  margin-left: 0.35rem;
+  font-size: 0.84rem;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-.zoomControl {
-  display: flex;
-  gap: 0.65rem;
-  align-items: center;
-  justify-content: flex-end;
-  margin: -0.25rem 0 0.75rem;
+.transport strong span {
   color: var(--bench-muted);
-  font-size: 0.78rem;
-  font-weight: 600;
+  font-weight: 400;
 }
 
-.zoomControl input {
-  width: min(14rem, 45vw);
+.zoomControl {
+  gap: 0;
+}
+
+.zoomControl button {
+  width: 2rem;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.zoomControl button:first-child {
+  border-radius: 0.5rem 0 0 0.5rem;
+}
+
+.zoomControl button:last-child {
+  border-radius: 0 0.5rem 0.5rem 0;
 }
 
 .zoomControl output {
-  min-width: 2.2rem;
+  display: flex;
+  min-width: 2.6rem;
+  height: 2rem;
+  align-items: center;
+  justify-content: center;
+  border-top: 1px solid var(--bench-line);
+  border-bottom: 1px solid var(--bench-line);
   color: var(--ifm-font-color-base);
   font-variant-numeric: tabular-nums;
-  text-align: right;
 }
 
 .timelineScroller {
   overflow-x: auto;
   margin-bottom: 1.25rem;
-  border-top: 1px solid var(--bench-line);
-  border-bottom: 1px solid var(--bench-line);
   overscroll-behavior-inline: contain;
   touch-action: pan-x pan-y;
   -webkit-overflow-scrolling: touch;
@@ -239,15 +288,23 @@
 .shellTracks,
 .backgroundTracks {
   min-width: 0;
-  border-bottom: 1px solid var(--bench-line);
+}
+
+.dotTrack,
+.shellTracks,
+.backgroundTracks {
+  background-image: linear-gradient(to right, var(--bench-line) 1px, transparent 1px);
+  background-size: 25% 100%;
+  background-repeat: repeat-x;
+  box-shadow: inset -1px 0 var(--bench-line);
 }
 
 .backgroundTracks {
   position: relative;
   display: grid;
-  grid-template-rows: repeat(var(--lane-count), 2.65rem);
-  gap: 0.35rem;
-  padding: 0.5rem 0;
+  grid-template-rows: repeat(var(--lane-count), 2.1rem);
+  gap: 0.3rem;
+  padding: 0.45rem 0;
 }
 
 .axis,
@@ -265,11 +322,11 @@
 .backgroundBar {
   position: absolute;
   top: 0;
-  height: 2.65rem;
+  height: 2.1rem;
   overflow: hidden;
-  padding: 0 0.65rem;
+  padding: 0 0.6rem;
   border: 1px solid color-mix(in srgb, #0f766e 55%, var(--bench-line));
-  border-radius: 0.55rem;
+  border-radius: 0.4rem;
   background: repeating-linear-gradient(
     -45deg,
     color-mix(in srgb, #0f766e 18%, var(--bench-surface)),
@@ -281,7 +338,7 @@
   cursor: pointer;
   font-family: var(--ifm-font-family-monospace);
   font-size: 0.72rem;
-  line-height: 2.55rem;
+  line-height: 2rem;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -297,7 +354,7 @@
 
 .axisLabel,
 .axis {
-  height: 2.5rem;
+  height: 2.2rem;
 }
 
 .axisLabel,
@@ -310,6 +367,37 @@
 
 .axis {
   position: relative;
+  border-bottom: 1px solid var(--bench-line);
+}
+
+.scrubber {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: ew-resize;
+  opacity: 0;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.scrubber::-webkit-slider-thumb {
+  width: 2px;
+  height: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.scrubber::-moz-range-thumb {
+  width: 2px;
+  height: 100%;
+  border: 0;
+}
+
+.axis:has(.scrubber:focus-visible) {
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: -2px;
 }
 
 .playhead {
@@ -326,11 +414,13 @@
 
 .axis span {
   position: absolute;
-  bottom: 0.45rem;
+  bottom: 0.4rem;
   color: var(--bench-muted);
-  font-size: 0.76rem;
+  font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
+  pointer-events: none;
   transform: translateX(-50%);
+  white-space: nowrap;
 }
 
 .axis span:first-child {
@@ -346,27 +436,38 @@
   align-items: center;
   padding-right: 1rem;
   color: var(--bench-muted);
-  font-size: 0.84rem;
-  font-weight: 600;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .dotTrack {
   position: relative;
-  height: 3.7rem;
+  height: 2.6rem;
 }
 
 .agentDot,
 .deviceDot {
   position: absolute;
   top: 50%;
-  width: 1.1rem;
-  height: 1.1rem;
+  width: 0.8rem;
+  height: 0.8rem;
   padding: 0;
-  border: 0;
+  border: 2px solid var(--ifm-background-color);
   border-radius: 50%;
   background: #7c3aed;
   cursor: pointer;
   transform: translate(-50%, -50%);
+}
+
+.agentDot:hover,
+.deviceDot:hover,
+.agentDot:focus-visible,
+.deviceDot:focus-visible {
+  z-index: 2;
+  outline: none;
+  transform: translate(-50%, -50%) scale(1.35);
 }
 
 .deviceDot {
@@ -379,8 +480,8 @@
 }
 
 .readyDot {
-  width: 1.35rem;
-  height: 1.35rem;
+  width: 1rem;
+  height: 1rem;
   background: #16a34a;
   box-shadow: 0 0 0 0.25rem color-mix(in srgb, #16a34a 18%, transparent);
 }
@@ -388,9 +489,9 @@
 .shellTracks {
   position: relative;
   display: grid;
-  grid-template-rows: repeat(var(--lane-count), 2.65rem);
-  gap: 0.35rem;
-  padding: 0.5rem 0;
+  grid-template-rows: repeat(var(--lane-count), 2.1rem);
+  gap: 0.3rem;
+  padding: 0.45rem 0;
 }
 
 .shellTrack {
@@ -401,35 +502,46 @@
 .commandBar {
   position: absolute;
   top: 0;
-  height: 2.65rem;
+  height: 2.1rem;
   overflow: hidden;
-  padding: 0 0.65rem;
-  border: 1px solid color-mix(in srgb, var(--ifm-color-primary) 24%, var(--bench-line));
-  border-radius: 0.55rem;
-  background: color-mix(in srgb, var(--ifm-color-primary) 12%, var(--bench-surface));
+  padding: 0 0.6rem;
+  border: 1px solid var(--ifm-background-color);
+  border-radius: 0.4rem;
+  background: color-mix(in srgb, var(--ifm-color-primary) 16%, var(--bench-surface));
   color: var(--ifm-font-color-base);
   cursor: pointer;
   font-family: var(--ifm-font-family-monospace);
   font-size: 0.72rem;
-  line-height: 2.55rem;
+  line-height: 2rem;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .commandBar:hover,
-.commandBar:focus-visible,
-.commandSelected {
+.commandBar:focus-visible {
+  z-index: 2;
+  background: color-mix(in srgb, var(--ifm-color-primary) 26%, var(--bench-surface));
+  outline: none;
+}
+
+.commandSelected,
+.commandSelected:hover {
   z-index: 2;
   border-color: var(--ifm-color-primary);
+  background: color-mix(in srgb, var(--ifm-color-primary) 30%, var(--bench-surface));
   outline: none;
   box-shadow: 0 0 0 0.16rem color-mix(in srgb, var(--ifm-color-primary) 22%, transparent);
 }
 
 .commandFailed {
-  border-color: color-mix(in srgb, #dc2626 45%, var(--bench-line));
-  background: color-mix(in srgb, #dc2626 12%, var(--bench-surface));
+  background: color-mix(in srgb, #dc2626 14%, var(--bench-surface));
   color: #b91c1c;
+}
+
+.commandFailed.commandSelected {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 0.16rem color-mix(in srgb, #dc2626 22%, transparent);
 }
 
 :global([data-theme='dark']) .commandFailed {
@@ -714,26 +826,6 @@
 
   .stats {
     grid-template-columns: 1fr;
-  }
-
-  .playbackControls {
-    grid-template-columns: auto auto 1fr auto;
-  }
-
-  .playbackControls label {
-    grid-column: 1 / -1;
-    grid-row: 2;
-  }
-
-  .playbackControls strong {
-    grid-column: 3;
-    grid-row: 1;
-    text-align: right;
-  }
-
-  .playbackControls select {
-    grid-column: 4;
-    grid-row: 1;
   }
 
   .terminalBar {
