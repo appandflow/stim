@@ -427,7 +427,7 @@
   transform: none;
 }
 
-.axis span:last-child {
+.axis span:last-of-type {
   transform: translateX(-100%);
 }
 
@@ -627,6 +627,9 @@
 }
 
 .commandContext {
+  flex: none;
+  max-height: 45%;
+  overflow: auto;
   padding: 0.65rem 1.1rem;
   border-bottom: 1px solid #30363d;
   color: #8b949e;

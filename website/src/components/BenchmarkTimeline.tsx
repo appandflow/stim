@@ -350,16 +350,16 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
               type="button"
               aria-label="Zoom out"
               disabled={zoom <= 1}
-              onClick={() => setZoom((current) => Math.max(1, current - 0.5))}
+              onClick={() => setZoom((current) => Math.max(1, Math.ceil(current * 2 - 1) / 2))}
             >
               -
             </button>
-            <output aria-live="off">{zoom}x</output>
+            <output aria-live="off">{Math.round(zoom * 10) / 10}x</output>
             <button
               type="button"
               aria-label="Zoom in"
               disabled={zoom >= 4}
-              onClick={() => setZoom((current) => Math.min(4, current + 0.5))}
+              onClick={() => setZoom((current) => Math.min(4, Math.floor(current * 2 + 1) / 2))}
             >
               +
             </button>
