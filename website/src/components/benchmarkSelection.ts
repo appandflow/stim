@@ -7,10 +7,23 @@ export type BenchmarkDimensions = {
 };
 
 export const benchmarkPlatforms: BenchmarkDimensions['platform'][] = ['ios', 'android'];
-export const benchmarkSuites: BenchmarkDimensions['suite'][] = ['readiness', 'launch-crash'];
+export const benchmarkScenarios: BenchmarkRun['variant'][] = ['javascript', 'native', 'launch-crash'];
+
+export function scenarioSuite(scenario: BenchmarkRun['variant']): BenchmarkDimensions['suite'] {
+  return scenario === 'launch-crash' ? 'launch-crash' : 'readiness';
+}
 
 export function defaultRun(benchmark: BenchmarkData | undefined, preferredId?: string): BenchmarkRun | undefined {
   return benchmark?.runs.find((run) => run.valid && run.id === preferredId) ?? benchmark?.runs.find((run) => run.valid);
+}
+
+export function scenarioRun(
+  benchmark: BenchmarkData | undefined,
+  scenario: BenchmarkRun['variant'],
+  preferredArm?: BenchmarkRun['arm'],
+): BenchmarkRun | undefined {
+  const runs = benchmark?.runs.filter((run) => run.valid && run.variant === scenario) ?? [];
+  return runs.find((run) => run.arm === preferredArm) ?? runs[0];
 }
 
 export function benchmarkDimensions(benchmark: BenchmarkData): BenchmarkDimensions {

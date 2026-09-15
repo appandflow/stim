@@ -11,9 +11,11 @@ import {
   benchmarkForDimensions,
   benchmarkModelLabel,
   benchmarkPlatforms,
-  benchmarkSuites,
+  benchmarkScenarios,
   defaultRun,
   exactBenchmarkForDimensions,
+  scenarioRun,
+  scenarioSuite,
   type BenchmarkDimensions,
 } from '@site/src/components/benchmarkSelection';
 import BenchmarkTimeline from '@site/src/components/BenchmarkTimeline';
@@ -31,15 +33,13 @@ import {
 } from '@site/src/components/benchmarkData';
 import styles from '../benchmarks.module.css';
 
-function ComparisonCard({
-  variant,
-  runs,
-  maxSeconds,
-}: {
-  variant: BenchmarkRun['variant'];
-  runs: BenchmarkRun[];
-  maxSeconds: number;
-}): ReactNode {
+const scenarioLabels: Record<BenchmarkRun['variant'], string> = {
+  javascript: 'JS change',
+  native: 'Native change',
+  'launch-crash': 'Launch crash',
+};
+
+function ComparisonCard({ variant, runs }: { variant: BenchmarkRun['variant']; runs: BenchmarkRun[] }): ReactNode {
   const isLaunchCrash = variant === 'launch-crash';
   const comparable = isLaunchCrash
     ? runs.filter((run) => run.valid && run.diagnosisSeconds !== null)
@@ -47,6 +47,10 @@ function ComparisonCard({
   const stim = comparable.find((run) => run.arm === 'stim');
   const control = comparable.find((run) => run.arm === 'control');
   const outcome = comparisonOutcome(stim?.settingsReadySeconds, control?.settingsReadySeconds);
+  const maxSeconds = Math.max(
+    1,
+    ...comparable.map((run) => (isLaunchCrash ? run.diagnosisSeconds : run.settingsReadySeconds) ?? 0),
+  );
   return (
     <article className={styles.comparisonCard}>
       <h3>{displayVariant(variant)}</h3>
@@ -114,26 +118,22 @@ export default function BenchmarkDetails(): ReactNode {
       hash: location.hash,
     });
   };
-  const selectDimensions = (next: Partial<BenchmarkDimensions>) => {
+  const selectDimensions = (next: Partial<BenchmarkDimensions>, scenario = activeRun?.variant) => {
     if (!dimensions) return;
     const candidate = benchmarkForDimensions(benchmarks, { ...dimensions, ...next });
     if (!candidate) return;
-    navigateTo(candidate.stage, defaultRun(candidate, activeRun?.id)?.id ?? '');
+    const run = (scenario && scenarioRun(candidate, scenario, activeRun?.arm)) ?? defaultRun(candidate);
+    navigateTo(candidate.stage, run?.id ?? '');
   };
-  const grouped = useMemo(() => {
-    const variants: BenchmarkRun['variant'][] =
-      benchmark?.suite === 'launch-crash' ? ['launch-crash'] : ['javascript', 'native'];
-    return variants.map((variant) => ({
-      variant,
-      runs: publishedRuns.filter((run) => run.variant === variant),
-    }));
-  }, [benchmark?.suite, publishedRuns]);
-  const maxSeconds = Math.max(
-    1,
-    ...(benchmark?.suite === 'launch-crash'
-      ? publishedRuns.map((run) => run.diagnosisSeconds ?? 0)
-      : comparableRuns(publishedRuns).map((run) => run.settingsReadySeconds)),
-  );
+  const isScenarioAvailable = (scenario: BenchmarkRun['variant']) =>
+    dimensions
+      ? Boolean(
+          scenarioRun(
+            exactBenchmarkForDimensions(benchmarks, { ...dimensions, suite: scenarioSuite(scenario) }),
+            scenario,
+          ),
+        )
+      : false;
 
   if (!benchmark || !activeRun) {
     return (
@@ -148,6 +148,8 @@ export default function BenchmarkDetails(): ReactNode {
     );
   }
 
+  const scenarioRuns = publishedRuns.filter((run) => run.variant === activeRun.variant);
+
   return (
     <Layout
       title="Benchmark details"
@@ -160,8 +162,8 @@ export default function BenchmarkDetails(): ReactNode {
             <span className={styles.eyebrow}>Detailed audit</span>
             <Heading as="h1">{benchmarkDisplayTitle(benchmark.title)}: Stim vs local toolchain</Heading>
             <p>
-              Select a model, platform, and run to inspect its timing, commands, terminal output, and Settings-screen
-              proof.
+              Select a model, platform, scenario, and run to inspect its timing, commands, terminal output, and
+              Settings-screen proof.
             </p>
           </header>
 
@@ -220,18 +222,18 @@ export default function BenchmarkDetails(): ReactNode {
             <nav className={styles.benchmarkPicker} aria-label="Benchmark scenario">
               <span>Scenario</span>
               <div className={styles.pickerOptions}>
-                {benchmarkSuites.map((suite) => {
-                  const available = isAvailable({ suite });
+                {benchmarkScenarios.map((scenario) => {
+                  const available = isScenarioAvailable(scenario);
                   return (
                     <button
-                      key={suite}
+                      key={scenario}
                       type="button"
-                      aria-pressed={suite === dimensions?.suite}
+                      aria-pressed={scenario === activeRun.variant}
                       disabled={!available}
                       title={available ? undefined : 'No published benchmark for this combination'}
-                      onClick={() => selectDimensions({ suite })}
+                      onClick={() => selectDimensions({ suite: scenarioSuite(scenario) }, scenario)}
                     >
-                      {suite === 'readiness' ? 'App readiness' : 'Launch crash'}
+                      {scenarioLabels[scenario]}
                     </button>
                   );
                 })}
@@ -244,13 +246,9 @@ export default function BenchmarkDetails(): ReactNode {
               <Heading as="h2" id="comparison-title">
                 {benchmark.suite === 'launch-crash' ? 'Launch-failure result' : 'Settings-ready comparison'}
               </Heading>
-              <p>Latest update {benchmark.recordedOn} / valid runs only</p>
+              <p>Latest update {benchmark.recordedOn}</p>
             </div>
-            <div className={styles.comparisonGrid}>
-              {grouped.map(({ variant, runs }) => (
-                <ComparisonCard key={variant} variant={variant} runs={runs} maxSeconds={maxSeconds} />
-              ))}
-            </div>
+            <ComparisonCard variant={activeRun.variant} runs={scenarioRuns} />
           </section>
 
           <section className={styles.environment} aria-labelledby="environment-title">
@@ -275,7 +273,7 @@ export default function BenchmarkDetails(): ReactNode {
                 </dd>
               </div>
               <div>
-                <dt>Device</dt>
+                <dt>{dimensions?.platform === 'android' ? 'Emulator' : 'Simulator'}</dt>
                 <dd>{benchmark.environment.simulator}</dd>
               </div>
             </dl>
@@ -291,14 +289,14 @@ export default function BenchmarkDetails(): ReactNode {
               </div>
             </div>
             <div className={styles.runTabs} role="group" aria-label="Benchmark runs">
-              {publishedRuns.map((run) => (
+              {scenarioRuns.map((run) => (
                 <button
                   key={run.id}
                   type="button"
                   aria-pressed={run.id === activeRun.id}
                   onClick={() => navigateTo(benchmark.stage, run.id)}
                 >
-                  {run.variant} / {run.arm}
+                  {run.arm === 'stim' ? 'Stim' : 'Control'}
                 </button>
               ))}
             </div>

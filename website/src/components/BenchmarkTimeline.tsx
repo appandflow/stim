@@ -277,21 +277,9 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
           <h2>
             {run.model} / {run.variant} / {run.arm}
           </h2>
-          <span className={run.valid ? styles.valid : styles.invalid}>
-            {run.valid ? 'Valid run' : `Invalid: ${run.invalidReasons.join(', ')}`}
-          </span>
         </div>
         <span>Agent turn {formatSeconds(run.totalSeconds)}</span>
       </div>
-
-      {run.timingOrigin ? (
-        <p>
-          Clock starts at the first recorded agent message or shell command. Excludes{' '}
-          {formatSeconds(run.timingOrigin.dispatchOffsetSeconds)} before that activity, including runner startup and any
-          unobserved initial reasoning. Settings proof from dispatch:{' '}
-          {formatSeconds(run.timingOrigin.dispatchSettingsReadySeconds)}. Tokens and cost cover the full turn.
-        </p>
-      ) : null}
 
       <section className={styles.summary}>
         <span>What the agent did</span>
@@ -325,10 +313,6 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
             Peak concurrency <strong>{breakdown.peakConcurrency}</strong>
           </span>
         </div>
-        <small>
-          &quot;Agent / other&quot; is time with no command active; it includes reasoning, tool selection, harness
-          latency, and idle gaps.
-        </small>
       </div>
 
       <div className={styles.playbackControls}>

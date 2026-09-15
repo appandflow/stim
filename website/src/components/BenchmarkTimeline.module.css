@@ -51,9 +51,7 @@
   font-size: 1.2rem;
 }
 
-.runHeading > span,
-.valid,
-.invalid {
+.runHeading > span {
   color: var(--bench-muted);
   font-size: 0.85rem;
   font-variant-numeric: tabular-nums;
@@ -139,13 +137,6 @@
   background: var(--ifm-color-primary);
 }
 
-.breakdown > small {
-  display: block;
-  margin-top: 0.65rem;
-  color: var(--bench-muted);
-  font-size: 0.7rem;
-}
-
 .playbackControls {
   display: grid;
   grid-template-columns: auto auto minmax(8rem, 1fr) auto auto;
@@ -197,21 +188,6 @@
   text-align: right;
 }
 
-.valid::before,
-.invalid::before {
-  display: inline-block;
-  width: 0.55rem;
-  height: 0.55rem;
-  margin-right: 0.4rem;
-  border-radius: 50%;
-  background: #16a34a;
-  content: '';
-}
-
-.invalid::before {
-  background: #dc2626;
-}
-
 .timelineScroller {
   overflow-x: auto;
   margin-bottom: 1.25rem;
@@ -220,6 +196,29 @@
   overscroll-behavior-inline: contain;
   touch-action: pan-x pan-y;
   -webkit-overflow-scrolling: touch;
+}
+
+.timelineScroller {
+  scrollbar-width: none;
+}
+
+.timelineScroller::-webkit-scrollbar {
+  display: none;
+}
+
+.terminal pre {
+  scrollbar-width: thin;
+  scrollbar-color: #484f58 transparent;
+}
+
+.terminal pre::-webkit-scrollbar {
+  width: 0.5rem;
+  height: 0.5rem;
+}
+
+.terminal pre::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #484f58;
 }
 
 .timelineScroller:focus-visible {
@@ -447,6 +446,9 @@
 }
 
 .terminal {
+  display: flex;
+  flex-direction: column;
+  height: clamp(20rem, 65vh, 36rem);
   overflow: hidden;
   border: 1px solid #30363d;
   border-radius: 0.8rem;
@@ -492,8 +494,6 @@
 }
 
 .terminal pre {
-  min-height: 18rem;
-  max-height: 32rem;
   overflow: auto;
   margin: 0;
   padding: 1.1rem;
@@ -503,6 +503,11 @@
   line-height: 1.55;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+.terminal > pre {
+  flex: 1;
+  min-height: 0;
 }
 
 .prompt {
@@ -527,7 +532,6 @@
 }
 
 .commandContext pre {
-  min-height: 0;
   max-height: 12rem;
   padding: 0.6rem 0 0;
 }
