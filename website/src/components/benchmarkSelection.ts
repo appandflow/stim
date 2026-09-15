@@ -13,8 +13,8 @@ export function scenarioSuite(scenario: BenchmarkRun['variant']): BenchmarkDimen
   return scenario === 'launch-crash' ? 'launch-crash' : 'readiness';
 }
 
-export function defaultRun(benchmark: BenchmarkData | undefined, preferredId?: string): BenchmarkRun | undefined {
-  return benchmark?.runs.find((run) => run.valid && run.id === preferredId) ?? benchmark?.runs.find((run) => run.valid);
+export function defaultRun(benchmark: BenchmarkData | undefined): BenchmarkRun | undefined {
+  return benchmark?.runs.find((run) => run.valid);
 }
 
 export function scenarioRun(

@@ -5,7 +5,6 @@ import {
   benchmarkModelLabel,
   benchmarkPlatforms,
   benchmarkScenarios,
-  defaultRun,
   exactBenchmarkForDimensions,
   scenarioRun,
   scenarioSuite,
@@ -155,11 +154,6 @@ describe('benchmark catalog selection', () => {
     expect(scenarioRun(withControl, 'javascript', 'control')?.id).toBe('javascript-stim');
     expect(scenarioRun(withControl, 'launch-crash', 'stim')).toBeUndefined();
     expect(scenarioRun(undefined, 'native')).toBeUndefined();
-  });
-
-  it('preserves a run when the destination provides it', () => {
-    expect(defaultRun(readinessAndroid, 'native-stim')?.id).toBe('native-stim');
-    expect(defaultRun(readinessAndroid, 'missing')?.id).toBe('javascript-stim');
   });
 
   it('formats the catalog model identifiers for picker labels', () => {
