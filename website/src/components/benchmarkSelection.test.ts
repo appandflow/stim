@@ -4,9 +4,10 @@ import {
   benchmarkForDimensions,
   benchmarkModelLabel,
   benchmarkPlatforms,
-  benchmarkSuites,
-  defaultRun,
+  benchmarkScenarios,
   exactBenchmarkForDimensions,
+  scenarioRun,
+  scenarioSuite,
 } from './benchmarkSelection';
 import type { BenchmarkData } from './benchmarkData';
 import { benchmarkSelectionFromSearch, benchmarkSelectionSearch } from './benchmarkData';
@@ -26,8 +27,8 @@ function benchmark(
     pricing: model.startsWith('gpt-') ? { model } : null,
     environment: { simulator: platform === 'android' ? 'Android emulator' : 'iPhone Simulator' },
     runs: [
-      { id: 'javascript-stim', model, platform, valid: true },
-      { id: 'native-stim', model, platform, valid: true },
+      { id: 'javascript-stim', arm: 'stim', variant: 'javascript', model, platform, valid: true },
+      { id: 'native-stim', arm: 'stim', variant: 'native', model, platform, valid: true },
     ],
   } as BenchmarkData;
 }
@@ -136,12 +137,23 @@ describe('benchmark catalog selection', () => {
 
   it('keeps every known platform and scenario available to render', () => {
     expect(benchmarkPlatforms).toEqual(['ios', 'android']);
-    expect(benchmarkSuites).toEqual(['readiness', 'launch-crash']);
+    expect(benchmarkScenarios).toEqual(['javascript', 'native', 'launch-crash']);
+    expect(benchmarkScenarios.map(scenarioSuite)).toEqual(['readiness', 'readiness', 'launch-crash']);
   });
 
-  it('preserves a run when the destination provides it', () => {
-    expect(defaultRun(readinessAndroid, 'native-stim')?.id).toBe('native-stim');
-    expect(defaultRun(readinessAndroid, 'missing')?.id).toBe('javascript-stim');
+  it('keeps the arm when switching scenario and falls back to the first valid run of that scenario', () => {
+    const withControl = {
+      ...readinessAndroid,
+      runs: [
+        ...readinessAndroid.runs,
+        { id: 'native-control', arm: 'control', variant: 'native', valid: true },
+        { id: 'javascript-control', arm: 'control', variant: 'javascript', valid: false },
+      ],
+    } as BenchmarkData;
+    expect(scenarioRun(withControl, 'native', 'control')?.id).toBe('native-control');
+    expect(scenarioRun(withControl, 'javascript', 'control')?.id).toBe('javascript-stim');
+    expect(scenarioRun(withControl, 'launch-crash', 'stim')).toBeUndefined();
+    expect(scenarioRun(undefined, 'native')).toBeUndefined();
   });
 
   it('formats the catalog model identifiers for picker labels', () => {

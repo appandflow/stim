@@ -373,14 +373,8 @@
   color: var(--ifm-color-emphasis-700);
 }
 
-.comparisonGrid {
-  margin-top: 1.5rem;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
-}
-
 .comparisonCard {
+  margin-top: 1.5rem;
   padding: 1.25rem;
   border: 1px solid var(--ifm-color-emphasis-300);
   border-radius: 1rem;
@@ -507,8 +501,7 @@
     padding-top: 2rem;
   }
 
-  .overviewGrid,
-  .comparisonGrid {
+  .overviewGrid {
     grid-template-columns: 1fr;
   }
 

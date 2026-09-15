@@ -277,21 +277,9 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
           <h2>
             {run.model} / {run.variant} / {run.arm}
           </h2>
-          <span className={run.valid ? styles.valid : styles.invalid}>
-            {run.valid ? 'Valid run' : `Invalid: ${run.invalidReasons.join(', ')}`}
-          </span>
         </div>
         <span>Agent turn {formatSeconds(run.totalSeconds)}</span>
       </div>
-
-      {run.timingOrigin ? (
-        <p>
-          Clock starts at the first recorded agent message or shell command. Excludes{' '}
-          {formatSeconds(run.timingOrigin.dispatchOffsetSeconds)} before that activity, including runner startup and any
-          unobserved initial reasoning. Settings proof from dispatch:{' '}
-          {formatSeconds(run.timingOrigin.dispatchSettingsReadySeconds)}. Tokens and cost cover the full turn.
-        </p>
-      ) : null}
 
       <section className={styles.summary}>
         <span>What the agent did</span>
@@ -325,71 +313,59 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
             Peak concurrency <strong>{breakdown.peakConcurrency}</strong>
           </span>
         </div>
-        <small>
-          &quot;Agent / other&quot; is time with no command active; it includes reasoning, tool selection, harness
-          latency, and idle gaps.
-        </small>
       </div>
 
-      <div className={styles.playbackControls}>
-        <button type="button" onClick={togglePlayback}>
-          {playing ? 'Pause' : 'Play'}
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setPlaying(false);
-            setPlaybackMode(true);
-            setCursorSeconds(0);
-            setZoom(1);
-          }}
-        >
-          Reset
-        </button>
-        <label>
-          <span className="sr-only">Playback position</span>
-          <input
-            type="range"
-            min={0}
-            max={Math.max(0.01, run.totalSeconds)}
-            step={0.1}
-            value={cursorSeconds}
-            aria-valuetext={`${formatSeconds(cursorSeconds)} of ${formatSeconds(run.totalSeconds)}`}
-            onChange={(event) => {
+      <div className={styles.toolbar}>
+        <div className={styles.transport}>
+          <button type="button" className={styles.playButton} onClick={togglePlayback}>
+            {playing ? 'Pause' : 'Play'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
               setPlaying(false);
               setPlaybackMode(true);
-              setCursorSeconds(Number(event.currentTarget.value));
+              setCursorSeconds(0);
+              setZoom(1);
             }}
-          />
-        </label>
-        <strong>
-          {formatSeconds(cursorSeconds)} / {formatSeconds(run.totalSeconds)}
-        </strong>
-        <select
-          value={speed}
-          onChange={(event) => setSpeed(Number(event.currentTarget.value))}
-          aria-label="Playback speed"
-        >
-          <option value={1}>1x</option>
-          <option value={5}>5x</option>
-          <option value={20}>20x</option>
-          <option value={60}>60x</option>
-        </select>
+          >
+            Reset
+          </button>
+          <strong>
+            {formatSeconds(cursorSeconds)} <span>/ {formatSeconds(run.totalSeconds)}</span>
+          </strong>
+        </div>
+        <div className={styles.toolbarOptions}>
+          <label>
+            Speed
+            <select value={speed} onChange={(event) => setSpeed(Number(event.currentTarget.value))}>
+              <option value={1}>1x</option>
+              <option value={5}>5x</option>
+              <option value={20}>20x</option>
+              <option value={60}>60x</option>
+            </select>
+          </label>
+          <div className={styles.zoomControl} role="group" aria-label="Timeline zoom">
+            <button
+              type="button"
+              aria-label="Zoom out"
+              disabled={zoom <= 1}
+              onClick={() => setZoom((current) => Math.max(1, Math.ceil(current * 2 - 1) / 2))}
+            >
+              -
+            </button>
+            <output aria-live="off">{Math.round(zoom * 10) / 10}x</output>
+            <button
+              type="button"
+              aria-label="Zoom in"
+              disabled={zoom >= 4}
+              onClick={() => setZoom((current) => Math.min(4, Math.floor(current * 2 + 1) / 2))}
+            >
+              +
+            </button>
+          </div>
+        </div>
       </div>
-
-      <label className={styles.zoomControl}>
-        <span>Timeline zoom</span>
-        <input
-          type="range"
-          min={1}
-          max={4}
-          step={0.5}
-          value={zoom}
-          aria-valuetext={`${zoom} times`}
-          onInput={(event) => setZoom(Number(event.currentTarget.value))}
-        />
-        <output>{zoom}x</output>
-      </label>
 
       <div
         ref={timelineScroller}
@@ -420,6 +396,21 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
                 {formatSeconds(run.totalSeconds * tick)}
               </span>
             ))}
+            <input
+              type="range"
+              className={styles.scrubber}
+              min={0}
+              max={Math.max(0.01, run.totalSeconds)}
+              step={0.1}
+              value={cursorSeconds}
+              aria-label="Playback position"
+              aria-valuetext={`${formatSeconds(cursorSeconds)} of ${formatSeconds(run.totalSeconds)}`}
+              onChange={(event) => {
+                setPlaying(false);
+                setPlaybackMode(true);
+                setCursorSeconds(Number(event.currentTarget.value));
+              }}
+            />
             {playbackMode ? (
               <i className={styles.playhead} style={{ left: position(cursorSeconds, run.totalSeconds) }} />
             ) : null}
@@ -448,31 +439,33 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
               <div className={styles.shellTrack} key={lane}>
                 {commands
                   .filter((command) => command.lane === lane)
-                  .map((command) => (
-                    <button
-                      key={command.id}
-                      type="button"
-                      className={`${styles.commandBar} ${command.exitCode === 0 ? '' : styles.commandFailed} ${
-                        (playbackMode && playbackCommand?.command.id === command.id) ||
-                        (!playbackMode && selected?.kind === 'command' && selected.event.id === command.id)
-                          ? styles.commandSelected
-                          : ''
-                      }`}
-                      style={{
-                        left: position(command.startSeconds, run.totalSeconds),
-                        width: `${Math.max(
-                          0.7,
-                          ((command.endSeconds - command.startSeconds) / run.totalSeconds) * 100,
-                        )}%`,
-                      }}
-                      aria-label={`${shortCommand(command)}, ${formatSeconds(
-                        command.endSeconds - command.startSeconds,
-                      )}, exit ${command.exitCode ?? 'unknown'}`}
-                      onClick={() => inspect({ kind: 'command', event: command })}
-                    >
-                      {shortCommand(command)}
-                    </button>
-                  ))}
+                  .map((command) => {
+                    const widthPercent = Math.max(
+                      0.7,
+                      ((command.endSeconds - command.startSeconds) / run.totalSeconds) * 100,
+                    );
+                    const labelFits =
+                      (widthPercent / 100) * timelineDimensions.trackWidth >= timelineViewport.rootFontSize * 3.5;
+                    return (
+                      <button
+                        key={command.id}
+                        type="button"
+                        className={`${styles.commandBar} ${command.exitCode === 0 ? '' : styles.commandFailed} ${
+                          (playbackMode && playbackCommand?.command.id === command.id) ||
+                          (!playbackMode && selected?.kind === 'command' && selected.event.id === command.id)
+                            ? styles.commandSelected
+                            : ''
+                        }`}
+                        style={{ left: position(command.startSeconds, run.totalSeconds), width: `${widthPercent}%` }}
+                        aria-label={`${shortCommand(command)}, ${formatSeconds(
+                          command.endSeconds - command.startSeconds,
+                        )}, exit ${command.exitCode ?? 'unknown'}`}
+                        onClick={() => inspect({ kind: 'command', event: command })}
+                      >
+                        {labelFits ? shortCommand(command) : null}
+                      </button>
+                    );
+                  })}
               </div>
             ))}
           </div>
