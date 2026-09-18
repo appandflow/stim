@@ -377,6 +377,8 @@ async function main() {
         `SWIFT_ENABLE_COMPILE_CACHE=${swiftCache ? 'YES' : 'NO'}`,
         'CLANG_ENABLE_PREFIX_MAPPING=YES',
         `CLANG_OTHER_PREFIX_MAPPINGS=${wt1.replace(/\/+$/, '')}=/^src`,
+        `SWIFT_ENABLE_PREFIX_MAPPING=${swiftCache ? 'YES' : 'NO'}`,
+        ...(swiftCache ? [`SWIFT_OTHER_PREFIX_MAPPINGS=${wt1.replace(/\/+$/, '')}=/^src`] : []),
       ];
       const missing = required.filter((s) => !argv.includes(s));
       if (missing.length) {
@@ -389,7 +391,7 @@ async function main() {
         }
         return c.fail(`the xcodebuild argv is missing ${missing.length} setting(s): ${missing.join(' ')}`);
       }
-      c.ev(`all 5 compilation-cache settings present verbatim on the argv (CAS at ${CAS_DIR})`);
+      c.ev(`all ${required.length} compilation-cache settings present verbatim on the argv (CAS at ${CAS_DIR})`);
 
       const g = growth('Xcode CAS', casBefore1, casAfter1);
       c.ev(describeGrowth(g));
@@ -398,7 +400,7 @@ async function main() {
         'the CAS directory gained no files across a full cold compile: caching is on but storing nothing',
       );
       return c.pass(
-        `5/5 settings on the argv; CAS +${g.added} files (${formatBytes(g.bytesAdded)}) across the cold build`,
+        `${required.length}/${required.length} settings on the argv; CAS +${g.added} files (${formatBytes(g.bytesAdded)}) across the cold build`,
       );
     });
   } else {

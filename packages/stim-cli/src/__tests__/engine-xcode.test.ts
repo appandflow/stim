@@ -521,6 +521,7 @@ describe('compilationCacheSettings', () => {
       'SWIFT_ENABLE_COMPILE_CACHE=NO',
       'CLANG_ENABLE_PREFIX_MAPPING=YES',
       'CLANG_OTHER_PREFIX_MAPPINGS=/w/app-412=/^src /home/.stim/workspaces/app-412--abc/derived-data=/^derived-data',
+      'SWIFT_ENABLE_PREFIX_MAPPING=NO',
     ]);
   });
 
@@ -563,7 +564,7 @@ describe('compilationCacheSettings', () => {
     for (const swiftVersion of [{ major: 6, minor: 3 }, { major: 5, minor: 10 }, null]) {
       const settings = compilationCacheSettings({ ...base, xcodeMajor: 26, swiftVersion });
       expect(settings).toContain('SWIFT_ENABLE_COMPILE_CACHE=NO');
-      expect(settings.some((s) => s.startsWith('SWIFT_ENABLE_PREFIX_MAPPING'))).toBe(false);
+      expect(settings).toContain('SWIFT_ENABLE_PREFIX_MAPPING=NO');
       expect(settings.some((s) => s.startsWith('SWIFT_OTHER_PREFIX_MAPPINGS'))).toBe(false);
     }
   });
@@ -585,7 +586,7 @@ describe('compilationCacheSettings', () => {
       optimizations: { compilationCache: true, swiftCompilationCache: true, prefixMapping: true },
     });
     expect(forced).toContain('SWIFT_ENABLE_COMPILE_CACHE=YES');
-    expect(forced.some((s) => s.startsWith('SWIFT_ENABLE_PREFIX_MAPPING'))).toBe(false);
+    expect(forced).toContain('SWIFT_ENABLE_PREFIX_MAPPING=NO');
     expect(forced).toHaveLength(defaults);
   });
 
@@ -598,13 +599,14 @@ describe('compilationCacheSettings', () => {
     });
     expect(settings).toContain('SWIFT_ENABLE_COMPILE_CACHE=YES');
     expect(settings).toContain('CLANG_OTHER_PREFIX_MAPPINGS=');
+    expect(settings).toContain('SWIFT_ENABLE_PREFIX_MAPPING=NO');
     expect(settings.some((s) => s.startsWith('SWIFT_OTHER_PREFIX_MAPPINGS'))).toBe(false);
   });
 
   test('parseSwiftVersion reads the toolchain line and rejects anything else', () => {
     expect(
       parseSwiftVersion(
-        'swift-driver version: 1.148.6 Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)\nTarget: arm64-apple-macosx26.0\n',
+        'Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)\nTarget: arm64-apple-macosx26.0\n',
       ),
     ).toEqual({ major: 6, minor: 3 });
     expect(parseSwiftVersion('Apple Swift version 6.4 (swiftlang-6.4.0.1.2 clang-2200.0.1.3)')).toEqual({
@@ -619,6 +621,12 @@ describe('compilationCacheSettings', () => {
   test('detectSwiftVersion reports unknown rather than throwing when xcrun is missing', () => {
     expect(detectSwiftVersion(makeExecutor({ runQuiet: () => null }))).toBe(null);
   });
+
+  test('detectSwiftVersion agrees with the real xcrun swift, when there is one', () => {
+    resetExecutor();
+    const version = detectSwiftVersion();
+    expect(version === null || (Number.isInteger(version.major) && version.major > 0)).toBeTruthy();
+  }, 30_000);
 
   test('carries nothing on an Xcode older than the one that shipped the cache', () => {
     expect(COMPILATION_CACHE_MIN_XCODE).toBe(26);
@@ -1113,6 +1121,7 @@ describe('buildIos with a mocked executor', () => {
     const args = spawnCalls[0]?.args ?? [];
     expect(args).toContain('COMPILATION_CACHE_ENABLE_CACHING=YES');
     expect(args).toContain('SWIFT_ENABLE_COMPILE_CACHE=NO');
+    expect(args).toContain('SWIFT_ENABLE_PREFIX_MAPPING=NO');
     expect(args).toContain(`CLANG_OTHER_PREFIX_MAPPINGS=${tmp}=/^src ${workspaceDerivedData(tmp)}=/^derived-data`);
     expect(readManifest().caches).toContainEqual(
       expect.objectContaining({

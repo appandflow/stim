@@ -63,9 +63,14 @@ export function compilerCacheFallbackMessage({
 }
 
 export function optimizationBuildProfile(platform: 'ios' | 'android', options: Optimizations): string | undefined {
-  const selected = platform === 'ios' ? options.ios : { pch: options.android.pch };
+  const selected =
+    platform === 'ios'
+      ? { ...options.ios, swiftCompilationCache: options.ios.swiftCompilationCache ?? false }
+      : { pch: options.android.pch };
   const defaults =
-    platform === 'ios' ? { compilationCache: true, swiftCompilationCache: null, prefixMapping: true } : { pch: 'auto' };
+    platform === 'ios'
+      ? { compilationCache: true, swiftCompilationCache: false, prefixMapping: true }
+      : { pch: 'auto' };
   if (JSON.stringify(selected) === JSON.stringify(defaults)) return undefined;
   return `opt-${createHash('sha256').update(JSON.stringify(selected)).digest('hex').slice(0, 16)}`;
 }

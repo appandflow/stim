@@ -221,7 +221,7 @@ export interface SwiftVersion {
 // sources; swiftlang/swift#90700 fixed it on release/6.4.x (Xcode 27).
 export const SWIFT_PREFIX_MAPPING_MIN_SWIFT: SwiftVersion = { major: 6, minor: 4 };
 
-export function swiftPrefixMappingSupported(version: SwiftVersion | null): boolean {
+function swiftPrefixMappingSupported(version: SwiftVersion | null): boolean {
   if (!version) return false;
   const min = SWIFT_PREFIX_MAPPING_MIN_SWIFT;
   return version.major > min.major || (version.major === min.major && version.minor >= min.minor);
@@ -258,7 +258,7 @@ export function compilationCacheSettings({
     `CLANG_OTHER_PREFIX_MAPPINGS=${mappings}`,
     ...(swift && swiftMappable && optimizations.prefixMapping
       ? ['SWIFT_ENABLE_PREFIX_MAPPING=YES', `SWIFT_OTHER_PREFIX_MAPPINGS=${mappings}`]
-      : []),
+      : ['SWIFT_ENABLE_PREFIX_MAPPING=NO']),
   ];
 }
 
