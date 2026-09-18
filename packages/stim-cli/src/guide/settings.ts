@@ -397,14 +397,16 @@ The example shows the defaults. Full setting names and behavior:
   optimizations.ios.swiftCompilationCache
     unset by default: Swift caching turns on, with Swift prefix mapping, when
     xcrun swift reports Swift 6.4 or newer (Xcode 27), where swift-frontend no
-    longer crashes on prefix-mapped batches; older toolchains leave it off.
-    true forces it on any toolchain, unmapped below 6.4, so entries only hit
-    within one checkout. false keeps it off. Requires compilationCache=true.
-    Xcode also refuses Swift caching for any target built without explicit
-    modules. React Native's prebuilt core sets SWIFT_ENABLE_EXPLICIT_MODULES=NO
-    on every target, so on a stock React Native or Expo project only clang
-    tasks cache; the post-build cache line then reports how many Swift targets
-    were excluded. Stim does not override that project setting.
+    longer crashes on prefix-mapped batches, and the project's react-native is
+    0.87 or newer. Older toolchains leave it off. React Native before 0.87
+    sets SWIFT_ENABLE_EXPLICIT_MODULES=NO on every target for its prebuilt
+    core, and Xcode refuses Swift caching without explicit modules, so those
+    projects stay off too; the cache line names which gate applied.
+    true forces it on any toolchain and React Native version, unmapped below
+    Swift 6.4, so entries only hit within one checkout. false keeps it off.
+    Requires compilationCache=true. A project that still disables explicit
+    modules itself sees the excluded target count on the post-build cache
+    line. Stim does not override that project setting.
   optimizations.ios.prefixMapping
     controls Clang source/DerivedData prefix mapping. false clears Stim's
     mappings. The existing Xcode version and project-ccache guards still apply.

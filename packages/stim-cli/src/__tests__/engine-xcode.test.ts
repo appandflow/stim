@@ -15,7 +15,9 @@ import {
   COMPILATION_CACHE_MIN_XCODE,
   compilationCacheActivityLine,
   compilationCacheSettings,
+  detectReactNativeVersion,
   detectSwiftVersion,
+  parseReactNativeVersion,
   parseSwiftVersion,
   discoverXcodeProject,
   findAppBundle,
@@ -552,22 +554,73 @@ describe('compilationCacheSettings', () => {
     expect(settings).toContain('CLANG_OTHER_PREFIX_MAPPINGS=/a/b=/^src /state/b/derived-data=/^derived-data');
   });
 
-  test('an unset Swift setting turns Swift caching and its prefix mapping on from Swift 6.4', () => {
-    const mapped = compilationCacheSettings({ ...base, xcodeMajor: 27, swiftVersion: { major: 6, minor: 4 } });
+  const rn87 = { major: 0, minor: 87 };
+
+  test('an unset Swift setting turns Swift caching and its prefix mapping on from Swift 6.4 and React Native 0.87', () => {
+    const mapped = compilationCacheSettings({
+      ...base,
+      xcodeMajor: 27,
+      swiftVersion: { major: 6, minor: 4 },
+      reactNativeVersion: rn87,
+    });
     expect(mapped).toContain('SWIFT_ENABLE_COMPILE_CACHE=YES');
     expect(mapped).toContain('SWIFT_ENABLE_PREFIX_MAPPING=YES');
     expect(mapped).toContain(
       'SWIFT_OTHER_PREFIX_MAPPINGS=/w/app-412=/^src /home/.stim/workspaces/app-412--abc/derived-data=/^derived-data',
     );
-    expect(compilationCacheSettings({ ...base, xcodeMajor: 27, swiftVersion: { major: 7, minor: 0 } })).toContain(
-      'SWIFT_ENABLE_COMPILE_CACHE=YES',
-    );
+    expect(
+      compilationCacheSettings({
+        ...base,
+        xcodeMajor: 27,
+        swiftVersion: { major: 7, minor: 0 },
+        reactNativeVersion: { major: 1, minor: 0 },
+      }),
+    ).toContain('SWIFT_ENABLE_COMPILE_CACHE=YES');
     for (const swiftVersion of [{ major: 6, minor: 3 }, { major: 5, minor: 10 }, null]) {
-      const settings = compilationCacheSettings({ ...base, xcodeMajor: 26, swiftVersion });
+      const settings = compilationCacheSettings({ ...base, xcodeMajor: 26, swiftVersion, reactNativeVersion: rn87 });
       expect(settings).toContain('SWIFT_ENABLE_COMPILE_CACHE=NO');
       expect(settings).toContain('SWIFT_ENABLE_PREFIX_MAPPING=NO');
       expect(settings.some((s) => s.startsWith('SWIFT_OTHER_PREFIX_MAPPINGS'))).toBe(false);
     }
+  });
+
+  test('React Native below 0.87 keeps the auto default off, because its prebuilt core disables explicit modules', () => {
+    const swift64 = { major: 6, minor: 4 };
+    for (const reactNativeVersion of [{ major: 0, minor: 86 }, { major: 0, minor: 81 }, null]) {
+      const settings = compilationCacheSettings({ ...base, xcodeMajor: 27, swiftVersion: swift64, reactNativeVersion });
+      expect(settings).toContain('SWIFT_ENABLE_COMPILE_CACHE=NO');
+      expect(settings).toContain('SWIFT_ENABLE_PREFIX_MAPPING=NO');
+    }
+    const forced = compilationCacheSettings({
+      ...base,
+      xcodeMajor: 27,
+      swiftVersion: swift64,
+      reactNativeVersion: { major: 0, minor: 86 },
+      optimizations: { compilationCache: true, swiftCompilationCache: true, prefixMapping: true },
+    });
+    expect(forced).toContain('SWIFT_ENABLE_COMPILE_CACHE=YES');
+    expect(forced).toContain('SWIFT_ENABLE_PREFIX_MAPPING=YES');
+  });
+
+  test('parseReactNativeVersion reads major.minor from the package manifest and rejects the rest', () => {
+    expect(parseReactNativeVersion({ version: '0.87.0' })).toEqual({ major: 0, minor: 87 });
+    expect(parseReactNativeVersion({ version: '0.88.0-rc.1' })).toEqual({ major: 0, minor: 88 });
+    expect(parseReactNativeVersion({ version: '0.89.0-nightly-20260918-d2a6ce5f7' })).toEqual({ major: 0, minor: 89 });
+    for (const bad of [null, {}, { version: 'latest' }, { version: 87 }, 'text']) {
+      expect(parseReactNativeVersion(bad)).toBe(null);
+    }
+  });
+
+  test('detectReactNativeVersion resolves react-native from the project and is null when it is absent', () => {
+    expect(detectReactNativeVersion(tmp)).toBe(null);
+    const dir = join(tmp, 'node_modules', 'react-native');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({ name: 'react-native', version: '0.87.0', main: 'index.js' }),
+    );
+    writeFileSync(join(dir, 'index.js'), '');
+    expect(detectReactNativeVersion(tmp)).toEqual({ major: 0, minor: 87 });
   });
 
   test('an explicit Swift setting wins over the toolchain, and a forced-on old toolchain stays unmapped', () => {
@@ -576,6 +629,7 @@ describe('compilationCacheSettings', () => {
       ...base,
       xcodeMajor: 27,
       swiftVersion: { major: 6, minor: 4 },
+      reactNativeVersion: rn87,
       optimizations: { compilationCache: true, swiftCompilationCache: false, prefixMapping: true },
     });
     expect(off).toContain('SWIFT_ENABLE_COMPILE_CACHE=NO');
@@ -596,6 +650,7 @@ describe('compilationCacheSettings', () => {
       ...base,
       xcodeMajor: 27,
       swiftVersion: { major: 6, minor: 4 },
+      reactNativeVersion: rn87,
       optimizations: { compilationCache: true, swiftCompilationCache: null, prefixMapping: false },
     });
     expect(settings).toContain('SWIFT_ENABLE_COMPILE_CACHE=YES');
@@ -1133,10 +1188,52 @@ describe('buildIos with a mocked executor', () => {
     );
   });
 
+  function stubReactNative(root: string, version: string) {
+    const dir = join(root, 'node_modules', 'react-native');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'react-native', version, main: 'index.js' }));
+    writeFileSync(join(dir, 'index.js'), '');
+  }
+
+  test('a Swift 6.4 toolchain on React Native 0.86 leaves Swift off and says why', async () => {
+    const notes: string[] = [];
+    const child = fakeChild();
+    const spawnCalls = harness(tmp, { child });
+    stubReactNative(tmp, '0.86.3');
+    setExecutor({
+      run: () => '',
+      runQuiet: (cmd) =>
+        cmd.startsWith('xcrun swift')
+          ? 'Apple Swift version 6.4 (swiftlang-6.4.0.1.2 clang-2200.0.1.3)\n'
+          : 'Xcode 27.0\nBuild version 18A100\n',
+      runFile: (file) => (file === 'xcodebuild' ? '{"project":{"name":"App","schemes":["App"]}}' : '{}'),
+      spawn: (cmd, args, opts) => {
+        spawnCalls.push({ cmd, args, opts });
+        return child as unknown as ChildProcess;
+      },
+    });
+    const promise = buildIos({
+      root: tmp,
+      udid: 'BF2A-1111-2222',
+      logWriter: recordingWriter(),
+      onNote: (line) => notes.push(line),
+    });
+    makeProduct(workspaceDerivedData(tmp));
+    child.emit('close', 0, null);
+    await promise;
+    expect(notes[0]).toMatch(
+      /compilation cache on \(CAS at .*compilation-cache, Swift off, react-native 0\.86 < 0\.87\)$/,
+    );
+    const args = spawnCalls[0]?.args ?? [];
+    expect(args).toContain('SWIFT_ENABLE_COMPILE_CACHE=NO');
+    expect(args).toContain('SWIFT_ENABLE_PREFIX_MAPPING=NO');
+  });
+
   test('a Swift 6.4 toolchain puts Swift caching and its mapping on the argv and names it on the note', async () => {
     const notes: string[] = [];
     const child = fakeChild();
     const spawnCalls = harness(tmp, { child });
+    stubReactNative(tmp, '0.88.0-rc.0');
     setExecutor({
       run: () => '',
       runQuiet: (cmd) =>
