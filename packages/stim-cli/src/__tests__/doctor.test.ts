@@ -14,6 +14,7 @@ import {
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { Command } from 'commander';
+import { getProject } from '../config.ts';
 import {
   checkBuildCacheProvider,
   checkCompilationCache,
@@ -1839,4 +1840,26 @@ test('doctor --platform android does not invoke Xcode tooling', async () => {
   }
   expect(logs).toHaveLength(1);
   expect(calls.some((call) => call.includes('xcodebuild'))).toBe(false);
+});
+
+test('doctor records its run per platform in the project record', async () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-record-'));
+  const cwd = process.cwd();
+  const originalLog = console.log;
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+  const program = new Command();
+  doctorCommand(program, '1.2.3', () => testStimVersions);
+  console.log = () => {};
+  process.chdir(project);
+  try {
+    await program.parseAsync(['node', 'stim', 'doctor', '--json', '--platform', 'ios']);
+    const runs = getProject(realpathSync(project))?.doctorRuns;
+    expect(runs?.ios?.version).toBe('1.2.3');
+    expect(runs?.android).toBe(undefined);
+    expect(Date.now() - Date.parse(runs?.ios?.at ?? '')).toBeLessThan(60_000);
+  } finally {
+    process.chdir(cwd);
+    console.log = originalLog;
+    rmSync(project, { recursive: true, force: true });
+  }
 });

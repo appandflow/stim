@@ -149,6 +149,7 @@ control build optimizations on this machine without changing project files.
 | `STIM_POOL_IOS_PARKED_MAX`     | Maximum parked simulators                                                                                |
 | `STIM_METRO_PUBLIC_URL`        | Public Metro URL for remote use                                                                          |
 | `STIM_ANDROID_CAS_TOOLCHAIN`   | Absolute path to the [Android CAS toolchain manifest](./build-optimizations.md#experimental-android-cas) |
+| `STIM_NO_UPDATE_CHECK`         | Set to disable the daily check for a newer Stim release in `stim guide`                                  |
 
 Proxy remote devices also use `AGENT_DEVICE_DAEMON_BASE_URL` and
 `AGENT_DEVICE_DAEMON_AUTH_TOKEN`. Those variables belong to the optional proxy

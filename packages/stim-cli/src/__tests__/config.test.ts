@@ -496,3 +496,13 @@ test('slot registry supports arbitrary numbers of identical model assignments', 
   expect(getProject(root)?.deviceSlots?.['phone-9']?.ios?.deviceUdid).toBe('udid-9');
   expect(Object.keys(getProject(root)?.deviceSlots ?? {})).toHaveLength(19);
 });
+
+test('upsertProject applies an updater against the record as it is under the lock', () => {
+  const root = '/abs/project';
+  upsertProject(root, { label: 'one', doctorRuns: { ios: { at: 'T1', version: '1' } } });
+  upsertProject(root, (existing) => ({ doctorRuns: { ...existing.doctorRuns, android: { at: 'T2', version: '2' } } }));
+  expect(getProject(root)).toMatchObject({
+    label: 'one',
+    doctorRuns: { ios: { at: 'T1', version: '1' }, android: { at: 'T2', version: '2' } },
+  });
+});
