@@ -4,7 +4,7 @@ import type { DoctorPlatform, Finding } from './doctor.ts';
 import { apkOutputsDir } from './engine/gradle.ts';
 import { sharedBuildCache, workspaceDerivedData } from './paths.ts';
 import { filesystemDevice, temporaryRoot } from './temporary.ts';
-import { listWorktrees, repoRoot } from './worktree.ts';
+import { repoRoot, resolveSourceCheckout } from './worktree.ts';
 
 export function checkStorageLayout(
   projectRoot: string,
@@ -35,10 +35,10 @@ export function checkStorageLayout(
   };
   try {
     const target = repoRoot(projectRoot) ?? projectRoot;
-    const source = listWorktrees(target)[0]?.path ?? target;
+    const source = resolveSourceCheckout(target);
     check(
       'Worktree copy',
-      [source, target],
+      ['path' in source ? source.path : target, target],
       'Keep the source checkout and linked worktree on the same volume to share file blocks when warming.',
     );
     const cache = sharedBuildCache();

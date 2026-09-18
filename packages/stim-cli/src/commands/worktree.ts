@@ -31,9 +31,9 @@ import {
   gitCommonDir,
   hasRemote,
   hasUncommittedWork,
-  isMainWorkingTree,
   isPodInstallChurn,
   listWorktrees,
+  sourceCheckoutOf,
   podsOutOfSync,
   readWorktreeExclude,
   removeWorktree,
@@ -736,7 +736,19 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
     process.exitCode = 1;
     return;
   }
-  if (isMainWorkingTree(entry.path)) {
+  if (entry.bare) {
+    console.error(chalk.red(`Refusing to remove ${path}: ${entry.path} is the bare repository, not a worktree.`));
+    console.error(chalk.dim('  Pass a worktree path, e.g. as printed by `git worktree list`.'));
+    process.exitCode = 1;
+    return;
+  }
+  const source = sourceCheckoutOf(worktrees);
+  if ('refusal' in source) {
+    console.error(chalk.red(`Refusing to remove ${path}: ${source.refusal}`));
+    process.exitCode = 1;
+    return;
+  }
+  if (entry.path === source.path) {
     if (entry.path !== path) {
       console.error(chalk.dim(`${path} is inside the source checkout ${entry.path}; reclaiming its environment.`));
     }
@@ -768,7 +780,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
         : inspection.unpushed.length > 0
           ? `it has ${plural(inspection.unpushed.length, 'unique commit')}`
           : null;
-  const branchDeleteCwd = worktrees.find((candidate) => isMainWorkingTree(candidate.path))?.path;
+  const branchDeleteCwd = source.path;
 
   await withManagedRemoteWorktreeRemovalLock(path, () =>
     withReclaimLocks(path, async (lockedKeys) => {
@@ -801,13 +813,6 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
           return;
         }
         upsertProject(path, { worktreeRemovalComplete: true, worktreePendingBranchSha: approvedBranchSha });
-        if (!branchDeleteCwd) {
-          console.error(chalk.yellow(phaseLine('branch', `kept ${branch} (Stim could not find the source checkout)`)));
-          console.error(chalk.dim(`  Retry with: stim worktree remove ${path}`));
-          process.exitCode = 1;
-          finish();
-          return;
-        }
         const checkedOutAt = listWorktrees(branchDeleteCwd).find(
           (candidate) => candidate.branch === branch && resolve(candidate.path) !== resolve(path),
         )?.path;

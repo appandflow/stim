@@ -19,23 +19,6 @@ export function gitCommonDir(cwd: string): string | null {
   return out ? out.trim() : null;
 }
 
-export function isMainWorkingTree(path: string): boolean {
-  const out = getExecutor().runFileQuiet('git', [
-    '-C',
-    path,
-    'rev-parse',
-    '--path-format=absolute',
-    '--git-dir',
-    '--git-common-dir',
-  ]);
-  if (!out) return false;
-  const [gitDir, commonDir] = out
-    .trim()
-    .split('\n')
-    .map((line) => line.trim());
-  return Boolean(gitDir) && gitDir === commonDir;
-}
-
 export function repoRoot(cwd: string): string | null {
   const out = getExecutor().runFileQuiet('git', ['-C', cwd, 'rev-parse', '--show-toplevel']);
   return out ? out.trim() : null;
@@ -74,19 +57,18 @@ export function warmWorktreePaths(cwd: string): { root: string; target: string; 
   const currentRoot = repoRoot(cwd);
   if (!currentRoot) throw new Error('Not a git repository.');
   const target = realpathSync(currentRoot);
-  if (isMainWorkingTree(target)) {
+  const source = resolveSourceCheckout(target);
+  if ('refusal' in source) throw new Error(source.refusal);
+  const current = source.entries.find((entry) => canonicalPath(entry.path) === target);
+  if (!current) throw new Error('Could not identify the linked worktree and its source checkout.');
+  const root = realpathSync(source.path);
+  if (root === target) {
     throw new Error('Run stim worktree warm from a linked worktree, not the source checkout.');
   }
-  const entries = listWorktrees(target);
-  const current = entries.find((entry) => canonicalPath(entry.path) === target);
-  const main = entries.find((entry) => isMainWorkingTree(entry.path));
-  if (!current || !main) throw new Error('Could not identify the linked worktree and its source checkout.');
-  const root = realpathSync(main.path);
   const sourceRoot = repoRoot(root);
   const sourceCommon = gitCommonDir(root);
   const targetCommon = gitCommonDir(target);
   if (
-    root === target ||
     !sourceRoot ||
     realpathSync(sourceRoot) !== root ||
     !sourceCommon ||
@@ -480,6 +462,7 @@ export interface WorktreeEntry {
   path: string;
   branch?: string;
   prunable?: boolean;
+  bare?: boolean;
 }
 
 function parseWorktrees(out: string): WorktreeEntry[] {
@@ -493,6 +476,8 @@ function parseWorktrees(out: string): WorktreeEntry[] {
       current.branch = line.slice('branch '.length).replace('refs/heads/', '');
     } else if (line === 'prunable' || line.startsWith('prunable ')) {
       current.prunable = true;
+    } else if (line === 'bare') {
+      current.bare = true;
     }
   }
   if (current.path) entries.push(current as WorktreeEntry);
@@ -502,4 +487,61 @@ function parseWorktrees(out: string): WorktreeEntry[] {
 export function listWorktrees(cwd: string): WorktreeEntry[] {
   const out = getExecutor().runFileQuiet('git', ['-C', cwd, 'worktree', 'list', '--porcelain']);
   return out ? parseWorktrees(out) : [];
+}
+
+export type SourceCheckout = { path: string } | { refusal: string };
+
+export function selectSourceCheckout(entries: WorktreeEntry[], bareHead: string | null): SourceCheckout {
+  const first = entries[0];
+  if (!first) return { refusal: 'Git lists no worktrees for this repository.' };
+  if (!first.bare) return { path: first.path };
+  const bare = first.path;
+  const checkouts = entries.filter((entry) => !entry.bare && !entry.prunable);
+  const listed = checkouts.map((entry) => `${entry.branch ?? 'detached'} (${entry.path})`).join(', ') || 'none';
+  const pointHead = `  git -C ${bare} symbolic-ref HEAD refs/heads/<branch>`;
+  if (!bareHead) {
+    return {
+      refusal:
+        `The bare repository at ${bare} has a detached HEAD, so Stim cannot tell which worktree is the source checkout. ` +
+        `Point HEAD at the source branch, then retry:\n${pointHead}\nChecked-out branches: ${listed}`,
+    };
+  }
+  const matches = checkouts.filter((entry) => entry.branch === bareHead);
+  const [only] = matches;
+  if (only && matches.length === 1) return { path: only.path };
+  if (!only) {
+    const stale = entries.find((entry) => entry.prunable && entry.branch === bareHead);
+    const beside = checkouts[0] ? dirname(checkouts[0].path) : bare;
+    const recreate = stale
+      ? `Its worktree at ${stale.path} is missing. Recreate it, then retry:\n` +
+        `  git -C ${bare} worktree prune\n  git -C ${bare} worktree add ${stale.path} ${bareHead}\n`
+      : `Create one, then retry:\n  git -C ${bare} worktree add ${join(beside, bareHead)} ${bareHead}\n`;
+    return {
+      refusal:
+        `The bare repository at ${bare} points HEAD at ${bareHead}, but no worktree has ${bareHead} checked out, ` +
+        `so Stim has no source checkout to copy from. ${recreate}` +
+        `Or point HEAD at a branch that is checked out (${listed}):\n${pointHead}`,
+    };
+  }
+  return {
+    refusal:
+      `The bare repository at ${bare} points HEAD at ${bareHead}, which is checked out in more than one worktree: ` +
+      `${matches.map((entry) => entry.path).join(', ')}. Remove the extra worktrees, or point HEAD at a branch ` +
+      `checked out once, then retry:\n${pointHead}`,
+  };
+}
+
+function bareHeadBranch(bare: string): string | null {
+  const out = getExecutor().runFileQuiet('git', ['-C', bare, 'symbolic-ref', '--quiet', 'HEAD'])?.trim();
+  return out?.startsWith('refs/heads/') ? out.slice('refs/heads/'.length) : null;
+}
+
+export function sourceCheckoutOf(entries: WorktreeEntry[]): SourceCheckout {
+  const first = entries[0];
+  return selectSourceCheckout(entries, first?.bare ? bareHeadBranch(first.path) : null);
+}
+
+export function resolveSourceCheckout(cwd: string): { entries: WorktreeEntry[] } & SourceCheckout {
+  const entries = listWorktrees(cwd);
+  return { entries, ...sourceCheckoutOf(entries) };
 }
