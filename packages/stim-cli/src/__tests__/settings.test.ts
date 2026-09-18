@@ -756,7 +756,7 @@ test('machine optimization defaults merge with committed, repository and project
   expect(options.buildCache).toBe(false);
   expect(options.android.pch).toBe('auto');
   expect(options.android.gradleBuildCache).toBe(false);
-  expect(options.ios).toEqual({ compilationCache: false, swiftCompilationCache: false, prefixMapping: false });
+  expect(options.ios).toEqual({ compilationCache: false, swiftCompilationCache: null, prefixMapping: false });
   expect(resolveOptimizations(resolveSettings({ repoRoot: tmpHome }), {}).android.pch).toBe('off');
   expect(resolveOptimizations(resolveSettings({}), {}).android.pch).toBe('on');
 });

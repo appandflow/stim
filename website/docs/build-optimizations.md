@@ -35,7 +35,6 @@ These are the defaults; you only need to include values you want to change:
     "metroSharedCache": true,
     "ios": {
       "compilationCache": true,
-      "swiftCompilationCache": false,
       "prefixMapping": true
     },
     "android": {
@@ -79,11 +78,11 @@ unrecognized Xcode versions and projects with that ccache setting retain their
 own compiler settings. Custom ccache integrations using other mechanisms are
 not detected by this guard.
 
-| Option                  | Default | What it does                                                                                                                                                                           |
-| ----------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `compilationCache`      | `true`  | Enables Xcode's compilation cache so unchanged native compilation can be reused across builds and worktrees. Set to `false` to disable the compilation cache, including Swift caching. |
-| `swiftCompilationCache` | `false` | Opts into experimental Swift compilation caching. Requires `compilationCache: true`.                                                                                                   |
-| `prefixMapping`         | `true`  | Maps checkout and DerivedData paths to stable Clang paths for reuse across worktrees. Set to `false` to disable Stim's prefix mapping and clear its mappings.                          |
+| Option                  | Default | What it does                                                                                                                                                                                                                                                                                                                                 |
+| ----------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `compilationCache`      | `true`  | Enables Xcode's compilation cache so unchanged native compilation can be reused across builds and worktrees. Set to `false` to disable the compilation cache, including Swift caching.                                                                                                                                                       |
+| `swiftCompilationCache` | unset   | Unset turns Swift caching on, with Swift prefix mapping, when `xcrun swift` reports Swift 6.4 or newer (Xcode 27), where swift-frontend no longer crashes on prefix-mapped batches. `true` forces it on any toolchain, unmapped below 6.4, so entries hit only within one checkout. `false` keeps it off. Requires `compilationCache: true`. |
+| `prefixMapping`         | `true`  | Maps checkout and DerivedData paths to stable Clang paths for reuse across worktrees. Set to `false` to disable Stim's prefix mapping and clear its mappings.                                                                                                                                                                                |
 
 ## Android options
 

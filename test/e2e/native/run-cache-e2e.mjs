@@ -367,10 +367,14 @@ async function main() {
       const argv = buildStartArgv(wt1);
       assert(argv, `no build_start record in ${buildLog(wt1)}`);
       c.ev(`xcodebuild argv: ${argv}`);
+      const swift = /\bSwift version (\d+)\.(\d+)/.exec(
+        sh('xcrun', ['swift', '--version'], { allowFail: true }).stdout,
+      );
+      const swiftCache = swift && (Number(swift[1]) > 6 || (Number(swift[1]) === 6 && Number(swift[2]) >= 4));
       const required = [
         'COMPILATION_CACHE_ENABLE_CACHING=YES',
         `COMPILATION_CACHE_CAS_PATH=${CAS_DIR}`,
-        'SWIFT_ENABLE_COMPILE_CACHE=NO',
+        `SWIFT_ENABLE_COMPILE_CACHE=${swiftCache ? 'YES' : 'NO'}`,
         'CLANG_ENABLE_PREFIX_MAPPING=YES',
         `CLANG_OTHER_PREFIX_MAPPINGS=${wt1.replace(/\/+$/, '')}=/^src`,
       ];

@@ -212,11 +212,27 @@ export function readPodfileProperties(root: string): Record<string, unknown> | n
   }
 }
 
+export interface SwiftVersion {
+  major: number;
+  minor: number;
+}
+
+// swift-frontend crashed when a compile batch mixed prefix-mapped and unmapped
+// sources; swiftlang/swift#90700 fixed it on release/6.4.x (Xcode 27).
+export const SWIFT_PREFIX_MAPPING_MIN_SWIFT: SwiftVersion = { major: 6, minor: 4 };
+
+export function swiftPrefixMappingSupported(version: SwiftVersion | null): boolean {
+  if (!version) return false;
+  const min = SWIFT_PREFIX_MAPPING_MIN_SWIFT;
+  return version.major > min.major || (version.major === min.major && version.minor >= min.minor);
+}
+
 export function compilationCacheSettings({
   workspaceRoot,
   derivedDataPath,
   casPath,
   xcodeMajor,
+  swiftVersion = null,
   ccache = false,
   optimizations = resolveOptimizations({}, {}).ios,
 }: {
@@ -224,19 +240,38 @@ export function compilationCacheSettings({
   derivedDataPath: string;
   casPath: string;
   xcodeMajor: number | null;
+  swiftVersion?: SwiftVersion | null;
   ccache?: boolean;
   optimizations?: Optimizations['ios'];
 }): string[] {
   if (xcodeMajor === null || xcodeMajor === undefined) return [];
   if (xcodeMajor < COMPILATION_CACHE_MIN_XCODE) return [];
   if (ccache) return [];
+  const swiftMappable = swiftPrefixMappingSupported(swiftVersion);
+  const swift = optimizations.compilationCache && (optimizations.swiftCompilationCache ?? swiftMappable);
+  const mappings = optimizations.prefixMapping ? compilationPrefixMappings(workspaceRoot, derivedDataPath) : '';
   return [
     `COMPILATION_CACHE_ENABLE_CACHING=${optimizations.compilationCache ? 'YES' : 'NO'}`,
     `COMPILATION_CACHE_CAS_PATH=${casPath}`,
-    `SWIFT_ENABLE_COMPILE_CACHE=${optimizations.compilationCache && optimizations.swiftCompilationCache ? 'YES' : 'NO'}`,
+    `SWIFT_ENABLE_COMPILE_CACHE=${swift ? 'YES' : 'NO'}`,
     `CLANG_ENABLE_PREFIX_MAPPING=${optimizations.prefixMapping ? 'YES' : 'NO'}`,
-    `CLANG_OTHER_PREFIX_MAPPINGS=${optimizations.prefixMapping ? compilationPrefixMappings(workspaceRoot, derivedDataPath) : ''}`,
+    `CLANG_OTHER_PREFIX_MAPPINGS=${mappings}`,
+    ...(swift && swiftMappable && optimizations.prefixMapping
+      ? ['SWIFT_ENABLE_PREFIX_MAPPING=YES', `SWIFT_OTHER_PREFIX_MAPPINGS=${mappings}`]
+      : []),
   ];
+}
+
+export function parseSwiftVersion(output: unknown): SwiftVersion | null {
+  const m = /\bSwift version (\d+)\.(\d+)/.exec(String(output || ''));
+  if (!m || m[1] === undefined || m[2] === undefined) return null;
+  const major = parseInt(m[1], 10);
+  const minor = parseInt(m[2], 10);
+  return Number.isFinite(major) && Number.isFinite(minor) ? { major, minor } : null;
+}
+
+export function detectSwiftVersion(exec: Executor | null = null): SwiftVersion | null {
+  return parseSwiftVersion((exec || getExecutor()).runQuiet('xcrun swift --version', { timeoutMs: 10000 }));
 }
 
 export function parseXcodeMajor(output: unknown): number | null {
@@ -267,12 +302,23 @@ function resolveCompilationCacheSettings({
   optimizations?: Optimizations['ios'];
   onNote?: (line: string) => void;
 }): string[] {
+  const xcodeMajor = detectXcodeMajor(exec);
+  const ccache = ccacheEnabled(readPodfileProperties(root));
+  const swiftVersion =
+    xcodeMajor !== null &&
+    xcodeMajor >= COMPILATION_CACHE_MIN_XCODE &&
+    !ccache &&
+    optimizations.compilationCache &&
+    optimizations.swiftCompilationCache !== false
+      ? detectSwiftVersion(exec)
+      : null;
   const settings = compilationCacheSettings({
     workspaceRoot: root,
     derivedDataPath,
     casPath,
-    xcodeMajor: detectXcodeMajor(exec),
-    ccache: ccacheEnabled(readPodfileProperties(root)),
+    xcodeMajor,
+    swiftVersion,
+    ccache,
     optimizations,
   });
   if (settings.length > 0 && optimizations.compilationCache) {
@@ -282,7 +328,14 @@ function resolveCompilationCacheSettings({
       prune: 'atomic',
       note: 'shared Xcode compilation cache',
     });
-    onNote(chalk.dim(phaseLine('cache', `compilation cache on (CAS at ${casPath})`)));
+    const swift = settings.includes('SWIFT_ENABLE_COMPILE_CACHE=YES')
+      ? settings.includes('SWIFT_ENABLE_PREFIX_MAPPING=YES')
+        ? 'Swift on'
+        : 'Swift on, unmapped'
+      : swiftVersion
+        ? `Swift off, ${swiftVersion.major}.${swiftVersion.minor} < ${SWIFT_PREFIX_MAPPING_MIN_SWIFT.major}.${SWIFT_PREFIX_MAPPING_MIN_SWIFT.minor}`
+        : 'Swift off';
+    onNote(chalk.dim(phaseLine('cache', `compilation cache on (CAS at ${casPath}, ${swift})`)));
   }
   return settings;
 }

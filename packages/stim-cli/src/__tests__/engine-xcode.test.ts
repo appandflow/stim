@@ -14,6 +14,8 @@ import {
   ccacheEnabled,
   COMPILATION_CACHE_MIN_XCODE,
   compilationCacheSettings,
+  detectSwiftVersion,
+  parseSwiftVersion,
   discoverXcodeProject,
   findAppBundle,
   listSchemes,
@@ -548,6 +550,76 @@ describe('compilationCacheSettings', () => {
     expect(settings).toContain('CLANG_OTHER_PREFIX_MAPPINGS=/a/b=/^src /state/b/derived-data=/^derived-data');
   });
 
+  test('an unset Swift setting turns Swift caching and its prefix mapping on from Swift 6.4', () => {
+    const mapped = compilationCacheSettings({ ...base, xcodeMajor: 27, swiftVersion: { major: 6, minor: 4 } });
+    expect(mapped).toContain('SWIFT_ENABLE_COMPILE_CACHE=YES');
+    expect(mapped).toContain('SWIFT_ENABLE_PREFIX_MAPPING=YES');
+    expect(mapped).toContain(
+      'SWIFT_OTHER_PREFIX_MAPPINGS=/w/app-412=/^src /home/.stim/workspaces/app-412--abc/derived-data=/^derived-data',
+    );
+    expect(compilationCacheSettings({ ...base, xcodeMajor: 27, swiftVersion: { major: 7, minor: 0 } })).toContain(
+      'SWIFT_ENABLE_COMPILE_CACHE=YES',
+    );
+    for (const swiftVersion of [{ major: 6, minor: 3 }, { major: 5, minor: 10 }, null]) {
+      const settings = compilationCacheSettings({ ...base, xcodeMajor: 26, swiftVersion });
+      expect(settings).toContain('SWIFT_ENABLE_COMPILE_CACHE=NO');
+      expect(settings.some((s) => s.startsWith('SWIFT_ENABLE_PREFIX_MAPPING'))).toBe(false);
+      expect(settings.some((s) => s.startsWith('SWIFT_OTHER_PREFIX_MAPPINGS'))).toBe(false);
+    }
+  });
+
+  test('an explicit Swift setting wins over the toolchain, and a forced-on old toolchain stays unmapped', () => {
+    const defaults = compilationCacheSettings({ ...base, xcodeMajor: 27 }).length;
+    const off = compilationCacheSettings({
+      ...base,
+      xcodeMajor: 27,
+      swiftVersion: { major: 6, minor: 4 },
+      optimizations: { compilationCache: true, swiftCompilationCache: false, prefixMapping: true },
+    });
+    expect(off).toContain('SWIFT_ENABLE_COMPILE_CACHE=NO');
+    expect(off).toHaveLength(defaults);
+    const forced = compilationCacheSettings({
+      ...base,
+      xcodeMajor: 26,
+      swiftVersion: { major: 6, minor: 3 },
+      optimizations: { compilationCache: true, swiftCompilationCache: true, prefixMapping: true },
+    });
+    expect(forced).toContain('SWIFT_ENABLE_COMPILE_CACHE=YES');
+    expect(forced.some((s) => s.startsWith('SWIFT_ENABLE_PREFIX_MAPPING'))).toBe(false);
+    expect(forced).toHaveLength(defaults);
+  });
+
+  test('Swift caching is never mapped when clang prefix mapping is off', () => {
+    const settings = compilationCacheSettings({
+      ...base,
+      xcodeMajor: 27,
+      swiftVersion: { major: 6, minor: 4 },
+      optimizations: { compilationCache: true, swiftCompilationCache: null, prefixMapping: false },
+    });
+    expect(settings).toContain('SWIFT_ENABLE_COMPILE_CACHE=YES');
+    expect(settings).toContain('CLANG_OTHER_PREFIX_MAPPINGS=');
+    expect(settings.some((s) => s.startsWith('SWIFT_OTHER_PREFIX_MAPPINGS'))).toBe(false);
+  });
+
+  test('parseSwiftVersion reads the toolchain line and rejects anything else', () => {
+    expect(
+      parseSwiftVersion(
+        'swift-driver version: 1.148.6 Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)\nTarget: arm64-apple-macosx26.0\n',
+      ),
+    ).toEqual({ major: 6, minor: 3 });
+    expect(parseSwiftVersion('Apple Swift version 6.4 (swiftlang-6.4.0.1.2 clang-2200.0.1.3)')).toEqual({
+      major: 6,
+      minor: 4,
+    });
+    for (const output of [null, '', 'xcrun: error: unable to find utility "swift"', 'Swift version next']) {
+      expect(parseSwiftVersion(output)).toBe(null);
+    }
+  });
+
+  test('detectSwiftVersion reports unknown rather than throwing when xcrun is missing', () => {
+    expect(detectSwiftVersion(makeExecutor({ runQuiet: () => null }))).toBe(null);
+  });
+
   test('carries nothing on an Xcode older than the one that shipped the cache', () => {
     expect(COMPILATION_CACHE_MIN_XCODE).toBe(26);
     expect(compilationCacheSettings({ ...base, xcodeMajor: 25 })).toEqual([]);
@@ -1015,7 +1087,10 @@ describe('buildIos with a mocked executor', () => {
     const spawnCalls = harness(tmp, { child });
     setExecutor({
       run: () => '',
-      runQuiet: () => 'Xcode 26.1\nBuild version 17B55\n',
+      runQuiet: (cmd) =>
+        cmd.startsWith('xcrun swift')
+          ? 'Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)\n'
+          : 'Xcode 26.1\nBuild version 17B55\n',
       runFile: (file) => (file === 'xcodebuild' ? '{"project":{"name":"App","schemes":["App"]}}' : '{}'),
       spawn: (cmd, args, opts) => {
         spawnCalls.push({ cmd, args, opts });
@@ -1032,9 +1107,12 @@ describe('buildIos with a mocked executor', () => {
     child.emit('close', 0, null);
     await promise;
     expect(notes.length).toBe(1);
-    expect(notes[0]).toMatch(/^ {2}cache {7}compilation cache on \(CAS at .*compilation-cache\)$/);
+    expect(notes[0]).toMatch(
+      /^ {2}cache {7}compilation cache on \(CAS at .*compilation-cache, Swift off, 6\.3 < 6\.4\)$/,
+    );
     const args = spawnCalls[0]?.args ?? [];
     expect(args).toContain('COMPILATION_CACHE_ENABLE_CACHING=YES');
+    expect(args).toContain('SWIFT_ENABLE_COMPILE_CACHE=NO');
     expect(args).toContain(`CLANG_OTHER_PREFIX_MAPPINGS=${tmp}=/^src ${workspaceDerivedData(tmp)}=/^derived-data`);
     expect(readManifest().caches).toContainEqual(
       expect.objectContaining({
@@ -1043,6 +1121,39 @@ describe('buildIos with a mocked executor', () => {
         prune: 'atomic',
       }),
     );
+  });
+
+  test('a Swift 6.4 toolchain puts Swift caching and its mapping on the argv and names it on the note', async () => {
+    const notes: string[] = [];
+    const child = fakeChild();
+    const spawnCalls = harness(tmp, { child });
+    setExecutor({
+      run: () => '',
+      runQuiet: (cmd) =>
+        cmd.startsWith('xcrun swift')
+          ? 'Apple Swift version 6.4 (swiftlang-6.4.0.1.2 clang-2200.0.1.3)\n'
+          : 'Xcode 27.0\nBuild version 18A100\n',
+      runFile: (file) => (file === 'xcodebuild' ? '{"project":{"name":"App","schemes":["App"]}}' : '{}'),
+      spawn: (cmd, args, opts) => {
+        spawnCalls.push({ cmd, args, opts });
+        return child as unknown as ChildProcess;
+      },
+    });
+    const promise = buildIos({
+      root: tmp,
+      udid: 'BF2A-1111-2222',
+      logWriter: recordingWriter(),
+      onNote: (line) => notes.push(line),
+    });
+    makeProduct(workspaceDerivedData(tmp));
+    child.emit('close', 0, null);
+    await promise;
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatch(/compilation cache on \(CAS at .*compilation-cache, Swift on\)$/);
+    const args = spawnCalls[0]?.args ?? [];
+    expect(args).toContain('SWIFT_ENABLE_COMPILE_CACHE=YES');
+    expect(args).toContain('SWIFT_ENABLE_PREFIX_MAPPING=YES');
+    expect(args).toContain(`SWIFT_OTHER_PREFIX_MAPPINGS=${tmp}=/^src ${workspaceDerivedData(tmp)}=/^derived-data`);
   });
 
   test('a build that carries no settings says nothing at all', async () => {
