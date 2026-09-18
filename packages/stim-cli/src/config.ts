@@ -127,7 +127,10 @@ function requireAbsoluteProjectPath(projectPath: string): void {
   );
 }
 
-export function upsertProject(projectPath: string, fields: Partial<ProjectRecord>): ProjectRecord {
+export function upsertProject(
+  projectPath: string,
+  fields: Partial<ProjectRecord> | ((existing: ProjectRecord) => Partial<ProjectRecord>),
+): ProjectRecord {
   requireAbsoluteProjectPath(projectPath);
   return withConfigLock(() => {
     const cfg = ensureConfig();
@@ -137,7 +140,7 @@ export function upsertProject(projectPath: string, fields: Partial<ProjectRecord
     };
     cfg.projects[projectPath] = {
       ...existing,
-      ...fields,
+      ...(typeof fields === 'function' ? fields(existing) : fields),
     };
     saveConfig(cfg);
     return cfg.projects[projectPath];

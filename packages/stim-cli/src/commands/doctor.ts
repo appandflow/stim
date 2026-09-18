@@ -162,7 +162,7 @@ export default function doctorCommand(
   program
     .command('doctor')
     .description(
-      'Inspect the source checkout and report project state that can make native worktrees slow or invalid. Read-only unless --fix is passed; --platform filters native findings.',
+      'Inspect the source checkout and report project state that can make native worktrees slow or invalid. The checkout is left untouched unless --fix is passed; --platform filters native findings. Each run is recorded in Stim state so guide can say when doctor is due.',
     )
     .option('--json', 'print the findings as JSON')
     .option(
@@ -218,10 +218,9 @@ export default function doctorCommand(
       const shadowed = shadowedStimFinding(stim);
       if (shadowed) findings.push(shadowed);
 
-      recordDoctorRun(root, opts.platform, version);
-
       if (opts.json) {
         console.log(JSON.stringify({ project: root, platform: opts.platform ?? null, stim, findings }));
+        recordDoctorRun(root, opts.platform, version);
         return;
       }
 
@@ -232,6 +231,7 @@ export default function doctorCommand(
           else if (line && !line.startsWith('  ')) console.log(chalk.bold(line));
           else console.log(chalk.dim(line));
         }
+        recordDoctorRun(root, opts.platform, version);
         return;
       }
 
@@ -250,5 +250,6 @@ export default function doctorCommand(
           `\n${findings.length} finding(s). Fix relevant "costs time" findings before copying the source checkout into a native worktree.`,
         ),
       );
+      recordDoctorRun(root, opts.platform, version);
     });
 }

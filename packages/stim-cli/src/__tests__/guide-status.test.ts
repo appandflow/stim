@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getProject, upsertProject } from '../config.ts';
@@ -117,7 +117,7 @@ test('renderGuideStatus names the platforms that need doctor and the available u
   });
   expect(both).toContain('STATUS');
   expect(both).toContain('Doctor is due for ios (never run) and android (last run with stim 1.3.0).');
-  expect(both).toContain('stim doctor --platform <ios|android>');
+  expect(both).toMatch(/Run before native work:  stim doctor$/m);
   const one = renderGuideStatus({
     running: '1.4.0',
     doctor: [{ platform: 'ios', reason: 'last run 9 days ago' }],
@@ -140,4 +140,45 @@ test('guideStatus reads the project at cwd and skips doctor lines outside a proj
   expect(inProject).not.toContain('ios');
   const outside = await guideStatus({ projectRoot: null, running: '1.4.0', now: NOW, fetch });
   expect(outside).toBe(null);
+});
+
+test('recordDoctorRun never throws when STIM_HOME cannot be written, so doctor still reports', () => {
+  const locked = join(home, 'locked');
+  mkdirSync(locked, { mode: 0o500 });
+  process.env.STIM_HOME = join(locked, 'stim-home');
+  try {
+    expect(() => recordDoctorRun(join(home, 'app'), 'ios', '1.4.0', NOW)).not.toThrow();
+  } finally {
+    chmodSync(locked, 0o700);
+  }
+});
+
+test('checkForUpdate treats an error status or a body without a version as no answer', async () => {
+  for (const response of [
+    { ok: false, json: async () => ({ version: '9.0.0' }) },
+    { ok: true, json: async () => ({ error: 'not found' }) },
+    {
+      ok: true,
+      json: async () => {
+        throw new SyntaxError('bad json');
+      },
+    },
+  ]) {
+    rmSync(updateCacheFile(), { force: true });
+    const fetch: typeof globalThis.fetch = async () => response as Response;
+    expect(await checkForUpdate('1.4.0', { now: NOW, fetch })).toBe(null);
+    expect(JSON.parse(readFileSync(updateCacheFile(), 'utf-8'))).toEqual({
+      checkedAt: NOW.toISOString(),
+      latest: null,
+    });
+  }
+});
+
+test('guideStatus skips the doctor lines when the config is corrupt instead of refusing the guide', async () => {
+  mkdirSync(home, { recursive: true });
+  writeFileSync(join(home, 'config.json'), '{not json');
+  const { fetch } = fakeFetch('1.5.0');
+  const status = await guideStatus({ projectRoot: join(home, 'app'), running: '1.4.0', now: NOW, fetch });
+  expect(status).toContain('stim 1.5.0 is available');
+  expect(status).not.toContain('Doctor');
 });

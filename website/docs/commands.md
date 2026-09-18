@@ -54,12 +54,13 @@ checkout's fitness as a seed. It reports missing or stale dependencies,
 CocoaPods state, cache conflicts, device capacity, remote session problems, and
 a linked native library whose Git metadata enters the fingerprint. On a
 checkout without installed dependencies, it also reports fingerprint
-differences against a fresh worktree. The check is read-only unless `--fix` is
-passed.
+differences against a fresh worktree. The checkout is left untouched unless
+`--fix` is passed.
 
 `--platform ios` or `--platform android` limits native findings to that
 platform while keeping shared project checks. Each run is recorded per
-platform for this project, and a run without `--platform` counts for both, so
+platform in Stim's state for this project, which also registers the project
+for `stim status`, and a run without `--platform` counts for both, so
 `stim guide` can tell when doctor is due again.
 
 `doctor` also flags when an agent harness sandboxes shell commands and Stim is

@@ -1,9 +1,9 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getConfigDir, getProject, upsertProject } from './config.ts';
 import type { DoctorPlatform } from './doctor.ts';
 import { compareStimVersions } from './stim-installations.ts';
-import type { DoctorRunRecord } from './types.ts';
+import type { DoctorRunRecord, ProjectRecord } from './types.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DOCTOR_STALE_MS = 7 * DAY_MS;
@@ -19,9 +19,15 @@ export function recordDoctorRun(
   now: Date = new Date(),
 ): void {
   const run: DoctorRunRecord = { at: now.toISOString(), version };
-  const doctorRuns = { ...getProject(projectRoot)?.doctorRuns };
-  for (const target of platform ? [platform] : PLATFORMS) doctorRuns[target] = run;
-  upsertProject(projectRoot, { doctorRuns });
+  try {
+    upsertProject(projectRoot, (existing) => {
+      const doctorRuns = { ...existing.doctorRuns };
+      for (const target of platform ? [platform] : PLATFORMS) doctorRuns[target] = run;
+      return { doctorRuns };
+    });
+  } catch {
+    // Doctor reports an unwritable STIM_HOME as a finding; the record is only a nudge.
+  }
 }
 
 export function doctorDueReason(record: DoctorRunRecord | undefined, running: string, now: Date): string | null {
@@ -53,11 +59,16 @@ function readUpdateCache(): UpdateCache | null {
 }
 
 function writeUpdateCache(cache: UpdateCache): void {
+  const target = updateCacheFile();
+  const tmp = `${target}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
   try {
     mkdirSync(getConfigDir(), { recursive: true });
-    writeFileSync(updateCacheFile(), `${JSON.stringify(cache)}\n`);
+    writeFileSync(tmp, `${JSON.stringify(cache)}\n`);
+    renameSync(tmp, target);
   } catch {
-    // A read-only state directory only costs a retry on the next guide call.
+    try {
+      unlinkSync(tmp);
+    } catch {}
   }
 }
 
@@ -104,8 +115,8 @@ export function renderGuideStatus({ running, doctor, latest }: GuideStatusFacts)
   const lines: string[] = [];
   if (doctor.length) {
     const named = doctor.map((due) => `${due.platform} (${due.reason})`).join(' and ');
-    const flag = doctor.length === 1 ? doctor[0]?.platform : '<ios|android>';
-    lines.push(`  Doctor is due for ${named}.`, `  Run before native work:  stim doctor --platform ${flag}`);
+    const command = doctor.length === 1 ? `stim doctor --platform ${doctor[0]?.platform}` : 'stim doctor';
+    lines.push(`  Doctor is due for ${named}.`, `  Run before native work:  ${command}`);
   }
   if (latest) lines.push(`  stim ${latest} is available (running ${running}):  npm install -g stim@latest`);
   if (!lines.length) return null;
@@ -125,10 +136,17 @@ export async function guideStatus({
 }): Promise<string | null> {
   const doctor: DoctorDue[] = [];
   if (projectRoot) {
-    const runs = getProject(projectRoot)?.doctorRuns ?? {};
-    for (const platform of PLATFORMS) {
-      const reason = doctorDueReason(runs[platform], running, now);
-      if (reason) doctor.push({ platform, reason });
+    let runs: NonNullable<ProjectRecord['doctorRuns']> | null = null;
+    try {
+      runs = getProject(projectRoot)?.doctorRuns ?? {};
+    } catch {
+      // A corrupt config refuses every stateful command with its remedy; the guide still prints.
+    }
+    if (runs) {
+      for (const platform of PLATFORMS) {
+        const reason = doctorDueReason(runs[platform], running, now);
+        if (reason) doctor.push({ platform, reason });
+      }
     }
   }
   const latest = await checkForUpdate(running, { now, fetch: fetchImpl });
