@@ -1,12 +1,10 @@
 import { createRequire } from 'node:module';
-import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import { projectMetroSharedCache } from '../settings.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { appendCacheStore, metroStoreRoot, registerMetroStore } from './metro-store.ts';
 import { supervisorError } from './errors.ts';
 import { bundleResponseMiddleware } from '../../shim/bundle-response.cjs';
-import { applyMetroCacheGeneration } from '../../shim/metro-cache-generation.cjs';
-import { readWorkspaceState } from '../workspace-state.ts';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type BareModule = any;
@@ -286,6 +284,7 @@ export async function startBareServer({
   cacheStore = undefined,
   fileStore = undefined,
   closeTimeoutMs = 5000,
+  resetCache = false,
 }: {
   root: string;
   port: number;
@@ -296,15 +295,12 @@ export async function startBareServer({
   cacheStore?: boolean;
   fileStore?: (new (options: { root: string }) => { _root?: string }) | null;
   closeTimeoutMs?: number;
+  resetCache?: boolean;
 }): Promise<BareServerHandle> {
   const { metro, devMiddleware, serverApi } = deps || resolveBareDeps(root);
   const makeReporter = reporterFactory === undefined ? loadNdjsonReporter(root) : reporterFactory;
 
-  const config = applyMetroCacheGeneration(
-    await metro.loadConfig({ cwd: root, port }),
-    readWorkspaceState(root)?.metroCacheGeneration,
-    join(dirname(logsDir), 'metro-file-map'),
-  );
+  const config = await metro.loadConfig({ cwd: root, port, resetCache });
   const sharedStoreInstalled = installSharedCacheStore({
     root,
     config,

@@ -23,6 +23,7 @@ interface ParsedSupervisorArgs {
   root?: string;
   port?: number;
   tunnel?: boolean;
+  resetCache?: boolean;
   error?: string;
 }
 
@@ -30,6 +31,7 @@ export function parseArgs(argv: string[]): ParsedSupervisorArgs {
   let root: string | undefined;
   let port: string | undefined;
   let tunnel = false;
+  let resetCache = false;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--root') {
@@ -44,15 +46,21 @@ export function parseArgs(argv: string[]): ParsedSupervisorArgs {
       tunnel = true;
       continue;
     }
-    return { error: `Unknown supervisor argument "${arg}". Usage: run.js --root <path> --port <n> [--tunnel]` };
+    if (arg === '--reset-cache') {
+      resetCache = true;
+      continue;
+    }
+    return {
+      error: `Unknown supervisor argument "${arg}". Usage: run.js --root <path> --port <n> [--tunnel] [--reset-cache]`,
+    };
   }
-  if (!root) return { error: 'Missing --root. Usage: run.js --root <path> --port <n> [--tunnel]' };
+  if (!root) return { error: 'Missing --root. Usage: run.js --root <path> --port <n> [--tunnel] [--reset-cache]' };
   if (!isAbsolute(root)) return { error: `--root must be an absolute path, got "${root}".` };
   const parsedPort = Number(port);
   if (!Number.isInteger(parsedPort) || parsedPort <= 0 || parsedPort > 65535) {
     return { error: `--port must be a TCP port number, got "${port}".` };
   }
-  return { root: resolve(root), port: parsedPort, tunnel };
+  return { root: resolve(root), port: parsedPort, tunnel, resetCache };
 }
 
 export interface ServerExitInfo {
@@ -74,6 +82,7 @@ type ServerStarter = (opts: {
   logsDir: string;
   writer?: NdjsonWriter | null;
   tunnel?: boolean;
+  resetCache?: boolean;
   onTunnelUrl?: ((url: string) => void) | null;
 }) => Promise<ServerHandle>;
 
@@ -81,6 +90,7 @@ export interface RunSupervisorOptions {
   root: string;
   port: number;
   tunnel?: boolean;
+  resetCache?: boolean;
   isExpo?: (projectRoot: string) => boolean;
   startBare?: ServerStarter | null;
   startExpo?: ServerStarter | null;
@@ -94,6 +104,7 @@ export async function runSupervisor({
   root,
   port,
   tunnel = false,
+  resetCache = false,
   isExpo = detectIsExpo,
   startBare = null,
   startExpo = null,
@@ -173,6 +184,7 @@ export async function runSupervisor({
       logsDir,
       writer,
       tunnel,
+      resetCache,
       onTunnelUrl: (url: string) => {
         try {
           withWorkspaceStateLock(root, () => {
@@ -257,7 +269,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     process.chdir(root);
   } catch {}
   process.title = 'stim-supervisor';
-  await runSupervisor({ root, port: parsed.port as number, tunnel: parsed.tunnel ?? false });
+  await runSupervisor({
+    root,
+    port: parsed.port as number,
+    tunnel: parsed.tunnel ?? false,
+    resetCache: parsed.resetCache ?? false,
+  });
 }
 
 function invokedDirectly(): boolean {

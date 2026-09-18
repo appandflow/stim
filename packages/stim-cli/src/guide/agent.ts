@@ -148,7 +148,7 @@ RULES DURING THE LOOP
   change does not need one.
 - For stale Metro transforms or file-map state, use stim start --reset-cache.
   It restarts only this app's verified owned Metro, preserving devices and other
-  apps' caches. See guide lifecycle for reset scope and Expo requirements.
+  apps' caches. See guide lifecycle for reset scope.
 - Reload is not part of the normal workflow. Use stim reload on an owned local
   simulator or emulator when an error screen remains after the fix, and on
   Android after a failed first bundle load. It reloads JavaScript and never

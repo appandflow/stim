@@ -1,23 +1,12 @@
-import { randomUUID } from 'node:crypto';
 import { getProject, clearSupervisor } from '../config.ts';
 import { killMetroTree, resolveProjectMetro } from '../metro.ts';
 import { waitForProcessExit } from '../process-identity.ts';
-import { detectIsExpo } from '../project.ts';
 import { resolveSupervisorTarget } from './ownership.ts';
-import { expoSdkMajor } from './server-expo.ts';
-import { expoMetroConfigPath } from './metro-store.ts';
 import { clearWorkspaceSupervisor } from './state.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../workspace-state.ts';
+import { readWorkspaceState } from '../workspace-state.ts';
 import { supervisorError } from './errors.ts';
 
-export async function resetMetroCache(root: string): Promise<void> {
-  if (detectIsExpo(root) && ((expoSdkMajor(root) ?? 0) < 54 || !expoMetroConfigPath())) {
-    throw supervisorError(
-      'STIM_BAD_ARG',
-      'An isolated Metro cache reset requires Expo SDK 54 or newer and the Stim Metro config adapter.',
-      'Upgrade Expo or repair the Stim installation before retrying. The running server was not changed.',
-    );
-  }
+export async function stopOwnedMetroForReset(root: string): Promise<void> {
   const project = getProject(root);
   const port = project?.metroPort;
   const target = resolveSupervisorTarget({
@@ -58,5 +47,4 @@ export async function resetMetroCache(root: string): Promise<void> {
     clearWorkspaceSupervisor(root, expected);
     clearSupervisor(root, expected);
   }
-  writeWorkspaceState(root, { metroCacheGeneration: randomUUID() });
 }

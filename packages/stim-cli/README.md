@@ -50,9 +50,9 @@ registered descendant app with logs when one exists.
 
 Use `stim start --reset-cache` to recover from stale Metro transforms or file-map
 state. It restarts only this app's verified owned Metro, keeping its port and
-devices. A fresh persistent cache namespace bypasses old entries without deleting
-shared stores or changing other apps or native build caches. Expo requires SDK
-54+ and Stim's config adapter. See `stim guide lifecycle` for scope and limitations.
+devices, with Metro's own reset: every store in the app's Metro config is cleared,
+including this app's shared transform store, so other worktrees of the same app
+rebuild their transforms too. Other apps and native build caches are unchanged.
 
 Use `stim doctor --platform ios` or `stim doctor --platform android` when only
 one native platform is in scope; shared project checks still run. Doctor also

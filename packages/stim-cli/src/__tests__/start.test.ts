@@ -539,7 +539,7 @@ describe('action: already running', { timeout: 30_000 }, () => {
     const { port } = await metroListener();
     setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } }));
     upsertProject(root, { metroPort: port });
-    writeWorkspaceState(root, { metroCacheGeneration: 'before', lastBuild: { device: 'owned-device' } });
+    writeWorkspaceState(root, { lastBuild: { device: 'owned-device' } });
     const before = readWorkspaceState(root);
     const result = await runAction({ json: true, resetCache: true });
     expect(result.exitCode).toBe(1);
@@ -548,13 +548,15 @@ describe('action: already running', { timeout: 30_000 }, () => {
     expect(getProject(root)?.metroPort).toBe(port);
   });
 
-  test('cache reset refuses an unverifiable live supervisor without recording a new generation', async () => {
+  test('cache reset refuses an unverifiable live supervisor without spawning anything', async () => {
+    const exec = metroExecutor({ listeners: {} });
+    setExecutor(exec);
     upsertProject(root, { metroPort: 8148 });
     writeWorkspaceState(root, { supervisor: { pid: process.pid, port: 8148 } });
     const result = await runAction({ json: true, resetCache: true });
     expect(result.exitCode).toBe(1);
     expect(JSON.parse(result.logs[0] ?? '').message).toContain('identity');
-    expect(readWorkspaceState(root)?.metroCacheGeneration).toBeUndefined();
+    expect(exec.calls.spawn).toHaveLength(0);
   });
 
   test('a healthy dev server with a live supervisor record is a no-op exit 0', async () => {
@@ -1811,11 +1813,12 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       const facts = JSON.parse(lastLog);
       expect(facts.code).toBe('STIM_SUPERVISOR_EXITED');
       expect(facts.remedy).toMatch(/start` again/);
-      const generation = readWorkspaceState(root)?.metroCacheGeneration;
-      expect(typeof generation).toBe(resetCache ? 'string' : 'undefined');
+      const supervisorArgs = exec.calls.spawn[0]?.args as string[];
+      expect(supervisorArgs.includes('--reset-cache')).toBe(resetCache);
       const retry = await runAction({ json: true, wait: '30' });
       expect(retry.exitCode).toBe(1);
-      expect(readWorkspaceState(root)?.metroCacheGeneration).toBe(generation);
+      const retryArgs = exec.calls.spawn[1]?.args as string[];
+      expect(retryArgs.includes('--reset-cache')).toBe(false);
     },
   );
 });
