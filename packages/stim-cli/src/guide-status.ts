@@ -89,7 +89,7 @@ export async function checkForUpdate(
   return comparison !== null && comparison > 0 ? latest : null;
 }
 
-export interface DoctorDue {
+interface DoctorDue {
   platform: DoctorPlatform;
   reason: string;
 }
