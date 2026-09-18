@@ -26,7 +26,7 @@ export function recordDoctorRun(
       return { doctorRuns };
     });
   } catch {
-    // Doctor reports an unwritable STIM_HOME as a finding; the record is only a nudge.
+    // The record only feeds the guide nudge; doctor's report must not depend on it.
   }
 }
 
