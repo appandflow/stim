@@ -778,14 +778,26 @@ test('selectSourceCheckout refuses a detached bare HEAD with the symbolic-ref co
   expect(result).toMatchObject({ refusal: expect.stringContaining('main (/repo/main), feature (/repo/feature)') });
 });
 
-test('selectSourceCheckout refuses when no worktree checks out the bare HEAD branch, naming the worktree add command', () => {
+test('selectSourceCheckout refuses when no worktree checks out the bare HEAD branch, placing the new worktree beside the others', () => {
+  const entries = [
+    { path: '/repo/.bare', bare: true },
+    { path: '/repo/feature', branch: 'feature' },
+  ];
+  expect(selectSourceCheckout(entries, 'main')).toMatchObject({
+    refusal: expect.stringContaining('git -C /repo/.bare worktree add /repo/main main'),
+  });
+});
+
+test('selectSourceCheckout tells the agent to prune a missing worktree that still holds the bare HEAD branch', () => {
   const entries = [
     { path: '/repo', bare: true },
     { path: '/repo/feature', branch: 'feature' },
     { path: '/repo/stale', branch: 'main', prunable: true },
   ];
-  expect(selectSourceCheckout(entries, 'main')).toMatchObject({
-    refusal: expect.stringContaining('git -C /repo worktree add /repo/main main'),
+  const result = selectSourceCheckout(entries, 'main');
+  expect(result).toMatchObject({ refusal: expect.stringContaining('/repo/stale is missing') });
+  expect(result).toMatchObject({
+    refusal: expect.stringContaining('git -C /repo worktree prune\n  git -C /repo worktree add /repo/stale main'),
   });
 });
 

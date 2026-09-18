@@ -257,7 +257,9 @@ function makeExecutor({
     runFileQuiet(file: string, args: string[] = []) {
       const cmd = [file, ...args].join(' ');
       runQuietCalls.push(cmd);
-      if (args.includes('symbolic-ref') && bare && args[1] === bare.path) return bare.head;
+      if (args.includes('symbolic-ref') && bare && args[1] === bare.path) {
+        return bare.head ? `refs/heads/${bare.head}` : null;
+      }
       if (/status --porcelain/.test(cmd)) return dirty;
       const diffMatch = cmd.match(/ diff -- (.+)$/);
       if (diffMatch) return diffs[diffMatch[1] ?? ''] ?? '';

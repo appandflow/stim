@@ -558,3 +558,17 @@ test('warm refuses a bare HEAD branch that no worktree checks out and prints the
   git(bare, 'symbolic-ref', 'HEAD', 'refs/heads/develop');
   expect(() => warmWorktreePaths(feature)).toThrow(`git -C ${bare} worktree add ${join(bare, 'develop')} develop`);
 }, 30_000);
+
+test('warm in a bare-repository layout still finds the source when a tag shares the HEAD branch name', () => {
+  const { bare, main, feature } = bareLayout();
+  git(main, 'tag', 'main');
+  expect(warmWorktreePaths(feature)).toEqual({ root: main, target: feature, common: join(bare, '.git') });
+}, 30_000);
+
+test('warm refuses a deleted source worktree with the prune and re-add commands that restore it', () => {
+  const { bare, main, feature } = bareLayout();
+  rmSync(main, { recursive: true, force: true });
+  expect(() => warmWorktreePaths(feature)).toThrow(
+    `git -C ${bare} worktree prune\n  git -C ${bare} worktree add ${main} main`,
+  );
+}, 30_000);

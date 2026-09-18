@@ -510,11 +510,16 @@ export function selectSourceCheckout(entries: WorktreeEntry[], bareHead: string 
   const [only] = matches;
   if (only && matches.length === 1) return { path: only.path };
   if (!only) {
+    const stale = entries.find((entry) => entry.prunable && entry.branch === bareHead);
+    const beside = checkouts[0] ? dirname(checkouts[0].path) : bare;
+    const recreate = stale
+      ? `Its worktree at ${stale.path} is missing. Recreate it, then retry:\n` +
+        `  git -C ${bare} worktree prune\n  git -C ${bare} worktree add ${stale.path} ${bareHead}\n`
+      : `Create one, then retry:\n  git -C ${bare} worktree add ${join(beside, bareHead)} ${bareHead}\n`;
     return {
       refusal:
         `The bare repository at ${bare} points HEAD at ${bareHead}, but no worktree has ${bareHead} checked out, ` +
-        `so Stim has no source checkout to copy from. Create one, then retry:\n` +
-        `  git -C ${bare} worktree add ${join(bare, bareHead)} ${bareHead}\n` +
+        `so Stim has no source checkout to copy from. ${recreate}` +
         `Or point HEAD at a branch that is checked out (${listed}):\n${pointHead}`,
     };
   }
@@ -527,8 +532,8 @@ export function selectSourceCheckout(entries: WorktreeEntry[], bareHead: string 
 }
 
 function bareHeadBranch(bare: string): string | null {
-  const out = getExecutor().runFileQuiet('git', ['-C', bare, 'symbolic-ref', '--quiet', '--short', 'HEAD']);
-  return out ? out.trim() : null;
+  const out = getExecutor().runFileQuiet('git', ['-C', bare, 'symbolic-ref', '--quiet', 'HEAD'])?.trim();
+  return out?.startsWith('refs/heads/') ? out.slice('refs/heads/'.length) : null;
 }
 
 export function sourceCheckoutOf(entries: WorktreeEntry[]): SourceCheckout {
