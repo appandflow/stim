@@ -25,7 +25,6 @@ import {
 } from '../supervisor/server-bare.ts';
 import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import { asRequire, makeError, makeWriter } from './_factories.ts';
-import { writeWorkspaceState } from '../workspace-state.ts';
 
 function caught(fn: () => unknown): Error & Record<string, unknown> {
   try {
@@ -380,14 +379,13 @@ describe('startBareServer wiring', () => {
         return reporter;
       },
     });
-    expect(calls.loadConfig).toEqual({ cwd: root, port: 8099 });
+    expect(calls.loadConfig).toEqual({ cwd: root, port: 8099, resetCache: false });
     expect(calls.runServer.config.reporter).toBe(reporter);
     expect(calls.reporterDir).toBe(join(root, '.stim', 'logs'));
     expect(calls.runServer.config.resolver.platforms).toEqual(['android', 'ios', 'native']);
   });
 
-  test('uses the saved per-app cache generation on every bare start', async () => {
-    writeWorkspaceState(root, { metroCacheGeneration: 'fresh' });
+  test('passes a one-shot reset through to Metro config loading', async () => {
     const { deps, calls } = fakeDeps();
     await startBareServer({
       root,
@@ -396,8 +394,9 @@ describe('startBareServer wiring', () => {
       deps,
       cacheStore: false,
       reporterFactory: null,
+      resetCache: true,
     });
-    expect(calls.runServer.config).toMatchObject({ fileMapCacheDirectory: join(tmpHome, 'metro-file-map', 'fresh') });
+    expect(calls.loadConfig).toEqual({ cwd: root, port: 8099, resetCache: true });
   });
 
   test('wires both middlewares and merges both websocket endpoint sets', async () => {

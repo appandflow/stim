@@ -120,12 +120,12 @@ project is reused.
 - `--wait <seconds>` changes the startup timeout. The default is 60 seconds.
 - `--remote` prepares Metro for a remote device.
 - `--reset-cache` restarts only this app's verified owned Metro, preserving its
-  port and devices. A fresh persistent namespace invalidates transform keys and
-  the default Metro file-map cache without deleting shared cache entries. Other
-  apps, worktrees, and native build caches are unchanged. Subsequent starts reuse
-  the new namespace. Expo requires SDK 54+ and Stim's config adapter; custom
-  file-map cache managers must honor `fileMapCacheDirectory`. Externally started
-  servers are left alone, and a failed startup can be retried with `stim start`.
+  port and devices, with Metro's own reset (`resetCache` on a bare server,
+  `expo start --clear` on Expo). Every store in the app's Metro config is
+  cleared, including this app's shared transform store, so other worktrees of
+  the same app rebuild their transforms too; the file map is rebuilt. Other
+  apps and native build caches are unchanged. Externally started servers are
+  left alone, and a failed startup can be retried with `stim start`.
 - `--json` prints one stable result object on stdout.
 
 ## `ios`

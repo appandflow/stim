@@ -86,6 +86,7 @@ describe('parseArgs', () => {
       root: '/abs/path',
       port: 8082,
       tunnel: false,
+      resetCache: false,
     });
   });
 
@@ -94,6 +95,7 @@ describe('parseArgs', () => {
       root: '/abs/path',
       port: 8082,
       tunnel: true,
+      resetCache: false,
     });
   });
 
@@ -107,8 +109,13 @@ describe('parseArgs', () => {
     expect(parseArgs(['--root', '/abs', '--port', '70000']).error).toMatch(/--port/);
   });
 
+  test('parses --reset-cache as a one-shot flag', () => {
+    expect(parseArgs(['--root', '/abs', '--port', '1', '--reset-cache']).resetCache).toBe(true);
+    expect(parseArgs(['--root', '/abs', '--port', '1']).resetCache).toBe(false);
+  });
+
   test('refuses an unknown argument rather than ignoring it', () => {
-    expect(parseArgs(['--root', '/abs', '--port', '1', '--reset-cache']).error).toMatch(/Unknown/);
+    expect(parseArgs(['--root', '/abs', '--port', '1', '--clear']).error).toMatch(/Unknown/);
   });
 });
 

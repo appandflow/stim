@@ -42,12 +42,11 @@ a seed belongs to this workflow.
 
   # If stale Metro transforms or file-map state require recovery:
   stim start --reset-cache
-  # Restarts only this app's verified owned Metro, retaining its port/devices.
-  # Uses a fresh persistent cache namespace, not deletion of shared cache files.
-  # Other apps and worktrees keep their caches. Subsequent starts reuse the new
-  # namespace; another reset changes it again. Native build caches are unchanged.
-  # Expo requires SDK 54+ and Stim's config adapter. Custom file-map cache
-  # managers must honor Metro's fileMapCacheDirectory for file-map invalidation.
+  # Restarts only this app's verified owned Metro, retaining its port/devices,
+  # with Metro's own reset (resetCache on a bare server, expo start --clear).
+  # That clears every store in the app's Metro config, including this app's
+  # shared transform store, so other worktrees of the SAME app rebuild their
+  # transforms too. Other apps and native build caches are unchanged.
 
   # 3. Owned device booted, native inputs fingerprinted, cached build
   #    installed (or built), app launched wired to port 8082, device-log

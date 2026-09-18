@@ -19,7 +19,7 @@ import { clearManagedMetroTunnel, readMetroTunnel } from '../supervisor/state.ts
 import { readWorkspaceState, writeWorkspaceState } from '../workspace-state.ts';
 import { CACHE_PROVIDER_ENV, cacheProviderEnv } from '@stim-cli/cache';
 import { workspaceProcessLockError, withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
-import { resetMetroCache } from '../supervisor/cache-reset.ts';
+import { stopOwnedMetroForReset } from '../supervisor/cache-reset.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import {
   publicUrlSetting,
@@ -267,7 +267,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
     .option('--wait <seconds>', `How long to wait for the dev server to answer (default ${DEFAULT_WAIT_SECONDS})`)
     .option('--remote', 'Prepare the dev server for a remote device')
-    .option('--reset-cache', 'Restart owned Metro with fresh per-app transform and file-map cache state')
+    .option('--reset-cache', "Restart owned Metro and clear this app's Metro caches")
     .action(async (opts: StartOptions) => {
       const json = Boolean(opts.json);
       const waitTimer = stepTimer();
@@ -394,7 +394,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
 
         if (opts.resetCache) {
           try {
-            await resetMetroCache(root);
+            await stopOwnedMetroForReset(root);
           } catch (error) {
             const failure = error as Error & { code?: string; remedy?: string };
             return fail({
@@ -403,7 +403,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
               remedy: failure.remedy,
             });
           }
-          note(phaseLine('cache', 'fresh Metro cache state for this app; shared cache entries and devices preserved'));
+          note(phaseLine('cache', "clearing this app's Metro transform and file-map caches; devices preserved"));
         }
 
         const logsDir = workspaceLogsDir(root);
@@ -441,6 +441,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
             '--port',
             String(port),
             ...(tunnel ? ['--tunnel'] : []),
+            ...(opts.resetCache ? ['--reset-cache'] : []),
           ];
           const childEnv: NodeJS.ProcessEnv = {
             ...process.env,

@@ -189,6 +189,22 @@ describe('startExpoServer', () => {
     expect(seen.opts.detached).toBe(false);
   });
 
+  test('a one-shot reset becomes `expo start --clear`', async () => {
+    fakeBin();
+    const calls: { cmd: string; args: string[]; opts: SpawnOptions }[] = [];
+    await startExpoServer({
+      root,
+      port: 8112,
+      logsDir: join(root, 'logs'),
+      resetCache: true,
+      spawnFn: (cmd, args, opts) => {
+        calls.push({ cmd, args, opts });
+        return fakeChild();
+      },
+    });
+    expect(calls[0]?.args).toEqual(['start', '--port', '8112', '--clear']);
+  });
+
   test('an identical line arriving on both streams within a second is written once', async () => {
     fakeBin();
     const child = fakeChild();

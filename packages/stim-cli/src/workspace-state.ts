@@ -4,7 +4,6 @@ import { withDirLock } from './dir-lock.ts';
 import { ensureWorkspaceStorage, workspaceStateFile, workspaceStateLock } from './paths.ts';
 
 export interface WorkspaceState {
-  metroCacheGeneration?: string;
   supervisor?: Record<string, unknown>;
   collectors?: Record<string, unknown>;
   lastBuild?: Record<string, unknown>;
