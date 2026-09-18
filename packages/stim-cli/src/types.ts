@@ -57,7 +57,13 @@ export interface ProjectRecord {
   androidPackage?: string;
   isExpo?: boolean;
   lastBuild?: Record<string, unknown>;
+  doctorRuns?: Partial<Record<'ios' | 'android', DoctorRunRecord>>;
   [key: string]: unknown;
+}
+
+export interface DoctorRunRecord {
+  at: string;
+  version: string;
 }
 
 export interface RepoRecord {

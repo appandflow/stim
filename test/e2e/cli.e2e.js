@@ -14,11 +14,13 @@ let home;
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-cli-e2e-'));
   process.env.STIM_HOME = home;
+  process.env.STIM_NO_UPDATE_CHECK = '1';
 });
 
 afterEach(() => {
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
+  delete process.env.STIM_NO_UPDATE_CHECK;
 });
 
 function run(entry, args, allowedCommand) {

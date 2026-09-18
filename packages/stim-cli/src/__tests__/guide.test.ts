@@ -1,3 +1,4 @@
+import { Command } from 'commander';
 import { OPTIMIZATION_SHAPES } from '../optimizations.ts';
 import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
@@ -541,4 +542,26 @@ test('named ports guidance is routed and separates named listener cleanup from M
   expect(renderTopic('ports')).toContain('--dry-run');
   expect(renderTopic('ports')).toContain('stim stop leaves');
   expect(renderSection('cleanup', 'gc')).toContain('guide ports');
+});
+
+test('guide prints the status block before the index and the agent topic, and never before a section', async () => {
+  const { default: guideCommand } = await import('../commands/guide.ts');
+  const status = async () => 'STATUS\n  Doctor is due for ios (never run).';
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (msg) => logs.push(String(msg));
+  try {
+    for (const args of [[], ['agent'], ['errors', 'STIM_NO_METRO']]) {
+      const program = new Command();
+      guideCommand(program, '9.9.9', status);
+      await program.parseAsync(['node', 'stim', 'guide', ...args]);
+    }
+  } finally {
+    console.log = originalLog;
+  }
+  expect(logs[0]).toMatch(/^STATUS\n  Doctor is due for ios \(never run\)\.\n\n/);
+  expect(logs[0]).toContain('stim 9.9.9 -- reference');
+  expect(logs[1]).toMatch(/^STATUS\n/);
+  expect(logs[1]).toContain('AGENT WORKFLOW');
+  expect(logs[2]).not.toContain('STATUS');
 });

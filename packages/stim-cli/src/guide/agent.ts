@@ -60,8 +60,11 @@ If warm fails or reports incomplete, resolve the reported failure first.
 A warm that cannot record its ownership claim refuses before copying. Follow
 the printed remedy and keep concurrent runs on the same STIM_HOME.
 
-Before native worktree work, run doctor for the platform in scope. It checks
-the source checkout from a linked worktree. Fix relevant findings and inspect the
+Before native worktree work, run doctor for the platform in scope. The STATUS
+block at the top of this topic says when it is due here: never run in this
+checkout, older than seven days, or run under another Stim version. The same
+block names a newer Stim release when one exists. Doctor checks the source
+checkout from a linked worktree. Fix relevant findings and inspect the
 upstream gap; in the single-checkout workflow those seed findings do not
 appear. It also prints the running CLI version and the stim installation
 resolved from PATH. If that resolved installation is older than another one,

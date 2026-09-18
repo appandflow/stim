@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
+import { recordDoctorRun } from '../guide-status.ts';
 import { findProjectRoot } from '../project.ts';
 import { repoRoot } from '../worktree.ts';
 import {
@@ -216,6 +217,8 @@ export default function doctorCommand(
 
       const shadowed = shadowedStimFinding(stim);
       if (shadowed) findings.push(shadowed);
+
+      recordDoctorRun(root, opts.platform, version);
 
       if (opts.json) {
         console.log(JSON.stringify({ project: root, platform: opts.platform ?? null, stim, findings }));
