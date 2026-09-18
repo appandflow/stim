@@ -201,7 +201,7 @@ interface MakeExecutorOptions {
   simctlList?: string;
   occupied?: Record<string, boolean>;
   diffs?: Record<string, string>;
-  mainTrees?: string[];
+  bare?: { path: string; head: string | null };
   worktreeRemoveError?: string;
   branchDeleteError?: string;
   refSha?: string | null;
@@ -215,7 +215,7 @@ function makeExecutor({
   simctlList = '{"devices":{}}',
   occupied = {},
   diffs = {},
-  mainTrees = [],
+  bare,
   worktreeRemoveError,
   branchDeleteError,
   refSha = 'abc123',
@@ -257,10 +257,7 @@ function makeExecutor({
     runFileQuiet(file: string, args: string[] = []) {
       const cmd = [file, ...args].join(' ');
       runQuietCalls.push(cmd);
-      if (args.includes('--git-dir') && args.includes('--git-common-dir')) {
-        const p = args[1] ?? '';
-        return mainTrees.includes(p) ? `${p}/.git\n${p}/.git` : null;
-      }
+      if (args.includes('symbolic-ref') && bare && args[1] === bare.path) return bare.head;
       if (/status --porcelain/.test(cmd)) return dirty;
       const diffMatch = cmd.match(/ diff -- (.+)$/);
       if (diffMatch) return diffs[diffMatch[1] ?? ''] ?? '';
@@ -353,7 +350,6 @@ test('action: on the source checkout, reclaims the environment with the owned de
   const exec = makeExecutor({
     worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
     simctlList: simctlJson([{ udid: 'U9', name: 'stim-main', state: 'Shutdown', isAvailable: true }]),
-    mainTrees: [mainDir],
   });
   setExecutor(exec);
 
@@ -383,7 +379,6 @@ test('action: a dirty source checkout still reclaims, without a refusal and with
   const exec = makeExecutor({
     dirty: ' M src/app.js\n?? uncommitted.txt\n',
     worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
-    mainTrees: [mainDir],
   });
   setExecutor(exec);
 
@@ -412,7 +407,6 @@ test('action: --force changes nothing on the source checkout -- reclaim only, tr
   writeFileSync(join(mainDir, 'keep.txt'), 'source file');
   const exec = makeExecutor({
     worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
-    mainTrees: [mainDir],
   });
   setExecutor(exec);
 
@@ -441,7 +435,6 @@ test('action: a failed device teardown on the source checkout keeps the record a
   const exec = makeExecutor({
     worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
     simctlList: simctlJson([{ udid: 'U7', name: 'stim-held', state: 'Shutdown', isAvailable: true }]),
-    mainTrees: [mainDir],
   });
   const originalRun = exec.run.bind(exec);
   exec.run = (cmd: string) => {
@@ -471,7 +464,6 @@ test('action: a tunnel verification failure on the source checkout retains its s
   writeManagedTunnel(mainDir, child.pid!);
   const exec = makeExecutor({
     worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
-    mainTrees: [mainDir],
   });
   setExecutor(exec);
 
@@ -502,7 +494,6 @@ test('action: source-checkout artifact deletion blocks a concurrent replacement 
   setExecutor(
     makeExecutor({
       worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
-      mainTrees: [mainDir],
     }),
   );
   let competingStart: Promise<'started' | 'refused'> | null = null;
@@ -621,7 +612,6 @@ test('action: removes the branch that Stim created when it has no unique commits
       { path: mainDir, branch: 'main' },
       { path: wtDir, branch: 'worktree-feat-x' },
     ]),
-    mainTrees: [mainDir],
   });
   setExecutor(exec);
 
@@ -648,7 +638,6 @@ test('action: on success, prints only the label-column vocabulary on stderr and 
       { path: mainDir, branch: 'main' },
       { path: wtDir, branch: 'worktree-feat-x' },
     ]),
-    mainTrees: [mainDir],
     simctlList: simctlJson([{ udid: 'U1', name: 'stim-x', state: 'Shutdown', isAvailable: true }]),
   });
   setExecutor(exec);
@@ -689,7 +678,6 @@ test('action: keeps a branch that existed before Stim attached the worktree', as
       { path: mainDir, branch: 'main' },
       { path: wtDir, branch: 'worktree-feat-x' },
     ]),
-    mainTrees: [mainDir],
   });
   setExecutor(exec);
 
@@ -720,7 +708,6 @@ test('action: force removal keeps an owned branch that has unique commits', asyn
       { path: mainDir, branch: 'main' },
       { path: wtDir, branch: 'worktree-feat-x' },
     ]),
-    mainTrees: [mainDir],
   });
   setExecutor(exec);
 
@@ -752,7 +739,6 @@ test('action: a branch deletion failure keeps ownership state and exits unsucces
       { path: mainDir, branch: 'main' },
       { path: wtDir, branch: 'worktree-feat-x' },
     ]),
-    mainTrees: [mainDir],
     branchDeleteError: 'branch is locked',
   });
   setExecutor(exec);
@@ -812,7 +798,6 @@ test('action: pending cleanup keeps a branch that another worktree checks out', 
   rmSync(wtDir, { recursive: true, force: true });
   const exec = makeExecutor({
     worktrees: porcelain([{ path: mainDir, branch: 'worktree-feat-x' }]),
-    mainTrees: [mainDir],
   });
   const originalRunFileQuiet = exec.runFileQuiet.bind(exec);
   exec.runFileQuiet = (file, args = []) => {
@@ -840,7 +825,6 @@ test('action: a worktree deletion failure keeps ownership state', async () => {
       { path: mainDir, branch: 'main' },
       { path: wtDir, branch: 'worktree-feat-x' },
     ]),
-    mainTrees: [mainDir],
     worktreeRemoveError: 'worktree is locked',
   });
   setExecutor(exec);
@@ -1394,6 +1378,116 @@ test('against a real repo: remove on the source checkout reclaims the environmen
   }
 }, 30_000);
 
+function barePorcelain(bareRoot: string, entries: PorcelainEntry[]) {
+  return `worktree ${bareRoot}\nbare\n\n${porcelain(entries)}`;
+}
+
+test('action: in a bare-repository layout, the worktree on the bare HEAD branch is the source checkout and only its environment is reclaimed', async () => {
+  const bareRoot = join(tmpHome, 'bare');
+  upsertProject(mainDir, { metroPort: 8081 });
+  writeFileSync(join(mainDir, 'keep.txt'), 'source file');
+  const exec = makeExecutor({
+    worktrees: barePorcelain(bareRoot, [
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+    bare: { path: bareRoot, head: 'main' },
+  });
+  setExecutor(exec);
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(mainDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).not.toBe(1);
+  expect(getProject(mainDir)).toBe(null);
+  expect(readFileSync(join(mainDir, 'keep.txt'), 'utf-8')).toBe('source file');
+  expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBe(false);
+  expect(errs.join('\n')).toMatch(/working tree stays \(it is the source checkout\)/);
+});
+
+test('action: in a bare-repository layout, a linked worktree is removed and its owned branch is deleted from the source checkout', async () => {
+  const bareRoot = join(tmpHome, 'bare');
+  upsertProject(wtDir, {
+    worktreeRoot: true,
+    worktreeBranch: 'worktree-feat-x',
+    worktreeBranchOwned: true,
+    worktreeMainRoot: mainDir,
+  });
+  const exec = makeExecutor({
+    worktrees: barePorcelain(bareRoot, [
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'worktree-feat-x' },
+    ]),
+    bare: { path: bareRoot, head: 'main' },
+  });
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  await run(wtDir, {});
+
+  expect(process.exitCode).not.toBe(1);
+  expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBe(true);
+  expect(exec.calls.run.some((c) => c.startsWith(`git -C ${mainDir} update-ref -d refs/heads/worktree-feat-x`))).toBe(
+    true,
+  );
+});
+
+test('action: in a bare-repository layout with a detached bare HEAD, removal refuses and prints the symbolic-ref command', async () => {
+  const bareRoot = join(tmpHome, 'bare');
+  upsertProject(wtDir, { metroPort: 8083 });
+  const exec = makeExecutor({
+    worktrees: barePorcelain(bareRoot, [
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+    bare: { path: bareRoot, head: null },
+  });
+  setExecutor(exec);
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(getProject(wtDir)).not.toBe(null);
+  expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBe(false);
+  expect(errs.join('\n')).toContain(`git -C ${bareRoot} symbolic-ref HEAD refs/heads/<branch>`);
+});
+
+test('action: the bare repository directory itself is refused as a removal target', async () => {
+  mkdirSync(join(tmpHome, 'bare'));
+  const bareRoot = canon(join(tmpHome, 'bare'));
+  const exec = makeExecutor({
+    worktrees: barePorcelain(bareRoot, [{ path: mainDir, branch: 'main' }]),
+    bare: { path: bareRoot, head: 'main' },
+  });
+  setExecutor(exec);
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(bareRoot, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBe(false);
+  expect(errs.join('\n')).toMatch(/is the bare repository, not a worktree/);
+});
+
 test('excludePodChurn takes the whole set when every dirty path is pod churn', () => {
   const { lines, restore } = excludePodChurn([
     ' M apps/app/ios/Podfile.lock',
@@ -1550,7 +1644,6 @@ test('action: removal releases this workspace lease and leaves another workspace
   expect(takeLease({ root: wtDir, platform: 'android', id: 'R5CT', kind: 'run' }).status).toBe('taken');
   const exec = makeExecutor({
     worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
-    mainTrees: [mainDir],
   });
   setExecutor(exec);
 

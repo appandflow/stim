@@ -21,7 +21,7 @@ import {
   removeWorktree,
   repoRoot,
   gitCommonDir,
-  isMainWorkingTree,
+  selectSourceCheckout,
   branchExists,
   hasRemote,
   dirtyPaths,
@@ -671,7 +671,6 @@ test('git runs against a real repo whose path holds a space, a double quote, a d
 
     expect(repoRoot(root)).toBe(realpathSync(root));
     expect(gitCommonDir(root)).toBe(join(realpathSync(root), '.git'));
-    expect(isMainWorkingTree(root)).toBe(true);
     expect(hasUncommittedWork(root)).toBe(false);
     expect(branchExists(root, 'main')).toBe(true);
     expect(branchExists(root, 'missing')).toBe(false);
@@ -730,4 +729,73 @@ test('an unproven detached HEAD keeps the conservative remotes-only comparison',
   });
   expect(unpushedCommits('/wt')).toEqual(['abc123 local work']);
   expect(calls.find((args) => args.includes('log'))?.slice(-2)).toEqual(['--not', '--remotes']);
+});
+
+test('listWorktrees marks the bare repository entry so it is never mistaken for a checkout', () => {
+  const porcelain = [
+    'worktree /repo',
+    'bare',
+    '',
+    'worktree /repo/main',
+    'HEAD abc123',
+    'branch refs/heads/main',
+    '',
+  ].join('\n');
+  setExecutor({ run: () => porcelain, runFileQuiet: () => porcelain, spawn: () => {} });
+  expect(listWorktrees('/repo')).toEqual([
+    { path: '/repo', bare: true },
+    { path: '/repo/main', branch: 'main' },
+  ]);
+});
+
+test('selectSourceCheckout takes the first entry of a normal repository', () => {
+  const entries = [
+    { path: '/repo', branch: 'main' },
+    { path: '/repo-wt/feat', branch: 'feat' },
+  ];
+  expect(selectSourceCheckout(entries, null)).toEqual({ path: '/repo' });
+});
+
+test('selectSourceCheckout follows a bare repository HEAD to the worktree on that branch', () => {
+  const entries = [
+    { path: '/repo', bare: true },
+    { path: '/repo/feature', branch: 'feature' },
+    { path: '/repo/main', branch: 'main' },
+  ];
+  expect(selectSourceCheckout(entries, 'main')).toEqual({ path: '/repo/main' });
+});
+
+test('selectSourceCheckout refuses a detached bare HEAD with the symbolic-ref command and the branches to pick from', () => {
+  const entries = [
+    { path: '/repo', bare: true },
+    { path: '/repo/main', branch: 'main' },
+    { path: '/repo/feature', branch: 'feature' },
+  ];
+  const result = selectSourceCheckout(entries, null);
+  expect(result).toMatchObject({
+    refusal: expect.stringContaining('git -C /repo symbolic-ref HEAD refs/heads/<branch>'),
+  });
+  expect(result).toMatchObject({ refusal: expect.stringContaining('main (/repo/main), feature (/repo/feature)') });
+});
+
+test('selectSourceCheckout refuses when no worktree checks out the bare HEAD branch, naming the worktree add command', () => {
+  const entries = [
+    { path: '/repo', bare: true },
+    { path: '/repo/feature', branch: 'feature' },
+    { path: '/repo/stale', branch: 'main', prunable: true },
+  ];
+  expect(selectSourceCheckout(entries, 'main')).toMatchObject({
+    refusal: expect.stringContaining('git -C /repo worktree add /repo/main main'),
+  });
+});
+
+test('selectSourceCheckout refuses when the bare HEAD branch is checked out more than once', () => {
+  const entries = [
+    { path: '/repo', bare: true },
+    { path: '/repo/a', branch: 'main' },
+    { path: '/repo/b', branch: 'main' },
+  ];
+  expect(selectSourceCheckout(entries, 'main')).toMatchObject({
+    refusal: expect.stringMatching(/\/repo\/a.*\/repo\/b/),
+  });
 });

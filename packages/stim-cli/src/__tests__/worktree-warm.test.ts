@@ -234,7 +234,7 @@ test('warm refuses an unregistered target, missing source checkout, or mismatche
         if (kind === 'unregistered' && args.includes('worktree') && args.includes('list')) {
           return `worktree ${root}\nbranch refs/heads/main\n`;
         }
-        if (kind === 'missing main' && args.includes('--git-dir') && args[1] === root) return null;
+        if (kind === 'missing main' && args.includes('--show-toplevel') && args[1] === root) return null;
         if (
           kind === 'different common' &&
           args.at(-1) === '--git-common-dir' &&
@@ -510,4 +510,51 @@ test('warm permits ignored siblings under a directory containing tracked files',
   expect(result.failed).toEqual([]);
   expect(readFileSync(join(target, 'local/data.cache'), 'utf-8')).toBe('main cache');
   expect(readFileSync(join(target, 'local/README'), 'utf-8')).toBe('linked readme');
+}, 30_000);
+
+function bareLayout(): { bare: string; main: string; feature: string } {
+  const bare = join(base, 'bare');
+  mkdirSync(bare);
+  git(bare, 'init', '-q', '--bare', '-b', 'main', '.git');
+  const main = join(bare, 'main');
+  const feature = join(bare, 'feature');
+  git(bare, 'worktree', 'add', '-q', main);
+  git(main, 'config', 'user.name', 'test');
+  git(main, 'config', 'user.email', 'test@example.com');
+  git(main, 'config', 'commit.gpgsign', 'false');
+  write(main, '.gitignore', 'node_modules/\n.env*\n');
+  write(main, 'package.json', '{"name":"bare-fixture"}\n');
+  write(main, 'ios/Podfile.lock', 'branch pods\n');
+  git(main, 'add', '.');
+  git(main, 'commit', '-qm', 'fixture');
+  git(bare, 'worktree', 'add', '-qb', 'feature', feature, 'main');
+  return { bare, main, feature };
+}
+
+test('warm in a bare-repository layout seeds from the worktree on the bare HEAD branch', async () => {
+  const { bare, main, feature } = bareLayout();
+  expect(warmWorktreePaths(join(feature, 'ios'))).toEqual({ root: main, target: feature, common: join(bare, '.git') });
+  write(main, '.env', 'main env');
+  const result = await runWarm(feature);
+  expect(result.code).toBe(0);
+  expect(readFileSync(join(feature, '.env'), 'utf-8')).toBe('main env');
+}, 30_000);
+
+test('warm in a bare-repository layout rejects the worktree on the bare HEAD branch as the source checkout', async () => {
+  const { main } = bareLayout();
+  const result = await runWarm(main);
+  expect(result.code).toBe(1);
+  expect(result.stderr).toMatch(/linked worktree, not the source checkout/);
+}, 30_000);
+
+test('warm refuses a detached bare HEAD and prints the symbolic-ref command that repairs it', () => {
+  const { bare, main, feature } = bareLayout();
+  git(bare, 'update-ref', '--no-deref', 'HEAD', git(main, 'rev-parse', 'HEAD'));
+  expect(() => warmWorktreePaths(feature)).toThrow(`git -C ${bare} symbolic-ref HEAD refs/heads/<branch>`);
+}, 30_000);
+
+test('warm refuses a bare HEAD branch that no worktree checks out and prints the worktree add command', () => {
+  const { bare, feature } = bareLayout();
+  git(bare, 'symbolic-ref', 'HEAD', 'refs/heads/develop');
+  expect(() => warmWorktreePaths(feature)).toThrow(`git -C ${bare} worktree add ${join(bare, 'develop')} develop`);
 }, 30_000);

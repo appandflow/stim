@@ -31,7 +31,11 @@ If a harness already created the linked worktree, skip Git creation and run
 ## Warm ignored state
 
 Warm copies from the repository's source checkout, regardless of either
-branch's `HEAD`. That checkout must still be available. It copies missing
+branch's `HEAD`. That checkout must still be available. In a bare-repository
+layout, where every checkout is a linked worktree beside a bare `.git`, the
+source checkout is the worktree on the branch the bare repository's `HEAD`
+names; warm refuses with the exact Git command to run when that branch has no
+worktree or `HEAD` is detached. It copies missing
 ignored entries, including installed dependencies, Pods, native build output,
 `.env`, and local configuration files. APFS clones keep copies space-efficient
 where supported; a normal byte copy is used when cloning is unavailable.

@@ -14,6 +14,7 @@ import {
   dirtyFingerprintFiles,
   gitCommonDir,
   listWorktrees,
+  resolveSourceCheckout,
   locallyKnownUpstream,
   repoRoot,
   type UpstreamState,
@@ -81,12 +82,11 @@ function mainCheckoutProjectRoot(projectRoot: string): string {
   const currentRepoRoot = repoRoot(projectRoot);
   if (!currentRepoRoot) return projectRoot;
   try {
-    // Git lists the main working tree before all linked worktrees.
-    const main = listWorktrees(currentRepoRoot)[0];
-    if (!main) return projectRoot;
+    const source = resolveSourceCheckout(currentRepoRoot);
+    if ('refusal' in source) return projectRoot;
     const projectRel = relative(currentRepoRoot, realpathSync(projectRoot));
     if (projectRel.startsWith('..')) return projectRoot;
-    return resolve(main.path, projectRel);
+    return resolve(source.path, projectRel);
   } catch {
     return projectRoot;
   }
@@ -120,7 +120,7 @@ function hasIosWarmOutput(root: string): boolean {
 function hasLinkedWorktree(projectRoot: string): boolean {
   const root = repoRoot(projectRoot);
   if (!root) return false;
-  return listWorktrees(root).filter((entry) => !entry.prunable).length > 1;
+  return listWorktrees(root).filter((entry) => !entry.prunable && !entry.bare).length > 1;
 }
 
 function headBranch(root: string): string | null {

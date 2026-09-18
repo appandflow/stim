@@ -17,7 +17,7 @@ import { findProjectRoot, projectShortcut } from '../project.ts';
 import { listAllIosSims } from '../sim/ios.ts';
 import { resolveOwnedAvdSerial } from '../sim/android.ts';
 import type { IosSimRecord } from '../sim/ios.ts';
-import { listWorktrees } from '../worktree.ts';
+import { resolveSourceCheckout } from '../worktree.ts';
 import type { WorktreeEntry } from '../worktree.ts';
 import { volumeRootFor } from '../fs-util.ts';
 import { listLeaseFiles } from '../engine/device-lease.ts';
@@ -74,7 +74,9 @@ export default function statusCommand(program: Command): void {
         simctlError = String((e as Error)?.message || e).split('\n')[0] ?? '';
       }
 
-      const worktrees: WorktreeEntry[] = listWorktrees(process.cwd()).slice(1);
+      const source = resolveSourceCheckout(process.cwd());
+      const sourcePath = 'path' in source ? source.path : null;
+      const worktrees: WorktreeEntry[] = source.entries.filter((entry) => !entry.bare && entry.path !== sourcePath);
 
       const states: EnvironmentState[] = [];
       const labelOnlyRoots: boolean[] = [];
