@@ -693,9 +693,11 @@ with machine or project optimization settings; see \`guide settings\`:
            workspace's root, so compiled output crosses worktrees with no
            Podfile post_install block. Swift joins in, with its own prefix
            mapping, once xcrun swift reports 6.4 or newer (Xcode 27); the
-           cache line names Swift on or off and why. Xcode 26+ only, and
-           skipped entirely when the project configured ccache (the two
-           defeat each other).
+           cache line names Swift on or off and why. Xcode still excludes
+           Swift targets built without explicit modules, which React
+           Native's prebuilt core disables; the post-build cache line
+           counts those. Xcode 26+ only, and skipped entirely when the
+           project configured ccache (the two defeat each other).
   android  gradlew carries --build-cache, so task outputs cross worktrees with
            no org.gradle.caching=true in gradle.properties. Debug builds also
            carry -PreactNativeArchitectures=<target ABI>, using the owned

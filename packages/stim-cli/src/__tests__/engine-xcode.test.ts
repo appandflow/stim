@@ -13,6 +13,7 @@ import {
   buildIos,
   ccacheEnabled,
   COMPILATION_CACHE_MIN_XCODE,
+  compilationCacheActivityLine,
   compilationCacheSettings,
   detectSwiftVersion,
   parseSwiftVersion,
@@ -1277,6 +1278,49 @@ describe('buildIos with a mocked executor', () => {
         cacheableTasks: 1520,
         hitRatePercent: 91.7,
       }),
+    );
+  });
+
+  test('counts the Swift targets Xcode excluded from caching for lack of explicit modules', async () => {
+    const child = fakeChild();
+    harness(tmp, { child });
+    const writer = recordingWriter();
+    const dd = join(tmp, 'dd');
+    const promise = buildIos({
+      root: tmp,
+      udid: 'u',
+      logWriter: writer,
+      derivedDataPath: dd,
+      compilationCache: ['COMPILATION_CACHE_ENABLE_CACHING=YES', 'SWIFT_ENABLE_COMPILE_CACHE=YES'],
+    });
+
+    child.stdout.emit(
+      'data',
+      [
+        "SwiftDriver ExpoCrypto normal arm64 com.apple.xcode.tools.swift.compiler (in target 'ExpoCrypto' from project 'Pods')",
+        "warning: swift compiler caching requires explicit module build (SWIFT_ENABLE_EXPLICIT_MODULES=YES) (in target 'ExpoCrypto' from project 'Pods')",
+        "warning: swift compiler caching requires explicit module build (SWIFT_ENABLE_EXPLICIT_MODULES=YES) (in target 'EXConstants' from project 'Pods')",
+        "warning: Ignore '-scanner-prefix-*' options that cannot be used without compilation caching (in target 'ExpoCrypto' from project 'Pods')",
+        'note: 1441 hits / 1441 cacheable tasks (100%)',
+        '',
+      ].join('\n'),
+    );
+    makeProduct(dd);
+    child.emit('close', 0, null);
+    const result = await promise;
+
+    expect(result.compilationCache).toEqual({
+      status: 'reported',
+      hits: 1441,
+      cacheableTasks: 1441,
+      hitRatePercent: 100,
+      swiftTargetsWithoutExplicitModules: 2,
+    });
+    expect(compilationCacheActivityLine(result.compilationCache)).toBe(
+      '1441/1441 hits (100%); Swift excluded: 2 targets build without explicit modules (SWIFT_ENABLE_EXPLICIT_MODULES=NO)',
+    );
+    expect(writer.records).toContainEqual(
+      expect.objectContaining({ event: 'compilation_cache', swiftTargetsWithoutExplicitModules: 2 }),
     );
   });
 

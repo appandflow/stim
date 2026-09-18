@@ -615,9 +615,17 @@ export function parseCompilationCacheActivity(line: unknown): CompilationCacheAc
   };
 }
 
+// swift-build refuses Swift caching for a target without explicit modules and
+// warns once per target; React Native's prebuilt core sets
+// SWIFT_ENABLE_EXPLICIT_MODULES=NO on every target (react_native_pods.rb).
+const SWIFT_CACHING_NEEDS_EXPLICIT_MODULES = /warning: swift compiler caching requires explicit module build/;
+
 export function compilationCacheActivityLine(activity: CompilationCacheActivity): string {
   if (activity.status === 'reported') {
-    return `${activity.hits}/${activity.cacheableTasks} hits (${activity.hitRatePercent}%)`;
+    const swift = activity.swiftTargetsWithoutExplicitModules
+      ? `; Swift excluded: ${activity.swiftTargetsWithoutExplicitModules} targets build without explicit modules (SWIFT_ENABLE_EXPLICIT_MODULES=NO)`
+      : '';
+    return `${activity.hits}/${activity.cacheableTasks} hits (${activity.hitRatePercent}%)${swift}`;
   }
   if (activity.status === 'not-run') return 'not run; artifact cache supplied the app';
   return 'unavailable; Xcode did not report reliable statistics';
@@ -738,13 +746,16 @@ export async function buildIos({
 
   const transcript: string[] = [];
   let compilationCacheActivity: CompilationCacheActivity = COMPILATION_CACHE_UNAVAILABLE;
+  let swiftTargetsWithoutExplicitModules = 0;
   const onLine = (line: unknown) => {
     const msg = cleanLine(line);
     transcript.push(msg);
     if (msg.trim() === '') return;
     logWriter.write({ src: 'build', level: 'debug', msg });
-    const activity = parseCompilationCacheActivity(msg);
-    if (activity) {
+    if (SWIFT_CACHING_NEEDS_EXPLICIT_MODULES.test(msg)) swiftTargetsWithoutExplicitModules += 1;
+    const parsed = parseCompilationCacheActivity(msg);
+    if (parsed) {
+      const activity = swiftTargetsWithoutExplicitModules ? { ...parsed, swiftTargetsWithoutExplicitModules } : parsed;
       compilationCacheActivity = activity;
       logWriter.write({
         src: 'build',
@@ -754,6 +765,7 @@ export async function buildIos({
         hits: activity.hits,
         cacheableTasks: activity.cacheableTasks,
         hitRatePercent: activity.hitRatePercent,
+        ...(swiftTargetsWithoutExplicitModules ? { swiftTargetsWithoutExplicitModules } : {}),
       });
     }
   };

@@ -106,6 +106,7 @@ export interface CompilationCacheActivity {
   hits: number | null;
   cacheableTasks: number | null;
   hitRatePercent: number | null;
+  swiftTargetsWithoutExplicitModules?: number;
 }
 
 export interface CcacheActivity {
