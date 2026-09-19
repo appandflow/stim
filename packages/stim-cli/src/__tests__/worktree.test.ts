@@ -333,12 +333,14 @@ test('removeWorktree runs git via runFile (no shell) from another checkout, with
     spawn: () => {},
   });
 
-  removeWorktree(path, { from });
-  removeWorktree(path, { from, force: true });
+  removeWorktree(path, { from, platform: 'darwin' });
+  removeWorktree(path, { from, force: true, platform: 'darwin' });
+  removeWorktree(path, { from, platform: 'win32' });
 
   expect(calls).toEqual([
     ['git', '-C', from, 'worktree', 'remove', '--', path],
     ['git', '-C', from, 'worktree', 'remove', '--force', '--', path],
+    ['git', '-c', 'core.longpaths=true', '-C', from, 'worktree', 'remove', '--', path],
   ]);
 });
 

@@ -452,9 +452,23 @@ export function resolveFullRef(cwd: string, ref: string): string | null {
 }
 
 // Windows refuses to delete a directory that is a running process's current
-// directory, so `from` names another checkout of the same repository.
-export function removeWorktree(path: string, { from, force = false }: { from: string; force?: boolean }): void {
-  const args = ['-C', from, 'worktree', 'remove', ...(force ? ['--force'] : []), '--', path];
+// directory, so `from` names another checkout of the same repository. Git for
+// Windows also refuses paths past MAX_PATH (a built android/app/.cxx tree)
+// unless core.longpaths is on for the invocation.
+export function removeWorktree(
+  path: string,
+  { from, force = false, platform = process.platform }: { from: string; force?: boolean; platform?: NodeJS.Platform },
+): void {
+  const args = [
+    ...(platform === 'win32' ? ['-c', 'core.longpaths=true'] : []),
+    '-C',
+    from,
+    'worktree',
+    'remove',
+    ...(force ? ['--force'] : []),
+    '--',
+    path,
+  ];
   getExecutor().runFile('git', args);
 }
 
