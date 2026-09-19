@@ -12,11 +12,11 @@ import {
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getProject, upsertProject } from '../config.ts';
+import { getProject, upsertProject } from '../workspace/config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
-import { supervisorPidFile, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
+import { supervisorPidFile, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { describeError, supervisorError } from '../supervisor/errors.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../workspace-state.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import {
   MODE_BARE,
   MODE_EXPO,
@@ -196,7 +196,7 @@ describe('Contract 2: the workspace state file', () => {
 describe('state.json concurrent writers (Contract 2 lock)', () => {
   test('4+ processes writing different keys never lose an update', async () => {
     const script = join(tmpHome, 'state-writer.mjs');
-    const runUrl = new URL('../workspace-state.ts', import.meta.url).href;
+    const runUrl = new URL('../workspace/workspace-state.ts', import.meta.url).href;
     writeFileSync(
       script,
       [

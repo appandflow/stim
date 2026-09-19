@@ -1,6 +1,6 @@
 import { projectDeviceSlots } from './device-slots.ts';
 import { clockTime, formatElapsed, plural } from './command-output.ts';
-import type { ProjectRecord } from './config.ts';
+import type { ProjectRecord } from './workspace/config.ts';
 import type { LeaseFileEntry } from './engine/device-lease.ts';
 
 const IOS_SIM_MB = 1500;

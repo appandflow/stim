@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { getExecutor } from './exec.ts';
-import { repoRoot } from './worktree.ts';
+import { repoRoot } from './workspace/worktree.ts';
 
 export function installedNpmTreeIsValid(projectRoot: string): boolean {
   try {

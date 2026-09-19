@@ -1,9 +1,9 @@
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { getConfigDir, getProject, upsertProject } from './config.ts';
+import { getConfigDir, getProject, upsertProject } from './workspace/config.ts';
 import type { DoctorPlatform } from './doctor.ts';
 import { compareStimVersions } from './stim-installations.ts';
-import type { DoctorRunRecord, ProjectRecord } from './config-types.ts';
+import type { DoctorRunRecord, ProjectRecord } from './workspace/config-types.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DOCTOR_STALE_MS = 7 * DAY_MS;

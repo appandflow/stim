@@ -1,11 +1,11 @@
-import { assignSlotDevice, deviceSlotPlatforms, projectDeviceSlots, removeSlotDevice } from './device-slots.ts';
+import { assignSlotDevice, deviceSlotPlatforms, projectDeviceSlots, removeSlotDevice } from '../device-slots.ts';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs';
 import { isAbsolute, join } from 'path';
 import { homedir } from 'os';
-import { isOnMountedVolume } from './fs-util.ts';
-import { withDirLock } from './dir-lock.ts';
-import { acquireAvdClaim } from './avd-claim.ts';
-import { releaseClaim } from './ownership-claim.ts';
+import { isOnMountedVolume } from '../fs-util.ts';
+import { withDirLock } from '../dir-lock.ts';
+import { acquireAvdClaim } from '../avd-claim.ts';
+import { releaseClaim } from '../ownership-claim.ts';
 
 import type {
   Config,
@@ -15,7 +15,7 @@ import type {
   RepoRecord,
   SupervisorRecord,
 } from './config-types.ts';
-import { sameProcessRecord, type ProcessRecord } from './process-identity.ts';
+import { sameProcessRecord, type ProcessRecord } from '../process-identity.ts';
 export type { Config, ConcurrencyLimits, DeviceRecord, ProjectRecord, RepoRecord, SupervisorRecord };
 
 export function getConfigDir(): string {

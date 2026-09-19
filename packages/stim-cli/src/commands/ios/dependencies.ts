@@ -1,7 +1,7 @@
 import { loadCacheProvider } from '@stim-cli/cache';
 import { resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
 import { fingerprintProject, resolveBuild, storeBuild, untrackedNativeFiles } from '../../build-cache.ts';
-import { getConcurrencyLimits, getProject, upsertProject } from '../../config.ts';
+import { getConcurrencyLimits, getProject, upsertProject } from '../../workspace/config.ts';
 import {
   clearOtherUserApps,
   installIosApp,
@@ -52,11 +52,11 @@ import {
 } from '../../engine/xcode.ts';
 import { pidExists, resolveProjectMetro } from '../../metro.ts';
 import { createNdjsonWriter } from '../../ndjson.ts';
-import { detectBundleId, detectIsExpo, findProjectRoot, projectShortcut } from '../../project.ts';
-import { resolveCacheProviderConfig, resolveSettings } from '../../settings.ts';
+import { detectBundleId, detectIsExpo, findProjectRoot, projectShortcut } from '../../workspace/project.ts';
+import { resolveCacheProviderConfig, resolveSettings } from '../../workspace/settings.ts';
 import { writeWorkspaceLaunch } from '../../supervisor/state.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../../workspace-state.ts';
-import { gitCommonDir, repoRoot } from '../../worktree.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../../workspace/workspace-state.ts';
+import { gitCommonDir, repoRoot } from '../../workspace/worktree.ts';
 import { warmMetro } from '../../engine/metro-warmup.ts';
 import { resolveMetroWithRetry, ensureWorkspaceStorageSafely } from '../native-runtime.ts';
 import { devClientScheme } from '../dev-client.ts';

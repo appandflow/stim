@@ -11,8 +11,8 @@ import { resetExecutor, setExecutor } from '../exec.ts';
 import { launchErrorPreview } from '../launch-error-preview.ts';
 import { buildCriteria, recordMatches } from '../logs-query.ts';
 import { recordFromLine } from '../supervisor/server-expo.ts';
-import { clearWorkspaceStateKeys, writeWorkspaceState } from '../workspace-state.ts';
-import { upsertProject } from '../config.ts';
+import { clearWorkspaceStateKeys, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { upsertProject } from '../workspace/config.ts';
 import { deviceLeasePath, fileLeaseIo } from '../engine/device-lease.ts';
 
 let server: Server | undefined;

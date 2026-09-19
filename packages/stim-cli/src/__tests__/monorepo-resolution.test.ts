@@ -2,8 +2,8 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { runDoctor } from '../doctor.ts';
-import { workspaceStateFile } from '../paths.ts';
-import { detectIsExpo, isPackageResolvable, resolvePackageJson } from '../project.ts';
+import { workspaceStateFile } from '../workspace/paths.ts';
+import { detectIsExpo, isPackageResolvable, resolvePackageJson } from '../workspace/project.ts';
 import { MODE_BARE, MODE_EXPO, runSupervisor } from '../supervisor/run.ts';
 import { expoBinFromPackage, expoBinPath, findBinUpward } from '../supervisor/server-expo.ts';
 

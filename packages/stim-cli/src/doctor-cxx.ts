@@ -4,7 +4,7 @@ import { getExecutor } from './exec.ts';
 import { readAndroidCasToolchain, resolveAndroidCompilerCache } from './engine/android-cas.ts';
 import { listBuildLocks } from './engine/build-lock.ts';
 import { projectCmakeLauncher } from './engine/ccache.ts';
-import { projectOptimizations } from './settings.ts';
+import { projectOptimizations } from './workspace/settings.ts';
 
 export interface CxxLauncherState {
   path: string;

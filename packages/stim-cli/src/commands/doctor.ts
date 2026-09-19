@@ -1,8 +1,8 @@
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
 import { recordDoctorRun } from '../guide-status.ts';
-import { findProjectRoot } from '../project.ts';
-import { repoRoot } from '../worktree.ts';
+import { findProjectRoot } from '../workspace/project.ts';
+import { repoRoot } from '../workspace/worktree.ts';
 import {
   allowanceSearchPaths,
   applyClaudeAllowance,

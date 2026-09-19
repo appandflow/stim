@@ -14,10 +14,10 @@ import {
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { register } from '../cache-manifest.ts';
-import { getConfigDir } from '../config.ts';
+import { getConfigDir } from '../workspace/config.ts';
 import { withDirLock } from '../dir-lock.ts';
 import type { Optimizations } from '../optimizations.ts';
-import { ensureWorkspaceStorage } from '../paths.ts';
+import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 
 interface AndroidCasToolchain {
   clang: string;

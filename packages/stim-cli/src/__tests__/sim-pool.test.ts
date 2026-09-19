@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getProject, loadConfig, saveConfig, setDevice, upsertProject, withConfigLock } from '../config.ts';
+import { getProject, loadConfig, saveConfig, setDevice, upsertProject, withConfigLock } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { readClaimSet } from '../ownership-claim.ts';
 import { IMPOSSIBLE_PID, liveClaimOwner, plantClaim, recycledClaimOwner } from './_factories.ts';
@@ -261,7 +261,7 @@ describe('pool operation recovery', () => {
           script,
           new URL('../ownership-claim.ts', import.meta.url).href,
           claimRoot(),
-          new URL('../config.ts', import.meta.url).href,
+          new URL('../workspace/config.ts', import.meta.url).href,
         ],
         { stdio: 'ignore' },
       );

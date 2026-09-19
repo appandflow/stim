@@ -1,6 +1,6 @@
 import { compilerCacheFallbackMessage, resolveOptimizations, optimizationBuildProfile } from '../optimizations.ts';
 import { buildCacheKey } from '@stim-cli/core';
-import { settingShapeErrors, unknownSettingKeys } from '../settings.ts';
+import { settingShapeErrors, unknownSettingKeys } from '../workspace/settings.ts';
 import assert from 'node:assert';
 
 test('explicit compiler selection can opt out of an inherited CAS manifest', () => {

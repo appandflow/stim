@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { withDirLock } from '../dir-lock.ts';
-import { workspaceName } from '../paths.ts';
+import { workspaceName } from '../workspace/paths.ts';
 
 export interface EasSessionClaim {
   sessionId: string;

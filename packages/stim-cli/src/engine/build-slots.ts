@@ -1,6 +1,6 @@
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { getConfigDir } from '../config.ts';
+import { getConfigDir } from '../workspace/config.ts';
 import { formatElapsed } from '../command-output.ts';
 import {
   isClaimRefusal,

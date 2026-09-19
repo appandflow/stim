@@ -16,11 +16,11 @@ import {
   unknownIosDeviceTypeRefusal,
   unknownIosRuntimeRefusal,
 } from '../engine/device.ts';
-import { allConsolePortsAndSerials, getProject, setDevice, upsertProject } from '../config.ts';
-import type { DeviceRecord } from '../config-types.ts';
+import { allConsolePortsAndSerials, getProject, setDevice, upsertProject } from '../workspace/config.ts';
+import type { DeviceRecord } from '../workspace/config-types.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { parkSim, readParked } from '../sim-pool.ts';
-import { workspaceId } from '../paths.ts';
+import { workspaceId } from '../workspace/paths.ts';
 import { ownedSimName } from '../sim/ios.ts';
 import { makeAdbDevices, makeChildProcess, makeConfig, makeExitingChild, makeIosSim } from './_factories.ts';
 

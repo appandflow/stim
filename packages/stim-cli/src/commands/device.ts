@@ -19,7 +19,7 @@ import {
   listIosDevices,
   resolveIosPhysicalDevice,
 } from '../engine/ios-device.ts';
-import { findProjectRoot } from '../project.ts';
+import { findProjectRoot } from '../workspace/project.ts';
 import {
   androidPoolCandidates,
   androidPoolNoCandidatesRefusal,

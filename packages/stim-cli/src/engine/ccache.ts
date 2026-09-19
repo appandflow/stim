@@ -4,7 +4,7 @@ import chalk from 'chalk';
 import { phaseLine } from '../command-output.ts';
 import { register } from '../cache-manifest.ts';
 import { getExecutor } from '../exec.ts';
-import { sharedCcache, workspaceLogsDir } from '../paths.ts';
+import { sharedCcache, workspaceLogsDir } from '../workspace/paths.ts';
 import type { CcacheActivity } from './build-facts.ts';
 
 export const CCACHE_MAX_SIZE = '5G';

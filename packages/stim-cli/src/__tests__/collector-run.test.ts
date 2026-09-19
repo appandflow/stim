@@ -5,10 +5,10 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseNdjsonText } from '../ndjson.ts';
-import { workspaceLogsDir, workspaceStateFile } from '../paths.ts';
+import { workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { parseArgs, readCollectors, registerCollector, runCollector, unregisterCollector } from '../collector/run.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
-import { writeWorkspaceState } from '../workspace-state.ts';
+import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { makeChildProcess } from './_factories.ts';
 
 const ENTRY = fileURLToPath(new URL('../collector/run.ts', import.meta.url));

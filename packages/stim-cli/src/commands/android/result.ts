@@ -13,7 +13,7 @@ import { PLATFORM } from './support.ts';
 import { formatDuration, phaseLine } from '../../command-output.ts';
 import type { RemoteUploadLike, LaunchResultLike, AndroidRecord, AndroidWriter } from './types.ts';
 import type { RunRecorder } from '../../engine/stats.ts';
-import { writeWorkspaceState } from '../../workspace-state.ts';
+import { writeWorkspaceState } from '../../workspace/workspace-state.ts';
 
 export function androidFacts({
   slot,

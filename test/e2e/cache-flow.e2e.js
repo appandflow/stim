@@ -14,7 +14,7 @@ import {
   entryDir,
 } from '../../packages/stim-cli/src/build-cache.ts';
 import { buildLockPath } from '../../packages/stim-cli/src/engine/build-lock.ts';
-import { loadConfig } from '../../packages/stim-cli/src/config.ts';
+import { loadConfig } from '../../packages/stim-cli/src/workspace/config.ts';
 import { createFingerprintAsync } from './fixtures/fingerprint-stub.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');

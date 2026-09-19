@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
-import { detectIsExpo } from '../project.ts';
+import { detectIsExpo } from '../workspace/project.ts';
 import { expoBinPath, expoBinRefusal } from '../supervisor/server-expo.ts';
 
 export const PREBUILD_ERROR = 'STIM_PREBUILD_FAILED';

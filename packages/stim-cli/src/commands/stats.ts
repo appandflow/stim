@@ -3,8 +3,8 @@ import type { Command } from 'commander';
 import { formatLongDuration } from '../command-output.ts';
 import { readStats, statsProjectKey, STATS_VERSION } from '../engine/stats.ts';
 import type { StatsBucket, StatsPlatform, StatsScope } from '../engine/stats.ts';
-import { findProjectRoot } from '../project.ts';
-import { gitCommonDir, repoRoot } from '../worktree.ts';
+import { findProjectRoot } from '../workspace/project.ts';
+import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 
 const PLATFORMS: StatsPlatform[] = ['ios', 'android'];
 const PLATFORM_WIDTH = 9;

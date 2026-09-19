@@ -5,8 +5,8 @@ import assert from 'node:assert';
 import { checkMachineSettings, readMachineSettings } from '../doctor-config.ts';
 import { runDoctor } from '../doctor.ts';
 import { resolveOptimizations } from '../optimizations.ts';
-import { mergeSettingsLayers, settingsLayers } from '../settings.ts';
-import type { SettingsObject } from '../settings-types.ts';
+import { mergeSettingsLayers, settingsLayers } from '../workspace/settings.ts';
+import type { SettingsObject } from '../workspace/settings-types.ts';
 import { writeCasToolchain } from './_factories.ts';
 
 const MACHINE = '/home/.stim/config.json';

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
 import { acquireAvdClaim } from '../avd-claim.ts';
-import { clearDevice, loadConfig, setDevice, withConfigLock } from '../config.ts';
+import { clearDevice, loadConfig, setDevice, withConfigLock } from '../workspace/config.ts';
 import { deviceSlotPlatforms, projectDeviceSlots } from '../device-slots.ts';
 import {
   claimRemoveCommand,

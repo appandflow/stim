@@ -18,7 +18,7 @@ import { workspaceName } from '@stim-cli/core';
 import { registerWarm } from '../commands/worktree.ts';
 import { acquireWarmClaim, warmClaimPath, warmClaimsDir } from '../engine/warm-claim.ts';
 import { exclusiveClaimDir, readClaimSet } from '../ownership-claim.ts';
-import { warmWorktreePaths } from '../worktree.ts';
+import { warmWorktreePaths } from '../workspace/worktree.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import {
   type DepsInputs,
@@ -29,7 +29,7 @@ import {
   divergedRefusal,
   mainCheckoutRefusal,
   podsPlan,
-} from '../worktree-refresh.ts';
+} from '../workspace/worktree-refresh.ts';
 import { goneClaimOwner, makeExitingChild, plantClaim } from './_factories.ts';
 
 let base: string;

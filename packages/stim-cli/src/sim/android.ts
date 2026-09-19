@@ -15,7 +15,7 @@ import { homedir } from 'os';
 import { dirname, isAbsolute, join, resolve } from 'path';
 import { type Executor, getExecutor } from '../exec.ts';
 import { pidExists } from '../metro.ts';
-import { androidDataPartitionSizeBytes } from '../settings.ts';
+import { androidDataPartitionSizeBytes } from '../workspace/settings.ts';
 
 export interface SystemImage {
   api: number;

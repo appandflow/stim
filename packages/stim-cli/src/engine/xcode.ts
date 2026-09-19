@@ -6,14 +6,14 @@ import chalk from 'chalk';
 import { register } from '../cache-manifest.ts';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
-import { sharedCompilationCache, workspaceDerivedData } from '../paths.ts';
+import { sharedCompilationCache, workspaceDerivedData } from '../workspace/paths.ts';
 import { formatElapsed, phaseLine } from '../command-output.ts';
 import { createLineReader } from '../process-output.ts';
 import { capDiagnostics, describeDiagnostic, type Diagnostic, extractXcodeDiagnostics } from './errors-xcode.ts';
 import { cleanLine } from '../supervisor/server-expo.ts';
 import type { CompilationCacheActivity } from './build-facts.ts';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
-import { resolvePackageJson } from '../project.ts';
+import { resolvePackageJson } from '../workspace/project.ts';
 
 const IOS_DIR = 'ios';
 

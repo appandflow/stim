@@ -12,8 +12,8 @@ import { deviceConsoleLevel } from './collector/ios-device.ts';
 import { writeDiagnosticOnce } from './diagnostic-store.ts';
 import { readLogRecords } from './logs-query.ts';
 import { readWorkspaceLaunches } from './supervisor/state.ts';
-import { readWorkspaceState } from './workspace-state.ts';
-import { getProject } from './config.ts';
+import { readWorkspaceState } from './workspace/workspace-state.ts';
+import { getProject } from './workspace/config.ts';
 import { deviceLeasePath, fileLeaseIo, parseLease } from './engine/device-lease.ts';
 
 export const IOS_CRASH_REPORT_RETRY =

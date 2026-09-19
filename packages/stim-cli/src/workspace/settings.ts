@@ -7,10 +7,10 @@ import {
   resolveOptimizations,
   resolveMetroSharedCache,
   type Optimizations,
-} from './optimizations.ts';
+} from '../optimizations.ts';
 import { gitCommonDir as projectGitCommonDir, repoRoot as projectRepoRoot } from './worktree.ts';
-import { TUNNEL_MODES, type TunnelMode } from './engine/metro-reach.ts';
-import type { RemoteDeviceBackend } from './engine/device-remote.ts';
+import { TUNNEL_MODES, type TunnelMode } from '../engine/metro-reach.ts';
+import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
 import type { Settings, SettingsObject } from './settings-types.ts';
 export type { Settings, SettingsObject };
 

@@ -33,7 +33,7 @@ import {
   settingShapeErrors,
   tunnelModeSetting,
   unknownSettingKeys,
-} from '../settings.ts';
+} from '../workspace/settings.ts';
 import type { IosCommandOptions, IosBootLike, FailArgs } from './ios/types.ts';
 import { type IosDeps, DEFAULT_DEPS } from './ios/dependencies.ts';
 import { DEFAULT_METRO_PORT } from '../engine/app-install.ts';
@@ -51,8 +51,8 @@ import { ownedSessionName } from '../engine/eas-simulator.ts';
 import { createRunRecorder, statsProjectKey, type RunEstimates } from '../engine/stats.ts';
 import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
-import { workspaceDir, workspaceLogsDir } from '../paths.ts';
-import { appProjectProblem } from '../project.ts';
+import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
+import { appProjectProblem } from '../workspace/project.ts';
 import { isPhysicalDeviceRequest, type SupervisorLike, noMetroMessage, noMetroRemedy } from './native-runtime.ts';
 import {
   PLATFORM,

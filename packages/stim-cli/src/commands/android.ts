@@ -15,7 +15,7 @@ import {
   detectAndroidPackage,
   detectBundleId,
   projectShortcut,
-} from '../project.ts';
+} from '../workspace/project.ts';
 import {
   REMOTE_DEVICE_BACKENDS,
   resolveCacheProviderConfig,
@@ -23,7 +23,7 @@ import {
   metroWarmupUrlSetting,
   publicUrlSetting,
   tunnelModeSetting,
-} from '../settings.ts';
+} from '../workspace/settings.ts';
 import {
   waitFlagConflict,
   acquireRunLease,
@@ -33,7 +33,7 @@ import {
   type RunLease,
 } from '../engine/device-lease-run.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
-import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
+import { getConcurrencyLimits, getProject, upsertProject } from '../workspace/config.ts';
 import {
   fingerprintProject,
   resolveBuild,
@@ -61,7 +61,7 @@ import {
   type RunEstimates,
 } from '../engine/stats.ts';
 import { writeWorkspaceLaunch } from '../supervisor/state.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../workspace-state.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import {
   installAndroidApp,
   launchAndroidApp,
@@ -123,8 +123,8 @@ import {
   pooledAndroidDevice,
 } from './android/support.ts';
 import { getExecutor } from '../exec.ts';
-import { emulatorLogFile, workspaceDir, workspaceLogsDir } from '../paths.ts';
-import { gitCommonDir, repoRoot } from '../worktree.ts';
+import { emulatorLogFile, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
+import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { SupervisorLike, FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from './android/types.ts';
 import { acquireAndroidArtifact } from './android/artifact.ts';

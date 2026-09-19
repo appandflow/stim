@@ -3,11 +3,11 @@ import {
   withWorkspaceStateLock,
   updateWorkspaceState,
   clearWorkspaceStateKey,
-} from '../workspace-state.ts';
+} from '../workspace/workspace-state.ts';
 import { deviceSlotKey, parseDeviceSlotKey } from '../device-slots.ts';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { supervisorPidFile, workspaceStateFile } from '../paths.ts';
+import { supervisorPidFile, workspaceStateFile } from '../workspace/paths.ts';
 import type { ManagedProvider } from '../engine/metro-reach.ts';
 import { sameProcessRecord, type ProcessRecord } from '../process-identity.ts';
 

@@ -1,6 +1,6 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { join } from 'node:path';
-import { getConfigDir } from '../config.ts';
+import { getConfigDir } from '../workspace/config.ts';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
 import {
   ClaimRefusedError,

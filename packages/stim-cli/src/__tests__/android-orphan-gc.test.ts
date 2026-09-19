@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { collectGcReport, runGc } from '../commands/gc.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
-import { ensureConfig, getProject, upsertProject } from '../config.ts';
+import { ensureConfig, getProject, upsertProject } from '../workspace/config.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { listOrphanedAvdDirectories } from '../sim/android.ts';
 import { parkSim, readParked } from '../sim-pool.ts';

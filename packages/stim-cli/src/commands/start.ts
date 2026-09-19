@@ -5,19 +5,25 @@ import { dirname } from 'node:path';
 import type { Command } from 'commander';
 import { phaseLine, stepTimer } from '../command-output.ts';
 import type { StartError, StartFacts } from '../supervisor/start-facts.ts';
-import type { SupervisorRecord } from '../config-types.ts';
-import { getProject, upsertProject } from '../config.ts';
+import type { SupervisorRecord } from '../workspace/config-types.ts';
+import { getProject, upsertProject } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { pidExists, resolveProjectMetro } from '../metro.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { resolveSupervisorTarget, type SupervisorStateRecord } from '../supervisor/ownership.ts';
 import type { MetroResolution } from '../metro.ts';
 import { queryLogs } from '../logs-query.ts';
-import { ensureWorkspaceStorage, supervisorLogFile, workspaceLogsDir } from '../paths.ts';
+import { ensureWorkspaceStorage, supervisorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
 import { reserveMetroPort } from '../ports.ts';
-import { appProjectProblem, detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot } from '../project.ts';
+import {
+  appProjectProblem,
+  detectAndroidPackage,
+  detectBundleId,
+  detectIsExpo,
+  findProjectRoot,
+} from '../workspace/project.ts';
 import { clearManagedMetroTunnel, readMetroTunnel } from '../supervisor/state.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../workspace-state.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { CACHE_PROVIDER_ENV, cacheProviderEnv } from '@stim-cli/cache';
 import { workspaceProcessLockError, withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { stopOwnedMetroForReset } from '../supervisor/cache-reset.ts';
@@ -36,7 +42,7 @@ import {
   settingShapeErrors,
   tunnelModeSetting,
   unknownSettingKeys,
-} from '../settings.ts';
+} from '../workspace/settings.ts';
 import { detectProviders, planMetroReach, PUBLIC_METRO_ENV, type ManagedProvider } from '../engine/metro-reach.ts';
 import {
   startTunnelSequence,
@@ -48,7 +54,7 @@ import {
   type StartTunnelSequenceResult,
   type TunnelRecord,
 } from '../engine/tunnel.ts';
-import { gitCommonDir, repoRoot } from '../worktree.ts';
+import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 
 const DEFAULT_WAIT_SECONDS = 60;
 const POLL_MS = 500;

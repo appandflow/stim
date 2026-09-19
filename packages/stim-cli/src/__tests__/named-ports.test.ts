@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { claimMetroPort, getProject, removeProject, upsertProject } from '../config.ts';
+import { claimMetroPort, getProject, removeProject, upsertProject } from '../workspace/config.ts';
 import { clearNamedPorts, getNamedPort, portListeners } from '../named-ports.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { findReclaimablePort } from '../ports.ts';

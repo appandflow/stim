@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { workspaceDir } from '../paths.ts';
+import { workspaceDir } from '../workspace/paths.ts';
 import { sanitizeDeviceLabel } from '../sim/ios.ts';
 import type { RemoteDaemon } from './eas-simulator.ts';
 

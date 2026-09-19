@@ -26,7 +26,7 @@ import {
   hasRemote,
   dirtyPaths,
   restoreFile,
-} from '../worktree.ts';
+} from '../workspace/worktree.ts';
 
 afterEach(() => resetExecutor());
 

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import { type NdjsonRecord, parseNdjsonLine } from '../ndjson.ts';
-import { workspaceDir, workspaceLogsDir } from '../paths.ts';
+import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import logsCommand, {
   ERRORS_PRINT_CAP,
   formatRecord,
@@ -14,7 +14,7 @@ import logsCommand, {
   validateLevel,
   validateSources,
 } from '../commands/logs.ts';
-import { getConfigPath, upsertProject } from '../config.ts';
+import { getConfigPath, upsertProject } from '../workspace/config.ts';
 
 type ActionFn = (opts: Record<string, unknown>) => void | Promise<void>;
 

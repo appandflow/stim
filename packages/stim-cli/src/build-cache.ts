@@ -7,7 +7,7 @@ import { resolveArtifact, storeArtifact } from '@stim-cli/core';
 import { getExecutor } from './exec.ts';
 import { register } from './cache-manifest.ts';
 import { ASSET_MANIFEST_FILE, parseAssetManifest, type AssetManifest } from './engine/asset-manifest.ts';
-import { sharedBuildCache as cacheRoot } from './paths.ts';
+import { sharedBuildCache as cacheRoot } from './workspace/paths.ts';
 
 export { artifactIn, buildCacheKey } from '@stim-cli/core';
 export { cacheRoot };

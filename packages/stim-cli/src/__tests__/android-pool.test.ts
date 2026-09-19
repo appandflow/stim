@@ -2,7 +2,7 @@ import { vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getProject, loadConfig, setDevice, upsertProject } from '../config.ts';
+import { getProject, loadConfig, setDevice, upsertProject } from '../workspace/config.ts';
 import { ensureOwnedDevice } from '../engine/device.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { adoptParked, parkSim, readParked, removeParkedAfter } from '../sim-pool.ts';

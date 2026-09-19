@@ -6,7 +6,7 @@ import { getExecutor } from './exec.ts';
 import { makeTemporaryDirectory } from './temporary.ts';
 import { checkStorageLayout } from './doctor-storage.ts';
 import { inspectIosDebugArchitectures } from './doctor-ios-architectures.ts';
-import { appProjectProblem, detectIsExpo } from './project.ts';
+import { appProjectProblem, detectIsExpo } from './workspace/project.ts';
 import * as expoFingerprint from '@expo/fingerprint';
 import { diffFingerprintSources, fingerprintProject } from './build-cache.ts';
 import type { DebugInfoDir, FingerprintSource } from '@expo/fingerprint';
@@ -18,10 +18,10 @@ import {
   locallyKnownUpstream,
   repoRoot,
   type UpstreamState,
-} from './worktree.ts';
+} from './workspace/worktree.ts';
 import { dependencyState, hasInstalledDependencies, installedNpmTreeIsValid } from './dependency-state.ts';
-import { workspaceDerivedData } from './paths.ts';
-import { type Config, type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from './config.ts';
+import { workspaceDerivedData } from './workspace/paths.ts';
+import { type Config, type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from './workspace/config.ts';
 import { podInstallCommand } from './engine/bundler.ts';
 import { liveOwnedDeviceCount } from './engine/device.ts';
 import { simslimIsOnPath } from './engine/simslim.ts';
@@ -45,7 +45,7 @@ import {
   resolveSettings,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
-} from './settings.ts';
+} from './workspace/settings.ts';
 import type { RemoteDeviceBackend } from './engine/device-remote.ts';
 import { readAndroidCasToolchain, resolveAndroidCompilerCache } from './engine/android-cas.ts';
 import { readCxxLauncherStates, type CxxLauncherState } from './doctor-cxx.ts';

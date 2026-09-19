@@ -2,7 +2,7 @@ import type { ChildProcess } from 'node:child_process';
 import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, join, resolve as resolvePath, sep } from 'node:path';
-import { getConfigDir } from '../config.ts';
+import { getConfigDir } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { pidExists } from '../metro.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';

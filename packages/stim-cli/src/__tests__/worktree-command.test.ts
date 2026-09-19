@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { dependencyInstallCommand } from '../commands/worktree.ts';
-import { findEnclosingWorktreeRoot, upsertProject } from '../config.ts';
+import { findEnclosingWorktreeRoot, upsertProject } from '../workspace/config.ts';
 
 let tmpHome: string;
 

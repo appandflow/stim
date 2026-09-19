@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getProject, upsertProject } from '../config.ts';
+import { getProject, upsertProject } from '../workspace/config.ts';
 import {
   checkForUpdate,
   doctorDueReason,

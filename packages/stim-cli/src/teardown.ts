@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { lstatSync, renameSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { loadConfig, withConfigLock } from './config.ts';
+import { loadConfig, withConfigLock } from './workspace/config.ts';
 import {
   clearAppDataContainer,
   deleteParkedIosSim,

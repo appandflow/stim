@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getExecutor } from '../../../packages/stim-cli/src/exec.ts';
-import { upsertProject } from '../../../packages/stim-cli/src/config.ts';
+import { upsertProject } from '../../../packages/stim-cli/src/workspace/config.ts';
 import { ensureOwnedDevice } from '../../../packages/stim-cli/src/engine/device.ts';
 import { installAndroidApp } from '../../../packages/stim-cli/src/engine/app-install.ts';
 import { apkPackage, dumpApkManifest } from '../../../packages/stim-cli/src/commands/android.ts';

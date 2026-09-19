@@ -2,14 +2,14 @@ import { deviceSlotKey, parseDeviceSlotKey, validateDeviceSlot } from '../device
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { getConfigDir } from '../config.ts';
+import { getConfigDir } from '../workspace/config.ts';
 import { withDirLock } from '../dir-lock.ts';
 import {
   clearWorkspaceStateKeys,
   readWorkspaceState,
   withWorkspaceStateLock,
   writeWorkspaceState,
-} from '../workspace-state.ts';
+} from '../workspace/workspace-state.ts';
 import { segment } from './build-lock.ts';
 
 export const LEASE_VERSION = 1;

@@ -12,7 +12,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { getConfigDir, loadConfig } from './config.ts';
+import { getConfigDir, loadConfig } from './workspace/config.ts';
 
 function existingPath(path: string): { existing: string; resolved: string } {
   const missing: string[] = [];

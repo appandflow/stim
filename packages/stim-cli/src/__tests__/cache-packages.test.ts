@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import assert from 'node:assert';
 import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
 import { readManifest } from '../cache-manifest.ts';
-import { sharedBuildCache, sharedMetroCache } from '../paths.ts';
+import { sharedBuildCache, sharedMetroCache } from '../workspace/paths.ts';
 import { hasStoreAt } from '../supervisor/metro-store.ts';
 import { buildCacheKey, resolveBuild, storeBuild, storedSources } from '../build-cache.ts';
 

@@ -1,7 +1,7 @@
 import { request } from 'http';
 import { connect } from 'net';
 import { existsSync } from 'fs';
-import { loadConfig, allMetroPorts, removeProject, claimMetroPort } from './config.ts';
+import { loadConfig, allMetroPorts, removeProject, claimMetroPort } from './workspace/config.ts';
 import { isOnMountedVolume, listMountedVolumes } from './fs-util.ts';
 
 export function isMetroRunning(port: number): Promise<boolean> {

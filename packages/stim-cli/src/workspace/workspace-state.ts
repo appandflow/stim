@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { withDirLock } from './dir-lock.ts';
+import { withDirLock } from '../dir-lock.ts';
 import { ensureWorkspaceStorage, workspaceStateFile, workspaceStateLock } from './paths.ts';
 
 export interface WorkspaceState {

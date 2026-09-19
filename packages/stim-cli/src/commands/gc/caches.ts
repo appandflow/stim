@@ -2,7 +2,7 @@ import { readdirSync, rmSync } from 'fs';
 import { homedir, tmpdir } from 'os';
 import { dirname, isAbsolute, join, relative } from 'path';
 import chalk from 'chalk';
-import { getConfigDir } from '../../config.ts';
+import { getConfigDir } from '../../workspace/config.ts';
 import { formatBytes } from '../../fs-util.ts';
 import { pruneCache, type CacheDescriptor } from '../../caches.ts';
 import { canonicalPath } from './paths.ts';

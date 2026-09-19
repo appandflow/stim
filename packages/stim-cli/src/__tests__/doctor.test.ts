@@ -14,7 +14,7 @@ import {
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { Command } from 'commander';
-import { getProject } from '../config.ts';
+import { getProject } from '../workspace/config.ts';
 import {
   checkBuildCacheProvider,
   checkCompilationCache,
@@ -39,7 +39,7 @@ import doctorCommand, { doctorSuccessLines, parseDoctorPlatform, shadowedStimFin
 import type { Finding } from '../doctor.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import type { EasAuthResult } from '../engine/remote-cache.ts';
-import { workspaceDerivedData } from '../paths.ts';
+import { workspaceDerivedData } from '../workspace/paths.ts';
 import assert from 'node:assert';
 import {
   analyzeStimVersions,

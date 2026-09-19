@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import chalk from 'chalk';
-import { loadConfig } from '../../config.ts';
+import { loadConfig } from '../../workspace/config.ts';
 import { readClaimSet } from '../../ownership-claim.ts';
 import {
   findOrphanedOwnedSessions,
@@ -16,8 +16,8 @@ import {
 } from '../../engine/eas-simulator.ts';
 import { resolveEasCliBin } from '../../engine/remote-cache.ts';
 import { getExecutor } from '../../exec.ts';
-import { detectIsExpo, findProjectRoot } from '../../project.ts';
-import { workspaceDir, workspaceStateFile } from '../../paths.ts';
+import { detectIsExpo, findProjectRoot } from '../../workspace/project.ts';
+import { workspaceDir, workspaceStateFile } from '../../workspace/paths.ts';
 import { withRemoteSessionLock } from '../../engine/device-remote.ts';
 import { withEasProjectLock } from '../../engine/eas-project-lock.ts';
 import {
@@ -26,7 +26,7 @@ import {
   removeEasSessionClaim,
   type EasSessionClaim,
 } from '../../engine/eas-session-ledger.ts';
-import type { Config } from '../../config-types.ts';
+import type { Config } from '../../workspace/config-types.ts';
 import { canonicalPath } from './paths.ts';
 
 export interface EasSessionSweep {

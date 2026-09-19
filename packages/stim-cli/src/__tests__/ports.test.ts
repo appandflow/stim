@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { getExecutor, resetExecutor } from '../exec.ts';
-import { upsertProject, setDevice, saveConfig, getProject, claimMetroPort } from '../config.ts';
+import { upsertProject, setDevice, saveConfig, getProject, claimMetroPort } from '../workspace/config.ts';
 import { computeNextPort, findReclaimablePort, allocatePort, reserveMetroPort } from '../ports.ts';
 
 const allFree = async () => true;

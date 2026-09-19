@@ -11,7 +11,7 @@ import {
   NOT_OURS_UNRESPONSIVE,
 } from '../metro.ts';
 import { captureProcessToken } from '../process-identity.ts';
-import { writeWorkspaceState } from '../workspace-state.ts';
+import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { spawn as realSpawn } from 'node:child_process';
 import { realpathSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

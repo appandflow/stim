@@ -4,9 +4,9 @@ import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
 import { directorySize } from './fs-util.ts';
 import { registeredCaches } from './cache-manifest.ts';
-import { findProjectRoot } from './project.ts';
-import { resolveSettings, settingShapeErrors, type SettingsObject } from './settings.ts';
-import { gitCommonDir, repoRoot } from './worktree.ts';
+import { findProjectRoot } from './workspace/project.ts';
+import { resolveSettings, settingShapeErrors, type SettingsObject } from './workspace/settings.ts';
+import { gitCommonDir, repoRoot } from './workspace/worktree.ts';
 
 export interface CacheDescriptor {
   name: string;

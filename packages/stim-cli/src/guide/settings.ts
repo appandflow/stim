@@ -1,4 +1,4 @@
-import { ANDROID_AVD_CONFIG_HELP } from '../settings.ts';
+import { ANDROID_AVD_CONFIG_HELP } from '../workspace/settings.ts';
 
 export default {
   summary: 'Settings Stim reads, and where they can live',

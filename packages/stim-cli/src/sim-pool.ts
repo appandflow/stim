@@ -1,9 +1,16 @@
 import { assignSlotDevice, deviceSlotPlatforms, removeSlotDevice } from './device-slots.ts';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { ensureConfig, getConfigDir, getConfigPath, loadConfig, saveConfig, withConfigLock } from './config.ts';
+import {
+  ensureConfig,
+  getConfigDir,
+  getConfigPath,
+  loadConfig,
+  saveConfig,
+  withConfigLock,
+} from './workspace/config.ts';
 import { clearClaimChild, markClaimChildPending, releaseClaim, tryAcquireClaim } from './ownership-claim.ts';
-import type { Config, DeviceRecord } from './config-types.ts';
+import type { Config, DeviceRecord } from './workspace/config-types.ts';
 
 export type PoolPlatform = 'ios' | 'android';
 

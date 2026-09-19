@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { clearFreeClaimSet, readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { runGc } from '../commands/gc.ts';
-import { saveConfig } from '../config.ts';
+import { saveConfig } from '../workspace/config.ts';
 
 const faults = vi.hoisted(() => ({
   readOnly: '',

@@ -9,18 +9,18 @@ import {
   settingShapeErrors,
   unknownSettingKeys,
   type SettingsObject,
-} from '../settings.ts';
-import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } from '../config.ts';
+} from '../workspace/settings.ts';
+import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } from '../workspace/config.ts';
 import type { ReleasedLease } from '../engine/device-lease.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
-import { findProjectRoot } from '../project.ts';
+import { findProjectRoot } from '../workspace/project.ts';
 import { reclaimProject } from '../reclaim.ts';
 import { claimFailure } from '../ownership-claim.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../sim-pool.ts';
 import type { ParkedDevice } from '../teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
 import { acquireWarmClaim, warmClaimAcquiredLine, withWarmClaim, type WarmClaimWait } from '../engine/warm-claim.ts';
-import { incompleteInstallRefusal, refreshMainCheckout, type RefreshFailure } from '../worktree-refresh.ts';
+import { incompleteInstallRefusal, refreshMainCheckout, type RefreshFailure } from '../workspace/worktree-refresh.ts';
 import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
 import {
   branchExists,
@@ -41,8 +41,8 @@ import {
   restoreFile,
   unpushedCommits,
   warmWorktreePaths,
-} from '../worktree.ts';
-import type { WorktreeEntry } from '../worktree.ts';
+} from '../workspace/worktree.ts';
+import type { WorktreeEntry } from '../workspace/worktree.ts';
 
 interface WorktreeSettings {
   worktree?: { exclude?: string[] };

@@ -28,7 +28,7 @@ import {
 import { appReadinessMessage, formatDuration, launchErrorReport, phaseLine, stepTimer } from '../../command-output.ts';
 import { launchErrorPreview } from '../../launch-error-preview.ts';
 import { MODE_BARE, MODE_EXPO, writeWorkspaceLaunch } from '../../supervisor/state.ts';
-import { writeWorkspaceState } from '../../workspace-state.ts';
+import { writeWorkspaceState } from '../../workspace/workspace-state.ts';
 import type {
   VerifyLaunchResultLike,
   RemoteUploadLike,
@@ -57,9 +57,9 @@ import { remoteAndroidDeps } from '../../engine/device-remote.ts';
 import { type RunLease, DEBUG_VERIFY_STEP_MS, lostLine, lostRefusal } from '../../engine/device-lease-run.ts';
 import { type LoadProjectProviderResult, exitAfterFlush } from '../../engine/remote-cache.ts';
 import { type ReportAndroidResultArgs, finishAndroidUpload, reportAndroidResult, persistLastBuild } from './result.ts';
-import { loadConfig, saveConfig, setDevice, withConfigLock, upsertProject } from '../../config.ts';
+import { loadConfig, saveConfig, setDevice, withConfigLock, upsertProject } from '../../workspace/config.ts';
 import { providerUploadOutcome } from '../../build-cache.ts';
-import { detectAndroidPackage } from '../../project.ts';
+import { detectAndroidPackage } from '../../workspace/project.ts';
 import { launchOutcomeRecord } from '../native-runtime.ts';
 import { startCollector } from './collector.ts';
 import { captureNativeCrashes, printNativeCrashReport } from '../../native-crash.ts';

@@ -5,10 +5,10 @@ import { realpathSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileS
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
-import { upsertProject, setDevice, getProject } from '../config.ts';
+import { upsertProject, setDevice, getProject } from '../workspace/config.ts';
 import { describeDereferenced, parkedIosCacheKey, reclaimProject } from '../reclaim.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
-import { ensureWorkspaceStorage, workspaceStateFile } from '../paths.ts';
+import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
 let tmpHome: string;

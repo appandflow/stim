@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
-import { workspaceDerivedData } from '../paths.ts';
+import { workspaceDerivedData } from '../workspace/paths.ts';
 import { readManifest } from '../cache-manifest.ts';
 import {
   buildIos,

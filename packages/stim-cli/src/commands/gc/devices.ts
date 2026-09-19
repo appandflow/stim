@@ -2,7 +2,7 @@ import { deviceSlotPlatforms, projectDeviceSlots } from '../../device-slots.ts';
 import { existsSync } from 'fs';
 import { isAbsolute } from 'path';
 import chalk from 'chalk';
-import { clearDevice, getProject, withConfigLock } from '../../config.ts';
+import { clearDevice, getProject, withConfigLock } from '../../workspace/config.ts';
 import { plural } from '../../command-output.ts';
 import { directorySize } from '../../fs-util.ts';
 import { leaseIsExpired, listLeaseFiles, type LeaseFileEntry } from '../../engine/device-lease.ts';
@@ -10,7 +10,7 @@ import { listAllIosSims, listIosDeviceTypes, parseRuntimeVersion, type IosSimRec
 import { listAvds, ownedAvdDirectory, type OrphanedAvdDirectory } from '../../sim/android.ts';
 import { dropParked, readParked, type ParkedSim } from '../../sim-pool.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd, teardownParkedIosSim, teardownParkedAvd } from '../../teardown.ts';
-import type { Config } from '../../config-types.ts';
+import type { Config } from '../../workspace/config-types.ts';
 import type { OrphanedDevice } from '../../reclaim-types.ts';
 
 export interface StaleProjectDevice {

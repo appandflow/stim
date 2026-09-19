@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { join, resolve } from 'path';
 import { workspaceName, workspaceStateDir as workspaceDir } from '@stim-cli/core';
 import { getConfigDir } from './config.ts';
-import { withDirLock } from './dir-lock.ts';
+import { withDirLock } from '../dir-lock.ts';
 
 export {
   buildCacheRoot as sharedBuildCache,

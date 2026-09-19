@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { clearSupervisorState } from '../commands/stop.ts';
 import { readWorkspaceLaunches, writeWorkspaceLaunch, type WorkspaceLaunchRecord } from '../supervisor/state.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../workspace-state.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 
 let stimHome: string;
 let root: string;

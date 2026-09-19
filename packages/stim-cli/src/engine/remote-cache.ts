@@ -6,9 +6,9 @@ import { pathToFileURL } from 'node:url';
 import { format } from 'node:util';
 import { getExecutor } from '../exec.ts';
 import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
-import { workspaceLogsDir } from '../paths.ts';
+import { workspaceLogsDir } from '../workspace/paths.ts';
 import { stripAnsi } from '../process-output.ts';
-import { resolvePackageJson } from '../project.ts';
+import { resolvePackageJson } from '../workspace/project.ts';
 import { expoBinFromPackage, expoBinPath, findBinUpward } from '../supervisor/server-expo.ts';
 
 export const EAS_PROVIDER_PACKAGE = 'eas-build-cache-provider';

@@ -3,7 +3,7 @@ import { dirname, resolve as resolvePath } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { pidExists } from '../metro.ts';
 import { gateMetroOrigin, REMOTE_METRO_WRONG } from './metro-gate.ts';
-import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
+import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { clearRemoteSession, readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
 import {
   acceptAlertArgs,
@@ -38,7 +38,7 @@ import {
   recordEasSessionClaim,
   removeEasSessionClaim,
 } from './eas-session-ledger.ts';
-import { getConfigDir } from '../config.ts';
+import { getConfigDir } from '../workspace/config.ts';
 
 export type RemoteDeviceBackend = 'proxy' | 'eas';
 

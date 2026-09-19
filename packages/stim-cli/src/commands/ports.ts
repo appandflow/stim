@@ -1,7 +1,7 @@
 import type { Command } from 'commander';
-import { getProject } from '../config.ts';
+import { getProject } from '../workspace/config.ts';
 import { clearNamedPorts, getNamedPort } from '../named-ports.ts';
-import { findProjectRoot } from '../project.ts';
+import { findProjectRoot } from '../workspace/project.ts';
 
 async function inProject(action: (root: string) => Promise<void>): Promise<void> {
   try {

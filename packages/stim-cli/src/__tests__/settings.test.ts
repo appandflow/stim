@@ -30,10 +30,10 @@ import {
   settingShapeErrors,
   tunnelModeSetting,
   unknownSettingKeys,
-} from '../settings.ts';
+} from '../workspace/settings.ts';
 import { resolveOptimizations, resolveMetroSharedCache } from '../optimizations.ts';
-import { saveConfig, setProjectSetting, setRepoSetting, upsertProject } from '../config.ts';
-import { findProjectRoot } from '../project.ts';
+import { saveConfig, setProjectSetting, setRepoSetting, upsertProject } from '../workspace/config.ts';
+import { findProjectRoot } from '../workspace/project.ts';
 
 type SettingsView = {
   caches?: string[];
@@ -423,7 +423,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
 };
 
 test('every known setting has a shape, and a wrong-typed value is one refusal naming the key and the shape', () => {
-  const src = readFileSync(new URL('../settings.ts', import.meta.url), 'utf-8');
+  const src = readFileSync(new URL('../workspace/settings.ts', import.meta.url), 'utf-8');
   const table = src.slice(src.indexOf('const SETTING_SHAPES'), src.indexOf('};', src.indexOf('const SETTING_SHAPES')));
   const known = [...table.matchAll(/^\s*'?([A-Za-z0-9.]+)'?: '[a-z-]+',$/gm)]
     .map((match) => match[1])
