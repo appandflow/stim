@@ -1,15 +1,20 @@
 import { afterEach, expect, test } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { symbolicateErrors } from '../error-symbolication.ts';
-import { errorDiagnostics, mergeErrorCopies } from '../error-diagnostics.ts';
-import { captureNativeCrashes, captureWorkspaceCrashes, parseAndroidCrashes, parseIosCrash } from '../native-crash.ts';
+import { symbolicateErrors } from '../diagnostics/error-symbolication.ts';
+import { errorDiagnostics, mergeErrorCopies } from '../diagnostics/error-diagnostics.ts';
+import {
+  captureNativeCrashes,
+  captureWorkspaceCrashes,
+  parseAndroidCrashes,
+  parseIosCrash,
+} from '../diagnostics/native-crash.ts';
 import { verifyLaunch } from '../engine/app-install.ts';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { launchErrorPreview } from '../launch-error-preview.ts';
-import { buildCriteria, recordMatches } from '../logs-query.ts';
+import { buildCriteria, recordMatches } from '../diagnostics/logs-query.ts';
 import { recordFromLine } from '../supervisor/server-expo.ts';
 import { clearWorkspaceStateKeys, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { upsertProject } from '../workspace/config.ts';

@@ -1,7 +1,7 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import type { Finding } from './doctor.ts';
-import { getExecutor } from './exec.ts';
+import { getExecutor } from '../exec.ts';
 
 interface ArchitectureTarget {
   target: string;

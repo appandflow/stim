@@ -10,7 +10,7 @@ import { isMetroRunning } from '../ports.ts';
 import { resolveProjectMetro } from '../metro.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import type { MetroResolution } from '../metro.ts';
-import { queryLogs } from '../logs-query.ts';
+import { queryLogs } from '../diagnostics/logs-query.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readSupervisorState } from './stop.ts';
 import { findProjectRoot, projectShortcut } from '../workspace/project.ts';

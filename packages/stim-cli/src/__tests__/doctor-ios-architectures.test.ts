@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { inspectIosDebugArchitectures, parseIosDebugArchitectures } from '../doctor-ios-architectures.ts';
+import { inspectIosDebugArchitectures, parseIosDebugArchitectures } from '../diagnostics/doctor-ios-architectures.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 
 function target(settings: Record<string, unknown> = {}, name = 'NativePod') {

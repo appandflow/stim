@@ -1,6 +1,6 @@
 import { hashFile } from '../engine/installed-artifact.ts';
 import { vi } from 'vitest';
-import * as crashDiagnostics from '../native-crash.ts';
+import * as crashDiagnostics from '../diagnostics/native-crash.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import assert from 'node:assert';
 import { captureProcessToken } from '../process-identity.ts';

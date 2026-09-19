@@ -34,9 +34,9 @@ import {
   detectXcodeMajor,
   parseXcodeMajor,
   checkConcurrency,
-} from '../doctor.ts';
+} from '../diagnostics/doctor.ts';
 import doctorCommand, { doctorSuccessLines, parseDoctorPlatform, shadowedStimFinding } from '../commands/doctor.ts';
-import type { Finding } from '../doctor.ts';
+import type { Finding } from '../diagnostics/doctor.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import type { EasAuthResult } from '../engine/remote-cache.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import {
   inspectIosDebugArchitectures,
   parseIosDebugArchitectures,
-} from '../../packages/stim-cli/src/doctor-ios-architectures.ts';
+} from '../../packages/stim-cli/src/diagnostics/doctor-ios-architectures.ts';
 import { getExecutor } from '../../packages/stim-cli/src/exec.ts';
 
 test(

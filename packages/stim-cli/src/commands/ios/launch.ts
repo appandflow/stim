@@ -38,8 +38,8 @@ import {
   IOS_CRASH_REPORT_RETRY,
   printNativeCrashReport,
   simulatorConsolePaths,
-} from '../../native-crash.ts';
-import { errorDiagnostics } from '../../error-diagnostics.ts';
+} from '../../diagnostics/native-crash.ts';
+import { errorDiagnostics } from '../../diagnostics/error-diagnostics.ts';
 
 interface VerifyIosRunArgs {
   root: string;

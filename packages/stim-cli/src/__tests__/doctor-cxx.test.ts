@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { acquireBuildLock, releaseBuildLock } from '../engine/build-lock.ts';
-import { readCxxLauncherStates, repairCxxLauncherState } from '../doctor-cxx.ts';
-import { checkCxxCompilerLauncher, type Finding } from '../doctor.ts';
+import { readCxxLauncherStates, repairCxxLauncherState } from '../diagnostics/doctor-cxx.ts';
+import { checkCxxCompilerLauncher, type Finding } from '../diagnostics/doctor.ts';
 import { claudeLocalSettingsPath, missingAllowance } from '../sandbox.ts';
 import { writeCasToolchain } from './_factories.ts';
 

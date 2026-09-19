@@ -12,11 +12,16 @@ import {
   sandboxAllowance,
   sandboxFinding,
 } from '../sandbox.ts';
-import { detectFingerprintParity, detectLinkedLibraryGitMetadata, detectXcodeMajor, runDoctor } from '../doctor.ts';
-import type { DoctorPlatform, Finding } from '../doctor.ts';
+import {
+  detectFingerprintParity,
+  detectLinkedLibraryGitMetadata,
+  detectXcodeMajor,
+  runDoctor,
+} from '../diagnostics/doctor.ts';
+import type { DoctorPlatform, Finding } from '../diagnostics/doctor.ts';
 import { phaseLine } from '../command-output.ts';
 import { compareStimVersions, inspectStimVersions, type StimVersionReport } from '../stim-installations.ts';
-import { repairCxxLauncherState } from '../doctor-cxx.ts';
+import { repairCxxLauncherState } from '../diagnostics/doctor-cxx.ts';
 
 interface DoctorOptions {
   json?: boolean;

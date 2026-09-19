@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import { vi } from 'vitest';
-import * as crashDiagnostics from '../native-crash.ts';
+import * as crashDiagnostics from '../diagnostics/native-crash.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { ClaimUnavailableError, readClaimSet } from '../ownership-claim.ts';
 import { once } from 'node:events';

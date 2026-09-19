@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { NdjsonRecord } from './ndjson.ts';
+import type { NdjsonRecord } from '../ndjson.ts';
 import { bundleLocations, symbolicateErrors } from './error-symbolication.ts';
-import { resolveProjectMetro } from './metro.ts';
+import { resolveProjectMetro } from '../metro.ts';
 import { attachExpoErrorContext, readLogRecords } from './logs-query.ts';
-import { writeDiagnosticOnce } from './diagnostic-store.ts';
+import { writeDiagnosticOnce } from '../diagnostic-store.ts';
 
 function key(record: NdjsonRecord): string {
   return createHash('sha256').update(JSON.stringify(record)).digest('hex');

@@ -1,14 +1,14 @@
-import { resolveOptimizations, type Optimizations } from './optimizations.ts';
+import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync } from 'fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
-import { plural, quotedPath } from './command-output.ts';
-import { getExecutor } from './exec.ts';
-import { makeTemporaryDirectory } from './temporary.ts';
+import { plural, quotedPath } from '../command-output.ts';
+import { getExecutor } from '../exec.ts';
+import { makeTemporaryDirectory } from '../temporary.ts';
 import { checkStorageLayout } from './doctor-storage.ts';
 import { inspectIosDebugArchitectures } from './doctor-ios-architectures.ts';
-import { appProjectProblem, detectIsExpo } from './workspace/project.ts';
+import { appProjectProblem, detectIsExpo } from '../workspace/project.ts';
 import * as expoFingerprint from '@expo/fingerprint';
-import { diffFingerprintSources, fingerprintProject } from './build-cache.ts';
+import { diffFingerprintSources, fingerprintProject } from '../build-cache.ts';
 import type { DebugInfoDir, FingerprintSource } from '@expo/fingerprint';
 import {
   dirtyFingerprintFiles,
@@ -18,26 +18,26 @@ import {
   locallyKnownUpstream,
   repoRoot,
   type UpstreamState,
-} from './workspace/worktree.ts';
-import { dependencyState, hasInstalledDependencies, installedNpmTreeIsValid } from './dependency-state.ts';
-import { workspaceDerivedData } from './workspace/paths.ts';
-import { type Config, type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from './workspace/config.ts';
-import { podInstallCommand } from './engine/bundler.ts';
-import { liveOwnedDeviceCount } from './engine/device.ts';
-import { simslimIsOnPath } from './engine/simslim.ts';
-import { readHostMemoryPressure, hostMemoryPressureAdvice, type HostMemoryPressure } from './host-memory.ts';
-import { listBuildSlots } from './engine/build-slots.ts';
-import { type IosSimRecord, listAllIosSims } from './devices/ios.ts';
-import { parkedMaxSetting, POOL_SETTING_REMEDY } from './devices/sim-pool.ts';
-import { ccacheEnabled, COMPILATION_CACHE_MIN_XCODE, detectXcodeMajor, parseXcodeMajor } from './engine/xcode.ts';
-import { type AdbDevices, listAdbDevices } from './devices/android.ts';
+} from '../workspace/worktree.ts';
+import { dependencyState, hasInstalledDependencies, installedNpmTreeIsValid } from '../dependency-state.ts';
+import { workspaceDerivedData } from '../workspace/paths.ts';
+import { type Config, type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from '../workspace/config.ts';
+import { podInstallCommand } from '../engine/bundler.ts';
+import { liveOwnedDeviceCount } from '../engine/device.ts';
+import { simslimIsOnPath } from '../engine/simslim.ts';
+import { readHostMemoryPressure, hostMemoryPressureAdvice, type HostMemoryPressure } from '../host-memory.ts';
+import { listBuildSlots } from '../engine/build-slots.ts';
+import { type IosSimRecord, listAllIosSims } from '../devices/ios.ts';
+import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
+import { ccacheEnabled, COMPILATION_CACHE_MIN_XCODE, detectXcodeMajor, parseXcodeMajor } from '../engine/xcode.ts';
+import { type AdbDevices, listAdbDevices } from '../devices/android.ts';
 import {
   type EasAuthResult,
   checkEasAuth as probeEasAuth,
   ownerFromConfig,
   providerFromConfig,
   resolveEasCliBin,
-} from './engine/remote-cache.ts';
+} from '../engine/remote-cache.ts';
 import {
   iosSimSlimProfileSetting,
   remoteAndroidSetting,
@@ -45,9 +45,9 @@ import {
   resolveSettings,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
-} from './workspace/settings.ts';
-import type { RemoteDeviceBackend } from './engine/device-remote.ts';
-import { readAndroidCasToolchain, resolveAndroidCompilerCache } from './engine/android-cas.ts';
+} from '../workspace/settings.ts';
+import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
+import { readAndroidCasToolchain, resolveAndroidCompilerCache } from '../engine/android-cas.ts';
 import { readCxxLauncherStates, type CxxLauncherState } from './doctor-cxx.ts';
 import { checkMachineSettings, readMachineSettings } from './doctor-config.ts';
 export { parseCmakeCacheLauncher } from './doctor-cxx.ts';

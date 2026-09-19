@@ -9,11 +9,19 @@ import { findProjectRoot } from '../workspace/project.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
-import { buildCriteria, compileGrep, fileSizes, followLogs, logFiles, parseSince, queryLogs } from '../logs-query.ts';
-import { errorDiagnostics } from '../error-diagnostics.ts';
+import {
+  buildCriteria,
+  compileGrep,
+  fileSizes,
+  followLogs,
+  logFiles,
+  parseSince,
+  queryLogs,
+} from '../diagnostics/logs-query.ts';
+import { errorDiagnostics } from '../diagnostics/error-diagnostics.ts';
 import { launchErrorPreview } from '../launch-error-preview.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import { captureWorkspaceCrashes } from '../native-crash.ts';
+import { captureWorkspaceCrashes } from '../diagnostics/native-crash.ts';
 
 const LEVEL_WIDTH = 5;
 const SRC_WIDTH = 6;

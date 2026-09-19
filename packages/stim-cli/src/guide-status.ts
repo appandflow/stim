@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getConfigDir, getProject, upsertProject } from './workspace/config.ts';
-import type { DoctorPlatform } from './doctor.ts';
+import type { DoctorPlatform } from './diagnostics/doctor.ts';
 import { compareStimVersions } from './stim-installations.ts';
 import type { DoctorRunRecord, ProjectRecord } from './workspace/config-types.ts';
 

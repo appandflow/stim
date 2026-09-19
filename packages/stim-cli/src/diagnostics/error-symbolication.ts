@@ -1,4 +1,4 @@
-import type { NdjsonRecord } from './ndjson.ts';
+import type { NdjsonRecord } from '../ndjson.ts';
 
 interface Frame {
   file: string;

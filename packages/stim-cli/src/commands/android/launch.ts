@@ -62,8 +62,8 @@ import { providerUploadOutcome } from '../../build-cache.ts';
 import { detectAndroidPackage } from '../../workspace/project.ts';
 import { launchOutcomeRecord } from '../native-runtime.ts';
 import { startCollector } from './collector.ts';
-import { captureNativeCrashes, printNativeCrashReport } from '../../native-crash.ts';
-import { errorDiagnostics } from '../../error-diagnostics.ts';
+import { captureNativeCrashes, printNativeCrashReport } from '../../diagnostics/native-crash.ts';
+import { errorDiagnostics } from '../../diagnostics/error-diagnostics.ts';
 
 interface VerifyAndroidRunArgs {
   root: string;

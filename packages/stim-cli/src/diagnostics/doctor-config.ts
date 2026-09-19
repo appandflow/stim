@@ -1,8 +1,8 @@
 import { existsSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
-import { configCorruptRepair } from './workspace/config.ts';
+import { configCorruptRepair } from '../workspace/config.ts';
 import type { Finding } from './doctor.ts';
-import { compilerCacheFallbackMessage, type CompilerCacheFallback, type Optimizations } from './optimizations.ts';
+import { compilerCacheFallbackMessage, type CompilerCacheFallback, type Optimizations } from '../optimizations.ts';
 import {
   mergeSettingsLayers,
   PATH_SETTINGS,
@@ -11,8 +11,8 @@ import {
   settingsLayers,
   unknownSettingKeys,
   type SettingsLayer,
-} from './workspace/settings.ts';
-import type { SettingsObject } from './workspace/settings-types.ts';
+} from '../workspace/settings.ts';
+import type { SettingsObject } from '../workspace/settings-types.ts';
 
 export interface MachineSettings {
   settings: SettingsObject;

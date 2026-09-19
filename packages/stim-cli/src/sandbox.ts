@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { dirname, join } from 'path';
-import type { Finding } from './doctor.ts';
+import type { Finding } from './diagnostics/doctor.ts';
 
 export type Harness = 'claude-code' | 'codex' | null;
 
