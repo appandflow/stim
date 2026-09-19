@@ -8,7 +8,7 @@ import { checkStorageLayout } from './doctor-storage.ts';
 import { inspectIosDebugArchitectures } from './doctor-ios-architectures.ts';
 import { appProjectProblem, detectIsExpo } from '../workspace/project.ts';
 import * as expoFingerprint from '@expo/fingerprint';
-import { diffFingerprintSources, fingerprintProject } from '../build-cache.ts';
+import { diffFingerprintSources, fingerprintProject } from '../cache/build-cache.ts';
 import type { DebugInfoDir, FingerprintSource } from '@expo/fingerprint';
 import {
   dirtyFingerprintFiles,

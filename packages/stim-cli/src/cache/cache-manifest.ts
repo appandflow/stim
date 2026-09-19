@@ -2,7 +2,7 @@ import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { join, resolve } from 'path';
 import { readCacheManifest, updateCacheManifest } from '@stim-cli/core';
-import { getConfigDir } from './workspace/config.ts';
+import { getConfigDir } from '../workspace/config.ts';
 
 export interface CacheEntry {
   dir: string;

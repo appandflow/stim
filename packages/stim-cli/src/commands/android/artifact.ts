@@ -23,7 +23,7 @@ import {
   type storeBuild,
   type storedAssetManifest,
   type untrackedNativeFiles,
-} from '../../build-cache.ts';
+} from '../../cache/build-cache.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
 import {
   takeoverLine,

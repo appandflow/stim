@@ -11,8 +11,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../exec.ts';
-import { declaredCachePaths, discoverCaches, pruneCache, sizeCaches } from '../caches.ts';
-import { register } from '../cache-manifest.ts';
+import { declaredCachePaths, discoverCaches, pruneCache, sizeCaches } from '../cache/caches.ts';
+import { register } from '../cache/cache-manifest.ts';
 import { makeCacheDescriptor } from './_factories.ts';
 import { setProjectSetting, upsertProject } from '../workspace/config.ts';
 import assert from 'node:assert';

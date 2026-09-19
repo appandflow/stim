@@ -2,11 +2,11 @@ import { existsSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
 import { homedir, tmpdir } from 'os';
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
-import { directorySize } from './fs-util.ts';
+import { directorySize } from '../fs-util.ts';
 import { registeredCaches } from './cache-manifest.ts';
-import { findProjectRoot } from './workspace/project.ts';
-import { resolveSettings, settingShapeErrors, type SettingsObject } from './workspace/settings.ts';
-import { gitCommonDir, repoRoot } from './workspace/worktree.ts';
+import { findProjectRoot } from '../workspace/project.ts';
+import { resolveSettings, settingShapeErrors, type SettingsObject } from '../workspace/settings.ts';
+import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 
 export interface CacheDescriptor {
   name: string;

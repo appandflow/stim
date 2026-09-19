@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import chalk from 'chalk';
-import { register } from '../cache-manifest.ts';
+import { register } from '../cache/cache-manifest.ts';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { sharedCompilationCache, workspaceDerivedData } from '../workspace/paths.ts';

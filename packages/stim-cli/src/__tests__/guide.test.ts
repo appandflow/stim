@@ -3,7 +3,7 @@ import { OPTIMIZATION_SHAPES } from '../optimizations.ts';
 import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_FINGERPRINT_IGNORES } from '../build-cache.ts';
+import { DEFAULT_FINGERPRINT_IGNORES } from '../cache/build-cache.ts';
 import { OUTPUT_LABELS } from '../command-output.ts';
 import { CLAIM_REFUSED, CLAIM_UNAVAILABLE } from '../ownership-claim.ts';
 import TOPICS from '../guide/index.ts';

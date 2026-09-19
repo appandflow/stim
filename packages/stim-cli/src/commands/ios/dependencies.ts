@@ -1,6 +1,6 @@
 import { loadCacheProvider } from '@stim-cli/cache';
 import { resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
-import { fingerprintProject, resolveBuild, storeBuild, untrackedNativeFiles } from '../../build-cache.ts';
+import { fingerprintProject, resolveBuild, storeBuild, untrackedNativeFiles } from '../../cache/build-cache.ts';
 import { getConcurrencyLimits, getProject, upsertProject } from '../../workspace/config.ts';
 import {
   clearOtherUserApps,

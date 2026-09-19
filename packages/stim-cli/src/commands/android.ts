@@ -40,7 +40,7 @@ import {
   storeBuild,
   storedAssetManifest,
   untrackedNativeFiles,
-} from '../build-cache.ts';
+} from '../cache/build-cache.ts';
 import { acquireBuildLock, releaseBuildLock, waitForBuild as waitForOtherBuild } from '../engine/build-lock.ts';
 import { claimFailure } from '../ownership-claim.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.ts';

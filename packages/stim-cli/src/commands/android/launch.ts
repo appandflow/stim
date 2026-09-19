@@ -58,7 +58,7 @@ import { type RunLease, DEBUG_VERIFY_STEP_MS, lostLine, lostRefusal } from '../.
 import { type LoadProjectProviderResult, exitAfterFlush } from '../../engine/remote-cache.ts';
 import { type ReportAndroidResultArgs, finishAndroidUpload, reportAndroidResult, persistLastBuild } from './result.ts';
 import { loadConfig, saveConfig, setDevice, withConfigLock, upsertProject } from '../../workspace/config.ts';
-import { providerUploadOutcome } from '../../build-cache.ts';
+import { providerUploadOutcome } from '../../cache/build-cache.ts';
 import { detectAndroidPackage } from '../../workspace/project.ts';
 import { launchOutcomeRecord } from '../native-runtime.ts';
 import { startCollector } from './collector.ts';

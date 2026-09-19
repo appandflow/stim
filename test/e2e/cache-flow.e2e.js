@@ -12,7 +12,7 @@ import {
   storeBuild,
   resolveBuild,
   entryDir,
-} from '../../packages/stim-cli/src/build-cache.ts';
+} from '../../packages/stim-cli/src/cache/build-cache.ts';
 import { buildLockPath } from '../../packages/stim-cli/src/engine/build-lock.ts';
 import { loadConfig } from '../../packages/stim-cli/src/workspace/config.ts';
 import { createFingerprintAsync } from './fixtures/fingerprint-stub.mjs';
@@ -20,7 +20,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
 const CLI = join(REPO, 'packages', 'stim-cli', 'bin', 'cli.ts');
 const LOCK_URL = pathToFileURL(join(REPO, 'packages', 'stim-cli', 'src', 'engine', 'build-lock.ts')).href;
-const CACHE_URL = pathToFileURL(join(REPO, 'packages', 'stim-cli', 'src', 'build-cache.ts')).href;
+const CACHE_URL = pathToFileURL(join(REPO, 'packages', 'stim-cli', 'src', 'cache', 'build-cache.ts')).href;
 
 const ctx = {};
 

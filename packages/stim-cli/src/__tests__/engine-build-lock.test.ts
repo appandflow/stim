@@ -403,7 +403,7 @@ describe('waitingLine', () => {
 
 describe('a real race between real processes', { timeout: 30_000 }, () => {
   const LOCK_URL = new URL('../engine/build-lock.ts', import.meta.url).href;
-  const CACHE_URL = new URL('../build-cache.ts', import.meta.url).href;
+  const CACHE_URL = new URL('../cache/build-cache.ts', import.meta.url).href;
   const CHILD_TIMEOUT_MS = 20_000;
   const HANDSHAKE_MS = 10_000;
 

@@ -19,7 +19,7 @@ import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
 import { Command } from 'commander';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { getProject, saveConfig, loadConfig, upsertProject } from '../workspace/config.ts';
-import { register } from '../cache-manifest.ts';
+import { register } from '../cache/cache-manifest.ts';
 import { ensureRemoteBootOwned, withRemoteSessionLock } from '../engine/device-remote.ts';
 import { deviceLeasePath, deviceLocksDir } from '../engine/device-lease.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';

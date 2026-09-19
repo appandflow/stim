@@ -2,7 +2,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import chalk from 'chalk';
 import { phaseLine } from '../command-output.ts';
-import { register } from '../cache-manifest.ts';
+import { register } from '../cache/cache-manifest.ts';
 import { getExecutor } from '../exec.ts';
 import { sharedCcache, workspaceLogsDir } from '../workspace/paths.ts';
 import type { CcacheActivity } from './build-facts.ts';
