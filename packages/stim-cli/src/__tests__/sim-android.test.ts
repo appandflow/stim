@@ -928,6 +928,22 @@ test('bootAndroidEmulator spawns the resolved emulator binary', () => {
   expect(spawned).toEqual([[join(sdk, 'emulator', SDK_TOOL_FILES.emulator), ['-avd', 'stim-app', '-port', '5556']]]);
 });
 
+test('bootAndroidEmulator starts the emulator tree from the home directory on Windows so its launcher and crashpad handler never hold a worktree open', () => {
+  const sdk = makeFakeSdk(tmpHome);
+  process.env.ANDROID_HOME = sdk;
+  const cwds: unknown[] = [];
+  setExecutor({
+    spawn: (_cmd: string, _args: string[], opts: { cwd?: string }) => {
+      cwds.push(opts.cwd);
+      return { unref: () => {}, pid: 42 };
+    },
+  });
+  expect(bootAndroidEmulator('stim-app', 5556, { platform: 'win32' })).toBe(42);
+  bootAndroidEmulator('stim-app', 5556, { platform: 'darwin' });
+  bootAndroidEmulator('stim-app', 5556, { platform: 'linux' });
+  expect(cwds).toEqual([homedir(), undefined, undefined]);
+});
+
 test('listAvds keeps the bare command when resolution falls back to PATH', () => {
   process.env.ANDROID_HOME = join(tmpHome, 'nowhere');
   const calls: string[] = [];

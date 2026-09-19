@@ -798,7 +798,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
         if (process.platform === 'win32' && /Permission denied/i.test(message)) {
           console.error(
             chalk.dim(
-              'Another process holds a file or directory inside the worktree. An adb server started from it keeps its working directory open until `adb kill-server`; Sysinternals handle.exe lists other holders.',
+              'Another process holds a file or directory inside the worktree. An adb server or emulator started from it keeps its working directory open; `adb kill-server` releases the server, and Sysinternals handle.exe lists other holders.',
             ),
           );
         }
