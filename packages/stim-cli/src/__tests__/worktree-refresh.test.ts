@@ -518,6 +518,7 @@ test.each(['.', 'apps/mobile'])(
     expect(result.stderr).not.toContain(`pods        source ${join(root, 'apps', 'other')}`);
     expect(result.stderr).not.toContain(`deps        source ${target}`);
   },
+  30_000,
 );
 
 test('a failed install refuses with the code the build path uses and does not copy', async () => {

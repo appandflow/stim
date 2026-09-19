@@ -133,14 +133,15 @@ jobs:
   # the emulator binary at ANDROID_HOME=C:\Android\android-sdk, but NO system
   # image, so one is installed below before Stim can create its own AVD.
   #
-  # It does NOT ship VM acceleration. GitHub scopes hardware-accelerated Android
-  # virtualization to LARGER hosted Windows runners, and
-  # reactivecircus/android-emulator-runner supports Linux and macOS only. So an
-  # emulator here boots in software, if at all. The loop step is therefore
-  # allowed to fail while the APK assertion below it is not: the minimum this
-  # job proves is that Stim drives a real Gradle build to a real artifact on
-  # Windows. `emulator -accel-check` is recorded so the verdict rests on the
-  # runner's own answer rather than on the assumption above.
+  # It DOES have VM acceleration: `emulator -accel-check` on this image answers
+  # "WHPX(10.0.26100) is installed and usable", so an owned emulator can boot
+  # here. That is measured, not assumed, and the check stays in the job so the
+  # claim keeps being re-verified rather than trusted.
+  #
+  # The loop step is still allowed to fail while the APK assertion below it is
+  # not. Boot, install and launch depend on an emulator that can regress with
+  # the image; producing the artifact does not. The floor this job holds is that
+  # Stim drives a real Gradle build to a real APK on Windows.
   windows-android-e2e:
     name: windows android e2e (non-blocking)
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.ref_name, 'windows'))
