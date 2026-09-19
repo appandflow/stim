@@ -190,6 +190,46 @@ describe('startExpoServer', () => {
     expect(seen.opts.detached).toBe(false);
   });
 
+  test('on win32 the package bin runs under the supervisor node, not the PATH node its shebang names', async () => {
+    fakeBin();
+    const cli = join(root, 'node_modules', 'expo', 'bin', 'cli');
+    mkdirSync(join(root, 'node_modules', 'expo', 'bin'), { recursive: true });
+    writeFileSync(cli, '#!/usr/bin/env node\n');
+    chmodSync(cli, 0o755);
+    writeFileSync(
+      join(root, 'node_modules', 'expo', 'package.json'),
+      JSON.stringify({ name: 'expo', version: '54.0.0', bin: { expo: 'bin/cli' } }),
+    );
+    const calls: { cmd: string; args: string[] }[] = [];
+    const spawnFn = (cmd: string, args: string[]) => {
+      calls.push({ cmd, args });
+      return fakeChild();
+    };
+    const bin = expoBinPath(root);
+    expect(bin).toMatch(/node_modules[\\/]expo[\\/]bin[\\/]cli$/);
+    await startExpoServer({ root, port: 8111, logsDir: join(root, 'logs'), spawnFn, platform: 'win32' });
+    expect(calls[0]).toEqual({ cmd: process.execPath, args: [bin, 'start', '--port', '8111'] });
+
+    await startExpoServer({ root, port: 8111, logsDir: join(root, 'logs'), spawnFn, platform: 'darwin' });
+    expect(calls[1]).toEqual({ cmd: bin, args: ['start', '--port', '8111'] });
+  });
+
+  test('on win32 a .bin shim without a package bin is still spawned as itself', async () => {
+    const shim = fakeBin();
+    const calls: { cmd: string; args: string[] }[] = [];
+    await startExpoServer({
+      root,
+      port: 8111,
+      logsDir: join(root, 'logs'),
+      platform: 'win32',
+      spawnFn: (cmd, args) => {
+        calls.push({ cmd, args });
+        return fakeChild();
+      },
+    });
+    expect(calls[0]).toEqual({ cmd: shim, args: ['start', '--port', '8111'] });
+  });
+
   test('a one-shot reset becomes `expo start --clear`', async () => {
     fakeBin();
     const calls: { cmd: string; args: string[]; opts: SpawnOptions }[] = [];
