@@ -16,10 +16,18 @@ launch-crash contract), [`agent-benchmark-v3.md`](./agent-benchmark-v3.md)
 ## Why a new campaign
 
 The 16 published datasets under `website/src/data/benchmarks/` all carry
-`protocolVersion: 4` and `recordedOn` 2026-09-10 or 2026-09-11, recorded on
-stim `1.0.0-rc.12`. They predate device pooling, slots, named ports, and the
-1.6.0 automatic Swift compilation cache. The iOS readiness stage files are
-named `*-rc12` for that reason.
+`protocolVersion: 4` and `recordedOn` 2026-09-10 or 2026-09-11. They are the
+campaign archived as `docs/benchmark-history/1.0.0.json`: all 48
+`settingsReadySeconds` match that snapshot and none match `rc.json`, and they
+were published by `e6844650d` with the CLI at `1.0.0`. The `*-rc12` iOS stage
+filenames are retained legacy stage names, not the recorded version; the
+launch-crash datasets' `stageAliases` end `-crash-rc23` for the same reason.
+Issue #869 calls this the "rc12" campaign; that label is wrong and only the
+stage filenames support it.
+
+The campaign predates device pooling, slots, named ports, and the 1.6.0
+automatic Swift compilation cache. This document calls it the **1.0.0
+campaign** throughout.
 
 ## Status legend
 
@@ -45,14 +53,14 @@ benchmark-root/
   state/
 ```
 
-| Item                                               | Status        | Note                                                                                                                                                             |
-| -------------------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Benchmark root exists                              | Not satisfied | No `stim-bench-coordinator` or equivalent directory exists on this host, and no `STIM_BENCH_*` variable is set. The whole root must be created.                  |
-| `bin/stim` shim                                    | Not satisfied | Preflight refuses a shim whose text does not contain the pinned `runtime/node_modules/stim/dist/cli.mjs` path (`driver.mjs:587`).                                |
-| `runtime/node_modules/stim` at 1.6.0               | Not satisfied | Must be a real npm install of the published `stim@1.6.0` tarball so `runtime/package-lock.json` carries the integrity string preflight reads (`driver.mjs:546`). |
-| `golden/`                                          | Not satisfied | See section 4.                                                                                                                                                   |
-| `results/`, `state/`                               | Not satisfied | Created with the root.                                                                                                                                           |
-| Single APFS volume for goldens and restore targets | Satisfied     | Only `Macintosh HD` is mounted, so the `diskutil info -plist` volume-UUID equality check in the v3 protocol is trivially met.                                    |
+| Item                                           | Status        | Note                                                                                                                                                                                                                                                                                                            |
+| ---------------------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Benchmark root exists                          | Not satisfied | No `stim-bench-coordinator` or equivalent directory exists on this host, and no `STIM_BENCH_*` variable is set. The whole root must be created.                                                                                                                                                                 |
+| `bin/stim` shim                                | Not satisfied | Preflight refuses a shim whose text does not contain the pinned `runtime/node_modules/stim/dist/cli.mjs` path (`driver.mjs:587`).                                                                                                                                                                               |
+| `runtime/node_modules/stim` at 1.6.0           | Not satisfied | Must be a real npm install of the published `stim@1.6.0` tarball so `runtime/package-lock.json` carries the integrity string preflight reads (`driver.mjs:546`).                                                                                                                                                |
+| `golden/`                                      | Not satisfied | See section 4.                                                                                                                                                                                                                                                                                                  |
+| `results/`, `state/`                           | Not satisfied | Created with the root.                                                                                                                                                                                                                                                                                          |
+| Goldens and restore targets on one APFS volume | Satisfied     | Everything under `/Users` is on the single Data volume `disk3s5`, so the v3 `diskutil info -plist` volume-UUID equality check passes. This host also mounts the sealed system volume and separate CoreSimulator runtime volumes; v3 treats the CoreSimulator volume as distinct for the 12 GiB free-space gate. |
 
 Environment to export before any driver command:
 
@@ -74,10 +82,13 @@ export STIM_BENCH_NATIVE_COMPAT_MANIFEST=/path/to/native-compat/manifest.json
 reproduced here rather than committed. It is immutable for a block; preflight
 fails on any mismatch instead of recording one.
 
-`versionChecks()` compares exactly these 16 keys. Four more
+`versionChecks()` compares exactly 16 of the keys below. Four more
 (`IOS_DEVICE_TYPE`, `IOS_RUNTIME`, `ANDROID_SYSTEM_IMAGE`,
-`NATIVE_COMPAT_SHA256`) are read elsewhere in the driver, and the v3 protocol
-adds informational provenance pins.
+`NATIVE_COMPAT_SHA256`) are read elsewhere in the driver. The remaining four
+(`TRAILHEAD_UPSTREAM_COMMIT`, `STIM_COMMIT`, `CODEX_SERVICE_TIER`,
+`CODEX_REASONING_EFFORT`) are the v3 protocol's informational provenance pins
+and are read nowhere in the driver; the service tier and reasoning effort are
+hardcoded in the isolated Codex config (`driver.mjs:1072`).
 
 ```text
 # Fixture and product
@@ -103,9 +114,9 @@ COCOAPODS_VERSION=<unknown; 1.16.2 is installed, the frozen campaign pinned 1.17
 
 # Devices
 IOS_DEVICE_TYPE=iPhone 17
-IOS_RUNTIME=26.5
-ANDROID_SDK_VERSION=<unknown; `sdkmanager --version` is not resolvable on the current PATH>
-ANDROID_EMULATOR_VERSION=35.6.11.0 (build_id 13610412) (CL:N/A)
+IOS_RUNTIME=26.5  # deliberately held at the frozen value; see below
+ANDROID_SDK_VERSION=<unknown; `sdkmanager` is not resolvable on the current PATH>
+ANDROID_EMULATOR_VERSION=<unknown; `emulator` is not resolvable on the current PATH either. It reports 35.6.11.0 (build_id 13610412) (CL:N/A) at ~/Library/Android/sdk/emulator/emulator>
 ADB_VERSION=36.0.0-13206524
 ANDROID_SYSTEM_IMAGE=system-images;android-36;google_apis_playstore_ps16k;arm64-v8a
 
@@ -115,18 +126,24 @@ AGENT_DEVICE_SHA256=<unknown until the compatibility copy is prepared>
 NATIVE_COMPAT_SHA256=<unknown until prepareNativeCompatibility writes its manifest>
 ```
 
-Changes from the frozen rc12 pins, with why:
+Changes from the frozen 1.0.0-campaign pins, with why:
 
-| Key                             | rc12                         | 1.6.0                           | Why                                                                                                                                                                                                                                                       |
+| Key                             | 1.0.0                        | 1.6.0                           | Why                                                                                                                                                                                                                                                       |
 | ------------------------------- | ---------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `TRAILHEAD_UPSTREAM_COMMIT`     | `f4a4a3b7…`                  | `5944bdfd…`                     | SDK 58 preview.3 / RN 0.88.0-rc.0. That commit also dropped trailhead's committed `SWIFT_ENABLE_EXPLICIT_MODULES=NO` override, so the ExpoModulesJSI cache behaviour in section 7 is live on the fixture.                                                 |
-| `STIM_VERSION`                  | `1.0.0-rc.12`                | `1.6.0`                         | The version under test.                                                                                                                                                                                                                                   |
+| `STIM_VERSION`                  | `1.0.0`                      | `1.6.0`                         | The version under test.                                                                                                                                                                                                                                   |
 | `MACOS_VERSION` / `MACOS_BUILD` | `26.5.2` / `25F84`           | `27.0` / `26A428`               | Host has moved; preflight compares literally.                                                                                                                                                                                                             |
 | `XCODE_VERSION` / `XCODE_BUILD` | `26.6` / `17F113`            | `27.0` / `27A266a`              | **Required, not incidental.** `2ece2d34d` enables `SWIFT_ENABLE_COMPILE_CACHE=YES` only on Swift 6.4+, which ships with Xcode 27. On Xcode 26.6 the headline 1.6.0 feature never activates. `xcrun swift --version` on this host reports Apple Swift 6.4. |
 | `CODEX_VERSION`                 | `0.145.0-alpha.11`           | `0.153.4`                       | Installed version.                                                                                                                                                                                                                                        |
 | `CLAUDE_VERSION`                | `2.1.257`                    | `2.1.266`                       | Installed version.                                                                                                                                                                                                                                        |
 | `ADB_VERSION`                   | `36.0.2-14143358`            | `36.0.0-13206524`               | The installed adb is _older_ than the frozen pin. Section 3 treats this as a blocker to resolve, not a value to accept.                                                                                                                                   |
 | `ANDROID_EMULATOR_VERSION`      | `36.4.9 (build_id 14788078)` | `35.6.11.0 (build_id 13610412)` | Same: the installed emulator is older than the frozen pin.                                                                                                                                                                                                |
+
+`IOS_DEVICE_TYPE` and `IOS_RUNTIME` are deliberately held at `iPhone 17` /
+`26.5`. Both are still installed, and moving the runtime is a device-pin change,
+which starts a new block that cannot be pooled with anything earlier. Xcode 27
+ships an iOS 27.0 runtime; using it is a choice, not an upgrade that happens by
+itself.
 
 Values that cannot be known without running something:
 
@@ -164,17 +181,16 @@ string, and for every key `<platform>.<variant>.<arm>`:
 
 Every dispatched cell needs its own entry, so a full campaign needs all 12 keys
 (2 platforms x 3 variants x 2 arms). The machine string carries into
-`preflight.timingTargets.machine` and into the exported dataset's environment
-block.
-
-The rc12 datasets record the machine as `Mac mini / Apple M4 / 16 GB`. Confirm
-that is still the recording host before reusing the string; the exporter's
-sanitized machine JSON must contain only `model`, `chip`, and `memory`.
+`preflight.timingTargets.machine` only; the exported dataset's
+`environment.machine` comes independently from the exporter's sanitized machine
+JSON, which must contain only `model`, `chip`, and `memory`. Keep the two
+consistent by hand. The 1.0.0 datasets record `Mac mini / Apple M4 / 16 GB`;
+confirm that is still the recording host before reusing either.
 
 `screenReadySeconds` is a reported performance signal, not a validity gate, so
-the values below are set from the rc12 observations with headroom. The two
+the values below are set from the 1.0.0 observations with headroom. The two
 gates that _do_ invalidate — `platformCommandSeconds` and `runTimeoutSeconds` —
-are set well above the rc12 maxima so a slow model is not silently discarded.
+are set well above the 1.0.0 maxima so a slow model is not silently discarded.
 
 ```json
 {
@@ -224,6 +240,15 @@ are set well above the rc12 maxima so a slow model is not silently discarded.
 }
 ```
 
+Only `android.native.stim` is _required_ to carry `ccacheMinHitRatePercent`
+(`driver.mjs:1318-1327`, `README.md`), but once set the threshold is enforced on
+any Android Stim build: the live `CACHE ALERT` hook and the
+`ccache-hit-rate-below-target` collection reason both fire whenever the value is
+non-null, regardless of variant (`driver.mjs:1557`, `run-guards.mjs:471`).
+Setting it on the javascript and launch-crash cells therefore arms a gate the
+contract does not ask for. Decide deliberately; the safe default is to set it
+only on `android.native.stim`.
+
 The three `ccacheMinHitRatePercent: 0` placeholders are **invalid as written** —
 `parseBenchmarkTargets` rejects a value outside `(0, 100]`. They are placeholders
 because the real number is unknown until measured (section 5). Do not guess one;
@@ -231,12 +256,12 @@ because the real number is unknown until measured (section 5). Do not guess one;
 (`driver.mjs:1324`), and a threshold that is too low silently accepts a broken
 cache while one that is too high fires a `CACHE ALERT` on every run.
 
-| Item                                                   | Status                                        |
-| ------------------------------------------------------ | --------------------------------------------- |
-| `targets.json` file                                    | Not satisfied — no benchmark root             |
-| Machine string confirmed                               | Unknown until the recording host is confirmed |
-| All 12 cell keys present                               | Not satisfied                                 |
-| `ccacheMinHitRatePercent` for the 3 Android Stim cells | Unknown until measured                        |
+| Item                                                           | Status                                        |
+| -------------------------------------------------------------- | --------------------------------------------- |
+| `targets.json` file                                            | Not satisfied — no benchmark root             |
+| Machine string confirmed                                       | Unknown until the recording host is confirmed |
+| All 12 cell keys present                                       | Not satisfied                                 |
+| `ccacheMinHitRatePercent` for `android.native.stim` (required) | Unknown until measured                        |
 
 ## 4. Golden state
 
@@ -316,11 +341,14 @@ node scripts/agent-benchmark/driver.mjs smoke stim
 node scripts/agent-benchmark/driver.mjs smoke control
 ```
 
-Also required by the protocol and not covered by a single command: a load
-average at or below 3.0 for two consecutive 15-second samples (up to a 10-minute
-wait), an empty `agent-device` campaign session inventory with no ownership
-claim on the prepared device, and the fixture main checkout clean at the fixture
-commit.
+Two of the protocol's remaining gates are already automatic: `versionChecks()`
+compares `TRAILHEAD_FIXTURE_COMMIT` against `git rev-parse HEAD` and throws on a
+non-empty `git status --short` (`driver.mjs:539`, `:567`), and `dispatch` awaits
+`waitForLoadGate()` unconditionally and throws when the one-minute load average
+fails two consecutive 15-second samples within 10 minutes (`driver.mjs:665`,
+`:1330`). The one gate with no command behind it is the `agent-device` campaign
+session inventory: it must be empty, with no ownership claim on the prepared
+device, before the timer starts.
 
 ### The Android ccache probe
 
@@ -337,7 +365,7 @@ driver subcommand for it; it is an untimed manual probe:
 4. Set the threshold below the observed warm hit rate with enough margin that
    normal variation does not fire `CACHE ALERT`, and freeze it for the campaign.
 
-**Unknown until measured.** The rc12 datasets do not publish the ccache hit
+**Unknown until measured.** The 1.0.0 datasets do not publish the ccache hit
 rate, and this is a different stim version, a different Android toolchain, and a
 different fixture, so no prior number carries over.
 
@@ -347,7 +375,10 @@ different fixture, so no prior number carries over.
 are not enough to close it: an accepted compatibility design plus **real untimed
 build and recording evidence under the exact runner policy** are still required.
 
-Established in #469 and reflected in the driver:
+Established in #469 and reflected in the driver. Every measurement below was
+made on macOS 26.5 (25F71); this host is now macOS 27.0 (26A428), so the
+nesting and `/bin/ps` behaviour needs reconfirming under the run's exact policy
+rather than assuming it carried over:
 
 - The macOS kernel refuses a nested `sandbox_apply` unless the inner profile
   compiles to the same sandbox the process already runs under. SwiftPM generates
@@ -385,7 +416,7 @@ until they pass.
 | -------------------------------------------------------------------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Android system image `google_apis_playstore_ps16k;arm64-v8a`                                 | Not satisfied | `~/Library/Android/sdk/system-images/android-36/` contains only `google_apis_playstore`. Either install the pinned `ps16k` image or change the pin — and a changed device pin is a new block that cannot be pooled with anything earlier.                                                                                                                                                                                                                                                                                           |
 | `sdkmanager` on the benchmark PATH                                                           | Not satisfied | `versionChecks()` invokes it unqualified; it does not resolve on this shell.                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| Android emulator and adb at or above the frozen pins                                         | Not satisfied | Installed emulator 35.6.11.0 / adb 36.0.0 are both older than the rc12 pins. Decide deliberately: update the SDK and pin the new versions, or pin the installed older ones.                                                                                                                                                                                                                                                                                                                                                         |
+| Android emulator and adb at or above the frozen pins                                         | Not satisfied | Installed emulator 35.6.11.0 / adb 36.0.0 are both older than the frozen pins. Decide deliberately: update the SDK and pin the new versions, or pin the installed older ones.                                                                                                                                                                                                                                                                                                                                                       |
 | CocoaPods version decision                                                                   | Not satisfied | 1.16.2 installed vs 1.17.0 frozen. `prepare` bakes the choice into the fixture commit's `Pods/Manifest.lock`.                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | Node version on the benchmark PATH                                                           | Not satisfied | v22.22.1 on this shell vs 26.7.0 frozen.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | Codex auth file for the isolated runner home                                                 | Unknown       | `STIM_BENCH_CODEX_AUTH` must point at a valid `codex-auth.json`; not verifiable without dispatching.                                                                                                                                                                                                                                                                                                                                                                                                                                |
@@ -415,7 +446,7 @@ A complete campaign is exactly 48 cells: 4 models
 `scripts/snapshot-benchmark-times.mjs` refuses to snapshot anything less.
 `gpt-5.6-terra` is a v3 screening model and is **not** part of the campaign.
 
-Per-cell estimates are the rc12 `totalSeconds` for the same cell, in seconds,
+Per-cell estimates are the 1.0.0 campaign's `totalSeconds` for the same cell, in seconds,
 as `stim / control`:
 
 | Platform | Scenario     | sol        | luna      | opus      | sonnet    |
@@ -438,7 +469,7 @@ Aggregates from the same data:
 | **Total agent time** | **48** | **19,175** | **5.33** |
 
 **Total estimated agent wall-clock: about 5 hours 20 minutes.** That is the sum
-of the 48 rc12 run durations, and it is a floor, not the campaign duration.
+of the 48 recorded run durations, and it is a floor, not the campaign duration.
 
 Not included, and unknown until measured:
 
@@ -451,12 +482,12 @@ Not included, and unknown until measured:
   adapter, the ccache probe, the five self-tests, and the two isolation smokes.
 - The untimed iOS build/recording/cleanup validation #469 requires.
 - Invalid attempts. The protocol preserves an invalid run and reschedules the
-  same cell under a new id; the rc12 campaign's own history in
-  `agent-benchmark-v3.md` records repeated invalid control attempts.
+  same cell under a new id. `agent-benchmark-v3.md` records two invalid Luna
+  control attempts in the recorder pilot alone before a valid one completed.
 - Direction of change for 1.6.0 itself. Device pooling, slots, named ports and
   Swift compilation caching should move the Stim arms down and leave the control
   arms roughly where they were, but SDK 58 and Xcode 27 change both arms' build
-  work. **Unknown until measured**; do not present the rc12 numbers as a
+  work. **Unknown until measured**; do not present the 1.0.0 numbers as a
   1.6.0 prediction.
 
 A defensible planning figure is a full working day per platform across two
@@ -487,8 +518,8 @@ and by dropping the `-Xfrontend` wrappers around `-load-plugin-executable`.
   it now publishes 1.6.0's Swift compilation cache at 90% of its achievable
   value on a stock SDK 58 app.
 - iOS native is also the campaign's narrowest Stim/control gap: 254/500,
-  282/649, 248/464, 248/649 in rc12 — roughly 2.0x to 2.6x, against 3.7x to
-  7.6x for iOS javascript. It is the cell with the most to gain and the least
+  282/649, 248/464, 248/649 in the 1.0.0 campaign — 1.87x to 2.61x, against
+  3.37x to 7.57x for iOS javascript. It is the cell with the most to gain and the least
   headroom to spare.
 - The fixture commit makes this worse, not better: `5944bdfd` explicitly dropped
   trailhead's committed `SWIFT_ENABLE_EXPLICIT_MODULES=NO` override, which was a
@@ -503,16 +534,16 @@ and by dropping the `-Xfrontend` wrappers around `-load-plugin-executable`.
   version reproduces, which is exactly what the "any deliberate pin change
   starts a new named block" rule exists to prevent. A reader could not
   reproduce the result from the pins.
-- There is no merge date to wait for. It was opened 2026-09-18 by an external
-  contributor and has no milestone; the wait is open-ended and the other 46
-  cells are ready to plan around.
-- The affected surface is bounded. 44 of the 48 cells are unaffected: all
-  Android cells (clang tasks already hit), all iOS JavaScript cells (no Swift
-  recompile), and the iOS launch-crash cells (a JavaScript repair). Only the
-  4 iOS native Stim cells sit on the fix, and their controls are unaffected
-  either way — the control arm builds cold DerivedData by construction, so the
-  measured ratio only understates Stim, never overstates it.
-- Even with 141 Swift tasks recompiling, rc12 iOS native Stim was 248-282s
+- There is no merge date to wait for. It was opened 2026-09-18, carries expo's
+  `contributor: external` triage label, and has no milestone. Its author is the
+  same person who would run this campaign, so the wait depends on Expo's review
+  and release cadence, not on writing the fix.
+- The affected surface is bounded. Only the 4 iOS native Stim cells sit on the
+  fix. The other 44 are unaffected: 24 Android cells (clang tasks already hit),
+  8 iOS JavaScript cells and 8 iOS launch-crash cells (no Swift recompile), and
+  the 4 iOS native controls, which build cold DerivedData by construction. So
+  the measured ratio only understates Stim, never overstates it.
+- Even with 141 Swift tasks recompiling, 1.0.0 iOS native Stim was 248-282s
   against 464-649s control. The claim survives without the fix; it is just
   smaller than the product can actually deliver.
 - The PR touches `build-xcframework.sh`, the same file the #469 compatibility
