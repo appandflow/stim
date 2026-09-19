@@ -853,6 +853,16 @@ test('androidToolPath falls back to the bare name when no SDK is on disk', () =>
   expect(androidToolPath('avdmanager')).toBe('avdmanager');
 });
 
+test('androidToolPath uses the Windows names the SDK installs and keeps the bare name off it', () => {
+  const sdk = join(tmpHome, 'win-sdk');
+  mkdirSync(join(sdk, 'cmdline-tools', 'latest', 'bin'), { recursive: true });
+  writeFileSync(join(sdk, 'cmdline-tools', 'latest', 'bin', 'avdmanager.bat'), '');
+  process.env.ANDROID_HOME = sdk;
+  expect(androidToolPath('avdmanager', 'win32')).toBe(join(sdk, 'cmdline-tools', 'latest', 'bin', 'avdmanager.bat'));
+  expect(androidToolPath('adb', 'win32')).toBe('adb');
+  expect(androidToolPath('emulator', 'win32')).toBe('emulator');
+});
+
 test('listAvds runs the resolved emulator binary, quoted', () => {
   const sdk = makeFakeSdk(tmpHome);
   process.env.ANDROID_HOME = sdk;

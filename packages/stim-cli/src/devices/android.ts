@@ -82,11 +82,22 @@ const SDK_TOOL_LOCATIONS = {
   avdmanager: ['cmdline-tools', 'latest', 'bin', 'avdmanager'],
 } as const;
 
+// The Windows SDK ships avdmanager as a batch wrapper around its jar; adb and the emulator are
+// plain executables.
+const WINDOWS_SDK_TOOL_EXTENSIONS: Readonly<Record<AndroidTool, string>> = {
+  emulator: '.exe',
+  adb: '.exe',
+  avdmanager: '.bat',
+};
+
 type AndroidTool = keyof typeof SDK_TOOL_LOCATIONS;
 
-export function androidToolPath(tool: AndroidTool): string {
-  const abs = join(androidHome(), ...SDK_TOOL_LOCATIONS[tool]);
-  return existsSync(abs) ? abs : tool;
+export function androidToolPath(tool: AndroidTool, platform: NodeJS.Platform = process.platform): string {
+  const location = SDK_TOOL_LOCATIONS[tool];
+  const bare = location.at(-1) as string;
+  const name = platform === 'win32' ? `${bare}${WINDOWS_SDK_TOOL_EXTENSIONS[tool]}` : bare;
+  const abs = join(androidHome(), ...location.slice(0, -1), name);
+  return existsSync(abs) ? abs : bare;
 }
 
 export interface BuildToolsEntry {
