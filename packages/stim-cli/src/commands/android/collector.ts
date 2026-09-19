@@ -7,7 +7,7 @@ import { spawnEntry } from '../../spawn-entry.ts';
 import { workspaceLogsDir } from '../../workspace/paths.ts';
 import { PLATFORM } from './support.ts';
 import { verifyCollectorOwnership } from '../../collector/ownership.ts';
-import { pidExists } from '../../metro.ts';
+import { pidExists, signalProcessTree } from '../../metro.ts';
 import { readCollectors } from '../../collector/state.ts';
 import { phaseLine } from '../../command-output.ts';
 
@@ -28,7 +28,7 @@ export function killPreviousCollector(
   {
     platform = PLATFORM,
     slot = 'default',
-    kill = (pid: number, signal: NodeJS.Signals) => process.kill(pid, signal),
+    kill = (pid: number, signal: NodeJS.Signals) => signalProcessTree(pid, signal),
     collectors = null,
     verify = verifyCollectorOwnership,
     isAlive = pidExists,

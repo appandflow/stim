@@ -9,6 +9,7 @@ import {
   processCwd,
   resolveProjectMetro,
   killMetroTree,
+  signalProcessTree,
   NOT_OURS_FOREIGN_CWD,
   NOT_OURS_UNRESPONSIVE,
 } from '../metro.ts';
@@ -176,6 +177,32 @@ test('resolveProjectMetro still refuses an unreadable-cwd listener this workspac
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('signalProcessTree kills the whole tree with taskkill on Windows and signals a group elsewhere', () => {
+  const runFile: Array<[string, string[]]> = [];
+  setExecutor({
+    run: () => '',
+    runQuiet: () => null,
+    runFileQuiet: (file: string, args: string[]) => {
+      runFile.push([file, args]);
+      return '';
+    },
+    spawn: () => {},
+  });
+  expect(signalProcessTree(4242, 'SIGTERM', { platform: 'win32' })).toBe(true);
+  expect(runFile).toEqual([['taskkill', ['/PID', '4242', '/T', '/F']]]);
+
+  const signal = vi.spyOn(process, 'kill').mockReturnValue(true);
+  expect(signalProcessTree(4242, 'SIGTERM', { group: true, platform: 'darwin' })).toBe(true);
+  expect(signal).toHaveBeenCalledWith(-4242, 'SIGTERM');
+  expect(runFile).toHaveLength(1);
+  signal.mockRestore();
+});
+
+test('signalProcessTree reports a taskkill that found no such process', () => {
+  setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
+  expect(signalProcessTree(4242, 'SIGTERM', { platform: 'win32' })).toBe(false);
 });
 
 test.each([undefined, 'malformed'])('killMetroTree refuses an unverified identity (%s)', (token) => {

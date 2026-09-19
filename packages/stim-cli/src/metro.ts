@@ -43,7 +43,7 @@ export function parseNetstatPids(out: unknown, port: number): number[] {
     const cols = line.trim().split(/\s+/);
     if (cols.length < 5 || cols[0]?.toUpperCase() !== 'TCP') continue;
     if (addressPort(cols[1]) !== port || addressPort(cols[2]) !== 0) continue;
-    const pid = Number(cols[4]);
+    const pid = Number(cols.at(-1));
     if (Number.isSafeInteger(pid) && pid > 0 && !pids.includes(pid)) pids.push(pid);
   }
   return pids;
@@ -158,14 +158,27 @@ export async function resolveProjectMetro(
   };
 }
 
+/**
+ * Terminate a process and everything it spawned. On POSIX `group` signals the process group, which
+ * is what a detached leader owns. Windows has no process groups, and its SIGTERM is
+ * TerminateProcess: no handler runs and no child is reached, so a spawned dev server or `adb
+ * logcat` would outlive its parent. taskkill /T is the only route to the tree there, and it is
+ * always forceful.
+ */
+export function signalProcessTree(
+  pid: number,
+  signal: NodeJS.Signals = 'SIGTERM',
+  { group = false, platform = process.platform }: { group?: boolean; platform?: NodeJS.Platform } = {},
+): boolean {
+  if (platform !== 'win32') return process.kill(group ? -pid : pid, signal);
+  return getExecutor().runFileQuiet('taskkill', ['/PID', String(pid), '/T', '/F']) !== null;
+}
+
 export function killMetroTree(leader: number | null | undefined, processToken?: string): boolean {
   if (!leader || leader === process.pid || inspectProcessIdentity({ pid: leader, processToken }) !== 'same')
     return false;
   try {
-    // Windows has no process groups, so there is no negative pid to signal; the supervisor hosts
-    // Metro in-process and `stop` signals its collectors separately.
-    process.kill(process.platform === 'win32' ? leader : -leader, 'SIGTERM');
-    return true;
+    return signalProcessTree(leader, 'SIGTERM', { group: true });
   } catch {
     return false;
   }

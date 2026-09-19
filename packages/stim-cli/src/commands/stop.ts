@@ -12,7 +12,7 @@ import { phaseLine, plural, releasedLeaseFact } from '../command-output.ts';
 import { clearSupervisor, getProject, upsertProject, withConfigLock } from '../workspace/config.ts';
 import type { ProjectRecord } from '../workspace/config.ts';
 import { findProjectRoot } from '../workspace/project.ts';
-import { pidExists, killMetroTree, resolveProjectMetro } from '../metro.ts';
+import { pidExists, killMetroTree, resolveProjectMetro, signalProcessTree } from '../metro.ts';
 import type { MetroResolution } from '../metro.ts';
 import {
   clearManagedMetroTunnel,
@@ -268,7 +268,7 @@ async function stopWorkspace({
   project = undefined,
   state = undefined,
   collectors = undefined,
-  signalCollector = (pid: number) => process.kill(pid, 'SIGTERM'),
+  signalCollector = (pid: number) => signalProcessTree(pid),
   verifyCollector = verifyCollectorOwnership,
   clearCollectors = clearCollectorState,
   isAlive = pidExists,
