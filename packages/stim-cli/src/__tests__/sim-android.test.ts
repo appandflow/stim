@@ -10,7 +10,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'fs';
-import { tmpdir } from 'os';
+import { homedir, tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import {
@@ -25,6 +25,7 @@ import {
   findBuildTool,
   headlessEmulatorArgs,
   bootAndroidEmulator,
+  listAdbDevices,
   configureNewOwnedAvd,
   listAvds,
   memoizeEmulatorProbe,
@@ -443,6 +444,26 @@ test('resolveOwnedAvdSerial reports notOwned for a non-Stim AVD name', () => {
     spawn: () => null,
   });
   expect(resolveOwnedAvdSerial('Pixel_6_API_34')).toEqual({ notOwned: true });
+});
+
+test('listAdbDevices runs the adb client from the home directory on Windows so an auto-started server never holds a worktree open', () => {
+  const calls: { cmd: string; cwd: unknown }[] = [];
+  setExecutor({
+    run: (cmd, opts) => {
+      calls.push({ cmd, cwd: opts?.cwd });
+      return 'List of devices attached\nemulator-5554\tdevice\n';
+    },
+  });
+  expect(listAdbDevices({ timeoutMs: 1000, platform: 'win32' }).emulators).toEqual([
+    { serial: 'emulator-5554', consolePort: 5554 },
+  ]);
+  listAdbDevices({ platform: 'darwin' });
+  listAdbDevices({ platform: 'linux' });
+  expect(calls).toEqual([
+    { cmd: 'adb devices', cwd: homedir() },
+    { cmd: 'adb devices', cwd: undefined },
+    { cmd: 'adb devices', cwd: undefined },
+  ]);
 });
 
 test('resolveOwnedAvdSerial resolves the live serial by AVD identity, not by port', () => {

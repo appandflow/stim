@@ -353,8 +353,24 @@ export function listAvds({ timeoutMs }: { timeoutMs?: number } = {}): string[] {
   return parseAvdList(getExecutor().run(`${androidTool('emulator')} -list-avds`, { timeoutMs }));
 }
 
-export function listAdbDevices({ timeoutMs }: { timeoutMs?: number } = {}): AdbDevices {
-  return parseAdbDevices(getExecutor().run(`${androidTool('adb')} devices`, { timeoutMs }));
+/**
+ * Working directory for the adb client Stim runs first in an Android flow. The adb server is
+ * spawned by whichever client finds none running and inherits that client's working directory; on
+ * Windows the server then holds that directory open for its lifetime, and Windows refuses to delete
+ * a directory with an open handle, so a server started from a worktree breaks `worktree remove`.
+ * https://github.com/appandflow/stim/issues/914
+ */
+function adbClientCwd(platform: NodeJS.Platform = process.platform): string | undefined {
+  return platform === 'win32' ? homedir() : undefined;
+}
+
+export function listAdbDevices({
+  timeoutMs,
+  platform = process.platform,
+}: { timeoutMs?: number; platform?: NodeJS.Platform } = {}): AdbDevices {
+  return parseAdbDevices(
+    getExecutor().run(`${androidTool('adb')} devices`, { timeoutMs, cwd: adbClientCwd(platform) }),
+  );
 }
 
 const ADB_PROP_TIMEOUT_MS = 5000;
