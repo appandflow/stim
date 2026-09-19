@@ -154,7 +154,7 @@ refuses to take one as evidence of another:
 | ------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `zero-config`       | Stim writes no runtime state into the repo; global workspace state needs no ignore rule | `git status --porcelain` before and after; a change to `metro.config.js` / `Podfile` / `gradle.properties` is a CRITICAL failure; every worktree is removed WITHOUT `--force` and no project `.gitignore` mutation is expected                                                                                                                                                        |
 | `metro-store`       | the shared transform store is engaged per dev-server mode, stores, and is reused        | the `cache_store_added` record in the global workspace `logs/metro.ndjson` (Expo SDK 54+: the config adapter's confirmation from inside the child; bare: the in-process append), the absence of a "could not share" warning, one store root for both workspaces, then a file count around each workspace's build+launch                                                               |
-| `xcode-cas`         | Xcode 26 compilation caching                                                            | the five build settings read verbatim off the `build_start` record in `build-ios.ndjson`, CAS directory growth across the cold compile, and near-zero growth when a never-compiled workspace compiles the same sources                                                                                                                                                                |
+| `xcode-cas`         | Xcode compilation caching, clang always and Swift when the gate allows                  | the build settings read verbatim off the `build_start` record in `build-ios.ndjson` -- with the Swift ones expected `YES` or `NO` from the same two-part gate the product applies, `xcrun swift` 6.4+ AND the fixture's `react-native` 0.87+ -- plus CAS directory growth across the cold compile, and near-zero growth when a never-compiled workspace compiles the same sources     |
 | `gradle-cache`      | the Gradle build cache                                                                  | `--build-cache` read off the `build_start` record in `build-android.ndjson` (added in #78 so this need not race `ps`), growth of `<gradle user home>/caches/build-cache-1`, and `FROM-CACHE` tasks in a second worktree forced to run gradle with `stim android --no-build-cache`                                                                                                     |
 | `fingerprint-cache` | the entry is complete and under the right key                                           | the entry holds the artifact AND `fingerprint-sources.json` (and, for an Android release entry, `assets-manifest.json`); a second run in the SAME tree must HIT what the first stored, which is what proves the entry landed under the POST-mutation key that prebuild and `pod install` shift it to                                                                                  |
 | `pods-reuse`        | carried Pods skip `pod install`                                                         | the racing worktrees warm ignored state from the source checkout, whose installed Pods match their tracked Podfile.lock; the one that takes the BUILD path must print no `pods` phase line at all                                                                                                                                                                                     |
@@ -255,8 +255,10 @@ Two workflows under `.github/workflows/`:
   race -- plus two cache-hit builds, and on Android one forced `gradlew` run)
   and uploads its machine-readable summary
   as an artifact with `if: always()` -- a FAILING cache run is exactly when the
-  per-check evidence is worth reading. iOS runs on `macos-latest` (Xcode via
-  `maxim-lobanov/setup-xcode`); Android runs on a Linux+KVM host via
+  per-check evidence is worth reading. iOS runs on the `xcode-27` image, which
+  ships Xcode 27 and its Swift 6.4 toolchain as the only Xcode; the job selects
+  `/Applications/Xcode_27.0.app` and fails if the toolchain is below Swift 6.4.
+  Android runs on a Linux+KVM host via
   `reactivecircus/android-emulator-runner`. Each platform's `{bare, expo}` are a
   matrix, so they run as parallel, isolated jobs. `~/.stim`'s shared build
   cache (`STIM_BUILD_CACHE`) is persisted across runs with `actions/cache`, so
@@ -265,11 +267,21 @@ Two workflows under `.github/workflows/`:
 
 ### Assumptions a reviewer must confirm
 
-- The `macos-latest` runner image ships the Xcode that `latest-stable` selects,
-  and it is new enough for the RN/Expo template the fixture creates.
+- `xcode-27` is a GitHub **preview** image (actions/runner-images#14404). It can
+  queue longer and break sooner than a GA image, and `xcode-27-xlarge` is the
+  only other size. The iOS lane is worth that because Swift compilation caching
+  cannot be exercised anywhere else: the `macos-26` images top out at Xcode 26.6.
 - The `@react-native-community/cli` and `create-expo-app` flag surfaces in the
   driver's `FIXTURE_COMMANDS` match the versions the runners fetch (override via
   the env vars above if not).
+- **Which fixture reaches the Swift branch.** Swift caching needs the fixture's
+  `react-native` to be 0.87 or newer as well as the Swift 6.4 toolchain. The bare
+  fixture takes `react-native@latest` and reaches it; the Expo fixture takes
+  whatever `expo-template-blank@latest` pins, which was `react-native 0.86.3`
+  (Expo SDK 57) when this lane moved to `xcode-27`, so `expo-ios` legitimately
+  reports Swift caching OFF. `xcode-cas` prints which half of the gate decided;
+  a PASS with `Swift caching OFF` is not Swift coverage. Set `STIM_E2E_EXPO_INIT`
+  to a template on React Native 0.87+ to cover the Expo variant too.
 - The Android job's `api-level` / `target` / `arch` have a matching system image
   available to `android-emulator-runner`.
 - **Disk, for the `caches` suite only.** It stands up FOUR worktrees, each with

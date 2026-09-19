@@ -32,6 +32,13 @@
 # events run the two framework variants for one suite. iOS and Android are
 # separate jobs because iOS needs macOS and Xcode, while Android needs Linux and
 # KVM. Bare and Expo exercise different stim-cli Metro paths.
+#
+# THE iOS RUNNER IS `xcode-27`, NOT `macos-latest`. Automatic Swift compilation
+# caching needs Swift 6.4, which ships with Xcode 27; the macos-26 images top out
+# at Xcode 26.6, so on `macos-latest` that branch is unreachable and the `caches`
+# suite can only ever observe SWIFT_ENABLE_COMPILE_CACHE=NO. `xcode-27` is a
+# GitHub PREVIEW image (actions/runner-images#14404): capacity and stability are
+# weaker than a GA image, which is the price of covering the on-path at all.
 name: Native E2E
 
 on:
@@ -67,7 +74,7 @@ jobs:
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'e2e-native'))
-    runs-on: macos-latest
+    runs-on: xcode-27
     # The caches suite adds a second cold compile (the single-flight race) plus a
     # third cache-hit build, so it needs headroom the loop suite never did.
     timeout-minutes: ${{ matrix.suite == 'caches' && 120 || 60 }}
@@ -104,13 +111,22 @@ jobs:
         with:
           ruby-version: '3.4'
 
-      - name: Select a recent stable Xcode
-        # REVIEWER: confirm the macos-latest image ships this Xcode. 'latest-stable'
-        # tracks whatever the runner image has; pin to a specific version here if a
-        # build needs a known toolchain.
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: latest-stable
+      - name: Pin Xcode 27 and prove its Swift 6.4 toolchain
+        # maxim-lobanov/setup-xcode cannot pin this image: it keeps only candidates
+        # whose LicenseInfo.plist marks them stable, and the sole Xcode here is the
+        # release candidate at /Applications/Xcode_27_Release_Candidate.app. The
+        # image documents the 27.0 symlink, so select it directly. The Swift floor
+        # is asserted because a silently older toolchain would leave the caches
+        # suite green while never reaching the Swift branch it is here to cover.
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.0.app
+          xcodebuild -version
+          xcrun swift --version
+          swift_version=$(xcrun swift --version | sed -n 's/.*Swift version \([0-9.]*\).*/\1/p' | head -1)
+          if [ "$(printf '%s\n6.4\n' "$swift_version" | sort -V | head -1)" != 6.4 ]; then
+            echo "::error::runner reports Swift ${swift_version:-unknown}, below the 6.4 the Swift compilation-cache branch needs"
+            exit 1
+          fi
 
       - name: Install SimSlim for generated iOS fixtures
         run: brew install mobai-app/tap/simslim
