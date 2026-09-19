@@ -125,6 +125,103 @@ jobs:
       - name: Unit tests (vitest)
         run: pnpm test
 
+  # NON-BLOCKING. The Android half of the dev loop on Windows, driven by the
+  # same fixture and driver the macOS and Linux native lanes use. Same gate as
+  # windows-probe above.
+  #
+  # The runner image ships the Android SDK, build-tools, platform-tools, NDK and
+  # the emulator binary at ANDROID_HOME=C:\Android\android-sdk, but NO system
+  # image, so one is installed below before Stim can create its own AVD.
+  #
+  # It does NOT ship VM acceleration. GitHub scopes hardware-accelerated Android
+  # virtualization to LARGER hosted Windows runners, and
+  # reactivecircus/android-emulator-runner supports Linux and macOS only. So an
+  # emulator here boots in software, if at all. The loop step is therefore
+  # allowed to fail while the APK assertion below it is not: the minimum this
+  # job proves is that Stim drives a real Gradle build to a real artifact on
+  # Windows. `emulator -accel-check` is recorded so the verdict rests on the
+  # runner's own answer rather than on the assumption above.
+  windows-android-e2e:
+    name: windows android e2e (non-blocking)
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.ref_name, 'windows'))
+    runs-on: windows-latest
+    continue-on-error: true
+    timeout-minutes: 90
+    env:
+      # os.tmpdir() reads TEMP on Windows, and the driver builds its fixture
+      # under it. Keeping it in the workspace is what lets the APK assertion and
+      # the log upload find anything.
+      TEMP: ${{ github.workspace }}\e2e-tmp
+      TMP: ${{ github.workspace }}\e2e-tmp
+    steps:
+      - uses: actions/checkout@v4
+      - run: New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\e2e-tmp"
+
+      - name: Set up pnpm and Node
+        uses: pnpm/setup@v2
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install (workspace root)
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (dist/cli.mjs is what the native e2e drives)
+        run: pnpm run build
+
+      - name: Record what this runner can actually do
+        continue-on-error: true
+        run: |
+          "ANDROID_HOME=$env:ANDROID_HOME"
+          & "$env:ANDROID_HOME\emulator\emulator.exe" -accel-check
+          & "$env:ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat" --list_installed
+
+      - name: Install a system image so Stim can create its own AVD
+        run: |
+          $sdkmanager = "$env:ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat"
+          & $sdkmanager --install "platform-tools" "system-images;android-34;google_apis;x86_64"
+          "$env:ANDROID_HOME\platform-tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "$env:ANDROID_HOME\emulator" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Doctor (android)
+        continue-on-error: true
+        run: node packages/stim-cli/dist/cli.mjs doctor --platform android
+
+      # --keep leaves the fixture and its worktrees on this ephemeral runner so
+      # the assertion and the upload below can read them.
+      - name: Android loop e2e (bare)
+        continue-on-error: true
+        run: >-
+          node test/e2e/native/run-native-e2e.mjs
+          --framework bare --platform android --keep --home "${{ github.workspace }}\e2e-tmp\stim-home"
+
+      # The step that decides this job's colour. Install and launch depend on an
+      # emulator the runner may not be able to boot; producing the APK does not.
+      - name: Assert Stim produced an APK
+        run: |
+          $apk = Get-ChildItem -Path "${{ github.workspace }}\e2e-tmp" -Recurse -Filter *.apk -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $apk) { throw "stim android produced no APK under the e2e temp root" }
+          "stim android produced $($apk.FullName) ($([math]::Round($apk.Length / 1MB, 1)) MB)"
+
+      - name: Upload build and device logs
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-android-e2e-logs
+          path: ${{ github.workspace }}\e2e-tmp\stim-home\workspaces\**\logs\*
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+
   runtime-floor:
     name: published runtime (node 22.12.0)
     runs-on: ubuntu-latest

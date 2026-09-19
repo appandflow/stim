@@ -81,23 +81,26 @@ test('lanOriginUrlFor is the http origin the phone dials', () => {
   expect(lanOriginUrlFor('192.168.1.5', 8082)).toBe('http://192.168.1.5:8082');
 });
 
-test('copyAppAside copies with the real cp, preserving a symlink and the exec bit', () => {
-  const app = join(dir, 'Fixture.app');
-  mkdirSync(join(app, 'Frameworks'), { recursive: true });
-  writeFileSync(join(app, 'Fixture'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-  symlinkSync('Fixture', join(app, 'Current'));
-  const copy = copyAppAside(app);
-  try {
-    expect(copy.appPath).toBe(join(copy.tmpDir, 'Fixture.app'));
-    expect(existsSync(join(copy.appPath, 'Frameworks'))).toBe(true);
-    expect(readFileSync(join(copy.appPath, 'Current'), 'utf-8')).toBe('#!/bin/sh\nexit 0\n');
-    expect(existsSync(join(app, 'ip.txt'))).toBe(false);
-    writeIpTxt(copy.appPath, '192.168.1.5', 8082);
-    expect(existsSync(join(app, 'ip.txt'))).toBe(false);
-  } finally {
-    rmSync(copy.tmpDir, { recursive: true, force: true });
-  }
-});
+test.skipIf(process.platform === 'win32')(
+  'copyAppAside copies with the real cp, preserving a symlink and the exec bit (real cp, POSIX symlinks and mode bits; skipped on win32)',
+  () => {
+    const app = join(dir, 'Fixture.app');
+    mkdirSync(join(app, 'Frameworks'), { recursive: true });
+    writeFileSync(join(app, 'Fixture'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    symlinkSync('Fixture', join(app, 'Current'));
+    const copy = copyAppAside(app);
+    try {
+      expect(copy.appPath).toBe(join(copy.tmpDir, 'Fixture.app'));
+      expect(existsSync(join(copy.appPath, 'Frameworks'))).toBe(true);
+      expect(readFileSync(join(copy.appPath, 'Current'), 'utf-8')).toBe('#!/bin/sh\nexit 0\n');
+      expect(existsSync(join(app, 'ip.txt'))).toBe(false);
+      writeIpTxt(copy.appPath, '192.168.1.5', 8082);
+      expect(existsSync(join(app, 'ip.txt'))).toBe(false);
+    } finally {
+      rmSync(copy.tmpDir, { recursive: true, force: true });
+    }
+  },
+);
 
 test('ensureLanReachable passes when the gate proves the origin is this workspace Metro', async () => {
   const gated: Array<Record<string, unknown>> = [];
