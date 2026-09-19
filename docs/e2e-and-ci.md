@@ -99,11 +99,11 @@ node test/e2e/native/run-native-e2e.mjs --framework bare --platform android --sm
 `--smoke` stops after the first worktree has been built, launched, verified and
 stopped: no second-worktree cache proof, no named slots. CI restores the
 cross-run build cache before it, so a run whose native fingerprint matches an
-earlier loop or smoke installs from cache. Observed on the `e2e-smoke` run of
-#905: iOS 17 minutes and Linux Android 3 minutes with the cache warm (the iOS
-time is fixture creation, `pod install` and simulator boot; the build phase
-was 86 and 52 seconds), Windows Android 17.5 minutes cold, of which the Gradle
-build was 13.5. A run that changes the fingerprint pays the cold build on
+earlier loop or smoke installs from cache. Observed on the `e2e-smoke` runs of
+#905: iOS 8 to 17 minutes and Linux Android 3 to 4 minutes with the cache warm
+(the build phase was 60 to 90 seconds; the rest is fixture creation,
+`pod install` and device boot), Windows Android 25 minutes cold, of which the
+Gradle build was 20. A run that changes the fingerprint pays the cold build on
 every platform.
 
 The fixture-creation commands are version-sensitive; each is overridable with an
