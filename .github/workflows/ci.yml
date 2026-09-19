@@ -85,7 +85,7 @@ jobs:
         run: pnpm run test:e2e
 
   runtime-floor:
-    name: published runtime (node 20.19.4)
+    name: published runtime (node 22.12.0)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -103,7 +103,7 @@ jobs:
       - name: Set up runtime Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20.19.4
+          node-version: 22.12.0
 
       - name: Verify published runtime
         run: node test/runtime-floor.mjs

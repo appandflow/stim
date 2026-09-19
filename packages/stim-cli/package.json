@@ -49,8 +49,8 @@
     "@stim-cli/cache": "workspace:^",
     "@stim-cli/core": "workspace:^",
     "@stim-cli/metro": "workspace:^",
-    "chalk": "^5.4.1",
-    "commander": "^13.1.0",
+    "chalk": "^6.0.0",
+    "commander": "^15.0.0",
     "ws": "^8.21.3"
   },
   "devDependencies": {
@@ -59,6 +59,6 @@
     "unique-pid": "0.1.1"
   },
   "engines": {
-    "node": "^20.19.4 || >=22.12.0"
+    "node": ">=22.12.0"
   }
 }

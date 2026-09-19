@@ -9,7 +9,7 @@ Stim has three test layers. The unit suite (`pnpm test`, Vitest, more than
 2,000 cases across five packages) is the bulk of the coverage. On top of it sit
 two end-to-end layers that exercise the _published loop_ rather than individual
 functions. The separately built runtime-floor job loads every published ESM
-entry point on Node 20.19.4.
+entry point on Node 22.12.0.
 
 ## The fast cross-platform e2e
 
@@ -19,10 +19,10 @@ entry point on Node 20.19.4.
 pnpm run test:e2e
 ```
 
-Published packages support Node 20.19.4 or later on Node 20, or Node 22.12.0
-or later. Repository development, including this suite, uses Node 22.18 or
-later. CI runs the suite on Node 22 and 24; the separate runtime-floor job loads
-every published entry point under exactly Node 20.19.4. Git is also required.
+Published packages support Node 22.12.0 or later. Repository development,
+including this suite, uses Node 22.18 or later. CI runs the suite on Node 22 and
+24; the separate runtime-floor job loads every published entry point under
+exactly Node 22.12.0. Git is also required.
 The suite needs **no Xcode or Android SDK**.
 It drives the real CLI and the real cache library end to end under a throwaway
 `STIM_HOME` and a throwaway temp repo, so it never touches the machine's real
@@ -239,9 +239,8 @@ Two workflows under `.github/workflows/`:
   repository build matrix uses Node 22 and 24, runs frozen pnpm install, lint,
   format check, ESM build, typecheck, knip, Vitest, and the cross-platform E2E.
   A separate job builds on Node 22.18 and then runs `test/runtime-floor.mjs`
-  under exactly Node 20.19.4, the published Node 20 floor. Published packages
-  also support Node 22.12 or later; repository development needs Node 22.18 or
-  later because tsdown has the higher floor.
+  under exactly Node 22.12.0, the published floor. Repository development needs
+  Node 22.18 or later because tsdown has the higher floor.
 
 - **`e2e-native.yml`** -- the native matrix. **Gated**: it runs nightly
   (schedule), on demand (`workflow_dispatch`), and on a pull request **only when

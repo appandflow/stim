@@ -28,9 +28,8 @@ requires project judgment.
 ## Development
 
 The repository is a pnpm workspace. Published packages live under `packages/`.
-The packages are ESM-only. They require Node.js 20.19.4 or later on Node 20,
-or Node.js 22.12.0 or later. Repository development requires Node.js 22.18.0
-or later because tsdown uses that floor.
+The packages are ESM-only. They require Node.js 22.12.0 or later. Repository
+development requires Node.js 22.18.0 or later because tsdown uses that floor.
 
 ```bash
 pnpm install

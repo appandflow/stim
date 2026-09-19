@@ -307,7 +307,7 @@ repeat the affected gate rather than waiving it.
    ```
 
 4. **Wait for blocking CI on that exact commit.** The Node 22 and Node 24 jobs
-   plus `published runtime (node 20.19.4)` must all be green:
+   plus `published runtime (node 22.12.0)` must all be green:
 
    ```bash
    run_id=$(gh run list --workflow CI --commit "$release_commit" --limit 1 --json databaseId --jq '.[0].databaseId')

@@ -14,7 +14,7 @@ for (const directory of packageDirs) {
   const root = join(repositoryRoot, 'packages', directory);
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
   assert.equal(pkg.type, 'module', `${pkg.name} must declare ESM`);
-  assert.equal(pkg.engines.node, '^20.19.4 || >=22.12.0', `${pkg.name} must declare the runtime range`);
+  assert.equal(pkg.engines.node, '>=22.12.0', `${pkg.name} must declare the runtime range`);
 
   const distFiles = readdirSync(join(root, 'dist'));
   assert.equal(

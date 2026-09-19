@@ -1074,7 +1074,7 @@ not on any remote"  (worktree remove)
   the no-install form.
 
 "Unsupported engine" or a syntax error before Stim starts
-  Stim requires Node 20.19.4 or later on Node 20, or Node 22.12.0 or later.
+  Stim requires Node 22.12.0 or later.
   Switch Node versions, then run the command again.
 
 
