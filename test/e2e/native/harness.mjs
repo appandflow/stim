@@ -377,14 +377,23 @@ export function createCleanupTracker({ h, platform, processExitTimeoutMs = 5000 
   return { recordBuild, recordWorkspace, remainingDevices, verifyProcesses };
 }
 
-function inspect(h, file, argv) {
-  const result = h.sh(file, argv, { allowFail: true, timeout: 5000 });
+function inspect(h, file, argv, timeout = 5000) {
+  const result = h.sh(file, argv, { allowFail: true, timeout });
   assert(result.code === 0, `could not inspect ${file}: ${result.stderr}`);
   return result.stdout;
 }
 
+// Windows has no ps. Win32_Process is the pid, start time and command line ps -o would print;
+// the script avoids double quotes because they do not survive spawnSync's command-line quoting.
+const WIN32_PROCESS_LIST =
+  "Get-CimInstance Win32_Process | ForEach-Object { $_.ProcessId.ToString() + ' ' + " +
+  "$_.CreationDate.Ticks.ToString() + ' ' + $_.CommandLine }";
+
 function processSnapshot(h) {
-  const out = inspect(h, 'ps', ['-ax', '-o', 'pid=,lstart=,command=']);
+  const out =
+    process.platform === 'win32'
+      ? inspect(h, 'powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WIN32_PROCESS_LIST], 60_000)
+      : inspect(h, 'ps', ['-ax', '-o', 'pid=,lstart=,command=']);
   return new Map(
     out
       .split('\n')
