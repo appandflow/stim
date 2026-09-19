@@ -114,10 +114,11 @@ jobs:
       - name: Unit tests (vitest)
         run: pnpm test
 
-  # NON-BLOCKING. The Android half of the dev loop on Windows, driven by the
-  # same fixture and driver the macOS and Linux native lanes use. It runs only
-  # on an explicit workflow_dispatch or on a pull request from a branch named
-  # for Windows work, and stays non-blocking until #881 has it passing.
+  # BLOCKING where it runs. The Android half of the dev loop on Windows, driven
+  # by the same fixture and driver the macOS and Linux native lanes use. It
+  # runs only on an explicit workflow_dispatch or on a pull request from a
+  # branch named for Windows work, because it costs 30+ minutes of emulator
+  # time; where it runs, its colour counts.
   #
   # The runner image ships the Android SDK, build-tools, platform-tools, NDK and
   # the emulator binary at ANDROID_HOME=C:\Android\android-sdk, but NO system
@@ -129,14 +130,15 @@ jobs:
   # claim keeps being re-verified rather than trusted.
   #
   # The loop step is still allowed to fail while the APK assertion below it is
-  # not. Boot, install and launch depend on an emulator that can regress with
-  # the image; producing the artifact does not. The floor this job holds is that
-  # Stim drives a real Gradle build to a real APK on Windows.
+  # not: the driver's named-slots phase exits 1 after the loop has passed,
+  # because a repeated slot loses device.systemImage (#892) and the resulting
+  # all-ABI build overruns the NDK object-path limit (#893). Until those land
+  # the assertion is the gate; then the loop step becomes it and the assertion
+  # goes.
   windows-android-e2e:
-    name: windows android e2e (non-blocking)
+    name: android e2e (windows)
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.head_ref, 'windows'))
     runs-on: windows-latest
-    continue-on-error: true
     timeout-minutes: 90
     env:
       # os.tmpdir() reads TEMP on Windows, and the driver builds its fixture
