@@ -119,7 +119,9 @@ export function renderChecklist(result, context) {
     const shown = scope(row);
     lines.push(`  [ ] ${row.id}${shown ? `  ${shown}` : ''}`);
     lines.push(`      evidence: ${row.evidence}`);
-    lines.push(`      because: ${row.reason}`);
+    lines.push(
+      `      because: ${row.causes.length > 0 ? samplePaths(row.causes.map((entry) => entry.path)) : row.reason}`,
+    );
   }
   lines.push('', `Omitted rows (${omitted.length} of ${result.rows.length})`);
   if (omitted.length === 0) lines.push('  none');
@@ -156,7 +158,7 @@ export function renderMarkdown(result, context) {
     const shown = scope(row);
     const cause =
       row.causes.length > 0
-        ? `Required by ${row.causes.map((entry) => `\`${entry.path}\``).join(', ')}.`
+        ? `Required by ${samplePaths(row.causes.map((entry) => `\`${entry.path}\``))}.`
         : `Required because ${row.reason}.`;
     lines.push(`- **${row.id}**${shown ? ` (${shown})` : ''}: ${row.evidence}. ${cause}`);
   }
