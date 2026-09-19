@@ -206,7 +206,7 @@ describe('startExpoServer', () => {
       return fakeChild();
     };
     const bin = expoBinPath(root);
-    expect(bin).toMatch(/node_modules\/expo\/bin\/cli$/);
+    expect(bin).toMatch(/node_modules[\\/]expo[\\/]bin[\\/]cli$/);
     await startExpoServer({ root, port: 8111, logsDir: join(root, 'logs'), spawnFn, platform: 'win32' });
     expect(calls[0]).toEqual({ cmd: process.execPath, args: [bin, 'start', '--port', '8111'] });
 

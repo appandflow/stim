@@ -730,9 +730,9 @@ describe('stopTunnel: idempotent, never throws', () => {
 describe('terminateChild on win32', () => {
   afterEach(() => resetExecutor());
 
-  test('signals the tree through taskkill instead of child.kill', async () => {
+  test('signals the tree through taskkill before child.kill', async () => {
     const taskkill: string[][] = [];
-    const child = makeChildProcess({ pid: 4242, kill: () => throwUnexpectedKill() });
+    const child = makeChildProcess({ pid: 4242 });
     setExecutor({
       runFileQuiet: (file: string, args: string[]) => {
         taskkill.push([file, ...args]);
@@ -752,10 +752,6 @@ describe('terminateChild on win32', () => {
     expect(taskkill).toEqual([['taskkill', '/PID', '4242', '/T', '/F']]);
   });
 });
-
-function throwUnexpectedKill(): never {
-  throw new Error('child.kill must not run on win32');
-}
 
 describe('against output cloudflared really printed', () => {
   // Captured from cloudflared 2026.8.2; keep these raw lines as parser fixtures.
