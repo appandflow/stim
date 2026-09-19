@@ -3,12 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "prebuild": "node scripts/gen-changelog.mjs",
-    "prestart": "node scripts/gen-changelog.mjs",
+    "prebuild": "node scripts/gen-changelog.mjs && node scripts/gen-troubleshooting.mjs",
+    "prestart": "node scripts/gen-changelog.mjs && node scripts/gen-troubleshooting.mjs",
     "docusaurus": "docusaurus",
     "start": "docusaurus start",
     "build": "docusaurus build",
-    "render:benchmark-video": "node scripts/render-benchmark-video.mjs",
     "swizzle": "docusaurus swizzle",
     "deploy": "docusaurus deploy",
     "clear": "docusaurus clear",
@@ -32,12 +31,9 @@
     "@docusaurus/module-type-aliases": "3.10.2",
     "@docusaurus/tsconfig": "3.10.2",
     "@docusaurus/types": "3.10.2",
-    "@remotion/cli": "4.0.520",
-    "@remotion/media": "4.0.520",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.2.7",
     "jsdom": "^29.1.1",
-    "remotion": "4.0.520",
     "typescript": "~6.0.2"
   },
   "browserslist": {
@@ -53,6 +49,6 @@
     ]
   },
   "engines": {
-    "node": ">=20.0"
+    "node": ">=22.18.0"
   }
 }

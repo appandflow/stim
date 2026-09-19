@@ -23,6 +23,7 @@ export default defineConfig({
       'packages/*/src/**/__tests__/**/*.test.ts',
       'packages/*/__tests__/**/*.test.ts',
       'scripts/**/*.test.mjs',
+      'website/scripts/**/*.test.mjs',
       'website/src/**/*.test.ts',
     ],
     exclude: ['**/*.compat.test.ts'],

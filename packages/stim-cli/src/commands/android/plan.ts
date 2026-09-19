@@ -58,7 +58,7 @@ type AndroidTargetPlan =
       readonly lease: { readonly waitSeconds: number; readonly noWait: boolean };
     };
 
-interface AndroidRunPlan {
+export interface AndroidRunPlan {
   readonly build: {
     readonly variant: string | null;
     readonly release: boolean;

@@ -164,3 +164,9 @@
 ::view-transition {
   pointer-events: none;
 }
+
+/* Alias anchors on the generated troubleshooting page sit before the heading
+   they name, so they need the scroll margin the sticky navbar requires. */
+a[id^='STIM_']:empty {
+  scroll-margin-top: calc(var(--ifm-navbar-height) + 1rem);
+}
