@@ -53,7 +53,9 @@ describe('e2e build cache trim', () => {
     entry(base, 'android', 'aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111-debug-sim-x86-64', 0);
     entry(base, 'android', 'bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222-debug-sim-x86-64', 60);
     const key = buildCacheKey('stim-cli-buildcache-v2-android-bare', trimBuildCache(base));
-    expect(key).toBe('stim-cli-buildcache-v2-android-bare-aaaa1111aaaa-bbbb2222bbbb');
+    expect(key).toBe(
+      'stim-cli-buildcache-v2-android-bare-aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111-debug-sim-x86-64-bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222-debug-sim-x86-64',
+    );
 
     entry(base, 'android', 'cccc3333cccc3333cccc3333cccc3333cccc3333-debug-sim-x86-64', 0);
     expect(buildCacheKey('stim-cli-buildcache-v2-android-bare', trimBuildCache(base))).not.toBe(key);
