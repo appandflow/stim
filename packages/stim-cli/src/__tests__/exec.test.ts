@@ -52,3 +52,35 @@ test('an opt-in hard deadline terminates a child that ignores SIGTERM before ret
   expect(failure.pid).toBeGreaterThan(1);
   expect(() => process.kill(failure.pid!, 0)).toThrow(/ESRCH/);
 });
+
+test('a non-zero exit throws with status, stdout and stderr, the fields callers read', () => {
+  resetExecutor();
+  let failure: Error & { status?: number; stdout?: string; stderr?: string } = new Error('did not fail');
+  try {
+    getExecutor().runFile(process.execPath, ['-e', 'console.log("out"); console.error("err"); process.exit(3)']);
+  } catch (error) {
+    failure = error as typeof failure;
+  }
+  expect(failure.status).toBe(3);
+  expect(failure.stdout).toBe('out\n');
+  expect(failure.stderr).toBe('err\n');
+  expect(failure.message).toMatch(/^Command failed: .*\nerr/);
+});
+
+test('a missing executable throws ENOENT', () => {
+  resetExecutor();
+  let failure: NodeJS.ErrnoException = new Error('did not fail');
+  try {
+    getExecutor().runFile('stim-definitely-not-installed', ['--version']);
+  } catch (error) {
+    failure = error as typeof failure;
+  }
+  expect(failure.code).toBe('ENOENT');
+});
+
+test.skipIf(process.platform !== 'win32')('runFile launches a .cmd shim on Windows', { timeout: 30_000 }, () => {
+  resetExecutor();
+  const npm = getExecutor().findExecutable('npm');
+  expect(npm).toMatch(/\.cmd$/i);
+  expect(getExecutor().runFile(npm!, ['--version'])).toMatch(/^\d+\.\d+/);
+});
