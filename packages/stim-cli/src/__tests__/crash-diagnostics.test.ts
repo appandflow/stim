@@ -153,6 +153,16 @@ test('launch omits incomplete frames and capture noise while full logs retain th
   expect(bounded).not.toContain('app frames prioritized');
 });
 
+test('a parent-relative frame ranks below an app frame so a late app frame survives the preview', () => {
+  const frames = [
+    ...Array.from({ length: 12 }, (_, i) => `at helper${i} (../shared/helper${i}.ts:${i + 1}:1)`),
+    'at Screen (src/App.tsx:1:1)',
+  ];
+  const preview = launchErrorPreview([{ stack: frames.join('\n') }]).join('\n');
+  expect(preview).toContain('src/App.tsx');
+  expect(preview).toContain('app frames prioritized');
+});
+
 test('cross-source copies collapse only with matching title, location, platform and time', () => {
   const a = { ts: 1000, src: 'client', platform: 'ios', msg: 'Error: broken\n    at render (app.tsx:4:2)' };
   const b = { ...a, ts: 1100, src: 'device' };
