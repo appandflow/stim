@@ -2,9 +2,12 @@
 # windows-android-e2e job in ci.yml does, then opens SSH to it over Tailscale
 # and holds so the Android loop can be worked on interactively (#888).
 #
-# Needs a TAILSCALE_AUTHKEY repository secret (ephemeral, reusable auth key).
-# The node leaves the tailnet when the job ends. Create a file named `stop` in
-# the workspace to end the hold early. GitHub caps a job at 6 hours.
+# tunnel=tailscale needs a TAILSCALE_AUTHKEY repository secret (ephemeral,
+# reusable auth key); the node leaves the tailnet when the job ends and SSH
+# lands in pwsh as runneradmin. tunnel=tmate needs no secret: the session is
+# limited to the GitHub SSH keys of whoever dispatched the run, and the
+# connection string is in the step log. Create a file named `stop` in the
+# workspace to end the hold early. GitHub caps a job at 6 hours.
 #
 #   gh workflow run windows-debug.yml -F public_key=@~/.ssh/id_rsa.pub -f hours=2
 #   ssh runneradmin@stim-windows-runner
@@ -13,9 +16,16 @@ name: Windows debug host
 on:
   workflow_dispatch:
     inputs:
+      tunnel:
+        description: 'How to reach the runner'
+        required: false
+        default: tailscale
+        type: choice
+        options: [tailscale, tmate]
       public_key:
-        description: 'SSH public key allowed to log in as runneradmin'
-        required: true
+        description: 'SSH public key allowed to log in as runneradmin (tailscale only)'
+        required: false
+        default: ''
         type: string
       hours:
         description: 'How long to hold the runner (max 6)'
@@ -69,6 +79,7 @@ jobs:
           & $sdkmanager --install "platform-tools" "system-images;android-34;google_apis;x86_64"
 
       - name: Tailscale
+        if: inputs.tunnel == 'tailscale'
         uses: tailscale/github-action@v4
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
@@ -77,6 +88,7 @@ jobs:
       # SSH sessions do not see GITHUB_ENV or GITHUB_PATH, so the toolchain
       # locations are written to the machine environment instead.
       - name: Open SSH
+        if: inputs.tunnel == 'tailscale'
         run: |
           Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
           New-Item -Path "HKLM:\SOFTWARE\OpenSSH" -Force | Out-Null
@@ -93,6 +105,13 @@ jobs:
           Set-Service sshd -StartupType Automatic
           Start-Service sshd
           "ssh runneradmin@$(tailscale ip -4)  (MagicDNS: stim-windows-runner)"
+
+      - name: tmate
+        if: inputs.tunnel == 'tmate'
+        uses: mxschmitt/action-tmate@v3
+        with:
+          detached: true
+          limit-access-to-actor: true
 
       - name: Hold
         run: |
