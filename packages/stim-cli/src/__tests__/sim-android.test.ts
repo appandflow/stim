@@ -72,14 +72,19 @@ afterEach(() => {
   resetExecutor();
 });
 
+const SDK_TOOL_FILES =
+  process.platform === 'win32'
+    ? { emulator: 'emulator.exe', adb: 'adb.exe', avdmanager: 'avdmanager.bat' }
+    : { emulator: 'emulator', adb: 'adb', avdmanager: 'avdmanager' };
+
 function makeFakeSdk(root: string): string {
   const sdk = join(root, 'sdk');
   mkdirSync(join(sdk, 'emulator'), { recursive: true });
-  writeFileSync(join(sdk, 'emulator', 'emulator'), '');
+  writeFileSync(join(sdk, 'emulator', SDK_TOOL_FILES.emulator), '');
   mkdirSync(join(sdk, 'platform-tools'), { recursive: true });
-  writeFileSync(join(sdk, 'platform-tools', 'adb'), '');
+  writeFileSync(join(sdk, 'platform-tools', SDK_TOOL_FILES.adb), '');
   mkdirSync(join(sdk, 'cmdline-tools', 'latest', 'bin'), { recursive: true });
-  writeFileSync(join(sdk, 'cmdline-tools', 'latest', 'bin', 'avdmanager'), '');
+  writeFileSync(join(sdk, 'cmdline-tools', 'latest', 'bin', SDK_TOOL_FILES.avdmanager), '');
   return sdk;
 }
 
@@ -834,16 +839,16 @@ test.each([25, 2000])('boot timeout retains diagnostics within a separate budget
 test('androidToolPath resolves each tool inside ANDROID_HOME when it exists', () => {
   const sdk = makeFakeSdk(tmpHome);
   process.env.ANDROID_HOME = sdk;
-  expect(androidToolPath('emulator')).toBe(join(sdk, 'emulator', 'emulator'));
-  expect(androidToolPath('adb')).toBe(join(sdk, 'platform-tools', 'adb'));
-  expect(androidToolPath('avdmanager')).toBe(join(sdk, 'cmdline-tools', 'latest', 'bin', 'avdmanager'));
+  expect(androidToolPath('emulator')).toBe(join(sdk, 'emulator', SDK_TOOL_FILES.emulator));
+  expect(androidToolPath('adb')).toBe(join(sdk, 'platform-tools', SDK_TOOL_FILES.adb));
+  expect(androidToolPath('avdmanager')).toBe(join(sdk, 'cmdline-tools', 'latest', 'bin', SDK_TOOL_FILES.avdmanager));
 });
 
 test('androidToolPath honours ANDROID_SDK_ROOT when ANDROID_HOME is unset', () => {
   const sdk = makeFakeSdk(tmpHome);
   delete process.env.ANDROID_HOME;
   process.env.ANDROID_SDK_ROOT = sdk;
-  expect(androidToolPath('adb')).toBe(join(sdk, 'platform-tools', 'adb'));
+  expect(androidToolPath('adb')).toBe(join(sdk, 'platform-tools', SDK_TOOL_FILES.adb));
 });
 
 test('androidToolPath falls back to the bare name when no SDK is on disk', () => {
@@ -876,7 +881,7 @@ test('listAvds runs the resolved emulator binary, quoted', () => {
     spawn: () => null,
   });
   expect(listAvds()).toEqual(['Pixel_6_API_34']);
-  expect(calls).toEqual([`"${join(sdk, 'emulator', 'emulator')}" -list-avds`]);
+  expect(calls).toEqual([`"${join(sdk, 'emulator', SDK_TOOL_FILES.emulator)}" -list-avds`]);
 });
 
 test('bootAndroidEmulator spawns the resolved emulator binary', () => {
@@ -899,7 +904,7 @@ test('bootAndroidEmulator spawns the resolved emulator binary', () => {
     if (savedDisplay === undefined) delete process.env.DISPLAY;
     else process.env.DISPLAY = savedDisplay;
   }
-  expect(spawned).toEqual([[join(sdk, 'emulator', 'emulator'), ['-avd', 'stim-app', '-port', '5556']]]);
+  expect(spawned).toEqual([[join(sdk, 'emulator', SDK_TOOL_FILES.emulator), ['-avd', 'stim-app', '-port', '5556']]]);
 });
 
 test('listAvds keeps the bare command when resolution falls back to PATH', () => {

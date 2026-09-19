@@ -121,7 +121,7 @@ test('parseNetstatPids takes the listening row for the port and ignores the rest
   expect(parseNetstatPids(null, 8082)).toEqual([]);
 });
 
-test('listeningPids asks netstat on Windows, where lsof does not exist', () => {
+test('listeningPids falls back to netstat on Windows, where lsof does not exist', () => {
   const asked: string[] = [];
   setExecutor({
     run: () => '',
@@ -133,7 +133,10 @@ test('listeningPids asks netstat on Windows, where lsof does not exist', () => {
     spawn: () => {},
   });
   expect(listeningPids(8082, 'win32')).toEqual([2212]);
-  expect(asked).toEqual(['netstat -ano']);
+  expect(asked).toEqual(['lsof -nP -iTCP:8082 -sTCP:LISTEN -t', 'netstat -ano']);
+  asked.length = 0;
+  expect(listeningPids(8082, 'darwin')).toEqual([]);
+  expect(asked).toEqual(['lsof -nP -iTCP:8082 -sTCP:LISTEN -t']);
 });
 
 test('resolveProjectMetro accepts an unreadable-cwd listener that is this workspace recorded supervisor', async () => {

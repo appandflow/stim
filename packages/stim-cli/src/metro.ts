@@ -50,8 +50,9 @@ export function parseNetstatPids(out: unknown, port: number): number[] {
 }
 
 export function listeningPids(port: number, platform: NodeJS.Platform = process.platform): number[] {
-  if (platform === 'win32') return parseNetstatPids(getExecutor().runQuiet('netstat -ano'), port);
-  return parseLsofPids(getExecutor().runQuiet(`lsof -nP -iTCP:${port} -sTCP:LISTEN -t`));
+  const pids = parseLsofPids(getExecutor().runQuiet(`lsof -nP -iTCP:${port} -sTCP:LISTEN -t`));
+  if (pids.length > 0 || platform !== 'win32') return pids;
+  return parseNetstatPids(getExecutor().runQuiet('netstat -ano'), port);
 }
 
 export function parseLsofCwd(out: unknown): string | null {
