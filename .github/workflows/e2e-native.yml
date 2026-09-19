@@ -99,6 +99,10 @@ jobs:
         env:
           E2E_PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
           E2E_SUITE: ${{ inputs.suite }}
+        # An explicit `shell: bash` runs with `-o pipefail`; the runner's
+        # default shell does not, and tee would turn a script error into
+        # success.
+        shell: bash
         run: node scripts/e2e-plan.mjs | tee -a "$GITHUB_OUTPUT"
 
   ios:
