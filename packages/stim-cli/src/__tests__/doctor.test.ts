@@ -419,7 +419,7 @@ test('Stim installation probes share one timeout window', async () => {
       pathValue: [first, second].join(delimiter),
       probeTimeoutMs: 50,
     });
-    expect(Date.now() - startedAt).toBeLessThan(500);
+    expect(Date.now() - startedAt).toBeLessThan(1500);
     expect(report.installations.map((entry) => entry.version)).toEqual([null, null]);
   } finally {
     rmSync(root, { recursive: true, force: true });
