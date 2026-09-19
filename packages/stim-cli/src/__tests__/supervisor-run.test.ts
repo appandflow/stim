@@ -196,59 +196,55 @@ describe('Contract 2: the workspace state file', () => {
 });
 
 describe('state.json concurrent writers (Contract 2 lock)', () => {
-  test.skipIf(process.platform === 'win32')(
-    '4+ processes writing different keys never lose an update (Windows rename limbo, #883; skipped on win32)',
-    async () => {
-      const script = join(tmpHome, 'state-writer.mjs');
-      const runUrl = new URL('../workspace/workspace-state.ts', import.meta.url).href;
-      writeFileSync(
-        script,
-        [
-          `const { writeWorkspaceState } = await import(${JSON.stringify(runUrl)});`,
-          'const root = process.argv[2];',
-          'const key = process.argv[3];',
-          'const startAt = Number(process.argv[4]);',
-          'while (Date.now() < startAt) {}',
-          'writeWorkspaceState(root, { [key]: { pid: process.pid } });',
-        ].join('\n'),
+  test('4+ processes writing different keys never lose an update', async () => {
+    const script = join(tmpHome, 'state-writer.mjs');
+    const runUrl = new URL('../workspace/workspace-state.ts', import.meta.url).href;
+    writeFileSync(
+      script,
+      [
+        `const { writeWorkspaceState } = await import(${JSON.stringify(runUrl)});`,
+        'const root = process.argv[2];',
+        'const key = process.argv[3];',
+        'const startAt = Number(process.argv[4]);',
+        'while (Date.now() < startAt) {}',
+        'writeWorkspaceState(root, { [key]: { pid: process.pid } });',
+      ].join('\n'),
+    );
+
+    const keys = [
+      'supervisor',
+      'lastBuild',
+      'collectorsIos',
+      'collectorsAndroid',
+      'extra',
+      'sixth',
+      'seventh',
+      'eighth',
+    ];
+    for (let round = 0; round < 8; round++) {
+      mkdirSync(workspaceDir(root), { recursive: true });
+      writeFileSync(workspaceStateFile(root), '{}\n');
+      const startAt = Date.now() + 250;
+      await Promise.all(
+        keys.map(
+          (key) =>
+            new Promise<void>((resolve, reject) => {
+              execFile(
+                process.execPath,
+                [script, root, key, String(startAt)],
+                { env: { ...process.env, STIM_HOME: tmpHome } },
+                (err) => (err ? reject(err) : resolve()),
+              );
+            }),
+        ),
       );
 
-      const keys = [
-        'supervisor',
-        'lastBuild',
-        'collectorsIos',
-        'collectorsAndroid',
-        'extra',
-        'sixth',
-        'seventh',
-        'eighth',
-      ];
-      for (let round = 0; round < 8; round++) {
-        mkdirSync(workspaceDir(root), { recursive: true });
-        writeFileSync(workspaceStateFile(root), '{}\n');
-        const startAt = Date.now() + 250;
-        await Promise.all(
-          keys.map(
-            (key) =>
-              new Promise<void>((resolve, reject) => {
-                execFile(
-                  process.execPath,
-                  [script, root, key, String(startAt)],
-                  { env: { ...process.env, STIM_HOME: tmpHome } },
-                  (err) => (err ? reject(err) : resolve()),
-                );
-              }),
-          ),
-        );
-
-        const state = readWorkspaceState(root);
-        for (const key of keys) {
-          expect(state && state[key]).toBeTruthy();
-        }
+      const state = readWorkspaceState(root);
+      for (const key of keys) {
+        expect(state && state[key]).toBeTruthy();
       }
-    },
-    15_000,
-  );
+    }
+  }, 15_000);
 });
 
 describe('runSupervisor', () => {

@@ -19,12 +19,21 @@ function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+/**
+ * Whether Windows refused a call on the lock directory because another process is removing it at that
+ * moment. NTFS answers ERROR_ACCESS_DENIED, which Node reports as EPERM, until that removal completes,
+ * where POSIX answers EEXIST or ENOENT: https://github.com/appandflow/stim/issues/883.
+ */
+function removalInFlight(error: unknown): boolean {
+  return process.platform === 'win32' && (error as NodeJS.ErrnoException)?.code === 'EPERM';
+}
+
 function createLockDirectory(lockPath: string): boolean {
   try {
     mkdirSync(lockPath);
     return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === 'EEXIST') return false;
+    if ((error as NodeJS.ErrnoException)?.code === 'EEXIST' || removalInFlight(error)) return false;
     throw error;
   }
 }
@@ -33,7 +42,7 @@ function removeLockDirectory(lockPath: string, marker: string): boolean {
   try {
     unlinkSync(marker);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return false;
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT' || removalInFlight(error)) return false;
     throw error;
   }
   try {
@@ -41,6 +50,7 @@ function removeLockDirectory(lockPath: string, marker: string): boolean {
     return true;
   } catch (error) {
     if (['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes((error as NodeJS.ErrnoException)?.code ?? '')) return false;
+    if (removalInFlight(error)) return false;
     throw error;
   }
 }
@@ -51,7 +61,7 @@ function takeLockDirectory(lockPath: string, claim: ClaimHandle): string | null 
     try {
       entries = readdirSync(lockPath);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT' || removalInFlight(error)) return null;
       throw error;
     }
     const name = entries.length === 1 ? entries[0] : undefined;
@@ -61,7 +71,7 @@ function takeLockDirectory(lockPath: string, claim: ClaimHandle): string | null 
     try {
       entry = lstatSync(marker);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT' || removalInFlight(error)) return null;
       throw error;
     }
     if (!entry.isFile() || entry.size !== 0) {

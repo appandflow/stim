@@ -178,6 +178,14 @@ a branch only when it has no unique commits.
 On the source checkout, `worktree remove` only reclaims the Stim environment.
 It does not remove that checkout.
 
+Windows cannot delete a directory another process holds open. The adb server
+inherits the working directory of the adb client that starts it, and the
+emulator launcher passes its own to qemu and its crash handler, so Stim runs
+its first adb command and the emulator from your home directory rather than
+the worktree. When removal still reports `Permission denied`, a server or
+another process was started from inside the worktree; `adb kill-server`
+releases the server.
+
 Named ports allocated by `stim ports get <label>` belong to the workspace.
 `worktree remove` stops their TCP listeners and releases the allocations;
 `gc --delete` does the same for missing workspaces. `stim stop` leaves them

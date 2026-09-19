@@ -277,6 +277,7 @@ export async function startExpoServer({
   tunnel = false,
   resetCache = false,
   onTunnelUrl = null,
+  platform = process.platform,
 }: {
   root: string;
   port: number;
@@ -287,6 +288,7 @@ export async function startExpoServer({
   tunnel?: boolean;
   resetCache?: boolean;
   onTunnelUrl?: ((url: string) => void) | null;
+  platform?: NodeJS.Platform;
 }): Promise<ExpoServerHandle> {
   const bin = expoBinPath(root);
   if (!bin) {
@@ -300,7 +302,13 @@ export async function startExpoServer({
   const args = ['start', '--port', String(port), ...(tunnel ? ['--tunnel'] : []), ...(resetCache ? ['--clear'] : [])];
   const storeEnv = resolveMetroStoreInjection(root, { log, env: process.env });
 
-  const child = spawn(bin, args, {
+  // On Windows the package bin's shebang resolves `node` through PATH, where pnpm
+  // and Volta install shims that run the real node as a child. Metro then listens
+  // in a grandchild, and with no readable cwd on win32 resolveProjectMetro only
+  // accepts the recorded serverPid, so the supervisor runs its own node directly.
+  const runWithOwnNode = platform === 'win32' && bin === expoBinFromPackage(resolvePackageJson(root, 'expo'));
+  const [command, commandArgs] = runWithOwnNode ? [process.execPath, [bin, ...args]] : [bin, args];
+  const child = spawn(command, commandArgs, {
     cwd: root,
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: false,

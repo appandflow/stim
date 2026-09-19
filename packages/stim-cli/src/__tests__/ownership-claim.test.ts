@@ -461,6 +461,8 @@ describe('a claim whose work runs in a spawned process group', () => {
   });
 });
 
+const STRESS_TIMEOUT_MS = process.platform === 'win32' ? 120_000 : 60_000;
+
 describe('a real race between real processes', { timeout: 30_000 }, () => {
   test('exactly one of six processes takes the claim, and a dead claim does not stop them', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'stim-claim-race-'));
@@ -502,8 +504,8 @@ describe('a real race between real processes', { timeout: 30_000 }, () => {
     }
   });
 
-  test.skipIf(process.platform === 'win32')(
-    'many processes cycling the same claim set never overlap and never surface a raw errno (Windows rename limbo, #883; skipped on win32)',
+  test(
+    'many processes cycling the same claim set never overlap and never surface a raw errno',
     async () => {
       const dir = mkdtempSync(join(tmpdir(), 'stim-claim-stress-'));
       const script = join(dir, 'cycle.mjs');
@@ -567,7 +569,7 @@ describe('a real race between real processes', { timeout: 30_000 }, () => {
         rmSync(dir, { recursive: true, force: true });
       }
     },
-    60_000,
+    STRESS_TIMEOUT_MS,
   );
 
   test('a holder killed without releasing leaves a claim the next process takes over', async () => {

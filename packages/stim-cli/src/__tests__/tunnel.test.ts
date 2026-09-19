@@ -4,9 +4,11 @@ import {
   stopTunnel,
   parseCloudflaredLine,
   parseNgrokLine,
+  terminateChild,
   tunnelArgv,
   type TunnelRecord,
 } from '../engine/tunnel.ts';
+import { resetExecutor, setExecutor } from '../exec.ts';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -643,6 +645,25 @@ describe('stopTunnel: idempotent, never throws', () => {
     expect(result.status).toBe('stopped');
   });
 
+  test('on win32 the default kill reaches the tree, because a shim on PATH runs the real tunnel as a child', async () => {
+    const taskkill: string[][] = [];
+    let alive = true;
+    setExecutor({
+      runFileQuiet: (file: string, args: string[]) => {
+        taskkill.push([file, ...args]);
+        alive = false;
+        return '';
+      },
+    });
+    try {
+      const result = await stopVerified(fixtureRecord(), { isAlive: () => alive, platform: 'win32' });
+      expect(result.status).toBe('stopped');
+      expect(taskkill).toEqual([['taskkill', '/PID', '4242', '/T', '/F']]);
+    } finally {
+      resetExecutor();
+    }
+  });
+
   test('a reused PID during the exit wait does not hold cleanup or get another signal', async () => {
     let identity: 'same' | 'different' = 'same';
     const kill = vi.fn<(pid: number) => void>();
@@ -703,6 +724,32 @@ describe('stopTunnel: idempotent, never throws', () => {
     });
     expect(result.status).toBe('failed');
     expect(result.reason).toContain('did not exit');
+  });
+});
+
+describe('terminateChild on win32', () => {
+  afterEach(() => resetExecutor());
+
+  test('signals the tree through taskkill before child.kill', async () => {
+    const taskkill: string[][] = [];
+    const child = makeChildProcess({ pid: 4242 });
+    setExecutor({
+      runFileQuiet: (file: string, args: string[]) => {
+        taskkill.push([file, ...args]);
+        child.emit('exit', null, 'SIGKILL');
+        return '';
+      },
+    });
+    const stopped = await terminateChild(child, {
+      alreadyExited: false,
+      timeoutMs: 10,
+      now: Date.now,
+      sleep: async () => {},
+      isAlive: () => true,
+      platform: 'win32',
+    });
+    expect(stopped).toBe(true);
+    expect(taskkill).toEqual([['taskkill', '/PID', '4242', '/T', '/F']]);
   });
 });
 
