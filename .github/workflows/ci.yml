@@ -11,9 +11,7 @@ name: CI
 on:
   workflow_dispatch:
   push:
-    # '**windows**' feeds the non-blocking windows-probe job below; '*' does
-    # not match '/', so the double star is required for a namespaced branch.
-    branches: [main, '**windows**']
+    branches: [main]
   pull_request:
 
 concurrency:
@@ -90,10 +88,10 @@ jobs:
   # This job exists to measure the distance, not to close it: it runs the unit
   # suite on a GitHub-hosted Windows runner so the failures can be read and
   # classified. It never gates a merge, and it runs only on an explicit
-  # workflow_dispatch or on a push to a branch named for Windows work.
+  # workflow_dispatch or on a pull request from a branch named for Windows work.
   windows-probe:
     name: windows probe (non-blocking)
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.ref_name, 'windows'))
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.head_ref, 'windows'))
     runs-on: windows-latest
     continue-on-error: true
     timeout-minutes: 30
@@ -144,7 +142,7 @@ jobs:
   # Stim drives a real Gradle build to a real APK on Windows.
   windows-android-e2e:
     name: windows android e2e (non-blocking)
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.ref_name, 'windows'))
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.head_ref, 'windows'))
     runs-on: windows-latest
     continue-on-error: true
     timeout-minutes: 90
@@ -155,8 +153,9 @@ jobs:
       TEMP: ${{ github.workspace }}\e2e-tmp
       TMP: ${{ github.workspace }}\e2e-tmp
     steps:
-      - uses: actions/checkout@v4
+      # Before checkout: every action in this job, checkout included, reads TEMP.
       - run: New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\e2e-tmp"
+      - uses: actions/checkout@v4
 
       - name: Set up pnpm and Node
         uses: pnpm/setup@v2
