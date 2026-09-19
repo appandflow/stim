@@ -4,8 +4,10 @@
 # lint, format, typecheck, build, the full vitest unit suite (all five
 # packages), and the fast cross-platform e2e (test/e2e/cache-flow.e2e.js), which
 # drives the real CLI and the real cache library end to end with no compiler.
-# The SLOW native builds live in e2e-native.yml, gated so a flaky 15-minute
-# build never blocks a PR.
+# The native builds live in e2e-native.yml: a one-worktree smoke on every pull
+# request, the full loop nightly, on the e2e-native label, or on dispatch. The
+# Windows Android lane below is the same smoke on the platform e2e-native.yml
+# does not cover.
 name: CI
 
 on:
@@ -136,11 +138,29 @@ jobs:
       # a path at 260 characters.
       TEMP: D:\e
       TMP: D:\e
+      # The shared build cache is persisted across runs so a pull request that
+      # leaves the native fingerprint alone installs from cache instead of
+      # paying the cold Gradle build; one that changes it builds cold, as it
+      # should. Same arrangement as the Linux and macOS lanes.
+      STIM_BUILD_CACHE: D:\e\build-cache
     steps:
       - uses: actions/checkout@v4
-      - run: New-Item -ItemType Directory -Force -Path "D:\e"
+      - run: New-Item -ItemType Directory -Force -Path "D:\e", "D:\e\build-cache"
       - uses: ./.github/actions/setup-stim
       - uses: ./.github/actions/windows-android-sdk
+
+      - name: Restore cross-run build cache
+        uses: actions/cache@v4
+        with:
+          path: D:\e\build-cache
+          key: stim-cli-buildcache-windows-android-bare-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            stim-cli-buildcache-windows-android-bare-
+
+      - name: Detect a warmed cross-run cache
+        run: |
+          $warm = if (Get-ChildItem -Path "D:\e\build-cache" -Force -ErrorAction SilentlyContinue | Select-Object -First 1) { 1 } else { 0 }
+          "STIM_E2E_WARM_CACHE=$warm" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Doctor (android)
         continue-on-error: true

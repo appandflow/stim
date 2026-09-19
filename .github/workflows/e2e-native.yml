@@ -1,9 +1,12 @@
-# SLOW, GATED native e2e -- a real xcodebuild / gradle build on a real
+# SLOW native e2e -- a real xcodebuild / gradle build on a real
 # simulator/emulator, across the framework x platform matrix:
 #
 #     framework in {bare, expo}   x   platform in {ios, android}   (iOS: expo only)
 #
-# THREE SUITES RUN ON THIS MATRIX, selected by the `suite` dispatch input:
+# FOUR SUITES RUN ON THIS MATRIX, selected by the `suite` dispatch input:
+#   smoke   test/e2e/native/run-native-e2e.mjs --smoke -- one worktree: create
+#           -> start -> cold build -> launch -> stop -> cleanup checks. Expo
+#           only. THE PER-PULL-REQUEST GATE, about a third of the loop.
 #   loop    test/e2e/native/run-native-e2e.mjs -- docs/field-test-protocol.md as
 #           code: create -> start -> build -> second worktree hits the cache ->
 #           teardown. THE DEFAULT, and what the nightly has always run.
@@ -19,13 +22,13 @@
 # The nightly and the PR label keep running `loop` exactly as before -- adding
 # the input changed nothing about them.
 #
-# WHY IT IS GATED. A cold native build is ~10-20 minutes and occasionally flaky
-# (device boot, toolchain). Blocking every PR on it would be miserable, so it
-# runs:
-#   - nightly (schedule), against main;
-#   - on demand (workflow_dispatch);
-#   - on a PR ONLY when that PR carries the `e2e-native` label (see the `if:`
-#     guard on each job). Adding the label re-triggers via the `labeled` event.
+# WHAT RUNS WHEN. A cold native build is ~10-20 minutes and occasionally flaky
+# (device boot, toolchain), so the full loop does not run on every PR:
+#   - every pull request: the smoke suite, Expo only, blocking;
+#   - a PR carrying the `e2e-native` label: the loop suite, both frameworks.
+#     Adding the label re-triggers via the `labeled` event;
+#   - nightly (schedule), against main: the loop suite;
+#   - on demand (workflow_dispatch): the `suite` input.
 #
 # VARIANT LAYOUT. Each platform is its own job. Framework and selected suite are
 # matrix axes. iOS and Android are separate jobs because iOS needs macOS and
@@ -53,12 +56,18 @@ on:
         description: 'Which suite to run on the framework x platform matrix'
         type: choice
         default: loop
-        options: [loop, caches, pool, all]
+        options: [smoke, loop, caches, pool, all]
   pull_request:
     # `labeled` is what makes "add the label to run it" work; the others let a
-    # push to an already-labeled PR re-run. The `if:` on each job is the actual
-    # gate -- these types only decide when to EVALUATE it.
+    # push to an already-labeled PR re-run. The matrix `suite` on each job is
+    # the actual gate -- these types only decide when to EVALUATE it.
     types: [labeled, opened, synchronize, reopened]
+    # Documentation cannot change what a build does; those PRs skip the
+    # native lanes entirely.
+    paths-ignore:
+      - 'docs/**'
+      - 'website/**'
+      - '**.md'
 
 concurrency:
   group: e2e-native-${{ github.workflow }}-${{ github.ref }}
@@ -70,21 +79,17 @@ permissions:
 jobs:
   ios:
     name: ios ${{ matrix.framework }} (${{ matrix.suite }})
-    # Gate: always on schedule/dispatch; on a PR only when it is labeled.
-    if: >-
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'e2e-native'))
     runs-on: xcode-27
     # The caches suite adds a second cold compile (the single-flight race) plus a
     # third cache-hit build, so it needs headroom the loop suite never did.
-    timeout-minutes: ${{ matrix.suite == 'caches' && 120 || 60 }}
+    timeout-minutes: ${{ matrix.suite == 'caches' && 120 || matrix.suite == 'smoke' && 45 || 60 }}
     strategy:
       fail-fast: false
       matrix:
         framework: [bare, expo]
-        # Schedule and pull_request events have no suite input and use loop.
-        suite: ${{ fromJSON(inputs.suite == 'all' && '["loop","caches","pool"]' || inputs.suite == 'caches' && '["caches"]' || inputs.suite == 'pool' && '["pool"]' || '["loop"]') }}
+        # Schedule has no suite input and uses loop; an unlabeled pull request
+        # runs smoke, a labeled one runs loop.
+        suite: ${{ fromJSON(inputs.suite == 'all' && '["loop","caches","pool"]' || inputs.suite == 'caches' && '["caches"]' || inputs.suite == 'pool' && '["pool"]' || inputs.suite == 'smoke' && '["smoke"]' || (github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'e2e-native')) && '["smoke"]' || '["loop"]') }}
         # No bare variant on iOS. iOS 27 traps an app that has not adopted the
         # UIScene lifecycle, and @react-native-community/template (0.88.0-rc.1)
         # still ships no SceneDelegate and no UIApplicationSceneManifest, so the
@@ -146,7 +151,7 @@ jobs:
         run: brew install mobai-app/tap/simslim
 
       - name: Restore cross-run build cache
-        if: matrix.suite == 'loop'
+        if: matrix.suite == 'loop' || matrix.suite == 'smoke'
         id: cache
         uses: actions/cache@v4
         with:
@@ -161,7 +166,7 @@ jobs:
       # build may be a legitimate cross-run HIT rather than a cold miss. The
       # combined cache action only reports exact matches, so ask the filesystem.
       - name: Detect a warmed cross-run cache
-        if: matrix.suite == 'loop'
+        if: matrix.suite == 'loop' || matrix.suite == 'smoke'
         run: echo "STIM_E2E_WARM_CACHE=$([ -n \"$(ls -A \"$STIM_BUILD_CACHE\" 2>/dev/null)\" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
 
       - name: Monitor host memory during iOS QA
@@ -175,6 +180,10 @@ jobs:
         # --keep leaves the temp worktrees in place on this ephemeral runner so
         # the artifact step below can collect their build logs.
         run: node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform ios --keep --home "$TMPDIR/stim-cli-home"
+
+      - name: Smoke suite (ios, ${{ matrix.framework }})
+        if: matrix.suite == 'smoke'
+        run: node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform ios --keep --smoke --home "$TMPDIR/stim-cli-home"
 
       - name: Cache suite (ios, ${{ matrix.framework }})
         if: matrix.suite == 'caches'
@@ -238,20 +247,23 @@ jobs:
 
   android:
     name: android ${{ matrix.framework }} (${{ matrix.suite }})
-    if: >-
-      github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_dispatch' && inputs.suite != 'pool') ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'e2e-native'))
+    # The pool suite is iOS only.
+    if: github.event_name != 'workflow_dispatch' || inputs.suite != 'pool'
     # A Linux host with KVM: the Android emulator needs hardware acceleration,
     # which the ubuntu-latest GitHub runners provide once /dev/kvm is exposed.
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ matrix.suite == 'caches' && 120 || 60 }}
+    timeout-minutes: ${{ matrix.suite == 'caches' && 120 || matrix.suite == 'smoke' && 45 || 60 }}
     strategy:
       fail-fast: false
       matrix:
         framework: [bare, expo]
-        # Schedule and pull_request events have no suite input and use loop.
-        suite: ${{ fromJSON(inputs.suite == 'all' && '["loop","caches"]' || inputs.suite == 'caches' && '["caches"]' || '["loop"]') }}
+        # Schedule has no suite input and uses loop; an unlabeled pull request
+        # runs smoke, a labeled one runs loop.
+        suite: ${{ fromJSON(inputs.suite == 'all' && '["loop","caches"]' || inputs.suite == 'caches' && '["caches"]' || inputs.suite == 'smoke' && '["smoke"]' || (github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'e2e-native')) && '["smoke"]' || '["loop"]') }}
+        # The smoke suite is one job per platform; Expo matches the iOS side.
+        exclude:
+          - suite: smoke
+            framework: bare
     env:
       STIM_E2E_SUITE: ${{ matrix.suite }}
       STIM_BUILD_CACHE: ${{ github.workspace }}/.e2e-build-cache/android-${{ matrix.framework }}
@@ -271,7 +283,7 @@ jobs:
           java-version: 17
 
       - name: Restore cross-run build cache
-        if: matrix.suite == 'loop'
+        if: matrix.suite == 'loop' || matrix.suite == 'smoke'
         id: cache
         uses: actions/cache@v4
         with:
@@ -290,7 +302,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Detect a warmed cross-run cache
-        if: matrix.suite == 'loop'
+        if: matrix.suite == 'loop' || matrix.suite == 'smoke'
         run: echo "STIM_E2E_WARM_CACHE=$([ -n \"$(ls -A \"$STIM_BUILD_CACHE\" 2>/dev/null)\" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
 
       - name: Native e2e (android, ${{ matrix.framework }}) -- runs the selected suite(s)
@@ -314,6 +326,7 @@ jobs:
             adb -s emulator-5554 emu kill || true
             sleep 3
             if [ "$STIM_E2E_SUITE" = loop ]; then node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/stim-cli-home"; fi
+            if [ "$STIM_E2E_SUITE" = smoke ]; then node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --smoke --home "$TMPDIR/stim-cli-home"; fi
             if [ "$STIM_E2E_SUITE" = caches ]; then node test/e2e/native/run-cache-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/stim-cli-cache-home" --summary "$GITHUB_WORKSPACE/cache-summary-android-${{ matrix.framework }}.json"; fi
 
       - name: Upload the cache-suite summary
