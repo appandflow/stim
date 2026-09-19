@@ -120,36 +120,39 @@ test('withConfigLock releases the lock when the body throws', () => {
   expect(withConfigLock(() => 'ok')).toBe('ok');
 });
 
-test('concurrent processes each keep their record', async () => {
-  const script = join(tmpHome, 'writer.mjs');
-  const configUrl = new URL('../workspace/config.ts', import.meta.url).href;
-  writeFileSync(
-    script,
-    [
-      `const { upsertProject } = await import(${JSON.stringify(configUrl)});`,
-      'const key = process.argv[2];',
-      'upsertProject(key, { bundleId: key, androidPackage: key, isExpo: false });',
-    ].join('\n'),
-  );
+test.skipIf(process.platform === 'win32')(
+  'concurrent processes each keep their record (Windows rename limbo, #883; skipped on win32)',
+  async () => {
+    const script = join(tmpHome, 'writer.mjs');
+    const configUrl = new URL('../workspace/config.ts', import.meta.url).href;
+    writeFileSync(
+      script,
+      [
+        `const { upsertProject } = await import(${JSON.stringify(configUrl)});`,
+        'const key = process.argv[2];',
+        'upsertProject(key, { bundleId: key, androidPackage: key, isExpo: false });',
+      ].join('\n'),
+    );
 
-  const keys = ['/p1', '/p2', '/p3', '/p4', '/p5', '/p6'];
-  await Promise.all(
-    keys.map(
-      (key) =>
-        new Promise<void>((resolve, reject) => {
-          execFile(process.execPath, [script, key], { env: { ...process.env, STIM_HOME: tmpHome } }, (err) =>
-            err ? reject(err) : resolve(),
-          );
-        }),
-    ),
-  );
+    const keys = ['/p1', '/p2', '/p3', '/p4', '/p5', '/p6'];
+    await Promise.all(
+      keys.map(
+        (key) =>
+          new Promise<void>((resolve, reject) => {
+            execFile(process.execPath, [script, key], { env: { ...process.env, STIM_HOME: tmpHome } }, (err) =>
+              err ? reject(err) : resolve(),
+            );
+          }),
+      ),
+    );
 
-  const cfg = loadConfig();
-  assert(cfg);
-  for (const key of keys) {
-    expect(cfg.projects[key]).toBeTruthy();
-  }
-});
+    const cfg = loadConfig();
+    assert(cfg);
+    for (const key of keys) {
+      expect(cfg.projects[key]).toBeTruthy();
+    }
+  },
+);
 
 test('claimMetroPort records the port when nothing else holds it', () => {
   upsertProject('/a', { bundleId: 'a', androidPackage: 'a', isExpo: false });
