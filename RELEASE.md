@@ -208,8 +208,9 @@ table below over the diff, as `scripts/release-qa-matrix.data.mjs` encodes it in
 paths:
 
 ```bash
-node scripts/release-qa-matrix.mjs vX.Y.Z                    # the checklist, with a reason per row
-node scripts/release-qa-matrix.mjs vX.Y.Z --format markdown  # the QA section for docs/releases
+# "v$last" is the last published version resolved in section 1, not the version being cut.
+node scripts/release-qa-matrix.mjs "v$last"                    # the checklist, with a reason per row
+node scripts/release-qa-matrix.mjs "v$last" --format markdown  # the QA section for docs/releases
 ```
 
 It prints every required row with the changed paths that require it, and every
