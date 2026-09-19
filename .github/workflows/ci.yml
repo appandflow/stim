@@ -196,8 +196,9 @@ jobs:
           node test/e2e/native/run-native-e2e.mjs
           --framework bare --platform android --keep --home "D:\e\stim-home"
 
-      # The step that decides this job's colour. Install and launch depend on an
-      # emulator the runner may not be able to boot; producing the APK does not.
+      # The step that decides this job's colour until #892 and #893 land: the
+      # loop step above passes the build, install and launch, then exits 1 in
+      # the named-slots phase, so the artifact is the part this job can hold.
       - name: Assert Stim produced an APK
         run: |
           $apk = Get-ChildItem -Path "D:\e" -Recurse -Filter *.apk -ErrorAction SilentlyContinue |
