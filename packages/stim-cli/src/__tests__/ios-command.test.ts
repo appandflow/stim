@@ -2683,18 +2683,21 @@ describe('devClientScheme', () => {
     expect(devClientScheme(project({ expo: { scheme: 'myapp' } }, { name: 'x' }))).toBe(undefined);
   });
 
-  test("prefers the built app's Info.plist over app.json", () => {
-    const dir = project({ expo: { scheme: 'from-app-json' } }, withDevClient);
-    const exec = makeExecutor({
-      runFile: (cmd, args) => {
-        expect(cmd).toBe('plutil');
-        expect(args?.slice(0, 4)).toEqual(['-convert', 'json', '-o', '-']);
-        expect(args?.[4]).toMatch(/Fixture\.app\/Info\.plist$/);
-        return JSON.stringify({ CFBundleURLTypes: [{ CFBundleURLSchemes: ['io.tlon.groups'] }] });
-      },
-    });
-    expect(devClientScheme(dir, '/b/Fixture.app', { exec })).toBe('io.tlon.groups');
-  });
+  test.skipIf(process.platform === 'win32')(
+    "prefers the built app's Info.plist over app.json (plutil argv; skipped on win32)",
+    () => {
+      const dir = project({ expo: { scheme: 'from-app-json' } }, withDevClient);
+      const exec = makeExecutor({
+        runFile: (cmd, args) => {
+          expect(cmd).toBe('plutil');
+          expect(args?.slice(0, 4)).toEqual(['-convert', 'json', '-o', '-']);
+          expect(args?.[4]).toMatch(/Fixture\.app\/Info\.plist$/);
+          return JSON.stringify({ CFBundleURLTypes: [{ CFBundleURLSchemes: ['io.tlon.groups'] }] });
+        },
+      });
+      expect(devClientScheme(dir, '/b/Fixture.app', { exec })).toBe('io.tlon.groups');
+    },
+  );
 
   test('falls back to app.json when the bundle cannot be read', () => {
     const dir = project({ expo: { scheme: 'from-app-json' } }, withDevClient);

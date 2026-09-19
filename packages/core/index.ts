@@ -45,7 +45,7 @@ export function cachePathSetting(key: 'buildCache' | 'metroCache'): string | nul
       caches?: Record<string, unknown>;
     };
     const value = parsed?.caches?.[key];
-    return typeof value === 'string' && value.startsWith('/') ? value : null;
+    return typeof value === 'string' && path.isAbsolute(value) ? value : null;
   } catch {
     return null;
   }

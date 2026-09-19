@@ -36,12 +36,13 @@ function write(dir: string, rel: string, value: string): void {
 }
 
 beforeEach(() => {
-  base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-test-warm-')));
+  base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-test-warm-')));
   root = join(base, 'main');
   target = join(base, 'linked');
   process.env.STIM_HOME = join(base, 'home');
   mkdirSync(root);
   git(root, 'init', '-q', '-b', 'main');
+  git(root, 'config', 'core.autocrlf', 'false');
   git(root, 'config', 'user.name', 'test');
   git(root, 'config', 'user.email', 'test@example.com');
   git(root, 'config', 'commit.gpgsign', 'false');
@@ -148,31 +149,35 @@ test('failed direct copies report partial output and keep existing files on retr
   expect(warm().skipped).toEqual([{ file: 'node_modules', reason: 'exists' }]);
 }, 30_000);
 
-test('missing-only copy preserves relative symlinks without linking files back to the source', () => {
-  write(root, 'node_modules/pkg/index.js', 'source package');
-  const source = join(root, 'node_modules/pkg/index.js');
-  const destination = join(target, 'node_modules/pkg/index.js');
-  linkSync(source, join(root, 'node_modules/pkg/sibling.js'));
-  symlinkSync('pkg', join(root, 'node_modules/alias'));
-  write(base, 'outside/.DerivedData/keep', 'outside data');
-  symlinkSync('../../outside', join(root, 'node_modules/outside'));
-  symlinkSync('../../../outside', join(root, 'node_modules/pkg/.DerivedData'));
-  const result = warm();
-  expect(result.failed).toEqual([]);
-  expect(readlinkSync(join(target, 'node_modules/alias'))).toBe('pkg');
-  expect(readlinkSync(join(target, 'node_modules/outside'))).toBe('../../outside');
-  expect(existsSync(join(target, 'node_modules/pkg/.DerivedData'))).toBe(false);
-  expect(readFileSync(join(base, 'outside/.DerivedData/keep'), 'utf-8')).toBe('outside data');
-  const published = lstatSync(destination);
-  expect(published.ino).not.toBe(lstatSync(source).ino);
-  expect(published.nlink).toBe(1);
-  expect(lstatSync(join(target, 'node_modules/pkg/sibling.js')).ino).not.toBe(published.ino);
-  write(target, 'node_modules/pkg/index.js', 'edited destination');
-  expect(readFileSync(source, 'utf-8')).toBe('source package');
-  expect(readFileSync(join(target, 'node_modules/pkg/sibling.js'), 'utf-8')).toBe('source package');
-  writeFileSync(source, 'edited source');
-  expect(readFileSync(destination, 'utf-8')).toBe('edited destination');
-}, 30_000);
+test.skipIf(process.platform === 'win32')(
+  'missing-only copy preserves relative symlinks without linking files back to the source (POSIX symlink and inode semantics; skipped on win32)',
+  () => {
+    write(root, 'node_modules/pkg/index.js', 'source package');
+    const source = join(root, 'node_modules/pkg/index.js');
+    const destination = join(target, 'node_modules/pkg/index.js');
+    linkSync(source, join(root, 'node_modules/pkg/sibling.js'));
+    symlinkSync('pkg', join(root, 'node_modules/alias'));
+    write(base, 'outside/.DerivedData/keep', 'outside data');
+    symlinkSync('../../outside', join(root, 'node_modules/outside'));
+    symlinkSync('../../../outside', join(root, 'node_modules/pkg/.DerivedData'));
+    const result = warm();
+    expect(result.failed).toEqual([]);
+    expect(readlinkSync(join(target, 'node_modules/alias'))).toBe('pkg');
+    expect(readlinkSync(join(target, 'node_modules/outside'))).toBe('../../outside');
+    expect(existsSync(join(target, 'node_modules/pkg/.DerivedData'))).toBe(false);
+    expect(readFileSync(join(base, 'outside/.DerivedData/keep'), 'utf-8')).toBe('outside data');
+    const published = lstatSync(destination);
+    expect(published.ino).not.toBe(lstatSync(source).ino);
+    expect(published.nlink).toBe(1);
+    expect(lstatSync(join(target, 'node_modules/pkg/sibling.js')).ino).not.toBe(published.ino);
+    write(target, 'node_modules/pkg/index.js', 'edited destination');
+    expect(readFileSync(source, 'utf-8')).toBe('source package');
+    expect(readFileSync(join(target, 'node_modules/pkg/sibling.js'), 'utf-8')).toBe('source package');
+    writeFileSync(source, 'edited source');
+    expect(readFileSync(destination, 'utf-8')).toBe('edited destination');
+  },
+  30_000,
+);
 
 test.skipIf(process.platform !== 'darwin')('direct cloning preserves source timestamps', () => {
   write(root, '.env', 'source config');
@@ -347,7 +352,8 @@ test('warm copies literal ignored filenames and skips Finder, IDE, and derived d
   write(root, 'tracked-app/.idea/codeStyles.xml', 'local source changes');
   write(root, '.idea/workspace.xml', 'source IDE state');
   write(root, '.DS_Store', 'source Finder metadata');
-  write(root, '.env with "quotes"', 'literal env');
+  const literalName = process.platform === 'win32' ? ".env with 'quotes'" : '.env with "quotes"';
+  write(root, literalName, 'literal env');
   write(root, 'node_modules/pkg/.DS_Store', 'nested Finder metadata');
   write(root, 'node_modules/pkg/.DS_Store.keep', 'package data');
   write(root, 'node_modules/pkg/.idea/workspace.xml', 'nested IDE state');
@@ -358,7 +364,7 @@ test('warm copies literal ignored filenames and skips Finder, IDE, and derived d
   expect(result.failed).toEqual([]);
   expect(result.copied).not.toContain('.DS_Store');
   expect(result.copied).not.toContain('.idea');
-  expect(readFileSync(join(target, '.env with "quotes"'), 'utf-8')).toBe('literal env');
+  expect(readFileSync(join(target, literalName), 'utf-8')).toBe('literal env');
   expect(existsSync(join(target, '.DS_Store'))).toBe(false);
   expect(existsSync(join(target, 'node_modules/pkg/.DS_Store'))).toBe(false);
   expect(readFileSync(join(target, 'node_modules/pkg/.DS_Store.keep'), 'utf-8')).toBe('package data');
@@ -407,30 +413,38 @@ test.each(['android/build/', 'apps/mobile/'])('warm excludes generated autolinki
   );
 });
 
-test('missing-only copy preserves executable file modes', () => {
-  write(root, 'node_modules/pkg/bin', '#!/bin/sh\nexit 0\n');
-  chmodSync(join(root, 'node_modules/pkg/bin'), 0o755);
-  const result = warm();
-  expect(result.failed).toEqual([]);
-  expect(lstatSync(join(target, 'node_modules/pkg/bin')).mode & 0o777).toBe(0o755);
-}, 30_000);
+test.skipIf(process.platform === 'win32')(
+  'missing-only copy preserves executable file modes (POSIX file modes; skipped on win32)',
+  () => {
+    write(root, 'node_modules/pkg/bin', '#!/bin/sh\nexit 0\n');
+    chmodSync(join(root, 'node_modules/pkg/bin'), 0o755);
+    const result = warm();
+    expect(result.failed).toEqual([]);
+    expect(lstatSync(join(target, 'node_modules/pkg/bin')).mode & 0o777).toBe(0o755);
+  },
+  30_000,
+);
 
-test('warm removes excluded copies from read-only directories and restores their modes', async () => {
-  write(root, 'node_modules/pkg/index.js', 'read-only package');
-  write(root, 'node_modules/pkg/.DerivedData/large', 'excluded');
-  chmodSync(join(root, 'node_modules/pkg'), 0o555);
-  try {
-    const result = await runWarm(target);
-    expect(result.code).toBe(0);
-    expect(readFileSync(join(target, 'node_modules/pkg/index.js'), 'utf-8')).toBe('read-only package');
-    expect(lstatSync(join(target, 'node_modules/pkg')).mode & 0o777).toBe(0o555);
-    expect(existsSync(join(target, 'node_modules/pkg/.DerivedData'))).toBe(false);
-  } finally {
-    chmodSync(join(root, 'node_modules/pkg'), 0o755);
-    const pkg = join(target, 'node_modules/pkg');
-    if (existsSync(pkg)) chmodSync(pkg, 0o755);
-  }
-}, 30_000);
+test.skipIf(process.platform === 'win32')(
+  'warm removes excluded copies from read-only directories and restores their modes (POSIX directory modes; skipped on win32)',
+  async () => {
+    write(root, 'node_modules/pkg/index.js', 'read-only package');
+    write(root, 'node_modules/pkg/.DerivedData/large', 'excluded');
+    chmodSync(join(root, 'node_modules/pkg'), 0o555);
+    try {
+      const result = await runWarm(target);
+      expect(result.code).toBe(0);
+      expect(readFileSync(join(target, 'node_modules/pkg/index.js'), 'utf-8')).toBe('read-only package');
+      expect(lstatSync(join(target, 'node_modules/pkg')).mode & 0o777).toBe(0o555);
+      expect(existsSync(join(target, 'node_modules/pkg/.DerivedData'))).toBe(false);
+    } finally {
+      chmodSync(join(root, 'node_modules/pkg'), 0o755);
+      const pkg = join(target, 'node_modules/pkg');
+      if (existsSync(pkg)) chmodSync(pkg, 0o755);
+    }
+  },
+  30_000,
+);
 
 test('missing-only copy does not restore a deleted tracked file from ignored main state', () => {
   write(target, '.env', 'tracked linked env');

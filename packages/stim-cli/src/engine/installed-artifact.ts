@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { closeSync, openSync, readSync, lstatSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 
 const READ_CHUNK_BYTES = 1024 * 1024;
@@ -35,7 +35,7 @@ export function parseAppContainerPath(text: unknown): string | null {
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean);
-  return lines.length === 1 && lines[0]!.startsWith('/') ? lines[0]! : null;
+  return lines.length === 1 && isAbsolute(lines[0]!) ? lines[0]! : null;
 }
 
 export function artifactsMatch(local: string | null, installed: string | null): boolean {

@@ -15,27 +15,30 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test('a failed clone copy falls back to a regular copy before publishing the artifact', () => {
-  const source = join(root, 'My App "quoted".app');
-  mkdirSync(source);
-  writeFileSync(join(source, 'binary'), 'app bytes');
-  const dest = join(root, 'cache', 'entry');
-  let attempts = 0;
+test.skipIf(process.platform === 'win32')(
+  'a failed clone copy falls back to a regular copy before publishing the artifact (skipped on Windows: the fallback runs the real cp, and a double quote is illegal in an NTFS name)',
+  () => {
+    const source = join(root, 'My App "quoted".app');
+    mkdirSync(source);
+    writeFileSync(join(source, 'binary'), 'app bytes');
+    const dest = join(root, 'cache', 'entry');
+    let attempts = 0;
 
-  const stored = storeArtifact(dest, source, {
-    runFile: (file, args) => {
-      expect(artifactIn(dest)).toBeNull();
-      attempts += 1;
-      if (args.includes('-c')) throw new Error('clone copy unavailable');
-      return execFileSync(file, args);
-    },
-  });
+    const stored = storeArtifact(dest, source, {
+      runFile: (file, args) => {
+        expect(artifactIn(dest)).toBeNull();
+        attempts += 1;
+        if (args.includes('-c')) throw new Error('clone copy unavailable');
+        return execFileSync(file, args);
+      },
+    });
 
-  assert(stored);
-  expect(attempts).toBe(2);
-  expect(readFileSync(join(stored, 'binary'), 'utf8')).toBe('app bytes');
-  expect(existsSync(`${dest}.staging-${process.pid}`)).toBe(false);
-});
+    assert(stored);
+    expect(attempts).toBe(2);
+    expect(readFileSync(join(stored, 'binary'), 'utf8')).toBe('app bytes');
+    expect(existsSync(`${dest}.staging-${process.pid}`)).toBe(false);
+  },
+);
 
 test('a failed copy leaves the existing artifact intact and does not invoke rename-error handling', () => {
   const dest = join(root, 'cache', 'entry');

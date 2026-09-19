@@ -76,10 +76,13 @@ describe("finding the project's expo binary", () => {
     );
   });
 
-  test('a bin file that is not executable falls through to the .bin shim', () => {
-    chmodSync(join(ws, 'node_modules', 'expo', 'bin', 'cli'), 0o644);
-    expect(expoBinPath(app)).toBe(join(ws, 'node_modules', '.bin', 'expo'));
-  });
+  test.skipIf(process.platform === 'win32')(
+    'a bin file that is not executable falls through to the .bin shim (POSIX execute bit; skipped on win32)',
+    () => {
+      chmodSync(join(ws, 'node_modules', 'expo', 'bin', 'cli'), 0o644);
+      expect(expoBinPath(app)).toBe(join(ws, 'node_modules', '.bin', 'expo'));
+    },
+  );
 
   test('the .bin walk reaches the WORKSPACE root, not just the project', () => {
     expect(findBinUpward(app, 'expo')).toBe(join(ws, 'node_modules', '.bin', 'expo'));

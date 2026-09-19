@@ -14,14 +14,19 @@ export function isCarrySkipped(rel: string): boolean {
   );
 }
 
+// Git reports paths with forward slashes on every platform, including Windows.
+function nativePath(path: string): string {
+  return sep === '/' ? path : path.replaceAll('/', sep);
+}
+
 export function gitCommonDir(cwd: string): string | null {
   const out = getExecutor().runFileQuiet('git', ['-C', cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir']);
-  return out ? out.trim() : null;
+  return out ? nativePath(out.trim()) : null;
 }
 
 export function repoRoot(cwd: string): string | null {
   const out = getExecutor().runFileQuiet('git', ['-C', cwd, 'rev-parse', '--show-toplevel']);
-  return out ? out.trim() : null;
+  return out ? nativePath(out.trim()) : null;
 }
 
 export interface UpstreamState {
@@ -471,7 +476,7 @@ function parseWorktrees(out: string): WorktreeEntry[] {
   for (const line of out.split('\n')) {
     if (line.startsWith('worktree ')) {
       if (current.path) entries.push(current as WorktreeEntry);
-      current = { path: line.slice('worktree '.length) };
+      current = { path: nativePath(line.slice('worktree '.length)) };
     } else if (line.startsWith('branch ')) {
       current.branch = line.slice('branch '.length).replace('refs/heads/', '');
     } else if (line === 'prunable' || line.startsWith('prunable ')) {

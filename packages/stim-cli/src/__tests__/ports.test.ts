@@ -57,12 +57,13 @@ test('findReclaimablePort returns first dead port and its owner', async () => {
 });
 
 test('allocatePort reclaims dead ports and removes the dead project', async () => {
-  upsertProject('/a', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  claimMetroPort('/a', 8082);
+  const dead = join(tmpHome, 'dead-project');
+  upsertProject(dead, { bundleId: 'a', androidPackage: 'a', isExpo: false });
+  claimMetroPort(dead, 8082);
   const probe = async () => false;
   const port = await allocatePort('/new', probe, allFree);
   expect(port).toBe(8082);
-  expect(getProject('/a')).toBe(null);
+  expect(getProject(dead)).toBe(null);
 });
 
 test('findReclaimablePort does not reclaim live-path projects even with dead Metro', async () => {

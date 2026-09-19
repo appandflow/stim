@@ -2,7 +2,7 @@ import * as hostMemory from '../host-memory.ts';
 import { deviceSlotPlatforms } from '../devices/device-slots.ts';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import assert from 'node:assert';
 import {
   claimAndroidConsolePort,
@@ -1830,7 +1830,9 @@ describe('ensureOwnedDevice: android', () => {
     const content = join(process.env.ANDROID_AVD_HOME!, 'stim-app.avd');
     mkdirSync(content, { recursive: true });
     writeFileSync(join(process.env.ANDROID_AVD_HOME!, 'stim-app.ini'), `path=${content}\n`);
-    writeFileSync(join(content, 'hardware-qemu.ini.lock'), String(process.pid));
+    const processLock = join(content, 'hardware-qemu.ini.lock', ...(process.platform === 'win32' ? ['pid'] : []));
+    mkdirSync(dirname(processLock), { recursive: true });
+    writeFileSync(processLock, String(process.pid));
     try {
       const { exec, spawn } = androidExecutor({
         avds: ['stim-app'],

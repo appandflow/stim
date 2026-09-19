@@ -276,15 +276,18 @@ test('removeProject deletes entry', () => {
   expect(getProject('/p')).toBe(null);
 });
 
-test('allConsolePortsAndSerials ignores entries from project paths that no longer exist', () => {
-  const live = liveProjectDir('live');
-  upsertProject(live, { bundleId: 'com.live', androidPackage: 'com.live', isExpo: false });
-  setDevice(live, 'android', { avdName: 'Pixel_6', consolePort: 5554 });
-  upsertProject('/definitely/gone/worktree', { bundleId: 'com.dead', androidPackage: 'com.dead', isExpo: false });
-  setDevice('/definitely/gone/worktree', 'android', { avdName: 'Pixel_7', consolePort: 5556 });
-  const result = allConsolePortsAndSerials();
-  expect(result.androidConsolePorts).toEqual([5554]);
-});
+test.skipIf(process.platform === 'win32')(
+  'allConsolePortsAndSerials ignores entries from project paths that no longer exist (skipped on Windows: the default mount check only resolves POSIX volume roots)',
+  () => {
+    const live = liveProjectDir('live');
+    upsertProject(live, { bundleId: 'com.live', androidPackage: 'com.live', isExpo: false });
+    setDevice(live, 'android', { avdName: 'Pixel_6', consolePort: 5554 });
+    upsertProject('/definitely/gone/worktree', { bundleId: 'com.dead', androidPackage: 'com.dead', isExpo: false });
+    setDevice('/definitely/gone/worktree', 'android', { avdName: 'Pixel_7', consolePort: 5556 });
+    const result = allConsolePortsAndSerials();
+    expect(result.androidConsolePorts).toEqual([5554]);
+  },
+);
 
 test('allConsolePortsAndSerials keeps the claim of a project on an unmounted volume', () => {
   const unmounted = '/Volumes/NotPluggedIn/worktree';

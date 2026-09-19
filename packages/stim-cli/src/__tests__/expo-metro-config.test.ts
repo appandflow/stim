@@ -1,7 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { expoMetroConfigPath, metroStoreConfirmedRoot } from '../supervisor/metro-store.ts';
 
 let project: string;
@@ -122,7 +123,7 @@ describe('the Expo Metro config adapter', () => {
 
   test('ships with Stim and is discoverable from source builds', () => {
     expect(adapter.endsWith(join('shim', 'expo-metro-config.cjs'))).toBe(true);
-    expect(expoMetroConfigPath('file:///nowhere/at/all/x.js')).toBe(null);
+    expect(expoMetroConfigPath(pathToFileURL(resolve('/nowhere/at/all/x.js')).href)).toBe(null);
   });
 
   test('keeps Expo default stores when the project has no Metro config', () => {

@@ -181,8 +181,11 @@ test('storeBuild refuses a path that is not there rather than creating an empty 
   expect(existsSync(entryDir('ios', 'fp3', root))).toBe(false);
 });
 
+const SHELL_HOSTILE_APP_NAME =
+  process.platform === 'win32' ? "My App 'quoted' & $(echo owned).app" : 'My App "quoted".app';
+
 test('storeBuild passes the build path as one argument, never through a shell', () => {
-  const build = join(root, 'build', 'My App "quoted".app');
+  const build = join(root, 'build', SHELL_HOSTILE_APP_NAME);
   mkdirSync(build, { recursive: true });
   writeFileSync(join(build, 'bin'), 'x');
 

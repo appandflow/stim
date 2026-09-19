@@ -629,6 +629,7 @@ test('waitForAndroidEmulatorShutdown prefers the active process lock over the le
   let observedPid: number | null = null;
 
   waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+    platform: 'darwin',
     resolveDirectory: () => '/avds/stim-app.avd',
     readProcessId: (path) => {
       paths.push(path);
@@ -641,7 +642,7 @@ test('waitForAndroidEmulatorShutdown prefers the active process lock over the le
     directoryExists: () => true,
   });
 
-  expect(paths).toEqual(['/avds/stim-app.avd/hardware-qemu.ini.lock']);
+  expect(paths).toEqual([join('/avds/stim-app.avd', 'hardware-qemu.ini.lock')]);
   expect(observedPid).toBe(123);
 });
 
@@ -650,6 +651,7 @@ test('waitForAndroidEmulatorShutdown falls back to the legacy process lock', () 
   let observedPid: number | null = null;
 
   waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+    platform: 'darwin',
     resolveDirectory: () => '/avds/stim-app.avd',
     readProcessId: (path) => {
       paths.push(path);
@@ -662,7 +664,10 @@ test('waitForAndroidEmulatorShutdown falls back to the legacy process lock', () 
     directoryExists: () => true,
   });
 
-  expect(paths).toEqual(['/avds/stim-app.avd/hardware-qemu.ini.lock', '/avds/stim-app.avd/userdata-qemu.img.lock']);
+  expect(paths).toEqual([
+    join('/avds/stim-app.avd', 'hardware-qemu.ini.lock'),
+    join('/avds/stim-app.avd', 'userdata-qemu.img.lock'),
+  ]);
   expect(observedPid).toBe(456);
 });
 
@@ -908,6 +913,7 @@ describe('findBuildTool', () => {
       home: '/sdk',
       readDir: () => ['34.0.0', '36.0.0', '35.0.0'],
       exists: (path) => path === join('/sdk', 'build-tools', '35.0.0', 'zipalign'),
+      platform: 'darwin',
     });
     expect(found).toEqual({
       path: join('/sdk', 'build-tools', '35.0.0', 'zipalign'),
@@ -915,6 +921,13 @@ describe('findBuildTool', () => {
       version: '35.0.0',
       major: 35,
     });
+  });
+
+  test('on Windows the build-tools entries carry their own extensions', () => {
+    const probe = (tool: string) =>
+      findBuildTool([tool], { home: '/sdk', readDir: () => ['36.0.0'], exists: () => true, platform: 'win32' })?.path;
+    expect(probe('zipalign')).toBe(join('/sdk', 'build-tools', '36.0.0', 'zipalign.exe'));
+    expect(probe('apksigner')).toBe(join('/sdk', 'build-tools', '36.0.0', 'apksigner.bat'));
   });
 
   test('the tool ORDER within a version is the caller preference', () => {

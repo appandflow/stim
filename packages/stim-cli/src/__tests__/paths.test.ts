@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import {
   emulatorLogFile,
   ensureWorkspaceStorage,
@@ -128,13 +128,15 @@ describe('shared cache roots', () => {
   });
 
   test('explicit cache env overrides win and remain parent roots', () => {
-    process.env.STIM_BUILD_CACHE = '/tmp/custom-build';
-    expect(sharedBuildCache()).toBe('/tmp/custom-build');
+    const customBuild = resolve('/tmp/custom-build');
+    const customMetro = resolve('/tmp/custom-metro');
+    process.env.STIM_BUILD_CACHE = customBuild;
+    expect(sharedBuildCache()).toBe(customBuild);
 
-    process.env.STIM_METRO_CACHE = '/tmp/custom-metro';
-    expect(sharedMetroCache()).toBe('/tmp/custom-metro');
-    expect(sharedMetroCache('demo')).toBe('/tmp/custom-metro/demo');
-    expect(sharedMetroCache('@scope/app')).toBe('/tmp/custom-metro/-scope-app');
+    process.env.STIM_METRO_CACHE = customMetro;
+    expect(sharedMetroCache()).toBe(customMetro);
+    expect(sharedMetroCache('demo')).toBe(join(customMetro, 'demo'));
+    expect(sharedMetroCache('@scope/app')).toBe(join(customMetro, '-scope-app'));
   });
 
   test('a named Metro cache is a subdirectory, and cannot escape the root', () => {

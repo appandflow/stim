@@ -214,13 +214,15 @@ describe('explicit backend selection', () => {
     ).toBe(false);
   });
 
-  test('eas child processes omit proxy credentials and preserve the project environment', async () => {
-    const easBin = join(root, 'fake-eas.cjs');
-    const agentDeviceBin = join(root, 'fake-agent-device');
-    const reportPath = join(root, 'eas-child-env.json');
-    writeFileSync(
-      easBin,
-      `#!/usr/bin/env node
+  test.skipIf(process.platform === 'win32')(
+    'eas child processes omit proxy credentials and preserve the project environment (POSIX executable stub; skipped on win32)',
+    async () => {
+      const easBin = join(root, 'fake-eas.cjs');
+      const agentDeviceBin = join(root, 'fake-agent-device');
+      const reportPath = join(root, 'eas-child-env.json');
+      writeFileSync(
+        easBin,
+        `#!/usr/bin/env node
 const { writeFileSync } = require('node:fs');
 writeFileSync(${JSON.stringify(reportPath)}, JSON.stringify({
   hasProxyUrl: Object.hasOwn(process.env, 'AGENT_DEVICE_DAEMON_BASE_URL'),
@@ -232,55 +234,56 @@ writeFileSync(${JSON.stringify(reportPath)}, JSON.stringify({
 }));
 process.stdout.write(${JSON.stringify(CREATED)});
 `,
-    );
-    writeFileSync(agentDeviceBin, '#!/bin/sh\nexit 0\n');
-    chmodSync(easBin, 0o755);
-    chmodSync(agentDeviceBin, 0o755);
+      );
+      writeFileSync(agentDeviceBin, '#!/bin/sh\nexit 0\n');
+      chmodSync(easBin, 0o755);
+      chmodSync(agentDeviceBin, 0o755);
 
-    const keys = [
-      'AGENT_DEVICE_DAEMON_BASE_URL',
-      'AGENT_DEVICE_DAEMON_AUTH_TOKEN',
-      'EXPO_TOKEN',
-      'LANG',
-      'STIM_EAS_PROJECT_VARIABLE',
-    ] as const;
-    const previous = new Map(keys.map((key) => [key, process.env[key]]));
-    const expectedPath = process.env.PATH;
-    try {
-      process.env.AGENT_DEVICE_DAEMON_BASE_URL = 'https://proxy.example/agent-device';
-      process.env.AGENT_DEVICE_DAEMON_AUTH_TOKEN = 'proxy-token-fixture';
-      process.env.EXPO_TOKEN = 'expo-token-fixture';
-      process.env.LANG = 'stim-test-locale';
-      process.env.STIM_EAS_PROJECT_VARIABLE = 'project-value';
+      const keys = [
+        'AGENT_DEVICE_DAEMON_BASE_URL',
+        'AGENT_DEVICE_DAEMON_AUTH_TOKEN',
+        'EXPO_TOKEN',
+        'LANG',
+        'STIM_EAS_PROJECT_VARIABLE',
+      ] as const;
+      const previous = new Map(keys.map((key) => [key, process.env[key]]));
+      const expectedPath = process.env.PATH;
+      try {
+        process.env.AGENT_DEVICE_DAEMON_BASE_URL = 'https://proxy.example/agent-device';
+        process.env.AGENT_DEVICE_DAEMON_AUTH_TOKEN = 'proxy-token-fixture';
+        process.env.EXPO_TOKEN = 'expo-token-fixture';
+        process.env.LANG = 'stim-test-locale';
+        process.env.STIM_EAS_PROJECT_VARIABLE = 'project-value';
 
-      const resolved = await resolveRemoteContext({
-        root,
-        label: 'wt',
-        backend: 'eas',
-        easBin,
-        env: process.env,
-        lookupAgentDevice: () => agentDeviceBin,
-      });
-      expect('ctx' in resolved).toBe(true);
-      if (!('ctx' in resolved)) return;
-      const booted = await remoteIosDeps(resolved.ctx).ensureBooted({});
-      expect(booted.ok).toBe(true);
+        const resolved = await resolveRemoteContext({
+          root,
+          label: 'wt',
+          backend: 'eas',
+          easBin,
+          env: process.env,
+          lookupAgentDevice: () => agentDeviceBin,
+        });
+        expect('ctx' in resolved).toBe(true);
+        if (!('ctx' in resolved)) return;
+        const booted = await remoteIosDeps(resolved.ctx).ensureBooted({});
+        expect(booted.ok).toBe(true);
 
-      expect(JSON.parse(readFileSync(reportPath, 'utf8'))).toEqual({
-        hasProxyUrl: false,
-        hasProxyToken: false,
-        expoToken: 'expo-token-fixture',
-        path: expectedPath,
-        lang: 'stim-test-locale',
-        projectVariable: 'project-value',
-      });
-    } finally {
-      for (const [key, value] of previous) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
+        expect(JSON.parse(readFileSync(reportPath, 'utf8'))).toEqual({
+          hasProxyUrl: false,
+          hasProxyToken: false,
+          expoToken: 'expo-token-fixture',
+          path: expectedPath,
+          lang: 'stim-test-locale',
+          projectVariable: 'project-value',
+        });
+      } finally {
+        for (const [key, value] of previous) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
       }
-    }
-  });
+    },
+  );
 });
 
 describe('the expensive step happens after the Metro gate', () => {

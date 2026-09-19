@@ -263,3 +263,15 @@ export function writeCasToolchain(
   );
   return { manifest, binary };
 }
+
+// The Android emulator writes its pid to hardware-qemu.ini.lock as a file on POSIX and as a
+// directory holding a `pid` entry on Windows.
+export function writeAvdProcessLock(avdDirectory: string, contents: string): void {
+  const lock = join(avdDirectory, 'hardware-qemu.ini.lock');
+  if (process.platform !== 'win32') {
+    writeFileSync(lock, contents);
+    return;
+  }
+  mkdirSync(lock, { recursive: true });
+  writeFileSync(join(lock, 'pid'), contents);
+}

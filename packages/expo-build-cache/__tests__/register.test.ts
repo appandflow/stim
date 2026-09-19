@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -40,10 +40,13 @@ test('repeated registration updates rather than duplicating', async () => {
 });
 
 test('an unwritable manifest does not break the cache', async () => {
-  process.env.STIM_HOME = '/dev/null/nope';
+  const notADirectory = join(home, 'not-a-directory');
+  writeFileSync(notADirectory, '');
+  const blocked = join(notADirectory, 'nope');
+  process.env.STIM_HOME = blocked;
   vi.resetModules();
   const bc = await import('../index.ts');
   const result = await bc.resolveBuildCache({ platform: 'ios', fingerprintHash: 'x' });
   expect(result).toBe(null);
-  expect(existsSync('/dev/null/nope')).toBe(false);
+  expect(existsSync(blocked)).toBe(false);
 });

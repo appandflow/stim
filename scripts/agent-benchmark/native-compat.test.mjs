@@ -25,87 +25,92 @@ import {
   verifyNativeCompatibility,
 } from './native-compat.mjs';
 
-test('compatibility refuses changed package bytes, permissions, fixture patch, and executable resolution', () => {
-  const root = mkdtempSync(join(tmpdir(), 'benchmark-compat-'));
-  try {
-    const packagePath = join(root, 'agent-device');
-    const entry = join(packagePath, 'bin/agent-device.mjs');
-    const fixture = join(root, 'fixture');
-    const jsi = join(fixture, 'node_modules/expo-modules-jsi/apple/scripts/build-xcframework.sh');
-    mkdirSync(join(packagePath, 'bin'), { recursive: true });
-    mkdirSync(join(root, 'bin'));
-    mkdirSync(join(fixture, 'node_modules/expo-modules-jsi/apple/scripts'), { recursive: true });
-    writeFileSync(entry, 'entry');
-    writeFileSync(join(packagePath, 'implementation.js'), 'original implementation');
-    writeFileSync(jsi, 'patched JSI');
-    const wrapper = join(root, 'bin/xcodebuild');
-    writeFileSync(wrapper, 'wrapper');
-    chmodSync(wrapper, 0o755);
-    const manifest = join(root, 'manifest.json');
-    writeFileSync(
-      manifest,
-      JSON.stringify({
-        schema: 1,
-        architecture: process.arch,
-        agentDevicePackageSha256: packageHash(packagePath),
-        xcodebuildSha256: fileHash(wrapper),
-        xcodebuildMode: 0o755,
-        jsiSha256: fileHash(jsi),
-      }),
-    );
-    const hash = fileHash(manifest);
-    const mode = lstatSync(entry).mode & 0o777;
-    const meta = {
-      preflight: {
-        nativeCompatibility: { directory: root, manifestSha256: hash },
-        nativeCompatibilityProbe: { processIdentity: true },
-      },
-    };
-    assert.equal(collectedNativeCompatibility(meta, fixture).valid, true);
-    assert.equal(collectedNativeCompatibility(meta, null).valid, false);
-    assert.equal(collectedNativeCompatibility(meta, null).manifestSha256, hash);
-    assert.equal(
-      collectedNativeCompatibility(
-        {
-          preflight: {
-            ...meta.preflight,
-            nativeCompatibility: { ...meta.preflight.nativeCompatibility, manifestSha256: 'changed' },
-          },
+test.skipIf(process.platform === 'win32')(
+  'compatibility refuses changed package bytes, permissions, fixture patch, and executable resolution (skipped on Windows: the manifest records POSIX file modes chmod cannot reproduce there)',
+  () => {
+    const root = mkdtempSync(join(tmpdir(), 'benchmark-compat-'));
+    try {
+      const packagePath = join(root, 'agent-device');
+      const entry = join(packagePath, 'bin/agent-device.mjs');
+      const fixture = join(root, 'fixture');
+      const jsi = join(fixture, 'node_modules/expo-modules-jsi/apple/scripts/build-xcframework.sh');
+      mkdirSync(join(packagePath, 'bin'), { recursive: true });
+      mkdirSync(join(root, 'bin'));
+      mkdirSync(join(fixture, 'node_modules/expo-modules-jsi/apple/scripts'), { recursive: true });
+      writeFileSync(entry, 'entry');
+      writeFileSync(join(packagePath, 'implementation.js'), 'original implementation');
+      writeFileSync(jsi, 'patched JSI');
+      const wrapper = join(root, 'bin/xcodebuild');
+      writeFileSync(wrapper, 'wrapper');
+      chmodSync(wrapper, 0o755);
+      const manifest = join(root, 'manifest.json');
+      writeFileSync(
+        manifest,
+        JSON.stringify({
+          schema: 1,
+          architecture: process.arch,
+          agentDevicePackageSha256: packageHash(packagePath),
+          xcodebuildSha256: fileHash(wrapper),
+          xcodebuildMode: 0o755,
+          jsiSha256: fileHash(jsi),
+        }),
+      );
+      const hash = fileHash(manifest);
+      const mode = lstatSync(entry).mode & 0o777;
+      const meta = {
+        preflight: {
+          nativeCompatibility: { directory: root, manifestSha256: hash },
+          nativeCompatibilityProbe: { processIdentity: true },
         },
-        null,
-      ).manifestSha256,
-      undefined,
-    );
-    writeFileSync(manifest, `${readFileSync(manifest, 'utf8')}\n`);
-    assert.equal(collectedNativeCompatibility(meta, null).manifestSha256, undefined);
-    writeFileSync(manifest, readFileSync(manifest, 'utf8').slice(0, -1));
-    assert.equal(collectedNativeCompatibility(meta, join(root, 'removed-worktree')).valid, false);
-    assert.equal(
-      collectedNativeCompatibility({ preflight: { nativeCompatibility: meta.preflight.nativeCompatibility } }, fixture)
-        .valid,
-      false,
-    );
-    assert(verifyNativeCompatibility(manifest, hash, fixture, entry));
-    assert.throws(() => verifyNativeCompatibility(manifest, 'wrong', fixture, entry), /manifest hash/);
-    assert.throws(() => verifyNativeCompatibility(null, hash, fixture, entry), /missing/);
-    assert.throws(() => verifyNativeCompatibility(manifest, hash, fixture, wrapper), /not the compatibility package/);
-    writeFileSync(join(packagePath, 'implementation.js'), 'different implementation');
-    assert.equal(collectedNativeCompatibility(meta, fixture).valid, false);
-    assert.throws(() => verifyNativeCompatibility(manifest, hash, fixture, entry), /package changed/);
-    writeFileSync(join(packagePath, 'implementation.js'), 'original implementation');
-    chmodSync(entry, 0o700);
-    assert.throws(() => verifyNativeCompatibility(manifest, hash, fixture, entry), /package changed/);
-    chmodSync(entry, mode);
-    chmodSync(wrapper, 0o644);
-    assert.throws(() => verifyNativeCompatibility(manifest, hash, fixture, entry), /wrapper changed/);
-    assert.equal(collectedNativeCompatibility(meta, fixture).valid, false);
-    chmodSync(wrapper, 0o755);
-    writeFileSync(jsi, 'unpatched JSI');
-    assert.throws(() => verifyNativeCompatibility(manifest, hash, fixture, entry), /JSI compatibility/);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+      };
+      assert.equal(collectedNativeCompatibility(meta, fixture).valid, true);
+      assert.equal(collectedNativeCompatibility(meta, null).valid, false);
+      assert.equal(collectedNativeCompatibility(meta, null).manifestSha256, hash);
+      assert.equal(
+        collectedNativeCompatibility(
+          {
+            preflight: {
+              ...meta.preflight,
+              nativeCompatibility: { ...meta.preflight.nativeCompatibility, manifestSha256: 'changed' },
+            },
+          },
+          null,
+        ).manifestSha256,
+        undefined,
+      );
+      writeFileSync(manifest, `${readFileSync(manifest, 'utf8')}\n`);
+      assert.equal(collectedNativeCompatibility(meta, null).manifestSha256, undefined);
+      writeFileSync(manifest, readFileSync(manifest, 'utf8').slice(0, -1));
+      assert.equal(collectedNativeCompatibility(meta, join(root, 'removed-worktree')).valid, false);
+      assert.equal(
+        collectedNativeCompatibility(
+          { preflight: { nativeCompatibility: meta.preflight.nativeCompatibility } },
+          fixture,
+        ).valid,
+        false,
+      );
+      assert(verifyNativeCompatibility(manifest, hash, fixture, entry));
+      assert.throws(() => verifyNativeCompatibility(manifest, 'wrong', fixture, entry), /manifest hash/);
+      assert.throws(() => verifyNativeCompatibility(null, hash, fixture, entry), /missing/);
+      assert.throws(() => verifyNativeCompatibility(manifest, hash, fixture, wrapper), /not the compatibility package/);
+      writeFileSync(join(packagePath, 'implementation.js'), 'different implementation');
+      assert.equal(collectedNativeCompatibility(meta, fixture).valid, false);
+      assert.throws(() => verifyNativeCompatibility(manifest, hash, fixture, entry), /package changed/);
+      writeFileSync(join(packagePath, 'implementation.js'), 'original implementation');
+      chmodSync(entry, 0o700);
+      assert.throws(() => verifyNativeCompatibility(manifest, hash, fixture, entry), /package changed/);
+      chmodSync(entry, mode);
+      chmodSync(wrapper, 0o644);
+      assert.throws(() => verifyNativeCompatibility(manifest, hash, fixture, entry), /wrapper changed/);
+      assert.equal(collectedNativeCompatibility(meta, fixture).valid, false);
+      chmodSync(wrapper, 0o755);
+      writeFileSync(jsi, 'unpatched JSI');
+      assert.throws(() => verifyNativeCompatibility(manifest, hash, fixture, entry), /JSI compatibility/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test('package hashing permits portable internal links but rejects escaping targets', () => {
   const root = mkdtempSync(join(tmpdir(), 'benchmark-compat-links-'));

@@ -24,6 +24,7 @@ import {
   debugApkDir,
   discoverAndroidProject,
   gradleArgs,
+  gradlewPath,
   locateApk,
   parseApkFromTranscript,
   parseOutputMetadata,
@@ -56,7 +57,7 @@ afterEach(() => {
 function makeAndroidProject({ gradlew = true } = {}) {
   mkdirSync(join(root, 'android'), { recursive: true });
   if (gradlew) {
-    const path = join(root, 'android', 'gradlew');
+    const path = gradlewPath(root);
     writeFileSync(path, '#!/bin/sh\nexit 0\n');
     chmodSync(path, 0o755);
   }
@@ -97,7 +98,7 @@ describe('discoverAndroidProject', () => {
     makeAndroidProject();
     expect(discoverAndroidProject(root)).toEqual({
       androidDir: join(root, 'android'),
-      gradlew: join(root, 'android', 'gradlew'),
+      gradlew: gradlewPath(root),
     });
   });
 });
@@ -260,7 +261,7 @@ describe('locateApk', () => {
     const apk = writeFlavoredApk('production', 'debug', 'app-production-debug.apk');
     const result = locateApk(root, '');
     expect(result.apkPath).toBe(apk);
-    expect(result.note).toMatch(/apk\/production\/debug/);
+    expect(result.note).toContain(join('apk', 'production', 'debug'));
     expect(result.note).toMatch(/android\.variant/);
     expect(result.note).toMatch(/"productionDebug"/);
   });
@@ -385,7 +386,7 @@ describe('buildAndroid', () => {
     expect(calls.length).toBe(1);
     const call = calls[0];
     assert(call);
-    expect(call.cmd).toBe(join(root, 'android', 'gradlew'));
+    expect(call.cmd).toBe(gradlewPath(root));
     expect(call.args).toEqual(['assembleDebug', '--build-cache', '--init-script', nativeScript]);
     expect(ASSEMBLE_TASK).toBe('assembleDebug');
     expect(call.opts.cwd).toBe(join(root, 'android'));
@@ -399,9 +400,7 @@ describe('buildAndroid', () => {
     const [start, ...transcript] = writer.records;
     assert(start);
     expect(start.event).toBe('build_start');
-    expect(start.msg).toBe(
-      `${join(root, 'android', 'gradlew')} assembleDebug --build-cache --init-script ${nativeScript}`,
-    );
+    expect(start.msg).toBe(`${gradlewPath(root)} assembleDebug --build-cache --init-script ${nativeScript}`);
     expect(transcript.map((r) => r.msg)).toEqual(['> Task :app:compileDebugKotlin', 'BUILD SUCCESSFUL in 41s']);
     for (const record of transcript) {
       expect(record.src).toBe('build');
@@ -434,7 +433,7 @@ describe('buildAndroid', () => {
     expect(start.level).toBe('info');
     expect(start.raw).toBe(undefined);
     expect(start.msg).toBe(
-      `${join(root, 'android', 'gradlew')} assembleDebug --build-cache -PreactNativeArchitectures=arm64-v8a --init-script ${nativeScript}`,
+      `${gradlewPath(root)} assembleDebug --build-cache -PreactNativeArchitectures=arm64-v8a --init-script ${nativeScript}`,
     );
   });
 
@@ -450,9 +449,7 @@ describe('buildAndroid', () => {
     );
     const start = writer.records.find((r) => r.event === 'build_start');
     assert(start);
-    expect(start.msg).toBe(
-      `${join(root, 'android', 'gradlew')} assembleDebug --no-build-cache --init-script ${nativeScript}`,
-    );
+    expect(start.msg).toBe(`${gradlewPath(root)} assembleDebug --no-build-cache --init-script ${nativeScript}`);
   });
 
   test('a failing build comes back as data with the diagnostics extracted, never a throw', async () => {

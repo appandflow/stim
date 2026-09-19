@@ -48,8 +48,14 @@ test('default staging stays on the target volume outside nested Git working tree
   expect(temporaryRoot(near)).toBe(volume.path);
   expect(filesystemDevice(staging)).toBe(filesystemDevice(near));
   expect(filesystemDevice(staging)).not.toBe(filesystemDevice(tmpdir()));
-  expect(lstatSync(staging).mode & 0o777).toBe(0o700);
 });
+
+test.skipIf(process.platform === 'win32')(
+  'default staging is readable only by its owner (POSIX directory modes; skipped on win32)',
+  () => {
+    expect(lstatSync(makeTemporaryDirectory(near, '.stim-warm-')).mode & 0o777).toBe(0o700);
+  },
+);
 
 test('a safe system temporary directory on the same volume remains usable', () => {
   vi.stubEnv('TMPDIR', volume.path);

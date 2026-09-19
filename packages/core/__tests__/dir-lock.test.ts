@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { withDirLock } from '../index.ts';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
 
@@ -46,6 +46,8 @@ vi.mock('node:fs', async (importOriginal) => {
     },
   };
 });
+
+const KILLED_EXIT = process.platform === 'win32' ? [1, null] : [null, 'SIGKILL'];
 
 const CORE_URL = new URL('../index.ts', import.meta.url).href;
 const CHILD_SCRIPT = `
@@ -148,7 +150,7 @@ test('a losing publisher does not strand an empty lock after the winning owner r
   let winner: ClaimHandle | undefined;
   let losingStaging: string | undefined;
   faults.renaming = (from, to) => {
-    if (!to.endsWith('/exclusive')) return;
+    if (basename(to) !== 'exclusive') return;
     faults.renaming = null;
     losingStaging = from;
     winner = tryAcquireClaim({ root: dirname(to), mode: 'exclusive' }).acquired;
@@ -223,6 +225,7 @@ test.each(['publication', 'removal'])(
         `
       import fs from 'node:fs';
       import { syncBuiltinESMExports } from 'node:module';
+      import { join } from 'node:path';
       const lock = process.argv[2];
       const mkdir = fs.mkdirSync;
       const unlink = fs.unlinkSync;
@@ -233,7 +236,7 @@ test.each(['publication', 'removal'])(
       };
       fs.unlinkSync = (path) => {
         unlink(path);
-        if (process.argv[3] === 'removal' && String(path).startsWith(lock + '/.stim-claim-')) process.kill(process.pid, 'SIGKILL');
+        if (process.argv[3] === 'removal' && String(path).startsWith(join(lock, '.stim-claim-'))) process.kill(process.pid, 'SIGKILL');
       };
       syncBuiltinESMExports();
       const { withDirLock } = await import(process.argv[1]);
@@ -245,7 +248,7 @@ test.each(['publication', 'removal'])(
       ],
       { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] },
     );
-    expect(await once(child, 'exit')).toEqual([null, 'SIGKILL']);
+    expect(await once(child, 'exit')).toEqual(KILLED_EXIT);
     const body = vi.fn<() => void>();
     expect(() => withDirLock(lock, body, { waitMs: 0 })).toThrow(
       expect.objectContaining({ code: 'STIM_LOCK_TIMEOUT', lockPath: lock }),
@@ -274,7 +277,7 @@ test('a second interrupted recovery does not strand the original visible marker'
     ],
     { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] },
   );
-  expect(await once(recovery, 'exit')).toEqual([null, 'SIGKILL']);
+  expect(await once(recovery, 'exit')).toEqual(KILLED_EXIT);
   expect(readdirSync(lock)).toEqual(original);
   expect(withDirLock(lock, () => 'recovered', { waitMs: 0 })).toBe('recovered');
   expect(existsSync(lock)).toBe(false);

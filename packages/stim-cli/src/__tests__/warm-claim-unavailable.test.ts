@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Command } from 'commander';
@@ -57,10 +57,7 @@ async function runWarm(cwd: string, ...args: string[]) {
 }
 
 beforeEach(() => {
-  base = execFileSync('/bin/sh', ['-c', 'pwd -P'], {
-    cwd: mkdtempSync(join(tmpdir(), 'stim-test-claimless-')),
-    encoding: 'utf-8',
-  }).trim();
+  base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-test-claimless-')));
   process.env.STIM_HOME = join(base, 'home');
   const origin = join(base, 'origin.git');
   root = join(base, 'main');

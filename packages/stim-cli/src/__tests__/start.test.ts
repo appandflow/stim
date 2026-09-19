@@ -378,7 +378,7 @@ describe('option parsing', () => {
 describe('the supervisor entry point', () => {
   test('resolves to the run.js that is actually shipped', () => {
     expect(existsSync(supervisorEntry())).toBeTruthy();
-    expect(supervisorEntry()).toMatch(/src\/supervisor\/run\.ts$/);
+    expect(supervisorEntry().endsWith(join('src', 'supervisor', 'run.ts'))).toBe(true);
   });
 });
 

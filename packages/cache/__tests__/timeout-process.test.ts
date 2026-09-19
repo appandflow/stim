@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
@@ -11,7 +11,7 @@ test('the timeout fires in a process with nothing else keeping the loop alive', 
   expect(existsSync(dist)).toBe(true);
 
   const script = `
-    const { callWithTimeout } = await import(${JSON.stringify(dist)});
+    const { callWithTimeout } = await import(${JSON.stringify(pathToFileURL(dist).href)});
     const outcome = await callWithTimeout(() => new Promise(() => {}), 150);
     process.stdout.write(JSON.stringify(outcome));
   `;

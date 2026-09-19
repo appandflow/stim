@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import assert from 'node:assert';
 import { checkMachineSettings, readMachineSettings } from '../diagnostics/doctor-config.ts';
 import { runDoctor } from '../diagnostics/doctor.ts';
@@ -42,10 +42,11 @@ test('the same path existing reports nothing', () => {
 
 test('a relative path setting is resolved against the project root before the existence test', () => {
   const settings = { ios: { simslimProfile: 'tools/simslim.json' } };
-  expect(check(settings, ['/app/tools/simslim.json'])).toEqual([]);
+  const profile = resolve('/app', 'tools/simslim.json');
+  expect(check(settings, [profile])).toEqual([]);
   const findings = check(settings);
   expect(findings).toHaveLength(1);
-  expect(findings[0]?.detail).toContain('/app/tools/simslim.json');
+  expect(findings[0]?.detail).toContain(profile);
 });
 
 test('a CAS selection with no toolchain is a finding rather than a refusal mid-build', () => {
@@ -137,10 +138,11 @@ test('a path setting is tested verbatim, because the build opens the string the 
 
 test('a keystore is tested the way its consumer reads it, which trims the configured value', () => {
   const settings = { android: { keystore: ' release.keystore ' } };
-  expect(check(settings, ['/app/release.keystore'])).toEqual([]);
+  const keystore = resolve('/app', 'release.keystore');
+  expect(check(settings, [keystore])).toEqual([]);
   const findings = check(settings);
   expect(findings).toHaveLength(1);
-  expect(findings[0]?.detail).toBe(`android.keystore in ${MACHINE} names /app/release.keystore, which does not exist.`);
+  expect(findings[0]?.detail).toBe(`android.keystore in ${MACHINE} names ${keystore}, which does not exist.`);
 });
 
 test.each(['tc/toolchain.json', '/abs/toolchain.json\n'])(

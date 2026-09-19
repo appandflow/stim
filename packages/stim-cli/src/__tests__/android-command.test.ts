@@ -1452,7 +1452,9 @@ describe('product flavors (--variant / android.variant)', () => {
 
     expect(result.ok).toBe(true);
     expect(h.calls.build[0]?.variant).toBe('productionDebug');
-    expect(h.calls.install[0]?.apkPath).toMatch(/apk\/production\/debug\/app-production-debug\.apk$/);
+    expect(h.calls.install[0]?.apkPath).toBe(
+      join(root, 'android', 'app', 'build', 'outputs', 'apk', 'production', 'debug', 'app-production-debug.apk'),
+    );
     expect(h.calls.resolveCached[0]).toEqual(['android', FLAVORED_KEY]);
     expect(h.calls.storeCached[0]?.slice(0, 2)).toEqual(['android', FLAVORED_KEY]);
     expect(FLAVORED_KEY).not.toBe(CACHE_KEY);
@@ -2648,7 +2650,7 @@ describe('Contract 5: the device-log collector', () => {
     const spawn0 = h.calls.spawn[0];
     assert(spawn0);
     const { args, opts, unrefed } = spawn0;
-    expect(args[0]).toMatch(/collector\/run\.ts$/);
+    expect(args[0]).toBe(join(import.meta.dirname, '..', 'collector', 'run.ts'));
     expect(args.slice(1)).toEqual([
       '--platform',
       'android',
@@ -2843,7 +2845,7 @@ describe('the pure parts', () => {
   });
 
   test('displayPath shortens a workspace path and leaves a foreign one alone', () => {
-    expect(displayPath(root, join(root, '.stim', 'logs'))).toBe('.stim/logs');
+    expect(displayPath(root, join(root, '.stim', 'logs'))).toBe(join('.stim', 'logs'));
     expect(displayPath(root, '/elsewhere/build.ndjson')).toBe('/elsewhere/build.ndjson');
   });
 
@@ -3435,11 +3437,12 @@ describe('the APK dev-client scheme', () => {
   });
 
   test('findAapt takes the newest build-tools that actually has one', () => {
+    const aapt2 = join('/sdk', 'build-tools', '35.0.0', process.platform === 'win32' ? 'aapt2.exe' : 'aapt2');
     const found = findAapt('/sdk', {
       readDir: () => ['35.0.0', '36.0.0'],
-      exists: (path) => path === join('/sdk', 'build-tools', '35.0.0', 'aapt2'),
+      exists: (path) => path === aapt2,
     });
-    expect(found).toEqual({ path: join('/sdk', 'build-tools', '35.0.0', 'aapt2'), tool: 'aapt2', version: '35.0.0' });
+    expect(found).toEqual({ path: aapt2, tool: 'aapt2', version: '35.0.0' });
     expect(
       findAapt('/sdk', {
         readDir: () => {
@@ -5668,26 +5671,29 @@ test('a CAS manifest with no resourceDir builds with ccache instead of failing t
   ]);
 });
 
-test('a CAS manifest whose compiler is not executable builds with ccache instead of spawning EACCES', async () => {
-  const { manifest, binary } = writeCasToolchain(home);
-  chmodSync(binary, 0o644);
-  const file = writeMachineOptimizations({ android: { compilerCache: 'cas', casToolchain: manifest } });
-  const options: Record<string, unknown>[] = [];
-  const h = harness({
-    ccacheFor: () => CCACHE_SETUP,
-    build: async (_args: BuildArgs = {}, opts: Record<string, unknown> = {}) => {
-      options.push(opts);
-      return makeAndroidBuildSuccess({ apkPath: fakeApk(), durationMs: 1 });
-    },
-  });
-  expect((await h.run()).ok).toBe(true);
-  expect(options[0]).toMatchObject({ cas: null, ccache: CCACHE_SETUP });
-  expect(h.calls.storeCached[0]?.[1]).not.toMatch(/apple-cas-/);
-  expect(h.stderr.filter((line) => line.includes('Warning: optimizations.android.casToolchain'))).toEqual([
-    `  cache       Warning: optimizations.android.casToolchain in ${file} could not be used: ${manifest} names no ` +
-      'executable clang, clangxx, lld, ar, ranlib. Android builds fall back to ccache when it is available.',
-  ]);
-});
+test.skipIf(process.platform === 'win32')(
+  'a CAS manifest whose compiler is not executable builds with ccache instead of spawning EACCES (POSIX executable bit; skipped on win32)',
+  async () => {
+    const { manifest, binary } = writeCasToolchain(home);
+    chmodSync(binary, 0o644);
+    const file = writeMachineOptimizations({ android: { compilerCache: 'cas', casToolchain: manifest } });
+    const options: Record<string, unknown>[] = [];
+    const h = harness({
+      ccacheFor: () => CCACHE_SETUP,
+      build: async (_args: BuildArgs = {}, opts: Record<string, unknown> = {}) => {
+        options.push(opts);
+        return makeAndroidBuildSuccess({ apkPath: fakeApk(), durationMs: 1 });
+      },
+    });
+    expect((await h.run()).ok).toBe(true);
+    expect(options[0]).toMatchObject({ cas: null, ccache: CCACHE_SETUP });
+    expect(h.calls.storeCached[0]?.[1]).not.toMatch(/apple-cas-/);
+    expect(h.stderr.filter((line) => line.includes('Warning: optimizations.android.casToolchain'))).toEqual([
+      `  cache       Warning: optimizations.android.casToolchain in ${file} could not be used: ${manifest} names no ` +
+        'executable clang, clangxx, lld, ar, ranlib. Android builds fall back to ccache when it is available.',
+    ]);
+  },
+);
 
 test('CAS Release builds skip legacy providers that cannot key compiler identity', async () => {
   const previous = process.env.STIM_ANDROID_CAS_TOOLCHAIN;

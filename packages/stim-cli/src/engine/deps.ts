@@ -1,7 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { delimiter, dirname, join, relative, resolve, sep } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
@@ -168,7 +168,7 @@ export function podEnv(
   ];
   for (const c of candidates) {
     if (!exists(c.bin)) continue;
-    out.PATH = `${c.bin}:${out.PATH ?? ''}`;
+    out.PATH = `${c.bin}${delimiter}${out.PATH ?? ''}`;
     if (c.gems && exists(c.gems)) {
       out.GEM_HOME = c.gems;
       out.GEM_PATH = c.gems;
@@ -350,7 +350,7 @@ async function ensureBundledGems(
   if (install.error) return bundlerSpawnFailure('bundle install', install, pin);
   const inProject = bundlePathInsideProject(cwd, env);
   const note = inProject
-    ? `\`bundle install\` put this project's gems in ${inProject.path}/, ${inProject.where}; ` +
+    ? `\`bundle install\` put this project's gems in ${inProject.path}${sep}, ${inProject.where}; ` +
       'Gemfile.lock itself is never written.'
     : undefined;
   if (install.code === 0) return { bundler: true, note };

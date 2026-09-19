@@ -7,12 +7,13 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, sep } from 'node:path';
 import { Command } from 'commander';
 import { workspaceName } from '@stim-cli/core';
 import { registerWarm } from '../commands/worktree.ts';
@@ -70,16 +71,14 @@ async function runWarm(cwd: string, ...args: string[]) {
 }
 
 beforeEach(() => {
-  base = execFileSync('/bin/sh', ['-c', 'pwd -P'], {
-    cwd: mkdtempSync(join(tmpdir(), 'stim-test-refresh-')),
-    encoding: 'utf-8',
-  }).trim();
+  base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-test-refresh-')));
   process.env.STIM_HOME = join(base, 'home');
   const origin = join(base, 'origin.git');
   root = join(base, 'main');
   target = join(base, 'linked');
   git(base, 'init', '-q', '--bare', '-b', 'main', origin);
   execFileSync('git', ['clone', '-q', origin, root], { encoding: 'utf-8', timeout: 15_000 });
+  git(root, 'config', 'core.autocrlf', 'false');
   git(root, 'config', 'user.name', 'test');
   git(root, 'config', 'user.email', 'test@example.com');
   git(root, 'config', 'commit.gpgsign', 'false');
@@ -687,26 +686,30 @@ test('a retry after a failed install runs it again instead of copying a half-ins
   expect(spawned).toEqual([]);
 }, 30_000);
 
-test('both warm paths refuse an unwritable claim store before copying and report recovery', async () => {
-  write(root, '.env', 'main env');
-  const home = String(process.env.STIM_HOME);
-  mkdirSync(home, { recursive: true });
-  chmodSync(home, 0o500);
-  try {
-    for (const args of [[], ['--refresh']]) {
-      process.exitCode = 0;
-      const result = await runWarm(target, ...args);
-      expect(result.code).toBe(1);
-      expect(result.stdout).toEqual([]);
-      expect(result.stderr).toContain('failed: STIM_CLAIM_UNAVAILABLE');
-      expect(result.stderr).toContain('Restore write access to the existing claim store');
-      expect(result.stderr).toContain(home);
-      expect(existsSync(join(target, '.env'))).toBe(false);
+test.skipIf(process.platform === 'win32')(
+  'both warm paths refuse an unwritable claim store before copying and report recovery (POSIX directory modes; skipped on win32)',
+  async () => {
+    write(root, '.env', 'main env');
+    const home = String(process.env.STIM_HOME);
+    mkdirSync(home, { recursive: true });
+    chmodSync(home, 0o500);
+    try {
+      for (const args of [[], ['--refresh']]) {
+        process.exitCode = 0;
+        const result = await runWarm(target, ...args);
+        expect(result.code).toBe(1);
+        expect(result.stdout).toEqual([]);
+        expect(result.stderr).toContain('failed: STIM_CLAIM_UNAVAILABLE');
+        expect(result.stderr).toContain('Restore write access to the existing claim store');
+        expect(result.stderr).toContain(home);
+        expect(existsSync(join(target, '.env'))).toBe(false);
+      }
+    } finally {
+      chmodSync(home, 0o700);
     }
-  } finally {
-    chmodSync(home, 0o700);
-  }
-}, 30_000);
+  },
+  30_000,
+);
 
 test('a dangling STIM_HOME link refuses both warm paths before copying or changing the source', async () => {
   write(root, '.env', 'main env');
@@ -880,41 +883,45 @@ test('a real install whose own child outlives it holds the claim until that chil
   } catch {}
 }, 60_000);
 
-test('an install Stim could not record is not abandoned, and its claim outlives the failed record', async () => {
-  write(root, 'pnpm-lock.yaml', 'lock v1\n');
-  commit(root, 'lockfile');
-  git(root, 'push', '-q', 'origin', 'main');
-  mkdirSync(join(root, 'node_modules'), { recursive: true });
-  fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
-  write(root, '.env', 'main env');
+test.skipIf(process.platform === 'win32')(
+  'an install Stim could not record is not abandoned, and its claim outlives the failed record (POSIX directory modes; skipped on win32)',
+  async () => {
+    write(root, 'pnpm-lock.yaml', 'lock v1\n');
+    commit(root, 'lockfile');
+    git(root, 'push', '-q', 'origin', 'main');
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
+    write(root, '.env', 'main env');
 
-  const real = getExecutor();
-  setExecutor({
-    ...real,
-    spawn(_cmd: string, _args: string[], opts: SpawnOptions) {
-      const dir = exclusiveClaimDir(warmClaimPath(root));
-      // The spawned process restores the claim directory itself, so the refresh that could not record it
-      // can release the claim once the process is gone rather than leaving it for the next warm to reap.
-      const child = real.spawn(
-        process.execPath,
-        ['-e', `setTimeout(() => require("node:fs").chmodSync(${JSON.stringify(dir)}, 0o700), 200)`],
-        opts,
-      );
-      chmodSync(dir, 0o500);
-      return child;
-    },
-  });
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      spawn(_cmd: string, _args: string[], opts: SpawnOptions) {
+        const dir = exclusiveClaimDir(warmClaimPath(root));
+        // The spawned process restores the claim directory itself, so the refresh that could not record it
+        // can release the claim once the process is gone rather than leaving it for the next warm to reap.
+        const child = real.spawn(
+          process.execPath,
+          ['-e', `setTimeout(() => require("node:fs").chmodSync(${JSON.stringify(dir)}, 0o700), 200)`],
+          opts,
+        );
+        chmodSync(dir, 0o500);
+        return child;
+      },
+    });
 
-  const result = await runWarm(target, '--refresh');
-  expect(result.code).toBe(0);
-  expect(result.stderr).toMatch(
-    /lock {8}could not record the install this refresh spawned \(.*\); holding the claim here until it exits/,
-  );
-  expect(result.stderr).toContain(`deps        source ${root}: pnpm-lock.yaml changed -> pnpm install`);
-  expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
-  expect(installLedger()).toMatchObject({ completed: true });
-  expect(existsSync(warmClaimPath(root))).toBe(false);
-}, 30_000);
+    const result = await runWarm(target, '--refresh');
+    expect(result.code).toBe(0);
+    expect(result.stderr).toMatch(
+      /lock {8}could not record the install this refresh spawned \(.*\); holding the claim here until it exits/,
+    );
+    expect(result.stderr).toContain(`deps        source ${root}: pnpm-lock.yaml changed -> pnpm install`);
+    expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
+    expect(installLedger()).toMatchObject({ completed: true });
+    expect(existsSync(warmClaimPath(root))).toBe(false);
+  },
+  30_000,
+);
 
 test('the evidence that an install is owed is written before the fast-forward moves HEAD', async () => {
   write(root, 'pnpm-lock.yaml', 'lock v1\n');
@@ -925,9 +932,10 @@ test('the evidence that an install is owed is written before the fast-forward mo
   const snapshot = join(base, 'ledger-as-git-saw-it.json');
   const hook = join(root, '.git', 'hooks', 'post-merge');
   mkdirSync(dirname(hook), { recursive: true });
+  const shellPath = (path: string) => JSON.stringify(path.split(sep).join('/'));
   writeFileSync(
     hook,
-    `#!/bin/sh\ncat ${JSON.stringify(join(String(process.env.STIM_HOME), 'warm-installs'))}/*.json > ${JSON.stringify(snapshot)} 2>/dev/null || echo '"none"' > ${JSON.stringify(snapshot)}\n`,
+    `#!/bin/sh\ncat ${shellPath(join(String(process.env.STIM_HOME), 'warm-installs'))}/*.json > ${shellPath(snapshot)} 2>/dev/null || echo '"none"' > ${shellPath(snapshot)}\n`,
   );
   chmodSync(hook, 0o755);
 

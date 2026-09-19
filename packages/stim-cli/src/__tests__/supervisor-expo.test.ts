@@ -2,7 +2,8 @@ import assert from 'node:assert';
 import type { SpawnOptions } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { parseNdjsonText } from '../ndjson.ts';
 import {
   expoProxyEnv,
@@ -522,7 +523,7 @@ describe('the Metro store injected into an Expo child', () => {
     assert(found);
     expect(found.endsWith(join('shim', 'expo-metro-config.cjs'))).toBe(true);
     expect(existsSync(found)).toBe(true);
-    expect(expoMetroConfigPath('file:///nowhere/at/all/x.js')).toBe(null);
+    expect(expoMetroConfigPath(pathToFileURL(resolve('/nowhere/at/all/x.js')).href)).toBe(null);
   });
 
   test('the spawned SDK 54 child carries the adapter, store, and caller environment', async () => {

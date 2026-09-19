@@ -475,36 +475,42 @@ test('a project and STIM_HOME on the boot volume report one volume', () => {
   expect(volumes.map((v) => v.volume)).toEqual(['/']);
 });
 
-test('a project on another volume reports that volume alongside the boot one', () => {
-  process.env.STIM_HOME = '/Users/someone/.stim';
-  const asked = dfExecutor({
-    '/': dfOutput({ totalKb: 926 * 1024 * 1024, availableKb: 38 * 1024 * 1024 }),
-    '/Volumes/ExternalSSD': dfOutput({ totalKb: 2048 * 1024 * 1024, availableKb: 1536 * 1024 * 1024 }),
-  });
-  const volumes = readVolumes('/Volumes/ExternalSSD/Developer/app');
-  expect(asked).toEqual(['/', '/Volumes/ExternalSSD']);
-  expect(volumes.map((v) => v.volume)).toEqual(['/', '/Volumes/ExternalSSD']);
-  const v1 = volumes[1];
-  assert(v1?.disk);
-  expect(v1.disk.availableMb).toBe(1536 * 1024);
-});
-
-test('an STIM_HOME on another volume is reported even when the project is on the boot volume', () => {
-  const previousHome = process.env.STIM_HOME;
-  process.env.STIM_HOME = '/Volumes/StateSSD/Stim';
-  try {
+test.skipIf(process.platform === 'win32')(
+  'a project on another volume reports that volume alongside the boot one (macOS df and /Volumes; skipped on win32)',
+  () => {
+    process.env.STIM_HOME = '/Users/someone/.stim';
     const asked = dfExecutor({
       '/': dfOutput({ totalKb: 926 * 1024 * 1024, availableKb: 38 * 1024 * 1024 }),
-      '/Volumes/StateSSD': dfOutput({ totalKb: 2048 * 1024 * 1024, availableKb: 1536 * 1024 * 1024 }),
+      '/Volumes/ExternalSSD': dfOutput({ totalKb: 2048 * 1024 * 1024, availableKb: 1536 * 1024 * 1024 }),
     });
-    const volumes = readVolumes('/Users/someone/code/app');
-    expect(asked).toEqual(['/', '/Volumes/StateSSD']);
-    expect(volumes.map((v) => v.volume)).toEqual(['/', '/Volumes/StateSSD']);
-  } finally {
-    if (previousHome === undefined) delete process.env.STIM_HOME;
-    else process.env.STIM_HOME = previousHome;
-  }
-});
+    const volumes = readVolumes('/Volumes/ExternalSSD/Developer/app');
+    expect(asked).toEqual(['/', '/Volumes/ExternalSSD']);
+    expect(volumes.map((v) => v.volume)).toEqual(['/', '/Volumes/ExternalSSD']);
+    const v1 = volumes[1];
+    assert(v1?.disk);
+    expect(v1.disk.availableMb).toBe(1536 * 1024);
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'an STIM_HOME on another volume is reported even when the project is on the boot volume (macOS df and /Volumes; skipped on win32)',
+  () => {
+    const previousHome = process.env.STIM_HOME;
+    process.env.STIM_HOME = '/Volumes/StateSSD/Stim';
+    try {
+      const asked = dfExecutor({
+        '/': dfOutput({ totalKb: 926 * 1024 * 1024, availableKb: 38 * 1024 * 1024 }),
+        '/Volumes/StateSSD': dfOutput({ totalKb: 2048 * 1024 * 1024, availableKb: 1536 * 1024 * 1024 }),
+      });
+      const volumes = readVolumes('/Users/someone/code/app');
+      expect(asked).toEqual(['/', '/Volumes/StateSSD']);
+      expect(volumes.map((v) => v.volume)).toEqual(['/', '/Volumes/StateSSD']);
+    } finally {
+      if (previousHome === undefined) delete process.env.STIM_HOME;
+      else process.env.STIM_HOME = previousHome;
+    }
+  },
+);
 
 test('a volume df cannot answer for is dropped, not reported as empty', async () => {
   dfExecutor({ '/': dfOutput({ totalKb: 926 * 1024 * 1024, availableKb: 38 * 1024 * 1024 }) });

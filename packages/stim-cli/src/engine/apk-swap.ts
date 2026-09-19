@@ -1,12 +1,12 @@
 import { makeTemporaryDirectory, removeTemporaryEntry } from '../temporary.ts';
 import type { ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, waitForChild } from '../process-output.ts';
 import type { SettingsObject } from '../workspace/settings-types.ts';
-import { findBuildTool, type BuildToolsEntry } from '../devices/android.ts';
+import { androidBuildToolName, findBuildTool, type BuildToolsEntry } from '../devices/android.ts';
 import { cleanLine } from '../supervisor/server-expo.ts';
 import {
   assetDiffReason,
@@ -44,7 +44,12 @@ export function readAndroidHermesEnabled(root: string): boolean {
 }
 
 export function hermescBinDir(platform: string = process.platform): string {
-  return platform === 'darwin' ? 'osx-bin' : 'linux64-bin';
+  if (platform === 'darwin') return 'osx-bin';
+  return platform === 'win32' ? 'win64-bin' : 'linux64-bin';
+}
+
+function hermescName(platform: string): string {
+  return platform === 'win32' ? 'hermesc.exe' : 'hermesc';
 }
 
 export function hermescCandidates(
@@ -52,13 +57,14 @@ export function hermescCandidates(
   { platform = process.platform, reactNativePath = null }: { platform?: string; reactNativePath?: string | null } = {},
 ): string[] {
   const bin = hermescBinDir(platform);
+  const name = hermescName(platform);
   const rn = reactNativePath ?? join(root, 'node_modules', 'react-native');
   return [
     ...new Set([
-      join(dirname(rn), 'hermes-compiler', 'hermesc', bin, 'hermesc'),
-      join(root, 'node_modules', 'hermes-compiler', 'hermesc', bin, 'hermesc'),
-      join(root, 'node_modules', 'react-native', 'sdks', 'hermesc', bin, 'hermesc'),
-      join(root, 'node_modules', 'react-native', 'sdks', 'hermes', 'build', 'bin', 'hermesc'),
+      join(dirname(rn), 'hermes-compiler', 'hermesc', bin, name),
+      join(root, 'node_modules', 'hermes-compiler', 'hermesc', bin, name),
+      join(root, 'node_modules', 'react-native', 'sdks', 'hermesc', bin, name),
+      join(root, 'node_modules', 'react-native', 'sdks', 'hermes', 'build', 'bin', name),
     ]),
   ];
 }
@@ -160,7 +166,7 @@ export function resolveKeystore(root: string, settings: SettingsObject | null | 
   const configured = bag['keystore'];
   const path =
     typeof configured === 'string' && configured.trim() !== ''
-      ? configured.trim().startsWith('/')
+      ? isAbsolute(configured.trim())
         ? configured.trim()
         : join(root, configured.trim())
       : join(root, 'android', 'app', 'debug.keystore');
@@ -397,7 +403,7 @@ export async function swapApkBundle({
   }
 
   const signer = buildTools
-    ? { ...buildTools, path: join(dirname(buildTools.path), 'apksigner') }
+    ? { ...buildTools, path: join(dirname(buildTools.path), androidBuildToolName('apksigner')) }
     : findTool(['apksigner']);
   if (!signer) {
     return fail(

@@ -2,7 +2,7 @@ import assert from 'node:assert';
 import { execFileSync, execSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import {
   matchesInclude,
@@ -27,6 +27,10 @@ import {
   dirtyPaths,
   restoreFile,
 } from '../workspace/worktree.ts';
+
+function nativePath(path: string): string {
+  return path.split('/').join(sep);
+}
 
 afterEach(() => resetExecutor());
 
@@ -203,9 +207,9 @@ test('listWorktrees parses a detached-HEAD entry without dropping neighbours', (
   ].join('\n');
   setExecutor({ run: () => porcelain, runFileQuiet: () => porcelain, spawn: () => {} });
   expect(listWorktrees('/repo')).toEqual([
-    { path: '/repo', branch: 'main' },
-    { path: '/repo-worktrees/detached' },
-    { path: '/repo-worktrees/feat-x', branch: 'feat-x' },
+    { path: nativePath('/repo'), branch: 'main' },
+    { path: nativePath('/repo-worktrees/detached') },
+    { path: nativePath('/repo-worktrees/feat-x'), branch: 'feat-x' },
   ]);
 });
 
@@ -653,10 +657,10 @@ test('dirtyFingerprintFiles is empty on a clean tree and when git cannot answer'
   expect(dirtyFingerprintFiles('/p')).toEqual([]);
 });
 
-test('git runs against a real repo whose path holds a space, a double quote, a dollar sign and a backtick', () => {
+test('git runs against a real repo whose path holds a space, a dollar sign, and shell metacharacters (NTFS-legal set on win32)', () => {
   resetExecutor();
-  const base = mkdtempSync(join(tmpdir(), 'stim-test-hostile-'));
-  const root = join(base, 'we "ird $HOME `id` repo');
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-test-hostile-')));
+  const root = join(base, process.platform === 'win32' ? "we 'ird $HOME & (id); repo" : 'we "ird $HOME `id` repo');
   try {
     mkdirSync(root, { recursive: true });
     const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
@@ -743,8 +747,8 @@ test('listWorktrees marks the bare repository entry so it is never mistaken for 
   ].join('\n');
   setExecutor({ run: () => porcelain, runFileQuiet: () => porcelain, spawn: () => {} });
   expect(listWorktrees('/repo')).toEqual([
-    { path: '/repo', bare: true },
-    { path: '/repo/main', branch: 'main' },
+    { path: nativePath('/repo'), bare: true },
+    { path: nativePath('/repo/main'), branch: 'main' },
   ]);
 });
 
@@ -784,7 +788,7 @@ test('selectSourceCheckout refuses when no worktree checks out the bare HEAD bra
     { path: '/repo/feature', branch: 'feature' },
   ];
   expect(selectSourceCheckout(entries, 'main')).toMatchObject({
-    refusal: expect.stringContaining('git -C /repo/.bare worktree add /repo/main main'),
+    refusal: expect.stringContaining(`git -C /repo/.bare worktree add ${join('/repo', 'main')} main`),
   });
 });
 

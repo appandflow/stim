@@ -185,7 +185,7 @@ describe('logs command', () => {
   beforeEach(() => {
     tmpHome = mkdtempSync(join(tmpdir(), 'stim-logscmd-home-'));
     process.env.STIM_HOME = tmpHome;
-    project = realpathSync(mkdtempSync(join(tmpdir(), 'stim-logscmd-')));
+    project = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-logscmd-')));
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'demo' }));
     logsDir = workspaceLogsDir(project);
     mkdirSync(logsDir, { recursive: true });
@@ -302,21 +302,23 @@ describe('logs command', () => {
   });
 
   test('suggests the nearest registered descendant app that has logs', async () => {
-    const app = join(project, 'apps', 'mobile');
-    const deeperApp = join(app, 'example');
-    for (const path of [app, deeperApp]) {
-      mkdirSync(path, { recursive: true });
-      writeFileSync(join(path, 'package.json'), JSON.stringify({ dependencies: { expo: '54.0.0' } }));
-      mkdirSync(workspaceLogsDir(path), { recursive: true });
-      writeFileSync(join(workspaceLogsDir(path), 'metro.ndjson'), '');
-      upsertProject(realpathSync(path), {});
-    }
+    const [app, deeperApp] = [join(project, 'apps', 'mobile'), join(project, 'apps', 'mobile', 'example')].map(
+      (path) => {
+        mkdirSync(path, { recursive: true });
+        writeFileSync(join(path, 'package.json'), JSON.stringify({ dependencies: { expo: '54.0.0' } }));
+        const canonical = realpathSync(path);
+        mkdirSync(workspaceLogsDir(canonical), { recursive: true });
+        writeFileSync(join(workspaceLogsDir(canonical), 'metro.ndjson'), '');
+        upsertProject(canonical, {});
+        return canonical;
+      },
+    );
     rmSync(workspaceDir(project), { recursive: true, force: true });
     await run({});
     expect(exitCode).toBe(1);
     expect(out).toEqual([]);
-    expect(errOut.join('\n')).toContain(`The nearest registered app with logs is ${realpathSync(app)}`);
-    expect(errOut.join('\n')).not.toContain(realpathSync(deeperApp));
+    expect(errOut.join('\n')).toContain(`The nearest registered app with logs is ${app}`);
+    expect(errOut.join('\n')).not.toContain(deeperApp);
   });
 
   test('a zero-byte timeline is a valid empty workspace query', async () => {

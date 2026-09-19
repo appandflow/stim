@@ -44,7 +44,7 @@ function fixture(name: string) {
 }
 
 describe('ios: log stream ndjson', () => {
-  const lines = fixture('ios-log-stream.ndjson').split('\n').filter(Boolean);
+  const lines = fixture('ios-log-stream.ndjson').split(/\r?\n/).filter(Boolean);
 
   test('the real capture yields Contract-1 records for the log events only', () => {
     const records = lines.map((l) => parseLogStreamLine(l)).filter(isNotNull);
@@ -174,7 +174,7 @@ describe('ios: log stream ndjson', () => {
 
 describe('ios: the physical-device console', () => {
   const capture = fixture('ios-device-console.txt');
-  const lines = capture.split('\n').filter((l) => l !== '');
+  const lines = capture.split(/\r?\n/).filter((l) => l !== '');
   const at = () => 1788271500000;
   const parsed = lines.map((l) => parseDeviceConsoleLine(l, { now: at })).filter(isNotNull);
 
@@ -532,7 +532,7 @@ describe('ios: demoting device noise', () => {
 });
 
 describe('android: logcat -v time', () => {
-  const lines = fixture('android-logcat-time.txt').split('\n').filter(Boolean);
+  const lines = fixture('android-logcat-time.txt').split(/\r?\n/).filter(Boolean);
 
   test('every real level line parses into a Contract-1 record', () => {
     const records = lines.map((l) => parseLogcatLine(l)).filter(isNotNull);

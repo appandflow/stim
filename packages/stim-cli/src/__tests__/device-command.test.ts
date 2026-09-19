@@ -11,6 +11,8 @@ const PHONE = '00008101-000A10913C89001E';
 const SERIAL = 'RFCR7081Q9L';
 const OTHER_ROOT = '/worktree/theirs';
 
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 let home: string;
 let root: string;
 
@@ -100,7 +102,7 @@ describe('stim device lock', () => {
     expect(h.out).toHaveLength(1);
     expect(h.out[0]).toMatch(
       new RegExp(
-        `locked Old iPhone \\(${PHONE}\\) for ${root} until \\d\\d:\\d\\d:\\d\\d \\(5m\\)\\. ` +
+        `locked Old iPhone \\(${PHONE}\\) for ${escapeRegExp(root)} until \\d\\d:\\d\\d:\\d\\d \\(5m\\)\\. ` +
           'Renew: stim device lock ios --for 5m\\. Release: stim device unlock\\.',
       ),
     );
@@ -441,7 +443,7 @@ describe('stim device unlock', () => {
     const released = await runUnlock(undefined, { json: true }, h.deps);
     assert(Array.isArray(released));
     expect(released).toEqual([]);
-    expect(h.note.join('\n')).toMatch(new RegExp(`No device lease to release for ${root}`));
+    expect(h.note.join('\n')).toContain(`No device lease to release for ${root}`);
     expect(h.out).toEqual(['[]']);
   });
 

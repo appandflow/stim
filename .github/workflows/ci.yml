@@ -110,9 +110,10 @@ jobs:
       - name: Install (workspace root)
         run: pnpm install --frozen-lockfile
 
-      # Every step past install keeps going on failure. A probe that stops at
-      # the first broken step reports one symptom; the point is to collect all
-      # of them in one run.
+      # Build and typecheck keep going on failure so a break in either still
+      # yields a full test run to read. The test step reports honestly, so the
+      # job's own colour tracks the suite; the job cannot gate a merge either
+      # way.
       - name: Build (tsdown, all packages)
         continue-on-error: true
         run: pnpm run build
@@ -122,7 +123,6 @@ jobs:
         run: pnpm run typecheck
 
       - name: Unit tests (vitest)
-        continue-on-error: true
         run: pnpm test
 
   runtime-floor:

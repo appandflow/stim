@@ -223,8 +223,8 @@ test('the log directory is created on the first write, not on construction', () 
   });
 });
 
-test.skipIf(Boolean(process.getuid) && process.getuid!() === 0)(
-  'an unwritable directory costs records, not the server',
+test.skipIf((Boolean(process.getuid) && process.getuid!() === 0) || process.platform === 'win32')(
+  'an unwritable directory costs records, not the server (skipped on Windows: mode 500 does not take write access away from a directory)',
   () => {
     withDir((dir) => {
       const reporter = ndjsonReporter({ dir });

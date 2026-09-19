@@ -11,6 +11,8 @@ import {
   verifyIsolationCompatibility,
 } from './runner-isolation.mjs';
 
+const TOOLS_DIR_NAME = process.platform === 'win32' ? "tools with 'quotes'" : 'tools with "quotes"';
+
 const roots = [];
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -22,7 +24,7 @@ function fixture() {
   const golden = join(root, 'golden');
   const results = join(root, 'results');
   const run = join(results, 'current');
-  const tools = join(root, 'tools with "quotes"');
+  const tools = join(root, TOOLS_DIR_NAME);
   for (const path of [golden, run, tools]) mkdirSync(path, { recursive: true });
   const privateFile = join(root, 'pins.env');
   writeFileSync(privateFile, 'private');
