@@ -8,7 +8,25 @@ import { saveConfig } from '../workspace/config.ts';
 const faults = vi.hoisted(() => ({
   readOnly: '',
   beforeRename: null as null | ((from: string, to: string) => void | (() => void)),
+  denied: new Map<string, () => void>(),
+  denyCreates: false,
 }));
+
+function accessDenied(syscall: string, path: string): never {
+  throw Object.assign(new Error(`EPERM: operation not permitted, ${syscall} '${path}'`), { code: 'EPERM', syscall });
+}
+
+function denyOnce(path: string, then: () => void): void {
+  faults.denied.set(path, then);
+}
+
+function denied(syscall: string, path: string): void {
+  const then = faults.denied.get(path);
+  if (!then) return;
+  faults.denied.delete(path);
+  then();
+  accessDenied(syscall, path);
+}
 
 vi.mock('node:fs', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs')>();
@@ -16,6 +34,7 @@ vi.mock('node:fs', async (importOriginal) => {
     ...fs,
     mkdirSync: (...args: Parameters<typeof fs.mkdirSync>) => {
       const path = String(args[0]);
+      if (faults.denyCreates) accessDenied('mkdir', path);
       if (!faults.readOnly || relative(faults.readOnly, path).startsWith('..')) return fs.mkdirSync(...args);
       const options = args[1];
       const recursive = typeof options === 'object' && options !== null && options.recursive === true;
@@ -30,6 +49,14 @@ vi.mock('node:fs', async (importOriginal) => {
       } finally {
         cleanup?.();
       }
+    },
+    readdirSync: (...args: Parameters<typeof fs.readdirSync>) => {
+      denied('scandir', String(args[0]));
+      return fs.readdirSync(...args);
+    },
+    readFileSync: (...args: Parameters<typeof fs.readFileSync>) => {
+      denied('open', String(args[0]));
+      return fs.readFileSync(...args);
     },
   };
 });
@@ -46,6 +73,8 @@ beforeEach(() => {
 afterEach(() => {
   faults.readOnly = '';
   faults.beforeRename = null;
+  faults.denied.clear();
+  faults.denyCreates = false;
   delete process.env.STIM_HOME;
   rmSync(home, { recursive: true, force: true });
 });
@@ -112,4 +141,52 @@ test('a rename colliding with a claim that releases before the next survey still
     expect.objectContaining({ code: 'STIM_CLAIM_REFUSED' }),
   );
   expect(existsSync(join(root, 'exclusive'))).toBe(false);
+});
+
+describe.skipIf(process.platform !== 'win32')(
+  'Windows answers access denied for a name another process is removing',
+  () => {
+    test.each(['exclusive', 'shared'] as const)(
+      'an empty claim directory whose removal is in flight reads as absent and a %s claim is taken',
+      (mode) => {
+        const exclusive = join(root, 'exclusive');
+        mkdirSync(exclusive, { recursive: true });
+        denyOnce(exclusive, () => rmSync(exclusive, { recursive: true }));
+        const attempt = tryAcquireClaim({ root, mode });
+        expect(attempt.acquired).toBeDefined();
+        expect(releaseClaim(attempt.acquired)).toBe(true);
+      },
+    );
+
+    test('a claim record whose removal is in flight reads as absent rather than unreadable', () => {
+      const exclusive = join(root, 'exclusive');
+      const leaving = join(exclusive, 'leaving.claim');
+      mkdirSync(exclusive, { recursive: true });
+      writeFileSync(leaving, '{}');
+      denyOnce(leaving, () => rmSync(exclusive, { recursive: true }));
+      const attempt = tryAcquireClaim({ root, mode: 'exclusive' });
+      expect(attempt.acquired).toBeDefined();
+      expect(releaseClaim(attempt.acquired)).toBe(true);
+    });
+
+    test.each(['exclusive', 'shared'] as const)(
+      'a denial that outlasts every publication attempt is a store Stim cannot write, not a %s claim it lost',
+      (mode) => {
+        faults.denyCreates = true;
+        expect(() => tryAcquireClaim({ root, mode })).toThrow(
+          expect.objectContaining({ code: 'STIM_CLAIM_UNAVAILABLE', remedy: expect.stringContaining(root) }),
+        );
+        expect(readClaimSet(root)).toEqual({ live: [], dead: [], unresolved: [], orphans: [] });
+      },
+    );
+  },
+);
+
+test.skipIf(process.platform === 'win32')('an access denial on a claim directory stays a refusal off Windows', () => {
+  const exclusive = join(root, 'exclusive');
+  mkdirSync(exclusive, { recursive: true });
+  denyOnce(exclusive, () => {});
+  expect(() => tryAcquireClaim({ root, mode: 'exclusive' })).toThrow(
+    expect.objectContaining({ code: 'STIM_CLAIM_REFUSED', claimPath: exclusive }),
+  );
 });

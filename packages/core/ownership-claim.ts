@@ -208,12 +208,23 @@ function asOwner(record: unknown): ClaimOwner | null {
   return { pid: candidate.pid, processToken: candidate.processToken };
 }
 
+/**
+ * Whether a read, listing or removal failed because the name is gone. NTFS answers ERROR_ACCESS_DENIED,
+ * which Node reports as EPERM, for a name whose removal by another process is still in flight, and for
+ * every name below it, where POSIX answers ENOENT. Every name in a claim set arrives complete through a
+ * rename, so that answer only ever settles to ENOENT: https://github.com/appandflow/stim/issues/883.
+ */
+function absent(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException)?.code;
+  return code === 'ENOENT' || (code === 'EPERM' && process.platform === 'win32');
+}
+
 function readChild(claimPath: string): { record: ClaimOwner | null } | null | 'unreadable' {
   let text;
   try {
     text = readFileSync(childPath(claimPath), 'utf-8');
   } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+    if (absent(err)) return null;
     return 'unreadable';
   }
   try {
@@ -228,7 +239,7 @@ function readClaim(path: string, mode: ClaimMode): ClaimHolder | null | 'unreada
   try {
     text = readFileSync(path, 'utf-8');
   } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+    if (absent(err)) return null;
     return 'unreadable';
   }
   let parsed;
@@ -326,7 +337,7 @@ function names(dir: string): string[] | 'unreadable' {
   try {
     return readdirSync(dir).toSorted();
   } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return [];
+    if (absent(err)) return [];
     return 'unreadable';
   }
 }
@@ -382,8 +393,8 @@ function removeOrRefuse(path: string, root: string, claimPath: string, label: st
   try {
     unlinkSync(path);
   } catch (err) {
+    if (absent(err)) return;
     const code = (err as NodeJS.ErrnoException)?.code;
-    if (code === 'ENOENT') return;
     refuse(root, claimPath, label, `the claim left behind could not be removed (${code || (err as Error)?.message})`);
   }
 }
@@ -482,13 +493,20 @@ function selfOwner(): ClaimOwner {
   return { pid: process.pid, processToken: captured.token };
 }
 
-function contended(error: unknown): boolean {
-  if (error instanceof MissingClaimStoreError) return false;
-  const code = (error as NodeJS.ErrnoException)?.code;
-  // Windows MoveFileEx refuses a directory destination that already exists with ERROR_ACCESS_DENIED,
-  // which libuv reports as EPERM where POSIX rename reports EEXIST or ENOTEMPTY.
-  if (code === 'EPERM' && process.platform === 'win32') return true;
-  return code === 'EEXIST' || code === 'ENOTEMPTY' || code === 'ENOENT' || code === 'EINVAL';
+interface Contention {
+  denied: boolean;
+}
+
+function contention(error: unknown): Contention | null {
+  if (error instanceof MissingClaimStoreError) return null;
+  const { code, syscall } = (error as NodeJS.ErrnoException) ?? {};
+  // Windows answers ERROR_ACCESS_DENIED, which libuv reports as EPERM, both for a MoveFileEx onto a
+  // directory that already exists and for a name whose removal by another process is in flight, where
+  // POSIX answers EEXIST, ENOTEMPTY or ENOENT. Only a refusal to create the staging entry can be a real
+  // denial, and the caller reports it as one once it has outlasted every attempt.
+  if (code === 'EPERM' && process.platform === 'win32') return { denied: syscall !== 'rename' };
+  if (code === 'EEXIST' || code === 'ENOTEMPTY' || code === 'ENOENT' || code === 'EINVAL') return { denied: false };
+  return null;
 }
 
 class MissingClaimStoreError extends Error {
@@ -534,7 +552,15 @@ function createClaimDir(path: string): void {
   }
 }
 
-function publishExclusive(root: string, payload: string, claimId: string, label: string): string | null {
+function removeStaging(staging: string, { recursive }: { recursive: boolean }): void {
+  try {
+    rmSync(staging, { recursive, force: true });
+  } catch (err) {
+    if (!absent(err)) throw err;
+  }
+}
+
+function publishExclusive(root: string, payload: string, claimId: string, label: string): string | Contention {
   const staging = join(root, `${STAGING_PREFIX}${claimId}`);
   const target = exclusiveClaimDir(root);
   try {
@@ -543,15 +569,16 @@ function publishExclusive(root: string, payload: string, claimId: string, label:
     renameSync(staging, target);
     return join(target, `${claimId}${CLAIM_SUFFIX}`);
   } catch (err) {
-    rmSync(staging, { recursive: true, force: true });
+    removeStaging(staging, { recursive: true });
     const code = (err as NodeJS.ErrnoException)?.code;
-    if (contended(err)) return null;
+    const why = contention(err);
+    if (why) return why;
     if (code === 'ENOTDIR') refuseNonDirectory(root, target, label);
     throw err;
   }
 }
 
-function publishShared(root: string, payload: string, claimId: string): string | null {
+function publishShared(root: string, payload: string, claimId: string): string | Contention {
   const staging = join(root, `${STAGING_PREFIX}${claimId}`);
   const target = join(sharedClaimDir(root), `${claimId}${CLAIM_SUFFIX}`);
   try {
@@ -560,8 +587,9 @@ function publishShared(root: string, payload: string, claimId: string): string |
     renameSync(staging, target);
     return target;
   } catch (err) {
-    rmSync(staging, { force: true });
-    if (contended(err)) return null;
+    removeStaging(staging, { recursive: false });
+    const why = contention(err);
+    if (why) return why;
     throw err;
   }
 }
@@ -578,6 +606,7 @@ function settleOrRelease(claim: ClaimHandle): ClaimSetState {
 export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' }: ClaimOptions): ClaimAttempt {
   const owner = selfOwner();
   const reaped: ClaimHolder[] = [];
+  let denied = true;
 
   for (let attempt = 0; attempt < PUBLISH_ATTEMPTS; attempt++) {
     try {
@@ -587,8 +616,10 @@ export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' 
       if (code === 'EEXIST' || code === 'ENOTDIR') {
         refuseNonDirectory(root, root, label);
       }
-      if (contended(err)) continue;
-      throw err;
+      const why = contention(err);
+      if (!why) throw err;
+      denied &&= why.denied;
+      continue;
     }
     const state = inspectClaimSet(root, { label });
     reaped.push(...state.reaped);
@@ -610,7 +641,10 @@ export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' 
 
     if (mode === 'shared') {
       const published = publishShared(root, payload, claimId);
-      if (!published) continue;
+      if (typeof published !== 'string') {
+        denied &&= published.denied;
+        continue;
+      }
       const claim = handle(published);
       const settled = settleOrRelease(claim);
       reaped.push(...settled.reaped);
@@ -620,7 +654,10 @@ export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' 
     }
 
     const path = publishExclusive(root, payload, claimId, label);
-    if (!path) continue;
+    if (typeof path !== 'string') {
+      denied &&= path.denied;
+      continue;
+    }
     const claim = handle(path);
     const settled = settleOrRelease(claim);
     reaped.push(...settled.reaped);
@@ -632,6 +669,11 @@ export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' 
   reaped.push(...contender.reaped);
   const holder = contender.exclusive ?? (mode === 'exclusive' ? contender.shared[0] : undefined);
   if (holder) return { held: holder, reaped };
+  if (denied) {
+    throw new ClaimUnavailableError(`access was denied on every one of ${PUBLISH_ATTEMPTS} attempts to publish it`, {
+      claimPath: root,
+    });
+  }
   refuse(
     root,
     root,
