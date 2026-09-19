@@ -461,7 +461,7 @@ describe('a claim whose work runs in a spawned process group', () => {
   });
 });
 
-const STRESS_TIMEOUT_MS = process.platform === 'win32' ? 180_000 : 60_000;
+const STRESS_TIMEOUT_MS = process.platform === 'win32' ? 120_000 : 60_000;
 
 describe('a real race between real processes', { timeout: 30_000 }, () => {
   test('exactly one of six processes takes the claim, and a dead claim does not stop them', async () => {

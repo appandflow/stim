@@ -12,6 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { debuglog } from 'node:util';
 import { quotedPath } from './quoted-path.ts';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from './process-identity.ts';
 
@@ -90,7 +91,9 @@ const CLAIM_SUFFIX = '.claim';
 const CHILD_SUFFIX = '.child';
 const STAGING_PREFIX = '.staging-';
 const PUBLISH_ATTEMPTS = 64;
-const WIN32_DENIED_CREATE_YIELD_MS = 5;
+const WIN32_SETTLE_MS = 250;
+const WIN32_SETTLE_STEP_MS = 5;
+const debug = debuglog('stim:claim');
 
 export class ClaimRefusedError extends Error {
   readonly code: string = CLAIM_REFUSED;
@@ -140,7 +143,7 @@ export class ClaimUnavailableError extends Error {
     );
     this.reason = reason;
     this.remedy = claimPath
-      ? `Restore write access to the existing claim store at ${quotedPath(claimPath)} (check parent permissions, symlink targets, mount access and sandbox rules)`
+      ? `Restore write access to the existing claim store at ${quotedPath(claimPath)} (check parent permissions, an antivirus or endpoint agent holding its files, symlink targets, mount access and sandbox rules)`
       : 'Reinstall Stim so the unique-pid native module for this platform is present';
   }
 }
@@ -209,23 +212,44 @@ function asOwner(record: unknown): ClaimOwner | null {
   return { pid: candidate.pid, processToken: candidate.processToken };
 }
 
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 /**
- * Whether a read, listing or removal failed because the name is gone. NTFS answers ERROR_ACCESS_DENIED,
- * which Node reports as EPERM, for a name whose removal by another process is still in flight, and for
- * every name below it, where POSIX answers ENOENT. Every name in a claim set arrives complete through a
- * rename, so that answer only ever settles to ENOENT: https://github.com/appandflow/stim/issues/883.
+ * Run a read, listing or removal and resolve the one answer Windows leaves ambiguous. NTFS answers
+ * ERROR_ACCESS_DENIED, which Node reports as EPERM, for a name whose removal by another process is still
+ * in flight, and for every name below it, where POSIX answers ENOENT; measured to settle within 134 ms
+ * with 12 processes on 4 cores (https://github.com/appandflow/stim/issues/883). The call is reissued in
+ * small steps for at most WIN32_SETTLE_MS: a result or ENOENT is the settled answer, and an EPERM that
+ * outlasts the window is a real denial, thrown exactly as a POSIX EACCES is. This bounds the resolution
+ * of an ambiguous OS answer; it never waits on a holder.
  */
-function absent(err: unknown): boolean {
-  const code = (err as NodeJS.ErrnoException)?.code;
-  return code === 'ENOENT' || (code === 'EPERM' && process.platform === 'win32');
+function settledAnswer<T>(path: string, call: () => T): T {
+  if (process.platform !== 'win32') return call();
+  const started = Date.now();
+  for (;;) {
+    try {
+      const result = call();
+      if (Date.now() > started) debug('%s settled after %d ms', path, Date.now() - started);
+      return result;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code !== 'EPERM' || Date.now() - started >= WIN32_SETTLE_MS) {
+        if (code === 'EPERM') debug('%s still answers EPERM after %d ms', path, Date.now() - started);
+        throw err;
+      }
+    }
+    sleepSync(WIN32_SETTLE_STEP_MS);
+  }
 }
 
 function readChild(claimPath: string): { record: ClaimOwner | null } | null | 'unreadable' {
   let text;
   try {
-    text = readFileSync(childPath(claimPath), 'utf-8');
+    text = settledAnswer(childPath(claimPath), () => readFileSync(childPath(claimPath), 'utf-8'));
   } catch (err) {
-    if (absent(err)) return null;
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
     return 'unreadable';
   }
   try {
@@ -238,9 +262,9 @@ function readChild(claimPath: string): { record: ClaimOwner | null } | null | 'u
 function readClaim(path: string, mode: ClaimMode): ClaimHolder | null | 'unreadable' {
   let text;
   try {
-    text = readFileSync(path, 'utf-8');
+    text = settledAnswer(path, () => readFileSync(path, 'utf-8'));
   } catch (err) {
-    if (absent(err)) return null;
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
     return 'unreadable';
   }
   let parsed;
@@ -336,9 +360,9 @@ function refuseNonDirectory(root: string, path: string, label: string): never {
 
 function names(dir: string): string[] | 'unreadable' {
   try {
-    return readdirSync(dir).toSorted();
+    return settledAnswer(dir, () => readdirSync(dir)).toSorted();
   } catch (err) {
-    if (absent(err)) return [];
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return [];
     return 'unreadable';
   }
 }
@@ -392,10 +416,10 @@ export function readClaimSet(root: string): ClaimSurvey {
 
 function removeOrRefuse(path: string, root: string, claimPath: string, label: string): void {
   try {
-    unlinkSync(path);
+    settledAnswer(path, () => unlinkSync(path));
   } catch (err) {
-    if (absent(err)) return;
     const code = (err as NodeJS.ErrnoException)?.code;
+    if (code === 'ENOENT') return;
     refuse(root, claimPath, label, `the claim left behind could not be removed (${code || (err as Error)?.message})`);
   }
 }
@@ -554,11 +578,7 @@ function createClaimDir(path: string): void {
 }
 
 function removeStaging(staging: string, { recursive }: { recursive: boolean }): void {
-  try {
-    rmSync(staging, { recursive, force: true });
-  } catch (err) {
-    if (!absent(err)) throw err;
-  }
+  settledAnswer(staging, () => rmSync(staging, { recursive, force: true }));
 }
 
 function publishExclusive(root: string, payload: string, claimId: string, label: string): string | Contention {
@@ -610,7 +630,7 @@ function settleOrRelease(claim: ClaimHandle): ClaimSetState {
  * finish. A real denial spends at most PUBLISH_ATTEMPTS of these before it is reported.
  */
 function yieldToRemoval(): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, WIN32_DENIED_CREATE_YIELD_MS);
+  sleepSync(WIN32_SETTLE_STEP_MS);
 }
 
 export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' }: ClaimOptions): ClaimAttempt {

@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import assert from 'node:assert';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { clearFreeClaimSet, readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
@@ -9,6 +10,7 @@ const faults = vi.hoisted(() => ({
   readOnly: '',
   beforeRename: null as null | ((from: string, to: string) => void | (() => void)),
   denied: new Map<string, () => void>(),
+  denyReads: '',
   denyCreates: '',
 }));
 
@@ -55,6 +57,7 @@ vi.mock('node:fs', async (importOriginal) => {
       return fs.readdirSync(...args);
     },
     readFileSync: (...args: Parameters<typeof fs.readFileSync>) => {
+      if (faults.denyReads && String(args[0]) === faults.denyReads) accessDenied('open', faults.denyReads);
       denied('open', String(args[0]));
       return fs.readFileSync(...args);
     },
@@ -74,6 +77,7 @@ afterEach(() => {
   faults.readOnly = '';
   faults.beforeRename = null;
   faults.denied.clear();
+  faults.denyReads = '';
   faults.denyCreates = '';
   delete process.env.STIM_HOME;
   rmSync(home, { recursive: true, force: true });
@@ -168,6 +172,23 @@ describe.skipIf(process.platform !== 'win32')(
       expect(attempt.acquired).toBeDefined();
       expect(releaseClaim(attempt.acquired)).toBe(true);
     });
+
+    test.each(['exclusive', 'shared'] as const)(
+      'a live claim whose record stays denied is refused by name, never joined by a %s claim',
+      (mode) => {
+        const holder = tryAcquireClaim({ root, mode: 'exclusive' });
+        assert(holder.acquired);
+        faults.denyReads = holder.acquired.path;
+        expect(() => tryAcquireClaim({ root, mode })).toThrow(
+          expect.objectContaining({ code: 'STIM_CLAIM_REFUSED', claimPath: holder.acquired.path }),
+        );
+        expect(readdirSync(join(root, 'exclusive'))).toEqual([`${holder.acquired.claimId}.claim`]);
+        expect(existsSync(join(root, 'shared'))).toBe(false);
+        faults.denyReads = '';
+        expect(readClaimSet(root).live.map((live) => live.claimId)).toEqual([holder.acquired.claimId]);
+        expect(releaseClaim(holder.acquired)).toBe(true);
+      },
+    );
 
     test.each(['exclusive', 'shared'] as const)(
       'a denial to create the staging entry that outlasts every attempt is a store Stim cannot write, not a %s claim it lost',
