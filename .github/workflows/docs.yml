@@ -31,7 +31,7 @@ jobs:
         uses: pnpm/setup@v2
         with:
           runtime: node@22
-          cache: true
+          cache: false
           install: false
       - name: Install
         run: pnpm install --frozen-lockfile --filter website
