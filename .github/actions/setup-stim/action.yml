@@ -1,0 +1,33 @@
+name: Set up Stim
+description: pnpm and Node from the lockfile, the workspace install, and the tsdown build every native lane drives.
+inputs:
+  node:
+    description: Node major to run on
+    default: '22'
+  install:
+    description: Run pnpm install --frozen-lockfile
+    default: 'true'
+  build:
+    description: Run pnpm run build after the install
+    default: 'true'
+runs:
+  using: composite
+  steps:
+    - name: Set up pnpm and Node ${{ inputs.node }}
+      uses: pnpm/setup@v2
+      with:
+        runtime: node@${{ inputs.node }}
+        cache: true
+        install: false
+
+    - name: Install (workspace root)
+      if: inputs.install == 'true'
+      shell: bash
+      run: pnpm install --frozen-lockfile
+
+    # The cache packages' declaration files are build output, so anything that
+    # typechecks or runs dist/cli.mjs needs this first.
+    - name: Build (tsdown, all packages)
+      if: inputs.build == 'true'
+      shell: bash
+      run: pnpm run build

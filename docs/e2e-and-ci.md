@@ -52,11 +52,12 @@ There are three native suites and one shared harness
 wrappers, the cleanup checks and the diagnostics dump so all drivers build and
 tear down the same app the same way):
 
-| suite      | driver               | proves                                                  | when                        |
-| ---------- | -------------------- | ------------------------------------------------------- | --------------------------- |
-| **loop**   | `run-native-e2e.mjs` | the dev loop works end to end                           | nightly, PR label, dispatch |
-| **caches** | `run-cache-e2e.mjs`  | each individual cache is engaged, storing and reused    | on demand                   |
-| **pool**   | `run-pool-e2e.mjs`   | iOS simulators are parked, evicted, adopted, and reaped | on demand                   |
+| suite      | driver                       | proves                                                  | when                        |
+| ---------- | ---------------------------- | ------------------------------------------------------- | --------------------------- |
+| **loop**   | `run-native-e2e.mjs`         | the dev loop works end to end                           | nightly, PR label, dispatch |
+| **smoke**  | `run-native-e2e.mjs --smoke` | one worktree builds, launches and stops                 | every PR (Windows)          |
+| **caches** | `run-cache-e2e.mjs`          | each individual cache is engaged, storing and reused    | on demand                   |
+| **pool**   | `run-pool-e2e.mjs`           | iOS simulators are parked, evicted, adopted, and reaped | on demand                   |
 
 ### The loop suite
 
@@ -88,7 +89,13 @@ node test/e2e/native/run-native-e2e.mjs --framework expo --platform android
 node test/e2e/native/run-native-e2e.mjs --framework expo --platform ios --fixture-only
 # print the plan, no side effects
 node test/e2e/native/run-native-e2e.mjs --framework bare --platform android --dry-run
+# the smoke subset: fixture, one worktree, stim start, cold build, launch, stop, cleanup
+node test/e2e/native/run-native-e2e.mjs --framework bare --platform android --smoke
 ```
+
+`--smoke` stops after the first worktree has been built, launched, verified and
+stopped: no second-worktree cache proof, no named slots. It is the shape a
+per-pull-request job can afford.
 
 The fixture-creation commands are version-sensitive; each is overridable with an
 env var (`STIM_E2E_BARE_INIT`, `STIM_E2E_EXPO_INIT`) so a runner can adjust
@@ -233,14 +240,27 @@ fixed:
 
 ## CI
 
-Two workflows under `.github/workflows/`:
+The CI workflows under `.github/workflows/` share two composite actions under
+`.github/actions/`: `setup-stim` (pnpm and Node from the lockfile, the frozen
+install, the tsdown build) and `windows-android-sdk` (JDK 17 plus the system
+image the `windows-latest` image lacks, with platform-tools and the emulator on
+PATH).
 
 - **`ci.yml`** -- fast and **blocking** on every push to `main` and every pull request. The
   repository build matrix uses Node 22 and 24, runs frozen pnpm install, lint,
   format check, ESM build, typecheck, knip, Vitest, and the cross-platform E2E.
   A separate job builds on Node 22.18 and then runs `test/runtime-floor.mjs`
   under exactly Node 22.12.0, the published floor. Repository development needs
-  Node 22.18 or later because tsdown has the higher floor.
+  Node 22.18 or later because tsdown has the higher floor. Two Windows lanes:
+  `test (windows)` repeats install, build, typecheck and the unit suite on
+  `windows-latest`; `android smoke (windows)` runs the native loop's `--smoke`
+  subset on a WHPX-accelerated emulator, about 22 minutes. The full Windows
+  loop, `android loop (windows)`, is added to that matrix on
+  `workflow_dispatch` or on a pull request from a branch whose name contains
+  `windows`.
+
+- **`windows-debug.yml`** -- dispatch only: prepares a `windows-latest` runner
+  like the Android lane and holds it open behind Tailscale SSH or tmate.
 
 - **`e2e-native.yml`** -- the native matrix. **Gated**: it runs nightly
   (schedule), on demand (`workflow_dispatch`), and on a pull request **only when

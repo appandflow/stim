@@ -69,7 +69,7 @@ async function main() {
   }
 
   const wt1 = worktreeCreate('e2e-1', appDir);
-  const wt2 = worktreeCreate('e2e-2', appDir);
+  const wt2 = args.smoke ? null : worktreeCreate('e2e-2', appDir);
   const flags = [];
   if (PLATFORM === 'ios') {
     const inventory = JSON.parse(sh('xcrun', ['simctl', 'list', '--json'], { timeout: 30000 }).stdout);
@@ -88,12 +88,9 @@ async function main() {
     h,
     platform: PLATFORM,
     cleanup,
-    targets: [
-      { cwd: wt1 },
-      { cwd: wt1, slot: 'second' },
-      { cwd: wt1, slot: 'third', deviceType: flags[1] },
-      { cwd: wt2 },
-    ],
+    targets: args.smoke
+      ? [{ cwd: wt1 }]
+      : [{ cwd: wt1 }, { cwd: wt1, slot: 'second' }, { cwd: wt1, slot: 'third', deviceType: flags[1] }, { cwd: wt2 }],
   });
   const start1 = startAndAssertMode(wt1);
   log(`wt1 start mode: ${start1.mode}`);
@@ -109,6 +106,15 @@ async function main() {
   }
   assertArtifact(build1.appPath);
   handleLaunch(build1, 'wt1');
+
+  if (args.smoke) {
+    log('smoke: one worktree built, launched and verified. Skipping the cache proof and named slots.');
+    cleanup.recordWorkspace(wt1);
+    cli(['stop'], { cwd: wt1 });
+    worktreeRemove(wt1);
+    await verifyCleanup({ h, cleanup, appDir, created });
+    return;
+  }
 
   const start2 = startAndAssertMode(wt2);
   log(`wt2 start mode: ${start2.mode}`);
@@ -255,6 +261,7 @@ function parseArgs(argv) {
     platform: null,
     appDir: null,
     keep: false,
+    smoke: false,
     fixtureOnly: false,
     dryRun: false,
     home: null,
@@ -266,6 +273,7 @@ function parseArgs(argv) {
     else if (a === '--app-dir') out.appDir = argv[++i];
     else if (a === '--home') out.home = argv[++i];
     else if (a === '--keep') out.keep = true;
+    else if (a === '--smoke') out.smoke = true;
     else if (a === '--fixture-only') out.fixtureOnly = true;
     else if (a === '--dry-run') out.dryRun = true;
     else {
@@ -289,7 +297,7 @@ function plan() {
 
 if (!['bare', 'expo'].includes(FRAMEWORK) || !['ios', 'android'].includes(PLATFORM)) {
   die(
-    'usage: run-native-e2e.mjs --framework <bare|expo> --platform <ios|android> [--app-dir P] [--keep] [--fixture-only] [--dry-run]',
+    'usage: run-native-e2e.mjs --framework <bare|expo> --platform <ios|android> [--app-dir P] [--keep] [--smoke] [--fixture-only] [--dry-run]',
   );
 }
 

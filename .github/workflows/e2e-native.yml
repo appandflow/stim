@@ -117,12 +117,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: mkdir -p "$TMPDIR" "$STIM_BUILD_CACHE"
 
-      - name: Set up pnpm and Node 22
-        uses: pnpm/setup@v2
-        with:
-          runtime: node@22
-          cache: true
-          install: false
+      - uses: ./.github/actions/setup-stim
 
       - name: Set up Ruby and Bundler for the fixture's Gemfile
         uses: ruby/setup-ruby@v1
@@ -149,12 +144,6 @@ jobs:
 
       - name: Install SimSlim for generated iOS fixtures
         run: brew install mobai-app/tap/simslim
-
-      - name: Install (workspace root)
-        run: pnpm install --frozen-lockfile
-
-      - name: Build (dist/cli.mjs is what the native e2e drives)
-        run: pnpm run build
 
       - name: Restore cross-run build cache
         if: matrix.suite == 'loop'
@@ -271,12 +260,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: mkdir -p "$TMPDIR" "$STIM_BUILD_CACHE"
 
-      - name: Set up pnpm and Node 22
-        uses: pnpm/setup@v2
-        with:
-          runtime: node@22
-          cache: true
-          install: false
+      - uses: ./.github/actions/setup-stim
 
       - name: Set up JDK 17
         # gradle for a modern RN/Expo Android build needs a JDK; 17 is the
@@ -285,12 +269,6 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-
-      - name: Install (workspace root)
-        run: pnpm install --frozen-lockfile
-
-      - name: Build (dist/cli.mjs is what the native e2e drives)
-        run: pnpm run build
 
       - name: Restore cross-run build cache
         if: matrix.suite == 'loop'
