@@ -104,7 +104,8 @@ current workspace's JavaScript. `--scheme`, `--configuration`, `--variant`, and
 
 `--eas-profile` selects where the app comes from. The separate `--remote eas`
 option selects an [EAS-hosted device](./owned-devices.md#remote-devices), which
-has its own session costs.
+has its own session costs. Together they run iOS from a
+[Windows or Linux host](./owned-devices.md#from-windows-or-linux).
 
 ## When no build matches
 
