@@ -203,7 +203,23 @@ node test/e2e/native/run-native-e2e.mjs --framework <bare|expo> --platform <ios|
 node test/e2e/native/run-cache-e2e.mjs --framework <bare|expo> --platform <ios|android> --summary /tmp/cache-summary.json
 ```
 
-Choose the matrix from the changes since the last published tag:
+Choose the matrix from the changes since the last published tag by running the
+table below over the diff, as `scripts/release-qa-matrix.data.mjs` encodes it in
+paths:
+
+```bash
+# "v$last" is the last published version resolved in section 1, not the version being cut.
+node scripts/release-qa-matrix.mjs "v$last"                    # the checklist, with a reason per row
+node scripts/release-qa-matrix.mjs "v$last" --format markdown  # the QA section for docs/releases
+```
+
+It prints every required row with the changed paths that require it, and every
+omitted row with the diff-based reason this gate already demands. A changed path
+the mapping does not cover makes the full matrix required: add its rule and
+rerun rather than deciding that one by hand. Reading the table yourself stays
+valid, and a disagreement with the script is a mapping bug to fix in the same
+release. The design is in
+[docs/specs/2026-09-18-release-qa-orchestration-design.md](./docs/specs/2026-09-18-release-qa-orchestration-design.md).
 
 | Change since the last release                                           | Required evidence                                                |
 | ----------------------------------------------------------------------- | ---------------------------------------------------------------- |
