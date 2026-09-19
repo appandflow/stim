@@ -28,10 +28,11 @@
 #     guard on each job). Adding the label re-triggers via the `labeled` event.
 #
 # VARIANT LAYOUT. Each platform is its own job. Framework and selected suite are
-# matrix axes. An `all` dispatch runs four isolated jobs per platform. Other
-# events run the two framework variants for one suite. iOS and Android are
-# separate jobs because iOS needs macOS and Xcode, while Android needs Linux and
-# KVM. Bare and Expo exercise different stim-cli Metro paths.
+# matrix axes. iOS and Android are separate jobs because iOS needs macOS and
+# Xcode, while Android needs Linux and KVM. Bare and Expo exercise different
+# stim-cli Metro paths. Android runs both frameworks; iOS runs Expo ONLY, because
+# the bare template cannot launch on iOS 27 (see the matrix `exclude` below), so
+# an `all` dispatch is three iOS jobs and two Android jobs.
 #
 # THE iOS RUNNER IS `xcode-27`, NOT `macos-latest`. Automatic Swift compilation
 # caching needs Swift 6.4, which ships with Xcode 27; the macos-26 images top out
@@ -84,6 +85,16 @@ jobs:
         framework: [bare, expo]
         # Schedule and pull_request events have no suite input and use loop.
         suite: ${{ fromJSON(inputs.suite == 'all' && '["loop","caches","pool"]' || inputs.suite == 'caches' && '["caches"]' || inputs.suite == 'pool' && '["pool"]' || '["loop"]') }}
+        # No bare variant on iOS. iOS 27 traps an app that has not adopted the
+        # UIScene lifecycle, and @react-native-community/template (0.88.0-rc.1)
+        # still ships no SceneDelegate and no UIApplicationSceneManifest, so the
+        # bare fixture builds and then dies at launch. The Expo side is covered
+        # by pinning STIM_E2E_EXPO_INIT to the SDK 58 template, which generates
+        # both (expo/expo#46664). Drop this exclude when the React Native
+        # template adopts scenes. A job-level `if:` cannot do this: the matrix
+        # context is not available there.
+        exclude:
+          - framework: bare
     env:
       STIM_E2E_SUITE: ${{ matrix.suite }}
       # The registry stays throwaway per run (the driver makes its own temp home)

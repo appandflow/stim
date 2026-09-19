@@ -259,8 +259,10 @@ Two workflows under `.github/workflows/`:
   ships Xcode 27 and its Swift 6.4 toolchain as the only Xcode; the job selects
   `/Applications/Xcode_27.0.app` and fails if the toolchain is below Swift 6.4.
   Android runs on a Linux+KVM host via
-  `reactivecircus/android-emulator-runner`. Each platform's `{bare, expo}` are a
-  matrix, so they run as parallel, isolated jobs. `~/.stim`'s shared build
+  `reactivecircus/android-emulator-runner`. Framework and suite are matrix axes,
+  so variants run as parallel, isolated jobs. Android runs `{bare, expo}`; **iOS
+  runs `expo` only** -- a matrix `exclude` drops the bare variant, whose template
+  cannot launch on iOS 27. `~/.stim`'s shared build
   cache (`STIM_BUILD_CACHE`) is persisted across runs with `actions/cache`, so
   the cross-run cache path is itself exercised; build logs
   (`build-*.ndjson`) are uploaded as artifacts on failure.
@@ -285,13 +287,16 @@ Two workflows under `.github/workflows/`:
   harness default nor the Android lane moves. It also carries
   `react-native 0.88.0-rc.0`, above the 0.87 floor, so the Expo variant reaches
   the Swift branch.
-- **The bare iOS variant cannot launch on `xcode-27` yet.** Swift caching needs
-  the fixture's `react-native` to be 0.87 or newer as well as the Swift 6.4
-  toolchain, and `@react-native-community/cli@latest init` satisfies that. Its
-  template does not adopt the UIScene lifecycle, though -- `@react-native-community/template`
-  0.88.0-rc.1 still has no `SceneDelegate` and no `UIApplicationSceneManifest` --
-  so the app builds and then traps at launch on iOS 27. That variant stays red
-  until the React Native template adopts scenes.
+- **The bare iOS variant is excluded from the matrix**, so the iOS lane has no
+  bare job at all. Swift caching needs the fixture's `react-native` to be 0.87 or
+  newer as well as the Swift 6.4 toolchain, and `@react-native-community/cli@latest init`
+  satisfies that -- its build does report `Swift on`. Its template does not adopt
+  the UIScene lifecycle, though: `@react-native-community/template` 0.88.0-rc.1
+  still has no `SceneDelegate` and no `UIApplicationSceneManifest`, so the app
+  builds and then traps at launch on iOS 27. Excluding it keeps the nightly
+  honest rather than permanently red. Remove the `exclude` when the React Native
+  template adopts scenes; that restores bare iOS coverage, including the
+  `bare-inproc` Metro path, which only Android exercises until then.
 - `xcode-cas` prints which half of the Swift gate decided, in its evidence and
   its PASS message. A PASS with `Swift caching OFF` is not Swift coverage.
 - The Android job's `api-level` / `target` / `arch` have a matching system image
