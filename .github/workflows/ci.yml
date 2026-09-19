@@ -84,16 +84,13 @@ jobs:
       - name: Cross-platform e2e
         run: pnpm run test:e2e
 
-  # NON-BLOCKING probe. Stim has never run on Windows and does not claim to.
-  # This job exists to measure the distance, not to close it: it runs the unit
-  # suite on a GitHub-hosted Windows runner so the failures can be read and
-  # classified. It never gates a merge, and it runs only on an explicit
-  # workflow_dispatch or on a pull request from a branch named for Windows work.
-  windows-probe:
-    name: windows probe (non-blocking)
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.head_ref, 'windows'))
+  # BLOCKING. The unit suite on a GitHub-hosted Windows runner. Lint, format
+  # and knip are platform-independent and already proven by the Linux lanes,
+  # so this job only repeats what can differ on Windows: install, build,
+  # typecheck and the tests themselves.
+  test-windows:
+    name: test (windows)
     runs-on: windows-latest
-    continue-on-error: true
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -108,24 +105,19 @@ jobs:
       - name: Install (workspace root)
         run: pnpm install --frozen-lockfile
 
-      # Build and typecheck keep going on failure so a break in either still
-      # yields a full test run to read. The test step reports honestly, so the
-      # job's own colour tracks the suite; the job cannot gate a merge either
-      # way.
       - name: Build (tsdown, all packages)
-        continue-on-error: true
         run: pnpm run build
 
       - name: Typecheck (production)
-        continue-on-error: true
         run: pnpm run typecheck
 
       - name: Unit tests (vitest)
         run: pnpm test
 
   # NON-BLOCKING. The Android half of the dev loop on Windows, driven by the
-  # same fixture and driver the macOS and Linux native lanes use. Same gate as
-  # windows-probe above.
+  # same fixture and driver the macOS and Linux native lanes use. It runs only
+  # on an explicit workflow_dispatch or on a pull request from a branch named
+  # for Windows work, and stays non-blocking until #881 has it passing.
   #
   # The runner image ships the Android SDK, build-tools, platform-tools, NDK and
   # the emulator binary at ANDROID_HOME=C:\Android\android-sdk, but NO system
@@ -153,9 +145,8 @@ jobs:
       TEMP: ${{ github.workspace }}\e2e-tmp
       TMP: ${{ github.workspace }}\e2e-tmp
     steps:
-      # Before checkout: every action in this job, checkout included, reads TEMP.
-      - run: New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\e2e-tmp"
       - uses: actions/checkout@v4
+      - run: New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\e2e-tmp"
 
       - name: Set up pnpm and Node
         uses: pnpm/setup@v2

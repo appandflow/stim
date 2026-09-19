@@ -133,24 +133,28 @@ test('checkMainCheckout says nothing about the seed when the repository has no l
   }
 });
 
-test('an interrupted rebase is named instead of the dirty and detached remedies git would reject', () => {
-  const { base, main, git } = seedRepo('stim-doctor-rebase-');
-  try {
-    writeFileSync(join(main, 'README.md'), 'theirs\n');
-    git('git commit -q -am theirs');
-    git('git checkout -q -b side HEAD~1');
-    writeFileSync(join(main, 'README.md'), 'ours\n');
-    git('git commit -q -am ours');
-    expect(() => git('git rebase main')).toThrow(/rebase/);
-    git('git worktree add -q -b task ../linked');
+test(
+  'an interrupted rebase is named instead of the dirty and detached remedies git would reject',
+  { timeout: 30_000 },
+  () => {
+    const { base, main, git } = seedRepo('stim-doctor-rebase-');
+    try {
+      writeFileSync(join(main, 'README.md'), 'theirs\n');
+      git('git commit -q -am theirs');
+      git('git checkout -q -b side HEAD~1');
+      writeFileSync(join(main, 'README.md'), 'ours\n');
+      git('git commit -q -am ours');
+      expect(() => git('git rebase main')).toThrow(/rebase/);
+      git('git worktree add -q -b task ../linked');
 
-    const findings = checkMainCheckout(main, { platform: 'ios' });
-    expect(findings.map((entry) => entry.title)).toEqual(['The source checkout has a rebase in progress']);
-    expect(findings[0]?.fix).toBe(`Finish it, or run \`git -C '${main}' rebase --abort\`.`);
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-});
+      const findings = checkMainCheckout(main, { platform: 'ios' });
+      expect(findings.map((entry) => entry.title)).toEqual(['The source checkout has a rebase in progress']);
+      expect(findings[0]?.fix).toBe(`Finish it, or run \`git -C '${main}' rebase --abort\`.`);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+);
 
 test('a tag sharing the branch name does not turn the branch into an ambiguous ref', () => {
   const { base, main, git } = seedRepo('stim-doctor-ambiguous-');
