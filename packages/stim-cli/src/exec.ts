@@ -1,4 +1,4 @@
-import { type ChildProcess, type SpawnOptions, execFileSync, execSync } from 'child_process';
+import { type ChildProcess, type SpawnOptions, execSync } from 'child_process';
 import spawn from 'cross-spawn';
 import which from 'which';
 
@@ -34,8 +34,12 @@ const defaultExecutor: Executor = {
     if (cwd) opts.cwd = cwd;
     return String(execSync(cmd, opts)).trim();
   },
+  // spawnSync through cross-spawn rather than execFileSync: on Windows Node
+  // refuses .cmd/.bat files and shebang scripts without a shell, and every
+  // package bin (eas, agent-device) is one of those. The throw matches
+  // execFileSync's, so callers keep reading status, stdout and stderr off it.
   runFile(file, args = [], { timeoutMs, killSignal, cwd, env, omitEnv } = {}) {
-    const opts: Parameters<typeof execFileSync>[2] = {
+    const opts: Parameters<typeof spawn.sync>[2] = {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
       maxBuffer: MAX_BUFFER,
@@ -48,7 +52,14 @@ const defaultExecutor: Executor = {
       for (const key of omitEnv ?? []) delete childEnv[key];
       opts.env = childEnv;
     }
-    return String(execFileSync(file, args, opts)).trim();
+    const result = spawn.sync(file, args, opts);
+    if (result.error) throw Object.assign(result.error, result);
+    if (result.status !== 0) {
+      const stderr = String(result.stderr ?? '');
+      const message = `Command failed: ${[file, ...args].join(' ')}${stderr ? `\n${stderr}` : ''}`;
+      throw Object.assign(new Error(message), result);
+    }
+    return String(result.stdout).trim();
   },
   runQuiet(cmd, opts) {
     try {
