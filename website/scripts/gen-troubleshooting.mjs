@@ -29,13 +29,11 @@ export function buildTroubleshooting(topic) {
   let shownContext = null;
   for (const [name, section] of Object.entries(topic.sections)) {
     if (section.separator) {
-      lines.push(`## ${escapeMdx(section.separator.replaceAll('---', '').trim())}`, '');
+      lines.push(`## ${escapeMdx(section.separator.replace(/^-+|-+$/g, '').trim())}`, '');
       shownContext = null;
     }
-    if (section.context && section.context !== shownContext) {
-      lines.push(escapeMdx(section.context), '');
-      shownContext = section.context;
-    }
+    if (section.context && section.context !== shownContext) lines.push(escapeMdx(section.context), '');
+    shownContext = section.context ?? null;
     for (const alias of section.aliases ?? []) lines.push(aliasAnchor(alias), '');
     lines.push(`### ${[name, ...(section.aliases ?? [])].join(' / ')} {/* #${name} */}`, '');
     lines.push(escapeMdx(section.summary), '');
