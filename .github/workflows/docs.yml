@@ -6,6 +6,7 @@ on:
     paths:
       - 'website/**'
       - 'docs/releases/**'
+      - 'packages/stim-cli/src/guide/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
