@@ -113,9 +113,10 @@ jobs:
 
       - name: Pin Xcode 27 and prove its Swift 6.4 toolchain
         # maxim-lobanov/setup-xcode cannot pin this image: it keeps only candidates
-        # whose LicenseInfo.plist marks them stable, and the sole Xcode here is the
-        # release candidate at /Applications/Xcode_27_Release_Candidate.app. The
-        # image documents the 27.0 symlink, so select it directly. The Swift floor
+        # whose LicenseInfo.plist marks them stable, and the sole Xcode here is a
+        # prerelease whose real bundle name moves between image revisions
+        # (Xcode_27_beta_3.app, then Xcode_27_Release_Candidate.app). The image
+        # documents the stable 27.0 symlink, so select it directly. The Swift floor
         # is asserted because a silently older toolchain would leave the caches
         # suite green while never reaching the Swift branch it is here to cover.
         run: |

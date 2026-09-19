@@ -374,7 +374,9 @@ async function main() {
       // packages/stim-cli/src/engine/xcode.ts the moment they disagree: prefix
       // mapping needs Swift 6.4 (swiftlang/swift#90700), and React Native below
       // 0.87 builds its prebuilt core without explicit modules, which Xcode
-      // refuses to cache.
+      // refuses to cache. This mirrors only the automatic default; an explicit
+      // optimizations.ios.swiftCompilationCache would override it, and the
+      // harness never sets one.
       const swiftMappable = !!swift && (Number(swift[1]) > 6 || (Number(swift[1]) === 6 && Number(swift[2]) >= 4));
       const rn = readReactNativeVersion(wt1);
       const rnSupportsSwift = !!rn && (rn.major > 0 || rn.minor >= 87);
@@ -401,7 +403,10 @@ async function main() {
         }
         return c.fail(`the xcodebuild argv is missing ${missing.length} setting(s): ${missing.join(' ')}`);
       }
-      c.ev(`all ${required.length} compilation-cache settings present verbatim on the argv (CAS at ${CAS_DIR})`);
+      if (!swiftCache && argv.includes('SWIFT_OTHER_PREFIX_MAPPINGS')) {
+        return c.fail('Swift caching is off, but the argv still carries SWIFT_OTHER_PREFIX_MAPPINGS');
+      }
+      c.ev(`all ${required.length} compilation-cache settings found on the argv (CAS at ${CAS_DIR})`);
 
       const g = growth('Xcode CAS', casBefore1, casAfter1);
       c.ev(describeGrowth(g));
