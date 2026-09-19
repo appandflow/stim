@@ -283,17 +283,19 @@ test('a second interrupted recovery does not strand the original visible marker'
   expect(existsSync(lock)).toBe(false);
 });
 
-test('concurrent dead-owner reapers preserve each replacement owner and serialize updates', async () => {
-  await killHolder();
-  const counter = join(home, 'counter');
-  writeFileSync(counter, '0');
-  const workers = Array.from({ length: 4 }, () =>
-    spawn(
-      process.execPath,
-      [
-        '--input-type=module',
-        '-e',
-        `
+test.skipIf(process.platform === 'win32')(
+  'concurrent dead-owner reapers preserve each replacement owner and serialize updates (Windows rename limbo, #883; skipped on win32)',
+  async () => {
+    await killHolder();
+    const counter = join(home, 'counter');
+    writeFileSync(counter, '0');
+    const workers = Array.from({ length: 4 }, () =>
+      spawn(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `
     const { withDirLock } = await import(process.argv[1]);
     const { readFileSync, writeFileSync } = await import('node:fs');
     for (let i = 0; i < 10; i++) {
@@ -304,22 +306,23 @@ test('concurrent dead-owner reapers preserve each replacement owner and serializ
       }, { waitMs: 5000, pollMs: 2 });
     }
   `,
-        CORE_URL,
-        lock,
-        counter,
-      ],
-      { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] },
-    ),
-  );
-  try {
-    const exits = await Promise.all(workers.map((child) => once(child, 'exit')));
-    expect(exits).toEqual(workers.map(() => [0, null]));
-    expect(readFileSync(counter, 'utf8')).toBe('40');
-    expect(existsSync(lock)).toBe(false);
-  } finally {
-    for (const child of workers) if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
-  }
-});
+          CORE_URL,
+          lock,
+          counter,
+        ],
+        { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] },
+      ),
+    );
+    try {
+      const exits = await Promise.all(workers.map((child) => once(child, 'exit')));
+      expect(exits).toEqual(workers.map(() => [0, null]));
+      expect(readFileSync(counter, 'utf8')).toBe('40');
+      expect(existsSync(lock)).toBe(false);
+    } finally {
+      for (const child of workers) if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    }
+  },
+);
 
 test.each([false, true])('release keeps a replacement legacy directory (owner published: %s)', (published) => {
   withDirLock(lock, () => {
