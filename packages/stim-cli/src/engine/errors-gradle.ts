@@ -301,7 +301,7 @@ function decodePath(path: string): string {
 }
 
 function stripCarriage(line: string | undefined): string {
-  const text = String(line ?? '');
+  const text = String(line ?? '').replace(/\r$/, '');
   const idx = text.lastIndexOf('\r');
   return idx === -1 ? text : text.slice(idx + 1);
 }

@@ -280,8 +280,9 @@ test('allConsolePortsAndSerials ignores entries from project paths that no longe
   const live = liveProjectDir('live');
   upsertProject(live, { bundleId: 'com.live', androidPackage: 'com.live', isExpo: false });
   setDevice(live, 'android', { avdName: 'Pixel_6', consolePort: 5554 });
-  upsertProject('/definitely/gone/worktree', { bundleId: 'com.dead', androidPackage: 'com.dead', isExpo: false });
-  setDevice('/definitely/gone/worktree', 'android', { avdName: 'Pixel_7', consolePort: 5556 });
+  const gone = join(tmpHome, 'definitely-gone', 'worktree');
+  upsertProject(gone, { bundleId: 'com.dead', androidPackage: 'com.dead', isExpo: false });
+  setDevice(gone, 'android', { avdName: 'Pixel_7', consolePort: 5556 });
   const result = allConsolePortsAndSerials();
   expect(result.androidConsolePorts).toEqual([5554]);
 });

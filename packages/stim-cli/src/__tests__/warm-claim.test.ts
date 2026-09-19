@@ -208,68 +208,71 @@ test('the acquired line reports a wait only when there was one', () => {
   );
 });
 
-test('the installer process group keeps the claim after the refresh that spawned it is gone', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'stim-test-warm-installer-'));
-  const leader = join(dir, 'leader.mjs');
-  const pidFile = join(dir, 'grandchild.pid');
-  writeFileSync(
-    leader,
-    [
-      'const { spawn } = await import("node:child_process");',
-      'const { writeFileSync } = await import("node:fs");',
-      'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
-      'child.unref();',
-      `writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
-    ].join('\n'),
-  );
+test.skipIf(process.platform === 'win32')(
+  'the installer process group keeps the claim after the refresh that spawned it is gone (POSIX process groups; skipped on win32)',
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'stim-test-warm-installer-'));
+    const leader = join(dir, 'leader.mjs');
+    const pidFile = join(dir, 'grandchild.pid');
+    writeFileSync(
+      leader,
+      [
+        'const { spawn } = await import("node:child_process");',
+        'const { writeFileSync } = await import("node:fs");',
+        'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
+        'child.unref();',
+        `writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
+      ].join('\n'),
+    );
 
-  const refresh = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'refresh', sleep: never });
-  const installer = getExecutor().spawn(process.execPath, [leader], { detached: true, stdio: 'ignore' });
-  if (!installer.pid) throw new Error('the installer did not start');
-  refresh.installer.declare();
-  refresh.installer.record(installer.pid);
-  await once(installer, 'exit');
+    const refresh = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'refresh', sleep: never });
+    const installer = getExecutor().spawn(process.execPath, [leader], { detached: true, stdio: 'ignore' });
+    if (!installer.pid) throw new Error('the installer did not start');
+    refresh.installer.declare();
+    refresh.installer.record(installer.pid);
+    await once(installer, 'exit');
 
-  let grandchild = 0;
-  for (let attempt = 0; attempt < 200 && !grandchild; attempt++) {
-    try {
-      grandchild = Number(readFileSync(pidFile, 'utf-8'));
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 20));
+    let grandchild = 0;
+    for (let attempt = 0; attempt < 200 && !grandchild; attempt++) {
+      try {
+        grandchild = Number(readFileSync(pidFile, 'utf-8'));
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
     }
-  }
-  if (!grandchild) throw new Error('the installer never spawned its own child');
+    if (!grandchild) throw new Error('the installer never spawned its own child');
 
-  try {
-    const claim = exclusiveClaimFile();
-    const record = JSON.parse(readFileSync(claim, 'utf-8'));
-    writeFileSync(claim, JSON.stringify({ ...record, owner: goneClaimOwner() }));
-
-    let polls = 0;
-    await acquireWarmClaim({
-      repositoryRoot: REPO,
-      phase: 'copy',
-      sleep: async () => {
-        polls++;
-        throw new Error('stop');
-      },
-    }).catch(() => {});
-    expect(polls).toBe(1);
-
-    process.kill(grandchild, 'SIGKILL');
-    for (let attempt = 0; attempt < 200 && readClaimSet(warmClaimPath(REPO)).live.length > 0; attempt++) {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    const copy = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'copy', sleep: never });
-    expect(copy.wait.holder).toBe(null);
-    copy.release();
-  } finally {
     try {
+      const claim = exclusiveClaimFile();
+      const record = JSON.parse(readFileSync(claim, 'utf-8'));
+      writeFileSync(claim, JSON.stringify({ ...record, owner: goneClaimOwner() }));
+
+      let polls = 0;
+      await acquireWarmClaim({
+        repositoryRoot: REPO,
+        phase: 'copy',
+        sleep: async () => {
+          polls++;
+          throw new Error('stop');
+        },
+      }).catch(() => {});
+      expect(polls).toBe(1);
+
       process.kill(grandchild, 'SIGKILL');
-    } catch {}
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
+      for (let attempt = 0; attempt < 200 && readClaimSet(warmClaimPath(REPO)).live.length > 0; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      const copy = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'copy', sleep: never });
+      expect(copy.wait.holder).toBe(null);
+      copy.release();
+    } finally {
+      try {
+        process.kill(grandchild, 'SIGKILL');
+      } catch {}
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
 
 test('an installer whose identity cannot be captured leaves the claim unresolvable rather than free', async () => {
   const refresh = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'refresh', sleep: never });
@@ -301,99 +304,105 @@ test('a pid that no longer exists is not a writer to hold the claim for', async 
   expect(existsSync(warmClaimPath(REPO))).toBe(false);
 });
 
-test('settling the installer waits for its process group, not for the process that led it', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'stim-test-warm-settle-'));
-  const pidFile = join(dir, 'grandchild.pid');
-  const leader = join(dir, 'leader.mjs');
-  writeFileSync(
-    leader,
-    [
-      'const { spawn } = await import("node:child_process");',
-      'const { writeFileSync } = await import("node:fs");',
-      'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
-      'child.unref();',
-      `writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
-    ].join('\n'),
-  );
+test.skipIf(process.platform === 'win32')(
+  'settling the installer waits for its process group, not for the process that led it (POSIX process groups; skipped on win32)',
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'stim-test-warm-settle-'));
+    const pidFile = join(dir, 'grandchild.pid');
+    const leader = join(dir, 'leader.mjs');
+    writeFileSync(
+      leader,
+      [
+        'const { spawn } = await import("node:child_process");',
+        'const { writeFileSync } = await import("node:fs");',
+        'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
+        'child.unref();',
+        `writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
+      ].join('\n'),
+    );
 
-  const refresh = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'refresh', sleep: never });
-  const installer = getExecutor().spawn(process.execPath, [leader], { detached: true, stdio: 'ignore' });
-  if (!installer.pid) throw new Error('the installer did not start');
-  refresh.installer.declare();
-  refresh.installer.record(installer.pid);
-  await once(installer, 'exit');
+    const refresh = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'refresh', sleep: never });
+    const installer = getExecutor().spawn(process.execPath, [leader], { detached: true, stdio: 'ignore' });
+    if (!installer.pid) throw new Error('the installer did not start');
+    refresh.installer.declare();
+    refresh.installer.record(installer.pid);
+    await once(installer, 'exit');
 
-  let grandchild = 0;
-  for (let attempt = 0; attempt < 200 && !grandchild; attempt++) {
-    try {
-      grandchild = Number(readFileSync(pidFile, 'utf-8'));
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 20));
+    let grandchild = 0;
+    for (let attempt = 0; attempt < 200 && !grandchild; attempt++) {
+      try {
+        grandchild = Number(readFileSync(pidFile, 'utf-8'));
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
     }
-  }
-  if (!grandchild) throw new Error('the installer never spawned its own child');
+    if (!grandchild) throw new Error('the installer never spawned its own child');
 
-  try {
-    let settled = false;
-    const settling = refresh.installer.settle().then((result) => {
-      settled = true;
-      return result;
+    try {
+      let settled = false;
+      const settling = refresh.installer.settle().then((result) => {
+        settled = true;
+        return result;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(settled).toBe(false);
+      expect(readClaimSet(warmClaimPath(REPO)).live).toHaveLength(1);
+
+      process.kill(grandchild, 'SIGKILL');
+      expect(await settling).toMatchObject({ settled: true });
+      refresh.release();
+      expect(existsSync(warmClaimPath(REPO))).toBe(false);
+    } finally {
+      try {
+        process.kill(grandchild, 'SIGKILL');
+      } catch {}
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a child record that cannot be written leaves the claim held while the writer it names runs (POSIX directory permissions and process groups; skipped on win32)',
+  async () => {
+    const lines: string[] = [];
+    const refresh = await acquireWarmClaim({
+      repositoryRoot: REPO,
+      phase: 'refresh',
+      sleep: never,
+      out: (line) => lines.push(line),
     });
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(settled).toBe(false);
-    expect(readClaimSet(warmClaimPath(REPO)).live).toHaveLength(1);
+    const writer = getExecutor().spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    if (!writer.pid) throw new Error('the writer did not start');
+    const group = writer.pid;
+    try {
+      refresh.installer.declare();
+      chmodSync(exclusiveClaimDir(warmClaimPath(REPO)), 0o500);
+      refresh.installer.record(group);
+      expect(lines.join('\n')).toMatch(/lock {8}could not record the install this refresh spawned \(.*EACCES/);
 
-    process.kill(grandchild, 'SIGKILL');
-    expect(await settling).toMatchObject({ settled: true });
+      refresh.release();
+      expect(readClaimSet(warmClaimPath(REPO)).live.some((holder) => holder.mode === 'exclusive')).toBe(true);
+      let polls = 0;
+      await acquireWarmClaim({
+        repositoryRoot: REPO,
+        phase: 'copy',
+        sleep: async () => {
+          polls++;
+          throw new Error('stop');
+        },
+      }).catch(() => {});
+      expect(polls).toBe(1);
+    } finally {
+      chmodSync(exclusiveClaimDir(warmClaimPath(REPO)), 0o700);
+      try {
+        process.kill(-group, 'SIGKILL');
+      } catch {}
+    }
+    expect(await refresh.installer.settle()).toMatchObject({ settled: true });
     refresh.release();
     expect(existsSync(warmClaimPath(REPO))).toBe(false);
-  } finally {
-    try {
-      process.kill(grandchild, 'SIGKILL');
-    } catch {}
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('a child record that cannot be written leaves the claim held while the writer it names runs', async () => {
-  const lines: string[] = [];
-  const refresh = await acquireWarmClaim({
-    repositoryRoot: REPO,
-    phase: 'refresh',
-    sleep: never,
-    out: (line) => lines.push(line),
-  });
-  const writer = getExecutor().spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
-    detached: true,
-    stdio: 'ignore',
-  });
-  if (!writer.pid) throw new Error('the writer did not start');
-  const group = writer.pid;
-  try {
-    refresh.installer.declare();
-    chmodSync(exclusiveClaimDir(warmClaimPath(REPO)), 0o500);
-    refresh.installer.record(group);
-    expect(lines.join('\n')).toMatch(/lock {8}could not record the install this refresh spawned \(.*EACCES/);
-
-    refresh.release();
-    expect(readClaimSet(warmClaimPath(REPO)).live.some((holder) => holder.mode === 'exclusive')).toBe(true);
-    let polls = 0;
-    await acquireWarmClaim({
-      repositoryRoot: REPO,
-      phase: 'copy',
-      sleep: async () => {
-        polls++;
-        throw new Error('stop');
-      },
-    }).catch(() => {});
-    expect(polls).toBe(1);
-  } finally {
-    chmodSync(exclusiveClaimDir(warmClaimPath(REPO)), 0o700);
-    try {
-      process.kill(-group, 'SIGKILL');
-    } catch {}
-  }
-  expect(await refresh.installer.settle()).toMatchObject({ settled: true });
-  refresh.release();
-  expect(existsSync(warmClaimPath(REPO))).toBe(false);
-});
+  },
+);

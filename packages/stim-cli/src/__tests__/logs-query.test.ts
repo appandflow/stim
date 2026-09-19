@@ -586,11 +586,11 @@ describe('incremental tailing', () => {
 });
 
 test('a sibling launch marker does not hide errors from the selected slot', () => {
-  writeLog('build-ios:phone.ndjson', [
+  writeLog('build-ios-phone.ndjson', [
     { ts: 1, src: 'build', marker: true, slot: 'phone' },
     { ts: 2, src: 'build', level: 'error', msg: 'phone failed', slot: 'phone' },
   ]);
-  writeLog('build-ios:tablet.ndjson', [
+  writeLog('build-ios-tablet.ndjson', [
     { ts: 3, src: 'build', marker: true, slot: 'tablet' },
     { ts: 4, src: 'build', level: 'error', msg: 'tablet failed', slot: 'tablet' },
   ]);

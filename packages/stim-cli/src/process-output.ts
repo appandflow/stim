@@ -18,7 +18,7 @@ export function createLineReader(onLine: (line: string) => void): { push(chunk: 
       buffered += String(chunk);
       const parts = buffered.split('\n');
       buffered = parts.pop() ?? '';
-      for (const part of parts) onLine(part);
+      for (const part of parts) onLine(part.endsWith('\r') ? part.slice(0, -1) : part);
     },
     flush() {
       if (!buffered) return;

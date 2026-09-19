@@ -9,7 +9,7 @@ import { adoptParked, parkSim, readParked, removeParkedAfter } from '../devices/
 import { avdPoolConfiguration, hostSystemImageArch, resetAdoptedAvd } from '../devices/android.ts';
 import { teardownOwnedAvd, teardownParkedAvd } from '../devices/teardown.ts';
 import { collectParkedAvds, deleteParkedAvds, findOrphanedDevices } from '../commands/gc/devices.ts';
-import { goneClaimOwner, makeExitingChild, plantClaim } from './_factories.ts';
+import { goneClaimOwner, makeExitingChild, plantClaim, writeAvdProcessLock } from './_factories.ts';
 
 let home: string;
 let saved: Record<string, string | undefined>;
@@ -189,7 +189,7 @@ test.each([false, true])(
 
 test('an emulator with a live process but no adb connection stays parked', async () => {
   park();
-  writeFileSync(join(home, 'avd', 'stim-source.avd', 'hardware-qemu.ini.lock'), String(process.pid));
+  writeAvdProcessLock(join(home, 'avd', 'stim-source.avd'), String(process.pid));
   upsertProject('/adopter', {});
   const result = await ensureOwnedDevice({ platform: 'android', projectPath: '/adopter', label: 'new', settings: {} });
   expect(result.created).toBe(true);

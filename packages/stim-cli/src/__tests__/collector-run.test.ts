@@ -2,7 +2,7 @@ import assert from 'node:assert';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { realpathSync, chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, join, resolve as absolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseNdjsonText } from '../ndjson.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
@@ -105,21 +105,23 @@ function exited(child: ChildProcess, timeoutMs = 6000) {
 }
 
 describe('parseArgs', () => {
+  const absRoot = absolute('/abs');
+
   test('accepts the ios invocation and derives the predicate app name from the bundle id', () => {
-    expect(parseArgs(['--platform', 'ios', '--root', '/abs', '--udid', 'U1', '--bundle', 'com.example.MyApp'])).toEqual(
-      {
-        platform: 'ios',
-        root: '/abs',
-        udid: 'U1',
-        bundleId: 'com.example.MyApp',
-        appName: 'MyApp',
-        appExecutable: null,
-        serial: null,
-        packageName: null,
-        physical: false,
-        payloadUrl: null,
-      },
-    );
+    expect(
+      parseArgs(['--platform', 'ios', '--root', absRoot, '--udid', 'U1', '--bundle', 'com.example.MyApp']),
+    ).toEqual({
+      platform: 'ios',
+      root: absRoot,
+      udid: 'U1',
+      bundleId: 'com.example.MyApp',
+      appName: 'MyApp',
+      appExecutable: null,
+      serial: null,
+      packageName: null,
+      physical: false,
+      payloadUrl: null,
+    });
   });
 
   test('--physical selects the devicectl console; it needs the bundle id, not the app name', () => {
@@ -128,7 +130,7 @@ describe('parseArgs', () => {
         '--platform',
         'ios',
         '--root',
-        '/abs',
+        absRoot,
         '--udid',
         'U1',
         '--bundle',
@@ -139,7 +141,7 @@ describe('parseArgs', () => {
       ]),
     ).toEqual({
       platform: 'ios',
-      root: '/abs',
+      root: absRoot,
       udid: 'U1',
       bundleId: 'com.example.MyApp',
       appName: 'MyApp',
@@ -276,377 +278,389 @@ function iosShimLines() {
   return text.split('\n').filter((l) => l.startsWith('{'));
 }
 
-describe('the ios collector, spawned for real against a fake xcrun', { timeout: 30_000 }, () => {
-  test('registers its own pid, writes records, and clears the registration on SIGTERM', async () => {
-    const banner = 'Filtering the log data using "processImagePath ENDSWITH \\"/MyApp.app/MyApp\\""';
-    writeShim(
-      'xcrun',
-      [
-        `case "$*" in`,
-        `  'simctl spawn UDID-1 log stream --style ndjson --predicate processImagePath ENDSWITH "/MyApp.app/MyApp" --level info') ;;`,
-        `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
-        `esac`,
-        `echo "${banner}" >&2`,
-        ...iosShimLines().map((l) => `cat <<'LINE'\n${l}\nLINE`),
-        'exec sleep 30',
-      ].join('\n'),
-    );
+describe.skipIf(process.platform === 'win32')(
+  'the ios collector, spawned for real against a fake xcrun (skipped on Windows: the fake xcrun is a /bin/sh script and the teardown is a real SIGTERM)',
+  { timeout: 30_000 },
+  () => {
+    test('registers its own pid, writes records, and clears the registration on SIGTERM', async () => {
+      const banner = 'Filtering the log data using "processImagePath ENDSWITH \\"/MyApp.app/MyApp\\""';
+      writeShim(
+        'xcrun',
+        [
+          `case "$*" in`,
+          `  'simctl spawn UDID-1 log stream --style ndjson --predicate processImagePath ENDSWITH "/MyApp.app/MyApp" --level info') ;;`,
+          `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
+          `esac`,
+          `echo "${banner}" >&2`,
+          ...iosShimLines().map((l) => `cat <<'LINE'\n${l}\nLINE`),
+          'exec sleep 30',
+        ].join('\n'),
+      );
 
-    const child = spawnCollector([
-      '--platform',
-      'ios',
-      '--root',
-      root,
-      '--udid',
-      'UDID-1',
-      '--bundle',
-      'com.example.MyApp',
-    ]);
+      const child = spawnCollector([
+        '--platform',
+        'ios',
+        '--root',
+        root,
+        '--udid',
+        'UDID-1',
+        '--bundle',
+        'com.example.MyApp',
+      ]);
 
-    const registered = await until(() => readCollectors(root).ios as CollectorEntry, {
-      label: 'the collector registration',
+      const registered = await until(() => readCollectors(root).ios as CollectorEntry, {
+        label: 'the collector registration',
+      });
+      expect(registered.pid).toBe(child.pid);
+      expect(registered.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+
+      const records = await until(
+        () => {
+          const r = deviceLog().filter((x) => x.level === 'fatal');
+          return r.length ? r : null;
+        },
+        { label: 'a parsed device record' },
+      );
+      const first = records[0];
+      assert(first);
+      expect(first.msg).toMatch(/LocationProvider/);
+      expect(first.proc).toBe('locationd');
+      expect(first.platform).toBe('ios');
+      const firstLog = deviceLog()[0];
+      assert(firstLog);
+      expect(firstLog.event).toBe('collector_started');
+      expect(firstLog.platform).toBe('ios');
+
+      process.kill(childPid(child), 'SIGTERM');
+      const result = await exited(child);
+      expect(result).toEqual({ code: 0, signal: null });
+      expect('collectors' in (state() || {})).toBe(false);
+      expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBeTruthy();
     });
-    expect(registered.pid).toBe(child.pid);
-    expect(registered.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
-    const records = await until(
-      () => {
-        const r = deviceLog().filter((x) => x.level === 'fatal');
-        return r.length ? r : null;
-      },
-      { label: 'a parsed device record' },
-    );
-    const first = records[0];
-    assert(first);
-    expect(first.msg).toMatch(/LocationProvider/);
-    expect(first.proc).toBe('locationd');
-    expect(first.platform).toBe('ios');
-    const firstLog = deviceLog()[0];
-    assert(firstLog);
-    expect(firstLog.event).toBe('collector_started');
-    expect(firstLog.platform).toBe('ios');
+    test('a distinct --app-executable anchors the predicate to it, not to --app-name', async () => {
+      writeShim(
+        'xcrun',
+        [
+          `case "$*" in`,
+          `  'simctl spawn UDID-1 log stream --style ndjson --predicate processImagePath ENDSWITH "/MyAppDev.app/MyApp" --level info') ;;`,
+          `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
+          `esac`,
+          ...iosShimLines().map((l) => `cat <<'LINE'\n${l}\nLINE`),
+          'exec sleep 30',
+        ].join('\n'),
+      );
 
-    process.kill(childPid(child), 'SIGTERM');
-    const result = await exited(child);
-    expect(result).toEqual({ code: 0, signal: null });
-    expect('collectors' in (state() || {})).toBe(false);
-    expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBeTruthy();
-  });
+      const child = spawnCollector([
+        '--platform',
+        'ios',
+        '--root',
+        root,
+        '--udid',
+        'UDID-1',
+        '--bundle',
+        'com.example.app',
+        '--app-name',
+        'MyAppDev',
+        '--app-executable',
+        'MyApp',
+      ]);
 
-  test('a distinct --app-executable anchors the predicate to it, not to --app-name', async () => {
-    writeShim(
-      'xcrun',
-      [
-        `case "$*" in`,
-        `  'simctl spawn UDID-1 log stream --style ndjson --predicate processImagePath ENDSWITH "/MyAppDev.app/MyApp" --level info') ;;`,
-        `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
-        `esac`,
-        ...iosShimLines().map((l) => `cat <<'LINE'\n${l}\nLINE`),
-        'exec sleep 30',
-      ].join('\n'),
-    );
+      const registered = await until(() => readCollectors(root).ios as CollectorEntry, {
+        label: 'the collector registration',
+      });
+      expect(registered.pid).toBe(child.pid);
 
-    const child = spawnCollector([
-      '--platform',
-      'ios',
-      '--root',
-      root,
-      '--udid',
-      'UDID-1',
-      '--bundle',
-      'com.example.app',
-      '--app-name',
-      'MyAppDev',
-      '--app-executable',
-      'MyApp',
-    ]);
+      await until(() => deviceLog().find((r) => r.src === 'device' && r.proc === 'locationd') ?? null, {
+        label: 'a parsed device record',
+      });
+      expect(deviceLog().some((r) => r.event === 'collector_stderr' && /unexpected argv/.test(String(r.msg)))).toBe(
+        false,
+      );
 
-    const registered = await until(() => readCollectors(root).ios as CollectorEntry, {
-      label: 'the collector registration',
+      process.kill(childPid(child), 'SIGTERM');
+      const result = await exited(child);
+      expect(result).toEqual({ code: 0, signal: null });
     });
-    expect(registered.pid).toBe(child.pid);
 
-    await until(() => deviceLog().find((r) => r.src === 'device' && r.proc === 'locationd') ?? null, {
-      label: 'a parsed device record',
+    test('survives the stream ending: a record, and exit 0', async () => {
+      writeShim(
+        'xcrun',
+        [
+          ...iosShimLines()
+            .slice(0, 1)
+            .map((l) => `cat <<'LINE'\n${l}\nLINE`),
+          'exit 0',
+        ].join('\n'),
+      );
+
+      const child = spawnCollector([
+        '--platform',
+        'ios',
+        '--root',
+        root,
+        '--udid',
+        'UDID-1',
+        '--bundle',
+        'com.example.MyApp',
+      ]);
+      const result = await exited(child);
+      expect(result.code).toBe(0);
+      const stopped = deviceLog().find((r) => r.event === 'collector_stopped');
+      expect(stopped).toBeTruthy();
+      assert(stopped);
+      expect(stopped.msg).toMatch(/device log stream ended/);
+      expect('collectors' in (state() || {})).toBe(false);
     });
-    expect(deviceLog().some((r) => r.event === 'collector_stderr' && /unexpected argv/.test(String(r.msg)))).toBe(
-      false,
-    );
+  },
+);
 
-    process.kill(childPid(child), 'SIGTERM');
-    const result = await exited(child);
-    expect(result).toEqual({ code: 0, signal: null });
-  });
+describe.skipIf(process.platform === 'win32')(
+  'the ios device collector, spawned for real against a fake devicectl (skipped on Windows: the fake xcrun is a /bin/sh script and the teardown is a real SIGTERM)',
+  { timeout: 30_000 },
+  () => {
+    const consoleLines = () =>
+      readFileSync(fileURLToPath(new URL('./fixtures/ios-device-console.txt', import.meta.url)), 'utf-8')
+        .split('\n')
+        .filter((l) => l !== '');
 
-  test('survives the stream ending: a record, and exit 0', async () => {
-    writeShim(
-      'xcrun',
-      [
-        ...iosShimLines()
-          .slice(0, 1)
-          .map((l) => `cat <<'LINE'\n${l}\nLINE`),
-        'exit 0',
-      ].join('\n'),
-    );
+    test('launches the app itself, parses BOTH streams, and clears the registration on SIGTERM', async () => {
+      const expected =
+        'devicectl device process launch --quiet --device UDID-1 --console --terminate-existing ' +
+        '--environment-variables {"OS_ACTIVITY_DT_MODE":"enable"} --payload-url stim://open com.example.MyApp ' +
+        '-- -EXDevMenuShowsAtLaunch 0 -EXDevMenuShowFloatingActionButton 0';
+      writeShim(
+        'xcrun',
+        [
+          `case "$*" in`,
+          `  '${expected}') ;;`,
+          `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
+          `esac`,
+          `echo 'a raw stdout write'`,
+          ...consoleLines().map((l) => `cat >&2 <<'LINE'\n${l}\nLINE`),
+          'exec sleep 30',
+        ].join('\n'),
+      );
 
-    const child = spawnCollector([
-      '--platform',
-      'ios',
-      '--root',
-      root,
-      '--udid',
-      'UDID-1',
-      '--bundle',
-      'com.example.MyApp',
-    ]);
-    const result = await exited(child);
-    expect(result.code).toBe(0);
-    const stopped = deviceLog().find((r) => r.event === 'collector_stopped');
-    expect(stopped).toBeTruthy();
-    assert(stopped);
-    expect(stopped.msg).toMatch(/device log stream ended/);
-    expect('collectors' in (state() || {})).toBe(false);
-  });
-});
+      const child = spawnCollector([
+        '--platform',
+        'ios',
+        '--root',
+        root,
+        '--udid',
+        'UDID-1',
+        '--bundle',
+        'com.example.MyApp',
+        '--physical',
+        '--payload-url',
+        'stim://open',
+      ]);
 
-describe('the ios device collector, spawned for real against a fake devicectl', { timeout: 30_000 }, () => {
-  const consoleLines = () =>
-    readFileSync(fileURLToPath(new URL('./fixtures/ios-device-console.txt', import.meta.url)), 'utf-8')
-      .split('\n')
-      .filter((l) => l !== '');
+      const registered = await until(() => readCollectors(root).ios as CollectorEntry, {
+        label: 'the device collector registration',
+      });
+      expect(registered.pid).toBe(child.pid);
 
-  test('launches the app itself, parses BOTH streams, and clears the registration on SIGTERM', async () => {
-    const expected =
-      'devicectl device process launch --quiet --device UDID-1 --console --terminate-existing ' +
-      '--environment-variables {"OS_ACTIVITY_DT_MODE":"enable"} --payload-url stim://open com.example.MyApp ' +
-      '-- -EXDevMenuShowsAtLaunch 0 -EXDevMenuShowFloatingActionButton 0';
-    writeShim(
-      'xcrun',
-      [
-        `case "$*" in`,
-        `  '${expected}') ;;`,
-        `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
-        `esac`,
-        `echo 'a raw stdout write'`,
-        ...consoleLines().map((l) => `cat >&2 <<'LINE'\n${l}\nLINE`),
-        'exec sleep 30',
-      ].join('\n'),
-    );
+      const fatals = await until(
+        () => {
+          const r = deviceLog().filter((x) => x.level === 'fatal');
+          return r.length ? r : null;
+        },
+        { label: 'the crash record from the app stderr' },
+      );
+      const crash = fatals[0];
+      assert(crash);
+      expect(crash.msg).toMatch(/Terminating app due to uncaught exception/);
+      expect(crash.proc).toBe('StimFixture(431)');
+      expect(crash.platform).toBe('ios');
+      expect(crash.raw).toBe(true);
 
-    const child = spawnCollector([
-      '--platform',
-      'ios',
-      '--root',
-      root,
-      '--udid',
-      'UDID-1',
-      '--bundle',
-      'com.example.MyApp',
-      '--physical',
-      '--payload-url',
-      'stim://open',
-    ]);
+      const log = deviceLog();
+      const started = log[0];
+      assert(started);
+      expect(started.event).toBe('collector_started');
+      expect(started.msg).toMatch(/launching com\.example\.MyApp on device UDID-1/);
+      expect(started.msg).toMatch(/subsystem, category and severity are not carried on hardware/);
+      expect(log.some((r) => r.msg === 'a raw stdout write')).toBeTruthy();
+      expect(log.some((r) => r.category === 'javascript' && r.msg === 'counter is 1')).toBeTruthy();
+      expect(log.some((r) => r.event === 'collector_stderr')).toBe(false);
 
-    const registered = await until(() => readCollectors(root).ios as CollectorEntry, {
-      label: 'the device collector registration',
+      expect(verifyCollectorOwnership({ pid: childPid(child), platform: 'ios', root })).toEqual({ status: 'ours' });
+
+      process.kill(childPid(child), 'SIGTERM');
+      expect(await exited(child)).toEqual({ code: 0, signal: null });
+      expect('collectors' in (state() || {})).toBe(false);
+      expect(deviceLog().some((r) => r.event === 'collector_empty')).toBe(false);
     });
-    expect(registered.pid).toBe(child.pid);
 
-    const fatals = await until(
-      () => {
-        const r = deviceLog().filter((x) => x.level === 'fatal');
-        return r.length ? r : null;
-      },
-      { label: 'the crash record from the app stderr' },
-    );
-    const crash = fatals[0];
-    assert(crash);
-    expect(crash.msg).toMatch(/Terminating app due to uncaught exception/);
-    expect(crash.proc).toBe('StimFixture(431)');
-    expect(crash.platform).toBe('ios');
-    expect(crash.raw).toBe(true);
-
-    const log = deviceLog();
-    const started = log[0];
-    assert(started);
-    expect(started.event).toBe('collector_started');
-    expect(started.msg).toMatch(/launching com\.example\.MyApp on device UDID-1/);
-    expect(started.msg).toMatch(/subsystem, category and severity are not carried on hardware/);
-    expect(log.some((r) => r.msg === 'a raw stdout write')).toBeTruthy();
-    expect(log.some((r) => r.category === 'javascript' && r.msg === 'counter is 1')).toBeTruthy();
-    expect(log.some((r) => r.event === 'collector_stderr')).toBe(false);
-
-    expect(verifyCollectorOwnership({ pid: childPid(child), platform: 'ios', root })).toEqual({ status: 'ours' });
-
-    process.kill(childPid(child), 'SIGTERM');
-    expect(await exited(child)).toEqual({ code: 0, signal: null });
-    expect('collectors' in (state() || {})).toBe(false);
-    expect(deviceLog().some((r) => r.event === 'collector_empty')).toBe(false);
-  });
-
-  test('a devicectl refusal is a failure, not a silent empty section', async () => {
-    writeShim('xcrun', ['echo "ERROR: The specified device was not found. (Name: UDID-1)" >&2', 'exit 1'].join('\n'));
-    const child = spawnCollector([
-      '--platform',
-      'ios',
-      '--root',
-      root,
-      '--udid',
-      'UDID-1',
-      '--bundle',
-      'com.example.MyApp',
-      '--physical',
-    ]);
-    expect((await exited(child)).code).toBe(1);
-    const log = deviceLog();
-    expect(
-      log.some((r) => r.level === 'error' && String(r.msg).startsWith('ERROR: The specified device')),
-    ).toBeTruthy();
-    const empty = log.find((r) => r.event === 'collector_empty');
-    expect(empty).toBeFalsy();
-    const failed = log.find((r) => r.event === 'collector_failed');
-    assert(failed);
-    expect(failed.level).toBe('error');
-    expect(failed.msg).toMatch(/the devicectl console ended with exit code 1/);
-    expect('collectors' in (state() || {})).toBe(false);
-  });
-
-  test('a stop signal before any output is a stop, not an empty capture', async () => {
-    writeShim('xcrun', 'exec sleep 30\n');
-    const child = spawnCollector([
-      '--platform',
-      'ios',
-      '--root',
-      root,
-      '--udid',
-      'UDID-1',
-      '--bundle',
-      'com.example.MyApp',
-      '--physical',
-    ]);
-    await until(() => readCollectors(root).ios as CollectorEntry, { label: 'the device collector registration' });
-    process.kill(childPid(child), 'SIGTERM');
-    expect(await exited(child)).toEqual({ code: 0, signal: null });
-    expect(deviceLog().some((r) => r.event === 'collector_empty')).toBe(false);
-    expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBeTruthy();
-  });
-
-  test('a clean launch that produced no console output says so rather than reading as a pass', async () => {
-    writeShim('xcrun', 'exit 0\n');
-    const child = spawnCollector([
-      '--platform',
-      'ios',
-      '--root',
-      root,
-      '--udid',
-      'UDID-1',
-      '--bundle',
-      'com.example.MyApp',
-      '--physical',
-    ]);
-    expect((await exited(child)).code).toBe(0);
-    const empty = deviceLog().find((r) => r.event === 'collector_empty');
-    assert(empty);
-    expect(empty.level).toBe('warn');
-    expect(empty.msg).toMatch(/devicectl only connects the app's streams when it starts the app/);
-    expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBeTruthy();
-  });
-});
-
-describe('the android collector, spawned for real against a fake adb', { timeout: 30_000 }, () => {
-  test('resolves the app pid, filters logcat on it, and cleans up on SIGTERM', async () => {
-    writeShim(
-      'adb',
-      [
-        `case "$*" in`,
-        `  '-s emulator-5554 shell pidof -s com.example.app')`,
-        `    if [ -f "${join(shimDir, 'started')}" ]; then echo 3132; else touch "${join(shimDir, 'started')}"; fi ;;`,
-        `  '-s emulator-5554 logcat --pid 3132 -v time,epoch')`,
-        `    echo '--------- beginning of main'`,
-        `    echo '08-21 17:51:19.507 I/ReactNativeJS(  3132): Running "App" with {"rootTag":11}'`,
-        `    echo '08-21 17:51:20.100 E/ReactNativeJS(  3132): TypeError: undefined is not a function'`,
-        `    exec sleep 30 ;;`,
-        `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
-        `esac`,
-      ].join('\n'),
-    );
-
-    const child = spawnCollector([
-      '--platform',
-      'android',
-      '--root',
-      root,
-      '--serial',
-      'emulator-5554',
-      '--package',
-      'com.example.app',
-    ]);
-
-    const registered = await until(() => readCollectors(root).android as CollectorEntry, {
-      label: 'the android registration',
+    test('a devicectl refusal is a failure, not a silent empty section', async () => {
+      writeShim('xcrun', ['echo "ERROR: The specified device was not found. (Name: UDID-1)" >&2', 'exit 1'].join('\n'));
+      const child = spawnCollector([
+        '--platform',
+        'ios',
+        '--root',
+        root,
+        '--udid',
+        'UDID-1',
+        '--bundle',
+        'com.example.MyApp',
+        '--physical',
+      ]);
+      expect((await exited(child)).code).toBe(1);
+      const log = deviceLog();
+      expect(
+        log.some((r) => r.level === 'error' && String(r.msg).startsWith('ERROR: The specified device')),
+      ).toBeTruthy();
+      const empty = log.find((r) => r.event === 'collector_empty');
+      expect(empty).toBeFalsy();
+      const failed = log.find((r) => r.event === 'collector_failed');
+      assert(failed);
+      expect(failed.level).toBe('error');
+      expect(failed.msg).toMatch(/the devicectl console ended with exit code 1/);
+      expect('collectors' in (state() || {})).toBe(false);
     });
-    expect(registered.pid).toBe(child.pid);
 
-    const errors = await until(
-      () => {
-        const r = deviceLog().filter((x) => x.level === 'error');
-        return r.length ? r : null;
-      },
-      { label: 'a parsed logcat record' },
-    );
-    const firstError = errors[0];
-    assert(firstError);
-    expect(firstError.msg).toMatch(/undefined is not a function/);
-    expect(firstError.proc).toBe('ReactNativeJS(3132)');
-    expect(deviceLog().some((r) => r.msg?.includes('beginning of main'))).toBe(false);
-
-    process.kill(childPid(child), 'SIGTERM');
-    expect(await exited(child)).toEqual({ code: 0, signal: null });
-    expect('collectors' in (state() || {})).toBe(false);
-  });
-
-  test('is registered while it is still waiting for the app pid to appear', async () => {
-    writeShim('adb', 'exit 1\n');
-    const child = spawnCollector([
-      '--platform',
-      'android',
-      '--root',
-      root,
-      '--serial',
-      'emulator-5554',
-      '--package',
-      'com.example.app',
-    ]);
-    const registered = await until(() => readCollectors(root).android as CollectorEntry, {
-      label: 'the android registration',
+    test('a stop signal before any output is a stop, not an empty capture', async () => {
+      writeShim('xcrun', 'exec sleep 30\n');
+      const child = spawnCollector([
+        '--platform',
+        'ios',
+        '--root',
+        root,
+        '--udid',
+        'UDID-1',
+        '--bundle',
+        'com.example.MyApp',
+        '--physical',
+      ]);
+      await until(() => readCollectors(root).ios as CollectorEntry, { label: 'the device collector registration' });
+      process.kill(childPid(child), 'SIGTERM');
+      expect(await exited(child)).toEqual({ code: 0, signal: null });
+      expect(deviceLog().some((r) => r.event === 'collector_empty')).toBe(false);
+      expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBeTruthy();
     });
-    expect(registered.pid).toBe(child.pid);
-    expect(deviceLog().some((r) => r.event === 'collector_started')).toBe(false);
-    process.kill(childPid(child), 'SIGKILL');
-    await exited(child);
-  });
 
-  test('a SIGTERM during the pid wait clears a named-slot registration', async () => {
-    writeShim('adb', 'exit 1\n');
-    const child = spawnCollector([
-      '--slot',
-      'phone',
-      '--platform',
-      'android',
-      '--root',
-      root,
-      '--serial',
-      'emulator-5554',
-      '--package',
-      'com.example.app',
-    ]);
-    await until(() => readCollectors(root)['android:phone'], { label: 'the android registration' });
-    process.kill(childPid(child), 'SIGTERM');
-    expect(await exited(child)).toEqual({ code: 0, signal: null });
-    expect('collectors' in (state() || {})).toBe(false);
-    expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBeTruthy();
-  });
-});
+    test('a clean launch that produced no console output says so rather than reading as a pass', async () => {
+      writeShim('xcrun', 'exit 0\n');
+      const child = spawnCollector([
+        '--platform',
+        'ios',
+        '--root',
+        root,
+        '--udid',
+        'UDID-1',
+        '--bundle',
+        'com.example.MyApp',
+        '--physical',
+      ]);
+      expect((await exited(child)).code).toBe(0);
+      const empty = deviceLog().find((r) => r.event === 'collector_empty');
+      assert(empty);
+      expect(empty.level).toBe('warn');
+      expect(empty.msg).toMatch(/devicectl only connects the app's streams when it starts the app/);
+      expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBeTruthy();
+    });
+  },
+);
+
+describe.skipIf(process.platform === 'win32')(
+  'the android collector, spawned for real against a fake adb (skipped on Windows: the fake adb is a /bin/sh script and the teardown is a real SIGTERM)',
+  { timeout: 30_000 },
+  () => {
+    test('resolves the app pid, filters logcat on it, and cleans up on SIGTERM', async () => {
+      writeShim(
+        'adb',
+        [
+          `case "$*" in`,
+          `  '-s emulator-5554 shell pidof -s com.example.app')`,
+          `    if [ -f "${join(shimDir, 'started')}" ]; then echo 3132; else touch "${join(shimDir, 'started')}"; fi ;;`,
+          `  '-s emulator-5554 logcat --pid 3132 -v time,epoch')`,
+          `    echo '--------- beginning of main'`,
+          `    echo '08-21 17:51:19.507 I/ReactNativeJS(  3132): Running "App" with {"rootTag":11}'`,
+          `    echo '08-21 17:51:20.100 E/ReactNativeJS(  3132): TypeError: undefined is not a function'`,
+          `    exec sleep 30 ;;`,
+          `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
+          `esac`,
+        ].join('\n'),
+      );
+
+      const child = spawnCollector([
+        '--platform',
+        'android',
+        '--root',
+        root,
+        '--serial',
+        'emulator-5554',
+        '--package',
+        'com.example.app',
+      ]);
+
+      const registered = await until(() => readCollectors(root).android as CollectorEntry, {
+        label: 'the android registration',
+      });
+      expect(registered.pid).toBe(child.pid);
+
+      const errors = await until(
+        () => {
+          const r = deviceLog().filter((x) => x.level === 'error');
+          return r.length ? r : null;
+        },
+        { label: 'a parsed logcat record' },
+      );
+      const firstError = errors[0];
+      assert(firstError);
+      expect(firstError.msg).toMatch(/undefined is not a function/);
+      expect(firstError.proc).toBe('ReactNativeJS(3132)');
+      expect(deviceLog().some((r) => r.msg?.includes('beginning of main'))).toBe(false);
+
+      process.kill(childPid(child), 'SIGTERM');
+      expect(await exited(child)).toEqual({ code: 0, signal: null });
+      expect('collectors' in (state() || {})).toBe(false);
+    });
+
+    test('is registered while it is still waiting for the app pid to appear', async () => {
+      writeShim('adb', 'exit 1\n');
+      const child = spawnCollector([
+        '--platform',
+        'android',
+        '--root',
+        root,
+        '--serial',
+        'emulator-5554',
+        '--package',
+        'com.example.app',
+      ]);
+      const registered = await until(() => readCollectors(root).android as CollectorEntry, {
+        label: 'the android registration',
+      });
+      expect(registered.pid).toBe(child.pid);
+      expect(deviceLog().some((r) => r.event === 'collector_started')).toBe(false);
+      process.kill(childPid(child), 'SIGKILL');
+      await exited(child);
+    });
+
+    test('a SIGTERM during the pid wait clears a named-slot registration', async () => {
+      writeShim('adb', 'exit 1\n');
+      const child = spawnCollector([
+        '--slot',
+        'phone',
+        '--platform',
+        'android',
+        '--root',
+        root,
+        '--serial',
+        'emulator-5554',
+        '--package',
+        'com.example.app',
+      ]);
+      await until(() => readCollectors(root)['android:phone'], { label: 'the android registration' });
+      process.kill(childPid(child), 'SIGTERM');
+      expect(await exited(child)).toEqual({ code: 0, signal: null });
+      expect('collectors' in (state() || {})).toBe(false);
+      expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBeTruthy();
+    });
+  },
+);
 
 describe('runCollector seams', () => {
   test.each([2739, null])(
@@ -727,74 +741,78 @@ describe('runCollector seams', () => {
   });
 });
 
-describe('the android collector follows the app across a restart', { timeout: 30_000 }, () => {
-  const restartingShim = () =>
-    writeShim(
-      'adb',
-      [
-        `case "$*" in`,
-        `  '-s emulator-5554 shell pidof -s com.example.app')`,
-        `    if [ -f "${join(shimDir, 'restarted')}" ]; then echo 4200; else echo 3132; fi ;;`,
-        `  '-s emulator-5554 logcat --pid 3132 -v time,epoch')`,
-        `    echo '08-21 17:51:19.507 I/ReactNativeJS(  3132): before the restart'`,
-        `    exec sleep 30 ;;`,
-        `  '-s emulator-5554 logcat --pid 4200 -v time,epoch')`,
-        `    echo '08-21 17:51:29.507 I/ReactNativeJS(  4200): after the restart'`,
-        `    exec sleep 30 ;;`,
-        `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
-        `esac`,
-      ].join('\n'),
-    );
+describe.skipIf(process.platform === 'win32')(
+  'the android collector follows the app across a restart (skipped on Windows: the fake adb is a /bin/sh script and the teardown is a real SIGTERM)',
+  { timeout: 30_000 },
+  () => {
+    const restartingShim = () =>
+      writeShim(
+        'adb',
+        [
+          `case "$*" in`,
+          `  '-s emulator-5554 shell pidof -s com.example.app')`,
+          `    if [ -f "${join(shimDir, 'restarted')}" ]; then echo 4200; else echo 3132; fi ;;`,
+          `  '-s emulator-5554 logcat --pid 3132 -v time,epoch')`,
+          `    echo '08-21 17:51:19.507 I/ReactNativeJS(  3132): before the restart'`,
+          `    exec sleep 30 ;;`,
+          `  '-s emulator-5554 logcat --pid 4200 -v time,epoch')`,
+          `    echo '08-21 17:51:29.507 I/ReactNativeJS(  4200): after the restart'`,
+          `    exec sleep 30 ;;`,
+          `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
+          `esac`,
+        ].join('\n'),
+      );
 
-  test('a new pid reattaches the stream, with a record saying so', async () => {
-    restartingShim();
-    const child = spawnCollector(
-      ['--platform', 'android', '--root', root, '--serial', 'emulator-5554', '--package', 'com.example.app'],
-      { STIM_PID_WATCH_MS: '100' },
-    );
-    await until(() => deviceLog().some((r) => /before the restart/.test(r.msg || '')), { label: 'the first stream' });
+    test('a new pid reattaches the stream, with a record saying so', async () => {
+      restartingShim();
+      const child = spawnCollector(
+        ['--platform', 'android', '--root', root, '--serial', 'emulator-5554', '--package', 'com.example.app'],
+        { STIM_PID_WATCH_MS: '100' },
+      );
+      await until(() => deviceLog().some((r) => /before the restart/.test(r.msg || '')), { label: 'the first stream' });
 
-    writeFileSync(join(shimDir, 'restarted'), '');
+      writeFileSync(join(shimDir, 'restarted'), '');
 
-    const reattached = await until(() => deviceLog().find((r) => r.event === 'collector_reattached'), {
-      label: 'the reattach record',
+      const reattached = await until(() => deviceLog().find((r) => r.event === 'collector_reattached'), {
+        label: 'the reattach record',
+      });
+      expect(reattached.msg).toMatch(/pid 4200/);
+      expect(reattached.msg).toMatch(/was 3132/);
+      await until(() => deviceLog().some((r) => /after the restart/.test(r.msg || '')), { label: 'the second stream' });
+
+      expect((readCollectors(root).android as { pid?: number }).pid).toBe(child.pid);
+      expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBe(false);
+
+      process.kill(childPid(child), 'SIGTERM');
+      expect(await exited(child)).toEqual({ code: 0, signal: null });
+      expect('collectors' in (state() || {})).toBe(false);
     });
-    expect(reattached.msg).toMatch(/pid 4200/);
-    expect(reattached.msg).toMatch(/was 3132/);
-    await until(() => deviceLog().some((r) => /after the restart/.test(r.msg || '')), { label: 'the second stream' });
 
-    expect((readCollectors(root).android as { pid?: number }).pid).toBe(child.pid);
-    expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBe(false);
-
-    process.kill(childPid(child), 'SIGTERM');
-    expect(await exited(child)).toEqual({ code: 0, signal: null });
-    expect('collectors' in (state() || {})).toBe(false);
-  });
-
-  test('the same pid, poll after poll, changes nothing', async () => {
-    writeShim(
-      'adb',
-      [
-        `case "$*" in`,
-        `  '-s emulator-5554 shell pidof -s com.example.app') echo 3132 ;;`,
-        `  '-s emulator-5554 logcat --pid 3132 -v time,epoch')`,
-        `    echo '08-21 17:51:19.507 I/ReactNativeJS(  3132): steady'`,
-        `    exec sleep 30 ;;`,
-        `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
-        `esac`,
-      ].join('\n'),
-    );
-    const child = spawnCollector(
-      ['--platform', 'android', '--root', root, '--serial', 'emulator-5554', '--package', 'com.example.app'],
-      { STIM_PID_WATCH_MS: '50' },
-    );
-    await until(() => deviceLog().some((r) => /steady/.test(r.msg || '')), { label: 'the stream' });
-    await new Promise((r) => setTimeout(r, 400));
-    expect(deviceLog().filter((r) => r.event === 'collector_reattached').length).toBe(0);
-    process.kill(childPid(child), 'SIGKILL');
-    await exited(child);
-  });
-});
+    test('the same pid, poll after poll, changes nothing', async () => {
+      writeShim(
+        'adb',
+        [
+          `case "$*" in`,
+          `  '-s emulator-5554 shell pidof -s com.example.app') echo 3132 ;;`,
+          `  '-s emulator-5554 logcat --pid 3132 -v time,epoch')`,
+          `    echo '08-21 17:51:19.507 I/ReactNativeJS(  3132): steady'`,
+          `    exec sleep 30 ;;`,
+          `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
+          `esac`,
+        ].join('\n'),
+      );
+      const child = spawnCollector(
+        ['--platform', 'android', '--root', root, '--serial', 'emulator-5554', '--package', 'com.example.app'],
+        { STIM_PID_WATCH_MS: '50' },
+      );
+      await until(() => deviceLog().some((r) => /steady/.test(r.msg || '')), { label: 'the stream' });
+      await new Promise((r) => setTimeout(r, 400));
+      expect(deviceLog().filter((r) => r.event === 'collector_reattached').length).toBe(0);
+      process.kill(childPid(child), 'SIGKILL');
+      await exited(child);
+    });
+  },
+);
 
 describe('runCollector reattach seams', () => {
   const fakeChild = (pid: number | null | undefined) => makeChildProcess({ pid: pid ?? undefined });

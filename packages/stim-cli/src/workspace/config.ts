@@ -5,7 +5,7 @@ import {
   removeSlotDevice,
 } from '../devices/device-slots.ts';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs';
-import { isAbsolute, join } from 'path';
+import { isAbsolute, join, sep } from 'path';
 import { homedir } from 'os';
 import { isOnMountedVolume } from '../fs-util.ts';
 import { withDirLock } from '../dir-lock.ts';
@@ -389,9 +389,15 @@ function deleteNested(obj: Record<string, unknown>, dottedKey: string): boolean 
 }
 
 export function isPathPrefix(prefix: string, path: string): boolean {
-  if (prefix === path) return true;
-  const withSlash = prefix.endsWith('/') ? prefix : `${prefix}/`;
-  return path.startsWith(withSlash);
+  const head = comparablePath(prefix);
+  const candidate = comparablePath(path);
+  if (head === candidate) return true;
+  return candidate.startsWith(head.endsWith('/') ? head : `${head}/`);
+}
+
+// A backslash is a separator on Windows and an ordinary filename character elsewhere.
+function comparablePath(path: string): string {
+  return sep === '/' ? path : path.replaceAll(sep, '/');
 }
 
 export function findEnclosingWorktreeRoot(projectPath: string): string | null {

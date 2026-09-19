@@ -394,34 +394,38 @@ test.each(['throw', 'error'])('a spawn %s releases the claim and retains the inc
   releaseClaim(acquireAvdClaim(avdName));
 });
 
-test.each([false, true])(
-  'a surviving native descendant retains the claim (child identity unavailable: %s)',
-  async (unavailable) => {
-    if (unavailable) failChildIdentity();
-    let child: ChildProcess | undefined;
-    setExecutor({
-      ...getExecutor(),
-      spawn(_file, args, options) {
-        child = spawn(process.execPath, ['-e', nativeWriter, avdRoot, 'descendant', ...args!], options);
-        return child;
-      },
-    });
-    try {
-      await expect(prepare()).rejects.toThrow('process group running');
-      const holder = claimState().live[0];
-      expect(holder?.childDeclared).toBe(true);
-      expect(Boolean(holder?.child)).toBe(!unavailable);
-      expect(getProject(project)?.platforms?.android?.setupIncomplete).toBe(true);
-      expect(() => acquireAvdClaim(avdName)).toThrow(/another operation|recording/);
-    } finally {
-      writeFileSync(join(avdRoot, 'finish'), 'done');
-      if (child?.pid !== undefined) await until(() => !processGroupAlive(child!.pid!));
-    }
-  },
-);
+describe.skipIf(process.platform === 'win32')('POSIX process groups; skipped on win32', () => {
+  test.each([false, true])(
+    'a surviving native descendant retains the claim (child identity unavailable: %s)',
+    async (unavailable) => {
+      if (unavailable) failChildIdentity();
+      let child: ChildProcess | undefined;
+      setExecutor({
+        ...getExecutor(),
+        spawn(_file, args, options) {
+          child = spawn(process.execPath, ['-e', nativeWriter, avdRoot, 'descendant', ...args!], options);
+          return child;
+        },
+      });
+      try {
+        await expect(prepare()).rejects.toThrow('process group running');
+        const holder = claimState().live[0];
+        expect(holder?.childDeclared).toBe(true);
+        expect(Boolean(holder?.child)).toBe(!unavailable);
+        expect(getProject(project)?.platforms?.android?.setupIncomplete).toBe(true);
+        expect(() => acquireAvdClaim(avdName)).toThrow(/another operation|recording/);
+      } finally {
+        writeFileSync(join(avdRoot, 'finish'), 'done');
+        if (child?.pid !== undefined) await until(() => !processGroupAlive(child!.pid!));
+      }
+    },
+  );
+});
 
-test('a killed creator leaves its recorded native child protected until the group exits', async () => {
-  const callerSource = `
+test.skipIf(process.platform === 'win32')(
+  'a killed creator leaves its recorded native child protected until the group exits (POSIX process groups; skipped on win32)',
+  async () => {
+    const callerSource = `
 import { spawn } from 'node:child_process';
 const { setExecutor } = await import(process.argv[1]);
 const { prepareOwnedAvd } = await import(process.argv[2]);
@@ -430,45 +434,47 @@ setExecutor({ spawn(file, args, options) {
 } });
 await prepareOwnedAvd({ projectPath: process.argv[3], label: 'setup', configuration: 'fixture', configure() {} });
 `;
-  const caller = spawn(
-    process.execPath,
-    [
-      '--input-type=module',
-      '-e',
-      callerSource,
-      new URL('../exec.ts', import.meta.url).href,
-      new URL('../engine/android-avd-setup.ts', import.meta.url).href,
-      project,
-      avdRoot,
-    ],
-    { env: process.env, stdio: 'ignore' },
-  );
-  const callerDone = new Promise((resolve) => caller.once('exit', resolve));
-  let nativePid: number | undefined;
-  try {
-    await until(() => Boolean(claimState().live[0]?.child) && existsSync(join(avdRoot, 'input.txt')));
-    nativePid = claimState().live[0]!.child!.pid;
-    caller.kill('SIGKILL');
-    await callerDone;
-    expect(claimState().live[0]?.child?.pid).toBe(nativePid);
-    expect(teardownOwnedAvd(avdName, { del: true, owner: { projectPath: project } }).status).toBe('failed');
-    expect(getProject(project)?.platforms?.android?.setupIncomplete).toBe(true);
-    expect(readFileSync(join(avdRoot, `${avdName}.avd`, 'partial'), 'utf8')).toBe('keep');
-    writeFileSync(join(avdRoot, 'finish'), 'done');
-    await until(() => !processGroupAlive(nativePid!));
-    expect(
-      teardownOwnedAvd(avdName, {
-        del: true,
-        owner: { projectPath: project },
-        onRemoved: () => clearDevice(project, 'android'),
-      }).status,
-    ).toBe('torn-down');
-    expect(getProject(project)?.platforms?.android).toBeUndefined();
-    expect(existsSync(join(avdRoot, `${avdName}.avd`))).toBe(false);
-  } finally {
-    if (caller.exitCode === null && caller.signalCode === null) caller.kill('SIGKILL');
-    await callerDone;
-    writeFileSync(join(avdRoot, 'finish'), 'done');
-    if (nativePid !== undefined) await until(() => !processGroupAlive(nativePid!));
-  }
-}, 10000);
+    const caller = spawn(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        callerSource,
+        new URL('../exec.ts', import.meta.url).href,
+        new URL('../engine/android-avd-setup.ts', import.meta.url).href,
+        project,
+        avdRoot,
+      ],
+      { env: process.env, stdio: 'ignore' },
+    );
+    const callerDone = new Promise((resolve) => caller.once('exit', resolve));
+    let nativePid: number | undefined;
+    try {
+      await until(() => Boolean(claimState().live[0]?.child) && existsSync(join(avdRoot, 'input.txt')));
+      nativePid = claimState().live[0]!.child!.pid;
+      caller.kill('SIGKILL');
+      await callerDone;
+      expect(claimState().live[0]?.child?.pid).toBe(nativePid);
+      expect(teardownOwnedAvd(avdName, { del: true, owner: { projectPath: project } }).status).toBe('failed');
+      expect(getProject(project)?.platforms?.android?.setupIncomplete).toBe(true);
+      expect(readFileSync(join(avdRoot, `${avdName}.avd`, 'partial'), 'utf8')).toBe('keep');
+      writeFileSync(join(avdRoot, 'finish'), 'done');
+      await until(() => !processGroupAlive(nativePid!));
+      expect(
+        teardownOwnedAvd(avdName, {
+          del: true,
+          owner: { projectPath: project },
+          onRemoved: () => clearDevice(project, 'android'),
+        }).status,
+      ).toBe('torn-down');
+      expect(getProject(project)?.platforms?.android).toBeUndefined();
+      expect(existsSync(join(avdRoot, `${avdName}.avd`))).toBe(false);
+    } finally {
+      if (caller.exitCode === null && caller.signalCode === null) caller.kill('SIGKILL');
+      await callerDone;
+      writeFileSync(join(avdRoot, 'finish'), 'done');
+      if (nativePid !== undefined) await until(() => !processGroupAlive(nativePid!));
+    }
+  },
+  10000,
+);

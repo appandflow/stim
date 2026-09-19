@@ -62,7 +62,7 @@ describe('the connection profile', () => {
     const previous = process.env.STIM_HOME;
     process.env.STIM_HOME = '/stim-home';
     try {
-      expect(remoteProfilePath('/work/app')).toMatch(
+      expect(remoteProfilePath('/work/app').replaceAll('\\', '/')).toMatch(
         /^\/stim-home\/workspaces\/app--[a-f0-9]{16}\/agent-device\.remote\.json$/,
       );
     } finally {

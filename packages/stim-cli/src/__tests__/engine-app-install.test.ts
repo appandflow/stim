@@ -1210,45 +1210,50 @@ describe('unverifiedLaunchLines', () => {
     );
   });
 
-  test.each([androidDevClientUrl('exp+app', 8082), `${androidDevClientUrl('exp+app', 8082)}&probe=O'Brien`])(
-    'printed Android deep links preserve the complete URL and extras through both shells: %s',
-    (url) => {
-      const lines = unverifiedLaunchLines({
-        platform: 'android',
-        metroPort: 8082,
-        bundleId: 'com.x',
-        serial: 'emulator-5584',
-        devClientUrl: url,
-      });
-      const commands = lines.filter((line) => line.includes('adb -s') && line.includes(' -d '));
-      expect(commands).toHaveLength(2);
-      for (const line of commands) {
-        const command = line.slice(line.indexOf('adb -s'));
-        const output = execFileSync(
-          '/bin/sh',
-          [
-            '-c',
-            `adb() {
+  describe.skipIf(process.platform === 'win32')(
+    'printed Android deep links through a real POSIX sh (skipped on win32)',
+    () => {
+      test.each([androidDevClientUrl('exp+app', 8082), `${androidDevClientUrl('exp+app', 8082)}&probe=O'Brien`])(
+        'preserves the complete URL and extras through both shells: %s',
+        (url) => {
+          const lines = unverifiedLaunchLines({
+            platform: 'android',
+            metroPort: 8082,
+            bundleId: 'com.x',
+            serial: 'emulator-5584',
+            devClientUrl: url,
+          });
+          const commands = lines.filter((line) => line.includes('adb -s') && line.includes(' -d '));
+          expect(commands).toHaveLength(2);
+          for (const line of commands) {
+            const command = line.slice(line.indexOf('adb -s'));
+            const output = execFileSync(
+              '/bin/sh',
+              [
+                '-c',
+                `adb() {
               [ "$1" = -s ] && [ "$2" = emulator-5584 ] && [ "$3" = shell ] || return 1
               shift 3
               /bin/sh -c 'am() { printf "%s\\n" "$@"; }; '"$*"
             }
             ${command}`,
-          ],
-          { encoding: 'utf8' },
-        );
-        expect(output.trimEnd().split('\n')).toEqual([
-          ...(command.includes('force-stop') ? ['force-stop', 'com.x'] : []),
-          'start',
-          '-a',
-          'android.intent.action.VIEW',
-          '-d',
-          url,
-          '--ez',
-          'EXDevMenuDisableAutoLaunch',
-          'true',
-        ]);
-      }
+              ],
+              { encoding: 'utf8' },
+            );
+            expect(output.trimEnd().split('\n')).toEqual([
+              ...(command.includes('force-stop') ? ['force-stop', 'com.x'] : []),
+              'start',
+              '-a',
+              'android.intent.action.VIEW',
+              '-d',
+              url,
+              '--ez',
+              'EXDevMenuDisableAutoLaunch',
+              'true',
+            ]);
+          }
+        },
+      );
     },
   );
 });
@@ -1402,126 +1407,131 @@ describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
   });
 });
 
-describe('the debug_http_host script, run for real under sh', () => {
-  let dir: string;
-  const PKG = 'com.example.app';
-  const prefsPath = () => join(dir, 'shared_prefs', `${PKG}_preferences.xml`);
+describe.skipIf(process.platform === 'win32')(
+  'the debug_http_host script, run for real under sh (skipped on win32)',
+  () => {
+    let dir: string;
+    const PKG = 'com.example.app';
+    const prefsPath = () => join(dir, 'shared_prefs', `${PKG}_preferences.xml`);
 
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'stim-prefs-'));
-  });
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  const runScript = (port: number) =>
-    execFileSync(
-      '/bin/sh',
-      [
-        '-c',
-        `sh -c ${deviceShellArg(debugHttpHostScript({ packageName: PKG, host: `10.0.2.2:${port}`, dataDir: dir }))}`,
-      ],
-      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] },
-    );
-
-  const parsePrefs = (text: string) => {
-    const entries: Record<string, string> = {};
-    const stack: Array<{ name: string; attrs: Record<string, string> }> = [];
-    const tag = /<(\/?)([\w:.-]+)((?:\s+[\w:.-]+\s*=\s*"[^"]*")*)\s*(\/?)>/g;
-    const body = text.replace(/<\?xml[^>]*\?>/g, '');
-    let last = 0;
-    let m;
-    while ((m = tag.exec(body)) !== null) {
-      const [full, closing, name, attrs, selfClosing] = m;
-      if (full === undefined || name === undefined || attrs === undefined) continue;
-      const between = body.slice(last, m.index);
-      last = m.index + full.length;
-      if (closing) {
-        const open = stack.pop();
-        assert(open);
-        expect(open.name).toBe(name);
-        const key = open.attrs.name;
-        if (name === 'string' && key !== undefined) entries[key] = between;
-        continue;
-      }
-      const attrMap: Record<string, string> = {};
-      for (const a of attrs.matchAll(/([\w:.-]+)\s*=\s*"([^"]*)"/g)) {
-        const k = a[1];
-        const v = a[2];
-        if (k !== undefined && v !== undefined) attrMap[k] = v;
-      }
-      if (selfClosing) {
-        const key = attrMap.name;
-        if (name === 'string' && key !== undefined) entries[key] = '';
-        continue;
-      }
-      stack.push({ name, attrs: attrMap });
-    }
-    expect(stack).toEqual([]);
-    expect(body.trim()).toMatch(/^<map>[\s\S]*<\/map>$/);
-    return entries;
-  };
-
-  test('case 1: no prefs file at all', () => {
-    runScript(8085);
-    const entries = parsePrefs(readFileSync(prefsPath(), 'utf-8'));
-    expect(entries).toEqual({ debug_http_host: '10.0.2.2:8085' });
-  });
-
-  test('case 2: a prefs file that already carries the key (the value is replaced, once)', () => {
-    runScript(8085);
-    runScript(8099);
-    const text = readFileSync(prefsPath(), 'utf-8');
-    expect(parsePrefs(text)).toEqual({ debug_http_host: '10.0.2.2:8099' });
-    const hostMatches = text.match(/debug_http_host/g);
-    assert(hostMatches);
-    expect(hostMatches.length).toBe(1);
-  });
-
-  test('case 3: a prefs file WITHOUT the key keeps every other entry', () => {
-    execFileSync('/bin/sh', ['-c', `mkdir -p ${join(dir, 'shared_prefs')}`]);
-    writeFileSync(
-      prefsPath(),
-      [
-        "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>",
-        '<map>',
-        '    <string name="onboarding">done</string>',
-        '    <string name="last_route">/settings?tab=1&amp;q=x</string>',
-        '</map>',
-        '',
-      ].join('\n'),
-    );
-    runScript(8085);
-    expect(parsePrefs(readFileSync(prefsPath(), 'utf-8'))).toEqual({
-      onboarding: 'done',
-      last_route: '/settings?tab=1&amp;q=x',
-      debug_http_host: '10.0.2.2:8085',
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'stim-prefs-'));
     });
-  });
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
 
-  test("case 4: Android's empty-prefs form, `<map />`", () => {
-    execFileSync('/bin/sh', ['-c', `mkdir -p ${join(dir, 'shared_prefs')}`]);
-    writeFileSync(prefsPath(), "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map />\n");
-    runScript(8085);
-    expect(parsePrefs(readFileSync(prefsPath(), 'utf-8'))).toEqual({ debug_http_host: '10.0.2.2:8085' });
-  });
+    const runScript = (port: number) =>
+      execFileSync(
+        '/bin/sh',
+        [
+          '-c',
+          `sh -c ${deviceShellArg(debugHttpHostScript({ packageName: PKG, host: `10.0.2.2:${port}`, dataDir: dir }))}`,
+        ],
+        { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] },
+      );
 
-  test('a data directory that does not exist exits non-zero rather than pretending', () => {
-    const script = debugHttpHostScript({ packageName: PKG, host: '10.0.2.2:8085', dataDir: join(dir, 'nope') });
-    expect(() => execFileSync('/bin/sh', ['-c', `sh -c ${deviceShellArg(script)}`], { stdio: 'ignore' })).toThrow(
-      Error,
-    );
-  });
+    const parsePrefs = (text: string) => {
+      const entries: Record<string, string> = {};
+      const stack: Array<{ name: string; attrs: Record<string, string> }> = [];
+      const tag = /<(\/?)([\w:.-]+)((?:\s+[\w:.-]+\s*=\s*"[^"]*")*)\s*(\/?)>/g;
+      const body = text.replace(/<\?xml[^>]*\?>/g, '');
+      let last = 0;
+      let m;
+      while ((m = tag.exec(body)) !== null) {
+        const [full, closing, name, attrs, selfClosing] = m;
+        if (full === undefined || name === undefined || attrs === undefined) continue;
+        const between = body.slice(last, m.index);
+        last = m.index + full.length;
+        if (closing) {
+          const open = stack.pop();
+          assert(open);
+          expect(open.name).toBe(name);
+          const key = open.attrs.name;
+          if (name === 'string' && key !== undefined) entries[key] = between;
+          continue;
+        }
+        const attrMap: Record<string, string> = {};
+        for (const a of attrs.matchAll(/([\w:.-]+)\s*=\s*"([^"]*)"/g)) {
+          const k = a[1];
+          const v = a[2];
+          if (k !== undefined && v !== undefined) attrMap[k] = v;
+        }
+        if (selfClosing) {
+          const key = attrMap.name;
+          if (name === 'string' && key !== undefined) entries[key] = '';
+          continue;
+        }
+        stack.push({ name, attrs: attrMap });
+      }
+      expect(stack).toEqual([]);
+      expect(body.trim()).toMatch(/^<map>[\s\S]*<\/map>$/);
+      return entries;
+    };
 
-  test('the script is multi-line, and every line survives the quoting', () => {
-    const script = debugHttpHostScript({ packageName: PKG, host: '10.0.2.2:8085' });
-    expect(script.split('\n').length >= 6).toBeTruthy();
-    expect(script).toMatch(/^cd \/data\/data\/com\.example\.app \|\| exit 1$/m);
-    expect(script).not.toMatch(/\\"/);
-    const roundTripped = execFileSync('/bin/sh', ['-c', `printf %s ${deviceShellArg(script)}`], { encoding: 'utf-8' });
-    expect(roundTripped).toBe(script);
-  });
-});
+    test('case 1: no prefs file at all', () => {
+      runScript(8085);
+      const entries = parsePrefs(readFileSync(prefsPath(), 'utf-8'));
+      expect(entries).toEqual({ debug_http_host: '10.0.2.2:8085' });
+    });
+
+    test('case 2: a prefs file that already carries the key (the value is replaced, once)', () => {
+      runScript(8085);
+      runScript(8099);
+      const text = readFileSync(prefsPath(), 'utf-8');
+      expect(parsePrefs(text)).toEqual({ debug_http_host: '10.0.2.2:8099' });
+      const hostMatches = text.match(/debug_http_host/g);
+      assert(hostMatches);
+      expect(hostMatches.length).toBe(1);
+    });
+
+    test('case 3: a prefs file WITHOUT the key keeps every other entry', () => {
+      execFileSync('/bin/sh', ['-c', `mkdir -p ${join(dir, 'shared_prefs')}`]);
+      writeFileSync(
+        prefsPath(),
+        [
+          "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>",
+          '<map>',
+          '    <string name="onboarding">done</string>',
+          '    <string name="last_route">/settings?tab=1&amp;q=x</string>',
+          '</map>',
+          '',
+        ].join('\n'),
+      );
+      runScript(8085);
+      expect(parsePrefs(readFileSync(prefsPath(), 'utf-8'))).toEqual({
+        onboarding: 'done',
+        last_route: '/settings?tab=1&amp;q=x',
+        debug_http_host: '10.0.2.2:8085',
+      });
+    });
+
+    test("case 4: Android's empty-prefs form, `<map />`", () => {
+      execFileSync('/bin/sh', ['-c', `mkdir -p ${join(dir, 'shared_prefs')}`]);
+      writeFileSync(prefsPath(), "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map />\n");
+      runScript(8085);
+      expect(parsePrefs(readFileSync(prefsPath(), 'utf-8'))).toEqual({ debug_http_host: '10.0.2.2:8085' });
+    });
+
+    test('a data directory that does not exist exits non-zero rather than pretending', () => {
+      const script = debugHttpHostScript({ packageName: PKG, host: '10.0.2.2:8085', dataDir: join(dir, 'nope') });
+      expect(() => execFileSync('/bin/sh', ['-c', `sh -c ${deviceShellArg(script)}`], { stdio: 'ignore' })).toThrow(
+        Error,
+      );
+    });
+
+    test('the script is multi-line, and every line survives the quoting', () => {
+      const script = debugHttpHostScript({ packageName: PKG, host: '10.0.2.2:8085' });
+      expect(script.split('\n').length >= 6).toBeTruthy();
+      expect(script).toMatch(/^cd \/data\/data\/com\.example\.app \|\| exit 1$/m);
+      expect(script).not.toMatch(/\\"/);
+      const roundTripped = execFileSync('/bin/sh', ['-c', `printf %s ${deviceShellArg(script)}`], {
+        encoding: 'utf-8',
+      });
+      expect(roundTripped).toBe(script);
+    });
+  },
+);
 
 describe('the Android dev-client deep link', () => {
   test('the url is the iOS shape pointed at the emulator loopback', () => {
@@ -1643,10 +1653,16 @@ describe('the Android dev-client deep link', () => {
   test('deviceShellArg quotes what adb will not', () => {
     expect(deviceShellArg('a b')).toBe(`'a b'`);
     expect(deviceShellArg("it's")).toBe(`'it'\\''s'`);
-    for (const raw of ['a b', "it's", 'x\ny', '?url=a&b=c', '$HOME `id`', '<map>']) {
-      expect(execFileSync('/bin/sh', ['-c', `printf %s ${deviceShellArg(raw)}`], { encoding: 'utf-8' })).toBe(raw);
-    }
   });
+
+  test.skipIf(process.platform === 'win32')(
+    'every deviceShellArg quoting round-trips unchanged (real POSIX sh; skipped on win32)',
+    () => {
+      for (const raw of ['a b', "it's", 'x\ny', '?url=a&b=c', '$HOME `id`', '<map>']) {
+        expect(execFileSync('/bin/sh', ['-c', `printf %s ${deviceShellArg(raw)}`], { encoding: 'utf-8' })).toBe(raw);
+      }
+    },
+  );
 });
 
 describe('installConflictKind', () => {

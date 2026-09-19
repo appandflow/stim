@@ -13,7 +13,7 @@ import {
   realpathSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const assets = fileURLToPath(new URL('./compat/', import.meta.url));
@@ -36,7 +36,7 @@ export function packageHash(path) {
       else if (stat.isSymbolicLink()) {
         const link = readlinkSync(entry);
         const target = relative(realpathSync(path), realpathSync(entry));
-        if (isAbsolute(link) || target === '..' || target.startsWith('../'))
+        if (isAbsolute(link) || target === '..' || target.startsWith(`..${sep}`))
           throw new Error('compatibility package symlink escapes its package');
         hash.update(JSON.stringify([relative(path, entry), 'symlink', link]));
       } else throw new Error(`compatibility package contains an unsupported entry: ${relative(path, entry)}`);

@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
@@ -85,7 +85,7 @@ test('checkMainCheckout reports missing dependencies, Pods, and native output', 
 });
 
 function seedRepo(prefix: string) {
-  const base = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), prefix)));
   const main = join(base, 'main');
   mkdirSync(main, { recursive: true });
   const git = (command: string) => execSync(command, { cwd: main, encoding: 'utf-8' }).trim();
@@ -94,7 +94,7 @@ function seedRepo(prefix: string) {
   git('git config user.name test');
   git('git config commit.gpgsign false');
   git('git config remote.origin.url ../origin.git');
-  git("git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'");
+  execFileSync('git', ['config', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*'], { cwd: main });
   writeFileSync(join(main, 'README.md'), 'seed\n');
   git('git add -A');
   git('git commit -q -m first');
@@ -245,7 +245,7 @@ test('worktree.defaultBranch outranks origin/HEAD, and neither resolving stays s
 });
 
 test('a fingerprinted library directory that still hashes .git gets both .fingerprintignore entries', async () => {
-  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-linked-git-'));
+  const project = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-doctor-linked-git-')));
   try {
     const library = join(project, 'library');
     mkdirSync(join(library, 'android'), { recursive: true });
@@ -364,37 +364,40 @@ test('Stim version comparison follows semver prerelease precedence', () => {
   expect(parseStimVersionOutput('stim 1.2.3')).toBe(null);
 });
 
-test('Stim installation inspection finds a shadowed older executable and deduplicates real paths', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-doctor-versions-'));
-  const oldBin = join(root, 'old');
-  const newBin = join(root, 'new');
-  const aliasBin = join(root, 'alias');
-  mkdirSync(oldBin);
-  mkdirSync(newBin);
-  mkdirSync(aliasBin);
-  writeFileSync(join(oldBin, 'stim'), '#!/bin/sh\nprintf "1.0.0-rc.14\\n"\n');
-  writeFileSync(join(newBin, 'stim'), '#!/bin/sh\nprintf "1.0.0-rc.15\\n"\n');
-  chmodSync(join(oldBin, 'stim'), 0o755);
-  chmodSync(join(newBin, 'stim'), 0o755);
-  symlinkSync(join(newBin, 'stim'), join(aliasBin, 'stim'));
-  try {
-    const report = await inspectStimVersions('1.0.0-rc.15', {
-      pathValue: [oldBin, newBin, aliasBin].join(delimiter),
-      runningPath: join(newBin, 'stim'),
-    });
-    expect(report.resolved).toMatchObject({ path: join(oldBin, 'stim'), version: '1.0.0-rc.14' });
-    expect(report.installations).toHaveLength(2);
-    expect(report.versions).toEqual(['1.0.0-rc.15', '1.0.0-rc.14']);
-    expect(report.highestVersion).toBe('1.0.0-rc.15');
-    expect(report.resolvedIsOlder).toBe(true);
-    expect(shadowedStimFinding(report)).toMatchObject({
-      level: 'cost',
-      title: 'The Stim resolved from PATH is older than another installation',
-    });
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+test.skipIf(process.platform === 'win32')(
+  'Stim installation inspection finds a shadowed older executable and deduplicates real paths (POSIX executable stubs; skipped on win32)',
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), 'stim-doctor-versions-'));
+    const oldBin = join(root, 'old');
+    const newBin = join(root, 'new');
+    const aliasBin = join(root, 'alias');
+    mkdirSync(oldBin);
+    mkdirSync(newBin);
+    mkdirSync(aliasBin);
+    writeFileSync(join(oldBin, 'stim'), '#!/bin/sh\nprintf "1.0.0-rc.14\\n"\n');
+    writeFileSync(join(newBin, 'stim'), '#!/bin/sh\nprintf "1.0.0-rc.15\\n"\n');
+    chmodSync(join(oldBin, 'stim'), 0o755);
+    chmodSync(join(newBin, 'stim'), 0o755);
+    symlinkSync(join(newBin, 'stim'), join(aliasBin, 'stim'));
+    try {
+      const report = await inspectStimVersions('1.0.0-rc.15', {
+        pathValue: [oldBin, newBin, aliasBin].join(delimiter),
+        runningPath: join(newBin, 'stim'),
+      });
+      expect(report.resolved).toMatchObject({ path: join(oldBin, 'stim'), version: '1.0.0-rc.14' });
+      expect(report.installations).toHaveLength(2);
+      expect(report.versions).toEqual(['1.0.0-rc.15', '1.0.0-rc.14']);
+      expect(report.highestVersion).toBe('1.0.0-rc.15');
+      expect(report.resolvedIsOlder).toBe(true);
+      expect(shadowedStimFinding(report)).toMatchObject({
+        level: 'cost',
+        title: 'The Stim resolved from PATH is older than another installation',
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test('Stim installation probes share one timeout window', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-doctor-version-timeout-'));
@@ -438,7 +441,7 @@ test('checkMainCheckout recognizes non-npm dependency installs', () => {
 
 test('checkMainCheckout reads warm state from the repository source checkout', () => {
   resetExecutor();
-  const base = mkdtempSync(join(tmpdir(), 'stim-doctor-main-worktree-'));
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-doctor-main-worktree-')));
   const repo = join(base, 'repo');
   const linked = join(base, 'linked');
   try {

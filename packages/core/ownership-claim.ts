@@ -485,6 +485,9 @@ function selfOwner(): ClaimOwner {
 function contended(error: unknown): boolean {
   if (error instanceof MissingClaimStoreError) return false;
   const code = (error as NodeJS.ErrnoException)?.code;
+  // Windows MoveFileEx refuses a directory destination that already exists with ERROR_ACCESS_DENIED,
+  // which libuv reports as EPERM where POSIX rename reports EEXIST or ENOTEMPTY.
+  if (code === 'EPERM' && process.platform === 'win32') return true;
   return code === 'EEXIST' || code === 'ENOTEMPTY' || code === 'ENOENT' || code === 'EINVAL';
 }
 

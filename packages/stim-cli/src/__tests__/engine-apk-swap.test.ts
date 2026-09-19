@@ -55,14 +55,20 @@ describe('hermesEnabledFromGradleProperties', () => {
 
 describe('the hermesc probe order', () => {
   const root = '/proj';
-  const sibling = '/w/monorepo/node_modules/hermes-compiler/hermesc/osx-bin/hermesc';
-  const local = '/proj/node_modules/hermes-compiler/hermesc/osx-bin/hermesc';
-  const sdks = '/proj/node_modules/react-native/sdks/hermesc/osx-bin/hermesc';
-  const built = '/proj/node_modules/react-native/sdks/hermes/build/bin/hermesc';
+  const sibling = join('/w/monorepo/node_modules/hermes-compiler/hermesc/osx-bin/hermesc');
+  const local = join('/proj/node_modules/hermes-compiler/hermesc/osx-bin/hermesc');
+  const sdks = join('/proj/node_modules/react-native/sdks/hermesc/osx-bin/hermesc');
+  const built = join('/proj/node_modules/react-native/sdks/hermes/build/bin/hermesc');
 
-  test('the host directory is the only platform-dependent piece', () => {
+  test('the host directory and the executable name are the only platform-dependent pieces', () => {
     expect(hermescBinDir('darwin')).toBe('osx-bin');
     expect(hermescBinDir('linux')).toBe('linux64-bin');
+    expect(hermescBinDir('win32')).toBe('win64-bin');
+    expect(hermescCandidates('/proj', { platform: 'win32' })).toEqual([
+      join('/proj/node_modules/hermes-compiler/hermesc/win64-bin/hermesc.exe'),
+      join('/proj/node_modules/react-native/sdks/hermesc/win64-bin/hermesc.exe'),
+      join('/proj/node_modules/react-native/sdks/hermes/build/bin/hermesc.exe'),
+    ]);
   });
 
   test("Rock's trick first: hermes-compiler beside the react-native the project resolves", () => {
@@ -198,24 +204,26 @@ describe('zip surgery, alignment and signing', () => {
 });
 
 describe('keystore resolution', () => {
+  const debugKeystore = join('/w/app', 'android', 'app', 'debug.keystore');
+
   test('the default is the debug keystore every RN/Expo android project carries', () => {
     expect(resolveKeystore('/w/app', null)).toEqual({
-      path: '/w/app/android/app/debug.keystore',
+      path: debugKeystore,
       pass: 'pass:android',
     });
     expect(resolveKeystore('/w/app', {})).toEqual({
-      path: '/w/app/android/app/debug.keystore',
+      path: debugKeystore,
       pass: 'pass:android',
     });
-    expect(resolveKeystore('/w/app', { android: [] }).path).toBe('/w/app/android/app/debug.keystore');
+    expect(resolveKeystore('/w/app', { android: [] }).path).toBe(debugKeystore);
   });
 
   test('android.keystore is absolute as given, relative to the project root otherwise', () => {
     expect(resolveKeystore('/w/app', { android: { keystore: '/keys/release.jks' } }).path).toBe('/keys/release.jks');
     expect(resolveKeystore('/w/app', { android: { keystore: ' android/app/release.jks ' } }).path).toBe(
-      '/w/app/android/app/release.jks',
+      join('/w/app', 'android', 'app', 'release.jks'),
     );
-    expect(resolveKeystore('/w/app', { android: { keystore: '' } }).path).toBe('/w/app/android/app/debug.keystore');
+    expect(resolveKeystore('/w/app', { android: { keystore: '' } }).path).toBe(debugKeystore);
   });
 
   test('android.keystorePassword is schemed for apksigner, and an explicit scheme passes through', () => {
@@ -239,7 +247,7 @@ const buildTools: BuildToolsEntry = {
   version: '36.0.0',
   major: 36,
 };
-const apksigner = '/sdk/build-tools/36.0.0/apksigner';
+const apksigner = join('/sdk/build-tools/36.0.0', process.platform === 'win32' ? 'apksigner.bat' : 'apksigner');
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'stim-apk-root-'));

@@ -1,7 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import chalk from 'chalk';
 import { phaseLine } from '../command-output.ts';
@@ -39,8 +39,8 @@ function androidDir(root: string) {
   return join(root, 'android');
 }
 
-function gradlewPath(root: string) {
-  return join(androidDir(root), 'gradlew');
+export function gradlewPath(root: string): string {
+  return join(androidDir(root), process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
 }
 
 export function apkOutputsDir(root: string): string {
@@ -148,7 +148,7 @@ function apkInDir(dir: string): string | null {
   if (metadata) {
     const named = parseOutputMetadata(metadata);
     if (named) {
-      const abs = named.startsWith('/') ? named : join(dir, named);
+      const abs = isAbsolute(named) ? named : join(dir, named);
       if (existsSync(abs)) return abs;
     }
   }
@@ -206,7 +206,7 @@ export interface LocateApkResult {
 export function locateApk(root: string, transcript = '', variant: string | null = null): LocateApkResult {
   const fromTranscript = parseApkFromTranscript(transcript);
   if (fromTranscript) {
-    const abs = fromTranscript.startsWith('/') ? fromTranscript : join(androidDir(root), fromTranscript);
+    const abs = isAbsolute(fromTranscript) ? fromTranscript : join(androidDir(root), fromTranscript);
     if (existsSync(abs)) return { apkPath: abs };
   }
 
@@ -222,7 +222,7 @@ export function locateApk(root: string, transcript = '', variant: string | null 
   const found = findDebugApksUnder(apkOutputsDir(root));
   if (found.length === 1) {
     const apk = found[0]!;
-    const rel = relative(apkOutputsDir(root), apk).split('/').slice(0, -1);
+    const rel = relative(apkOutputsDir(root), apk).split(sep).slice(0, -1);
     const suggested = variantNameOf(rel);
     return {
       apkPath: apk,
@@ -613,7 +613,7 @@ export async function buildAndroid(
       ok: false,
       code: BUILD_ERROR,
       reason: `\`./gradlew ${task}\` left ${located.candidates.length} debug APKs under ${apkOutputsDir(root)}, and nothing says which flavor to install.`,
-      remedy: `Set the android.variant setting to the variant to install -- e.g. {"android": {"variant": "${variantNameOf(relative(apkOutputsDir(root), located.candidates[0]!).split('/').slice(0, -1))}"}} in .stim.json.`,
+      remedy: `Set the android.variant setting to the variant to install -- e.g. {"android": {"variant": "${variantNameOf(relative(apkOutputsDir(root), located.candidates[0]!).split(sep).slice(0, -1))}"}} in .stim.json.`,
       diagnostics: [],
       truncated: 0,
       lastLines: located.candidates.map((c) => relative(androidDir(root), c)),

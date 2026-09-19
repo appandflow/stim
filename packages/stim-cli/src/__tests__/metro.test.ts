@@ -17,7 +17,7 @@ import { realpathSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 const CAN_READ_CWD = processCwd(process.pid) !== null;
-import { join } from 'node:path';
+import { join, resolve as absolute } from 'node:path';
 
 let home: string;
 beforeEach(() => {
@@ -45,11 +45,12 @@ test('parseLsofCwd extracts the cwd path from -Fn field output', () => {
 });
 
 test('isInsideProject accepts the root and descendants, rejects siblings', () => {
-  expect(isInsideProject('/a/b', '/a/b')).toBe(true);
-  expect(isInsideProject('/a/b/apps/x', '/a/b')).toBe(true);
-  expect(isInsideProject('/a/bc', '/a/b')).toBe(false);
-  expect(isInsideProject('/a', '/a/b')).toBe(false);
-  expect(isInsideProject(null, '/a/b')).toBe(false);
+  const project = absolute('/a/b');
+  expect(isInsideProject(project, project)).toBe(true);
+  expect(isInsideProject(absolute('/a/b/apps/x'), project)).toBe(true);
+  expect(isInsideProject(absolute('/a/bc'), project)).toBe(false);
+  expect(isInsideProject(absolute('/a'), project)).toBe(false);
+  expect(isInsideProject(null, project)).toBe(false);
 });
 
 test('resolveProjectMetro returns missing when nothing listens', async () => {

@@ -19,6 +19,7 @@ import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { listOrphanedAvdDirectories } from '../devices/android.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
 import { teardownOwnedAvd, teardownParkedAvd } from '../devices/teardown.ts';
+import { writeAvdProcessLock } from './_factories.ts';
 
 const race = vi.hoisted(() => ({ afterRename: null as null | ((from: string, to: string) => void) }));
 vi.mock('node:fs', async (importOriginal) => {
@@ -179,7 +180,7 @@ test('stop keeps unregistered data and delete refuses user-created names', () =>
 
 test.each(['live', 'unverifiable'])('orphan deletion refuses a %s emulator process lock', (state) => {
   const directory = orphan();
-  writeFileSync(join(directory, 'hardware-qemu.ini.lock'), state === 'live' ? String(process.pid) : 'not-a-pid');
+  writeAvdProcessLock(directory, state === 'live' ? String(process.pid) : 'not-a-pid');
   expect(teardownOwnedAvd('stim-orphan', { del: true }).status).toBe('failed');
   expect(existsSync(directory)).toBe(true);
 });
@@ -273,8 +274,8 @@ test.each(['workspace', 'pool'])(
   },
 );
 
-test.skipIf(process.getuid?.() === 0)(
-  'GC keeps failed removals discoverable, continues to later devices, and reclaims them on retry',
+test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
+  'GC keeps failed removals discoverable, continues to later devices, and reclaims them on retry (POSIX directory permissions; skipped on win32)',
   async () => {
     const blocked = orphan('stim-a-blocked');
     mkdirSync(join(blocked, 'blocked'));
@@ -339,11 +340,25 @@ test.each(['absolute', 'relative', 'symlink'])(
 );
 
 describe.skipIf(process.getuid?.() === 0)('unverifiable registrations', () => {
-  test.each(['unreadable', 'malformed'])('an %s registration keeps unverified orphan data', async (failure) => {
+  test.skipIf(process.platform === 'win32')(
+    'an unreadable registration keeps unverified orphan data (POSIX file permissions; skipped on win32)',
+    async () => {
+      const directory = orphan();
+      const registration = join(avdRoot, 'Personal_Phone.ini');
+      writeFileSync(registration, `path=${directory}\n`);
+      chmodSync(registration, 0);
+      vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+      const report = await collectGcReport({}, deps);
+      expect(report.orphanedDevices).toEqual([]);
+      expect(report.deviceSweepNotices.join('\n')).toContain('android data sweep skipped');
+      expect(teardownOwnedAvd('stim-orphan', { del: true }).status).toBe('failed');
+      expect(existsSync(directory)).toBe(true);
+    },
+  );
+
+  test('a malformed registration keeps unverified orphan data', async () => {
     const directory = orphan();
-    const registration = join(avdRoot, 'Personal_Phone.ini');
-    writeFileSync(registration, failure === 'malformed' ? 'avd.ini.encoding=UTF-8\n' : `path=${directory}\n`);
-    if (failure === 'unreadable') chmodSync(registration, 0);
+    writeFileSync(join(avdRoot, 'Personal_Phone.ini'), 'avd.ini.encoding=UTF-8\n');
     vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
     const report = await collectGcReport({}, deps);
     expect(report.orphanedDevices).toEqual([]);

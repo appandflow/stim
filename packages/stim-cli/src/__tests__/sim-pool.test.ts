@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { getProject, loadConfig, saveConfig, setDevice, upsertProject, withConfigLock } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { readClaimSet } from '../ownership-claim.ts';
@@ -18,6 +19,8 @@ import {
   selectParked,
   type ParkedSim,
 } from '../devices/sim-pool.ts';
+
+const KILLED_EXIT = process.platform === 'win32' ? [1, null] : [null, 'SIGKILL'];
 
 const first: ParkedSim = {
   udid: 'FIRST',
@@ -220,7 +223,7 @@ describe('pool operation recovery', () => {
              ? adoptParked(request)
              : removeParkedAfter(request.platform, request.udid, () => { deleted = true; });
            process.stdout.write(JSON.stringify({ result, deleted }));`,
-          module,
+          pathToFileURL(module).href,
           JSON.stringify(request),
           action,
         ],
@@ -265,7 +268,7 @@ describe('pool operation recovery', () => {
         ],
         { stdio: 'ignore' },
       );
-      expect(await once(child, 'exit')).toEqual([null, 'SIGKILL']);
+      expect(await once(child, 'exit')).toEqual(KILLED_EXIT);
       expect(readClaimSet(claimRoot()).dead).toHaveLength(1);
       expect(selectParked(readParked('ios'), first)).toMatchObject([first]);
       let deleted = false;
@@ -325,7 +328,7 @@ describe('pool operation recovery', () => {
       ],
       { stdio: 'ignore' },
     );
-    expect(await once(child, 'exit')).toEqual([null, 'SIGKILL']);
+    expect(await once(child, 'exit')).toEqual(KILLED_EXIT);
     expect(readClaimSet(claimRoot()).unresolved).toHaveLength(1);
     expect(() => adoptParked(request)).toThrow(claimRoot());
     let deleted = false;

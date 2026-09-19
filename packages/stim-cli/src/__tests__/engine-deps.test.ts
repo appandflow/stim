@@ -1,7 +1,7 @@
 import assert from 'node:assert';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join, sep } from 'node:path';
 import {
   DEPS_ERROR,
   extractPodDiagnostics,
@@ -127,14 +127,14 @@ describe('podEnv (#43, #44)', () => {
   test('prepends a pinned ruby that a version manager has installed', () => {
     mkdirSync(root, { recursive: true });
     writeFileSync(join(root, '.ruby-version'), 'ruby-3.3.10\n');
-    const rvmBin = '/home/u/.rvm/rubies/ruby-3.3.10/bin';
-    const rvmGems = '/home/u/.rvm/gems/ruby-3.3.10';
+    const rvmBin = join('/home/u', '.rvm', 'rubies', 'ruby-3.3.10', 'bin');
+    const rvmGems = join('/home/u', '.rvm', 'gems', 'ruby-3.3.10');
     const env = podEnv(root, {
       env: { PATH: '/usr/bin' },
       home: '/home/u',
       exists: (p) => p === rvmBin || p === rvmGems,
     });
-    expect(env.PATH).toBe(`${rvmBin}:/usr/bin`);
+    expect(env.PATH).toBe(`${rvmBin}${delimiter}/usr/bin`);
     expect(env.GEM_HOME).toBe(rvmGems);
     const none = podEnv(root, { env: { PATH: '/usr/bin' }, home: '/home/u', exists: () => false });
     expect(none.PATH).toBe('/usr/bin');
@@ -603,7 +603,7 @@ describe('runPodInstall through bundler (#137)', () => {
         'bundle exec pod install': ok,
       }),
     });
-    expect(withPath.notes?.join('\n')).toMatch(/gems in vendor\/bundle\//);
+    expect(withPath.notes?.join('\n')).toContain(`gems in ${join('vendor', 'bundle')}${sep}`);
     expect(withPath.notes?.join('\n')).toMatch(/Gemfile\.lock itself is never written/);
 
     writeFileSync(join(root, '.bundle', 'config'), 'BUNDLE_PATH: "/opt/gems"\n');

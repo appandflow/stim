@@ -1,25 +1,30 @@
 import { lstatSync, readdirSync, readlinkSync, statSync } from 'fs';
-import { dirname, join, normalize } from 'path';
+import { dirname, isAbsolute, join, normalize, parse, sep } from 'path';
 import { getExecutor } from './exec.ts';
+
+const WINDOWS = process.platform === 'win32';
+const DRIVE_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
 export function volumeRootFor(path: string): string {
   const normalized = normalize(String(path));
+  if (WINDOWS) return parse(normalized).root.replace(/^[a-z]:/, (drive) => drive.toUpperCase());
   const m = normalized.match(/^\/volumes\/([^/]+)/i);
   return m ? `/Volumes/${m[1]}` : '/';
 }
 
 function resolveWorkspaceRealish(workspacePath: string): string | null {
   const raw = String(workspacePath);
-  if (!raw.startsWith('/')) return null;
+  if (!isAbsolute(raw)) return null;
   let current = raw;
   const MAX_HOPS = 40;
   for (let hops = 0; hops < MAX_HOPS; hops++) {
     const normalized = normalize(current);
-    const segments = normalized.split('/').filter(Boolean);
-    let prefix = '';
+    const root = parse(normalized).root;
+    const segments = normalized.slice(root.length).split(sep).filter(Boolean);
+    let prefix = root.endsWith(sep) ? root.slice(0, -sep.length) : root;
     let followedSymlink = false;
     for (const segment of segments) {
-      prefix += `/${segment}`;
+      prefix += `${sep}${segment}`;
       let st;
       try {
         st = lstatSync(prefix);
@@ -36,7 +41,7 @@ function resolveWorkspaceRealish(workspacePath: string): string | null {
         } catch {
           return null;
         }
-        const resolvedTarget = target.startsWith('/') ? target : normalize(join(dirname(prefix), target));
+        const resolvedTarget = isAbsolute(target) ? target : normalize(join(dirname(prefix), target));
         const rest = normalized.slice(prefix.length);
         current = `${resolvedTarget}${rest}`;
         followedSymlink = true;
@@ -54,7 +59,22 @@ export function isRealMount(entryDev: number | null | undefined, rootDev: number
   return entryDev != null && rootDev != null && entryDev !== rootDev;
 }
 
+function listWindowsVolumeRoots(statFn: typeof statSync): string[] {
+  const roots: string[] = [];
+  for (const letter of DRIVE_LETTERS) {
+    const root = `${letter}:${sep}`;
+    try {
+      statFn(root);
+    } catch {
+      continue;
+    }
+    roots.push(root);
+  }
+  return roots;
+}
+
 export function listMountedVolumes({ statFn = statSync }: { statFn?: typeof statSync } = {}): string[] {
+  if (WINDOWS) return listWindowsVolumeRoots(statFn);
   const roots = ['/'];
   let rootDev: number;
   try {
@@ -84,11 +104,20 @@ function resolveVolumeRoot(path: string): string | null {
   return realish === null ? null : volumeRootFor(realish);
 }
 
+function uncShareIsReachable(volume: string): boolean {
+  if (!WINDOWS || !volume.startsWith(`${sep}${sep}`)) return false;
+  try {
+    return statSync(volume).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 export function isOnMountedVolume(path: string, mountedVolumes?: string[]): boolean {
   const mounted = new Set(mountedVolumes || listMountedVolumes());
   const volume = resolveVolumeRoot(path);
   if (volume === null) return false;
-  return mounted.has(volume);
+  return mounted.has(volume) || uncShareIsReachable(volume);
 }
 
 export function directorySize(dir: string, { timeoutMs }: { timeoutMs?: number } = {}): number {

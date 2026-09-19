@@ -75,56 +75,62 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-test('doctor reports generated Pod helper effects using bounded metadata calls without evaluating Ruby', () => {
-  mkdirSync(join(project, 'ios', 'Pods', 'Pods.xcodeproj'), { recursive: true });
-  writeFileSync(
-    join(project, 'ios', 'Podfile'),
-    "require_relative '../helpers/pods'\npost_install { |installer| configure_pods(installer) }\n",
-  );
-  const calls: string[][] = [];
-  setExecutor({
-    runFile(file: string, args: string[], options: { timeoutMs: number }) {
-      expect(file).toBe('xcodebuild');
-      calls.push(args);
-      expect(options.timeoutMs).toBeGreaterThan(0);
-      expect(options.timeoutMs).toBeLessThanOrEqual(30_000);
-      return JSON.stringify([target({ ONLY_ACTIVE_ARCH: args[1]?.includes('/Pods/') ? 'NO' : 'YES' })]);
-    },
-  });
-  const findings = inspectIosDebugArchitectures(project);
-  expect(findings).toHaveLength(1);
-  expect(findings[0]).toMatchObject({ code: 'ios-debug-architectures', level: 'cost' });
-  expect(findings[0]?.detail).toContain('ios/Pods/Pods.xcodeproj');
-  expect(findings[0]?.detail).toContain('NativePod (arm64, x86_64)');
-  expect(calls).toHaveLength(2);
-  for (const args of calls) {
-    expect(args.slice(2)).toEqual([
-      '-alltargets',
-      '-configuration',
-      'Debug',
-      '-sdk',
-      'iphonesimulator',
-      '-showBuildSettings',
-      '-json',
-      '-disableAutomaticPackageResolution',
-      '-skipPackageUpdates',
-    ]);
-  }
-});
+test.skipIf(process.platform === 'win32')(
+  'doctor reports generated Pod helper effects using bounded metadata calls without evaluating Ruby (xcodebuild metadata; skipped on win32)',
+  () => {
+    mkdirSync(join(project, 'ios', 'Pods', 'Pods.xcodeproj'), { recursive: true });
+    writeFileSync(
+      join(project, 'ios', 'Podfile'),
+      "require_relative '../helpers/pods'\npost_install { |installer| configure_pods(installer) }\n",
+    );
+    const calls: string[][] = [];
+    setExecutor({
+      runFile(file: string, args: string[], options: { timeoutMs: number }) {
+        expect(file).toBe('xcodebuild');
+        calls.push(args);
+        expect(options.timeoutMs).toBeGreaterThan(0);
+        expect(options.timeoutMs).toBeLessThanOrEqual(30_000);
+        return JSON.stringify([target({ ONLY_ACTIVE_ARCH: args[1]?.includes('/Pods/') ? 'NO' : 'YES' })]);
+      },
+    });
+    const findings = inspectIosDebugArchitectures(project);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ code: 'ios-debug-architectures', level: 'cost' });
+    expect(findings[0]?.detail).toContain('ios/Pods/Pods.xcodeproj');
+    expect(findings[0]?.detail).toContain('NativePod (arm64, x86_64)');
+    expect(calls).toHaveLength(2);
+    for (const args of calls) {
+      expect(args.slice(2)).toEqual([
+        '-alltargets',
+        '-configuration',
+        'Debug',
+        '-sdk',
+        'iphonesimulator',
+        '-showBuildSettings',
+        '-json',
+        '-disableAutomaticPackageResolution',
+        '-skipPackageUpdates',
+      ]);
+    }
+  },
+);
 
-test('missing Pods and failed app metadata produce an unverified note without a cost warning', () => {
-  writeFileSync(join(project, 'ios', 'Podfile'), 'post_install {}\n');
-  setExecutor({
-    runFile() {
-      throw new Error('timed out');
-    },
-  });
-  const findings = inspectIosDebugArchitectures(project);
-  expect(findings).toHaveLength(1);
-  expect(findings[0]).toMatchObject({ code: 'ios-debug-architectures-unknown', level: 'note' });
-  expect(findings[0]?.detail).toContain('Pods project (not generated)');
-  expect(findings[0]?.detail).toContain('ios/App.xcodeproj');
-});
+test.skipIf(process.platform === 'win32')(
+  'missing Pods and failed app metadata produce an unverified note without a cost warning (xcodebuild metadata; skipped on win32)',
+  () => {
+    writeFileSync(join(project, 'ios', 'Podfile'), 'post_install {}\n');
+    setExecutor({
+      runFile() {
+        throw new Error('timed out');
+      },
+    });
+    const findings = inspectIosDebugArchitectures(project);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ code: 'ios-debug-architectures-unknown', level: 'note' });
+    expect(findings[0]?.detail).toContain('Pods project (not generated)');
+    expect(findings[0]?.detail).toContain('ios/App.xcodeproj');
+  },
+);
 
 test('ungenerated iOS projects do not invoke Xcode', () => {
   setExecutor({

@@ -679,9 +679,12 @@ test('findStaleProjectDevices skips projects the dead-entry sweep already claime
 
 let tmpHome: string;
 let fakeHome: string;
-let originalHome: string | undefined;
-let originalTmpdir: string | undefined;
+let originalHomeRoots: Record<string, string | undefined>;
+let originalTmpRoots: Record<string, string | undefined>;
 let originalAvdRoots: Record<string, string | undefined>;
+
+const HOME_ENV_KEYS = process.platform === 'win32' ? ['HOME', 'USERPROFILE'] : ['HOME'];
+const TMP_ENV_KEYS = process.platform === 'win32' ? ['TMPDIR', 'TEMP', 'TMP'] : ['TMPDIR'];
 
 function currentConfig() {
   const cfg = loadConfig();
@@ -855,9 +858,9 @@ beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
 
-  originalHome = process.env.HOME;
   fakeHome = mkdtempSync(join(tmpdir(), 'stim-fakehome-'));
-  process.env.HOME = fakeHome;
+  originalHomeRoots = Object.fromEntries(HOME_ENV_KEYS.map((key) => [key, process.env[key]]));
+  for (const key of HOME_ENV_KEYS) process.env[key] = fakeHome;
   originalAvdRoots = Object.fromEntries(
     ['ANDROID_AVD_HOME', 'ANDROID_SDK_HOME', 'ANDROID_USER_HOME', 'ANDROID_EMULATOR_HOME'].map((key) => [
       key,
@@ -869,8 +872,8 @@ beforeEach(() => {
   process.env.ANDROID_USER_HOME = join(fakeHome, '.android');
   process.env.ANDROID_EMULATOR_HOME = join(fakeHome, '.android');
 
-  originalTmpdir = process.env.TMPDIR;
-  process.env.TMPDIR = fakeHome;
+  originalTmpRoots = Object.fromEntries(TMP_ENV_KEYS.map((key) => [key, process.env[key]]));
+  for (const key of TMP_ENV_KEYS) process.env[key] = fakeHome;
 });
 
 afterEach(() => {
@@ -880,13 +883,17 @@ afterEach(() => {
     else process.env[key] = value;
   }
   resetExecutor();
-  if (originalTmpdir === undefined) delete process.env.TMPDIR;
-  else process.env.TMPDIR = originalTmpdir;
+  for (const [key, value] of Object.entries(originalTmpRoots)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
   rmSync(tmpHome, { recursive: true, force: true });
   rmSync(fakeHome, { recursive: true, force: true });
   delete process.env.STIM_HOME;
-  if (originalHome === undefined) delete process.env.HOME;
-  else process.env.HOME = originalHome;
+  for (const [key, value] of Object.entries(originalHomeRoots)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
 });
 
 describe('EAS orphan session sweep', () => {
@@ -1102,17 +1109,7 @@ describe('EAS orphan session sweep', () => {
     });
   });
 
-  test.each([
-    ['missing', (root: string) => root],
-    [
-      'inaccessible',
-      (root: string) => {
-        mkdirSync(root);
-        chmodSync(root, 0o000);
-        return root;
-      },
-    ],
-  ])('a registered workspace root that is %s fails closed', async (_label, prepareRoot) => {
+  const gcWithUnavailableRoot = async (prepareRoot: (root: string) => string) => {
     const project = join(fakeHome, 'expo-app');
     const unavailable = prepareRoot(join(fakeHome, 'unavailable-workspace'));
     mkdirSync(project, { recursive: true });
@@ -1133,9 +1130,27 @@ describe('EAS orphan session sweep', () => {
       if (existsSync(unavailable)) chmodSync(unavailable, 0o700);
     });
 
+    return { output, calls: harness.calls };
+  };
+
+  test('a registered workspace root that is missing fails closed', async () => {
+    const { output, calls } = await gcWithUnavailableRoot((root) => root);
     expect(output).toMatch(/unavailable-workspace.*not available|unavailable-workspace.*not readable/i);
-    expect(harness.calls).toEqual([]);
+    expect(calls).toEqual([]);
   });
+
+  test.skipIf(process.platform === 'win32')(
+    'a registered workspace root that is inaccessible fails closed (skipped on Windows: mode 000 does not take read access away from a directory)',
+    async () => {
+      const { output, calls } = await gcWithUnavailableRoot((root) => {
+        mkdirSync(root);
+        chmodSync(root, 0o000);
+        return root;
+      });
+      expect(output).toMatch(/unavailable-workspace.*not available|unavailable-workspace.*not readable/i);
+      expect(calls).toEqual([]);
+    },
+  );
 
   test('an existing registered workspace with no state file does not block deletion', async () => {
     const project = join(fakeHome, 'expo-app');
@@ -2754,8 +2769,8 @@ test('--delete removes the stale lock and leaves the live one alone', async () =
   expect(output).toMatch(/build lock/i);
 });
 
-test.skipIf(process.getuid?.() === 0)(
-  '--delete continues after staging cleanup fails and leaves no cleanup claim',
+test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
+  '--delete continues after staging cleanup fails and leaves no cleanup claim (skipped on Windows: mode 0 does not stop a directory from being deleted)',
   async () => {
     saveConfig({ version: 2, projects: {}, repos: {} });
     installExecutor();

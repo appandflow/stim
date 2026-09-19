@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cases, commandState, websitePrompt } from './cases.mjs';
 
 const workspace = '/fixture/app';
+const worktree = resolve(workspace, '../feature');
 function driver(id) {
   const state = commandState(id, workspace);
   const run = (args, cwd = workspace, file = 'stim') => state.accept({ file, args, cwd });
@@ -71,7 +73,7 @@ describe('website prompt command selection', () => {
     expect(() => run(['worktree', 'warm'])).toThrow('new worktree');
     run(['worktree', 'add', '-b', 'feature', '../feature', 'HEAD'], workspace, 'git');
     expect(() => run(['worktree', 'warm'])).toThrow('new worktree');
-    expect(run(['worktree', 'warm'], '/fixture/feature')).toEqual({ done: true });
+    expect(run(['worktree', 'warm'], worktree)).toEqual({ done: true });
   });
 
   it('refuses unsupported executables, shell syntax, duplicate flags, and guide injection', () => {

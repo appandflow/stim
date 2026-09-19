@@ -18,9 +18,9 @@ import { makeChildProcess, makeExecutor, makeWriter } from './_factories.ts';
 
 describe('hermescPath', () => {
   const root = '/proj';
-  const modern = '/proj/node_modules/hermes-compiler/hermesc/osx-bin/hermesc';
-  const pods = '/proj/ios/Pods/hermes-engine/destroot/bin/hermesc';
-  const legacy = '/proj/node_modules/react-native/sdks/hermesc/osx-bin/hermesc';
+  const modern = join('/proj/node_modules/hermes-compiler/hermesc/osx-bin/hermesc');
+  const pods = join('/proj/ios/Pods/hermes-engine/destroot/bin/hermesc');
+  const legacy = join('/proj/node_modules/react-native/sdks/hermesc/osx-bin/hermesc');
 
   test('prefers the hermes-compiler package (RN 0.8x), then Pods, then the legacy sdks path', () => {
     expect(hermescPath(root, { exists: (p) => p === modern || p === legacy })).toBe(modern);
@@ -127,7 +127,7 @@ describe('bundleCommand', () => {
 
 describe('hermesc', () => {
   test("the compiler is the PROJECT's own, and the argv is -emit-binary -out", () => {
-    expect(hermescPath('/w/app')).toBe('/w/app/node_modules/react-native/sdks/hermesc/osx-bin/hermesc');
+    expect(hermescPath('/w/app')).toBe(join('/w/app/node_modules/react-native/sdks/hermesc/osx-bin/hermesc'));
     expect(hermescArgs({ bundle: '/t/main.jsbundle', out: '/t/main.jsbundle.hbc' })).toEqual([
       '-emit-binary',
       '-out',
@@ -264,26 +264,29 @@ describe('swapJsBundle', () => {
     expect(calls.some((c) => c.file === 'codesign')).toBe(false);
   });
 
-  test('failed swaps remove copied read-only app directories and preserve the full-build fallback', async () => {
-    const source = mkdtempSync(join(tmpdir(), 'stim-readonly-app-'));
-    const app = join(source, 'Fixture.app');
-    const resources = join(app, 'Resources');
-    mkdirSync(resources, { recursive: true });
-    writeFileSync(join(resources, 'asset.txt'), 'cached asset');
-    chmodSync(resources, 0o555);
-    try {
-      const { run } = harness({ bundleExit: 1 });
-      const result = await run({ cachedAppPath: app, exec: getExecutor() });
-      expect(result.failed).toBe(true);
-      expect(result.step).toBe('bundle');
-      expect(existsSync(tmp)).toBe(false);
-      expect(statSync(resources).mode & 0o777).toBe(0o555);
-      expect(readFileSync(join(resources, 'asset.txt'), 'utf-8')).toBe('cached asset');
-    } finally {
-      chmodSync(resources, 0o755);
-      rmSync(source, { recursive: true, force: true });
-    }
-  });
+  test.skipIf(process.platform === 'win32')(
+    'failed swaps remove copied read-only app directories and preserve the full-build fallback (POSIX permission bits; skipped on win32)',
+    async () => {
+      const source = mkdtempSync(join(tmpdir(), 'stim-readonly-app-'));
+      const app = join(source, 'Fixture.app');
+      const resources = join(app, 'Resources');
+      mkdirSync(resources, { recursive: true });
+      writeFileSync(join(resources, 'asset.txt'), 'cached asset');
+      chmodSync(resources, 0o555);
+      try {
+        const { run } = harness({ bundleExit: 1 });
+        const result = await run({ cachedAppPath: app, exec: getExecutor() });
+        expect(result.failed).toBe(true);
+        expect(result.step).toBe('bundle');
+        expect(existsSync(tmp)).toBe(false);
+        expect(statSync(resources).mode & 0o777).toBe(0o555);
+        expect(readFileSync(join(resources, 'asset.txt'), 'utf-8')).toBe('cached asset');
+      } finally {
+        chmodSync(resources, 0o755);
+        rmSync(source, { recursive: true, force: true });
+      }
+    },
+  );
 
   test('a bundle that exits 0 without writing the file is still a bundle failure', async () => {
     const { run } = harness({ bundleWritten: false });

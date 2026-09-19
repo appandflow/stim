@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
+  appendFileSync,
   copyFileSync,
   existsSync,
   readFileSync,
@@ -13,6 +14,10 @@ import {
 import { basename, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
+
+// npx, npm and bundle are .cmd wrappers on Windows, and Node refuses to spawn a
+// .cmd without a shell (child_process, since 18.20.2).
+const WRAPPER_SHELL = process.platform === 'win32';
 
 export function createHarness({ env, cliPath, label }) {
   const log = (msg) => process.stderr.write(`[${label}] ${msg}\n`);
@@ -123,7 +128,13 @@ export function createFixture({ framework, platform, workDir, h }) {
   const appDir = join(workDir, 'app');
   const cmd = FIXTURE_COMMANDS[framework](appDir);
   h.log(`creating ${framework} fixture: ${cmd.map(quote).join(' ')}`);
-  const r = spawnSync(cmd[0], cmd.slice(1), { cwd: workDir, env: h.env, stdio: 'inherit', timeout: 20 * 60 * 1000 });
+  const r = spawnSync(cmd[0], cmd.slice(1), {
+    cwd: workDir,
+    env: h.env,
+    stdio: 'inherit',
+    timeout: 20 * 60 * 1000,
+    shell: WRAPPER_SHELL,
+  });
   if (r.status !== 0) h.die(`fixture creation failed (exit ${r.status ?? r.signal})`);
   assert(existsSync(join(appDir, 'package.json')), `fixture has no package.json at ${appDir}`);
 
@@ -133,6 +144,7 @@ export function createFixture({ framework, platform, workDir, h }) {
       env: h.env,
       stdio: 'inherit',
       timeout: 15 * 60 * 1000,
+      shell: WRAPPER_SHELL,
     });
     if (r2.status !== 0) h.die('installing the expo fixture dependencies failed');
   }
@@ -284,7 +296,7 @@ export function ensureGitignore({ appDir, framework }) {
   );
   if (missing.length) {
     const add = `\n# stim-cli native e2e\n${missing.join('\n')}\n`;
-    spawnSync('sh', ['-c', `printf '%s' ${quote(add)} >> ${quote(gi)}`], { stdio: 'inherit' });
+    appendFileSync(gi, add);
   }
 }
 

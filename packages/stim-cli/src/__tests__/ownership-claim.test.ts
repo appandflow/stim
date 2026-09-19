@@ -177,17 +177,20 @@ describe('refusing instead of guessing', () => {
     expect(existsSync(path)).toBe(true);
   });
 
-  test.skipIf(process.getuid?.() === 0)('a reap that fails for any reason but ENOENT refuses', () => {
-    const path = plantClaim(root, 'exclusive', goneClaimOwner(), { claimId: 'unremovable' });
-    chmodSync(exclusiveClaimDir(root), 0o500);
-    try {
-      const err = refusal(() => tryAcquireClaim({ root, mode: 'exclusive' }));
-      expect(err.message).toMatch(/could not be removed/);
-      expect(existsSync(path)).toBe(true);
-    } finally {
-      chmodSync(exclusiveClaimDir(root), 0o700);
-    }
-  });
+  test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
+    'a reap that fails for any reason but ENOENT refuses (POSIX directory permissions; skipped on win32)',
+    () => {
+      const path = plantClaim(root, 'exclusive', goneClaimOwner(), { claimId: 'unremovable' });
+      chmodSync(exclusiveClaimDir(root), 0o500);
+      try {
+        const err = refusal(() => tryAcquireClaim({ root, mode: 'exclusive' }));
+        expect(err.message).toMatch(/could not be removed/);
+        expect(existsSync(path)).toBe(true);
+      } finally {
+        chmodSync(exclusiveClaimDir(root), 0o700);
+      }
+    },
+  );
 
   test('the remedy for a claim that declared a child clears it in one go', () => {
     const path = plantClaim(root, 'exclusive', goneClaimOwner(), { claimId: 'spawned', child: { record: null } });
@@ -205,57 +208,62 @@ describe('refusing instead of guessing', () => {
     expect(err.message).toContain('blocked by a non-directory path');
   });
 
-  test.each(['exclusive', 'shared'] as const)(
-    'a %s claim remedy preserves the actual blocking ancestor and its siblings',
-    (mode) => {
-      const home = dirname(root);
-      const blocker = join(home, "warm locks' file");
-      const bystander = join(home, 'keep');
-      writeFileSync(blocker, 'unrelated contents');
-      writeFileSync(bystander, 'keep');
-      const blocked = join(blocker, 'repository.lock');
-      try {
-        const err = refusal(() => tryAcquireClaim({ root: blocked, mode }));
-        expect(err.claimPath).toBe(blocker);
-        expect(err.removeCommand).toMatch(/^mv -i /);
-        getExecutor().run(err.removeCommand);
-        expect(readFileSync(`${blocker}.stim-backup`, 'utf8')).toBe('unrelated contents');
-        expect(readFileSync(bystander, 'utf8')).toBe('keep');
-        const acquired = tryAcquireClaim({ root: blocked, mode }).acquired;
-        expect(acquired).toBeDefined();
-        releaseClaim(acquired);
-      } finally {
-        rmSync(blocker, { recursive: true, force: true });
-        rmSync(`${blocker}.stim-backup`, { force: true });
-        rmSync(bystander, { force: true });
-      }
+  describe.skipIf(process.platform === 'win32')(
+    'remedies the test runs as a shell command (POSIX mv, rm and POSIX quoting; cmd.exe cannot parse them; skipped on win32)',
+    () => {
+      test.each(['exclusive', 'shared'] as const)(
+        'a %s claim remedy preserves the actual blocking ancestor and its siblings',
+        (mode) => {
+          const home = dirname(root);
+          const blocker = join(home, "warm locks' file");
+          const bystander = join(home, 'keep');
+          writeFileSync(blocker, 'unrelated contents');
+          writeFileSync(bystander, 'keep');
+          const blocked = join(blocker, 'repository.lock');
+          try {
+            const err = refusal(() => tryAcquireClaim({ root: blocked, mode }));
+            expect(err.claimPath).toBe(blocker);
+            expect(err.removeCommand).toMatch(/^mv -i /);
+            getExecutor().run(err.removeCommand);
+            expect(readFileSync(`${blocker}.stim-backup`, 'utf8')).toBe('unrelated contents');
+            expect(readFileSync(bystander, 'utf8')).toBe('keep');
+            const acquired = tryAcquireClaim({ root: blocked, mode }).acquired;
+            expect(acquired).toBeDefined();
+            releaseClaim(acquired);
+          } finally {
+            rmSync(blocker, { recursive: true, force: true });
+            rmSync(`${blocker}.stim-backup`, { force: true });
+            rmSync(bystander, { force: true });
+          }
+        },
+      );
+
+      test('the printed remedy, run as printed, clears the claim and nothing beside it', () => {
+        const home = mkdtempSync(join(tmpdir(), 'stim-claim-remedy-'));
+        const bystander = join(home, 'cache');
+        mkdirSync(bystander, { recursive: true });
+        writeFileSync(join(bystander, 'artifact'), 'not mine to delete');
+        try {
+          for (const awkward of ['cache home', "it's cache"]) {
+            const set = join(home, awkward, 'build.lock');
+            const planted = plantClaim(set, 'exclusive', { pid: 4242, processToken: 'not-a-token' });
+            const err = refusal(() => tryAcquireClaim({ root: set, mode: 'exclusive' }));
+            expect(err.removeCommand).toBe(claimRemoveCommand(planted));
+            getExecutor().run(err.removeCommand);
+            expect(existsSync(planted)).toBe(false);
+            expect(existsSync(join(bystander, 'artifact'))).toBe(true);
+            expect(tryAcquireClaim({ root: set, mode: 'exclusive' }).acquired).toBeTruthy();
+
+            getExecutor().run(claimRemoveCommand(set));
+            expect(existsSync(set)).toBe(false);
+            expect(existsSync(join(bystander, 'artifact'))).toBe(true);
+          }
+        } finally {
+          rmSync(home, { recursive: true, force: true });
+        }
+      });
     },
   );
-
-  test('the printed remedy, run as printed, clears the claim and nothing beside it', () => {
-    const home = mkdtempSync(join(tmpdir(), 'stim-claim-remedy-'));
-    const bystander = join(home, 'cache');
-    mkdirSync(bystander, { recursive: true });
-    writeFileSync(join(bystander, 'artifact'), 'not mine to delete');
-    try {
-      for (const awkward of ['cache home', "it's cache"]) {
-        const set = join(home, awkward, 'build.lock');
-        const planted = plantClaim(set, 'exclusive', { pid: 4242, processToken: 'not-a-token' });
-        const err = refusal(() => tryAcquireClaim({ root: set, mode: 'exclusive' }));
-        expect(err.removeCommand).toBe(claimRemoveCommand(planted));
-        getExecutor().run(err.removeCommand);
-        expect(existsSync(planted)).toBe(false);
-        expect(existsSync(join(bystander, 'artifact'))).toBe(true);
-        expect(tryAcquireClaim({ root: set, mode: 'exclusive' }).acquired).toBeTruthy();
-
-        getExecutor().run(claimRemoveCommand(set));
-        expect(existsSync(set)).toBe(false);
-        expect(existsSync(join(bystander, 'artifact'))).toBe(true);
-      }
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
 
   test('a claim directory holding foreign files refuses rather than being overwritten', () => {
     const dir = exclusiveClaimDir(root);
@@ -283,8 +291,8 @@ describe('clearing a claim set that holds nothing', () => {
     expect(existsSync(root)).toBe(false);
   });
 
-  test.skipIf(process.getuid?.() === 0)(
-    'a staging deletion failure releases the cleanup claim and preserves the payload',
+  test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
+    'a staging deletion failure releases the cleanup claim and preserves the payload (POSIX directory permissions; skipped on win32)',
     () => {
       const staging = join(root, '.staging-interrupted');
       const payload = join(staging, 'partial.claim');
@@ -360,65 +368,74 @@ describe('shared and exclusive', () => {
 });
 
 describe('a claim whose work runs in a spawned process group', () => {
-  test('the claim stays held while a descendant of the recorded child is alive, and is reaped once the group exits', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'stim-claim-group-'));
-    const leader = join(dir, 'leader.mjs');
-    const pidFile = join(dir, 'grandchild.pid');
-    writeFileSync(
-      leader,
-      [
-        'const { spawn } = await import("node:child_process");',
-        'const { writeFileSync } = await import("node:fs");',
-        'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
-        'child.unref();',
-        `writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
-      ].join('\n'),
-    );
-
-    const held = tryAcquireClaim({ root, mode: 'exclusive' });
-    assert(held.acquired);
-    const group = getExecutor().spawn(process.execPath, [leader], { detached: true, stdio: 'ignore' });
-    assert(group.pid);
-    const childRecord = { pid: group.pid, processToken: captureProcessToken(group.pid)! };
-    expect(childRecord.processToken).toBeTruthy();
-    markClaimChildPending(held.acquired);
-    setClaimChild(held.acquired, childRecord);
-    await once(group, 'exit');
-
-    let grandchild = 0;
-    for (let i = 0; i < 200 && !grandchild; i++) {
-      try {
-        grandchild = Number(readFileSync(pidFile, 'utf-8'));
-      } catch {
-        await new Promise((r) => setTimeout(r, 20));
-      }
-    }
-    assert(grandchild > 0);
-
-    try {
-      const dead = goneClaimOwner();
+  test.skipIf(process.platform === 'win32')(
+    'the claim stays held while a descendant of the recorded child is alive, and is reaped once the group exits (POSIX process groups; skipped on win32)',
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'stim-claim-group-'));
+      const leader = join(dir, 'leader.mjs');
+      const pidFile = join(dir, 'grandchild.pid');
       writeFileSync(
-        held.acquired.path,
-        JSON.stringify({ claimId: held.acquired.claimId, mode: 'exclusive', owner: dead, startedAt: '', details: {} }),
+        leader,
+        [
+          'const { spawn } = await import("node:child_process");',
+          'const { writeFileSync } = await import("node:fs");',
+          'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
+          'child.unref();',
+          `writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
+        ].join('\n'),
       );
-      const survey = readClaimSet(root);
-      expect(survey.live.length).toBe(1);
-      expect(claimLiveness(survey.live[0]!)).toBe('live');
-      expect(tryAcquireClaim({ root, mode: 'exclusive' }).acquired).toBe(undefined);
 
-      process.kill(grandchild, 'SIGKILL');
-      for (let i = 0; i < 200 && readClaimSet(root).live.length > 0; i++) {
-        await new Promise((r) => setTimeout(r, 20));
+      const held = tryAcquireClaim({ root, mode: 'exclusive' });
+      assert(held.acquired);
+      const group = getExecutor().spawn(process.execPath, [leader], { detached: true, stdio: 'ignore' });
+      assert(group.pid);
+      const childRecord = { pid: group.pid, processToken: captureProcessToken(group.pid)! };
+      expect(childRecord.processToken).toBeTruthy();
+      markClaimChildPending(held.acquired);
+      setClaimChild(held.acquired, childRecord);
+      await once(group, 'exit');
+
+      let grandchild = 0;
+      for (let i = 0; i < 200 && !grandchild; i++) {
+        try {
+          grandchild = Number(readFileSync(pidFile, 'utf-8'));
+        } catch {
+          await new Promise((r) => setTimeout(r, 20));
+        }
       }
-      expect(readClaimSet(root).dead.length).toBe(1);
-      expect(tryAcquireClaim({ root, mode: 'exclusive' }).acquired).toBeTruthy();
-    } finally {
+      assert(grandchild > 0);
+
       try {
+        const dead = goneClaimOwner();
+        writeFileSync(
+          held.acquired.path,
+          JSON.stringify({
+            claimId: held.acquired.claimId,
+            mode: 'exclusive',
+            owner: dead,
+            startedAt: '',
+            details: {},
+          }),
+        );
+        const survey = readClaimSet(root);
+        expect(survey.live.length).toBe(1);
+        expect(claimLiveness(survey.live[0]!)).toBe('live');
+        expect(tryAcquireClaim({ root, mode: 'exclusive' }).acquired).toBe(undefined);
+
         process.kill(grandchild, 'SIGKILL');
-      } catch {}
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
+        for (let i = 0; i < 200 && readClaimSet(root).live.length > 0; i++) {
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        expect(readClaimSet(root).dead.length).toBe(1);
+        expect(tryAcquireClaim({ root, mode: 'exclusive' }).acquired).toBeTruthy();
+      } finally {
+        try {
+          process.kill(grandchild, 'SIGKILL');
+        } catch {}
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 
   test('a recycled child pid is unresolvable, not a live holder', () => {
     const got = tryAcquireClaim({ root, mode: 'exclusive' });

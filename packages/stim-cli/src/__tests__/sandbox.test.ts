@@ -28,20 +28,23 @@ test('detectHarness reads the variable each harness exports', () => {
   expect(detectHarness({ CLAUDECODE: '1', CODEX_SANDBOX: 'seatbelt' })).toBe('claude-code');
 });
 
-test('sandboxBlocksStimHome reports a directory it cannot write, and only that', () => {
-  const dir = scratch();
-  try {
-    expect(sandboxBlocksStimHome(join(dir, 'stim-home'))).toBe(false);
+test.skipIf(process.platform === 'win32')(
+  'sandboxBlocksStimHome reports a directory it cannot write, and only that (POSIX permission bits; skipped on win32)',
+  () => {
+    const dir = scratch();
+    try {
+      expect(sandboxBlocksStimHome(join(dir, 'stim-home'))).toBe(false);
 
-    const locked = join(dir, 'locked');
-    mkdirSync(locked);
-    chmodSync(locked, 0o500);
-    expect(sandboxBlocksStimHome(join(locked, 'stim-home'))).toBe(process.getuid?.() !== 0);
-    chmodSync(locked, 0o700);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
+      const locked = join(dir, 'locked');
+      mkdirSync(locked);
+      chmodSync(locked, 0o500);
+      expect(sandboxBlocksStimHome(join(locked, 'stim-home'))).toBe(process.getuid?.() !== 0);
+      chmodSync(locked, 0o700);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
 
 test('missingAllowance names only the parts no settings file supplies', () => {
   const dir = scratch();

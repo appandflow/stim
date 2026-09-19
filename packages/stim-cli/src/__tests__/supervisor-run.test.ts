@@ -11,7 +11,7 @@ import {
 } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve as absolute } from 'node:path';
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { supervisorPidFile, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
@@ -81,9 +81,11 @@ function readMetroLog() {
 }
 
 describe('parseArgs', () => {
+  const absRoot = absolute('/abs/path');
+
   test('accepts --root and --port', () => {
-    expect(parseArgs(['--root', '/abs/path', '--port', '8082'])).toEqual({
-      root: '/abs/path',
+    expect(parseArgs(['--root', absRoot, '--port', '8082'])).toEqual({
+      root: absRoot,
       port: 8082,
       tunnel: false,
       resetCache: false,
@@ -91,8 +93,8 @@ describe('parseArgs', () => {
   });
 
   test('accepts --tunnel', () => {
-    expect(parseArgs(['--root', '/abs/path', '--port', '8082', '--tunnel'])).toEqual({
-      root: '/abs/path',
+    expect(parseArgs(['--root', absRoot, '--port', '8082', '--tunnel'])).toEqual({
+      root: absRoot,
       port: 8082,
       tunnel: true,
       resetCache: false,

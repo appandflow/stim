@@ -2,19 +2,25 @@ import { mkdtempSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../exec.ts';
-import { directorySize, volumeRootFor, isRealMount, isOnMountedVolume } from '../fs-util.ts';
+import { directorySize, volumeRootFor, isRealMount, isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 
-test('volumeRootFor identifies external and boot volumes', () => {
-  expect(volumeRootFor('/Volumes/ExternalSSD/Developer/app')).toBe('/Volumes/ExternalSSD');
-  expect(volumeRootFor('/Users/j/Developer/app')).toBe('/');
-});
+test.skipIf(process.platform === 'win32')(
+  'volumeRootFor identifies external and boot volumes (macOS /Volumes; skipped on win32)',
+  () => {
+    expect(volumeRootFor('/Volumes/ExternalSSD/Developer/app')).toBe('/Volumes/ExternalSSD');
+    expect(volumeRootFor('/Users/j/Developer/app')).toBe('/');
+  },
+);
 
-test('volumeRootFor normalizes case, doubled slashes, and dot components', () => {
-  expect(volumeRootFor('/volumes/ExternalSSD/Developer/app')).toBe('/Volumes/ExternalSSD');
-  expect(volumeRootFor('//Volumes/ExternalSSD/Developer/app')).toBe('/Volumes/ExternalSSD');
-  expect(volumeRootFor('/Volumes/./ExternalSSD/Developer/app')).toBe('/Volumes/ExternalSSD');
-  expect(volumeRootFor('/Volumes/Other/../ExternalSSD/app')).toBe('/Volumes/ExternalSSD');
-});
+test.skipIf(process.platform === 'win32')(
+  'volumeRootFor normalizes case, doubled slashes, and dot components (macOS /Volumes; skipped on win32)',
+  () => {
+    expect(volumeRootFor('/volumes/ExternalSSD/Developer/app')).toBe('/Volumes/ExternalSSD');
+    expect(volumeRootFor('//Volumes/ExternalSSD/Developer/app')).toBe('/Volumes/ExternalSSD');
+    expect(volumeRootFor('/Volumes/./ExternalSSD/Developer/app')).toBe('/Volumes/ExternalSSD');
+    expect(volumeRootFor('/Volumes/Other/../ExternalSSD/app')).toBe('/Volumes/ExternalSSD');
+  },
+);
 
 test('isRealMount treats a distinct st_dev as a genuine mount', () => {
   expect(isRealMount(16777244, 16777234)).toBe(true);
@@ -30,23 +36,49 @@ test('isRealMount refuses to guess when either dev is missing', () => {
   expect(isRealMount(undefined, undefined)).toBe(false);
 });
 
-test('isOnMountedVolume resolves a symlinked ancestor instead of classifying the raw path text', () => {
-  const homeDir = mkdtempSync(join(tmpdir(), 'stim-fsutil-'));
-  try {
-    const symlinkedAncestor = join(homeDir, 'Developer');
-    symlinkSync('/Volumes/UnmountedTestVolume/Developer', symlinkedAncestor);
-    const projectPath = join(symlinkedAncestor, 'app');
+test.skipIf(process.platform === 'win32')(
+  'isOnMountedVolume resolves a symlinked ancestor instead of classifying the raw path text (macOS /Volumes; skipped on win32)',
+  () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'stim-fsutil-'));
+    try {
+      const symlinkedAncestor = join(homeDir, 'Developer');
+      symlinkSync('/Volumes/UnmountedTestVolume/Developer', symlinkedAncestor);
+      const projectPath = join(symlinkedAncestor, 'app');
 
-    expect(volumeRootFor(projectPath)).not.toBe('/Volumes/UnmountedTestVolume');
-    expect(isOnMountedVolume(projectPath, ['/'])).toBe(false);
-    expect(isOnMountedVolume(projectPath, ['/', '/Volumes/UnmountedTestVolume'])).toBe(true);
-  } finally {
-    rmSync(homeDir, { recursive: true, force: true });
-  }
-});
+      expect(volumeRootFor(projectPath)).not.toBe('/Volumes/UnmountedTestVolume');
+      expect(isOnMountedVolume(projectPath, ['/'])).toBe(false);
+      expect(isOnMountedVolume(projectPath, ['/', '/Volumes/UnmountedTestVolume'])).toBe(true);
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  },
+);
 
 test('isOnMountedVolume confirms a plain boot-volume path', () => {
-  expect(isOnMountedVolume('/', ['/'])).toBe(true);
+  const boot = volumeRootFor(process.cwd());
+  expect(isOnMountedVolume(boot, [boot])).toBe(true);
+});
+
+describe.skipIf(process.platform !== 'win32')('the Windows volume model', () => {
+  test('a drive path and a UNC path each report their own root', () => {
+    expect(volumeRootFor('C:\\Users\\j\\Developer\\app')).toBe('C:\\');
+    expect(volumeRootFor('c:/Users/j/Developer/app')).toBe('C:\\');
+    expect(volumeRootFor('\\\\server\\share\\Developer\\app')).toBe('\\\\server\\share\\');
+  });
+
+  test('listMountedVolumes keeps only the drive roots that are present', () => {
+    const present = new Set(['C:\\', 'Z:\\']);
+    const statFn = ((target: string) => {
+      if (!present.has(String(target))) throw new Error('not present');
+      return { dev: 1 };
+    }) as unknown as typeof import('node:fs').statSync;
+    expect(listMountedVolumes({ statFn })).toEqual(['C:\\', 'Z:\\']);
+  });
+
+  test('a path on a drive that is gone, or on no drive at all, is not on a mounted volume', () => {
+    expect(isOnMountedVolume('Z:\\Developer\\app', ['C:\\'])).toBe(false);
+    expect(isOnMountedVolume('\\Users\\j\\Developer\\app', ['C:\\'])).toBe(false);
+  });
 });
 
 test('isOnMountedVolume returns false for a path it cannot resolve', () => {

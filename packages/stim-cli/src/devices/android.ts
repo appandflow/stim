@@ -68,7 +68,12 @@ export interface ResolvedAvdSerial {
 }
 
 export function androidHome(): string {
-  return process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || join(homedir(), 'Library', 'Android', 'sdk');
+  const configured = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
+  if (configured) return configured;
+  if (process.platform === 'win32') {
+    return join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Android', 'Sdk');
+  }
+  return join(homedir(), 'Library', 'Android', 'sdk');
 }
 
 const SDK_TOOL_LOCATIONS = {
@@ -89,6 +94,15 @@ export interface BuildToolsEntry {
   tool: string;
   version: string;
   major: number;
+}
+
+// The Android SDK ships apksigner as a Windows batch wrapper around its jar;
+// every other build-tools entry is a plain .exe.
+const WINDOWS_BUILD_TOOL_EXTENSIONS: Readonly<Record<string, string>> = { apksigner: '.bat' };
+
+export function androidBuildToolName(tool: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform !== 'win32') return tool;
+  return `${tool}${WINDOWS_BUILD_TOOL_EXTENSIONS[tool] ?? '.exe'}`;
 }
 
 export function newestBuildTools(names: unknown): string | null {
@@ -118,7 +132,13 @@ export function findBuildTool(
     home = androidHome(),
     readDir = readdirSync,
     exists = existsSync,
-  }: { home?: string; readDir?: (path: string) => string[]; exists?: (path: string) => boolean } = {},
+    platform = process.platform,
+  }: {
+    home?: string;
+    readDir?: (path: string) => string[];
+    exists?: (path: string) => boolean;
+    platform?: NodeJS.Platform;
+  } = {},
 ): BuildToolsEntry | null {
   const root = join(home, 'build-tools');
   let versions: string[] = [];
@@ -131,7 +151,7 @@ export function findBuildTool(
     const version = newestBuildTools(versions);
     if (!version) return null;
     for (const tool of tools) {
-      const path = join(root, version, tool);
+      const path = join(root, version, androidBuildToolName(tool, platform));
       if (exists(path)) return { path, tool, version, major: buildToolsMajor(version) };
     }
     versions = versions.filter((v) => v !== version);

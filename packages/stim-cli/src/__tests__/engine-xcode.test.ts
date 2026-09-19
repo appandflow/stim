@@ -517,16 +517,19 @@ describe('compilationCacheSettings', () => {
     casPath: '/home/.stim/compilation-cache',
   };
 
-  test('names the CAS, the prefix mapping and the Swift opt-out on an Xcode that has the cache', () => {
-    expect(compilationCacheSettings({ ...base, xcodeMajor: 26 })).toEqual([
-      'COMPILATION_CACHE_ENABLE_CACHING=YES',
-      'COMPILATION_CACHE_CAS_PATH=/home/.stim/compilation-cache',
-      'SWIFT_ENABLE_COMPILE_CACHE=NO',
-      'CLANG_ENABLE_PREFIX_MAPPING=YES',
-      'CLANG_OTHER_PREFIX_MAPPINGS=/w/app-412=/^src /home/.stim/workspaces/app-412--abc/derived-data=/^derived-data',
-      'SWIFT_ENABLE_PREFIX_MAPPING=NO',
-    ]);
-  });
+  test.skipIf(process.platform === 'win32')(
+    'names the CAS, the prefix mapping and the Swift opt-out on an Xcode that has the cache (xcodebuild settings; skipped on win32)',
+    () => {
+      expect(compilationCacheSettings({ ...base, xcodeMajor: 26 })).toEqual([
+        'COMPILATION_CACHE_ENABLE_CACHING=YES',
+        'COMPILATION_CACHE_CAS_PATH=/home/.stim/compilation-cache',
+        'SWIFT_ENABLE_COMPILE_CACHE=NO',
+        'CLANG_ENABLE_PREFIX_MAPPING=YES',
+        'CLANG_OTHER_PREFIX_MAPPINGS=/w/app-412=/^src /home/.stim/workspaces/app-412--abc/derived-data=/^derived-data',
+        'SWIFT_ENABLE_PREFIX_MAPPING=NO',
+      ]);
+    },
+  );
 
   test('explicit switches override project-enabled caching and prefix mapping while allowing Swift caching', () => {
     const options = { compilationCache: false, swiftCompilationCache: true, prefixMapping: false };
@@ -542,47 +545,53 @@ describe('compilationCacheSettings', () => {
     expect(compilationCacheSettings({ ...base, xcodeMajor: 26, ccache: true, optimizations: options })).toEqual([]);
   });
 
-  test('the prefix mapping is the workspace root, normalised, and the virtual prefix a committed Podfile block must match', () => {
-    expect(prefixMapping('/w/app-412')).toBe('/w/app-412=/^src');
-    expect(prefixMapping('/w/app-412/')).toBe('/w/app-412=/^src');
-    const settings = compilationCacheSettings({
-      workspaceRoot: '/a/b/',
-      derivedDataPath: '/state/b/derived-data',
-      casPath: '/cas',
-      xcodeMajor: 27,
-    });
-    expect(settings).toContain('CLANG_OTHER_PREFIX_MAPPINGS=/a/b=/^src /state/b/derived-data=/^derived-data');
-  });
+  test.skipIf(process.platform === 'win32')(
+    'the prefix mapping is the workspace root, normalised, and the virtual prefix a committed Podfile block must match (xcodebuild settings; skipped on win32)',
+    () => {
+      expect(prefixMapping('/w/app-412')).toBe('/w/app-412=/^src');
+      expect(prefixMapping('/w/app-412/')).toBe('/w/app-412=/^src');
+      const settings = compilationCacheSettings({
+        workspaceRoot: '/a/b/',
+        derivedDataPath: '/state/b/derived-data',
+        casPath: '/cas',
+        xcodeMajor: 27,
+      });
+      expect(settings).toContain('CLANG_OTHER_PREFIX_MAPPINGS=/a/b=/^src /state/b/derived-data=/^derived-data');
+    },
+  );
 
   const rn87 = { major: 0, minor: 87 };
 
-  test('an unset Swift setting turns Swift caching and its prefix mapping on from Swift 6.4 and React Native 0.87', () => {
-    const mapped = compilationCacheSettings({
-      ...base,
-      xcodeMajor: 27,
-      swiftVersion: { major: 6, minor: 4 },
-      reactNativeVersion: rn87,
-    });
-    expect(mapped).toContain('SWIFT_ENABLE_COMPILE_CACHE=YES');
-    expect(mapped).toContain('SWIFT_ENABLE_PREFIX_MAPPING=YES');
-    expect(mapped).toContain(
-      'SWIFT_OTHER_PREFIX_MAPPINGS=/w/app-412=/^src /home/.stim/workspaces/app-412--abc/derived-data=/^derived-data',
-    );
-    expect(
-      compilationCacheSettings({
+  test.skipIf(process.platform === 'win32')(
+    'an unset Swift setting turns Swift caching and its prefix mapping on from Swift 6.4 and React Native 0.87 (xcodebuild settings; skipped on win32)',
+    () => {
+      const mapped = compilationCacheSettings({
         ...base,
         xcodeMajor: 27,
-        swiftVersion: { major: 7, minor: 0 },
-        reactNativeVersion: { major: 1, minor: 0 },
-      }),
-    ).toContain('SWIFT_ENABLE_COMPILE_CACHE=YES');
-    for (const swiftVersion of [{ major: 6, minor: 3 }, { major: 5, minor: 10 }, null]) {
-      const settings = compilationCacheSettings({ ...base, xcodeMajor: 26, swiftVersion, reactNativeVersion: rn87 });
-      expect(settings).toContain('SWIFT_ENABLE_COMPILE_CACHE=NO');
-      expect(settings).toContain('SWIFT_ENABLE_PREFIX_MAPPING=NO');
-      expect(settings.some((s) => s.startsWith('SWIFT_OTHER_PREFIX_MAPPINGS'))).toBe(false);
-    }
-  });
+        swiftVersion: { major: 6, minor: 4 },
+        reactNativeVersion: rn87,
+      });
+      expect(mapped).toContain('SWIFT_ENABLE_COMPILE_CACHE=YES');
+      expect(mapped).toContain('SWIFT_ENABLE_PREFIX_MAPPING=YES');
+      expect(mapped).toContain(
+        'SWIFT_OTHER_PREFIX_MAPPINGS=/w/app-412=/^src /home/.stim/workspaces/app-412--abc/derived-data=/^derived-data',
+      );
+      expect(
+        compilationCacheSettings({
+          ...base,
+          xcodeMajor: 27,
+          swiftVersion: { major: 7, minor: 0 },
+          reactNativeVersion: { major: 1, minor: 0 },
+        }),
+      ).toContain('SWIFT_ENABLE_COMPILE_CACHE=YES');
+      for (const swiftVersion of [{ major: 6, minor: 3 }, { major: 5, minor: 10 }, null]) {
+        const settings = compilationCacheSettings({ ...base, xcodeMajor: 26, swiftVersion, reactNativeVersion: rn87 });
+        expect(settings).toContain('SWIFT_ENABLE_COMPILE_CACHE=NO');
+        expect(settings).toContain('SWIFT_ENABLE_PREFIX_MAPPING=NO');
+        expect(settings.some((s) => s.startsWith('SWIFT_OTHER_PREFIX_MAPPINGS'))).toBe(false);
+      }
+    },
+  );
 
   test('React Native below 0.87 keeps the auto default off, because its prebuilt core disables explicit modules', () => {
     const swift64 = { major: 6, minor: 4 };
@@ -725,12 +734,15 @@ describe('the ccache detection both the build and doctor read', () => {
 });
 
 describe('locating the product', () => {
-  test('productsDir mirrors the layout xcodebuild writes under -derivedDataPath', () => {
-    expect(productsDir('/p/.stim/derived-data')).toBe('/p/.stim/derived-data/Build/Products/Debug-iphonesimulator');
-    expect(productsDir('/dd', { configuration: 'Release', sdk: 'iphoneos' })).toBe(
-      '/dd/Build/Products/Release-iphoneos',
-    );
-  });
+  test.skipIf(process.platform === 'win32')(
+    'productsDir mirrors the layout xcodebuild writes under -derivedDataPath (macOS DerivedData layout; skipped on win32)',
+    () => {
+      expect(productsDir('/p/.stim/derived-data')).toBe('/p/.stim/derived-data/Build/Products/Debug-iphonesimulator');
+      expect(productsDir('/dd', { configuration: 'Release', sdk: 'iphoneos' })).toBe(
+        '/dd/Build/Products/Release-iphoneos',
+      );
+    },
+  );
 
   test('pickAppBundle prefers the app named after the scheme', () => {
     expect(pickAppBundle(['App.app', 'AppWidget.app', 'App.dSYM'], 'App')).toBe('App.app');
@@ -769,20 +781,23 @@ describe('reading the bundle id', () => {
     expect(parseBundleId(null)).toBe(null);
   });
 
-  test('readBundleId asks plutil first, with the .plist path', () => {
-    const calls: [string, string[] | undefined][] = [];
-    setExecutor({
-      run: () => '',
-      runQuiet: () => null,
-      spawn: () => {},
-      runFile: (file, args) => {
-        calls.push([file, args]);
-        return '{"CFBundleIdentifier":"com.example.app"}';
-      },
-    });
-    expect(readBundleId('/dd/App.app')).toBe('com.example.app');
-    expect(calls).toEqual([['plutil', ['-convert', 'json', '-o', '-', '/dd/App.app/Info.plist']]]);
-  });
+  test.skipIf(process.platform === 'win32')(
+    'readBundleId asks plutil first, with the .plist path (plutil argv; skipped on win32)',
+    () => {
+      const calls: [string, string[] | undefined][] = [];
+      setExecutor({
+        run: () => '',
+        runQuiet: () => null,
+        spawn: () => {},
+        runFile: (file, args) => {
+          calls.push([file, args]);
+          return '{"CFBundleIdentifier":"com.example.app"}';
+        },
+      });
+      expect(readBundleId('/dd/App.app')).toBe('com.example.app');
+      expect(calls).toEqual([['plutil', ['-convert', 'json', '-o', '-', '/dd/App.app/Info.plist']]]);
+    },
+  );
 
   test('falls back to `defaults read`, which takes the path WITHOUT the extension', () => {
     const calls: string[] = [];
@@ -826,20 +841,23 @@ describe('reading the bundle executable', () => {
     expect(parseBundleExecutable(null)).toBe(null);
   });
 
-  test('readBundleExecutable asks plutil first, with the .plist path', () => {
-    const calls: [string, string[] | undefined][] = [];
-    setExecutor({
-      run: () => '',
-      runQuiet: () => null,
-      spawn: () => {},
-      runFile: (file, args) => {
-        calls.push([file, args]);
-        return '{"CFBundleExecutable":"App"}';
-      },
-    });
-    expect(readBundleExecutable('/dd/App.app')).toBe('App');
-    expect(calls).toEqual([['plutil', ['-convert', 'json', '-o', '-', '/dd/App.app/Info.plist']]]);
-  });
+  test.skipIf(process.platform === 'win32')(
+    'readBundleExecutable asks plutil first, with the .plist path (plutil argv; skipped on win32)',
+    () => {
+      const calls: [string, string[] | undefined][] = [];
+      setExecutor({
+        run: () => '',
+        runQuiet: () => null,
+        spawn: () => {},
+        runFile: (file, args) => {
+          calls.push([file, args]);
+          return '{"CFBundleExecutable":"App"}';
+        },
+      });
+      expect(readBundleExecutable('/dd/App.app')).toBe('App');
+      expect(calls).toEqual([['plutil', ['-convert', 'json', '-o', '-', '/dd/App.app/Info.plist']]]);
+    },
+  );
 
   test('falls back to `defaults read`, which takes the path WITHOUT the extension', () => {
     const calls: string[] = [];

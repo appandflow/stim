@@ -44,7 +44,9 @@ test('no blockers for a clean worktree', async () => {
 });
 
 test('removalPath canonicalizes a missing path through its nearest existing parent', () => {
-  expect(removalPath('/tmp/stim-missing/worktree')).toBe(join(realpathSync('/tmp'), 'stim-missing', 'worktree'));
+  expect(removalPath(join(tmpdir(), 'stim-missing', 'worktree'))).toBe(
+    join(realpathSync(tmpdir()), 'stim-missing', 'worktree'),
+  );
 });
 
 test('reports uncommitted changes', async () => {
@@ -127,10 +129,14 @@ test('the remedy carries the paths themselves, capped, quoting what needs it', (
 
 function canon(p: string) {
   try {
-    return realpathSync(resolve(p));
+    return realpathSync.native(resolve(p));
   } catch {
     return resolve(p);
   }
+}
+
+function pathPattern(path: string): string {
+  return path.replaceAll(/[\\^$.*+?()[\]{}|]/g, '\\$&');
 }
 
 function captureAction(register: (cmd: Command) => void) {
@@ -666,7 +672,7 @@ test('action: on success, prints only the label-column vocabulary on stderr and 
   expect(
     errs.some((line) => /^\s*lease\s+released the android lease on R5CT \(it ran until \d{2}:\d{2}:\d{2}\)/.test(line)),
   ).toBe(true);
-  expect(errs.some((line) => new RegExp(`^\\s*removed\\s+${wtDir}$`).test(line))).toBe(true);
+  expect(errs.some((line) => new RegExp(`^\\s*removed\\s+${pathPattern(wtDir)}$`).test(line))).toBe(true);
 });
 
 test('action: keeps a branch that existed before Stim attached the worktree', async () => {
@@ -1330,8 +1336,8 @@ test('action: the dirty-tree remedy names the real worktree, not a placeholder',
   const text = errs.join('\n');
   expect(!text.includes('<worktree>')).toBeTruthy();
   expect(!text.includes('git -C <path>')).toBeTruthy();
-  expect(text).toMatch(new RegExp(`git -C ${wtDir} checkout --`));
-  expect(text).toMatch(new RegExp(`git -C ${wtDir} clean -fd`));
+  expect(text).toContain(`git -C ${wtDir} checkout --`);
+  expect(text).toContain(`git -C ${wtDir} clean -fd`);
 });
 
 test('against a real repo: remove on the source checkout reclaims the environment and leaves the repo intact', async () => {

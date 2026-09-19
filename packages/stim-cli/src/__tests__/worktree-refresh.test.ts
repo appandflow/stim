@@ -7,12 +7,13 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, sep } from 'node:path';
 import { Command } from 'commander';
 import { workspaceName } from '@stim-cli/core';
 import { registerWarm } from '../commands/worktree.ts';
@@ -70,16 +71,14 @@ async function runWarm(cwd: string, ...args: string[]) {
 }
 
 beforeEach(() => {
-  base = execFileSync('/bin/sh', ['-c', 'pwd -P'], {
-    cwd: mkdtempSync(join(tmpdir(), 'stim-test-refresh-')),
-    encoding: 'utf-8',
-  }).trim();
+  base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-test-refresh-')));
   process.env.STIM_HOME = join(base, 'home');
   const origin = join(base, 'origin.git');
   root = join(base, 'main');
   target = join(base, 'linked');
   git(base, 'init', '-q', '--bare', '-b', 'main', origin);
   execFileSync('git', ['clone', '-q', origin, root], { encoding: 'utf-8', timeout: 15_000 });
+  git(root, 'config', 'core.autocrlf', 'false');
   git(root, 'config', 'user.name', 'test');
   git(root, 'config', 'user.email', 'test@example.com');
   git(root, 'config', 'commit.gpgsign', 'false');
@@ -343,6 +342,7 @@ test.each(['fast-forward', 'remote changes', 'dependencies', 'pods'])(
     expect(modes.every((mode) => mode.length === 1 && mode[0] === 'exclusive')).toBe(true);
     expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
   },
+  30_000,
 );
 
 test('a refresh rechecks checkout safety after releasing shared and waiting for exclusive', async () => {
@@ -518,6 +518,7 @@ test.each(['.', 'apps/mobile'])(
     expect(result.stderr).not.toContain(`pods        source ${join(root, 'apps', 'other')}`);
     expect(result.stderr).not.toContain(`deps        source ${target}`);
   },
+  30_000,
 );
 
 test('a failed install refuses with the code the build path uses and does not copy', async () => {
@@ -687,26 +688,30 @@ test('a retry after a failed install runs it again instead of copying a half-ins
   expect(spawned).toEqual([]);
 }, 30_000);
 
-test('both warm paths refuse an unwritable claim store before copying and report recovery', async () => {
-  write(root, '.env', 'main env');
-  const home = String(process.env.STIM_HOME);
-  mkdirSync(home, { recursive: true });
-  chmodSync(home, 0o500);
-  try {
-    for (const args of [[], ['--refresh']]) {
-      process.exitCode = 0;
-      const result = await runWarm(target, ...args);
-      expect(result.code).toBe(1);
-      expect(result.stdout).toEqual([]);
-      expect(result.stderr).toContain('failed: STIM_CLAIM_UNAVAILABLE');
-      expect(result.stderr).toContain('Restore write access to the existing claim store');
-      expect(result.stderr).toContain(home);
-      expect(existsSync(join(target, '.env'))).toBe(false);
+test.skipIf(process.platform === 'win32')(
+  'both warm paths refuse an unwritable claim store before copying and report recovery (POSIX directory modes; skipped on win32)',
+  async () => {
+    write(root, '.env', 'main env');
+    const home = String(process.env.STIM_HOME);
+    mkdirSync(home, { recursive: true });
+    chmodSync(home, 0o500);
+    try {
+      for (const args of [[], ['--refresh']]) {
+        process.exitCode = 0;
+        const result = await runWarm(target, ...args);
+        expect(result.code).toBe(1);
+        expect(result.stdout).toEqual([]);
+        expect(result.stderr).toContain('failed: STIM_CLAIM_UNAVAILABLE');
+        expect(result.stderr).toContain('Restore write access to the existing claim store');
+        expect(result.stderr).toContain(home);
+        expect(existsSync(join(target, '.env'))).toBe(false);
+      }
+    } finally {
+      chmodSync(home, 0o700);
     }
-  } finally {
-    chmodSync(home, 0o700);
-  }
-}, 30_000);
+  },
+  30_000,
+);
 
 test('a dangling STIM_HOME link refuses both warm paths before copying or changing the source', async () => {
   write(root, '.env', 'main env');
@@ -810,111 +815,119 @@ function liveExclusiveClaim(): boolean {
   return readClaimSet(warmClaimPath(root)).live.some((holder) => holder.mode === 'exclusive');
 }
 
-test('a real install whose own child outlives it holds the claim until that child is done writing', async () => {
-  const ready = join(base, 'writer.pid');
-  const gate = join(base, 'let-the-writer-finish');
-  write(
-    root,
-    'launch.cjs',
-    'const { spawn } = require("node:child_process");\n' +
-      'const child = spawn(process.execPath, ["worker.cjs"], { stdio: "ignore" });\n' +
-      'child.unref();\n',
-  );
-  write(
-    root,
-    'worker.cjs',
-    [
-      'const fs = require("node:fs");',
-      'fs.mkdirSync("node_modules", { recursive: true });',
-      'fs.writeFileSync("node_modules/value", "PARTIAL");',
-      `fs.writeFileSync(${JSON.stringify(ready)}, String(process.pid));`,
-      'const timer = setInterval(() => {',
-      `  if (!fs.existsSync(${JSON.stringify(gate)})) return;`,
-      '  fs.writeFileSync("node_modules/value", "COMPLETE");',
-      '  clearInterval(timer);',
-      '}, 20);',
-    ].join('\n'),
-  );
-  write(
-    root,
-    'package.json',
-    `${JSON.stringify({ name: 'refresh-fixture', version: '1.0.0', scripts: { postinstall: 'node launch.cjs' } })}\n`,
-  );
-  write(
-    root,
-    'package-lock.json',
-    `${JSON.stringify({
-      name: 'refresh-fixture',
-      version: '1.0.0',
-      lockfileVersion: 3,
-      requires: true,
-      packages: { '': { name: 'refresh-fixture', version: '1.0.0', hasInstallScript: true } },
-    })}\n`,
-  );
-  commit(root, 'a package whose postinstall outlives npm');
-  git(root, 'push', '-q', 'origin', 'main');
-
-  const warm = runWarm(target, '--refresh');
-  let writer = 0;
-  try {
-    writer = Number(
-      await waitUntil('the postinstall writer', () => (existsSync(ready) ? readFileSync(ready, 'utf-8') : null)),
+test.skipIf(process.platform === 'win32')(
+  'a real install whose own child outlives it holds the claim until that child is done writing (POSIX process groups; skipped on win32)',
+  async () => {
+    const ready = join(base, 'writer.pid');
+    const gate = join(base, 'let-the-writer-finish');
+    write(
+      root,
+      'launch.cjs',
+      'const { spawn } = require("node:child_process");\n' +
+        'const child = spawn(process.execPath, ["worker.cjs"], { stdio: "ignore" });\n' +
+        'child.unref();\n',
     );
-    // npm is gone the moment its postinstall script returns, and the writer it left behind is not, so the
-    // claim and its child record have to survive npm's own exit.
-    expect(readFileSync(join(root, 'node_modules', 'value'), 'utf-8')).toBe('PARTIAL');
-    expect(liveExclusiveClaim()).toBe(true);
-    expect(claimedInstaller()).toMatchObject({ pid: expect.any(Number) });
-  } finally {
-    writeFileSync(gate, 'go');
-  }
-  const result = await warm;
-  expect(result.code).toBe(0);
-  expect(result.stderr).toContain(`deps        source ${root}: no installed dependencies -> npm ci`);
-  expect(readFileSync(join(root, 'node_modules', 'value'), 'utf-8')).toBe('COMPLETE');
-  expect(readFileSync(join(target, 'node_modules', 'value'), 'utf-8')).toBe('COMPLETE');
-  expect(installLedger()).toMatchObject({ lock: 'package-lock.json', completed: true });
-  expect(existsSync(warmClaimPath(root))).toBe(false);
-  try {
-    process.kill(writer, 'SIGKILL');
-  } catch {}
-}, 60_000);
+    write(
+      root,
+      'worker.cjs',
+      [
+        'const fs = require("node:fs");',
+        'fs.mkdirSync("node_modules", { recursive: true });',
+        'fs.writeFileSync("node_modules/value", "PARTIAL");',
+        `fs.writeFileSync(${JSON.stringify(ready)}, String(process.pid));`,
+        'const timer = setInterval(() => {',
+        `  if (!fs.existsSync(${JSON.stringify(gate)})) return;`,
+        '  fs.writeFileSync("node_modules/value", "COMPLETE");',
+        '  clearInterval(timer);',
+        '}, 20);',
+      ].join('\n'),
+    );
+    write(
+      root,
+      'package.json',
+      `${JSON.stringify({ name: 'refresh-fixture', version: '1.0.0', scripts: { postinstall: 'node launch.cjs' } })}\n`,
+    );
+    write(
+      root,
+      'package-lock.json',
+      `${JSON.stringify({
+        name: 'refresh-fixture',
+        version: '1.0.0',
+        lockfileVersion: 3,
+        requires: true,
+        packages: { '': { name: 'refresh-fixture', version: '1.0.0', hasInstallScript: true } },
+      })}\n`,
+    );
+    commit(root, 'a package whose postinstall outlives npm');
+    git(root, 'push', '-q', 'origin', 'main');
 
-test('an install Stim could not record is not abandoned, and its claim outlives the failed record', async () => {
-  write(root, 'pnpm-lock.yaml', 'lock v1\n');
-  commit(root, 'lockfile');
-  git(root, 'push', '-q', 'origin', 'main');
-  mkdirSync(join(root, 'node_modules'), { recursive: true });
-  fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
-  write(root, '.env', 'main env');
-
-  const real = getExecutor();
-  setExecutor({
-    ...real,
-    spawn(_cmd: string, _args: string[], opts: SpawnOptions) {
-      const dir = exclusiveClaimDir(warmClaimPath(root));
-      // The spawned process restores the claim directory itself, so the refresh that could not record it
-      // can release the claim once the process is gone rather than leaving it for the next warm to reap.
-      const child = real.spawn(
-        process.execPath,
-        ['-e', `setTimeout(() => require("node:fs").chmodSync(${JSON.stringify(dir)}, 0o700), 200)`],
-        opts,
+    const warm = runWarm(target, '--refresh');
+    let writer = 0;
+    try {
+      writer = Number(
+        await waitUntil('the postinstall writer', () => (existsSync(ready) ? readFileSync(ready, 'utf-8') : null)),
       );
-      chmodSync(dir, 0o500);
-      return child;
-    },
-  });
+      // npm is gone the moment its postinstall script returns, and the writer it left behind is not, so the
+      // claim and its child record have to survive npm's own exit.
+      expect(readFileSync(join(root, 'node_modules', 'value'), 'utf-8')).toBe('PARTIAL');
+      expect(liveExclusiveClaim()).toBe(true);
+      expect(claimedInstaller()).toMatchObject({ pid: expect.any(Number) });
+    } finally {
+      writeFileSync(gate, 'go');
+    }
+    const result = await warm;
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain(`deps        source ${root}: no installed dependencies -> npm ci`);
+    expect(readFileSync(join(root, 'node_modules', 'value'), 'utf-8')).toBe('COMPLETE');
+    expect(readFileSync(join(target, 'node_modules', 'value'), 'utf-8')).toBe('COMPLETE');
+    expect(installLedger()).toMatchObject({ lock: 'package-lock.json', completed: true });
+    expect(existsSync(warmClaimPath(root))).toBe(false);
+    try {
+      process.kill(writer, 'SIGKILL');
+    } catch {}
+  },
+  60_000,
+);
 
-  const result = await runWarm(target, '--refresh');
-  expect(result.code).toBe(0);
-  expect(result.stderr).toMatch(
-    /lock {8}could not record the install this refresh spawned \(.*\); holding the claim here until it exits/,
-  );
-  expect(result.stderr).toContain(`deps        source ${root}: pnpm-lock.yaml changed -> pnpm install`);
-  expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
-  expect(installLedger()).toMatchObject({ completed: true });
-  expect(existsSync(warmClaimPath(root))).toBe(false);
-}, 30_000);
+test.skipIf(process.platform === 'win32')(
+  'an install Stim could not record is not abandoned, and its claim outlives the failed record (POSIX directory modes; skipped on win32)',
+  async () => {
+    write(root, 'pnpm-lock.yaml', 'lock v1\n');
+    commit(root, 'lockfile');
+    git(root, 'push', '-q', 'origin', 'main');
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
+    write(root, '.env', 'main env');
+
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      spawn(_cmd: string, _args: string[], opts: SpawnOptions) {
+        const dir = exclusiveClaimDir(warmClaimPath(root));
+        // The spawned process restores the claim directory itself, so the refresh that could not record it
+        // can release the claim once the process is gone rather than leaving it for the next warm to reap.
+        const child = real.spawn(
+          process.execPath,
+          ['-e', `setTimeout(() => require("node:fs").chmodSync(${JSON.stringify(dir)}, 0o700), 200)`],
+          opts,
+        );
+        chmodSync(dir, 0o500);
+        return child;
+      },
+    });
+
+    const result = await runWarm(target, '--refresh');
+    expect(result.code).toBe(0);
+    expect(result.stderr).toMatch(
+      /lock {8}could not record the install this refresh spawned \(.*\); holding the claim here until it exits/,
+    );
+    expect(result.stderr).toContain(`deps        source ${root}: pnpm-lock.yaml changed -> pnpm install`);
+    expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
+    expect(installLedger()).toMatchObject({ completed: true });
+    expect(existsSync(warmClaimPath(root))).toBe(false);
+  },
+  30_000,
+);
 
 test('the evidence that an install is owed is written before the fast-forward moves HEAD', async () => {
   write(root, 'pnpm-lock.yaml', 'lock v1\n');
@@ -925,9 +938,10 @@ test('the evidence that an install is owed is written before the fast-forward mo
   const snapshot = join(base, 'ledger-as-git-saw-it.json');
   const hook = join(root, '.git', 'hooks', 'post-merge');
   mkdirSync(dirname(hook), { recursive: true });
+  const shellPath = (path: string) => JSON.stringify(path.split(sep).join('/'));
   writeFileSync(
     hook,
-    `#!/bin/sh\ncat ${JSON.stringify(join(String(process.env.STIM_HOME), 'warm-installs'))}/*.json > ${JSON.stringify(snapshot)} 2>/dev/null || echo '"none"' > ${JSON.stringify(snapshot)}\n`,
+    `#!/bin/sh\ncat ${shellPath(join(String(process.env.STIM_HOME), 'warm-installs'))}/*.json > ${shellPath(snapshot)} 2>/dev/null || echo '"none"' > ${shellPath(snapshot)}\n`,
   );
   chmodSync(hook, 0o755);
 
@@ -1016,70 +1030,74 @@ test('a STIM_HOME that is a regular file refuses both warm paths and names the b
   }
 }, 30_000);
 
-test('a plain warm refuses the tree a real failed install left, and copies once a refresh finishes it', async () => {
-  write(
-    root,
-    'install.cjs',
-    [
-      'const fs = require("node:fs");',
-      'fs.mkdirSync("node_modules", { recursive: true });',
-      'fs.writeFileSync("node_modules/value", fs.existsSync("succeed") ? "COMPLETE" : "PARTIAL");',
-      'process.exit(fs.existsSync("succeed") ? 0 : 7);',
-    ].join('\n'),
-  );
-  write(
-    root,
-    'package.json',
-    `${JSON.stringify({ name: 'refresh-fixture', version: '1.0.0', scripts: { postinstall: 'node install.cjs' } })}\n`,
-  );
-  write(
-    root,
-    'package-lock.json',
-    `${JSON.stringify({
-      name: 'refresh-fixture',
-      version: '1.0.0',
-      lockfileVersion: 3,
-      requires: true,
-      packages: { '': { name: 'refresh-fixture', version: '1.0.0', hasInstallScript: true } },
-    })}\n`,
-  );
-  write(root, '.env', 'main env');
-  commit(root, 'an install whose postinstall fails');
-  git(root, 'push', '-q', 'origin', 'main');
+test.skipIf(process.platform === 'win32')(
+  'a plain warm refuses the tree a real failed install left, and copies once a refresh finishes it (spawns a real npm ci; skipped on win32)',
+  async () => {
+    write(
+      root,
+      'install.cjs',
+      [
+        'const fs = require("node:fs");',
+        'fs.mkdirSync("node_modules", { recursive: true });',
+        'fs.writeFileSync("node_modules/value", fs.existsSync("succeed") ? "COMPLETE" : "PARTIAL");',
+        'process.exit(fs.existsSync("succeed") ? 0 : 7);',
+      ].join('\n'),
+    );
+    write(
+      root,
+      'package.json',
+      `${JSON.stringify({ name: 'refresh-fixture', version: '1.0.0', scripts: { postinstall: 'node install.cjs' } })}\n`,
+    );
+    write(
+      root,
+      'package-lock.json',
+      `${JSON.stringify({
+        name: 'refresh-fixture',
+        version: '1.0.0',
+        lockfileVersion: 3,
+        requires: true,
+        packages: { '': { name: 'refresh-fixture', version: '1.0.0', hasInstallScript: true } },
+      })}\n`,
+    );
+    write(root, '.env', 'main env');
+    commit(root, 'an install whose postinstall fails');
+    git(root, 'push', '-q', 'origin', 'main');
 
-  const failed = await runWarm(target, '--refresh');
-  expect(failed.code).toBe(1);
-  expect(failed.stderr).toContain('failed: STIM_DEPS_FAILED');
-  expect(installLedger()).toMatchObject({ lock: 'package-lock.json', completed: false });
-  expect(readFileSync(join(root, 'node_modules', 'value'), 'utf-8')).toBe('PARTIAL');
-  expect(existsSync(join(target, 'node_modules'))).toBe(false);
+    const failed = await runWarm(target, '--refresh');
+    expect(failed.code).toBe(1);
+    expect(failed.stderr).toContain('failed: STIM_DEPS_FAILED');
+    expect(installLedger()).toMatchObject({ lock: 'package-lock.json', completed: false });
+    expect(readFileSync(join(root, 'node_modules', 'value'), 'utf-8')).toBe('PARTIAL');
+    expect(existsSync(join(target, 'node_modules'))).toBe(false);
 
-  process.exitCode = 0;
-  const refused = await runWarm(target);
-  expect(refused.code).toBe(1);
-  expect(refused.stdout).toEqual([]);
-  expect(refused.stderr).toContain(`the last install of package-lock.json there did not finish`);
-  expect(refused.stderr).toContain('stim worktree warm --refresh');
-  expect(refused.stderr).toContain('failed: STIM_DEPS_INCOMPLETE');
-  expect(refused.stderr).not.toMatch(/carry {7}/);
-  expect(existsSync(join(target, 'node_modules'))).toBe(false);
-  expect(existsSync(join(target, '.env'))).toBe(false);
+    process.exitCode = 0;
+    const refused = await runWarm(target);
+    expect(refused.code).toBe(1);
+    expect(refused.stdout).toEqual([]);
+    expect(refused.stderr).toContain(`the last install of package-lock.json there did not finish`);
+    expect(refused.stderr).toContain('stim worktree warm --refresh');
+    expect(refused.stderr).toContain('failed: STIM_DEPS_INCOMPLETE');
+    expect(refused.stderr).not.toMatch(/carry {7}/);
+    expect(existsSync(join(target, 'node_modules'))).toBe(false);
+    expect(existsSync(join(target, '.env'))).toBe(false);
 
-  process.exitCode = 0;
-  writeFileSync(join(root, 'succeed'), 'yes');
-  const reinstalled = await runWarm(target, '--refresh');
-  expect(reinstalled.code).toBe(0);
-  expect(reinstalled.stderr).toContain(
-    `deps        source ${root}: the last install of package-lock.json did not finish -> npm ci`,
-  );
-  expect(installLedger()).toMatchObject({ lock: 'package-lock.json', completed: true });
+    process.exitCode = 0;
+    writeFileSync(join(root, 'succeed'), 'yes');
+    const reinstalled = await runWarm(target, '--refresh');
+    expect(reinstalled.code).toBe(0);
+    expect(reinstalled.stderr).toContain(
+      `deps        source ${root}: the last install of package-lock.json did not finish -> npm ci`,
+    );
+    expect(installLedger()).toMatchObject({ lock: 'package-lock.json', completed: true });
 
-  process.exitCode = 0;
-  rmSync(join(target, 'node_modules'), { recursive: true, force: true });
-  const copied = await runWarm(target);
-  expect(copied.code).toBe(0);
-  expect(readFileSync(join(target, 'node_modules', 'value'), 'utf-8')).toBe('COMPLETE');
-}, 120_000);
+    process.exitCode = 0;
+    rmSync(join(target, 'node_modules'), { recursive: true, force: true });
+    const copied = await runWarm(target);
+    expect(copied.code).toBe(0);
+    expect(readFileSync(join(target, 'node_modules', 'value'), 'utf-8')).toBe('COMPLETE');
+  },
+  120_000,
+);
 
 test('an incomplete install of a superseded lockfile does not block a copy', async () => {
   write(root, 'pnpm-lock.yaml', 'lock v1\n');

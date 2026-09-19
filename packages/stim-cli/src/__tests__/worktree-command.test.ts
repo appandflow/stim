@@ -34,7 +34,10 @@ test('findEnclosingWorktreeRoot returns null when nothing is registered as a wor
   expect(findEnclosingWorktreeRoot('/repo-worktrees/feat-x/apps/mobile')).toBe(null);
 });
 
-test('dependencyInstallCommand shell-quotes repository paths', () => {
-  expect(dependencyInstallCommand('/tmp/app/$(touch PWNED)')).toBe("cd '/tmp/app/$(touch PWNED)' && npm install");
-  expect(dependencyInstallCommand("/tmp/app/it's-here")).toBe("cd '/tmp/app/it'\\''s-here' && npm install");
-});
+test.skipIf(process.platform === 'win32')(
+  'dependencyInstallCommand shell-quotes repository paths (POSIX sh quoting of absolute POSIX paths; skipped on win32)',
+  () => {
+    expect(dependencyInstallCommand('/tmp/app/$(touch PWNED)')).toBe("cd '/tmp/app/$(touch PWNED)' && npm install");
+    expect(dependencyInstallCommand("/tmp/app/it's-here")).toBe("cd '/tmp/app/it'\\''s-here' && npm install");
+  },
+);
