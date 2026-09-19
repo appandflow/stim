@@ -481,29 +481,32 @@ describe('the real file protocol', { timeout: 30_000 }, () => {
     for (const result of answers) expect(holders[`ios:${result.lease.slot}`]?.token).toBe(result.lease.token);
   });
 
-  test('two processes racing for one free device leave exactly one holder', async () => {
-    const racer = script(
-      'racer.mjs',
-      [
-        `const { takeLease } = await import(${JSON.stringify(LEASE_URL)});`,
-        ...barrier('go'),
-        'const result = takeLease({ root: process.argv[2], platform: "ios", id: "RACE-UDID", kind: "run" });',
-        'console.log(JSON.stringify(result));',
-      ].join('\n'),
-    );
+  test.skipIf(process.platform === 'win32')(
+    'two processes racing for one free device leave exactly one holder (Windows rename limbo, #883; skipped on win32)',
+    async () => {
+      const racer = script(
+        'racer.mjs',
+        [
+          `const { takeLease } = await import(${JSON.stringify(LEASE_URL)});`,
+          ...barrier('go'),
+          'const result = takeLease({ root: process.argv[2], platform: "ios", id: "RACE-UDID", kind: "run" });',
+          'console.log(JSON.stringify(result));',
+        ].join('\n'),
+      );
 
-    const runs = [runNode(racer, [join(scratch, 'a')]), runNode(racer, [join(scratch, 'b')])];
-    release('go');
-    const answers = (await Promise.all(runs)).map((r) => JSON.parse(r.stdout.trim()));
+      const runs = [runNode(racer, [join(scratch, 'a')]), runNode(racer, [join(scratch, 'b')])];
+      release('go');
+      const answers = (await Promise.all(runs)).map((r) => JSON.parse(r.stdout.trim()));
 
-    const taken = answers.filter((a) => a.status === 'taken');
-    const held = answers.filter((a) => a.status === 'held');
-    expect(taken).toHaveLength(1);
-    expect(held).toHaveLength(1);
-    expect(held[0].lease.token).toBe(taken[0].lease.token);
-    const survivor = parseLease(readFileSync(deviceLeasePath('ios', 'RACE-UDID'), 'utf-8'));
-    expect(survivor?.token).toBe(taken[0].lease.token);
-  });
+      const taken = answers.filter((a) => a.status === 'taken');
+      const held = answers.filter((a) => a.status === 'held');
+      expect(taken).toHaveLength(1);
+      expect(held).toHaveLength(1);
+      expect(held[0].lease.token).toBe(taken[0].lease.token);
+      const survivor = parseLease(readFileSync(deviceLeasePath('ios', 'RACE-UDID'), 'utf-8'));
+      expect(survivor?.token).toBe(taken[0].lease.token);
+    },
+  );
 
   test('a holder renewing against a claimant taking its expired lease leaves one holder', async () => {
     const rootA = join(scratch, 'a');
