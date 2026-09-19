@@ -33,16 +33,10 @@ jobs:
         node: [22, 24]
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up pnpm and Node ${{ matrix.node }}
-        uses: pnpm/setup@v2
+      - uses: ./.github/actions/setup-stim
         with:
-          runtime: node@${{ matrix.node }}
-          cache: true
-          install: false
-
-      - name: Install (workspace root)
-        run: pnpm install --frozen-lockfile
+          node: ${{ matrix.node }}
+          build: 'false'
 
       # Lint and format are fast and fail early. oxlint and oxfmt are the oxc
       # toolchain; typecheck is the production src (tests run under vitest),
@@ -94,19 +88,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up pnpm and Node
-        uses: pnpm/setup@v2
-        with:
-          runtime: node@22
-          cache: true
-          install: false
-
-      - name: Install (workspace root)
-        run: pnpm install --frozen-lockfile
-
-      - name: Build (tsdown, all packages)
-        run: pnpm run build
+      - uses: ./.github/actions/setup-stim
 
       - name: Typecheck (production)
         run: pnpm run typecheck
@@ -114,32 +96,39 @@ jobs:
       - name: Unit tests (vitest)
         run: pnpm test
 
-  # BLOCKING where it runs. The Android half of the dev loop on Windows, driven
-  # by the same fixture and driver the macOS and Linux native lanes use. It
-  # runs only on an explicit workflow_dispatch or on a pull request from a
-  # branch named for Windows work, because it costs 30+ minutes of emulator
-  # time; where it runs, its colour counts.
+  # BLOCKING. The Android half of the dev loop on Windows, driven by the same
+  # fixture and driver the macOS and Linux native lanes use, in two sizes:
   #
-  # The runner image ships the Android SDK, build-tools, platform-tools, NDK and
-  # the emulator binary at ANDROID_HOME=C:\Android\android-sdk, but NO system
-  # image, so one is installed below before Stim can create its own AVD.
+  #   smoke  every push and pull request. One worktree: fixture, stim start,
+  #          a cold Gradle build, install and launch on an owned emulator,
+  #          readiness, stim stop, worktree remove, cleanup checks. About
+  #          22 minutes, dominated by the emulator boot and the cold build.
+  #   loop   the full loop with the second-worktree cache proof and named
+  #          slots, about 47 minutes, added on workflow_dispatch or a pull
+  #          request from a branch named for Windows work.
   #
-  # It DOES have VM acceleration: `emulator -accel-check` on this image answers
-  # "WHPX(10.0.26100) is installed and usable", so an owned emulator can boot
-  # here. That is measured, not assumed, and the check stays in the job so the
-  # claim keeps being re-verified rather than trusted.
+  # Both are real proof of the paths the unit suite fakes: gradlew.bat through
+  # cross-spawn, Metro listener discovery through netstat, adb and the
+  # emulator, and the taskkill tree kill on stop.
   #
-  # The loop step is still allowed to fail while the APK assertion below it is
-  # not: the driver's named-slots phase exits 1 after the loop has passed,
-  # because a repeated slot loses device.systemImage (#892) and the resulting
-  # all-ABI build overruns the NDK object-path limit (#893). Until those land
-  # the assertion is the gate; then the loop step becomes it and the assertion
-  # goes.
+  # The SDK, system image and acceleration facts live in
+  # .github/actions/windows-android-sdk, shared with windows-debug.yml.
+  #
+  # The loop suite's driver step is still allowed to fail while the APK
+  # assertion below it is not: the named-slots phase exits 1 after the loop has
+  # passed, because a repeated slot loses device.systemImage (#892) and the
+  # resulting all-ABI build overruns the NDK object-path limit (#893). Until
+  # those land the assertion is that suite's gate; then the driver step becomes
+  # it and the assertion goes. The smoke suite never reaches that phase, so its
+  # driver step is the gate.
   windows-android-e2e:
-    name: android e2e (windows)
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.head_ref, 'windows'))
+    name: android ${{ matrix.suite }} (windows)
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: ${{ matrix.suite == 'loop' && 90 || 45 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: ${{ fromJSON((github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.head_ref, 'windows'))) && '["smoke", "loop"]' || '["smoke"]') }}
     env:
       # os.tmpdir() reads TEMP on Windows, and the driver builds its fixture
       # under it. It is D:\e rather than a path inside the workspace because
@@ -150,39 +139,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: New-Item -ItemType Directory -Force -Path "D:\e"
-
-      - name: Set up pnpm and Node
-        uses: pnpm/setup@v2
-        with:
-          runtime: node@22
-          cache: true
-          install: false
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - name: Install (workspace root)
-        run: pnpm install --frozen-lockfile
-
-      - name: Build (dist/cli.mjs is what the native e2e drives)
-        run: pnpm run build
-
-      - name: Record what this runner can actually do
-        continue-on-error: true
-        run: |
-          "ANDROID_HOME=$env:ANDROID_HOME"
-          & "$env:ANDROID_HOME\emulator\emulator.exe" -accel-check
-          & "$env:ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat" --list_installed
-
-      - name: Install a system image so Stim can create its own AVD
-        run: |
-          $sdkmanager = "$env:ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat"
-          & $sdkmanager --install "platform-tools" "system-images;android-34;google_apis;x86_64"
-          "$env:ANDROID_HOME\platform-tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          "$env:ANDROID_HOME\emulator" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - uses: ./.github/actions/setup-stim
+      - uses: ./.github/actions/windows-android-sdk
 
       - name: Doctor (android)
         continue-on-error: true
@@ -190,16 +148,18 @@ jobs:
 
       # --keep leaves the fixture and its worktrees on this ephemeral runner so
       # the assertion and the upload below can read them.
-      - name: Android loop e2e (bare)
-        continue-on-error: true
+      - name: Android ${{ matrix.suite }} e2e (bare)
+        continue-on-error: ${{ matrix.suite == 'loop' }}
         run: >-
           node test/e2e/native/run-native-e2e.mjs
           --framework bare --platform android --keep --home "D:\e\stim-home"
+          ${{ matrix.suite == 'smoke' && '--smoke' || '' }}
 
-      # The step that decides this job's colour until #892 and #893 land: the
-      # loop step above passes the build, install and launch, then exits 1 in
-      # the named-slots phase, so the artifact is the part this job can hold.
+      # The step that decides the loop suite's colour until #892 and #893 land:
+      # the driver step above passes the build, install and launch, then exits 1
+      # in the named-slots phase, so the artifact is the part this job can hold.
       - name: Assert Stim produced an APK
+        if: matrix.suite == 'loop'
         run: |
           $apk = Get-ChildItem -Path "D:\e" -Recurse -Filter *.apk -ErrorAction SilentlyContinue |
             Select-Object -First 1
@@ -211,7 +171,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: windows-android-e2e-logs
+          name: windows-android-${{ matrix.suite }}-logs
           path: D:\e\stim-home\workspaces\**\logs\*
           include-hidden-files: true
           if-no-files-found: warn
