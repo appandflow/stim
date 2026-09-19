@@ -154,7 +154,15 @@ export function renderMarkdown(result, context) {
   if (required.length === 0) lines.push('- none');
   for (const row of required) {
     const shown = scope(row);
-    lines.push(`- **${row.id}**${shown ? ` (${shown})` : ''}: ${row.evidence}. Required by ${row.reason}.`);
+    const cause =
+      row.causes.length > 0
+        ? `Required by ${row.causes.map((entry) => `\`${entry.path}\``).join(', ')}.`
+        : `Required because ${row.reason}.`;
+    lines.push(`- **${row.id}**${shown ? ` (${shown})` : ''}: ${row.evidence}. ${cause}`);
+  }
+  if (result.unclassified.length > 0) {
+    lines.push('', 'Unclassified paths, which require every row until the mapping covers them:', '');
+    for (const path of result.unclassified) lines.push(`- \`${path}\``);
   }
   lines.push('', 'Omitted rows, with the diff-based reason:', '');
   if (omitted.length === 0) lines.push('- none');

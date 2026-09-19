@@ -62,19 +62,32 @@ Gradle rows on a Gradle change rather than both platforms.
 The mapping lives in `scripts/release-qa-matrix.data.mjs`, next to the script,
 as data. Three levels do the work:
 
-- **Package.** `packages/cache` is cache evidence; `packages/metro` is cache
-  and log evidence.
-- **Subsystem.** The directories under `packages/stim-cli/src`: `engine`,
-  `commands`, `collector`, `supervisor`, `sim`, `guide`. Each names the rows a
-  change anywhere under it can reach, which is the fallback for a file with no
-  rule of its own.
-- **File.** The files whose behavior is narrower than their directory:
-  `engine/gradle.ts` is Android cache and lifecycle evidence, not the whole
-  engine fallback; `engine/tunnel.ts` is the remote provider row only.
+- **Package.** `packages/cache` is cache and remote-provider evidence, because
+  it is the provider contract the remote cache consumes; `packages/metro` is
+  cache and log evidence.
+- **Directory.** `packages/stim-cli/src` requires every row, and each directory
+  under it requires at least what it inherits. A directory rule is a fallback
+  for files nobody has mapped yet, so it may never ask for less than the
+  directory above it: narrowing there is silent, and the file it silently
+  narrows has not been read by anyone. A test over the data enforces that.
+- **File.** Only a file rule narrows. `engine/gradle.ts` is Android cache and
+  lifecycle evidence rather than the whole `src` fallback; `engine/tunnel.ts`
+  is the remote provider row alone. A file with no rule keeps the fallback and
+  over-requires, which is visible and costs a run, rather than under-requiring,
+  which is silent and costs the evidence.
+
+Platform narrowing (`ios`, `android`) applies to any row. Framework narrowing
+(`expo`, `bare`) only reaches `loop`, the one framework-axis row, so a rule
+whose rows are all platform-axis or global carries no framework list.
 
 Paths that cannot change native behavior carry an `exempt` reason instead of
 rows: documentation, the website, repository tooling, test configuration, and
-the guide text whose contract tests already run in the preflight.
+the guide text whose contract tests already run in the preflight. An exempt
+directory is an explicit claim that nothing under it reaches native evidence,
+not a fallback, so it is the one directory rule the monotonic check skips.
+`test/e2e/native` is not exempt even though `test` is: the section 2 preflight
+runs `test/e2e/*.e2e.js`, not those runners, and changing the instrument
+invalidates its readings.
 
 A path that matches no rule is not assumed harmless. It is reported as
 unclassified and every row becomes required, which is invariant 8 applied to
@@ -161,20 +174,27 @@ mapping change.
 - Coverage: every top-level source directory, every package, and every
   `packages/stim-cli/src` subsystem has its own rule, every rule is either rows
   or an exempt reason, and no rule names a row the table does not define.
+- Monotonic directories: no directory rule requires fewer rows than the nearest
+  directory above it.
+- Wording: the `change` and `evidence` strings parsed out of the RELEASE.md
+  section 3 table equal the ones in the data file, in order, so editing the
+  table without editing the mapping fails the suite.
 
 ## Decisions
 
-| Question                     | Decision                                           | Why                                                                                  |
-| ---------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Key                          | Repository paths, most specific prefix wins        | A diff is paths; a prefix table is reviewable and has no build step                  |
-| Import-graph reachability    | No                                                 | It answers "what could execute", not "what evidence is at risk", and it rots         |
-| Unmatched path               | Requires the full matrix                           | Invariant 8: unproven means retained, never assumed clean                            |
-| New subsystem directory      | Unit test fails until it has a rule                | The mapping decays silently otherwise, and it decays toward less QA                  |
-| Candidate version bump       | Exempt when the manifest diff moves only `version` | Otherwise every release diff requires the full matrix and the tool is useless        |
-| Lockfile change              | Cache and lifecycle rows                           | Section 2 step 4: the lockfile no longer moves with a bump, so it means dependencies |
-| Native e2e runner change     | The row that runner produces                       | Changing the instrument invalidates its prior readings                               |
-| Who gates                    | The owner and the section 3 checklist              | The script argues; it does not have the standing to pass a release                   |
-| Where phase 2 evidence lands | `$STIM_HOME/release-qa/<version>/`                 | Run state, not repository content; the repository takes the manifest and summaries   |
+| Question                               | Decision                                           | Why                                                                                     |
+| -------------------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Key                                    | Repository paths, most specific prefix wins        | A diff is paths; a prefix table is reviewable and has no build step                     |
+| Import-graph reachability              | No                                                 | It answers "what could execute", not "what evidence is at risk", and it rots            |
+| Unmatched path                         | Requires the full matrix                           | Invariant 8: unproven means retained, never assumed clean                               |
+| New subsystem directory                | Unit test fails until it has a rule                | The mapping decays silently otherwise, and it decays toward less QA                     |
+| Unmapped file under a mapped directory | Keeps the fallback, which for `src` is every row   | Over-requiring costs a run and is visible; under-requiring costs evidence and is silent |
+| Where narrowing is allowed             | File rules only; a directory never shrinks         | A directory rule is the fallback for files nobody has read yet                          |
+| Candidate version bump                 | Exempt when the manifest diff moves only `version` | Otherwise every release diff requires the full matrix and the tool is useless           |
+| Lockfile change                        | Cache and lifecycle rows                           | Section 2 step 4: the lockfile no longer moves with a bump, so it means dependencies    |
+| Native e2e runner change               | The row that runner produces                       | Changing the instrument invalidates its prior readings                                  |
+| Who gates                              | The owner and the section 3 checklist              | The script argues; it does not have the standing to pass a release                      |
+| Where phase 2 evidence lands           | `$STIM_HOME/release-qa/<version>/`                 | Run state, not repository content; the repository takes the manifest and summaries      |
 
 ## Phases
 
