@@ -55,30 +55,12 @@ jobs:
       - uses: actions/checkout@v4
       - run: New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\e2e-tmp"
 
-      - name: Set up pnpm and Node
-        uses: pnpm/setup@v2
+      - uses: ./.github/actions/setup-stim
         with:
-          runtime: node@22
-          cache: true
-          install: false
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - name: Install and build
+          install: ${{ inputs.prepare }}
+          build: ${{ inputs.prepare }}
+      - uses: ./.github/actions/windows-android-sdk
         if: inputs.prepare
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm run build
-
-      - name: Install a system image so Stim can create its own AVD
-        if: inputs.prepare
-        run: |
-          $sdkmanager = "$env:ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat"
-          & $sdkmanager --install "platform-tools" "system-images;android-34;google_apis;x86_64"
 
       - name: Tailscale
         if: inputs.tunnel == 'tailscale'
