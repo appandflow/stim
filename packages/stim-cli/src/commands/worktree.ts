@@ -793,7 +793,15 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
       try {
         removeWorktree(path, { from: source.path, force: opts.force });
       } catch (error) {
-        console.error(chalk.red(`git worktree remove failed: ${String((error as Error)?.message || error)}`));
+        const message = String((error as Error)?.message || error);
+        console.error(chalk.red(`git worktree remove failed: ${message}`));
+        if (process.platform === 'win32' && /Permission denied/i.test(message)) {
+          console.error(
+            chalk.dim(
+              'Another process holds a file or directory inside the worktree. An adb server or emulator started from it keeps its working directory open; `adb kill-server` releases the server, and Sysinternals handle.exe lists other holders.',
+            ),
+          );
+        }
         console.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
         printRemovalCleanup(result, true);
         process.exitCode = 1;

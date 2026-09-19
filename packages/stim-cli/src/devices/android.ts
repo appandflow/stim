@@ -353,8 +353,25 @@ export function listAvds({ timeoutMs }: { timeoutMs?: number } = {}): string[] {
   return parseAvdList(getExecutor().run(`${androidTool('emulator')} -list-avds`, { timeoutMs }));
 }
 
-export function listAdbDevices({ timeoutMs }: { timeoutMs?: number } = {}): AdbDevices {
-  return parseAdbDevices(getExecutor().run(`${androidTool('adb')} devices`, { timeoutMs }));
+/**
+ * Working directory for the adb client and the emulator Stim starts. Both leave processes behind
+ * that inherit it: the adb server is spawned by whichever client finds none running, and the
+ * emulator launcher forks qemu and a crashpad handler that outlives a crash on exit. On Windows a
+ * process holds its working directory open, and Windows refuses to delete a directory with an open
+ * handle, so one started from a worktree breaks `worktree remove`.
+ * https://github.com/appandflow/stim/issues/914
+ */
+function androidToolCwd(platform: NodeJS.Platform = process.platform): string | undefined {
+  return platform === 'win32' ? homedir() : undefined;
+}
+
+export function listAdbDevices({
+  timeoutMs,
+  platform = process.platform,
+}: { timeoutMs?: number; platform?: NodeJS.Platform } = {}): AdbDevices {
+  return parseAdbDevices(
+    getExecutor().run(`${androidTool('adb')} devices`, { timeoutMs, cwd: androidToolCwd(platform) }),
+  );
 }
 
 const ADB_PROP_TIMEOUT_MS = 5000;
@@ -841,13 +858,14 @@ export async function resetAdoptedAvd(avdName: string, serial: string, keepPacka
 export function bootAndroidEmulator(
   avdName: string,
   consolePort: number,
-  { logFile }: { logFile?: string | null } = {},
+  { logFile, platform = process.platform }: { logFile?: string | null; platform?: NodeJS.Platform } = {},
 ): number | null {
   const exec = getExecutor();
   const child = exec.spawn(
     androidToolPath('emulator'),
     ['-avd', avdName, '-port', String(consolePort), ...headlessEmulatorArgs()],
     {
+      cwd: androidToolCwd(platform),
       detached: true,
       stdio: emulatorStdio(logFile),
     },

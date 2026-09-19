@@ -10,7 +10,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'fs';
-import { tmpdir } from 'os';
+import { homedir, tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import {
@@ -25,6 +25,7 @@ import {
   findBuildTool,
   headlessEmulatorArgs,
   bootAndroidEmulator,
+  listAdbDevices,
   configureNewOwnedAvd,
   listAvds,
   memoizeEmulatorProbe,
@@ -443,6 +444,26 @@ test('resolveOwnedAvdSerial reports notOwned for a non-Stim AVD name', () => {
     spawn: () => null,
   });
   expect(resolveOwnedAvdSerial('Pixel_6_API_34')).toEqual({ notOwned: true });
+});
+
+test('listAdbDevices runs the adb client from the home directory on Windows so an auto-started server never holds a worktree open', () => {
+  const calls: { cmd: string; cwd: unknown }[] = [];
+  setExecutor({
+    run: (cmd, opts) => {
+      calls.push({ cmd, cwd: opts?.cwd });
+      return 'List of devices attached\nemulator-5554\tdevice\n';
+    },
+  });
+  expect(listAdbDevices({ timeoutMs: 1000, platform: 'win32' }).emulators).toEqual([
+    { serial: 'emulator-5554', consolePort: 5554 },
+  ]);
+  listAdbDevices({ platform: 'darwin' });
+  listAdbDevices({ platform: 'linux' });
+  expect(calls).toEqual([
+    { cmd: 'adb devices', cwd: homedir() },
+    { cmd: 'adb devices', cwd: undefined },
+    { cmd: 'adb devices', cwd: undefined },
+  ]);
 });
 
 test('resolveOwnedAvdSerial resolves the live serial by AVD identity, not by port', () => {
@@ -905,6 +926,22 @@ test('bootAndroidEmulator spawns the resolved emulator binary', () => {
     else process.env.DISPLAY = savedDisplay;
   }
   expect(spawned).toEqual([[join(sdk, 'emulator', SDK_TOOL_FILES.emulator), ['-avd', 'stim-app', '-port', '5556']]]);
+});
+
+test('bootAndroidEmulator starts the emulator tree from the home directory on Windows so its launcher and crashpad handler never hold a worktree open', () => {
+  const sdk = makeFakeSdk(tmpHome);
+  process.env.ANDROID_HOME = sdk;
+  const cwds: unknown[] = [];
+  setExecutor({
+    spawn: (_cmd: string, _args: string[], opts: { cwd?: string }) => {
+      cwds.push(opts.cwd);
+      return { unref: () => {}, pid: 42 };
+    },
+  });
+  expect(bootAndroidEmulator('stim-app', 5556, { platform: 'win32' })).toBe(42);
+  bootAndroidEmulator('stim-app', 5556, { platform: 'darwin' });
+  bootAndroidEmulator('stim-app', 5556, { platform: 'linux' });
+  expect(cwds).toEqual([homedir(), undefined, undefined]);
 });
 
 test('listAvds keeps the bare command when resolution falls back to PATH', () => {
