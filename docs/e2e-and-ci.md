@@ -150,16 +150,16 @@ refuses to take one as evidence of another:
 
 **The eight checks.**
 
-| id                  | what it proves                                                                          | how                                                                                                                                                                                                                                                                                                                                                                                   |
-| ------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `zero-config`       | Stim writes no runtime state into the repo; global workspace state needs no ignore rule | `git status --porcelain` before and after; a change to `metro.config.js` / `Podfile` / `gradle.properties` is a CRITICAL failure; every worktree is removed WITHOUT `--force` and no project `.gitignore` mutation is expected                                                                                                                                                        |
-| `metro-store`       | the shared transform store is engaged per dev-server mode, stores, and is reused        | the `cache_store_added` record in the global workspace `logs/metro.ndjson` (Expo SDK 54+: the config adapter's confirmation from inside the child; bare: the in-process append), the absence of a "could not share" warning, one store root for both workspaces, then a file count around each workspace's build+launch                                                               |
-| `xcode-cas`         | Xcode 26 compilation caching                                                            | the five build settings read verbatim off the `build_start` record in `build-ios.ndjson`, CAS directory growth across the cold compile, and near-zero growth when a never-compiled workspace compiles the same sources                                                                                                                                                                |
-| `gradle-cache`      | the Gradle build cache                                                                  | `--build-cache` read off the `build_start` record in `build-android.ndjson` (added in #78 so this need not race `ps`), growth of `<gradle user home>/caches/build-cache-1`, and `FROM-CACHE` tasks in a second worktree forced to run gradle with `stim android --no-build-cache`                                                                                                     |
-| `fingerprint-cache` | the entry is complete and under the right key                                           | the entry holds the artifact AND `fingerprint-sources.json` (and, for an Android release entry, `assets-manifest.json`); a second run in the SAME tree must HIT what the first stored, which is what proves the entry landed under the POST-mutation key that prebuild and `pod install` shift it to                                                                                  |
-| `pods-reuse`        | carried Pods skip `pod install`                                                         | the racing worktrees warm ignored state from the source checkout, whose installed Pods match their tracked Podfile.lock; the one that takes the BUILD path must print no `pods` phase line at all                                                                                                                                                                                     |
-| `single-flight`     | two workspaces racing one uncached fingerprint compile once                             | both racers point at an EMPTY build-cache root (so the fingerprint is identical to the one already stored and misses only because that root is empty, which keeps the check about the lock and nothing else) while the build lock stays shared through `STIM_HOME`; exactly one compiles, the other reports `waited ... -> installed from cache` with `waitedForBuild` in its payload |
-| `gc-view`           | `gc` can see every cache                                                                | a bare `gc` must list each live cache directory with a size under "Shared build caches (N) - alive, not garbage"                                                                                                                                                                                                                                                                      |
+| id                  | what it proves                                                                          | how                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `zero-config`       | Stim writes no runtime state into the repo; global workspace state needs no ignore rule | `git status --porcelain` before and after; a change to `metro.config.js` / `Podfile` / `gradle.properties` is a CRITICAL failure; every worktree is removed WITHOUT `--force` and no project `.gitignore` mutation is expected                                                                                                                                                                                                                                                                                                                                                                                    |
+| `metro-store`       | the shared transform store is engaged per dev-server mode, stores, and is reused        | the `cache_store_added` record in the global workspace `logs/metro.ndjson` (Expo SDK 54+: the config adapter's confirmation from inside the child; bare: the in-process append), the absence of a "could not share" warning, one store root for both workspaces, then a file count around each workspace's build+launch                                                                                                                                                                                                                                                                                           |
+| `xcode-cas`         | Xcode compilation caching, clang always and Swift when the gate allows                  | each expected build setting found on the real `build_start` argv in `build-ios.ndjson` -- with the Swift ones expected `YES` or `NO` from the same two-part gate the product applies, `xcrun swift` 6.4+ AND the fixture's `react-native` 0.87+, and `SWIFT_OTHER_PREFIX_MAPPINGS` asserted ABSENT when Swift is off; the two `*_OTHER_PREFIX_MAPPINGS` values are matched by their `<worktree>=/^src` half only, so the DerivedData half the product appends is not checked -- plus CAS directory growth across the cold compile, and near-zero growth when a never-compiled workspace compiles the same sources |
+| `gradle-cache`      | the Gradle build cache                                                                  | `--build-cache` read off the `build_start` record in `build-android.ndjson` (added in #78 so this need not race `ps`), growth of `<gradle user home>/caches/build-cache-1`, and `FROM-CACHE` tasks in a second worktree forced to run gradle with `stim android --no-build-cache`                                                                                                                                                                                                                                                                                                                                 |
+| `fingerprint-cache` | the entry is complete and under the right key                                           | the entry holds the artifact AND `fingerprint-sources.json` (and, for an Android release entry, `assets-manifest.json`); a second run in the SAME tree must HIT what the first stored, which is what proves the entry landed under the POST-mutation key that prebuild and `pod install` shift it to                                                                                                                                                                                                                                                                                                              |
+| `pods-reuse`        | carried Pods skip `pod install`                                                         | the racing worktrees warm ignored state from the source checkout, whose installed Pods match their tracked Podfile.lock; the one that takes the BUILD path must print no `pods` phase line at all                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `single-flight`     | two workspaces racing one uncached fingerprint compile once                             | both racers point at an EMPTY build-cache root (so the fingerprint is identical to the one already stored and misses only because that root is empty, which keeps the check about the lock and nothing else) while the build lock stays shared through `STIM_HOME`; exactly one compiles, the other reports `waited ... -> installed from cache` with `waitedForBuild` in its payload                                                                                                                                                                                                                             |
+| `gc-view`           | `gc` can see every cache                                                                | a bare `gc` must list each live cache directory with a size under "Shared build caches (N) - alive, not garbage"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 **Honesty rules.** Every assertion prints the evidence it checked -- numbers, and
 quoted lines. A check that cannot run SKIPS with the reason spelled out ("no
@@ -254,21 +254,50 @@ Two workflows under `.github/workflows/`:
   race -- plus two cache-hit builds, and on Android one forced `gradlew` run)
   and uploads its machine-readable summary
   as an artifact with `if: always()` -- a FAILING cache run is exactly when the
-  per-check evidence is worth reading. iOS runs on `macos-latest` (Xcode via
-  `maxim-lobanov/setup-xcode`); Android runs on a Linux+KVM host via
-  `reactivecircus/android-emulator-runner`. Each platform's `{bare, expo}` are a
-  matrix, so they run as parallel, isolated jobs. `~/.stim`'s shared build
+  per-check evidence is worth reading. iOS runs on the `xcode-27` image, which
+  ships Xcode 27 and its Swift 6.4 toolchain as the only Xcode; the job selects
+  `/Applications/Xcode_27.0.app` and fails if the toolchain is below Swift 6.4.
+  Android runs on a Linux+KVM host via
+  `reactivecircus/android-emulator-runner`. Framework and suite are matrix axes,
+  so variants run as parallel, isolated jobs. Android runs `{bare, expo}`; **iOS
+  runs `expo` only** -- a matrix `exclude` drops the bare variant, whose template
+  cannot launch on iOS 27. `~/.stim`'s shared build
   cache (`STIM_BUILD_CACHE`) is persisted across runs with `actions/cache`, so
   the cross-run cache path is itself exercised; build logs
   (`build-*.ndjson`) are uploaded as artifacts on failure.
 
 ### Assumptions a reviewer must confirm
 
-- The `macos-latest` runner image ships the Xcode that `latest-stable` selects,
-  and it is new enough for the RN/Expo template the fixture creates.
+- `xcode-27` is a GitHub **preview** image (actions/runner-images#14404). It can
+  queue longer and break sooner than a GA image, and `xcode-27-xlarge` is the
+  only other size. The iOS lane is worth that because Swift compilation caching
+  cannot be exercised anywhere else: the `macos-26` images top out at Xcode 26.6.
+- The image's Xcode still has to suit the RN/Expo template the fixture creates,
+  and this is now the likelier failure: `xcode-27` ships only the iOS 27 SDK and
+  the iOS 27 simulator runtimes, with no older runtime to fall back to. A
+  template that does not build against, or launch on, iOS 27 fails the lane.
 - The `@react-native-community/cli` and `create-expo-app` flag surfaces in the
   driver's `FIXTURE_COMMANDS` match the versions the runners fetch (override via
   the env vars above if not).
+- **The iOS job pins the Expo fixture to Expo SDK 58**, through
+  `STIM_E2E_EXPO_INIT`, because the SDK 57 template it would otherwise create
+  generates no `SceneDelegate` and cannot launch on iOS 27. SDK 58 is a preview
+  (`expo ~58.0.0-preview.3`), so the pin lives in that one job and neither the
+  harness default nor the Android lane moves. It also carries
+  `react-native 0.88.0-rc.0`, above the 0.87 floor, so the Expo variant reaches
+  the Swift branch.
+- **The bare iOS variant is excluded from the matrix**, so the iOS lane has no
+  bare job at all. Swift caching needs the fixture's `react-native` to be 0.87 or
+  newer as well as the Swift 6.4 toolchain, and `@react-native-community/cli@latest init`
+  satisfies that -- its build does report `Swift on`. Its template does not adopt
+  the UIScene lifecycle, though: `@react-native-community/template` 0.88.0-rc.1
+  still has no `SceneDelegate` and no `UIApplicationSceneManifest`, so the app
+  builds and then traps at launch on iOS 27. Excluding it keeps the nightly
+  honest rather than permanently red. Remove the `exclude` when the React Native
+  template adopts scenes; that restores bare iOS coverage, including the
+  `bare-inproc` Metro path, which only Android exercises until then.
+- `xcode-cas` prints which half of the Swift gate decided, in its evidence and
+  its PASS message. A PASS with `Swift caching OFF` is not Swift coverage.
 - The Android job's `api-level` / `target` / `arch` have a matching system image
   available to `android-emulator-runner`.
 - **Disk, for the `caches` suite only.** It stands up FOUR worktrees, each with

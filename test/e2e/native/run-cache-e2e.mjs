@@ -370,7 +370,19 @@ async function main() {
       const swift = /\bSwift version (\d+)\.(\d+)/.exec(
         sh('xcrun', ['swift', '--version'], { allowFail: true }).stdout,
       );
-      const swiftCache = swift && (Number(swift[1]) > 6 || (Number(swift[1]) === 6 && Number(swift[2]) >= 4));
+      // Both halves of the product's gate, or the expectation diverges from
+      // packages/stim-cli/src/engine/xcode.ts the moment they disagree: prefix
+      // mapping needs Swift 6.4 (swiftlang/swift#90700), and React Native below
+      // 0.87 builds its prebuilt core without explicit modules, which Xcode
+      // refuses to cache. This mirrors only the automatic default; an explicit
+      // optimizations.ios.swiftCompilationCache would override it, and the
+      // harness never sets one.
+      const swiftMappable = !!swift && (Number(swift[1]) > 6 || (Number(swift[1]) === 6 && Number(swift[2]) >= 4));
+      const rn = readReactNativeVersion(wt1);
+      const rnSupportsSwift = !!rn && (rn.major > 0 || rn.minor >= 87);
+      const swiftCache = swiftMappable && rnSupportsSwift;
+      const swiftGate = `toolchain Swift ${swift ? `${swift[1]}.${swift[2]}` : 'unknown'} (needs 6.4+) and fixture react-native ${rn ? `${rn.major}.${rn.minor}` : 'unknown'} (needs 0.87+)`;
+      c.ev(`Swift caching expected ${swiftCache ? 'ON' : 'OFF'}: ${swiftGate}`);
       const required = [
         'COMPILATION_CACHE_ENABLE_CACHING=YES',
         `COMPILATION_CACHE_CAS_PATH=${CAS_DIR}`,
@@ -391,7 +403,10 @@ async function main() {
         }
         return c.fail(`the xcodebuild argv is missing ${missing.length} setting(s): ${missing.join(' ')}`);
       }
-      c.ev(`all ${required.length} compilation-cache settings present verbatim on the argv (CAS at ${CAS_DIR})`);
+      if (!swiftCache && argv.includes('SWIFT_OTHER_PREFIX_MAPPINGS')) {
+        return c.fail('Swift caching is off, but the argv still carries SWIFT_OTHER_PREFIX_MAPPINGS');
+      }
+      c.ev(`all ${required.length} compilation-cache settings found on the argv (CAS at ${CAS_DIR})`);
 
       const g = growth('Xcode CAS', casBefore1, casAfter1);
       c.ev(describeGrowth(g));
@@ -400,7 +415,7 @@ async function main() {
         'the CAS directory gained no files across a full cold compile: caching is on but storing nothing',
       );
       return c.pass(
-        `${required.length}/${required.length} settings on the argv; CAS +${g.added} files (${formatBytes(g.bytesAdded)}) across the cold build`,
+        `${required.length}/${required.length} settings on the argv; Swift caching ${swiftCache ? 'ON' : 'OFF'} (${swiftGate}); CAS +${g.added} files (${formatBytes(g.bytesAdded)}) across the cold build`,
       );
     });
   } else {
@@ -837,6 +852,21 @@ function readExpoSdkMajor(cwd) {
       const pkg = JSON.parse(readFileSync(join(dir, 'node_modules', 'expo', 'package.json'), 'utf8'));
       const match = /^(\d+)/.exec(String(pkg.version || ''));
       return match ? Number(match[1]) : null;
+    } catch {
+      const parent = dirname(dir);
+      if (parent === dir) return null;
+      dir = parent;
+    }
+  }
+}
+
+function readReactNativeVersion(cwd) {
+  let dir = resolve(cwd);
+  while (true) {
+    try {
+      const pkg = JSON.parse(readFileSync(join(dir, 'node_modules', 'react-native', 'package.json'), 'utf8'));
+      const match = /^(\d+)\.(\d+)\./.exec(String(pkg.version || ''));
+      return match ? { major: Number(match[1]), minor: Number(match[2]) } : null;
     } catch {
       const parent = dirname(dir);
       if (parent === dir) return null;
