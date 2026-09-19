@@ -1,4 +1,4 @@
-import { deviceSlotKey, deviceSlotPlatforms } from '../device-slots.ts';
+import { deviceSlotKey, deviceSlotPlatforms } from '../devices/device-slots.ts';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -7,9 +7,9 @@ import { getExecutor } from '../exec.ts';
 import { androidClockOffset, parseLogcatLine } from '../collector/android.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import { androidHome } from '../devices/android.ts';
-import { launchErrorPreview } from '../launch-error-preview.ts';
+import { launchErrorPreview } from './launch-error-preview.ts';
 import { deviceConsoleLevel } from '../collector/ios-device.ts';
-import { writeDiagnosticOnce } from '../diagnostic-store.ts';
+import { writeDiagnosticOnce } from './diagnostic-store.ts';
 import { readLogRecords } from './logs-query.ts';
 import { readWorkspaceLaunches } from '../supervisor/state.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';

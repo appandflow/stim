@@ -15,7 +15,7 @@ import { clearDevice, getProject, removeProject, setDevice, upsertProject } from
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { prepareOwnedAvd } from '../engine/android-avd-setup.ts';
 import { deleteProjectDevices } from '../commands/gc/devices.ts';
-import { acquireAvdClaim } from '../avd-claim.ts';
+import { acquireAvdClaim } from '../devices/avd-claim.ts';
 import { processGroupAlive, readClaimSet, releaseClaim } from '@stim-cli/core/ownership-claim';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { makeExitingChild } from './_factories.ts';

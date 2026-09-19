@@ -1,4 +1,4 @@
-import { validateDeviceSlot } from '../device-slots.ts';
+import { validateDeviceSlot } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { clockTime } from '../command-output.ts';

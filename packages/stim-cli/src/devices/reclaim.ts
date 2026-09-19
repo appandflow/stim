@@ -1,10 +1,10 @@
 import { clearNamedPorts } from '../named-ports.ts';
-import { projectDeviceSlots } from '../device-slots.ts';
+import { projectDeviceSlots } from './device-slots.ts';
 import { type ProjectRecord, getProject, removeProject } from '../workspace/config.ts';
 import { existsSync, rmSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTree, pidExists } from '../metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd, type ParkedDevice, type ParkRequest } from './teardown.ts';
-import { acquireAvdClaim } from '../avd-claim.ts';
+import { acquireAvdClaim } from './avd-claim.ts';
 import { releaseClaim } from '../ownership-claim.ts';
 import { parkedMaxSetting } from './sim-pool.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';

@@ -1,4 +1,4 @@
-import { deviceSlotKey } from '../device-slots.ts';
+import { deviceSlotKey } from '../devices/device-slots.ts';
 import { clockTime, formatElapsed } from '../command-output.ts';
 import { VERIFY_TIMEOUT_MS } from './app-install.ts';
 import { APP_READINESS_TIMEOUT_MS } from './app-readiness.ts';

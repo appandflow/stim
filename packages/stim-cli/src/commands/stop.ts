@@ -1,6 +1,11 @@
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { workspaceDir } from '../workspace/paths.ts';
-import { deviceSlotPlatforms, parseDeviceSlotKey, projectDeviceSlots, validateDeviceSlot } from '../device-slots.ts';
+import {
+  deviceSlotPlatforms,
+  parseDeviceSlotKey,
+  projectDeviceSlots,
+  validateDeviceSlot,
+} from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, plural, releasedLeaseFact } from '../command-output.ts';

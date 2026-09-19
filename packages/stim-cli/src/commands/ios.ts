@@ -1,6 +1,6 @@
 import { acquireIosArtifact, type PreparedIosArtifact } from './ios/artifact.ts';
 import { isEasBuildFailure } from '../engine/eas-build.ts';
-import { deviceSlotKey, validateDeviceSlot } from '../device-slots.ts';
+import { deviceSlotKey, validateDeviceSlot } from '../devices/device-slots.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { join } from 'node:path';
 import {

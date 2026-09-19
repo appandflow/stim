@@ -1,10 +1,15 @@
-import { assignSlotDevice, deviceSlotPlatforms, projectDeviceSlots, removeSlotDevice } from '../device-slots.ts';
+import {
+  assignSlotDevice,
+  deviceSlotPlatforms,
+  projectDeviceSlots,
+  removeSlotDevice,
+} from '../devices/device-slots.ts';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs';
 import { isAbsolute, join } from 'path';
 import { homedir } from 'os';
 import { isOnMountedVolume } from '../fs-util.ts';
 import { withDirLock } from '../dir-lock.ts';
-import { acquireAvdClaim } from '../avd-claim.ts';
+import { acquireAvdClaim } from '../devices/avd-claim.ts';
 import { releaseClaim } from '../ownership-claim.ts';
 
 import type {

@@ -13,7 +13,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resetExecutor, setExecutor } from '../exec.ts';
-import { launchErrorPreview } from '../launch-error-preview.ts';
+import { launchErrorPreview } from '../diagnostics/launch-error-preview.ts';
 import { buildCriteria, recordMatches } from '../diagnostics/logs-query.ts';
 import { recordFromLine } from '../supervisor/server-expo.ts';
 import { clearWorkspaceStateKeys, writeWorkspaceState } from '../workspace/workspace-state.ts';

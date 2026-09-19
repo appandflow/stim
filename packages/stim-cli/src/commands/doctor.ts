@@ -11,7 +11,7 @@ import {
   missingAllowance,
   sandboxAllowance,
   sandboxFinding,
-} from '../sandbox.ts';
+} from '../diagnostics/sandbox.ts';
 import {
   detectFingerprintParity,
   detectLinkedLibraryGitMetadata,
@@ -20,7 +20,7 @@ import {
 } from '../diagnostics/doctor.ts';
 import type { DoctorPlatform, Finding } from '../diagnostics/doctor.ts';
 import { phaseLine } from '../command-output.ts';
-import { compareStimVersions, inspectStimVersions, type StimVersionReport } from '../stim-installations.ts';
+import { compareStimVersions, inspectStimVersions, type StimVersionReport } from '../diagnostics/stim-installations.ts';
 import { repairCxxLauncherState } from '../diagnostics/doctor-cxx.ts';
 
 interface DoctorOptions {

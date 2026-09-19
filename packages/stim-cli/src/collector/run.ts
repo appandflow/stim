@@ -1,4 +1,4 @@
-import { deviceSlotKey, validateDeviceSlot } from '../device-slots.ts';
+import { deviceSlotKey, validateDeviceSlot } from '../devices/device-slots.ts';
 import type { ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';

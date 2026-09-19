@@ -1,4 +1,4 @@
-import { validateDeviceSlot } from '../device-slots.ts';
+import { validateDeviceSlot } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import type { ChalkInstance } from 'chalk';
 import type { Command } from 'commander';
@@ -19,7 +19,7 @@ import {
   queryLogs,
 } from '../diagnostics/logs-query.ts';
 import { errorDiagnostics } from '../diagnostics/error-diagnostics.ts';
-import { launchErrorPreview } from '../launch-error-preview.ts';
+import { launchErrorPreview } from '../diagnostics/launch-error-preview.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { captureWorkspaceCrashes } from '../diagnostics/native-crash.ts';
 

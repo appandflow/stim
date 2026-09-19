@@ -1,4 +1,4 @@
-import { stripAnsi } from './process-output.ts';
+import { stripAnsi } from '../process-output.ts';
 
 type RecordLike = { msg?: unknown; stack?: unknown; componentStack?: unknown; [key: string]: unknown };
 type StackKind = 'Error' | 'Component' | 'Native' | 'Caused-by';

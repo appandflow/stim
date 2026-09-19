@@ -1,4 +1,4 @@
-import { closeOwnedDeviceSessions, parseAgentDeviceSessions } from '../agent-device-cleanup.ts';
+import { closeOwnedDeviceSessions, parseAgentDeviceSessions } from '../devices/agent-device-cleanup.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 
 const ios = { name: 'ios-task', platform: 'ios', device_udid: 'U1', id: 'U1', createdAt: 1789292795715 };

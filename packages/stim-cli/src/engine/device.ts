@@ -1,4 +1,4 @@
-import { deviceSlotPlatforms, projectDeviceSlots } from '../device-slots.ts';
+import { deviceSlotPlatforms, projectDeviceSlots } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import { phaseLine } from '../command-output.ts';
 import { ownedDeviceLabel } from '../workspace/project.ts';

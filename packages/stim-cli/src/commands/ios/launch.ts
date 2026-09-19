@@ -23,7 +23,7 @@ import {
   stepTimer,
 } from '../../command-output.ts';
 import { localNetworkPending, DEVICECTL_INSTALL_TIMEOUT_MS, LAUNCH_PROBE_TIMEOUT_MS } from '../../engine/ios-device.ts';
-import { launchErrorPreview } from '../../launch-error-preview.ts';
+import { launchErrorPreview } from '../../diagnostics/launch-error-preview.ts';
 import { MODE_BARE, MODE_EXPO } from '../../supervisor/state.ts';
 import type { VerifyLaunchResultLike, DeviceLike, IosBootLike, FailArgs } from './types.ts';
 import { PLATFORM, deviceLabel, deviceShortName, appNameFromPath } from './support.ts';

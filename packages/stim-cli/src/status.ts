@@ -1,4 +1,4 @@
-import { projectDeviceSlots } from './device-slots.ts';
+import { projectDeviceSlots } from './devices/device-slots.ts';
 import { clockTime, formatElapsed, plural } from './command-output.ts';
 import type { ProjectRecord } from './workspace/config.ts';
 import type { LeaseFileEntry } from './engine/device-lease.ts';

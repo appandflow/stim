@@ -46,7 +46,7 @@ import {
   compareStimVersions,
   inspectStimVersions,
   parseStimVersionOutput,
-} from '../stim-installations.ts';
+} from '../diagnostics/stim-installations.ts';
 
 const testStimVersions = analyzeStimVersions('1.2.3', '/tools/stim-cli', []);
 

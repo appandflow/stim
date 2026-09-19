@@ -1,5 +1,5 @@
-import { phaseLine } from './command-output.ts';
-import { getExecutor } from './exec.ts';
+import { phaseLine } from '../command-output.ts';
+import { getExecutor } from '../exec.ts';
 
 type Device = { platform: 'ios' | 'android'; id: string };
 interface Session {

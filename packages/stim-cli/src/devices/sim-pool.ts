@@ -1,4 +1,4 @@
-import { assignSlotDevice, deviceSlotPlatforms, removeSlotDevice } from '../device-slots.ts';
+import { assignSlotDevice, deviceSlotPlatforms, removeSlotDevice } from './device-slots.ts';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import {

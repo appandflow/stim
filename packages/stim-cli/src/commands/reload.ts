@@ -1,5 +1,5 @@
 import { nativeRunCommand } from '../engine/slot-launch.ts';
-import { deviceSlotPlatforms, parseDeviceSlotKey } from '../device-slots.ts';
+import { deviceSlotPlatforms, parseDeviceSlotKey } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine } from '../command-output.ts';

@@ -1,4 +1,4 @@
-import { deviceSlotKey } from '../../device-slots.ts';
+import { deviceSlotKey } from '../../devices/device-slots.ts';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { mkdirSync, openSync } from 'node:fs';

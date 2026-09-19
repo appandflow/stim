@@ -1,4 +1,4 @@
-import { launchErrorPreview } from './launch-error-preview.ts';
+import { launchErrorPreview } from './diagnostics/launch-error-preview.ts';
 
 const LABEL_WIDTH = 11;
 

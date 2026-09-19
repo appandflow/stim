@@ -1,4 +1,4 @@
-import { deviceSlotKey, parseDeviceSlotKey, validateDeviceSlot } from '../device-slots.ts';
+import { deviceSlotKey, parseDeviceSlotKey, validateDeviceSlot } from '../devices/device-slots.ts';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

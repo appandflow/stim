@@ -1,4 +1,4 @@
-import { deviceSlotKey } from '../device-slots.ts';
+import { deviceSlotKey } from '../devices/device-slots.ts';
 import {
   deviceLeasePath,
   fileLeaseIo,

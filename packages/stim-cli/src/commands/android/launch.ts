@@ -1,5 +1,5 @@
 import { launchSlotScope, nativeRunCommand } from '../../engine/slot-launch.ts';
-import { deviceSlotPlatforms } from '../../device-slots.ts';
+import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
 import { resetAdoptedAvd, type resolveOwnedAvdSerial, type waitForBoot } from '../../devices/android.ts';
 import type { ChildProcess } from 'node:child_process';
 import { rmSync } from 'node:fs';
@@ -26,7 +26,7 @@ import {
   deviceShellArg,
 } from '../../engine/app-install.ts';
 import { appReadinessMessage, formatDuration, launchErrorReport, phaseLine, stepTimer } from '../../command-output.ts';
-import { launchErrorPreview } from '../../launch-error-preview.ts';
+import { launchErrorPreview } from '../../diagnostics/launch-error-preview.ts';
 import { MODE_BARE, MODE_EXPO, writeWorkspaceLaunch } from '../../supervisor/state.ts';
 import { writeWorkspaceState } from '../../workspace/workspace-state.ts';
 import type {

@@ -1,5 +1,5 @@
 import * as hostMemory from '../host-memory.ts';
-import { deviceSlotPlatforms } from '../device-slots.ts';
+import { deviceSlotPlatforms } from '../devices/device-slots.ts';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

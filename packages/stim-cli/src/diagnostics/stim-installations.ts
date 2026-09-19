@@ -1,6 +1,6 @@
 import { accessSync, constants, realpathSync, statSync } from 'node:fs';
 import { delimiter, join, resolve } from 'node:path';
-import { getExecutor } from './exec.ts';
+import { getExecutor } from '../exec.ts';
 
 const VERSION_OUTPUT_LIMIT = 4096;
 

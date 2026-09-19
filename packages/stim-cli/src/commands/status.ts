@@ -1,4 +1,4 @@
-import { projectDeviceSlots } from '../device-slots.ts';
+import { projectDeviceSlots } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import { existsSync } from 'fs';
 import { totalmem } from 'os';

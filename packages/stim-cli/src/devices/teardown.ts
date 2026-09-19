@@ -1,5 +1,5 @@
-import { closeOwnedDeviceSessions } from '../agent-device-cleanup.ts';
-import { deviceSlotPlatforms, projectDeviceSlots } from '../device-slots.ts';
+import { closeOwnedDeviceSessions } from './agent-device-cleanup.ts';
+import { deviceSlotPlatforms, projectDeviceSlots } from './device-slots.ts';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { lstatSync, renameSync, rmSync } from 'node:fs';
@@ -33,7 +33,7 @@ import {
   ownedAvdSystemImage,
 } from './android.ts';
 import { parkSim, readParked, removeParkedAfter, type ParkedSim } from './sim-pool.ts';
-import { acquireAvdClaim } from '../avd-claim.ts';
+import { acquireAvdClaim } from './avd-claim.ts';
 import { clearClaimChild, markClaimChildPending, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
 
 export interface ParkedDevice {

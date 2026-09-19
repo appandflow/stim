@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { withDirLock } from './dir-lock.ts';
+import { withDirLock } from '../dir-lock.ts';
 
 /** Publishes an immutable diagnostic snapshot atomically; existing evidence wins. */
 export function writeDiagnosticOnce(path: string, content: string): void {

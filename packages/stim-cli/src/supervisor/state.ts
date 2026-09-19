@@ -4,7 +4,7 @@ import {
   updateWorkspaceState,
   clearWorkspaceStateKey,
 } from '../workspace/workspace-state.ts';
-import { deviceSlotKey, parseDeviceSlotKey } from '../device-slots.ts';
+import { deviceSlotKey, parseDeviceSlotKey } from '../devices/device-slots.ts';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { supervisorPidFile, workspaceStateFile } from '../workspace/paths.ts';

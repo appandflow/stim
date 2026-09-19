@@ -1,4 +1,4 @@
-import { deviceSlotPlatforms, projectDeviceSlots } from '../../device-slots.ts';
+import { deviceSlotPlatforms, projectDeviceSlots } from '../../devices/device-slots.ts';
 import { existsSync } from 'fs';
 import { isAbsolute } from 'path';
 import chalk from 'chalk';
