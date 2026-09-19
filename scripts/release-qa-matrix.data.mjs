@@ -260,7 +260,7 @@ export const pathRules = [
   { path: 'packages/stim-cli/src/engine/build-lock.ts', rows: ['loop', 'caches'] },
   { path: 'packages/stim-cli/src/engine/build-slots.ts', rows: ['loop', 'caches'] },
   { path: 'packages/stim-cli/src/engine/bundler.ts', rows: ['release-build', 'caches'] },
-  { path: 'packages/stim-cli/src/engine/ccache.ts', rows: ['caches'], platforms: ios },
+  { path: 'packages/stim-cli/src/engine/ccache.ts', rows: ['caches'], platforms: android },
   { path: 'packages/stim-cli/src/engine/deps.ts', rows: ['real-repository', 'caches'] },
   { path: 'packages/stim-cli/src/engine/device.ts', rows: ['loop', 'launch-evidence'] },
   { path: 'packages/stim-cli/src/engine/device-lease.ts', rows: ['loop'] },
@@ -296,7 +296,7 @@ export const pathRules = [
   { path: 'packages/stim-cli/src/engine/tunnel.ts', rows: ['remote-provider'] },
   { path: 'packages/stim-cli/src/engine/warm-claim.ts', rows: ['loop', 'caches'] },
   { path: 'packages/stim-cli/src/engine/workspace-process-lock.ts', rows: ['loop'] },
-  { path: 'packages/stim-cli/src/engine/xcode.ts', rows: ['caches', 'loop'], platforms: ios },
+  { path: 'packages/stim-cli/src/engine/xcode.ts', rows: ['caches', 'loop'] },
 
   { path: 'pnpm-lock.yaml', rows: ['loop', 'caches'] },
 
