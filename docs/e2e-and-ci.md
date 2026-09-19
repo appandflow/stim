@@ -47,7 +47,7 @@ The one non-real piece is the leaf hash function: the real CLI has a direct `@ex
 
 ## The native e2e
 
-There are three native suites and one shared harness
+There are four native suites and one shared harness
 (`test/e2e/native/harness.mjs`, which owns the fixture creation, the process
 wrappers, the cleanup checks and the diagnostics dump so all drivers build and
 tear down the same app the same way):
@@ -97,11 +97,14 @@ node test/e2e/native/run-native-e2e.mjs --framework bare --platform android --sm
 ```
 
 `--smoke` stops after the first worktree has been built, launched, verified and
-stopped: no second-worktree cache proof, no named slots. With the cross-run
-build cache restored, a run that leaves the native fingerprint alone installs
-from cache and finishes in about 8 minutes on iOS, 5 on Linux Android and 14
-on Windows (the emulator boot); one that changes the fingerprint pays the cold
-build.
+stopped: no second-worktree cache proof, no named slots. CI restores the
+cross-run build cache before it, so a run whose native fingerprint matches an
+earlier loop or smoke installs from cache. Observed on the `e2e-smoke` run of
+#905: iOS 17 minutes and Linux Android 3 minutes with the cache warm (the iOS
+time is fixture creation, `pod install` and simulator boot; the build phase
+was 86 and 52 seconds), Windows Android 17.5 minutes cold, of which the Gradle
+build was 13.5. A run that changes the fingerprint pays the cold build on
+every platform.
 
 The fixture-creation commands are version-sensitive; each is overridable with an
 env var (`STIM_E2E_BARE_INIT`, `STIM_E2E_EXPO_INIT`) so a runner can adjust
