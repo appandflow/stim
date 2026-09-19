@@ -7,7 +7,14 @@ import { withDirLock } from './dir-lock.ts';
 import { acquireAvdClaim } from './avd-claim.ts';
 import { releaseClaim } from './ownership-claim.ts';
 
-import type { Config, ConcurrencyLimits, DeviceRecord, ProjectRecord, RepoRecord, SupervisorRecord } from './types.ts';
+import type {
+  Config,
+  ConcurrencyLimits,
+  DeviceRecord,
+  ProjectRecord,
+  RepoRecord,
+  SupervisorRecord,
+} from './config-types.ts';
 import { sameProcessRecord, type ProcessRecord } from './process-identity.ts';
 export type { Config, ConcurrencyLimits, DeviceRecord, ProjectRecord, RepoRecord, SupervisorRecord };
 

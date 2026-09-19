@@ -16,7 +16,7 @@ import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../sim-pool.ts';
 import { listAvds, listOrphanedAvdDirectories, ownedAvdDirectory } from '../sim/android.ts';
 import { declaredCachePaths, discoverCaches, projectSettingShapeErrors, sizeCaches } from '../caches.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
-import type { GcSkip, OrphanedDevice } from '../types.ts';
+import type { GcSkip, OrphanedDevice } from '../reclaim-types.ts';
 import { emptyCaches, planCacheEmptying, selectCaches, trimCaches } from './gc/caches.ts';
 import {
   collectDeviceLeases,

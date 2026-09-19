@@ -1,4 +1,4 @@
-import type { RemoteDeviceBackend } from '../../types.ts';
+import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
 import type { LaunchErrorRecord } from '../../command-output.ts';
 import type { LeaseFacts } from '../../engine/device-lease-run.ts';
 

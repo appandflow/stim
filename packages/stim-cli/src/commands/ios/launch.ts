@@ -28,7 +28,7 @@ import { MODE_BARE, MODE_EXPO } from '../../supervisor/state.ts';
 import type { VerifyLaunchResultLike, DeviceLike, IosBootLike, FailArgs } from './types.ts';
 import { PLATFORM, deviceLabel, deviceShortName, appNameFromPath } from './support.ts';
 import { type RunLease, DEBUG_VERIFY_STEP_MS, lostLine, lostRefusal } from '../../engine/device-lease-run.ts';
-import type { IosFacts } from '../../types.ts';
+import type { IosFacts } from '../../engine/build-facts.ts';
 import type { NdjsonWriter } from '../../ndjson.ts';
 import { type ReportIosResultArgs, reportIosResult } from './result.ts';
 import { launchOutcomeRecord } from '../native-runtime.ts';

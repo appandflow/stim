@@ -46,7 +46,7 @@ import {
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
 } from './settings.ts';
-import type { RemoteDeviceBackend } from './types.ts';
+import type { RemoteDeviceBackend } from './engine/device-remote.ts';
 import { readAndroidCasToolchain, resolveAndroidCompilerCache } from './engine/android-cas.ts';
 import { readCxxLauncherStates, type CxxLauncherState } from './doctor-cxx.ts';
 import { checkMachineSettings, readMachineSettings } from './doctor-config.ts';

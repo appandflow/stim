@@ -12,7 +12,8 @@ import { productFlavorRefusal, readProductFlavors } from '../../engine/gradle.ts
 import { detectIsExpo } from '../../project.ts';
 import { listInstalledSystemImages } from '../../sim/android.ts';
 import { parkedMaxSetting } from '../../sim-pool.ts';
-import type { RemoteDeviceBackend, SettingsObject } from '../../types.ts';
+import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
+import type { SettingsObject } from '../../settings-types.ts';
 import {
   androidAvdConfigSettingError,
   androidDataPartitionSizeGbSettingError,

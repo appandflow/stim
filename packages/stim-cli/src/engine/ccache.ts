@@ -5,7 +5,7 @@ import { phaseLine } from '../command-output.ts';
 import { register } from '../cache-manifest.ts';
 import { getExecutor } from '../exec.ts';
 import { sharedCcache, workspaceLogsDir } from '../paths.ts';
-import type { CcacheActivity } from '../types.ts';
+import type { CcacheActivity } from './build-facts.ts';
 
 export const CCACHE_MAX_SIZE = '5G';
 

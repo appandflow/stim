@@ -26,7 +26,7 @@ import {
   removeEasSessionClaim,
   type EasSessionClaim,
 } from '../../engine/eas-session-ledger.ts';
-import type { Config } from '../../types.ts';
+import type { Config } from '../../config-types.ts';
 import { canonicalPath } from './paths.ts';
 
 export interface EasSessionSweep {

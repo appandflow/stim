@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { ensureConfig, getConfigDir, getConfigPath, loadConfig, saveConfig, withConfigLock } from './config.ts';
 import { clearClaimChild, markClaimChildPending, releaseClaim, tryAcquireClaim } from './ownership-claim.ts';
-import type { Config, DeviceRecord } from './types.ts';
+import type { Config, DeviceRecord } from './config-types.ts';
 
 export type PoolPlatform = 'ios' | 'android';
 

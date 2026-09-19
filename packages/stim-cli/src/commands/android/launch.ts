@@ -49,7 +49,7 @@ import {
   noDeviceDiagnostic,
   displayPath,
 } from './support.ts';
-import type { CcacheActivity, WaitedForBuild } from '../../types.ts';
+import type { CcacheActivity, WaitedForBuild } from '../../engine/build-facts.ts';
 import { verifyCollectorOwnership } from '../../collector/ownership.ts';
 import { pidExists } from '../../metro.ts';
 import type { OwnedDeviceRecord } from '../../engine/device.ts';

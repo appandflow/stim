@@ -10,7 +10,8 @@ import { listAllIosSims, listIosDeviceTypes, parseRuntimeVersion, type IosSimRec
 import { listAvds, ownedAvdDirectory, type OrphanedAvdDirectory } from '../../sim/android.ts';
 import { dropParked, readParked, type ParkedSim } from '../../sim-pool.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd, teardownParkedIosSim, teardownParkedAvd } from '../../teardown.ts';
-import type { Config, OrphanedDevice } from '../../types.ts';
+import type { Config } from '../../config-types.ts';
+import type { OrphanedDevice } from '../../reclaim-types.ts';
 
 export interface StaleProjectDevice {
   kind: 'ios' | 'android';

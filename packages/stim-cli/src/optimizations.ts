@@ -1,6 +1,6 @@
 import { isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
-import type { SettingsObject } from './types.ts';
+import type { SettingsObject } from './settings-types.ts';
 
 export const OPTIMIZATION_SHAPES = {
   optimizations: 'object',

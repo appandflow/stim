@@ -59,7 +59,7 @@ import { workspaceDir } from '../../paths.ts';
 import { detectAndroidPackage } from '../../project.ts';
 import type { SettingsObject } from '../../settings.ts';
 import type { androidDeviceAbi } from '../../sim/android.ts';
-import type { CcacheActivity, WaitedForBuild } from '../../types.ts';
+import type { CcacheActivity, WaitedForBuild } from '../../engine/build-facts.ts';
 import type { readWorkspaceState } from '../../workspace-state.ts';
 import type { AndroidRunPlan } from './plan.ts';
 import { androidBuildOptions, displayPath, NO_FINGERPRINT, PLATFORM } from './support.ts';

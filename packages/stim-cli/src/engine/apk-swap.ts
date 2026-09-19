@@ -5,7 +5,7 @@ import { basename, dirname, join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, waitForChild } from '../process-output.ts';
-import type { SettingsObject } from '../types.ts';
+import type { SettingsObject } from '../settings-types.ts';
 import { findBuildTool, type BuildToolsEntry } from '../sim/android.ts';
 import { cleanLine } from '../supervisor/server-expo.ts';
 import {

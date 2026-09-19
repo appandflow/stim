@@ -13,7 +13,8 @@ import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
 import { formatDuration, phaseLine, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
 import { waitFlagConflict, leaseExpiryText, parseDeviceWait, type RunLease } from '../engine/device-lease-run.ts';
-import type { RemoteDeviceBackend, CompilationCacheActivity } from '../types.ts';
+import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
+import type { CompilationCacheActivity } from '../engine/build-facts.ts';
 import { exitAfterFlush } from '../engine/remote-cache.ts';
 import {
   REMOTE_DEVICE_BACKENDS,

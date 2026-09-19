@@ -12,7 +12,7 @@ import {
   unknownSettingKeys,
   type SettingsLayer,
 } from './settings.ts';
-import type { SettingsObject } from './types.ts';
+import type { SettingsObject } from './settings-types.ts';
 
 export interface MachineSettings {
   settings: SettingsObject;

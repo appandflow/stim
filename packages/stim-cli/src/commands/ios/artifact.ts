@@ -42,7 +42,7 @@ import type { NdjsonWriter } from '../../ndjson.ts';
 import { artifactCachePolicy, type Optimizations } from '../../optimizations.ts';
 import { claimFailure } from '../../ownership-claim.ts';
 import { workspaceDir } from '../../paths.ts';
-import type { CacheHitLevel, CompilationCacheActivity } from '../../types.ts';
+import type { CacheHitLevel, CompilationCacheActivity } from '../../engine/build-facts.ts';
 import type { IosDeps } from './dependencies.ts';
 import { finishIosUpload } from './result.ts';
 import { PLATFORM, isReleaseConfiguration, podAction, printDiagnostics, xcodeFailureReport } from './support.ts';

@@ -1,6 +1,6 @@
 import type { LaunchErrorRecord } from '../../command-output.ts';
 import type { LeaseFacts } from '../../engine/device-lease-run.ts';
-import type { AndroidFacts } from '../../types.ts';
+import type { AndroidFacts } from '../../engine/build-facts.ts';
 import type { createNdjsonWriter } from '../../ndjson.ts';
 
 export interface SupervisorLike {

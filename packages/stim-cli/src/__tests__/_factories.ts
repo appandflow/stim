@@ -6,7 +6,7 @@ import { decode } from 'unique-pid';
 import { captureProcessToken } from '../process-identity.ts';
 import { exclusiveClaimDir, sharedClaimDir, type ClaimOwner } from '../ownership-claim.ts';
 
-import type { StimConfig } from '../types.ts';
+import type { StimConfig } from '../config-types.ts';
 import type { CacheDescriptor } from '../caches.ts';
 import type { EnvironmentState } from '../status.ts';
 import type { IosSimRecord } from '../sim/ios.ts';

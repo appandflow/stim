@@ -7,7 +7,8 @@ import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { formatDuration, phaseLine, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
-import type { CcacheActivity, RemoteDeviceBackend } from '../types.ts';
+import type { CcacheActivity } from '../engine/build-facts.ts';
+import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
 import {
   appProjectProblem,
   findProjectRoot,

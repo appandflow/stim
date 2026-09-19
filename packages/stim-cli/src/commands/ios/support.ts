@@ -7,7 +7,7 @@ import type { BuildIosResult } from '../../engine/xcode.ts';
 import type { SettingsObject } from '../../settings.ts';
 import { unknownIosDeviceTypeRefusal, unknownIosRuntimeRefusal } from '../../engine/device.ts';
 import { listIosRuntimes } from '../../sim/ios.ts';
-import type { RemoteDeviceBackend } from '../../types.ts';
+import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
 import { describeDiagnostic } from '../../engine/errors-xcode.ts';
 
 export const PLATFORM = 'ios';

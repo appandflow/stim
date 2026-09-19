@@ -1,4 +1,4 @@
-import type { DeviceRecord, PlatformRecords, ProjectRecord } from './types.ts';
+import type { DeviceRecord, PlatformRecords, ProjectRecord } from './config-types.ts';
 
 const DEFAULT_DEVICE_SLOT = 'default';
 
