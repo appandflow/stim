@@ -54,8 +54,8 @@ tear down the same app the same way):
 
 | suite      | driver                       | proves                                                  | when                        |
 | ---------- | ---------------------------- | ------------------------------------------------------- | --------------------------- |
+| **smoke**  | `run-native-e2e.mjs --smoke` | one worktree builds, launches and stops                 | every PR, all platforms     |
 | **loop**   | `run-native-e2e.mjs`         | the dev loop works end to end                           | nightly, PR label, dispatch |
-| **smoke**  | `run-native-e2e.mjs --smoke` | one worktree builds, launches and stops                 | every PR (Windows)          |
 | **caches** | `run-cache-e2e.mjs`          | each individual cache is engaged, storing and reused    | on demand                   |
 | **pool**   | `run-pool-e2e.mjs`           | iOS simulators are parked, evicted, adopted, and reaped | on demand                   |
 
@@ -95,7 +95,10 @@ node test/e2e/native/run-native-e2e.mjs --framework bare --platform android --sm
 
 `--smoke` stops after the first worktree has been built, launched, verified and
 stopped: no second-worktree cache proof, no named slots. It is the shape a
-per-pull-request job can afford.
+per-pull-request job can afford: with the cross-run build cache restored, a
+pull request that leaves the native fingerprint alone installs from cache and
+finishes in about 8 minutes on iOS, 5 on Linux Android and 14 on Windows
+(the emulator boot); one that changes the fingerprint pays the cold build.
 
 The fixture-creation commands are version-sensitive; each is overridable with an
 env var (`STIM_E2E_BARE_INIT`, `STIM_E2E_EXPO_INIT`) so a runner can adjust
@@ -262,14 +265,15 @@ PATH).
 - **`windows-debug.yml`** -- dispatch only: prepares a `windows-latest` runner
   like the Android lane and holds it open behind Tailscale SSH or tmate.
 
-- **`e2e-native.yml`** -- the native matrix. **Gated**: it runs nightly
-  (schedule), on demand (`workflow_dispatch`), and on a pull request **only when
-  the PR carries the `e2e-native` label** -- a flaky 15-minute `xcodebuild` must
-  not block every PR. A `suite` dispatch input picks which driver runs on the
-  matrix (`loop` | `caches` | `all`, default `loop`); `inputs` is empty on
-  schedule and on `pull_request`, so both fall through to `loop` and the
-  nightly's behaviour is preserved by construction rather than by a second code
-  path. The `caches` selection raises the job timeout to 120 minutes (per
+- **`e2e-native.yml`** -- the native matrix. Every pull request runs the
+  **smoke** suite, Expo only, one iOS job and one Android job, blocking;
+  pull requests that touch only `docs/`, `website/` or Markdown skip the
+  workflow. The full **loop** runs nightly (schedule), on demand
+  (`workflow_dispatch`), and on a pull request that carries the `e2e-native`
+  label. A `suite` dispatch input picks which driver runs on the matrix
+  (`smoke` | `loop` | `caches` | `pool` | `all`, default `loop`); `inputs` is
+  empty on schedule, which falls through to `loop`, and the pull-request
+  branch of the same expression picks `smoke` or `loop` by the label. The `caches` selection raises the job timeout to 120 minutes (per
   variant it pays one more cold compile than the loop suite -- the single-flight
   race -- plus two cache-hit builds, and on Android one forced `gradlew` run)
   and uploads its machine-readable summary
