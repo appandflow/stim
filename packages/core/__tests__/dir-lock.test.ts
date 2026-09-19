@@ -17,6 +17,8 @@ import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-cl
 
 const faults = vi.hoisted(() => ({
   created: null as null | ((path: string) => void),
+  creating: null as null | ((path: string) => void),
+  listing: null as null | ((path: string) => void),
   renaming: null as null | ((from: string, to: string) => void),
   removing: null as null | ((path: string) => void),
   removed: null as null | ((path: string) => void),
@@ -27,9 +29,14 @@ vi.mock('node:fs', async (importOriginal) => {
   return {
     ...fs,
     mkdirSync: (...args: Parameters<typeof fs.mkdirSync>) => {
+      faults.creating?.(String(args[0]));
       const result = fs.mkdirSync(...args);
       faults.created?.(String(args[0]));
       return result;
+    },
+    readdirSync: (...args: Parameters<typeof fs.readdirSync>) => {
+      faults.listing?.(String(args[0]));
+      return fs.readdirSync(...args);
     },
     renameSync: (...args: Parameters<typeof fs.renameSync>) => {
       faults.renaming?.(String(args[0]), String(args[1]));
@@ -71,6 +78,8 @@ beforeEach(() => {
 
 afterEach(() => {
   faults.created = null;
+  faults.creating = null;
+  faults.listing = null;
   faults.renaming = null;
   faults.removing = null;
   faults.removed = null;
@@ -112,6 +121,30 @@ test.each(['empty', 'legacy'])('an unidentified %s directory needs explicit remo
 
   rmSync(lock, { recursive: true });
   expect(withDirLock(lock, () => 'recovered')).toBe('recovered');
+});
+
+describe.skipIf(process.platform !== 'win32')('a legacy lock directory removed by hand while a waiter polls', () => {
+  const accessDenied = (syscall: string, path: string): never => {
+    throw Object.assign(new Error(`EPERM: operation not permitted, ${syscall} '${path}'`), { code: 'EPERM', syscall });
+  };
+
+  test.each(['mkdir', 'scandir'])(
+    'answers %s with access denied once and the waiter takes the lock next',
+    (syscall) => {
+      mkdirSync(lock);
+      const deny = (path: string) => {
+        if (path !== lock) return;
+        faults.creating = null;
+        faults.listing = null;
+        rmSync(lock, { recursive: true });
+        accessDenied(syscall, path);
+      };
+      if (syscall === 'mkdir') faults.creating = deny;
+      else faults.listing = deny;
+      expect(withDirLock(lock, () => 'taken', { pollMs: 1 })).toBe('taken');
+      expect(existsSync(lock)).toBe(false);
+    },
+  );
 });
 
 function contender(): unknown {
