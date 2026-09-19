@@ -668,7 +668,7 @@ test('ccache on PATH is silent, and ccache absent costs time with a full remedy'
   assert(f);
   expect(f.level).toBe('cost');
   expect(f.title).toMatch(/ccache is not on PATH, so Android C\+\+ recompiles in every worktree/);
-  expect(f.detail).toMatch(/command -v ccache/);
+  expect(f.detail).toMatch(/PATH lookup for `ccache`/);
   expect(f.detail).toMatch(/CMAKE_CXX_COMPILER_LAUNCHER/);
   expect(f.detail).toMatch(/49\.6s.*34\.2s/);
   expect(f.fix).toMatch(/brew install ccache/);

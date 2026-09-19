@@ -715,7 +715,8 @@ test('iOS session close failure warns but shutdown still follows', () => {
   const write = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
   setExecutor({
     ...exec,
-    runQuiet: (command) => (command === 'command -v agent-device' ? '/bin/agent-device' : exec.runQuiet(command)),
+    findExecutable: () => '/bin/agent-device',
+    runQuiet: (command) => exec.runQuiet(command),
     runFile: (file, args) => {
       if (file !== 'agent-device') return exec.runFile(file, args);
       exec.calls.push([file, ...args].join(' '));
@@ -743,7 +744,8 @@ test('iOS ownership loss during session inventory prevents close and shutdown', 
   let listed = false;
   setExecutor({
     ...exec,
-    runQuiet: (command) => (command === 'command -v agent-device' ? '/bin/agent-device' : exec.runQuiet(command)),
+    findExecutable: () => '/bin/agent-device',
+    runQuiet: (command) => exec.runQuiet(command),
     runFile: (file, args) => {
       if (file !== 'agent-device') return (listed ? renamed : exec).runFile(file, args);
       exec.calls.push([file, ...args].join(' '));

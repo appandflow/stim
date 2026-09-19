@@ -85,6 +85,7 @@ function mockExec({
     spawn() {
       throw new Error('device-remote does not spawn');
     },
+    findExecutable: () => null,
   };
   setExecutor(exec);
   return exec;

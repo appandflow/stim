@@ -66,7 +66,7 @@ describe('ccacheEnvironment', () => {
 });
 
 describe('parseCcacheBinary', () => {
-  test('takes the first line of `command -v ccache` and nothing else', () => {
+  test('takes the first line of the ccache PATH lookup and nothing else', () => {
     expect(parseCcacheBinary('/opt/homebrew/bin/ccache\n')).toBe('/opt/homebrew/bin/ccache');
     expect(parseCcacheBinary('/opt/homebrew/bin/ccache\n/usr/bin/ccache\n')).toBe('/opt/homebrew/bin/ccache');
   });

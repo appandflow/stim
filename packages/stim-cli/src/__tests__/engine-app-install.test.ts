@@ -102,6 +102,7 @@ function recordingExec({
     spawn() {
       throw new Error('app-install does not spawn');
     },
+    findExecutable: () => null,
   };
 }
 
@@ -1710,6 +1711,7 @@ describe('installAndroidApp: the uninstall-and-retry, exactly once', () => {
       spawn: () => {
         throw new Error('not used');
       },
+      findExecutable: () => null,
     };
     return { exec, calls };
   }

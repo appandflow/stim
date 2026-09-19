@@ -173,7 +173,7 @@ function simslimLaunchError(error: unknown): Error {
 
 export function simslimIsOnPath(): boolean {
   try {
-    return Boolean(getExecutor().runQuiet('command -v simslim', { timeoutMs: 5000 }));
+    return Boolean(getExecutor().findExecutable('simslim'));
   } catch {
     return false;
   }

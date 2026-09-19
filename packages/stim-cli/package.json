@@ -51,10 +51,14 @@
     "@stim-cli/metro": "workspace:^",
     "chalk": "^6.0.0",
     "commander": "^15.0.0",
+    "cross-spawn": "^7.0.6",
+    "which": "^7.0.0",
     "ws": "^8.21.3"
   },
   "devDependencies": {
     "@stim-cli/expo-build-cache": "workspace:*",
+    "@types/cross-spawn": "^6.0.6",
+    "@types/which": "^3.0.4",
     "@types/ws": "^8.18.1",
     "unique-pid": "0.1.1"
   },

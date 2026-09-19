@@ -374,13 +374,13 @@ export function easAuthNote(status?: EasAuthNoteStatus | null): string | null {
 
 export function resolveEasCliBin(
   projectRoot: string,
-  { lookupPath = null, timeoutMs = 5000 }: { lookupPath?: (() => string | null) | null; timeoutMs?: number } = {},
+  { lookupPath = null }: { lookupPath?: (() => string | null) | null } = {},
 ): { file: string; source: 'project' | 'path' } | null {
   const fromPackage = expoBinFromPackage(resolvePackageJson(projectRoot, EAS_CLI_PACKAGE), EAS_CLI_BIN);
   if (fromPackage) return { file: fromPackage, source: 'project' };
   const shim = findBinUpward(projectRoot, EAS_CLI_BIN);
   if (shim) return { file: shim, source: 'project' };
-  const onPath = lookupPath ? lookupPath() : getExecutor().runQuiet(`command -v ${EAS_CLI_BIN}`, { timeoutMs });
+  const onPath = lookupPath ? lookupPath() : getExecutor().findExecutable(EAS_CLI_BIN);
   const file = (String(onPath || '').split('\n')[0] ?? '').trim();
   return file ? { file, source: 'path' } : null;
 }

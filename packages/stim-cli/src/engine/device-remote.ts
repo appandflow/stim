@@ -472,14 +472,14 @@ export async function resolveRemoteContext({
 
 export function binOnPath(bin: string): boolean {
   try {
-    return Boolean(getExecutor().runQuiet(`command -v ${bin}`, { timeoutMs: 5000 }));
+    return Boolean(getExecutor().findExecutable(bin));
   } catch {
     return false;
   }
 }
 
 function defaultLookupAgentDevice(): string | null {
-  const found = getExecutor().runQuiet('command -v agent-device', { timeoutMs: 5000 });
+  const found = getExecutor().findExecutable('agent-device');
   const file = (String(found ?? '').split('\n')[0] ?? '').trim();
   return file || null;
 }

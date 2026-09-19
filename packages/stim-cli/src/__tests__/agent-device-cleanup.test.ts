@@ -38,6 +38,7 @@ function executor(lists: string[], close?: (args: string[]) => string) {
   const calls: string[][] = [];
   setExecutor({
     runQuiet: () => '/bin/agent-device',
+    findExecutable: () => '/bin/agent-device',
     runFile: (_file, args, options) => {
       calls.push(args);
       expect(options.timeoutMs).toBeGreaterThan(0);
@@ -106,7 +107,7 @@ test('contains a failed close and still closes the next matching session', () =>
 
 test('skips absent CLI and contains invalid inventory and unsuccessful close responses', () => {
   const runFile = vi.fn<() => string>();
-  setExecutor({ runQuiet: () => null, runFile });
+  setExecutor({ runQuiet: () => null, findExecutable: () => null, runFile });
   closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true);
   expect(runFile).not.toHaveBeenCalled();
   expect(stderr).not.toHaveBeenCalled();

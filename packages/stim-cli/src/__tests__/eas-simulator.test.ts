@@ -47,6 +47,7 @@ function recordingExec(outputs: Record<string, string> = {}): Executor & { calls
     spawn() {
       throw new Error('eas-simulator does not spawn');
     },
+    findExecutable: () => null,
   };
 }
 

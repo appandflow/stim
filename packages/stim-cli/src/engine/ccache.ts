@@ -122,7 +122,7 @@ export function ccacheActivityLine(activity: CcacheActivity): string {
 
 function lookupCcache(): string | null {
   try {
-    return parseCcacheBinary(getExecutor().runQuiet('command -v ccache', { timeoutMs: 5000 }));
+    return parseCcacheBinary(getExecutor().findExecutable('ccache'));
   } catch {
     return null;
   }
