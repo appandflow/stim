@@ -2,6 +2,8 @@ import { setExecutor, resetExecutor } from '../exec.ts';
 import { isMetroRunning } from '../ports.ts';
 import {
   parseLsofPids,
+  parseNetstatPids,
+  listeningPids,
   parseLsofCwd,
   isInsideProject,
   processCwd,
@@ -100,6 +102,77 @@ test('resolveProjectMetro identifies a workspace Metro without claiming ownershi
   expect(r.metro!.leader).toBe(59914);
   expect(r.metro!.processToken).toBeUndefined();
   resetExecutor();
+});
+
+test('parseNetstatPids takes the listening row for the port and ignores the rest', () => {
+  const out = [
+    'Active Connections',
+    '',
+    '  Proto  Local Address          Foreign Address        State           PID',
+    '  TCP    0.0.0.0:8082           0.0.0.0:0              LISTENING       2212',
+    '  TCP    [::]:8082              [::]:0                 LISTENING       2212',
+    '  TCP    127.0.0.1:8082         127.0.0.1:51001        ESTABLISHED     3300',
+    '  TCP    0.0.0.0:8083           0.0.0.0:0              LISTENING       4400',
+    '  UDP    0.0.0.0:8082           *:*                                    5500',
+  ].join('\r\n');
+  expect(parseNetstatPids(out, 8082)).toEqual([2212]);
+  expect(parseNetstatPids(out, 8083)).toEqual([4400]);
+  expect(parseNetstatPids(out, 9999)).toEqual([]);
+  expect(parseNetstatPids(null, 8082)).toEqual([]);
+});
+
+test('listeningPids asks netstat on Windows, where lsof does not exist', () => {
+  const asked: string[] = [];
+  setExecutor({
+    run: () => '',
+    runQuiet: (cmd: string) => {
+      asked.push(cmd);
+      if (cmd !== 'netstat -ano') return null;
+      return '  TCP    0.0.0.0:8082           0.0.0.0:0              LISTENING       2212';
+    },
+    spawn: () => {},
+  });
+  expect(listeningPids(8082, 'win32')).toEqual([2212]);
+  expect(asked).toEqual(['netstat -ano']);
+});
+
+test('resolveProjectMetro accepts an unreadable-cwd listener that is this workspace recorded supervisor', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-metro-own-')));
+  const token = captureProcessToken(process.pid);
+  expect(token).toBeTruthy();
+  writeWorkspaceState(root, { supervisor: { pid: process.pid, port: 8082, processToken: token } });
+  setExecutor({
+    run: () => '',
+    runQuiet: (cmd: string) => (cmd.includes('-sTCP:LISTEN') ? String(process.pid) : null),
+    spawn: () => {},
+  });
+  try {
+    const r = await resolveProjectMetro(8082, root, { probe: async () => true, cwdOf: () => null });
+    expect(r.metro?.pid).toBe(process.pid);
+    expect(r.metro?.leader).toBe(process.pid);
+    expect(r.metro?.processToken).toBe(token);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('resolveProjectMetro still refuses an unreadable-cwd listener this workspace did not record', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-metro-foreign-')));
+  writeWorkspaceState(root, {
+    supervisor: { pid: process.pid, port: 8082, processToken: captureProcessToken(process.pid) },
+  });
+  setExecutor({
+    run: () => '',
+    runQuiet: (cmd: string) => (cmd.includes('-sTCP:LISTEN') ? '4242' : null),
+    spawn: () => {},
+  });
+  try {
+    const r = await resolveProjectMetro(8082, root, { probe: async () => true, cwdOf: () => null });
+    expect(r.metro).toBe(undefined);
+    expect(r.notOurs).toMatch(/working directory could not be read/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test.each([undefined, 'malformed'])('killMetroTree refuses an unverified identity (%s)', (token) => {

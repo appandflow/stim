@@ -30,6 +30,30 @@ export function parseLsofPids(out: unknown): number[] {
     .filter((n) => Number.isFinite(n));
 }
 
+function addressPort(address: string | undefined): number {
+  const colon = String(address ?? '').lastIndexOf(':');
+  return colon < 0 ? Number.NaN : Number(String(address).slice(colon + 1));
+}
+
+// netstat's LISTENING state column is localized, so a listening TCP row is recognized by its
+// foreign address carrying port 0 instead.
+export function parseNetstatPids(out: unknown, port: number): number[] {
+  const pids: number[] = [];
+  for (const line of String(out ?? '').split('\n')) {
+    const cols = line.trim().split(/\s+/);
+    if (cols.length < 5 || cols[0]?.toUpperCase() !== 'TCP') continue;
+    if (addressPort(cols[1]) !== port || addressPort(cols[2]) !== 0) continue;
+    const pid = Number(cols[4]);
+    if (Number.isSafeInteger(pid) && pid > 0 && !pids.includes(pid)) pids.push(pid);
+  }
+  return pids;
+}
+
+export function listeningPids(port: number, platform: NodeJS.Platform = process.platform): number[] {
+  if (platform === 'win32') return parseNetstatPids(getExecutor().runQuiet('netstat -ano'), port);
+  return parseLsofPids(getExecutor().runQuiet(`lsof -nP -iTCP:${port} -sTCP:LISTEN -t`));
+}
+
 export function parseLsofCwd(out: unknown): string | null {
   if (!out) return null;
   const lines = String(out).split('\n');
@@ -75,20 +99,40 @@ export interface MetroResolution {
   metro?: { pid: number; leader: number; cwd: string; processToken?: string };
 }
 
+function ownedSupervisor(projectPath: string, port: number) {
+  const supervisor = readWorkspaceState(canonicalPath(projectPath))?.supervisor;
+  if (supervisor?.port !== port || inspectProcessIdentity(supervisor) !== 'same') return null;
+  return supervisor;
+}
+
 export async function resolveProjectMetro(
   port: number,
   projectPath: string,
-  { probe = isMetroRunning }: { probe?: (port: number) => Promise<boolean> | boolean } = {},
+  {
+    probe = isMetroRunning,
+    cwdOf = processCwd,
+  }: { probe?: (port: number) => Promise<boolean> | boolean; cwdOf?: (pid: number) => string | null } = {},
 ): Promise<MetroResolution> {
-  const pids = parseLsofPids(getExecutor().runQuiet(`lsof -nP -iTCP:${port} -sTCP:LISTEN -t`));
+  const pids = listeningPids(port);
   const pid = pids[0];
   if (pid === undefined) return { missing: true };
 
   if (!(await probe(port))) {
     return { notOurs: `pid ${pid} on port ${port} does not answer Metro's /status`, kind: NOT_OURS_UNRESPONSIVE, pid };
   }
-  const cwd = processCwd(pid);
+  const cwd = cwdOf(pid);
   if (!cwd) {
+    const owner = ownedSupervisor(projectPath, port);
+    if (owner && (pid === owner.pid || pid === owner.serverPid)) {
+      return {
+        metro: {
+          pid,
+          leader: owner.pid as number,
+          cwd: canonicalPath(projectPath),
+          processToken: owner.processToken as string,
+        },
+      };
+    }
     return {
       notOurs: `pid ${pid} on port ${port}: working directory could not be read`,
       kind: NOT_OURS_UNREADABLE_CWD,
@@ -102,14 +146,13 @@ export async function resolveProjectMetro(
       pid,
     };
   }
-  const supervisor = readWorkspaceState(canonicalPath(projectPath))?.supervisor;
-  const owned = supervisor?.port === port && inspectProcessIdentity(supervisor) === 'same';
+  const owner = ownedSupervisor(projectPath, port);
   return {
     metro: {
       pid,
-      leader: owned ? (supervisor.pid as number) : pid,
+      leader: owner ? (owner.pid as number) : pid,
       cwd,
-      ...(owned ? { processToken: supervisor.processToken as string } : {}),
+      ...(owner ? { processToken: owner.processToken as string } : {}),
     },
   };
 }
