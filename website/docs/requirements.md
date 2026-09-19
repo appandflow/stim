@@ -13,7 +13,7 @@ Commands use `stim`. If it is not installed globally, replace `stim` with
 
 ## All projects
 
-- Node 20.19.4 or later on Node 20, or Node 22.12.0 or later.
+- Node 22.12.0 or later.
 - A project with `expo` or `react-native` in `package.json`.
 - Git for `stim worktree` commands.
 

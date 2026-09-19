@@ -31,6 +31,6 @@
     "@stim-cli/core": "workspace:^"
   },
   "engines": {
-    "node": "^20.19.4 || >=22.12.0"
+    "node": ">=22.12.0"
   }
 }

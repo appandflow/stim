@@ -363,7 +363,7 @@ test('the static skill is only the agent guide router', () => {
     'gc --delete',
     '--force',
     'registry.npmjs.org',
-    '20.19.4',
+    '22.12.0',
     'sandbox',
   ]) {
     expect(skill).not.toContain(mutableDetail);

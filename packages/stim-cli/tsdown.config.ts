@@ -11,7 +11,7 @@ export default defineConfig({
   format: 'esm',
   dts: true,
   outDir: 'dist',
-  target: 'node20.19',
+  target: 'node22.12',
   platform: 'node',
   tsconfig: 'tsconfig.json',
   fixedExtension: true,

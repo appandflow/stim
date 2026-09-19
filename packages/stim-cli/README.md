@@ -22,7 +22,7 @@ Run without a global install when needed:
 npx stim <command>
 ```
 
-Node 20.19.4 or later on Node 20, or Node 22.12.0 or later, is required.
+Node 22.12.0 or later is required.
 
 Machine defaults in `~/.stim/config.json` can enable or disable native artifact
 caching, remote caches, Metro sharing, iOS compiler caching and prefix mapping,
