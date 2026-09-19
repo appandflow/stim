@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { basename, join, resolve as resolvePath, sep } from 'node:path';
 import { getConfigDir } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
-import { pidExists } from '../metro.ts';
+import { pidExists, signalProcessTree } from '../metro.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { createLineReader } from '../process-output.ts';
 import type { ManagedProvider } from './metro-reach.ts';
@@ -487,11 +487,13 @@ async function signalAndWaitForExit(
     now,
     sleep,
     isAlive,
+    platform,
   }: {
     timeoutMs: number;
     now: () => number;
     sleep: (ms: number) => Promise<void>;
     isAlive: (pid: number) => boolean;
+    platform: NodeJS.Platform;
   },
 ): Promise<boolean> {
   let exited = false;
@@ -500,7 +502,10 @@ async function signalAndWaitForExit(
   };
   child.once('exit', onExit);
   try {
-    child.kill(signal);
+    // Package-manager shims (choco shimgen, pnpm) run the real tunnel binary as a
+    // child; on win32 only taskkill /T reaches it.
+    if (platform === 'win32' && child.pid) signalProcessTree(child.pid, signal, { platform });
+    else child.kill(signal);
   } catch (err) {
     child.removeListener('exit', onExit);
     return isEsrch(err);
@@ -523,24 +528,26 @@ export async function terminateChild(
     now,
     sleep,
     isAlive,
+    platform = process.platform,
   }: {
     alreadyExited: boolean;
     timeoutMs: number;
     now: () => number;
     sleep: (ms: number) => Promise<void>;
     isAlive: (pid: number) => boolean;
+    platform?: NodeJS.Platform;
   },
 ): Promise<boolean> {
   if (alreadyExited) {
     closeChildPipes(child);
     return true;
   }
-  const terminated = await signalAndWaitForExit(child, 'SIGTERM', { timeoutMs, now, sleep, isAlive });
+  const terminated = await signalAndWaitForExit(child, 'SIGTERM', { timeoutMs, now, sleep, isAlive, platform });
   if (terminated) {
     closeChildPipes(child);
     return true;
   }
-  const killed = await signalAndWaitForExit(child, 'SIGKILL', { timeoutMs, now, sleep, isAlive });
+  const killed = await signalAndWaitForExit(child, 'SIGKILL', { timeoutMs, now, sleep, isAlive, platform });
   closeChildPipes(child);
   return killed;
 }
@@ -556,6 +563,7 @@ export interface StopTunnelOptions {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   timeoutMs?: number;
+  platform?: NodeJS.Platform;
 }
 
 export interface StopTunnelResult {
@@ -565,9 +573,6 @@ export interface StopTunnelResult {
 
 const STOP_TIMEOUT_MS = 5_000;
 const STOP_POLL_MS = 100;
-function defaultKill(pid: number): void {
-  process.kill(pid, 'SIGTERM');
-}
 
 function isEsrch(err: unknown): boolean {
   return (err as NodeJS.ErrnoException)?.code === 'ESRCH';
@@ -578,7 +583,8 @@ export async function stopTunnel(
   {
     isAlive = pidExists,
     inspectIdentity = inspectProcessIdentity,
-    kill = defaultKill,
+    platform = process.platform,
+    kill = (pid: number) => signalProcessTree(pid, 'SIGTERM', { platform }),
     now = Date.now,
     sleep = defaultSleep,
     timeoutMs = STOP_TIMEOUT_MS,
