@@ -318,9 +318,10 @@ be setup steps are supplied by Stim on the command lines it composes itself:
 
   xcodebuild   COMPILATION_CACHE_ENABLE_CACHING / COMPILATION_CACHE_CAS_PATH /
                SWIFT_ENABLE_COMPILE_CACHE / CLANG_ENABLE_PREFIX_MAPPING /
-               CLANG_OTHER_PREFIX_MAPPINGS -- so no Podfile post_install block
-               (Xcode 26+ only, and skipped when the project configured ccache,
-               which defeats it)
+               CLANG_OTHER_PREFIX_MAPPINGS, plus SWIFT_ENABLE_PREFIX_MAPPING /
+               SWIFT_OTHER_PREFIX_MAPPINGS on a Swift 6.4+ toolchain -- so no
+               Podfile post_install block (Xcode 26+ only, and skipped when the
+               project configured ccache, which defeats it)
   gradlew      --build-cache -- so no org.gradle.caching=true in a committed
                gradle.properties. Debug builds add
                -PreactNativeArchitectures=<target ABI> when the owned
@@ -358,7 +359,6 @@ key inherits the next layer. Changes apply on the next build or Metro restart.
       "metroWarmup": true,
       "ios": {
         "compilationCache": true,
-        "swiftCompilationCache": false,
         "prefixMapping": true
       },
       "android": {
@@ -395,7 +395,18 @@ The example shows the defaults. Full setting names and behavior:
   optimizations.ios.compilationCache
     controls Xcode compilation caching (Xcode 26+).
   optimizations.ios.swiftCompilationCache
-    opts into experimental Swift caching, requiring compilationCache=true.
+    unset by default: Swift caching turns on, with Swift prefix mapping, when
+    xcrun swift reports Swift 6.4 or newer (Xcode 27), where swift-frontend no
+    longer crashes on prefix-mapped batches, and the project's react-native is
+    0.87 or newer. Older toolchains leave it off. React Native before 0.87
+    sets SWIFT_ENABLE_EXPLICIT_MODULES=NO on every target for its prebuilt
+    core, and Xcode refuses Swift caching without explicit modules, so those
+    projects stay off too; the cache line names which gate applied.
+    true forces it on any toolchain and React Native version, unmapped below
+    Swift 6.4, so entries only hit within one checkout. false keeps it off.
+    Requires compilationCache=true. A project that still disables explicit
+    modules itself sees the excluded target count on the post-build cache
+    line. Stim does not override that project setting.
   optimizations.ios.prefixMapping
     controls Clang source/DerivedData prefix mapping. false clears Stim's
     mappings. The existing Xcode version and project-ccache guards still apply.

@@ -27,7 +27,7 @@ export interface Optimizations {
   releaseBundleSwap: boolean;
   metroSharedCache: boolean;
   metroWarmup: boolean;
-  ios: { compilationCache: boolean; swiftCompilationCache: boolean; prefixMapping: boolean };
+  ios: { compilationCache: boolean; swiftCompilationCache: boolean | null; prefixMapping: boolean };
   android: {
     compilerCache: 'ccache' | 'cas' | 'none';
     casToolchain: string | null;
@@ -63,7 +63,10 @@ export function compilerCacheFallbackMessage({
 }
 
 export function optimizationBuildProfile(platform: 'ios' | 'android', options: Optimizations): string | undefined {
-  const selected = platform === 'ios' ? options.ios : { pch: options.android.pch };
+  const selected =
+    platform === 'ios'
+      ? { ...options.ios, swiftCompilationCache: options.ios.swiftCompilationCache ?? false }
+      : { pch: options.android.pch };
   const defaults =
     platform === 'ios'
       ? { compilationCache: true, swiftCompilationCache: false, prefixMapping: true }
@@ -120,7 +123,10 @@ export function resolveOptimizations(
     metroWarmup: optimizationBoolean(settings, 'metroWarmup'),
     ios: {
       compilationCache: optimizationBoolean(settings, 'ios.compilationCache'),
-      swiftCompilationCache: optimizationBoolean(settings, 'ios.swiftCompilationCache', false),
+      swiftCompilationCache:
+        optimizationValue(settings, 'ios.swiftCompilationCache') === undefined
+          ? null
+          : optimizationBoolean(settings, 'ios.swiftCompilationCache'),
       prefixMapping: optimizationBoolean(settings, 'ios.prefixMapping'),
     },
     android: {

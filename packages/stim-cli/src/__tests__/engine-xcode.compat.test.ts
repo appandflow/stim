@@ -333,6 +333,7 @@ describe('buildIos against a real xcodebuild', { timeout: 180_000 }, () => {
   }, 30_000);
 
   test.each([
+    { compilationCache: true, swiftCompilationCache: null, prefixMapping: true },
     { compilationCache: true, swiftCompilationCache: false, prefixMapping: true },
     { compilationCache: false, swiftCompilationCache: false, prefixMapping: false },
     { compilationCache: false, swiftCompilationCache: false, prefixMapping: true },

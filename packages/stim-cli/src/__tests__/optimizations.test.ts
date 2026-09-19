@@ -123,6 +123,12 @@ test.each(['ios', 'android'] as const)(
       {},
     );
     expect(optimizationBuildProfile(platform, defaults)).toBeUndefined();
+    expect(
+      optimizationBuildProfile(
+        platform,
+        resolveOptimizations({ optimizations: { ios: { swiftCompilationCache: false } } }, {}),
+      ),
+    ).toBeUndefined();
     const profile = optimizationBuildProfile(platform, changed);
     expect(buildCacheKey(platform, 'same-source', { buildProfile: profile })).not.toBe(
       buildCacheKey(platform, 'same-source', {}),

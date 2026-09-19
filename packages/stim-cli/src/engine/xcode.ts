@@ -13,6 +13,7 @@ import { capDiagnostics, describeDiagnostic, type Diagnostic, extractXcodeDiagno
 import { cleanLine } from '../supervisor/server-expo.ts';
 import type { CompilationCacheActivity } from '../types.ts';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
+import { resolvePackageJson } from '../project.ts';
 
 const IOS_DIR = 'ios';
 
@@ -212,11 +213,62 @@ export function readPodfileProperties(root: string): Record<string, unknown> | n
   }
 }
 
+export interface SwiftVersion {
+  major: number;
+  minor: number;
+}
+
+// swift-frontend crashed when a compile batch mixed prefix-mapped and unmapped
+// sources; swiftlang/swift#90700 fixed it on release/6.4.x (Xcode 27).
+const SWIFT_PREFIX_MAPPING_MIN_SWIFT: SwiftVersion = { major: 6, minor: 4 };
+
+function swiftPrefixMappingSupported(version: SwiftVersion | null): boolean {
+  if (!version) return false;
+  const min = SWIFT_PREFIX_MAPPING_MIN_SWIFT;
+  return version.major > min.major || (version.major === min.major && version.minor >= min.minor);
+}
+
+export interface ReactNativeVersion {
+  major: number;
+  minor: number;
+}
+
+// React Native 0.87 dropped the SWIFT_ENABLE_EXPLICIT_MODULES=NO override its
+// prebuilt core needed on Xcode 26 (react/react-native#53457); Xcode refuses
+// Swift caching for targets built without explicit modules.
+const SWIFT_CACHE_MIN_REACT_NATIVE: ReactNativeVersion = { major: 0, minor: 87 };
+
+function reactNativeSupportsSwiftCache(version: ReactNativeVersion | null): boolean {
+  if (!version) return false;
+  const min = SWIFT_CACHE_MIN_REACT_NATIVE;
+  return version.major > min.major || (version.major === min.major && version.minor >= min.minor);
+}
+
+export function parseReactNativeVersion(packageJson: unknown): ReactNativeVersion | null {
+  if (!packageJson || typeof packageJson !== 'object') return null;
+  const raw = (packageJson as { version?: unknown }).version;
+  const m = typeof raw === 'string' ? /^(\d+)\.(\d+)\./.exec(raw) : null;
+  if (!m || m[1] === undefined || m[2] === undefined) return null;
+  return { major: parseInt(m[1], 10), minor: parseInt(m[2], 10) };
+}
+
+export function detectReactNativeVersion(root: string): ReactNativeVersion | null {
+  const file = resolvePackageJson(root, 'react-native');
+  if (!file) return null;
+  try {
+    return parseReactNativeVersion(JSON.parse(readFileSync(file, 'utf-8')));
+  } catch {
+    return null;
+  }
+}
+
 export function compilationCacheSettings({
   workspaceRoot,
   derivedDataPath,
   casPath,
   xcodeMajor,
+  swiftVersion = null,
+  reactNativeVersion = null,
   ccache = false,
   optimizations = resolveOptimizations({}, {}).ios,
 }: {
@@ -224,19 +276,40 @@ export function compilationCacheSettings({
   derivedDataPath: string;
   casPath: string;
   xcodeMajor: number | null;
+  swiftVersion?: SwiftVersion | null;
+  reactNativeVersion?: ReactNativeVersion | null;
   ccache?: boolean;
   optimizations?: Optimizations['ios'];
 }): string[] {
   if (xcodeMajor === null || xcodeMajor === undefined) return [];
   if (xcodeMajor < COMPILATION_CACHE_MIN_XCODE) return [];
   if (ccache) return [];
+  const swiftMappable = swiftPrefixMappingSupported(swiftVersion);
+  const auto = swiftMappable && reactNativeSupportsSwiftCache(reactNativeVersion);
+  const swift = optimizations.compilationCache && (optimizations.swiftCompilationCache ?? auto);
+  const mappings = optimizations.prefixMapping ? compilationPrefixMappings(workspaceRoot, derivedDataPath) : '';
   return [
     `COMPILATION_CACHE_ENABLE_CACHING=${optimizations.compilationCache ? 'YES' : 'NO'}`,
     `COMPILATION_CACHE_CAS_PATH=${casPath}`,
-    `SWIFT_ENABLE_COMPILE_CACHE=${optimizations.compilationCache && optimizations.swiftCompilationCache ? 'YES' : 'NO'}`,
+    `SWIFT_ENABLE_COMPILE_CACHE=${swift ? 'YES' : 'NO'}`,
     `CLANG_ENABLE_PREFIX_MAPPING=${optimizations.prefixMapping ? 'YES' : 'NO'}`,
-    `CLANG_OTHER_PREFIX_MAPPINGS=${optimizations.prefixMapping ? compilationPrefixMappings(workspaceRoot, derivedDataPath) : ''}`,
+    `CLANG_OTHER_PREFIX_MAPPINGS=${mappings}`,
+    ...(swift && swiftMappable && optimizations.prefixMapping
+      ? ['SWIFT_ENABLE_PREFIX_MAPPING=YES', `SWIFT_OTHER_PREFIX_MAPPINGS=${mappings}`]
+      : ['SWIFT_ENABLE_PREFIX_MAPPING=NO']),
   ];
+}
+
+export function parseSwiftVersion(output: unknown): SwiftVersion | null {
+  const m = /\bSwift version (\d+)\.(\d+)/.exec(String(output || ''));
+  if (!m || m[1] === undefined || m[2] === undefined) return null;
+  const major = parseInt(m[1], 10);
+  const minor = parseInt(m[2], 10);
+  return Number.isFinite(major) && Number.isFinite(minor) ? { major, minor } : null;
+}
+
+export function detectSwiftVersion(exec: Executor | null = null): SwiftVersion | null {
+  return parseSwiftVersion((exec || getExecutor()).runQuiet('xcrun swift --version', { timeoutMs: 10000 }));
 }
 
 export function parseXcodeMajor(output: unknown): number | null {
@@ -267,12 +340,24 @@ function resolveCompilationCacheSettings({
   optimizations?: Optimizations['ios'];
   onNote?: (line: string) => void;
 }): string[] {
+  const xcodeMajor = detectXcodeMajor(exec);
+  const ccache = ccacheEnabled(readPodfileProperties(root));
+  const probe =
+    xcodeMajor !== null &&
+    xcodeMajor >= COMPILATION_CACHE_MIN_XCODE &&
+    !ccache &&
+    optimizations.compilationCache &&
+    optimizations.swiftCompilationCache !== false;
+  const swiftVersion = probe ? detectSwiftVersion(exec) : null;
+  const reactNativeVersion = probe ? detectReactNativeVersion(root) : null;
   const settings = compilationCacheSettings({
     workspaceRoot: root,
     derivedDataPath,
     casPath,
-    xcodeMajor: detectXcodeMajor(exec),
-    ccache: ccacheEnabled(readPodfileProperties(root)),
+    xcodeMajor,
+    swiftVersion,
+    reactNativeVersion,
+    ccache,
     optimizations,
   });
   if (settings.length > 0 && optimizations.compilationCache) {
@@ -282,7 +367,16 @@ function resolveCompilationCacheSettings({
       prune: 'atomic',
       note: 'shared Xcode compilation cache',
     });
-    onNote(chalk.dim(phaseLine('cache', `compilation cache on (CAS at ${casPath})`)));
+    const swift = settings.includes('SWIFT_ENABLE_COMPILE_CACHE=YES')
+      ? settings.includes('SWIFT_ENABLE_PREFIX_MAPPING=YES')
+        ? 'Swift on'
+        : 'Swift on, unmapped'
+      : swiftVersion && !swiftPrefixMappingSupported(swiftVersion)
+        ? `Swift off, ${swiftVersion.major}.${swiftVersion.minor} < ${SWIFT_PREFIX_MAPPING_MIN_SWIFT.major}.${SWIFT_PREFIX_MAPPING_MIN_SWIFT.minor}`
+        : swiftVersion && reactNativeVersion && !reactNativeSupportsSwiftCache(reactNativeVersion)
+          ? `Swift off, react-native ${reactNativeVersion.major}.${reactNativeVersion.minor} < ${SWIFT_CACHE_MIN_REACT_NATIVE.major}.${SWIFT_CACHE_MIN_REACT_NATIVE.minor}`
+          : 'Swift off';
+    onNote(chalk.dim(phaseLine('cache', `compilation cache on (CAS at ${casPath}, ${swift})`)));
   }
   return settings;
 }
@@ -562,9 +656,17 @@ export function parseCompilationCacheActivity(line: unknown): CompilationCacheAc
   };
 }
 
+// swift-build refuses Swift caching for a target without explicit modules and
+// warns once per target; React Native's prebuilt core sets
+// SWIFT_ENABLE_EXPLICIT_MODULES=NO on every target (react_native_pods.rb).
+const SWIFT_CACHING_NEEDS_EXPLICIT_MODULES = /warning: swift compiler caching requires explicit module build/;
+
 export function compilationCacheActivityLine(activity: CompilationCacheActivity): string {
   if (activity.status === 'reported') {
-    return `${activity.hits}/${activity.cacheableTasks} hits (${activity.hitRatePercent}%)`;
+    const swift = activity.swiftTargetsWithoutExplicitModules
+      ? `; Swift excluded: ${activity.swiftTargetsWithoutExplicitModules} targets build without explicit modules (SWIFT_ENABLE_EXPLICIT_MODULES=NO)`
+      : '';
+    return `${activity.hits}/${activity.cacheableTasks} hits (${activity.hitRatePercent}%)${swift}`;
   }
   if (activity.status === 'not-run') return 'not run; artifact cache supplied the app';
   return 'unavailable; Xcode did not report reliable statistics';
@@ -685,13 +787,16 @@ export async function buildIos({
 
   const transcript: string[] = [];
   let compilationCacheActivity: CompilationCacheActivity = COMPILATION_CACHE_UNAVAILABLE;
+  let swiftTargetsWithoutExplicitModules = 0;
   const onLine = (line: unknown) => {
     const msg = cleanLine(line);
     transcript.push(msg);
     if (msg.trim() === '') return;
     logWriter.write({ src: 'build', level: 'debug', msg });
-    const activity = parseCompilationCacheActivity(msg);
-    if (activity) {
+    if (SWIFT_CACHING_NEEDS_EXPLICIT_MODULES.test(msg)) swiftTargetsWithoutExplicitModules += 1;
+    const parsed = parseCompilationCacheActivity(msg);
+    if (parsed) {
+      const activity = swiftTargetsWithoutExplicitModules ? { ...parsed, swiftTargetsWithoutExplicitModules } : parsed;
       compilationCacheActivity = activity;
       logWriter.write({
         src: 'build',
@@ -701,6 +806,7 @@ export async function buildIos({
         hits: activity.hits,
         cacheableTasks: activity.cacheableTasks,
         hitRatePercent: activity.hitRatePercent,
+        ...(swiftTargetsWithoutExplicitModules ? { swiftTargetsWithoutExplicitModules } : {}),
       });
     }
   };
