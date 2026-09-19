@@ -1,7 +1,7 @@
 # SLOW, GATED native e2e -- a real xcodebuild / gradle build on a real
-# simulator/emulator, across the full 2x2 matrix:
+# simulator/emulator, across the framework x platform matrix:
 #
-#     framework in {bare, expo}   x   platform in {ios, android}
+#     framework in {bare, expo}   x   platform in {ios, android}   (iOS: expo only)
 #
 # THREE SUITES RUN ON THIS MATRIX, selected by the `suite` dispatch input:
 #   loop    test/e2e/native/run-native-e2e.mjs -- docs/field-test-protocol.md as
@@ -32,7 +32,7 @@
 # Xcode, while Android needs Linux and KVM. Bare and Expo exercise different
 # stim-cli Metro paths. Android runs both frameworks; iOS runs Expo ONLY, because
 # the bare template cannot launch on iOS 27 (see the matrix `exclude` below), so
-# an `all` dispatch is three iOS jobs and two Android jobs.
+# an `all` dispatch is three iOS jobs and four Android jobs.
 #
 # THE iOS RUNNER IS `xcode-27`, NOT `macos-latest`. Automatic Swift compilation
 # caching needs Swift 6.4, which ships with Xcode 27; the macos-26 images top out
@@ -50,7 +50,7 @@ on:
   workflow_dispatch:
     inputs:
       suite:
-        description: 'Which suite to run on the 2x2 matrix'
+        description: 'Which suite to run on the framework x platform matrix'
         type: choice
         default: loop
         options: [loop, caches, pool, all]
