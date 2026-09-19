@@ -95,6 +95,13 @@ jobs:
       # Keep the throwaway STIM_HOME under the workspace so the failure
       # artifact step can find global workspace logs.
       TMPDIR: ${{ github.workspace }}/.e2e-tmp
+      # iOS 27 traps an app that has not adopted the UIScene lifecycle, and this
+      # image has no older simulator runtime. The default `--template blank` is
+      # Expo SDK 57, whose generated project has no SceneDelegate, so it cannot
+      # launch here; the SDK 58 template generates one (expo/expo#46664). It is a
+      # preview SDK, so it is pinned for this runner only rather than becoming the
+      # harness default.
+      STIM_E2E_EXPO_INIT: npx --yes create-expo-app@latest {dir} --template expo-template-blank@sdk-58 --no-install
     steps:
       - uses: actions/checkout@v4
       - run: mkdir -p "$TMPDIR" "$STIM_BUILD_CACHE"

@@ -278,14 +278,22 @@ Two workflows under `.github/workflows/`:
 - The `@react-native-community/cli` and `create-expo-app` flag surfaces in the
   driver's `FIXTURE_COMMANDS` match the versions the runners fetch (override via
   the env vars above if not).
-- **Which fixture reaches the Swift branch.** Swift caching needs the fixture's
-  `react-native` to be 0.87 or newer as well as the Swift 6.4 toolchain. The bare
-  fixture takes `react-native@latest` and reaches it; the Expo fixture takes
-  whatever `expo-template-blank@latest` pins, which was `react-native 0.86.3`
-  (Expo SDK 57) when this lane moved to `xcode-27`, so `expo-ios` legitimately
-  reports Swift caching OFF. `xcode-cas` prints which half of the gate decided;
-  a PASS with `Swift caching OFF` is not Swift coverage. Set `STIM_E2E_EXPO_INIT`
-  to a template on React Native 0.87+ to cover the Expo variant too.
+- **The iOS job pins the Expo fixture to Expo SDK 58**, through
+  `STIM_E2E_EXPO_INIT`, because the SDK 57 template it would otherwise create
+  generates no `SceneDelegate` and cannot launch on iOS 27. SDK 58 is a preview
+  (`expo ~58.0.0-preview.3`), so the pin lives in that one job and neither the
+  harness default nor the Android lane moves. It also carries
+  `react-native 0.88.0-rc.0`, above the 0.87 floor, so the Expo variant reaches
+  the Swift branch.
+- **The bare iOS variant cannot launch on `xcode-27` yet.** Swift caching needs
+  the fixture's `react-native` to be 0.87 or newer as well as the Swift 6.4
+  toolchain, and `@react-native-community/cli@latest init` satisfies that. Its
+  template does not adopt the UIScene lifecycle, though -- `@react-native-community/template`
+  0.88.0-rc.1 still has no `SceneDelegate` and no `UIApplicationSceneManifest` --
+  so the app builds and then traps at launch on iOS 27. That variant stays red
+  until the React Native template adopts scenes.
+- `xcode-cas` prints which half of the Swift gate decided, in its evidence and
+  its PASS message. A PASS with `Swift caching OFF` is not Swift coverage.
 - The Android job's `api-level` / `target` / `arch` have a matching system image
   available to `android-emulator-runner`.
 - **Disk, for the `caches` suite only.** It stands up FOUR worktrees, each with
