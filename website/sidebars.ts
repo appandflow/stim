@@ -17,6 +17,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'commands',
         'settings',
+        'troubleshooting',
         'build-optimizations',
         'android-cas',
         'requirements',

@@ -3,8 +3,8 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "prebuild": "node scripts/gen-changelog.mjs",
-    "prestart": "node scripts/gen-changelog.mjs",
+    "prebuild": "node scripts/gen-changelog.mjs && node scripts/gen-troubleshooting.mjs",
+    "prestart": "node scripts/gen-changelog.mjs && node scripts/gen-troubleshooting.mjs",
     "docusaurus": "docusaurus",
     "start": "docusaurus start",
     "build": "docusaurus build",

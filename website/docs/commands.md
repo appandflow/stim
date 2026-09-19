@@ -14,7 +14,8 @@ Commands use `stim`. If Stim is not installed globally, replace `stim` with
 :::
 
 Run `stim <command> --help` for parser help. Run `stim guide` for the full
-reference that ships with the installed version.
+reference that ships with the installed version. Every refusal code has an
+entry in the [troubleshooting reference](./troubleshooting.md).
 
 ## Normal workflow
 
