@@ -708,13 +708,15 @@ test('Android doctor skips iOS architecture metadata and findings', () => {
     });
     const options = { concurrency: { maxBuilds: 0, maxDevices: 0 }, lookupCcache: () => true };
     expect(
-      runDoctor(project, { ...options, platform: 'android' }).some((f) =>
+      runDoctor(project, { ...options, host: 'darwin', platform: 'android' }).some((f) =>
         f.code?.startsWith('ios-debug-architectures'),
       ),
     ).toBe(false);
     expect(queries).not.toContain('xcodebuild');
     expect(
-      runDoctor(project, { ...options, platform: 'ios' }).some((f) => f.code === 'ios-debug-architectures-unknown'),
+      runDoctor(project, { ...options, host: 'darwin', platform: 'ios' }).some(
+        (f) => f.code === 'ios-debug-architectures-unknown',
+      ),
     ).toBe(true);
     expect(queries).toContain('xcodebuild');
   } finally {
@@ -867,6 +869,7 @@ test.each(['ios', 'android'] as const)('doctor does not require an Expo dev clie
     writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
     mkdirSync(join(project, 'android'));
     const findings = runDoctor(project, {
+      host: 'darwin',
       platform,
       concurrency: { maxBuilds: 0, maxDevices: 0 },
       lookupCcache: () => false,
@@ -1240,7 +1243,7 @@ test('runDoctor reports observed local iOS memory pressure without applying SimS
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
     const memoryPressure = vi.fn<() => 'critical'>(() => 'critical');
     const options = { concurrency: { maxBuilds: 0, maxDevices: 0 }, memoryPressure };
-    const ios = runDoctor(project, { ...options, platform: 'ios' });
+    const ios = runDoctor(project, { ...options, host: 'darwin', platform: 'ios' });
     expect(ios).toContainEqual(
       expect.objectContaining({
         level: 'cost',
@@ -1250,11 +1253,11 @@ test('runDoctor reports observed local iOS memory pressure without applying SimS
     expect(ios).toContainEqual(expect.objectContaining({ level: 'note', title: expect.stringContaining('SimSlim') }));
     expect(existsSync(join(project, '.stim.json'))).toBe(false);
     memoryPressure.mockClear();
-    const android = runDoctor(project, { ...options, platform: 'android' });
+    const android = runDoctor(project, { ...options, host: 'darwin', platform: 'android' });
     expect(memoryPressure).not.toHaveBeenCalled();
     expect(android.some((f) => /memory pressure|SimSlim/.test(f.title))).toBe(false);
     writeFileSync(join(project, '.stim.json'), JSON.stringify({ ios: { remote: 'eas' } }));
-    const remote = runDoctor(project, { ...options, platform: 'ios' });
+    const remote = runDoctor(project, { ...options, host: 'darwin', platform: 'ios' });
     expect(memoryPressure).not.toHaveBeenCalled();
     expect(remote.some((f) => /memory pressure|SimSlim/.test(f.title))).toBe(false);
   } finally {
@@ -1269,6 +1272,7 @@ test('runDoctor reports a configured SimSlim profile when the binary is missing'
     writeFileSync(join(project, 'simslim.json'), '{}\n');
     writeFileSync(join(project, '.stim.json'), JSON.stringify({ ios: { simslimProfile: 'simslim.json' } }));
     const findings = runDoctor(project, {
+      host: 'darwin',
       concurrency: { maxBuilds: 0, maxDevices: 0 },
       lookupSimSlim: () => false,
     });
@@ -1293,7 +1297,7 @@ test('runDoctor reports a wrong-typed setting as a finding rather than refusing'
         metro: { warmupUrl: { ios: '/index.bundle?platform=android' } },
       }),
     );
-    const findings = runDoctor(project, { concurrency: { maxBuilds: 0, maxDevices: 0 } });
+    const findings = runDoctor(project, { host: 'darwin', concurrency: { maxBuilds: 0, maxDevices: 0 } });
     const shapeFindings = findings.filter((finding) => /wrong type/i.test(finding.title));
     expect(shapeFindings.map((finding) => finding.detail)).toEqual([
       'Invalid optimizations.metroWarmup setting "false". Expected true or false.',
@@ -1610,8 +1614,8 @@ test('runDoctor keeps shared checks and filters native checks and remote backend
       lookupCcache: () => true,
     };
 
-    const ios = runDoctor(project, { ...options, platform: 'ios', xcodeMajor: 26 });
-    const android = runDoctor(project, { ...options, platform: 'android', xcodeMajor: null });
+    const ios = runDoctor(project, { ...options, host: 'darwin', platform: 'ios', xcodeMajor: 26 });
+    const android = runDoctor(project, { ...options, host: 'darwin', platform: 'android', xcodeMajor: null });
 
     for (const findings of [ios, android]) {
       expect(findings.some((finding) => finding.title.includes('metro.config.js'))).toBe(true);
@@ -1644,6 +1648,7 @@ test('runDoctor checks one shared backend once', () => {
       JSON.stringify({ ios: { remote: 'proxy' }, android: { remote: 'proxy' } }),
     );
     const findings = runDoctor(project, {
+      host: 'darwin',
       concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }),
       remoteEnv: {
         AGENT_DEVICE_DAEMON_BASE_URL: 'https://proxy.example/agent-device',
@@ -1671,6 +1676,7 @@ test('runDoctor resolves the app-local SimSlim profile and ignores a monorepo ro
     execSync('git init -q', { cwd: repo });
 
     const findings = runDoctor(project, {
+      host: 'darwin',
       concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }),
       lookupSimSlim: () => false,
     });
@@ -1691,6 +1697,7 @@ test.each([
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
     writeFileSync(join(project, '.stim.json'), JSON.stringify({ ios: { remote: 'proxy' } }));
     const findings = runDoctor(project, {
+      host: 'darwin',
       concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }),
       remoteEnv: {
         AGENT_DEVICE_DAEMON_BASE_URL: baseUrl,
@@ -1796,8 +1803,54 @@ test('doctor --platform includes the selection in JSON and suppresses the other 
   const payload = JSON.parse(logs[0] as string);
   expect(payload.platform).toBe('ios');
   expect(payload.findings.some((finding: Finding) => finding.title.includes('Android warm'))).toBe(false);
-  expect(payload.findings.some((finding: Finding) => finding.title.includes('iOS warm'))).toBe(true);
+  const localIos = process.platform === 'darwin';
+  expect(payload.findings.some((finding: Finding) => finding.title.includes('iOS warm'))).toBe(localIos);
+  expect(payload.findings.some((finding: Finding) => finding.title.includes('iOS runs through EAS'))).toBe(!localIos);
 });
+
+test.each(['win32', 'linux'] as const)(
+  'on a %s host doctor --platform ios points at --remote eas instead of Xcode, CocoaPods and SimSlim',
+  (host) => {
+    const project = mkdtempSync(join(tmpdir(), 'stim-doc-ios-host-'));
+    try {
+      writeFileSync(
+        join(project, 'package.json'),
+        JSON.stringify({ dependencies: { expo: '~57.0.0', 'react-native': '0.86.3' } }),
+      );
+      writeFileSync(join(project, 'package-lock.json'), '{}');
+      writeFileSync(join(project, 'app.json'), JSON.stringify({ expo: { name: 'fixture' } }));
+      writeFileSync(join(project, '.stimrc.json'), JSON.stringify({ ios: { simslimProfile: 'lean' } }));
+      mkdirSync(join(project, 'ios', 'App.xcodeproj'), { recursive: true });
+      writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
+      mkdirSync(join(project, 'android'));
+      const options = {
+        platform: 'ios' as const,
+        concurrency: { maxBuilds: 0, maxDevices: 0 },
+        lookupCcache: () => false,
+        lookupSimSlim: () => false,
+        memoryPressure: () => 'critical' as const,
+      };
+      const titles = runDoctor(project, { ...options, host }).map((finding) => finding.title);
+      expect(titles).toContain(`iOS runs through EAS on this ${host} host`);
+      expect(titles).toContain('The source checkout has no installed dependencies');
+      expect(titles.join('\n')).not.toMatch(/CocoaPods|SimSlim|iOS warm|architecture|memory pressure|Android warm/);
+      const remote = runDoctor(project, { ...options, host }).find((finding) =>
+        finding.title.startsWith('iOS runs through EAS'),
+      );
+      expect(remote?.fix).toContain('stim ios --remote eas --eas-profile');
+
+      const mac = runDoctor(project, { ...options, host: 'darwin' }).map((finding) => finding.title);
+      expect(mac).not.toContain(`iOS runs through EAS on this ${host} host`);
+      expect(mac).toContain('The source checkout CocoaPods state is missing');
+
+      const both = runDoctor(project, { ...options, platform: undefined, host }).map((finding) => finding.title);
+      expect(both.join('\n')).not.toMatch(/iOS runs through EAS|CocoaPods|iOS warm/);
+      expect(both).toContain('The source checkout has no Android warm build output');
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  },
+);
 
 test('doctor --platform android does not invoke Xcode tooling', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-cli-android-'));

@@ -174,6 +174,23 @@ The app builds locally by default; `--eas-profile` can instead download an
 Metro route required by the remote device. Remote EAS sessions can incur cost
 independently of the build source.
 
+### From Windows or Linux
+
+`--remote eas` is the supported way to run iOS from a host without Xcode.
+`stim doctor --platform ios` on such a host points at it instead of at
+CocoaPods and simulators. Install `eas-cli` and `agent-device`, plus `ngrok` or
+`cloudflared` for the Metro tunnel, then:
+
+```bash
+stim start --remote
+stim ios --remote eas --eas-profile development-simulator
+stim logs --errors
+stim stop
+```
+
+The build must already exist on EAS; a miss prints the `eas build` command and
+never starts one. `stim stop` ends the session and the tunnel.
+
 ## Cleanup behavior
 
 - `stim stop` releases the live environment and device leases. It ends an owned
