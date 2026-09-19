@@ -12,6 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { debuglog } from 'node:util';
 import { quotedPath } from './quoted-path.ts';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from './process-identity.ts';
 
@@ -90,6 +91,9 @@ const CLAIM_SUFFIX = '.claim';
 const CHILD_SUFFIX = '.child';
 const STAGING_PREFIX = '.staging-';
 const PUBLISH_ATTEMPTS = 64;
+const WIN32_SETTLE_MS = 250;
+const WIN32_SETTLE_STEP_MS = 5;
+const debug = debuglog('stim:claim');
 
 export class ClaimRefusedError extends Error {
   readonly code: string = CLAIM_REFUSED;
@@ -139,7 +143,7 @@ export class ClaimUnavailableError extends Error {
     );
     this.reason = reason;
     this.remedy = claimPath
-      ? `Restore write access to the existing claim store at ${quotedPath(claimPath)} (check parent permissions, symlink targets, mount access and sandbox rules)`
+      ? `Restore write access to the existing claim store at ${quotedPath(claimPath)} (check parent permissions, an antivirus or endpoint agent holding its files, symlink targets, mount access and sandbox rules)`
       : 'Reinstall Stim so the unique-pid native module for this platform is present';
   }
 }
@@ -208,10 +212,42 @@ function asOwner(record: unknown): ClaimOwner | null {
   return { pid: candidate.pid, processToken: candidate.processToken };
 }
 
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Run a read, listing or removal and resolve the one answer Windows leaves ambiguous. NTFS answers
+ * ERROR_ACCESS_DENIED, which Node reports as EPERM, for a name whose removal by another process is still
+ * in flight, and for every name below it, where POSIX answers ENOENT; measured to settle within 134 ms
+ * with 12 processes on 4 cores (https://github.com/appandflow/stim/issues/883). The call is reissued in
+ * small steps for at most WIN32_SETTLE_MS: a result or ENOENT is the settled answer, and an EPERM that
+ * outlasts the window is a real denial, thrown exactly as a POSIX EACCES is. This bounds the resolution
+ * of an ambiguous OS answer; it never waits on a holder.
+ */
+function settledAnswer<T>(path: string, call: () => T): T {
+  if (process.platform !== 'win32') return call();
+  const started = Date.now();
+  for (;;) {
+    try {
+      const result = call();
+      if (Date.now() > started) debug('%s settled after %d ms', path, Date.now() - started);
+      return result;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code !== 'EPERM' || Date.now() - started >= WIN32_SETTLE_MS) {
+        if (code === 'EPERM') debug('%s still answers EPERM after %d ms', path, Date.now() - started);
+        throw err;
+      }
+    }
+    sleepSync(WIN32_SETTLE_STEP_MS);
+  }
+}
+
 function readChild(claimPath: string): { record: ClaimOwner | null } | null | 'unreadable' {
   let text;
   try {
-    text = readFileSync(childPath(claimPath), 'utf-8');
+    text = settledAnswer(childPath(claimPath), () => readFileSync(childPath(claimPath), 'utf-8'));
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
     return 'unreadable';
@@ -226,7 +262,7 @@ function readChild(claimPath: string): { record: ClaimOwner | null } | null | 'u
 function readClaim(path: string, mode: ClaimMode): ClaimHolder | null | 'unreadable' {
   let text;
   try {
-    text = readFileSync(path, 'utf-8');
+    text = settledAnswer(path, () => readFileSync(path, 'utf-8'));
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
     return 'unreadable';
@@ -324,7 +360,7 @@ function refuseNonDirectory(root: string, path: string, label: string): never {
 
 function names(dir: string): string[] | 'unreadable' {
   try {
-    return readdirSync(dir).toSorted();
+    return settledAnswer(dir, () => readdirSync(dir)).toSorted();
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return [];
     return 'unreadable';
@@ -380,7 +416,7 @@ export function readClaimSet(root: string): ClaimSurvey {
 
 function removeOrRefuse(path: string, root: string, claimPath: string, label: string): void {
   try {
-    unlinkSync(path);
+    settledAnswer(path, () => unlinkSync(path));
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code;
     if (code === 'ENOENT') return;
@@ -482,13 +518,20 @@ function selfOwner(): ClaimOwner {
   return { pid: process.pid, processToken: captured.token };
 }
 
-function contended(error: unknown): boolean {
-  if (error instanceof MissingClaimStoreError) return false;
-  const code = (error as NodeJS.ErrnoException)?.code;
-  // Windows MoveFileEx refuses a directory destination that already exists with ERROR_ACCESS_DENIED,
-  // which libuv reports as EPERM where POSIX rename reports EEXIST or ENOTEMPTY.
-  if (code === 'EPERM' && process.platform === 'win32') return true;
-  return code === 'EEXIST' || code === 'ENOTEMPTY' || code === 'ENOENT' || code === 'EINVAL';
+interface Contention {
+  denied: boolean;
+}
+
+function contention(error: unknown): Contention | null {
+  if (error instanceof MissingClaimStoreError) return null;
+  const { code, syscall } = (error as NodeJS.ErrnoException) ?? {};
+  // Windows answers ERROR_ACCESS_DENIED, which libuv reports as EPERM, both for a MoveFileEx onto a
+  // directory that already exists and for a name whose removal by another process is in flight, where
+  // POSIX answers EEXIST, ENOTEMPTY or ENOENT. Only a refusal to create the staging entry can be a real
+  // denial, and the caller reports it as one once it has outlasted every attempt.
+  if (code === 'EPERM' && process.platform === 'win32') return { denied: syscall !== 'rename' };
+  if (code === 'EEXIST' || code === 'ENOTEMPTY' || code === 'ENOENT' || code === 'EINVAL') return { denied: false };
+  return null;
 }
 
 class MissingClaimStoreError extends Error {
@@ -534,7 +577,11 @@ function createClaimDir(path: string): void {
   }
 }
 
-function publishExclusive(root: string, payload: string, claimId: string, label: string): string | null {
+function removeStaging(staging: string, { recursive }: { recursive: boolean }): void {
+  settledAnswer(staging, () => rmSync(staging, { recursive, force: true }));
+}
+
+function publishExclusive(root: string, payload: string, claimId: string, label: string): string | Contention {
   const staging = join(root, `${STAGING_PREFIX}${claimId}`);
   const target = exclusiveClaimDir(root);
   try {
@@ -543,15 +590,16 @@ function publishExclusive(root: string, payload: string, claimId: string, label:
     renameSync(staging, target);
     return join(target, `${claimId}${CLAIM_SUFFIX}`);
   } catch (err) {
-    rmSync(staging, { recursive: true, force: true });
+    removeStaging(staging, { recursive: true });
     const code = (err as NodeJS.ErrnoException)?.code;
-    if (contended(err)) return null;
+    const why = contention(err);
+    if (why) return why;
     if (code === 'ENOTDIR') refuseNonDirectory(root, target, label);
     throw err;
   }
 }
 
-function publishShared(root: string, payload: string, claimId: string): string | null {
+function publishShared(root: string, payload: string, claimId: string): string | Contention {
   const staging = join(root, `${STAGING_PREFIX}${claimId}`);
   const target = join(sharedClaimDir(root), `${claimId}${CLAIM_SUFFIX}`);
   try {
@@ -560,8 +608,9 @@ function publishShared(root: string, payload: string, claimId: string): string |
     renameSync(staging, target);
     return target;
   } catch (err) {
-    rmSync(staging, { force: true });
-    if (contended(err)) return null;
+    removeStaging(staging, { recursive: false });
+    const why = contention(err);
+    if (why) return why;
     throw err;
   }
 }
@@ -575,9 +624,23 @@ function settleOrRelease(claim: ClaimHandle): ClaimSetState {
   }
 }
 
+/**
+ * A create denied on win32 is almost always the store root mid-removal by a releaser whose rmdir has
+ * not returned yet, which a spinning contender can outpace 64 times over; yielding lets that process
+ * finish. A real denial spends at most PUBLISH_ATTEMPTS of these before it is reported.
+ */
+function yieldToRemoval(): void {
+  sleepSync(WIN32_SETTLE_STEP_MS);
+}
+
 export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' }: ClaimOptions): ClaimAttempt {
   const owner = selfOwner();
   const reaped: ClaimHolder[] = [];
+  let denied = true;
+  const retry = (why: Contention): void => {
+    denied &&= why.denied;
+    if (why.denied) yieldToRemoval();
+  };
 
   for (let attempt = 0; attempt < PUBLISH_ATTEMPTS; attempt++) {
     try {
@@ -587,8 +650,10 @@ export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' 
       if (code === 'EEXIST' || code === 'ENOTDIR') {
         refuseNonDirectory(root, root, label);
       }
-      if (contended(err)) continue;
-      throw err;
+      const why = contention(err);
+      if (!why) throw err;
+      retry(why);
+      continue;
     }
     const state = inspectClaimSet(root, { label });
     reaped.push(...state.reaped);
@@ -610,7 +675,10 @@ export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' 
 
     if (mode === 'shared') {
       const published = publishShared(root, payload, claimId);
-      if (!published) continue;
+      if (typeof published !== 'string') {
+        retry(published);
+        continue;
+      }
       const claim = handle(published);
       const settled = settleOrRelease(claim);
       reaped.push(...settled.reaped);
@@ -620,7 +688,10 @@ export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' 
     }
 
     const path = publishExclusive(root, payload, claimId, label);
-    if (!path) continue;
+    if (typeof path !== 'string') {
+      retry(path);
+      continue;
+    }
     const claim = handle(path);
     const settled = settleOrRelease(claim);
     reaped.push(...settled.reaped);
@@ -632,6 +703,11 @@ export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' 
   reaped.push(...contender.reaped);
   const holder = contender.exclusive ?? (mode === 'exclusive' ? contender.shared[0] : undefined);
   if (holder) return { held: holder, reaped };
+  if (denied) {
+    throw new ClaimUnavailableError(`access was denied on every one of ${PUBLISH_ATTEMPTS} attempts to publish it`, {
+      claimPath: root,
+    });
+  }
   refuse(
     root,
     root,
