@@ -35,8 +35,12 @@ const ARTIFACT_EXT = PLATFORM === 'ios' ? '.app' : '.apk';
 const COMPILE_SIGNS =
   PLATFORM === 'ios' ? [/xcodebuild/i, /CompileC\b/i, /Ld /] : [/gradlew/i, /:app:compile/i, /Task :app:/i];
 
+// Windows caps a path at 260 characters and the NDK's ninja is not long-path aware, so the
+// fixture root, which every CMake object path is built from, keeps a short name there.
+const WORK_PREFIX = process.platform === 'win32' ? 'sn-' : `stim-native-${VARIANT}-`;
+
 const HOME_DIR = args.dryRun ? '<dry-run>' : args.home || mkdtempSync(join(tmpdir(), `stim-native-${VARIANT}-home-`));
-const WORK_DIR = args.dryRun ? '<dry-run>' : mkdtempSync(join(tmpdir(), `stim-native-${VARIANT}-`));
+const WORK_DIR = args.dryRun ? '<dry-run>' : mkdtempSync(join(tmpdir(), WORK_PREFIX));
 const ENV = {
   ...process.env,
   STIM_HOME: HOME_DIR,

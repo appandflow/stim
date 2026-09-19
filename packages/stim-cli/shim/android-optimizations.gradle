@@ -7,6 +7,12 @@ gradle.beforeProject { project ->
                 def profile = System.getenv("STIM_ANDROID_NATIVE_PROFILE")
                 def staging = android.externalNativeBuild.cmake.buildStagingDirectory ?: new File(project.projectDir, ".cxx")
                 android.externalNativeBuild.cmake.buildStagingDirectory = new File(staging, "stim-" + profile)
+                // Windows caps a path at 260 characters and the SDK's ninja is not long-path aware, so the
+                // staging directory added above has to buy its room back: CMake replaces the mangled absolute
+                // source directory in an over-long object path with a hash of it.
+                if (System.getProperty("os.name").toLowerCase().startsWith("windows")) {
+                    android.defaultConfig.externalNativeBuild.cmake.arguments.add("-DCMAKE_OBJECT_PATH_MAX=240")
+                }
                 def configs = [android.defaultConfig] + android.buildTypes.toList() + android.productFlavors.toList()
                 def pch = System.getenv("STIM_ANDROID_PCH")
                 def ccache = System.getenv("STIM_ANDROID_CCACHE")
