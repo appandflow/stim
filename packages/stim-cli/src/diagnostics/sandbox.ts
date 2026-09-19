@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
-import { dirname, join } from 'path';
+import { dirname, join, sep } from 'path';
 import type { Finding } from './doctor.ts';
 
 export type Harness = 'claude-code' | 'codex' | null;
@@ -108,7 +108,10 @@ function nested(source: Settings | null, ...keys: string[]): unknown {
 
 /** Whether an allowWrite entry covers the Stim home, including as a parent. */
 function covers(entry: string, target: string, home: string): boolean {
-  const posix = (value: string): string => expandHome(value, home).replaceAll('\\', '/');
+  const posix = (value: string): string => {
+    const expanded = expandHome(value, home);
+    return sep === '/' ? expanded : expanded.replaceAll(sep, '/');
+  };
   const e = posix(entry.replace(/\/+\*+$/, '').replace(/\/+$/, ''));
   const t = posix(target.replace(/\/+$/, ''));
   return e === t || t.startsWith(`${e}/`);
