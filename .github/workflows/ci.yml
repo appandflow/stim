@@ -11,7 +11,9 @@ name: CI
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    # '**windows**' feeds the non-blocking windows-probe job below; '*' does
+    # not match '/', so the double star is required for a namespaced branch.
+    branches: [main, '**windows**']
   pull_request:
 
 concurrency:
@@ -83,6 +85,45 @@ jobs:
       # no Xcode, no Android SDK.
       - name: Cross-platform e2e
         run: pnpm run test:e2e
+
+  # NON-BLOCKING probe. Stim has never run on Windows and does not claim to.
+  # This job exists to measure the distance, not to close it: it runs the unit
+  # suite on a GitHub-hosted Windows runner so the failures can be read and
+  # classified. It never gates a merge, and it runs only on an explicit
+  # workflow_dispatch or on a push to a branch named for Windows work.
+  windows-probe:
+    name: windows probe (non-blocking)
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.ref_name, 'windows'))
+    runs-on: windows-latest
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm and Node
+        uses: pnpm/setup@v2
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+
+      - name: Install (workspace root)
+        run: pnpm install --frozen-lockfile
+
+      # Every step past install keeps going on failure. A probe that stops at
+      # the first broken step reports one symptom; the point is to collect all
+      # of them in one run.
+      - name: Build (tsdown, all packages)
+        continue-on-error: true
+        run: pnpm run build
+
+      - name: Typecheck (production)
+        continue-on-error: true
+        run: pnpm run typecheck
+
+      - name: Unit tests (vitest)
+        continue-on-error: true
+        run: pnpm test
 
   runtime-floor:
     name: published runtime (node 22.12.0)
