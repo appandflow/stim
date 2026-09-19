@@ -238,7 +238,7 @@ export interface ReactNativeVersion {
 // Swift caching for targets built without explicit modules.
 const SWIFT_CACHE_MIN_REACT_NATIVE: ReactNativeVersion = { major: 0, minor: 87 };
 
-export function reactNativeSupportsSwiftCache(version: ReactNativeVersion | null): boolean {
+function reactNativeSupportsSwiftCache(version: ReactNativeVersion | null): boolean {
   if (!version) return false;
   const min = SWIFT_CACHE_MIN_REACT_NATIVE;
   return version.major > min.major || (version.major === min.major && version.minor >= min.minor);
