@@ -94,7 +94,7 @@ export function repairCxxLauncherState(root: string): CxxRepairResult {
   const canonicalRoot = realpathSync(root);
   const result: CxxRepairResult = { removed: [], refused: [] };
   if (selectedCompilerCache(root) !== 'ccache') return result;
-  const ccache = getExecutor().runQuiet('command -v ccache', { timeoutMs: 5000 });
+  const ccache = getExecutor().findExecutable('ccache');
   if (!ccache) return result;
   const appOverrides = declaredLauncher(join(root, 'android', 'app'));
   const states = readCxxLauncherStates(root);

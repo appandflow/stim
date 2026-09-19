@@ -1,4 +1,6 @@
-import { type ChildProcess, type SpawnOptions, execFileSync, execSync, spawn } from 'child_process';
+import { type ChildProcess, type SpawnOptions, execFileSync, execSync } from 'child_process';
+import spawn from 'cross-spawn';
+import which from 'which';
 
 interface ExecOptions {
   timeoutMs?: number;
@@ -14,6 +16,8 @@ export interface Executor {
   runQuiet(cmd: string, opts?: ExecOptions): string | null;
   runFileQuiet(file: string, args?: string[], opts?: ExecOptions): string | null;
   spawn(cmd: string, args?: readonly string[], opts?: SpawnOptions): ChildProcess;
+  /** Absolute path of `name` on PATH, or null. Windows resolves PATH through PATHEXT. */
+  findExecutable(name: string): string | null;
 }
 
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -62,6 +66,9 @@ const defaultExecutor: Executor = {
   },
   spawn(cmd, args = [], opts = {}) {
     return spawn(cmd, args, opts);
+  },
+  findExecutable(name) {
+    return which.sync(name, { nothrow: true });
   },
 };
 

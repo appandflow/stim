@@ -50,7 +50,7 @@ export function closeOwnedDeviceSessions(device: Device, stillOwned: () => boole
   };
   const list = () => parseAgentDeviceSessions(run(['session', 'list', '--session', 'stim-teardown-inventory']));
   try {
-    if (!exec.runQuiet('command -v agent-device', { timeoutMs: 2000, killSignal: 'SIGKILL' })) return;
+    if (!exec.findExecutable('agent-device')) return;
     const sessions = list().filter((session) => session.platform === device.platform && session.id === device.id);
     for (const session of sessions) {
       try {

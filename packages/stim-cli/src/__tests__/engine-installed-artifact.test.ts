@@ -55,6 +55,7 @@ function recordingExec({
     spawn: () => {
       throw new Error('the identity check does not spawn');
     },
+    findExecutable: () => null,
   };
 }
 

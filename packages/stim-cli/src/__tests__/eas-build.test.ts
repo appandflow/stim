@@ -58,6 +58,7 @@ function fixture({
   const calls: string[][] = [];
   setExecutor({
     runQuiet: () => '/eas',
+    findExecutable: () => '/eas',
     runFile: (file, args, options) => {
       expect(file).toBe('/eas');
       expect(options.cwd).toBe(root);

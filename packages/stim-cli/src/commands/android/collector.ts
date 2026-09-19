@@ -1,4 +1,4 @@
-import { deviceSlotKey } from '../../devices/device-slots.ts';
+import { deviceSlotFileKey, deviceSlotKey } from '../../devices/device-slots.ts';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { mkdirSync, openSync } from 'node:fs';
@@ -7,7 +7,7 @@ import { spawnEntry } from '../../spawn-entry.ts';
 import { workspaceLogsDir } from '../../workspace/paths.ts';
 import { PLATFORM } from './support.ts';
 import { verifyCollectorOwnership } from '../../collector/ownership.ts';
-import { pidExists } from '../../metro.ts';
+import { pidExists, signalProcessTree } from '../../metro.ts';
 import { readCollectors } from '../../collector/state.ts';
 import { phaseLine } from '../../command-output.ts';
 
@@ -16,7 +16,7 @@ function collectorEntry(): string {
 }
 
 export function collectorLogFile(root: string, slot = 'default'): string {
-  return join(workspaceLogsDir(root), `collector-${deviceSlotKey(PLATFORM, slot)}.log`);
+  return join(workspaceLogsDir(root), `collector-${deviceSlotFileKey(PLATFORM, slot)}.log`);
 }
 
 const COLLECTOR_EXIT_WAIT_MS = 2000;
@@ -28,7 +28,7 @@ export function killPreviousCollector(
   {
     platform = PLATFORM,
     slot = 'default',
-    kill = (pid: number, signal: NodeJS.Signals) => process.kill(pid, signal),
+    kill = (pid: number, signal: NodeJS.Signals) => signalProcessTree(pid, signal),
     collectors = null,
     verify = verifyCollectorOwnership,
     isAlive = pidExists,

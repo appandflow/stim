@@ -419,7 +419,7 @@ export function checkCcacheInstalled(onPath: boolean): Finding | null {
   return finding(
     'cost',
     'ccache is not on PATH, so Android C++ recompiles in every worktree',
-    'Stim resolves the launcher with `command -v ccache` -- the same PATH lookup the build itself uses -- and found nothing, so it passes no CMAKE_C_COMPILER_LAUNCHER / CMAKE_CXX_COMPILER_LAUNCHER to Gradle and every AGP CMake task compiles without one. Those tasks are uncacheable by Gradle, so not one C++ object crosses a worktree. Measured on trailhead (arm64, fresh worktree): 49.6s without the launcher against 34.2s with it.',
+    'Stim resolves the launcher with a PATH lookup for `ccache` -- the same lookup the build itself uses -- and found nothing, so it passes no CMAKE_C_COMPILER_LAUNCHER / CMAKE_CXX_COMPILER_LAUNCHER to Gradle and every AGP CMake task compiles without one. Those tasks are uncacheable by Gradle, so not one C++ object crosses a worktree. Measured on trailhead (arm64, fresh worktree): 49.6s without the launcher against 34.2s with it.',
     'brew install ccache, then delete android/app/.cxx and node_modules/**/android/.cxx once so CMake reconfigures with the launcher. The shell that runs Stim must have the install location on PATH -- agent shells often lack /opt/homebrew/bin.',
   );
 }
@@ -468,7 +468,7 @@ export function checkCxxCompilerLauncher({
 
 function ccacheIsOnPath(): boolean {
   try {
-    return Boolean(getExecutor().runQuiet('command -v ccache', { timeoutMs: 5000 }));
+    return Boolean(getExecutor().findExecutable('ccache'));
   } catch {
     return false;
   }
@@ -925,7 +925,7 @@ function checkAppProject(projectRoot: string): Finding | null {
 
 function agentDeviceIsOnPath(): boolean {
   try {
-    return Boolean(getExecutor().runQuiet('command -v agent-device', { timeoutMs: 5000 }));
+    return Boolean(getExecutor().findExecutable('agent-device'));
   } catch {
     return true;
   }

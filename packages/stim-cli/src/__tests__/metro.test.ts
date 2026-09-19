@@ -2,11 +2,14 @@ import { setExecutor, resetExecutor } from '../exec.ts';
 import { isMetroRunning } from '../ports.ts';
 import {
   parseLsofPids,
+  parseNetstatPids,
+  listeningPids,
   parseLsofCwd,
   isInsideProject,
   processCwd,
   resolveProjectMetro,
   killMetroTree,
+  signalProcessTree,
   NOT_OURS_FOREIGN_CWD,
   NOT_OURS_UNRESPONSIVE,
 } from '../metro.ts';
@@ -100,6 +103,106 @@ test('resolveProjectMetro identifies a workspace Metro without claiming ownershi
   expect(r.metro!.leader).toBe(59914);
   expect(r.metro!.processToken).toBeUndefined();
   resetExecutor();
+});
+
+test('parseNetstatPids takes the listening row for the port and ignores the rest', () => {
+  const out = [
+    'Active Connections',
+    '',
+    '  Proto  Local Address          Foreign Address        State           PID',
+    '  TCP    0.0.0.0:8082           0.0.0.0:0              LISTENING       2212',
+    '  TCP    [::]:8082              [::]:0                 LISTENING       2212',
+    '  TCP    127.0.0.1:8082         127.0.0.1:51001        ESTABLISHED     3300',
+    '  TCP    0.0.0.0:8083           0.0.0.0:0              LISTENING       4400',
+    '  UDP    0.0.0.0:8082           *:*                                    5500',
+  ].join('\r\n');
+  expect(parseNetstatPids(out, 8082)).toEqual([2212]);
+  expect(parseNetstatPids(out, 8083)).toEqual([4400]);
+  expect(parseNetstatPids(out, 9999)).toEqual([]);
+  expect(parseNetstatPids(null, 8082)).toEqual([]);
+});
+
+test('listeningPids falls back to netstat on Windows, where lsof does not exist', () => {
+  const asked: string[] = [];
+  setExecutor({
+    run: () => '',
+    runQuiet: (cmd: string) => {
+      asked.push(cmd);
+      if (cmd !== 'netstat -ano') return null;
+      return '  TCP    0.0.0.0:8082           0.0.0.0:0              LISTENING       2212';
+    },
+    spawn: () => {},
+  });
+  expect(listeningPids(8082, 'win32')).toEqual([2212]);
+  expect(asked).toEqual(['lsof -nP -iTCP:8082 -sTCP:LISTEN -t', 'netstat -ano']);
+  asked.length = 0;
+  expect(listeningPids(8082, 'darwin')).toEqual([]);
+  expect(asked).toEqual(['lsof -nP -iTCP:8082 -sTCP:LISTEN -t']);
+});
+
+test('resolveProjectMetro accepts an unreadable-cwd listener that is this workspace recorded supervisor', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-metro-own-')));
+  const token = captureProcessToken(process.pid);
+  expect(token).toBeTruthy();
+  writeWorkspaceState(root, { supervisor: { pid: process.pid, port: 8082, processToken: token } });
+  setExecutor({
+    run: () => '',
+    runQuiet: (cmd: string) => (cmd.includes('-sTCP:LISTEN') ? String(process.pid) : null),
+    spawn: () => {},
+  });
+  try {
+    const r = await resolveProjectMetro(8082, root, { probe: async () => true, cwdOf: () => null });
+    expect(r.metro?.pid).toBe(process.pid);
+    expect(r.metro?.leader).toBe(process.pid);
+    expect(r.metro?.processToken).toBe(token);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('resolveProjectMetro still refuses an unreadable-cwd listener this workspace did not record', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-metro-foreign-')));
+  writeWorkspaceState(root, {
+    supervisor: { pid: process.pid, port: 8082, processToken: captureProcessToken(process.pid) },
+  });
+  setExecutor({
+    run: () => '',
+    runQuiet: (cmd: string) => (cmd.includes('-sTCP:LISTEN') ? '4242' : null),
+    spawn: () => {},
+  });
+  try {
+    const r = await resolveProjectMetro(8082, root, { probe: async () => true, cwdOf: () => null });
+    expect(r.metro).toBe(undefined);
+    expect(r.notOurs).toMatch(/working directory could not be read/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('signalProcessTree kills the whole tree with taskkill on Windows and signals a group elsewhere', () => {
+  const runFile: Array<[string, string[]]> = [];
+  setExecutor({
+    run: () => '',
+    runQuiet: () => null,
+    runFileQuiet: (file: string, args: string[]) => {
+      runFile.push([file, args]);
+      return '';
+    },
+    spawn: () => {},
+  });
+  expect(signalProcessTree(4242, 'SIGTERM', { platform: 'win32' })).toBe(true);
+  expect(runFile).toEqual([['taskkill', ['/PID', '4242', '/T', '/F']]]);
+
+  const signal = vi.spyOn(process, 'kill').mockReturnValue(true);
+  expect(signalProcessTree(4242, 'SIGTERM', { group: true, platform: 'darwin' })).toBe(true);
+  expect(signal).toHaveBeenCalledWith(-4242, 'SIGTERM');
+  expect(runFile).toHaveLength(1);
+  signal.mockRestore();
+});
+
+test('signalProcessTree reports a taskkill that found no such process', () => {
+  setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
+  expect(signalProcessTree(4242, 'SIGTERM', { platform: 'win32' })).toBe(false);
 });
 
 test.each([undefined, 'malformed'])('killMetroTree refuses an unverified identity (%s)', (token) => {

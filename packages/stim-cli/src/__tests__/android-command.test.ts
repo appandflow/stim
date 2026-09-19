@@ -91,10 +91,16 @@ const CAPTURED_ASSETS: AssetManifest = {
 
 let home: string;
 let root: string;
+let androidHome: string | undefined;
+let androidSdkRoot: string | undefined;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-home-'));
   process.env.STIM_HOME = home;
+  androidHome = process.env.ANDROID_HOME;
+  androidSdkRoot = process.env.ANDROID_SDK_ROOT;
+  process.env.ANDROID_HOME = join(home, 'sdk');
+  delete process.env.ANDROID_SDK_ROOT;
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-android-')));
   writeFileSync(
     join(root, 'package.json'),
@@ -113,6 +119,10 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
   delete process.env.STIM_HOME;
+  if (androidHome === undefined) delete process.env.ANDROID_HOME;
+  else process.env.ANDROID_HOME = androidHome;
+  if (androidSdkRoot === undefined) delete process.env.ANDROID_SDK_ROOT;
+  else process.env.ANDROID_SDK_ROOT = androidSdkRoot;
 });
 
 function parseRemoteOption(args: string[]): unknown {

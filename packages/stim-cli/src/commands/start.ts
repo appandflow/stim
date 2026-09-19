@@ -219,7 +219,7 @@ interface StartCommandDeps {
 function providersOnPath(): ManagedProvider[] {
   return detectProviders((bin) => {
     try {
-      return Boolean(getExecutor().runQuiet(`command -v ${bin}`, { timeoutMs: 5000 }));
+      return Boolean(getExecutor().findExecutable(bin));
     } catch {
       return false;
     }

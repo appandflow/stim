@@ -71,6 +71,16 @@ export function deviceSlotKey(platform: string, slot = 'default'): string {
   return slot === 'default' ? platform : `${platform}:${slot}`;
 }
 
+/**
+ * The slot key in a form that is legal as a file name. NTFS reads a colon in a file name as an
+ * alternate data stream: the write and the read of the exact path both succeed while `readdirSync`
+ * cannot see the file, so every non-default slot's logs would be invisible to `stim logs`. A slot
+ * name can contain neither a colon nor a dot, so the two forms stay one-to-one.
+ */
+export function deviceSlotFileKey(platform: string, slot = 'default'): string {
+  return deviceSlotKey(platform, slot).replace(':', '.');
+}
+
 export function parseDeviceSlotKey(key: string): { platform: 'ios' | 'android'; slot: string } | null {
   const [platform, slot = 'default', extra] = key.split(':');
   if ((platform !== 'ios' && platform !== 'android') || extra !== undefined) return null;
