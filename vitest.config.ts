@@ -18,6 +18,9 @@ export default defineConfig({
     environment: 'node',
     setupFiles: ['./vitest.setup.ts'],
     disableConsoleIntercept: true,
+    // Real git and spawn work take several times longer on the hosted Windows
+    // runner; a hang still fails, just later.
+    testTimeout: process.platform === 'win32' ? 20_000 : 5_000,
     include: [
       'packages/*/src/**/*.test.ts',
       'packages/*/src/**/__tests__/**/*.test.ts',
