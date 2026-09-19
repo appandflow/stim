@@ -250,12 +250,14 @@ export function checkMainCheckout(
     upstream = undefined,
     linkedWorktrees = undefined,
     platform,
+    localIos = platform !== 'android',
   }: {
     npmTreeValid?: boolean | null;
     brokenPods?: string[];
     upstream?: UpstreamState | null;
     linkedWorktrees?: boolean;
     platform?: DoctorPlatform;
+    localIos?: boolean;
   } = {},
 ): Finding[] {
   const mainRoot = mainCheckoutProjectRoot(projectRoot);
@@ -292,7 +294,7 @@ export function checkMainCheckout(
   const podfileLock = join(mainRoot, 'ios', 'Podfile.lock');
   const podManifest = join(mainRoot, 'ios', 'Pods', 'Manifest.lock');
   const podsRoot = join(mainRoot, 'ios', 'Pods');
-  if (platform !== 'android' && existsSync(podfileLock)) {
+  if (localIos && existsSync(podfileLock)) {
     let podsState: 'missing' | 'stale' | null = null;
     if (!existsSync(podManifest)) podsState = 'missing';
     else {
@@ -331,7 +333,7 @@ export function checkMainCheckout(
   }
 
   const coldPlatforms = [
-    platform !== 'android' && existsSync(join(mainRoot, 'ios')) && !hasIosWarmOutput(mainRoot) ? 'iOS' : null,
+    localIos && existsSync(join(mainRoot, 'ios')) && !hasIosWarmOutput(mainRoot) ? 'iOS' : null,
     platform !== 'ios' &&
     existsSync(join(mainRoot, 'android')) &&
     !existsSync(join(mainRoot, 'android', 'build')) &&
@@ -684,6 +686,19 @@ export function checkSimSlim({
   );
 }
 
+function checkIosHost(platform: DoctorPlatform | undefined, host: NodeJS.Platform): Finding | null {
+  if (platform !== 'ios' || host === 'darwin') return null;
+  return finding(
+    'note',
+    `iOS runs through EAS on this ${host} host`,
+    'Xcode, CocoaPods and simctl exist only on macOS, so `stim ios` cannot build or boot a simulator here. ' +
+      '`stim ios --remote eas --eas-profile <simulator profile>` downloads a finished EAS development build and runs it ' +
+      'on an EAS Simulator session driven through agent-device; Metro stays on this machine behind a tunnel.',
+    'Install eas-cli and agent-device, then run `stim start --remote` and `stim ios --remote eas --eas-profile <profile>`. ' +
+      'Read `stim guide metro` for the remote device backends.',
+  );
+}
+
 export function runDoctor(
   projectRoot: string,
   {
@@ -700,6 +715,7 @@ export function runDoctor(
     memoryPressure = readHostMemoryPressure,
     lookupCcache = null,
     platform,
+    host = process.platform,
   }: {
     readFile?: typeof readFileSync;
     xcodeMajor?: number | null;
@@ -714,8 +730,11 @@ export function runDoctor(
     memoryPressure?: () => HostMemoryPressure | null;
     lookupCcache?: (() => boolean) | null;
     platform?: DoctorPlatform;
+    host?: NodeJS.Platform;
   } = {},
 ): Finding[] {
+  // Only macOS has Xcode, CocoaPods and simctl; elsewhere iOS runs through `--remote eas`.
+  const localIos = platform !== 'android' && host === 'darwin';
   const read = (rel: string): string | null => {
     const p = join(projectRoot, rel);
     if (!existsSync(p)) return null;
@@ -803,7 +822,7 @@ export function runDoctor(
   }
   let simslimProfile: string | null = null;
   let simslimProfileError: string | null = null;
-  if (platform !== 'android') {
+  if (localIos) {
     try {
       simslimProfile = iosSimSlimProfileSetting(projectSettings, projectRoot);
     } catch (error) {
@@ -811,7 +830,7 @@ export function runDoctor(
     }
   }
   const simslimFinding =
-    platform === 'android' || (!simslimProfile && !simslimProfileError && remoteIosSetting(projectSettings))
+    !localIos || (!simslimProfile && !simslimProfileError && remoteIosSetting(projectSettings))
       ? null
       : checkSimSlim({
           configured: Boolean(simslimProfile),
@@ -849,18 +868,17 @@ export function runDoctor(
     .filter((remoteFinding): remoteFinding is Finding => remoteFinding !== null);
 
   const memoryAdvice =
-    platform !== 'android' && !remoteIosSetting(projectSettings) ? hostMemoryPressureAdvice(memoryPressure()) : null;
+    localIos && !remoteIosSetting(projectSettings) ? hostMemoryPressureAdvice(memoryPressure()) : null;
 
   return [
     checkAppProject(projectRoot),
-    ...checkMainCheckout(projectRoot, { platform }),
-    ...(platform === 'android' ? [] : inspectIosDebugArchitectures(mainCheckoutProjectRoot(projectRoot))),
+    checkIosHost(platform, host),
+    ...checkMainCheckout(projectRoot, { platform, localIos }),
+    ...(localIos ? inspectIosDebugArchitectures(mainCheckoutProjectRoot(projectRoot)) : []),
     ...checkStorageLayout(projectRoot, { platform }),
     optimizations?.metroSharedCache ? checkMetroCache(metroConfig) : null,
-    platform === 'android' || !optimizations?.ios.compilationCache ? null : checkCompilationCache(podfile, xcodeMajor),
-    platform === 'android' || !optimizations?.ios.compilationCache
-      ? null
-      : checkCcacheConflict(podfile, podfileProperties),
+    localIos && optimizations?.ios.compilationCache ? checkCompilationCache(podfile, xcodeMajor) : null,
+    localIos && optimizations?.ios.compilationCache ? checkCcacheConflict(podfile, podfileProperties) : null,
     ...(platform === 'ios' || optimizations?.android.compilerCache !== 'ccache'
       ? []
       : androidCcacheFindings(projectRoot, platform, lookupCcache)),
