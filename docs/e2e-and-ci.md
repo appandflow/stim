@@ -310,10 +310,11 @@ PATH).
   only when that set changed, and a pull request never saves, because GitHub
   scopes an entry to the ref that saved it. The Android lanes also persist
   Gradle's dependency cache and wrapper distribution (`~/.gradle/caches/modules-2`,
-  `~/.gradle/wrapper`) under a key that rotates monthly. The pnpm store is not
-  cached on any lane: a cold install from the registry measured as fast as a
-  restored store (#904). Every restore logs `Cache restored from key:` or `Cache
-not found`, and the build-cache lanes print `build cache: HIT <key>` or
+  `~/.gradle/wrapper`) under a key that rotates monthly, saved from `main` by
+  the suites that build in the real Gradle home. The pnpm store is not cached
+  on any lane: a cold install from the registry measured as fast as a restored
+  store (#904). Every restore logs `Cache restored from key:` or `Cache not
+found`, and the build-cache lanes print `build cache: HIT <key>` or
   `build cache: MISS`. Build logs (`build-*.ndjson`) are uploaded as artifacts
   on failure.
 

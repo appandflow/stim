@@ -34,7 +34,7 @@ export function trimBuildCache(root, { keep = KEEP } = {}) {
 
 export function buildCacheKey(prefix, kept) {
   if (!kept.length) return '';
-  return `${prefix}-${kept.map((entry) => entry.split('/')[1].slice(0, 12)).join('-')}`;
+  return `${prefix}-${kept.map((entry) => entry.split('/')[1]).join('-')}`;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -242,6 +242,7 @@ jobs:
       - name: Trim the cross-run build cache to its newest entries
         if: (matrix.suite == 'loop' || matrix.suite == 'smoke') && github.ref == 'refs/heads/main'
         id: trim
+        shell: bash
         run: node scripts/e2e-build-cache.mjs "$STIM_BUILD_CACHE" "$STIM_BUILD_CACHE_KEY" | tee -a "$GITHUB_OUTPUT"
 
       - name: Save cross-run build cache
@@ -333,18 +334,24 @@ jobs:
       # of every cold build. The month in the key rotates the entry so it
       # follows the fixture's templates; restore-keys warm a month's first run
       # from the previous entry. The caches suite seeds its throwaway Gradle
-      # home from these two directories.
+      # home from these two directories and writes nothing back, so only the
+      # other suites save, and only from main (see the build cache save). The
+      # daemon holds modules-2.lock open, which fails the archive on Windows
+      # (actions/setup-java#633).
       - name: Stamp the Gradle cache key
         id: gradle-key
-        run: echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+        run: echo "key=gradle-v1-${{ runner.os }}-${{ matrix.framework }}-$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
 
       - name: Restore the Gradle dependency cache
-        uses: actions/cache@v4
+        id: gradle
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.gradle/caches/modules-2
+            !~/.gradle/caches/modules-2/*.lock
+            !~/.gradle/caches/modules-2/gc.properties
             ~/.gradle/wrapper
-          key: gradle-v1-${{ runner.os }}-${{ matrix.framework }}-${{ steps.gradle-key.outputs.month }}
+          key: ${{ steps.gradle-key.outputs.key }}
           restore-keys: |
             gradle-v1-${{ runner.os }}-${{ matrix.framework }}-
 
@@ -401,6 +408,7 @@ jobs:
       - name: Trim the cross-run build cache to its newest entries
         if: (matrix.suite == 'loop' || matrix.suite == 'smoke') && github.ref == 'refs/heads/main'
         id: trim
+        shell: bash
         run: node scripts/e2e-build-cache.mjs "$STIM_BUILD_CACHE" "$STIM_BUILD_CACHE_KEY" | tee -a "$GITHUB_OUTPUT"
 
       - name: Save cross-run build cache
@@ -409,6 +417,17 @@ jobs:
         with:
           path: ${{ env.STIM_BUILD_CACHE }}
           key: ${{ steps.trim.outputs.key }}
+
+      - name: Save the Gradle dependency cache
+        if: matrix.suite != 'caches' && github.ref == 'refs/heads/main' && steps.gradle.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            !~/.gradle/caches/modules-2/*.lock
+            !~/.gradle/caches/modules-2/gc.properties
+            ~/.gradle/wrapper
+          key: ${{ steps.gradle-key.outputs.key }}
 
       - name: Upload the cache-suite summary
         if: always() && matrix.suite == 'caches'
@@ -475,15 +494,18 @@ jobs:
       - name: Stamp the Gradle cache key
         id: gradle-key
         shell: bash
-        run: echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+        run: echo "key=gradle-v1-${{ runner.os }}-bare-$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
 
       - name: Restore the Gradle dependency cache
-        uses: actions/cache@v4
+        id: gradle
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.gradle/caches/modules-2
+            !~/.gradle/caches/modules-2/*.lock
+            !~/.gradle/caches/modules-2/gc.properties
             ~/.gradle/wrapper
-          key: gradle-v1-${{ runner.os }}-bare-${{ steps.gradle-key.outputs.month }}
+          key: ${{ steps.gradle-key.outputs.key }}
           restore-keys: |
             gradle-v1-${{ runner.os }}-bare-
 
@@ -538,6 +560,17 @@ jobs:
         with:
           path: ${{ env.STIM_BUILD_CACHE }}
           key: ${{ steps.trim.outputs.key }}
+
+      - name: Save the Gradle dependency cache
+        if: github.ref == 'refs/heads/main' && steps.gradle.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            !~/.gradle/caches/modules-2/*.lock
+            !~/.gradle/caches/modules-2/gc.properties
+            ~/.gradle/wrapper
+          key: ${{ steps.gradle-key.outputs.key }}
 
       - name: Upload build and device logs
         if: always()
