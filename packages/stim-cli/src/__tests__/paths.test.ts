@@ -20,7 +20,7 @@ import {
   sharedCompilationCache,
   sharedGradle,
   sharedPods,
-} from '../paths.ts';
+} from '../workspace/paths.ts';
 
 describe('workspace paths', () => {
   let tmpHome: string;

@@ -6,7 +6,7 @@ import { deviceLeasePath, takeLease, type LeaseIo, type WorkspaceLeases } from '
 import { DEVICE_WAIT_POLL_MS } from '../engine/device-lease-run.ts';
 import { heldPoolId, selectFromPool } from '../engine/device-pool.ts';
 import { iosPoolCandidates } from '../engine/ios-device.ts';
-import { androidPoolCandidates } from '../sim/android.ts';
+import { androidPoolCandidates } from '../devices/android.ts';
 
 const ROOT = '/worktree/mine';
 const OTHER = '/worktree/theirs';

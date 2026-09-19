@@ -18,7 +18,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { cloneIgnoredEntries, warmWorktreePaths } from '../worktree.ts';
+import { cloneIgnoredEntries, warmWorktreePaths } from '../workspace/worktree.ts';
 import { Command } from 'commander';
 import { registerWarm } from '../commands/worktree.ts';
 

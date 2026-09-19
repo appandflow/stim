@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
-import { acquireAvdClaim } from '../avd-claim.ts';
-import { clearDevice, loadConfig, setDevice, withConfigLock } from '../config.ts';
-import { deviceSlotPlatforms, projectDeviceSlots } from '../device-slots.ts';
+import { acquireAvdClaim } from '../devices/avd-claim.ts';
+import { clearDevice, loadConfig, setDevice, withConfigLock } from '../workspace/config.ts';
+import { deviceSlotPlatforms, projectDeviceSlots } from '../devices/device-slots.ts';
 import {
   claimRemoveCommand,
   clearClaimChild,
@@ -14,7 +14,7 @@ import {
 } from '@stim-cli/core/ownership-claim';
 import { captureProcessIdentity } from '@stim-cli/core/process-identity';
 import { getExecutor } from '../exec.ts';
-import { readParked } from '../sim-pool.ts';
+import { readParked } from '../devices/sim-pool.ts';
 import {
   assertOwnedAvdStopped,
   createOwnedAvd,
@@ -22,8 +22,8 @@ import {
   ownedAvdName,
   ownedAvdSystemImage,
   resolveOwnedAvdSerial,
-} from '../sim/android.ts';
-import { teardownOwnedAvd } from '../teardown.ts';
+} from '../devices/android.ts';
+import { teardownOwnedAvd } from '../devices/teardown.ts';
 
 export class AvdBootError extends Error {
   readonly remedy: string;

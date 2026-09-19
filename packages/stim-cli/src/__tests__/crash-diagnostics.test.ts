@@ -1,18 +1,23 @@
 import { afterEach, expect, test } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { symbolicateErrors } from '../error-symbolication.ts';
-import { errorDiagnostics, mergeErrorCopies } from '../error-diagnostics.ts';
-import { captureNativeCrashes, captureWorkspaceCrashes, parseAndroidCrashes, parseIosCrash } from '../native-crash.ts';
+import { symbolicateErrors } from '../diagnostics/error-symbolication.ts';
+import { errorDiagnostics, mergeErrorCopies } from '../diagnostics/error-diagnostics.ts';
+import {
+  captureNativeCrashes,
+  captureWorkspaceCrashes,
+  parseAndroidCrashes,
+  parseIosCrash,
+} from '../diagnostics/native-crash.ts';
 import { verifyLaunch } from '../engine/app-install.ts';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resetExecutor, setExecutor } from '../exec.ts';
-import { launchErrorPreview } from '../launch-error-preview.ts';
-import { buildCriteria, recordMatches } from '../logs-query.ts';
+import { launchErrorPreview } from '../diagnostics/launch-error-preview.ts';
+import { buildCriteria, recordMatches } from '../diagnostics/logs-query.ts';
 import { recordFromLine } from '../supervisor/server-expo.ts';
-import { clearWorkspaceStateKeys, writeWorkspaceState } from '../workspace-state.ts';
-import { upsertProject } from '../config.ts';
+import { clearWorkspaceStateKeys, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { upsertProject } from '../workspace/config.ts';
 import { deviceLeasePath, fileLeaseIo } from '../engine/device-lease.ts';
 
 let server: Server | undefined;
@@ -146,6 +151,16 @@ test('launch omits incomplete frames and capture noise while full logs retain th
   expect(bounded).toContain('at framework8');
   expect(bounded).not.toContain('at anonymous');
   expect(bounded).not.toContain('app frames prioritized');
+});
+
+test('a parent-relative frame ranks below an app frame so a late app frame survives the preview', () => {
+  const frames = [
+    ...Array.from({ length: 12 }, (_, i) => `at helper${i} (../shared/helper${i}.ts:${i + 1}:1)`),
+    'at Screen (src/App.tsx:1:1)',
+  ];
+  const preview = launchErrorPreview([{ stack: frames.join('\n') }]).join('\n');
+  expect(preview).toContain('src/App.tsx');
+  expect(preview).toContain('app frames prioritized');
 });
 
 test('cross-source copies collapse only with matching title, location, platform and time', () => {

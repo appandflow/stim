@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { workspaceName } from '@stim-cli/core';
 import { formatElapsed, phaseLine } from '../command-output.ts';
-import { getConfigDir } from '../config.ts';
+import { getConfigDir } from '../workspace/config.ts';
 import { captureProcessIdentity } from '../process-identity.ts';
 import {
   ClaimUnavailableError,

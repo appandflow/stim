@@ -15,7 +15,7 @@ import assert from 'node:assert';
 import * as expoFingerprint from '@expo/fingerprint';
 import type { FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
 import { resolveTieredBuild, runCacheProviderContract, storeTieredBuild } from '@stim-cli/cache';
-import { readManifest } from '../cache-manifest.ts';
+import { readManifest } from '../cache/cache-manifest.ts';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import {
   artifactIn,
@@ -38,7 +38,7 @@ import {
   storedSources,
   untrackedMissLine,
   untrackedNativeFiles,
-} from '../build-cache.ts';
+} from '../cache/build-cache.ts';
 import { ASSET_MANIFEST_VERSION, type AssetManifest } from '../engine/asset-manifest.ts';
 import { buildCacheKey as providerKey } from '../../../expo-build-cache/index.js';
 
@@ -278,7 +278,7 @@ test('storing a build registers the cache root at the depth its entries actually
 
   storeBuild('ios', 'fp6', build, root);
 
-  const { registeredCaches } = await import('../cache-manifest.ts');
+  const { registeredCaches } = await import('../cache/cache-manifest.ts');
   const record = registeredCaches().find((c) => c.dir === root);
   assert(record);
   expect(record.entriesDepth).toBe(2);

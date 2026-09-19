@@ -1,8 +1,8 @@
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { formatElapsed } from '../command-output.ts';
-import { getConfigDir } from '../config.ts';
-import { resolveBuild } from '../build-cache.ts';
+import { getConfigDir } from '../workspace/config.ts';
+import { resolveBuild } from '../cache/build-cache.ts';
 import {
   ClaimRefusedError,
   claimRemoveCommand,

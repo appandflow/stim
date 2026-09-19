@@ -1,12 +1,17 @@
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
-import { workspaceDir } from '../paths.ts';
-import { deviceSlotPlatforms, parseDeviceSlotKey, projectDeviceSlots, validateDeviceSlot } from '../device-slots.ts';
+import { workspaceDir } from '../workspace/paths.ts';
+import {
+  deviceSlotPlatforms,
+  parseDeviceSlotKey,
+  projectDeviceSlots,
+  validateDeviceSlot,
+} from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, plural, releasedLeaseFact } from '../command-output.ts';
-import { clearSupervisor, getProject, upsertProject, withConfigLock } from '../config.ts';
-import type { ProjectRecord } from '../config.ts';
-import { findProjectRoot } from '../project.ts';
+import { clearSupervisor, getProject, upsertProject, withConfigLock } from '../workspace/config.ts';
+import type { ProjectRecord } from '../workspace/config.ts';
+import { findProjectRoot } from '../workspace/project.ts';
 import { pidExists, killMetroTree, resolveProjectMetro } from '../metro.ts';
 import type { MetroResolution } from '../metro.ts';
 import {
@@ -21,9 +26,9 @@ import {
   readWorkspaceState,
   withWorkspaceStateLock,
   writeWorkspaceState,
-} from '../workspace-state.ts';
+} from '../workspace/workspace-state.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
-import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
+import { teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';

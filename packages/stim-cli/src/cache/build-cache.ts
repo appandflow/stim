@@ -1,0 +1,402 @@
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import * as expoFingerprint from '@expo/fingerprint';
+import type { Fingerprint, FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
+import { buildUploadTimeoutMs, type BuildCacheCapability, type ProviderCallResult } from '@stim-cli/cache';
+import { resolveArtifact, storeArtifact } from '@stim-cli/core';
+import { getExecutor } from '../exec.ts';
+import { register } from './cache-manifest.ts';
+import { ASSET_MANIFEST_FILE, parseAssetManifest, type AssetManifest } from '../engine/asset-manifest.ts';
+import { sharedBuildCache as cacheRoot } from '../workspace/paths.ts';
+
+export { artifactIn, buildCacheKey } from '@stim-cli/core';
+export { cacheRoot };
+
+export interface BuildRunOptions {
+  variant?: string;
+  abi?: string;
+  configuration?: string;
+  buildConfiguration?: string;
+  isSimulator?: boolean;
+  device?: string | boolean | null;
+}
+
+export function entryDir(platform: string, key: string, root: string = cacheRoot()): string {
+  return join(root, platform, key);
+}
+
+export type ProjectFingerprint = Fingerprint;
+
+const FINGERPRINT_PLATFORMS = new Set(['ios', 'android']);
+
+/**
+ * Paths that exist in a working checkout and not in a fresh one, which
+ * @expo/fingerprint does not ignore on its own. A fingerprint that counts them
+ * cannot match across checkouts, which is the parity failure `doctor` reports.
+ *
+ * The list stays narrow on purpose: a path belongs here only when no native
+ * build on any project can read it. Anything a single project can judge --
+ * a lockfile with machine paths, a generated report -- belongs in that
+ * project's `.fingerprintignore`, which still applies on top of this.
+ */
+export const DEFAULT_FINGERPRINT_IGNORES: string[] = [
+  // Generated, and carries this machine's absolute sdk.dir.
+  '**/android/local.properties',
+  // Appears the first time someone opens the project in Android Studio.
+  '**/android/.idea/**',
+];
+
+export async function fingerprintProject(
+  projectRoot: string,
+  {
+    platform,
+    createFingerprint = expoFingerprint.createFingerprintAsync,
+    debug = false,
+  }: { platform?: string; createFingerprint?: typeof expoFingerprint.createFingerprintAsync; debug?: boolean } = {},
+): Promise<ProjectFingerprint | null> {
+  const platforms =
+    platform && FINGERPRINT_PLATFORMS.has(platform)
+      ? { platforms: [platform] as FingerprintOptions['platforms'] }
+      : undefined;
+  // With DEBUG set, @expo/fingerprint profiles sourcers on stdout unless silent.
+  const options: FingerprintOptions = {
+    ...platforms,
+    ...(debug ? { debug } : {}),
+    ignorePaths: DEFAULT_FINGERPRINT_IGNORES,
+    silent: true,
+  };
+  const result = await createFingerprint(projectRoot, options);
+  const hash = result?.hash ?? null;
+  if (!hash) return null;
+  const sources = Array.isArray(result?.sources) ? (result.sources as FingerprintSource[]) : [];
+  return { hash, sources };
+}
+
+function registerOnce(root: string): void {
+  try {
+    register({
+      dir: root,
+      name: 'Build cache',
+      prune: 'entries',
+      entriesDepth: 2,
+      note: 'built .app/.apk keyed on the native fingerprint',
+    });
+  } catch {}
+}
+
+export function resolveBuild(platform: string, key: string, root: string = cacheRoot()): string | null {
+  return resolveArtifact(entryDir(platform, key, root));
+}
+
+export function storeBuild(
+  platform: string,
+  key: string,
+  buildPath: string,
+  rootOrOptions:
+    | string
+    | {
+        root?: string;
+        overwrite?: boolean;
+        sources?: FingerprintSource[] | null;
+        assetManifest?: AssetManifest | null;
+      } = {},
+): string | null {
+  const options = typeof rootOrOptions === 'string' ? { root: rootOrOptions } : rootOrOptions || {};
+  const root = options.root || cacheRoot();
+  if (!buildPath || !existsSync(buildPath)) {
+    throw new Error(`No build to store at ${buildPath}`);
+  }
+  registerOnce(root);
+
+  return storeArtifact(entryDir(platform, key, root), buildPath, {
+    runFile: getExecutor().runFile,
+    overwrite: Boolean(options.overwrite),
+    writeMetadata: (staging) => {
+      if (Array.isArray(options.sources)) {
+        try {
+          writeFileSync(join(staging, SOURCES_FILE), JSON.stringify(options.sources));
+        } catch {}
+      }
+      if (options.assetManifest) {
+        try {
+          writeFileSync(join(staging, ASSET_MANIFEST_FILE), JSON.stringify(options.assetManifest));
+        } catch {}
+      }
+    },
+  });
+}
+
+export const PROVIDER_DOWNLOAD_DIR = 'cache-provider';
+
+export function providerDownloadPath(workspacePath: string): string {
+  return join(workspacePath, PROVIDER_DOWNLOAD_DIR);
+}
+
+/**
+ * Empties and registers the scratch directory a provider downloads into. It is
+ * created only when a provider is about to be asked, and registered so `gc`
+ * reports what an interrupted run left behind.
+ */
+export function prepareProviderDownloadDir(dir: string): void {
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  try {
+    register({
+      dir,
+      name: 'Cache provider downloads',
+      prune: 'entries',
+      entriesDepth: 1,
+      note: 'artifacts fetched from the project cache provider; anything left here is from an interrupted run',
+    });
+  } catch {}
+}
+
+export interface FilesystemBuildCapabilityOptions {
+  root?: string;
+  sources?: FingerprintSource[] | null;
+  assetManifest?: AssetManifest | null;
+  resolve?: typeof resolveBuild;
+  store?: typeof storeBuild;
+}
+
+export function filesystemBuildCapability({
+  root,
+  sources,
+  assetManifest,
+  resolve = resolveBuild,
+  store = storeBuild,
+}: FilesystemBuildCapabilityOptions = {}): BuildCacheCapability {
+  const stored = {
+    ...(root === undefined ? {} : { root }),
+    ...(sources === undefined ? {} : { sources }),
+    ...(assetManifest === undefined ? {} : { assetManifest }),
+  };
+  return {
+    resolve: ({ platform, key }) => (root === undefined ? resolve(platform, key) : resolve(platform, key, root)),
+    store: ({ platform, key, sourcePath, overwrite }) => store(platform, key, sourcePath, { ...stored, overwrite }),
+  };
+}
+
+export interface ProviderUploadOutcome {
+  line: string;
+  warn: boolean;
+}
+
+export function providerUploadOutcome(
+  result: ProviderCallResult<void> | null | undefined,
+  name: string | null,
+): ProviderUploadOutcome | null {
+  if (!result) return null;
+  const label = name || 'the cache provider';
+  if (result.timedOut) {
+    return { line: `${label} upload was cancelled after ${buildUploadTimeoutMs()}ms`, warn: true };
+  }
+  if (result.failed) return { line: `${label} upload failed: ${result.failed}`, warn: true };
+  return { line: `uploaded (${label})`, warn: false };
+}
+
+const SOURCES_FILE = 'fingerprint-sources.json';
+
+export function storedSources(platform: string, key: string, root: string = cacheRoot()): FingerprintSource[] | null {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(join(entryDir(platform, key, root), SOURCES_FILE), 'utf-8'));
+    return Array.isArray(parsed) ? (parsed as FingerprintSource[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function storedAssetManifest(platform: string, key: string, root: string = cacheRoot()): AssetManifest | null {
+  try {
+    return parseAssetManifest(readFileSync(join(entryDir(platform, key, root), ASSET_MANIFEST_FILE), 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+function sourceName(source: unknown): string | null {
+  const s = source as Record<string, unknown> | null | undefined;
+  if (typeof s?.filePath === 'string' && s.filePath !== '') return s.filePath;
+  if (typeof s?.id === 'string' && s.id !== '') return s.id;
+  return null;
+}
+
+function diffItemName(item: unknown): string | null {
+  const o = item as Record<string, unknown> | null | undefined;
+  for (const candidate of [o, o?.addedSource, o?.removedSource, o?.afterSource, o?.beforeSource]) {
+    const name = sourceName(candidate);
+    if (name) return name;
+  }
+  return null;
+}
+
+export function compareSourceLists(previous: unknown[], current: unknown[]): string[] {
+  const previousByName = new Map<string, string | null>();
+  for (const source of previous) {
+    const name = sourceName(source);
+    if (name !== null) previousByName.set(name, ((source as Record<string, unknown>).hash as string | null) ?? null);
+  }
+  const changed: string[] = [];
+  const seen = new Set<string>();
+  for (const source of current) {
+    const name = sourceName(source);
+    if (name === null || seen.has(name)) continue;
+    seen.add(name);
+    const hash = (source as Record<string, unknown>).hash;
+    if (!previousByName.has(name) || previousByName.get(name) !== (hash ?? null)) changed.push(name);
+  }
+  for (const [name] of previousByName) {
+    if (!seen.has(name)) changed.push(name);
+  }
+  return changed;
+}
+
+export function diffFingerprintSources({
+  previous,
+  previousHash = null,
+  current,
+  differ = null,
+}: {
+  previous: FingerprintSource[];
+  previousHash?: string | null;
+  current: ProjectFingerprint;
+  differ?: typeof expoFingerprint.diffFingerprints | null;
+}): string[] {
+  if (typeof differ === 'function') {
+    try {
+      const items = differ(
+        { sources: previous, hash: previousHash ?? '' },
+        { sources: current.sources, hash: current.hash },
+      );
+      if (Array.isArray(items)) {
+        const names: string[] = [];
+        const seen = new Set<string>();
+        for (const item of items) {
+          const name = diffItemName(item);
+          if (name !== null && !seen.has(name)) {
+            seen.add(name);
+            names.push(name);
+          }
+        }
+        return names;
+      }
+    } catch {}
+  }
+  return compareSourceLists(previous, current.sources);
+}
+
+export function fingerprintDiffSuffix(changed: string[]): string {
+  if (!changed.length) return '';
+  const shown = changed.slice(0, 3).join(', ');
+  return ` -- ${changed.length} source${changed.length === 1 ? '' : 's'} changed: ${shown}`;
+}
+
+export function describeFingerprintMiss({
+  platform,
+  current,
+  lastBuild,
+  root = cacheRoot(),
+  differ = expoFingerprint.diffFingerprints,
+}: {
+  platform: string;
+  current: ProjectFingerprint;
+  lastBuild: Record<string, unknown> | null | undefined;
+  root?: string;
+  differ?: typeof expoFingerprint.diffFingerprints | null;
+}): { changed: string[]; previousHash: string } | null {
+  if (!lastBuild || lastBuild.platform !== platform) return null;
+  const previousHash = typeof lastBuild.fingerprint === 'string' ? lastBuild.fingerprint : null;
+  const previousKey = typeof lastBuild.cacheKey === 'string' ? lastBuild.cacheKey : null;
+  if (!previousHash || !previousKey || previousHash === current.hash) return null;
+  const previous = storedSources(platform, previousKey, root);
+  if (!previous) return null;
+  const changed = diffFingerprintSources({ previous, previousHash, current, differ });
+  return changed.length ? { changed, previousHash } : null;
+}
+
+export async function refingerprintAfterMutation({
+  projectRoot,
+  platform,
+  previousHash,
+  fingerprint = fingerprintProject,
+}: {
+  projectRoot: string;
+  platform: string;
+  previousHash: string;
+  fingerprint?: typeof fingerprintProject;
+}): Promise<(ProjectFingerprint & { moved: boolean }) | null> {
+  let computed: ProjectFingerprint | null = null;
+  try {
+    computed = await fingerprint(projectRoot, { platform });
+  } catch {
+    return null;
+  }
+  if (!computed?.hash) return null;
+  return { hash: computed.hash, sources: computed.sources, moved: computed.hash !== previousHash };
+}
+
+export const UNTRACKED_MISS_CAP = 3;
+
+export function untrackedNativeFiles({
+  projectRoot,
+  exec = getExecutor(),
+}: {
+  projectRoot: string;
+  exec?: { runFile: (file: string, args?: string[]) => string };
+}): string[] {
+  let out: string;
+  try {
+    out = exec.runFile('git', [
+      '-C',
+      projectRoot,
+      'ls-files',
+      '--others',
+      '--exclude-standard',
+      '--',
+      'ios',
+      'android',
+    ]);
+  } catch {
+    return [];
+  }
+  return String(out || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '');
+}
+
+export function untrackedMissLine(files: string[], cap: number = UNTRACKED_MISS_CAP): string | null {
+  if (!Array.isArray(files) || files.length === 0) return null;
+  const shown = files.slice(0, cap);
+  const more = files.length > shown.length ? `, and ${files.length - shown.length} more` : '';
+  return (
+    `no previous entry to diff against; ${files.length} untracked file${files.length === 1 ? '' : 's'} ` +
+    `under ios/ or android/ are hashed like any other source: ${shown.join(', ')}${more}` +
+    ' -- list the build-irrelevant ones in .fingerprintignore'
+  );
+}
+
+export const FINGERPRINT_DIFF_LOG_CAP = 20;
+
+export function fingerprintDiffRecord({
+  changed,
+  previousHash,
+  hash,
+}: {
+  changed: string[];
+  previousHash: string;
+  hash: string;
+}): Record<string, unknown> {
+  const shown = changed.slice(0, FINGERPRINT_DIFF_LOG_CAP);
+  return {
+    src: 'build',
+    level: 'info',
+    event: 'fingerprint_diff',
+    msg:
+      `fingerprint ${previousHash} -> ${hash}: ${changed.length} source${changed.length === 1 ? '' : 's'} changed: ` +
+      shown.join(', ') +
+      (changed.length > shown.length ? `, and ${changed.length - shown.length} more` : ''),
+    changed: changed.length,
+    sources: shown,
+  };
+}

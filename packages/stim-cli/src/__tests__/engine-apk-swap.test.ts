@@ -20,7 +20,7 @@ import {
   zipalignArgs,
 } from '../engine/apk-swap.ts';
 import { ASSET_MANIFEST_VERSION, type AssetManifest } from '../engine/asset-manifest.ts';
-import type { BuildToolsEntry } from '../sim/android.ts';
+import type { BuildToolsEntry } from '../devices/android.ts';
 import { makeChildProcess, makeExecutor, makeWriter } from './_factories.ts';
 
 describe('hermesEnabledFromGradleProperties', () => {

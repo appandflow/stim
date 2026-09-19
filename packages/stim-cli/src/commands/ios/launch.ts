@@ -23,12 +23,12 @@ import {
   stepTimer,
 } from '../../command-output.ts';
 import { localNetworkPending, DEVICECTL_INSTALL_TIMEOUT_MS, LAUNCH_PROBE_TIMEOUT_MS } from '../../engine/ios-device.ts';
-import { launchErrorPreview } from '../../launch-error-preview.ts';
+import { launchErrorPreview } from '../../diagnostics/launch-error-preview.ts';
 import { MODE_BARE, MODE_EXPO } from '../../supervisor/state.ts';
 import type { VerifyLaunchResultLike, DeviceLike, IosBootLike, FailArgs } from './types.ts';
 import { PLATFORM, deviceLabel, deviceShortName, appNameFromPath } from './support.ts';
 import { type RunLease, DEBUG_VERIFY_STEP_MS, lostLine, lostRefusal } from '../../engine/device-lease-run.ts';
-import type { IosFacts } from '../../types.ts';
+import type { IosFacts } from '../../engine/build-facts.ts';
 import type { NdjsonWriter } from '../../ndjson.ts';
 import { type ReportIosResultArgs, reportIosResult } from './result.ts';
 import { launchOutcomeRecord } from '../native-runtime.ts';
@@ -38,8 +38,8 @@ import {
   IOS_CRASH_REPORT_RETRY,
   printNativeCrashReport,
   simulatorConsolePaths,
-} from '../../native-crash.ts';
-import { errorDiagnostics } from '../../error-diagnostics.ts';
+} from '../../diagnostics/native-crash.ts';
+import { errorDiagnostics } from '../../diagnostics/error-diagnostics.ts';
 
 interface VerifyIosRunArgs {
   root: string;

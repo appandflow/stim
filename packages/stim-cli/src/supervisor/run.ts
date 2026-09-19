@@ -1,14 +1,14 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { clearSupervisor, setSupervisor } from '../config.ts';
+import { clearSupervisor, setSupervisor } from '../workspace/config.ts';
 import { type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
-import { workspaceLogsDir } from '../paths.ts';
+import { workspaceLogsDir } from '../workspace/paths.ts';
 import { captureProcessToken } from '../process-identity.ts';
-import { detectIsExpo } from '../project.ts';
+import { detectIsExpo } from '../workspace/project.ts';
 import { describeError } from './errors.ts';
 import { MODE_BARE, MODE_EXPO, clearExpoMetroTunnel, clearWorkspaceSupervisor, writePidFile } from './state.ts';
-import { writeWorkspaceState, readWorkspaceState, withWorkspaceStateLock } from '../workspace-state.ts';
+import { writeWorkspaceState, readWorkspaceState, withWorkspaceStateLock } from '../workspace/workspace-state.ts';
 
 export {
   MODE_BARE,

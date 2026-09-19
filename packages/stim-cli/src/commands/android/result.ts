@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import type { AndroidFacts, CcacheActivity, WaitedForBuild } from '../../types.ts';
+import type { AndroidFacts, CcacheActivity, WaitedForBuild } from '../../engine/build-facts.ts';
 import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../../engine/app-install.ts';
 import {
   cacheLevel,
@@ -13,7 +13,7 @@ import { PLATFORM } from './support.ts';
 import { formatDuration, phaseLine } from '../../command-output.ts';
 import type { RemoteUploadLike, LaunchResultLike, AndroidRecord, AndroidWriter } from './types.ts';
 import type { RunRecorder } from '../../engine/stats.ts';
-import { writeWorkspaceState } from '../../workspace-state.ts';
+import { writeWorkspaceState } from '../../workspace/workspace-state.ts';
 
 export function androidFacts({
   slot,

@@ -3,7 +3,7 @@ import { OPTIMIZATION_SHAPES } from '../optimizations.ts';
 import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_FINGERPRINT_IGNORES } from '../build-cache.ts';
+import { DEFAULT_FINGERPRINT_IGNORES } from '../cache/build-cache.ts';
 import { OUTPUT_LABELS } from '../command-output.ts';
 import { CLAIM_REFUSED, CLAIM_UNAVAILABLE } from '../ownership-claim.ts';
 import TOPICS from '../guide/index.ts';
@@ -249,12 +249,12 @@ test('the errors topic documents every code the engine can emit under a command'
   const body = renderTopic('errors');
   assert(body);
   const sources = [
-    'config.ts',
+    'workspace/config.ts',
     'engine/workspace-process-lock.ts',
     'engine/build-slots.ts',
     'engine/device-remote.ts',
     'engine/warm-claim.ts',
-    'worktree-refresh.ts',
+    'workspace/worktree-refresh.ts',
   ]
     .map((f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8'))
     .join('\n');
@@ -336,7 +336,7 @@ test('pool recovery guidance routes claim refusals to the error remedy and back'
 test('the settings topic documents every supported setting key', () => {
   const body = renderTopic('settings');
   assert(body);
-  const src = readFileSync(new URL('../settings.ts', import.meta.url), 'utf-8');
+  const src = readFileSync(new URL('../workspace/settings.ts', import.meta.url), 'utf-8');
   const table = src.slice(src.indexOf('const SETTING_SHAPES'), src.indexOf('};', src.indexOf('const SETTING_SHAPES')));
   const known = [...table.matchAll(/^\s*'?([A-Za-z0-9.]+)'?: '[a-z-]+',$/gm)]
     .map((match) => match[1])

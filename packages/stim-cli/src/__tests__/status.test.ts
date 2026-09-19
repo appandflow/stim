@@ -4,16 +4,16 @@ import { join } from 'path';
 import { createServer } from 'http';
 import { Command } from 'commander';
 import { setExecutor, resetExecutor } from '../exec.ts';
-import { saveConfig, loadConfig } from '../config.ts';
+import { saveConfig, loadConfig } from '../workspace/config.ts';
 import type { AddressInfo } from 'node:net';
 import assert from 'node:assert';
 import { captureProcessToken } from '../process-identity.ts';
 import { makeConfig } from './_factories.ts';
 import statusCommand, { readVolumes } from '../commands/status.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
-import { ensureWorkspaceStorage, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
+import { ensureWorkspaceStorage, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { deviceLeasePath, deviceLocksDir } from '../engine/device-lease.ts';
-import { findProjectRoot } from '../project.ts';
+import { findProjectRoot } from '../workspace/project.ts';
 
 let tmpHome: string;
 

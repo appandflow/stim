@@ -13,7 +13,7 @@ import {
   sandboxFinding,
   unmergeableKey,
   withAllowance,
-} from '../sandbox.ts';
+} from '../diagnostics/sandbox.ts';
 import { applySandboxFix } from '../commands/doctor.ts';
 
 function scratch(): string {

@@ -1,8 +1,8 @@
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
 import { recordDoctorRun } from '../guide-status.ts';
-import { findProjectRoot } from '../project.ts';
-import { repoRoot } from '../worktree.ts';
+import { findProjectRoot } from '../workspace/project.ts';
+import { repoRoot } from '../workspace/worktree.ts';
 import {
   allowanceSearchPaths,
   applyClaudeAllowance,
@@ -11,12 +11,17 @@ import {
   missingAllowance,
   sandboxAllowance,
   sandboxFinding,
-} from '../sandbox.ts';
-import { detectFingerprintParity, detectLinkedLibraryGitMetadata, detectXcodeMajor, runDoctor } from '../doctor.ts';
-import type { DoctorPlatform, Finding } from '../doctor.ts';
+} from '../diagnostics/sandbox.ts';
+import {
+  detectFingerprintParity,
+  detectLinkedLibraryGitMetadata,
+  detectXcodeMajor,
+  runDoctor,
+} from '../diagnostics/doctor.ts';
+import type { DoctorPlatform, Finding } from '../diagnostics/doctor.ts';
 import { phaseLine } from '../command-output.ts';
-import { compareStimVersions, inspectStimVersions, type StimVersionReport } from '../stim-installations.ts';
-import { repairCxxLauncherState } from '../doctor-cxx.ts';
+import { compareStimVersions, inspectStimVersions, type StimVersionReport } from '../diagnostics/stim-installations.ts';
+import { repairCxxLauncherState } from '../diagnostics/doctor-cxx.ts';
 
 interface DoctorOptions {
   json?: boolean;

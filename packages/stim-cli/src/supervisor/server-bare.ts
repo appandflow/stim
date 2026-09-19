@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 import { isAbsolute, join, relative, sep } from 'node:path';
-import { projectMetroSharedCache } from '../settings.ts';
+import { projectMetroSharedCache } from '../workspace/settings.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { appendCacheStore, metroStoreRoot, registerMetroStore } from './metro-store.ts';
 import { supervisorError } from './errors.ts';

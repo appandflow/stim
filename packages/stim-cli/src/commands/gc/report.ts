@@ -1,6 +1,8 @@
 import { formatLongDuration, shortUdid } from '../../command-output.ts';
 import { formatBytes } from '../../fs-util.ts';
-import type { BuildLockInfo, BuildSlotInfo, GcSkip, OrphanedDevice } from '../../types.ts';
+import type { BuildLockInfo } from '../../engine/build-lock.ts';
+import type { BuildSlotInfo } from '../../engine/build-slots.ts';
+import type { GcSkip, OrphanedDevice } from './types.ts';
 import type { GcCache } from './caches.ts';
 import type {
   DeviceLeaseGarbage,

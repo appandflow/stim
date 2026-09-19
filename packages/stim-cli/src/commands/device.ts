@@ -1,4 +1,4 @@
-import { validateDeviceSlot } from '../device-slots.ts';
+import { validateDeviceSlot } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { clockTime } from '../command-output.ts';
@@ -19,7 +19,7 @@ import {
   listIosDevices,
   resolveIosPhysicalDevice,
 } from '../engine/ios-device.ts';
-import { findProjectRoot } from '../project.ts';
+import { findProjectRoot } from '../workspace/project.ts';
 import {
   androidPoolCandidates,
   androidPoolNoCandidatesRefusal,
@@ -28,7 +28,7 @@ import {
   physicalDeviceModel,
   probeEmulatorSerial,
   resolvePhysicalDevice,
-} from '../sim/android.ts';
+} from '../devices/android.ts';
 
 const DEFAULT_FOR = '5m';
 

@@ -19,7 +19,7 @@ import {
   listUserApps,
   parkedSimName,
   parseUserApps,
-} from '../sim/ios.ts';
+} from '../devices/ios.ts';
 import assert from 'node:assert';
 import { makeChildProcess, makeExitingChild } from './_factories.ts';
 
@@ -175,7 +175,7 @@ test('listBootedIosSims filters by state', () => {
 });
 
 test('parseRuntimeVersion extracts major.minor from runtime id', async () => {
-  const { parseRuntimeVersion } = await import('../sim/ios.ts');
+  const { parseRuntimeVersion } = await import('../devices/ios.ts');
   expect(parseRuntimeVersion('com.apple.CoreSimulator.SimRuntime.iOS-26-2')).toBe('26.2');
   expect(parseRuntimeVersion('com.apple.CoreSimulator.SimRuntime.iOS-18')).toBe('18');
   expect(parseRuntimeVersion('weird-id')).toBe('weird-id');

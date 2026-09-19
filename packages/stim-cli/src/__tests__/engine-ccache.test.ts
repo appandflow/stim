@@ -14,7 +14,7 @@ import {
   projectCmakeLauncher,
   resolveCcache,
 } from '../engine/ccache.ts';
-import { readManifest } from '../cache-manifest.ts';
+import { readManifest } from '../cache/cache-manifest.ts';
 
 let home: string;
 let savedHome: string | undefined;

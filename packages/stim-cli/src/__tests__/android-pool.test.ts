@@ -2,12 +2,12 @@ import { vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getProject, loadConfig, setDevice, upsertProject } from '../config.ts';
+import { getProject, loadConfig, setDevice, upsertProject } from '../workspace/config.ts';
 import { ensureOwnedDevice } from '../engine/device.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { adoptParked, parkSim, readParked, removeParkedAfter } from '../sim-pool.ts';
-import { avdPoolConfiguration, hostSystemImageArch, resetAdoptedAvd } from '../sim/android.ts';
-import { teardownOwnedAvd, teardownParkedAvd } from '../teardown.ts';
+import { adoptParked, parkSim, readParked, removeParkedAfter } from '../devices/sim-pool.ts';
+import { avdPoolConfiguration, hostSystemImageArch, resetAdoptedAvd } from '../devices/android.ts';
+import { teardownOwnedAvd, teardownParkedAvd } from '../devices/teardown.ts';
 import { collectParkedAvds, deleteParkedAvds, findOrphanedDevices } from '../commands/gc/devices.ts';
 import { goneClaimOwner, makeExitingChild, plantClaim } from './_factories.ts';
 

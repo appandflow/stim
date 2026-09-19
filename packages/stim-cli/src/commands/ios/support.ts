@@ -1,13 +1,13 @@
 import { join, basename } from 'node:path';
 import chalk from 'chalk';
-import { workspaceLogsDir } from '../../paths.ts';
+import { workspaceLogsDir } from '../../workspace/paths.ts';
 import { shortUdid, phaseLine } from '../../command-output.ts';
 import type { DeviceLike, PodStateLike, PodVerdictLike } from './types.ts';
 import type { BuildIosResult } from '../../engine/xcode.ts';
-import type { SettingsObject } from '../../settings.ts';
+import type { SettingsObject } from '../../workspace/settings.ts';
 import { unknownIosDeviceTypeRefusal, unknownIosRuntimeRefusal } from '../../engine/device.ts';
-import { listIosRuntimes } from '../../sim/ios.ts';
-import type { RemoteDeviceBackend } from '../../types.ts';
+import { listIosRuntimes } from '../../devices/ios.ts';
+import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
 import { describeDiagnostic } from '../../engine/errors-xcode.ts';
 
 export const PLATFORM = 'ios';

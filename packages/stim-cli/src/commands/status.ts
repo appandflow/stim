@@ -1,24 +1,24 @@
-import { projectDeviceSlots } from '../device-slots.ts';
+import { projectDeviceSlots } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import { existsSync } from 'fs';
 import { totalmem } from 'os';
 import type { Command } from 'commander';
-import { getConfigDir, loadConfig } from '../config.ts';
-import type { ProjectRecord, SupervisorRecord } from '../config.ts';
+import { getConfigDir, loadConfig } from '../workspace/config.ts';
+import type { ProjectRecord, SupervisorRecord } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { isMetroRunning } from '../ports.ts';
 import { resolveProjectMetro } from '../metro.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import type { MetroResolution } from '../metro.ts';
-import { queryLogs } from '../logs-query.ts';
-import { workspaceLogsDir } from '../paths.ts';
+import { queryLogs } from '../diagnostics/logs-query.ts';
+import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readSupervisorState } from './stop.ts';
-import { findProjectRoot, projectShortcut } from '../project.ts';
-import { listAllIosSims } from '../sim/ios.ts';
-import { resolveOwnedAvdSerial } from '../sim/android.ts';
-import type { IosSimRecord } from '../sim/ios.ts';
-import { resolveSourceCheckout } from '../worktree.ts';
-import type { WorktreeEntry } from '../worktree.ts';
+import { findProjectRoot, projectShortcut } from '../workspace/project.ts';
+import { listAllIosSims } from '../devices/ios.ts';
+import { resolveOwnedAvdSerial } from '../devices/android.ts';
+import type { IosSimRecord } from '../devices/ios.ts';
+import { resolveSourceCheckout } from '../workspace/worktree.ts';
+import type { WorktreeEntry } from '../workspace/worktree.ts';
 import { volumeRootFor } from '../fs-util.ts';
 import { listLeaseFiles } from '../engine/device-lease.ts';
 import {
@@ -32,7 +32,7 @@ import {
   tightVolumes,
   unprovisionedWorktrees,
 } from '../status.ts';
-import { parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../sim-pool.ts';
+import { parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../devices/sim-pool.ts';
 import type {
   AndroidRuntimeFacts,
   EnvironmentState,

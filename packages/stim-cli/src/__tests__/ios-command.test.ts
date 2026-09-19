@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import { vi } from 'vitest';
-import * as crashDiagnostics from '../native-crash.ts';
+import * as crashDiagnostics from '../diagnostics/native-crash.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { ClaimUnavailableError, readClaimSet } from '../ownership-claim.ts';
 import { once } from 'node:events';
@@ -10,11 +10,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
-import { getProject, upsertProject } from '../config.ts';
+import { getProject, upsertProject } from '../workspace/config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
-import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
-import type { WorkspaceState } from '../workspace-state.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../workspace-state.ts';
+import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
+import type { WorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import {
   appNameFromPath,
   buildLogFile,

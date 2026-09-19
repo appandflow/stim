@@ -1,7 +1,7 @@
 import { realpathSync } from 'node:fs';
-import { upsertProject } from '../../../packages/stim-cli/src/config.ts';
+import { upsertProject } from '../../../packages/stim-cli/src/workspace/config.ts';
 import { ensureOwnedDevice, ensureBooted } from '../../../packages/stim-cli/src/engine/device.ts';
-import { readCommittedSettings } from '../../../packages/stim-cli/src/settings.ts';
+import { readCommittedSettings } from '../../../packages/stim-cli/src/workspace/settings.ts';
 
 if (!process.env.STIM_HOME) throw new Error('Native QA preparation requires an isolated STIM_HOME.');
 const [path, slot = 'default', deviceType] = process.argv.slice(2);

@@ -6,11 +6,11 @@ import { decode } from 'unique-pid';
 import { captureProcessToken } from '../process-identity.ts';
 import { exclusiveClaimDir, sharedClaimDir, type ClaimOwner } from '../ownership-claim.ts';
 
-import type { StimConfig } from '../types.ts';
-import type { CacheDescriptor } from '../caches.ts';
+import type { StimConfig } from '../workspace/config-types.ts';
+import type { CacheDescriptor } from '../cache/caches.ts';
 import type { EnvironmentState } from '../status.ts';
-import type { IosSimRecord } from '../sim/ios.ts';
-import type { AdbDevices } from '../sim/android.ts';
+import type { IosSimRecord } from '../devices/ios.ts';
+import type { AdbDevices } from '../devices/android.ts';
 import type { Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import type { MetroResolution } from '../metro.ts';

@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { workspaceDir, workspaceLogsDir } from '../../packages/stim-cli/src/paths.ts';
+import { workspaceDir, workspaceLogsDir } from '../../packages/stim-cli/src/workspace/paths.ts';
 
 const CLI = fileURLToPath(new URL('../../packages/stim-cli/bin/cli.ts', import.meta.url));
 let home;

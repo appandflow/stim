@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { relative } from 'node:path';
-import type { SettingsObject } from '../../types.ts';
+import type { SettingsObject } from '../../workspace/settings-types.ts';
 import {
   androidDeviceAbi,
   androidSystemImageAbi,
@@ -16,7 +16,7 @@ import {
   listAdbDevices,
   physicalDeviceModel,
   probeEmulatorSerial,
-} from '../../sim/android.ts';
+} from '../../devices/android.ts';
 import { unknownAndroidSystemImageRefusal, type OwnedDeviceRecord } from '../../engine/device.ts';
 import { getExecutor } from '../../exec.ts';
 import { devClientScheme as configuredDevClientScheme, pickDevClientScheme } from '../dev-client.ts';

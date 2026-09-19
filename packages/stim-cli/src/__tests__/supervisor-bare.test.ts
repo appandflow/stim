@@ -10,7 +10,7 @@ import {
   metroStoreRoot,
   registerMetroStore,
 } from '../supervisor/metro-store.ts';
-import { readManifest } from '../cache-manifest.ts';
+import { readManifest } from '../cache/cache-manifest.ts';
 import {
   BARE_PACKAGES,
   checkBareApi,

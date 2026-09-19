@@ -8,11 +8,11 @@ import { phaseLine } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
-import { androidHome } from '../sim/android.ts';
+import { androidHome } from '../devices/android.ts';
 import { capDiagnostics, type Diagnostic, extractGradleDiagnostics } from './errors-gradle.ts';
 import { CCACHE_UNAVAILABLE, type CcacheSetup, readCcacheActivity } from './ccache.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
-import type { CcacheActivity } from '../types.ts';
+import type { CcacheActivity } from './build-facts.ts';
 import type { AndroidCasSetup } from './android-cas.ts';
 
 export const BUILD_ERROR = 'STIM_BUILD_FAILED';

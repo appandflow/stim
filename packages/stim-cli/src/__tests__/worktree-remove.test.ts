@@ -26,8 +26,8 @@ import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/
 import { registerStart } from '../commands/start.ts';
 import { asProcessExit } from './_factories.ts';
 import { setExecutor, resetExecutor } from '../exec.ts';
-import { upsertProject, getProject } from '../config.ts';
-import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../paths.ts';
+import { upsertProject, getProject } from '../workspace/config.ts';
+import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
 type ActionFn = (target: string | undefined, opts: Record<string, unknown>) => void | Promise<void>;

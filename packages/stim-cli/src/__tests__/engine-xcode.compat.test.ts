@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, resetExecutor } from '../exec.ts';
 import { createNdjsonWriter, parseNdjsonText } from '../ndjson.ts';
-import { workspaceDerivedData, workspaceLogsDir } from '../paths.ts';
+import { workspaceDerivedData, workspaceLogsDir } from '../workspace/paths.ts';
 import { buildIos, discoverXcodeProject, resolveScheme } from '../engine/xcode.ts';
 
 let tmp: string;

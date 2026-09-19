@@ -1,7 +1,7 @@
 import { readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
-import { getConfigDir, withConfigLock } from '../config.ts';
-import type { CacheHitLevel } from '../types.ts';
+import { getConfigDir, withConfigLock } from '../workspace/config.ts';
+import type { CacheHitLevel } from './build-facts.ts';
 
 export const STATS_VERSION = 1;
 

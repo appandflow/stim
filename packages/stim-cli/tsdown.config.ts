@@ -4,7 +4,7 @@ export default defineConfig({
   entry: {
     cli: 'bin/cli.ts',
     'android-cas-compiler': 'bin/android-cas-compiler.ts',
-    'cache-manifest': 'src/cache-manifest.ts',
+    'cache-manifest': 'src/cache/cache-manifest.ts',
     'supervisor-run': 'src/supervisor/run.ts',
     'collector-run': 'src/collector/run.ts',
   },

@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import type { ProjectRecord } from '../config.ts';
+import type { ProjectRecord } from '../workspace/config.ts';
 import { registerReload, runReload, type ReloadDeps } from '../commands/reload.ts';
 import type { WorkspaceLaunchRecord } from '../supervisor/state.ts';
 

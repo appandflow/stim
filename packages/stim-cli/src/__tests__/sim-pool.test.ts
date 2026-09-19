@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getProject, loadConfig, saveConfig, setDevice, upsertProject, withConfigLock } from '../config.ts';
+import { getProject, loadConfig, saveConfig, setDevice, upsertProject, withConfigLock } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { readClaimSet } from '../ownership-claim.ts';
 import { IMPOSSIBLE_PID, liveClaimOwner, plantClaim, recycledClaimOwner } from './_factories.ts';
@@ -17,7 +17,7 @@ import {
   removeParkedAfter,
   selectParked,
   type ParkedSim,
-} from '../sim-pool.ts';
+} from '../devices/sim-pool.ts';
 
 const first: ParkedSim = {
   udid: 'FIRST',
@@ -179,7 +179,7 @@ test('a live deletion claim blocks adoption beyond the ordinary lock stale windo
         '--input-type=module',
         '-e',
         script,
-        new URL('../sim-pool.ts', import.meta.url).href,
+        new URL('../devices/sim-pool.ts', import.meta.url).href,
         JSON.stringify({ platform: 'ios', projectPath: '/tmp/adopter', udid: first.udid, device }),
       ],
       { encoding: 'utf8', env: { ...process.env, STIM_HOME: stimHome } },
@@ -261,7 +261,7 @@ describe('pool operation recovery', () => {
           script,
           new URL('../ownership-claim.ts', import.meta.url).href,
           claimRoot(),
-          new URL('../config.ts', import.meta.url).href,
+          new URL('../workspace/config.ts', import.meta.url).href,
         ],
         { stdio: 'ignore' },
       );
@@ -320,7 +320,7 @@ describe('pool operation recovery', () => {
         '-e',
         `const { removeParkedAfter } = await import(process.argv[1]);
          removeParkedAfter('ios', process.argv[2], () => process.kill(process.pid, 'SIGKILL'));`,
-        new URL('../sim-pool.ts', import.meta.url).href,
+        new URL('../devices/sim-pool.ts', import.meta.url).href,
         first.udid,
       ],
       { stdio: 'ignore' },

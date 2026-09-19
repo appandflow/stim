@@ -3,9 +3,8 @@ import { dirname, resolve as resolvePath } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { pidExists } from '../metro.ts';
 import { gateMetroOrigin, REMOTE_METRO_WRONG } from './metro-gate.ts';
-import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
+import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { clearRemoteSession, readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
-import type { RemoteDeviceBackend } from '../types.ts';
 import {
   acceptAlertArgs,
   closeArgs,
@@ -39,7 +38,9 @@ import {
   recordEasSessionClaim,
   removeEasSessionClaim,
 } from './eas-session-ledger.ts';
-import { getConfigDir } from '../config.ts';
+import { getConfigDir } from '../workspace/config.ts';
+
+export type RemoteDeviceBackend = 'proxy' | 'eas';
 
 export const REMOTE_SESSION_ERROR = 'STIM_NO_REMOTE_SESSION';
 const REMOTE_METRO_ERROR = 'STIM_REMOTE_METRO_UNREACHABLE';

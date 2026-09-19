@@ -1,11 +1,11 @@
-import { deviceSlotKey, validateDeviceSlot } from '../device-slots.ts';
+import { deviceSlotKey, validateDeviceSlot } from '../devices/device-slots.ts';
 import type { ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Executor } from '../exec.ts';
 import { type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
-import { workspaceLogsDir } from '../paths.ts';
+import { workspaceLogsDir } from '../workspace/paths.ts';
 import { createLineReader } from '../process-output.ts';
 import { parseDeviceConsoleLine, startIosDeviceConsole } from './ios-device.ts';
 import { appNameFromBundleId, parseLogStreamLine, startIosLogStream } from './ios.ts';

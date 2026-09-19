@@ -26,7 +26,7 @@ import {
   setRepoSetting,
   unsetRepoSetting,
   getConcurrencyLimits,
-} from '../config.ts';
+} from '../workspace/config.ts';
 import { makeConfig } from './_factories.ts';
 import assert from 'node:assert';
 
@@ -122,7 +122,7 @@ test('withConfigLock releases the lock when the body throws', () => {
 
 test('concurrent processes each keep their record', async () => {
   const script = join(tmpHome, 'writer.mjs');
-  const configUrl = new URL('../config.ts', import.meta.url).href;
+  const configUrl = new URL('../workspace/config.ts', import.meta.url).href;
   writeFileSync(
     script,
     [

@@ -1,19 +1,27 @@
-import { validateDeviceSlot } from '../device-slots.ts';
+import { validateDeviceSlot } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import type { ChalkInstance } from 'chalk';
 import type { Command } from 'commander';
 import { realpathSync } from 'node:fs';
 import { relative, sep } from 'node:path';
-import { isPathPrefix, loadConfig } from '../config.ts';
-import { findProjectRoot } from '../project.ts';
-import { workspaceLogsDir } from '../paths.ts';
+import { isPathPrefix, loadConfig } from '../workspace/config.ts';
+import { findProjectRoot } from '../workspace/project.ts';
+import { workspaceLogsDir } from '../workspace/paths.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
-import { buildCriteria, compileGrep, fileSizes, followLogs, logFiles, parseSince, queryLogs } from '../logs-query.ts';
-import { errorDiagnostics } from '../error-diagnostics.ts';
-import { launchErrorPreview } from '../launch-error-preview.ts';
-import { readWorkspaceState } from '../workspace-state.ts';
-import { captureWorkspaceCrashes } from '../native-crash.ts';
+import {
+  buildCriteria,
+  compileGrep,
+  fileSizes,
+  followLogs,
+  logFiles,
+  parseSince,
+  queryLogs,
+} from '../diagnostics/logs-query.ts';
+import { errorDiagnostics } from '../diagnostics/error-diagnostics.ts';
+import { launchErrorPreview } from '../diagnostics/launch-error-preview.ts';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { captureWorkspaceCrashes } from '../diagnostics/native-crash.ts';
 
 const LEVEL_WIDTH = 5;
 const SRC_WIDTH = 6;

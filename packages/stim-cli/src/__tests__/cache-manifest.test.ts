@@ -2,11 +2,11 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
-import { register, readManifest, registeredCaches, unregister, manifestPath } from '../cache-manifest.ts';
-import type { CacheEntry } from '../cache-manifest.ts';
+import { register, readManifest, registeredCaches, unregister, manifestPath } from '../cache/cache-manifest.ts';
+import type { CacheEntry } from '../cache/cache-manifest.ts';
 
 const CORE_URL = new URL('../../../core/index.ts', import.meta.url).href;
-const CLI_URL = new URL('../cache-manifest.ts', import.meta.url).href;
+const CLI_URL = new URL('../cache/cache-manifest.ts', import.meta.url).href;
 const CORE_WRITER_SCRIPT = `
 import fs from 'node:fs';
 const { updateCacheManifest } = await import(process.argv[1]);

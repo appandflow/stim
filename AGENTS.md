@@ -243,7 +243,7 @@ install, launch, and read what logs they can, and nothing more. The only
 state a physical device leaves is its lease: the file under
 `$STIM_HOME/device-locks/` and the holder's token in that workspace's
 `state.json`. A serial or UDID never enters the project registry, and
-`teardown.ts` never sees a physical device. `stop` and `worktree remove`
+`devices/teardown.ts` never sees a physical device. `stop` and `worktree remove`
 release the workspace's leases; `gc --delete` deletes only expired lease
 files.
 
@@ -293,7 +293,7 @@ distribution remain out of scope.
 
 ### 4. Centralize device teardown
 
-All shutdown and deletion flows must use `src/teardown.ts`, and so does park,
+All shutdown and deletion flows must use `src/devices/teardown.ts`, and so does park,
 which is the flow that gives a simulator up without deleting it. Re-resolve
 ownership before each destructive command. Contain per-device failures so batch cleanup
 can continue. `stop` shuts down devices; it never deletes them.

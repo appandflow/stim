@@ -4,8 +4,8 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, w
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../../packages/stim-cli/src/exec.ts';
-import { cloneIgnoredEntries } from '../../packages/stim-cli/src/worktree.ts';
-import { checkStorageLayout } from '../../packages/stim-cli/src/doctor-storage.ts';
+import { cloneIgnoredEntries } from '../../packages/stim-cli/src/workspace/worktree.ts';
+import { checkStorageLayout } from '../../packages/stim-cli/src/diagnostics/doctor-storage.ts';
 
 test(
   'warm copies directly on the destination APFS volume despite a temporary override and clone fallback',

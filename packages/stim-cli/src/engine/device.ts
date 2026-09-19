@@ -1,8 +1,8 @@
-import { deviceSlotPlatforms, projectDeviceSlots } from '../device-slots.ts';
+import { deviceSlotPlatforms, projectDeviceSlots } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import { phaseLine } from '../command-output.ts';
-import { ownedDeviceLabel } from '../project.ts';
-import { workspaceId } from '../paths.ts';
+import { ownedDeviceLabel } from '../workspace/project.ts';
+import { workspaceId } from '../workspace/paths.ts';
 import {
   allConsolePortsAndSerials,
   clearDevice,
@@ -14,7 +14,7 @@ import {
   withConfigLock,
   type Config,
   type ProjectRecord,
-} from '../config.ts';
+} from '../workspace/config.ts';
 import { pidExists } from '../metro.ts';
 import { getExecutor } from '../exec.ts';
 import { hostMemoryPressureAdvice, readHostMemoryPressure, type HostMemoryPressure } from '../host-memory.ts';
@@ -36,7 +36,7 @@ import {
   type IosCreationChoice,
   type IosRuntime,
   type SimModel,
-} from '../sim/ios.ts';
+} from '../devices/ios.ts';
 import {
   adoptParked,
   dropParked,
@@ -44,7 +44,7 @@ import {
   parkedMaxSetting,
   readParked,
   selectParked,
-} from '../sim-pool.ts';
+} from '../devices/sim-pool.ts';
 import {
   assertOwnedAvdStopped,
   avdPoolConfiguration,
@@ -61,9 +61,13 @@ import {
   resolveOwnedAvdSerial,
   waitForBoot,
   type SystemImage,
-} from '../sim/android.ts';
-import { androidAvdConfigSetting, androidDataPartitionSizeGbSetting, iosSimSlimProfileSetting } from '../settings.ts';
-import { teardownOwnedAvd, teardownParkedAvd, teardownParkedIosSim } from '../teardown.ts';
+} from '../devices/android.ts';
+import {
+  androidAvdConfigSetting,
+  androidDataPartitionSizeGbSetting,
+  iosSimSlimProfileSetting,
+} from '../workspace/settings.ts';
+import { teardownOwnedAvd, teardownParkedAvd, teardownParkedIosSim } from '../devices/teardown.ts';
 import { reconcileSimSlim } from './simslim.ts';
 import { withWorkspaceProcessLock } from './workspace-process-lock.ts';
 import { AvdBootError, AvdRecoveryError, prepareOwnedAvd } from './android-avd-setup.ts';

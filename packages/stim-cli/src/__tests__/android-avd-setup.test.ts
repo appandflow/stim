@@ -11,13 +11,13 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { clearDevice, getProject, removeProject, setDevice, upsertProject } from '../config.ts';
+import { clearDevice, getProject, removeProject, setDevice, upsertProject } from '../workspace/config.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { prepareOwnedAvd } from '../engine/android-avd-setup.ts';
 import { deleteProjectDevices } from '../commands/gc/devices.ts';
-import { acquireAvdClaim } from '../avd-claim.ts';
+import { acquireAvdClaim } from '../devices/avd-claim.ts';
 import { processGroupAlive, readClaimSet, releaseClaim } from '@stim-cli/core/ownership-claim';
-import { teardownOwnedAvd } from '../teardown.ts';
+import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { makeExitingChild } from './_factories.ts';
 import * as processIdentity from '@stim-cli/core/process-identity';
 
@@ -133,7 +133,13 @@ test('another process can write config during AVD creation while cleanup preserv
     expect(getProject(project)?.platforms?.android).toMatchObject({ avdName, owned: true, setupIncomplete: true });
     execFileSync(
       process.execPath,
-      ['--input-type=module', '-e', configWriter, new URL('../config.ts', import.meta.url).href, join(home, 'other')],
+      [
+        '--input-type=module',
+        '-e',
+        configWriter,
+        new URL('../workspace/config.ts', import.meta.url).href,
+        join(home, 'other'),
+      ],
       { timeout: 3000, env: process.env },
     );
     expect(getProject(join(home, 'other'))?.label).toBe('other workspace');

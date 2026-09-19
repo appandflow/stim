@@ -1,6 +1,6 @@
 import { hashFile } from '../engine/installed-artifact.ts';
 import { vi } from 'vitest';
-import * as crashDiagnostics from '../native-crash.ts';
+import * as crashDiagnostics from '../diagnostics/native-crash.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import assert from 'node:assert';
 import { captureProcessToken } from '../process-identity.ts';
@@ -23,10 +23,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
-import { loadConfig, setDevice, setProjectSetting, upsertProject } from '../config.ts';
+import { loadConfig, setDevice, setProjectSetting, upsertProject } from '../workspace/config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
-import { emulatorLogFile, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
-import { writeWorkspaceState } from '../workspace-state.ts';
+import { emulatorLogFile, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
+import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { resolveMetroWithRetry } from '../commands/ios.ts';
 import {
   NO_DEVICE,
@@ -56,7 +56,7 @@ import {
   runAndroid,
   shortHash,
 } from '../commands/android.ts';
-import { newestBuildTools } from '../sim/android.ts';
+import { newestBuildTools } from '../devices/android.ts';
 import { BUILD_ERROR, type BuildAndroidResult } from '../engine/gradle.ts';
 import {
   ADB_INSTALL_TIMEOUT_MS,

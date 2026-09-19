@@ -19,7 +19,7 @@ import {
   providerUploadOutcome,
   refingerprintAfterMutation,
   untrackedMissLine,
-} from '../../build-cache.ts';
+} from '../../cache/build-cache.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
 import {
   takeoverLine,
@@ -41,8 +41,8 @@ import { COMPILATION_CACHE_NOT_RUN, compilationCacheActivityLine } from '../../e
 import type { NdjsonWriter } from '../../ndjson.ts';
 import { artifactCachePolicy, type Optimizations } from '../../optimizations.ts';
 import { claimFailure } from '../../ownership-claim.ts';
-import { workspaceDir } from '../../paths.ts';
-import type { CacheHitLevel, CompilationCacheActivity } from '../../types.ts';
+import { workspaceDir } from '../../workspace/paths.ts';
+import type { CacheHitLevel, CompilationCacheActivity } from '../../engine/build-facts.ts';
 import type { IosDeps } from './dependencies.ts';
 import { finishIosUpload } from './result.ts';
 import { PLATFORM, isReleaseConfiguration, podAction, printDiagnostics, xcodeFailureReport } from './support.ts';

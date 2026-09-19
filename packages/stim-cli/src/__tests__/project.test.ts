@@ -11,8 +11,8 @@ import {
   resolveRegisteredProject,
   projectShortcut,
   ownedDeviceLabel,
-} from '../project.ts';
-import { upsertProject, getProject } from '../config.ts';
+} from '../workspace/project.ts';
+import { upsertProject, getProject } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 
 const FIXTURES = resolve(import.meta.dirname, 'fixtures');

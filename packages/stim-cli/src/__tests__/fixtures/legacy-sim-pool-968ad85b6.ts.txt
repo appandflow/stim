@@ -1,7 +1,7 @@
-import { assignSlotDevice, deviceSlotPlatforms, removeSlotDevice } from './device-slots.ts';
+import { assignSlotDevice, deviceSlotPlatforms, removeSlotDevice } from './devices/device-slots.ts';
 import { randomUUID } from 'node:crypto';
-import { ensureConfig, loadConfig, saveConfig, withConfigLock } from './config.ts';
-import type { Config, DeviceRecord } from './types.ts';
+import { ensureConfig, loadConfig, saveConfig, withConfigLock } from './workspace/config.ts';
+import type { Config, DeviceRecord } from './workspace/config-types.ts';
 
 export type PoolPlatform = 'ios' | 'android';
 

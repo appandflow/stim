@@ -1,6 +1,6 @@
 import { launchSlotScope, nativeRunCommand } from '../../engine/slot-launch.ts';
-import { deviceSlotPlatforms } from '../../device-slots.ts';
-import { resetAdoptedAvd, type resolveOwnedAvdSerial, type waitForBoot } from '../../sim/android.ts';
+import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
+import { resetAdoptedAvd, type resolveOwnedAvdSerial, type waitForBoot } from '../../devices/android.ts';
 import type { ChildProcess } from 'node:child_process';
 import { rmSync } from 'node:fs';
 import { basename } from 'node:path';
@@ -26,9 +26,9 @@ import {
   deviceShellArg,
 } from '../../engine/app-install.ts';
 import { appReadinessMessage, formatDuration, launchErrorReport, phaseLine, stepTimer } from '../../command-output.ts';
-import { launchErrorPreview } from '../../launch-error-preview.ts';
+import { launchErrorPreview } from '../../diagnostics/launch-error-preview.ts';
 import { MODE_BARE, MODE_EXPO, writeWorkspaceLaunch } from '../../supervisor/state.ts';
-import { writeWorkspaceState } from '../../workspace-state.ts';
+import { writeWorkspaceState } from '../../workspace/workspace-state.ts';
 import type {
   VerifyLaunchResultLike,
   RemoteUploadLike,
@@ -49,7 +49,7 @@ import {
   noDeviceDiagnostic,
   displayPath,
 } from './support.ts';
-import type { CcacheActivity, WaitedForBuild } from '../../types.ts';
+import type { CcacheActivity, WaitedForBuild } from '../../engine/build-facts.ts';
 import { verifyCollectorOwnership } from '../../collector/ownership.ts';
 import { pidExists } from '../../metro.ts';
 import type { OwnedDeviceRecord } from '../../engine/device.ts';
@@ -57,13 +57,13 @@ import { remoteAndroidDeps } from '../../engine/device-remote.ts';
 import { type RunLease, DEBUG_VERIFY_STEP_MS, lostLine, lostRefusal } from '../../engine/device-lease-run.ts';
 import { type LoadProjectProviderResult, exitAfterFlush } from '../../engine/remote-cache.ts';
 import { type ReportAndroidResultArgs, finishAndroidUpload, reportAndroidResult, persistLastBuild } from './result.ts';
-import { loadConfig, saveConfig, setDevice, withConfigLock, upsertProject } from '../../config.ts';
-import { providerUploadOutcome } from '../../build-cache.ts';
-import { detectAndroidPackage } from '../../project.ts';
+import { loadConfig, saveConfig, setDevice, withConfigLock, upsertProject } from '../../workspace/config.ts';
+import { providerUploadOutcome } from '../../cache/build-cache.ts';
+import { detectAndroidPackage } from '../../workspace/project.ts';
 import { launchOutcomeRecord } from '../native-runtime.ts';
 import { startCollector } from './collector.ts';
-import { captureNativeCrashes, printNativeCrashReport } from '../../native-crash.ts';
-import { errorDiagnostics } from '../../error-diagnostics.ts';
+import { captureNativeCrashes, printNativeCrashReport } from '../../diagnostics/native-crash.ts';
+import { errorDiagnostics } from '../../diagnostics/error-diagnostics.ts';
 
 interface VerifyAndroidRunArgs {
   root: string;

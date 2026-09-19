@@ -7,7 +7,7 @@ import {
   type AndroidPlanInputs,
   type AndroidPlanDependencies,
 } from '../commands/android/plan.ts';
-import { androidAvdConfigSettingError } from '../settings.ts';
+import { androidAvdConfigSettingError } from '../workspace/settings.ts';
 import { readProductFlavors } from '../engine/gradle.ts';
 
 let root: string;

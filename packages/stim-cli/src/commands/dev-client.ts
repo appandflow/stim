@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { getExecutor } from '../exec.ts';
-import { isPackageResolvable } from '../project.ts';
+import { isPackageResolvable } from '../workspace/project.ts';
 
 export function devClientScheme(
   root: string,

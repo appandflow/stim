@@ -1,13 +1,13 @@
-import { deviceSlotKey } from '../../device-slots.ts';
+import { deviceSlotKey } from '../../devices/device-slots.ts';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { mkdirSync, openSync } from 'node:fs';
 import chalk from 'chalk';
-import { workspaceLogsDir } from '../../paths.ts';
+import { workspaceLogsDir } from '../../workspace/paths.ts';
 import { PLATFORM } from './support.ts';
 import { spawnEntry } from '../../spawn-entry.ts';
 import { verifyCollectorOwnership } from '../../collector/ownership.ts';
-import { readWorkspaceState } from '../../workspace-state.ts';
+import { readWorkspaceState } from '../../workspace/workspace-state.ts';
 import { pidExists } from '../../metro.ts';
 import { sleep } from '../native-runtime.ts';
 import { getExecutor } from '../../exec.ts';

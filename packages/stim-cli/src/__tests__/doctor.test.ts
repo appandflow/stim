@@ -14,7 +14,7 @@ import {
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { Command } from 'commander';
-import { getProject } from '../config.ts';
+import { getProject } from '../workspace/config.ts';
 import {
   checkBuildCacheProvider,
   checkCompilationCache,
@@ -34,19 +34,19 @@ import {
   detectXcodeMajor,
   parseXcodeMajor,
   checkConcurrency,
-} from '../doctor.ts';
+} from '../diagnostics/doctor.ts';
 import doctorCommand, { doctorSuccessLines, parseDoctorPlatform, shadowedStimFinding } from '../commands/doctor.ts';
-import type { Finding } from '../doctor.ts';
+import type { Finding } from '../diagnostics/doctor.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import type { EasAuthResult } from '../engine/remote-cache.ts';
-import { workspaceDerivedData } from '../paths.ts';
+import { workspaceDerivedData } from '../workspace/paths.ts';
 import assert from 'node:assert';
 import {
   analyzeStimVersions,
   compareStimVersions,
   inspectStimVersions,
   parseStimVersionOutput,
-} from '../stim-installations.ts';
+} from '../diagnostics/stim-installations.ts';
 
 const testStimVersions = analyzeStimVersions('1.2.3', '/tools/stim-cli', []);
 

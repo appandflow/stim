@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import { CACHE_PROVIDER_ENV, CACHE_PROVIDER_ENV_NONE, cacheProviderConfigFromEnv } from '@stim-cli/cache';
-import { getProject, upsertProject } from '../config.ts';
+import { getProject, upsertProject } from '../workspace/config.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import {
   startTunnel,
@@ -17,8 +17,8 @@ import {
   withManagedTunnelLock,
   type TunnelRecord,
 } from '../engine/tunnel.ts';
-import { supervisorLogFile, workspaceLogsDir, workspaceMetadataFile } from '../paths.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../workspace-state.ts';
+import { supervisorLogFile, workspaceLogsDir, workspaceMetadataFile } from '../workspace/paths.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { readMetroTunnel } from '../supervisor/state.ts';
 import * as supervisorState from '../supervisor/state.ts';
 import {

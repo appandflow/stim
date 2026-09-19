@@ -1,10 +1,10 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { ensureConfig, getProject, upsertProject } from '../config.ts';
+import { ensureConfig, getProject, upsertProject } from '../workspace/config.ts';
 import { setExecutor, resetExecutor } from '../exec.ts';
-import { parkSim, readParked } from '../sim-pool.ts';
-import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
+import { parkSim, readParked } from '../devices/sim-pool.ts';
+import { teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
 
 let savedAndroidHome: string | undefined;
 let savedSdkRoot: string | undefined;

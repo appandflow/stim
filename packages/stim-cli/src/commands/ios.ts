@@ -1,6 +1,6 @@
 import { acquireIosArtifact, type PreparedIosArtifact } from './ios/artifact.ts';
 import { isEasBuildFailure } from '../engine/eas-build.ts';
-import { deviceSlotKey, validateDeviceSlot } from '../device-slots.ts';
+import { deviceSlotKey, validateDeviceSlot } from '../devices/device-slots.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { join } from 'node:path';
 import {
@@ -13,7 +13,8 @@ import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
 import { formatDuration, phaseLine, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
 import { waitFlagConflict, leaseExpiryText, parseDeviceWait, type RunLease } from '../engine/device-lease-run.ts';
-import type { RemoteDeviceBackend, CompilationCacheActivity } from '../types.ts';
+import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
+import type { CompilationCacheActivity } from '../engine/build-facts.ts';
 import { exitAfterFlush } from '../engine/remote-cache.ts';
 import {
   REMOTE_DEVICE_BACKENDS,
@@ -32,12 +33,12 @@ import {
   settingShapeErrors,
   tunnelModeSetting,
   unknownSettingKeys,
-} from '../settings.ts';
+} from '../workspace/settings.ts';
 import type { IosCommandOptions, IosBootLike, FailArgs } from './ios/types.ts';
 import { type IosDeps, DEFAULT_DEPS } from './ios/dependencies.ts';
 import { DEFAULT_METRO_PORT } from '../engine/app-install.ts';
 import { ensureOwnedDevice } from '../engine/device.ts';
-import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../sim-pool.ts';
+import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { REMOTE_SESSION_ERROR, binOnPath } from '../engine/device-remote.ts';
 import {
   DEVICECTL_INSTALL_TIMEOUT_MS,
@@ -50,8 +51,8 @@ import { ownedSessionName } from '../engine/eas-simulator.ts';
 import { createRunRecorder, statsProjectKey, type RunEstimates } from '../engine/stats.ts';
 import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
-import { workspaceDir, workspaceLogsDir } from '../paths.ts';
-import { appProjectProblem } from '../project.ts';
+import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
+import { appProjectProblem } from '../workspace/project.ts';
 import { isPhysicalDeviceRequest, type SupervisorLike, noMetroMessage, noMetroRemedy } from './native-runtime.ts';
 import {
   PLATFORM,

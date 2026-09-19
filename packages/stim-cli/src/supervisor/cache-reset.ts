@@ -1,9 +1,9 @@
-import { getProject, clearSupervisor } from '../config.ts';
+import { getProject, clearSupervisor } from '../workspace/config.ts';
 import { killMetroTree, resolveProjectMetro } from '../metro.ts';
 import { waitForProcessExit } from '../process-identity.ts';
 import { resolveSupervisorTarget } from './ownership.ts';
 import { clearWorkspaceSupervisor } from './state.ts';
-import { readWorkspaceState } from '../workspace-state.ts';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { supervisorError } from './errors.ts';
 
 export async function stopOwnedMetroForReset(root: string): Promise<void> {

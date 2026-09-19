@@ -1,11 +1,11 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
 import { dirname, join, parse } from 'node:path';
-import { projectMetroSharedCache } from '../settings.ts';
+import { projectMetroSharedCache } from '../workspace/settings.ts';
 import { getExecutor } from '../exec.ts';
 import { type NdjsonRecord, type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi } from '../process-output.ts';
-import { resolvePackageJson } from '../project.ts';
+import { resolvePackageJson } from '../workspace/project.ts';
 import {
   expoMetroConfigPath,
   expoMetroStoreEnv,

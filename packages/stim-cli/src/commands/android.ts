@@ -1,5 +1,5 @@
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
-import { deviceSlotKey, validateDeviceSlot } from '../device-slots.ts';
+import { deviceSlotKey, validateDeviceSlot } from '../devices/device-slots.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
@@ -7,14 +7,15 @@ import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { formatDuration, phaseLine, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
-import type { CcacheActivity, RemoteDeviceBackend } from '../types.ts';
+import type { CcacheActivity } from '../engine/build-facts.ts';
+import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
 import {
   appProjectProblem,
   findProjectRoot,
   detectAndroidPackage,
   detectBundleId,
   projectShortcut,
-} from '../project.ts';
+} from '../workspace/project.ts';
 import {
   REMOTE_DEVICE_BACKENDS,
   resolveCacheProviderConfig,
@@ -22,7 +23,7 @@ import {
   metroWarmupUrlSetting,
   publicUrlSetting,
   tunnelModeSetting,
-} from '../settings.ts';
+} from '../workspace/settings.ts';
 import {
   waitFlagConflict,
   acquireRunLease,
@@ -32,14 +33,14 @@ import {
   type RunLease,
 } from '../engine/device-lease-run.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
-import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
+import { getConcurrencyLimits, getProject, upsertProject } from '../workspace/config.ts';
 import {
   fingerprintProject,
   resolveBuild,
   storeBuild,
   storedAssetManifest,
   untrackedNativeFiles,
-} from '../build-cache.ts';
+} from '../cache/build-cache.ts';
 import { acquireBuildLock, releaseBuildLock, waitForBuild as waitForOtherBuild } from '../engine/build-lock.ts';
 import { claimFailure } from '../ownership-claim.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.ts';
@@ -60,7 +61,7 @@ import {
   type RunEstimates,
 } from '../engine/stats.ts';
 import { writeWorkspaceLaunch } from '../supervisor/state.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../workspace-state.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import {
   installAndroidApp,
   launchAndroidApp,
@@ -79,7 +80,7 @@ import {
   resolveOwnedAvdSerial,
   resolvePhysicalDevice,
   waitForBoot,
-} from '../sim/android.ts';
+} from '../devices/android.ts';
 import {
   checkDeviceCapacity,
   ensureBooted,
@@ -122,8 +123,8 @@ import {
   pooledAndroidDevice,
 } from './android/support.ts';
 import { getExecutor } from '../exec.ts';
-import { emulatorLogFile, workspaceDir, workspaceLogsDir } from '../paths.ts';
-import { gitCommonDir, repoRoot } from '../worktree.ts';
+import { emulatorLogFile, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
+import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { SupervisorLike, FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from './android/types.ts';
 import { acquireAndroidArtifact } from './android/artifact.ts';

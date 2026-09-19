@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, existsSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
-import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../paths.ts';
+import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { remoteProfilePath } from '../engine/agent-device.ts';
 import {
   ensureRemoteBootOwned,

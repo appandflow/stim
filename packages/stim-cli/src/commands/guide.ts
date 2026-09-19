@@ -3,7 +3,7 @@ import type { Command } from 'commander';
 import TOPICS from '../guide/index.ts';
 import type { GuideSection, GuideTopic } from '../guide/types.ts';
 import { guideStatus } from '../guide-status.ts';
-import { findProjectRoot } from '../project.ts';
+import { findProjectRoot } from '../workspace/project.ts';
 
 export function topicNames(): string[] {
   return Object.keys(TOPICS);

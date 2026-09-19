@@ -1,5 +1,5 @@
 import { realpathSync } from 'node:fs';
-import { ensureConfig, getConfigDir, getProject, loadConfig, saveConfig, withConfigLock } from './config.ts';
+import { ensureConfig, getConfigDir, getProject, loadConfig, saveConfig, withConfigLock } from './workspace/config.ts';
 import { getExecutor } from './exec.ts';
 import { withWorkspaceProcessLock } from './engine/workspace-process-lock.ts';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from './process-identity.ts';

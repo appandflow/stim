@@ -1,5 +1,5 @@
 import * as hostMemory from '../host-memory.ts';
-import { deviceSlotPlatforms } from '../device-slots.ts';
+import { deviceSlotPlatforms } from '../devices/device-slots.ts';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,12 +16,12 @@ import {
   unknownIosDeviceTypeRefusal,
   unknownIosRuntimeRefusal,
 } from '../engine/device.ts';
-import { allConsolePortsAndSerials, getProject, setDevice, upsertProject } from '../config.ts';
-import type { DeviceRecord } from '../types.ts';
+import { allConsolePortsAndSerials, getProject, setDevice, upsertProject } from '../workspace/config.ts';
+import type { DeviceRecord } from '../workspace/config-types.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
-import { parkSim, readParked } from '../sim-pool.ts';
-import { workspaceId } from '../paths.ts';
-import { ownedSimName } from '../sim/ios.ts';
+import { parkSim, readParked } from '../devices/sim-pool.ts';
+import { workspaceId } from '../workspace/paths.ts';
+import { ownedSimName } from '../devices/ios.ts';
 import { makeAdbDevices, makeChildProcess, makeConfig, makeExitingChild, makeIosSim } from './_factories.ts';
 
 type SimEntry = {
