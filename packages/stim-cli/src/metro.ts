@@ -162,7 +162,9 @@ export function killMetroTree(leader: number | null | undefined, processToken?: 
   if (!leader || leader === process.pid || inspectProcessIdentity({ pid: leader, processToken }) !== 'same')
     return false;
   try {
-    process.kill(-leader, 'SIGTERM');
+    // Windows has no process groups, so there is no negative pid to signal; the supervisor hosts
+    // Metro in-process and `stop` signals its collectors separately.
+    process.kill(process.platform === 'win32' ? leader : -leader, 'SIGTERM');
     return true;
   } catch {
     return false;
