@@ -1,5 +1,5 @@
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
-import { deviceSlotKey, validateDeviceSlot } from '../devices/device-slots.ts';
+import { deviceSlotFileKey, validateDeviceSlot } from '../devices/device-slots.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
@@ -656,7 +656,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     return { ok: false, error: { code, message, remedy } };
   }
   const logsDir = workspaceLogsDir(root);
-  const buildLog = join(logsDir, `build-${deviceSlotKey('android', slot)}.ndjson`);
+  const buildLog = join(logsDir, `build-${deviceSlotFileKey('android', slot)}.ndjson`);
   const writer = createWriter(buildLog, { truncate: true, fields: { slot } });
 
   const record: AndroidRecord = {

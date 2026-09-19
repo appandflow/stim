@@ -1,4 +1,4 @@
-import { deviceSlotKey } from '../../devices/device-slots.ts';
+import { deviceSlotFileKey, deviceSlotKey } from '../../devices/device-slots.ts';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { mkdirSync, openSync } from 'node:fs';
@@ -13,7 +13,7 @@ import { sleep } from '../native-runtime.ts';
 import { getExecutor } from '../../exec.ts';
 
 function collectorLogFile(root: string, slot: string): string {
-  return join(workspaceLogsDir(root), `collector-${deviceSlotKey(PLATFORM, slot)}.log`);
+  return join(workspaceLogsDir(root), `collector-${deviceSlotFileKey(PLATFORM, slot)}.log`);
 }
 
 export function collectorEntry(): string {

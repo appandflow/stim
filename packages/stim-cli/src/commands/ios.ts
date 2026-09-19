@@ -1,6 +1,6 @@
 import { acquireIosArtifact, type PreparedIosArtifact } from './ios/artifact.ts';
 import { isEasBuildFailure } from '../engine/eas-build.ts';
-import { deviceSlotKey, validateDeviceSlot } from '../devices/device-slots.ts';
+import { deviceSlotFileKey, validateDeviceSlot } from '../devices/device-slots.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { join } from 'node:path';
 import {
@@ -198,7 +198,7 @@ function explicitSchemeRefusal(root: string, scheme: string | undefined, isExpo:
 function iosSlotLogFile(root: string, slot: string): string {
   return slot === 'default'
     ? buildLogFile(root)
-    : join(workspaceLogsDir(root), `build-${deviceSlotKey('ios', slot)}.ndjson`);
+    : join(workspaceLogsDir(root), `build-${deviceSlotFileKey('ios', slot)}.ndjson`);
 }
 
 function iosSlotDeps(d: IosDeps, slot: string): IosDeps {
