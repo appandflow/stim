@@ -13,11 +13,14 @@ inputs:
 runs:
   using: composite
   steps:
+    # No pnpm store cache: a cold install from the registry takes the same
+    # time as one from a restored store on every runner here, and the store
+    # entries were most of the repository's 10 GB cache budget (#904).
     - name: Set up pnpm and Node ${{ inputs.node }}
       uses: pnpm/setup@v2
       with:
         runtime: node@${{ inputs.node }}
-        cache: true
+        cache: false
         install: false
 
     - name: Install (workspace root)

@@ -136,6 +136,7 @@ jobs:
       # exercised. Kept per-variant so bare and expo never address one another's
       # entries.
       STIM_BUILD_CACHE: ${{ github.workspace }}/.e2e-build-cache/ios-${{ matrix.framework }}
+      STIM_BUILD_CACHE_KEY: stim-cli-buildcache-v2-ios-${{ matrix.framework }}
       # Keep the throwaway STIM_HOME under the workspace so the failure
       # artifact step can find global workspace logs.
       TMPDIR: ${{ github.workspace }}/.e2e-tmp
@@ -178,24 +179,28 @@ jobs:
       - name: Install SimSlim for generated iOS fixtures
         run: brew install mobai-app/tap/simslim
 
+      # The fixture is generated from the latest templates at run time, so no
+      # file in this repository predicts its fingerprint. The key is the lane
+      # prefix alone, which no saved entry matches exactly, so restore-keys
+      # picks the newest entry for the lane; Stim looks the fingerprint up
+      # inside it, and the save step after the suite stores a new entry only
+      # when the set of fingerprints changed. A restored entry means the first
+      # build may be a legitimate cross-run HIT rather than a cold miss.
       - name: Restore cross-run build cache
         if: matrix.suite == 'loop' || matrix.suite == 'smoke'
         id: cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ${{ env.STIM_BUILD_CACHE }}
-          # Invalidated when the lockfile changes (a dep bump can move the
-          # fingerprint); restore-keys let an older cache warm-start a new key.
-          key: stim-cli-buildcache-ios-${{ matrix.framework }}-${{ hashFiles('pnpm-lock.yaml') }}
+          key: ${{ env.STIM_BUILD_CACHE_KEY }}-
           restore-keys: |
-            stim-cli-buildcache-ios-${{ matrix.framework }}-
+            ${{ env.STIM_BUILD_CACHE_KEY }}-
 
-      # Any restored content -- exact key or restore-keys prefix -- means the first
-      # build may be a legitimate cross-run HIT rather than a cold miss. The
-      # combined cache action only reports exact matches, so ask the filesystem.
       - name: Detect a warmed cross-run cache
         if: matrix.suite == 'loop' || matrix.suite == 'smoke'
-        run: echo "STIM_E2E_WARM_CACHE=$([ -n \"$(ls -A \"$STIM_BUILD_CACHE\" 2>/dev/null)\" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
+        run: |
+          echo "build cache: ${{ steps.cache.outputs.cache-matched-key && format('HIT {0}', steps.cache.outputs.cache-matched-key) || 'MISS (no entry for this lane)' }}"
+          echo "STIM_E2E_WARM_CACHE=${{ steps.cache.outputs.cache-matched-key && 1 || 0 }}" >> "$GITHUB_ENV"
 
       - name: Monitor host memory during iOS QA
         continue-on-error: true
@@ -230,6 +235,21 @@ jobs:
       - name: Simulator pool suite (ios, ${{ matrix.framework }})
         if: matrix.suite == 'pool'
         run: node test/e2e/native/run-pool-e2e.mjs --framework ${{ matrix.framework }} --keep --home "$TMPDIR/stim-cli-pool-home"
+
+      # GitHub scopes a cache to the ref that saved it: an entry from main is
+      # visible to every ref, one from a pull request to that pull request
+      # alone, so only main saves.
+      - name: Trim the cross-run build cache to its newest entries
+        if: (matrix.suite == 'loop' || matrix.suite == 'smoke') && github.ref == 'refs/heads/main'
+        id: trim
+        run: node scripts/e2e-build-cache.mjs "$STIM_BUILD_CACHE" "$STIM_BUILD_CACHE_KEY" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Save cross-run build cache
+        if: steps.trim.outputs.key != '' && steps.trim.outputs.key != steps.cache.outputs.cache-matched-key
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.STIM_BUILD_CACHE }}
+          key: ${{ steps.trim.outputs.key }}
 
       - name: Stop host memory monitor
         continue-on-error: true
@@ -293,6 +313,7 @@ jobs:
     env:
       STIM_E2E_SUITE: ${{ matrix.suite }}
       STIM_BUILD_CACHE: ${{ github.workspace }}/.e2e-build-cache/android-${{ matrix.framework }}
+      STIM_BUILD_CACHE_KEY: stim-cli-buildcache-v2-android-${{ matrix.framework }}
       TMPDIR: ${{ github.workspace }}/.e2e-tmp
     steps:
       - uses: actions/checkout@v4
@@ -308,15 +329,35 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      # Gradle's dependency cache and wrapper distribution, the download phase
+      # of every cold build. The month in the key rotates the entry so it
+      # follows the fixture's templates; restore-keys warm a month's first run
+      # from the previous entry. The caches suite seeds its throwaway Gradle
+      # home from these two directories.
+      - name: Stamp the Gradle cache key
+        id: gradle-key
+        run: echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the Gradle dependency cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper
+          key: gradle-v1-${{ runner.os }}-${{ matrix.framework }}-${{ steps.gradle-key.outputs.month }}
+          restore-keys: |
+            gradle-v1-${{ runner.os }}-${{ matrix.framework }}-
+
+      # See the iOS job for the key design.
       - name: Restore cross-run build cache
         if: matrix.suite == 'loop' || matrix.suite == 'smoke'
         id: cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ${{ env.STIM_BUILD_CACHE }}
-          key: stim-cli-buildcache-android-${{ matrix.framework }}-${{ hashFiles('pnpm-lock.yaml') }}
+          key: ${{ env.STIM_BUILD_CACHE_KEY }}-
           restore-keys: |
-            stim-cli-buildcache-android-${{ matrix.framework }}-
+            ${{ env.STIM_BUILD_CACHE_KEY }}-
 
       # Expose /dev/kvm to the emulator (the standard incantation the
       # android-emulator-runner README recommends).
@@ -329,7 +370,9 @@ jobs:
 
       - name: Detect a warmed cross-run cache
         if: matrix.suite == 'loop' || matrix.suite == 'smoke'
-        run: echo "STIM_E2E_WARM_CACHE=$([ -n \"$(ls -A \"$STIM_BUILD_CACHE\" 2>/dev/null)\" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
+        run: |
+          echo "build cache: ${{ steps.cache.outputs.cache-matched-key && format('HIT {0}', steps.cache.outputs.cache-matched-key) || 'MISS (no entry for this lane)' }}"
+          echo "STIM_E2E_WARM_CACHE=${{ steps.cache.outputs.cache-matched-key && 1 || 0 }}" >> "$GITHUB_ENV"
 
       - name: Native e2e (android, ${{ matrix.framework }}) -- runs the selected suite(s)
         # reactivecircus/android-emulator-runner installs the SDK + system image,
@@ -354,6 +397,18 @@ jobs:
             if [ "$STIM_E2E_SUITE" = loop ]; then node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/stim-cli-home"; fi
             if [ "$STIM_E2E_SUITE" = smoke ]; then node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --smoke --home "$TMPDIR/stim-cli-home"; fi
             if [ "$STIM_E2E_SUITE" = caches ]; then node test/e2e/native/run-cache-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/stim-cli-cache-home" --summary "$GITHUB_WORKSPACE/cache-summary-android-${{ matrix.framework }}.json"; fi
+
+      - name: Trim the cross-run build cache to its newest entries
+        if: (matrix.suite == 'loop' || matrix.suite == 'smoke') && github.ref == 'refs/heads/main'
+        id: trim
+        run: node scripts/e2e-build-cache.mjs "$STIM_BUILD_CACHE" "$STIM_BUILD_CACHE_KEY" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Save cross-run build cache
+        if: steps.trim.outputs.key != '' && steps.trim.outputs.key != steps.cache.outputs.cache-matched-key
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.STIM_BUILD_CACHE }}
+          key: ${{ steps.trim.outputs.key }}
 
       - name: Upload the cache-suite summary
         if: always() && matrix.suite == 'caches'
@@ -409,24 +464,43 @@ jobs:
       TEMP: D:\e
       TMP: D:\e
       STIM_BUILD_CACHE: D:\e\build-cache
+      STIM_BUILD_CACHE_KEY: stim-cli-buildcache-v2-windows-android-bare
     steps:
       - uses: actions/checkout@v4
       - run: New-Item -ItemType Directory -Force -Path "D:\e", "D:\e\build-cache"
       - uses: ./.github/actions/setup-stim
       - uses: ./.github/actions/windows-android-sdk
 
-      - name: Restore cross-run build cache
+      # See the Linux Android job for the Gradle key design.
+      - name: Stamp the Gradle cache key
+        id: gradle-key
+        shell: bash
+        run: echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the Gradle dependency cache
         uses: actions/cache@v4
         with:
-          path: D:\e\build-cache
-          key: stim-cli-buildcache-windows-android-bare-${{ hashFiles('pnpm-lock.yaml') }}
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper
+          key: gradle-v1-${{ runner.os }}-bare-${{ steps.gradle-key.outputs.month }}
           restore-keys: |
-            stim-cli-buildcache-windows-android-bare-
+            gradle-v1-${{ runner.os }}-bare-
+
+      # See the iOS job for the key design.
+      - name: Restore cross-run build cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.STIM_BUILD_CACHE }}
+          key: ${{ env.STIM_BUILD_CACHE_KEY }}-
+          restore-keys: |
+            ${{ env.STIM_BUILD_CACHE_KEY }}-
 
       - name: Detect a warmed cross-run cache
         run: |
-          $warm = if (Get-ChildItem -Path "D:\e\build-cache" -Force -ErrorAction SilentlyContinue | Select-Object -First 1) { 1 } else { 0 }
-          "STIM_E2E_WARM_CACHE=$warm" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "build cache: ${{ steps.cache.outputs.cache-matched-key && format('HIT {0}', steps.cache.outputs.cache-matched-key) || 'MISS (no entry for this lane)' }}"
+          "STIM_E2E_WARM_CACHE=${{ steps.cache.outputs.cache-matched-key && 1 || 0 }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Doctor (android)
         continue-on-error: true
@@ -451,6 +525,19 @@ jobs:
             Select-Object -First 1
           if (-not $apk) { throw "stim android produced no APK under the e2e temp root" }
           "stim android produced $($apk.FullName) ($([math]::Round($apk.Length / 1MB, 1)) MB)"
+
+      - name: Trim the cross-run build cache to its newest entries
+        if: github.ref == 'refs/heads/main'
+        id: trim
+        shell: bash
+        run: node scripts/e2e-build-cache.mjs "$STIM_BUILD_CACHE" "$STIM_BUILD_CACHE_KEY" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Save cross-run build cache
+        if: steps.trim.outputs.key != '' && steps.trim.outputs.key != steps.cache.outputs.cache-matched-key
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.STIM_BUILD_CACHE }}
+          key: ${{ steps.trim.outputs.key }}
 
       - name: Upload build and device logs
         if: always()
