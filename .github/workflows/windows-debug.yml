@@ -1,5 +1,5 @@
 # DISPATCH-ONLY. Prepares a windows-latest runner the same way the
-# windows-android-e2e job in ci.yml does, then opens SSH to it over Tailscale
+# windows job in e2e-native.yml does, then opens SSH to it over Tailscale
 # and holds so the Android loop can be worked on interactively (#888).
 #
 # tunnel=tailscale needs a TAILSCALE_AUTHKEY repository secret (ephemeral,
