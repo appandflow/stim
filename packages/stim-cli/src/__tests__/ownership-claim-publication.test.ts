@@ -9,7 +9,7 @@ const faults = vi.hoisted(() => ({
   readOnly: '',
   beforeRename: null as null | ((from: string, to: string) => void | (() => void)),
   denied: new Map<string, () => void>(),
-  denyCreates: false,
+  denyCreates: '',
 }));
 
 function accessDenied(syscall: string, path: string): never {
@@ -34,7 +34,7 @@ vi.mock('node:fs', async (importOriginal) => {
     ...fs,
     mkdirSync: (...args: Parameters<typeof fs.mkdirSync>) => {
       const path = String(args[0]);
-      if (faults.denyCreates) accessDenied('mkdir', path);
+      if (faults.denyCreates && path !== faults.denyCreates) accessDenied('mkdir', path);
       if (!faults.readOnly || relative(faults.readOnly, path).startsWith('..')) return fs.mkdirSync(...args);
       const options = args[1];
       const recursive = typeof options === 'object' && options !== null && options.recursive === true;
@@ -74,7 +74,7 @@ afterEach(() => {
   faults.readOnly = '';
   faults.beforeRename = null;
   faults.denied.clear();
-  faults.denyCreates = false;
+  faults.denyCreates = '';
   delete process.env.STIM_HOME;
   rmSync(home, { recursive: true, force: true });
 });
@@ -170,9 +170,9 @@ describe.skipIf(process.platform !== 'win32')(
     });
 
     test.each(['exclusive', 'shared'] as const)(
-      'a denial that outlasts every publication attempt is a store Stim cannot write, not a %s claim it lost',
+      'a denial to create the staging entry that outlasts every attempt is a store Stim cannot write, not a %s claim it lost',
       (mode) => {
-        faults.denyCreates = true;
+        faults.denyCreates = root;
         expect(() => tryAcquireClaim({ root, mode })).toThrow(
           expect.objectContaining({ code: 'STIM_CLAIM_UNAVAILABLE', remedy: expect.stringContaining(root) }),
         );

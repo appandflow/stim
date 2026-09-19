@@ -90,6 +90,7 @@ const CLAIM_SUFFIX = '.claim';
 const CHILD_SUFFIX = '.child';
 const STAGING_PREFIX = '.staging-';
 const PUBLISH_ATTEMPTS = 64;
+const WIN32_DENIED_CREATE_YIELD_MS = 5;
 
 export class ClaimRefusedError extends Error {
   readonly code: string = CLAIM_REFUSED;
@@ -603,10 +604,23 @@ function settleOrRelease(claim: ClaimHandle): ClaimSetState {
   }
 }
 
+/**
+ * A create denied on win32 is almost always the store root mid-removal by a releaser whose rmdir has
+ * not returned yet, which a spinning contender can outpace 64 times over; yielding lets that process
+ * finish. A real denial spends at most PUBLISH_ATTEMPTS of these before it is reported.
+ */
+function yieldToRemoval(): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, WIN32_DENIED_CREATE_YIELD_MS);
+}
+
 export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' }: ClaimOptions): ClaimAttempt {
   const owner = selfOwner();
   const reaped: ClaimHolder[] = [];
   let denied = true;
+  const retry = (why: Contention): void => {
+    denied &&= why.denied;
+    if (why.denied) yieldToRemoval();
+  };
 
   for (let attempt = 0; attempt < PUBLISH_ATTEMPTS; attempt++) {
     try {
@@ -618,7 +632,7 @@ export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' 
       }
       const why = contention(err);
       if (!why) throw err;
-      denied &&= why.denied;
+      retry(why);
       continue;
     }
     const state = inspectClaimSet(root, { label });
@@ -642,7 +656,7 @@ export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' 
     if (mode === 'shared') {
       const published = publishShared(root, payload, claimId);
       if (typeof published !== 'string') {
-        denied &&= published.denied;
+        retry(published);
         continue;
       }
       const claim = handle(published);
@@ -655,7 +669,7 @@ export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' 
 
     const path = publishExclusive(root, payload, claimId, label);
     if (typeof path !== 'string') {
-      denied &&= path.denied;
+      retry(path);
       continue;
     }
     const claim = handle(path);

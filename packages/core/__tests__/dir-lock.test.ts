@@ -123,7 +123,7 @@ test.each(['empty', 'legacy'])('an unidentified %s directory needs explicit remo
   expect(withDirLock(lock, () => 'recovered')).toBe('recovered');
 });
 
-describe.skipIf(process.platform !== 'win32')('a legacy lock directory removed by hand while a waiter polls', () => {
+describe.skipIf(process.platform !== 'win32')('a lock directory removed by hand while a waiter polls', () => {
   const accessDenied = (syscall: string, path: string): never => {
     throw Object.assign(new Error(`EPERM: operation not permitted, ${syscall} '${path}'`), { code: 'EPERM', syscall });
   };
