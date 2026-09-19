@@ -4,8 +4,9 @@
 # lint, format, typecheck, build, the full vitest unit suite (all five
 # packages), and the fast cross-platform e2e (test/e2e/cache-flow.e2e.js), which
 # drives the real CLI and the real cache library end to end with no compiler.
-# The SLOW native builds live in e2e-native.yml, gated so a flaky 15-minute
-# build never blocks a PR.
+# The SLOW native builds live in e2e-native.yml: a smoke on every push to
+# main, the full loop nightly, and on a pull request only the suites its
+# e2e-* labels ask for, so a flaky 15-minute build never blocks a PR.
 name: CI
 
 on:
@@ -95,87 +96,6 @@ jobs:
 
       - name: Unit tests (vitest)
         run: pnpm test
-
-  # BLOCKING. The Android half of the dev loop on Windows, driven by the same
-  # fixture and driver the macOS and Linux native lanes use, in two sizes:
-  #
-  #   smoke  every push and pull request. One worktree: fixture, stim start,
-  #          a cold Gradle build, install and launch on an owned emulator,
-  #          readiness, stim stop, worktree remove, cleanup checks. About
-  #          22 minutes, dominated by the emulator boot and the cold build.
-  #   loop   the full loop with the second-worktree cache proof and named
-  #          slots, about 47 minutes, added on workflow_dispatch or a pull
-  #          request from a branch named for Windows work.
-  #
-  # Both are real proof of the paths the unit suite fakes: gradlew.bat through
-  # cross-spawn, Metro listener discovery through netstat, adb and the
-  # emulator, and the taskkill tree kill on stop.
-  #
-  # The SDK, system image and acceleration facts live in
-  # .github/actions/windows-android-sdk, shared with windows-debug.yml.
-  #
-  # The loop suite's driver step is still allowed to fail while the APK
-  # assertion below it is not: the named-slots phase exits 1 after the loop has
-  # passed, because a repeated slot loses device.systemImage (#892) and the
-  # resulting all-ABI build overruns the NDK object-path limit (#893). Until
-  # those land the assertion is that suite's gate; then the driver step becomes
-  # it and the assertion goes. The smoke suite never reaches that phase, so its
-  # driver step is the gate.
-  windows-android-e2e:
-    name: android ${{ matrix.suite }} (windows)
-    runs-on: windows-latest
-    timeout-minutes: ${{ matrix.suite == 'loop' && 90 || 45 }}
-    strategy:
-      fail-fast: false
-      matrix:
-        suite: ${{ fromJSON((github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.head_ref, 'windows'))) && '["smoke", "loop"]' || '["smoke"]') }}
-    env:
-      # os.tmpdir() reads TEMP on Windows, and the driver builds its fixture
-      # under it. It is D:\e rather than a path inside the workspace because
-      # every CMake object path is built from the fixture root and Windows caps
-      # a path at 260 characters.
-      TEMP: D:\e
-      TMP: D:\e
-    steps:
-      - uses: actions/checkout@v4
-      - run: New-Item -ItemType Directory -Force -Path "D:\e"
-      - uses: ./.github/actions/setup-stim
-      - uses: ./.github/actions/windows-android-sdk
-
-      - name: Doctor (android)
-        continue-on-error: true
-        run: node packages/stim-cli/dist/cli.mjs doctor --platform android
-
-      # --keep leaves the fixture and its worktrees on this ephemeral runner so
-      # the assertion and the upload below can read them.
-      - name: Android ${{ matrix.suite }} e2e (bare)
-        continue-on-error: ${{ matrix.suite == 'loop' }}
-        run: >-
-          node test/e2e/native/run-native-e2e.mjs
-          --framework bare --platform android --keep --home "D:\e\stim-home"
-          ${{ matrix.suite == 'smoke' && '--smoke' || '' }}
-
-      # The step that decides the loop suite's colour until #892 and #893 land:
-      # the driver step above passes the build, install and launch, then exits 1
-      # in the named-slots phase, so the artifact is the part this job can hold.
-      - name: Assert Stim produced an APK
-        if: matrix.suite == 'loop'
-        run: |
-          $apk = Get-ChildItem -Path "D:\e" -Recurse -Filter *.apk -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-          if (-not $apk) { throw "stim android produced no APK under the e2e temp root" }
-          "stim android produced $($apk.FullName) ($([math]::Round($apk.Length / 1MB, 1)) MB)"
-
-      - name: Upload build and device logs
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-android-${{ matrix.suite }}-logs
-          path: D:\e\stim-home\workspaces\**\logs\*
-          include-hidden-files: true
-          if-no-files-found: warn
-          retention-days: 7
 
   runtime-floor:
     name: published runtime (node 22.12.0)
