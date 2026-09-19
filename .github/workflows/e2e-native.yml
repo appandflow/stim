@@ -118,8 +118,6 @@ jobs:
       - run: mkdir -p "$TMPDIR" "$STIM_BUILD_CACHE"
 
       - uses: ./.github/actions/setup-stim
-        with:
-          build: 'false'
 
       - name: Set up Ruby and Bundler for the fixture's Gemfile
         uses: ruby/setup-ruby@v1
@@ -146,9 +144,6 @@ jobs:
 
       - name: Install SimSlim for generated iOS fixtures
         run: brew install mobai-app/tap/simslim
-
-      - name: Build (dist/cli.mjs is what the native e2e drives)
-        run: pnpm run build
 
       - name: Restore cross-run build cache
         if: matrix.suite == 'loop'

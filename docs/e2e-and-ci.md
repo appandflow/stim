@@ -240,7 +240,7 @@ fixed:
 
 ## CI
 
-Three workflows under `.github/workflows/`, sharing two composite actions under
+The CI workflows under `.github/workflows/` share two composite actions under
 `.github/actions/`: `setup-stim` (pnpm and Node from the lockfile, the frozen
 install, the tsdown build) and `windows-android-sdk` (JDK 17 plus the system
 image the `windows-latest` image lacks, with platform-tools and the emulator on
