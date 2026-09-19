@@ -87,7 +87,6 @@ test('checkMainCheckout reports missing dependencies, Pods, and native output', 
 function seedRepo(prefix: string) {
   const base = realpathSync.native(mkdtempSync(join(tmpdir(), prefix)));
   const main = join(base, 'main');
-  const gitMain = main.replaceAll('\\', '/');
   mkdirSync(main, { recursive: true });
   const git = (command: string) => execSync(command, { cwd: main, encoding: 'utf-8' }).trim();
   git('git init -q -b main');
@@ -108,7 +107,7 @@ function seedRepo(prefix: string) {
     git(`git config branch.${branch}.merge refs/heads/main`);
   };
   trackOrigin('main');
-  return { base, main, gitMain, git, trackOrigin };
+  return { base, main, git, trackOrigin };
 }
 
 test('checkMainCheckout says nothing about the seed when the repository has no linked worktree', () => {
@@ -135,7 +134,7 @@ test('checkMainCheckout says nothing about the seed when the repository has no l
 });
 
 test('an interrupted rebase is named instead of the dirty and detached remedies git would reject', () => {
-  const { base, main, gitMain, git } = seedRepo('stim-doctor-rebase-');
+  const { base, main, git } = seedRepo('stim-doctor-rebase-');
   try {
     writeFileSync(join(main, 'README.md'), 'theirs\n');
     git('git commit -q -am theirs');
@@ -147,7 +146,7 @@ test('an interrupted rebase is named instead of the dirty and detached remedies 
 
     const findings = checkMainCheckout(main, { platform: 'ios' });
     expect(findings.map((entry) => entry.title)).toEqual(['The source checkout has a rebase in progress']);
-    expect(findings[0]?.fix).toBe(`Finish it, or run \`git -C '${gitMain}' rebase --abort\`.`);
+    expect(findings[0]?.fix).toBe(`Finish it, or run \`git -C '${main}' rebase --abort\`.`);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
@@ -166,7 +165,7 @@ test('a tag sharing the branch name does not turn the branch into an ambiguous r
 });
 
 test('seed findings are reported from inside a linked worktree, about the source checkout', () => {
-  const { base, main, gitMain, git } = seedRepo('stim-doctor-from-worktree-');
+  const { base, main, git } = seedRepo('stim-doctor-from-worktree-');
   try {
     writeFileSync(join(main, 'README.md'), 'edited\n');
     git('git worktree add -q -b task ../linked');
@@ -184,14 +183,14 @@ test('seed findings are reported from inside a linked worktree, about the source
     expect(findings[0]?.level).toBe('note');
     expect(findings[0]?.detail).toContain('stim worktree warm --refresh');
     expect(findings[0]?.detail).toContain('README.md');
-    expect(findings[0]?.fix).toBe(`Commit them, or run \`git -C '${gitMain}' stash push -u -m warm-refresh\`.`);
+    expect(findings[0]?.fix).toBe(`Commit them, or run \`git -C '${main}' stash push -u -m warm-refresh\`.`);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
 });
 
 test('a detached source checkout is reported, and nothing compares its missing branch to the default', () => {
-  const { base, main, gitMain, git } = seedRepo('stim-doctor-detached-');
+  const { base, main, git } = seedRepo('stim-doctor-detached-');
   try {
     git('git checkout -q --detach HEAD~1');
     git('git worktree add -q -b task ../linked');
@@ -199,7 +198,7 @@ test('a detached source checkout is reported, and nothing compares its missing b
     const findings = checkMainCheckout(main, { platform: 'ios' });
     expect(findings.map((entry) => entry.title)).toEqual(['The source checkout has a detached HEAD']);
     expect(findings[0]?.detail).toContain('there is no branch to fast-forward');
-    expect(findings[0]?.fix).toBe(`Run \`git -C '${gitMain}' checkout <branch>\`.`);
+    expect(findings[0]?.fix).toBe(`Run \`git -C '${main}' checkout <branch>\`.`);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
@@ -223,7 +222,7 @@ test('a source checkout that is ahead of and behind its upstream is reported as 
 });
 
 test('worktree.defaultBranch outranks origin/HEAD, and neither resolving stays silent', () => {
-  const { base, main, gitMain, git } = seedRepo('stim-doctor-default-branch-');
+  const { base, main, git } = seedRepo('stim-doctor-default-branch-');
   try {
     git('git worktree add -q -b task ../linked');
     expect(checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
@@ -234,7 +233,7 @@ test('worktree.defaultBranch outranks origin/HEAD, and neither resolving stays s
       'The source checkout is on main, not the default branch release',
     ]);
     expect(configured[0]?.detail).toContain("carries main's dependencies");
-    expect(configured[0]?.fix).toContain(`git -C '${gitMain}' checkout release`);
+    expect(configured[0]?.fix).toContain(`git -C '${main}' checkout release`);
 
     rmSync(join(main, '.stim.json'));
     git('git symbolic-ref -d refs/remotes/origin/HEAD');

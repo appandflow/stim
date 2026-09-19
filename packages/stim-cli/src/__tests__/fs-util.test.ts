@@ -2,7 +2,7 @@ import { mkdtempSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../exec.ts';
-import { directorySize, volumeRootFor, isRealMount, isOnMountedVolume } from '../fs-util.ts';
+import { directorySize, volumeRootFor, isRealMount, isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 
 test.skipIf(process.platform === 'win32')(
   'volumeRootFor identifies external and boot volumes (macOS /Volumes; skipped on win32)',
@@ -55,7 +55,30 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test('isOnMountedVolume confirms a plain boot-volume path', () => {
-  expect(isOnMountedVolume('/', ['/'])).toBe(true);
+  const boot = volumeRootFor(process.cwd());
+  expect(isOnMountedVolume(boot, [boot])).toBe(true);
+});
+
+describe.skipIf(process.platform !== 'win32')('the Windows volume model', () => {
+  test('a drive path and a UNC path each report their own root', () => {
+    expect(volumeRootFor('C:\\Users\\j\\Developer\\app')).toBe('C:\\');
+    expect(volumeRootFor('c:/Users/j/Developer/app')).toBe('C:\\');
+    expect(volumeRootFor('\\\\server\\share\\Developer\\app')).toBe('\\\\server\\share\\');
+  });
+
+  test('listMountedVolumes keeps only the drive roots that are present', () => {
+    const present = new Set(['C:\\', 'Z:\\']);
+    const statFn = ((target: string) => {
+      if (!present.has(String(target))) throw new Error('not present');
+      return { dev: 1 };
+    }) as unknown as typeof import('node:fs').statSync;
+    expect(listMountedVolumes({ statFn })).toEqual(['C:\\', 'Z:\\']);
+  });
+
+  test('a path on a drive that is gone, or on no drive at all, is not on a mounted volume', () => {
+    expect(isOnMountedVolume('Z:\\Developer\\app', ['C:\\'])).toBe(false);
+    expect(isOnMountedVolume('\\Users\\j\\Developer\\app', ['C:\\'])).toBe(false);
+  });
 });
 
 test('isOnMountedVolume returns false for a path it cannot resolve', () => {

@@ -467,13 +467,16 @@ function dfExecutor(byVolume: Record<string, string>) {
   return asked;
 }
 
-test('a project and STIM_HOME on the boot volume report one volume', () => {
-  process.env.STIM_HOME = '/Users/someone/.stim';
-  const asked = dfExecutor({ '/': dfOutput({ totalKb: 926 * 1024 * 1024, availableKb: 38 * 1024 * 1024 }) });
-  const volumes = readVolumes('/Users/someone/code/app');
-  expect(asked).toEqual(['/']);
-  expect(volumes.map((v) => v.volume)).toEqual(['/']);
-});
+test.skipIf(process.platform === 'win32')(
+  'a project and STIM_HOME on the boot volume report one volume (macOS df and /Volumes; skipped on win32)',
+  () => {
+    process.env.STIM_HOME = '/Users/someone/.stim';
+    const asked = dfExecutor({ '/': dfOutput({ totalKb: 926 * 1024 * 1024, availableKb: 38 * 1024 * 1024 }) });
+    const volumes = readVolumes('/Users/someone/code/app');
+    expect(asked).toEqual(['/']);
+    expect(volumes.map((v) => v.volume)).toEqual(['/']);
+  },
+);
 
 test.skipIf(process.platform === 'win32')(
   'a project on another volume reports that volume alongside the boot one (macOS df and /Volumes; skipped on win32)',
@@ -512,11 +515,14 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
-test('a volume df cannot answer for is dropped, not reported as empty', async () => {
-  dfExecutor({ '/': dfOutput({ totalKb: 926 * 1024 * 1024, availableKb: 38 * 1024 * 1024 }) });
-  const volumes = readVolumes('/Volumes/Unplugged/app');
-  expect(volumes.map((v) => v.volume)).toEqual(['/']);
-});
+test.skipIf(process.platform === 'win32')(
+  'a volume df cannot answer for is dropped, not reported as empty (macOS df and /Volumes; skipped on win32)',
+  async () => {
+    dfExecutor({ '/': dfOutput({ totalKb: 926 * 1024 * 1024, availableKb: 38 * 1024 * 1024 }) });
+    const volumes = readVolumes('/Volumes/Unplugged/app');
+    expect(volumes.map((v) => v.volume)).toEqual(['/']);
+  },
+);
 
 function writeLease({
   platform = 'ios',

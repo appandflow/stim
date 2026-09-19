@@ -20,7 +20,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, parse } from 'node:path';
 import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
 import { loadConfig, setDevice, setProjectSetting, upsertProject } from '../workspace/config.ts';
@@ -2846,7 +2846,8 @@ describe('the pure parts', () => {
 
   test('displayPath shortens a workspace path and leaves a foreign one alone', () => {
     expect(displayPath(root, join(root, '.stim', 'logs'))).toBe(join('.stim', 'logs'));
-    expect(displayPath(root, '/elsewhere/build.ndjson')).toBe('/elsewhere/build.ndjson');
+    const foreign = join(parse(root).root, 'elsewhere', 'build.ndjson');
+    expect(displayPath(root, foreign)).toBe(foreign);
   });
 
   test('shortHash keeps the prefix an agent actually reads', () => {

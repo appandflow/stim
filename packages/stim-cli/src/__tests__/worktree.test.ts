@@ -320,8 +320,9 @@ test('ignored inventory and warm copying still find the target file when raw ls-
   }
 }, 30_000);
 
-test('removeWorktree runs git via runFile (no shell) and includes --force only when asked', () => {
+test('removeWorktree runs git via runFile (no shell) from another checkout, with --force only when asked', () => {
   const path = '/tmp/my worktree/repo';
+  const from = '/tmp/my worktree/main';
   const calls: string[][] = [];
   setExecutor({
     runFile: (file, args = []) => {
@@ -332,12 +333,12 @@ test('removeWorktree runs git via runFile (no shell) and includes --force only w
     spawn: () => {},
   });
 
-  removeWorktree(path);
-  removeWorktree(path, { force: true });
+  removeWorktree(path, { from });
+  removeWorktree(path, { from, force: true });
 
   expect(calls).toEqual([
-    ['git', '-C', path, 'worktree', 'remove', '--', path],
-    ['git', '-C', path, 'worktree', 'remove', '--force', '--', path],
+    ['git', '-C', from, 'worktree', 'remove', '--', path],
+    ['git', '-C', from, 'worktree', 'remove', '--force', '--', path],
   ]);
 });
 
@@ -667,6 +668,7 @@ test('git runs against a real repo whose path holds a space, a dollar sign, and 
     git('git init -q -b main');
     git('git config user.email test@example.com');
     git('git config user.name test');
+    git('git config core.autocrlf false');
     writeFileSync(join(root, '.gitignore'), 'secrets.env\n');
     writeFileSync(join(root, 'tracked.txt'), 'original\n');
     writeFileSync(join(root, 'secrets.env'), 'SECRET=1\n');

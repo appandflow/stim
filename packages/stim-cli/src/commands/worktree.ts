@@ -791,7 +791,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
       }
       restorePodChurn(path, inspection.podChurn);
       try {
-        removeWorktree(path, { force: opts.force });
+        removeWorktree(path, { from: source.path, force: opts.force });
       } catch (error) {
         console.error(chalk.red(`git worktree remove failed: ${String((error as Error)?.message || error)}`));
         console.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));

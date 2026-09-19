@@ -208,57 +208,62 @@ describe('refusing instead of guessing', () => {
     expect(err.message).toContain('blocked by a non-directory path');
   });
 
-  test.each(['exclusive', 'shared'] as const)(
-    'a %s claim remedy preserves the actual blocking ancestor and its siblings',
-    (mode) => {
-      const home = dirname(root);
-      const blocker = join(home, "warm locks' file");
-      const bystander = join(home, 'keep');
-      writeFileSync(blocker, 'unrelated contents');
-      writeFileSync(bystander, 'keep');
-      const blocked = join(blocker, 'repository.lock');
-      try {
-        const err = refusal(() => tryAcquireClaim({ root: blocked, mode }));
-        expect(err.claimPath).toBe(blocker);
-        expect(err.removeCommand).toMatch(/^mv -i /);
-        getExecutor().run(err.removeCommand);
-        expect(readFileSync(`${blocker}.stim-backup`, 'utf8')).toBe('unrelated contents');
-        expect(readFileSync(bystander, 'utf8')).toBe('keep');
-        const acquired = tryAcquireClaim({ root: blocked, mode }).acquired;
-        expect(acquired).toBeDefined();
-        releaseClaim(acquired);
-      } finally {
-        rmSync(blocker, { recursive: true, force: true });
-        rmSync(`${blocker}.stim-backup`, { force: true });
-        rmSync(bystander, { force: true });
-      }
+  describe.skipIf(process.platform === 'win32')(
+    'remedies the test runs as a shell command (POSIX mv, rm and POSIX quoting; cmd.exe cannot parse them; skipped on win32)',
+    () => {
+      test.each(['exclusive', 'shared'] as const)(
+        'a %s claim remedy preserves the actual blocking ancestor and its siblings',
+        (mode) => {
+          const home = dirname(root);
+          const blocker = join(home, "warm locks' file");
+          const bystander = join(home, 'keep');
+          writeFileSync(blocker, 'unrelated contents');
+          writeFileSync(bystander, 'keep');
+          const blocked = join(blocker, 'repository.lock');
+          try {
+            const err = refusal(() => tryAcquireClaim({ root: blocked, mode }));
+            expect(err.claimPath).toBe(blocker);
+            expect(err.removeCommand).toMatch(/^mv -i /);
+            getExecutor().run(err.removeCommand);
+            expect(readFileSync(`${blocker}.stim-backup`, 'utf8')).toBe('unrelated contents');
+            expect(readFileSync(bystander, 'utf8')).toBe('keep');
+            const acquired = tryAcquireClaim({ root: blocked, mode }).acquired;
+            expect(acquired).toBeDefined();
+            releaseClaim(acquired);
+          } finally {
+            rmSync(blocker, { recursive: true, force: true });
+            rmSync(`${blocker}.stim-backup`, { force: true });
+            rmSync(bystander, { force: true });
+          }
+        },
+      );
+
+      test('the printed remedy, run as printed, clears the claim and nothing beside it', () => {
+        const home = mkdtempSync(join(tmpdir(), 'stim-claim-remedy-'));
+        const bystander = join(home, 'cache');
+        mkdirSync(bystander, { recursive: true });
+        writeFileSync(join(bystander, 'artifact'), 'not mine to delete');
+        try {
+          for (const awkward of ['cache home', "it's cache"]) {
+            const set = join(home, awkward, 'build.lock');
+            const planted = plantClaim(set, 'exclusive', { pid: 4242, processToken: 'not-a-token' });
+            const err = refusal(() => tryAcquireClaim({ root: set, mode: 'exclusive' }));
+            expect(err.removeCommand).toBe(claimRemoveCommand(planted));
+            getExecutor().run(err.removeCommand);
+            expect(existsSync(planted)).toBe(false);
+            expect(existsSync(join(bystander, 'artifact'))).toBe(true);
+            expect(tryAcquireClaim({ root: set, mode: 'exclusive' }).acquired).toBeTruthy();
+
+            getExecutor().run(claimRemoveCommand(set));
+            expect(existsSync(set)).toBe(false);
+            expect(existsSync(join(bystander, 'artifact'))).toBe(true);
+          }
+        } finally {
+          rmSync(home, { recursive: true, force: true });
+        }
+      });
     },
   );
-
-  test('the printed remedy, run as printed, clears the claim and nothing beside it', () => {
-    const home = mkdtempSync(join(tmpdir(), 'stim-claim-remedy-'));
-    const bystander = join(home, 'cache');
-    mkdirSync(bystander, { recursive: true });
-    writeFileSync(join(bystander, 'artifact'), 'not mine to delete');
-    try {
-      for (const awkward of ['cache home', "it's cache"]) {
-        const set = join(home, awkward, 'build.lock');
-        const planted = plantClaim(set, 'exclusive', { pid: 4242, processToken: 'not-a-token' });
-        const err = refusal(() => tryAcquireClaim({ root: set, mode: 'exclusive' }));
-        expect(err.removeCommand).toBe(claimRemoveCommand(planted));
-        getExecutor().run(err.removeCommand);
-        expect(existsSync(planted)).toBe(false);
-        expect(existsSync(join(bystander, 'artifact'))).toBe(true);
-        expect(tryAcquireClaim({ root: set, mode: 'exclusive' }).acquired).toBeTruthy();
-
-        getExecutor().run(claimRemoveCommand(set));
-        expect(existsSync(set)).toBe(false);
-        expect(existsSync(join(bystander, 'artifact'))).toBe(true);
-      }
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
 
   test('a claim directory holding foreign files refuses rather than being overwritten', () => {
     const dir = exclusiveClaimDir(root);

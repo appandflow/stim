@@ -1942,30 +1942,27 @@ test('gc reports the three things that still orphan, and no DerivedData', async 
   expect('caches' in report).toBeTruthy();
 });
 
-test.skipIf(process.platform === 'win32')(
-  'a dead project on an unmounted volume is not unregistered (skipped on Windows: pruning a dead entry needs isOnMountedVolume, which only resolves POSIX volume roots)',
-  async () => {
-    const unmountedPath = '/Volumes/StimTestVolumeThatDoesNotExist/proj/gone';
-    const localDeadPath = join(fakeHome, 'no-longer-here');
+test('a dead project on an unmounted volume is not unregistered', async () => {
+  const unmountedPath = '/Volumes/StimTestVolumeThatDoesNotExist/proj/gone';
+  const localDeadPath = join(fakeHome, 'no-longer-here');
 
-    saveConfig({
-      version: 2,
-      projects: {
-        [unmountedPath]: { metroPort: 8100 },
-        [localDeadPath]: { metroPort: 8101 },
-      },
-      repos: {},
-    });
-    installExecutor();
+  saveConfig({
+    version: 2,
+    projects: {
+      [unmountedPath]: { metroPort: 8100 },
+      [localDeadPath]: { metroPort: 8101 },
+    },
+    repos: {},
+  });
+  installExecutor();
 
-    await cli(['--delete']);
+  await cli(['--delete']);
 
-    const cfg = currentConfig();
-    expect(cfg.projects[unmountedPath]).toBeTruthy();
-    expect(cfg.projects[unmountedPath]?.metroPort).toBe(8100);
-    expect(cfg.projects[localDeadPath]).toBe(undefined);
-  },
-);
+  const cfg = currentConfig();
+  expect(cfg.projects[unmountedPath]).toBeTruthy();
+  expect(cfg.projects[unmountedPath]?.metroPort).toBe(8100);
+  expect(cfg.projects[localDeadPath]).toBe(undefined);
+});
 
 describe('a registry key that is not an absolute path', () => {
   const relativeKey = '.claude/stim-worktrees/nestrel';
@@ -2156,34 +2153,31 @@ test('report-mode gc lists a seeded orphaned ios sim but issues no shutdown or d
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete'))).toBe(false);
 });
 
-test.skipIf(process.platform === 'win32')(
-  "--delete reaps a dead project's owned orphan device in the same run it prunes the entry (skipped on Windows: pruning a dead entry needs isOnMountedVolume, which only resolves POSIX volume roots)",
-  async () => {
-    const localDeadPath = join(fakeHome, 'no-longer-here');
-    saveConfig({
-      version: 2,
-      projects: {
-        [localDeadPath]: {
-          metroPort: 8100,
-          platforms: { ios: { deviceUdid: 'UDID-DEAD', owned: true } },
-        },
+test("--delete reaps a dead project's owned orphan device in the same run it prunes the entry", async () => {
+  const localDeadPath = join(fakeHome, 'no-longer-here');
+  saveConfig({
+    version: 2,
+    projects: {
+      [localDeadPath]: {
+        metroPort: 8100,
+        platforms: { ios: { deviceUdid: 'UDID-DEAD', owned: true } },
       },
-      repos: {},
-    });
-    const execCalls: string[] = [];
-    installDeviceExecutor({
-      devices: [{ udid: 'UDID-DEAD', name: 'stim-dead-owner' }],
-      execCalls,
-    });
+    },
+    repos: {},
+  });
+  const execCalls: string[] = [];
+  installDeviceExecutor({
+    devices: [{ udid: 'UDID-DEAD', name: 'stim-dead-owner' }],
+    execCalls,
+  });
 
-    await sweepingGc({ delete: true });
+  await sweepingGc({ delete: true });
 
-    const cfg = currentConfig();
-    expect(cfg.projects[localDeadPath]).toBe(undefined);
-    expect(execCalls.some((c) => c.startsWith('xcrun simctl shutdown UDID-DEAD'))).toBeTruthy();
-    expect(execCalls.some((c) => c.startsWith('xcrun simctl delete UDID-DEAD'))).toBeTruthy();
-  },
-);
+  const cfg = currentConfig();
+  expect(cfg.projects[localDeadPath]).toBe(undefined);
+  expect(execCalls.some((c) => c.startsWith('xcrun simctl shutdown UDID-DEAD'))).toBeTruthy();
+  expect(execCalls.some((c) => c.startsWith('xcrun simctl delete UDID-DEAD'))).toBeTruthy();
+});
 
 test('gc with no config names Stim devices it cannot verify, but never touches them', async () => {
   const execCalls: string[] = [];
@@ -2233,18 +2227,15 @@ test.each(['CLI', 'obsolete internal option'])(
   },
 );
 
-test.skipIf(process.platform === 'win32')(
-  'the STIM_HOME guard does not disable dead-entry pruning (skipped on Windows: pruning a dead entry needs isOnMountedVolume, which only resolves POSIX volume roots)',
-  async () => {
-    const localDeadPath = join(fakeHome, 'no-longer-here');
-    saveConfig({ version: 2, projects: { [localDeadPath]: { metroPort: 8100 } }, repos: {} });
-    installExecutor();
+test('the STIM_HOME guard does not disable dead-entry pruning', async () => {
+  const localDeadPath = join(fakeHome, 'no-longer-here');
+  saveConfig({ version: 2, projects: { [localDeadPath]: { metroPort: 8100 } }, repos: {} });
+  installExecutor();
 
-    await cli(['--delete']);
+  await cli(['--delete']);
 
-    expect(currentConfig().projects[localDeadPath]).toBe(undefined);
-  },
-);
+  expect(currentConfig().projects[localDeadPath]).toBe(undefined);
+});
 
 test('--delete --older-than reaps an owned device whose project went untouched, and clears its record', async () => {
   const stalePath = join(fakeHome, 'abandoned-project');
@@ -3218,33 +3209,30 @@ test('GC preserves named-slot references on unavailable volumes and identifies s
   ]);
 });
 
-test.skipIf(process.platform === 'win32')(
-  'gc reports and reclaims named ports only for confirmed missing workspaces (skipped on Windows: pruning a dead entry needs isOnMountedVolume, which only resolves POSIX volume roots)',
-  async () => {
-    const missing = join(fakeHome, 'missing-ports');
-    const unmounted = '/Volumes/StimTestVolumeThatDoesNotExist/named-ports';
-    upsertProject(missing, { ports: { web: 8900 } });
-    upsertProject(unmounted, { ports: { web: 8901 } });
-    installExecutor();
-    const original = getExecutor();
-    const inspected: string[] = [];
-    setExecutor({
-      ...original,
-      runFile: (file, args, opts) => {
-        if (file === 'lsof') {
-          inspected.push(args[1]);
-          return '';
-        }
-        return original.runFile(file, args, opts);
-      },
-    });
-    const report = await collectGcReport();
-    expect(report.orphanedPorts).toEqual([{ project: missing, label: 'web', port: 8900 }]);
-    expect(formatGcReport(report).join('\n')).toContain('web (8900)');
-    expect(inspected).toEqual([]);
-    await cli(['--delete']);
-    expect(getProject(missing)).toBeNull();
-    expect(getProject(unmounted)?.ports).toEqual({ web: 8901 });
-    expect(inspected).toEqual(['-iTCP:8900', '-iTCP:8900']);
-  },
-);
+test('gc reports and reclaims named ports only for confirmed missing workspaces', async () => {
+  const missing = join(fakeHome, 'missing-ports');
+  const unmounted = '/Volumes/StimTestVolumeThatDoesNotExist/named-ports';
+  upsertProject(missing, { ports: { web: 8900 } });
+  upsertProject(unmounted, { ports: { web: 8901 } });
+  installExecutor();
+  const original = getExecutor();
+  const inspected: string[] = [];
+  setExecutor({
+    ...original,
+    runFile: (file, args, opts) => {
+      if (file === 'lsof') {
+        inspected.push(args[1]);
+        return '';
+      }
+      return original.runFile(file, args, opts);
+    },
+  });
+  const report = await collectGcReport();
+  expect(report.orphanedPorts).toEqual([{ project: missing, label: 'web', port: 8900 }]);
+  expect(formatGcReport(report).join('\n')).toContain('web (8900)');
+  expect(inspected).toEqual([]);
+  await cli(['--delete']);
+  expect(getProject(missing)).toBeNull();
+  expect(getProject(unmounted)?.ports).toEqual({ web: 8901 });
+  expect(inspected).toEqual(['-iTCP:8900', '-iTCP:8900']);
+});

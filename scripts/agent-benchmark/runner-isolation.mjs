@@ -9,7 +9,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 const launcher = '/usr/bin/sandbox-exec';
 
@@ -25,7 +25,7 @@ function canonicalPath(path) {
 
 function contains(parent, path) {
   const child = relative(parent, path);
-  return child === '' || (!child.startsWith('../') && child !== '..' && !isAbsolute(child));
+  return child === '' || (!child.startsWith(`..${sep}`) && child !== '..' && !isAbsolute(child));
 }
 
 function pathFilter(paths) {

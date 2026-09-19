@@ -451,8 +451,10 @@ export function resolveFullRef(cwd: string, ref: string): string | null {
   }
 }
 
-export function removeWorktree(path: string, { force = false }: { force?: boolean } = {}): void {
-  const args = ['-C', path, 'worktree', 'remove', ...(force ? ['--force'] : []), '--', path];
+// Windows refuses to delete a directory that is a running process's current
+// directory, so `from` names another checkout of the same repository.
+export function removeWorktree(path: string, { from, force = false }: { from: string; force?: boolean }): void {
+  const args = ['-C', from, 'worktree', 'remove', ...(force ? ['--force'] : []), '--', path];
   getExecutor().runFile('git', args);
 }
 
