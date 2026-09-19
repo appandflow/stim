@@ -14,9 +14,9 @@ import { queryLogs } from '../logs-query.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readSupervisorState } from './stop.ts';
 import { findProjectRoot, projectShortcut } from '../workspace/project.ts';
-import { listAllIosSims } from '../sim/ios.ts';
-import { resolveOwnedAvdSerial } from '../sim/android.ts';
-import type { IosSimRecord } from '../sim/ios.ts';
+import { listAllIosSims } from '../devices/ios.ts';
+import { resolveOwnedAvdSerial } from '../devices/android.ts';
+import type { IosSimRecord } from '../devices/ios.ts';
 import { resolveSourceCheckout } from '../workspace/worktree.ts';
 import type { WorktreeEntry } from '../workspace/worktree.ts';
 import { volumeRootFor } from '../fs-util.ts';
@@ -32,7 +32,7 @@ import {
   tightVolumes,
   unprovisionedWorktrees,
 } from '../status.ts';
-import { parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../sim-pool.ts';
+import { parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../devices/sim-pool.ts';
 import type {
   AndroidRuntimeFacts,
   EnvironmentState,

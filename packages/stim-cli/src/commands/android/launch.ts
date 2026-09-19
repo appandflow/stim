@@ -1,6 +1,6 @@
 import { launchSlotScope, nativeRunCommand } from '../../engine/slot-launch.ts';
 import { deviceSlotPlatforms } from '../../device-slots.ts';
-import { resetAdoptedAvd, type resolveOwnedAvdSerial, type waitForBoot } from '../../sim/android.ts';
+import { resetAdoptedAvd, type resolveOwnedAvdSerial, type waitForBoot } from '../../devices/android.ts';
 import type { ChildProcess } from 'node:child_process';
 import { rmSync } from 'node:fs';
 import { basename } from 'node:path';

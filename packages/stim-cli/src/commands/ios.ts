@@ -38,7 +38,7 @@ import type { IosCommandOptions, IosBootLike, FailArgs } from './ios/types.ts';
 import { type IosDeps, DEFAULT_DEPS } from './ios/dependencies.ts';
 import { DEFAULT_METRO_PORT } from '../engine/app-install.ts';
 import { ensureOwnedDevice } from '../engine/device.ts';
-import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../sim-pool.ts';
+import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { REMOTE_SESSION_ERROR, binOnPath } from '../engine/device-remote.ts';
 import {
   DEVICECTL_INSTALL_TIMEOUT_MS,

@@ -1,4 +1,4 @@
-import { sanitizeDeviceLabel } from '../sim/ios.ts';
+import { sanitizeDeviceLabel } from '../devices/ios.ts';
 
 const OWNED_PREFIX = 'stim-';
 

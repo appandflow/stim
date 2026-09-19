@@ -6,7 +6,7 @@ import type { DeviceLike, PodStateLike, PodVerdictLike } from './types.ts';
 import type { BuildIosResult } from '../../engine/xcode.ts';
 import type { SettingsObject } from '../../workspace/settings.ts';
 import { unknownIosDeviceTypeRefusal, unknownIosRuntimeRefusal } from '../../engine/device.ts';
-import { listIosRuntimes } from '../../sim/ios.ts';
+import { listIosRuntimes } from '../../devices/ios.ts';
 import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
 import { describeDiagnostic } from '../../engine/errors-xcode.ts';
 

@@ -8,10 +8,10 @@ import { upsertProject } from '../../../packages/stim-cli/src/workspace/config.t
 import { ensureOwnedDevice } from '../../../packages/stim-cli/src/engine/device.ts';
 import { installAndroidApp } from '../../../packages/stim-cli/src/engine/app-install.ts';
 import { apkPackage, dumpApkManifest } from '../../../packages/stim-cli/src/commands/android.ts';
-import { reclaimProject } from '../../../packages/stim-cli/src/reclaim.ts';
-import { readParked } from '../../../packages/stim-cli/src/sim-pool.ts';
-import { listAvds, resetAdoptedAvd } from '../../../packages/stim-cli/src/sim/android.ts';
-import { teardownParkedAvd } from '../../../packages/stim-cli/src/teardown.ts';
+import { reclaimProject } from '../../../packages/stim-cli/src/devices/reclaim.ts';
+import { readParked } from '../../../packages/stim-cli/src/devices/sim-pool.ts';
+import { listAvds, resetAdoptedAvd } from '../../../packages/stim-cli/src/devices/android.ts';
+import { teardownParkedAvd } from '../../../packages/stim-cli/src/devices/teardown.ts';
 import { collectParkedAvds, deleteParkedAvds } from '../../../packages/stim-cli/src/commands/gc/devices.ts';
 
 if (process.argv[2] === '--device-worker') {

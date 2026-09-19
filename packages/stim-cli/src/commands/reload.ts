@@ -8,8 +8,8 @@ import { androidAppProcess, iosAppProcess } from '../engine/app-install.ts';
 import { reloadThroughMetro } from '../engine/reload.ts';
 import { resolveProjectMetro, type MetroResolution } from '../metro.ts';
 import { findProjectRoot } from '../workspace/project.ts';
-import { resolveOwnedAvdSerial, type ResolvedAvdSerial } from '../sim/android.ts';
-import { resolveOwnedIosSim, type ResolvedIosSim } from '../sim/ios.ts';
+import { resolveOwnedAvdSerial, type ResolvedAvdSerial } from '../devices/android.ts';
+import { resolveOwnedIosSim, type ResolvedIosSim } from '../devices/ios.ts';
 import {
   readWorkspaceLaunches,
   type WorkspaceLaunchPlatform,

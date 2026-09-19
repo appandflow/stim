@@ -6,7 +6,7 @@ import { basename, join, resolve, sep } from 'node:path';
 import { getExecutor } from './exec.ts';
 import { androidClockOffset, parseLogcatLine } from './collector/android.ts';
 import type { NdjsonRecord } from './ndjson.ts';
-import { androidHome } from './sim/android.ts';
+import { androidHome } from './devices/android.ts';
 import { launchErrorPreview } from './launch-error-preview.ts';
 import { deviceConsoleLevel } from './collector/ios-device.ts';
 import { writeDiagnosticOnce } from './diagnostic-store.ts';

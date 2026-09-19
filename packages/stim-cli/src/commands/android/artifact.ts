@@ -58,7 +58,7 @@ import { claimFailure } from '../../ownership-claim.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import { detectAndroidPackage } from '../../workspace/project.ts';
 import type { SettingsObject } from '../../workspace/settings.ts';
-import type { androidDeviceAbi } from '../../sim/android.ts';
+import type { androidDeviceAbi } from '../../devices/android.ts';
 import type { CcacheActivity, WaitedForBuild } from '../../engine/build-facts.ts';
 import type { readWorkspaceState } from '../../workspace/workspace-state.ts';
 import type { AndroidRunPlan } from './plan.ts';

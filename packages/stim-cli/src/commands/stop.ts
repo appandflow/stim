@@ -23,7 +23,7 @@ import {
   writeWorkspaceState,
 } from '../workspace/workspace-state.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
-import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
+import { teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';

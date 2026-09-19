@@ -5,7 +5,7 @@ import { getExecutor, type Executor } from '../exec.ts';
 import { parseNdjsonText, type NdjsonRecord } from '../ndjson.ts';
 import { deviceHoldsApk, deviceHoldsBundle } from './installed-artifact.ts';
 import { DEV_MENU_LAUNCH_ARGS } from '../collector/ios-device.ts';
-import { iosSimulatorFailureAdvice, listUserApps, uninstallIosApp } from '../sim/ios.ts';
+import { iosSimulatorFailureAdvice, listUserApps, uninstallIosApp } from '../devices/ios.ts';
 import { APP_READINESS_TIMEOUT_MS, appReadinessSignal, type AppReadiness } from './app-readiness.ts';
 
 export const INSTALL_ERROR = 'STIM_INSTALL_FAILED';

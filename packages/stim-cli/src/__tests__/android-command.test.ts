@@ -56,7 +56,7 @@ import {
   runAndroid,
   shortHash,
 } from '../commands/android.ts';
-import { newestBuildTools } from '../sim/android.ts';
+import { newestBuildTools } from '../devices/android.ts';
 import { BUILD_ERROR, type BuildAndroidResult } from '../engine/gradle.ts';
 import {
   ADB_INSTALL_TIMEOUT_MS,

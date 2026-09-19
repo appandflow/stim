@@ -37,7 +37,7 @@ import gcCommand, {
   runGc,
   selectCaches,
 } from '../commands/gc.ts';
-import { adoptParked, parkSim, readParked } from '../sim-pool.ts';
+import { adoptParked, parkSim, readParked } from '../devices/sim-pool.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import {
   makeConfig,

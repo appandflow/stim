@@ -27,10 +27,10 @@ import { liveOwnedDeviceCount } from './engine/device.ts';
 import { simslimIsOnPath } from './engine/simslim.ts';
 import { readHostMemoryPressure, hostMemoryPressureAdvice, type HostMemoryPressure } from './host-memory.ts';
 import { listBuildSlots } from './engine/build-slots.ts';
-import { type IosSimRecord, listAllIosSims } from './sim/ios.ts';
-import { parkedMaxSetting, POOL_SETTING_REMEDY } from './sim-pool.ts';
+import { type IosSimRecord, listAllIosSims } from './devices/ios.ts';
+import { parkedMaxSetting, POOL_SETTING_REMEDY } from './devices/sim-pool.ts';
 import { ccacheEnabled, COMPILATION_CACHE_MIN_XCODE, detectXcodeMajor, parseXcodeMajor } from './engine/xcode.ts';
-import { type AdbDevices, listAdbDevices } from './sim/android.ts';
+import { type AdbDevices, listAdbDevices } from './devices/android.ts';
 import {
   type EasAuthResult,
   checkEasAuth as probeEasAuth,

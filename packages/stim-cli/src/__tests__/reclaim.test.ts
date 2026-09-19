@@ -6,7 +6,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { upsertProject, setDevice, getProject } from '../workspace/config.ts';
-import { describeDereferenced, parkedIosCacheKey, reclaimProject } from '../reclaim.ts';
+import { describeDereferenced, parkedIosCacheKey, reclaimProject } from '../devices/reclaim.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';

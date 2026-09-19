@@ -16,9 +16,9 @@ import { collectGcReport, runGc } from '../commands/gc.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { ensureConfig, getProject, upsertProject } from '../workspace/config.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { listOrphanedAvdDirectories } from '../sim/android.ts';
-import { parkSim, readParked } from '../sim-pool.ts';
-import { teardownOwnedAvd, teardownParkedAvd } from '../teardown.ts';
+import { listOrphanedAvdDirectories } from '../devices/android.ts';
+import { parkSim, readParked } from '../devices/sim-pool.ts';
+import { teardownOwnedAvd, teardownParkedAvd } from '../devices/teardown.ts';
 
 const race = vi.hoisted(() => ({ afterRename: null as null | ((from: string, to: string) => void) }));
 vi.mock('node:fs', async (importOriginal) => {

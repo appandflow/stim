@@ -28,7 +28,7 @@ import {
   physicalDeviceModel,
   probeEmulatorSerial,
   resolvePhysicalDevice,
-} from '../sim/android.ts';
+} from '../devices/android.ts';
 
 const DEFAULT_FOR = '5m';
 

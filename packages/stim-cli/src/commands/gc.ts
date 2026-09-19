@@ -9,14 +9,14 @@ import { listBuildSlots } from '../engine/build-slots.ts';
 import { removeExpiredLease } from '../engine/device-lease.ts';
 import { clearFreeClaimSet } from '../ownership-claim.ts';
 import { detectIsExpo, findProjectRoot } from '../workspace/project.ts';
-import { describeDereferenced, reclaimProject } from '../reclaim.ts';
+import { describeDereferenced, reclaimProject } from '../devices/reclaim.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
-import { listAllIosSims, type IosSimRecord } from '../sim/ios.ts';
-import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../sim-pool.ts';
-import { listAvds, listOrphanedAvdDirectories, ownedAvdDirectory } from '../sim/android.ts';
+import { listAllIosSims, type IosSimRecord } from '../devices/ios.ts';
+import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
+import { listAvds, listOrphanedAvdDirectories, ownedAvdDirectory } from '../devices/android.ts';
 import { declaredCachePaths, discoverCaches, projectSettingShapeErrors, sizeCaches } from '../caches.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
-import type { GcSkip, OrphanedDevice } from '../reclaim-types.ts';
+import type { GcSkip, OrphanedDevice } from '../devices/reclaim-types.ts';
 import { emptyCaches, planCacheEmptying, selectCaches, trimCaches } from './gc/caches.ts';
 import {
   collectDeviceLeases,

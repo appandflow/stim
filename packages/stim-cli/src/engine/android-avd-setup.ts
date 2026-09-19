@@ -14,7 +14,7 @@ import {
 } from '@stim-cli/core/ownership-claim';
 import { captureProcessIdentity } from '@stim-cli/core/process-identity';
 import { getExecutor } from '../exec.ts';
-import { readParked } from '../sim-pool.ts';
+import { readParked } from '../devices/sim-pool.ts';
 import {
   assertOwnedAvdStopped,
   createOwnedAvd,
@@ -22,8 +22,8 @@ import {
   ownedAvdName,
   ownedAvdSystemImage,
   resolveOwnedAvdSerial,
-} from '../sim/android.ts';
-import { teardownOwnedAvd } from '../teardown.ts';
+} from '../devices/android.ts';
+import { teardownOwnedAvd } from '../devices/teardown.ts';
 
 export class AvdBootError extends Error {
   readonly remedy: string;

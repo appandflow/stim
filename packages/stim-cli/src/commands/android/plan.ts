@@ -10,8 +10,8 @@ import { resolveAndroidCas, resolveAndroidCompilerCache } from '../../engine/and
 import { parseDeviceWait } from '../../engine/device-lease-run.ts';
 import { productFlavorRefusal, readProductFlavors } from '../../engine/gradle.ts';
 import { detectIsExpo } from '../../workspace/project.ts';
-import { listInstalledSystemImages } from '../../sim/android.ts';
-import { parkedMaxSetting } from '../../sim-pool.ts';
+import { listInstalledSystemImages } from '../../devices/android.ts';
+import { parkedMaxSetting } from '../../devices/sim-pool.ts';
 import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
 import type { SettingsObject } from '../../workspace/settings-types.ts';
 import {

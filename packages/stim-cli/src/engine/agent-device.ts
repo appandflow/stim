@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { workspaceDir } from '../workspace/paths.ts';
-import { sanitizeDeviceLabel } from '../sim/ios.ts';
+import { sanitizeDeviceLabel } from '../devices/ios.ts';
 import type { RemoteDaemon } from './eas-simulator.ts';
 
 // agent-device and eas-cli share this token name. The token stays in the child environment.

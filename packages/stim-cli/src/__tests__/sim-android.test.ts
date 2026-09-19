@@ -47,7 +47,7 @@ import {
   waitForBoot,
   withAvdConfigOverrides,
   withAvdDataPartitionSize,
-} from '../sim/android.ts';
+} from '../devices/android.ts';
 
 let tmpHome: string;
 let savedAndroidHome: string | undefined;

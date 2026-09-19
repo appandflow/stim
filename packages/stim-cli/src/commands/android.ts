@@ -80,7 +80,7 @@ import {
   resolveOwnedAvdSerial,
   resolvePhysicalDevice,
   waitForBoot,
-} from '../sim/android.ts';
+} from '../devices/android.ts';
 import {
   checkDeviceCapacity,
   ensureBooted,

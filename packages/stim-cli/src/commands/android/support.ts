@@ -16,7 +16,7 @@ import {
   listAdbDevices,
   physicalDeviceModel,
   probeEmulatorSerial,
-} from '../../sim/android.ts';
+} from '../../devices/android.ts';
 import { unknownAndroidSystemImageRefusal, type OwnedDeviceRecord } from '../../engine/device.ts';
 import { getExecutor } from '../../exec.ts';
 import { devClientScheme as configuredDevClientScheme, pickDevClientScheme } from '../dev-client.ts';

@@ -1,28 +1,28 @@
-import { clearNamedPorts } from './named-ports.ts';
-import { projectDeviceSlots } from './device-slots.ts';
-import { type ProjectRecord, getProject, removeProject } from './workspace/config.ts';
+import { clearNamedPorts } from '../named-ports.ts';
+import { projectDeviceSlots } from '../device-slots.ts';
+import { type ProjectRecord, getProject, removeProject } from '../workspace/config.ts';
 import { existsSync, rmSync } from 'node:fs';
-import { resolveProjectMetro, killMetroTree, pidExists } from './metro.ts';
+import { resolveProjectMetro, killMetroTree, pidExists } from '../metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd, type ParkedDevice, type ParkRequest } from './teardown.ts';
-import { acquireAvdClaim } from './avd-claim.ts';
-import { releaseClaim } from './ownership-claim.ts';
+import { acquireAvdClaim } from '../avd-claim.ts';
+import { releaseClaim } from '../ownership-claim.ts';
 import { parkedMaxSetting } from './sim-pool.ts';
-import { verifyCollectorOwnership } from './collector/ownership.ts';
+import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import {
   clearManagedMetroTunnel,
   clearRemoteSession,
   readMetroTunnel,
   readRemoteSessionId,
   type ManagedTunnelRecord,
-} from './supervisor/state.ts';
-import { readWorkspaceState } from './workspace/workspace-state.ts';
-import { endRecordedSession } from './engine/device-remote.ts';
-import { releaseWorkspaceLeases, type ReleasedLease } from './engine/device-lease.ts';
-import { resolveEasCliBin } from './engine/remote-cache.ts';
-import { stopTunnel, type StopTunnelResult } from './engine/tunnel.ts';
-import { workspaceDir } from './workspace/paths.ts';
-import { resolveSupervisorTarget } from './supervisor/ownership.ts';
-import { sameProcessRecord, waitForProcessExit, type ProcessRecord } from './process-identity.ts';
+} from '../supervisor/state.ts';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { endRecordedSession } from '../engine/device-remote.ts';
+import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
+import { resolveEasCliBin } from '../engine/remote-cache.ts';
+import { stopTunnel, type StopTunnelResult } from '../engine/tunnel.ts';
+import { workspaceDir } from '../workspace/paths.ts';
+import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
+import { sameProcessRecord, waitForProcessExit, type ProcessRecord } from '../process-identity.ts';
 
 async function reapCollectors(
   root: string,

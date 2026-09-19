@@ -13,7 +13,7 @@ import { acquireBuildLock, releaseBuildLock, waitForBuild } from '../../engine/b
 import { acquireBuildSlot, releaseBuildSlot } from '../../engine/build-slots.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../../engine/deps.ts';
 import { checkDeviceCapacity, clearIosAdoptionPending, ensureBooted, ensureOwnedDevice } from '../../engine/device.ts';
-import { listIosRuntimes } from '../../sim/ios.ts';
+import { listIosRuntimes } from '../../devices/ios.ts';
 import {
   ensureRemoteBootOwned,
   ensureMetroReachable,

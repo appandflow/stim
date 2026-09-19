@@ -17,7 +17,7 @@ import {
   removeParkedAfter,
   selectParked,
   type ParkedSim,
-} from '../sim-pool.ts';
+} from '../devices/sim-pool.ts';
 
 const first: ParkedSim = {
   udid: 'FIRST',
@@ -179,7 +179,7 @@ test('a live deletion claim blocks adoption beyond the ordinary lock stale windo
         '--input-type=module',
         '-e',
         script,
-        new URL('../sim-pool.ts', import.meta.url).href,
+        new URL('../devices/sim-pool.ts', import.meta.url).href,
         JSON.stringify({ platform: 'ios', projectPath: '/tmp/adopter', udid: first.udid, device }),
       ],
       { encoding: 'utf8', env: { ...process.env, STIM_HOME: stimHome } },
@@ -320,7 +320,7 @@ describe('pool operation recovery', () => {
         '-e',
         `const { removeParkedAfter } = await import(process.argv[1]);
          removeParkedAfter('ios', process.argv[2], () => process.kill(process.pid, 'SIGKILL'));`,
-        new URL('../sim-pool.ts', import.meta.url).href,
+        new URL('../devices/sim-pool.ts', import.meta.url).href,
         first.udid,
       ],
       { stdio: 'ignore' },

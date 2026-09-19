@@ -17,7 +17,7 @@ import { prepareOwnedAvd } from '../engine/android-avd-setup.ts';
 import { deleteProjectDevices } from '../commands/gc/devices.ts';
 import { acquireAvdClaim } from '../avd-claim.ts';
 import { processGroupAlive, readClaimSet, releaseClaim } from '@stim-cli/core/ownership-claim';
-import { teardownOwnedAvd } from '../teardown.ts';
+import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { makeExitingChild } from './_factories.ts';
 import * as processIdentity from '@stim-cli/core/process-identity';
 

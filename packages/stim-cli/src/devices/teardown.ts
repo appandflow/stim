@@ -1,10 +1,10 @@
-import { closeOwnedDeviceSessions } from './agent-device-cleanup.ts';
-import { deviceSlotPlatforms, projectDeviceSlots } from './device-slots.ts';
+import { closeOwnedDeviceSessions } from '../agent-device-cleanup.ts';
+import { deviceSlotPlatforms, projectDeviceSlots } from '../device-slots.ts';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { lstatSync, renameSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { loadConfig, withConfigLock } from './workspace/config.ts';
+import { loadConfig, withConfigLock } from '../workspace/config.ts';
 import {
   clearAppDataContainer,
   deleteParkedIosSim,
@@ -17,7 +17,7 @@ import {
   resolveOwnedIosSim,
   shutdownIosSim,
   type IosSimRecord,
-} from './sim/ios.ts';
+} from './ios.ts';
 import {
   assertOwnedAvdStopped,
   avdPathExists,
@@ -31,10 +31,10 @@ import {
   deleteAvd,
   ownedAvdMatchesConfiguration,
   ownedAvdSystemImage,
-} from './sim/android.ts';
+} from './android.ts';
 import { parkSim, readParked, removeParkedAfter, type ParkedSim } from './sim-pool.ts';
-import { acquireAvdClaim } from './avd-claim.ts';
-import { clearClaimChild, markClaimChildPending, releaseClaim, type ClaimHandle } from './ownership-claim.ts';
+import { acquireAvdClaim } from '../avd-claim.ts';
+import { clearClaimChild, markClaimChildPending, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
 
 export interface ParkedDevice {
   udid: string;

@@ -14,10 +14,10 @@ import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } fr
 import type { ReleasedLease } from '../engine/device-lease.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
 import { findProjectRoot } from '../workspace/project.ts';
-import { reclaimProject } from '../reclaim.ts';
+import { reclaimProject } from '../devices/reclaim.ts';
 import { claimFailure } from '../ownership-claim.ts';
-import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../sim-pool.ts';
-import type { ParkedDevice } from '../teardown.ts';
+import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
+import type { ParkedDevice } from '../devices/teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
 import { acquireWarmClaim, warmClaimAcquiredLine, withWarmClaim, type WarmClaimWait } from '../engine/warm-claim.ts';
 import { incompleteInstallRefusal, refreshMainCheckout, type RefreshFailure } from '../workspace/worktree-refresh.ts';
