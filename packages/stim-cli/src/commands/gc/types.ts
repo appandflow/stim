@@ -4,7 +4,7 @@ export interface GcSkip {
 }
 
 export interface OrphanedDevice {
-  orphanedDirectory?: import('./android.ts').OrphanedAvdDirectory;
+  orphanedDirectory?: import('../../devices/android.ts').OrphanedAvdDirectory;
   kind: 'ios' | 'android';
   id: string;
   name: string;

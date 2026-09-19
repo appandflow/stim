@@ -16,7 +16,7 @@ import {
   teardownParkedAvd,
 } from '../../devices/teardown.ts';
 import type { Config } from '../../workspace/config-types.ts';
-import type { OrphanedDevice } from '../../devices/reclaim-types.ts';
+import type { OrphanedDevice } from './types.ts';
 
 export interface StaleProjectDevice {
   kind: 'ios' | 'android';
