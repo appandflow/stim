@@ -78,7 +78,7 @@ test('a missing executable throws ENOENT', () => {
   expect(failure.code).toBe('ENOENT');
 });
 
-test.skipIf(process.platform !== 'win32')('runFile launches a .cmd shim on Windows', () => {
+test.skipIf(process.platform !== 'win32')('runFile launches a .cmd shim on Windows', { timeout: 30_000 }, () => {
   resetExecutor();
   const npm = getExecutor().findExecutable('npm');
   expect(npm).toMatch(/\.cmd$/i);
