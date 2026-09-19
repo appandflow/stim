@@ -71,7 +71,14 @@ import { teardownOwnedAvd, teardownParkedAvd, teardownParkedIosSim } from '../de
 import { reconcileSimSlim } from './simslim.ts';
 import { withWorkspaceProcessLock } from './workspace-process-lock.ts';
 import { AvdBootError, AvdRecoveryError, prepareOwnedAvd } from './android-avd-setup.ts';
+
 export { AvdBootError, AvdRecoveryError } from './android-avd-setup.ts';
+
+// WHPX is the only Android accelerator on Windows and boots a cold system image far slower than
+// HVF or KVM: measured on a windows-latest host, a first emulator took 9m38s and a second one
+// beside it 9m37s, and a GitHub runner exceeded both. Both Android waits take 20 minutes there.
+const ANDROID_FRESH_BOOT_TIMEOUT_MS = process.platform === 'win32' ? 1200000 : 120000;
+const ANDROID_BOOT_TIMEOUT_MS = process.platform === 'win32' ? 1200000 : 240000;
 
 export interface OwnedDeviceRecord {
   deviceUdid?: string;
@@ -850,7 +857,7 @@ async function bootOwnedAvdOnFreshPort({
     reportAndroidMemoryPressure(out);
     const pid = bootAndroidEmulator(avdName, claim.consolePort, { logFile });
     out(chalk.dim(phaseLine('device', `waiting for ${serial} to finish booting`)));
-    const result = await waitForAndroidBoot({ serial, timeoutMs: 120000, pid, alive, out });
+    const result = await waitForAndroidBoot({ serial, timeoutMs: ANDROID_FRESH_BOOT_TIMEOUT_MS, pid, alive, out });
     if (result.failed) throw new AvdBootError(result.reason!, result.remedy!);
     const running = getAvdNameForSerial(serial);
     if (running && running !== avdName) {
@@ -1155,7 +1162,7 @@ export async function ensureBooted({
 > = {}): Promise<BootResult> {
   if (platform === 'ios') return ensureIosBooted({ device, timeoutMs: timeoutMs ?? IOS_BOOT_TIMEOUT_MS, pollMs, out });
   if (platform === 'android')
-    return ensureAndroidBooted({ device, timeoutMs: timeoutMs ?? 240000, out, logFile, alive });
+    return ensureAndroidBooted({ device, timeoutMs: timeoutMs ?? ANDROID_BOOT_TIMEOUT_MS, out, logFile, alive });
   return { failed: true, reason: `Unknown platform "${platform}".` };
 }
 
