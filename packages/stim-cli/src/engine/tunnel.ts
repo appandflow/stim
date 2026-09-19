@@ -505,7 +505,7 @@ async function signalAndWaitForExit(
     // Package-manager shims (choco shimgen, pnpm) run the real tunnel binary as a
     // child; on win32 only taskkill /T reaches it.
     if (platform === 'win32' && child.pid) signalProcessTree(child.pid, signal, { platform });
-    else child.kill(signal);
+    child.kill(signal);
   } catch (err) {
     child.removeListener('exit', onExit);
     return isEsrch(err);
