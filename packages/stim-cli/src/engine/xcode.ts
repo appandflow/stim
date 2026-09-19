@@ -220,7 +220,7 @@ export interface SwiftVersion {
 
 // swift-frontend crashed when a compile batch mixed prefix-mapped and unmapped
 // sources; swiftlang/swift#90700 fixed it on release/6.4.x (Xcode 27).
-export const SWIFT_PREFIX_MAPPING_MIN_SWIFT: SwiftVersion = { major: 6, minor: 4 };
+const SWIFT_PREFIX_MAPPING_MIN_SWIFT: SwiftVersion = { major: 6, minor: 4 };
 
 function swiftPrefixMappingSupported(version: SwiftVersion | null): boolean {
   if (!version) return false;
@@ -236,7 +236,7 @@ export interface ReactNativeVersion {
 // React Native 0.87 dropped the SWIFT_ENABLE_EXPLICIT_MODULES=NO override its
 // prebuilt core needed on Xcode 26 (react/react-native#53457); Xcode refuses
 // Swift caching for targets built without explicit modules.
-export const SWIFT_CACHE_MIN_REACT_NATIVE: ReactNativeVersion = { major: 0, minor: 87 };
+const SWIFT_CACHE_MIN_REACT_NATIVE: ReactNativeVersion = { major: 0, minor: 87 };
 
 export function reactNativeSupportsSwiftCache(version: ReactNativeVersion | null): boolean {
   if (!version) return false;
