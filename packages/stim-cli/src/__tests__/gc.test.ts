@@ -3219,12 +3219,20 @@ test('gc reports and reclaims named ports only for confirmed missing workspaces'
   const inspected: string[] = [];
   setExecutor({
     ...original,
+    findExecutable: (name) => (name === 'lsof' ? '/usr/sbin/lsof' : null),
     runFile: (file, args, opts) => {
       if (file === 'lsof') {
         inspected.push(args[1]);
         return '';
       }
       return original.runFile(file, args, opts);
+    },
+    runQuiet: (cmd, opts) => {
+      if (cmd.startsWith('lsof ')) {
+        inspected.push(cmd.split(' ')[2]!);
+        return '';
+      }
+      return original.runQuiet(cmd, opts);
     },
   });
   const report = await collectGcReport();

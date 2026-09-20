@@ -1,6 +1,6 @@
 import { makeTemporaryDirectory, removeTemporaryEntry } from '../temporary.ts';
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
@@ -19,7 +19,6 @@ import { detectEntryFile } from './js-swap.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat, tailLines } from './xcode.ts';
 
 export const ANDROID_BUNDLE_NAME = 'index.android.bundle';
-export const ANDROID_BUNDLE_ENTRY: string = `assets/${ANDROID_BUNDLE_NAME}`;
 
 const LAST_LINES = 5;
 
@@ -132,8 +131,12 @@ export function androidBundleCommand({
   };
 }
 
-export function isNothingToDelete(text: unknown): boolean {
-  return /nothing to do|name not matched|no matches found/i.test(String(text ?? ''));
+export function jarPath({
+  javaHome = process.env.JAVA_HOME,
+}: {
+  javaHome?: string | undefined;
+} = {}): string {
+  return javaHome ? join(javaHome, 'bin', 'jar') : 'jar';
 }
 
 export function zipalignArgs({
@@ -212,6 +215,7 @@ export async function swapApkBundle({
   now = Date.now,
   heartbeatMs = HEARTBEAT_INTERVAL_MS,
   onHeartbeat = (line: string) => console.error(line),
+  platform = process.platform,
 }: {
   root: string;
   isExpo: boolean;
@@ -230,6 +234,7 @@ export async function swapApkBundle({
   now?: () => number;
   heartbeatMs?: number;
   onHeartbeat?: (line: string) => void;
+  platform?: NodeJS.Platform;
 }): Promise<ApkSwapResult> {
   const e = exec || getExecutor();
   const startedAt = now();
@@ -253,11 +258,7 @@ export async function swapApkBundle({
     const base = basename(cachedApkPath);
     work = join(tmp, `unaligned-${base}`);
     final = join(tmp, base);
-    try {
-      e.runFile('cp', ['-c', cachedApkPath, work]);
-    } catch {
-      e.runFile('cp', [cachedApkPath, work]);
-    }
+    copyApk(e, cachedApkPath, work, platform);
   } catch (err) {
     return fail('copy', `could not copy ${cachedApkPath} aside: ${describe(err)}`);
   }
@@ -344,7 +345,7 @@ export async function swapApkBundle({
       const hbc = `${bundleOutput}.hbc`;
       try {
         e.runFile(hermesc, androidHermescArgs({ bundle: bundleOutput, out: hbc }));
-        e.runFile('mv', [hbc, bundleOutput]);
+        renameSync(hbc, bundleOutput);
         hermes = true;
       } catch (err) {
         return fail('hermesc', `hermesc failed on ${bundleOutput}: ${describe(err)}`);
@@ -372,21 +373,15 @@ export async function swapApkBundle({
   const diff = compareAssetManifests(fresh, storedAssets);
   if (!diff.same) return refuse(assetDiffReason(diff), diff);
 
+  const jar = jarPath();
   try {
-    e.runFile('zip', ['-d', work, ANDROID_BUNDLE_ENTRY]);
+    // --no-compress is mandatory: AGP packages the bundle STORED so the Hermes
+    // runtime can mmap it straight out of the APK, and a deflated entry fails to
+    // load. jar --update keeps every other entry's method and replaces
+    // assets/index.android.bundle in place.
+    e.runFile(jar, ['--update', '--file', work, '--no-compress', '-C', stage, 'assets']);
   } catch (err) {
-    if (!isNothingToDelete(describe(err))) {
-      return fail('zip', `zip -d ${ANDROID_BUNDLE_ENTRY} failed on ${work}: ${describe(err)}`);
-    }
-  }
-  try {
-    // -0 is STORE, and it is mandatory: AGP packages the bundle uncompressed
-    // so the Hermes runtime can mmap it straight out of the APK, and a
-    // deflated entry fails to load. cwd is the staging dir so `assets` names
-    // the archive path.
-    e.runFile('zip', ['-0', '-r', work, 'assets'], { cwd: stage });
-  } catch (err) {
-    return fail('zip', `zip -0 -r ${work} assets failed: ${describe(err)}`);
+    return fail('zip', `${jar} --update ${work} failed: ${describe(err)}`);
   }
 
   const tools = buildTools ?? findTool(['zipalign']);
@@ -426,6 +421,18 @@ export async function swapApkBundle({
   const result: ApkSwapResult = { ok: true, apkPath: final, tmpDir: tmp, hermes, durationMs: elapsed() };
   if (note) result.note = note;
   return result;
+}
+
+// libuv implements COPYFILE_FICLONE only on Linux; on macOS copyFileSync reads
+// and writes every byte, while cp -c clones the APK on APFS in constant time.
+function copyApk(e: Executor, from: string, to: string, platform: NodeJS.Platform): void {
+  if (platform === 'darwin') {
+    try {
+      e.runFile('cp', ['-c', from, to]);
+      return;
+    } catch {}
+  }
+  copyFileSync(from, to, constants.COPYFILE_FICLONE);
 }
 
 function describe(err: unknown): string {

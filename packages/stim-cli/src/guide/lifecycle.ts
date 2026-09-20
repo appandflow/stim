@@ -1437,7 +1437,7 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   workspace's bundle with the project's own tools (\`expo export:embed\` /
   \`react-native bundle\`, then the project's own hermesc when
   \`hermesEnabled\` is not false in android/gradle.properties), re-packs it
-  into the copy with plain zip surgery (stored, not deflated -- the runtime
+  into the copy with the JDK's jar tool (stored, not deflated -- the runtime
   mmaps it), then zipaligns and re-signs with apksigner. The keystore defaults
   to android/app/debug.keystore with the standard password; android.keystore /
   android.keystorePassword override it (see \`guide settings\`). The cache

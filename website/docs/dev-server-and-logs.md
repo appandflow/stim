@@ -233,7 +233,7 @@ stim ports stop web`}
 Stim keeps allocations in its machine registry and never starts or supervises these
 servers. It checks new allocations for existing listeners and skips busy
 ports in the 8900–8999 band, announcing retries on stderr. Install `lsof` if
-your system does not provide it.
+your system does not provide it; Windows uses `netstat` instead.
 
 A repeated `get` returns the same number even while the server is listening.
 The reservation does not hold a socket open: another process can bind it
