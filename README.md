@@ -1,16 +1,107 @@
-# stim-video
+<img width="1200" height="630" alt="OG_Image" src="https://github.com/user-attachments/assets/c3642b3f-3974-448c-89f6-3d87cbfbc5b0" />
 
-Remotion compositions for stim marketing and benchmark videos. Lives outside the stim repository on purpose so the product code stays free of video tooling.
+### About
 
-- `StimWorkflow`: the 90 second "Stim Workflow" explainer (1920x1080), plus `StimWorkflowSocial` (1080x1350).
-- `BenchmarkLandscape` and `BenchmarkSocial`: the benchmark replay used on the website. `scripts/render-benchmark-video.mjs` reads the published dataset and assets from a sibling stim checkout (`STIM_WEBSITE_DIR`, default `../stim/website`) and writes the mp4s back into its `static/benchmarks`.
+App&Flow is a Montreal-based React Native engineering and consulting studio. We partner with the world’s top companies and are recommended by [Expo](https://expo.dev/consultants). Need a hand? Let’s build together. team@appandflow.com
 
-```sh
-pnpm install
-pnpm studio                # Remotion Studio
-pnpm render:workflow       # out/stim-workflow.mp4
-pnpm render:workflow-social
-pnpm render:benchmark
+# Stim
+
+Fast, isolated local React Native environments for coding agents.
+
+Stim gives each project or git worktree its own Metro port and owned simulator
+or emulator. It shares native artifacts, Xcode compilation data, Gradle output,
+and Metro transforms across worktrees. Agents can work in parallel without
+sharing live resources, then clean up every resource Stim created.
+
+Stim supports React Native Community CLI and Expo projects. Builds run locally.
+Apps can launch on owned simulators and emulators, connected physical devices,
+or configured remote devices.
+
+## Install
+
+The `stim` npm package installs the `stim` command. If you previously installed
+`stim-cli` globally, run `npm uninstall --global stim-cli` first.
+
+```bash
+npm install --global stim
+npx skills add appandflow/stim
 ```
 
-Brand assets in `public/brand` and fonts in `public/fonts` are copies of the stim website's; the numbers in `src/workflowScript.ts` come from the 2026-09-18 trailhead race (SDK 58 preview.3, Xcode 27).
+Run without a global install when needed:
+
+```bash
+npx stim <command>
+```
+
+Then ask your coding agent to build and run the app. The normal loop is:
+
+```bash
+stim doctor
+stim start
+stim ios                  # or: stim android
+stim logs --errors
+stim stop
+```
+
+`stim reload [ios|android]` is a recovery command that reloads JavaScript in the
+live app and never restarts it. Use it when an error screen remains after a fix,
+not after every JavaScript edit. It also recovers an Android app whose first
+bundle failed; an iOS app in that state never connects to Metro, so reload
+cannot reach it.
+
+Stim needs no project initialization. Runtime state stays under `~/.stim` by
+default.
+
+For an isolated branch, create the worktree with Git, then warm it:
+
+```bash
+git worktree add -b feature/settings ../feature-settings HEAD
+cd ../feature-settings
+stim worktree warm
+```
+
+If a harness already created the linked worktree, run only `stim worktree warm`
+there. Warm copies missing ignored state from the source checkout, including eligible `.env`
+and local configuration files. Existing entries are preserved; existing
+ignored directories such as `node_modules` are skipped whole.
+
+After the work is preserved, `stim worktree remove` removes any linked
+worktree, warmed or not. Git-created branches stay. See the
+[worktree guide](https://stim.appandflow.com/docs/worktrees) for exclusions
+and cleanup rules.
+
+## Documentation
+
+Read the [Stim documentation](https://stim.appandflow.com/) for the
+motivation, setup, concepts, command reference, and settings reference.
+
+The installed version also includes its own reference:
+
+```bash
+stim guide agent
+stim guide
+stim guide lifecycle
+stim guide settings
+```
+
+## Packages
+
+- [`stim`](./packages/stim-cli) provides the `stim` command.
+- [`@stim-cli/metro`](./packages/metro) shares Metro transforms and records logs.
+- [`@stim-cli/expo-build-cache`](./packages/expo-build-cache) lets direct Expo
+  builds share native artifacts with Stim.
+- [`@stim-cli/cache`](./packages/cache) holds the cache provider contract and
+  the local-first tier coordination behind both caches.
+- [`@stim-cli/core`](./packages/core) contains shared internal cache contracts.
+
+## Development
+
+```bash
+pnpm install
+pnpm build
+pnpm test
+pnpm typecheck
+pnpm lint
+```
+
+Stim is licensed under the MIT License.
