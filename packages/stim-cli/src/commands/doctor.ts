@@ -163,6 +163,7 @@ export default function doctorCommand(
   program: Command,
   version: string,
   inspectVersions: (version: string) => StimVersionReport | Promise<StimVersionReport> = inspectStimVersions,
+  host: NodeJS.Platform = process.platform,
 ): void {
   program
     .command('doctor')
@@ -206,8 +207,9 @@ export default function doctorCommand(
       const stim = await inspectVersions(version);
 
       const findings: Finding[] = runDoctor(root, {
-        xcodeMajor: opts.platform === 'android' ? null : detectXcodeMajor(),
+        xcodeMajor: opts.platform !== 'android' && host === 'darwin' ? detectXcodeMajor() : null,
         platform: opts.platform,
+        host,
       });
 
       const parity = await detectFingerprintParity(root, { platform: opts.platform });

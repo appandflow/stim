@@ -10,10 +10,12 @@ export function checkStorageLayout(
   projectRoot: string,
   {
     platform,
+    host = process.platform,
     device = filesystemDevice,
     stagingRoot = temporaryRoot,
   }: {
     platform?: DoctorPlatform;
+    host?: NodeJS.Platform;
     device?: typeof filesystemDevice;
     stagingRoot?: typeof temporaryRoot;
   } = {},
@@ -46,7 +48,8 @@ export function checkStorageLayout(
     const cacheFix =
       'Place STIM_BUILD_CACHE / machine caches.buildCache on the build-output volume, ' +
       'or accept the full-copy cost of keeping the cache on a separate volume.';
-    if (platform === 'ios' || (platform !== 'android' && existsSync(join(projectRoot, 'ios')))) {
+    const localIos = platform === 'ios' || (platform !== 'android' && existsSync(join(projectRoot, 'ios')));
+    if (localIos && host === 'darwin') {
       const output = join(workspaceDerivedData(projectRoot), 'Build', 'Products');
       check('iOS build-cache storage', [output, cache], cacheFix);
       check('iOS device app staging', [output, stagingRoot(join(output, 'artifact.app'))], temporaryFix);

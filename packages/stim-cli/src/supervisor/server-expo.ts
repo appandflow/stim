@@ -22,10 +22,15 @@ function delay(ms: number): Promise<void> {
   });
 }
 
-export function expoBinPath(root: string): string | null {
+function resolveExpoBin(root: string): { path: string; source: 'package' | 'shim' } | null {
   const fromPackage = expoBinFromPackage(resolvePackageJson(root, 'expo'));
-  if (fromPackage) return fromPackage;
-  return findBinUpward(root, 'expo');
+  if (fromPackage) return { path: fromPackage, source: 'package' };
+  const shim = findBinUpward(root, 'expo');
+  return shim ? { path: shim, source: 'shim' } : null;
+}
+
+export function expoBinPath(root: string): string | null {
+  return resolveExpoBin(root)?.path ?? null;
 }
 
 export function expoSdkMajor(root: string): number | null {
@@ -290,11 +295,12 @@ export async function startExpoServer({
   onTunnelUrl?: ((url: string) => void) | null;
   platform?: NodeJS.Platform;
 }): Promise<ExpoServerHandle> {
-  const bin = expoBinPath(root);
-  if (!bin) {
+  const resolved = resolveExpoBin(root);
+  if (!resolved) {
     const refusal = expoBinRefusal(root);
     throw supervisorError('STIM_EXPO_BIN', refusal.message, refusal.remedy);
   }
+  const bin = resolved.path;
 
   const log = writer || createNdjsonWriter(join(logsDir, 'metro.ndjson'));
   const spawn = spawnFn || ((cmd: string, args: string[], opts: SpawnOptions) => getExecutor().spawn(cmd, args, opts));
@@ -306,7 +312,7 @@ export async function startExpoServer({
   // and Volta install shims that run the real node as a child. Metro then listens
   // in a grandchild, and with no readable cwd on win32 resolveProjectMetro only
   // accepts the recorded serverPid, so the supervisor runs its own node directly.
-  const runWithOwnNode = platform === 'win32' && bin === expoBinFromPackage(resolvePackageJson(root, 'expo'));
+  const runWithOwnNode = platform === 'win32' && resolved.source === 'package';
   const [command, commandArgs] = runWithOwnNode ? [process.execPath, [bin, ...args]] : [bin, args];
   const child = spawn(command, commandArgs, {
     cwd: root,

@@ -1902,6 +1902,103 @@ test('doctor --platform android does not invoke Xcode tooling', async () => {
   expect(calls.some((call) => call.includes('xcodebuild'))).toBe(false);
 });
 
+test.each(['win32', 'linux'] as const)('doctor --platform ios on a %s host runs no Xcode probe', async (host) => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-cli-ios-host-'));
+  const home = mkdtempSync(join(tmpdir(), 'stim-doctor-cli-ios-host-home-'));
+  process.env.STIM_HOME = home;
+  const cwd = process.cwd();
+  const logs: string[] = [];
+  const calls: string[] = [];
+  const originalLog = console.log;
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+  mkdirSync(join(project, 'node_modules'));
+  mkdirSync(join(project, 'ios'));
+  setExecutor({
+    run: (command: string) => {
+      calls.push(command);
+      return '';
+    },
+    runQuiet: (command: string) => {
+      calls.push(command);
+      return null;
+    },
+    runFile: (file: string, args: string[]) => {
+      calls.push([file, ...args].join(' '));
+      return '';
+    },
+    runFileQuiet: (file: string, args: string[]) => {
+      calls.push([file, ...args].join(' '));
+      return null;
+    },
+    spawn: () => {
+      throw new Error('unexpected spawn');
+    },
+  });
+  const program = new Command();
+  doctorCommand(program, '1.2.3', () => testStimVersions, host);
+  console.log = (msg) => logs.push(String(msg));
+  process.chdir(project);
+  try {
+    await program.parseAsync(['node', 'stim', 'doctor', '--json', '--platform', 'ios']);
+  } finally {
+    process.chdir(cwd);
+    console.log = originalLog;
+    resetExecutor();
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+    rmSync(project, { recursive: true, force: true });
+  }
+  expect(calls.some((call) => call.includes('xcodebuild'))).toBe(false);
+  const payload = JSON.parse(logs[0] as string);
+  const titles = payload.findings.map((finding: Finding) => finding.title);
+  expect(titles).toContain(`iOS runs through EAS on this ${host} host`);
+});
+
+test('on win32 doctor flags CR bytes in ios/.xcode.env whatever core.autocrlf says', () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-xcode-env-crlf-'));
+  const gitCalls: string[][] = [];
+  setExecutor({
+    run: () => '',
+    runQuiet: () => null,
+    runFile: () => '',
+    runFileQuiet: (file: string, args: string[] = []) => {
+      if (file === 'git') gitCalls.push([file, ...args]);
+      return null;
+    },
+    spawn: () => {},
+  });
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+    mkdirSync(join(project, 'node_modules'));
+    mkdirSync(join(project, 'ios'));
+    const options = { platform: 'ios' as const, concurrency: { maxBuilds: 0, maxDevices: 0 } };
+    const title = 'ios/.xcode.env has CRLF line endings';
+    const titlesOn = (host: NodeJS.Platform) => runDoctor(project, { ...options, host }).map((f) => f.title);
+
+    expect(titlesOn('win32')).not.toContain(title);
+    writeFileSync(join(project, 'ios', '.xcode.env'), 'export NODE_BINARY=$(command -v node)\n');
+    expect(titlesOn('win32')).not.toContain(title);
+
+    writeFileSync(join(project, 'ios', '.xcode.env'), 'export NODE_BINARY=$(command -v node)\r\n');
+    const found = runDoctor(project, { ...options, host: 'win32' }).find((f) => f.title === title);
+    expect(found?.level).toBe('cost');
+    expect(found?.detail).toContain('core.autocrlf');
+    expect(found?.fix).toContain('git config core.autocrlf input');
+    expect(found?.fix).toContain('git checkout -- ios/.xcode.env');
+    expect(found?.fix).toContain('.gitattributes');
+    expect(gitCalls.some((call) => call.includes('core.autocrlf'))).toBe(false);
+
+    expect(titlesOn('darwin')).not.toContain(title);
+    expect(titlesOn('linux')).not.toContain(title);
+    expect(runDoctor(project, { ...options, platform: 'android', host: 'win32' }).map((f) => f.title)).not.toContain(
+      title,
+    );
+  } finally {
+    resetExecutor();
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
 test('doctor records its run per platform in the project record', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-record-'));
   const cwd = process.cwd();

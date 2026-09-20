@@ -699,6 +699,32 @@ function checkIosHost(platform: DoctorPlatform | undefined, host: NodeJS.Platfor
   );
 }
 
+function checkXcodeEnvLineEndings(
+  projectRoot: string,
+  platform: DoctorPlatform | undefined,
+  host: NodeJS.Platform,
+): Finding | null {
+  if (platform === 'android' || host !== 'win32') return null;
+  const xcodeEnv = join(projectRoot, 'ios', '.xcode.env');
+  if (!existsSync(xcodeEnv)) return null;
+  let content: string;
+  try {
+    content = readFileSync(xcodeEnv, 'utf-8');
+  } catch {
+    return null;
+  }
+  if (!content.includes('\r')) return null;
+  return finding(
+    'cost',
+    'ios/.xcode.env has CRLF line endings',
+    'An EAS build uploads the working-tree bytes of ios/.xcode.env, and Xcode sources that file with sh on the ' +
+      'build worker, where each carriage return becomes part of the line and the build fails with ' +
+      '`: command not found`. On Windows the usual cause is core.autocrlf=true rewriting the file at checkout.',
+    'Run `git config core.autocrlf input` then `git checkout -- ios/.xcode.env`, or add ' +
+      '`ios/.xcode.env text eol=lf` to .gitattributes and check the file out again.',
+  );
+}
+
 export function runDoctor(
   projectRoot: string,
   {
@@ -873,9 +899,10 @@ export function runDoctor(
   return [
     checkAppProject(projectRoot),
     checkIosHost(platform, host),
+    checkXcodeEnvLineEndings(projectRoot, platform, host),
     ...checkMainCheckout(projectRoot, { platform, localIos }),
     ...(localIos ? inspectIosDebugArchitectures(mainCheckoutProjectRoot(projectRoot)) : []),
-    ...checkStorageLayout(projectRoot, { platform }),
+    ...checkStorageLayout(projectRoot, { platform, host }),
     optimizations?.metroSharedCache ? checkMetroCache(metroConfig) : null,
     localIos && optimizations?.ios.compilationCache ? checkCompilationCache(podfile, xcodeMajor) : null,
     localIos && optimizations?.ios.compilationCache ? checkCcacheConflict(podfile, podfileProperties) : null,

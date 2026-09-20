@@ -3105,6 +3105,18 @@ describe('--remote', () => {
     expect(calls.order.includes('buildIos')).toBeTruthy();
   });
 
+  test('a remote session gets no simctl log collector; the timeline says where device logs live', async () => {
+    const remote = remoteStub();
+    reserve();
+    const { calls, exitCode } = await run({ remote: 'eas' }, remote.deps);
+    expect(exitCode).toBeFalsy();
+    expect(calls.order.includes('replaceCollector')).toBe(false);
+    const skipped = buildRecords().find((record) => record.event === 'collector_skipped');
+    expect(skipped?.level).toBe('info');
+    expect(skipped?.msg).toContain('remote session drs_42');
+    expect(skipped?.msg).toContain('agent-device/EAS');
+  });
+
   test('a reused EAS session keeps its original ownership timestamp', async () => {
     writeWorkspaceState(root, {
       remoteDevice: { platform: 'ios', sessionId: 'drs_old', startedAt: '2026-08-27T12:00:00.000Z' },
