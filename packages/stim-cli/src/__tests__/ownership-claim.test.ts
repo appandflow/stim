@@ -523,7 +523,7 @@ describe('a real race between real processes', { timeout: 30_000 }, () => {
           '  try {',
           '    got = tryAcquireClaim({ root, mode });',
           '  } catch (err) {',
-          '    console.log(JSON.stringify({ threw: err.code ?? String(err), iteration: i }));',
+          '    console.log(JSON.stringify({ threw: err.code ?? String(err), reason: err.reason, path: err.claimPath, iteration: i }));',
           '    process.exit(0);',
           '  }',
           '  if (got.pending) releaseClaim(got.pending);',
@@ -541,29 +541,32 @@ describe('a real race between real processes', { timeout: 30_000 }, () => {
       );
 
       const run = (mode: string) =>
-        new Promise<{ acquired?: number; overlaps?: number; threw?: string }>((resolve, reject) => {
-          const child = getExecutor().spawn(process.execPath, [script, root, join(dir, 'witness'), mode, '150'], {
-            stdio: ['ignore', 'pipe', 'pipe'],
-          });
-          let out = '';
-          let err = '';
-          child.stdout?.on('data', (d) => (out += d));
-          child.stderr?.on('data', (d) => (err += d));
-          child.on('error', reject);
-          child.on('exit', (code) =>
-            code === 0 ? resolve(JSON.parse(out.trim().split('\n').at(-1)!)) : reject(new Error(err || `exit ${code}`)),
-          );
-        });
+        new Promise<{ acquired?: number; overlaps?: number; threw?: string; reason?: string; path?: string }>(
+          (resolve, reject) => {
+            const child = getExecutor().spawn(process.execPath, [script, root, join(dir, 'witness'), mode, '150'], {
+              stdio: ['ignore', 'pipe', 'pipe'],
+            });
+            let out = '';
+            let err = '';
+            child.stdout?.on('data', (d) => (out += d));
+            child.stderr?.on('data', (d) => (err += d));
+            child.on('error', reject);
+            child.on('close', (code) => {
+              if (code !== 0) return reject(new Error(err || `exit ${code}`));
+              resolve(JSON.parse(out.trim().split('\n').at(-1)!));
+            });
+          },
+        );
 
       try {
         const exclusive = await Promise.all(['exclusive', 'exclusive', 'exclusive', 'exclusive'].map(run));
-        for (const answer of exclusive) expect(answer.threw).toBe(undefined);
+        expect(exclusive.filter((a) => a.threw)).toEqual([]);
         expect(exclusive.reduce((sum, a) => sum + (a.overlaps ?? 0), 0)).toBe(0);
         expect(exclusive.reduce((sum, a) => sum + (a.acquired ?? 0), 0)).toBeGreaterThan(0);
 
         rmSync(root, { recursive: true, force: true });
         const shared = await Promise.all(['shared', 'shared', 'shared', 'shared'].map(run));
-        for (const answer of shared) expect(answer.threw).toBe(undefined);
+        expect(shared.filter((a) => a.threw)).toEqual([]);
         expect(shared.every((a) => (a.acquired ?? 0) > 0)).toBe(true);
       } finally {
         rmSync(dir, { recursive: true, force: true });
