@@ -398,7 +398,7 @@ export function isPodInstallChurn(paths: string[] | null | undefined): boolean {
   return paths.every((line) => /(?:^|\/)(?:Podfile\.lock|project\.pbxproj)$/.test(line.slice(3).trim()));
 }
 
-const SAFE_BRANCH_NAME = /^[A-Za-z0-9._/-]+$/;
+const SAFE_BRANCH_NAME = /^[A-Za-z0-9@._/-]+$/;
 
 export function unpushedCommits(dir: string): string[] | null {
   const exec = getExecutor();
