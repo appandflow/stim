@@ -303,8 +303,20 @@ PATH).
   (`STIM_BUILD_CACHE`) is persisted across runs with `actions/cache` for the
   smoke and loop suites on every platform, so the cross-run cache path is
   itself exercised and a smoke whose native fingerprint is unchanged installs
-  from cache; build logs (`build-*.ndjson`) are uploaded as artifacts on
-  failure.
+  from cache. Nothing in the repository predicts the generated fixture's
+  fingerprint, so the lane restores its newest entry by key prefix, and after
+  the suite `scripts/e2e-build-cache.mjs` trims the cache to the two newest
+  fingerprints per platform and names the set in the key; a run on `main` saves
+  only when that set changed, and a pull request never saves, because GitHub
+  scopes an entry to the ref that saved it. The Android lanes also persist
+  Gradle's dependency cache and wrapper distribution (`~/.gradle/caches/modules-2`,
+  `~/.gradle/wrapper`) under a key that rotates monthly, saved from `main` by
+  the suites that build in the real Gradle home. The pnpm store is not cached
+  on any lane: a cold install from the registry measured as fast as a restored
+  store (#904). Every restore logs `Cache restored from key:` or `Cache not
+found`, and the build-cache lanes print `build cache: HIT <key>` or
+  `build cache: MISS`. Build logs (`build-*.ndjson`) are uploaded as artifacts
+  on failure.
 
 ### Assumptions a reviewer must confirm
 
