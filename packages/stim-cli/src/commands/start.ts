@@ -1,6 +1,6 @@
 import chalk from 'chalk';
-import type { ChildProcess } from 'node:child_process';
-import { mkdirSync, openSync, readFileSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
+import { appendFileSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { Command } from 'commander';
 import { phaseLine, stepTimer } from '../command-output.ts';
@@ -8,7 +8,7 @@ import type { StartError, StartFacts } from '../supervisor/start-facts.ts';
 import type { SupervisorRecord } from '../workspace/config-types.ts';
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
-import { pidExists, resolveProjectMetro } from '../metro.ts';
+import { pidExists, resolveProjectMetro, signalProcessTree } from '../metro.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { resolveSupervisorTarget, type SupervisorStateRecord } from '../supervisor/ownership.ts';
 import type { MetroResolution } from '../metro.ts';
@@ -28,6 +28,7 @@ import { CACHE_PROVIDER_ENV, cacheProviderEnv } from '@stim-cli/cache';
 import { workspaceProcessLockError, withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { stopOwnedMetroForReset } from '../supervisor/cache-reset.ts';
 import { spawnEntry } from '../spawn-entry.ts';
+import { windowsLauncherArgs } from '../detached-entry.ts';
 import {
   publicUrlSetting,
   ngrokUrlSetting,
@@ -52,6 +53,7 @@ import {
   withManagedTunnelLock,
   type StartTunnelSequenceOptions,
   type StartTunnelSequenceResult,
+  type TerminableChild,
   type TunnelRecord,
 } from '../engine/tunnel.ts';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
@@ -210,11 +212,31 @@ interface StartCommandDeps {
   writeTunnelRecord(root: string, patch: Parameters<typeof writeWorkspaceState>[1]): unknown;
   stopTunnel(record: TunnelRecord): ReturnType<typeof stopTunnel>;
   writeSupervisorRecord(root: string, patch: Parameters<typeof writeWorkspaceState>[1]): unknown;
-  terminateSupervisorChild(child: ChildProcess): Promise<boolean>;
+  terminateSupervisorChild(child: SupervisorProcess): Promise<boolean>;
   withWorktreeLock: typeof withManagedRemoteWorktreeLock;
   withTunnelLock: typeof withManagedTunnelLock;
   clearTunnelRecord(root: string, record: TunnelRecord): void;
+  platform: NodeJS.Platform;
 }
+
+/** The spawned supervisor, or on win32 the stand-in for the one the launcher recorded. */
+export interface SupervisorProcess extends TerminableChild {
+  on(event: string, listener: (...args: unknown[]) => void): unknown;
+  unref(): void;
+}
+
+function recordedSupervisorProcess(pid: number | undefined): SupervisorProcess {
+  return Object.assign(new EventEmitter(), {
+    pid,
+    stdout: null,
+    stderr: null,
+    kill: (signal: NodeJS.Signals | number = 'SIGTERM') =>
+      pid !== undefined && signalProcessTree(pid, typeof signal === 'number' ? 'SIGTERM' : signal),
+    unref() {},
+  });
+}
+
+const RECORDED_SUPERVISOR_WAIT_MS = 15_000;
 
 function providersOnPath(): ManagedProvider[] {
   return detectProviders((bin) => {
@@ -244,6 +266,7 @@ const DEFAULT_START_DEPS: StartCommandDeps = {
   withWorktreeLock: withManagedRemoteWorktreeLock,
   withTunnelLock: withManagedTunnelLock,
   clearTunnelRecord: clearManagedMetroTunnel,
+  platform: process.platform,
 };
 
 interface ManagedTunnelFailure {
@@ -433,13 +456,79 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           });
         }
         let managedTunnel: ManagedTunnelTracking | null = null;
-        let spawnedChild: ChildProcess | null = null;
+        let spawnedChild: SupervisorProcess | null = null;
         let spawnedTs: number | null = null;
         let childExit: ChildExitInfo | null = null;
 
-        const spawnSupervisor = (origin: string | null): ChildProcess => {
-          mkdirSync(logsDir, { recursive: true });
+        const spawnDirect = (supervisorArgs: string[], childEnv: NodeJS.ProcessEnv): SupervisorProcess => {
           const fd = openSync(logFile, 'a');
+          const child = getExecutor().spawn(process.execPath, supervisorArgs, {
+            cwd: root,
+            detached: true,
+            stdio: ['ignore', fd, fd],
+            env: childEnv,
+          });
+          child.unref?.();
+          child.on?.('exit', (code, signal) => {
+            childExit = { code, signal };
+          });
+          child.on?.('error', (err) => {
+            childExit = { code: null, signal: null, error: err };
+          });
+          return child;
+        };
+
+        const recordedSupervisorPid = async (since: number): Promise<number | null> => {
+          const deadline = Date.now() + RECORDED_SUPERVISOR_WAIT_MS;
+          while (Date.now() < deadline) {
+            const record = readWorkspaceState(root)?.supervisor as SupervisorStateRecord | undefined;
+            if (
+              record?.pid &&
+              record.port === port &&
+              Date.parse(String(record.startedAt)) >= since &&
+              pidExists(record.pid)
+            )
+              return record.pid;
+            await sleep(25);
+          }
+          return null;
+        };
+
+        // See windowsLauncherArgs: the direct child is a PowerShell process that exits once the
+        // supervisor is started, so liveness comes from the record the supervisor writes.
+        const spawnThroughWindowsShell = async (
+          supervisorArgs: string[],
+          childEnv: NodeJS.ProcessEnv,
+        ): Promise<SupervisorProcess> => {
+          const [entry, ...args] = supervisorArgs as [string, ...string[]];
+          const launcher = windowsLauncherArgs({ entry, args, cwd: root, logFile });
+          const since = Date.now();
+          const shell = getExecutor().spawn(launcher.file, launcher.args, {
+            cwd: root,
+            stdio: ['ignore', 'ignore', 'pipe'],
+            env: { ...childEnv, ...launcher.env },
+            windowsHide: true,
+          });
+          const stderr: string[] = [];
+          shell.stderr?.on('data', (chunk) => stderr.push(String(chunk)));
+          const exit = await new Promise<ChildExitInfo>((resolve) => {
+            shell.on?.('close', (code, signal) => resolve({ code, signal }));
+            shell.on?.('error', (error) => resolve({ code: null, signal: null, error }));
+          });
+          const launcherFailed = exit.code !== 0 || exit.error;
+          const pid = launcherFailed ? null : await recordedSupervisorPid(since);
+          if (pid === null) {
+            const reason = launcherFailed
+              ? `the supervisor launcher exited (${exit.error ? exit.error.message : `code ${exit.code}`})`
+              : `the supervisor did not record itself within ${RECORDED_SUPERVISOR_WAIT_MS / 1000}s`;
+            appendFileSync(logFile, `Stim start: ${reason}.\n${stderr.join('')}`);
+            childExit = { code: exit.code, signal: exit.signal, ...(exit.error ? { error: exit.error } : {}) };
+          }
+          return recordedSupervisorProcess(pid ?? undefined);
+        };
+
+        const spawnSupervisor = async (origin: string | null): Promise<SupervisorProcess> => {
+          mkdirSync(logsDir, { recursive: true });
           spawnedTs = Date.now();
           const supervisorArgs = [
             supervisorEntry(),
@@ -455,19 +544,10 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
             ...(origin ? { [PUBLIC_METRO_ENV]: origin, EXPO_PACKAGER_PROXY_URL: origin } : {}),
           };
           childEnv[CACHE_PROVIDER_ENV] = cacheProviderEnv(cacheProvider);
-          const child = getExecutor().spawn(process.execPath, supervisorArgs, {
-            cwd: root,
-            detached: true,
-            stdio: ['ignore', fd, fd],
-            env: childEnv,
-          });
-          child.unref?.();
-          child.on?.('exit', (code, signal) => {
-            childExit = { code, signal };
-          });
-          child.on?.('error', (err) => {
-            childExit = { code: null, signal: null, error: err };
-          });
+          const child =
+            d.platform === 'win32'
+              ? await spawnThroughWindowsShell(supervisorArgs, childEnv)
+              : spawnDirect(supervisorArgs, childEnv);
           out(
             chalk.dim(
               phaseLine(
@@ -480,7 +560,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           return child;
         };
 
-        const waitForSupervisorHandoff = async (child: ChildProcess): Promise<LiveSupervisor | null> => {
+        const waitForSupervisorHandoff = async (child: SupervisorProcess): Promise<LiveSupervisor | null> => {
           const deadline = Date.now() + 5_000;
           while (Date.now() < deadline) {
             const found = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
@@ -660,9 +740,9 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
                   };
                 }
 
-                let child: ChildProcess;
+                let child: SupervisorProcess;
                 try {
-                  child = spawnSupervisor(tracking.record.url);
+                  child = await spawnSupervisor(tracking.record.url);
                 } catch (err) {
                   return {
                     failed: {
@@ -827,7 +907,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         }
 
         if (managedTunnelExited()) return failExitedManagedTunnel();
-        const child = spawnedChild ?? spawnSupervisor(publicOrigin);
+        const child = spawnedChild ?? (await spawnSupervisor(publicOrigin));
         const attemptStartedTs = spawnedTs ?? Date.now();
 
         const healthy = await waitForMetro({

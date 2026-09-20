@@ -30,7 +30,7 @@ import { listBuildSlots } from '../engine/build-slots.ts';
 import { type IosSimRecord, listAllIosSims } from '../devices/ios.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { ccacheEnabled, COMPILATION_CACHE_MIN_XCODE, detectXcodeMajor, parseXcodeMajor } from '../engine/xcode.ts';
-import { type AdbDevices, listAdbDevices } from '../devices/android.ts';
+import { type AdbDevices, hostSystemImageArch, listAdbDevices } from '../devices/android.ts';
 import {
   type EasAuthResult,
   checkEasAuth as probeEasAuth,
@@ -48,6 +48,7 @@ import {
 } from '../workspace/settings.ts';
 import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
 import { readAndroidCasToolchain, resolveAndroidCompilerCache } from '../engine/android-cas.ts';
+import { androidPathRoom, androidPathRoomMessage, androidPathRoomRemedy } from '../engine/android-path-limit.ts';
 import { readCxxLauncherStates, type CxxLauncherState } from './doctor-cxx.ts';
 import { checkMachineSettings, readMachineSettings } from './doctor-config.ts';
 export { parseCmakeCacheLauncher } from './doctor-cxx.ts';
@@ -909,6 +910,7 @@ export function runDoctor(
     ...(platform === 'ios' || optimizations?.android.compilerCache !== 'ccache'
       ? []
       : androidCcacheFindings(projectRoot, platform, lookupCcache)),
+    checkAndroidPathRoom(projectRoot, platform, host),
     remoteBuildCache ? checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig) : null,
     easFinding,
     concurrencyFinding,
@@ -931,6 +933,27 @@ export function runDoctor(
       reportedElsewhere: simslimProfileError ? ['ios.simslimProfile'] : [],
     }),
   ].filter((f): f is Finding => Boolean(f));
+}
+
+export function checkAndroidPathRoom(
+  projectRoot: string,
+  platform: DoctorPlatform | undefined,
+  host: NodeJS.Platform,
+  hostArch: string = process.arch,
+): Finding | null {
+  // Android Emulator system images can target an ABI other than the host default; doctor checks the default.
+  const room =
+    platform === 'ios' ? null : androidPathRoom(projectRoot, { abi: hostSystemImageArch(hostArch), platform: host });
+  if (!room) return null;
+  return {
+    code: 'android-path-room',
+    ...finding(
+      'cost',
+      'The project path leaves no room for Android native object paths',
+      `${androidPathRoomMessage(room)} \`stim android\` refuses to build here with STIM_PATH_TOO_LONG, because Gradle would fail deep inside ninja instead.`,
+      androidPathRoomRemedy(room),
+    ),
+  };
 }
 
 function androidCcacheFindings(

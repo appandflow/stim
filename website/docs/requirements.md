@@ -30,6 +30,13 @@ Commands use `stim`. If it is not installed globally, replace `stim` with
 - For an emulator, an installed Android system image matching the host:
   `arm64-v8a` on ARM64 or `x86_64` on x64.
 - A working Java and Gradle setup for the project.
+- On Windows, a project root short enough for the NDK's object paths: its
+  ninja cannot open a path of 260 characters or more, and a React Native
+  codegen object path only fits when CMake can shorten it. `stim doctor
+--platform android` reports a root that leaves no room and `stim android`
+  refuses it with `STIM_PATH_TOO_LONG` before Gradle runs; `subst X: <root>`
+  and working from `X:\` is the usual fix. The check assumes the default native
+  staging path and may also refuse a shorter custom `buildStagingDirectory`.
 
 Install the host tools and JavaScript dependencies before building. Stim runs
 `pod install` when an iOS project's installed Pods are missing or stale. When

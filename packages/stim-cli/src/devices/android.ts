@@ -11,10 +11,10 @@ import {
   statSync,
   writeFileSync,
 } from 'fs';
-import { homedir } from 'os';
+import { homedir, tmpdir } from 'os';
 import { dirname, isAbsolute, join, resolve } from 'path';
 import { type Executor, getExecutor } from '../exec.ts';
-import { pidExists } from '../metro.ts';
+import { pidExists, signalProcessTree } from '../metro.ts';
 import { androidDataPartitionSizeBytes } from '../workspace/settings.ts';
 
 export interface SystemImage {
@@ -364,7 +364,7 @@ export function listAvds({ timeoutMs }: { timeoutMs?: number } = {}): string[] {
  * handle, so one started from a worktree breaks `worktree remove`.
  * https://github.com/appandflow/stim/issues/914
  */
-function androidToolCwd(platform: NodeJS.Platform = process.platform): string | undefined {
+export function androidToolCwd(platform: NodeJS.Platform = process.platform): string | undefined {
   return platform === 'win32' ? homedir() : undefined;
 }
 
@@ -858,6 +858,64 @@ export async function resetAdoptedAvd(avdName: string, serial: string, keepPacka
   }
 }
 
+export function parseEmulatorVersion(text: unknown): number | null {
+  const match = /Android emulator version (\d+)\./.exec(String(text ?? ''));
+  return match ? Number(match[1]) : null;
+}
+
+function emulatorMajorVersion(): number | null {
+  return parseEmulatorVersion(getExecutor().runQuiet(`${androidTool('emulator')} -version`, { timeoutMs: 10_000 }));
+}
+
+/** The first emulator whose launcher accepts `-crash-report-mode`; an older one refuses to start with it. */
+const CRASH_REPORT_MODE_EMULATOR_VERSION = 37;
+
+/**
+ * Where the emulator keeps crashpad's database on Windows: `AndroidEmulator\emu-crash-<version>.db`
+ * under GetTempPath, which reads TMP before TEMP.
+ */
+function emulatorCrashDatabases(env: NodeJS.ProcessEnv = process.env): string[] {
+  const root = join(env.TMP || env.TEMP || tmpdir(), 'AndroidEmulator');
+  try {
+    return readdirSync(root)
+      .filter((name) => /^emu-crash-.*\.db$/.test(name))
+      .map((name) => join(root, name));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * An emulator that crashed (this host's crashes on exit) leaves a report in crashpad's database,
+ * and the next launch blocks on a consent dialog before qemu boots: emulator.log says "Showing
+ * crashdialog to get consent." and adb never sees the device. `-crash-report-mode never` (emulator
+ * 37 and later) answers it: the pending report is deleted at startup and the emulator boots.
+ * `-no-metrics` does not; the dialog shows all the same. An older emulator gets the database
+ * removed instead, which has the same effect unless a crash handler is still writing into it.
+ * https://github.com/appandflow/stim/issues/918
+ */
+export function suppressEmulatorCrashConsent({
+  platform = process.platform,
+  version = emulatorMajorVersion,
+  databases = emulatorCrashDatabases,
+  remove = (path: string) => rmSync(path, { recursive: true, force: true }),
+}: {
+  platform?: NodeJS.Platform;
+  version?: () => number | null;
+  databases?: () => string[];
+  remove?: (path: string) => void;
+} = {}): string[] {
+  if (platform !== 'win32') return [];
+  const major = version();
+  if (major !== null && major >= CRASH_REPORT_MODE_EMULATOR_VERSION) return ['-crash-report-mode', 'never'];
+  for (const database of databases()) {
+    try {
+      remove(database);
+    } catch {}
+  }
+  return [];
+}
+
 export function bootAndroidEmulator(
   avdName: string,
   consolePort: number,
@@ -866,7 +924,14 @@ export function bootAndroidEmulator(
   const exec = getExecutor();
   const child = exec.spawn(
     androidToolPath('emulator'),
-    ['-avd', avdName, '-port', String(consolePort), ...headlessEmulatorArgs()],
+    [
+      '-avd',
+      avdName,
+      '-port',
+      String(consolePort),
+      ...headlessEmulatorArgs(),
+      ...suppressEmulatorCrashConsent({ platform }),
+    ],
     {
       cwd: androidToolCwd(platform),
       detached: true,
@@ -1084,6 +1149,30 @@ export function assertOwnedAvdStopped(
   }
 }
 
+const CRASH_HANDLER_EXIT_TIMEOUT_MS = 15_000;
+
+/**
+ * The crashpad handler qemu forks on Windows. It outlives an emulator that crashes on exit while
+ * it writes the dump, so a `stop` that returns on qemu's exit leaves it running.
+ * https://github.com/appandflow/stim/issues/918
+ */
+function emulatorCrashHandlerPids(qemuPid: number): number[] {
+  const out = getExecutor().runFileQuiet(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'crashpad_handler.exe' -and $_.ParentProcessId -eq ${qemuPid} } | ForEach-Object ProcessId`,
+    ],
+    { timeoutMs: 10_000 },
+  );
+  return String(out ?? '')
+    .split(/\r?\n/)
+    .map((line) => Number(line.trim()))
+    .filter((pid) => Number.isSafeInteger(pid) && pid > 0);
+}
+
 export function waitForAndroidEmulatorShutdown(
   avdName: string,
   shutdown: (timeoutMs: number) => void,
@@ -1095,6 +1184,8 @@ export function waitForAndroidEmulatorShutdown(
     readProcessId = readAvdProcessId,
     processAlive = pidExists,
     directoryExists = (path: string) => statSync(path).isDirectory(),
+    crashHandlerPids = emulatorCrashHandlerPids,
+    killCrashHandler = (pid: number) => signalProcessTree(pid, 'SIGKILL', { platform }),
     now = Date.now,
     sleep = sleepSync,
   }: {
@@ -1105,6 +1196,8 @@ export function waitForAndroidEmulatorShutdown(
     readProcessId?: (path: string) => number | null;
     processAlive?: (pid: number) => boolean;
     directoryExists?: (path: string) => boolean;
+    crashHandlerPids?: (qemuPid: number) => number[];
+    killCrashHandler?: (pid: number) => void;
     now?: () => number;
     sleep?: (ms: number) => void;
   } = {},
@@ -1125,6 +1218,17 @@ export function waitForAndroidEmulatorShutdown(
       throw new Error(`Owned AVD ${avdName} did not finish shutting down within ${Math.ceil(timeoutMs / 1000)}s.`);
     }
     sleep(Math.min(pollMs, remaining));
+  }
+  if (platform === 'win32') {
+    const handlerDeadline = now() + CRASH_HANDLER_EXIT_TIMEOUT_MS;
+    for (const handler of crashHandlerPids(processId)) {
+      while (processAlive(handler) && now() < handlerDeadline) sleep(pollMs);
+      if (processAlive(handler)) {
+        killCrashHandler(handler);
+        if (processAlive(handler))
+          throw new Error(`Crashpad handler ${handler} for owned AVD ${avdName} stayed alive.`);
+      }
+    }
   }
   if (!directoryExists(directory)) {
     throw new Error(`Could not verify the content directory for owned AVD ${avdName} after shutdown.`);

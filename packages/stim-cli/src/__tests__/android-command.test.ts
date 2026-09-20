@@ -19,7 +19,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, parse } from 'node:path';
 import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
@@ -2675,7 +2675,7 @@ describe('Contract 5: the device-log collector', () => {
     expect(Array.isArray(opts.stdio)).toBe(true);
     expect((opts.stdio as unknown[])[0]).toBe('ignore');
     expect(existsSync(collectorLogFile(root))).toBe(true);
-    expect(opts.cwd).toBe(root);
+    expect(opts.cwd).toBe(process.platform === 'win32' ? homedir() : root);
     expect(unrefed).toBe(true);
   });
 
