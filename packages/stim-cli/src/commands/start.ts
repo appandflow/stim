@@ -506,7 +506,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           const shell = getExecutor().spawn(launcher.file, launcher.args, {
             cwd: root,
             stdio: ['ignore', 'ignore', 'pipe'],
-            env: childEnv,
+            env: { ...childEnv, ...launcher.env },
             windowsHide: true,
           });
           const stderr: string[] = [];

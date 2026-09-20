@@ -1,9 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync, writeSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SpawnOptions } from 'node:child_process';
 import { afterEach, beforeEach, expect, test } from 'vitest';
 import { relaunchWithLogFile, windowsLauncherArgs } from '../detached-entry.ts';
+import { getExecutor } from '../exec.ts';
 import { makeChildProcess } from './_factories.ts';
 
 let dir: string;
@@ -16,7 +17,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('the Windows launcher starts the entry through Start-Process with every path quoted for both shells', () => {
+test('the Windows launcher passes paths through the environment without parsing them as PowerShell source', () => {
   const launcher = windowsLauncherArgs({
     entry: 'C:\\Program Files\\stim\\supervisor-run.mjs',
     args: ['--root', "D:\\it's here\\app", '--port', '8082'],
@@ -26,17 +27,42 @@ test('the Windows launcher starts the entry through Start-Process with every pat
   });
   expect(launcher.file).toBe('powershell.exe');
   expect(launcher.args.slice(0, 3)).toEqual(['-NoProfile', '-NonInteractive', '-Command']);
-  expect(launcher.args[3]).toBe(
-    "Start-Process -WindowStyle Hidden -FilePath 'C:\\Program Files\\nodejs\\node.exe' " +
-      `-ArgumentList '"C:\\Program Files\\stim\\supervisor-run.mjs" "--root" "D:\\it''s here\\app" "--port" "8082" "--log-file" "D:\\home\\logs\\supervisor.log"' ` +
-      "-WorkingDirectory 'D:\\it''s here\\app'",
-  );
+  expect(launcher.args[3]).toContain('[System.Diagnostics.Process]::Start($start)');
+  expect(launcher.args[3]).not.toContain("it's here");
+  expect(launcher.env).toEqual({
+    STIM_WINDOWS_LAUNCH_FILE: 'C:\\Program Files\\nodejs\\node.exe',
+    STIM_WINDOWS_LAUNCH_ARGS:
+      '"C:\\Program Files\\stim\\supervisor-run.mjs" "--root" "D:\\it\'s here\\app" "--port" "8082" "--log-file" "D:\\home\\logs\\supervisor.log"',
+    STIM_WINDOWS_LAUNCH_CWD: "D:\\it's here\\app",
+  });
 });
 
 test('the Windows launcher escapes a trailing backslash so the closing quote survives the CRT parser', () => {
   const launcher = windowsLauncherArgs({ entry: 'run.mjs', args: ['--root', 'D:\\'], cwd: 'D:\\', logFile: 'x.log' });
-  expect(launcher.args[3]).toContain('"--root" "D:\\\\"');
+  expect(launcher.env.STIM_WINDOWS_LAUNCH_ARGS).toContain('"--root" "D:\\\\"');
 });
+
+test.skipIf(process.platform !== 'win32')(
+  'the Windows launcher starts an entry from a path with brackets and a smart quote',
+  async () => {
+    const cwd = join(dir, '[O\u2019Brien]');
+    mkdirSync(cwd);
+    const entry = join(cwd, 'entry.cjs');
+    const marker = join(dir, 'started.txt');
+    writeFileSync(entry, "require('node:fs').writeFileSync(process.env.STIM_LAUNCH_MARKER, process.cwd());\n");
+    const launcher = windowsLauncherArgs({ entry, args: [], cwd, logFile: join(cwd, 'supervisor.log') });
+    const result = getExecutor().runFile(launcher.file, launcher.args, {
+      cwd: dir,
+      env: { ...launcher.env, STIM_LAUNCH_MARKER: marker },
+      timeoutMs: 10000,
+    });
+    expect(result).toBe('');
+    for (let attempt = 0; attempt < 200 && !existsSync(marker); attempt += 1)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(readFileSync(marker, 'utf8').toLowerCase()).toBe(cwd.toLowerCase());
+  },
+  15000,
+);
 
 test('relaunchWithLogFile starts the entry again without the flag, detached, with stdio in the log', () => {
   const logFile = join(dir, 'supervisor.log');

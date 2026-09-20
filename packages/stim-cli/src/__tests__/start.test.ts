@@ -64,6 +64,8 @@ afterEach(async () => {
 });
 
 type ActionFn = (opts: Record<string, unknown>) => void | Promise<void>;
+const registerPosixStart = (cmd: Command) =>
+  registerStart(cmd, { platform: process.platform === 'win32' ? 'linux' : process.platform });
 
 interface CommandStub {
   command(nameAndArgs?: string): CommandStub;
@@ -213,7 +215,7 @@ function contendedRemoteStart() {
 
 async function runAction(
   opts: Record<string, unknown>,
-  register: (cmd: Command) => void = registerStart,
+  register: (cmd: Command) => void = registerPosixStart,
   onStderr?: (line: string) => void,
 ) {
   const run = captureAction(register);
@@ -910,14 +912,12 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     assert(spawned);
     expect(spawned.cmd).toBe('powershell.exe');
     expect(spawned.opts.detached).toBeUndefined();
-    const script = spawned.args.at(-1) ?? '';
-    expect(script).toMatch(
-      /^Start-Process -WindowStyle Hidden -FilePath '.*' -ArgumentList '.*' -WorkingDirectory '.*'$/,
-    );
-    expect(script).toContain(
-      `"${supervisorEntry()}" "--root" "${root}" "--port" "${port}" "--log-file" "${supervisorLogFile(root)}"`,
-    );
-    expect(script).toContain(`-WorkingDirectory '${root}'`);
+    expect(spawned.args.at(-1)).toContain('[System.Diagnostics.Process]::Start($start)');
+    expect(spawned.opts.env).toMatchObject({
+      STIM_WINDOWS_LAUNCH_FILE: process.execPath,
+      STIM_WINDOWS_LAUNCH_ARGS: `"${supervisorEntry()}" "--root" "${root}" "--port" "${port}" "--log-file" "${supervisorLogFile(root)}"`,
+      STIM_WINDOWS_LAUNCH_CWD: root,
+    });
     const facts = JSON.parse(result.logs[0] ?? '');
     expect(facts.supervisorPid).toBe(process.pid);
     expect(facts.alreadyRunning).toBe(false);
@@ -2087,7 +2087,7 @@ describe('action: an existing supervisor that is not answering', { timeout: 30_0
 
     let result;
     try {
-      const action = runAction({ json: true, wait: '10' }, registerStart, (line) => {
+      const action = runAction({ json: true, wait: '10' }, registerPosixStart, (line) => {
         if (line.includes('waiting for it to answer')) markWaiting();
       });
       await waiting;
@@ -2203,7 +2203,7 @@ describe('action: an existing supervisor that is not answering', { timeout: 30_0
     let settled = false;
     let result;
     try {
-      const action = runAction({ json: true, remote: true, wait: '10' }, registerStart, (line) => {
+      const action = runAction({ json: true, remote: true, wait: '10' }, registerPosixStart, (line) => {
         if (line.includes('waiting for it to answer')) markWaiting();
       }).then((value) => {
         settled = true;
