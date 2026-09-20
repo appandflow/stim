@@ -625,9 +625,9 @@ function settleOrRelease(claim: ClaimHandle): ClaimSetState {
 }
 
 /**
- * A create denied on win32 is almost always the store root mid-removal by a releaser whose rmdir has
- * not returned yet, which a spinning contender can outpace 64 times over; yielding lets that process
- * finish. A real denial spends at most PUBLISH_ATTEMPTS of these before it is reported.
+ * On Windows, removal in progress can answer EPERM or ENOENT while a releaser removes the store.
+ * A spinning contender can outpace 64 attempts; yielding lets that removal finish. A real denial
+ * still spends at most PUBLISH_ATTEMPTS of these before it is reported.
  */
 function yieldToRemoval(): void {
   sleepSync(WIN32_SETTLE_STEP_MS);
@@ -639,7 +639,7 @@ export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' 
   let denied = true;
   const retry = (why: Contention): void => {
     denied &&= why.denied;
-    if (why.denied) yieldToRemoval();
+    if (process.platform === 'win32') yieldToRemoval();
   };
 
   for (let attempt = 0; attempt < PUBLISH_ATTEMPTS; attempt++) {
