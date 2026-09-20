@@ -138,7 +138,9 @@ from bundle delivery and readiness verification: it gives CoreSimulator time
 to accept the launch, not the app extra time to report readiness. A timeout
 still fails the launch; Stim does not automatically retry it.
 
-For an unverified Android launch, follow the emitted device-specific remedy.
+For an unverified local Android launch, follow the emitted device-specific remedy.
+Only a dev client gets the Expo development-server picker step; a bare app
+starts with the printed process restart.
 If the app is stuck before loading its first bundle, restart its process with
 the printed force-stop and launcher commands. Foregrounding the same process
 does not restart initialization. Confirm the bundle request and expected UI.

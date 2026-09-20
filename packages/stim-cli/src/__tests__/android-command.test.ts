@@ -3176,7 +3176,7 @@ describe('launch verification', () => {
     expect(text).toMatch(/Do not run `stim android` unless native inputs changed or the app process exits/);
   });
 
-  test('the picker: no bundle request makes it launched: "unverified", still exit ok', async () => {
+  test('a bare app with no bundle request is unverified and gets a relaunch remedy', async () => {
     const h = harness({ verifyLaunched: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }) });
     const result = await h.run();
     expect(result.ok).toBe(true);
@@ -3184,7 +3184,7 @@ describe('launch verification', () => {
     expect(result.facts.launched).toBe('unverified');
     const text = h.stderr.join('\n');
     expect(text).toMatch(/UNVERIFIED/);
-    expect(text).toMatch(/DEVELOPMENT SERVERS/);
+    expect(text).not.toMatch(/DEVELOPMENT SERVERS/);
     expect(text).toContain(
       'adb -s emulator-5584 shell am force-stop com.example.app && adb -s emulator-5584 shell am start -n com.example.app/.MainActivity',
     );
@@ -3354,7 +3354,7 @@ describe('the dev-client deep link', () => {
     await h.run();
     const text = h.stderr.join('\n');
     expect(text).not.toMatch(/expo-development-client/);
-    expect(text).toMatch(/DEVELOPMENT SERVERS/);
+    expect(text).not.toMatch(/DEVELOPMENT SERVERS/);
   });
 });
 
@@ -4262,7 +4262,8 @@ describe('launch verification: bundling vs unverified', () => {
     });
     const result = await h.run();
     expect(result.facts?.launched).toBe('unverified');
-    expect(h.stderr.join('\n')).toMatch(/DEVELOPMENT SERVERS picker/);
+    expect(h.stderr.join('\n')).not.toMatch(/DEVELOPMENT SERVERS picker/);
+    expect(h.stderr.join('\n')).toMatch(/restart its process/);
   });
 
   test("verifyLaunch is told this workspace's port, which is what the device log is matched on", async () => {

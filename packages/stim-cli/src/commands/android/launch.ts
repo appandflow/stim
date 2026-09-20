@@ -289,6 +289,7 @@ async function verifyAndroidRun({
     serial,
     component,
     devClientUrl: scheme ? androidDevClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT, physical) : null,
+    devClient: Boolean(scheme),
     mode: isExpo ? MODE_EXPO : MODE_BARE,
   }))
     phase('', chalk.yellow(line));
