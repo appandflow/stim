@@ -3219,6 +3219,7 @@ test('gc reports and reclaims named ports only for confirmed missing workspaces'
   const inspected: string[] = [];
   setExecutor({
     ...original,
+    findExecutable: (name) => (name === 'lsof' ? '/usr/sbin/lsof' : null),
     runQuiet: (cmd, opts) => {
       if (cmd.startsWith('lsof ')) {
         inspected.push(cmd.split(' ')[2]!);

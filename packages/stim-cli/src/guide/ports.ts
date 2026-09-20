@@ -18,7 +18,7 @@ metro is reserved; use stim start and stim stop for managed Metro.
 
 New allocations scan TCP ports 8900-8999. They skip registry reservations
 and existing listeners, announcing occupied ports and upward retries on
-stderr. Listener checks use lsof, or netstat on Windows. All 100 ports
+stderr. Listener checks require lsof, or netstat on Windows. All 100 ports
 occupied or reserved is a refusal; stop or release unused allocations in
 their owning workspaces.
 

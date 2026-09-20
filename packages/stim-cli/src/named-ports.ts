@@ -18,6 +18,13 @@ function validatePortLabel(label: string): void {
   }
 }
 
+function portListeners(port: number, platform: NodeJS.Platform): number[] {
+  if (platform !== 'win32' && !getExecutor().findExecutable('lsof')) {
+    throw new Error(`Could not inspect TCP port ${port}: lsof is not installed.`);
+  }
+  return listeningPids(port, platform);
+}
+
 function processCommand(pid: number, platform: NodeJS.Platform): string {
   const e = getExecutor();
   if (platform === 'win32') {
@@ -35,7 +42,7 @@ export async function getNamedPort(
   projectPath: string,
   label: string,
   {
-    isFree = async (port: number) => (await isPortFree(port)) && listeningPids(port).length === 0,
+    isFree = async (port: number) => (await isPortFree(port)) && portListeners(port, process.platform).length === 0,
     log = console.error,
   }: { isFree?: (port: number) => Promise<boolean>; log?: (line: string) => void } = {},
 ): Promise<number> {
@@ -80,7 +87,7 @@ async function stopListeners(
   log: (line: string) => void,
   platform: NodeJS.Platform,
 ): Promise<void> {
-  const listeners = () => listeningPids(port, platform);
+  const listeners = () => portListeners(port, platform);
   for (const pid of listeners()) {
     if (pid === process.pid) throw new Error(`Refusing to stop Stim itself on ${label} (${port}).`);
     const identity = captureProcessIdentity(pid);

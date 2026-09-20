@@ -91,6 +91,7 @@ type Argv = { file: string; args: string[] };
 function posixExecutor(listening: () => boolean, command = 'node /sibling/vite'): Argv[] {
   const calls: Argv[] = [];
   setExecutor({
+    findExecutable: (name: string) => (name === 'lsof' ? '/usr/sbin/lsof' : null),
     runQuiet: (cmd: string) => {
       calls.push({ file: cmd.split(' ')[0]!, args: cmd.split(' ').slice(1) });
       return cmd.startsWith('lsof') && listening() ? '41219\n41219' : null;
@@ -106,6 +107,9 @@ function posixExecutor(listening: () => boolean, command = 'node /sibling/vite')
 function win32Executor(listening: () => boolean): Argv[] {
   const calls: Argv[] = [];
   setExecutor({
+    findExecutable: () => {
+      throw new Error('win32 must not look for lsof');
+    },
     runQuiet: (cmd: string) => {
       calls.push({ file: cmd.split(' ')[0]!, args: cmd.split(' ').slice(1) });
       if (cmd === 'netstat -ano') return listening() ? NETSTAT : '';
@@ -154,7 +158,7 @@ test('dry run prints pid and command without signalling or releasing', async () 
 test('win32 dry run reads the listener from netstat and its image from tasklist', async () => {
   upsertProject(root, { ports: { web: 8900 } });
   vi.spyOn(identity, 'captureProcessIdentity').mockReturnValue({ ok: true, token: 'token' });
-  const kill = vi.spyOn(process, 'kill');
+  const kill = vi.spyOn(process, 'kill').mockReturnValue(true);
   const calls = win32Executor(() => true);
   const log = vi.fn<(line: string) => void>();
   await clearNamedPorts(root, { stop: true, dryRun: true, log, platform: 'win32' });
@@ -190,7 +194,7 @@ test('win32 stops the listener tree with taskkill and releases only after netsta
   vi.spyOn(identity, 'captureProcessIdentity').mockReturnValue({ ok: true, token: 'token' });
   vi.spyOn(identity, 'inspectProcessIdentity').mockReturnValue('same');
   vi.spyOn(identity, 'waitForProcessExit').mockResolvedValue(true);
-  const kill = vi.spyOn(process, 'kill');
+  const kill = vi.spyOn(process, 'kill').mockReturnValue(true);
   const calls = win32Executor(() => !calls.some((c) => c.file === 'taskkill'));
   const log = vi.fn<(line: string) => void>();
   await clearNamedPorts(root, { stop: true, log, platform: 'win32' });
@@ -206,6 +210,7 @@ test('a listener that cannot be identified keeps its allocation and still releas
   upsertProject(root, { ports: { web: 8900, api: 8901 } });
   vi.spyOn(identity, 'captureProcessIdentity').mockReturnValue({ ok: false, reason: 'EPERM (denied)' });
   setExecutor({
+    findExecutable: () => '/usr/sbin/lsof',
     runQuiet: (cmd: string) => (cmd.includes('-iTCP:8900') ? '41219' : null),
     runFileQuiet: () => null,
   });
@@ -213,6 +218,18 @@ test('a listener that cannot be identified keeps its allocation and still releas
     'Cannot identify pid 41219 on web (8900): EPERM (denied)',
   );
   expect(getProject(root)?.ports).toEqual({ web: 8900 });
+});
+
+test('a POSIX host without lsof keeps every allocation instead of releasing blind', async () => {
+  upsertProject(root, { ports: { web: 8900, api: 8901 } });
+  const refuse = () => {
+    throw new Error('must not inspect listeners without lsof');
+  };
+  setExecutor({ findExecutable: () => null, runQuiet: refuse, runFileQuiet: refuse });
+  await expect(clearNamedPorts(root, { stop: true, log: () => {}, platform: 'linux' })).rejects.toThrow(
+    'Could not inspect TCP port 8900: lsof is not installed.',
+  );
+  expect(getProject(root)?.ports).toEqual({ web: 8900, api: 8901 });
 });
 
 test('Metro reclamation and registry removal retain named allocations', async () => {

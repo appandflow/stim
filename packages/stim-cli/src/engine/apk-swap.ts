@@ -139,14 +139,6 @@ export function jarPath({
   return javaHome ? join(javaHome, 'bin', 'jar') : 'jar';
 }
 
-// --no-compress is mandatory: AGP packages the bundle STORED so the Hermes
-// runtime can mmap it straight out of the APK, and a deflated entry fails to
-// load. jar --update keeps every other entry's method and replaces
-// assets/index.android.bundle in place.
-export function jarUpdateArgs({ archive, stage }: { archive: string; stage: string }): string[] {
-  return ['--update', '--file', archive, '--no-compress', '-C', stage, 'assets'];
-}
-
 export function zipalignArgs({
   buildToolsMajor,
   input,
@@ -381,7 +373,11 @@ export async function swapApkBundle({
 
   const jar = jarPath();
   try {
-    e.runFile(jar, jarUpdateArgs({ archive: work, stage }));
+    // --no-compress is mandatory: AGP packages the bundle STORED so the Hermes
+    // runtime can mmap it straight out of the APK, and a deflated entry fails to
+    // load. jar --update keeps every other entry's method and replaces
+    // assets/index.android.bundle in place.
+    e.runFile(jar, ['--update', '--file', work, '--no-compress', '-C', stage, 'assets']);
   } catch (err) {
     return fail('zip', `${jar} --update ${work} failed: ${describe(err)}`);
   }

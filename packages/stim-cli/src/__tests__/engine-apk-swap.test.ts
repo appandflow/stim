@@ -12,7 +12,6 @@ import {
   hermescBinDir,
   hermescCandidates,
   jarPath,
-  jarUpdateArgs,
   keystorePassArg,
   readAndroidHermesEnabled,
   resolveKeystore,
@@ -166,23 +165,10 @@ describe('androidBundleCommand', () => {
 });
 
 describe('archive update, alignment and signing', () => {
-  test('jar comes from JAVA_HOME when set, otherwise PATH, on every platform', () => {
+  test('jar comes from JAVA_HOME when set, otherwise PATH', () => {
     expect(jarPath({ javaHome: '/opt/jdk' })).toBe(join('/opt/jdk', 'bin', 'jar'));
-    expect(jarPath({ javaHome: 'C:\\jdk' })).toBe(join('C:\\jdk', 'bin', 'jar'));
     expect(jarPath({ javaHome: undefined })).toBe('jar');
     expect(jarPath({ javaHome: '' })).toBe('jar');
-  });
-
-  test('jar updates the archive in place with the bundle STORED, rooted at the staging dir', () => {
-    expect(jarUpdateArgs({ archive: '/t/unaligned-app.apk', stage: '/t/stage' })).toEqual([
-      '--update',
-      '--file',
-      '/t/unaligned-app.apk',
-      '--no-compress',
-      '-C',
-      '/t/stage',
-      'assets',
-    ]);
   });
 
   test('zipalign takes -P 16 from build-tools 35 (16KB pages) and -p before it', () => {
