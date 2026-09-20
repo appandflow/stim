@@ -797,6 +797,7 @@ test('waitForBoot keeps polling while adb still fails', async () => {
   setExecutor({
     run: () => '',
     runQuiet: (cmd) => {
+      if (/pm path android/.test(cmd)) return 'package:/system/framework/framework-res.apk';
       if (!/getprop/.test(cmd)) return '';
       calls++;
       if (calls <= 2) return null;
@@ -809,6 +810,51 @@ test('waitForBoot keeps polling while adb still fails', async () => {
   expect(calls > 2).toBeTruthy();
 });
 
+test('waitForBoot keeps waiting after the boot properties until the package manager answers', async () => {
+  const calls: string[] = [];
+  let pmAnswers = 0;
+  setExecutor({
+    run: () => '',
+    runQuiet: (cmd) => {
+      calls.push(cmd);
+      if (/getprop sys\.boot_completed/.test(cmd)) return '1';
+      if (/shell pm path android/.test(cmd))
+        return ++pmAnswers >= 3 ? 'package:/system/framework/framework-res.apk' : null;
+      return null;
+    },
+    spawn: () => null,
+  });
+  const result = await waitForBoot('emulator-5554', 5000, { pollMs: 1 });
+  expect(result).toEqual({ ok: true });
+  expect(calls.filter((cmd) => /shell pm path android/.test(cmd))).toHaveLength(3);
+  expect(calls.filter((cmd) => /getprop/.test(cmd)).length).toBeGreaterThanOrEqual(3);
+});
+
+test('waitForBoot pays one package-manager probe when it is already up and reports one that never answers', async () => {
+  const calls: string[] = [];
+  const executor = (pm: string | null) => ({
+    run: () => '',
+    runQuiet: (cmd: string) => {
+      calls.push(cmd);
+      if (/getprop sys\.boot_completed/.test(cmd)) return '1';
+      if (/shell pm path android/.test(cmd)) return pm;
+      return '';
+    },
+    spawn: () => null,
+  });
+  setExecutor(executor('package:/system/framework/framework-res.apk'));
+  expect(await waitForBoot('emulator-5554', 5000, { pollMs: 1 })).toEqual({ ok: true });
+  expect(calls).toEqual([
+    'adb -s emulator-5554 shell getprop sys.boot_completed',
+    'adb -s emulator-5554 shell pm path android',
+  ]);
+  calls.length = 0;
+  setExecutor(executor(null));
+  const result = await waitForBoot('emulator-5554', 20, { pollMs: 1 });
+  expect(result.ok).toBe(false);
+  expect(result.diagnostic).toMatchObject({ sysBoot: '1', packageManager: '' });
+});
+
 test('waitForBoot reports a timeout diagnostic when adb never answers', async () => {
   setExecutor({
     run: () => '',
@@ -817,7 +863,7 @@ test('waitForBoot reports a timeout diagnostic when adb never answers', async ()
   });
   const result = await waitForBoot('emulator-5554', 10);
   expect(result.ok).toBe(false);
-  expect(result.diagnostic).toEqual({ devices: '', sysBoot: '', devBoot: '', bootAnim: '' });
+  expect(result.diagnostic).toEqual({ devices: '', sysBoot: '', devBoot: '', bootAnim: '', packageManager: '' });
 });
 
 test.each([25, 2000])('boot timeout retains diagnostics within a separate budget (query cost %sms)', async (costMs) => {
@@ -832,6 +878,7 @@ test.each([25, 2000])('boot timeout retains diagnostics within a separate budget
       vi.setSystemTime(at + Math.min(costMs, timeoutMs));
       if (costMs > timeoutMs) return null;
       if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\toffline\n';
+      if (cmd.includes('pm path android')) return null;
       return cmd.includes('init.svc.bootanim') ? 'running\n' : '0\n';
     },
   });
@@ -846,10 +893,11 @@ test.each([25, 2000])('boot timeout retains diagnostics within a separate budget
       sysBoot: '0',
       devBoot: costMs === 25 ? '0' : '',
       bootAnim: costMs === 25 ? 'running' : '',
+      packageManager: '',
     });
     expect(diagnostics[0]).toEqual({ cmd: 'adb devices', at: 11, timeoutMs: 5000 });
     expect(diagnostics.map(({ timeoutMs }) => timeoutMs)).toEqual(
-      costMs === 25 ? [5000, 4975, 4950, 4925] : [5000, 3000, 1000],
+      costMs === 25 ? [5000, 4975, 4950, 4925, 4900] : [5000, 3000, 1000],
     );
     expect(Date.now() - diagnostics[0]!.at).toBeLessThanOrEqual(5000);
   } finally {
@@ -1036,6 +1084,7 @@ test('waitForBoot keeps polling while the emulator process is alive', async () =
   setExecutor({
     run: () => '',
     runQuiet: (cmd: string) => {
+      if (/pm path android/.test(cmd)) return 'package:/system/framework/framework-res.apk';
       if (!/getprop/.test(cmd)) return '';
       probes++;
       return probes >= 5 && /sys\.boot_completed/.test(cmd) ? '1' : null;
@@ -1050,7 +1099,12 @@ test('waitForBoot keeps polling while the emulator process is alive', async () =
 test('waitForBoot returns ok when the device booted even if the process reads as gone', async () => {
   setExecutor({
     run: () => '',
-    runQuiet: (cmd: string) => (/sys\.boot_completed/.test(cmd) ? '1' : ''),
+    runQuiet: (cmd: string) =>
+      /sys\.boot_completed/.test(cmd)
+        ? '1'
+        : /pm path android/.test(cmd)
+          ? 'package:/system/framework/framework-res.apk'
+          : '',
     spawn: () => null,
   });
   expect(await waitForBoot('emulator-5554', 5000, { aborted: () => true, pollMs: 1 })).toEqual({ ok: true });
@@ -1366,6 +1420,9 @@ test('parseAvdSystemImage turns the config.ini image directory back into an sdkm
   ).toBe('system-images;android-36;google_apis;arm64-v8a');
   expect(parseAvdSystemImage('image.sysdir.1 = system-images/android-35/default/x86_64')).toBe(
     'system-images;android-35;default;x86_64',
+  );
+  expect(parseAvdSystemImage('image.sysdir.1=system-images\\android-36\\google_apis\\x86_64\\\n')).toBe(
+    'system-images;android-36;google_apis;x86_64',
   );
   expect(parseAvdSystemImage('image.sysdir.1=\n')).toBe(null);
   expect(parseAvdSystemImage('hw.cpu.arch=arm64\n')).toBe(null);

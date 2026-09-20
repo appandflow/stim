@@ -57,6 +57,7 @@ export interface BootResult {
     sysBoot: string;
     devBoot: string;
     bootAnim: string;
+    packageManager: string;
   };
 }
 
@@ -262,6 +263,8 @@ export async function createOwnedAvd(
   return { avdName, systemImage: pick.pkg };
 }
 
+// avdmanager joins image.sysdir.1 with File.separator, so an AVD created on
+// Windows stores backslashes.
 export function parseAvdSystemImage(configIni: string): string | null {
   for (const line of String(configIni).split(/\r?\n/)) {
     const separator = line.indexOf('=');
@@ -270,9 +273,9 @@ export function parseAvdSystemImage(configIni: string): string | null {
     const dir = line
       .slice(separator + 1)
       .trim()
-      .replace(/\/+$/, '');
+      .replace(/[\\/]+$/, '');
     if (!dir) return null;
-    return dir.split('/').join(';');
+    return dir.split(/[\\/]/).join(';');
   }
   return null;
 }
@@ -938,6 +941,16 @@ function getprop(exec: Executor, serial: string, prop: string, timeoutMs?: numbe
   return typeof out === 'string' ? out.trim() : '';
 }
 
+// The emulator sets sys.boot_completed before the package manager service is
+// registered, and `adb install` fails with "Can't find service: package" in
+// that window (#897).
+const PACKAGE_MANAGER_PROBE = 'shell pm path android';
+
+function packageManagerReady(exec: Executor, serial: string, timeoutMs?: number): boolean {
+  const out = exec.runQuiet(`${androidTool('adb')} -s ${serial} ${PACKAGE_MANAGER_PROBE}`, { timeoutMs });
+  return typeof out === 'string' && /^package:/m.test(out);
+}
+
 export async function waitForBoot(
   serial: string,
   timeoutMs = 60000,
@@ -955,8 +968,10 @@ export async function waitForBoot(
       ? undefined
       : Math.max(1, Math.min(commandTimeoutMs, timeoutMs - (Date.now() - start)));
   while (Date.now() - start < timeoutMs) {
-    if (getprop(exec, serial, 'sys.boot_completed', probeTimeout()) === '1') return { ok: true };
-    if (getprop(exec, serial, 'dev.bootcomplete', probeTimeout()) === '1') return { ok: true };
+    const booted =
+      getprop(exec, serial, 'sys.boot_completed', probeTimeout()) === '1' ||
+      getprop(exec, serial, 'dev.bootcomplete', probeTimeout()) === '1';
+    if (booted && packageManagerReady(exec, serial, probeTimeout())) return { ok: true };
     if (aborted()) {
       exited = true;
       break;
@@ -983,6 +998,7 @@ export async function waitForBoot(
       sysBoot: diagnosticQuery(`-s ${serial} shell getprop sys.boot_completed`),
       devBoot: diagnosticQuery(`-s ${serial} shell getprop dev.bootcomplete`),
       bootAnim: diagnosticQuery(`-s ${serial} shell getprop init.svc.bootanim`),
+      packageManager: diagnosticQuery(`-s ${serial} ${PACKAGE_MANAGER_PROBE}`),
     },
   };
 }

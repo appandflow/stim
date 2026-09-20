@@ -59,6 +59,7 @@ beforeEach(() => {
     if (cmd === 'adb devices') return `List of devices attached\n${running ? 'emulator-5554\tdevice\n' : ''}`;
     if (cmd.includes('emu avd name')) return `${running}\nOK`;
     if (cmd.includes('getprop sys.boot_completed')) return '1';
+    if (cmd.includes('pm path android')) return 'package:/system/framework/framework-res.apk';
     if (cmd.includes('getprop ')) return '';
     if (cmd.includes('shell sync')) return '';
     if (cmd.includes('emu kill')) {
