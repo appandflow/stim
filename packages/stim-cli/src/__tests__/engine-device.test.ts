@@ -415,6 +415,7 @@ describe('ensureBooted: android', () => {
         commands.push(cmd);
         if (cmd.includes('emu avd name')) return 'stim-app\nOK';
         if (cmd.includes('sys.boot_completed')) return '1';
+        if (cmd.includes('pm path android')) return 'package:/system/framework/framework-res.apk';
         return '';
       },
       runFile: () => '',
@@ -441,6 +442,7 @@ describe('ensureBooted: android', () => {
       },
       runQuiet: (cmd) => {
         if (cmd.includes('sys.boot_completed')) return booted ? '1' : '';
+        if (cmd.includes('pm path android')) return booted ? 'package:/system/framework/framework-res.apk' : '';
         return '';
       },
       runFile: () => '',
@@ -466,7 +468,12 @@ describe('ensureBooted: android', () => {
         if (cmd === 'adb devices') return 'List of devices attached';
         return '';
       },
-      runQuiet: (cmd) => (cmd.includes('sys.boot_completed') ? '1' : ''),
+      runQuiet: (cmd) =>
+        cmd.includes('sys.boot_completed')
+          ? '1'
+          : cmd.includes('pm path android')
+            ? 'package:/system/framework/framework-res.apk'
+            : '',
       runFile: () => '',
       spawn: () => {
         throw new Error('must not boot the fresh AVD a second time');
@@ -501,6 +508,7 @@ describe('ensureBooted: android', () => {
       runQuiet: (cmd) => {
         if (cmd.includes('emu avd name')) return cmd.includes('5554') ? 'Pixel_7_API_35\nOK' : 'stim-app\nOK';
         if (cmd.includes('sys.boot_completed')) return ourSerial ? '1' : '';
+        if (cmd.includes('pm path android')) return ourSerial ? 'package:/system/framework/framework-res.apk' : '';
         return '';
       },
       runFile: () => '',
@@ -555,6 +563,7 @@ describe('ensureBooted: android', () => {
         return '';
       },
       runQuiet: (cmd) => {
+        if (cmd.includes('pm path android')) return 'package:/system/framework/framework-res.apk';
         if (!cmd.includes('getprop')) return '';
         probes++;
         return probes >= 5 && cmd.includes('sys.boot_completed') ? '1' : null;
@@ -594,9 +603,14 @@ describe('ensureBooted: android', () => {
     setExecutor({
       run: (cmd) => (cmd === 'emulator -list-avds' ? 'stim-app' : 'List of devices attached'),
       runQuiet: (cmd, opts) => {
-        if (cmd.includes('getprop')) {
+        if (cmd.includes('getprop') || cmd.includes('pm path android')) {
           probes.push(opts?.timeoutMs ?? 0);
-          return Date.now() >= bootAt && cmd.includes('sys.boot_completed') ? '1' : '';
+          if (Date.now() < bootAt) return '';
+          return cmd.includes('sys.boot_completed')
+            ? '1'
+            : cmd.includes('pm path android')
+              ? 'package:/system/framework/framework-res.apk'
+              : '';
         }
         return '';
       },
@@ -695,7 +709,12 @@ describe('ensureBooted: android', () => {
         if (cmd === 'adb devices') return 'List of devices attached';
         return '';
       },
-      runQuiet: (cmd) => (cmd.includes('sys.boot_completed') ? '1' : ''),
+      runQuiet: (cmd) =>
+        cmd.includes('sys.boot_completed')
+          ? '1'
+          : cmd.includes('pm path android')
+            ? 'package:/system/framework/framework-res.apk'
+            : '',
       runFile: () => '',
       spawn: (_cmd: string, _args: string[], o: Record<string, unknown>) => {
         opts.push(o);
@@ -1560,6 +1579,7 @@ describe('ensureOwnedDevice: android', () => {
           }
           if (/emu avd name/.test(cmd)) return runningAvdName;
           if (/getprop sys\.boot_completed/.test(cmd)) return bootCompletes ? '1' : '';
+          if (/pm path android/.test(cmd)) return bootCompletes ? 'package:/system/framework/framework-res.apk' : '';
           if (/getprop /.test(cmd)) return '';
           throw new Error(`unexpected run: ${cmd}`);
         },
