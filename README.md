@@ -13,14 +13,19 @@ or emulator. It shares native artifacts, Xcode compilation data, Gradle output,
 and Metro transforms across worktrees. Agents can work in parallel without
 sharing live resources, then clean up every resource Stim created.
 
-Stim supports React Native Community CLI and Expo projects. Builds run locally.
+Stim supports React Native Community CLI and Expo projects. Builds run locally
+by default; `--eas-profile` uses completed EAS development builds.
 Apps can launch on owned simulators and emulators, connected physical devices,
 or configured remote devices.
 
 ## Install
 
-The `stim` npm package installs the `stim` command. If you previously installed
-`stim-cli` globally, run `npm uninstall --global stim-cli` first.
+The `stim` npm package installs the `stim` command. It needs Node 22.12 or
+later and runs on macOS, Linux and Windows: Android everywhere, iOS locally on
+macOS or through EAS from any host. See
+[requirements](https://stim.appandflow.com/docs/requirements). If you
+previously installed `stim-cli` globally, run `npm uninstall --global stim-cli`
+first.
 
 ```bash
 npm install --global stim
