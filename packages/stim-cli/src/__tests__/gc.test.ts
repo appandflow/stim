@@ -3227,6 +3227,13 @@ test('gc reports and reclaims named ports only for confirmed missing workspaces'
       }
       return original.runFile(file, args, opts);
     },
+    runQuiet: (cmd, opts) => {
+      if (cmd.startsWith('lsof ')) {
+        inspected.push(cmd.split(' ')[2]!);
+        return '';
+      }
+      return original.runQuiet(cmd, opts);
+    },
   });
   const report = await collectGcReport();
   expect(report.orphanedPorts).toEqual([{ project: missing, label: 'web', port: 8900 }]);

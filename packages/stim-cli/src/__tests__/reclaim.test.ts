@@ -693,6 +693,7 @@ test('worktree reclaim releases named ports and keeps the entry when a listener 
   setExecutor({
     findExecutable: () => '/usr/sbin/lsof',
     runFile: (file: string) => (file === 'lsof' ? '41219' : ''),
+    runQuiet: (cmd: string) => (cmd.startsWith('lsof ') ? '41219' : null),
     runFileQuiet: () => null,
   });
   await expect(reclaimProject(root)).rejects.toThrow('Cannot identify pid 41219 on web (8900): EPERM');
@@ -703,6 +704,7 @@ test('worktree reclaim releases named ports and keeps the entry when a listener 
     runFile: () => {
       throw Object.assign(new Error(), { status: 1, stdout: '', stderr: '' });
     },
+    runQuiet: () => null,
     runFileQuiet: () => null,
   });
   const result = await reclaimProject(root);
