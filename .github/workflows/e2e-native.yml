@@ -333,11 +333,16 @@ jobs:
       # Gradle's dependency cache and wrapper distribution, the download phase
       # of every cold build. The month in the key rotates the entry so it
       # follows the fixture's templates; restore-keys warm a month's first run
-      # from the previous entry. The caches suite seeds its throwaway Gradle
-      # home from these two directories and writes nothing back, so only the
-      # other suites save, and only from main (see the build cache save). The
-      # daemon holds modules-2.lock open, which fails the archive on Windows
-      # (actions/setup-java#633).
+      # from the previous entry. An exact hit skips the save, so a dependency
+      # the templates add mid-month is downloaded on every run until the
+      # rollover, and the week after a rollover holds two entries per lane
+      # (4 to 6 GB across the three Android lanes). The caches suite seeds its
+      # throwaway Gradle home from these two directories and writes nothing
+      # back, so only the other suites save, and only from main (see the build
+      # cache save). The daemon holds modules-2.lock open, which fails the
+      # archive on Windows (actions/setup-java#633); actions/cache resolves a
+      # bare directory pattern to the directory itself and archives it whole,
+      # so the pattern lists the children for the exclusion to apply.
       - name: Stamp the Gradle cache key
         id: gradle-key
         run: echo "key=gradle-v1-${{ runner.os }}-${{ matrix.framework }}-$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
@@ -347,7 +352,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: |
-            ~/.gradle/caches/modules-2
+            ~/.gradle/caches/modules-2/*
             !~/.gradle/caches/modules-2/*.lock
             !~/.gradle/caches/modules-2/gc.properties
             ~/.gradle/wrapper
@@ -423,7 +428,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: |
-            ~/.gradle/caches/modules-2
+            ~/.gradle/caches/modules-2/*
             !~/.gradle/caches/modules-2/*.lock
             !~/.gradle/caches/modules-2/gc.properties
             ~/.gradle/wrapper
@@ -501,7 +506,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: |
-            ~/.gradle/caches/modules-2
+            ~/.gradle/caches/modules-2/*
             !~/.gradle/caches/modules-2/*.lock
             !~/.gradle/caches/modules-2/gc.properties
             ~/.gradle/wrapper
@@ -566,7 +571,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: |
-            ~/.gradle/caches/modules-2
+            ~/.gradle/caches/modules-2/*
             !~/.gradle/caches/modules-2/*.lock
             !~/.gradle/caches/modules-2/gc.properties
             ~/.gradle/wrapper
