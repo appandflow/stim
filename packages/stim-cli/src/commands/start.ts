@@ -512,7 +512,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           const stderr: string[] = [];
           shell.stderr?.on('data', (chunk) => stderr.push(String(chunk)));
           const exit = await new Promise<ChildExitInfo>((resolve) => {
-            shell.on?.('exit', (code, signal) => resolve({ code, signal }));
+            shell.on?.('close', (code, signal) => resolve({ code, signal }));
             shell.on?.('error', (error) => resolve({ code: null, signal: null, error }));
           });
           const launcherFailed = exit.code !== 0 || exit.error;

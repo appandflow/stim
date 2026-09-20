@@ -64,8 +64,8 @@ afterEach(async () => {
 });
 
 type ActionFn = (opts: Record<string, unknown>) => void | Promise<void>;
-const registerPosixStart = (cmd: Command) =>
-  registerStart(cmd, { platform: process.platform === 'win32' ? 'linux' : process.platform });
+const registerPosixStart = (cmd: Command, overrides: NonNullable<Parameters<typeof registerStart>[1]> = {}) =>
+  registerStart(cmd, { ...overrides, platform: process.platform === 'win32' ? 'linux' : process.platform });
 
 interface CommandStub {
   command(nameAndArgs?: string): CommandStub;
@@ -686,7 +686,7 @@ describe('action: already running', { timeout: 30_000 }, () => {
     let result;
     try {
       result = await runAction({ json: true, remote: true }, (cmd) =>
-        registerStart(cmd, {
+        registerPosixStart(cmd, {
           providers: () => ['ngrok'],
           startTunnelSequence: async () => {
             tunnelStarted = true;
@@ -889,6 +889,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
         });
         exec.listening = true;
         shell.emit('exit', 0, null);
+        shell.emit('close', 0, null);
       }, 20);
       return shell;
     };
@@ -930,8 +931,11 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       exec.calls.spawn.push({ cmd, args, opts });
       const shell = makeChildProcess({ pid: 777 });
       setTimeout(() => {
-        shell.stderr?.emit('data', 'Start-Process : This command cannot be run\n');
         shell.emit('exit', 1, null);
+        setTimeout(() => {
+          shell.stderr?.emit('data', 'ProcessStartInfo : This command cannot be run\n');
+          shell.emit('close', 1, null);
+        }, 0);
       }, 20);
       return shell;
     };
@@ -950,7 +954,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     expect(failure.code).toBe('STIM_SUPERVISOR_EXITED');
     expect(failure.message).toMatch(/exited \(code 1\)/);
     expect(readFileSync(supervisorLogFile(root), 'utf-8')).toContain(
-      'Stim start: the supervisor launcher exited (code 1).\nStart-Process : This command cannot be run\n',
+      'Stim start: the supervisor launcher exited (code 1).\nProcessStartInfo : This command cannot be run\n',
     );
   });
 
@@ -1106,7 +1110,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     let providerStarted = false;
 
     const result = await runAction({ json: true, remote: true }, (cmd) =>
-      registerStart(cmd, {
+      registerPosixStart(cmd, {
         providers: () => ['ngrok', 'cloudflared'],
         startTunnelSequence: async () => {
           providerStarted = true;
@@ -1125,7 +1129,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     setExecutor(metroExecutor({ listeners: {} }));
     let providerChecked = false;
     const result = await runAction({ json: true, remote: true }, (cmd) =>
-      registerStart(cmd, {
+      registerPosixStart(cmd, {
         providers: () => {
           providerChecked = true;
           return ['ngrok'];
@@ -1180,7 +1184,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
 
     try {
       await runAction({ json: true, wait: '10' }, (cmd) =>
-        registerStart(cmd, {
+        registerPosixStart(cmd, {
           providers: () => ['ngrok'],
           startTunnelSequence: async () => {
             throw new Error('plain start must not start a tunnel');
@@ -1220,7 +1224,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     });
 
     const result = await runAction({ json: true, wait: '10', remote: true }, (cmd) =>
-      registerStart(cmd, {
+      registerPosixStart(cmd, {
         providers: () => ['ngrok', 'cloudflared'],
         startTunnelSequence: async (options) => {
           order.push('tunnel');
@@ -1254,7 +1258,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     let maxActive = 0;
 
     const result = await runConcurrentActions({ json: true, wait: '10', remote: true }, (cmd) =>
-      registerStart(cmd, {
+      registerPosixStart(cmd, {
         providers: () => ['ngrok'],
         withWorktreeLock,
         startTunnelSequence: async () => {
@@ -1287,7 +1291,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     const { port, exec } = await managedStartExecutor();
     const { contended, withWorktreeLock } = contendedRemoteStart();
     const result = await runConcurrentActions({ json: true, wait: '10', remote: true }, (cmd) =>
-      registerStart(cmd, {
+      registerPosixStart(cmd, {
         providers: () => ['ngrok'],
         withWorktreeLock,
         startTunnelSequence: async () => {
@@ -1329,7 +1333,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
 
     const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
-      registerStart(cmd, {
+      registerPosixStart(cmd, {
         providers: () => ['ngrok'],
         startTunnelSequence: async () => {
           listening = true;
@@ -1378,7 +1382,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
 
     const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
-      registerStart(cmd, {
+      registerPosixStart(cmd, {
         providers: () => ['ngrok'],
         startTunnelSequence: async () => ({
           provider: 'ngrok',
@@ -1417,7 +1421,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     let maxActive = 0;
 
     const result = await runConcurrentActions({ json: true, wait: '10', remote: true }, (cmd) =>
-      registerStart(cmd, {
+      registerPosixStart(cmd, {
         providers: () => ['ngrok'],
         withWorktreeLock,
         startTunnelSequence: async () => {
@@ -1461,7 +1465,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     let cleanupCalled = false;
 
     const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
-      registerStart(cmd, {
+      registerPosixStart(cmd, {
         providers: () => ['ngrok'],
         startTunnelSequence: async () => ({
           provider: 'ngrok',
@@ -1507,7 +1511,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     });
 
     const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
-      registerStart(cmd, {
+      registerPosixStart(cmd, {
         providers: () => ['ngrok'],
         startTunnelSequence: (options) =>
           startTunnelSequence({
@@ -1548,7 +1552,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     const child = makeChildProcess({ kill: () => true });
 
     const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
-      registerStart(cmd, {
+      registerPosixStart(cmd, {
         providers: () => ['ngrok'],
         startTunnelSequence: (options) =>
           startTunnelSequence({
@@ -1586,7 +1590,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
 
     const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
-      registerStart(cmd, {
+      registerPosixStart(cmd, {
         providers: () => ['ngrok'],
         startTunnelSequence: async () => ({
           provider: 'ngrok',
@@ -1635,7 +1639,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     let result;
     try {
       result = await runAction({ json: true, wait: '10', remote: true }, (cmd) =>
-        registerStart(cmd, {
+        registerPosixStart(cmd, {
           providers: () => ['ngrok'],
           startTunnelSequence: async () => ({
             provider: 'ngrok',
@@ -1673,7 +1677,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     let livenessChecks = 0;
 
     const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
-      registerStart(cmd, {
+      registerPosixStart(cmd, {
         providers: () => ['ngrok'],
         startTunnelSequence: async () => ({
           provider: 'ngrok',
@@ -1734,7 +1738,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     let livenessChecks = 0;
 
     const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
-      registerStart(cmd, {
+      registerPosixStart(cmd, {
         providers: () => ['ngrok'],
         startTunnelSequence: async () => {
           throw new Error('the recorded tunnel must be reused');
@@ -1784,7 +1788,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
 
     try {
       await runAction({ json: true, wait: '10', remote: true }, (cmd) =>
-        registerStart(cmd, {
+        registerPosixStart(cmd, {
           providers: () => ['ngrok'],
           startTunnelSequence: async () => ({
             provider: 'ngrok',
