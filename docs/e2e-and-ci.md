@@ -102,9 +102,9 @@ cross-run build cache before it, so a run whose native fingerprint matches an
 earlier loop or smoke installs from cache. Observed on the `e2e-smoke` runs of
 #905: iOS 8 to 17 minutes and Linux Android 3 to 4 minutes with the cache warm
 (the build phase was 60 to 90 seconds; the rest is fixture creation,
-`pod install` and device boot), Windows Android 25 minutes cold, of which the
-Gradle build was 20. A run that changes the fingerprint pays the cold build on
-every platform.
+`pod install` and device boot), Windows Android 13 minutes warm and 25 cold,
+of which the Gradle build was 20. A run that changes the fingerprint pays the
+cold build on every platform.
 
 The fixture-creation commands are version-sensitive; each is overridable with an
 env var (`STIM_E2E_BARE_INIT`, `STIM_E2E_EXPO_INIT`) so a runner can adjust
