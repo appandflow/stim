@@ -56,6 +56,7 @@ beforeEach(() => {
   const run = (cmd: string): string => {
     calls.push(cmd);
     if (cmd === 'emulator -list-avds') return [...avds].join('\n');
+    if (cmd === 'emulator -version') return 'Android emulator version 37.1.11';
     if (cmd === 'adb devices') return `List of devices attached\n${running ? 'emulator-5554\tdevice\n' : ''}`;
     if (cmd.includes('emu avd name')) return `${running}\nOK`;
     if (cmd.includes('getprop sys.boot_completed')) return '1';

@@ -1,5 +1,6 @@
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import {
   appNameFromBundleId,
@@ -646,7 +647,11 @@ describe('android: logcat -v time', () => {
     let calls = 0;
     const exec = makeExecutor({
       runFile: (file, args, opts) => {
-        expect([file, args, opts]).toEqual(['adb', ['-s', 'serial', 'shell', 'date', '+%s%3N'], { timeoutMs: 1000 }]);
+        expect([file, args, opts]).toEqual([
+          'adb',
+          ['-s', 'serial', 'shell', 'date', '+%s%3N'],
+          { timeoutMs: 1000, cwd: process.platform === 'win32' ? homedir() : undefined },
+        ]);
         if (failed) throw new Error('offline');
         return output;
       },
