@@ -66,8 +66,9 @@ The selected `eas.json` profile must resolve to `developmentClient: true` and
 ```
 
 Use `ios-simulator` for an iOS simulator and `development` for an Android
-emulator or a physical device. iOS device profiles must omit `ios.simulator`
-or set it to `false`.
+emulator or a physical device. A profile for an iOS simulator, including the
+EAS-hosted one `--remote eas` targets, must set `ios.simulator: true`; iOS
+device profiles must omit `ios.simulator` or set it to `false`.
 
 Select EAS explicitly with `--eas-profile`. Having an `eas.json` file does not
 change Stim's default local build behavior. Profile inheritance and native
@@ -105,7 +106,8 @@ current workspace's JavaScript. `--scheme`, `--configuration`, `--variant`, and
 `--eas-profile` selects where the app comes from. The separate `--remote eas`
 option selects an [EAS-hosted device](./owned-devices.md#remote-devices), which
 has its own session costs. Together they run iOS from a
-[Windows or Linux host](./owned-devices.md#from-windows-or-linux).
+[Windows or Linux host](./owned-devices.md#from-windows-or-linux) with the same
+`ios-simulator` profile.
 
 ## When no build matches
 
