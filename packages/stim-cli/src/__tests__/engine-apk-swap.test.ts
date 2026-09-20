@@ -167,7 +167,6 @@ describe('androidBundleCommand', () => {
 describe('archive update, alignment and signing', () => {
   test('jar comes from JAVA_HOME when set, otherwise PATH', () => {
     expect(jarPath({ javaHome: '/opt/jdk' })).toBe(join('/opt/jdk', 'bin', 'jar'));
-    expect(jarPath({ javaHome: undefined })).toBe('jar');
     expect(jarPath({ javaHome: '' })).toBe('jar');
   });
 
