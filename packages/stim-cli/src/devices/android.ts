@@ -262,6 +262,8 @@ export async function createOwnedAvd(
   return { avdName, systemImage: pick.pkg };
 }
 
+// avdmanager joins image.sysdir.1 with File.separator, so an AVD created on
+// Windows stores backslashes.
 export function parseAvdSystemImage(configIni: string): string | null {
   for (const line of String(configIni).split(/\r?\n/)) {
     const separator = line.indexOf('=');
@@ -270,9 +272,9 @@ export function parseAvdSystemImage(configIni: string): string | null {
     const dir = line
       .slice(separator + 1)
       .trim()
-      .replace(/\/+$/, '');
+      .replace(/[\\/]+$/, '');
     if (!dir) return null;
-    return dir.split('/').join(';');
+    return dir.split(/[\\/]/).join(';');
   }
   return null;
 }

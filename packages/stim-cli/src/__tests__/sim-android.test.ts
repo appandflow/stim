@@ -1367,6 +1367,9 @@ test('parseAvdSystemImage turns the config.ini image directory back into an sdkm
   expect(parseAvdSystemImage('image.sysdir.1 = system-images/android-35/default/x86_64')).toBe(
     'system-images;android-35;default;x86_64',
   );
+  expect(parseAvdSystemImage('image.sysdir.1=system-images\\android-36\\google_apis\\x86_64\\\n')).toBe(
+    'system-images;android-36;google_apis;x86_64',
+  );
   expect(parseAvdSystemImage('image.sysdir.1=\n')).toBe(null);
   expect(parseAvdSystemImage('hw.cpu.arch=arm64\n')).toBe(null);
   expect(parseAvdSystemImage('')).toBe(null);

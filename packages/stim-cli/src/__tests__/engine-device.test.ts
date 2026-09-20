@@ -23,6 +23,9 @@ import { parkSim, readParked } from '../devices/sim-pool.ts';
 import { workspaceId } from '../workspace/paths.ts';
 import { ownedSimName } from '../devices/ios.ts';
 import { makeAdbDevices, makeChildProcess, makeConfig, makeExitingChild, makeIosSim } from './_factories.ts';
+import { androidBuildOptions } from '../commands/android/support.ts';
+import { hostSystemImageArch } from '../devices/android.ts';
+import { buildCacheKey } from '@stim-cli/core';
 
 type SimEntry = {
   udid: string;
@@ -1618,6 +1621,54 @@ describe('ensureOwnedDevice: android', () => {
       expect(notes.some((n) => /stored assignment to physical device R5CT10/i.test(n))).toBeTruthy();
       expect(readFileSync(join(process.env.ANDROID_AVD_HOME!, 'stim-app.avd', 'config.ini'), 'utf8')).toContain(
         'disk.dataPartition.size=8589934592',
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a repeated named slot on its running owned AVD keeps systemImage, so one ABI and the same cache key', async () => {
+    const root = projectDir();
+    try {
+      setExecutor(androidExecutor().exec);
+      const first = await ensureOwnedDevice({
+        platform: 'android',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {},
+        slot: 'second',
+      });
+      const arch = hostSystemImageArch();
+      expect(first.systemImage).toBe(`system-images;android-36;google_apis;${arch}`);
+      // avdmanager joins image.sysdir.1 with File.separator, so a Windows AVD stores backslashes.
+      writeFileSync(
+        join(process.env.ANDROID_AVD_HOME!, `${first.avdName}.avd`, 'config.ini'),
+        `image.sysdir.1=system-images\\android-36\\google_apis\\${arch}\\\ndisk.dataPartition.size=10G\n`,
+      );
+      setExecutor(
+        androidExecutor({
+          avds: [first.avdName!],
+          adbDevices: `List of devices attached\nemulator-${first.consolePort}\tdevice\n`,
+          runningAvdName: first.avdName,
+        }).exec,
+      );
+      const repeated = await ensureOwnedDevice({
+        platform: 'android',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {},
+        slot: 'second',
+      });
+      expect(repeated.avdName).toBe(first.avdName);
+      expect(repeated.systemImage).toBe(first.systemImage);
+      const options = (device: typeof first) =>
+        androidBuildOptions({ release: false, physical: false, device, variant: null, deviceAbi: () => null });
+      expect(options(first).abi).toBe(arch);
+      expect(options(repeated).abi).toBe(arch);
+      expect(buildCacheKey('android', 'same-fingerprint', options(repeated).runOptions)).toBe(
+        buildCacheKey('android', 'same-fingerprint', options(first).runOptions),
       );
     } finally {
       rmSync(root, { recursive: true, force: true });
