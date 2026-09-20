@@ -138,6 +138,23 @@ code, never on the message.`,
   \`gc --delete --cache "compilation cache"\`, then build again. The next
   build is a cold one.`,
     },
+    STIM_PATH_TOO_LONG: {
+      summary: 'Windows only: the project root leaves no room for the NDK object paths ninja must open',
+      body: () => `STIM_PATH_TOO_LONG  (android, Windows only)
+  The NDK's ninja is not long-path aware, so every CMake object path has to
+  stay under Windows' MAX_PATH. React Native's codegen objects are named
+  after their mangled absolute source path, so each carries the project root
+  twice unless CMake shortens it, and CMake only shortens a name that then
+  fits the object path limit Stim's Gradle shim sets. The message names the
+  longest known object (measured on the e2e fixture, for the ABI being
+  built) and the longest root it leaves room for. Refused BEFORE Gradle runs
+  -- a cache hit still installs -- because the build would otherwise fail
+  deep inside ninja ("mkdir ... No such file or directory" or "Filename
+  longer than 260 characters"). Map the project to a drive letter (\`subst
+  X: <root>\`, then run Stim from X:\\) or move it under a shorter root.
+  \`doctor --platform android\` reports the same root as a finding for the
+  emulator's ABI.`,
+    },
     fallbacks: {
       summary: 'release cache-hit notes that are not codes: swap failure, asset gate, uninstall, device fallbacks',
       body: () => `FALLBACK NOTES THAT ARE NOT CODES (release cache hits)

@@ -48,6 +48,7 @@ import {
 } from '../workspace/settings.ts';
 import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
 import { readAndroidCasToolchain, resolveAndroidCompilerCache } from '../engine/android-cas.ts';
+import { androidPathRoom, androidPathRoomMessage, androidPathRoomRemedy } from '../engine/android-path-limit.ts';
 import { readCxxLauncherStates, type CxxLauncherState } from './doctor-cxx.ts';
 import { checkMachineSettings, readMachineSettings } from './doctor-config.ts';
 export { parseCmakeCacheLauncher } from './doctor-cxx.ts';
@@ -909,6 +910,7 @@ export function runDoctor(
     ...(platform === 'ios' || optimizations?.android.compilerCache !== 'ccache'
       ? []
       : androidCcacheFindings(projectRoot, platform, lookupCcache)),
+    checkAndroidPathRoom(projectRoot, platform, host),
     remoteBuildCache ? checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig) : null,
     easFinding,
     concurrencyFinding,
@@ -931,6 +933,25 @@ export function runDoctor(
       reportedElsewhere: simslimProfileError ? ['ios.simslimProfile'] : [],
     }),
   ].filter((f): f is Finding => Boolean(f));
+}
+
+export function checkAndroidPathRoom(
+  projectRoot: string,
+  platform: DoctorPlatform | undefined,
+  host: NodeJS.Platform,
+): Finding | null {
+  // A Windows host's emulator is x86_64; a build for every ABI is the tighter case `stim android` checks.
+  const room = platform === 'ios' ? null : androidPathRoom(projectRoot, { abi: 'x86_64', platform: host });
+  if (!room) return null;
+  return {
+    code: 'android-path-room',
+    ...finding(
+      'cost',
+      'The project path leaves no room for Android native object paths',
+      `${androidPathRoomMessage(room)} \`stim android\` refuses to build here with STIM_PATH_TOO_LONG, because Gradle would fail deep inside ninja instead.`,
+      androidPathRoomRemedy(room),
+    ),
+  };
 }
 
 function androidCcacheFindings(
