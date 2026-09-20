@@ -6,7 +6,7 @@ import { basename, join, resolve, sep } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { androidClockOffset, parseLogcatLine } from '../collector/android.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
-import { androidHome } from '../devices/android.ts';
+import { androidHome, androidToolCwd } from '../devices/android.ts';
 import { launchErrorPreview } from './launch-error-preview.ts';
 import { deviceConsoleLevel } from '../collector/ios-device.ts';
 import { writeDiagnosticOnce } from './diagnostic-store.ts';
@@ -392,7 +392,7 @@ export function captureNativeCrashes(target: CrashTarget, logsDir: string): Ndjs
       const text = getExecutor().runFileQuiet(
         'adb',
         ['-s', target.deviceId, 'logcat', '-b', 'crash', '-d', '-v', 'time,epoch', '-t', '2000'],
-        { timeoutMs: 3000 },
+        { timeoutMs: 3000, cwd: androidToolCwd() },
       );
       const deadline = Date.now() + 4000;
       if (text)
@@ -476,7 +476,10 @@ export function captureWorkspaceCrashes(root: string, logsDir: string): void {
         if (platform === 'ios' && configured.deviceUdid !== deviceId) continue;
         if (platform === 'android') {
           if (!configured.avdName) continue;
-          const name = getExecutor().runFileQuiet('adb', ['-s', deviceId, 'emu', 'avd', 'name'], { timeoutMs: 2000 });
+          const name = getExecutor().runFileQuiet('adb', ['-s', deviceId, 'emu', 'avd', 'name'], {
+            timeoutMs: 2000,
+            cwd: androidToolCwd(),
+          });
           if (name?.split('\n')[0]?.trim() !== configured.avdName) continue;
         }
       }

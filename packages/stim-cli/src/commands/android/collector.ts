@@ -6,6 +6,7 @@ import chalk from 'chalk';
 import { spawnEntry } from '../../spawn-entry.ts';
 import { workspaceLogsDir } from '../../workspace/paths.ts';
 import { PLATFORM } from './support.ts';
+import { androidToolCwd } from '../../devices/android.ts';
 import { verifyCollectorOwnership } from '../../collector/ownership.ts';
 import { pidExists, signalProcessTree } from '../../metro.ts';
 import { readCollectors } from '../../collector/state.ts';
@@ -126,7 +127,7 @@ export async function startCollector({
         packageName,
       ],
       {
-        cwd: root,
+        cwd: androidToolCwd() ?? root,
         detached: true,
         stdio,
         env: process.env,

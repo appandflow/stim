@@ -44,6 +44,8 @@ import {
   physicalDeviceModel,
   resolvePhysicalDevice,
   assertOwnedAvdStopped,
+  parseEmulatorVersion,
+  suppressEmulatorCrashConsent,
   waitForAndroidEmulatorShutdown,
   waitForBoot,
   withAvdConfigOverrides,
@@ -581,6 +583,55 @@ test('waitForAndroidEmulatorShutdown waits for the owned AVD process lock to dis
   expect(calls).toEqual(['shutdown:60000', 'wait']);
 });
 
+test('waitForAndroidEmulatorShutdown on win32 waits for the crashpad handler qemu left behind, then kills a stuck one', () => {
+  const alive = new Map<number, number>([
+    [123, 1],
+    [456, 3],
+    [789, Number.POSITIVE_INFINITY],
+  ]);
+  let clock = 0;
+  const killed: number[] = [];
+  const queried: number[] = [];
+
+  waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+    platform: 'win32',
+    pollMs: 1000,
+    resolveDirectory: () => 'C:\\avds\\stim-app.avd',
+    readProcessId: () => 123,
+    processAlive: (pid) => (alive.get(pid) ?? 0) > clock,
+    directoryExists: () => true,
+    crashHandlerPids: (qemuPid) => {
+      queried.push(qemuPid);
+      return [456, 789];
+    },
+    killCrashHandler: (pid) => killed.push(pid),
+    now: () => clock * 1000,
+    sleep: (ms) => {
+      clock += ms / 1000;
+    },
+  });
+
+  expect(queried).toEqual([123]);
+  expect(killed).toEqual([789]);
+  expect(clock).toBe(1 + 15);
+});
+
+test('waitForAndroidEmulatorShutdown outside win32 never looks for a crash handler', () => {
+  let queried = false;
+  waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+    platform: 'darwin',
+    resolveDirectory: () => '/avds/stim-app.avd',
+    readProcessId: () => 123,
+    processAlive: () => false,
+    directoryExists: () => true,
+    crashHandlerPids: () => {
+      queried = true;
+      return [];
+    },
+  });
+  expect(queried).toBe(false);
+});
+
 test('waitForAndroidEmulatorShutdown includes the shutdown command in its deadline', () => {
   let elapsed = 0;
   let commandTimeout = 0;
@@ -968,7 +1019,7 @@ test('bootAndroidEmulator spawns the resolved emulator binary', () => {
     },
   });
   try {
-    bootAndroidEmulator('stim-app', 5556);
+    bootAndroidEmulator('stim-app', 5556, { platform: 'linux' });
   } finally {
     if (savedDisplay === undefined) delete process.env.DISPLAY;
     else process.env.DISPLAY = savedDisplay;
@@ -980,9 +1031,12 @@ test('bootAndroidEmulator starts the emulator tree from the home directory on Wi
   const sdk = makeFakeSdk(tmpHome);
   process.env.ANDROID_HOME = sdk;
   const cwds: unknown[] = [];
+  const args: string[][] = [];
   setExecutor({
-    spawn: (_cmd: string, _args: string[], opts: { cwd?: string }) => {
+    runQuiet: (cmd: string) => (cmd.endsWith(' -version') ? 'Android emulator version 37.1.11.0 (build_id 1)' : null),
+    spawn: (_cmd: string, spawnArgs: string[], opts: { cwd?: string }) => {
       cwds.push(opts.cwd);
+      args.push(spawnArgs);
       return { unref: () => {}, pid: 42 };
     },
   });
@@ -990,6 +1044,43 @@ test('bootAndroidEmulator starts the emulator tree from the home directory on Wi
   bootAndroidEmulator('stim-app', 5556, { platform: 'darwin' });
   bootAndroidEmulator('stim-app', 5556, { platform: 'linux' });
   expect(cwds).toEqual([homedir(), undefined, undefined]);
+  expect(args[0]).toEqual(['-avd', 'stim-app', '-port', '5556', '-crash-report-mode', 'never']);
+  expect(args[1]).not.toContain('-crash-report-mode');
+  expect(args[2]).not.toContain('-crash-report-mode');
+});
+
+test('suppressEmulatorCrashConsent passes -crash-report-mode never to emulator 37+, and removes the crash database for an older one', () => {
+  const removed: string[] = [];
+  const databases = () => ['C:\\tmp\\AndroidEmulator\\emu-crash-36.2.12.db'];
+  const remove = (path: string) => removed.push(path);
+  expect(suppressEmulatorCrashConsent({ platform: 'win32', version: () => 37, databases, remove })).toEqual([
+    '-crash-report-mode',
+    'never',
+  ]);
+  expect(removed).toEqual([]);
+  expect(suppressEmulatorCrashConsent({ platform: 'win32', version: () => 36, databases, remove })).toEqual([]);
+  expect(suppressEmulatorCrashConsent({ platform: 'win32', version: () => null, databases, remove })).toEqual([]);
+  expect(removed).toEqual([
+    'C:\\tmp\\AndroidEmulator\\emu-crash-36.2.12.db',
+    'C:\\tmp\\AndroidEmulator\\emu-crash-36.2.12.db',
+  ]);
+  expect(
+    suppressEmulatorCrashConsent({
+      platform: 'darwin',
+      version: () => {
+        throw new Error('not probed off Windows');
+      },
+      databases,
+      remove,
+    }),
+  ).toEqual([]);
+});
+
+test('parseEmulatorVersion reads the major from the launcher banner', () => {
+  expect(parseEmulatorVersion('Android emulator version 37.1.11.0 (build_id 15917651) (CL:N/A)\nCopyright')).toBe(37);
+  expect(parseEmulatorVersion('Android emulator version 36.2.12.0 (build_id 1)')).toBe(36);
+  expect(parseEmulatorVersion('')).toBeNull();
+  expect(parseEmulatorVersion(null)).toBeNull();
 });
 
 test('listAvds keeps the bare command when resolution falls back to PATH', () => {
@@ -1121,7 +1212,7 @@ test('bootAndroidEmulator writes stdout and stderr to the log file it is given',
       return { pid: 4242, unref: () => {} };
     },
   });
-  const pid = bootAndroidEmulator('stim-app', 5556, { logFile });
+  const pid = bootAndroidEmulator('stim-app', 5556, { logFile, platform: 'linux' });
   expect(pid).toBe(4242);
   expect(existsSync(logFile)).toBe(true);
   const opts = spawned[0];
@@ -1145,7 +1236,7 @@ test('bootAndroidEmulator keeps stdio ignored when no log file is given', () => 
       return { unref: () => {} };
     },
   });
-  expect(bootAndroidEmulator('stim-app', 5556)).toBe(null);
+  expect(bootAndroidEmulator('stim-app', 5556, { platform: 'linux' })).toBe(null);
   expect(spawned[0]?.stdio).toBe('ignore');
 });
 
@@ -1161,7 +1252,7 @@ test('bootAndroidEmulator still boots when the log file cannot be opened', () =>
   });
   const blocker = join(tmpHome, 'blocker');
   writeFileSync(blocker, '');
-  bootAndroidEmulator('stim-app', 5556, { logFile: join(blocker, 'emulator.log') });
+  bootAndroidEmulator('stim-app', 5556, { logFile: join(blocker, 'emulator.log'), platform: 'linux' });
   expect(spawned.length).toBe(1);
   expect(spawned[0]?.stdio).toBe('ignore');
 });

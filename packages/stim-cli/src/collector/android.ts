@@ -1,5 +1,6 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { type Executor, getExecutor } from '../exec.ts';
+import { androidToolCwd } from '../devices/android.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 
 const LEVEL_BY_LETTER: Record<string, string> = {
@@ -117,7 +118,9 @@ export function androidClockOffset(
 ): number | null {
   const before = now();
   try {
-    const output = exec.runFile('adb', ['-s', serial, 'shell', 'date', '+%s%3N'], { timeoutMs: 1000 }).trim();
+    const output = exec
+      .runFile('adb', ['-s', serial, 'shell', 'date', '+%s%3N'], { timeoutMs: 1000, cwd: androidToolCwd() })
+      .trim();
     const after = now();
     if (!/^\d{13}$/.test(output) || after < before || after - before > 1000) return null;
     return Math.round((before + after) / 2) - Number(output);
