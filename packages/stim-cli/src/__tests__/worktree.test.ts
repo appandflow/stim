@@ -699,10 +699,11 @@ test('git runs against a real repo whose path holds a space, a dollar sign, and 
   }
 });
 
-test('detached worktrees preserve unique commits but do not count commits already on a local branch', () => {
+test('detached and @-prefixed worktrees preserve unique commits but not commits on another local branch', () => {
   const base = mkdtempSync(join(tmpdir(), 'stim-test-detached-'));
   const root = join(base, 'repo');
   const target = join(base, 'detached');
+  const named = join(base, 'named');
   const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8' });
   try {
     mkdirSync(root);
@@ -713,6 +714,12 @@ test('detached worktrees preserve unique commits but do not count commits alread
     writeFileSync(join(root, 'tracked.txt'), 'shared commit');
     git(root, 'add', '.');
     git(root, 'commit', '-qm', 'shared main commit');
+    git(root, 'worktree', 'add', '-q', '-b', '@janic/qa', named);
+    expect(unpushedCommits(named)).toEqual([]);
+    writeFileSync(join(named, 'named-unique.txt'), 'named work');
+    git(named, 'add', '.');
+    git(named, 'commit', '-qm', 'unique named commit');
+    expect(unpushedCommits(named)?.[0]).toContain('unique named commit');
     git(root, 'worktree', 'add', '--detach', target);
     expect(unpushedCommits(target)).toEqual([]);
     writeFileSync(join(target, 'unique.txt'), 'detached work');
