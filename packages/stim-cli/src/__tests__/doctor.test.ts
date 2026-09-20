@@ -1958,6 +1958,60 @@ test.each(['win32', 'linux'] as const)(
   },
 );
 
+test('on win32 doctor flags core.autocrlf=true when the project ships ios/.xcode.env', () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-autocrlf-'));
+  const gitCalls: string[][] = [];
+  let autocrlf: string | null = 'true';
+  setExecutor({
+    run: () => '',
+    runQuiet: () => null,
+    runFile: () => '',
+    runFileQuiet: (file: string, args: string[] = []) => {
+      if (file === 'git' && args.includes('core.autocrlf')) {
+        gitCalls.push([file, ...args]);
+        return autocrlf === null ? null : `${autocrlf}\n`;
+      }
+      return null;
+    },
+    spawn: () => {},
+  });
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+    mkdirSync(join(project, 'node_modules'));
+    mkdirSync(join(project, 'ios'));
+    const options = { platform: 'ios' as const, concurrency: { maxBuilds: 0, maxDevices: 0 } };
+    const title = 'core.autocrlf rewrites ios/.xcode.env with CRLF line endings';
+    const titlesOn = (host: NodeJS.Platform) => runDoctor(project, { ...options, host }).map((f) => f.title);
+
+    expect(titlesOn('win32')).not.toContain(title);
+    expect(gitCalls).toEqual([]);
+
+    writeFileSync(join(project, 'ios', '.xcode.env'), 'export NODE_BINARY=$(command -v node)\n');
+    const found = runDoctor(project, { ...options, host: 'win32' }).find((f) => f.title === title);
+    expect(found?.level).toBe('cost');
+    expect(found?.fix).toContain('git config core.autocrlf input');
+    expect(found?.fix).toContain('.gitattributes');
+    expect(gitCalls).toEqual([['git', '-C', project, 'config', '--get', 'core.autocrlf']]);
+
+    autocrlf = 'input';
+    expect(titlesOn('win32')).not.toContain(title);
+    autocrlf = null;
+    expect(titlesOn('win32')).not.toContain(title);
+
+    autocrlf = 'true';
+    gitCalls.length = 0;
+    expect(titlesOn('darwin')).not.toContain(title);
+    expect(titlesOn('linux')).not.toContain(title);
+    expect(runDoctor(project, { ...options, platform: 'android', host: 'win32' }).map((f) => f.title)).not.toContain(
+      title,
+    );
+    expect(gitCalls).toEqual([]);
+  } finally {
+    resetExecutor();
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
 test('doctor records its run per platform in the project record', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-record-'));
   const cwd = process.cwd();

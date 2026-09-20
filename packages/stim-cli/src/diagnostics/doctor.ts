@@ -699,6 +699,27 @@ function checkIosHost(platform: DoctorPlatform | undefined, host: NodeJS.Platfor
   );
 }
 
+function checkXcodeEnvLineEndings(
+  projectRoot: string,
+  platform: DoctorPlatform | undefined,
+  host: NodeJS.Platform,
+): Finding | null {
+  if (platform === 'android' || host !== 'win32' || !existsSync(join(projectRoot, 'ios', '.xcode.env'))) return null;
+  const autocrlf = getExecutor()
+    .runFileQuiet('git', ['-C', projectRoot, 'config', '--get', 'core.autocrlf'], { timeoutMs: 10000 })
+    ?.trim();
+  if (autocrlf !== 'true') return null;
+  return finding(
+    'cost',
+    'core.autocrlf rewrites ios/.xcode.env with CRLF line endings',
+    'This checkout has core.autocrlf=true, so Git checks ios/.xcode.env out with CRLF endings and an EAS build ' +
+      'uploads it that way. Xcode sources the file with sh on the build worker, where each carriage return ' +
+      'becomes part of the line and the build fails with `: command not found`.',
+    'Run `git config core.autocrlf input` then `git add --renormalize .` and commit, or add ' +
+      '`ios/.xcode.env text eol=lf` to .gitattributes and check the file out again.',
+  );
+}
+
 export function runDoctor(
   projectRoot: string,
   {
@@ -873,6 +894,7 @@ export function runDoctor(
   return [
     checkAppProject(projectRoot),
     checkIosHost(platform, host),
+    checkXcodeEnvLineEndings(projectRoot, platform, host),
     ...checkMainCheckout(projectRoot, { platform, localIos }),
     ...(localIos ? inspectIosDebugArchitectures(mainCheckoutProjectRoot(projectRoot)) : []),
     ...checkStorageLayout(projectRoot, { platform, host }),
