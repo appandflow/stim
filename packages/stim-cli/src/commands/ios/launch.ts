@@ -753,7 +753,14 @@ export async function finishIosRun({
         (launched?.mode === 'openurl' || launched?.mode === 'payload-url' ? ' (expo-dev-client)' : ''),
   });
 
-  if (remoteDevice) await d.replaceCollector({ root, slot, udid, bundleId: bundleId!, appName, appExecutable, note });
+  if (remoteDevice) {
+    logWriter().write({
+      src: 'build',
+      level: 'info',
+      event: 'collector_skipped',
+      msg: `remote session ${udid}: device logs come from agent-device/EAS, so no simctl log stream is attached`,
+    });
+  }
 
   if (physical) raiseLeaseFor(release ? RELEASE_VERIFY_WAIT_MS : DEBUG_VERIFY_STEP_MS, false);
   const { state: launchState, warning: launchWarning } = await verifyIosRun({
