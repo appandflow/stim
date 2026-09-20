@@ -30,7 +30,7 @@ import { listBuildSlots } from '../engine/build-slots.ts';
 import { type IosSimRecord, listAllIosSims } from '../devices/ios.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { ccacheEnabled, COMPILATION_CACHE_MIN_XCODE, detectXcodeMajor, parseXcodeMajor } from '../engine/xcode.ts';
-import { type AdbDevices, listAdbDevices } from '../devices/android.ts';
+import { type AdbDevices, hostSystemImageArch, listAdbDevices } from '../devices/android.ts';
 import {
   type EasAuthResult,
   checkEasAuth as probeEasAuth,
@@ -939,9 +939,11 @@ export function checkAndroidPathRoom(
   projectRoot: string,
   platform: DoctorPlatform | undefined,
   host: NodeJS.Platform,
+  hostArch: string = process.arch,
 ): Finding | null {
-  // A Windows host's emulator is x86_64; a build for every ABI is the tighter case `stim android` checks.
-  const room = platform === 'ios' ? null : androidPathRoom(projectRoot, { abi: 'x86_64', platform: host });
+  // Android Emulator system images can target an ABI other than the host default; doctor checks the default.
+  const room =
+    platform === 'ios' ? null : androidPathRoom(projectRoot, { abi: hostSystemImageArch(hostArch), platform: host });
   if (!room) return null;
   return {
     code: 'android-path-room',

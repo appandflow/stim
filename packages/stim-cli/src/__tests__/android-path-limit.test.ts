@@ -63,21 +63,32 @@ test('the message names the root, its length, the ABI and the root cap; the reme
       `${ANDROID_OBJECT_PATH_MAX - 1} the NDK's ninja can be given on Windows; the root can be at most 35 characters.`,
   );
   expect(androidPathRoomRemedy(room!)).toBe(
-    `Map the project to a drive letter (\`subst X: ${root}\`) and run Stim from X:\\, or move it under a shorter root.`,
+    `Map the project to a drive letter (\`subst X: "${root}"\`) and run Stim from X:\\, or move it under a shorter root.`,
   );
+  const spacedRoot = `${root} folder`;
+  const spacedRoom = androidPathRoom(spacedRoot, { abi: 'x86_64', platform: 'win32' });
+  expect(androidPathRoomRemedy(spacedRoom!)).toContain(`subst X: "${spacedRoot}"`);
 });
 
 test('doctor reports the room as an Android cost finding on win32 only, for the emulator ABI', () => {
   const root = rootOf(maxRoot('x86_64') + 5);
-  expect(checkAndroidPathRoom(root, 'android', 'darwin')).toBeNull();
-  expect(checkAndroidPathRoom(root, 'ios', 'win32')).toBeNull();
-  expect(checkAndroidPathRoom(rootOf(maxRoot('x86_64')), undefined, 'win32')).toBeNull();
-  const finding = checkAndroidPathRoom(root, undefined, 'win32');
+  expect(checkAndroidPathRoom(root, 'android', 'darwin', 'x64')).toBeNull();
+  expect(checkAndroidPathRoom(root, 'ios', 'win32', 'x64')).toBeNull();
+  expect(checkAndroidPathRoom(rootOf(maxRoot('x86_64')), undefined, 'win32', 'x64')).toBeNull();
+  const finding = checkAndroidPathRoom(root, undefined, 'win32', 'x64');
   expect(finding?.code).toBe('android-path-room');
   expect(finding?.level).toBe('cost');
   expect(finding?.title).toBe('The project path leaves no room for Android native object paths');
   expect(finding?.detail).toContain(`${root} is ${root.length} characters`);
   expect(finding?.detail).toContain('for x86_64');
   expect(finding?.detail).toContain('STIM_PATH_TOO_LONG');
-  expect(finding?.fix).toContain(`subst X: ${root}`);
+  expect(finding?.fix).toContain(`subst X: "${root}"`);
+});
+
+test('doctor uses the Windows ARM64 emulator ABI when checking path room', () => {
+  const root = rootOf(maxRoot('arm64-v8a') + 2);
+  expect(checkAndroidPathRoom(root, 'android', 'win32', 'x64')).toBeNull();
+  const finding = checkAndroidPathRoom(root, 'android', 'win32', 'arm64');
+  expect(finding?.detail).toContain('for arm64-v8a');
+  expect(finding?.detail).toContain('STIM_PATH_TOO_LONG');
 });

@@ -54,5 +54,5 @@ export function androidPathRoomMessage({ root, abi, longest, maxRootLength }: An
 }
 
 export function androidPathRoomRemedy({ root }: AndroidPathRoom): string {
-  return `Map the project to a drive letter (\`subst X: ${root}\`) and run Stim from X:\\, or move it under a shorter root.`;
+  return `Map the project to a drive letter (\`subst X: "${root}"\`) and run Stim from X:\\, or move it under a shorter root.`;
 }
