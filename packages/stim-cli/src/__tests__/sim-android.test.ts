@@ -604,7 +604,10 @@ test('waitForAndroidEmulatorShutdown on win32 waits for the crashpad handler qem
       queried.push(qemuPid);
       return [456, 789];
     },
-    killCrashHandler: (pid) => killed.push(pid),
+    killCrashHandler: (pid) => {
+      killed.push(pid);
+      alive.set(pid, clock);
+    },
     now: () => clock * 1000,
     sleep: (ms) => {
       clock += ms / 1000;
@@ -614,6 +617,26 @@ test('waitForAndroidEmulatorShutdown on win32 waits for the crashpad handler qem
   expect(queried).toEqual([123]);
   expect(killed).toEqual([789]);
   expect(clock).toBe(1 + 15);
+});
+
+test('waitForAndroidEmulatorShutdown refuses when a crashpad handler remains alive after termination', () => {
+  let clock = 0;
+  expect(() =>
+    waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+      platform: 'win32',
+      pollMs: 1000,
+      resolveDirectory: () => 'C:\\avds\\stim-app.avd',
+      readProcessId: () => 123,
+      processAlive: (pid) => pid === 456,
+      directoryExists: () => true,
+      crashHandlerPids: () => [456],
+      killCrashHandler: () => {},
+      now: () => clock * 1000,
+      sleep: (ms) => {
+        clock += ms / 1000;
+      },
+    }),
+  ).toThrow('Crashpad handler 456 for owned AVD stim-app stayed alive.');
 });
 
 test('waitForAndroidEmulatorShutdown outside win32 never looks for a crash handler', () => {
@@ -1044,7 +1067,8 @@ test('bootAndroidEmulator starts the emulator tree from the home directory on Wi
   bootAndroidEmulator('stim-app', 5556, { platform: 'darwin' });
   bootAndroidEmulator('stim-app', 5556, { platform: 'linux' });
   expect(cwds).toEqual([homedir(), undefined, undefined]);
-  expect(args[0]).toEqual(['-avd', 'stim-app', '-port', '5556', '-crash-report-mode', 'never']);
+  expect(args[0]?.slice(0, 4)).toEqual(['-avd', 'stim-app', '-port', '5556']);
+  expect(args[0]?.slice(-2)).toEqual(['-crash-report-mode', 'never']);
   expect(args[1]).not.toContain('-crash-report-mode');
   expect(args[2]).not.toContain('-crash-report-mode');
 });

@@ -1223,7 +1223,11 @@ export function waitForAndroidEmulatorShutdown(
     const handlerDeadline = now() + CRASH_HANDLER_EXIT_TIMEOUT_MS;
     for (const handler of crashHandlerPids(processId)) {
       while (processAlive(handler) && now() < handlerDeadline) sleep(pollMs);
-      if (processAlive(handler)) killCrashHandler(handler);
+      if (processAlive(handler)) {
+        killCrashHandler(handler);
+        if (processAlive(handler))
+          throw new Error(`Crashpad handler ${handler} for owned AVD ${avdName} stayed alive.`);
+      }
     }
   }
   if (!directoryExists(directory)) {
