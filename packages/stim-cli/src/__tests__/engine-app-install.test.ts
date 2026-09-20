@@ -618,7 +618,7 @@ describe('android: install and launch', () => {
     const httpHostCall = exec.calls[1];
     assert(httpHostCall);
     expect(httpHostCall.slice(0, 6)).toEqual(['adb', '-s', 'emulator-5554', 'shell', 'run-as', 'com.example.app']);
-    expect(httpHostCall.at(-1)).toMatch(/debug_http_host.*10\.0\.2\.2:8082/);
+    expect(httpHostCall.at(-1)).toMatch(/debug_http_host.*127\.0\.0\.1:8082/);
   });
 
   test('falls back to monkey when no launcher activity resolves', () => {
@@ -677,13 +677,13 @@ test('writeDebugHttpHost writes host:port via run-as and reports it', () => {
   } as unknown as Executor;
   const r = writeDebugHttpHost({ serial: 'emulator-5554', packageName: 'com.x', metroPort: 8082 }, { exec });
   expect(r.ok).toBe(true);
-  expect(r.host).toBe('10.0.2.2:8082');
+  expect(r.host).toBe('127.0.0.1:8082');
   const argv = calls[0];
   assert(argv);
   expect(argv[0]).toBe('adb');
   expect(argv.slice(1, 6)).toEqual(['-s', 'emulator-5554', 'shell', 'run-as', 'com.x']);
   expect(argv[8]).toMatch(/debug_http_host/);
-  expect(argv[8]).toMatch(/10\.0\.2\.2:8082/);
+  expect(argv[8]).toMatch(/127\.0\.0\.1:8082/);
 });
 
 test('a failed prefs write does not fail the launch', () => {
@@ -1537,7 +1537,7 @@ describe.skipIf(process.platform === 'win32')(
 describe('the Android dev-client deep link', () => {
   test('the url is the iOS shape pointed at the emulator loopback', () => {
     expect(androidDevClientUrl('exp+app', 8085)).toBe(
-      'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8085%2F%3FdisableOnboarding%3D1&disableFab=1',
+      'exp+app://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8085%2F%3FdisableOnboarding%3D1&disableFab=1',
     );
     expect(devClientUrl('exp+app', 8085)).toBe(
       'exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8085%2F%3FdisableOnboarding%3D1&disableFab=1',
@@ -1552,7 +1552,7 @@ describe('the Android dev-client deep link', () => {
     );
     expect(result.mode).toBe('deep-link');
     expect(result.devClientUrl).toBe(
-      'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082%2F%3FdisableOnboarding%3D1&disableFab=1',
+      'exp+app://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8082%2F%3FdisableOnboarding%3D1&disableFab=1',
     );
     expect(exec.calls.at(-1)).toEqual([
       'adb',
@@ -1564,13 +1564,13 @@ describe('the Android dev-client deep link', () => {
       '-a',
       'android.intent.action.VIEW',
       '-d',
-      `'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082%2F%3FdisableOnboarding%3D1&disableFab=1'`,
+      `'exp+app://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8082%2F%3FdisableOnboarding%3D1&disableFab=1'`,
       '--ez',
       'EXDevMenuDisableAutoLaunch',
       'true',
     ]);
     expect(!exec.calls.some((c: string[]) => c.includes('resolve-activity'))).toBeTruthy();
-    expect(result.debugHttpHost).toBe('10.0.2.2:8082');
+    expect(result.debugHttpHost).toBe('127.0.0.1:8082');
     expect(result.reversed).toEqual(['tcp:8082->tcp:8082']);
   });
 
@@ -2397,13 +2397,13 @@ describe('the Metro host for a physical device', () => {
     expect(argv[8]).not.toMatch(/10\.0\.2\.2/);
   });
 
-  test('writeDebugHttpHost still points an emulator at the emulator loopback', () => {
+  test('writeDebugHttpHost points an emulator at adb reverse loopback', () => {
     const exec = { runFile: () => '' } as unknown as Executor;
     const r = writeDebugHttpHost(
       { serial: 'emulator-5554', packageName: 'com.x', metroPort: 8082, physical: false },
       { exec },
     );
-    expect(r.host).toBe('10.0.2.2:8082');
+    expect(r.host).toBe('127.0.0.1:8082');
   });
 
   test('the dev-client url targets localhost on a physical device', () => {
@@ -2411,7 +2411,7 @@ describe('the Metro host for a physical device', () => {
       'exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8085%2F%3FdisableOnboarding%3D1&disableFab=1',
     );
     expect(androidDevClientUrl('exp+app', 8085, false)).toBe(
-      'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8085%2F%3FdisableOnboarding%3D1&disableFab=1',
+      'exp+app://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8085%2F%3FdisableOnboarding%3D1&disableFab=1',
     );
   });
 
