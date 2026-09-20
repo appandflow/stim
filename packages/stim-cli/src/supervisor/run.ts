@@ -7,6 +7,7 @@ import { workspaceLogsDir } from '../workspace/paths.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { detectIsExpo } from '../workspace/project.ts';
 import { describeError } from './errors.ts';
+import { relaunchWithLogFile } from '../detached-entry.ts';
 import { MODE_BARE, MODE_EXPO, clearExpoMetroTunnel, clearWorkspaceSupervisor, writePidFile } from './state.ts';
 import { writeWorkspaceState, readWorkspaceState, withWorkspaceStateLock } from '../workspace/workspace-state.ts';
 
@@ -253,6 +254,7 @@ export async function runSupervisor({
 }
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
+  if (relaunchWithLogFile(argv)) return;
   const parsed = parseArgs(argv);
   if (parsed.error) {
     console.error(`Stim supervisor: ${parsed.error}`);

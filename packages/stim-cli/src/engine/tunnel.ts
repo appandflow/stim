@@ -462,7 +462,7 @@ export async function startTunnelSequence({
   return { failed: true, reason: failures.join(' ') || 'No managed tunnel provider was selected.' };
 }
 
-function closeChildPipes(child: ChildProcess): void {
+function closeChildPipes(child: TerminableChild): void {
   child.stdout?.destroy?.();
   child.stderr?.destroy?.();
 }
@@ -480,7 +480,7 @@ function resumeChildPipes(child: ChildProcess): void {
 }
 
 async function signalAndWaitForExit(
-  child: ChildProcess,
+  child: TerminableChild,
   signal: NodeJS.Signals,
   {
     timeoutMs,
@@ -520,8 +520,17 @@ async function signalAndWaitForExit(
   return hasExited();
 }
 
+export interface TerminableChild {
+  pid?: number | undefined;
+  stdout: ChildProcess['stdout'];
+  stderr: ChildProcess['stderr'];
+  kill(signal?: NodeJS.Signals | number): boolean;
+  once(event: string, listener: (...args: unknown[]) => void): unknown;
+  removeListener(event: string, listener: (...args: unknown[]) => void): unknown;
+}
+
 export async function terminateChild(
-  child: ChildProcess,
+  child: TerminableChild,
   {
     alreadyExited,
     timeoutMs,

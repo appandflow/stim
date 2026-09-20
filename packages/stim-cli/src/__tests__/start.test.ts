@@ -97,7 +97,7 @@ function captureAction(register: (cmd: Command) => void) {
 }
 
 interface ChildStub {
-  pid: number | undefined;
+  pid?: number | undefined;
   unref(): void;
   on(event: string, cb: (...args: unknown[]) => void): void;
 }
@@ -867,6 +867,91 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     expect(facts.alreadyRunning).toBe(false);
     expect(facts.supervisorPid).toBe(process.pid);
     expect(facts.mode).toBe('bare-inproc');
+  });
+
+  test('win32 starts the supervisor through PowerShell and reads its pid from the record it writes', async () => {
+    const { server, port } = await metroListener();
+    const exec = metroExecutor({ listeners: {} });
+    exec.spawn = (cmd, args, opts) => {
+      exec.calls.spawn.push({ cmd, args, opts });
+      const shell = makeChildProcess({ pid: 777 });
+      setTimeout(() => {
+        writeWorkspaceState(root, {
+          supervisor: {
+            pid: process.pid,
+            processToken: captureProcessToken(process.pid),
+            port,
+            mode: 'bare-inproc',
+            startedAt: new Date().toISOString(),
+          },
+        });
+        exec.listening = true;
+        shell.emit('exit', 0, null);
+      }, 20);
+      return shell;
+    };
+    const base = exec.runQuiet.bind(exec);
+    exec.runQuiet = (cmd) => {
+      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5150' : '';
+      return base(cmd);
+    };
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port });
+
+    let result;
+    try {
+      result = await runAction({ json: true, wait: '10' }, (cmd) => registerStart(cmd, { platform: 'win32' }));
+    } finally {
+      server.close();
+    }
+
+    expect(result.exitCode).toBe(null);
+    const spawned = exec.calls.spawn[0];
+    assert(spawned);
+    expect(spawned.cmd).toBe('powershell.exe');
+    expect(spawned.opts.detached).toBeUndefined();
+    const script = spawned.args.at(-1) ?? '';
+    expect(script).toMatch(
+      /^Start-Process -WindowStyle Hidden -FilePath '.*' -ArgumentList '.*' -WorkingDirectory '.*'$/,
+    );
+    expect(script).toContain(
+      `"${supervisorEntry()}" "--root" "${root}" "--port" "${port}" "--log-file" "${supervisorLogFile(root)}"`,
+    );
+    expect(script).toContain(`-WorkingDirectory '${root}'`);
+    const facts = JSON.parse(result.logs[0] ?? '');
+    expect(facts.supervisorPid).toBe(process.pid);
+    expect(facts.alreadyRunning).toBe(false);
+  });
+
+  test('win32 reports a launcher that fails, with its stderr in supervisor.log', async () => {
+    const { server, port } = await metroListener();
+    const exec = metroExecutor({ listeners: {} });
+    exec.spawn = (cmd, args, opts) => {
+      exec.calls.spawn.push({ cmd, args, opts });
+      const shell = makeChildProcess({ pid: 777 });
+      setTimeout(() => {
+        shell.stderr?.emit('data', 'Start-Process : This command cannot be run\n');
+        shell.emit('exit', 1, null);
+      }, 20);
+      return shell;
+    };
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port });
+
+    let result;
+    try {
+      result = await runAction({ json: true, wait: '10' }, (cmd) => registerStart(cmd, { platform: 'win32' }));
+    } finally {
+      server.close();
+    }
+
+    expect(result.exitCode).toBe(1);
+    const failure = JSON.parse(result.logs[0] ?? '');
+    expect(failure.code).toBe('STIM_SUPERVISOR_EXITED');
+    expect(failure.message).toMatch(/exited \(code 1\)/);
+    expect(readFileSync(supervisorLogFile(root), 'utf-8')).toContain(
+      'Stim start: the supervisor launcher exited (code 1).\nStart-Process : This command cannot be run\n',
+    );
   });
 
   test('a configured cache provider reaches the supervisor through the environment', async () => {
