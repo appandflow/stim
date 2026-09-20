@@ -432,7 +432,7 @@ export function reverseMetroPorts(
   return { ok: true, reversed: pairs.map(([device, host]) => `tcp:${device}->tcp:${host}`) };
 }
 
-const EMULATOR_HOST_LOOPBACK = '10.0.2.2';
+const EMULATOR_HOST_LOOPBACK = '127.0.0.1';
 const PHYSICAL_HOST_LOOPBACK = 'localhost';
 
 function androidMetroHost(physical: boolean): string {

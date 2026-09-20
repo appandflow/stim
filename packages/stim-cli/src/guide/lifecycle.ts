@@ -1228,9 +1228,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   The build, the fingerprint, the build cache and the Metro port gate are
   unchanged. What is skipped is everything that manages an owned device:
   no capacity check, no AVD creation, no boot wait, and no owned-device
-  registry entry. The app is pointed at
-  localhost:<port>, which the adb reverse serves, instead of the emulator's
-  10.0.2.2. Stim never creates, boots, shuts down, or deletes hardware.
+  registry entry. A debug app uses localhost:<port> through adb reverse.
+  Stim never creates, boots, shuts down, or deletes hardware.
 
   \`ios --device [udid]\` selects a connected iPhone, the same way
   \`android --device\` selects a connected phone: with no UDID it takes the

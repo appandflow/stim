@@ -200,7 +200,7 @@ line by design (see \`guide logs\`), not this single-payload contract.`,
                   the remedies all target -- read from the BUILT APK's
                   manifest, which on a flavored project is the flavor's
                   applicationId, not what the project files say
-  debugHttpHost   "10.0.2.2:<port>" on an emulator, "localhost:<port>" on a
+  debugHttpHost   "127.0.0.1:<port>" on an emulator, "localhost:<port>" on a
                   physical device, when the app's SharedPreferences were
                   pointed at this workspace's Metro; null when they were not.
                   A healthy run reverses only <port> -> <port>, which is what
