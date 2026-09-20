@@ -1954,19 +1954,15 @@ test.each(['win32', 'linux'] as const)('doctor --platform ios on a %s host runs 
   expect(titles).toContain(`iOS runs through EAS on this ${host} host`);
 });
 
-test('on win32 doctor flags core.autocrlf=true once it has given ios/.xcode.env CRLF endings', () => {
-  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-autocrlf-'));
+test('on win32 doctor flags CR bytes in ios/.xcode.env whatever core.autocrlf says', () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-xcode-env-crlf-'));
   const gitCalls: string[][] = [];
-  let autocrlf: string | null = 'true';
   setExecutor({
     run: () => '',
     runQuiet: () => null,
     runFile: () => '',
     runFileQuiet: (file: string, args: string[] = []) => {
-      if (file === 'git' && args.includes('core.autocrlf')) {
-        gitCalls.push([file, ...args]);
-        return autocrlf === null ? null : `${autocrlf}\n`;
-      }
+      if (file === 'git') gitCalls.push([file, ...args]);
       return null;
     },
     spawn: () => {},
@@ -1976,36 +1972,27 @@ test('on win32 doctor flags core.autocrlf=true once it has given ios/.xcode.env 
     mkdirSync(join(project, 'node_modules'));
     mkdirSync(join(project, 'ios'));
     const options = { platform: 'ios' as const, concurrency: { maxBuilds: 0, maxDevices: 0 } };
-    const title = 'core.autocrlf rewrites ios/.xcode.env with CRLF line endings';
+    const title = 'ios/.xcode.env has CRLF line endings';
     const titlesOn = (host: NodeJS.Platform) => runDoctor(project, { ...options, host }).map((f) => f.title);
 
     expect(titlesOn('win32')).not.toContain(title);
-    expect(gitCalls).toEqual([]);
-
     writeFileSync(join(project, 'ios', '.xcode.env'), 'export NODE_BINARY=$(command -v node)\n');
     expect(titlesOn('win32')).not.toContain(title);
-    expect(gitCalls).toEqual([]);
 
     writeFileSync(join(project, 'ios', '.xcode.env'), 'export NODE_BINARY=$(command -v node)\r\n');
     const found = runDoctor(project, { ...options, host: 'win32' }).find((f) => f.title === title);
     expect(found?.level).toBe('cost');
+    expect(found?.detail).toContain('core.autocrlf');
     expect(found?.fix).toContain('git config core.autocrlf input');
+    expect(found?.fix).toContain('git checkout -- ios/.xcode.env');
     expect(found?.fix).toContain('.gitattributes');
-    expect(gitCalls).toEqual([['git', '-C', project, 'config', '--get', 'core.autocrlf']]);
+    expect(gitCalls.some((call) => call.includes('core.autocrlf'))).toBe(false);
 
-    autocrlf = 'input';
-    expect(titlesOn('win32')).not.toContain(title);
-    autocrlf = null;
-    expect(titlesOn('win32')).not.toContain(title);
-
-    autocrlf = 'true';
-    gitCalls.length = 0;
     expect(titlesOn('darwin')).not.toContain(title);
     expect(titlesOn('linux')).not.toContain(title);
     expect(runDoctor(project, { ...options, platform: 'android', host: 'win32' }).map((f) => f.title)).not.toContain(
       title,
     );
-    expect(gitCalls).toEqual([]);
   } finally {
     resetExecutor();
     rmSync(project, { recursive: true, force: true });
