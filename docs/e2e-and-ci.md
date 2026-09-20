@@ -47,17 +47,20 @@ The one non-real piece is the leaf hash function: the real CLI has a direct `@ex
 
 ## The native e2e
 
-There are three native suites and one shared harness
+There are four native suites and one shared harness
 (`test/e2e/native/harness.mjs`, which owns the fixture creation, the process
 wrappers, the cleanup checks and the diagnostics dump so all drivers build and
 tear down the same app the same way):
 
-| suite      | driver                       | proves                                                  | when                        |
-| ---------- | ---------------------------- | ------------------------------------------------------- | --------------------------- |
-| **loop**   | `run-native-e2e.mjs`         | the dev loop works end to end                           | nightly, PR label, dispatch |
-| **smoke**  | `run-native-e2e.mjs --smoke` | one worktree builds, launches and stops                 | every PR (Windows)          |
-| **caches** | `run-cache-e2e.mjs`          | each individual cache is engaged, storing and reused    | on demand                   |
-| **pool**   | `run-pool-e2e.mjs`           | iOS simulators are parked, evicted, adopted, and reaped | on demand                   |
+| suite      | driver                       | proves                                                  | platforms           | when                                        |
+| ---------- | ---------------------------- | ------------------------------------------------------- | ------------------- | ------------------------------------------- |
+| **smoke**  | `run-native-e2e.mjs --smoke` | one worktree builds, launches and stops                 | iOS, Linux, Windows | every push to `main`, `e2e-smoke`, dispatch |
+| **loop**   | `run-native-e2e.mjs`         | the dev loop works end to end                           | iOS, Linux, Windows | nightly, `e2e-loop`, dispatch               |
+| **caches** | `run-cache-e2e.mjs`          | each individual cache is engaged, storing and reused    | iOS, Linux          | `e2e-caches`, dispatch                      |
+| **pool**   | `run-pool-e2e.mjs`           | iOS simulators are parked, evicted, adopted, and reaped | iOS                 | `e2e-pool`, dispatch                        |
+
+The `e2e-*` names are pull-request labels; the `e2e-all` label is loop, caches
+and pool together. See [CI](#ci) for the gate.
 
 ### The loop suite
 
@@ -94,8 +97,14 @@ node test/e2e/native/run-native-e2e.mjs --framework bare --platform android --sm
 ```
 
 `--smoke` stops after the first worktree has been built, launched, verified and
-stopped: no second-worktree cache proof, no named slots. It is the shape a
-per-pull-request job can afford.
+stopped: no second-worktree cache proof, no named slots. CI restores the
+cross-run build cache before it, so a run whose native fingerprint matches an
+earlier loop or smoke installs from cache. Observed on the `e2e-smoke` runs of
+#905: iOS 8 to 17 minutes and Linux Android 3 to 4 minutes with the cache warm
+(the build phase was 60 to 90 seconds; the rest is fixture creation,
+`pod install` and device boot), Windows Android 13 minutes warm and 25 cold,
+of which the Gradle build was 20. A run that changes the fingerprint pays the
+cold build on every platform.
 
 The fixture-creation commands are version-sensitive; each is overridable with an
 env var (`STIM_E2E_BARE_INIT`, `STIM_E2E_EXPO_INIT`) so a runner can adjust
@@ -218,9 +227,9 @@ node test/e2e/native/run-cache-e2e.mjs --framework bare --platform ios --dry-run
 
 See the [source-fixture preparation requirements](./field-test-protocol.md#use-a-fixture-that-looks-like-a-real-repo).
 
-On CI it is `workflow_dispatch` only: **Actions -> Native E2E -> Run workflow ->
-suite: `caches`** (or `all` for both). The default stays `loop`, so the nightly
-and the PR label behave exactly as they always have.
+On CI it runs on `workflow_dispatch` (**Actions -> Native E2E -> Run workflow ->
+suite: `caches`**, or `all` for loop, caches and pool) or on a pull request
+labeled `e2e-caches`. The dispatch default stays `loop`.
 
 #### What its first run found
 
@@ -251,25 +260,32 @@ PATH).
   format check, ESM build, typecheck, knip, Vitest, and the cross-platform E2E.
   A separate job builds on Node 22.18 and then runs `test/runtime-floor.mjs`
   under exactly Node 22.12.0, the published floor. Repository development needs
-  Node 22.18 or later because tsdown has the higher floor. Two Windows lanes:
-  `test (windows)` repeats install, build, typecheck and the unit suite on
-  `windows-latest`; `android smoke (windows)` runs the native loop's `--smoke`
-  subset on a WHPX-accelerated emulator, about 22 minutes. The full Windows
-  loop, `android loop (windows)`, is added to that matrix on
-  `workflow_dispatch` or on a pull request from a branch whose name contains
-  `windows`.
+  Node 22.18 or later because tsdown has the higher floor. A Windows lane,
+  `test (windows)`, repeats install, build, typecheck and the unit suite on
+  `windows-latest`.
 
 - **`windows-debug.yml`** -- dispatch only: prepares a `windows-latest` runner
   like the Android lane and holds it open behind Tailscale SSH or tmate.
 
-- **`e2e-native.yml`** -- the native matrix. **Gated**: it runs nightly
-  (schedule), on demand (`workflow_dispatch`), and on a pull request **only when
-  the PR carries the `e2e-native` label** -- a flaky 15-minute `xcodebuild` must
-  not block every PR. A `suite` dispatch input picks which driver runs on the
-  matrix (`loop` | `caches` | `all`, default `loop`); `inputs` is empty on
-  schedule and on `pull_request`, so both fall through to `loop` and the
-  nightly's behaviour is preserved by construction rather than by a second code
-  path. The `caches` selection raises the job timeout to 120 minutes (per
+- **`e2e-native.yml`** -- the native matrix, every native gate in one
+  workflow. Nothing native runs on an unlabeled pull request; what runs is:
+
+  | event               | suites                                                                                              |
+  | ------------------- | --------------------------------------------------------------------------------------------------- |
+  | push to `main`      | smoke on iOS, Linux Android and Windows Android                                                     |
+  | nightly schedule    | loop on every platform                                                                              |
+  | `workflow_dispatch` | the `suite` input (`smoke` \| `loop` \| `caches` \| `pool` \| `all`, default `loop`)                |
+  | pull request        | the union of its labels `e2e-smoke`, `e2e-loop`, `e2e-caches`, `e2e-pool`, `e2e-all`; none, nothing |
+
+  `all` and `e2e-all` are loop, caches and pool. Adding a label re-triggers the
+  workflow through the `labeled` event; several labels union. A `plan` job runs
+  `scripts/e2e-plan.mjs` (unit-tested in `scripts/e2e-plan.test.mjs`), which
+  turns event, labels and input into one suite list per platform, filtered by
+  what the platform supports: iOS smoke, loop, caches, pool; Linux Android
+  smoke, loop, caches; Windows Android smoke, loop. Each platform job reads its
+  list as the `suite` matrix axis and is skipped when the list is empty. The
+  smoke is one framework per platform: Expo on iOS and Linux, bare on Windows.
+  The `caches` selection raises the job timeout to 120 minutes (per
   variant it pays one more cold compile than the loop suite -- the single-flight
   race -- plus two cache-hit builds, and on Android one forced `gradlew` run)
   and uploads its machine-readable summary
@@ -277,14 +293,18 @@ PATH).
   per-check evidence is worth reading. iOS runs on the `xcode-27` image, which
   ships Xcode 27 and its Swift 6.4 toolchain as the only Xcode; the job selects
   `/Applications/Xcode_27.0.app` and fails if the toolchain is below Swift 6.4.
-  Android runs on a Linux+KVM host via
-  `reactivecircus/android-emulator-runner`. Framework and suite are matrix axes,
-  so variants run as parallel, isolated jobs. Android runs `{bare, expo}`; **iOS
-  runs `expo` only** -- a matrix `exclude` drops the bare variant, whose template
-  cannot launch on iOS 27. `~/.stim`'s shared build
-  cache (`STIM_BUILD_CACHE`) is persisted across runs with `actions/cache`, so
-  the cross-run cache path is itself exercised; build logs
-  (`build-*.ndjson`) are uploaded as artifacts on failure.
+  Linux Android runs on a KVM host via
+  `reactivecircus/android-emulator-runner`; Windows Android runs bare on
+  `windows-latest` with a WHPX-accelerated emulator, its fixture under `D:\e`
+  to stay under the 260-character path cap. Framework and suite are matrix
+  axes, so variants run as parallel, isolated jobs. Linux Android runs both
+  frameworks; **iOS runs `expo` only** -- a matrix `exclude` drops the bare
+  variant, whose template cannot launch on iOS 27. `~/.stim`'s shared build cache
+  (`STIM_BUILD_CACHE`) is persisted across runs with `actions/cache` for the
+  smoke and loop suites on every platform, so the cross-run cache path is
+  itself exercised and a smoke whose native fingerprint is unchanged installs
+  from cache; build logs (`build-*.ndjson`) are uploaded as artifacts on
+  failure.
 
 ### Assumptions a reviewer must confirm
 

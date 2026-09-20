@@ -1,12 +1,15 @@
-# SLOW, GATED native e2e -- a real xcodebuild / gradle build on a real
+# SLOW native e2e -- a real xcodebuild / gradle build on a real
 # simulator/emulator, across the framework x platform matrix:
 #
-#     framework in {bare, expo}   x   platform in {ios, android}   (iOS: expo only)
+#     framework in {bare, expo}   x   platform in {ios, android, windows}
 #
-# THREE SUITES RUN ON THIS MATRIX, selected by the `suite` dispatch input:
+# FOUR SUITES RUN ON THIS MATRIX:
+#   smoke   test/e2e/native/run-native-e2e.mjs --smoke -- one worktree: create
+#           -> start -> build -> launch -> stop -> cleanup checks. One
+#           framework per platform (Expo on iOS and Linux, bare on Windows).
 #   loop    test/e2e/native/run-native-e2e.mjs -- docs/field-test-protocol.md as
 #           code: create -> start -> build -> second worktree hits the cache ->
-#           teardown. THE DEFAULT, and what the nightly has always run.
+#           teardown. What the nightly runs.
 #   caches  test/e2e/native/run-cache-e2e.mjs -- for every cache stim-cli supplies,
 #           prove it is ENGAGED (read off the real argv/log), that it STORES (the
 #           directory gained files), and that a second workspace REUSED it. It
@@ -14,25 +17,32 @@
 #           run it before a release, or after a change that touches caching.
 #   pool    test/e2e/native/run-pool-e2e.mjs -- iOS only: park, evict, adopt,
 #           and empty the simulator pool on real CoreSimulator devices.
-#   all     every applicable suite, as separate parallel matrix jobs.
+#   all     loop, caches and pool, as separate parallel matrix jobs.
 #
-# The nightly and the PR label keep running `loop` exactly as before -- adding
-# the input changed nothing about them.
+# Per platform: iOS runs smoke, loop, caches and pool; Linux Android smoke,
+# loop and caches; Windows Android smoke and loop.
 #
-# WHY IT IS GATED. A cold native build is ~10-20 minutes and occasionally flaky
-# (device boot, toolchain). Blocking every PR on it would be miserable, so it
-# runs:
-#   - nightly (schedule), against main;
-#   - on demand (workflow_dispatch);
-#   - on a PR ONLY when that PR carries the `e2e-native` label (see the `if:`
-#     guard on each job). Adding the label re-triggers via the `labeled` event.
+# WHAT RUNS WHEN. A cold native build is ~10-20 minutes and occasionally flaky
+# (device boot, toolchain), so nothing native runs on an unlabeled pull request:
+#   - every push to main: the smoke suite on all three platforms;
+#   - nightly (schedule), against main: the loop suite;
+#   - on demand (workflow_dispatch): the `suite` input;
+#   - on a pull request: the union of its labels `e2e-smoke`, `e2e-loop`,
+#     `e2e-caches`, `e2e-pool` and `e2e-all` (loop, caches, pool). No label,
+#     no native job. Adding a label re-triggers via the `labeled` event.
+# The `plan` job turns event, labels and input into one suite list per
+# platform through scripts/e2e-plan.mjs (unit-tested in e2e-plan.test.mjs);
+# each platform job reads its list as the `suite` matrix axis and is skipped
+# when the list is empty.
 #
 # VARIANT LAYOUT. Each platform is its own job. Framework and selected suite are
 # matrix axes. iOS and Android are separate jobs because iOS needs macOS and
-# Xcode, while Android needs Linux and KVM. Bare and Expo exercise different
-# stim-cli Metro paths. Android runs both frameworks; iOS runs Expo ONLY, because
-# the bare template cannot launch on iOS 27 (see the matrix `exclude` below), so
-# an `all` dispatch is three iOS jobs and four Android jobs.
+# Xcode, while Android needs Linux and KVM; Windows Android proves the paths
+# the unit suite fakes (gradlew.bat through cross-spawn, netstat, taskkill).
+# Bare and Expo exercise different stim-cli Metro paths. Linux Android runs
+# both frameworks; iOS runs Expo ONLY, because the bare template cannot launch
+# on iOS 27 (see the matrix `exclude` below); Windows runs bare only, so an
+# `all` dispatch is three iOS jobs, four Linux Android jobs and one Windows job.
 #
 # THE iOS RUNNER IS `xcode-27`, NOT `macos-latest`. Automatic Swift compilation
 # caching needs Swift 6.4, which ships with Xcode 27; the macos-26 images top out
@@ -43,6 +53,8 @@
 name: Native E2E
 
 on:
+  push:
+    branches: [main]
   schedule:
     # 07:00 UTC nightly. Cron has no notion of "against main" -- schedule always
     # runs on the default branch, which is what we want.
@@ -53,38 +65,59 @@ on:
         description: 'Which suite to run on the framework x platform matrix'
         type: choice
         default: loop
-        options: [loop, caches, pool, all]
+        options: [smoke, loop, caches, pool, all]
   pull_request:
     # `labeled` is what makes "add the label to run it" work; the others let a
-    # push to an already-labeled PR re-run. The `if:` on each job is the actual
-    # gate -- these types only decide when to EVALUATE it.
+    # push to an already-labeled PR re-run. The `plan` job is the actual gate
+    # -- these types only decide when to EVALUATE it.
     types: [labeled, opened, synchronize, reopened]
 
 concurrency:
-  group: e2e-native-${{ github.workflow }}-${{ github.ref }}
+  # The event name keeps a push to main from cancelling the nightly loop, which
+  # runs on the same ref.
+  group: e2e-native-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ios: ${{ steps.plan.outputs.ios }}
+      android: ${{ steps.plan.outputs.android }}
+      windows: ${{ steps.plan.outputs.windows }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: plan
+        env:
+          E2E_PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          E2E_SUITE: ${{ inputs.suite }}
+        # An explicit `shell: bash` runs with `-o pipefail`; the runner's
+        # default shell does not, and tee would turn a script error into
+        # success.
+        shell: bash
+        run: node scripts/e2e-plan.mjs | tee -a "$GITHUB_OUTPUT"
+
   ios:
     name: ios ${{ matrix.framework }} (${{ matrix.suite }})
-    # Gate: always on schedule/dispatch; on a PR only when it is labeled.
-    if: >-
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'e2e-native'))
+    needs: plan
+    if: needs.plan.outputs.ios != '[]'
     runs-on: xcode-27
     # The caches suite adds a second cold compile (the single-flight race) plus a
     # third cache-hit build, so it needs headroom the loop suite never did.
-    timeout-minutes: ${{ matrix.suite == 'caches' && 120 || 60 }}
+    timeout-minutes: ${{ matrix.suite == 'caches' && 120 || matrix.suite == 'smoke' && 45 || 60 }}
     strategy:
       fail-fast: false
       matrix:
         framework: [bare, expo]
-        # Schedule and pull_request events have no suite input and use loop.
-        suite: ${{ fromJSON(inputs.suite == 'all' && '["loop","caches","pool"]' || inputs.suite == 'caches' && '["caches"]' || inputs.suite == 'pool' && '["pool"]' || '["loop"]') }}
+        suite: ${{ fromJSON(needs.plan.outputs.ios) }}
         # No bare variant on iOS. iOS 27 traps an app that has not adopted the
         # UIScene lifecycle, and @react-native-community/template (0.88.0-rc.1)
         # still ships no SceneDelegate and no UIApplicationSceneManifest, so the
@@ -146,7 +179,7 @@ jobs:
         run: brew install mobai-app/tap/simslim
 
       - name: Restore cross-run build cache
-        if: matrix.suite == 'loop'
+        if: matrix.suite == 'loop' || matrix.suite == 'smoke'
         id: cache
         uses: actions/cache@v4
         with:
@@ -161,7 +194,7 @@ jobs:
       # build may be a legitimate cross-run HIT rather than a cold miss. The
       # combined cache action only reports exact matches, so ask the filesystem.
       - name: Detect a warmed cross-run cache
-        if: matrix.suite == 'loop'
+        if: matrix.suite == 'loop' || matrix.suite == 'smoke'
         run: echo "STIM_E2E_WARM_CACHE=$([ -n \"$(ls -A \"$STIM_BUILD_CACHE\" 2>/dev/null)\" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
 
       - name: Monitor host memory during iOS QA
@@ -175,6 +208,10 @@ jobs:
         # --keep leaves the temp worktrees in place on this ephemeral runner so
         # the artifact step below can collect their build logs.
         run: node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform ios --keep --home "$TMPDIR/stim-cli-home"
+
+      - name: Smoke suite (ios, ${{ matrix.framework }})
+        if: matrix.suite == 'smoke'
+        run: node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform ios --keep --smoke --home "$TMPDIR/stim-cli-home"
 
       - name: Cache suite (ios, ${{ matrix.framework }})
         if: matrix.suite == 'caches'
@@ -238,20 +275,21 @@ jobs:
 
   android:
     name: android ${{ matrix.framework }} (${{ matrix.suite }})
-    if: >-
-      github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_dispatch' && inputs.suite != 'pool') ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'e2e-native'))
+    needs: plan
+    if: needs.plan.outputs.android != '[]'
     # A Linux host with KVM: the Android emulator needs hardware acceleration,
     # which the ubuntu-latest GitHub runners provide once /dev/kvm is exposed.
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ matrix.suite == 'caches' && 120 || 60 }}
+    timeout-minutes: ${{ matrix.suite == 'caches' && 120 || matrix.suite == 'smoke' && 45 || 60 }}
     strategy:
       fail-fast: false
       matrix:
         framework: [bare, expo]
-        # Schedule and pull_request events have no suite input and use loop.
-        suite: ${{ fromJSON(inputs.suite == 'all' && '["loop","caches"]' || inputs.suite == 'caches' && '["caches"]' || '["loop"]') }}
+        suite: ${{ fromJSON(needs.plan.outputs.android) }}
+        # The smoke suite is one job per platform; Expo matches the iOS side.
+        exclude:
+          - suite: smoke
+            framework: bare
     env:
       STIM_E2E_SUITE: ${{ matrix.suite }}
       STIM_BUILD_CACHE: ${{ github.workspace }}/.e2e-build-cache/android-${{ matrix.framework }}
@@ -271,7 +309,7 @@ jobs:
           java-version: 17
 
       - name: Restore cross-run build cache
-        if: matrix.suite == 'loop'
+        if: matrix.suite == 'loop' || matrix.suite == 'smoke'
         id: cache
         uses: actions/cache@v4
         with:
@@ -290,7 +328,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Detect a warmed cross-run cache
-        if: matrix.suite == 'loop'
+        if: matrix.suite == 'loop' || matrix.suite == 'smoke'
         run: echo "STIM_E2E_WARM_CACHE=$([ -n \"$(ls -A \"$STIM_BUILD_CACHE\" 2>/dev/null)\" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
 
       - name: Native e2e (android, ${{ matrix.framework }}) -- runs the selected suite(s)
@@ -314,6 +352,7 @@ jobs:
             adb -s emulator-5554 emu kill || true
             sleep 3
             if [ "$STIM_E2E_SUITE" = loop ]; then node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/stim-cli-home"; fi
+            if [ "$STIM_E2E_SUITE" = smoke ]; then node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --smoke --home "$TMPDIR/stim-cli-home"; fi
             if [ "$STIM_E2E_SUITE" = caches ]; then node test/e2e/native/run-cache-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/stim-cli-cache-home" --summary "$GITHUB_WORKSPACE/cache-summary-android-${{ matrix.framework }}.json"; fi
 
       - name: Upload the cache-suite summary
@@ -333,6 +372,93 @@ jobs:
           path: |
             ${{ env.TMPDIR }}/stim-cli-home/workspaces/**/logs/*
             ${{ env.TMPDIR }}/stim-cli-cache-home/workspaces/**/logs/*
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+
+  # The Android half of the dev loop on Windows, driven by the same fixture and
+  # driver as the lanes above, bare framework only. Real proof of the paths the
+  # unit suite fakes: gradlew.bat through cross-spawn, Metro listener discovery
+  # through netstat, adb and the emulator, and the taskkill tree kill on stop.
+  #
+  # The SDK, system image and acceleration facts live in
+  # .github/actions/windows-android-sdk, shared with windows-debug.yml.
+  #
+  # The loop suite's driver step is still allowed to fail while the APK
+  # assertion below it is not: the named-slots phase exits 1 after the loop has
+  # passed, because a repeated slot loses device.systemImage (#892) and the
+  # resulting all-ABI build overruns the NDK object-path limit (#893). Until
+  # those land the assertion is that suite's gate; then the driver step becomes
+  # it and the assertion goes. The smoke suite never reaches that phase, so its
+  # driver step is the gate.
+  windows:
+    name: android bare (${{ matrix.suite }}, windows)
+    needs: plan
+    if: needs.plan.outputs.windows != '[]'
+    runs-on: windows-latest
+    timeout-minutes: ${{ matrix.suite == 'loop' && 90 || 45 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: ${{ fromJSON(needs.plan.outputs.windows) }}
+    env:
+      # os.tmpdir() reads TEMP on Windows, and the driver builds its fixture
+      # under it. It is D:\e rather than a path inside the workspace because
+      # every CMake object path is built from the fixture root and Windows caps
+      # a path at 260 characters.
+      TEMP: D:\e
+      TMP: D:\e
+      STIM_BUILD_CACHE: D:\e\build-cache
+    steps:
+      - uses: actions/checkout@v4
+      - run: New-Item -ItemType Directory -Force -Path "D:\e", "D:\e\build-cache"
+      - uses: ./.github/actions/setup-stim
+      - uses: ./.github/actions/windows-android-sdk
+
+      - name: Restore cross-run build cache
+        uses: actions/cache@v4
+        with:
+          path: D:\e\build-cache
+          key: stim-cli-buildcache-windows-android-bare-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            stim-cli-buildcache-windows-android-bare-
+
+      - name: Detect a warmed cross-run cache
+        run: |
+          $warm = if (Get-ChildItem -Path "D:\e\build-cache" -Force -ErrorAction SilentlyContinue | Select-Object -First 1) { 1 } else { 0 }
+          "STIM_E2E_WARM_CACHE=$warm" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Doctor (android)
+        continue-on-error: true
+        run: node packages/stim-cli/dist/cli.mjs doctor --platform android
+
+      # --keep leaves the fixture and its worktrees on this ephemeral runner so
+      # the assertion and the upload below can read them.
+      - name: Android ${{ matrix.suite }} e2e (bare)
+        continue-on-error: ${{ matrix.suite == 'loop' }}
+        run: >-
+          node test/e2e/native/run-native-e2e.mjs
+          --framework bare --platform android --keep --home "D:\e\stim-home"
+          ${{ matrix.suite == 'smoke' && '--smoke' || '' }}
+
+      # The step that decides the loop suite's colour until #892 and #893 land:
+      # the driver step above passes the build, install and launch, then exits 1
+      # in the named-slots phase, so the artifact is the part this job can hold.
+      - name: Assert Stim produced an APK
+        if: matrix.suite == 'loop'
+        run: |
+          $apk = Get-ChildItem -Path "D:\e" -Recurse -Filter *.apk -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $apk) { throw "stim android produced no APK under the e2e temp root" }
+          "stim android produced $($apk.FullName) ($([math]::Round($apk.Length / 1MB, 1)) MB)"
+
+      - name: Upload build and device logs
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-android-${{ matrix.suite }}-logs
+          path: D:\e\stim-home\workspaces\**\logs\*
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
