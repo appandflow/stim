@@ -18,8 +18,9 @@ metro is reserved; use stim start and stim stop for managed Metro.
 
 New allocations scan TCP ports 8900-8999. They skip registry reservations
 and existing listeners, announcing occupied ports and upward retries on
-stderr. Allocation requires lsof. All 100 ports occupied or reserved is a
-refusal; stop or release unused allocations in their owning workspaces.
+stderr. Listener checks use lsof, or netstat on Windows. All 100 ports
+occupied or reserved is a refusal; stop or release unused allocations in
+their owning workspaces.
 
 The machine registry, under STIM_HOME, serializes allocation and cleanup.
 The workspace is the nearest package.json directory, resolved through
@@ -31,7 +32,8 @@ supervise, or capture logs for these servers.
 
 ports lists named labels and ports, plus Metro marked managed.
 ports stop [label] kills TCP listeners on those named ports and releases
-the allocations. It sends SIGTERM, waits two seconds, then SIGKILL if needed.
+the allocations. It sends SIGTERM, waits two seconds, then SIGKILL if needed;
+on Windows it terminates the listener's process tree with taskkill.
 It prints the PID and command for each stopped process. The listener's cwd
 can be anywhere: the named reservation is permission to stop that listener.
 Reserve only services this workspace may stop. --dry-run prints what would

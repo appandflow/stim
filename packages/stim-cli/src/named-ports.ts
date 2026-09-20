@@ -2,6 +2,7 @@ import { realpathSync } from 'node:fs';
 import { ensureConfig, getConfigDir, getProject, loadConfig, saveConfig, withConfigLock } from './workspace/config.ts';
 import { getExecutor } from './exec.ts';
 import { withWorkspaceProcessLock } from './engine/workspace-process-lock.ts';
+import { listeningPids, signalProcessTree } from './metro.ts';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from './process-identity.ts';
 import { isPortFree } from './ports.ts';
 
@@ -17,20 +18,13 @@ function validatePortLabel(label: string): void {
   }
 }
 
-export function portListeners(port: number): number[] {
-  let out: string;
-  try {
-    out = getExecutor().runFile('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], { timeoutMs: 5000 });
-  } catch (error) {
-    const result = error as { status?: number; stdout?: unknown; stderr?: unknown };
-    if (result.status === 1 && !String(result.stdout ?? '').trim() && !String(result.stderr ?? '').trim()) return [];
-    throw new Error(`Could not inspect TCP port ${port} with lsof: ${(error as Error).message}`, { cause: error });
+function processCommand(pid: number, platform: NodeJS.Platform): string {
+  const e = getExecutor();
+  if (platform === 'win32') {
+    const csv = e.runFileQuiet('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { timeoutMs: 5000 });
+    return /^"([^"]*)"/.exec((csv ?? '').trim())?.[1] ?? '';
   }
-  const pids = out.trim() ? out.trim().split(/\s+/).map(Number) : [];
-  if (pids.some((pid) => !Number.isSafeInteger(pid) || pid <= 0)) {
-    throw new Error(`lsof returned an invalid listener for TCP port ${port}.`);
-  }
-  return [...new Set(pids)];
+  return (e.runFileQuiet('ps', ['-p', String(pid), '-o', 'args='], { timeoutMs: 5000 }) ?? '').trim();
 }
 
 function withPortsLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -41,7 +35,7 @@ export async function getNamedPort(
   projectPath: string,
   label: string,
   {
-    isFree = async (port: number) => (await isPortFree(port)) && portListeners(port).length === 0,
+    isFree = async (port: number) => (await isPortFree(port)) && listeningPids(port).length === 0,
     log = console.error,
   }: { isFree?: (port: number) => Promise<boolean>; log?: (line: string) => void } = {},
 ): Promise<number> {
@@ -79,31 +73,36 @@ export async function getNamedPort(
   });
 }
 
-async function stopListeners(port: number, label: string, dryRun: boolean, log: (line: string) => void): Promise<void> {
-  for (const pid of portListeners(port)) {
+async function stopListeners(
+  port: number,
+  label: string,
+  dryRun: boolean,
+  log: (line: string) => void,
+  platform: NodeJS.Platform,
+): Promise<void> {
+  const listeners = () => listeningPids(port, platform);
+  for (const pid of listeners()) {
     if (pid === process.pid) throw new Error(`Refusing to stop Stim itself on ${label} (${port}).`);
     const identity = captureProcessIdentity(pid);
     if (!identity.ok) {
-      if (!portListeners(port).includes(pid)) continue;
+      if (!listeners().includes(pid)) continue;
       throw new Error(`Cannot identify pid ${pid} on ${label} (${port}): ${identity.reason}`);
     }
     const record = { pid, processToken: identity.token };
-    const command = getExecutor()
-      .runFile('ps', ['-p', String(pid), '-o', 'args='], { timeoutMs: 5000 })
-      .trim();
+    const command = processCommand(pid, platform);
     if (dryRun) {
       log(`would stop ${label} (${port}): pid ${pid} ${command}`);
       continue;
     }
-    if (!portListeners(port).includes(pid)) continue;
+    if (!listeners().includes(pid)) continue;
     const status = inspectProcessIdentity(record);
     if (status === 'gone' || status === 'different') continue;
     if (status !== 'same') throw new Error(`Cannot verify pid ${pid} on ${label} (${port}); allocation kept.`);
     try {
-      process.kill(pid, 'SIGTERM');
+      signalProcessTree(pid, 'SIGTERM', { platform });
       if (!(await waitForProcessExit(record, 2000))) {
         if (inspectProcessIdentity(record) !== 'same') throw new Error(`Cannot verify pid ${pid} before SIGKILL.`);
-        process.kill(pid, 'SIGKILL');
+        signalProcessTree(pid, 'SIGKILL', { platform });
         if (!(await waitForProcessExit(record, 2000))) throw new Error(`Pid ${pid} did not exit.`);
       }
     } catch (error) {
@@ -111,7 +110,7 @@ async function stopListeners(port: number, label: string, dryRun: boolean, log: 
     }
     log(`stopped ${label} (${port}): pid ${pid} ${command}`);
   }
-  if (!dryRun && portListeners(port).length) throw new Error(`Port ${port} still has a listener; allocation kept.`);
+  if (!dryRun && listeners().length) throw new Error(`Port ${port} still has a listener; allocation kept.`);
 }
 
 export async function clearNamedPorts(
@@ -121,7 +120,14 @@ export async function clearNamedPorts(
     stop = false,
     dryRun = false,
     log = console.error,
-  }: { label?: string; stop?: boolean; dryRun?: boolean; log?: (line: string) => void } = {},
+    platform = process.platform,
+  }: {
+    label?: string;
+    stop?: boolean;
+    dryRun?: boolean;
+    log?: (line: string) => void;
+    platform?: NodeJS.Platform;
+  } = {},
 ): Promise<void> {
   if (label !== undefined) validatePortLabel(label);
   await withPortsLock(async () => {
@@ -137,7 +143,7 @@ export async function clearNamedPorts(
           if (Object.values(loadConfig()?.projects ?? {}).some((project) => project.metroPort === port)) {
             throw new Error(`Port ${port} is reserved for managed Metro; allocation kept.`);
           }
-          await stopListeners(port, name, dryRun, log);
+          await stopListeners(port, name, dryRun, log, platform);
         }
         if (dryRun) {
           log(`would release ${name} (${port})`);

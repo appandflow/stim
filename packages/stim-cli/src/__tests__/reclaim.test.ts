@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process';
+import * as identity from '../process-identity.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { once } from 'node:events';
 import { realpathSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
@@ -685,17 +686,15 @@ test('reclaimProject releases a lease whose token the recreated workspace lost',
   }
 });
 
-test('worktree reclaim releases named ports and keeps the entry when listener inspection fails', async () => {
+test('worktree reclaim releases named ports and keeps the entry when a listener cannot be identified', async () => {
   const root = join(tmpHome, 'named-project');
   upsertProject(root, { ports: { web: 8900 } });
-  setExecutor({
-    runFile: () => {
-      throw new Error('lsof unavailable');
-    },
-  });
-  await expect(reclaimProject(root)).rejects.toThrow('lsof unavailable');
+  const identify = vi.spyOn(identity, 'captureProcessIdentity').mockReturnValue({ ok: false, reason: 'EPERM' });
+  setExecutor({ runQuiet: (cmd: string) => (cmd.startsWith('lsof ') ? '41219' : null), runFileQuiet: () => null });
+  await expect(reclaimProject(root)).rejects.toThrow('Cannot identify pid 41219 on web (8900): EPERM');
   expect(getProject(root)?.ports).toEqual({ web: 8900 });
-  setExecutor({ runFile: () => '' });
+  identify.mockRestore();
+  setExecutor({ runQuiet: () => null, runFileQuiet: () => null });
   const result = await reclaimProject(root);
   expect(result.keptEntry).toBe(false);
   expect(getProject(root)).toBeNull();

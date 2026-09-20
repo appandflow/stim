@@ -1,6 +1,6 @@
 import { makeTemporaryDirectory, removeTemporaryEntry } from '../temporary.ts';
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
@@ -19,7 +19,6 @@ import { detectEntryFile } from './js-swap.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat, tailLines } from './xcode.ts';
 
 export const ANDROID_BUNDLE_NAME = 'index.android.bundle';
-export const ANDROID_BUNDLE_ENTRY: string = `assets/${ANDROID_BUNDLE_NAME}`;
 
 const LAST_LINES = 5;
 
@@ -132,8 +131,20 @@ export function androidBundleCommand({
   };
 }
 
-export function isNothingToDelete(text: unknown): boolean {
-  return /nothing to do|name not matched|no matches found/i.test(String(text ?? ''));
+export function jarPath({
+  javaHome = process.env.JAVA_HOME,
+}: {
+  javaHome?: string | undefined;
+} = {}): string {
+  return javaHome ? join(javaHome, 'bin', 'jar') : 'jar';
+}
+
+// --no-compress is mandatory: AGP packages the bundle STORED so the Hermes
+// runtime can mmap it straight out of the APK, and a deflated entry fails to
+// load. jar --update keeps every other entry's method and replaces
+// assets/index.android.bundle in place.
+export function jarUpdateArgs({ archive, stage }: { archive: string; stage: string }): string[] {
+  return ['--update', '--file', archive, '--no-compress', '-C', stage, 'assets'];
 }
 
 export function zipalignArgs({
@@ -253,11 +264,7 @@ export async function swapApkBundle({
     const base = basename(cachedApkPath);
     work = join(tmp, `unaligned-${base}`);
     final = join(tmp, base);
-    try {
-      e.runFile('cp', ['-c', cachedApkPath, work]);
-    } catch {
-      e.runFile('cp', [cachedApkPath, work]);
-    }
+    copyFileSync(cachedApkPath, work, constants.COPYFILE_FICLONE);
   } catch (err) {
     return fail('copy', `could not copy ${cachedApkPath} aside: ${describe(err)}`);
   }
@@ -344,7 +351,7 @@ export async function swapApkBundle({
       const hbc = `${bundleOutput}.hbc`;
       try {
         e.runFile(hermesc, androidHermescArgs({ bundle: bundleOutput, out: hbc }));
-        e.runFile('mv', [hbc, bundleOutput]);
+        renameSync(hbc, bundleOutput);
         hermes = true;
       } catch (err) {
         return fail('hermesc', `hermesc failed on ${bundleOutput}: ${describe(err)}`);
@@ -372,21 +379,11 @@ export async function swapApkBundle({
   const diff = compareAssetManifests(fresh, storedAssets);
   if (!diff.same) return refuse(assetDiffReason(diff), diff);
 
+  const jar = jarPath();
   try {
-    e.runFile('zip', ['-d', work, ANDROID_BUNDLE_ENTRY]);
+    e.runFile(jar, jarUpdateArgs({ archive: work, stage }));
   } catch (err) {
-    if (!isNothingToDelete(describe(err))) {
-      return fail('zip', `zip -d ${ANDROID_BUNDLE_ENTRY} failed on ${work}: ${describe(err)}`);
-    }
-  }
-  try {
-    // -0 is STORE, and it is mandatory: AGP packages the bundle uncompressed
-    // so the Hermes runtime can mmap it straight out of the APK, and a
-    // deflated entry fails to load. cwd is the staging dir so `assets` names
-    // the archive path.
-    e.runFile('zip', ['-0', '-r', work, 'assets'], { cwd: stage });
-  } catch (err) {
-    return fail('zip', `zip -0 -r ${work} assets failed: ${describe(err)}`);
+    return fail('zip', `${jar} --update ${work} failed: ${describe(err)}`);
   }
 
   const tools = buildTools ?? findTool(['zipalign']);

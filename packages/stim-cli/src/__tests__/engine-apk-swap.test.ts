@@ -1,9 +1,8 @@
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  ANDROID_BUNDLE_ENTRY,
   ANDROID_BUNDLE_NAME,
   androidBundleCommand,
   androidHermescArgs,
@@ -12,7 +11,8 @@ import {
   hermesEnabledFromGradleProperties,
   hermescBinDir,
   hermescCandidates,
-  isNothingToDelete,
+  jarPath,
+  jarUpdateArgs,
   keystorePassArg,
   readAndroidHermesEnabled,
   resolveKeystore,
@@ -162,16 +162,27 @@ describe('androidBundleCommand', () => {
 
   test('the bundle entry is the one the runtime loads', () => {
     expect(ANDROID_BUNDLE_NAME).toBe('index.android.bundle');
-    expect(ANDROID_BUNDLE_ENTRY).toBe('assets/index.android.bundle');
   });
 });
 
-describe('zip surgery, alignment and signing', () => {
-  test('"nothing to do" from zip -d is tolerated, every other zip failure is not', () => {
-    expect(isNothingToDelete('zip error: Nothing to do! (app.apk)')).toBe(true);
-    expect(isNothingToDelete('\tzip warning: name not matched: assets/index.android.bundle')).toBe(true);
-    expect(isNothingToDelete('zip I/O error: No space left on device')).toBe(false);
-    expect(isNothingToDelete(null)).toBe(false);
+describe('archive update, alignment and signing', () => {
+  test('jar comes from JAVA_HOME when set, otherwise PATH, on every platform', () => {
+    expect(jarPath({ javaHome: '/opt/jdk' })).toBe(join('/opt/jdk', 'bin', 'jar'));
+    expect(jarPath({ javaHome: 'C:\\jdk' })).toBe(join('C:\\jdk', 'bin', 'jar'));
+    expect(jarPath({ javaHome: undefined })).toBe('jar');
+    expect(jarPath({ javaHome: '' })).toBe('jar');
+  });
+
+  test('jar updates the archive in place with the bundle STORED, rooted at the staging dir', () => {
+    expect(jarUpdateArgs({ archive: '/t/unaligned-app.apk', stage: '/t/stage' })).toEqual([
+      '--update',
+      '--file',
+      '/t/unaligned-app.apk',
+      '--no-compress',
+      '-C',
+      '/t/stage',
+      'assets',
+    ]);
   });
 
   test('zipalign takes -P 16 from build-tools 35 (16KB pages) and -p before it', () => {
@@ -239,7 +250,7 @@ describe('keystore resolution', () => {
 
 let root: string;
 let tmp: string;
-const cachedApk = '/cache/android/k-productionrelease-sim/app-production-release.apk';
+let cachedApk: string;
 const keystore = { path: '/w/app/android/app/debug.keystore', pass: 'pass:android' };
 const buildTools: BuildToolsEntry = {
   path: '/sdk/build-tools/36.0.0/zipalign',
@@ -252,6 +263,8 @@ const apksigner = join('/sdk/build-tools/36.0.0', process.platform === 'win32' ?
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'stim-apk-root-'));
   tmp = mkdtempSync(join(tmpdir(), 'stim-apk-tmp-'));
+  cachedApk = join(root, 'app-production-release.apk');
+  writeFileSync(cachedApk, 'cached apk bytes');
 });
 
 afterEach(() => {
@@ -307,6 +320,7 @@ function harness({
     runFile: (file: string, args: string[] = [], opts: Record<string, unknown> = {}) => {
       calls.push({ op: 'runFile', file, args, opts });
       if (failOn && (file === failOn || args[0] === failOn)) throw new Error(`${failOn} blew up`);
+      if (file === hermesc) writeFileSync(args[args.indexOf('-out') + 1]!, 'hermes bytecode');
       return '';
     },
   });
@@ -341,32 +355,32 @@ function harness({
 }
 
 describe('swapApkBundle', () => {
-  test('the order IS the product: copy aside, bundle, hermesc, asset gate, zip -d, zip -0, zipalign, apksigner -- and the cache entry is never written', async () => {
-    const { calls, run, work, final, stage, hermesc } = harness();
+  test('the order IS the product: copy aside, bundle, hermesc, asset gate, jar update, zipalign, apksigner -- and the cache entry is never written', async () => {
+    const { calls, run, work, final, stage, bundleOutput, hermesc } = harness();
     const result = await run();
     expect(result.ok).toBe(true);
     expect(result.apkPath).toBe(final);
     expect(result.tmpDir).toBe(tmp);
     expect(result.hermes).toBe(true);
 
-    expect(calls.map((c) => c.file)).toEqual(['cp', 'npx', hermesc, 'mv', 'zip', 'zip', buildTools.path, apksigner]);
+    expect(calls.map((c) => c.file)).toEqual(['npx', hermesc, jarPath(), buildTools.path, apksigner]);
 
-    expect(calls[0]?.args).toEqual(['-c', cachedApk, work]);
-    for (const call of calls.slice(1)) expect(call.args ?? []).not.toContain(cachedApk);
+    expect(readFileSync(work, 'utf-8')).toBe('cached apk bytes');
+    expect(readFileSync(cachedApk, 'utf-8')).toBe('cached apk bytes');
+    for (const call of calls) expect(call.args ?? []).not.toContain(cachedApk);
 
-    const bundle = calls[1];
+    const bundle = calls[0];
     expect(bundle?.args?.slice(0, 4)).toEqual(['expo', 'export:embed', '--platform', 'android']);
-    expect(bundle?.args).toContain(join(stage, 'assets', ANDROID_BUNDLE_NAME));
+    expect(bundle?.args).toContain(bundleOutput);
     expect(bundle?.args).toContain(join(stage, 'res'));
 
-    expect(calls.some((c) => c.file === 'unzip')).toBe(false);
+    expect(readFileSync(bundleOutput, 'utf-8')).toBe('hermes bytecode');
+    expect(existsSync(`${bundleOutput}.hbc`)).toBe(false);
 
-    expect(calls[4]?.args).toEqual(['-d', work, ANDROID_BUNDLE_ENTRY]);
-    expect(calls[5]?.args).toEqual(['-0', '-r', work, 'assets']);
-    expect(calls[5]?.opts).toEqual({ cwd: stage });
+    expect(calls[2]?.args).toEqual(['--update', '--file', work, '--no-compress', '-C', stage, 'assets']);
 
-    expect(calls[6]?.args).toEqual(['-P', '16', '-f', '-v', '4', work, final]);
-    expect(calls[7]?.args).toEqual(['sign', '--ks', keystore.path, '--ks-pass', 'pass:android', final]);
+    expect(calls[3]?.args).toEqual(['-P', '16', '-f', '-v', '4', work, final]);
+    expect(calls[4]?.args).toEqual(['sign', '--ks', keystore.path, '--ks-pass', 'pass:android', final]);
   });
 
   test('bare project: the bundle step is `react-native bundle` with the detected entry file', async () => {
@@ -482,34 +496,13 @@ describe('swapApkBundle', () => {
     expect(result.step).toBe('hermesc');
   });
 
-  test('zip -d on an archive with no bundle entry is tolerated, and the swap continues', async () => {
-    const calls: Call[] = [];
-    const exec = makeExecutor({
-      runFile: (file: string, args: string[] = []) => {
-        calls.push({ op: 'runFile', file, args });
-        if (file === 'zip' && args[0] === '-d') throw new Error('zip error: Nothing to do! (app.apk)');
-        return '';
-      },
-    });
-    const { run } = harness();
-    const result = await run({ exec });
-    expect(result.ok).toBe(true);
-    expect(calls.at(-1)?.file).toBe(apksigner);
-  });
-
-  test('any OTHER zip failure fails at the zip step', async () => {
-    const calls: Call[] = [];
-    const exec = makeExecutor({
-      runFile: (file: string, args: string[] = []) => {
-        calls.push({ op: 'runFile', file, args });
-        if (file === 'zip' && args[0] === '-0') throw new Error('zip I/O error: No space left on device');
-        return '';
-      },
-    });
-    const { run } = harness();
-    const result = await run({ exec });
+  test('a jar failure fails at the zip step, and nothing is aligned or signed', async () => {
+    const { calls, run } = harness({ failOn: jarPath() });
+    const result = await run();
     expect(result.failed).toBe(true);
     expect(result.step).toBe('zip');
+    expect(calls.some((c) => c.file === buildTools.path)).toBe(false);
+    expect(calls.some((c) => c.file === apksigner)).toBe(false);
   });
 
   test('a zipalign failure fails at the zipalign step, and nothing is signed', async () => {
@@ -536,23 +529,12 @@ describe('swapApkBundle', () => {
     expect(result.reason).toMatch(/sdkmanager/);
   });
 
-  test('the clone-first copy falls back to a plain cp when -c is refused', async () => {
-    const calls: Call[] = [];
-    let first = true;
-    const exec = makeExecutor({
-      runFile: (file: string, args: string[] = []) => {
-        calls.push({ op: 'runFile', file, args });
-        if (file === 'cp' && first) {
-          first = false;
-          throw new Error('cp: -c not supported');
-        }
-        return '';
-      },
-    });
-    const { run, work } = harness();
-    const result = await run({ exec });
-    expect(result.ok).toBe(true);
-    expect(calls[0]?.args?.[0]).toBe('-c');
-    expect(calls[1]?.args).toEqual([cachedApk, work]);
+  test('a cache entry that vanished fails at the copy step before anything runs', async () => {
+    const { calls, run } = harness();
+    const result = await run({ cachedApkPath: join(root, 'missing.apk') });
+    expect(result.failed).toBe(true);
+    expect(result.step).toBe('copy');
+    expect(result.reason).toMatch(/missing\.apk/);
+    expect(calls).toEqual([]);
   });
 });
