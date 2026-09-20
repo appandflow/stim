@@ -68,10 +68,17 @@ interface RecordingExec extends Executor {
 function recordingExec({
   fail = null,
   failCode,
+  failStderr = 'device not booted',
   outputs = {},
-}: { fail?: string | null; failCode?: string; outputs?: Record<string, string> } = {}): RecordingExec {
+}: {
+  fail?: string | null;
+  failCode?: string;
+  failStderr?: string;
+  outputs?: Record<string, string | string[]>;
+} = {}): RecordingExec {
   const calls: string[][] = [];
   const options: Parameters<Executor['runFile']>[2][] = [];
+  const outputReads = new Map<string, number>();
   return {
     calls,
     options,
@@ -81,12 +88,17 @@ function recordingExec({
       const key = [file, ...args].join(' ');
       if (fail && key.includes(fail)) {
         const err = new Error(`Command failed: ${key}`);
-        (err as Error & { stderr?: string }).stderr = 'device not booted';
+        (err as Error & { stderr?: string }).stderr = failStderr;
         if (failCode) (err as NodeJS.ErrnoException).code = failCode;
         throw err;
       }
       for (const [match, value] of Object.entries(outputs)) {
-        if (key.includes(match)) return value;
+        if (key.includes(match)) {
+          if (typeof value === 'string') return value;
+          const index = outputReads.get(match) ?? 0;
+          outputReads.set(match, index + 1);
+          return value[index] ?? value.at(-1) ?? '';
+        }
       }
       return '';
     },
@@ -354,9 +366,10 @@ describe('ios', () => {
     expect(result.mode).toBe('launch');
     expect(exec.calls).toEqual([
       ['xcrun', 'simctl', 'spawn', 'U1', 'defaults', 'write', 'com.example.app', 'RCT_jsLocation', 'localhost:8082'],
+      ['xcrun', 'simctl', 'spawn', 'U1', 'launchctl', 'list'],
       ['xcrun', 'simctl', 'launch', 'U1', 'com.example.app'],
     ]);
-    expect(exec.options).toEqual([{ timeoutMs: 60000 }, { timeoutMs: 60000 }]);
+    expect(exec.options).toEqual([{ timeoutMs: 60000 }, { timeoutMs: 2000 }, { timeoutMs: 60000 }]);
   });
 
   test('launchIosApp opens the preapproved dev-client URL after the RCT defaults write', () => {
@@ -435,11 +448,77 @@ describe('ios', () => {
     expect(exec.calls).toHaveLength(3);
   });
 
+  test('a cold Expo launch recovers a no-process-handle error when its app started', () => {
+    const exec = recordingExec({
+      fail: 'simctl launch',
+      failStderr:
+        "An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=3):\nApplication launch for 'com.example.app' did not return a process handle nor launch error.",
+      outputs: { 'launchctl list': ['', '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n'] },
+    });
+    const result = launchIosApp(
+      {
+        udid: 'U1',
+        bundleId: 'com.example.app',
+        metroPort: 8082,
+        devClientScheme: 'myapp',
+        consolePaths: { stdout: '/container/trace.out', stderr: '/container/trace.err' },
+      },
+      { exec },
+    );
+    expect(result).toMatchObject({ ok: true, mode: 'launch', pid: 4242 });
+    expect(exec.calls.filter((call) => call.includes('launchctl'))).toHaveLength(2);
+  });
+
   test('a failed launch is reported, not thrown', () => {
     const exec = recordingExec({ fail: 'simctl launch' });
     expect(launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec }).reason).toMatch(
       /simctl launch/,
     );
+  });
+
+  test('a no-process-handle error succeeds when the target app is running', () => {
+    const exec = recordingExec({
+      fail: 'simctl launch',
+      failStderr:
+        "An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=3):\nApplication launch for 'com.example.app' did not return a process handle nor launch error.",
+      outputs: { 'launchctl list': ['', '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n'] },
+    });
+    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+    expect(result).toEqual({ ok: true, mode: 'launch', pid: 4242, jsLocation: 'localhost:8082' });
+    expect(exec.calls.at(-1)).toEqual(['xcrun', 'simctl', 'spawn', 'U1', 'launchctl', 'list']);
+  });
+
+  test('a no-process-handle error still fails when the target app is absent', () => {
+    const exec = recordingExec({
+      fail: 'simctl launch',
+      failStderr:
+        "An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=3):\nApplication launch for 'com.example.app' did not return a process handle nor launch error.",
+    });
+    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+    expect(result.code).toBe(LAUNCH_ERROR);
+    expect(result.reason).toMatch(/did not return a process handle/);
+  });
+
+  test('a no-process-handle error does not count a pre-existing app process as a new launch', () => {
+    const exec = recordingExec({
+      fail: 'simctl launch',
+      failStderr:
+        "An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=3):\nApplication launch for 'com.example.app' did not return a process handle nor launch error.",
+      outputs: { 'launchctl list': '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n' },
+    });
+    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+    expect(result.code).toBe(LAUNCH_ERROR);
+    expect(exec.calls.filter((call) => call.includes('launchctl'))).toHaveLength(1);
+  });
+
+  test('an unrelated launch error still fails when the target app is running', () => {
+    const exec = recordingExec({
+      fail: 'simctl launch',
+      outputs: { 'launchctl list': '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n' },
+    });
+    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+    expect(result.code).toBe(LAUNCH_ERROR);
+    expect(exec.calls).toHaveLength(3);
   });
 
   test('launchIosApp with metroPort null is a plain launch: no RCT_jsLocation write, no openurl', () => {
@@ -452,7 +531,10 @@ describe('ios', () => {
     expect(result.mode).toBe('launch');
     expect(result.pid).toBe(4242);
     expect(result.jsLocation).toBeUndefined();
-    expect(exec.calls).toEqual([['xcrun', 'simctl', 'launch', 'U1', 'com.example.app']]);
+    expect(exec.calls).toEqual([
+      ['xcrun', 'simctl', 'spawn', 'U1', 'launchctl', 'list'],
+      ['xcrun', 'simctl', 'launch', 'U1', 'com.example.app'],
+    ]);
   });
 
   test('parseLaunchedPid reads `<bundleId>: <pid>` and nothing else', () => {
