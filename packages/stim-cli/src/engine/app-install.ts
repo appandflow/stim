@@ -226,6 +226,16 @@ export function iosAppProcess(
   return null;
 }
 
+function launchedIosAppAfterNoHandle(error: unknown, udid: string, bundleId: string, exec: Executor): number | null {
+  const stderr = String((error as { stderr?: unknown })?.stderr ?? '');
+  if (
+    !stderr.includes('domain=NSPOSIXErrorDomain, code=3') ||
+    !stderr.includes(`Application launch for '${bundleId}' did not return a process handle nor launch error.`)
+  )
+    return null;
+  return iosAppProcess(udid, bundleId, { exec }) ?? null;
+}
+
 export function launchIosApp(
   {
     udid,
@@ -267,11 +277,13 @@ export function launchIosApp(
 
     if (devClientScheme) {
       const url = devClientUrl(devClientScheme, metroPort);
+      let launchedWithInitialUrl = false;
       try {
         if (consolePaths && iosAppProcess(udid, bundleId, { exec: e }) === null) {
           // Expo's EXDevLauncherController.initialUrlFromProcessInfo loads this
           // project directly; launch-then-openurl can create two React hosts.
           const initialUrl = new URL(url).searchParams.get('url')!;
+          launchedWithInitialUrl = true;
           const pid = parseLaunchedPid(
             e.runFile('xcrun', [...launchArgs, '--initialUrl', initialUrl], { timeoutMs: 60000 }),
           );
@@ -280,21 +292,30 @@ export function launchIosApp(
         e.runFile('xcrun', ['simctl', 'openurl', udid, url], { timeoutMs: 60000 });
         return { ok: true, mode: 'openurl', url, jsLocation: jsLocationValue(metroPort) };
       } catch (err) {
+        const pid = launchedWithInitialUrl ? launchedIosAppAfterNoHandle(err, udid, bundleId, e) : null;
+        if (pid) return { ok: true, mode: 'launch', url, jsLocation: jsLocationValue(metroPort), pid };
         return {
           failed: true,
           code: LAUNCH_ERROR,
-          reason: `simctl openurl ${url} failed: ${describeIosSimulatorFailure(err, e)}`,
+          reason: `simctl ${launchedWithInitialUrl ? `launch ${bundleId}` : `openurl ${url}`} failed: ${describeIosSimulatorFailure(err, e)}`,
         };
       }
     }
   }
 
+  const preLaunchPid = iosAppProcess(udid, bundleId, { exec: e });
   try {
     const out = e.runFile('xcrun', launchArgs, { timeoutMs: 60000 });
     const result: IosLaunchResult = { ok: true, mode: 'launch', pid: parseLaunchedPid(out) };
     if (metroPort !== null) result.jsLocation = jsLocationValue(metroPort);
     return result;
   } catch (err) {
+    const pid = preLaunchPid === null ? launchedIosAppAfterNoHandle(err, udid, bundleId, e) : null;
+    if (pid) {
+      const result: IosLaunchResult = { ok: true, mode: 'launch', pid };
+      if (metroPort !== null) result.jsLocation = jsLocationValue(metroPort);
+      return result;
+    }
     return {
       failed: true,
       code: LAUNCH_ERROR,
