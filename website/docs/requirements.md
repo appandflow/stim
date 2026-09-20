@@ -13,20 +13,24 @@ Commands use `stim`. If it is not installed globally, replace `stim` with
 
 ## All projects
 
-- Node 22.12.0 or later.
+- Node 22.12.0 or later. Node 20 is no longer supported.
 - A project with `expo` or `react-native` in `package.json`.
 - Git for `stim worktree` commands.
+- macOS, Linux or Windows. What each host can run is listed below.
 
 ## iOS
 
-- macOS with Xcode. Local simulator runs also need an installed iOS Simulator
-  runtime.
+- Local builds and simulators need macOS with Xcode. Local simulator runs also
+  need an installed iOS Simulator runtime.
 - A compatible Ruby and CocoaPods setup when the project uses pods. Install
   Bundler when the project pins CocoaPods in `Gemfile.lock`.
+- From Linux or Windows, iOS runs through an EAS build and an EAS Simulator
+  session: `stim ios --remote eas --eas-profile <profile>`. See
+  [From Windows or Linux](./owned-devices.md#from-windows-or-linux).
 
 ## Android
 
-- macOS or Linux with the Android SDK.
+- macOS, Linux or Windows with the Android SDK.
 - For an emulator, an installed Android system image matching the host:
   `arm64-v8a` on ARM64 or `x86_64` on x64.
 - A working Java and Gradle setup for the project.
@@ -34,9 +38,29 @@ Commands use `stim`. If it is not installed globally, replace `stim` with
   ninja cannot open a path of 260 characters or more, and a React Native
   codegen object path only fits when CMake can shorten it. `stim doctor
 --platform android` reports a root that leaves no room and `stim android`
-  refuses it with `STIM_PATH_TOO_LONG` before Gradle runs; `subst X: <root>`
+  refuses it with `STIM_PATH_TOO_LONG` before Gradle runs; `subst X: "<root>"`
   and working from `X:\` is the usual fix. The check assumes the default native
   staging path and may also refuse a shorter custom `buildStagingDirectory`.
+
+## Windows
+
+The Android loop runs on Windows: owned emulators, builds, install, launch,
+logs, worktrees and caches. iOS can run through `--remote eas`; there
+is no local Xcode path. Requirements on top of the Android list:
+
+- Windows 10 or 11 with PowerShell 7 or cmd.exe to run Stim. Windows PowerShell
+  (`powershell.exe`) must also be on `PATH` for background processes and emulator
+  cleanup. Stim resolves `.cmd` and `.bat` tools itself.
+- Git for Windows. Stim passes `core.longpaths` to the git commands that need
+  it; your global configuration is not changed.
+- Emulator acceleration: WHPX (Windows Hypervisor Platform) or the Android
+  Emulator hypervisor driver. `emulator -accel-check` reports which is active.
+- JDK 17 on `JAVA_HOME` or `PATH`.
+- A short project path or a `subst` drive, as described in the Android path
+  requirement above.
+
+On Windows, `stim doctor --platform android` checks path room, and `stim doctor
+--platform ios` points at `--remote eas` for iOS.
 
 Install the host tools and JavaScript dependencies before building. Stim runs
 `pod install` when an iOS project's installed Pods are missing or stale. When
