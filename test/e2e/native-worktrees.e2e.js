@@ -165,7 +165,7 @@ import { join } from 'node:path';
 const app = process.argv[2];
 mkdirSync(app);
 writeFileSync(join(app, 'package.json'), '{"name":"fixture","dependencies":{"expo":"~57.0.24"}}\\n');
-writeFileSync(join(app, 'app.json'), '{"expo":{}}\\n');
+writeFileSync(join(app, 'app.json'), '{"expo":{"plugins":[["fixture-plugin",{"enabled":true}],["expo-build-properties",{"android":{"compileSdkVersion":36}}]]}}\\n');
 writeFileSync(join(app, '.stim.json'), JSON.stringify({ios:{deviceType:'iPhone 17'},android:{systemImage:'keep-image'}}));
 `,
   );
@@ -192,7 +192,8 @@ writeFileSync(join(app, '.stim.json'), JSON.stringify({ios:{deviceType:'iPhone 1
       assert.deepEqual(argv, ['--no-install', 'expo', 'prebuild', '--platform', 'ios']);
       assert.equal(existsSync(join(opts.cwd, '.git')), false);
       assert.deepEqual(JSON.parse(readFileSync(join(opts.cwd, 'app.json'), 'utf8')).expo.plugins, [
-        ['expo-build-properties', { ios: { enableSceneSupport: true } }],
+        ['fixture-plugin', { enabled: true }],
+        ['expo-build-properties', { android: { compileSdkVersion: 36 }, ios: { enableSceneSupport: true } }],
       ]);
       mkdirSync(join(opts.cwd, 'ios', 'Pods'), { recursive: true });
       writeFileSync(join(opts.cwd, 'ios', 'Pods', 'Manifest.lock'), 'prepared');

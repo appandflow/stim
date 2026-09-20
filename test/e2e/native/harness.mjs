@@ -188,7 +188,15 @@ export function createFixture({ framework, platform, workDir, h }) {
       });
       const configPath = join(appDir, 'app.json');
       const config = JSON.parse(readFileSync(configPath, 'utf8'));
-      config.expo.plugins = [['expo-build-properties', { ios: { enableSceneSupport: true } }]];
+      const plugins = config.expo.plugins ?? [];
+      const index = plugins.findIndex(
+        (plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-build-properties',
+      );
+      const options = index >= 0 && Array.isArray(plugins[index]) ? (plugins[index][1] ?? {}) : {};
+      const scenePlugin = ['expo-build-properties', { ...options, ios: { ...options.ios, enableSceneSupport: true } }];
+      if (index >= 0) plugins[index] = scenePlugin;
+      else plugins.push(scenePlugin);
+      config.expo.plugins = plugins;
       writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
     }
     h.log('preparing the disposable Expo iOS fixture and Pods before its initial commit');
