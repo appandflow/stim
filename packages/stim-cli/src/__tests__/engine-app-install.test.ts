@@ -1124,6 +1124,7 @@ describe('unverifiedLaunchLines', () => {
       bundleId: 'io.tlon.groups',
       udid: 'BF2A1C3D',
       devClientUrl: url,
+      devClient: true,
     }).join('\n');
     expect(text).toMatch(/DEVELOPMENT SERVERS/);
     expect(text).toMatch(/localhost:8082/);
@@ -1135,6 +1136,7 @@ describe('unverifiedLaunchLines', () => {
   test('with no scheme it restarts the exact app without attaching a console', () => {
     const text = unverifiedLaunchLines({ platform: 'ios', metroPort: 8082, bundleId: 'com.x', udid: 'U1' }).join('\n');
     expect(text).toContain('Re-launch: xcrun simctl launch --terminate-running-process U1 com.x');
+    expect(text).not.toMatch(/DEVELOPMENT SERVERS/);
     expect(text).not.toContain('--console');
   });
 
@@ -1151,18 +1153,23 @@ describe('unverifiedLaunchLines', () => {
       'adb -s emulator-5584 shell am force-stop com.x && adb -s emulator-5584 shell am start -n com.x/.MainActivity',
     );
     expect(text).not.toMatch(/monkey/);
-    expect(text).toMatch(/DEVELOPMENT SERVERS/);
+    expect(text).not.toMatch(/DEVELOPMENT SERVERS/);
   });
 
   test('a dev-client launch without a resolved activity restarts through the deep link, not monkey', () => {
     const base = { platform: 'android', metroPort: 8082, bundleId: 'com.x', serial: 'emulator-5584' };
     const url = devClientUrl('com.x', 8082);
-    const deepLink = unverifiedLaunchLines({ ...base, devClientUrl: url }).join('\n');
+    const deepLink = unverifiedLaunchLines({ ...base, devClientUrl: url, devClient: true }).join('\n');
     expect(deepLink).toContain(
       `adb -s emulator-5584 shell am force-stop com.x && adb -s emulator-5584 shell am start -a android.intent.action.VIEW -d ${deviceShellArg(deviceShellArg(url))} --ez EXDevMenuDisableAutoLaunch true`,
     );
     expect(deepLink).not.toMatch(/monkey/);
-    const both = unverifiedLaunchLines({ ...base, devClientUrl: url, component: 'com.x/.MainActivity' }).join('\n');
+    const both = unverifiedLaunchLines({
+      ...base,
+      devClientUrl: url,
+      devClient: true,
+      component: 'com.x/.MainActivity',
+    }).join('\n');
     expect(both).toContain('am force-stop com.x && adb -s emulator-5584 shell am start -n com.x/.MainActivity');
     const noActivity = unverifiedLaunchLines(base).join('\n');
     expect(noActivity).toContain(
@@ -1177,6 +1184,7 @@ describe('unverifiedLaunchLines', () => {
       bundleId: 'io.tlon.groups',
       udid: 'BF2A1C3D',
       devClientUrl: devClientUrl('io.tlon.groups', 8082),
+      devClient: true,
     }).join('\n');
     expect(simulator).toContain(
       "xcrun simctl openurl BF2A1C3D 'io.tlon.groups://expo-development-client/" +
@@ -1205,6 +1213,7 @@ describe('unverifiedLaunchLines', () => {
       bundleId: 'com.x',
       serial: 'emulator-5584',
       devClientUrl: androidDevClientUrl('exp+app', 8082),
+      devClient: true,
     }).join('\n');
     expect(android).toContain(
       `-d ${deviceShellArg(deviceShellArg(androidDevClientUrl('exp+app', 8082)))} --ez EXDevMenuDisableAutoLaunch true`,
@@ -1268,6 +1277,7 @@ describe('unverifiedLaunchLines: the action comes first', () => {
       bundleId: 'io.tlon.groups',
       udid: 'BF2A1C3D',
       devClientUrl: devClientUrl('io.tlon.groups', 8082),
+      devClient: true,
     });
   }
 
@@ -1286,17 +1296,16 @@ describe('unverifiedLaunchLines: the action comes first', () => {
     expect(picker).toMatch(/NOT another workspace/);
   });
 
-  test('android has no such alert, so it leads with the picker', () => {
+  test('a bare Android app leads with the relaunch', () => {
     const lines = unverifiedLaunchLines({
       platform: 'android',
       metroPort: 8082,
       bundleId: 'com.x',
       serial: 'emulator-5584',
     });
-    const picker = lines.findIndex((l) => /DEVELOPMENT SERVERS/.test(l));
     const relaunch = lines.findIndex((l) => /am force-stop com\.x/.test(l));
-    expect(picker !== -1 && relaunch !== -1).toBeTruthy();
-    expect(picker < relaunch).toBeTruthy();
+    expect(relaunch).toBe(2);
+    expect(lines.join('\n')).not.toMatch(/DEVELOPMENT SERVERS/);
     expect(!lines.some((l) => /Open in <app>/.test(l))).toBeTruthy();
   });
 });

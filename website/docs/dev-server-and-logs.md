@@ -29,6 +29,10 @@ window, Stim also observes three seconds of launch logs. The summary can report
 that bundling is still in progress or that launch is unverified. Release runs
 check process liveness without Metro.
 
+For an unverified debug launch, follow the printed remedy. An Expo development
+client may need its server picker; a bare app on a local simulator or emulator
+gets a process restart command.
+
 Stim reports bundle, red-screen, and fatal launch errors when those signals are
 available. These checks do not prove that a screen rendered correctly.
 

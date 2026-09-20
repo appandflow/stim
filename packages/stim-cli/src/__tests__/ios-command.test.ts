@@ -1082,7 +1082,7 @@ describe('launch verification', () => {
     expect(text).toMatch(/Do not run `stim ios` unless native inputs changed or the app process exits/);
   });
 
-  test('the picker: an unverified launch is launched: "unverified", exit 0, and a loud warning', async () => {
+  test('a bare unverified launch exits 0 and gives a relaunch remedy', async () => {
     reserve();
     const { logs, errs, exitCode } = await run(
       { json: true },
@@ -1095,8 +1095,8 @@ describe('launch verification', () => {
     expect(parseFirst(logs).launched).toBe('unverified');
     const text = errs.join('\n');
     expect(text).toMatch(/UNVERIFIED/);
-    expect(text).toMatch(/DEVELOPMENT SERVERS/);
-    expect(text).toMatch(/localhost:8082/);
+    expect(text).not.toMatch(/DEVELOPMENT SERVERS/);
+    expect(text).toMatch(/Re-launch: xcrun simctl launch/);
   });
 
   test('a dev-client stall carries the exact openurl to retry without an alert step', async () => {
@@ -1118,6 +1118,7 @@ describe('launch verification', () => {
     );
     const text = errs.join('\n');
     expect(text).not.toMatch(/Open in/);
+    expect(text).toMatch(/DEVELOPMENT SERVERS/);
     expect(text).toMatch(new RegExp(`xcrun simctl openurl ${UDID}`));
     expect(text).toMatch(/fixture:\/\/expo-development-client/);
     expect(parseFirst(logs).launched).toBe('unverified');
@@ -3973,7 +3974,8 @@ describe('launch verification: bundling vs unverified', () => {
       { verifyLaunch: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }) },
     );
     expect(parseFirst(logs).launched).toBe('unverified');
-    expect(errs.join('\n')).toMatch(/DEVELOPMENT SERVERS picker/);
+    expect(errs.join('\n')).not.toMatch(/DEVELOPMENT SERVERS picker/);
+    expect(errs.join('\n')).toMatch(/Re-launch: xcrun simctl launch/);
     expect(buildRecords().some((r) => r.event === 'launch_unverified')).toBe(true);
   });
 

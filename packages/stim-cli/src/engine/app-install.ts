@@ -1318,7 +1318,7 @@ export function unverifiedLaunchLines({
     return lines;
   }
   if (platform === 'ios') {
-    push(picker);
+    if (devClient) push(picker);
     if (url && udid) {
       push(`Retry the deep link: xcrun simctl openurl ${udid} '${url}'`);
     } else if (udid && bundleId) {
@@ -1330,7 +1330,7 @@ export function unverifiedLaunchLines({
         `Re-send the dev-client deep link -- this is the command that points the app at THIS workspace's Metro: adb -s ${serial} shell am start -a android.intent.action.VIEW -d ${deviceShellArg(deviceShellArg(url))} --ez ${ANDROID_DISABLE_AUTO_LAUNCH_EXTRA} true`,
       );
     }
-    push(picker);
+    if (devClient) push(picker);
     if (serial && bundleId) {
       const restart = component
         ? `adb -s ${serial} shell am force-stop ${bundleId} && adb -s ${serial} shell am start -n ${component}`
