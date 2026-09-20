@@ -20,7 +20,7 @@ import {
   androidSdkRefusal,
   apkOutputsDir,
   assembleTaskFor,
-  buildAndroid,
+  buildAndroid as buildAndroidImpl,
   debugApkDir,
   discoverAndroidProject,
   gradleArgs,
@@ -39,6 +39,9 @@ import { makeWriter } from './_factories.ts';
 let root: string;
 let sdk: string;
 let savedAndroidHome: string | undefined;
+
+const buildAndroid: typeof buildAndroidImpl = (request, options) =>
+  buildAndroidImpl(request, { platform: 'linux', ...options });
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'stim-gradle-'));
@@ -362,6 +365,25 @@ describe('gradleArgs', () => {
 const nativeScript = join(import.meta.dirname, '../../shim/android-optimizations.gradle');
 
 describe('buildAndroid', () => {
+  test('refuses a Windows native build with an object path that cannot fit before invoking Gradle', async () => {
+    const longRoot = join(root, 'windows-object-path-limit');
+    mkdirSync(join(longRoot, 'android'), { recursive: true });
+    writeFileSync(gradlewPath(longRoot), '');
+    let spawned = false;
+    const result = await buildAndroid(
+      { root: longRoot, abi: 'x86_64' },
+      {
+        platform: 'win32',
+        spawnFn: () => {
+          spawned = true;
+          return fakeChild();
+        },
+      },
+    );
+    expect(result).toMatchObject({ ok: false, code: 'STIM_PATH_TOO_LONG', durationMs: 0 });
+    expect(spawned).toBe(false);
+  });
+
   test('runs ./gradlew assembleDebug in android/ and streams every line as it arrives', async () => {
     makeAndroidProject();
     const writer = recordingWriter();

@@ -28,6 +28,16 @@ test('the last root that fits is one character shorter than the one that reaches
   expect(androidPathRoom(rootOf(maxRoot(abi) + 1), { abi, platform: 'win32' })?.longest).toBe(ANDROID_OBJECT_PATH_MAX);
 });
 
+test('release variants account for the longer RelWithDebInfo directory', () => {
+  const abi = 'x86_64';
+  const releaseRoot = maxRoot(abi) - ('RelWithDebInfo'.length - 'Debug'.length);
+  expect(androidPathRoom(rootOf(releaseRoot), { abi, variant: 'productionRelease', platform: 'win32' })).toBeNull();
+  expect(
+    androidPathRoom(rootOf(releaseRoot + 1), { abi, variant: 'productionRelease', platform: 'win32' })?.longest,
+  ).toBe(ANDROID_OBJECT_PATH_MAX);
+  expect(androidPathRoom(rootOf(maxRoot(abi)), { abi, variant: 'productionDebug', platform: 'win32' })).toBeNull();
+});
+
 test('a build for every ABI has to fit the longest ABI name', () => {
   const root = rootOf(maxRoot('x86_64'));
   expect(androidPathRoom(root, { abi: 'x86_64', platform: 'win32' })).toBeNull();

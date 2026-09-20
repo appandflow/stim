@@ -30,11 +30,16 @@ export interface AndroidPathRoom {
 
 export function androidPathRoom(
   root: string,
-  { abi = null, platform = process.platform }: { abi?: string | null; platform?: NodeJS.Platform } = {},
+  {
+    abi = null,
+    variant = null,
+    platform = process.platform,
+  }: { abi?: string | null; variant?: string | null; platform?: NodeJS.Platform } = {},
 ): AndroidPathRoom | null {
   if (platform !== 'win32') return null;
   const abiName = abi ?? LONGEST_ANDROID_ABI;
-  const tail = LONGEST_ANDROID_OBJECT_PATH_TAIL + abiName.length;
+  const configurationLength = /release$/i.test(variant ?? '') ? 'RelWithDebInfo'.length : 'Debug'.length;
+  const tail = LONGEST_ANDROID_OBJECT_PATH_TAIL + configurationLength - 'Debug'.length + abiName.length;
   const longest = root.length + tail;
   if (longest < ANDROID_OBJECT_PATH_MAX) return null;
   return { root, abi: abiName, longest, maxRootLength: ANDROID_OBJECT_PATH_MAX - 1 - tail };

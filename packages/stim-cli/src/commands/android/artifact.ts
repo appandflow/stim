@@ -25,7 +25,6 @@ import {
   type untrackedNativeFiles,
 } from '../../cache/build-cache.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
-import { androidPathRoom, androidPathRoomMessage, androidPathRoomRemedy } from '../../engine/android-path-limit.ts';
 import {
   takeoverLine,
   WAIT_CEILING_MS,
@@ -635,13 +634,6 @@ export async function acquireAndroidArtifact(
           }
         }
 
-        const room = androidPathRoom(root, { abi: buildAbi });
-        if (!apkPath && room) {
-          phaseFailure = fail('STIM_PATH_TOO_LONG', androidPathRoomMessage(room), androidPathRoomRemedy(room), {
-            lastBuildStatus: true,
-          });
-          return false;
-        }
         if (!apkPath) {
           phase('build', `compiling ${variant || 'debug'} with Gradle`);
           const built = await build(

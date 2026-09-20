@@ -152,6 +152,8 @@ code, never on the message.`,
   deep inside ninja ("mkdir ... No such file or directory" or "Filename
   longer than 260 characters"). Map the project to a drive letter (\`subst
   X: <root>\`, then run Stim from X:\\) or move it under a shorter root.
+  A custom Gradle buildStagingDirectory can be shorter than the default; this
+  preflight does not inspect that configured path and may refuse it too.
   \`doctor --platform android\` reports the same root as a finding for the
   emulator's ABI.`,
     },

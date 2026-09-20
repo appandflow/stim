@@ -9,6 +9,7 @@ import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
 import { androidHome } from '../devices/android.ts';
+import { androidPathRoom, androidPathRoomMessage, androidPathRoomRemedy } from './android-path-limit.ts';
 import { capDiagnostics, type Diagnostic, extractGradleDiagnostics } from './errors-gradle.ts';
 import { CCACHE_UNAVAILABLE, type CcacheSetup, readCcacheActivity } from './ccache.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
@@ -454,6 +455,7 @@ export async function buildAndroid(
     estimateMs = null,
     onHeartbeat = (line: string) => console.error(line),
     onNote = (line: string) => console.error(line),
+    platform = process.platform,
   }: {
     spawnFn?: SpawnFn | null;
     now?: () => number;
@@ -467,6 +469,7 @@ export async function buildAndroid(
     estimateMs?: number | null;
     onHeartbeat?: (line: string) => void;
     onNote?: (line: string) => void;
+    platform?: NodeJS.Platform;
   } = {},
 ): Promise<BuildAndroidResult> {
   const project = discoverAndroidProject(root);
@@ -490,6 +493,21 @@ export async function buildAndroid(
     hasLocalProperties: existsSync(join(project.androidDir, 'local.properties')),
   });
   if (refusal) return { ok: false, ...refusal, diagnostics: [], truncated: 0, lastLines: [], durationMs: 0 };
+
+  // https://github.com/appandflow/stim/issues/893: Gradle has not configured a custom
+  // buildStagingDirectory yet, so this default-layout check may refuse a shorter custom path.
+  const room = androidPathRoom(root, { abi, variant, platform });
+  if (room)
+    return {
+      ok: false,
+      code: 'STIM_PATH_TOO_LONG',
+      reason: androidPathRoomMessage(room),
+      remedy: androidPathRoomRemedy(room),
+      diagnostics: [],
+      truncated: 0,
+      lastLines: [],
+      durationMs: 0,
+    };
 
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
   const task = assembleTaskFor(variant);
