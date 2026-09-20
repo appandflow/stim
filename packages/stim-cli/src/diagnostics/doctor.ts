@@ -704,7 +704,16 @@ function checkXcodeEnvLineEndings(
   platform: DoctorPlatform | undefined,
   host: NodeJS.Platform,
 ): Finding | null {
-  if (platform === 'android' || host !== 'win32' || !existsSync(join(projectRoot, 'ios', '.xcode.env'))) return null;
+  if (platform === 'android' || host !== 'win32') return null;
+  const xcodeEnv = join(projectRoot, 'ios', '.xcode.env');
+  if (!existsSync(xcodeEnv)) return null;
+  let content: string;
+  try {
+    content = readFileSync(xcodeEnv, 'utf-8');
+  } catch {
+    return null;
+  }
+  if (!content.includes('\r')) return null;
   const autocrlf = getExecutor()
     .runFileQuiet('git', ['-C', projectRoot, 'config', '--get', 'core.autocrlf'], { timeoutMs: 10000 })
     ?.trim();
@@ -712,7 +721,7 @@ function checkXcodeEnvLineEndings(
   return finding(
     'cost',
     'core.autocrlf rewrites ios/.xcode.env with CRLF line endings',
-    'This checkout has core.autocrlf=true, so Git checks ios/.xcode.env out with CRLF endings and an EAS build ' +
+    'ios/.xcode.env has CRLF line endings because this checkout has core.autocrlf=true, and an EAS build ' +
       'uploads it that way. Xcode sources the file with sh on the build worker, where each carriage return ' +
       'becomes part of the line and the build fails with `: command not found`.',
     'Run `git config core.autocrlf input` then `git add --renormalize .` and commit, or add ' +
