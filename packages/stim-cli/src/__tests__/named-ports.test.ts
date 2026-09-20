@@ -92,9 +92,15 @@ function posixExecutor(listening: () => boolean, command = 'node /sibling/vite')
   const calls: Argv[] = [];
   setExecutor({
     findExecutable: (name: string) => (name === 'lsof' ? '/usr/sbin/lsof' : null),
-    runQuiet: (cmd: string) => {
-      calls.push({ file: cmd.split(' ')[0]!, args: cmd.split(' ').slice(1) });
-      return cmd.startsWith('lsof') && listening() ? '41219\n41219' : null;
+    runQuiet: () => {
+      throw new Error('POSIX must not inspect listeners through the shell');
+    },
+    runFile: (file: string, args: string[] = [], opts: { timeoutMs?: number } = {}) => {
+      calls.push({ file, args });
+      if (file !== 'lsof') throw new Error(`unexpected runFile ${file}`);
+      expect(opts.timeoutMs).toBe(5000);
+      if (listening()) return '41219\n41219';
+      throw Object.assign(new Error(), { status: 1, stdout: '', stderr: '' });
     },
     runFileQuiet: (file: string, args: string[] = []) => {
       calls.push({ file, args });
@@ -109,6 +115,9 @@ function win32Executor(listening: () => boolean): Argv[] {
   setExecutor({
     findExecutable: () => {
       throw new Error('win32 must not look for lsof');
+    },
+    runFile: (file: string) => {
+      throw new Error(`win32 must not run ${file}`);
     },
     runQuiet: (cmd: string) => {
       calls.push({ file: cmd.split(' ')[0]!, args: cmd.split(' ').slice(1) });
@@ -211,7 +220,10 @@ test('a listener that cannot be identified keeps its allocation and still releas
   vi.spyOn(identity, 'captureProcessIdentity').mockReturnValue({ ok: false, reason: 'EPERM (denied)' });
   setExecutor({
     findExecutable: () => '/usr/sbin/lsof',
-    runQuiet: (cmd: string) => (cmd.includes('-iTCP:8900') ? '41219' : null),
+    runFile: (_file: string, args: string[]) => {
+      if (args.includes('-iTCP:8900')) return '41219';
+      throw Object.assign(new Error(), { status: 1, stdout: '', stderr: '' });
+    },
     runFileQuiet: () => null,
   });
   await expect(clearNamedPorts(root, { stop: true, log: () => {}, platform: 'darwin' })).rejects.toThrow(
@@ -220,16 +232,32 @@ test('a listener that cannot be identified keeps its allocation and still releas
   expect(getProject(root)?.ports).toEqual({ web: 8900 });
 });
 
-test('a POSIX host without lsof keeps every allocation instead of releasing blind', async () => {
+test('a POSIX host without lsof refuses to stop before touching any allocation', async () => {
   upsertProject(root, { ports: { web: 8900, api: 8901 } });
   const refuse = () => {
     throw new Error('must not inspect listeners without lsof');
   };
-  setExecutor({ findExecutable: () => null, runQuiet: refuse, runFileQuiet: refuse });
+  setExecutor({ findExecutable: () => null, runFile: refuse, runQuiet: refuse, runFileQuiet: refuse });
   await expect(clearNamedPorts(root, { stop: true, log: () => {}, platform: 'linux' })).rejects.toThrow(
-    'Could not inspect TCP port 8900: lsof is not installed.',
+    'Cannot stop named ports: lsof is not installed.',
   );
   expect(getProject(root)?.ports).toEqual({ web: 8900, api: 8901 });
+});
+
+test('an lsof failure other than "no listeners" keeps that allocation and still releases other labels', async () => {
+  upsertProject(root, { ports: { web: 8900, api: 8901 } });
+  setExecutor({
+    findExecutable: () => '/usr/sbin/lsof',
+    runFile: (_file: string, args: string[]) => {
+      if (args.includes('-iTCP:8900')) throw Object.assign(new Error('denied'), { status: 1, stderr: 'denied' });
+      throw Object.assign(new Error(), { status: 1, stdout: '', stderr: '' });
+    },
+    runFileQuiet: () => null,
+  });
+  await expect(clearNamedPorts(root, { stop: true, log: () => {}, platform: 'linux' })).rejects.toThrow(
+    'Could not inspect TCP port 8900 with lsof: denied',
+  );
+  expect(getProject(root)?.ports).toEqual({ web: 8900 });
 });
 
 test('Metro reclamation and registry removal retain named allocations', async () => {

@@ -19,10 +19,20 @@ function validatePortLabel(label: string): void {
 }
 
 function portListeners(port: number, platform: NodeJS.Platform): number[] {
-  if (platform !== 'win32' && !getExecutor().findExecutable('lsof')) {
-    throw new Error(`Could not inspect TCP port ${port}: lsof is not installed.`);
+  if (platform === 'win32') return listeningPids(port, platform);
+  let out: string;
+  try {
+    out = getExecutor().runFile('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], { timeoutMs: 5000 });
+  } catch (error) {
+    const result = error as { status?: number; stdout?: unknown; stderr?: unknown };
+    if (result.status === 1 && !String(result.stdout ?? '').trim() && !String(result.stderr ?? '').trim()) return [];
+    throw new Error(`Could not inspect TCP port ${port} with lsof: ${(error as Error).message}`, { cause: error });
   }
-  return listeningPids(port, platform);
+  const pids = out.trim() ? out.trim().split(/\s+/).map(Number) : [];
+  if (pids.some((pid) => !Number.isSafeInteger(pid) || pid <= 0)) {
+    throw new Error(`lsof returned an invalid listener for TCP port ${port}.`);
+  }
+  return [...new Set(pids)];
 }
 
 function processCommand(pid: number, platform: NodeJS.Platform): string {
@@ -139,9 +149,12 @@ export async function clearNamedPorts(
   if (label !== undefined) validatePortLabel(label);
   await withPortsLock(async () => {
     const ports = getProject(projectPath)?.ports ?? {};
+    const selected = Object.entries(ports).filter(([name]) => label === undefined || name === label);
+    if (stop && selected.length > 0 && platform !== 'win32' && !getExecutor().findExecutable('lsof')) {
+      throw new Error('Cannot stop named ports: lsof is not installed.');
+    }
     const failures: string[] = [];
-    for (const [name, port] of Object.entries(ports)) {
-      if (label !== undefined && name !== label) continue;
+    for (const [name, port] of selected) {
       try {
         if (!Number.isInteger(port) || port < FIRST_PORT || port > LAST_PORT) {
           throw new Error(`Invalid named port ${name} (${port}); repair its config record before cleanup.`);

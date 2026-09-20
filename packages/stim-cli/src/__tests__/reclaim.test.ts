@@ -692,13 +692,19 @@ test('worktree reclaim releases named ports and keeps the entry when a listener 
   const identify = vi.spyOn(identity, 'captureProcessIdentity').mockReturnValue({ ok: false, reason: 'EPERM' });
   setExecutor({
     findExecutable: () => '/usr/sbin/lsof',
-    runQuiet: (cmd: string) => (cmd.startsWith('lsof ') ? '41219' : null),
+    runFile: (file: string) => (file === 'lsof' ? '41219' : ''),
     runFileQuiet: () => null,
   });
   await expect(reclaimProject(root)).rejects.toThrow('Cannot identify pid 41219 on web (8900): EPERM');
   expect(getProject(root)?.ports).toEqual({ web: 8900 });
   identify.mockRestore();
-  setExecutor({ findExecutable: () => '/usr/sbin/lsof', runQuiet: () => null, runFileQuiet: () => null });
+  setExecutor({
+    findExecutable: () => '/usr/sbin/lsof',
+    runFile: () => {
+      throw Object.assign(new Error(), { status: 1, stdout: '', stderr: '' });
+    },
+    runFileQuiet: () => null,
+  });
   const result = await reclaimProject(root);
   expect(result.keptEntry).toBe(false);
   expect(getProject(root)).toBeNull();

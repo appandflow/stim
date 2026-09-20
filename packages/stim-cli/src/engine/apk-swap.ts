@@ -215,6 +215,7 @@ export async function swapApkBundle({
   now = Date.now,
   heartbeatMs = HEARTBEAT_INTERVAL_MS,
   onHeartbeat = (line: string) => console.error(line),
+  platform = process.platform,
 }: {
   root: string;
   isExpo: boolean;
@@ -233,6 +234,7 @@ export async function swapApkBundle({
   now?: () => number;
   heartbeatMs?: number;
   onHeartbeat?: (line: string) => void;
+  platform?: NodeJS.Platform;
 }): Promise<ApkSwapResult> {
   const e = exec || getExecutor();
   const startedAt = now();
@@ -256,7 +258,7 @@ export async function swapApkBundle({
     const base = basename(cachedApkPath);
     work = join(tmp, `unaligned-${base}`);
     final = join(tmp, base);
-    copyFileSync(cachedApkPath, work, constants.COPYFILE_FICLONE);
+    copyApk(e, cachedApkPath, work, platform);
   } catch (err) {
     return fail('copy', `could not copy ${cachedApkPath} aside: ${describe(err)}`);
   }
@@ -419,6 +421,18 @@ export async function swapApkBundle({
   const result: ApkSwapResult = { ok: true, apkPath: final, tmpDir: tmp, hermes, durationMs: elapsed() };
   if (note) result.note = note;
   return result;
+}
+
+// libuv implements COPYFILE_FICLONE only on Linux; on macOS copyFileSync reads
+// and writes every byte, while cp -c clones the APK on APFS in constant time.
+function copyApk(e: Executor, from: string, to: string, platform: NodeJS.Platform): void {
+  if (platform === 'darwin') {
+    try {
+      e.runFile('cp', ['-c', from, to]);
+      return;
+    } catch {}
+  }
+  copyFileSync(from, to, constants.COPYFILE_FICLONE);
 }
 
 function describe(err: unknown): string {

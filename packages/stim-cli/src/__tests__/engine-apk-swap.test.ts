@@ -306,6 +306,7 @@ function harness({
       calls.push({ op: 'runFile', file, args, opts });
       if (failOn && (file === failOn || args[0] === failOn)) throw new Error(`${failOn} blew up`);
       if (file === hermesc) writeFileSync(args[args.indexOf('-out') + 1]!, 'hermes bytecode');
+      if (file === 'cp') writeFileSync(args[2]!, 'cloned apk bytes');
       return '';
     },
   });
@@ -334,6 +335,7 @@ function harness({
       storedAssets: stored,
       readManifest: () => fresh,
       heartbeatMs: 0,
+      platform: 'linux',
       ...overrides,
     });
   return { calls, run, work, final, stage, bundleOutput, hermesc, writer };
@@ -512,6 +514,28 @@ describe('swapApkBundle', () => {
     expect(result.failed).toBe(true);
     expect(result.step).toBe('zipalign');
     expect(result.reason).toMatch(/sdkmanager/);
+  });
+
+  test('darwin clones the cached APK with cp -c and falls back to a plain copy when cp refuses', async () => {
+    const { calls, run, work } = harness();
+    expect((await run({ platform: 'darwin' })).ok).toBe(true);
+    expect(calls[0]).toMatchObject({ file: 'cp', args: ['-c', cachedApk, work] });
+    expect(readFileSync(work, 'utf-8')).toBe('cloned apk bytes');
+
+    const { calls: refused, run: rerun, work: work2 } = harness({ failOn: 'cp' });
+    expect((await rerun({ platform: 'darwin' })).ok).toBe(true);
+    expect(refused[0]?.file).toBe('cp');
+    expect(refused.filter((c) => c.file === 'cp')).toHaveLength(1);
+    expect(readFileSync(work2, 'utf-8')).toBe('cached apk bytes');
+  });
+
+  test('win32 and linux never shell out to cp', async () => {
+    for (const platform of ['win32', 'linux'] as const) {
+      const { calls, run, work } = harness();
+      expect((await run({ platform })).ok).toBe(true);
+      expect(calls.some((c) => c.file === 'cp')).toBe(false);
+      expect(readFileSync(work, 'utf-8')).toBe('cached apk bytes');
+    }
   });
 
   test('a cache entry that vanished fails at the copy step before anything runs', async () => {

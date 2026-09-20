@@ -34,8 +34,9 @@ ports lists named labels and ports, plus Metro marked managed.
 ports stop [label] kills TCP listeners on those named ports and releases
 the allocations. It sends SIGTERM, waits two seconds, then SIGKILL if needed;
 on Windows it terminates the listener's process tree with taskkill.
-It prints the PID and command for each stopped process. The listener's cwd
-can be anywhere: the named reservation is permission to stop that listener.
+It prints the PID and command (the image name on Windows) for each stopped
+process. The listener's cwd can be anywhere: the named reservation is
+permission to stop that listener.
 Reserve only services this workspace may stop. --dry-run prints what would
 be stopped and released, without doing either. A failed inspection or stop
 keeps that allocation for retry; other labels are still processed.
