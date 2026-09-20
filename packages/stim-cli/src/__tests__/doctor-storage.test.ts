@@ -33,13 +33,16 @@ test('doctor distinguishes Android project output from iOS workspace output', ()
   expect(findings[0]?.detail).toContain(output);
   expect(findings[0]?.detail).toContain(cache);
   expect(findings[0]?.fix).toContain('STIM_BUILD_CACHE');
-  expect(checkStorageLayout(project, { platform: 'ios', device: () => 1, stagingRoot: (path) => path })).toEqual([]);
+  expect(
+    checkStorageLayout(project, { platform: 'ios', host: 'darwin', device: () => 1, stagingRoot: (path) => path }),
+  ).toEqual([]);
 });
 
 test('doctor detects iOS output/cache and configured staging mismatches separately', () => {
   const output = join(workspaceDerivedData(project), 'Build', 'Products');
   const findings = checkStorageLayout(project, {
     platform: 'ios',
+    host: 'darwin',
     device: (path) => (path === cache ? 2 : 1),
     stagingRoot: () => base,
   });
@@ -66,6 +69,7 @@ test('an explicit override on another volume warns for artifact preparation but 
   const staging = join(base, 'override');
   const findings = checkStorageLayout(project, {
     platform: 'ios',
+    host: 'darwin',
     device: (path) => (path === staging ? 2 : 1),
     stagingRoot: () => staging,
   });
