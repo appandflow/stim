@@ -148,7 +148,7 @@ test('Pods reuse requires both lockfiles and an exact match', (t) => {
   assert.doesNotThrow(() => assertMatchingPods(app));
 });
 
-test('the disposable Expo iOS fixture prepares matching Pods before committing its baseline', (t) => {
+test('the disposable Expo iOS fixture enables scenes and prepares matching Pods before committing', (t) => {
   const workDir = scratch(t);
   const tools = join(workDir, 'tools');
   mkdirSync(tools);
@@ -164,7 +164,8 @@ test('the disposable Expo iOS fixture prepares matching Pods before committing i
 import { join } from 'node:path';
 const app = process.argv[2];
 mkdirSync(app);
-writeFileSync(join(app, 'package.json'), '{"name":"fixture"}\\n');
+writeFileSync(join(app, 'package.json'), '{"name":"fixture","dependencies":{"expo":"~57.0.24"}}\\n');
+writeFileSync(join(app, 'app.json'), '{"expo":{"plugins":[["fixture-plugin",{"enabled":true}],["expo-build-properties",{"android":{"compileSdkVersion":36}}]]}}\\n');
 writeFileSync(join(app, '.stim.json'), JSON.stringify({ios:{deviceType:'iPhone 17'},android:{systemImage:'keep-image'}}));
 `,
   );
@@ -182,9 +183,18 @@ writeFileSync(join(app, '.stim.json'), JSON.stringify({ios:{deviceType:'iPhone 1
   const sh = h.sh;
   let prepared = false;
   h.sh = (file, argv, opts) => {
+    if (file === 'npx' && argv[2] === 'install') {
+      assert.deepEqual(argv, ['--no-install', 'expo', 'install', 'expo-build-properties']);
+      assert.equal(existsSync(join(opts.cwd, '.git')), false);
+      return { code: 0, stdout: '', stderr: '' };
+    }
     if (file === 'npx') {
       assert.deepEqual(argv, ['--no-install', 'expo', 'prebuild', '--platform', 'ios']);
       assert.equal(existsSync(join(opts.cwd, '.git')), false);
+      assert.deepEqual(JSON.parse(readFileSync(join(opts.cwd, 'app.json'), 'utf8')).expo.plugins, [
+        ['fixture-plugin', { enabled: true }],
+        ['expo-build-properties', { android: { compileSdkVersion: 36 }, ios: { enableSceneSupport: true } }],
+      ]);
       mkdirSync(join(opts.cwd, 'ios', 'Pods'), { recursive: true });
       writeFileSync(join(opts.cwd, 'ios', 'Pods', 'Manifest.lock'), 'prepared');
       writeFileSync(join(opts.cwd, 'ios', 'Podfile.lock'), 'prepared');

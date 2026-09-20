@@ -180,6 +180,25 @@ export function createFixture({ framework, platform, workDir, h }) {
   }
 
   if (framework === 'expo' && platform === 'ios') {
+    const expoVersion = JSON.parse(readFileSync(join(appDir, 'package.json'), 'utf8')).dependencies.expo;
+    if (/^[~^]?57\./.test(expoVersion)) {
+      h.sh('npx', ['--no-install', 'expo', 'install', 'expo-build-properties'], {
+        cwd: appDir,
+        timeout: 15 * 60 * 1000,
+      });
+      const configPath = join(appDir, 'app.json');
+      const config = JSON.parse(readFileSync(configPath, 'utf8'));
+      const plugins = config.expo.plugins ?? [];
+      const index = plugins.findIndex(
+        (plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-build-properties',
+      );
+      const options = index >= 0 && Array.isArray(plugins[index]) ? (plugins[index][1] ?? {}) : {};
+      const scenePlugin = ['expo-build-properties', { ...options, ios: { ...options.ios, enableSceneSupport: true } }];
+      if (index >= 0) plugins[index] = scenePlugin;
+      else plugins.push(scenePlugin);
+      config.expo.plugins = plugins;
+      writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+    }
     h.log('preparing the disposable Expo iOS fixture and Pods before its initial commit');
     h.sh('npx', ['--no-install', 'expo', 'prebuild', '--platform', 'ios'], { cwd: appDir, timeout: 20 * 60 * 1000 });
     assertMatchingPods(appDir);

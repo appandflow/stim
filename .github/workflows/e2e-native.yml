@@ -119,13 +119,12 @@ jobs:
         framework: [bare, expo]
         suite: ${{ fromJSON(needs.plan.outputs.ios) }}
         # No bare variant on iOS. iOS 27 traps an app that has not adopted the
-        # UIScene lifecycle, and @react-native-community/template (0.88.0-rc.1)
-        # still ships no SceneDelegate and no UIApplicationSceneManifest, so the
-        # bare fixture builds and then dies at launch. The Expo side is covered
-        # by pinning STIM_E2E_EXPO_INIT to the SDK 58 template, which generates
-        # both (expo/expo#46664). Drop this exclude when the React Native
-        # template adopts scenes (#882 tracks re-enabling it). A job-level `if:`
-        # cannot do this: the matrix context is not available there.
+        # UIScene lifecycle (expo/expo#46664). The 0.88.0-rc.1
+        # @react-native-community/template ships no SceneDelegate or
+        # UIApplicationSceneManifest, so its app builds but traps at launch.
+        # Expo SDK 57 opts into scenes; CI pins SDK 58 for RN 0.88 Swift caching.
+        # Drop this exclude when the React Native template adopts scenes (#882).
+        # A job-level `if:` cannot do this: the matrix context is unavailable.
         exclude:
           - framework: bare
     env:
@@ -140,12 +139,9 @@ jobs:
       # Keep the throwaway STIM_HOME under the workspace so the failure
       # artifact step can find global workspace logs.
       TMPDIR: ${{ github.workspace }}/.e2e-tmp
-      # iOS 27 traps an app that has not adopted the UIScene lifecycle, and this
-      # image has no older simulator runtime. The default `--template blank` is
-      # Expo SDK 57, whose generated project has no SceneDelegate, so it cannot
-      # launch here; the SDK 58 template generates one (expo/expo#46664). It is a
-      # preview SDK, so it is pinned for this runner only rather than becoming the
-      # harness default.
+      # The default blank template is SDK 57; the harness enables scene support
+      # for Xcode 27. Pin SDK 58 here to exercise RN 0.88 Swift compilation
+      # caching while keeping the preview SDK out of other fixture lanes.
       STIM_E2E_EXPO_INIT: npx --yes create-expo-app@latest {dir} --template expo-template-blank@sdk-58 --no-install
     steps:
       - uses: actions/checkout@v4

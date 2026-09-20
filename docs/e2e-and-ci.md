@@ -332,12 +332,12 @@ found`, and the build-cache lanes print `build cache: HIT <key>` or
   driver's `FIXTURE_COMMANDS` match the versions the runners fetch (override via
   the env vars above if not).
 - **The iOS job pins the Expo fixture to Expo SDK 58**, through
-  `STIM_E2E_EXPO_INIT`, because the SDK 57 template it would otherwise create
-  generates no `SceneDelegate` and cannot launch on iOS 27. SDK 58 is a preview
+  `STIM_E2E_EXPO_INIT`, to exercise Swift compilation caching with
+  `react-native 0.88.0-rc.0`, above the 0.87 floor. SDK 58 is a preview
   (`expo ~58.0.0-preview.3`), so the pin lives in that one job and neither the
-  harness default nor the Android lane moves. It also carries
-  `react-native 0.88.0-rc.0`, above the 0.87 floor, so the Expo variant reaches
-  the Swift branch.
+  harness default nor the Android lane moves. The default SDK 57 iOS fixture
+  enables scene support with `expo-build-properties` before prebuild so it can
+  launch on iOS 27.
 - **The bare iOS variant is excluded from the matrix**, so the iOS lane has no
   bare job at all. Swift caching needs the fixture's `react-native` to be 0.87 or
   newer as well as the Swift 6.4 toolchain, and `@react-native-community/cli@latest init`
