@@ -50,6 +50,18 @@ test('doctor detects iOS output/cache and configured staging mismatches separate
   expect(findings[1]?.detail).toContain(output);
 });
 
+test.each(['win32', 'linux'] as const)('a %s host has no DerivedData, so iOS storage findings stay off', (host) => {
+  mkdirSync(join(project, 'ios'));
+  const device = (path: string) => (path === cache ? 2 : 1);
+  const stagingRoot = () => base;
+  const mac = checkStorageLayout(project, { device, stagingRoot, host: 'darwin' }).map((finding) => finding.title);
+  expect(mac).toContain('iOS build-cache storage crosses filesystems');
+  for (const platform of ['ios', undefined] as const) {
+    const titles = checkStorageLayout(project, { platform, device, stagingRoot, host }).map((finding) => finding.title);
+    expect(titles).toEqual(['Cached app/APK staging crosses filesystems']);
+  }
+});
+
 test('an explicit override on another volume warns for artifact preparation but not direct warming', () => {
   const staging = join(base, 'override');
   const findings = checkStorageLayout(project, {

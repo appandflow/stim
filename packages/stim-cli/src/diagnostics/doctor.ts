@@ -875,7 +875,7 @@ export function runDoctor(
     checkIosHost(platform, host),
     ...checkMainCheckout(projectRoot, { platform, localIos }),
     ...(localIos ? inspectIosDebugArchitectures(mainCheckoutProjectRoot(projectRoot)) : []),
-    ...checkStorageLayout(projectRoot, { platform }),
+    ...checkStorageLayout(projectRoot, { platform, host }),
     optimizations?.metroSharedCache ? checkMetroCache(metroConfig) : null,
     localIos && optimizations?.ios.compilationCache ? checkCompilationCache(podfile, xcodeMajor) : null,
     localIos && optimizations?.ios.compilationCache ? checkCcacheConflict(podfile, podfileProperties) : null,
