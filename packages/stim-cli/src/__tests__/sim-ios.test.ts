@@ -817,8 +817,29 @@ test('opening the Simulator app is bounded and best-effort after successful boot
     runFile: () => '',
     spawn: () => makeExitingChild(),
     runFileQuiet(file, args, options) {
+      if (file === 'xcrun') return join(tmpHome, 'Xcode.app', 'Contents', 'Developer', 'usr', 'bin', 'simctl');
       expect([file, ...args]).toEqual(['open', '-a', 'Simulator']);
       expect(options).toEqual({ timeoutMs: 5000, killSignal: 'SIGKILL' });
+      return null;
+    },
+  });
+  await expect(bootIosSim('UDID-A')).resolves.toBeUndefined();
+});
+
+test('opening a simulator on Xcode 27 focuses its UDID in the selected Device Hub', async () => {
+  const xcode = join(tmpHome, 'Xcode.app', 'Contents');
+  const deviceHubApp = join(xcode, 'Applications', 'DeviceHub.app');
+  mkdirSync(deviceHubApp, { recursive: true });
+  setExecutor({
+    runFile: () => '',
+    spawn: () => makeExitingChild(),
+    runFileQuiet(file, args, options) {
+      expect(options).toEqual({ timeoutMs: 5000, killSignal: 'SIGKILL' });
+      if (file === 'xcrun') {
+        expect(args).toEqual(['--find', 'simctl']);
+        return join(xcode, 'Developer', 'usr', 'bin', 'simctl');
+      }
+      expect([file, ...args]).toEqual(['open', '-a', deviceHubApp, 'devices://device/open?id=UDID-A']);
       return null;
     },
   });
