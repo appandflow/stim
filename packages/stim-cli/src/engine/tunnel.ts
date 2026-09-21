@@ -8,6 +8,7 @@ import { pidExists, signalProcessTree } from '../metro.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { createLineReader } from '../process-output.ts';
 import type { ManagedProvider } from './metro-reach.ts';
+import { probePublicHttp } from './public-http-probe.ts';
 import { withWorkspaceProcessLock, type WorkspaceProcessLockOptions } from './workspace-process-lock.ts';
 
 type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
@@ -136,13 +137,8 @@ function managedRemoteWorktreeLockRoot(worktreeRoot: string): string {
 }
 
 async function defaultProbeReachable(url: string, signal: AbortSignal): Promise<boolean> {
-  try {
-    const res = await fetch(url, { signal, redirect: 'follow' });
-    // Any HTTP response proves the tunnel is routable; only a connection failure means unavailable.
-    return res.status > 0;
-  } catch {
-    return false;
-  }
+  const status = await probePublicHttp(url, signal);
+  return status !== null && status > 0;
 }
 
 function waitForUrl(

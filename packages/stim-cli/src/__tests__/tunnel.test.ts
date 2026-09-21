@@ -9,10 +9,24 @@ import {
   type TunnelRecord,
 } from '../engine/tunnel.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
+import { resolve4 } from 'node:dns/promises';
+import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import type { ClientRequest, IncomingMessage } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { vi } from 'vitest';
 import { IMPOSSIBLE_PID, makeChildProcess } from './_factories.ts';
+
+vi.mock('node:dns/promises', () => ({ resolve4: vi.fn<typeof resolve4>() }));
+vi.mock('node:https', () => ({ request: vi.fn<typeof httpsRequest>() }));
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.mocked(resolve4).mockReset();
+  vi.mocked(httpsRequest).mockReset();
+});
 
 function clock(start = 1_000) {
   let t = start;
@@ -110,6 +124,40 @@ describe('parseNgrokLine', () => {
 });
 
 describe('startTunnel: the happy path', () => {
+  test('cloudflared checks HTTPS through a fresh DNS answer when system lookup is stale', async () => {
+    const child = makeChildProcess();
+    const fetchError = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('lookup failed'), { code: 'ENOTFOUND' }),
+    });
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockRejectedValue(fetchError));
+    vi.mocked(resolve4).mockResolvedValue(['203.0.113.1', '203.0.113.2']);
+    const response = { statusCode: 200, resume: vi.fn<() => void>() } as unknown as IncomingMessage;
+    vi.mocked(httpsRequest).mockImplementation((...args: unknown[]) => {
+      const callback = args[2] as (response: IncomingMessage) => void;
+      const request = new EventEmitter() as EventEmitter & { end: () => void };
+      request.end = () => callback(response);
+      return request as ClientRequest;
+    });
+
+    const promise = startVerified({ provider: 'cloudflared', port: 8081, spawnFn: () => child });
+    child.stderr?.emit('data', 'https://random-words.trycloudflare.com\n');
+    await expect(promise).resolves.toMatchObject({ url: 'https://random-words.trycloudflare.com' });
+    expect(resolve4).toHaveBeenCalledWith('random-words.trycloudflare.com');
+    expect(response.resume).toHaveBeenCalled();
+
+    const [url, options] = vi.mocked(httpsRequest).mock.calls[0] as unknown as [string, { lookup: Function }];
+    expect(url).toBe('https://random-words.trycloudflare.com');
+    const all = vi.fn<(error: unknown, addresses: unknown) => void>();
+    Reflect.apply(options.lookup, null, ['random-words.trycloudflare.com', { all: true }, all]);
+    expect(all).toHaveBeenCalledWith(null, [
+      { address: '203.0.113.1', family: 4 },
+      { address: '203.0.113.2', family: 4 },
+    ]);
+    const one = vi.fn<(error: unknown, address: string, family: number) => void>();
+    Reflect.apply(options.lookup, null, ['random-words.trycloudflare.com', { all: false }, one]);
+    expect(one).toHaveBeenCalledWith(null, '203.0.113.1', 4);
+  });
+
   test('cloudflared: the URL from stderr, confirmed reachable, is returned with the pid', async () => {
     const child = makeChildProcess();
     const promise = startVerified({
