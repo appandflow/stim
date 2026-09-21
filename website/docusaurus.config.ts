@@ -1,6 +1,12 @@
+import { createRequire } from 'node:module';
+import { dirname } from 'node:path';
 import { themes as prismThemes } from 'prism-react-renderer';
 import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
+
+const require = createRequire(import.meta.url);
+const presetDir = dirname(require.resolve('@docusaurus/preset-classic'));
+const themeCommon = require.resolve('@docusaurus/theme-common', { paths: [presetDir] });
 
 const config: Config = {
   title: 'Stim',
@@ -30,6 +36,17 @@ const config: Config = {
     defaultLocale: 'en',
     locales: ['en'],
   },
+
+  plugins: [
+    function usePresetThemeContext() {
+      return {
+        name: 'use-preset-theme-context',
+        configureWebpack() {
+          return { resolve: { alias: { '@docusaurus/theme-common$': themeCommon } } };
+        },
+      };
+    },
+  ],
 
   presets: [
     [
