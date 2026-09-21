@@ -282,6 +282,21 @@ Unset, 0, or any non-positive value means NO enforcement -- the default, where
 Stim limits nothing. See \`guide lifecycle concurrency\` for what each cap
 does.
 
+THE IOS SIMULATOR APP IS MACHINE-LEVEL
+Top-level \`iosSimulatorApp\` in ~/.stim/config.json selects the macOS app that
+displays Stim's owned local iOS simulator after boot. It is not a project
+setting. Unset or \`"xcode"\` opens the selected Xcode's Device Hub on Xcode 27,
+or Simulator on older Xcode. To use an installed Siniulator instead:
+
+  { "iosSimulatorApp": "siniulator" }
+
+Stim still creates and boots its owned simulator. An invalid value refuses
+before boot. Opening a window remains best-effort, so install Siniulator before
+selecting it. By default, closing a Siniulator device window shuts down that
+simulator. Enable "Leave simulator running after window is closed" in Siniulator
+Settings if Stim should keep it running. See \`guide lifecycle boot\` for
+window behavior.
+
 THE DEVICE POOL BOUNDS ARE MACHINE-LEVEL TOO
 \`pool.iosParkedMax\` caps how many parked simulators \`worktree remove\` may
 leave behind for a later workspace to adopt. It is machine-level for the same

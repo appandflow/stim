@@ -1544,9 +1544,9 @@ HOST MEMORY PRESSURE AND STALLED SIMULATORS
   up to 5 minutes. Process termination confirmation can take another 10 seconds;
   a final boot-state query can take 30 seconds. After boot, Stim opens the owned
   simulator in the selected Xcode's Device Hub on Xcode 27, or Simulator on
-  older Xcode. Opening the window is best-effort and takes at most 10 seconds.
-  A timeout is not proof of an
-  app crash or OOM.
+  older Xcode. Top-level iosSimulatorApp in the machine config can select
+  Siniulator instead; see guide settings. Opening the window is best-effort
+  and takes at most 10 seconds. A timeout is not proof of an app crash or OOM.
   During boot, Stim reports elapsed time, the simulator name, last boot output,
   current pressure and the highest observed pressure roughly every 15 seconds.
   Failure diagnostics retain the highest pressure and unavailable sample count;

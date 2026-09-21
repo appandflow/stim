@@ -80,6 +80,7 @@ export interface StimConfig {
   projects: Record<string, ProjectRecord>;
   repos: Record<string, RepoRecord>;
   tempDir?: unknown;
+  iosSimulatorApp?: unknown;
   optimizations?: unknown;
   concurrency?: { maxBuilds?: unknown; maxDevices?: unknown };
   pool?: { iosParkedMax?: unknown; androidParkedMax?: unknown };
