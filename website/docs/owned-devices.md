@@ -25,6 +25,10 @@ runs. Hardware never enters the owned-device registry and is never booted,
 shut down, or deleted by Stim.
 
 Each workspace keeps its owned-device assignments for later runs.
+After boot, Stim opens its owned iOS simulator in Device Hub on Xcode 27, or
+Simulator on older Xcode. Stim passes the workspace's simulator ID to Device Hub
+so it can open that device's window.
+Opening the window is best effort; a window failure does not undo a successful boot.
 
 ## Multiple devices with slots
 

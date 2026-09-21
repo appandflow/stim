@@ -1542,8 +1542,10 @@ HOST MEMORY PRESSURE AND STALLED SIMULATORS
   simulator launch operations. Simulator discovery waits up to 30 seconds,
   boot (including the initial boot request) up to 10 minutes, and app installation
   up to 5 minutes. Process termination confirmation can take another 10 seconds;
-  a final boot-state query can take 30 seconds. Opening the Simulator app after
-  boot is best-effort and takes at most 5 seconds. A timeout is not proof of an
+  a final boot-state query can take 30 seconds. After boot, Stim opens the owned
+  simulator in the selected Xcode's Device Hub on Xcode 27, or Simulator on
+  older Xcode. Opening the window is best-effort and takes at most 10 seconds.
+  A timeout is not proof of an
   app crash or OOM.
   During boot, Stim reports elapsed time, the simulator name, last boot output,
   current pressure and the highest observed pressure roughly every 15 seconds.

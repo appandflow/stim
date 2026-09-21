@@ -1,6 +1,6 @@
-import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve as resolvePath } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import { hostMemoryPressureAdvice, readHostMemoryPressure, type HostMemoryPressure } from '../host-memory.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
@@ -315,7 +315,15 @@ export async function bootIosSim(
   } finally {
     clearInterval(monitor);
   }
-  exec.runFileQuiet('open', ['-a', 'Simulator'], { timeoutMs: 5000, killSignal: 'SIGKILL' });
+  const simctlPath = exec.runFileQuiet('xcrun', ['--find', 'simctl'], { timeoutMs: 5000, killSignal: 'SIGKILL' });
+  const deviceHubApp = simctlPath
+    ? resolvePath(dirname(simctlPath), '..', '..', '..', 'Applications', 'DeviceHub.app')
+    : null;
+  const openArgs =
+    deviceHubApp && existsSync(deviceHubApp)
+      ? ['-a', deviceHubApp, `devices://device/open?id=${udid}`]
+      : ['-a', 'Simulator'];
+  exec.runFileQuiet('open', openArgs, { timeoutMs: 5000, killSignal: 'SIGKILL' });
 }
 
 export function shutdownIosSim(udid: string): void {
