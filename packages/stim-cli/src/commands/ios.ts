@@ -61,6 +61,7 @@ import {
   resolveConfiguration,
   resolveDeviceType,
   resolveRuntime,
+  resolveSimulatorAppFlag,
   deviceModelRefusal,
   isReleaseConfiguration,
 } from './ios/support.ts';
@@ -143,6 +144,10 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
       'Simulator runtime to create this workspace\'s owned sim on, as a version ("18.5") or a runtime\'s full name ' +
         '("iOS 18.5"); nothing else matches. Overrides the ios.runtime setting for this invocation. An unknown version ' +
         'refuses with STIM_BAD_ARG and prints the installed runtimes.',
+    )
+    .option(
+      '--simulator-app <app>',
+      'Open the owned simulator in xcode or siniulator for this run, overriding the machine iosSimulatorApp setting. Also opens an already running simulator; local simulators only.',
     )
     .option(
       '--device [udid]',
@@ -450,6 +455,9 @@ async function runIos(
   const schemeRefusal = explicitSchemeRefusal(root, buildScheme, isExpo, d);
   if (schemeRefusal) return fail(schemeRefusal);
   const remoteBackend = physical ? null : (opts.remote ?? remoteIosSetting(settings));
+  const viewer = resolveSimulatorAppFlag(opts.simulatorApp, physical, remoteBackend);
+  if ('refusal' in viewer) return fail(viewer.refusal);
+  const { simulatorApp } = viewer;
   const modelRefusal = deviceModelRefusal({
     slot,
     deviceTypeFlag: opts.deviceType,
@@ -561,7 +569,7 @@ async function runIos(
         projectPath: root,
         settingsRoot: root,
         settings,
-        flags: { deviceType, runtime },
+        flags: { deviceType, runtime, simulatorApp },
         note,
         out: note,
       });
@@ -707,7 +715,7 @@ async function runIos(
     const boot = (): Promise<IosBootLike> =>
       physicalDevice
         ? Promise.resolve({ ok: true, udid: physicalDevice.udid })
-        : Promise.resolve(d.ensureBooted({ platform: PLATFORM, device, out: note })).catch((e) => ({
+        : Promise.resolve(d.ensureBooted({ platform: PLATFORM, device, simulatorApp, out: note })).catch((e) => ({
             ok: false,
             reason: String((e as Error)?.message || e),
           }));

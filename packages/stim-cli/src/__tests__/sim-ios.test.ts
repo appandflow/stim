@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
@@ -853,6 +853,23 @@ test('machine config opens the owned simulator in Siniulator', async () => {
   expect(quiet).toContain('open -a Siniulator siniulator://open?udid=UDID-A');
   expect(quiet.some((call) => call.includes('DeviceHub.app'))).toBe(false);
 });
+
+test.each([
+  ['xcode', 'siniulator', 'open -a Siniulator siniulator://open?udid=UDID-A'],
+  ['siniulator', 'xcode', 'open -a Simulator'],
+  ['unknown', 'xcode', 'open -a Simulator'],
+] as const)(
+  'a %s machine preference is overridden by %s without saving it',
+  async (configured, simulatorApp, command) => {
+    const configPath = join(tmpHome, 'config.json');
+    const config = JSON.stringify({ iosSimulatorApp: configured });
+    writeFileSync(configPath, config);
+    const { quiet } = bootstatusExecutor([{ exitCode: 0 }], () => bootSimList('Booted'));
+    await bootIosSim('UDID-A', { simulatorApp });
+    expect(quiet.filter((call) => call.startsWith('open '))).toEqual([command]);
+    expect(readFileSync(configPath, 'utf8')).toBe(config);
+  },
+);
 
 test('invalid simulator viewer refuses before booting', async () => {
   writeFileSync(join(tmpHome, 'config.json'), JSON.stringify({ iosSimulatorApp: 'unknown' }));

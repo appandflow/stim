@@ -2,10 +2,11 @@ import { join, basename } from 'node:path';
 import chalk from 'chalk';
 import { workspaceLogsDir } from '../../workspace/paths.ts';
 import { shortUdid, phaseLine } from '../../command-output.ts';
-import type { DeviceLike, PodStateLike, PodVerdictLike } from './types.ts';
+import type { DeviceLike, PodStateLike, PodVerdictLike, FailArgs } from './types.ts';
 import type { BuildIosResult } from '../../engine/xcode.ts';
 import type { SettingsObject } from '../../workspace/settings.ts';
 import { unknownIosDeviceTypeRefusal, unknownIosRuntimeRefusal } from '../../engine/device.ts';
+import { parseIosSimulatorApp, type IosSimulatorApp } from '../../devices/ios-simulator-viewer.ts';
 import { listIosRuntimes } from '../../devices/ios.ts';
 import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
 import { describeDiagnostic } from '../../engine/errors-xcode.ts';
@@ -69,6 +70,30 @@ export function resolveRuntime(
 ): string | null {
   const fromFlag = typeof flag === 'string' && flag.trim() !== '' ? flag.trim() : null;
   return fromFlag || iosStringSetting(settings, 'runtime');
+}
+
+export function resolveSimulatorAppFlag(
+  flag: string | undefined,
+  physical: boolean,
+  remoteBackend: RemoteDeviceBackend | null,
+): { simulatorApp?: IosSimulatorApp } | { refusal: FailArgs } {
+  if (flag === undefined) return {};
+  let simulatorApp: IosSimulatorApp;
+  try {
+    simulatorApp = parseIosSimulatorApp(flag, '--simulator-app');
+  } catch (error) {
+    return { refusal: { code: 'STIM_BAD_ARG', message: (error as Error).message } };
+  }
+  if (physical || remoteBackend) {
+    return {
+      refusal: {
+        code: 'STIM_BAD_ARG',
+        message: '--simulator-app only applies to a local owned iOS simulator.',
+        remedy: 'Drop --simulator-app when using a physical or remote device.',
+      },
+    };
+  }
+  return { simulatorApp };
 }
 
 export function deviceModelRefusal({

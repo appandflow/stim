@@ -132,6 +132,11 @@ machine-wide preference, not a project setting; Stim still creates, boots, and
 owns the simulator. An invalid value refuses before boot. Opening the chosen
 app is best effort, so install Siniulator before selecting it.
 
+Override it for one launch with `stim ios --simulator-app siniulator` or
+`stim ios --simulator-app xcode`. The flag also opens an already running owned
+simulator without rebooting it and leaves the saved preference unchanged. It
+only applies to local simulators.
+
 `pool.iosParkedMax` bounds the simulators `worktree remove` parks for a later
 workspace to adopt. Absent means 3; `0` turns parking and adoption off. When
 `STIM_HOME` is set, parking is off unless `STIM_POOL_IOS_PARKED_MAX` is set too.

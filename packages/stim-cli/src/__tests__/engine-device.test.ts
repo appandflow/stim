@@ -77,36 +77,50 @@ function simList(devices: SimEntry[]) {
 }
 
 describe('ensureBooted: ios', () => {
-  test('returns the udid without touching simctl boot when the sim is already Booted', async () => {
-    const commands: string[] = [];
-    const probes: unknown[] = [];
-    setExecutor({
-      run: (cmd) => {
-        commands.push(cmd);
-        return simList([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
-      },
-      runQuiet: (cmd) => {
-        commands.push(cmd);
-        return '';
-      },
-      runFile(file, args = [], options) {
-        if (file === 'xcrun' && args[1] === 'list') return this.run!([file, ...args].join(' '));
-        probes.push([file, ...args, options]);
-        return '';
-      },
-      spawn: (cmd: string, args: readonly string[] = []) => {
-        commands.push([cmd, ...args].join(' '));
-        return makeExitingChild();
-      },
-    });
-    expect(await ensureBooted({ platform: 'ios', device: { deviceUdid: 'U1', owned: true } })).toEqual({
-      ok: true,
-      udid: 'U1',
-    });
-    expect(commands.filter((c) => c.includes('simctl boot')).length).toBe(0);
-    expect(commands.some((c) => c.includes('simctl bootstatus'))).toBe(false);
-    expect(probes).toEqual([['xcrun', 'simctl', 'spawn', 'U1', 'launchctl', 'list', { timeoutMs: 30000 }]]);
-  });
+  test.each([undefined, 'xcode', 'siniulator'] as const)(
+    'reuses a booted simulator and opens only an explicit viewer (%s)',
+    async (simulatorApp) => {
+      const commands: string[] = [];
+      const probes: unknown[] = [];
+      setExecutor({
+        run: (cmd) => {
+          commands.push(cmd);
+          return simList([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
+        },
+        runFileQuiet: (file, args = []) => {
+          commands.push([file, ...args].join(' '));
+          return '';
+        },
+        runQuiet: (cmd) => {
+          commands.push(cmd);
+          return '';
+        },
+        runFile(file, args = [], options) {
+          if (file === 'xcrun' && args[1] === 'list') return this.run!([file, ...args].join(' '));
+          probes.push([file, ...args, options]);
+          return '';
+        },
+        spawn: (cmd: string, args: readonly string[] = []) => {
+          commands.push([cmd, ...args].join(' '));
+          return makeExitingChild();
+        },
+      });
+      expect(await ensureBooted({ platform: 'ios', device: { deviceUdid: 'U1', owned: true }, simulatorApp })).toEqual({
+        ok: true,
+        udid: 'U1',
+      });
+      expect(commands.filter((c) => c.includes('simctl boot')).length).toBe(0);
+      expect(commands.some((c) => c.includes('simctl bootstatus'))).toBe(false);
+      expect(commands.filter((c) => c.startsWith('open '))).toEqual(
+        simulatorApp === 'siniulator'
+          ? ['open -a Siniulator siniulator://open?udid=U1']
+          : simulatorApp === 'xcode'
+            ? ['open -a Simulator']
+            : [],
+      );
+      expect(probes).toEqual([['xcrun', 'simctl', 'spawn', 'U1', 'launchctl', 'list', { timeoutMs: 30000 }]]);
+    },
+  );
 
   test.each([false, true])('refuses a simulator that cannot spawn a process after boot (joined=%s)', async (joined) => {
     setExecutor({
@@ -146,7 +160,10 @@ describe('ensureBooted: ios', () => {
         return '';
       },
       runQuiet: () => '',
-      runFileQuiet: () => '',
+      runFileQuiet: (file, args = []) => {
+        commands.push([file, ...args].join(' '));
+        return '';
+      },
       runFile(file, args = []) {
         return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
           ? this.run!([file, ...args].join(' '))
@@ -159,10 +176,12 @@ describe('ensureBooted: ios', () => {
     });
     const result = await ensureBooted({
       platform: 'ios',
+      simulatorApp: 'siniulator',
       device: { deviceUdid: 'U1', owned: true },
       timeoutMs: 5000,
       pollMs: 5,
     });
+    expect(commands).toContain('open -a Siniulator siniulator://open?udid=U1');
     expect(result).toEqual({ ok: true, udid: 'U1' });
     expect(commands.filter((c) => c === 'xcrun simctl boot U1').length).toBe(1);
     expect(commands.indexOf('xcrun simctl boot U1')).toBeLessThan(commands.indexOf('xcrun simctl bootstatus U1 -b'));
@@ -1439,6 +1458,39 @@ describe('ensureOwnedDevice: ios', () => {
       await result.booting?.done;
       expect(calls).toMatchObject([{ udid: 'NEW-UDID', profile, previouslyManaged: false }]);
       expect(getProject(root)?.platforms?.ios?.simslimManaged).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test.each([false, true])('prepares and joins a boot with the requested viewer (reused=%s)', async (reused) => {
+    const root = projectDir();
+    try {
+      if (reused) setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
+      const { exec } = iosExecutor(
+        reused ? [{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }] : [],
+      );
+      const opened: string[][] = [];
+      setExecutor({
+        ...exec,
+        runFileQuiet(file, args = []) {
+          if (file === 'open') opened.push([file, ...args]);
+          return '';
+        },
+      });
+      const device = await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {},
+        flags: { simulatorApp: 'siniulator' },
+      });
+      expect(await ensureBooted({ platform: 'ios', device, simulatorApp: 'siniulator' })).toEqual({
+        ok: true,
+        udid: device.deviceUdid,
+      });
+      expect(opened).toEqual([['open', '-a', 'Siniulator', `siniulator://open?udid=${device.deviceUdid}`]]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

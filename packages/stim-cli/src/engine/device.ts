@@ -16,6 +16,7 @@ import {
   type ProjectRecord,
 } from '../workspace/config.ts';
 import { pidExists } from '../metro.ts';
+import { configuredIosSimulatorViewer, type IosSimulatorApp } from '../devices/ios-simulator-viewer.ts';
 import { getExecutor } from '../exec.ts';
 import { hostMemoryPressureAdvice, readHostMemoryPressure, type HostMemoryPressure } from '../host-memory.ts';
 import {
@@ -111,9 +112,15 @@ interface IosBoot {
   done: Promise<void>;
 }
 
-function startIosBoot(udid: string, configure: () => Promise<unknown>, label: string, out: Notify): IosBoot {
+function startIosBoot(
+  udid: string,
+  configure: () => Promise<unknown>,
+  label: string,
+  out: Notify,
+  simulatorApp?: IosSimulatorApp,
+): IosBoot {
   const done = (async () => {
-    await bootIosSim(udid, { label, out });
+    await bootIosSim(udid, { label, out, simulatorApp });
     await configure();
   })();
   // Node ends the process on an unhandled rejection, and `ensureBooted` -- the
@@ -133,6 +140,7 @@ interface DeviceSettings {
 }
 
 interface DeviceFlags {
+  simulatorApp?: IosSimulatorApp;
   deviceType?: string | null;
   runtime?: string | null;
   systemImage?: string | null;
@@ -300,7 +308,7 @@ async function ensureOwnedIosDevice({
         };
         if (sim.state !== 'Booted') {
           out(chalk.dim(phaseLine('device', `booting ${name} (${sim.udid})`)));
-          return { ...updated, booting: startIosBoot(sim.udid, configure, name, out), ...facts };
+          return { ...updated, booting: startIosBoot(sim.udid, configure, name, out, flags.simulatorApp), ...facts };
         }
         return { ...(await configure()), ...facts };
       }
@@ -358,6 +366,7 @@ async function ensureOwnedIosDevice({
       },
       adopted.deviceName,
       out,
+      flags.simulatorApp,
     );
     return { ...adopted, booting, deviceType: choice.deviceType, runtime: choice.runtime };
   }
@@ -382,6 +391,7 @@ async function ensureOwnedIosDevice({
       }),
     created.name,
     out,
+    flags.simulatorApp,
   );
   return {
     ...newRecord,
@@ -1146,6 +1156,7 @@ interface BootResult {
 export async function ensureBooted({
   platform,
   device,
+  simulatorApp,
   timeoutMs,
   pollMs = BOOT_POLL_MS,
   out = () => {},
@@ -1155,12 +1166,14 @@ export async function ensureBooted({
   {
     platform: string;
     device: OwnedDeviceRecord | null;
+    simulatorApp: IosSimulatorApp;
     timeoutMs: number;
     pollMs: number;
     out: Notify;
   } & EmulatorLogging
 > = {}): Promise<BootResult> {
-  if (platform === 'ios') return ensureIosBooted({ device, timeoutMs: timeoutMs ?? IOS_BOOT_TIMEOUT_MS, pollMs, out });
+  if (platform === 'ios')
+    return ensureIosBooted({ device, simulatorApp, timeoutMs: timeoutMs ?? IOS_BOOT_TIMEOUT_MS, pollMs, out });
   if (platform === 'android')
     return ensureAndroidBooted({ device, timeoutMs: timeoutMs ?? ANDROID_BOOT_TIMEOUT_MS, out, logFile, alive });
   return { failed: true, reason: `Unknown platform "${platform}".` };
@@ -1168,11 +1181,13 @@ export async function ensureBooted({
 
 async function ensureIosBooted({
   device,
+  simulatorApp,
   timeoutMs,
   pollMs,
   out,
 }: {
   device?: OwnedDeviceRecord | null;
+  simulatorApp?: IosSimulatorApp;
   timeoutMs: number;
   pollMs: number;
   out: Notify;
@@ -1220,12 +1235,16 @@ async function ensureIosBooted({
     };
   }
   const sim = resolved.sim as SimRecord;
-  if (sim.state === 'Booted') return ready();
+  if (sim.state === 'Booted') {
+    const result = ready();
+    if (result.ok && simulatorApp !== undefined) configuredIosSimulatorViewer(simulatorApp).open(udid);
+    return result;
+  }
 
   out(chalk.dim(phaseLine('device', `booting ${sim.name} (${udid})`)));
   const bootDeadline = Date.now() + timeoutMs;
   try {
-    await bootIosSim(udid, { timeoutMs, label: sim.name, out });
+    await bootIosSim(udid, { timeoutMs, label: sim.name, out, simulatorApp });
   } catch (e) {
     return { failed: true, reason: `Could not boot simulator ${udid}: ${(e as Error)?.message || e}` };
   }

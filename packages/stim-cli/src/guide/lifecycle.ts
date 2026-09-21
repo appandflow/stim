@@ -994,7 +994,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
         'every flag per command, Android variants and flavors, the per-run simulator model, runtime and system image',
       body: () => `THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote --reset-cache
-  ios             --slot <name> --json --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --device [udid] --wait <seconds> --no-wait --remote <proxy|eas>
+  ios             --slot <name> --json --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --simulator-app <xcode|siniulator> --device [udid] --wait <seconds> --no-wait --remote <proxy|eas>
   android         --slot <name> --json --no-metro-check --no-build-cache --variant <name> --system-image <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
   reload          [ios|android] --json
   device          lock <ios|android> [id] --slot <name> --for <duration> --wait <seconds> --json;
@@ -1545,7 +1545,11 @@ HOST MEMORY PRESSURE AND STALLED SIMULATORS
   a final boot-state query can take 30 seconds. After boot, Stim opens the owned
   simulator in the selected Xcode's Device Hub on Xcode 27, or Simulator on
   older Xcode. Top-level iosSimulatorApp in the machine config can select
-  Siniulator instead; see guide settings. Opening the window is best-effort
+  Siniulator instead; see guide settings. Override it for one local run with
+  \`stim ios --simulator-app siniulator\` or \`--simulator-app xcode\`. This also
+  opens an already running owned simulator without rebooting it or saving the
+  preference. The flag refuses physical and remote targets, including ios.remote.
+  Opening the window is best-effort
   and takes at most 10 seconds. A timeout is not proof of an app crash or OOM.
   During boot, Stim reports elapsed time, the simulator name, last boot output,
   current pressure and the highest observed pressure roughly every 15 seconds.
