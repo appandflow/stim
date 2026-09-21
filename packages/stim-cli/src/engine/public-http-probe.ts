@@ -1,6 +1,26 @@
 import { resolve4 } from 'node:dns/promises';
 import { request as httpsRequest } from 'node:https';
 
+const DNS_TIMEOUT_MS = 5_000;
+
+async function resolveAddresses(hostname: string, signal: AbortSignal): Promise<string[]> {
+  if (signal.aborted) throw signal.reason;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const unavailable = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) onAbort();
+    else timer = setTimeout(() => reject(new Error('DNS lookup timed out')), DNS_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([resolve4(hostname), unavailable]);
+  } finally {
+    clearTimeout(timer);
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+  }
+}
+
 export async function probePublicHttp(url: string, signal: AbortSignal): Promise<number | null> {
   try {
     const response = await fetch(url, { signal, redirect: 'follow' });
@@ -15,7 +35,7 @@ export async function probePublicHttp(url: string, signal: AbortSignal): Promise
 
   let addresses: string[];
   try {
-    addresses = await resolve4(hostname);
+    addresses = await resolveAddresses(hostname, signal);
   } catch {
     return null;
   }

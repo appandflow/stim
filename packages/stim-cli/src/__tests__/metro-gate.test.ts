@@ -140,6 +140,28 @@ describe('the probe url', () => {
 });
 
 describe('failing closed', () => {
+  test('a pending DNS lookup ends when the gate deadline aborts it', async () => {
+    const fetchError = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('lookup failed'), { code: 'ENOTFOUND' }),
+    });
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockRejectedValue(fetchError));
+    vi.mocked(resolve4).mockImplementation(() => new Promise<string[]>(() => {}));
+
+    const result = await gateMetroOrigin({
+      origin: ORIGIN,
+      metroPort: 8085,
+      platform: 'ios',
+      readRecords: () => [],
+      isProof: () => false,
+      sleep: () => new Promise((resolve) => setTimeout(resolve, 1)),
+      timeoutMs: 20,
+    });
+
+    expect(result.failed).toBe(true);
+    expect(result.reason).toContain('did not answer');
+    expect(resolve4).toHaveBeenCalledOnce();
+  });
+
   test('a probe that throws is still a refusal, never a pass', async () => {
     const result = await gate({
       probe: async () => {
