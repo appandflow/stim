@@ -846,6 +846,21 @@ test('opening a simulator on Xcode 27 focuses its UDID in the selected Device Hu
   await expect(bootIosSim('UDID-A')).resolves.toBeUndefined();
 });
 
+test('machine config opens the owned simulator in Siniulator', async () => {
+  writeFileSync(join(tmpHome, 'config.json'), JSON.stringify({ iosSimulatorApp: 'siniulator' }));
+  const { quiet } = bootstatusExecutor([{ exitCode: 0 }], () => bootSimList('Booted'));
+  await bootIosSim('UDID-A');
+  expect(quiet).toContain('open -a Siniulator siniulator://open?udid=UDID-A');
+  expect(quiet.some((call) => call.includes('DeviceHub.app'))).toBe(false);
+});
+
+test('invalid simulator viewer refuses before booting', async () => {
+  writeFileSync(join(tmpHome, 'config.json'), JSON.stringify({ iosSimulatorApp: 'unknown' }));
+  const { spawned } = bootstatusExecutor([{ exitCode: 0 }], () => bootSimList('Booted'));
+  await expect(bootIosSim('UDID-A')).rejects.toThrow(/Invalid iosSimulatorApp/);
+  expect(spawned).toEqual([]);
+});
+
 test('boot diagnostics retain peak pressure after recovery and unknown readings, then stop sampling', async () => {
   vi.useFakeTimers();
   const messages: string[] = [];

@@ -115,6 +115,7 @@ Run `stim guide settings` for the complete key and value list.
 ```json
 {
   "concurrency": { "maxBuilds": 2, "maxDevices": 3 },
+  "iosSimulatorApp": "xcode",
   "pool": { "iosParkedMax": 3, "androidParkedMax": 3 },
   "caches": {
     "buildCache": "/Volumes/Cache/stim/build-cache",
@@ -122,6 +123,14 @@ Run `stim guide settings` for the complete key and value list.
   }
 }
 ```
+
+`iosSimulatorApp` chooses the macOS app that displays an owned iOS simulator after
+Stim boots it. `"xcode"` (the default) opens the selected Xcode's Device Hub on
+Xcode 27 or Simulator on older Xcode. Set `"siniulator"` to use an installed
+[Siniulator](https://github.com/kmagiera/Siniulator) instead. This is a
+machine-wide preference, not a project setting; Stim still creates, boots, and
+owns the simulator. An invalid value refuses before boot. Opening the chosen
+app is best effort, so install Siniulator before selecting it.
 
 `pool.iosParkedMax` bounds the simulators `worktree remove` parks for a later
 workspace to adopt. Absent means 3; `0` turns parking and adoption off. When
