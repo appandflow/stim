@@ -1,6 +1,6 @@
 {
   "name": "stim",
-  "version": "1.7.0",
+  "version": "1.8.0-rc.1",
   "description": "Stim: fast, isolated React Native environments for coding agents",
   "keywords": [
     "agent",
