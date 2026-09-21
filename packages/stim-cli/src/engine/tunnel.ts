@@ -1,8 +1,6 @@
 import type { ChildProcess } from 'node:child_process';
-import { resolve4 } from 'node:dns/promises';
 import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { request as httpsRequest } from 'node:https';
 import { basename, join, resolve as resolvePath, sep } from 'node:path';
 import { getConfigDir } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
@@ -10,6 +8,7 @@ import { pidExists, signalProcessTree } from '../metro.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { createLineReader } from '../process-output.ts';
 import type { ManagedProvider } from './metro-reach.ts';
+import { probePublicHttp } from './public-http-probe.ts';
 import { withWorkspaceProcessLock, type WorkspaceProcessLockOptions } from './workspace-process-lock.ts';
 
 type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
@@ -138,56 +137,8 @@ function managedRemoteWorktreeLockRoot(worktreeRoot: string): string {
 }
 
 async function defaultProbeReachable(url: string, signal: AbortSignal): Promise<boolean> {
-  try {
-    const res = await fetch(url, { signal, redirect: 'follow' });
-    // Any HTTP response proves the tunnel is routable; only a connection failure means unavailable.
-    return res.status > 0;
-  } catch {
-    return false;
-  }
-}
-
-async function probeCloudflaredReachable(url: string, signal: AbortSignal): Promise<boolean> {
-  try {
-    const res = await fetch(url, { signal, redirect: 'follow' });
-    return res.status > 0;
-  } catch (error) {
-    const code = (error as { cause?: { code?: unknown } })?.cause?.code;
-    if (code !== 'ENOTFOUND' && code !== 'EAI_AGAIN') return false;
-  }
-
-  let addresses: string[];
-  try {
-    addresses = await resolve4(new URL(url).hostname);
-  } catch {
-    return false;
-  }
-  const firstAddress = addresses[0];
-  if (!firstAddress) return false;
-
-  return new Promise((resolve) => {
-    const request = httpsRequest(
-      url,
-      {
-        signal,
-        lookup: (_hostname, options, callback) => {
-          // Node requests all addresses when automatic family selection is enabled.
-          if (options.all)
-            callback(
-              null,
-              addresses.map((address) => ({ address, family: 4 })),
-            );
-          else callback(null, firstAddress, 4);
-        },
-      },
-      (response) => {
-        response.resume();
-        resolve((response.statusCode ?? 0) > 0);
-      },
-    );
-    request.on('error', () => resolve(false));
-    request.end();
-  });
+  const status = await probePublicHttp(url, signal);
+  return status !== null && status > 0;
 }
 
 function waitForUrl(
@@ -355,7 +306,7 @@ export async function startTunnel({
   spawnFn = null,
   urlTimeoutMs = URL_TIMEOUT_MS,
   reachableTimeoutMs = REACHABLE_TIMEOUT_MS,
-  probeReachable = provider === 'cloudflared' ? probeCloudflaredReachable : defaultProbeReachable,
+  probeReachable = defaultProbeReachable,
   now = Date.now,
   sleep = defaultSleep,
   ngrokUrl = null,

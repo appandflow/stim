@@ -1,4 +1,5 @@
 import type { NdjsonRecord } from '../ndjson.ts';
+import { probePublicHttp } from './public-http-probe.ts';
 
 export const REMOTE_METRO_WRONG = 'STIM_REMOTE_METRO_WRONG';
 
@@ -31,15 +32,6 @@ export function probeBundleUrl(origin: string, platform: 'ios' | 'android', entr
   return `${origin.replace(/\/+$/, '')}/${entry}.bundle?platform=${platform}&dev=true`;
 }
 
-const defaultProbe = async (url: string, signal: AbortSignal): Promise<number | null> => {
-  try {
-    const res = await fetch(url, { signal, redirect: 'follow' });
-    return res.status;
-  } catch {
-    return null;
-  }
-};
-
 export async function gateMetroOrigin({
   origin,
   metroPort,
@@ -47,15 +39,30 @@ export async function gateMetroOrigin({
   entryPoint = 'index',
   readRecords,
   isProof,
-  probe = defaultProbe,
+  probe = probePublicHttp,
   now = Date.now,
   sleep = (ms: number) => new Promise((r) => setTimeout(r, ms)),
   timeoutMs = GATE_TIMEOUT_MS,
 }: GateOptions): Promise<GateResult> {
   const since = now();
   const controller = new AbortController();
-  const request = probe(probeBundleUrl(origin, platform, entryPoint), controller.signal);
-  void request.catch(() => {});
+  const bundleUrl = probeBundleUrl(origin, platform, entryPoint);
+  let status: number | null = null;
+  let pending = false;
+  let request: Promise<void> = Promise.resolve();
+  const startProbe = () => {
+    pending = true;
+    request = (async () => {
+      try {
+        status = await probe(bundleUrl, controller.signal);
+      } catch {
+        status = null;
+      } finally {
+        pending = false;
+      }
+    })();
+  };
+  startProbe();
 
   try {
     const deadline = now() + timeoutMs;
@@ -63,13 +70,14 @@ export async function gateMetroOrigin({
       for (const record of readRecords()) {
         if (isProof(record, since)) return { ok: true };
       }
+      if (!pending && status === null) startProbe();
       await sleep(POLL_MS);
     }
   } finally {
     controller.abort();
   }
 
-  const status = await request.catch(() => null);
+  await request;
   return {
     failed: true,
     code: REMOTE_METRO_WRONG,
