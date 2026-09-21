@@ -5439,6 +5439,51 @@ describe('ios --device: the lease on the phone', () => {
   });
 });
 
+describe('--simulator-app', () => {
+  test.each(['xcode', 'siniulator'])('parses %s and passes it to preparation and boot', async (simulatorApp) => {
+    reserve();
+    const program = new Command();
+    registerIos(program);
+    const command = program.commands[0]!;
+    command.parseOptions(['--simulator-app', simulatorApp]);
+    const { calls, exitCode } = await run(command.opts());
+    expect(exitCode).toBe(null);
+    expect(calls.args.ensureOwnedDevice).toMatchObject({ flags: { simulatorApp } });
+    expect(calls.args.ensureBooted).toMatchObject({ simulatorApp });
+  });
+
+  test.each(['unknown', ''])('refuses an invalid viewer %j before preparing a device', async (simulatorApp) => {
+    reserve();
+    const { calls, logs, exitCode } = await run({ simulatorApp, json: true });
+    expect(exitCode).toBe(1);
+    expect(parseFirst(logs)).toMatchObject({
+      code: 'STIM_BAD_ARG',
+      message: 'Invalid --simulator-app. Use "xcode" or "siniulator".',
+    });
+    expect(calls.order).not.toContain('ensureOwnedDevice');
+    expect(calls.order).not.toContain('buildIos');
+  });
+
+  test.each([
+    { opts: { device: true }, settings: {} },
+    { opts: { remote: 'eas' }, settings: {} },
+    { opts: {}, settings: { ios: { remote: 'proxy' } } },
+  ])('refuses a local viewer on nonlocal targets: %j', async ({ opts, settings }) => {
+    reserve();
+    const { calls, logs, exitCode } = await run(
+      { ...opts, simulatorApp: 'siniulator', json: true },
+      { resolveSettings: () => settings },
+    );
+    expect(exitCode).toBe(1);
+    expect(parseFirst(logs)).toMatchObject({
+      code: 'STIM_BAD_ARG',
+      message: '--simulator-app only applies to a local owned iOS simulator.',
+    });
+    expect(calls.order).not.toContain('ensureOwnedDevice');
+    expect(calls.order).not.toContain('buildIos');
+  });
+});
+
 describe('the simulator model and runtime flags', () => {
   test('resolveDeviceType and resolveRuntime put the flag over the setting', () => {
     const settings = { ios: { deviceType: 'iPhone 17 Pro', runtime: '26.2' } };

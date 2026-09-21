@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import { hostMemoryPressureAdvice, readHostMemoryPressure, type HostMemoryPressure } from '../host-memory.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
-import { configuredIosSimulatorViewer } from './ios-simulator-viewer.ts';
+import { configuredIosSimulatorViewer, type IosSimulatorApp } from './ios-simulator-viewer.ts';
 
 export interface IosSimRecord {
   udid: string;
@@ -229,12 +229,19 @@ export async function bootIosSim(
   {
     timeoutMs = IOS_BOOT_TIMEOUT_MS,
     attemptMs = BOOTSTATUS_ATTEMPT_MS,
+    simulatorApp,
     label = udid,
     out = () => {},
-  }: { timeoutMs?: number; attemptMs?: number; label?: string; out?: (message: string) => void } = {},
+  }: {
+    timeoutMs?: number;
+    attemptMs?: number;
+    simulatorApp?: IosSimulatorApp;
+    label?: string;
+    out?: (message: string) => void;
+  } = {},
 ): Promise<void> {
   const exec = getExecutor();
-  const viewer = configuredIosSimulatorViewer();
+  const viewer = configuredIosSimulatorViewer(simulatorApp);
   const started = Date.now();
   const deadline = started + timeoutMs;
   let worst: HostMemoryPressure | null = null;

@@ -290,11 +290,16 @@ or Simulator on older Xcode. To use an installed Siniulator instead:
 
   { "iosSimulatorApp": "siniulator" }
 
+Override the preference for one local launch with
+\`stim ios --simulator-app siniulator\` or \`stim ios --simulator-app xcode\`.
+The flag also opens an already running owned simulator without rebooting it.
+It leaves the saved preference unchanged and refuses physical or remote targets.
+
 Stim still creates and boots its owned simulator. An invalid value refuses
 before boot. Opening a window remains best-effort, so install Siniulator before
 selecting it. By default, closing a Siniulator device window shuts down that
 simulator. Enable "Leave simulator running after window is closed" in Siniulator
-Settings if Stim should keep it running. See \`guide lifecycle boot\` for
+Settings if Stim should keep it running. See \`guide lifecycle simslim\` for
 window behavior.
 
 THE DEVICE POOL BOUNDS ARE MACHINE-LEVEL TOO

@@ -136,7 +136,7 @@ project is reused.
 
 ```text
 stim ios [--slot <name>] [--scheme <name>] [--configuration <name>] [--device-type <name>] [--runtime <version>]
-         [--device [udid]] [--wait <seconds> | --no-wait] [--remote <proxy|eas>]
+         [--simulator-app <xcode|siniulator>] [--device [udid]] [--wait <seconds> | --no-wait] [--remote <proxy|eas>]
          [--eas-profile <name>] [--no-metro-check] [--no-build-cache] [--json]
 ```
 
@@ -154,6 +154,10 @@ app, opens it, and checks launch logs. Native builds run locally by default;
 - `--runtime <version>` creates it on that iOS runtime, overriding `ios.runtime`
   the same way. It takes a version (`26.5`) or a runtime's full name
   (`iOS 26.5`), exactly.
+- `--simulator-app <xcode|siniulator>` overrides the machine `iosSimulatorApp`
+  preference for this run. It also opens an already running owned simulator in
+  that app without rebooting it. The preference is not saved. Local simulators
+  only; cannot be combined with `--device` or a remote target.
 - `--device [udid]` builds, installs, and launches on a connected iPhone instead
   of the owned simulator. With no UDID it takes the first connected device it
   can lease. It cannot be combined with `--remote`. Stim never creates, boots,

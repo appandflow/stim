@@ -62,6 +62,7 @@ export interface IosCommandOptions {
   easProfile?: string;
   deviceType?: string;
   runtime?: string;
+  simulatorApp?: string;
   device?: string | boolean;
   remote?: RemoteDeviceBackend;
   wait?: string | boolean;

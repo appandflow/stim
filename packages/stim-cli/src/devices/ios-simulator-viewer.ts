@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { loadConfig } from '../workspace/config.ts';
 
-type IosSimulatorApp = 'xcode' | 'siniulator';
+export type IosSimulatorApp = 'xcode' | 'siniulator';
 
 interface IosSimulatorViewer {
   open(udid: string): void;
@@ -11,16 +11,16 @@ interface IosSimulatorViewer {
 
 const OPEN_OPTIONS = { timeoutMs: 5000, killSignal: 'SIGKILL' } as const;
 
-function parseIosSimulatorApp(value: unknown): IosSimulatorApp {
+export function parseIosSimulatorApp(value: unknown, source = 'iosSimulatorApp in machine config'): IosSimulatorApp {
   if (value === undefined || value === 'xcode') return 'xcode';
   if (value === 'siniulator') return 'siniulator';
-  const error = new Error('Invalid iosSimulatorApp in machine config. Use "xcode" or "siniulator".');
+  const error = new Error(`Invalid ${source}. Use "xcode" or "siniulator".`);
   Object.assign(error, { code: 'STIM_BAD_ARG' });
   throw error;
 }
 
-export function configuredIosSimulatorViewer(): IosSimulatorViewer {
-  const app = parseIosSimulatorApp(loadConfig()?.iosSimulatorApp);
+export function configuredIosSimulatorViewer(override?: IosSimulatorApp): IosSimulatorViewer {
+  const app = override ?? parseIosSimulatorApp(loadConfig()?.iosSimulatorApp);
   const exec = getExecutor();
   if (app === 'siniulator') {
     return {

@@ -333,6 +333,15 @@ test('pool recovery guidance routes claim refusals to the error remedy and back'
   expect(renderSection('errors', CLAIM_REFUSED)).toContain('stim guide lifecycle pool');
 });
 
+test('the viewer override is discoverable beside the machine preference and boot guidance', () => {
+  expect(renderSection('lifecycle', 'options')).toContain('--simulator-app <xcode|siniulator>');
+  for (const guide of [renderTopic('settings'), renderSection('lifecycle', 'simslim')]) {
+    expect(guide).toContain('iosSimulatorApp');
+    expect(guide).toContain('--simulator-app siniulator');
+    expect(guide).toContain('--simulator-app xcode');
+  }
+});
+
 test('the settings topic documents every supported setting key', () => {
   const body = renderTopic('settings');
   assert(body);
