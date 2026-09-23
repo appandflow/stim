@@ -25,7 +25,7 @@ import type { Command } from 'commander';
 import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
 import { registerStart } from '../commands/start.ts';
 import { asProcessExit } from './_factories.ts';
-import { setExecutor, resetExecutor } from '../exec.ts';
+import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { upsertProject, getProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
@@ -847,6 +847,60 @@ test('action: a worktree deletion failure keeps ownership state', async () => {
   });
 });
 
+test('action: a git refusal after the owned sim was deleted keeps a record that no longer names the sim', async () => {
+  upsertProject(wtDir, {
+    worktreeRoot: true,
+    worktreeBranch: 'worktree-feat-x',
+    worktreeBranchOwned: true,
+    platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'stim-x' } },
+  });
+  const exec = makeExecutor({
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'worktree-feat-x' },
+    ]),
+    simctlList: simctlJson([{ udid: 'U1', name: 'stim-x', state: 'Shutdown', isAvailable: true }]),
+    worktreeRemoveError: 'Permission denied',
+  });
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  await run(wtDir, {});
+
+  expect(process.exitCode).toBe(1);
+  expect(exec.calls.run.some((c) => /xcrun simctl delete U1/.test(c))).toBeTruthy();
+  expect(getProject(wtDir)).toMatchObject({ worktreeBranch: 'worktree-feat-x', worktreeBranchOwned: true });
+  expect(getProject(wtDir)?.platforms?.ios).toBeUndefined();
+});
+
+test('action: a named port that cannot be stopped is reported as retained, before any git removal', async () => {
+  upsertProject(wtDir, { metroPort: 8083, ports: { web: 8900 } });
+  const exec = {
+    ...makeExecutor({
+      worktrees: porcelain([
+        { path: mainDir, branch: 'main' },
+        { path: wtDir, branch: 'feat-x' },
+      ]),
+    }),
+    findExecutable: () => null,
+  };
+  setExecutor(exec);
+  const errs: string[] = [];
+  const originalError = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+  } finally {
+    console.error = originalError;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(errs.join('\n')).toMatch(/lsof is not installed/);
+  expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBe(false);
+  expect(getProject(wtDir)?.ports).toEqual({ web: 8900 });
+});
+
 test('action: tunnel verification failure retains state and refuses worktree removal even with force', async () => {
   const child = liveUnrelatedProcess();
   upsertProject(wtDir, { label: 'feature' });
@@ -1385,6 +1439,119 @@ test('against a real repo: remove on the source checkout reclaims the environmen
     rmSync(base, { recursive: true, force: true });
   }
 }, 30_000);
+
+function realRepoWithWorktree(base: string) {
+  const repo = join(base, 'repo');
+  const remote = join(base, 'remote.git');
+  mkdirSync(repo, { recursive: true });
+  const git = (cmd: string, cwd = repo) => execSync(cmd, { cwd, encoding: 'utf-8', timeout: 15_000 });
+  git(`git init -q --bare "${remote}"`, base);
+  git('git init -q');
+  git('git config user.email test@example.com');
+  git('git config user.name test');
+  git(`git remote add origin "${remote}"`);
+  writeFileSync(join(repo, 'package.json'), '{}');
+  git('git add -A');
+  git('git commit -q -m init');
+  git('git push -q -u origin HEAD');
+  const wt = join(base, 'wt');
+  git(`git worktree add -q "${wt}" -b feat-x`);
+  return { repo, wt, git };
+}
+
+function realGitFakeSimctl(simctlList: string) {
+  resetExecutor();
+  const real = getExecutor();
+  const deleted: string[] = [];
+  const fake = (cmd: string) => {
+    if (/simctl list/.test(cmd)) return simctlList;
+    const deletion = cmd.match(/simctl delete (\S+)/);
+    if (deletion) deleted.push(deletion[1] ?? '');
+    return '';
+  };
+  const exec = {
+    run: fake,
+    runQuiet: fake,
+    runFile(file: string, args: string[] = [], opts?: Parameters<typeof real.runFile>[2]) {
+      return file === 'git' ? real.runFile(file, args, opts) : fake([file, ...args].join(' '));
+    },
+    runFileQuiet(file: string, args: string[] = [], opts?: Parameters<typeof real.runFile>[2]) {
+      return file === 'git' ? real.runFileQuiet(file, args, opts) : fake([file, ...args].join(' '));
+    },
+    spawn() {
+      throw new Error('unexpected spawn');
+    },
+    findExecutable: () => null,
+  };
+  setExecutor(exec);
+  return { deleted };
+}
+
+test('against a real repo: a locked worktree is refused before its owned sim is torn down, even with --force', async () => {
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-locked-')));
+  const errs: string[] = [];
+  const originalError = console.error;
+  try {
+    const { repo, wt, git } = realRepoWithWorktree(base);
+    git(`git worktree lock --reason "on a usb disk" "${wt}"`);
+    upsertProject(wt, { platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'stim-x' } } });
+    const sims = realGitFakeSimctl(simctlJson([{ udid: 'U1', name: 'stim-x', state: 'Shutdown', isAvailable: true }]));
+
+    console.error = (m) => errs.push(String(m));
+    const run = captureAction(registerRemove);
+    await run(wt, { force: true });
+    console.error = originalError;
+
+    expect(process.exitCode).toBe(1);
+    expect(sims.deleted).toEqual([]);
+    expect(existsSync(wt)).toBe(true);
+    expect(getProject(wt)?.platforms?.ios).toMatchObject({ deviceUdid: 'U1', owned: true });
+    expect(errs.join('\n')).toMatch(/locked/);
+    expect(errs.join('\n')).toContain(`git -C ${repo} worktree unlock ${wt}`);
+  } finally {
+    console.error = originalError;
+    rmSync(base, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test.each(['submodule add', 'embedded repository'] as const)(
+  'against a real repo: a worktree with an initialized submodule (%s) is refused before its owned sim is torn down',
+  async (layout) => {
+    const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-submodule-')));
+    const errs: string[] = [];
+    const originalError = console.error;
+    try {
+      const { wt, git } = realRepoWithWorktree(base);
+      const sub = layout === 'submodule add' ? join(base, 'sub') : join(wt, 'sub');
+      mkdirSync(sub);
+      git('git init -q', sub);
+      git('git -c user.email=t@e.com -c user.name=t commit -q --allow-empty -m s', sub);
+      if (layout === 'submodule add') git(`git -c protocol.file.allow=always submodule add -q "${sub}" sub`, wt);
+      else git('git add sub', wt);
+      git('git commit -q -m sub', wt);
+      git('git push -q -u origin feat-x', wt);
+      upsertProject(wt, { platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'stim-x' } } });
+      const sims = realGitFakeSimctl(
+        simctlJson([{ udid: 'U1', name: 'stim-x', state: 'Shutdown', isAvailable: true }]),
+      );
+
+      console.error = (m) => errs.push(String(m));
+      const run = captureAction(registerRemove);
+      await run(wt, {});
+      console.error = originalError;
+
+      expect(process.exitCode).toBe(1);
+      expect(sims.deleted).toEqual([]);
+      expect(existsSync(wt)).toBe(true);
+      expect(getProject(wt)?.platforms?.ios).toMatchObject({ deviceUdid: 'U1', owned: true });
+      expect(errs.join('\n')).toMatch(/submodule/);
+    } finally {
+      console.error = originalError;
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
 
 function barePorcelain(bareRoot: string, entries: PorcelainEntry[]) {
   return `worktree ${bareRoot}\nbare\n\n${porcelain(entries)}`;

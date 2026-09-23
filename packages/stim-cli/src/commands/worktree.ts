@@ -14,7 +14,7 @@ import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } fr
 import type { ReleasedLease } from '../engine/device-lease.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
 import { findProjectRoot } from '../workspace/project.ts';
-import { reclaimProject } from '../devices/reclaim.ts';
+import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
 import { claimFailure } from '../ownership-claim.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import type { ParkedDevice } from '../devices/teardown.ts';
@@ -30,6 +30,7 @@ import {
   dirtyPaths,
   gitCommonDir,
   hasRemote,
+  hasPopulatedSubmodules,
   hasUncommittedWork,
   isPodInstallChurn,
   listWorktrees,
@@ -403,11 +404,22 @@ async function reclaimAll(
   const removedWorkspaceDirs: string[] = [];
   const failedWorkspaceDirs: string[] = [];
   for (const key of keys) {
-    const r = await reclaimProject(key, {
-      deleteOwnedDevices: true,
-      parkOwnedDevices: true,
-      preserveProjectRecord: preserveRootProject && key === rootPath,
-    });
+    let r: ReclaimResult;
+    try {
+      r = await reclaimProject(key, {
+        deleteOwnedDevices: true,
+        parkOwnedDevices: true,
+        preserveProjectRecord: preserveRootProject && key === rootPath,
+      });
+    } catch (error) {
+      keptEntries.push(key);
+      retainedResources.push({
+        name: 'ownership state',
+        reason: String((error as Error)?.message || error),
+        project: key,
+      });
+      continue;
+    }
     dereferenced.push(...r.dereferenced);
     if (r.killedPid) killedPids.push(r.killedPid);
     deletedDevices.push(...r.deletedDevices);
@@ -587,7 +599,9 @@ function inspectRemoval(path: string): RemovalInspection {
   const { lines: dirtyLines, restore: podChurn } = excludePodChurn(allDirty);
   const dirty = gitAnswered === null ? null : dirtyLines.length > 0;
   const unpushed = unpushedCommits(path);
-  return { dirtyLines, podChurn, unpushed, blockers: removalBlockers({ dirty, unpushed }) };
+  const blockers = removalBlockers({ dirty, unpushed });
+  if (hasPopulatedSubmodules(path)) blockers.push('initialized submodules, which git removes only with --force');
+  return { dirtyLines, podChurn, unpushed, blockers };
 }
 
 function printRemovalRefusal(path: string, inspection: RemovalInspection): void {
@@ -758,6 +772,12 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
   if (entry.path !== path) {
     console.error(chalk.dim(`${path} is inside the worktree ${entry.path}; removing that.`));
     path = entry.path;
+  }
+  if (entry.locked) {
+    console.error(chalk.red(`Refusing to remove ${path}: git has it locked.`));
+    console.error(chalk.dim(`Unlock it, then retry: git -C ${source.path} worktree unlock ${path}`));
+    process.exitCode = 1;
+    return;
   }
 
   const project = getProject(path);

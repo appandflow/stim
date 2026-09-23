@@ -483,6 +483,7 @@ export interface WorktreeEntry {
   path: string;
   branch?: string;
   prunable?: boolean;
+  locked?: boolean;
   bare?: boolean;
 }
 
@@ -497,12 +498,25 @@ function parseWorktrees(out: string): WorktreeEntry[] {
       current.branch = line.slice('branch '.length).replace('refs/heads/', '');
     } else if (line === 'prunable' || line.startsWith('prunable ')) {
       current.prunable = true;
+    } else if (line === 'locked' || line.startsWith('locked ')) {
+      current.locked = true;
     } else if (line === 'bare') {
       current.bare = true;
     }
   }
   if (current.path) entries.push(current as WorktreeEntry);
   return entries;
+}
+
+export function hasPopulatedSubmodules(worktree: string): boolean {
+  const modules = getExecutor().runFileQuiet('git', ['-C', worktree, 'rev-parse', '--git-path', 'modules']);
+  if (modules && existsSync(resolve(worktree, nativePath(modules)))) return true;
+  const staged = getExecutor().runFileQuiet('git', ['-C', worktree, 'ls-files', '--stage', '-z']) ?? '';
+  return staged
+    .split('\0')
+    .some(
+      (line) => line.startsWith('160000 ') && existsSync(join(worktree, line.slice(line.indexOf('\t') + 1), '.git')),
+    );
 }
 
 export function listWorktrees(cwd: string): WorktreeEntry[] {
