@@ -1058,6 +1058,12 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   worktrees of the same Git repository; the source checkout must be available.
   Running it in the source checkout refuses.
 
+  \`stim doctor\` reports the source checkout's fitness as a seed -- how far
+  behind its upstream it is, uncommitted tracked changes, an interrupted rebase
+  or merge, a detached HEAD, a diverged branch, a branch that is not the
+  default one -- only once the repository has at least one linked worktree. A
+  single-checkout session is never told that its own branch is a problem.
+
   \`--refresh\` WRITES TO THE SOURCE CHECKOUT before the copy, which is why it
   is opt-in: it checks the upstream, fetches changes when needed, and fast-forwards
   whatever branch is checked out there to its \`@{upstream}\`, and installs

@@ -20,12 +20,6 @@ the source checkout is infrastructure, not a workspace: you edit, build, and run
 in the worktree, and you keep the seed fit to copy. Every rule below about the
 source checkout's fitness as a seed belongs to this workflow.
 
-Doctor reports that fitness -- how far behind the seed is, uncommitted tracked
-changes, an interrupted rebase or merge, a detached HEAD, a diverged branch, a
-branch that is not the default one -- only once the repository has at least
-one linked worktree, so read it from inside the worktree. A single-checkout
-session is never told that its own branch is a problem.
-
 MULTIPLE DEVICES
 
 Use ios/android --slot <name> to retain multiple devices in one workspace,
@@ -60,44 +54,17 @@ If warm fails or reports incomplete, resolve the reported failure first.
 A warm that cannot record its ownership claim refuses before copying. Follow
 the printed remedy and keep concurrent runs on the same STIM_HOME.
 
-Before native worktree work, run doctor for the platform in scope. The STATUS
-block at the top of this topic says when it is due in this app: never run in
-this checkout, older than seven days, or run under another Stim version. Outside
-an app it lists no doctor line. No block means doctor is current and Stim is up
-to date; the same block names a newer
-Stim release when one exists. Doctor checks the source
-checkout from a linked worktree. Fix relevant findings and inspect the
-upstream gap; in the single-checkout workflow those seed findings do not
-appear. It also prints the running CLI version and the stim installation
-resolved from PATH. If that resolved installation is older than another one,
-fix PATH or the installation before continuing so commands and guidance match.
-Doctor reports cross-volume staging and build-cache copies; read guide settings
-for placement overrides and guide lifecycle options for warm behavior.
-For iOS Debug architecture findings, review the project's overrides and imported
-Podfile helpers using guide lifecycle options. Doctor --fix does not change them.
-For parallel iOS work, review the recommended optional SimSlim setup in
-stim guide lifecycle simslim. If simulator process startup times out, check
-host memory pressure and free memory before retrying. Boot progress reports
-current and highest observed pressure; a timeout does not establish OOM.
-Avoid repeated reboots under unchanged pressure; do not restart other
-workspaces' devices or close their apps without asking. That guide covers
-the recovery steps and profile tradeoffs.
-An Android boot timeout under observed elevated memory pressure gets one
-extra wait while the emulator process this run started is alive. It never
-launches a second emulator. For a timeout, read guide errors STIM_NO_DEVICE
-and free memory by stopping only unneeded devices in workspaces you own;
-ask before closing other apps or devices. Device count alone is not evidence
-of memory pressure.
-For a linked native library carrying Git metadata, add the printed .git entries to
-.fingerprintignore only when the native build does not read Git state.
+Before native work, run doctor for the platform in scope when the STATUS block
+at the top of this topic says it is due. No block means doctor is current and
+Stim is up to date. In the worktree workflow, run it from the linked worktree
+so it also checks the source checkout. Follow each finding's printed remedy,
+and read the routed topic below before acting on one you do not understand. If
+the stim resolved from PATH is older than another installation, fix PATH or the
+installation before continuing so commands and guidance match. Under host
+memory pressure, stop only devices in workspaces you own; ask before closing
+other apps or other workspaces' devices.
 
   stim doctor --platform ios          # or: --platform android
-
-For stale Android CMake launcher findings, stop native builds and run
-stim doctor --fix --platform android in the affected checkout before warming
-more worktrees. It removes affected ignored, untracked generated .cxx
-configurations, including installed native modules; the next build recreates
-them. It preserves source, custom launcher settings, and the shared ccache.
 
   # Skip Git creation if the harness already created this linked worktree.
   git worktree add -b <branch> <worktree-path> HEAD
@@ -274,6 +241,11 @@ Read the matching guide before acting in these situations:
 | Capacity limits                                       | stim guide lifecycle concurrency |
 | Cache statistics from stim stats                      | stim guide facts stats           |
 | Worktree carry-over                                   | stim guide lifecycle options     |
+| Doctor finding: seed checkout or cross-volume copy    | stim guide lifecycle options     |
+| Doctor finding: iOS Debug archs, .cxx, fingerprints   | stim guide lifecycle builds      |
+| Temporary storage placement                           | stim guide settings              |
+| Parallel iOS, simulator stall, or memory pressure     | stim guide lifecycle simslim     |
+| Android boot timeout                                  | stim guide errors STIM_NO_DEVICE |
 | gc or orphaned resources                              | stim guide cleanup gc            |
 | worktree remove refusal or --force                    | stim guide errors remove         |
 | Cleanup failure or unverified cleanup ownership       | stim guide errors teardown       |

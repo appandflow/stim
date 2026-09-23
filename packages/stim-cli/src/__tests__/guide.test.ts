@@ -464,6 +464,12 @@ test('the agent guide protects other workspaces device lease files', () => {
   expect(agent).toMatch(/gc --delete removes expired\s+ones/);
 });
 
+test('the agent guide limits memory-pressure recovery to owned workspaces', () => {
+  expect(renderTopic('agent')).toMatch(
+    /stop only devices in workspaces you own; ask before closing\s+other apps or other workspaces' devices/,
+  );
+});
+
 test('the agent and cleanup guides shut down owned simulators without an occupancy check', () => {
   const agent = renderTopic('agent');
   const cleanup = renderSection('cleanup', 'gc');
