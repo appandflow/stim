@@ -105,6 +105,12 @@ function emptyCache(cache: CacheDescriptor): {
   return { removed, bytes: failed ? 0 : (cache.bytes ?? 0), failed, skipped: null };
 }
 
+function reportFailures(cache: CacheDescriptor, failed: number | undefined): void {
+  if (!failed) return;
+  console.log(chalk.red(`  ${failed} entr${failed === 1 ? 'y' : 'ies'} in ${cache.dir} could not be removed`));
+  process.exitCode = 1;
+}
+
 export function trimCaches(caches: GcCache[], olderThan: number): void {
   let cacheBytes = 0;
   for (const c of caches) {
@@ -120,9 +126,10 @@ export function trimCaches(caches: GcCache[], olderThan: number): void {
       console.log(
         chalk.green(`Trimmed ${c.name}: ${r.removed} entr${r.removed === 1 ? 'y' : 'ies'} (${formatBytes(r.bytes)})`),
       );
-    } else {
+    } else if (!r.failed) {
       console.log(chalk.dim(`${c.name}: nothing older than ${olderThan}d`));
     }
+    reportFailures(c, r.failed);
   }
 
   if (cacheBytes) {
@@ -149,13 +156,10 @@ export function emptyCaches(caches: GcCache[]): void {
       console.log(
         chalk.green(`Emptied ${c.name}: ${r.removed} entr${r.removed === 1 ? 'y' : 'ies'} (${formatBytes(r.bytes)})`),
       );
-    } else {
+    } else if (!r.failed) {
       console.log(chalk.dim(`${c.name}: already empty`));
     }
-    if (r.failed) {
-      console.log(chalk.red(`  ${r.failed} entr${r.failed === 1 ? 'y' : 'ies'} in ${c.dir} could not be removed`));
-      process.exitCode = 1;
-    }
+    reportFailures(c, r.failed);
   }
   if (cacheBytes) {
     console.log(

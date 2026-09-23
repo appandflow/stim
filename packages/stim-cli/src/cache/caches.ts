@@ -275,7 +275,7 @@ export function sizeCaches(caches: CacheDescriptor[]): CacheDescriptor[] {
 export function pruneCache(
   cache: CacheDescriptor,
   { olderThanDays, now = Date.now() }: { olderThanDays?: number; now?: number } = {},
-): { removed: number; bytes: number; skipped: string | null } {
+): { removed: number; bytes: number; skipped: string | null; failed?: number } {
   const cutoff = now - (olderThanDays as number) * 24 * 60 * 60 * 1000;
 
   if (cache.prune === 'report-only') {
@@ -289,6 +289,7 @@ export function pruneCache(
   const entries = cache.files ?? entriesAtDepth(cache.dir, cache.entriesDepth ?? 1);
   let removed = 0;
   let bytes = 0;
+  let failed = 0;
   for (const entry of entries) {
     let used;
     let size;
@@ -304,9 +305,11 @@ export function pruneCache(
       rmSync(entry, { recursive: true, force: true });
       removed++;
       bytes += size;
-    } catch {}
+    } catch {
+      failed++;
+    }
   }
-  return { removed, bytes, skipped: null };
+  return { removed, bytes, failed, skipped: null };
 }
 
 function entriesAtDepth(dir: string, depth: number): string[] {
