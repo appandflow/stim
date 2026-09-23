@@ -83,7 +83,8 @@ settings.
 Unless `--platform ios` is selected, `--fix` also removes stale ignored,
 untracked Android `.cxx` configurations with obsolete compiler launchers,
 including those in installed native modules. Stop native builds before this
-repair. The next build recreates these files; source, custom launcher settings,
+repair: its cache-lock check cannot detect uncached, release-swap fallback, or
+direct Gradle builds. The next build recreates these files; source, custom launcher settings,
 and shared ccache entries are preserved. See `stim guide lifecycle options`.
 
 ## `ports`
