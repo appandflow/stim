@@ -274,6 +274,7 @@ async function stopWorkspace({
   clearCollectors = clearCollectorState,
   isAlive = pidExists,
   killGroup = killMetroTree,
+  signalServer = (pid: number) => signalProcessTree(pid),
   inspectIdentity = inspectProcessIdentity,
   waitForDeath = undefined,
   waitMs = DEFAULT_WAIT_MS,
@@ -299,6 +300,7 @@ async function stopWorkspace({
   clearCollectors?: (root: string, expected?: CollectorStateMap | null) => boolean | void;
   isAlive?: (pid: number) => boolean;
   killGroup?: typeof killMetroTree;
+  signalServer?: (pid: number) => boolean;
   inspectIdentity?: typeof inspectProcessIdentity;
   waitForDeath?: ((pid: number) => Promise<boolean>) | undefined;
   waitMs?: number;
@@ -333,6 +335,7 @@ async function stopWorkspace({
   };
   let ok = true;
   let stillHolding: string | null | undefined = null;
+  let keepPort: string | null = null;
 
   const target = resolveSupervisorTarget({
     state: sup,
@@ -400,7 +403,17 @@ async function stopWorkspace({
   } else if (reservedPort === null) {
     report(chalk.dim(phaseLine('metro', 'no port reserved')));
   } else {
-    outcomes.metro = await stopMetro(reservedPort, root, { resolveMetro, report });
+    const metro = await stopMetro(reservedPort, root, {
+      server: sup,
+      supervisorGone: target.status === 'stale',
+      signalServer,
+      inspectIdentity,
+      waiter,
+      resolveMetro,
+      report,
+    });
+    outcomes.metro = metro.outcome;
+    keepPort = metro.keepPort;
     if (outcomes.metro.status === 'refused' || outcomes.metro.status === 'failed') {
       ok = false;
       stillHolding = outcomes.metro.reason;
@@ -420,6 +433,11 @@ async function stopWorkspace({
       return;
     }
     if (reservedPort !== null) {
+      if (keepPort) {
+        outcomes.port = { status: 'kept', port: reservedPort, reason: keepPort };
+        report(chalk.dim(phaseLine('port', `keeping reservation ${reservedPort} -- ${keepPort}`)));
+        return;
+      }
       if (freePort(root, reservedPort) === false) {
         ok = false;
         outcomes.port = { status: 'kept', port: reservedPort, reason: 'the port reservation changed during cleanup' };
@@ -496,11 +514,10 @@ async function stopWorkspace({
   if (stillHolding) {
     outcomes.port = { status: 'kept', port: reservedPort, reason: stillHolding };
     report(chalk.yellow(phaseLine('port', `keeping reservation ${reservedPort ?? '(none)'} -- ${stillHolding}`)));
-    const supervisorIsDown =
-      outcomes.supervisor.status === 'none' ||
-      outcomes.supervisor.status === 'already-stopped' ||
-      outcomes.supervisor.status === 'stopped';
-    if (tunnelHolding && supervisorIsDown) {
+    const serverIsDown =
+      ['none', 'already-stopped', 'stopped'].includes(outcomes.supervisor.status) &&
+      !['refused', 'failed'].includes(outcomes.metro.status);
+    if (tunnelHolding && serverIsDown) {
       clearState(root, sup);
       await clearRegistration(root, proj?.supervisor ?? null);
     }
@@ -647,22 +664,62 @@ async function stopMetro(
   port: number,
   root: string,
   {
+    server,
+    supervisorGone,
+    signalServer,
+    inspectIdentity,
+    waiter,
     resolveMetro,
     report,
   }: {
+    server: SupervisorStateRecord | null;
+    supervisorGone: boolean;
+    signalServer: (pid: number) => boolean;
+    inspectIdentity: typeof inspectProcessIdentity;
+    waiter: (pid: number, processToken?: string) => Promise<boolean>;
     resolveMetro: (port: number, root: string) => Promise<MetroResolution>;
     report: (line: string) => void;
   },
-): Promise<MetroOutcome> {
+): Promise<{ outcome: MetroOutcome; keepPort: string | null }> {
+  const serverPid = numberOrNull(server?.serverPid);
+  const serverProcessToken = server?.serverProcessToken;
+  const serverRecord = { pid: serverPid, processToken: serverProcessToken };
+  const identity =
+    supervisorGone && serverPid && typeof serverProcessToken === 'string' ? inspectIdentity(serverRecord) : null;
+  if (identity === 'unknown') {
+    const reason = `the identity of dev server pid ${serverPid} left by the supervisor could not be verified`;
+    report(chalk.yellow(phaseLine('metro', `refusing to signal it: ${reason}`)));
+    return { outcome: { status: 'refused', port, pid: serverPid, reason }, keepPort: null };
+  }
+  if (identity === 'same') {
+    report(chalk.dim(phaseLine('metro', `sending SIGTERM to dev server pid ${serverPid} left by the supervisor`)));
+    let signalled = false;
+    try {
+      signalled = signalServer(serverPid as number);
+    } catch {}
+    const exited = signalled
+      ? await waiter(serverPid as number, serverProcessToken as string)
+      : ['gone', 'different'].includes(inspectIdentity(serverRecord));
+    if (exited) {
+      report(chalk.green(phaseLine('metro', `dev server pid ${serverPid}`)));
+      return { outcome: { status: 'stopped', port, pid: serverPid }, keepPort: null };
+    }
+    const reason = `dev server pid ${serverPid} left by the supervisor did not exit`;
+    report(chalk.red(phaseLine('metro', reason)));
+    return { outcome: { status: 'failed', port, pid: serverPid, reason }, keepPort: null };
+  }
   const resolution = await resolveMetro(port, root);
   if (resolution.missing) {
     report(chalk.dim(phaseLine('metro', `nothing listening on port ${port}`)));
-    return { status: 'missing', port };
+    return { outcome: { status: 'missing', port }, keepPort: null };
   }
   const reason =
     resolution.notOurs || 'no recorded Stim supervisor owns this server; stop it with the tool that started it';
   report(chalk.yellow(phaseLine('metro', `leaving port ${port} alone: ${reason}`)));
-  return { status: 'not-managed', port, reason };
+  return {
+    outcome: { status: 'not-managed', port, reason },
+    keepPort: resolution.metro ? `a dev server from this project still answers on port ${port}` : null,
+  };
 }
 
 const OCCUPANCY_HINT = 'often a UI-test runner or device tool still attached';

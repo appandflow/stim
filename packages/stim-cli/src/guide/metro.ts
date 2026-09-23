@@ -142,6 +142,7 @@ STARTING YOUR OWN BUNDLER STILL WORKS
   and finding output is back to redirecting it to a file yourself. Prefer
   \`start\`.
 
-  \`stop\` leaves an externally started server running. Stop it with the tool
-  that started it.`,
+  \`stop\` leaves an externally started server running and keeps the port
+  reserved while it answers from this project. Stop it with the tool that
+  started it.`,
 };

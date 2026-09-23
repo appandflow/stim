@@ -177,8 +177,10 @@ Permanent local deletion lives in exactly TWO commands: \`worktree remove\`
 (the workspace you name) and \`gc --delete\` (the machine). For a local device,
 \`stop\` shuts it down and never deletes it. For a recorded EAS session,
 \`stop\` irreversibly ends the session. Externally started servers are left
-alone, even when they use the reserved port. There is no \`--delete\` flag on
-\`stop\`.
+alone, even when they use the reserved port, and the reservation is kept while
+one answers from the project. A dev server whose supervisor died is stopped
+only when its recorded process identity still matches. There is no
+\`--delete\` flag on \`stop\`.
 
 CAPACITY
   A booted iOS sim is roughly 1-2 GB of RAM, an Android emulator 2-3 GB. On a

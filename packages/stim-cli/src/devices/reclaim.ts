@@ -2,7 +2,7 @@ import { clearNamedPorts } from '../named-ports.ts';
 import { projectDeviceSlots } from './device-slots.ts';
 import { type ProjectRecord, clearDevice, getProject, removeProject } from '../workspace/config.ts';
 import { existsSync, rmSync } from 'node:fs';
-import { resolveProjectMetro, killMetroTree, pidExists } from '../metro.ts';
+import { resolveProjectMetro, killMetroTree, pidExists, signalProcessTree } from '../metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd, type ParkedDevice, type ParkRequest } from './teardown.ts';
 import { acquireAvdClaim } from './avd-claim.ts';
 import { releaseClaim } from '../ownership-claim.ts';
@@ -22,7 +22,12 @@ import { resolveEasCliBin } from '../engine/remote-cache.ts';
 import { stopTunnel, type StopTunnelResult } from '../engine/tunnel.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
-import { sameProcessRecord, waitForProcessExit, type ProcessRecord } from '../process-identity.ts';
+import {
+  inspectProcessIdentity,
+  sameProcessRecord,
+  waitForProcessExit,
+  type ProcessRecord,
+} from '../process-identity.ts';
 
 async function reapCollectors(
   root: string,
@@ -350,6 +355,14 @@ export async function reclaimProject(
     record: project?.supervisor,
     reservedPort: project?.metroPort,
   });
+  const orphanServer = {
+    pid: Number(initialState?.supervisor?.serverPid),
+    processToken: initialState?.supervisor?.serverProcessToken,
+  };
+  const orphanIdentity =
+    supervisor.status === 'stale' && typeof orphanServer.processToken === 'string'
+      ? inspectProcessIdentity(orphanServer)
+      : null;
   if (supervisor.status === 'ours') {
     if (killMetroTree(supervisor.pid, supervisor.processToken) && (await waitForProcessExit(supervisor, 10_000))) {
       killedPid = supervisor.pid!;
@@ -359,6 +372,23 @@ export async function reclaimProject(
     }
   } else if (supervisor.status === 'unverified') {
     skippedMetro = supervisor.reason ?? 'supervisor identity could not be verified';
+    supervisorHeld = true;
+  } else if (orphanIdentity === 'same') {
+    let signalled = false;
+    try {
+      signalled = signalProcessTree(orphanServer.pid, 'SIGTERM');
+    } catch {}
+    const exited = signalled
+      ? await waitForProcessExit(orphanServer, 10_000)
+      : ['gone', 'different'].includes(inspectProcessIdentity(orphanServer));
+    if (exited) {
+      killedPid = orphanServer.pid;
+    } else {
+      skippedMetro = `could not confirm dev server pid ${orphanServer.pid} left by the supervisor exited`;
+      supervisorHeld = true;
+    }
+  } else if (orphanIdentity === 'unknown') {
+    skippedMetro = `the identity of dev server pid ${orphanServer.pid} left by the supervisor could not be verified`;
     supervisorHeld = true;
   } else if (typeof project?.metroPort === 'number') {
     const resolution = await resolveProjectMetro(project.metroPort, path);
