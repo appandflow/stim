@@ -65,6 +65,10 @@ registers the project for `stim status`, and a run without `--platform` counts
 for both, so `stim guide` can tell when doctor is due again. A run in a
 directory that is not an app records nothing.
 
+Doctor also prints the running CLI version and the `stim` installation resolved
+from `PATH`, and flags a resolved installation that is older than another
+available one.
+
 `doctor` also flags when an agent harness sandboxes shell commands and Stim is
 not allowed through it, which shows up as unrelated-looking failures against
 the simulator service, the adb server, and Stim's own state directory.
@@ -79,7 +83,8 @@ settings.
 Unless `--platform ios` is selected, `--fix` also removes stale ignored,
 untracked Android `.cxx` configurations with obsolete compiler launchers,
 including those in installed native modules. Stop native builds before this
-repair. The next build recreates these files; source, custom launcher settings,
+repair: its cache-lock check cannot detect uncached, release-swap fallback, or
+direct Gradle builds. The next build recreates these files; source, custom launcher settings,
 and shared ccache entries are preserved. See `stim guide lifecycle options`.
 
 ## `ports`

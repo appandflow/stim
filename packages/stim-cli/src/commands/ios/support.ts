@@ -126,7 +126,7 @@ export function deviceModelRefusal({
       code: 'STIM_BAD_ARG',
       message: '--device-type was given an empty name.',
       remedy:
-        'Pass `--device-type <name>` with a model `xcrun simctl list devicetypes` names, e.g. "iPad Pro 13-inch (M4)".',
+        'Pass `--device-type <name>` with a model `xcrun simctl list devicetypes` names, e.g. "iPad Pro 13-inch (M5)".',
     };
   }
   if (typeof runtimeFlag === 'string' && runtimeFlag.trim() === '') {

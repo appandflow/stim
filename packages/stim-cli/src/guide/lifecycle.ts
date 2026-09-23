@@ -1021,7 +1021,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   the workspace's existing assignment.
 
     stim ios --slot phone
-    stim ios --slot tablet --device-type "iPad Pro 13-inch (M4)"
+    stim ios --slot tablet --device-type "iPad Pro 13-inch (M5)"
     stim ios --slot hardware --device <udid>
     stim android --slot second-phone
     stim logs --slot tablet --source device
@@ -1185,8 +1185,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
 
   \`ios --device-type <name>\` and \`ios --runtime <version>\` choose the
   MODEL and the iOS version of the simulator this workspace owns --
-  \`--device-type "iPad Pro 13-inch (M4)" --runtime 18.5\` is how a ticket that
-  says "happens on iPad on iOS 18.5" gets reproduced without writing a
+  \`--device-type "iPad Pro 13-inch (M5)" --runtime 26.5\` is how a ticket that
+  says "happens on iPad on iOS 26.5" gets reproduced without writing a
   \`.stim.json\`. \`android --system-image <id>\` is the Android half, taking
   the sdkmanager package id
   ("system-images;android-36;google_apis;arm64-v8a"). Each overrides its

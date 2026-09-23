@@ -39,11 +39,11 @@ line by design (see \`guide logs\`), not this single-payload contract.`,
   deviceName      its name, or null
   deviceType      the owned simulator's MODEL, as
                   \`xcrun simctl list devicetypes\` names it ("iPad Pro 13-inch
-                  (M4)"). Read from the simulator itself, so a run driven by
+                  (M5)"). Read from the simulator itself, so a run driven by
                   the ios.deviceType setting reports it too, not only a
                   \`--device-type\` run. Null on \`--device\` and on a
                   simulator Stim does not own
-  runtime         that simulator's iOS runtime version ("18.5"), from the same
+  runtime         that simulator's iOS runtime version ("26.5"), from the same
                   record. Null on the same paths as deviceType
   fingerprint     the @expo/fingerprint hash of the native inputs, AS STORED.
                   A run that had to \`expo prebuild\` or \`pod install\`
