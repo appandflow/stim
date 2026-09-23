@@ -90,7 +90,7 @@ app. Review a committed value the way you review a build script, and
 keep provider credentials in the environment or in machine settings.
 `cache.options` merges by key from the layer that selects the provider,
 higher-precedence layers that name no provider, and lower-precedence layers
-that name the same provider. A machine layer can therefore override one option
+that name the same provider resolved from the same directory. A machine layer can therefore override one option
 of a committed provider, but options written for a different provider, or added
 by a lower layer that names no provider, are ignored. Stim reads
 the module for `stim ios` and `stim android`; Metro uses it only when the

@@ -670,6 +670,20 @@ test('a lower-precedence layer adds options only to a provider it names', () => 
   });
 });
 
+test('the same provider reference resolved from another directory does not inherit its options', () => {
+  writeFileSync(
+    join(tmpHome, '.stim.json'),
+    JSON.stringify({ cache: { provider: './cache.cjs', options: { bucket: 'team' } } }),
+  );
+  setRepoSetting('/repo/.git', 'cache', { provider: './cache.cjs', options: { token: 'machine' } });
+
+  expect(resolveCacheProviderConfig({ projectPath: tmpHome, gitCommonDir: '/repo/.git', repoRoot: '/repo' })).toEqual({
+    provider: './cache.cjs',
+    options: { token: 'machine' },
+    baseDir: '/repo',
+  });
+});
+
 test('an invalid provider reference reports no provider and names the error', () => {
   writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ cache: { provider: 42, options: { a: 1 } } }));
   upsertProject('/proj', {});

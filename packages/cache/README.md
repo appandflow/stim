@@ -26,8 +26,8 @@ The reference is a package name or a path relative to the settings file that
 declares it. Commit `.stim.json` beside the app's `package.json`; monorepo apps do
 not inherit an ancestor's provider. Machine settings override committed settings. `cache.options` merges by key
 from the layer that selects the provider, higher-precedence layers that name no
-provider, and lower-precedence layers that name the same provider; options
-written for another provider are ignored. Keep secrets out of
+provider, and lower-precedence layers that name the same provider resolved from
+the same directory; options written for another provider are ignored. Keep secrets out of
 committed settings; read them from the environment or from machine settings.
 
 ## Writing a provider
