@@ -969,8 +969,8 @@ captured"  (in metro.ndjson, bare RN)
 the supervisor could not be verified"  (stop)
 "metro       dev server pid <n> left by the supervisor did not exit"  (stop)
   The supervisor is gone but the dev server it started may still run. Stim
-  signals it only while its saved identity matches, and never escalates to
-  SIGKILL. The record and the port reservation are KEPT for a retry. Check
+  signals it only while its saved identity matches, and on macOS and Linux
+  never escalates to SIGKILL. The record and the port reservation are KEPT for a retry. Check
   \`ps -p <n>\`, stop it yourself if it is still running, then re-run \`stop\`.
 
 "teardown failed: <reason>"
