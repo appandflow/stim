@@ -1,6 +1,6 @@
 import assert from 'node:assert';
-import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { execFile, spawn } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { claimRemoveCommand } from '../ownership-claim.ts';
@@ -16,6 +16,8 @@ import {
   waitForBuild,
   waitingLine,
 } from '../engine/build-lock.ts';
+import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
+import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 
 const PLATFORM = 'ios';
 const KEY = 'a3f9b1c2d3e4f5-debug-sim';
@@ -559,7 +561,115 @@ describe('a real race between real processes', { timeout: 30_000 }, () => {
     assert(takeoverRecord);
     expect(takeoverRecord.pid).toBe(process.pid);
   });
+
+  // libuv puts a non-detached Windows child in a job object that is closed, killing the child, when the parent exits.
+  test.skipIf(process.platform === 'win32')(
+    'xcodebuild outliving a SIGTERMed builder keeps its build lock, build slot and native-run claim until it exits (skipped on win32)',
+    async () => {
+      const key = 'orphan-debug-sim';
+      const workspace = join(root, 'workspace');
+      mkdirSync(workspace, { recursive: true });
+      const started = join(root, 'tool-started');
+      const release = join(root, 'tool-release');
+      const tool = script(
+        'xcodebuild.mjs',
+        [
+          'import { existsSync, writeFileSync } from "node:fs";',
+          'process.stdout.on("error", () => {});',
+          'writeFileSync(process.env.TOOL_STARTED, String(process.pid));',
+          `const deadline = Date.now() + ${CHILD_TIMEOUT_MS};`,
+          'setInterval(() => {',
+          '  if (existsSync(process.env.TOOL_RELEASE) || Date.now() > deadline) process.exit(0);',
+          '  process.stdout.write("CompileSwift normal arm64\\n");',
+          '}, 20);',
+        ].join('\n'),
+      );
+      const builder = script(
+        'builder.mjs',
+        [
+          'const { spawn } = await import("node:child_process");',
+          `const { setExecutor } = await import(${JSON.stringify(new URL('../exec.ts', import.meta.url).href)});`,
+          `const { buildIos } = await import(${JSON.stringify(new URL('../engine/xcode.ts', import.meta.url).href)});`,
+          `const { acquireBuildSlot } = await import(${JSON.stringify(new URL('../engine/build-slots.ts', import.meta.url).href)});`,
+          `const { withWorkspaceProcessLock } = await import(${JSON.stringify(new URL('../engine/workspace-process-lock.ts', import.meta.url).href)});`,
+          `const { acquireBuildLock } = await import(${JSON.stringify(LOCK_URL)});`,
+          'setExecutor({',
+          '  runFile: () => JSON.stringify({ project: { name: "App", schemes: ["App"] } }),',
+          `  spawn: (_cmd, _args, opts) => spawn(process.execPath, [${JSON.stringify(tool)}], opts),`,
+          '});',
+          `await withWorkspaceProcessLock(${JSON.stringify(workspace)}, "native-run", async () => {`,
+          `  if (!acquireBuildLock({ platform: "ios", key: ${JSON.stringify(key)}, root: ${JSON.stringify(workspace)} }).acquired) process.exit(3);`,
+          `  await acquireBuildSlot({ max: 1, root: ${JSON.stringify(workspace)} });`,
+          '  await buildIos({',
+          `    root: ${JSON.stringify(workspace)}, udid: "UDID", scheme: "App", compilationCache: [],`,
+          `    project: { kind: "project", flag: "-project", path: ${JSON.stringify(join(workspace, 'App.xcodeproj'))}, dir: ${JSON.stringify(workspace)}, name: "App" },`,
+          `    derivedDataPath: ${JSON.stringify(join(root, 'dd'))},`,
+          '    logWriter: { write() {} }, onHeartbeat() {}, onNote() {},',
+          '  });',
+          '}, { external: true, declareSpawns: true });',
+        ].join('\n'),
+      );
+
+      const child = spawn(process.execPath, [builder], {
+        env: { ...process.env, STIM_HOME: home, TOOL_STARTED: started, TOOL_RELEASE: release },
+        stdio: 'ignore',
+      });
+      const exited = new Promise((resolve) => child.once('exit', resolve));
+      let toolPid: number | null = null;
+      try {
+        for (let attempts = 0; attempts < 500 && !existsSync(started); attempts += 1) {
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        expect(existsSync(started), 'the builder never spawned xcodebuild').toBe(true);
+        toolPid = Number(readFileSync(started, 'utf-8'));
+        child.kill('SIGTERM');
+        await exited;
+        expect(() => process.kill(toolPid!, 0), 'xcodebuild died with its builder').not.toThrow();
+
+        const lock = acquireBuildLock({ platform: 'ios', key, root, logFile: null });
+        if (lock.acquired) releaseBuildLock(lock);
+        expect(lock.acquired).toBe(undefined);
+        expect(lock.held).toBeTruthy();
+        const slot = tryAcquireBuildSlot({ max: 1, root });
+        if (slot) releaseBuildSlot(slot);
+        expect(slot).toBe(null);
+        await expect(
+          withWorkspaceProcessLock(workspace, 'native-run', async () => 'ran', { external: true, waitMs: 0 }),
+        ).rejects.toMatchObject({ code: 'STIM_LOCK_TIMEOUT' });
+
+        writeFileSync(release, '');
+        for (let attempts = 0; attempts < 500 && pidExists(toolPid); attempts += 1) {
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        expect(pidExists(toolPid), 'xcodebuild never exited').toBe(false);
+
+        const after = acquireBuildLock({ platform: 'ios', key, root, logFile: null });
+        expect(after.acquired).toBe(true);
+        expect(after.tookOver?.projectRoot).toBe(workspace);
+        releaseBuildLock(after);
+        const freed = tryAcquireBuildSlot({ max: 1, root });
+        expect(freed?.acquired).toBe(true);
+        releaseBuildSlot(freed);
+        await expect(
+          withWorkspaceProcessLock(workspace, 'native-run', async () => 'ran', { external: true, waitMs: 0 }),
+        ).resolves.toBe('ran');
+      } finally {
+        writeFileSync(release, '');
+        child.kill('SIGKILL');
+        if (toolPid && pidExists(toolPid)) process.kill(toolPid, 'SIGKILL');
+      }
+    },
+  );
 });
+
+function pidExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 test('a stray file with a .lock name is not reported as a lock', () => {
   mkdirSync(buildLocksDir(), { recursive: true });

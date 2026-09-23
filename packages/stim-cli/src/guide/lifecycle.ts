@@ -938,7 +938,10 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   Nothing can deadlock on it. The lock records the holder's process IDENTITY,
   so a builder that crashes, is killed, or whose build simply fails frees it:
   the waiters see a released lock with no artifact, and one of them takes over
-  and builds. A recycled pid reads as a gone builder, and a builder busy in a
+  and builds. The xcodebuild, Gradle, pod install or expo prebuild it spawned
+  is recorded on the lock, its build slot and the workspace's native run, so a
+  builder killed while that tool keeps running (SIGTERM to the stim pid alone)
+  frees them only when the tool exits. A recycled pid reads as a gone builder, and a builder busy in a
   long synchronous tool call reads as live -- age is never a reason to take a
   lock. The one state that cannot be decided (a truncated claim, an identity
   token that does not decode) is STIM_CLAIM_REFUSED: Stim names the claim and

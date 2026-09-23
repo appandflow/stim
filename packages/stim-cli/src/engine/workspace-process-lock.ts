@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
 
 const DEFAULT_WAIT_MS = 60_000;
 const POLL_MS = 25;
@@ -11,6 +12,7 @@ export interface WorkspaceProcessLockOptions {
   ownerPurpose?: string;
   rejectOwnerPurposes?: readonly string[];
   external?: boolean;
+  declareSpawns?: boolean;
 }
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -37,6 +39,7 @@ export async function withWorkspaceProcessLock<T>(
     ownerPurpose,
     rejectOwnerPurposes = [],
     external = false,
+    declareSpawns = false,
   }: WorkspaceProcessLockOptions = {},
 ): Promise<T> {
   const path = lockPath(root, name, external);
@@ -51,9 +54,11 @@ export async function withWorkspaceProcessLock<T>(
     });
     if (attempt.pending) releaseClaim(attempt.pending);
     if (attempt.acquired) {
+      if (declareSpawns) declareSpawnsOn(attempt.acquired);
       try {
         return await fn();
       } finally {
+        stopDeclaringSpawnsOn(attempt.acquired);
         releaseClaim(attempt.acquired);
       }
     }

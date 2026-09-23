@@ -11,6 +11,8 @@ import {
   podEnv,
   readRubyVersion,
 } from '../engine/deps.ts';
+import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
+import { readClaimSet } from '../ownership-claim.ts';
 import { makeChildProcess, makeError, makeWriter } from './_factories.ts';
 
 type WriteRecord = { src: string; level: string; msg: string };
@@ -151,6 +153,29 @@ describe('podEnv (#43, #44)', () => {
 });
 
 describe('runPodInstall', () => {
+  test('declares pod install on the build slot before it starts, and clears it once pod install exits', async () => {
+    mkdirSync(join(root, 'ios'), { recursive: true });
+    process.env.STIM_HOME = join(root, 'stim-home');
+    const slot = tryAcquireBuildSlot({ max: 1, root });
+    try {
+      assert(slot?.path);
+      const slotPath = slot.path;
+      let declaredAtSpawn: boolean | undefined;
+      const result = await runPodInstall(root, collectingWriter(), {
+        spawnFn: () => {
+          declaredAtSpawn = readClaimSet(slotPath).live[0]?.childDeclared;
+          return fakePodChild({ lines: ['Pod installation complete!'] });
+        },
+      });
+      expect(result.ok).toBe(true);
+      expect(declaredAtSpawn).toBe(true);
+      expect(readClaimSet(slotPath).live[0]?.childDeclared).toBe(false);
+    } finally {
+      releaseBuildSlot(slot);
+      delete process.env.STIM_HOME;
+    }
+  });
+
   test('runs `pod install` with cwd ios/ and streams the transcript as build/debug records', async () => {
     mkdirSync(join(root, 'ios'), { recursive: true });
     const writer = collectingWriter();
