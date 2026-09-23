@@ -49,7 +49,18 @@ test.skipIf(process.platform !== 'win32')(
     mkdirSync(cwd);
     const entry = join(cwd, 'entry.cjs');
     const marker = join(dir, 'started.txt');
-    writeFileSync(entry, "require('node:fs').writeFileSync(process.env.STIM_LAUNCH_MARKER, process.cwd());\n");
+    // Windows refuses to remove a live process's working directory, and the detached entry may
+    // still be exiting when the marker appears, so it leaves `cwd` before writing the marker.
+    writeFileSync(
+      entry,
+      [
+        "const fs = require('node:fs');",
+        'const cwd = process.cwd();',
+        "process.chdir(require('node:os').tmpdir());",
+        "fs.writeFileSync(process.env.STIM_LAUNCH_MARKER + '.tmp', cwd);",
+        "fs.renameSync(process.env.STIM_LAUNCH_MARKER + '.tmp', process.env.STIM_LAUNCH_MARKER);",
+      ].join('\n'),
+    );
     const launcher = windowsLauncherArgs({ entry, args: [], cwd, logFile: join(cwd, 'supervisor.log') });
     const result = getExecutor().runFile(launcher.file, launcher.args, {
       cwd: dir,
