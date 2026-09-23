@@ -207,7 +207,9 @@ stim logs --errors --json`}
 
 The merged timeline includes Metro, client, device, and build records. Logs live
 in the global workspace directory under `$STIM_HOME/workspaces`, not in the
-project checkout.
+project checkout. The Metro, client, and device files are capped at 8 MiB each.
+Stim keeps one previous generation of each file, and queries read both. The oldest
+records are dropped first.
 
 Exit code 0 means the query succeeded, including when it prints errors. A clean
 `stim logs --errors` check requires exit code 0 and no matching errors in the

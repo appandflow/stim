@@ -3,6 +3,7 @@ import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
 import { dirname, join, parse } from 'node:path';
 import { projectMetroSharedCache } from '../workspace/settings.ts';
 import { getExecutor } from '../exec.ts';
+import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { type NdjsonRecord, type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi } from '../process-output.ts';
 import { resolvePackageJson } from '../workspace/project.ts';
@@ -302,7 +303,7 @@ export async function startExpoServer({
   }
   const bin = resolved.path;
 
-  const log = writer || createNdjsonWriter(join(logsDir, 'metro.ndjson'));
+  const log = writer || createNdjsonWriter(join(logsDir, 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
   const spawn = spawnFn || ((cmd: string, args: string[], opts: SpawnOptions) => getExecutor().spawn(cmd, args, opts));
 
   const args = ['start', '--port', String(port), ...(tunnel ? ['--tunnel'] : []), ...(resetCache ? ['--clear'] : [])];

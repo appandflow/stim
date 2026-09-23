@@ -8,6 +8,11 @@ Reads every *.ndjson file in the global workspace logs directory, merges them in
 ordered by timestamp, prints what matches, and EXITS. The file set is
 discovered, not enumerated.
 
+metro.ndjson, client.ndjson and device.ndjson are size-capped. At 8 MiB a file
+becomes <name>.1, replacing the previous .1, and a new file starts. Queries read
+both generations, so the oldest records drop off first. History and --since
+reach back only as far as those records.
+
 EXIT 0 MEANS THE QUERY SUCCEEDED, whether or not records matched. A clean
 \`stim logs --errors\` check requires exit code 0 AND no matching errors in
 captured logs. A workspace that has never produced a timeline refuses with
@@ -99,7 +104,7 @@ FLAGS
   records; use its printed --tail value to include all records before grouping.
   To read the complete timeline without the default error-record limit:
     stim logs --source all
-  This includes all sources, levels and history, not just the latest errors;
+  This includes all sources, levels and retained history, not just the latest errors;
   add --since, --level or --grep to narrow it. --source all selects sources,
   not stack depth. For untouched captured records use:
     stim logs --source all --json

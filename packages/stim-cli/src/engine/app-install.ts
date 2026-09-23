@@ -1,8 +1,7 @@
-import { readFileSync } from 'node:fs';
 import { isAppLaunchError } from '../command-output.ts';
 import { join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
-import { parseNdjsonText, type NdjsonRecord } from '../ndjson.ts';
+import { readNdjsonGenerations, type NdjsonRecord } from '../ndjson.ts';
 import { deviceHoldsApk, deviceHoldsBundle } from './installed-artifact.ts';
 import { DEV_MENU_LAUNCH_ARGS } from '../collector/ios-device.ts';
 import { iosSimulatorFailureAdvice, listUserApps, uninstallIosApp } from '../devices/ios.ts';
@@ -1185,12 +1184,7 @@ export function readCollectorRecords(logsDir: string | undefined): NdjsonRecord[
 }
 
 function readNdjson(logsDir: string | undefined, name: string): NdjsonRecord[] {
-  if (!logsDir) return [];
-  try {
-    return parseNdjsonText(readFileSync(join(logsDir, name), 'utf-8'));
-  } catch {
-    return [];
-  }
+  return logsDir ? readNdjsonGenerations(join(logsDir, name)) : [];
 }
 
 export function unverifiedLaunchLines({

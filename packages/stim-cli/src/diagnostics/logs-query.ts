@@ -1,7 +1,8 @@
-import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'fs';
+import { rotatedLogPath } from '@stim-cli/core';
+import { closeSync, openSync, readdirSync, readSync, statSync } from 'fs';
 import { join } from 'path';
 import { StringDecoder } from 'string_decoder';
-import { type NdjsonRecord, levelRank, parseNdjsonLine, parseNdjsonText } from '../ndjson.ts';
+import { type NdjsonRecord, levelRank, parseNdjsonLine, readNdjsonGenerations } from '../ndjson.ts';
 
 const SINCE_UNITS: { s: number; m: number; h: number } = { s: 1000, m: 60000, h: 3600000 };
 const SINCE_FORMS = '30s, 5m, 2h';
@@ -183,16 +184,10 @@ export function fileSizes(dir: string): Record<string, number> {
   return sizes;
 }
 
-export function readLogRecords(dir: string): NdjsonRecord[] {
+export function readLogRecords(dir: string, include: (name: string) => boolean = () => true): NdjsonRecord[] {
   const all: NdjsonRecord[] = [];
-  for (const name of logFiles(dir)) {
-    let text;
-    try {
-      text = readFileSync(join(dir, name), 'utf-8');
-    } catch {
-      continue;
-    }
-    for (const record of parseNdjsonText(text)) all.push(record);
+  for (const name of logFiles(dir).filter(include)) {
+    for (const record of readNdjsonGenerations(join(dir, name))) all.push(record);
   }
   return sortByTs(all);
 }
@@ -276,6 +271,7 @@ function launchMarkersBySlot(records: NdjsonRecord[]): Map<unknown, number> {
 export function queryLogs({
   slot,
   dir,
+  records,
   sources,
   minLevel,
   since,
@@ -287,6 +283,7 @@ export function queryLogs({
 }: {
   slot?: string;
   dir?: string;
+  records?: NdjsonRecord[];
   sources?: string[];
   minLevel?: string;
   since?: string;
@@ -296,7 +293,7 @@ export function queryLogs({
   errorContext?: boolean;
   now?: number;
 } = {}): NdjsonRecord[] {
-  const all = readLogRecords(dir as string).filter(
+  const all = (records ?? readLogRecords(dir as string)).filter(
     (record) => slot === undefined || (record.slot ?? 'default') === slot,
   );
   if (all.length === 0) return [];
@@ -375,31 +372,36 @@ export function followLogs({
     decoders.set(name, new StringDecoder('utf8'));
   }
 
+  function emit(records: NdjsonRecord[]): void {
+    for (const record of records) {
+      if (recordMatches(record, criteria)) onRecord(record);
+    }
+  }
+
+  function drainRotated(name: string, entry: TailState): void {
+    const path = rotatedLogPath(join(dir, name));
+    let size;
+    try {
+      size = statSync(path).size;
+    } catch {
+      return;
+    }
+    const decoder = decoders.get(name) ?? new StringDecoder('utf8');
+    emit(advanceTail(entry, readChunk(path, decoder, entry.offset, size) + decoder.end(), size).records);
+  }
+
   function pollFile(name: string): void {
     const path = join(dir, name);
     const size = statSync(path).size;
     const entry = state.get(name);
+    if (entry && size < entry.offset) drainRotated(name, entry);
     const { start, prev } = tailRead(entry, size);
     if (prev !== entry) decoders.set(name, new StringDecoder('utf8'));
     if (!decoders.has(name)) decoders.set(name, new StringDecoder('utf8'));
 
-    let chunk = '';
-    if (size > start) {
-      const fd = openSync(path, 'r');
-      try {
-        const buf = Buffer.allocUnsafe(size - start);
-        const read = readSync(fd, buf, 0, size - start, start);
-        chunk = decoders.get(name)!.write(buf.subarray(0, read));
-      } finally {
-        closeSync(fd);
-      }
-    }
-
-    const next = advanceTail(prev, chunk, size);
+    const next = advanceTail(prev, readChunk(path, decoders.get(name)!, start, size), size);
     state.set(name, next.state);
-    for (const record of next.records) {
-      if (recordMatches(record, criteria)) onRecord(record);
-    }
+    emit(next.records);
   }
 
   function poll() {
@@ -416,11 +418,23 @@ export function followLogs({
   };
 }
 
+function readChunk(path: string, decoder: StringDecoder, start: number, size: number): string {
+  if (size <= start) return '';
+  const fd = openSync(path, 'r');
+  try {
+    const buf = Buffer.allocUnsafe(size - start);
+    const read = readSync(fd, buf, 0, size - start, start);
+    return decoder.write(buf.subarray(0, read));
+  } finally {
+    closeSync(fd);
+  }
+}
+
 function tsOf(record: NdjsonRecord | null | undefined): number | null {
   return typeof record?.ts === 'number' && Number.isFinite(record.ts) ? record.ts : null;
 }
 
-function sortByTs(records: NdjsonRecord[]): NdjsonRecord[] {
+export function sortByTs(records: NdjsonRecord[]): NdjsonRecord[] {
   return records.toSorted((a, b) => {
     const ta = tsOf(a);
     const tb = tsOf(b);

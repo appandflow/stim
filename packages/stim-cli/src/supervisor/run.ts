@@ -2,6 +2,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { clearSupervisor, setSupervisor } from '../workspace/config.ts';
+import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { captureProcessToken } from '../process-identity.ts';
@@ -121,7 +122,7 @@ export async function runSupervisor({
 } | null> {
   root = realpathSync(root);
   const logsDir = workspaceLogsDir(root);
-  const writer = createNdjsonWriter(join(logsDir, 'metro.ndjson'));
+  const writer = createNdjsonWriter(join(logsDir, 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
   const mode = isExpo(root) ? MODE_EXPO : MODE_BARE;
   const startedAt = new Date(now()).toISOString();
   const processToken = captureProcessToken(process.pid);

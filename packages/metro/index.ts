@@ -12,9 +12,11 @@ import {
   type WarnOnce,
 } from '@stim-cli/cache';
 import {
+  LOG_ROTATE_BYTES,
   metroCacheRoot,
   METRO_NAMED_CACHE_LAYOUT,
   registerCache,
+  rotateLog,
   tagSharedStore,
   workspaceLogDir,
 } from '@stim-cli/core';
@@ -234,6 +236,7 @@ export function ndjsonReporter({ dir }: { dir?: string } = {}): NdjsonReporter {
   let drops = 0;
   const builds = new Map<string, string | null>();
   let failedBuild: { buildID: string; platform: string | null } | null = null;
+  const uncheckedBytes = new Map<string, number>();
 
   function write(file: string, record: LogRecord): void {
     try {
@@ -241,7 +244,17 @@ export function ndjsonReporter({ dir }: { dir?: string } = {}): NdjsonReporter {
         fs.mkdirSync(logDir, { recursive: true });
         ensured = true;
       }
-      fs.appendFileSync(path.join(logDir, file), JSON.stringify(record) + '\n');
+      const target = path.join(logDir, file);
+      const line = JSON.stringify(record) + '\n';
+      const unchecked = uncheckedBytes.get(file);
+      if (unchecked === undefined || unchecked >= LOG_ROTATE_BYTES / 8) {
+        uncheckedBytes.set(file, 0);
+        try {
+          rotateLog(target, LOG_ROTATE_BYTES);
+        } catch {}
+      }
+      fs.appendFileSync(target, line);
+      uncheckedBytes.set(file, (uncheckedBytes.get(file) ?? 0) + Buffer.byteLength(line));
     } catch {
       drops += 1;
       ensured = false;

@@ -276,3 +276,14 @@ test('records append rather than replace', () => {
     expect(lines.map((r) => r.msg)).toEqual(['line 0', 'line 1', 'line 2', 'line 3', 'line 4']);
   });
 });
+
+test('an oversized log rotates to one previous generation before the next record', () => {
+  withDir((dir) => {
+    const oversized = `${JSON.stringify({ ts: 1, src: 'client', level: 'info', msg: 'x'.repeat(9 * 1024 * 1024) })}\n`;
+    fs.writeFileSync(path.join(dir, 'client.ndjson'), oversized);
+    const reporter = ndjsonReporter({ dir });
+    reporter.update({ type: 'client_log', level: 'log', data: ['fresh'] });
+    expect(records(dir, 'client.ndjson').map((r) => r.msg)).toEqual(['fresh']);
+    expect(fs.readFileSync(path.join(dir, 'client.ndjson.1'), 'utf-8')).toBe(oversized);
+  });
+});

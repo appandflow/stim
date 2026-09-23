@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Executor } from '../exec.ts';
+import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { createLineReader } from '../process-output.ts';
@@ -244,7 +245,7 @@ export async function runCollector({
 }: RunCollectorOptions): Promise<RunCollectorHandle | null> {
   const key = deviceSlotKey(platform, slot);
   const attribution = slot === 'default' ? {} : { slot, deviceId: udid ?? serial };
-  const writer = createNdjsonWriter(join(workspaceLogsDir(root), 'device.ndjson'));
+  const writer = createNdjsonWriter(join(workspaceLogsDir(root), 'device.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
   const startedAt = new Date(now()).toISOString();
   const processToken = captureProcessToken(process.pid);
   if (!processToken) {

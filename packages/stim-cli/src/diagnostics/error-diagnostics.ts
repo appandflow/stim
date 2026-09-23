@@ -135,9 +135,9 @@ export async function errorDiagnostics(
     logsDir,
     port,
     allowRequest = false,
-  }: { root: string; logsDir: string; port: number | null; allowRequest?: boolean },
+    timeline = readLogRecords(logsDir),
+  }: { root: string; logsDir: string; port: number | null; allowRequest?: boolean; timeline?: NdjsonRecord[] },
 ): Promise<NdjsonRecord[]> {
-  const timeline = readLogRecords(logsDir);
   const records = attachDeviceErrorContext(
     timeline,
     attachExpoErrorContext(

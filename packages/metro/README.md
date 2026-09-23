@@ -49,6 +49,9 @@ const { ndjsonReporter } = require('@stim-cli/metro');
 config.reporter = ndjsonReporter({ dir: '/absolute/log/directory' });
 ```
 
+It writes `metro.ndjson` and `client.ndjson`. When a file reaches 8 MiB it is
+renamed to `<name>.1`, replacing the previous one, and a new file starts.
+
 The reporter must be attached to the config passed directly to
 `Metro.runServer`. React Native and Expo CLIs can replace a reporter declared in
 `metro.config.js`.

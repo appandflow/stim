@@ -39,6 +39,32 @@ export function workspaceLogDir(projectRoot: string): string {
   return path.join(workspaceStateDir(projectRoot), 'logs');
 }
 
+export const LOG_ROTATE_BYTES: number = 8 * 1024 * 1024;
+
+export function rotatedLogPath(file: string): string {
+  return `${file}.1`;
+}
+
+/** Moves `file` over its previous generation once it reaches `maxBytes`; readers read both generations. */
+export function rotateLog(file: string, maxBytes: number): void {
+  if (logSize(file) < maxBytes) return;
+  withDirLock(
+    `${file}.lock`,
+    () => {
+      if (logSize(file) >= maxBytes) fs.renameSync(file, rotatedLogPath(file));
+    },
+    { waitMs: 100, pollMs: 10 },
+  );
+}
+
+function logSize(file: string): number {
+  try {
+    return fs.statSync(file).size;
+  } catch {
+    return 0;
+  }
+}
+
 export function cachePathSetting(key: 'buildCache' | 'metroCache'): string | null {
   try {
     const parsed = JSON.parse(fs.readFileSync(path.join(configDir(), 'config.json'), 'utf-8')) as {

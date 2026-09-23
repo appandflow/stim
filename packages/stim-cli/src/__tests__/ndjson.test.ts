@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -268,5 +268,33 @@ describe('createNdjsonWriter', () => {
     expect(r.marker).toBe(true);
     expect(r.raw).toBe(true);
     expect(r.stack).toEqual([{ file: 'App.js', line: 3, column: 7, fn: 'render' }]);
+  });
+
+  test('a size-capped writer keeps the current and one previous generation, contiguous', () => {
+    const file = join(dir, 'metro.ndjson');
+    const w = createNdjsonWriter(file, { maxBytes: 2000 });
+    for (let i = 0; i < 400; i++) w.write({ ts: i, src: 'metro', level: 'info', msg: `record ${i}` });
+    w.close();
+    expect(statSync(file).size).toBeLessThan(2600);
+    expect(statSync(`${file}.1`).size).toBeLessThan(2600);
+    const kept = [...readFileSync(`${file}.1`, 'utf-8').split('\n'), ...readFileSync(file, 'utf-8').split('\n')]
+      .map((line) => parseNdjsonLine(line)?.ts)
+      .filter((ts) => ts !== undefined);
+    expect(kept.at(-1)).toBe(399);
+    expect(kept).toEqual(Array.from({ length: kept.length }, (_, i) => 400 - kept.length + i));
+  });
+
+  test('a writer sharing a capped file follows a rotation made by another writer', () => {
+    const file = join(dir, 'device.ndjson');
+    let clock = 0;
+    const ios = createNdjsonWriter(file, { maxBytes: 2000, now: () => clock });
+    const android = createNdjsonWriter(file, { maxBytes: 2000, now: () => clock });
+    android.write({ ts: 0, src: 'device', level: 'info', msg: 'android before' });
+    for (let i = 0; i < 400; i++) ios.write({ ts: i, src: 'device', level: 'info', msg: `ios ${i}` });
+    clock += 1000;
+    android.write({ ts: 400, src: 'device', level: 'info', msg: 'android after' });
+    ios.close();
+    android.close();
+    expect(parseNdjsonText(readFileSync(file, 'utf-8')).map((r) => r.msg)).toContain('android after');
   });
 });
