@@ -7,6 +7,23 @@ description: 'Install Stim, add the agent skill, and run the first isolated app'
 import StimTabs, { StimInstallTabs } from '@site/src/components/StimTabs';
 import PromptBox, { PromptGrid } from '@site/src/components/PromptBox';
 
+Check the [requirements](./requirements.md) first: Node 22.12.0 or later, Xcode
+for local iOS builds, and the Android SDK for local Android builds.
+
+## Terms
+
+A workspace is one app in one checkout, either the source checkout or a git
+worktree. Each workspace gets its own Metro port and an owned device: a
+simulator or emulator that Stim created, the only kind it boots or deletes.
+`worktree warm` copies ignored state such as dependencies and native build
+output from the source checkout into a new worktree. A lease is a time-limited
+claim on a physical device, so two workspaces do not install on the same phone
+at once. A slot, selected with `--slot <name>`, runs another device in the same
+workspace. `stop` shuts down the workspace's Metro server and devices and
+releases its leases; `worktree remove` reclaims everything the workspace owns.
+`gc` reports resources left behind by workspaces that are gone, and
+`gc --delete` removes them.
+
 ## Install Stim
 
 Install the CLI globally or run it with npx. The package and command are both
@@ -169,6 +186,28 @@ success. None of these checks proves that the screen rendered correctly.
 Use a device automation tool only when the task requires visual interaction or
 a screenshot. Stim owns the build and launch. It does not require a separate
 device tool for that workflow.
+
+A cached `stim ios` run ends with a summary like this on stdout, after progress
+lines on stderr:
+
+```text
+OK: com.appandflow.trailhead on stim-trailhead (iPhone 17 26.5) (4F2A..), Metro port 8083 (from cache, 58.8s)
+  device      stim-trailhead (iPhone 17 26.5) (4F2A91C6-7D3B-4E58-9A1F-2C6B8E0D5A73)
+  app         com.appandflow.trailhead
+  metro       running on port 8083
+  cache       from cache
+  compilation cache not run; artifact cache supplied the app
+  logs        /Users/you/.stim/workspaces/trailhead--3f9c2a1b7d3b4e58/logs
+```
+
+## When it fails
+
+- Run `stim doctor` to check the machine and project setup.
+- Run `stim logs --errors` for Metro, app, and build errors since the last
+  launch or bundle.
+- A refusal prints a code such as `STIM_NO_METRO`. Run
+  `stim guide errors <CODE>` for its cause and remedy, or look it up on the
+  [troubleshooting page](./troubleshooting.md).
 
 ## Next steps
 

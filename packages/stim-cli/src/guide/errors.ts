@@ -5,11 +5,12 @@ const errors: GuideTopic = {
   sectionHint: '<CODE>',
   preamble: () => `WHAT STIM REFUSES, AND WHY
 
-Every refusal from \`ios\` / \`android\` carries a stable CODE. Branch on the
-code, never on the message.`,
+Every refusal listed here carries a stable CODE, whichever command prints it.
+Branch on the code, never on the message.`,
   sections: {
     STIM_EAS_BUILD_MISSING: {
       summary: 'no completed EAS development build matches; build only with session authorization',
+      separator: '--- EAS BUILD CODES (`ios --eas-profile` / `android --eas-profile`) ---',
       body: () => `STIM_EAS_BUILD_MISSING
   No compatible build matches the selected EAS project, profile, platform and
   native fingerprint. No device was acquired and no local or cloud build was

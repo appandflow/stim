@@ -20,9 +20,8 @@ Stim supports React Native Community CLI and Expo projects. Builds run on the
 local machine. Apps can run on owned simulators and emulators, connected
 physical devices, or configured remote devices.
 
-> Stim is a release candidate. Commands and on-disk state can change before the
-> stable release. [Report an issue](https://github.com/appandflow/stim/issues)
-> when a workflow does not behave as documented.
+[Report an issue](https://github.com/appandflow/stim/issues) when a workflow
+does not behave as documented.
 
 ## Fast builds across worktrees
 
@@ -65,7 +64,8 @@ is leased for the run and never added to the owned-device registry.
 `stim stop` releases a live environment without deleting its local device.
 `stim worktree remove` reclaims the worktree environment. `stim gc --delete`
 removes orphaned resources. This ownership model makes cleanup safe after an
-agent exits early.
+agent exits early. [Getting started](./getting-started.md#terms) defines these
+terms.
 
 ## Why run locally
 

@@ -33,6 +33,7 @@ These are the defaults; you only need to include values you want to change:
     "remoteBuildCache": true,
     "releaseBundleSwap": true,
     "metroSharedCache": true,
+    "metroWarmup": true,
     "ios": {
       "compilationCache": true,
       "prefixMapping": true
@@ -46,6 +47,9 @@ These are the defaults; you only need to include values you want to change:
   }
 }
 ```
+
+`ios.swiftCompilationCache` is unset by default, so it is not shown; see
+[iOS options](#ios-options).
 
 An explicit `false` overrides a lower layer's `true`. Removing a key inherits the
 next layer. Changes apply on the next build or Metro restart. These settings
@@ -62,6 +66,7 @@ All keys below are inside `optimizations`.
 | `remoteBuildCache`  | `true`  | Allows configured artifact providers. Stim ships no network provider or hosted cache. Set to `false` to skip remote lookup, upload, provider discovery, loading, and authentication while keeping the local artifact cache.                      |
 | `releaseBundleSwap` | `true`  | Allows supported Release artifact hits to reuse native code with the current JavaScript and assets inserted into a copy. If swapping fails, Stim builds fresh. Set to `false` to build Release from source; fresh artifacts can still be stored. |
 | `metroSharedCache`  | `true`  | Adds Stim's shared Metro transform store for Expo SDK 54+ and bare React Native. Set to `false` to stop adding it; stores configured by the project remain.                                                                                      |
+| `metroWarmup`       | `true`  | Prefetches the development bundle during `ios` and `android` while native work runs, using [`metro.warmupUrl`](./settings.md#committed-settings) when set. Set to `false` to skip the prefetch; Metro verification and native builds still run.  |
 
 Remote artifact reuse is available through [optional cache providers](./build-caches.md#optional-artifact-providers).
 It does not synchronize compiler caches between machines.

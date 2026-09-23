@@ -123,6 +123,8 @@ the process and captures its output. A healthy existing server for the same
 project is reused.
 
 - `--wait <seconds>` changes the startup timeout. The default is 60 seconds.
+  It waits for the dev server; `--wait` on `ios`, `android`, and `device lock`
+  instead bounds the wait for a device another workspace holds.
 - `--remote` prepares Metro for a remote device.
 - `--reset-cache` restarts only this app's verified owned Metro, preserving its
   port and devices, with Metro's own reset (`resetCache` on a bare server,
@@ -481,8 +483,8 @@ stale locks, and shared cache sizes. It does not change anything without
 stim guide [topic] [section]
 ```
 
-Prints version-matched reference text. Topics are agent, facts, metro, logs,
-errors, lifecycle, cleanup, and settings. Those topics also cover caches,
+Prints version-matched reference text. Topics are agent, facts, metro, ports,
+logs, errors, lifecycle, cleanup, and settings. Those topics also cover caches,
 remote devices, and release builds. The errors, lifecycle, facts, and cleanup
 topics have sections: called bare they print a section index, and a named
 section prints on its own. `stim guide errors` lists every refusal code and

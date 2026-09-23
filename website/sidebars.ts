@@ -3,6 +3,7 @@ import type { SidebarsConfig } from '@docusaurus/plugin-content-docs';
 const sidebars: SidebarsConfig = {
   docs: [
     'why',
+    'requirements',
     'getting-started',
     {
       type: 'category',
@@ -20,7 +21,6 @@ const sidebars: SidebarsConfig = {
         'troubleshooting',
         'build-optimizations',
         'android-cas',
-        'requirements',
         'agent-skills',
         'cache-packages',
       ],
