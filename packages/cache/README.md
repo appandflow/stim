@@ -24,8 +24,10 @@ If Stim is not installed globally, replace `stim` with `npx stim`.
 
 The reference is a package name or a path relative to the settings file that
 declares it. Commit `.stim.json` beside the app's `package.json`; monorepo apps do
-not inherit an ancestor's provider. Machine settings override committed settings, and the
-existing nested merge rules apply to `cache.options`. Keep secrets out of
+not inherit an ancestor's provider. Machine settings override committed settings. `cache.options` merges by key
+from the layer that selects the provider, higher-precedence layers that name no
+provider, and lower-precedence layers that name the same provider; options
+written for another provider are ignored. Keep secrets out of
 committed settings; read them from the environment or from machine settings.
 
 ## Writing a provider

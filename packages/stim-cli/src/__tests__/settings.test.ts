@@ -638,6 +638,38 @@ test('provider options merge across layers with earlier layers winning', () => {
   });
 });
 
+test('options written for a different provider do not reach the selected provider', () => {
+  writeFileSync(
+    join(tmpHome, '.stim.json'),
+    JSON.stringify({ cache: { provider: './committed.cjs', options: { endpoint: 'https://team', token: 'team' } } }),
+  );
+  setRepoSetting('/repo/.git', 'cache', { provider: './repo.cjs', options: { token: 'machine' } });
+  upsertProject(tmpHome, {});
+  setProjectSetting(tmpHome, 'cache', { options: { region: 'eu' } });
+
+  expect(resolveCacheProviderConfig({ projectPath: tmpHome, gitCommonDir: '/repo/.git', repoRoot: '/repo' })).toEqual({
+    provider: './repo.cjs',
+    options: { region: 'eu', token: 'machine' },
+    baseDir: '/repo',
+  });
+});
+
+test('a lower-precedence layer adds options only to a provider it names', () => {
+  writeFileSync(
+    join(tmpHome, '.stim.json'),
+    JSON.stringify({ cache: { provider: './cache.cjs', options: { bucket: 'team', token: 'team' } } }),
+  );
+  setRepoSetting('/repo/.git', 'cache', { options: { endpoint: 'https://repo' } });
+  upsertProject(tmpHome, {});
+  setProjectSetting(tmpHome, 'cache', { provider: './cache.cjs', options: { token: 'machine' } });
+
+  expect(resolveCacheProviderConfig({ projectPath: tmpHome, gitCommonDir: '/repo/.git', repoRoot: '/repo' })).toEqual({
+    provider: './cache.cjs',
+    options: { token: 'machine', bucket: 'team' },
+    baseDir: tmpHome,
+  });
+});
+
 test('an invalid provider reference reports no provider and names the error', () => {
   writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ cache: { provider: 42, options: { a: 1 } } }));
   upsertProject('/proj', {});

@@ -238,9 +238,13 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         store Stim injects for you (bare in-process, or the
                         Expo config override) stays local-only.
   cache.options         free-form object handed to that module's factory. It
-                        merges key by key across settings layers. Keep secrets
-                        out of the committed file: read them from the
-                        environment or the machine layers.
+                        merges key by key from the layer that names the
+                        provider, higher layers that name none, and lower
+                        layers that name the same provider. Options in a
+                        layer naming another provider, or in a lower layer
+                        naming none, are ignored. Keep secrets out of the
+                        committed file: read them from the environment or
+                        the machine layers.
   caches                extra shared-cache paths for \`gc\`. A JSON array;
                         every path is treated as a flat store that
                         \`gc --delete --older-than N\` trims and
