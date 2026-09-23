@@ -1162,6 +1162,8 @@ export async function ensureBooted({
   out = () => {},
   logFile = null,
   alive = pidExists,
+  projectPath,
+  slot,
 }: Partial<
   {
     platform: string;
@@ -1170,12 +1172,22 @@ export async function ensureBooted({
     timeoutMs: number;
     pollMs: number;
     out: Notify;
+    projectPath: string;
+    slot: string;
   } & EmulatorLogging
 > = {}): Promise<BootResult> {
   if (platform === 'ios')
     return ensureIosBooted({ device, simulatorApp, timeoutMs: timeoutMs ?? IOS_BOOT_TIMEOUT_MS, pollMs, out });
   if (platform === 'android')
-    return ensureAndroidBooted({ device, timeoutMs: timeoutMs ?? ANDROID_BOOT_TIMEOUT_MS, out, logFile, alive });
+    return ensureAndroidBooted({
+      device,
+      projectPath,
+      slot,
+      timeoutMs: timeoutMs ?? ANDROID_BOOT_TIMEOUT_MS,
+      out,
+      logFile,
+      alive,
+    });
   return { failed: true, reason: `Unknown platform "${platform}".` };
 }
 
@@ -1266,16 +1278,20 @@ async function ensureIosBooted({
 
 async function ensureAndroidBooted({
   device,
+  projectPath,
+  slot,
   timeoutMs,
   out,
   logFile = null,
   alive = pidExists,
 }: {
   device?: OwnedDeviceRecord | null;
+  projectPath?: string;
+  slot?: string;
   timeoutMs: number;
   out: Notify;
 } & EmulatorLogging): Promise<BootResult> {
-  if (!device?.avdName) {
+  if (!device?.avdName || !projectPath) {
     return { failed: true, reason: 'No owned Android emulator is recorded for this project.' };
   }
 
@@ -1303,25 +1319,30 @@ async function ensureAndroidBooted({
     return waitForAndroidBoot({ serial: freshSerial, timeoutMs, out });
   }
 
-  const serial = `emulator-${pickConsolePort(device.consolePort)}`;
+  const claim = claimAndroidConsolePort({
+    projectPath,
+    slot,
+    avdName: device.avdName,
+    deviceName: device.deviceName,
+    livePorts: liveAndroidConsolePorts(),
+    metadata: device,
+  });
+  const serial = `emulator-${claim.consolePort}`;
   reportAndroidMemoryPressure(out);
   out(chalk.dim(phaseLine('device', `booting ${device.avdName} as ${serial}`)));
   let pid: number | null = null;
   try {
-    pid = bootAndroidEmulator(device.avdName, Number(serial.replace(/^emulator-/, '')), { logFile });
+    pid = bootAndroidEmulator(device.avdName, claim.consolePort, { logFile });
   } catch (e) {
+    releaseAndroidConsolePort(projectPath, claim.consolePort, slot);
     return {
       failed: true,
       reason: `Could not start emulator for AVD ${device.avdName}: ${(e as Error)?.message || e}`,
     };
   }
-  return waitForAndroidBoot({ serial, timeoutMs, pid, alive, out });
-}
-
-function pickConsolePort(recorded: number | undefined) {
-  const live = liveAndroidConsolePorts();
-  if (recorded && !live.includes(Number(recorded))) return Number(recorded);
-  return nextConsolePort([...allConsolePortsAndSerials().androidConsolePorts, ...live]);
+  const result = await waitForAndroidBoot({ serial, timeoutMs, pid, alive, out });
+  if (result.failed) releaseAndroidConsolePort(projectPath, claim.consolePort, slot);
+  return result;
 }
 
 function sleep(ms: number) {

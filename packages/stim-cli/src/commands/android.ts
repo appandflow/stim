@@ -516,6 +516,8 @@ function androidSlotOptions(options: RunAndroidOptions) {
   return {
     ...base,
     ensureDevice: (args: Parameters<typeof base.ensureDevice>[0]) => base.ensureDevice({ ...args, slot }),
+    ensureDeviceBooted: (args: Parameters<typeof base.ensureDeviceBooted>[0]) =>
+      base.ensureDeviceBooted({ ...args, slot }),
     checkCapacity: (args: Parameters<typeof base.checkCapacity>[0]) => base.checkCapacity({ ...args, slot }),
     selectPool: (args: Parameters<typeof base.selectPool>[0]) => base.selectPool({ ...args, slot }),
     acquireLease: (args: Parameters<typeof base.acquireLease>[0]) => base.acquireLease({ ...args, slot }),
@@ -925,7 +927,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
     const bootTimer = stepTimer(now);
     const boot = (): Promise<AndroidBootLike> =>
-      Promise.resolve(ensureDeviceBooted({ platform: PLATFORM, device, out, logFile: emuLog })).catch((e) => ({
+      Promise.resolve(
+        ensureDeviceBooted({ platform: PLATFORM, device, projectPath: root, out, logFile: emuLog }),
+      ).catch((e) => ({
         failed: true as const,
         reason: String((e as Error)?.message || e),
         serial: undefined,

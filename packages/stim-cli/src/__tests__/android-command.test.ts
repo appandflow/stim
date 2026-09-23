@@ -5885,6 +5885,7 @@ test('a named Android run scopes allocation, launch verification and collector s
   const result = await h.run();
   expect(result.ok).toBe(true);
   expect(h.calls.ensureDevice[0]).toMatchObject({ slot: 'phone' });
+  expect(h.calls.booted[0]).toMatchObject({ projectPath: root, slot: 'phone' });
   expect(h.calls.verify[0]).toMatchObject({ slot: 'phone' });
   expect(h.calls.spawn.some((call) => call.args.includes('--slot') && call.args.includes('phone'))).toBe(true);
   const facts = JSON.parse(h.stdout.at(-1)!);
