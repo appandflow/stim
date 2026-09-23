@@ -64,7 +64,8 @@ is leased for the run and never added to the owned-device registry.
 `stim stop` releases a live environment without deleting its local device.
 `stim worktree remove` reclaims the worktree environment. `stim gc --delete`
 removes orphaned resources. This ownership model makes cleanup safe after an
-agent exits early.
+agent exits early. [Getting started](./getting-started.md#terms) defines these
+terms.
 
 ## Why run locally
 

@@ -197,14 +197,14 @@ OK: com.appandflow.trailhead on stim-trailhead (iPhone 17 26.5) (4F2A..), Metro 
   metro       running on port 8083
   cache       from cache
   compilation cache not run; artifact cache supplied the app
-  logs        /Users/you/.stim/workspaces/trailhead--3f9c2a1b/logs
+  logs        /Users/you/.stim/workspaces/trailhead--3f9c2a1b7d3b4e58/logs
 ```
 
 ## When it fails
 
 - Run `stim doctor` to check the machine and project setup.
 - Run `stim logs --errors` for Metro, app, and build errors since the last
-  launch.
+  launch or bundle.
 - A refusal prints a code such as `STIM_NO_METRO`. Run
   `stim guide errors <CODE>` for its cause and remedy, or look it up on the
   [troubleshooting page](./troubleshooting.md).
