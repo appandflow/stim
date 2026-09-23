@@ -41,7 +41,8 @@ shared with Expo runs.
 The provider works without the `stim` npm package. When Stim is available,
 the provider registers its cache so `stim gc` can report and trim it.
 
-Set `STIM_BUILD_CACHE` to override the cache location.
+Set `STIM_BUILD_CACHE` to an absolute path to override the cache location. A
+relative value is ignored with a warning.
 
 See the [cache package documentation](https://stim.appandflow.com/docs/cache-packages)
 for current setup and cleanup guidance.

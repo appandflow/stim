@@ -17,7 +17,8 @@ const { sharedCacheStores } = require('@stim-cli/metro');
 config.cacheStores = sharedCacheStores('my-app');
 ```
 
-Set `STIM_METRO_CACHE` to override the shared cache location.
+Set `STIM_METRO_CACHE` to an absolute path to override the shared cache location.
+A relative value is ignored with a warning.
 
 ## Optional second tier
 

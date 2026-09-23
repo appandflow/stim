@@ -299,6 +299,43 @@ test('both packages resolve the same cache roots the CLI does', async () => {
   }
 });
 
+test('both packages ignore relative overrides, so every cwd resolves the same roots', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'stim-pkg-relhome-'));
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  const cwd = process.cwd();
+  const emitWarning = vi.spyOn(process, 'emitWarning').mockImplementation(() => {});
+  process.env.HOME = fakeHome;
+  process.env.USERPROFILE = fakeHome;
+  process.env.STIM_HOME = 'rel-home';
+  process.env.STIM_BUILD_CACHE = 'rel-build';
+  process.env.STIM_METRO_CACHE = 'rel-metro';
+  try {
+    const provider = await import('@stim-cli/expo-build-cache');
+    const metro = await import('@stim-cli/metro');
+    const roots = ['a', 'b'].map((name) => {
+      const dir = join(fakeHome, name);
+      mkdirSync(dir);
+      process.chdir(dir);
+      return [provider.cacheRoot(), metro.cacheRoot('demo')];
+    });
+    expect(roots[0]).toEqual([join(fakeHome, '.stim', 'build-cache'), join(fakeHome, '.stim', 'metro-cache', 'demo')]);
+    expect(roots[1]).toEqual(roots[0]);
+    const warned = emitWarning.mock.calls.map((call) => String(call[0])).join('\n');
+    for (const name of ['STIM_HOME', 'STIM_BUILD_CACHE', 'STIM_METRO_CACHE']) expect(warned).toContain(name);
+  } finally {
+    process.chdir(cwd);
+    emitWarning.mockRestore();
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(fakeHome, { recursive: true, force: true });
+    delete process.env.STIM_HOME;
+    delete process.env.STIM_BUILD_CACHE;
+    delete process.env.STIM_METRO_CACHE;
+  }
+});
+
 test('the standalone cache provider never serves an artifact from another compiler profile', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pkg-profile-'));
   process.env.STIM_HOME = home;

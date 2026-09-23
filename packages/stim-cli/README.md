@@ -163,7 +163,7 @@ stim <command> --help
 stim guide
 ```
 
-Runtime state defaults to `~/.stim`. Set `STIM_HOME` to move it. Stim manages
+Runtime state defaults to `~/.stim`. Set `STIM_HOME` to an absolute path to move it. Stim manages
 owned simulators and emulators, leases connected physical devices, and supports
 configured remote devices.
 

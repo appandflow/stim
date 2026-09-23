@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import { Command } from 'commander';
+import { refuseRelativeStimPaths } from '../src/workspace/config.ts';
 
 type CommandModule = { default: (program: Command, version: string) => void };
 
@@ -27,6 +28,7 @@ const program = new Command();
 program.name('stim').description('Isolated React Native dev environments per project/worktree').version(pkg.version);
 
 try {
+  refuseRelativeStimPaths();
   const first = process.argv[2];
   const loadCommand = commands.get((first === 'help' ? process.argv[3] : first) ?? '');
   if (loadCommand) {

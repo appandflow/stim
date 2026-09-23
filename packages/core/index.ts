@@ -8,8 +8,21 @@ export { withDirLock, type DirLockOptions } from './dir-lock.ts';
 export { quotedPath } from './quoted-path.ts';
 export { artifactIn, resolveArtifact, storeArtifact, type StoreArtifactOptions } from './artifact-store.ts';
 
+const warnedRelative = new Set<string>();
+
+function absoluteEnvPath(name: 'STIM_HOME' | 'STIM_BUILD_CACHE' | 'STIM_METRO_CACHE'): string | null {
+  const value = process.env[name];
+  if (!value) return null;
+  if (path.isAbsolute(value)) return value;
+  if (!warnedRelative.has(name)) {
+    warnedRelative.add(name);
+    process.emitWarning(`${name}=${value} is not an absolute path and is ignored.`, { code: 'STIM_RELATIVE_PATH' });
+  }
+  return null;
+}
+
 export function configDir(): string {
-  return process.env.STIM_HOME || path.join(os.homedir(), '.stim');
+  return absoluteEnvPath('STIM_HOME') || path.join(os.homedir(), '.stim');
 }
 
 export function workspaceSlug(projectRoot: string): string {
@@ -86,11 +99,12 @@ export function cacheNameSegment(name: string | null | undefined): string {
 }
 
 export function buildCacheRoot(): string {
-  return process.env.STIM_BUILD_CACHE || cachePathSetting('buildCache') || path.join(configDir(), 'build-cache');
+  return absoluteEnvPath('STIM_BUILD_CACHE') || cachePathSetting('buildCache') || path.join(configDir(), 'build-cache');
 }
 
 export function metroCacheRoot(name?: string | null): string {
-  const root = process.env.STIM_METRO_CACHE || cachePathSetting('metroCache') || path.join(configDir(), 'metro-cache');
+  const root =
+    absoluteEnvPath('STIM_METRO_CACHE') || cachePathSetting('metroCache') || path.join(configDir(), 'metro-cache');
   return name === undefined || name === null || name === '' ? root : path.join(root, cacheNameSegment(name));
 }
 
@@ -225,6 +239,7 @@ export function updateCacheManifest(
 }
 
 export function registerCache({ dir, name, prune, note, entriesDepth, layout, replaces = [] }: RegisterOptions): void {
+  if (!path.isAbsolute(dir)) return;
   try {
     updateCacheManifest(path.join(configDir(), 'caches.json'), (caches) => {
       const others = caches.filter(

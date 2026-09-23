@@ -1,6 +1,6 @@
 import { existsSync } from 'fs';
 import { homedir } from 'os';
-import { join, resolve } from 'path';
+import { isAbsolute, join, resolve } from 'path';
 import { readCacheManifest, updateCacheManifest } from '@stim-cli/core';
 import { getConfigDir } from '../workspace/config.ts';
 
@@ -76,7 +76,7 @@ export function registeredCaches(path: string = manifestPath()): {
   layout: string | undefined;
 }[] {
   return readManifest(path)
-    .caches.filter((c) => c.dir && existsSync(c.dir))
+    .caches.filter((c) => isAbsolute(c.dir) && existsSync(c.dir))
     .map((c) => ({
       name: c.name,
       dir: c.dir,

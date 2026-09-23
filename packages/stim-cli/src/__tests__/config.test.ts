@@ -26,6 +26,7 @@ import {
   setRepoSetting,
   unsetRepoSetting,
   getConcurrencyLimits,
+  refuseRelativeStimPaths,
 } from '../workspace/config.ts';
 import { makeConfig } from './_factories.ts';
 import assert from 'node:assert';
@@ -50,6 +51,16 @@ afterEach(() => {
 
 test('getConfigDir respects STIM_HOME', () => {
   expect(getConfigDir()).toBe(tmpHome);
+});
+
+test.each(['STIM_HOME', 'STIM_BUILD_CACHE', 'STIM_METRO_CACHE'])('refuses a relative %s by name', (name) => {
+  expect(() => refuseRelativeStimPaths({ [name]: 'relative/dir' })).toThrow(
+    expect.objectContaining({ code: 'STIM_RELATIVE_PATH', message: expect.stringContaining(name) }),
+  );
+});
+
+test('accepts absolute and unset STIM paths', () => {
+  expect(() => refuseRelativeStimPaths({ STIM_HOME: tmpHome, STIM_BUILD_CACHE: join(tmpHome, 'build') })).not.toThrow();
 });
 
 test('loadConfig returns null when no file exists', () => {
