@@ -35,7 +35,7 @@ export function readMachineSettings(context: {
       layers: [],
       corrupt: {
         level: 'note',
-        title: 'The Stim config is not valid JSON',
+        title: 'The Stim config is not a valid JSON object',
         detail: `${String((error as Error).message).split('\n')[0]}. Every setting and device record lives in that file, so no other machine-level check can run until it parses.`,
         fix: configCorruptRepair(),
       },

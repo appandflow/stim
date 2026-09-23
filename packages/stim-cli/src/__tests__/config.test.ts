@@ -91,6 +91,20 @@ test('loadConfig keeps a corrupt config on disk rather than resetting it', () =>
   expect(readFileSync(p, 'utf-8')).toBe('not json at all');
 });
 
+test.each(['[]', '5', 'null', '"oops"'])('refuses a config.json holding %s instead of dropping writes', (content) => {
+  const p = join(tmpHome, 'config.json');
+  writeFileSync(p, content);
+  let err: unknown;
+  try {
+    upsertProject('/p', { bundleId: 'a', androidPackage: 'a', isExpo: false });
+  } catch (e) {
+    err = e;
+  }
+  expect((err as { code?: string } | undefined)?.code).toBe('STIM_CONFIG_CORRUPT');
+  expect((err as Error).message).toContain(`${p} is not a JSON object`);
+  expect(readFileSync(p, 'utf-8')).toBe(content);
+});
+
 test('saveConfig writes through a temp file and leaves none behind', () => {
   saveConfig({ version: 2, projects: {}, repos: {} });
   const strays = readdirSync(tmpHome).filter((name) => name.endsWith('.tmp'));

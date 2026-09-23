@@ -64,11 +64,14 @@ export function loadConfig(): Config | null {
   const p = getConfigPath();
   if (!existsSync(p)) return null;
   const raw = readFileSync(p, 'utf-8');
+  let parsed: unknown;
   try {
-    return JSON.parse(raw) as Config;
+    parsed = JSON.parse(raw);
   } catch (err) {
     throw configCorrupt(`is not valid JSON: ${(err as Error).message}`, p);
   }
+  if (!isRecord(parsed)) throw configCorrupt(`is not a JSON object: ${JSON.stringify(parsed)}`, p);
+  return parsed as Config;
 }
 
 function isRecord(value: unknown): boolean {

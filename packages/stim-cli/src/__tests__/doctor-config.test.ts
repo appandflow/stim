@@ -243,7 +243,7 @@ describe('against a config file on disk', () => {
     writeFileSync(join(home, 'config.json'), '{ "projects": ');
     const machine = readMachineSettings({ projectPath: project, gitCommonDir: null, repoRoot: project });
     assert(machine.corrupt);
-    expect(machine.corrupt.title).toBe('The Stim config is not valid JSON');
+    expect(machine.corrupt.title).toBe('The Stim config is not a valid JSON object');
     expect(machine.corrupt.detail).toContain(join(home, 'config.json'));
     expect(machine.corrupt.fix).toBe(
       `Repair the file, or move it aside to start over: mv "${join(home, 'config.json')}" "${join(home, 'config.json')}.broken"`,
