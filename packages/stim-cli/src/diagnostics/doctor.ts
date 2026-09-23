@@ -823,11 +823,7 @@ export function runDoctor(
       optimizations: resolveOptimizations(projectSettings),
       use: readAndroidCasToolchain,
     }).optimizations;
-  } catch (error) {
-    settingShapeFindings.push(
-      finding('cost', 'Invalid optimization setting', (error as Error).message, SETTING_SHAPE_REMEDY),
-    );
-  }
+  } catch {}
   const remoteBuildCache = optimizations?.buildCache && optimizations.remoteBuildCache;
   const easFinding =
     remoteBuildCache && provider === 'eas'

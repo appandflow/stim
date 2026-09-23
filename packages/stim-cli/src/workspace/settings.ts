@@ -3,6 +3,8 @@ import { isAbsolute, join, relative, resolve, sep } from 'path';
 import type { CacheProviderConfig } from '@stim-cli/cache';
 import { getConfigPath, getProjectSettings, getRepoSettings, loadConfig } from './config.ts';
 import {
+  ANDROID_COMPILER_CACHE_CHOICES,
+  ANDROID_PCH_CHOICES,
   OPTIMIZATION_SHAPES,
   resolveOptimizations,
   resolveMetroSharedCache,
@@ -33,11 +35,27 @@ export function mergeSettingsLayers(layers: Array<SettingsObject | null | undefi
   return out;
 }
 
-type SettingShape = 'string' | 'path' | 'strings' | 'number' | 'object' | 'boolean' | 'bundle-url';
+type SettingShape =
+  | 'string'
+  | 'path'
+  | 'strings'
+  | 'number'
+  | 'object'
+  | 'boolean'
+  | 'bundle-url'
+  | 'android-compiler-cache'
+  | 'android-pch';
 
 interface SettingShapeRule {
   expected: string;
   accepts: (value: unknown, key: string) => boolean;
+}
+
+function choiceRule(choices: readonly string[]): SettingShapeRule {
+  return {
+    expected: `one of: ${choices.join(', ')}`,
+    accepts: (value) => typeof value === 'string' && choices.includes(value),
+  };
 }
 
 const SETTING_SHAPE_RULES: Record<SettingShape, SettingShapeRule> = {
@@ -49,6 +67,8 @@ const SETTING_SHAPE_RULES: Record<SettingShape, SettingShapeRule> = {
     accepts: (value) => Array.isArray(value) && value.every((entry) => typeof entry === 'string'),
   },
   number: { expected: 'a number', accepts: (value) => typeof value === 'number' },
+  'android-compiler-cache': choiceRule(ANDROID_COMPILER_CACHE_CHOICES),
+  'android-pch': choiceRule(ANDROID_PCH_CHOICES),
   object: { expected: 'an object', accepts: isPlainObject },
   'bundle-url': {
     expected: 'an HTTP(S) URL or /path ending in .bundle with a matching platform query and no fragment',

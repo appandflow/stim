@@ -2,6 +2,9 @@ import { isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { SettingsObject } from './workspace/settings-types.ts';
 
+export const ANDROID_COMPILER_CACHE_CHOICES = ['auto', 'ccache', 'cas', 'none'] as const;
+export const ANDROID_PCH_CHOICES = ['auto', 'on', 'off'] as const;
+
 export const OPTIMIZATION_SHAPES = {
   optimizations: 'object',
   'optimizations.buildCache': 'boolean',
@@ -14,9 +17,9 @@ export const OPTIMIZATION_SHAPES = {
   'optimizations.ios.swiftCompilationCache': 'boolean',
   'optimizations.ios.prefixMapping': 'boolean',
   'optimizations.android': 'object',
-  'optimizations.android.compilerCache': 'string',
+  'optimizations.android.compilerCache': 'android-compiler-cache',
   'optimizations.android.casToolchain': 'path',
-  'optimizations.android.pch': 'string',
+  'optimizations.android.pch': 'android-pch',
   'optimizations.android.gradleBuildCache': 'boolean',
   'optimizations.android.targetAbiOnly': 'boolean',
 } as const;
@@ -87,7 +90,7 @@ export function resolveOptimizations(
     }
     return raw as T;
   }
-  const compiler = choice('android.compilerCache', ['auto', 'ccache', 'cas', 'none'], 'auto');
+  const compiler = choice('android.compilerCache', ANDROID_COMPILER_CACHE_CHOICES, 'auto');
   const fromEnvironment = Boolean(env.STIM_ANDROID_CAS_TOOLCHAIN);
   const manifest = env.STIM_ANDROID_CAS_TOOLCHAIN || optimizationValue(settings, 'android.casToolchain');
   let fallback: CompilerCacheFallback | null = null;
@@ -133,7 +136,7 @@ export function resolveOptimizations(
       compilerCache,
       casToolchain: toolchain,
       compilerCacheFallback: fallback,
-      pch: choice('android.pch', ['auto', 'on', 'off'], 'auto'),
+      pch: choice('android.pch', ANDROID_PCH_CHOICES, 'auto'),
       gradleBuildCache: optimizationBoolean(settings, 'android.gradleBuildCache'),
       targetAbiOnly: optimizationBoolean(settings, 'android.targetAbiOnly'),
     },
