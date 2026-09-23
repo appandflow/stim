@@ -332,8 +332,10 @@ describe('against a config file on disk', () => {
       (found) => found.detail.includes('compilerCache') || found.detail.includes('casToolchain'),
     );
     expect(findings).toHaveLength(1);
-    expect(findings[0]).toMatchObject({ level: 'cost', title: 'Invalid optimization setting' });
-    expect(findings[0]?.detail).toBe('Invalid optimizations.android.compilerCache. Expected auto, ccache, cas, none.');
+    expect(findings[0]).toMatchObject({ level: 'cost', title: 'A setting has the wrong type' });
+    expect(findings[0]?.detail).toBe(
+      'Invalid optimizations.android.compilerCache setting "CAS". Expected one of: auto, ccache, cas, none.',
+    );
     expect(reported.some((found) => found.detail.includes(join(project, 'tc')))).toBe(false);
   });
 });

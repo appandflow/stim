@@ -114,6 +114,17 @@ test('nested optimization settings are validated and misspelled names are report
   ]);
 });
 
+test.each([
+  ['compilerCache', 'sccache', 'auto, ccache, cas, none'],
+  ['compilerCache', 5, 'auto, ccache, cas, none'],
+  ['pch', 'maybe', 'auto, on, off'],
+  ['pch', false, 'auto, on, off'],
+])('an Android %s of %j outside its choices is refused by the shape check', (key, value, choices) => {
+  expect(settingShapeErrors({ optimizations: { android: { [key]: value } } })).toEqual([
+    `Invalid optimizations.android.${key} setting ${JSON.stringify(value)}. Expected one of: ${choices}.`,
+  ]);
+});
+
 test.each(['ios', 'android'] as const)(
   'compiler changes separate %s artifacts without discarding default cache keys',
   (platform) => {

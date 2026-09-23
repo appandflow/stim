@@ -132,10 +132,10 @@ const REFUSALS: Array<{
     events: ['pool'],
   },
   {
-    name: 'optimization refusal preserves the unknown-setting warning',
+    name: 'an optimization choice outside its list refuses at shape validation',
     inputs: { settings: { unused: true, optimizations: { android: { pch: 'invalid' } } } },
-    message: /Could not configure Android build/,
-    events: ['pool', 'warning:setting'],
+    message: /^Invalid optimizations\.android\.pch setting "invalid"\. Expected one of: auto, on, off\.$/,
+    events: ['pool'],
   },
   {
     name: 'data-partition refusal follows compiler and provider warnings but precedes AVD inspection',
