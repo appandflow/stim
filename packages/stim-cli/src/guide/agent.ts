@@ -61,9 +61,10 @@ A warm that cannot record its ownership claim refuses before copying. Follow
 the printed remedy and keep concurrent runs on the same STIM_HOME.
 
 Before native worktree work, run doctor for the platform in scope. The STATUS
-block at the top of this topic says when it is due here: never run in this
-checkout, older than seven days, or run under another Stim version. No block
-means doctor is current and Stim is up to date; the same block names a newer
+block at the top of this topic says when it is due in this app: never run in
+this checkout, older than seven days, or run under another Stim version. Outside
+an app it lists no doctor line. No block means doctor is current and Stim is up
+to date; the same block names a newer
 Stim release when one exists. Doctor checks the source
 checkout from a linked worktree. Fix relevant findings and inspect the
 upstream gap; in the single-checkout workflow those seed findings do not

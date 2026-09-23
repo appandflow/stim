@@ -168,7 +168,7 @@ export default function doctorCommand(
   program
     .command('doctor')
     .description(
-      'Inspect the source checkout and report project state that can make native worktrees slow or invalid. The checkout is left untouched unless --fix is passed; --platform filters native findings. Each run is recorded in Stim state so guide can say when doctor is due.',
+      'Inspect the source checkout and report project state that can make native worktrees slow or invalid. The checkout is left untouched unless --fix is passed; --platform filters native findings. Each run in a React Native or Expo app is recorded in Stim state so guide can say when doctor is due.',
     )
     .option('--json', 'print the findings as JSON')
     .option(

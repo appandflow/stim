@@ -489,8 +489,9 @@ section prints on its own. `stim guide errors` lists every refusal code and
 `stim guide errors <CODE>` prints one.
 
 The bare index and the agent topic open with a STATUS block when something is
-due: doctor for a platform that never ran in this project, ran more than seven
-days ago, or ran under another Stim version; and a newer Stim release, checked
+due: doctor for a platform that never ran in this app, ran more than seven
+days ago, or ran under another Stim version (outside a React Native or Expo app
+there is no doctor line); and a newer Stim release, checked
 against the npm registry at most once a day and skipped when
 `STIM_NO_UPDATE_CHECK` is set. The block is omitted when nothing is due.
 

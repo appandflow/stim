@@ -22,18 +22,18 @@ beforeEach(() => {
   delete process.env.STIM_NO_UPDATE_CHECK;
 });
 
+afterEach(() => {
+  delete process.env.STIM_HOME;
+  delete process.env.STIM_NO_UPDATE_CHECK;
+  rmSync(home, { recursive: true, force: true });
+});
+
 function appRoot(): string {
   const root = join(home, 'app');
   mkdirSync(root, { recursive: true });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
   return root;
 }
-
-afterEach(() => {
-  delete process.env.STIM_HOME;
-  delete process.env.STIM_NO_UPDATE_CHECK;
-  rmSync(home, { recursive: true, force: true });
-});
 
 test('doctorDueReason: never run, stale, other version, or fresh', () => {
   expect(doctorDueReason(undefined, '1.4.0', NOW)).toBe('never run');
