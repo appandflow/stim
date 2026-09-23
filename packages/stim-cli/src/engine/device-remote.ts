@@ -119,6 +119,7 @@ interface LaunchResult {
 function describe(err: unknown): string {
   const e = err as { stderr?: unknown; message?: unknown };
   const stderr = typeof e?.stderr === 'string' ? e.stderr.trim() : '';
+  if ((err as NodeJS.ErrnoException)?.code === 'ETIMEDOUT') return String(e?.message ?? err);
   return stderr || String(e?.message ?? err);
 }
 
@@ -248,6 +249,14 @@ function remoteDeviceDeps(ctx: RemoteContext) {
           );
         } catch (err) {
           if ((err as NodeJS.ErrnoException)?.code === 'ETIMEDOUT') {
+            const partial = parseCreatedSession(String((err as { stdout?: unknown }).stdout ?? ''));
+            if (partial) {
+              return abandonSession(
+                ctx,
+                partial.id,
+                `eas sim did not finish within ${EAS_SESSION_CREATE_TIMEOUT_MS / 60_000} minutes after creating session ${partial.id}.`,
+              );
+            }
             const name = ownedSessionName(ctx.label);
             return {
               failed: true,

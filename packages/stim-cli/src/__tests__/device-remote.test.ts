@@ -653,6 +653,30 @@ describe('session creation', () => {
     expect(booted.remedy).toContain('eas simulator:list --name stim-wt');
   });
 
+  test('an eas sim killed at its deadline after printing its session stops that session', async () => {
+    const timedOut = Object.assign(new Error('Command timed out after 600000ms: /bin/eas sim'), {
+      code: 'ETIMEDOUT',
+      stdout: CREATED,
+    });
+    const exec = mockExec({ errors: { 'sim --platform': timedOut } });
+    const booted = await remoteIosDeps(ctx()).ensureBooted({});
+    expect(booted.failed).toBe(true);
+    expect(booted.reason).toContain('drs_42');
+    expect(booted.reason).toContain('The session was stopped.');
+    expect(exec.calls.map((c) => c.args.slice(0, 3))).toContainEqual(['simulator:stop', '--id', 'drs_42']);
+  });
+
+  test('an agent-device timeout names the deadline even when the tool wrote stderr first', async () => {
+    const timedOut = Object.assign(new Error('Command timed out after 600000ms: /bin/agent-device install'), {
+      code: 'ETIMEDOUT',
+      stderr: 'Uploading 42%',
+    });
+    mockExec({ outputs: { sim: CREATED }, errors: { '/bin/agent-device install': timedOut } });
+    const deps = remoteIosDeps(ctx());
+    await deps.ensureBooted({});
+    expect(deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/a.app' }).reason).toContain('timed out after');
+  });
+
   test('an operator-supplied daemon creates no session at all', async () => {
     const exec = mockExec();
     const deps = remoteIosDeps(ctx({ existingDaemon: { baseUrl: 'https://proxy.local/daemon', token: 'tok_proxy' } }));
