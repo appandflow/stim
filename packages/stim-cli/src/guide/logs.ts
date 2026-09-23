@@ -8,7 +8,7 @@ Reads every *.ndjson file in the global workspace logs directory, merges them in
 ordered by timestamp, prints what matches, and EXITS. The file set is
 discovered, not enumerated.
 
-metro.ndjson, client.ndjson and device.ndjson are size-capped. At 8 MiB a file
+metro.ndjson, client.ndjson and device.ndjson are size-capped. At about 8 MiB a file
 becomes <name>.1, replacing the previous .1, and a new file starts. Queries read
 both generations, so the oldest records drop off first. History and --since
 reach back only as far as those records.

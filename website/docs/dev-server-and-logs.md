@@ -207,7 +207,7 @@ stim logs --errors --json`}
 
 The merged timeline includes Metro, client, device, and build records. Logs live
 in the global workspace directory under `$STIM_HOME/workspaces`, not in the
-project checkout. The Metro, client, and device files are capped at 8 MiB each.
+project checkout. The Metro, client, and device files are capped at about 8 MiB each.
 Stim keeps one previous generation of each file, and queries read both. The oldest
 records are dropped first.
 
