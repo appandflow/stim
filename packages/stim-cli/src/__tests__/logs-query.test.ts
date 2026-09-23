@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -14,6 +14,7 @@ import {
   fileSizes,
   tailRead,
   advanceTail,
+  followLogs,
 } from '../diagnostics/logs-query.ts';
 
 let dir: string;
@@ -191,6 +192,16 @@ describe('queryLogs', () => {
     ]);
     writeLog('build-ios.ndjson', [{ ts: 3, src: 'build', level: 'info', msg: 'b3' }]);
     expect(queryLogs({ dir }).map((r) => r.msg)).toEqual(['m1', 'c2', 'b3', 'm5', 'c9']);
+  });
+
+  test('reads the previous generation of a rotated file before the current one', () => {
+    writeLog('metro.ndjson.1', [
+      { ts: 1, src: 'metro', level: 'info', msg: 'bundle build done', marker: true },
+      { ts: 2, src: 'metro', level: 'error', msg: 'old generation error' },
+    ]);
+    writeLog('metro.ndjson', [{ ts: 3, src: 'metro', level: 'info', msg: 'current' }]);
+    expect(queryLogs({ dir }).map((r) => r.msg)).toEqual(['bundle build done', 'old generation error', 'current']);
+    expect(queryLogs({ dir, errorsOnly: true }).map((r) => r.msg)).toEqual(['old generation error']);
   });
 
   test('skips corrupt lines instead of failing the query', () => {
@@ -530,6 +541,24 @@ describe('queryLogs', () => {
 });
 
 describe('incremental tailing', () => {
+  test('follow emits records written just before a rotation, then the new file', () => {
+    vi.useFakeTimers();
+    try {
+      const line = (msg: string) => `${JSON.stringify({ ts: 1, src: 'metro', level: 'info', msg })}\n`;
+      writeFileSync(join(dir, 'metro.ndjson'), line('before follow') + line('also before'));
+      const seen: unknown[] = [];
+      const stop = followLogs({ dir, onRecord: (record) => seen.push(record.msg), intervalMs: 100 });
+      appendFileSync(join(dir, 'metro.ndjson'), line('before rotation'));
+      renameSync(join(dir, 'metro.ndjson'), join(dir, 'metro.ndjson.1'));
+      writeFileSync(join(dir, 'metro.ndjson'), line('after rotation'));
+      vi.advanceTimersByTime(100);
+      stop();
+      expect(seen).toEqual(['before rotation', 'after rotation']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('fileSizes reports a byte size per log file, and {} for a missing dir', () => {
     writeFileSync(join(dir, 'metro.ndjson'), 'abcde');
     expect(fileSizes(dir)).toEqual({ 'metro.ndjson': 5 });

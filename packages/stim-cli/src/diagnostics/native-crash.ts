@@ -10,11 +10,13 @@ import { androidHome, androidToolCwd } from '../devices/android.ts';
 import { launchErrorPreview } from './launch-error-preview.ts';
 import { deviceConsoleLevel } from '../collector/ios-device.ts';
 import { writeDiagnosticOnce } from './diagnostic-store.ts';
-import { readLogRecords } from './logs-query.ts';
+import { readLogRecords, sortByTs } from './logs-query.ts';
 import { readWorkspaceLaunches } from '../supervisor/state.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { getProject } from '../workspace/config.ts';
 import { deviceLeasePath, fileLeaseIo, parseLease } from '../engine/device-lease.ts';
+
+const CRASH_LOG_PREFIX = 'native-crash-';
 
 export const IOS_CRASH_REPORT_RETRY =
   'iOS crash reports can take about a minute or longer to appear. Run `stim logs --errors` again for the native stack.';
@@ -407,7 +409,7 @@ export function captureNativeCrashes(target: CrashTarget, logsDir: string): Ndjs
       const key = createHash('sha256')
         .update(JSON.stringify([record.slot, record.deviceId, record.incident ?? record.deviceTs, record.rawReport]))
         .digest('hex');
-      writeDiagnosticOnce(join(logsDir, `native-crash-${key}.ndjson`), `${JSON.stringify(record)}\n`);
+      writeDiagnosticOnce(join(logsDir, `${CRASH_LOG_PREFIX}${key}.ndjson`), `${JSON.stringify(record)}\n`);
     } catch {}
   }
   return records;
@@ -423,8 +425,10 @@ export function printNativeCrashReport(
   for (const line of launchErrorPreview(captureNativeCrashes(target, logsDir), target.root)) emit(line);
 }
 
-export function captureWorkspaceCrashes(root: string, logsDir: string): void {
-  const attempts = readLogRecords(logsDir).filter((record) => record.event === 'launch_attempt');
+/** Captures native crash reports for this workspace's current launches and returns the whole timeline. */
+export function captureWorkspaceCrashes(root: string, logsDir: string): NdjsonRecord[] {
+  const timeline = readLogRecords(logsDir, (name) => !isCrashLog(name));
+  const attempts = timeline.filter((record) => record.event === 'launch_attempt');
   const launches = readWorkspaceLaunches(root);
   const latest = new Map<string, NdjsonRecord>();
   for (const attempt of attempts) {
@@ -499,4 +503,9 @@ export function captureWorkspaceCrashes(root: string, logsDir: string): void {
       );
     } catch {}
   }
+  return sortByTs([...timeline, ...readLogRecords(logsDir, isCrashLog)]);
+}
+
+function isCrashLog(name: string): boolean {
+  return name.startsWith(CRASH_LOG_PREFIX);
 }

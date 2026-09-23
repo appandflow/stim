@@ -13,6 +13,7 @@ import { captureProcessToken, inspectProcessIdentity } from '../process-identity
 import { resolveSupervisorTarget, type SupervisorStateRecord } from '../supervisor/ownership.ts';
 import type { MetroResolution } from '../metro.ts';
 import { queryLogs } from '../diagnostics/logs-query.ts';
+import { levelRank } from '../ndjson.ts';
 import { ensureWorkspaceStorage, supervisorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
 import { reserveMetroPort } from '../ports.ts';
 import {
@@ -1090,8 +1091,8 @@ export function failureEvidence({
   let errors: ReturnType<typeof queryLogs> = [];
   let all: ReturnType<typeof queryLogs> = [];
   try {
-    errors = queryLogs({ dir: logsDir, minLevel: 'error' });
     all = queryLogs({ dir: logsDir });
+    errors = all.filter((record) => levelRank(record.level) >= levelRank('error'));
   } catch {}
   const since = (rs: ReturnType<typeof queryLogs>) =>
     rs.filter((r) => typeof r.ts === 'number' && r.ts >= sinceTs).slice(-ERROR_EVIDENCE_RECORDS);

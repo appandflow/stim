@@ -1,4 +1,5 @@
-import { closeSync, mkdirSync, openSync, writeSync } from 'fs';
+import { rotatedLogPath, rotateLog } from '@stim-cli/core';
+import { closeSync, mkdirSync, openSync, readFileSync, writeSync } from 'fs';
 import { dirname } from 'path';
 
 export interface NdjsonRecord {
@@ -17,6 +18,8 @@ export interface NdjsonWriter {
   readonly dropped: number;
   readonly lastError: Error | null;
 }
+
+const ROTATE_CHECK_MS = 1000;
 
 export const LEVELS: string[] = ['debug', 'info', 'warn', 'error', 'fatal'];
 
@@ -53,6 +56,20 @@ export function parseNdjsonText(text: unknown): NdjsonRecord[] {
   return out;
 }
 
+export function readNdjsonGenerations(file: string): NdjsonRecord[] {
+  const out: NdjsonRecord[] = [];
+  for (const path of [rotatedLogPath(file), file]) {
+    let text;
+    try {
+      text = readFileSync(path, 'utf-8');
+    } catch {
+      continue;
+    }
+    for (const record of parseNdjsonText(text)) out.push(record);
+  }
+  return out;
+}
+
 export function formatNdjsonLine(record: unknown): string | null {
   try {
     return `${JSON.stringify(record)}\n`;
@@ -63,10 +80,17 @@ export function formatNdjsonLine(record: unknown): string | null {
 
 export function createNdjsonWriter(
   file: string,
-  { truncate = false, fields = {} }: { truncate?: boolean; fields?: Record<string, unknown> } = {},
+  {
+    truncate = false,
+    fields = {},
+    maxBytes,
+    now = Date.now,
+  }: { truncate?: boolean; fields?: Record<string, unknown>; maxBytes?: number; now?: () => number } = {},
 ): NdjsonWriter {
   let fd: number | null = null;
   let freshFile = truncate;
+  let uncheckedBytes = 0;
+  let checkedAt = 0;
   let written = 0;
   let dropped = 0;
   let lastError: Error | null = null;
@@ -76,6 +100,21 @@ export function createNdjsonWriter(
     mkdirSync(dirname(file), { recursive: true });
     fd = openSync(file, freshFile ? 'w' : 'a');
     freshFile = false;
+  }
+
+  function rotateIfDue(limit: number): void {
+    if (fd !== null && uncheckedBytes < limit / 8 && now() - checkedAt < ROTATE_CHECK_MS) return;
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {}
+      fd = null;
+    }
+    uncheckedBytes = 0;
+    checkedAt = now();
+    try {
+      rotateLog(file, limit);
+    } catch {}
   }
 
   function write(record: unknown): boolean {
@@ -90,8 +129,10 @@ export function createNdjsonWriter(
       return false;
     }
     try {
+      if (maxBytes !== undefined) rotateIfDue(maxBytes);
       if (fd === null) open();
       writeSync(fd as number, line);
+      uncheckedBytes += Buffer.byteLength(line);
       written += 1;
       return true;
     } catch (err) {
