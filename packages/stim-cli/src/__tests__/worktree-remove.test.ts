@@ -1527,7 +1527,7 @@ test.each(['submodule add', 'embedded repository'] as const)(
       git('git init -q', sub);
       git('git -c user.email=t@e.com -c user.name=t commit -q --allow-empty -m s', sub);
       if (layout === 'submodule add') git(`git -c protocol.file.allow=always submodule add -q "${sub}" sub`, wt);
-      else git('git add sub', wt);
+      else git('git -c advice.addEmbeddedRepo=false add sub', wt);
       git('git commit -q -m sub', wt);
       git('git push -q -u origin feat-x', wt);
       upsertProject(wt, { platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'stim-x' } } });

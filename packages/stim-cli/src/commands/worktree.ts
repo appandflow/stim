@@ -880,7 +880,7 @@ export function registerRemove(worktree: Command): void {
     .description(
       'Remove a worktree, its unused Stim-created branch, build artifacts, owned devices, and Metro port. Defaults to the current workspace. On the source checkout it reclaims the environment only and leaves the tree in place.',
     )
-    .option('--force', 'remove even when the worktree holds uncommitted or unpushed work')
+    .option('--force', 'remove even when the worktree holds uncommitted or unpushed work or initialized submodules')
     .action(runRemove);
 }
 
