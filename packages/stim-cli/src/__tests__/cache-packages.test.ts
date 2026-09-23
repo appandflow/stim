@@ -310,16 +310,20 @@ test('the standalone cache provider never serves an artifact from another compil
       platform: 'android',
       fingerprintHash: 'same',
       buildPath: apk,
-      runOptions: { buildProfile: 'opt-pch' },
+      runOptions: { abi: 'arm64-v8a', buildProfile: 'opt-pch' },
     });
     expect(
-      await provider.resolveBuildCache({ platform: 'android', fingerprintHash: 'same', runOptions: {} }),
+      await provider.resolveBuildCache({
+        platform: 'android',
+        fingerprintHash: 'same',
+        runOptions: { abi: 'arm64-v8a' },
+      }),
     ).toBeNull();
     expect(
       await provider.resolveBuildCache({
         platform: 'android',
         fingerprintHash: 'same',
-        runOptions: { buildProfile: 'opt-pch' },
+        runOptions: { abi: 'arm64-v8a', buildProfile: 'opt-pch' },
       }),
     ).toBeTruthy();
   } finally {
