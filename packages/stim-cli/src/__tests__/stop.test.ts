@@ -332,14 +332,63 @@ test('an unverified supervisor record is refused without signalling anything', a
   expect(calls.freed.length).toBe(0);
 });
 
-test('a workspace Metro without a saved supervisor identity is left alone', async () => {
+test('a workspace Metro without a saved supervisor identity is left alone and keeps its reservation', async () => {
   const { calls, opts } = seams({
-    resolveMetro: async () => makeMetroResolution.identified({ metro: { pid: 90, leader: 88, cwd: '/proj/a' } }),
+    state: { pid: 4242, port: 8083 },
+    project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
+    resolveMetro: async () => makeMetroResolution.identified({ metro: { pid: 90, leader: 90, cwd: '/proj/a' } }),
   });
   const r = await runStop(opts);
   expect(r.ok).toBe(true);
   expect(r.outcomes.metro.status).toBe('not-managed');
+  expect(r.outcomes.port.status).toBe('kept');
+  expect(calls.freed).toEqual([]);
+  expect(calls.stateCleared).toBe(1);
+  expect(r.outcomes.device.ios?.status).toBe('shut-down');
   expect(calls.killedMetro).toEqual([]);
+});
+
+test('the dev server a dead supervisor left behind is stopped by its recorded identity', async () => {
+  const signalled: number[] = [];
+  const { calls, opts } = seams({
+    state: { pid: 4242, port: 8083, serverPid: 4243, serverProcessToken: 'server-token' },
+    inspectIdentity: (record: { pid?: unknown }) => (record?.pid === 4243 ? 'same' : 'gone'),
+    signalServer: (pid: number) => {
+      signalled.push(pid);
+      return true;
+    },
+    resolveMetro: async () => makeMetroResolution.identified({ metro: { pid: 4243, leader: 4243, cwd: '/proj/a' } }),
+  });
+  const r = await runStop(opts);
+  expect(r.ok).toBe(true);
+  expect(r.outcomes.supervisor.status).toBe('already-stopped');
+  expect(signalled).toEqual([4243]);
+  expect(r.outcomes.metro.status).toBe('stopped');
+  expect(r.outcomes.port.status).toBe('freed');
+  expect(calls.signals).toEqual([]);
+});
+
+test('a recorded dev server that cannot be proven or does not exit is never freed over', async () => {
+  for (const [identity, exited] of [
+    ['unknown', true],
+    ['same', false],
+  ] as const) {
+    const signalled: number[] = [];
+    const { calls, opts } = seams({
+      state: { pid: 4242, port: 8083, serverPid: 4243, serverProcessToken: 'server-token' },
+      inspectIdentity: (record: { pid?: unknown }) => (record?.pid === 4243 ? identity : 'gone'),
+      signalServer: (pid: number) => {
+        signalled.push(pid);
+        return true;
+      },
+      waitForDeath: async () => exited,
+      resolveMetro: async () => makeMetroResolution.identified({ metro: { pid: 4243, leader: 4243, cwd: '/proj/a' } }),
+    });
+    const r = await runStop(opts);
+    expect(signalled).toEqual(identity === 'same' ? [4243] : []);
+    expect(r.outcomes.port.status).toBe('kept');
+    expect(calls.freed).toEqual([]);
+  }
 });
 
 test('an unproven listener is named and left alone', async () => {

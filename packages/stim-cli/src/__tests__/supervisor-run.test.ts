@@ -17,6 +17,7 @@ import { parseNdjsonText } from '../ndjson.ts';
 import { supervisorPidFile, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { describeError, supervisorError } from '../supervisor/errors.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { inspectProcessIdentity } from '../process-identity.ts';
 import {
   MODE_BARE,
   MODE_EXPO,
@@ -354,6 +355,60 @@ describe('runSupervisor', () => {
     expect(state.supervisor.serverPid).toBe(31337);
     expect(state.supervisor.mode).toBe(MODE_EXPO);
   });
+
+  test('records the Expo child with a process token that proves it after the supervisor is gone', async () => {
+    const server = fakeServer({ mode: MODE_EXPO, serverPid: process.pid });
+    await runSupervisor({
+      root,
+      port: 8099,
+      isExpo: () => true,
+      attachSignals: false,
+      onExit: () => {},
+      startExpo: async () => server.handle,
+    });
+    const supervisor = readWorkspaceState(root)?.supervisor;
+    assert(supervisor);
+    expect(inspectProcessIdentity({ pid: supervisor.serverPid, processToken: supervisor.serverProcessToken })).toBe(
+      'same',
+    );
+  });
+
+  test.each(['SIGTERM', 'SIGINT'] as const)(
+    'a %s that arrives while the dev server starts stops it once it is up',
+    async (signal) => {
+      const before = { SIGTERM: process.listeners('SIGTERM'), SIGINT: process.listeners('SIGINT') };
+      const server = fakeServer({ mode: MODE_EXPO, serverPid: 31339 });
+      const exits: number[] = [];
+      let started!: () => void;
+      const running = runSupervisor({
+        root,
+        port: 8100,
+        isExpo: () => true,
+        onExit: (code) => exits.push(code),
+        startExpo: () =>
+          new Promise((resolve) => {
+            started = () => resolve(server.handle);
+          }),
+      });
+      try {
+        const added = process.listeners(signal).filter((listener) => !before[signal].includes(listener));
+        expect(added).toHaveLength(1);
+        added[0]?.(signal);
+        started();
+        await running;
+        expect(server.state.closed).toBe(1);
+        expect(exits).toEqual([0]);
+        expect(readWorkspaceState(root)).toBe(null);
+        expect(getProject(root)?.supervisor).toBe(undefined);
+      } finally {
+        for (const name of ['SIGTERM', 'SIGINT'] as const) {
+          for (const listener of process.listeners(name)) {
+            if (!before[name].includes(listener)) process.off(name, listener);
+          }
+        }
+      }
+    },
+  );
 
   test('forwards `tunnel` to the expo starter, and records the URL it reports', async () => {
     const server = fakeServer({ mode: MODE_EXPO, serverPid: 31338 });

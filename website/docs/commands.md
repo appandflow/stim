@@ -337,8 +337,11 @@ stim stop [--slot <name>] [--json]
 
 Without `--slot`, stops the supervisor and all log collectors, shuts down every
 owned local device, ends an owned remote session, and frees the port. Owned
-local devices stay assigned for reuse. An external server on the reserved port is left running, and a
-process whose ownership cannot be verified is not signalled.
+local devices stay assigned for reuse. A dev server left behind by a supervisor
+that died is stopped when its recorded process identity still matches. An
+external server on the reserved port is left running, the port stays reserved
+while that server runs from this project, and a process whose ownership cannot
+be verified is not signalled.
 
 With `--slot <name>`, stops only that slot's owned devices and collectors and
 releases its leases. Metro, the reserved port, and sibling slots keep running.

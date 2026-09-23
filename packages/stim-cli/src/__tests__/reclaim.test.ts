@@ -582,6 +582,27 @@ test('reclaim retains a live legacy supervisor even before any port listens', as
   }
 });
 
+test('reclaim stops the dev server a dead supervisor left behind, proven by its recorded identity', async () => {
+  const child = await spawnFakeProcess(null);
+  const root = workspaceWithCollector(99999999);
+  try {
+    const serverProcessToken = captureProcessToken(child.pid!);
+    expect(serverProcessToken).toBeTruthy();
+    writeFileSync(
+      workspaceStateFile(root),
+      JSON.stringify({ supervisor: { pid: 99999999, port: 8083, serverPid: child.pid, serverProcessToken } }),
+    );
+    const died = exits(child);
+    const result = await reclaimProject(root);
+    expect(await died).toBe(true);
+    expect(result.killedPid).toBe(child.pid);
+    expect(result.keptEntry).toBe(false);
+  } finally {
+    child.kill('SIGKILL');
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 describe.skipIf(process.platform === 'win32')('POSIX process groups and SIGTERM handlers; skipped on win32', () => {
   test.each(['collector', 'supervisor'] as const)(
     'reclaim leaves a replacement %s and its device alone after awaiting supervisor exit',

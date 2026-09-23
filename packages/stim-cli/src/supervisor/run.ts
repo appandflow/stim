@@ -175,6 +175,30 @@ export async function runSupervisor({
   };
 
   let server: ServerHandle | undefined;
+  let stopRequest = null as [code: number, event: string, msg: string] | null;
+  const shutdown = async (code: number, event: string, msg: string) => {
+    if (stopping) return;
+    if (!server) {
+      stopRequest ??= [code, event, msg];
+      return;
+    }
+    stopping = true;
+    try {
+      await server.close();
+    } catch (err) {
+      writer.write({ src: 'metro', level: 'warn', event: 'server_close_failed', msg: describeError(err) });
+    }
+    finish(code, event, code === 0 ? 'info' : 'error', msg);
+  };
+
+  if (attachSignals) {
+    for (const signal of ['SIGTERM', 'SIGINT']) {
+      process.on(signal, () => {
+        shutdown(0, 'supervisor_stopped', `received ${signal}; stopping the ${mode} dev server`);
+      });
+    }
+  }
+
   try {
     const start: ServerStarter =
       mode === MODE_EXPO
@@ -206,12 +230,14 @@ export async function runSupervisor({
     return null;
   }
 
-  const readyServer: ServerHandle = server;
-
-  if (readyServer.serverPid) {
+  const serverPid = server.serverPid;
+  if (serverPid) {
+    const serverProcessToken = captureProcessToken(serverPid);
     withWorkspaceStateLock(root, () => {
       if (readWorkspaceState(root)?.supervisor?.processToken === processToken) {
-        writeWorkspaceState(root, { supervisor: { ...record, serverPid: readyServer.serverPid } });
+        writeWorkspaceState(root, {
+          supervisor: { ...record, serverPid, ...(serverProcessToken ? { serverProcessToken } : {}) },
+        });
       }
     });
   }
@@ -222,18 +248,7 @@ export async function runSupervisor({
     msg: `${mode} dev server listening on port ${port}`,
   });
 
-  const shutdown = async (code: number, event: string, msg: string) => {
-    if (stopping) return;
-    stopping = true;
-    try {
-      await readyServer.close();
-    } catch (err) {
-      writer.write({ src: 'metro', level: 'warn', event: 'server_close_failed', msg: describeError(err) });
-    }
-    finish(code, event, code === 0 ? 'info' : 'error', msg);
-  };
-
-  readyServer.onExit?.((info) => {
+  server.onExit?.((info) => {
     if (stopping) return;
     const detail = info?.signal ? `signal ${info.signal}` : `exit code ${info?.code ?? 'unknown'}`;
     shutdown(
@@ -243,13 +258,7 @@ export async function runSupervisor({
     );
   });
 
-  if (attachSignals) {
-    for (const signal of ['SIGTERM', 'SIGINT']) {
-      process.on(signal, () => {
-        shutdown(0, 'supervisor_stopped', `received ${signal}; stopping the ${mode} dev server`);
-      });
-    }
-  }
+  if (stopRequest) await shutdown(...stopRequest);
 
   return { mode, server, shutdown, startedAt };
 }
