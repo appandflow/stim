@@ -22,6 +22,13 @@ export interface Executor {
 
 const MAX_BUFFER = 64 * 1024 * 1024;
 
+function nameTimeout(error: unknown, command: string, timeoutMs: number | undefined): unknown {
+  if ((error as NodeJS.ErrnoException)?.code === 'ETIMEDOUT' && error instanceof Error) {
+    error.message = `Command timed out after ${timeoutMs}ms: ${command}`;
+  }
+  return error;
+}
+
 const defaultExecutor: Executor = {
   run(cmd, { timeoutMs, killSignal, cwd } = {}) {
     const opts: Parameters<typeof execSync>[1] = {
@@ -32,7 +39,11 @@ const defaultExecutor: Executor = {
     if (timeoutMs) opts.timeout = timeoutMs;
     if (killSignal) opts.killSignal = killSignal;
     if (cwd) opts.cwd = cwd;
-    return String(execSync(cmd, opts)).trim();
+    try {
+      return String(execSync(cmd, opts)).trim();
+    } catch (error) {
+      throw nameTimeout(error, cmd, timeoutMs);
+    }
   },
   // spawnSync through cross-spawn rather than execFileSync: on Windows Node
   // refuses .cmd/.bat files and shebang scripts without a shell, and every
@@ -53,7 +64,7 @@ const defaultExecutor: Executor = {
       opts.env = childEnv;
     }
     const result = spawn.sync(file, args, opts);
-    if (result.error) throw Object.assign(result.error, result);
+    if (result.error) throw nameTimeout(Object.assign(result.error, result), [file, ...args].join(' '), timeoutMs);
     if (result.status !== 0) {
       const stderr = String(result.stderr ?? '');
       const message = `Command failed: ${[file, ...args].join(' ')}${stderr ? `\n${stderr}` : ''}`;

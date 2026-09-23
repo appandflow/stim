@@ -19,6 +19,12 @@ import {
   listUserApps,
   parkedSimName,
   parseUserApps,
+  createOwnedIosSim,
+  renameIosSim,
+  resetIosKeychain,
+  resetIosPrivacy,
+  shutdownIosSim,
+  uninstallIosApp,
 } from '../devices/ios.ts';
 import assert from 'node:assert';
 import { makeChildProcess, makeExitingChild } from './_factories.ts';
@@ -356,6 +362,47 @@ const OWNED_SIM_LIST = JSON.stringify({
       },
     ],
   },
+});
+
+const BOOTED_OWNED_SIM_LIST = OWNED_SIM_LIST.replace('"Shutdown"', '"Booted"');
+
+test.each([
+  [
+    'create',
+    () => createOwnedIosSim('wt', {}, { deviceTypeId: 'dt', runtimeId: 'rt', deviceType: null, runtime: null }),
+  ],
+  ['rename', () => renameIosSim('UDID-B', 'stim-wt')],
+  ['privacy', () => resetIosPrivacy('UDID-B')],
+  ['keychain', () => resetIosKeychain('UDID-B')],
+  ['uninstall', () => uninstallIosApp('UDID-B', 'com.example.app')],
+  ['shutdown', () => shutdownIosSim('UDID-B')],
+  ['delete', () => deleteIosSim('UDID-B')],
+  ['spawn', () => occupyingApps('UDID-B')],
+])('simctl %s runs under a hard deadline so a stuck CoreSimulator cannot hold the caller', (verb, operation) => {
+  const deadlines: { command: string; timeoutMs?: number; killSignal?: string }[] = [];
+  const record = (command: string, opts?: { timeoutMs?: number; killSignal?: string }) => {
+    if (new RegExp(`simctl ${verb}\\b`).test(command)) {
+      deadlines.push({ command, timeoutMs: opts?.timeoutMs, killSignal: opts?.killSignal });
+    }
+  };
+  setExecutor({
+    run: (cmd, opts) => {
+      record(cmd, opts);
+      return 'NEW-UDID';
+    },
+    runQuiet: (cmd, opts) => {
+      record(cmd, opts);
+      return '';
+    },
+    runFile: (file, args = [], opts) => {
+      record([file, ...args].join(' '), opts);
+      return BOOTED_OWNED_SIM_LIST;
+    },
+  });
+  operation();
+  expect(deadlines).toHaveLength(1);
+  expect(deadlines[0]?.timeoutMs).toBeGreaterThan(0);
+  expect(deadlines[0]?.killSignal).toBe('SIGKILL');
 });
 
 test('deleteIosSim deletes a Stim-owned sim', () => {

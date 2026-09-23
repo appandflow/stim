@@ -307,11 +307,16 @@ export function ownedAvdName(label: string): string {
   return `stim-${clean.startsWith('stim-') ? clean.slice('stim-'.length) : clean}`;
 }
 
+const AVDMANAGER_DELETE_TIMEOUT_MS = 120_000;
+
 export function deleteAvd(avdName: string): void {
   if (!avdName?.startsWith('stim-')) {
     throw new Error(`Refusing to delete AVD "${avdName}": not a Stim-owned AVD (name must start with "stim-").`);
   }
-  getExecutor().run(`${androidTool('avdmanager')} delete avd -n "${avdName}"`);
+  getExecutor().run(`${androidTool('avdmanager')} delete avd -n "${avdName}"`, {
+    timeoutMs: AVDMANAGER_DELETE_TIMEOUT_MS,
+    killSignal: 'SIGKILL',
+  });
 }
 
 export function parseAvdList(text: string): string[] {
@@ -1235,8 +1240,16 @@ export function waitForAndroidEmulatorShutdown(
   }
 }
 
-export function getAvdNameForSerial(serial: string, { timeoutMs }: { timeoutMs?: number } = {}): string | null {
-  const out = getExecutor().runQuiet(`${androidTool('adb')} -s ${serial} emu avd name`, { timeoutMs });
+const EMU_AVD_NAME_TIMEOUT_MS = 10_000;
+
+export function getAvdNameForSerial(
+  serial: string,
+  { timeoutMs = EMU_AVD_NAME_TIMEOUT_MS }: { timeoutMs?: number } = {},
+): string | null {
+  const out = getExecutor().runQuiet(`${androidTool('adb')} -s ${serial} emu avd name`, {
+    timeoutMs: Math.min(timeoutMs, EMU_AVD_NAME_TIMEOUT_MS),
+    killSignal: 'SIGKILL',
+  });
   if (!out) return null;
   return out.split('\n')[0]?.trim() || null;
 }

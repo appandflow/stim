@@ -651,6 +651,34 @@ describe('android: install and launch', () => {
     expect(options.at(-1)).toEqual({ timeoutMs: ADB_INSTALL_TIMEOUT_MS });
   });
 
+  test('every adb call on the launch path runs under a hard deadline', () => {
+    const exec = recordingExec({
+      fail: 'android.intent.action.VIEW',
+      outputs: { 'resolve-activity': ['com.example.app/.MainActivity\n', 'No activity found\n'] },
+    });
+    launchAndroidApp(
+      { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' },
+      { exec },
+    );
+    launchAndroidReleaseApp({ serial: 'emulator-5554', packageName: 'com.example.app' }, { exec });
+    androidAppProcess('emulator-5554', 'com.example.app', { exec });
+    expect(exec.calls.map((call) => call.slice(3, 5).join(' '))).toEqual([
+      'reverse tcp:8082',
+      'shell run-as',
+      'shell am',
+      'shell cmd',
+      'shell am',
+      'shell cmd',
+      'shell monkey',
+      'shell pidof',
+      'shell ps',
+    ]);
+    for (const options of exec.options) {
+      expect(options?.timeoutMs).toBeGreaterThan(0);
+      expect(options?.killSignal).toBe('SIGKILL');
+    }
+  });
+
   test('reverseMetroPorts maps only the reserved port to itself', () => {
     const exec = recordingExec();
     const result = reverseMetroPorts({ serial: 'emulator-5554', metroPort: 8082 }, { exec });
@@ -1782,10 +1810,12 @@ describe('installAndroidApp: the uninstall-and-retry, exactly once', () => {
 
   function conflictingExec(text: string, { alsoFailRetry = false } = {}) {
     const calls: string[][] = [];
+    const options: Parameters<Executor['runFile']>[2][] = [];
     let installs = 0;
     const exec: Executor = {
-      runFile(file: string, args: string[] = []) {
+      runFile(file: string, args: string[] = [], opts) {
         calls.push([file, ...args]);
+        options.push(opts);
         if (args.includes('install')) {
           installs += 1;
           if (installs === 1 || alsoFailRetry) {
@@ -1804,17 +1834,18 @@ describe('installAndroidApp: the uninstall-and-retry, exactly once', () => {
       },
       findExecutable: () => null,
     };
-    return { exec, calls };
+    return { exec, calls, options };
   }
 
   test('a signer conflict uninstalls the package and installs once more, with a note saying why', () => {
-    const { exec, calls } = conflictingExec('Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE]');
+    const { exec, calls, options } = conflictingExec('Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE]');
     const result = installAndroidApp(
       { serial: 'emulator-5584', apkPath, packageName: 'com.example.app', allowUninstall: true },
       { exec },
     );
     expect(result.ok).toBe(true);
     expect(result.uninstalled).toBe(true);
+    expect(options[2]).toMatchObject({ timeoutMs: expect.any(Number), killSignal: 'SIGKILL' });
     expect(result.note).toMatch(/different signer/);
     expect(result.note).toMatch(/data went with it/);
     expect(calls).toEqual([

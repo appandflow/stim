@@ -514,6 +514,34 @@ test('resolveOwnedAvdSerial resolves an offline emulator through its console ide
   expect(resolveOwnedAvdSerial('stim-mine')).toEqual({ serial: 'emulator-5554' });
 });
 
+test('resolveOwnedAvdSerial asks healthy emulators first and bounds every console identity query', () => {
+  const queried: { serial: string; timeoutMs?: number; killSignal?: string }[] = [];
+  setExecutor({
+    run: (cmd) => {
+      if (cmd === 'emulator -list-avds') return 'stim-mine\nstim-stopped\n';
+      if (cmd === 'adb devices') return 'List of devices attached\nemulator-5556\toffline\nemulator-5554\tdevice\n';
+      return '';
+    },
+    runQuiet: (cmd, opts) => {
+      const serial = /adb -s (\S+) emu avd name/.exec(cmd)?.[1];
+      if (!serial) return null;
+      queried.push({ serial, timeoutMs: opts?.timeoutMs, killSignal: opts?.killSignal });
+      return serial === 'emulator-5554' ? 'stim-mine\nOK' : null;
+    },
+  });
+
+  expect(resolveOwnedAvdSerial('stim-mine')).toEqual({ serial: 'emulator-5554' });
+  expect(queried.map((q) => q.serial)).toEqual(['emulator-5554']);
+
+  expect(resolveOwnedAvdSerial('stim-stopped', { timeoutMs: 600_000 })).toEqual({ notRunning: true });
+  expect(queried.map((q) => q.serial)).toEqual(['emulator-5554', 'emulator-5554', 'emulator-5556']);
+  for (const query of queried) {
+    expect(query.killSignal).toBe('SIGKILL');
+    expect(query.timeoutMs).toBeGreaterThan(0);
+    expect(query.timeoutMs).toBeLessThanOrEqual(10_000);
+  }
+});
+
 test('assertOwnedAvdStopped rejects a live process and accepts a stale lock', () => {
   expect(() =>
     assertOwnedAvdStopped('stim-app', {

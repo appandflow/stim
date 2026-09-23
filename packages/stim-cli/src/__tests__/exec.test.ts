@@ -48,9 +48,25 @@ test('an opt-in hard deadline terminates a child that ignores SIGTERM before ret
   }
   expect(failure.code).toBe('ETIMEDOUT');
   expect(failure.signal).toBe('SIGKILL');
+  expect(failure.message).toMatch(/^Command timed out after 200ms: .*node/);
   expect(Date.now() - started).toBeLessThan(3000);
   expect(failure.pid).toBeGreaterThan(1);
   expect(() => process.kill(failure.pid!, 0)).toThrow(/ESRCH/);
+});
+
+test('a shell command that outlives its deadline fails with a message naming the command and the deadline', () => {
+  resetExecutor();
+  let failure: NodeJS.ErrnoException = new Error('did not fail');
+  try {
+    getExecutor().run(`"${process.execPath}" -e "setInterval(() => {}, 1000)"`, {
+      timeoutMs: 200,
+      killSignal: 'SIGKILL',
+    });
+  } catch (error) {
+    failure = error as typeof failure;
+  }
+  expect(failure.code).toBe('ETIMEDOUT');
+  expect(failure.message).toMatch(/^Command timed out after 200ms: .*setInterval/);
 });
 
 test('a non-zero exit throws with status, stdout and stderr, the fields callers read', () => {

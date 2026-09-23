@@ -24,6 +24,7 @@ import {
   getSessionArgs,
   inspectSessionForTeardown,
   isDefinitiveMissingSessionError,
+  ownedSessionName,
   parseCreatedSession,
   remoteDaemonFrom,
   stopSessionArgs,
@@ -118,6 +119,7 @@ interface LaunchResult {
 function describe(err: unknown): string {
   const e = err as { stderr?: unknown; message?: unknown };
   const stderr = typeof e?.stderr === 'string' ? e.stderr.trim() : '';
+  if ((err as NodeJS.ErrnoException)?.code === 'ETIMEDOUT') return String(e?.message ?? err);
   return stderr || String(e?.message ?? err);
 }
 
@@ -151,6 +153,9 @@ function easExecOptions(root: string): { cwd: string; omitEnv: typeof PROXY_CRED
 }
 
 const EAS_OPERATION_TIMEOUT_MS = 30_000;
+const EAS_SESSION_CREATE_TIMEOUT_MS = 600_000;
+const AGENT_DEVICE_TIMEOUT_MS = 120_000;
+const AGENT_DEVICE_INSTALL_TIMEOUT_MS = 600_000;
 
 function easBoundedExecOptions(root: string): {
   cwd: string;
@@ -240,9 +245,25 @@ function remoteDeviceDeps(ctx: RemoteContext) {
               platform: ctx.platform ?? 'ios',
               maxDurationMinutes: ctx.maxDurationMinutes ?? null,
             }),
-            easEnv,
+            { ...easEnv, timeoutMs: EAS_SESSION_CREATE_TIMEOUT_MS, killSignal: 'SIGKILL' },
           );
         } catch (err) {
+          if ((err as NodeJS.ErrnoException)?.code === 'ETIMEDOUT') {
+            const partial = parseCreatedSession(String((err as { stdout?: unknown }).stdout ?? ''));
+            if (partial) {
+              return abandonSession(
+                ctx,
+                partial.id,
+                `eas sim did not finish within ${EAS_SESSION_CREATE_TIMEOUT_MS / 60_000} minutes after creating session ${partial.id}.`,
+              );
+            }
+            const name = ownedSessionName(ctx.label);
+            return {
+              failed: true,
+              reason: `eas sim did not finish within ${EAS_SESSION_CREATE_TIMEOUT_MS / 60_000} minutes and the eas process was killed. EAS may still have started session ${name}; it has no Stim ownership claim, so \`stim gc\` will not stop it.`,
+              remedy: `Run \`eas simulator:list --name ${name}\` and stop any running session with \`eas simulator:stop --id <id>\`, then retry.`,
+            };
+          }
           return { failed: true, reason: `eas sim failed: ${describe(err)}` };
         }
         const created = parseCreatedSession(stdout);
@@ -273,6 +294,8 @@ function remoteDeviceDeps(ctx: RemoteContext) {
         getExecutor().runFile(ctx.agentDeviceBin, closeArgs(profilePath), {
           cwd: ctx.root,
           env: daemonEnv(daemon),
+          timeoutMs: AGENT_DEVICE_TIMEOUT_MS,
+          killSignal: 'SIGKILL',
         });
       } catch {
         /* nothing to close, or a lease already expired: connect proceeds */
@@ -281,6 +304,8 @@ function remoteDeviceDeps(ctx: RemoteContext) {
         getExecutor().runFile(ctx.agentDeviceBin, connectArgs(profilePath), {
           cwd: ctx.root,
           env: daemonEnv(daemon),
+          timeoutMs: AGENT_DEVICE_TIMEOUT_MS,
+          killSignal: 'SIGKILL',
         });
       } catch (err) {
         if (createdHere) return abandonSession(ctx, createdHere, `agent-device connect failed: ${describe(err)}`);
@@ -299,6 +324,8 @@ function remoteDeviceDeps(ctx: RemoteContext) {
         getExecutor().runFile(ctx.agentDeviceBin, installArgs(session.profilePath, artifactPath), {
           cwd: ctx.root,
           env: daemonEnv(session.daemon),
+          timeoutMs: AGENT_DEVICE_INSTALL_TIMEOUT_MS,
+          killSignal: 'SIGKILL',
         });
         return { ok: true, appPath: artifactPath };
       } catch (err) {
@@ -325,6 +352,8 @@ function remoteDeviceDeps(ctx: RemoteContext) {
           getExecutor().runFile(ctx.agentDeviceBin, openArgs(session.profilePath, appId, null, null), {
             cwd: ctx.root,
             env: daemonEnv(session.daemon),
+            timeoutMs: AGENT_DEVICE_TIMEOUT_MS,
+            killSignal: 'SIGKILL',
           });
           return { ok: true, mode: 'launch' };
         } catch (err) {
@@ -349,6 +378,8 @@ function remoteDeviceDeps(ctx: RemoteContext) {
           {
             cwd: ctx.root,
             env: daemonEnv(session.daemon),
+            timeoutMs: AGENT_DEVICE_TIMEOUT_MS,
+            killSignal: 'SIGKILL',
           },
         );
         if (url) {
@@ -356,6 +387,8 @@ function remoteDeviceDeps(ctx: RemoteContext) {
             getExecutor().runFile(ctx.agentDeviceBin, acceptAlertArgs(session.profilePath), {
               cwd: ctx.root,
               env: daemonEnv(session.daemon),
+              timeoutMs: AGENT_DEVICE_TIMEOUT_MS,
+              killSignal: 'SIGKILL',
             });
           } catch {
             /* no alert to accept: the ordinary case once a device has seen one */
@@ -826,7 +859,11 @@ export function teardownRemote(
 ): { status: 'torn-down' | 'failed'; reason?: string } {
   const profilePath = remoteProfilePath(ctx.root);
   try {
-    getExecutor().runFile(ctx.agentDeviceBin, disconnectArgs(profilePath), { cwd: ctx.root });
+    getExecutor().runFile(ctx.agentDeviceBin, disconnectArgs(profilePath), {
+      cwd: ctx.root,
+      timeoutMs: AGENT_DEVICE_TIMEOUT_MS,
+      killSignal: 'SIGKILL',
+    });
   } catch {
     // Nothing to report: a dead or already-released connection is the
     // ordinary case here, and the session stop below is what matters.
