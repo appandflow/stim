@@ -941,10 +941,12 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   and builds. The xcodebuild, Gradle, pod install or expo prebuild it spawned
   is recorded on the lock, its build slot and the workspace's native run, so a
   builder killed while that tool keeps running (SIGTERM to the stim pid alone)
-  frees them only when the tool exits. A recycled pid reads as a gone builder, and a builder busy in a
-  long synchronous tool call reads as live -- age is never a reason to take a
-  lock. The one state that cannot be decided (a truncated claim, an identity
-  token that does not decode) is STIM_CLAIM_REFUSED: Stim names the claim and
+  frees them only when the tool exits. A recycled builder pid reads as a gone
+  builder, and a builder busy in a long synchronous tool call reads as live --
+  age is never a reason to take a lock. A state that cannot be decided (a
+  truncated claim, an identity token that does not decode, a builder killed
+  between spawning its build tool and recording it, a recorded build tool
+  whose pid was since reused) is STIM_CLAIM_REFUSED: Stim names the claim and
   the command that removes it rather than guessing. A process whose own identity
   cannot be captured takes no lock and no slot, and refuses with
   STIM_CLAIM_UNAVAILABLE rather than building unprotected. The

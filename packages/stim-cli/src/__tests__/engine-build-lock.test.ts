@@ -3,7 +3,7 @@ import { execFile, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { claimRemoveCommand } from '../ownership-claim.ts';
+import { claimRemoveCommand, readClaimSet } from '../ownership-claim.ts';
 import { goneClaimOwner, liveClaimOwner, plantClaim, recycledClaimOwner } from './_factories.ts';
 import {
   acquireBuildLock,
@@ -622,6 +622,10 @@ describe('a real race between real processes', { timeout: 30_000 }, () => {
         }
         expect(existsSync(started), 'the builder never spawned xcodebuild').toBe(true);
         toolPid = Number(readFileSync(started, 'utf-8'));
+        const lockPath = buildLockPath('ios', key);
+        for (let attempts = 0; attempts < 500 && !readClaimSet(lockPath).live[0]?.child; attempts += 1) {
+          await new Promise((r) => setTimeout(r, 20));
+        }
         child.kill('SIGTERM');
         await exited;
         expect(() => process.kill(toolPid!, 0), 'xcodebuild died with its builder').not.toThrow();

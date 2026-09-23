@@ -16,7 +16,8 @@ export function stopDeclaringSpawnsOn(claim: ClaimHandle | null | undefined): vo
 /**
  * Start a child that every claim passed to `declareSpawnsOn` records until it exits. The child keeps
  * the caller's process group, so a terminal interrupt still reaches it; the claim follows the child
- * itself. A claim that cannot be marked stops the spawn rather than letting it run unprotected.
+ * itself. A claim that cannot be marked stops the spawn rather than letting it run unprotected. A claim
+ * records one child, so declared spawns must not overlap.
  */
 export function spawnDeclared(spawn: () => ChildProcess): ChildProcess {
   const claims = [...declaring];
