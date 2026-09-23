@@ -311,16 +311,20 @@ describe('swapJsBundle', () => {
     expect(result.appPath).toBeUndefined();
   });
 
-  test('the clone-first copy falls back to a plain cp -R when -c is refused', async () => {
+  test('a clone copy that fails midway is removed before the plain cp -R, which would otherwise nest into it', async () => {
     const calls: Call[] = [];
     let first = true;
+    let fallbackTargetExisted: boolean | undefined;
     const exec = makeExecutor({
       runFile: (file, args = []) => {
         calls.push({ op: 'runFile', file, args });
         if (file === 'cp' && first) {
           first = false;
-          throw new Error('cp: -c not supported');
+          mkdirSync(args.at(-1)!);
+          writeFileSync(join(args.at(-1)!, 'partial'), '');
+          throw new Error('cp: clonefile failed');
         }
+        if (file === 'cp' && fallbackTargetExisted === undefined) fallbackTargetExisted = existsSync(args.at(-1)!);
         return '';
       },
     });
@@ -329,5 +333,6 @@ describe('swapJsBundle', () => {
     expect(result.ok).toBe(true);
     expect(calls[0]?.args?.[0]).toBe('-c');
     expect(calls[1]?.args).toEqual(['-R', cachedApp, join(tmp, 'Fixture.app')]);
+    expect(fallbackTargetExisted).toBe(false);
   });
 });

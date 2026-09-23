@@ -106,3 +106,12 @@ test('app staging cannot modify or recursively copy the source bundle', () => {
   vi.stubEnv('STIM_TMPDIR', join(app, 'temp'));
   expect(() => temporaryRoot(app)).toThrow(/must not be inside/);
 });
+
+test('swap staging for a cached artifact stays outside the build cache', () => {
+  const cache = join(volume.path, 'build-cache');
+  vi.stubEnv('STIM_BUILD_CACHE', cache);
+  const app = join(cache, 'ios', 'key', 'Fixture.app');
+  mkdirSync(app, { recursive: true });
+  expect(temporaryRoot(app)).toBe(volume.path);
+  expect(temporaryRoot(join(cache, 'android', 'key', 'app.apk'))).toBe(volume.path);
+});
