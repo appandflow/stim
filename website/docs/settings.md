@@ -148,8 +148,9 @@ different shapes: the committed key is an array of extra cache paths for `gc`,
 and this machine-file key is an object of named cache locations. `gc` reports
 each committed path, `gc --delete --older-than N` deletes its top-level entries
 older than N days, and `gc --delete --cache all` empties it. A committed path
-that is or contains `/`, the home directory, the temp directory, `$STIM_HOME`,
-or the project or repository root is report-only; `gc` never deletes in it.
+that is or contains `/`, the home directory, the temp directory, `$STIM_HOME`
+(default `~/.stim`), or the project or repository root is report-only; `gc`
+never deletes in it.
 
 Use a top-level [`optimizations` object](./build-optimizations.md) in this file to
 control build optimizations on this machine without changing project files.

@@ -9,7 +9,7 @@ import {
   symlinkSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { declaredCachePaths, discoverCaches, pruneCache, sizeCaches } from '../cache/caches.ts';
 import { register } from '../cache/cache-manifest.ts';
@@ -298,6 +298,7 @@ test('a declared cache that is or contains a protected root is never trimmed', (
   mkdirSync(project, { recursive: true });
   mkdirSync(ordinary);
   writeFileSync(join(project, 'package.json'), '{}');
+  const homeCaseVariant = join(dirname(fakeHome), basename(fakeHome).toUpperCase());
   const protectedDirs = [fakeHome, join(fakeHome, 'src'), repo, project];
   const entries = new Map(
     [...protectedDirs, ordinary].map((dir) => {
@@ -320,14 +321,15 @@ test('a declared cache that is or contains a protected root is never trimmed', (
       spawn: () => {},
     });
 
-    const caches = discoverCaches({ declared: ['~', '~/src', repo, project, ordinary] });
+    const caches = discoverCaches({ declared: ['~', '~/src', repo, project, ordinary, homeCaseVariant] });
 
-    for (const dir of protectedDirs) {
+    const caseInsensitive = existsSync(homeCaseVariant);
+    for (const dir of caseInsensitive ? [...protectedDirs, homeCaseVariant] : protectedDirs) {
       const found = caches.find((c) => c.dir === dir);
       assert(found, dir);
       expect(found.prune).toBe('report-only');
       pruneCache(found, { olderThanDays: 30 });
-      expect(existsSync(entries.get(dir) as string)).toBe(true);
+      expect(existsSync(entries.get(dir) ?? (entries.get(fakeHome) as string))).toBe(true);
     }
     const trimmed = caches.find((c) => c.dir === ordinary);
     assert(trimmed);

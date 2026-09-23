@@ -246,8 +246,9 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         \`gc --delete --older-than N\` trims and
                         \`gc --delete --cache all\` empties. A path that is
                         or contains /, the home directory, the temp
-                        directory, $STIM_HOME, or the project or repository
-                        root is report-only: \`gc\` never deletes in it.
+                        directory, $STIM_HOME (default ~/.stim), or the
+                        project or repository root is report-only: \`gc\`
+                        never deletes in it.
 
 Each setting takes its documented type: string, array of strings, number,
 boolean, or object. A value of the wrong type is

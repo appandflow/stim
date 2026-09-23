@@ -81,7 +81,7 @@ function declaredCaches(paths: string[]): CacheDescriptor[] {
   if (!dirs.length) return [];
   const roots = protectedRoots();
   return dirs.map((dir): CacheDescriptor => {
-    const canonical = canonicalCacheDir(dir);
+    const canonical = onDiskPath(dir);
     const root = [parse(canonical).root, ...roots].find((r) => cachePathContains(canonical, r));
     if (root) {
       return {
@@ -99,7 +99,17 @@ function protectedRoots(): string[] {
   const project = findProjectRoot(process.cwd());
   return [homedir(), tmpdir(), getConfigDir(), project, project && repoRoot(project)]
     .filter((root): root is string => Boolean(root))
-    .map(canonicalCacheDir);
+    .map(onDiskPath);
+}
+
+// Node's JS realpathSync keeps the caller's spelling on a case-insensitive volume
+// (APFS default); realpathSync.native returns the name as stored on disk.
+function onDiskPath(dir: string): string {
+  try {
+    return realpathSync.native(dir);
+  } catch {
+    return resolve(dir);
+  }
 }
 
 function projectSettings(cwd: string): SettingsObject {
