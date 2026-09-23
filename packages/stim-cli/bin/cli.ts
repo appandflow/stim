@@ -40,6 +40,6 @@ try {
   const code = (err as { code?: unknown })?.code;
   const message = err instanceof Error ? err.message : String(err);
   if (typeof code === 'string' && code.startsWith('STIM_')) console.error(`${code}: ${message}`);
-  else console.error(`Unexpected error: ${message}. Report it at ${pkg.bugs.url}`);
+  else console.error(`Unexpected error: ${message.replace(/\.$/, '')}. Report it at ${pkg.bugs.url}`);
   process.exit(1);
 }
