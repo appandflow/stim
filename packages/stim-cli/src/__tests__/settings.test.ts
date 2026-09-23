@@ -23,7 +23,6 @@ import {
   publicUrlSetting,
   readCommittedSettings,
   remoteAndroidSetting,
-  remoteDeviceSettingError,
   remoteIosSetting,
   resolveCacheProviderConfig,
   resolveSettings,
@@ -334,18 +333,15 @@ describe('remote device settings', () => {
   });
 
   test('reports invalid platform values instead of silently disabling remote mode', () => {
-    expect(remoteDeviceSettingError({ ios: { remote: true } })).toBe(
+    expect(settingShapeErrors({ ios: { remote: true }, android: { remote: 'cloud' } })).toEqual([
       'Invalid ios.remote setting true. Expected one of: proxy, eas.',
-    );
-    expect(remoteDeviceSettingError({ android: { remote: 'cloud' } })).toBe(
       'Invalid android.remote setting "cloud". Expected one of: proxy, eas.',
-    );
+    ]);
   });
 
   test('missing platform settings remain local and valid', () => {
     expect(remoteIosSetting({})).toBeNull();
     expect(remoteAndroidSetting({ android: {} })).toBeNull();
-    expect(remoteDeviceSettingError({})).toBeNull();
   });
 });
 
@@ -388,7 +384,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'ios.deviceType': { valid: 'iPhone 17 Pro', invalid: {}, expected: 'a string' },
   'ios.runtime': { valid: '26.2', invalid: 26.2, expected: 'a string' },
   'ios.configuration': { valid: 'Release', invalid: { name: 'Release' }, expected: 'a string' },
-  'ios.remote': { valid: 'proxy', invalid: true, expected: 'a string' },
+  'ios.remote': { valid: 'proxy', invalid: 'cloud', expected: 'one of: proxy, eas' },
   'ios.simslimProfile': { valid: '.simslim/dev.json', invalid: {}, expected: 'a string path' },
   'ios.signingIdentity': { valid: 'Apple Development: Jane', invalid: [], expected: 'a string' },
   'ios.signingIdentitySha1': { valid: 'A'.repeat(40), invalid: 42, expected: 'a string' },
@@ -400,8 +396,8 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'android.variant': { valid: 'productionDebug', invalid: {}, expected: 'a string' },
   'android.keystore': { valid: 'android/app/release.keystore', invalid: {}, expected: 'a string path' },
   'android.keystorePassword': { valid: 'env:MY_KS_PASS', invalid: 1234, expected: 'a string' },
-  'android.remote': { valid: 'eas', invalid: true, expected: 'a string' },
-  'metro.tunnel': { valid: 'ngrok', invalid: {}, expected: 'a string' },
+  'android.remote': { valid: 'eas', invalid: 'cloud', expected: 'one of: proxy, eas' },
+  'metro.tunnel': { valid: 'ngrok', invalid: 'bogus', expected: 'one of: auto, off, expo, cloudflared, ngrok' },
   'metro.ngrokUrl': { valid: 'https://a.ngrok.app', invalid: {}, expected: 'a string' },
   'metro.publicUrl': { valid: 'https://metro.example', invalid: false, expected: 'a string' },
   'metro.warmupUrl': { valid: {}, invalid: '/index.bundle', expected: 'an object' },

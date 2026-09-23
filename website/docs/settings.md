@@ -29,6 +29,7 @@ Nested objects merge by key. Arrays replace lower-precedence arrays. Unknown
 keys produce a warning. Every key below takes one type: a string, an array of
 strings, a number, a boolean, or an object such as `android.avdConfig`,
 `cache.options`, and the nested `optimizations` settings.
+`ios.remote`, `android.remote`, `metro.tunnel`,
 `optimizations.android.compilerCache` and `optimizations.android.pch` take only
 their listed choices. A value of the wrong type or outside those choices is
 refused by name on every command that resolves settings, `stim ios` included,

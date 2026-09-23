@@ -36,7 +36,6 @@ import {
   ngrokUrlSetting,
   metroTunnelSettingError,
   remoteAndroidSetting,
-  remoteDeviceSettingError,
   cacheProviderSettingError,
   remoteIosSetting,
   resolveCacheProviderConfig,
@@ -389,15 +388,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         return fail({
           code: 'STIM_BAD_ARG',
           message: settingError,
-          remedy: `Set metro.tunnel to one of: auto, expo, ngrok, cloudflared, off.`,
-        });
-      }
-      const remoteSettingError = remoteDeviceSettingError(settings);
-      if (remoteSettingError) {
-        return fail({
-          code: 'STIM_BAD_ARG',
-          message: remoteSettingError,
-          remedy: 'Set ios.remote and android.remote to either proxy or eas.',
+          remedy: 'Set metro.tunnel to "ngrok" and metro.ngrokUrl to an HTTPS URL, or remove metro.ngrokUrl.',
         });
       }
       const remote =

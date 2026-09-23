@@ -19,9 +19,7 @@ import {
   androidDataPartitionSizeGbSettingError,
   cacheProviderSettingError,
   remoteAndroidSetting,
-  remoteDeviceSettingError,
   resolveCacheProviderConfig,
-  REMOTE_DEVICE_BACKENDS,
   SETTING_SHAPE_REMEDY,
   settingFile,
   settingShapeErrors,
@@ -193,14 +191,6 @@ export function resolveAndroidRunPlan(
       'STIM_BAD_ARG',
       avdConfigError,
       'Use only documented android.avdConfig keys, or an android.avdConfigFile fragment contained by the app directory.',
-    );
-  }
-  const remoteSettingError = remoteDeviceSettingError(settings);
-  if (remoteSettingError) {
-    return fail(
-      'STIM_BAD_ARG',
-      remoteSettingError,
-      `Set ios.remote and android.remote to one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}.`,
     );
   }
   const systemImage = resolveSystemImage(systemImageFlag, settings);
