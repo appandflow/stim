@@ -1156,10 +1156,12 @@ not on any remote"  (worktree remove)
   on a fetch that otherwise succeeded, and is safe to ignore.`,
     },
     STIM_CONFIG_CORRUPT: {
-      summary: '~/.stim/config.json is not valid JSON and Stim never resets it',
-      body: () => `STIM_CONFIG_CORRUPT  ("Stim config at <path> is not valid JSON")
+      summary: '~/.stim/config.json is not a valid JSON object and Stim never resets it',
+      body: () => `STIM_CONFIG_CORRUPT  ("Stim config at <path> is not valid JSON",
+                     "... is not a JSON object")
   Any command can raise it: every command reads ~/.stim/config.json first.
-  The file holding every owned-device record will not parse, and Stim never
+  The file holding every owned-device record will not parse into an object
+  (a bare [], null or number counts as corrupt, not empty), and Stim never
   resets it for you -- a silent reset would orphan every simulator it names.
   Repair the file, or move it aside (\`mv <path> <path>.broken\`) and accept
   that the devices it recorded become orphans you delete by hand.`,

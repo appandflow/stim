@@ -267,8 +267,9 @@ removed -- check this list rather than assuming it still applies.
 problem. It reports, as notes naming the key, the file it came from, and the
 line that clears it: a setting whose path no longer exists, a setting that needs
 a companion the config does not supply, a key Stim no longer reads, and a
-config file that is not valid JSON. It skips the \`projects\` registry, where an
-entry for a deleted checkout is normal and \`gc\` owns the cleanup.
+config file that is not a valid JSON object. It skips the \`projects\`
+registry, where an entry for a deleted checkout is normal and \`gc\` owns the
+cleanup.
 
 CONCURRENCY LIMITS ARE MACHINE-LEVEL, NOT A PER-PROJECT SETTING
 The caps above are not in the layered settings -- they are not per-project,
