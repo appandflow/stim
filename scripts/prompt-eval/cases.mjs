@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 
 export const cases = [
   { id: 'simulator', page: 'getting-started', title: 'Choose an iOS simulator' },
@@ -7,6 +7,13 @@ export const cases = [
   { id: 'logs', page: 'getting-started', title: 'Inspect recent errors' },
   { id: 'warm', page: 'getting-started', title: 'Work in parallel' },
   { id: 'slots', page: 'owned-devices', title: 'Test a change on multiple devices' },
+  { id: 'failure', page: 'getting-started', title: 'Build and run' },
+  {
+    id: 'stop',
+    page: 'getting-started',
+    title: 'Stop the environment',
+    context: "This workspace's Stim dev server and iOS simulator are running from an earlier session.",
+  },
 ];
 
 export function websitePrompt(root, entry) {
@@ -61,12 +68,117 @@ function readGitFixture(args, workspace) {
   return null;
 }
 
+const fingerprint = '6564e2a0c3b1f9d8e7a6b5c4d3e2f1a0b9c8d7e6';
+const bundleId = 'com.example.promptfixture';
+const launchFailure = 'STIM_LAUNCH_FAILED';
+
+function fixturePaths(workspace) {
+  const stimHome = resolve(workspace, '../stim-home');
+  return { stimHome, logsDir: join(stimHome, 'workspaces/app--0123456789abcdef/logs') };
+}
+
+function doctorPayload(workspace, platform) {
+  const installation = {
+    path: '/usr/local/bin/stim',
+    realPath: '/usr/local/lib/node_modules/stim/dist/cli.mjs',
+    version: '1.8.0',
+  };
+  return {
+    project: workspace,
+    platform: platform ?? null,
+    stim: {
+      runningVersion: '1.8.0',
+      runningPath: installation.realPath,
+      resolved: installation,
+      installations: [installation],
+      versions: ['1.8.0'],
+      highestVersion: '1.8.0',
+      resolvedIsOlder: false,
+    },
+    findings: [],
+  };
+}
+
+function startPayload(workspace) {
+  return {
+    port: 8083,
+    supervisorPid: 48213,
+    mode: 'expo-child',
+    logsDir: fixturePaths(workspace).logsDir,
+    alreadyRunning: false,
+  };
+}
+
+function iosSlotPayload(workspace, slot, deviceType) {
+  const { stimHome, logsDir } = fixturePaths(workspace);
+  const physical = slot === 'hardware';
+  const cacheKey = `${fingerprint}-debug-${physical ? 'device' : 'sim'}`;
+  const model = deviceType ?? 'iPhone 17';
+  return {
+    platform: 'ios',
+    slot,
+    udid: physical
+      ? '00008140-000A1C2E3F4B5D6E'
+      : `F1E2D3C4-B5A6-4789-9ABC-0000000000${slot === 'phone' ? '01' : '02'}`,
+    deviceName: physical ? "Example's iPhone" : `stim-app-${slot} (${model} 26.5)`,
+    deviceType: physical ? null : model,
+    runtime: physical ? null : '26.5',
+    fingerprint,
+    configuration: null,
+    cacheKey,
+    cacheHit: 'local',
+    cacheSkipped: false,
+    compilationCache: { status: 'not-run', hits: null, cacheableTasks: null, hitRatePercent: null },
+    waitedForBuild: null,
+    appPath: join(stimHome, 'build-cache', cacheKey, 'PromptFixture.app'),
+    bundleId,
+    installSkipped: false,
+    launched: true,
+    metroPort: 8083,
+    logs: { dir: logsDir },
+    durationMs: physical ? 38410 : 21870,
+    ...(physical ? { lease: { kind: 'run', expiresAt: '2026-01-01T00:30:00.000Z' } } : {}),
+  };
+}
+
+function launchFailurePayload(workspace) {
+  return {
+    code: launchFailure,
+    message: 'The app failed its launch readiness check.',
+    remedy: `Read the launch error above or run \`stim logs --errors\`. The full timeline is in ${fixturePaths(workspace).logsDir}.`,
+  };
+}
+
+const launchErrorRecord = {
+  ts: 1767225834210,
+  src: 'metro',
+  level: 'error',
+  raw: true,
+  msg: "ERROR  TypeError: Cannot read property 'title' of undefined\n\nThis error is located at:\n    in SettingsScreen (at App.tsx:12)",
+};
+
+function launchErrorLogs(json) {
+  if (json) return JSON.stringify(launchErrorRecord);
+  return [
+    "14:03:54.210 error metro  ERROR  TypeError: Cannot read property 'title' of undefined",
+    '    This error is located at:',
+    '        in SettingsScreen (at App.tsx:12)',
+  ].join('\n');
+}
+
 export function commandState(id, workspace) {
   let guided = false;
   let started = false;
   let worktree = null;
+  let launchFailed = false;
+  const diagnosed = new Set();
   const slots = new Set();
   const trace = [];
+  function diagnose(step) {
+    if (!launchFailed) return false;
+    diagnosed.add(step);
+    return diagnosed.size === 2;
+  }
   function acceptSlot(flags) {
     const slot = flags.get('--slot');
     if (!['phone', 'tablet', 'hardware'].includes(slot) || slots.has(slot))
@@ -82,14 +194,17 @@ export function commandState(id, workspace) {
     slots.add(slot);
     return slots.size === 3
       ? { done: true }
-      : {
-          output: JSON.stringify({
-            launched: true,
-            bundleId: 'com.example.promptfixture',
-            slot,
-            device: { udid: `fixture-${slot}`, name: slot },
-          }),
-        };
+      : { output: JSON.stringify(iosSlotPayload(workspace, slot, flags.get('--device-type'))) };
+  }
+  function acceptFailure(command, flags) {
+    if (command === 'ios') {
+      if (!started) throw new Error('Debug launch must follow start');
+      if (launchFailed) throw new Error('Launch retried before reading the errors and the error guide');
+      launchFailed = true;
+      return { output: JSON.stringify(launchFailurePayload(workspace)), failed: true };
+    }
+    if (!launchFailed || !flags.has('--errors')) throw new Error('Expected logs --errors after the failed launch');
+    return diagnose('logs') ? { done: true } : { output: launchErrorLogs(flags.has('--json')) };
   }
   function accept(command) {
     const { file, args, cwd } = command;
@@ -137,6 +252,8 @@ export function commandState(id, workspace) {
       if (args.length < 2 || args.length > 3 || args.slice(1).some((arg) => !/^[a-zA-Z0-9_-]+$/.test(arg)))
         throw new Error('Invalid guide request');
       if (args[1] === 'agent' && args.length === 2) guided = true;
+      if (id === 'failure' && args[1] === 'errors' && args[2] === launchFailure && diagnose('guide'))
+        return { done: true };
       return { guide: args };
     }
     if (!guided) throw new Error('Stim action before loading guide agent');
@@ -147,12 +264,12 @@ export function commandState(id, workspace) {
     if (positional.length === 1 && positional[0] === 'doctor') {
       only(['--json', '--platform']);
       if (flags.has('--platform') && flags.get('--platform') !== 'ios') throw new Error('Wrong doctor platform');
-      return { output: JSON.stringify({ ok: true, findings: [], project: { type: 'expo' }, warm: { ready: true } }) };
+      return { output: JSON.stringify(doctorPayload(workspace, flags.get('--platform'))) };
     }
     if (positional.length === 1 && positional[0] === 'start') {
       only(['--json']);
       started = true;
-      return { output: JSON.stringify({ status: 'ready', port: 8083 }) };
+      return { output: JSON.stringify(startPayload(workspace)) };
     }
     if (positional.join(' ') === 'worktree warm' && id === 'warm') {
       only([]);
@@ -163,6 +280,14 @@ export function commandState(id, workspace) {
       only(['--errors', '--since', '--json']);
       if (!flags.has('--errors') || flags.get('--since') !== '10m')
         throw new Error('Expected errors from the last 10 minutes');
+      return { done: true };
+    }
+    if (id === 'failure' && ['ios', 'logs'].includes(positional.join(' '))) {
+      only(positional[0] === 'ios' ? ['--json'] : ['--errors', '--since', '--json']);
+      return acceptFailure(positional[0], flags);
+    }
+    if (positional.join(' ') === 'stop' && id === 'stop') {
+      only(['--json']);
       return { done: true };
     }
     if (positional.join(' ') === 'ios' && ['simulator', 'phone', 'slots'].includes(id)) {
@@ -188,7 +313,9 @@ export function commandState(id, workspace) {
       only(['--errors', '--slot', '--json']);
       if (!flags.has('--errors') || !slots.has(flags.get('--slot')))
         throw new Error('Errors must target an already launched slot');
-      return { output: '[]' };
+      return {
+        output: flags.has('--json') ? '' : `No matching log records in ${fixturePaths(workspace).logsDir}`,
+      };
     }
     throw new Error(`Unexpected Stim action: ${args.join(' ')}`);
   }

@@ -2,6 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cases, commandState, websitePrompt } from './cases.mjs';
+import { startFacts } from '../../packages/stim-cli/src/commands/start.ts';
+import { iosFacts } from '../../packages/stim-cli/src/commands/ios/result.ts';
+import { analyzeStimVersions } from '../../packages/stim-cli/src/diagnostics/stim-installations.ts';
+import errors from '../../packages/stim-cli/src/guide/errors.ts';
 
 const workspace = '/fixture/app';
 const worktree = resolve(workspace, '../feature');
@@ -64,6 +68,55 @@ describe('website prompt command selection', () => {
     expect(() => run(['ios', '--slot', 'phone'])).toThrow('repeated');
     expect(run(['ios', '--slot', 'tablet', '--device-type', 'iPad Pro 13-inch (M5)']).done).toBeUndefined();
     expect(run(['ios', '--slot', 'hardware', '--device'])).toEqual({ done: true });
+  });
+
+  it('returns doctor, start, slot launch, and empty log results in the shapes the CLI emits', () => {
+    const { run } = driver('slots');
+    run(['guide', 'agent']);
+    const doctor = JSON.parse(run(['doctor', '--json']).output);
+    expect(Object.keys(doctor)).toEqual(['project', 'platform', 'stim', 'findings']);
+    expect(Object.keys(doctor.stim)).toEqual(Object.keys(analyzeStimVersions('1.0.0', null, [])));
+    const start = JSON.parse(run(['start', '--json']).output);
+    expect(Object.keys(start)).toEqual(Object.keys(startFacts({ port: start.port, logsDir: start.logsDir })));
+    const phone = JSON.parse(run(['ios', '--slot', 'phone', '--json']).output);
+    expect(Object.keys(phone)).toEqual(Object.keys(iosFacts({ slot: 'phone', udid: phone.udid })));
+    const hardware = JSON.parse(run(['ios', '--slot', 'hardware', '--device', '--json']).output);
+    expect(Object.keys(hardware)).toEqual(
+      Object.keys(iosFacts({ slot: 'hardware', udid: hardware.udid, lease: hardware.lease })),
+    );
+    expect(run(['logs', '--errors', '--slot', 'phone', '--json']).output).toBe('');
+  });
+
+  it('passes a failed launch only after its errors and its code guide are read, in either order', () => {
+    function failedLaunch() {
+      const { run } = driver('failure');
+      run(['guide', 'agent']);
+      expect(() => run(['logs', '--errors'])).toThrow('after the failed launch');
+      run(['start']);
+      const launch = run(['ios', '--json']);
+      expect(launch.failed).toBe(true);
+      const { code } = JSON.parse(launch.output);
+      expect(errors.sections[code]).toBeDefined();
+      expect(() => run(['ios'])).toThrow('retried');
+      return { run, code };
+    }
+    const logsFirst = failedLaunch();
+    const record = JSON.parse(logsFirst.run(['logs', '--errors', '--json']).output);
+    expect(Object.keys(record)).toEqual(expect.arrayContaining(['ts', 'src', 'level', 'msg']));
+    expect(logsFirst.run(['guide', 'errors', logsFirst.code])).toEqual({ done: true });
+    const guideFirst = failedLaunch();
+    expect(guideFirst.run(['guide', 'errors', guideFirst.code])).toEqual({
+      guide: ['guide', 'errors', guideFirst.code],
+    });
+    expect(guideFirst.run(['logs', '--errors'])).toEqual({ done: true });
+  });
+
+  it('stops the workspace only after the guide and never removes the worktree', () => {
+    const { run } = driver('stop');
+    expect(() => run(['stop'])).toThrow('guide agent');
+    run(['guide', 'agent']);
+    expect(() => run(['worktree', 'remove'])).toThrow('Unexpected Stim action');
+    expect(run(['stop', '--json'])).toEqual({ done: true });
   });
 
   it('requires warming the newly created worktree instead of the original checkout', () => {
