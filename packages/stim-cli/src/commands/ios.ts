@@ -52,7 +52,7 @@ import { createRunRecorder, statsProjectKey, type RunEstimates } from '../engine
 import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { appProjectProblem } from '../workspace/project.ts';
+import { appProjectProblem, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { isPhysicalDeviceRequest, type SupervisorLike, noMetroMessage, noMetroRemedy } from './native-runtime.ts';
 import {
   PLATFORM,
@@ -244,23 +244,19 @@ async function runIos(
   const startedAt = new Date(started).toISOString();
   const elapsed = () => d.now() - started;
 
-  const foundRoot = d.findProjectRoot(process.cwd());
-  if (!foundRoot) {
-    note(chalk.red('Not in a React Native project (no package.json found).'));
-    process.exitCode = 1;
-    return null;
-  }
-  const root = foundRoot;
-  const projectProblem = appProjectProblem(root);
-  if (projectProblem) {
-    const { message, remedy } = projectProblem;
+  const refuseProject = ({ message, remedy }: { message: string; remedy: string }): null => {
     note(chalk.red(phaseLine('error', message)));
     note(chalk.dim(phaseLine('remedy', remedy)));
     note(chalk.red(phaseLine('failed', 'STIM_NO_PROJECT')));
     if (json) console.log(JSON.stringify({ code: 'STIM_NO_PROJECT', message, remedy }));
     process.exitCode = 1;
     return null;
-  }
+  };
+  const foundRoot = d.findProjectRoot(process.cwd());
+  if (!foundRoot) return refuseProject(NO_PROJECT_REFUSAL);
+  const root = foundRoot;
+  const projectProblem = appProjectProblem(root);
+  if (projectProblem) return refuseProject(projectProblem);
 
   try {
     await d.ensureWorkspaceStorage(root, { note });

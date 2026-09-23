@@ -1,4 +1,6 @@
+import chalk from 'chalk';
 import { launchErrorPreview } from './diagnostics/launch-error-preview.ts';
+import { NO_PROJECT_REFUSAL } from './workspace/project.ts';
 
 const LABEL_WIDTH = 11;
 
@@ -58,6 +60,14 @@ export function releasedLeaseFact(lease: ReleasedLeaseFact): string {
 
 export function phaseLine(label: unknown, text: string): string {
   return `  ${String(label).padEnd(LABEL_WIDTH)} ${text}`;
+}
+
+export function refuseNoProject({ json }: { json: boolean }): void {
+  const { code, message, remedy } = NO_PROJECT_REFUSAL;
+  console.error(chalk.red(phaseLine('error', `${code}: ${message}`)));
+  console.error(phaseLine('remedy', remedy));
+  if (json) console.log(JSON.stringify(NO_PROJECT_REFUSAL));
+  process.exitCode = 1;
 }
 
 export { quotedPath } from '@stim-cli/core';

@@ -881,6 +881,12 @@ captured"  (in metro.ndjson, bare RN)
   or android.systemImage setting is checked the same way, and the check applies
   even when this workspace ALREADY owns a device, so a name that could never
   create anything is caught rather than left to a later run.
+  A working directory with no package.json above it gets the same
+  STIM_NO_PROJECT refusal from \`start\`, \`ios\`, \`android\`, \`stop\`,
+  \`reload\`, \`logs\`, \`doctor\` and \`device lock|unlock\`. With \`--json\` the { code, message, remedy } object
+  is on stdout, except \`logs --json\`, whose stdout stays empty NDJSON; the
+  refusal is on stderr. \`stop\` outside a project refuses rather than
+  reporting that nothing was running.
   These errors are caught before the port is reserved and before any build or
   device work, so nothing was started. The one listing they need
   (\`simctl list runtimes\`, the SDK's system-images directory) runs only when

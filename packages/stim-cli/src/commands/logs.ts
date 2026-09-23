@@ -6,6 +6,7 @@ import { realpathSync } from 'node:fs';
 import { relative, sep } from 'node:path';
 import { isPathPrefix, loadConfig } from '../workspace/config.ts';
 import { findProjectRoot } from '../workspace/project.ts';
+import { refuseNoProject } from '../command-output.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
@@ -185,8 +186,8 @@ export default function logsCommand(program: Command): void {
     .action(async (opts: LogsOptions) => {
       const root = findProjectRoot(process.cwd());
       if (!root) {
-        console.error(chalk.red('Not in a React Native project (no package.json found).'));
-        process.exit(1);
+        refuseNoProject({ json: false });
+        return;
       }
       const dir = workspaceLogsDir(root);
 

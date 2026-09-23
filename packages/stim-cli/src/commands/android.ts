@@ -6,7 +6,7 @@ import type { ChildProcess } from 'node:child_process';
 import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
 import { loadCacheProvider } from '@stim-cli/cache';
-import { formatDuration, phaseLine, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
+import { formatDuration, phaseLine, refuseNoProject, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
 import type { CcacheActivity } from '../engine/build-facts.ts';
 import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
 import {
@@ -229,8 +229,7 @@ export function registerAndroid(program: Command): void {
     .action(async (opts: AndroidCommandOptions) => {
       const root = findProjectRoot(process.cwd());
       if (!root) {
-        console.error(chalk.red('Not in a React Native project (no package.json found).'));
-        process.exit(1);
+        refuseNoProject({ json: Boolean(opts.json) });
         return;
       }
       const result = await withWorkspaceProcessLock(

@@ -23,7 +23,7 @@ afterEach(() => {
   delete process.env.STIM_NO_UPDATE_CHECK;
 });
 
-function run(entry, args, allowedCommand) {
+function run(entry, args, allowedCommand, options = {}) {
   const nodeArgs = [];
   if (allowedCommand !== undefined) {
     const hook = `
@@ -42,6 +42,7 @@ function run(entry, args, allowedCommand) {
   }
   return spawnSync(process.execPath, [...nodeArgs, fileURLToPath(new URL(entry, packageRoot)), ...args], {
     env: process.env,
+    ...options,
     encoding: 'utf8',
     timeout: 10000,
   });
@@ -130,5 +131,26 @@ for (const entry of entries) {
       unexpected.stderr,
       /^Unexpected error: EISDIR: .+ Report it at https:\/\/github\.com\/appandflow\/stim\/issues\n$/,
     );
+  });
+
+  test(`${entry}: every project command refuses outside a project with STIM_NO_PROJECT`, () => {
+    const outside = mkdtempSync(join(tmpdir(), 'stim-cli-e2e-outside-'));
+    const options = { cwd: outside, env: { ...process.env, HOME: home } };
+    try {
+      for (const command of ['start', 'ios', 'android', 'stop', 'reload', 'doctor']) {
+        const result = run(entry, [command, '--json'], undefined, options);
+        assert.equal(result.status, 1, `${command}: ${result.stderr}`);
+        const payload = JSON.parse(result.stdout || 'null');
+        assert.equal(payload?.code, 'STIM_NO_PROJECT', command);
+        assert.match(payload.remedy, /package\.json/, command);
+        assert.match(result.stderr, /STIM_NO_PROJECT/, command);
+      }
+      const logs = run(entry, ['logs', '--json'], undefined, options);
+      assert.equal(logs.status, 1, logs.stderr);
+      assert.equal(logs.stdout, '');
+      assert.match(logs.stderr, /STIM_NO_PROJECT/);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 }

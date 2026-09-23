@@ -537,14 +537,18 @@ describe('logs command', () => {
   test('outside a project it exits 1 and says so', async () => {
     const bare = mkdtempSync(join(tmpdir(), 'stim-logscmd-bare-'));
     process.chdir(bare);
+    let refusedWith;
     try {
-      await run({});
+      await run({ json: true });
+      refusedWith = process.exitCode;
     } finally {
+      process.exitCode = undefined;
       process.chdir(project);
       rmSync(bare, { recursive: true, force: true });
     }
-    expect(exitCode).toBe(1);
-    expect(errOut.join('\n')).toMatch(/project/i);
+    expect(refusedWith).toBe(1);
+    expect(errOut.join('\n')).toContain('STIM_NO_PROJECT');
+    expect(out).toEqual([]);
   });
 
   test('--since is honoured against real timestamps', async () => {

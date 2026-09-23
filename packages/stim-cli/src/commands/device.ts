@@ -19,7 +19,7 @@ import {
   listIosDevices,
   resolveIosPhysicalDevice,
 } from '../engine/ios-device.ts';
-import { findProjectRoot } from '../workspace/project.ts';
+import { findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import {
   androidPoolCandidates,
   androidPoolNoCandidatesRefusal,
@@ -223,11 +223,7 @@ export async function runLock(
 
   const root = d.findProjectRoot(process.cwd());
   if (!root) {
-    return report({
-      code: 'STIM_NO_PROJECT',
-      message: 'Not in a React Native project (no package.json found).',
-      remedy: 'Run this from the app directory -- the one holding package.json.',
-    });
+    return report(NO_PROJECT_REFUSAL);
   }
 
   const durationText = String(opts.for ?? DEFAULT_FOR).trim();
@@ -341,11 +337,7 @@ export async function runUnlock(
 
   const root = d.findProjectRoot(process.cwd());
   if (!root) {
-    return report({
-      code: 'STIM_NO_PROJECT',
-      message: 'Not in a React Native project (no package.json found).',
-      remedy: 'Run this from the app directory -- the one holding package.json.',
-    });
+    return report(NO_PROJECT_REFUSAL);
   }
 
   const released = d.releaseLeases(root, { platform, ...(opts.slot ? { slot: opts.slot } : {}) }, d.io);
