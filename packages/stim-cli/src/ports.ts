@@ -1,7 +1,7 @@
 import { request } from 'http';
 import { connect } from 'net';
 import { existsSync } from 'fs';
-import { loadConfig, allMetroPorts, removeProject, claimMetroPort } from './workspace/config.ts';
+import { loadConfig, allMetroPorts, releaseMetroPort, claimMetroPort } from './workspace/config.ts';
 import { isOnMountedVolume, listMountedVolumes } from './fs-util.ts';
 
 export function isMetroRunning(port: number): Promise<boolean> {
@@ -92,7 +92,7 @@ export async function allocatePort(
 ): Promise<number> {
   const reclaim = await findReclaimablePort(projectPath, probe);
   if (reclaim && (await isFree(reclaim.port))) {
-    removeProject(reclaim.ownerPath);
+    releaseMetroPort(reclaim.ownerPath, reclaim.port);
     return reclaim.port;
   }
   return computeNextPort(isFree);

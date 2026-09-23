@@ -58,14 +58,28 @@ test('findReclaimablePort returns first dead port and its owner', async () => {
   expect(r).toEqual({ port: 8083, ownerPath: b });
 });
 
-test('allocatePort reclaims dead ports and removes the dead project', async () => {
+test('allocatePort reuses a dead project port but keeps its devices and pending branch cleanup', async () => {
   const dead = join(tmpHome, 'dead-project');
-  upsertProject(dead, { bundleId: 'a', androidPackage: 'a', isExpo: false });
+  upsertProject(dead, {
+    bundleId: 'a',
+    androidPackage: 'a',
+    isExpo: false,
+    worktreeBranch: 'feature',
+    worktreeBranchOwned: true,
+    worktreeMainRoot: join(tmpHome, 'main'),
+    worktreeRemovalComplete: true,
+    worktreePendingBranchSha: 'abc123',
+  });
+  setDevice(dead, 'ios', { deviceUdid: 'U1', owned: true });
   claimMetroPort(dead, 8082);
-  const probe = async () => false;
-  const port = await allocatePort('/new', probe, allFree);
+  const port = await allocatePort('/new', async () => false, allFree);
   expect(port).toBe(8082);
-  expect(getProject(dead)).toBe(null);
+  expect(getProject(dead)).toMatchObject({
+    metroPort: null,
+    platforms: { ios: { deviceUdid: 'U1', owned: true } },
+    worktreeRemovalComplete: true,
+    worktreePendingBranchSha: 'abc123',
+  });
 });
 
 test('findReclaimablePort does not reclaim live-path projects even with dead Metro', async () => {

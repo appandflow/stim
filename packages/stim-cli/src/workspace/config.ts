@@ -194,6 +194,16 @@ export function claimMetroPort(projectPath: string, port: number): number | null
   });
 }
 
+export function releaseMetroPort(projectPath: string, port: number): void {
+  withConfigLock(() => {
+    const cfg = loadConfig();
+    const project = cfg?.projects?.[projectPath];
+    if (!cfg || project?.metroPort !== port) return;
+    project.metroPort = null;
+    saveConfig(cfg);
+  });
+}
+
 export function setDevice(projectPath: string, platform: string, deviceFields: DeviceRecord, slot = 'default'): void {
   requireAbsoluteProjectPath(projectPath);
   withConfigLock(() => {
