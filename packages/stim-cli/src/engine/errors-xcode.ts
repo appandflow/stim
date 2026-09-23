@@ -115,52 +115,63 @@ export function extractXcodeDiagnostics(
   sdk: string = 'iphonesimulator',
 ): Diagnostic[] {
   if (typeof transcript !== 'string' || transcript === '') return [];
+  const collector = createXcodeDiagnosticCollector(root, sdk);
+  for (const line of transcript.split('\n')) collector.push(line);
+  return collector.diagnostics;
+}
 
-  const lines = transcript.split('\n');
+export function createXcodeDiagnosticCollector(
+  root: string | null = null,
+  sdk: string = 'iphonesimulator',
+): { push(line: string): void; readonly diagnostics: Diagnostic[] } {
   const out: Diagnostic[] = [];
   const seen = new Set<string>();
+  let finished = false;
+  let inUndefinedSymbols = false;
 
-  const push = (d: Diagnostic) => {
+  const add = (d: Diagnostic) => {
     const key = dedupeKey(d);
     if (seen.has(key)) return;
     seen.add(key);
     out.push(d);
   };
 
-  for (let i = 0; i < lines.length; i += 1) {
-    const rawLine = lines[i];
-    if (rawLine === undefined) continue;
-    const raw = rawLine.replace(/\r$/, '');
-    if (raw.includes(BUILD_FAILED)) break;
+  const push = (line: string) => {
+    if (finished) return;
+    const raw = line.replace(/\r$/, '');
+
+    if (inUndefinedSymbols) {
+      const sym = UNDEFINED_SYMBOL.exec(raw);
+      if (sym) {
+        const symbol = sym[1];
+        if (symbol !== undefined) add(makeDiagnostic({ message: undefinedSymbolMessage(symbol) }, root, sdk));
+        return;
+      }
+      if (/^\s+\S/.test(line) && !/^\S/.test(line)) return;
+      inUndefinedSymbols = false;
+    }
+
+    if (raw.includes(BUILD_FAILED)) {
+      finished = true;
+      return;
+    }
 
     if (UNDEFINED_HEADER.test(raw)) {
-      for (let j = i + 1; j < lines.length; j += 1) {
-        const symLine = lines[j];
-        if (symLine === undefined) continue;
-        const sym = UNDEFINED_SYMBOL.exec(symLine.replace(/\r$/, ''));
-        if (sym) {
-          const symbol = sym[1];
-          if (symbol !== undefined) push(makeDiagnostic({ message: undefinedSymbolMessage(symbol) }, root, sdk));
-          continue;
-        }
-        if (/^\s+\S/.test(symLine) && !/^\S/.test(symLine)) continue;
-        i = j - 1;
-        break;
-      }
-      continue;
+      inUndefinedSymbols = true;
+      return;
     }
 
     const ld = LD_ERROR.exec(raw);
     if (ld) {
-      push(makeDiagnostic({ message: `ld: ${ld[1]}` }, root, sdk));
-      continue;
+      add(makeDiagnostic({ message: `ld: ${ld[1]}` }, root, sdk));
+      return;
     }
 
     const positioned = POSITIONED.exec(raw);
     if (positioned) {
       const posMsg = positioned[4];
-      if (posMsg === undefined) continue;
-      push(
+      if (posMsg === undefined) return;
+      add(
         makeDiagnostic(
           {
             file: positioned[1],
@@ -172,18 +183,18 @@ export function extractXcodeDiagnostics(
           sdk,
         ),
       );
-      continue;
+      return;
     }
 
     const plain = UNPOSITIONED.exec(raw);
     if (plain) {
       const plainMsg = plain[2];
-      if (plainMsg === undefined) continue;
-      push(makeDiagnostic({ file: fileFromPrefix(plain[1] || ''), message: plainMsg }, root, sdk));
+      if (plainMsg === undefined) return;
+      add(makeDiagnostic({ file: fileFromPrefix(plain[1] || ''), message: plainMsg }, root, sdk));
     }
-  }
+  };
 
-  return out;
+  return { push, diagnostics: out };
 }
 
 export function capDiagnostics(

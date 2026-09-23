@@ -2,6 +2,8 @@ import type { ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 import { decode } from 'unique-pid';
 import { captureProcessToken } from '../process-identity.ts';
 import { exclusiveClaimDir, sharedClaimDir, type ClaimOwner } from '../ownership-claim.ts';
@@ -275,4 +277,10 @@ export function writeAvdProcessLock(avdDirectory: string, contents: string): voi
   }
   mkdirSync(lock, { recursive: true });
   writeFileSync(join(lock, 'pid'), contents);
+}
+
+export function heapUsedAfterGc(): number {
+  setFlagsFromString('--expose-gc');
+  (runInNewContext('gc') as () => void)();
+  return process.memoryUsage().heapUsed;
 }
