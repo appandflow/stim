@@ -538,7 +538,7 @@ test('resolveOwnedAvdSerial asks healthy emulators first and bounds every consol
   for (const query of queried) {
     expect(query.killSignal).toBe('SIGKILL');
     expect(query.timeoutMs).toBeGreaterThan(0);
-    expect(query.timeoutMs).toBeLessThanOrEqual(30_000);
+    expect(query.timeoutMs).toBeLessThanOrEqual(10_000);
   }
 });
 

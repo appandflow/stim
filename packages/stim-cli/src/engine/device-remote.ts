@@ -260,7 +260,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
             const name = ownedSessionName(ctx.label);
             return {
               failed: true,
-              reason: `eas sim did not finish within ${EAS_SESSION_CREATE_TIMEOUT_MS / 60_000} minutes and was stopped. EAS may still have started session ${name}; it has no Stim ownership claim, so \`stim gc\` will not stop it.`,
+              reason: `eas sim did not finish within ${EAS_SESSION_CREATE_TIMEOUT_MS / 60_000} minutes and the eas process was killed. EAS may still have started session ${name}; it has no Stim ownership claim, so \`stim gc\` will not stop it.`,
               remedy: `Run \`eas simulator:list --name ${name}\` and stop any running session with \`eas simulator:stop --id <id>\`, then retry.`,
             };
           }
