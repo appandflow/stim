@@ -882,9 +882,8 @@ captured"  (in metro.ndjson, bare RN)
   even when this workspace ALREADY owns a device, so a name that could never
   create anything is caught rather than left to a later run.
   A working directory with no package.json above it gets the same
-  STIM_NO_PROJECT refusal from every command that acts on a project --
-  \`start\`, \`ios\`, \`android\`, \`stop\`, \`reload\`, \`logs\`, \`doctor\` and
-  \`device lock|unlock\`. With \`--json\` the { code, message, remedy } object
+  STIM_NO_PROJECT refusal from \`start\`, \`ios\`, \`android\`, \`stop\`,
+  \`reload\`, \`logs\`, \`doctor\` and \`device lock|unlock\`. With \`--json\` the { code, message, remedy } object
   is on stdout, except \`logs --json\`, whose stdout stays empty NDJSON; the
   refusal is on stderr. \`stop\` outside a project refuses rather than
   reporting that nothing was running.
