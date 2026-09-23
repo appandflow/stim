@@ -407,6 +407,38 @@ describe('runSupervisor', () => {
     },
   );
 
+  test('a server that comes up after an early signal is closed and never registered', async () => {
+    const before = { SIGTERM: process.listeners('SIGTERM'), SIGINT: process.listeners('SIGINT') };
+    const server = fakeServer();
+    const exits: number[] = [];
+    let started!: () => void;
+    const running = runSupervisor({
+      root,
+      port: 8102,
+      isExpo: () => false,
+      onExit: (code) => exits.push(code),
+      startBare: () =>
+        new Promise((resolve) => {
+          started = () => resolve(server.handle);
+        }),
+    });
+    try {
+      process.listeners('SIGTERM').find((listener) => !before.SIGTERM.includes(listener))?.('SIGTERM');
+      started();
+      expect(await running).toBe(null);
+      expect(exits).toEqual([143]);
+      expect(server.state.closed).toBe(1);
+      expect(readWorkspaceState(root)).toBe(null);
+      expect(readMetroLog().some((record) => record.event === 'server_started')).toBe(false);
+    } finally {
+      for (const name of ['SIGTERM', 'SIGINT'] as const) {
+        for (const listener of process.listeners(name)) {
+          if (!before[name].includes(listener)) process.off(name, listener);
+        }
+      }
+    }
+  });
+
   test('a SIGTERM once the Expo child is up closes it before the supervisor exits', async () => {
     const before = { SIGTERM: process.listeners('SIGTERM'), SIGINT: process.listeners('SIGINT') };
     const server = fakeServer({ mode: MODE_EXPO, serverPid: 31339 });
