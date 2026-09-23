@@ -127,6 +127,6 @@ The first command only reports sizes. Age-based cleanup removes unused entries.
 nothing, so `gc --delete` on its own remains the way to prune stale entries.
 `--cache "compilation cache"` empties one cache instead of every one.
 
-Set `STIM_BUILD_CACHE` or `STIM_METRO_CACHE` to place the shared caches on a
-different volume. The same values can live in the machine config under
+Set `STIM_BUILD_CACHE` or `STIM_METRO_CACHE` to an absolute path to place the
+shared caches on a different volume. The same values can live in the machine config under
 `caches.buildCache` and `caches.metroCache`.

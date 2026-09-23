@@ -6,7 +6,7 @@ import {
 } from '../devices/device-slots.ts';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs';
 import { isAbsolute, join, sep } from 'path';
-import { homedir } from 'os';
+import { configDir } from '@stim-cli/core';
 import { isOnMountedVolume } from '../fs-util.ts';
 import { withDirLock } from '../dir-lock.ts';
 import { acquireAvdClaim } from '../devices/avd-claim.ts';
@@ -24,7 +24,7 @@ import { sameProcessRecord, type ProcessRecord } from '../process-identity.ts';
 export type { Config, ConcurrencyLimits, DeviceRecord, ProjectRecord, RepoRecord, SupervisorRecord };
 
 export function getConfigDir(): string {
-  return process.env.STIM_HOME || join(homedir(), '.stim');
+  return configDir();
 }
 
 export function refuseRelativeStimPaths(env: NodeJS.ProcessEnv = process.env): void {
