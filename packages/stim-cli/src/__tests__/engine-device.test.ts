@@ -558,7 +558,7 @@ describe('ensureBooted: android', () => {
     expect(call[4]).toBe(result.serial.replace('emulator-', ''));
   });
 
-  test('concurrent fallback boots in two workspaces claim and record distinct console ports', async () => {
+  test('fallback boots in two workspaces claim and record distinct ports before either emulator reaches adb', async () => {
     const roots = ['a', 'b'].map((name) => join(tmpHome, name));
     for (const [i, root] of roots.entries()) {
       mkdirSync(root);
