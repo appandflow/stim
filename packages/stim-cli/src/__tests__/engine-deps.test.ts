@@ -13,7 +13,7 @@ import {
 } from '../engine/deps.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
 import { readClaimSet } from '../ownership-claim.ts';
-import { makeChildProcess, makeError, makeWriter } from './_factories.ts';
+import { heapUsedAfterGc, makeChildProcess, makeError, makeWriter } from './_factories.ts';
 
 type WriteRecord = { src: string; level: string; msg: string };
 
@@ -307,6 +307,34 @@ describe('runPodInstall', () => {
     expect(result.diagnosticLines[0]).toMatch(/Unable to find a specification/);
     assert(result.lastLines);
     expect(result.lastLines.join('\n')).not.toMatch(/Unable to find a specification/);
+  });
+
+  test('a long transcript is not retained while pod install runs, and an early [!] diagnostic survives it', async () => {
+    mkdirSync(join(root, 'ios'), { recursive: true });
+    const child = makeChildProcess({ pid: 4242 });
+    let retained = 0;
+    const result = await runPodInstall(root, makeWriter({ write: () => true }), {
+      spawnFn: () => {
+        setImmediate(() => {
+          const before = heapUsedAfterGc();
+          child.stdout?.emit('data', '[!] Unable to find a specification for `ExpoModulesCore`\n');
+          const filler = 'x'.repeat(500);
+          for (let chunk = 0; chunk < 100; chunk += 1) {
+            const lines = Array.from({ length: 1000 }, (_, i) => `Installing Pod-${chunk}-${i} ${filler}`);
+            child.stdout?.emit('data', `${lines.join('\n')}\n`);
+          }
+          retained = heapUsedAfterGc() - before;
+          child.emit('exit', 1, null);
+        });
+        return child;
+      },
+    });
+    expect(retained).toBeLessThan(10 * 1024 * 1024);
+    expect(result.diagnosticSource).toBe('cocoapods');
+    expect(result.diagnosticLines).toEqual(['[!] Unable to find a specification for `ExpoModulesCore`']);
+    assert(result.lastLines);
+    expect(result.lastLines).toHaveLength(20);
+    expect(result.lastLines.at(-1)).toMatch(/^Installing Pod-99-999 /);
   });
 
   test('a transcript with no recognizable marker falls back to the tail', async () => {

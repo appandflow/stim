@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { makeExecutor } from './_factories.ts';
+import { heapUsedAfterGc, makeExecutor } from './_factories.ts';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -1523,6 +1523,30 @@ describe('buildIos with a mocked executor', () => {
     const errors = writer.records.filter((r) => r.level === 'error');
     expect(errors.map((r) => r.msg)).toEqual(["/src/App/AppDelegate.m:42:8: cannot find 'Foo' in scope"]);
     expect(errors[0]?.src).toBe('build');
+  });
+
+  test('a long transcript is not retained while the build runs, and an early error is still reported', async () => {
+    const child = fakeChild();
+    harness(tmp, { child });
+    const writer = { ...recordingWriter(), write: () => true };
+    const promise = buildIos({ root: tmp, udid: 'u', logWriter: writer, derivedDataPath: join(tmp, 'dd') });
+    const before = heapUsedAfterGc();
+    child.stdout.emit('data', '/src/App/Early.m:3:1: error: early failure\n');
+    const filler = 'x'.repeat(500);
+    for (let chunk = 0; chunk < 100; chunk += 1) {
+      const lines = Array.from({ length: 1000 }, (_, i) => `CompileC /dd/${chunk}/${i}.o ${filler}`);
+      child.stdout.emit('data', `${lines.join('\n')}\n`);
+    }
+    const retained = heapUsedAfterGc() - before;
+    child.stdout.emit('data', '** BUILD FAILED **\n');
+    child.emit('close', 65, null);
+    const result = await promise;
+    assert(!result.ok);
+    expect(retained).toBeLessThan(10 * 1024 * 1024);
+    expect(result.transcriptLines).toBe(100_002);
+    expect(result.diagnostics).toEqual([{ file: '/src/App/Early.m', line: 3, column: 1, message: 'early failure' }]);
+    expect(result.tail.at(-1)).toBe('** BUILD FAILED **');
+    expect(result.tail).toHaveLength(5);
   });
 
   test('more than ten diagnostics are capped, and the rest are counted', async () => {

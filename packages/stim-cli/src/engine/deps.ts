@@ -15,6 +15,8 @@ export const DEPS_ERROR = 'STIM_DEPS_FAILED';
 
 const LAST_LINES = 20;
 
+const TRANSCRIPT_LINES = 2000;
+
 const MAX_POD_DIAGNOSTIC_LINES = 15;
 
 const POD_MARKER = /^\[!\]/;
@@ -270,6 +272,7 @@ export async function runCaptured(
     const msg = stripAnsi(String(line)).trimEnd();
     if (!msg.trim()) return;
     transcript.push(msg);
+    if (transcript.length > TRANSCRIPT_LINES) transcript.splice(TRANSCRIPT_LINES / 2, 1);
     ctx.logWriter?.write?.({ src: 'build', level: 'debug', msg, raw: true, event: ctx.event });
   };
 

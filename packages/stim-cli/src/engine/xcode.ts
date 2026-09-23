@@ -10,7 +10,7 @@ import { sharedCompilationCache, workspaceDerivedData } from '../workspace/paths
 import { formatElapsed, phaseLine } from '../command-output.ts';
 import { createLineReader } from '../process-output.ts';
 import { spawnDeclared } from './spawn-claims.ts';
-import { capDiagnostics, describeDiagnostic, type Diagnostic, extractXcodeDiagnostics } from './errors-xcode.ts';
+import { capDiagnostics, createXcodeDiagnosticCollector, describeDiagnostic, type Diagnostic } from './errors-xcode.ts';
 import { cleanLine } from '../supervisor/server-expo.ts';
 import type { CompilationCacheActivity } from './build-facts.ts';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
@@ -511,7 +511,9 @@ export function readBundleExecutable(appPath: string, { exec = null }: { exec?: 
   }
 }
 
-export function tailLines(lines: unknown, count = 5): string[] {
+const TAIL_LINES = 5;
+
+export function tailLines(lines: unknown, count: number = TAIL_LINES): string[] {
   const nonEmpty = (Array.isArray(lines) ? lines : []).filter((l) => typeof l === 'string' && l.trim() !== '');
   return nonEmpty.slice(-count);
 }
@@ -786,13 +788,18 @@ export async function buildIos({
     event: 'build_start',
   });
 
-  const transcript: string[] = [];
+  const diagnosticCollector = createXcodeDiagnosticCollector(root, sdk);
+  const tail: string[] = [];
+  let transcriptLines = 0;
   let compilationCacheActivity: CompilationCacheActivity = COMPILATION_CACHE_UNAVAILABLE;
   let swiftTargetsWithoutExplicitModules = 0;
   const onLine = (line: unknown) => {
     const msg = cleanLine(line);
-    transcript.push(msg);
+    transcriptLines += 1;
+    diagnosticCollector.push(msg);
     if (msg.trim() === '') return;
+    tail.push(msg);
+    if (tail.length > TAIL_LINES) tail.shift();
     logWriter.write({ src: 'build', level: 'debug', msg });
     if (SWIFT_CACHING_NEEDS_EXPLICIT_MODULES.test(msg)) swiftTargetsWithoutExplicitModules += 1;
     const parsed = parseCompilationCacheActivity(msg);
@@ -866,7 +873,6 @@ export async function buildIos({
 
   stopHeartbeat();
   const durationMs = elapsed();
-  const text = transcript.join('\n');
 
   if (outcome.error) {
     const message = `Could not run xcodebuild: ${outcome.error.message}`;
@@ -876,14 +882,14 @@ export async function buildIos({
       code: 'STIM_BUILD_FAILED',
       diagnostics: [{ message, remedy }],
       durationMs,
-      transcriptLines: transcript.length,
-      tail: tailLines(transcript),
+      transcriptLines,
+      tail,
       compilationCache: compilationCacheActivity,
     });
   }
 
   if (outcome.code !== 0) {
-    const diagnostics = extractXcodeDiagnostics(text, root, sdk);
+    const diagnostics = diagnosticCollector.diagnostics;
     const capped = capDiagnostics(diagnostics);
     for (const d of capped.diagnostics) reportError(describeDiagnostic(d), d.remedy);
     if (capped.diagnostics.length === 0) {
@@ -897,8 +903,8 @@ export async function buildIos({
       diagnostics,
       durationMs,
       exitCode: outcome.code,
-      transcriptLines: transcript.length,
-      tail: tailLines(transcript),
+      transcriptLines,
+      tail,
       compilationCache: compilationCacheActivity,
     });
   }
@@ -965,8 +971,8 @@ export async function buildIos({
       diagnostics: [{ message, remedy }],
       durationMs,
       exitCode: 0,
-      transcriptLines: transcript.length,
-      tail: tailLines(transcript),
+      transcriptLines,
+      tail,
       compilationCache: compilationCacheActivity,
     });
   }
@@ -981,8 +987,8 @@ export async function buildIos({
       diagnostics: [{ message, remedy }],
       durationMs,
       exitCode: 0,
-      transcriptLines: transcript.length,
-      tail: tailLines(transcript),
+      transcriptLines,
+      tail,
       compilationCache: compilationCacheActivity,
     });
   }
@@ -1003,7 +1009,7 @@ export async function buildIos({
     project: resolvedTarget,
     derivedDataPath: dd,
     productsDir: products,
-    transcriptLines: transcript.length,
+    transcriptLines,
     compilationCache: compilationCacheActivity,
   };
 }
