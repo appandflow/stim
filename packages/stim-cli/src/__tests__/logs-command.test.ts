@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
@@ -15,6 +15,8 @@ import logsCommand, {
   validateSources,
 } from '../commands/logs.ts';
 import { getConfigPath, upsertProject } from '../workspace/config.ts';
+import { resetExecutor, setExecutor } from '../exec.ts';
+import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 
 type ActionFn = (opts: Record<string, unknown>) => void | Promise<void>;
 
@@ -553,6 +555,55 @@ describe('logs command', () => {
     ]);
     await run({ since: '30s', json: true });
     expect(parsedMsgs(out)).toEqual(['a second ago']);
+  });
+
+  test('--follow does not re-emit a native crash captured at startup', async () => {
+    const since = Date.now() - 5000;
+    const launch = {
+      appId: 'app.test',
+      deviceId: 'emulator-5556',
+      metroPort: null,
+      release: true,
+      launchedAt: new Date(since).toISOString(),
+    };
+    writeLog('launch.ndjson', [
+      { event: 'launch_attempt', platform: 'android', ts: since, appId: launch.appId, deviceId: launch.deviceId },
+    ]);
+    writeWorkspaceState(project, { launches: { android: launch } });
+    upsertProject(project, { platforms: { android: { owned: true, avdName: 'stim-own' } } });
+    const secs = Math.floor((since + 1000) / 1000);
+    setExecutor({
+      runFile: () => String(Date.now()),
+      runFileQuiet: (_file, args) =>
+        args.includes('emu')
+          ? 'stim-own\nOK'
+          : [
+              `${secs}.000 E/AndroidRuntime( 44): FATAL EXCEPTION: main`,
+              `${secs}.001 E/AndroidRuntime( 44): Process: app.test, PID: 44`,
+              `${secs}.002 E/AndroidRuntime( 44): java.lang.IllegalStateException: failed`,
+            ].join('\n'),
+    });
+    const before = new Set([...process.listeners('SIGINT'), ...process.listeners('SIGTERM')]);
+    try {
+      await run({ follow: true, errors: true, json: true });
+      appendFileSync(
+        join(logsDir, 'client.ndjson'),
+        `${JSON.stringify({ ts: Date.now(), src: 'client', level: 'error', msg: 'after follow' })}\n`,
+      );
+      await vi.waitFor(() => expect(out.some((line) => line.includes('after follow'))).toBe(true), { timeout: 4000 });
+    } finally {
+      resetExecutor();
+      for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+        for (const listener of process.listeners(signal)) {
+          if (before.has(listener)) continue;
+          process.removeListener(signal, listener);
+          try {
+            (listener as () => void)();
+          } catch {}
+        }
+      }
+    }
+    expect(out.filter((line) => line.includes('IllegalStateException'))).toHaveLength(1);
   });
 
   describe('--errors, after the field test', () => {
