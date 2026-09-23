@@ -59,10 +59,11 @@ differences against a fresh worktree. The checkout is left untouched unless
 `--fix` is passed.
 
 `--platform ios` or `--platform android` limits native findings to that
-platform while keeping shared project checks. Each run is recorded per
-platform in Stim's state for this project, which also registers the project
-for `stim status`, and a run without `--platform` counts for both, so
-`stim guide` can tell when doctor is due again.
+platform while keeping shared project checks. Each run in a React Native or
+Expo app is recorded per platform in Stim's state for this project, which also
+registers the project for `stim status`, and a run without `--platform` counts
+for both, so `stim guide` can tell when doctor is due again. A run in a
+directory that is not an app records nothing.
 
 `doctor` also flags when an agent harness sandboxes shell commands and Stim is
 not allowed through it, which shows up as unrelated-looking failures against
@@ -488,8 +489,9 @@ section prints on its own. `stim guide errors` lists every refusal code and
 `stim guide errors <CODE>` prints one.
 
 The bare index and the agent topic open with a STATUS block when something is
-due: doctor for a platform that never ran in this project, ran more than seven
-days ago, or ran under another Stim version; and a newer Stim release, checked
+due: doctor for a platform that never ran in this app, ran more than seven
+days ago, or ran under another Stim version (outside a React Native or Expo app
+there is no doctor line); and a newer Stim release, checked
 against the npm registry at most once a day and skipped when
 `STIM_NO_UPDATE_CHECK` is set. The block is omitted when nothing is due.
 
