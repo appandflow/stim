@@ -13,7 +13,7 @@ if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 180_000)
   throw new Error('Timeout must be 100..180000 milliseconds');
 const selected = process.argv.slice(2);
 if (selected.some((id) => !cases.some((entry) => entry.id === id)))
-  throw new Error('Unknown case; choose simulator, phone, logs, warm, slots');
+  throw new Error(`Unknown case; choose ${cases.map((entry) => entry.id).join(', ')}`);
 const authPath = resolve(
   process.env.STIM_PROMPT_CODEX_AUTH ?? join(process.env.CODEX_HOME ?? join(process.env.HOME, '.codex'), 'auth.json'),
 );
@@ -166,7 +166,10 @@ async function runCase(entry) {
             encoding: 'utf8',
             timeout: 10_000,
           });
-        send({ id: message.id, result: { contentItems: [{ type: 'inputText', text: output }], success: true } });
+        send({
+          id: message.id,
+          result: { contentItems: [{ type: 'inputText', text: output }], success: !decision.failed },
+        });
       } catch (error) {
         finish({ passed: false, reason: error.message });
       }
@@ -199,7 +202,7 @@ async function runCase(entry) {
       config: { model_reasoning_effort: 'low' },
       baseInstructions:
         'You are a coding agent working in a React Native/Expo project. Carry out the user request using the available tools. Use installed skills when relevant. Commands use structured executable, arguments, and working directory, not shell syntax.',
-      developerInstructions: `The current project is an Expo app at ${workspace}. The requested trivial UI change is already committed on HEAD, the checkout is clean, and dependencies are prepared. A connected iPhone and iPhone 17 / iOS 26.5 and iPad Pro 13-inch (M5) simulators are available. The run_command tool provides command results from a simulated project; it never executes native operations. For UI inspection after a launch, continue to other requested device launches; UI verification is outside this command-selection exercise. Available installed skill:\n${skill}`,
+      developerInstructions: `The current project is an Expo app at ${workspace}. The requested trivial UI change is already committed on HEAD, the checkout is clean, and dependencies are prepared. A connected iPhone and iPhone 17 / iOS 26.5 and iPad Pro 13-inch (M5) simulators are available. The run_command tool provides command results from a simulated project; it never executes native operations. For UI inspection after a launch, continue to other requested device launches; UI verification is outside this command-selection exercise.${entry.context ? ` ${entry.context}` : ''} Available installed skill:\n${skill}`,
       dynamicTools: [
         {
           type: 'function',

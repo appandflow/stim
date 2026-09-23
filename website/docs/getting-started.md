@@ -117,6 +117,13 @@ com.appandflow.trailhead · Metro 8083 · launch ready`}
     {`What is running for this workspace?`}
   </PromptBox>
   <PromptBox
+    title="Stop the environment"
+    response={`Stopped Trailhead: Metro on port 8083 stopped, stim-trailhead (iPhone 17 / iOS 26.5) shut down.
+The simulator stays assigned for the next run.`}
+  >
+    {`I'm done testing for now. Stop this workspace's dev server and simulator.`}
+  </PromptBox>
+  <PromptBox
     title="Review build performance"
     response={`iOS · 3 runs · 67% cache hits · cached average 46s · estimated savings ~7m`}
   >
