@@ -90,6 +90,7 @@ export interface BuildRunOptions {
   compiler?: string;
   variant?: string;
   abi?: string;
+  allArch?: boolean;
   configuration?: string;
   scheme?: string;
   buildConfiguration?: string;
@@ -126,13 +127,14 @@ function buildTarget(options: BuildRunOptions): string {
 export function buildCacheKey(platform: string, fingerprintHash: string, options: unknown = {}): string {
   const opts = (options && typeof options === 'object' ? options : {}) as BuildRunOptions;
   const abi = platform === 'android' && typeof opts.abi === 'string' ? slug(opts.abi) : '';
+  const allArch = platform === 'android' && opts.allArch === true ? '-all-arch' : '';
   const compiler = typeof opts.compiler === 'string' ? slug(opts.compiler) : '';
   const profile = typeof opts.buildProfile === 'string' ? slug(opts.buildProfile) : '';
   const scheme =
     platform === 'ios' && typeof opts.scheme === 'string' && opts.scheme
       ? createHash('sha256').update(opts.scheme).digest('hex')
       : '';
-  return `${fingerprintHash}-${buildVariant(platform, opts)}-${buildTarget(opts)}${abi ? `-${abi}` : ''}${compiler ? `-${compiler}` : ''}${profile ? `-${profile}` : ''}${scheme ? `-scheme-${scheme}` : ''}`;
+  return `${fingerprintHash}-${buildVariant(platform, opts)}-${buildTarget(opts)}${abi ? `-${abi}` : ''}${allArch}${compiler ? `-${compiler}` : ''}${profile ? `-${profile}` : ''}${scheme ? `-scheme-${scheme}` : ''}`;
 }
 
 export interface RegisterOptions {

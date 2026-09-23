@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {
   artifactIn,
@@ -27,6 +28,65 @@ function shortKey(key: string, fingerprintHash: string): string {
   return `${String(fingerprintHash).slice(0, 12)}${key.slice(String(fingerprintHash).length)}`;
 }
 
+const ANDROID_ABIS = ['armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'];
+
+function adbPath(): string {
+  const configured = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
+  const home = os.homedir();
+  const sdk = configured
+    ? configured
+    : [
+        path.join(home, 'Library', 'Android', 'sdk'),
+        path.join(home, 'Android', 'Sdk'),
+        path.join(home, 'Android', 'sdk'),
+        path.join(home, 'AppData', 'Local', 'Android', 'Sdk'),
+      ].find((candidate) => fs.existsSync(path.join(candidate, 'platform-tools')));
+  return sdk ? path.join(sdk, 'platform-tools', 'adb') : 'adb';
+}
+
+function connectedDeviceAbi(): string | null {
+  try {
+    const adb = adbPath();
+    const serials = execFileSync(adb, ['devices'], {
+      encoding: 'utf8',
+      timeout: 10_000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+      .split('\n')
+      .slice(1)
+      .map((line) => line.trim().split(/\s+/))
+      .filter(([, state]) => state === 'device')
+      .map(([serial]) => serial!);
+    if (serials.length !== 1) return null;
+    const abis = execFileSync(adb, ['-s', serials[0]!, 'shell', 'getprop', 'ro.product.cpu.abilist'], {
+      encoding: 'utf8',
+      timeout: 10_000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return (
+      abis
+        .trim()
+        .split(',')
+        .find((abi) => ANDROID_ABIS.includes(abi)) ?? null
+    );
+  } catch {
+    return null;
+  }
+}
+
+// Expo `run:android` builds a `debug` or `debugOptimized` build type without `--all-arch`
+// only for the ABI of the device it selected, and boots that device before asking the
+// provider for a build.
+function keyOptions(platform: string, runOptions: RunOptions = {}): RunOptions | null {
+  if (platform !== 'android' || runOptions.abi || runOptions.allArch) return runOptions;
+  const parts = (runOptions.variant || 'debug').split(/(?=[A-Z])/);
+  let buildType = parts.pop()!;
+  if (parts.length > 0 && buildType === 'Optimized') buildType = parts.pop()! + buildType;
+  if (!/^debug(optimized)?$/i.test(buildType)) return runOptions;
+  const abi = connectedDeviceAbi();
+  return abi ? { ...runOptions, abi } : null;
+}
+
 function registerOnce(): void {
   const root = cacheRoot();
   if (registeredDir === root) return;
@@ -50,7 +110,12 @@ export async function resolveBuildCache({
   runOptions?: RunOptions;
 }): Promise<string | null> {
   registerOnce();
-  const key = buildCacheKey(platform, fingerprintHash, runOptions);
+  const options = keyOptions(platform, runOptions);
+  if (!options) {
+    console.log(`[build-cache] skip ${platform}: cannot tell which ABI this debug build targets`);
+    return null;
+  }
+  const key = buildCacheKey(platform, fingerprintHash, options);
   const hit = resolveArtifact(entryDir(platform, key));
   if (hit) {
     console.log(`[build-cache] hit ${platform} ${shortKey(key, fingerprintHash)}`);
@@ -74,15 +139,27 @@ export async function uploadBuildCache({
   registerOnce();
   if (!buildPath || !fs.existsSync(buildPath)) return null;
 
-  const key = buildCacheKey(platform, fingerprintHash, runOptions);
+  const options = keyOptions(platform, runOptions);
+  if (!options) {
+    console.log(`[build-cache] skip ${platform}: cannot tell which ABI this debug build targets`);
+    return null;
+  }
+  const key = buildCacheKey(platform, fingerprintHash, options);
   const dest = entryDir(platform, key);
   if (artifactIn(dest)) return artifactIn(dest);
 
-  const stored = storeArtifact(dest, buildPath, {
-    runFile: execFileSync,
-    onRenameError: (staging) => fs.rmSync(staging, { recursive: true, force: true }),
-  });
-
-  console.log(`[build-cache] stored ${platform} ${shortKey(key, fingerprintHash)}`);
+  let stored: string | null;
+  try {
+    stored = storeArtifact(dest, buildPath, {
+      runFile: execFileSync,
+      onRenameError: (staging) => fs.rmSync(staging, { recursive: true, force: true }),
+    });
+  } catch (error) {
+    console.warn(
+      `[build-cache] could not store ${platform} ${shortKey(key, fingerprintHash)}: ${(error as Error).message}`,
+    );
+    return null;
+  }
+  if (stored) console.log(`[build-cache] stored ${platform} ${shortKey(key, fingerprintHash)}`);
   return stored;
 }

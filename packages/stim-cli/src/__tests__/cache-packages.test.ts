@@ -30,30 +30,34 @@ test.each(['ios', 'android'])(
       if (platform === 'ios') mkdirSync(build);
       const binary = platform === 'ios' ? join(build, 'binary') : build;
       writeFileSync(binary, 'provider bytes');
+      const runOptions = platform === 'android' ? { abi: 'arm64-v8a' } : {};
 
       const providerArtifact = await provider.uploadBuildCache({
         platform,
         fingerprintHash: 'provider',
         buildPath: build,
+        runOptions,
       });
-      const providerKey = buildCacheKey(platform, 'provider');
+      const providerKey = buildCacheKey(platform, 'provider', runOptions);
       expect(resolveBuild(platform, providerKey)).toBe(providerArtifact);
       assert(providerArtifact);
       const providerBinary = platform === 'ios' ? join(providerArtifact, 'binary') : providerArtifact;
       expect(readFileSync(providerBinary, 'utf8')).toBe('provider bytes');
 
       writeFileSync(binary, 'CLI bytes');
-      const cliKey = buildCacheKey(platform, 'cli');
+      const cliKey = buildCacheKey(platform, 'cli', runOptions);
       const sources = [{ type: 'file' as const, filePath: 'native-input', reasons: [], hash: 'hash' }];
       const cliArtifact = storeBuild(platform, cliKey, build, { sources });
       const cliEntry = join(process.env.STIM_BUILD_CACHE, platform, cliKey);
       const old = new Date(0);
       utimesSync(cliEntry, old, old);
-      expect(await provider.resolveBuildCache({ platform, fingerprintHash: 'cli' })).toBe(cliArtifact);
+      expect(await provider.resolveBuildCache({ platform, fingerprintHash: 'cli', runOptions })).toBe(cliArtifact);
       expect(statSync(cliEntry).mtimeMs).toBeGreaterThan(old.getTime());
 
       writeFileSync(binary, 'replacement bytes');
-      expect(await provider.uploadBuildCache({ platform, fingerprintHash: 'cli', buildPath: build })).toBe(cliArtifact);
+      expect(await provider.uploadBuildCache({ platform, fingerprintHash: 'cli', buildPath: build, runOptions })).toBe(
+        cliArtifact,
+      );
       expect(storeBuild(platform, providerKey, build)).toBe(providerArtifact);
       expect(readFileSync(providerBinary, 'utf8')).toBe('provider bytes');
       assert(cliArtifact);
@@ -62,10 +66,10 @@ test.each(['ios', 'android'])(
       expect(storedSources(platform, cliKey)).toEqual(sources);
 
       storeBuild(platform, cliKey, build, { overwrite: true });
-      expect(await provider.resolveBuildCache({ platform, fingerprintHash: 'cli' })).toBe(cliArtifact);
+      expect(await provider.resolveBuildCache({ platform, fingerprintHash: 'cli', runOptions })).toBe(cliArtifact);
       expect(readFileSync(cliBinary, 'utf8')).toBe('replacement bytes');
       expect(storedSources(platform, cliKey)).toBeNull();
-      expect(await provider.uploadBuildCache({ platform, fingerprintHash: 'absent' })).toBeNull();
+      expect(await provider.uploadBuildCache({ platform, fingerprintHash: 'absent', runOptions })).toBeNull();
     } finally {
       delete process.env.STIM_BUILD_CACHE;
       delete process.env.STIM_HOME;
@@ -153,7 +157,7 @@ test('the standalone Expo build cache provider separates Android ABIs', async ()
       platform: 'android',
       fingerprintHash: 'fingerprint',
       buildPath: universalApk,
-      runOptions: { variant: 'debug' },
+      runOptions: { variant: 'debug', allArch: true },
     });
     await provider.uploadBuildCache({
       platform: 'android',
@@ -165,7 +169,7 @@ test('the standalone Expo build cache provider separates Android ABIs', async ()
     const universal = await provider.resolveBuildCache({
       platform: 'android',
       fingerprintHash: 'fingerprint',
-      runOptions: { variant: 'debug' },
+      runOptions: { variant: 'debug', allArch: true },
     });
     const arm64 = await provider.resolveBuildCache({
       platform: 'android',
@@ -306,16 +310,20 @@ test('the standalone cache provider never serves an artifact from another compil
       platform: 'android',
       fingerprintHash: 'same',
       buildPath: apk,
-      runOptions: { buildProfile: 'opt-pch' },
+      runOptions: { abi: 'arm64-v8a', buildProfile: 'opt-pch' },
     });
     expect(
-      await provider.resolveBuildCache({ platform: 'android', fingerprintHash: 'same', runOptions: {} }),
+      await provider.resolveBuildCache({
+        platform: 'android',
+        fingerprintHash: 'same',
+        runOptions: { abi: 'arm64-v8a' },
+      }),
     ).toBeNull();
     expect(
       await provider.resolveBuildCache({
         platform: 'android',
         fingerprintHash: 'same',
-        runOptions: { buildProfile: 'opt-pch' },
+        runOptions: { abi: 'arm64-v8a', buildProfile: 'opt-pch' },
       }),
     ).toBeTruthy();
   } finally {
