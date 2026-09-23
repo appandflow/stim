@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
+import { spawnDeclared } from './spawn-claims.ts';
 import { detectIsExpo } from '../workspace/project.ts';
 import { expoBinPath, expoBinRefusal } from '../supervisor/server-expo.ts';
 
@@ -121,11 +122,13 @@ export async function runPrebuild(
 
   let child: ChildProcess;
   try {
-    child = spawn(bin, ['prebuild', '-p', platform, '--no-install'], {
-      cwd: root,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, FORCE_COLOR: '0', CI: '1' },
-    });
+    child = spawnDeclared(() =>
+      spawn(bin, ['prebuild', '-p', platform, '--no-install'], {
+        cwd: root,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, FORCE_COLOR: '0', CI: '1' },
+      }),
+    );
   } catch (err) {
     return prebuildFailure(logWriter, {
       failed: true,

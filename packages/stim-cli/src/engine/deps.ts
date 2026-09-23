@@ -5,6 +5,7 @@ import { delimiter, dirname, join, relative, resolve, sep } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
+import { spawnDeclared } from './spawn-claims.ts';
 import { bundlerPin } from './bundler.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
 
@@ -274,11 +275,13 @@ export async function runCaptured(
 
   let child: ChildProcess;
   try {
-    child = ctx.spawn(ctx.cmd, ctx.args, {
-      cwd: ctx.cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: ctx.env,
-    });
+    child = spawnDeclared(() =>
+      ctx.spawn(ctx.cmd, ctx.args, {
+        cwd: ctx.cwd,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: ctx.env,
+      }),
+    );
   } catch (error) {
     return { transcript, code: null, signal: null, error, durationMs: ctx.now() - startedAt };
   }

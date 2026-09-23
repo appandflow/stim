@@ -251,7 +251,7 @@ export function registerAndroid(program: Command): void {
             wait: opts.wait,
             waitConflict: waitFlagConflict(process.argv),
           }),
-        { external: true, waitMs: 30 * 60_000 },
+        { external: true, waitMs: 30 * 60_000, declareSpawns: true },
       );
       if (!result.ok) process.exit(1);
     });

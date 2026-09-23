@@ -10,6 +10,8 @@ import {
   runPrebuild,
   shouldPrebuild,
 } from '../engine/prebuild.ts';
+import { acquireBuildLock, releaseBuildLock } from '../engine/build-lock.ts';
+import { readClaimSet } from '../ownership-claim.ts';
 import { makeChildProcess, makeWriter } from './_factories.ts';
 
 type WriteRecord = { src: string; level: string; msg: string; event?: string };
@@ -106,6 +108,30 @@ function collectingWriter() {
 }
 
 describe('runPrebuild', () => {
+  test('declares expo prebuild on the build lock before it starts, and clears it once prebuild exits', async () => {
+    installFakeExpoBin();
+    process.env.STIM_HOME = join(root, 'stim-home');
+    const lock = acquireBuildLock({ platform: 'ios', key: 'prebuild-debug', root });
+    try {
+      assert(lock.path);
+      const lockPath = lock.path;
+      let declaredAtSpawn: boolean | undefined;
+      const result = await runPrebuild(root, 'ios', collectingWriter(), {
+        isExpo: true,
+        spawnFn: () => {
+          declaredAtSpawn = readClaimSet(lockPath).live[0]?.childDeclared;
+          return fakeExpoChild({ onExitSideEffect: () => mkdirSync(join(root, 'ios'), { recursive: true }) });
+        },
+      });
+      expect(result.ok).toBe(true);
+      expect(declaredAtSpawn).toBe(true);
+      expect(readClaimSet(lockPath).live[0]?.childDeclared).toBe(false);
+    } finally {
+      releaseBuildLock(lock);
+      delete process.env.STIM_HOME;
+    }
+  });
+
   test("runs the PROJECT's own expo bin with `prebuild -p <platform> --no-install`", async () => {
     const bin = installFakeExpoBin();
     const writer = collectingWriter();

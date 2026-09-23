@@ -178,6 +178,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
         ? await withWorkspaceProcessLock(workspaceDir(root), 'native-run', run, {
             external: true,
             waitMs: 30 * 60_000,
+            declareSpawns: true,
           })
         : await run();
       if (!completion) process.exit(1);

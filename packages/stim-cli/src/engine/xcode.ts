@@ -9,6 +9,7 @@ import type { NdjsonWriter } from '../ndjson.ts';
 import { sharedCompilationCache, workspaceDerivedData } from '../workspace/paths.ts';
 import { formatElapsed, phaseLine } from '../command-output.ts';
 import { createLineReader } from '../process-output.ts';
+import { spawnDeclared } from './spawn-claims.ts';
 import { capDiagnostics, describeDiagnostic, type Diagnostic, extractXcodeDiagnostics } from './errors-xcode.ts';
 import { cleanLine } from '../supervisor/server-expo.ts';
 import type { CompilationCacheActivity } from './build-facts.ts';
@@ -813,18 +814,20 @@ export async function buildIos({
 
   let child: ChildProcess;
   try {
-    child = executor.spawn('xcodebuild', args, {
-      cwd: resolvedTarget.dir || root,
-      // stdin is ignored: xcodebuild never prompts in this mode, and a build
-      // run from a detached agent has no terminal to prompt to.
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: false,
-      env: {
-        ...process.env,
-        NSUnbufferedIO: 'YES',
-        FORCE_COLOR: '0',
-      },
-    });
+    child = spawnDeclared(() =>
+      executor.spawn('xcodebuild', args, {
+        cwd: resolvedTarget.dir || root,
+        // stdin is ignored: xcodebuild never prompts in this mode, and a build
+        // run from a detached agent has no terminal to prompt to.
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: false,
+        env: {
+          ...process.env,
+          NSUnbufferedIO: 'YES',
+          FORCE_COLOR: '0',
+        },
+      }),
+    );
   } catch (err) {
     const message = `Could not run xcodebuild: ${(err as Error).message}`;
     const remedy = 'Install Xcode and select it with `sudo xcode-select -s /Applications/Xcode.app`.';

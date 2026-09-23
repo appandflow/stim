@@ -8,6 +8,7 @@ import { phaseLine } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
+import { spawnDeclared } from './spawn-claims.ts';
 import { androidHome } from '../devices/android.ts';
 import { androidPathRoom, androidPathRoomMessage, androidPathRoomRemedy } from './android-path-limit.ts';
 import { capDiagnostics, type Diagnostic, extractGradleDiagnostics } from './errors-gradle.ts';
@@ -576,11 +577,13 @@ export async function buildAndroid(
 
   let child: ChildProcess;
   try {
-    child = spawn(project.gradlew, args, {
-      cwd: project.androidDir,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...env, ...ccache?.env, ...cas?.env, ...nativeEnv, TERM: 'dumb', FORCE_COLOR: '0' },
-    });
+    child = spawnDeclared(() =>
+      spawn(project.gradlew, args, {
+        cwd: project.androidDir,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...env, ...ccache?.env, ...cas?.env, ...nativeEnv, TERM: 'dumb', FORCE_COLOR: '0' },
+      }),
+    );
   } catch (err) {
     return spawnFailure(err, project, now() - startedAt);
   }

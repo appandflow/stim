@@ -34,6 +34,8 @@ import {
   readProductFlavors,
   variantNameOf,
 } from '../engine/gradle.ts';
+import { acquireBuildLock, releaseBuildLock } from '../engine/build-lock.ts';
+import { readClaimSet } from '../ownership-claim.ts';
 import { makeWriter } from './_factories.ts';
 
 let root: string;
@@ -428,6 +430,32 @@ describe('buildAndroid', () => {
       expect(record.src).toBe('build');
       expect(record.level).toBe('debug');
       expect(record.raw).toBe(true);
+    }
+  });
+
+  test('declares the Gradle child on the build lock before it starts, and clears it once Gradle exits', async () => {
+    makeAndroidProject();
+    process.env.STIM_HOME = join(root, 'stim-home');
+    const lock = acquireBuildLock({ platform: 'android', key: 'gradle-debug', root });
+    try {
+      assert(lock.path);
+      const lockPath = lock.path;
+      let declaredAtSpawn: boolean | undefined;
+      const result = await buildAndroid(
+        { root },
+        {
+          spawnFn: () => {
+            declaredAtSpawn = readClaimSet(lockPath).live[0]?.childDeclared;
+            return fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() });
+          },
+        },
+      );
+      expect(result.ok).toBe(true);
+      expect(declaredAtSpawn).toBe(true);
+      expect(readClaimSet(lockPath).live[0]?.childDeclared).toBe(false);
+    } finally {
+      releaseBuildLock(lock);
+      delete process.env.STIM_HOME;
     }
   });
 

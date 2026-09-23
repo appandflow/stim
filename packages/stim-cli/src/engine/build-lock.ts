@@ -12,6 +12,7 @@ import {
   type ClaimHandle,
   type ClaimHolder,
 } from '../ownership-claim.ts';
+import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
 
 const LOCK_SUFFIX = '.lock';
 
@@ -153,6 +154,7 @@ export function acquireBuildLock({
       logFile,
     };
     const handle: BuildLockHandle = { acquired: true, path, lock, claim: attempt.acquired };
+    declareSpawnsOn(attempt.acquired);
     return reaped ? { ...handle, tookOver: toRecord(reaped) } : handle;
   }
 
@@ -162,6 +164,7 @@ export function acquireBuildLock({
 }
 
 export function releaseBuildLock(handle?: BuildLockHandle | null): boolean {
+  stopDeclaringSpawnsOn(handle?.claim);
   return releaseClaim(handle?.claim);
 }
 

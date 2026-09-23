@@ -11,6 +11,7 @@ import {
   type ClaimHolder,
   type ClaimRefusedError,
 } from '../ownership-claim.ts';
+import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
 
 const SLOT_PREFIX = 'slot-';
 const SLOT_LABEL = 'build slot';
@@ -121,6 +122,7 @@ export function tryAcquireBuildSlot({
       busy = true;
       continue;
     }
+    declareSpawnsOn(attempt.acquired);
     return {
       acquired: true,
       path,
@@ -184,6 +186,7 @@ export async function acquireBuildSlot({
 
 export function releaseBuildSlot(handle?: BuildSlotHandle | null): boolean {
   if (!handle || handle.unlimited) return false;
+  stopDeclaringSpawnsOn(handle.claim);
   return releaseClaim(handle.claim);
 }
 
