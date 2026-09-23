@@ -67,6 +67,8 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `metro.tunnel`                | Remote tunnel mode                                                   |
 | `metro.ngrokUrl`              | Existing ngrok URL                                                   |
 | `metro.publicUrl`             | Existing public Metro URL                                            |
+| `metro.warmupUrl.ios`         | Bundle URL `stim ios` prefetches to warm Metro                       |
+| `metro.warmupUrl.android`     | Bundle URL `stim android` prefetches to warm Metro                   |
 | `worktree.exclude`            | Ignored paths skipped by `worktree warm`                             |
 | `worktree.defaultBranch`      | Branch `worktree warm --refresh` expects the source checkout on      |
 | `cache.provider`              | Optional second-tier cache provider module                           |
@@ -97,6 +99,19 @@ the module for `stim ios` and `stim android`; Metro uses it only when the
 project's own `metro.config.js` calls `sharedCacheStores()` from
 `@stim-cli/metro`.
 
+`metro.warmupUrl.ios` and `metro.warmupUrl.android` replace the bundle URL that
+`ios` and `android` prefetch while the native build runs. Unset, Stim uses
+Expo's manifest or the bare React Native default. Give an HTTP(S) URL or a path
+ending in `.bundle` with the app's full query, including a matching `platform`.
+Stim keeps the path and query but always requests this workspace's Metro port.
+The setting only changes the prefetch, not the app. Setting
+`optimizations.metroWarmup` to `false` turns the prefetch off. Run
+`stim guide settings` for the full rules.
+
+```json
+{ "metro": { "warmupUrl": { "ios": "/src/main.bundle?platform=ios&dev=true&lazy=true" } } }
+```
+
 ### Android AVD overrides
 
 New owned AVDs use the Pixel 6 hardware profile (1080 × 2400 pixels at 420 dpi).
@@ -121,6 +136,7 @@ Run `stim guide settings` for the complete key and value list.
 {
   "concurrency": { "maxBuilds": 2, "maxDevices": 3 },
   "iosSimulatorApp": "xcode",
+  "tempDir": "/Volumes/SSD/stim-tmp",
   "pool": { "iosParkedMax": 3, "androidParkedMax": 3 },
   "caches": {
     "buildCache": "/Volumes/Cache/stim/build-cache",
@@ -157,6 +173,13 @@ that is or contains `/`, the home directory, the temp directory, `$STIM_HOME`
 (default `~/.stim`), or the project or repository root is report-only; `gc`
 never deletes in it.
 
+`tempDir` moves the large temporary copies Stim makes for iOS app preparation,
+release JavaScript and APK swaps, and the `doctor` fingerprint checkout. Unset,
+Stim picks a writable directory on the same volume as the files it copies. The
+value must be an absolute directory outside Git working trees; a missing
+directory is created. `STIM_TMPDIR` overrides it. `stim doctor` reports
+cross-volume copy costs and invalid values.
+
 Use a top-level [`optimizations` object](./build-optimizations.md) in this file to
 control build optimizations on this machine without changing project files.
 
@@ -167,6 +190,7 @@ control build optimizations on this machine without changing project files.
 | `STIM_HOME`                    | Runtime state root. Default: `~/.stim`                                                                   |
 | `STIM_BUILD_CACHE`             | Native artifact cache root                                                                               |
 | `STIM_METRO_CACHE`             | Metro transform cache root                                                                               |
+| `STIM_TMPDIR`                  | Directory for large temporary copies; overrides the machine `tempDir`                                    |
 | `STIM_MAX_BUILDS`              | Maximum concurrent native builds                                                                         |
 | `STIM_MAX_DEVICES`             | Maximum booted owned devices                                                                             |
 | `STIM_POOL_ANDROID_PARKED_MAX` | Maximum parked Android emulators; 0 disables parking and adoption                                        |

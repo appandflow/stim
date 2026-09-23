@@ -14,7 +14,8 @@ another worktree's bundler.
   --json            one line of facts on stdout, everything else on stderr:
                       { port, supervisorPid, mode, logsDir, alreadyRunning }
   --wait <seconds>  how long to wait for server and remote tunnel readiness
-                    (default 60 for each)
+                    (default 60 for each). Unlike ios/android/device lock
+                    --wait, it does not wait for a device lease.
   --remote          expose Metro for a remote device
 
 Plain \`stim start\` is local and does not create a public tunnel. Remote intent

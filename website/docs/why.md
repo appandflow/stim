@@ -20,9 +20,8 @@ Stim supports React Native Community CLI and Expo projects. Builds run on the
 local machine. Apps can run on owned simulators and emulators, connected
 physical devices, or configured remote devices.
 
-> Stim is a release candidate. Commands and on-disk state can change before the
-> stable release. [Report an issue](https://github.com/appandflow/stim/issues)
-> when a workflow does not behave as documented.
+[Report an issue](https://github.com/appandflow/stim/issues) when a workflow
+does not behave as documented.
 
 ## Fast builds across worktrees
 

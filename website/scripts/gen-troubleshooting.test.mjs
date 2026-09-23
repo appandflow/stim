@@ -46,3 +46,10 @@ test('the page carries no markup MDX would refuse to parse', () => {
     .replace(/`[^`]*`/g, '');
   expect(outsideCode).not.toMatch(/[<{]/);
 });
+
+test('every code entry sits under a group heading', () => {
+  const page = buildTroubleshooting(errors);
+  const firstGroup = page.indexOf('\n## ');
+  expect(firstGroup).toBeGreaterThan(-1);
+  expect(page.indexOf('\n### ')).toBeGreaterThan(firstGroup);
+});
