@@ -583,19 +583,20 @@ export function resolveCacheProviderConfig({
     { settings: readCommittedSettings(projectPath), baseDir: projectPath ?? null },
   ];
 
-  let provider: string | null = null;
-  let baseDir: string | null = null;
-  for (const layer of layers) {
+  const references = layers.map((layer) => {
     const reference = cacheBlock(layer.settings)?.provider;
-    if (typeof reference !== 'string' || reference.trim() === '' || layer.baseDir === null) continue;
-    provider = reference.trim();
-    baseDir = layer.baseDir;
-    break;
-  }
-  if (provider === null || baseDir === null) return null;
+    return typeof reference === 'string' && reference.trim() !== '' ? reference.trim() : null;
+  });
+  const selected = layers.findIndex((layer, index) => references[index] !== null && layer.baseDir !== null);
+  if (selected === -1) return null;
+  const provider = references[selected]!;
+  const baseDir = layers[selected]!.baseDir!;
 
   const options = mergeSettingsLayers(
-    layers.map((layer) => {
+    layers.map((layer, index) => {
+      const namesProvider = references[index] === provider && layer.baseDir === baseDir;
+      const overridesAbove = index < selected && references[index] === null;
+      if (!namesProvider && !overridesAbove) return null;
       const block = cacheBlock(layer.settings)?.options;
       return isPlainObject(block) ? block : null;
     }),
