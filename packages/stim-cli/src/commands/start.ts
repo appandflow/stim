@@ -1014,6 +1014,12 @@ async function resolvePort(root: string, note: (line: string) => void): Promise<
   const project = getProject(root);
   const recorded = project?.metroPort;
   if (!recorded) return await reserveMetroPort(root);
+  const supervisor = resolveSupervisorTarget({
+    state: readWorkspaceState(root)?.supervisor,
+    record: project.supervisor,
+    reservedPort: recorded,
+  });
+  if (supervisor.status !== 'none' && supervisor.status !== 'stale') return recorded;
   const held = await resolveProjectMetro(recorded, root);
   if (!held.notOurs) return recorded;
   const fresh = await reserveMetroPort(root);

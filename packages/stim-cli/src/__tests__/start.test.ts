@@ -21,6 +21,7 @@ import { supervisorLogFile, workspaceLogsDir, workspaceMetadataFile } from '../w
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { readMetroTunnel } from '../supervisor/state.ts';
 import * as supervisorState from '../supervisor/state.ts';
+import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import {
   liveSupervisor,
   parseWait,
@@ -2061,6 +2062,44 @@ describe('action: an existing supervisor that is not answering', { timeout: 30_0
     expect(result.exitCode).toBe(1);
     expect(result.errs.join('\n')).toMatch(/did not serve port 8158/);
     expect(result.errs.join('\n')).toMatch(/stim stop/);
+  });
+
+  test('keeps the reserved port while its own supervisor holds it without answering /status', async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(503);
+      res.end('starting');
+    });
+    openServers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert(address && typeof address === 'object');
+    const port = address.port;
+    const exec = metroExecutor({ listeners: { [port]: process.pid } });
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port });
+    writeWorkspaceState(root, {
+      supervisor: {
+        pid: process.pid,
+        processToken: captureProcessToken(process.pid),
+        port,
+        mode: 'expo-child',
+        startedAt: 'T',
+      },
+    });
+
+    const result = await runAction({ json: true, wait: '1' });
+
+    expect(getProject(root)?.metroPort).toBe(port);
+    expect(exec.calls.spawn).toEqual([]);
+    expect(result.exitCode).toBe(1);
+    expect(result.errs.join('\n')).toMatch(new RegExp(`Supervisor pid ${process.pid} did not serve port ${port}`));
+    expect(
+      resolveSupervisorTarget({
+        state: readWorkspaceState(root)?.supervisor,
+        record: getProject(root)?.supervisor,
+        reservedPort: getProject(root)?.metroPort,
+      }).status,
+    ).toBe('ours');
   });
 
   test('and reports success once that supervisor answers', async () => {
