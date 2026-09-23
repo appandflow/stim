@@ -27,7 +27,6 @@ import {
   iosSigningIdentitySha1SettingError,
   metroWarmupUrlSetting,
   publicUrlSetting,
-  remoteDeviceSettingError,
   remoteIosSetting,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
@@ -368,14 +367,6 @@ async function runIos(
   }
   const cacheProviderError = cacheProviderSettingError(settings);
   if (cacheProviderError) note(chalk.yellow(phaseLine('cache', `${cacheProviderError} Using the local cache.`)));
-  const remoteSettingError = remoteDeviceSettingError(settings);
-  if (remoteSettingError) {
-    return fail({
-      code: 'STIM_BAD_ARG',
-      message: remoteSettingError,
-      remedy: `Set ios.remote and android.remote to one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}.`,
-    });
-  }
 
   const poolError = parkedMaxSetting('ios').error;
   if (poolError) return fail({ code: 'STIM_BAD_ARG', message: poolError, remedy: POOL_SETTING_REMEDY });

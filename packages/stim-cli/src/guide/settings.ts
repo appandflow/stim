@@ -255,8 +255,9 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         never deletes in it.
 
 Each setting takes its documented type: string, array of strings, number,
-boolean, or object. optimizations.android.compilerCache and
-optimizations.android.pch take only their listed choices. A value of the wrong
+boolean, or object. ios.remote, android.remote, metro.tunnel,
+optimizations.android.compilerCache and optimizations.android.pch take only
+their listed choices. A value of the wrong
 type or outside those choices is refused by name on every command that resolves
 settings, \`stim ios\` included, so a wrong shape never falls back to a default
 silently. \`stim doctor\` reports it as a finding

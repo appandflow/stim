@@ -29,6 +29,7 @@ Nested objects merge by key. Arrays replace lower-precedence arrays. Unknown
 keys produce a warning. Every key below takes one type: a string, an array of
 strings, a number, a boolean, or an object such as `android.avdConfig`,
 `cache.options`, and the nested `optimizations` settings.
+`ios.remote`, `android.remote`, `metro.tunnel`,
 `optimizations.android.compilerCache` and `optimizations.android.pch` take only
 their listed choices. A value of the wrong type or outside those choices is
 refused by name on every command that resolves settings, `stim ios` included,
@@ -66,7 +67,7 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `android.keystore`            | Release keystore path                                                |
 | `android.keystorePassword`    | Release keystore password source                                     |
 | `android.remote`              | Default remote backend, `proxy` or `eas`                             |
-| `metro.tunnel`                | Remote tunnel mode                                                   |
+| `metro.tunnel`                | Remote tunnel mode: `auto`, `off`, `expo`, `cloudflared`, or `ngrok` |
 | `metro.ngrokUrl`              | Existing ngrok URL                                                   |
 | `metro.publicUrl`             | Existing public Metro URL                                            |
 | `metro.warmupUrl.ios`         | Bundle URL `stim ios` prefetches to warm Metro                       |

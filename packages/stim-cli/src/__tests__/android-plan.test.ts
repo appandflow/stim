@@ -139,21 +139,21 @@ const REFUSALS: Array<{
   },
   {
     name: 'data-partition refusal follows compiler and provider warnings but precedes AVD inspection',
-    inputs: { settings: { cache: { provider: '' }, android: { dataPartitionSizeGb: 5, remote: 'invalid' } } },
+    inputs: { settings: { cache: { provider: '' }, android: { dataPartitionSizeGb: 5 } } },
     message: /Invalid android.dataPartitionSizeGb/,
     events: ['pool', 'compiler', 'warning:cache', 'provider', 'warning:cache'],
   },
   {
-    name: 'AVD validation precedes remote and product-flavor validation',
-    inputs: { settings: { android: { avdConfig: { 'image.sysdir.1': '/image' }, remote: 'invalid' } } },
+    name: 'AVD validation precedes product-flavor validation',
+    inputs: { settings: { android: { avdConfig: { 'image.sysdir.1': '/image' } } } },
     message: /Unsupported android.avdConfig key/,
     events: ['pool', 'compiler', 'warning:cache', 'provider', 'avd'],
   },
   {
-    name: 'remote settings are validated before inspecting product flavors',
-    inputs: { settings: { android: { remote: 'invalid' } } },
-    message: /Invalid android.remote/,
-    events: ['pool', 'compiler', 'warning:cache', 'provider', 'avd'],
+    name: 'a remote backend outside its list refuses at shape validation',
+    inputs: { settings: { unused: true, android: { remote: 'invalid' } } },
+    message: /^Invalid android\.remote setting "invalid"\. Expected one of: proxy, eas\.$/,
+    events: ['pool'],
   },
   {
     name: 'a lease flag conflict precedes system-image inspection',

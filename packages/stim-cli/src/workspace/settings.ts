@@ -44,12 +44,16 @@ type SettingShape =
   | 'boolean'
   | 'bundle-url'
   | 'android-compiler-cache'
-  | 'android-pch';
+  | 'android-pch'
+  | 'remote-backend'
+  | 'tunnel-mode';
 
 interface SettingShapeRule {
   expected: string;
   accepts: (value: unknown, key: string) => boolean;
 }
+
+export const REMOTE_DEVICE_BACKENDS: readonly RemoteDeviceBackend[] = ['proxy', 'eas'] as const;
 
 function choiceRule(choices: readonly string[]): SettingShapeRule {
   return {
@@ -69,6 +73,8 @@ const SETTING_SHAPE_RULES: Record<SettingShape, SettingShapeRule> = {
   number: { expected: 'a number', accepts: (value) => typeof value === 'number' },
   'android-compiler-cache': choiceRule(ANDROID_COMPILER_CACHE_CHOICES),
   'android-pch': choiceRule(ANDROID_PCH_CHOICES),
+  'remote-backend': choiceRule(REMOTE_DEVICE_BACKENDS),
+  'tunnel-mode': choiceRule(TUNNEL_MODES),
   object: { expected: 'an object', accepts: isPlainObject },
   'bundle-url': {
     expected: 'an HTTP(S) URL or /path ending in .bundle with a matching platform query and no fragment',
@@ -89,7 +95,7 @@ const SETTING_SHAPES: Record<string, SettingShape> = {
   'ios.deviceType': 'string',
   'ios.runtime': 'string',
   'ios.configuration': 'string',
-  'ios.remote': 'string',
+  'ios.remote': 'remote-backend',
   'ios.simslimProfile': 'path',
   'ios.signingIdentity': 'string',
   'ios.signingIdentitySha1': 'string',
@@ -101,8 +107,8 @@ const SETTING_SHAPES: Record<string, SettingShape> = {
   'android.variant': 'string',
   'android.keystore': 'path',
   'android.keystorePassword': 'string',
-  'android.remote': 'string',
-  'metro.tunnel': 'string',
+  'android.remote': 'remote-backend',
+  'metro.tunnel': 'tunnel-mode',
   'metro.ngrokUrl': 'string',
   'metro.publicUrl': 'string',
   'metro.warmupUrl': 'object',
@@ -640,8 +646,6 @@ export function cacheProviderSettingError(settings: SettingsObject): string | nu
   return null;
 }
 
-export const REMOTE_DEVICE_BACKENDS: readonly RemoteDeviceBackend[] = ['proxy', 'eas'] as const;
-
 export function remoteIosSetting(settings: SettingsObject): RemoteDeviceBackend | null {
   return remoteSetting(settings, 'ios');
 }
@@ -659,17 +663,6 @@ function remoteSetting(settings: SettingsObject, platform: 'ios' | 'android'): R
     : null;
 }
 
-export function remoteDeviceSettingError(settings: SettingsObject): string | null {
-  for (const platform of ['ios', 'android'] as const) {
-    const block = settings[platform];
-    if (!isPlainObject(block) || !('remote' in block)) continue;
-    if (remoteSetting(settings, platform) === null) {
-      return `Invalid ${platform}.remote setting ${JSON.stringify(block.remote)}. Expected one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}.`;
-    }
-  }
-  return null;
-}
-
 export function tunnelModeSetting(settings: SettingsObject): TunnelMode | null {
   const block = settings.metro;
   if (typeof block !== 'object' || block === null) return null;
@@ -679,14 +672,7 @@ export function tunnelModeSetting(settings: SettingsObject): TunnelMode | null {
 
 export function metroTunnelSettingError(settings: SettingsObject): string | null {
   const block = settings.metro;
-  if (!isPlainObject(block)) return null;
-  if ('tunnel' in block) {
-    const mode = block.tunnel;
-    if (typeof mode !== 'string' || !(TUNNEL_MODES as readonly string[]).includes(mode)) {
-      return `Invalid metro.tunnel setting ${JSON.stringify(mode)}. Expected one of: ${TUNNEL_MODES.join(', ')}.`;
-    }
-  }
-  if (!('ngrokUrl' in block)) return null;
+  if (!isPlainObject(block) || !('ngrokUrl' in block)) return null;
   if (block.tunnel !== 'ngrok') {
     return 'metro.ngrokUrl requires metro.tunnel to be "ngrok".';
   }
