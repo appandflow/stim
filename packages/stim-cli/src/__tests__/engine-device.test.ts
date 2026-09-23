@@ -421,6 +421,10 @@ describe('ensureBooted: ios', () => {
 });
 
 describe('ensureBooted: android', () => {
+  beforeEach(() => {
+    upsertProject(tmpHome, {});
+  });
+
   test('waits for boot completion on an already-running owned AVD', async () => {
     const commands: string[] = [];
     setExecutor({
@@ -444,19 +448,20 @@ describe('ensureBooted: android', () => {
     });
     const result = await ensureBooted({
       platform: 'android',
+      projectPath: tmpHome,
       device: { avdName: 'stim-app', consolePort: 5554, owned: true },
     });
     expect(result).toEqual({ ok: true, serial: 'emulator-5554' });
   });
 
-  test('boots a stopped owned AVD on its recorded port and waits', async () => {
+  test('boots a stopped owned AVD on a claimed console port and waits', async () => {
     const spawned: string[][] = [];
     let booted = false;
     setExecutor({
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices')
-          return booted ? 'List of devices attached\nemulator-5556\tdevice' : 'List of devices attached';
+          return booted ? 'List of devices attached\nemulator-5554\tdevice' : 'List of devices attached';
         return '';
       },
       runQuiet: (cmd) => {
@@ -473,11 +478,12 @@ describe('ensureBooted: android', () => {
     });
     const result = await ensureBooted({
       platform: 'android',
+      projectPath: tmpHome,
       device: { avdName: 'stim-app', consolePort: 5556, owned: true },
       timeoutMs: 5000,
     });
-    expect(result).toEqual({ ok: true, serial: 'emulator-5556' });
-    expect(spawned).toEqual([['emulator', '-avd', 'stim-app', '-port', '5556']]);
+    expect(result).toEqual({ ok: true, serial: 'emulator-5554' });
+    expect(spawned).toEqual([['emulator', '-avd', 'stim-app', '-port', '5554']]);
   });
 
   test('reuses the serial returned by a fresh owned AVD boot when adb listing briefly misses it', async () => {
@@ -500,6 +506,7 @@ describe('ensureBooted: android', () => {
     });
     const result = await ensureBooted({
       platform: 'android',
+      projectPath: tmpHome,
       device: {
         avdName: 'stim-app',
         consolePort: 5556,
@@ -539,6 +546,7 @@ describe('ensureBooted: android', () => {
     });
     const result = await ensureBooted({
       platform: 'android',
+      projectPath: tmpHome,
       device: { avdName: 'stim-app', consolePort: 5554, owned: true },
       timeoutMs: 5000,
     });
@@ -548,6 +556,49 @@ describe('ensureBooted: android', () => {
     const call = spawned[0];
     assert(call);
     expect(call[4]).toBe(result.serial.replace('emulator-', ''));
+  });
+
+  test('fallback boots in two workspaces claim and record distinct ports before either emulator reaches adb', async () => {
+    const roots = ['a', 'b'].map((name) => join(tmpHome, name));
+    for (const [i, root] of roots.entries()) {
+      mkdirSync(root);
+      upsertProject(root, {});
+      setDevice(root, 'android', { avdName: `stim-${i}`, owned: true });
+    }
+    const spawnedPorts: number[] = [];
+    setExecutor({
+      run: (cmd) => {
+        if (cmd === 'emulator -list-avds') return 'stim-0\nstim-1';
+        if (cmd === 'adb devices') return 'List of devices attached';
+        return '';
+      },
+      runQuiet: (cmd) =>
+        cmd.includes('sys.boot_completed')
+          ? '1'
+          : cmd.includes('pm path android')
+            ? 'package:/system/framework/framework-res.apk'
+            : '',
+      runFile: () => '',
+      spawn: (_cmd, args) => {
+        spawnedPorts.push(Number(args[args.indexOf('-port') + 1]));
+        return { unref() {} };
+      },
+    });
+    const results = await Promise.all(
+      roots.map((projectPath, i) =>
+        ensureBooted({
+          platform: 'android',
+          projectPath,
+          device: { avdName: `stim-${i}`, owned: true },
+          timeoutMs: 5000,
+        }),
+      ),
+    );
+    expect(new Set(spawnedPorts).size).toBe(2);
+    expect(results.map((r) => r.serial)).toEqual(spawnedPorts.map((port) => `emulator-${port}`));
+    expect(roots.map((root) => deviceSlotPlatforms(getProject(root), 'default')?.android?.consolePort)).toEqual(
+      spawnedPorts,
+    );
   });
 
   test('ensureBooted stops the moment the spawned emulator process is gone', async () => {
@@ -564,6 +615,7 @@ describe('ensureBooted: android', () => {
     const started = Date.now();
     const result = await ensureBooted({
       platform: 'android',
+      projectPath: tmpHome,
       device: { avdName: 'stim-app', consolePort: 5556, owned: true },
       timeoutMs: 240000,
       alive: () => false,
@@ -571,6 +623,8 @@ describe('ensureBooted: android', () => {
     expect(result.failed).toBe(true);
     expect(result.reason).toMatch(/exited before the device finished booting/);
     expect(Date.now() - started < 10000).toBeTruthy();
+    expect(deviceSlotPlatforms(getProject(tmpHome), 'default')?.android).toMatchObject({ avdName: 'stim-app' });
+    expect(deviceSlotPlatforms(getProject(tmpHome), 'default')?.android?.consolePort).toBeUndefined();
   });
 
   test('ensureBooted keeps polling while the emulator process is alive', async () => {
@@ -592,11 +646,12 @@ describe('ensureBooted: android', () => {
     });
     const result = await ensureBooted({
       platform: 'android',
+      projectPath: tmpHome,
       device: { avdName: 'stim-app', consolePort: 5556, owned: true },
       timeoutMs: 20000,
       alive: () => true,
     });
-    expect(result).toEqual({ ok: true, serial: 'emulator-5556' });
+    expect(result).toEqual({ ok: true, serial: 'emulator-5554' });
     expect(probes >= 5).toBeTruthy();
   });
 
@@ -638,6 +693,7 @@ describe('ensureBooted: android', () => {
     });
     const resultPromise = ensureBooted({
       platform: 'android',
+      projectPath: tmpHome,
       device: { avdName: 'stim-app', consolePort: 5556, owned: true },
       timeoutMs: 120000,
       alive: () =>
@@ -689,7 +745,6 @@ describe('ensureBooted: android', () => {
   test('running owned devices add context without claiming memory pressure or extending an untracked boot', async () => {
     vi.useFakeTimers();
     vi.spyOn(hostMemory, 'readHostMemoryPressure').mockReturnValue(null);
-    upsertProject(tmpHome, {});
     setDevice(tmpHome, 'android', { owned: true, avdName: 'stim-app', consolePort: 5556 });
     const spawn = vi.fn<() => void>();
     setExecutor({
@@ -706,6 +761,7 @@ describe('ensureBooted: android', () => {
     const lines: string[] = [];
     const pending = ensureBooted({
       platform: 'android',
+      projectPath: tmpHome,
       device: { avdName: 'stim-app', owned: true },
       timeoutMs: 1000,
       out: (line) => lines.push(line),
@@ -742,6 +798,7 @@ describe('ensureBooted: android', () => {
     });
     const result = await ensureBooted({
       platform: 'android',
+      projectPath: tmpHome,
       device: { avdName: 'stim-app', consolePort: 5556, owned: true },
       timeoutMs: 5000,
       logFile,
@@ -763,7 +820,11 @@ describe('ensureBooted: android', () => {
         throw new Error('must not boot a foreign AVD');
       },
     });
-    const result = await ensureBooted({ platform: 'android', device: { avdName: 'Pixel_7_API_35' } });
+    const result = await ensureBooted({
+      platform: 'android',
+      projectPath: tmpHome,
+      device: { avdName: 'Pixel_7_API_35' },
+    });
     expect(result.reason).toMatch(/not Stim-owned/);
   });
 
@@ -783,7 +844,7 @@ describe('ensureBooted: android', () => {
       },
     });
     const physical = { serial: 'R5CT10', kind: 'physical', owned: false };
-    const result = await ensureBooted({ platform: 'android', device: physical });
+    const result = await ensureBooted({ platform: 'android', projectPath: tmpHome, device: physical });
     expect(result.failed).toBe(true);
     expect(result.reason).toMatch(/No owned Android emulator is recorded/);
   });
