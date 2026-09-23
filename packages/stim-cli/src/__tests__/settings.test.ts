@@ -35,7 +35,6 @@ import { saveConfig, setProjectSetting, setRepoSetting, upsertProject } from '..
 import { findProjectRoot } from '../workspace/project.ts';
 
 type SettingsView = {
-  caches?: string[];
   worktree?: { exclude?: string[] };
   ios?: { deviceType?: string; runtime?: string };
   [k: string]: unknown;
@@ -54,8 +53,11 @@ afterEach(() => {
 });
 
 test('earlier layers win over later ones', () => {
-  const merged = mergeSettingsLayers([{ caches: ['/a'] }, { caches: ['/b'], ios: { runtime: '26.2' } }]);
-  expect(merged).toEqual({ caches: ['/a'], ios: { runtime: '26.2' } });
+  const merged = mergeSettingsLayers([
+    { worktree: { exclude: ['/a'] } },
+    { worktree: { exclude: ['/b'] }, ios: { runtime: '26.2' } },
+  ]);
+  expect(merged).toEqual({ worktree: { exclude: ['/a'] }, ios: { runtime: '26.2' } });
 });
 
 test('merges nested objects key by key rather than replacing them', () => {
@@ -366,7 +368,6 @@ test('unknownSettingKeys still reports a genuinely unknown nested key under ios'
 test('a known key is never an unknown-key warning, whatever its value', () => {
   for (const value of [{}, 42, true, [], null, 'x']) {
     expect(unknownSettingKeys({ ios: { configuration: value } })).toEqual([]);
-    expect(unknownSettingKeys({ caches: value })).toEqual([]);
   }
   expect(settingShapeErrors({ ios: { configuration: {} } })).toEqual([
     'Invalid ios.configuration setting {}. Expected a string.',
@@ -415,7 +416,6 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'worktree.defaultBranch': { valid: 'main', invalid: ['main'], expected: 'a string' },
   'cache.provider': { valid: './cache.cjs', invalid: {}, expected: 'a string' },
   'cache.options': { valid: { bucket: 'a' }, invalid: 'nope', expected: 'an object' },
-  caches: { valid: ['~/.myapp-metro-cache'], invalid: {}, expected: 'an array of strings' },
 };
 
 test('every known setting has a shape, and a wrong-typed value is one refusal naming the key and the shape', () => {
@@ -473,18 +473,18 @@ test('unknownSettingKeys tolerates empty and malformed input', () => {
   expect(unknownSettingKeys('nope')).toEqual([]);
 });
 
-test('committed caches and device settings resolve with their JSON types intact', () => {
+test('committed array and device settings resolve with their JSON types intact', () => {
   const repo = mkdtempSync(join(tmpdir(), 'stim-repo-'));
   try {
     writeFileSync(
       join(repo, '.stim.json'),
       JSON.stringify({
-        caches: ['~/.myapp-metro-cache', '/tmp/build-cache'],
+        worktree: { exclude: ['.env', 'ios/Pods'] },
         ios: { deviceType: 'iPhone 17 Pro', runtime: '26.2' },
       }),
     );
     const resolved = resolveSettings({ repoRoot: repo }) as SettingsView;
-    expect(resolved.caches).toEqual(['~/.myapp-metro-cache', '/tmp/build-cache']);
+    expect(resolved.worktree?.exclude).toEqual(['.env', 'ios/Pods']);
     assert(resolved.ios);
     expect(resolved.ios.deviceType).toBe('iPhone 17 Pro');
     expect(resolved.ios.runtime).toBe('26.2');
@@ -495,9 +495,9 @@ test('committed caches and device settings resolve with their JSON types intact'
 });
 
 test('a repo-layer array setting survives resolution as an array', () => {
-  setRepoSetting('/repo/.git', 'caches', ['~/.myapp-metro-cache', '/tmp/build-cache']);
-  const resolved = resolveSettings({ gitCommonDir: '/repo/.git' });
-  expect(resolved.caches).toEqual(['~/.myapp-metro-cache', '/tmp/build-cache']);
+  setRepoSetting('/repo/.git', 'worktree.exclude', ['.env', 'ios/Pods']);
+  const resolved = resolveSettings({ gitCommonDir: '/repo/.git' }) as SettingsView;
+  expect(resolved.worktree?.exclude).toEqual(['.env', 'ios/Pods']);
 });
 
 test('unknownSettingKeys accepts metro.tunnel, metro.ngrokUrl, and metro.publicUrl', () => {

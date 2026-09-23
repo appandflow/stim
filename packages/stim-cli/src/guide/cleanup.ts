@@ -282,11 +282,6 @@ SHARED BUILD CACHES
   report-only because every Gradle build shares it. Stim reports its size
   but never prunes or empties it, including with --older-than or --cache all.
 
-  Paths in the \`caches\` setting are trimmed and emptied like the others,
-  except a path that is or contains /, the home directory, the temp
-  directory, $STIM_HOME, or the project or repository root: \`gc\` only
-  reports it.
-
   Trim rather than empty. Emptying costs the next build in every project the
   time the cache was saving.`,
     },

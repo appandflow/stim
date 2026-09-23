@@ -122,23 +122,6 @@ describe('a cache-scoped report', () => {
   });
 });
 
-test('a wrong-typed setting refuses gc with nothing on stdout', async () => {
-  const errs: string[] = [];
-  const originalError = console.error;
-  console.error = (...args) => errs.push(args.join(' '));
-  try {
-    const output = await captureLog(() =>
-      runGc({}, { settingShapeErrors: () => ['Invalid caches setting {}. Expected an array of strings.'] }),
-    );
-    expect(output).toBe('');
-    expect(errs.join('\n')).toContain('Invalid caches setting {}. Expected an array of strings.');
-    expect(process.exitCode).toBe(1);
-  } finally {
-    console.error = originalError;
-    process.exitCode = 0;
-  }
-});
-
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 test('names skipped entries and why they were skipped', () => {
@@ -2440,6 +2423,30 @@ test('gc reports but never deletes the shared Gradle build cache under any delet
   }
 });
 
+test('a caches path committed in .stim.json is neither reported nor trimmed', async () => {
+  const project = join(fakeHome, 'app');
+  const committed = join(fakeHome, 'Documents');
+  const entry = join(committed, 'notes');
+  mkdirSync(project, { recursive: true });
+  mkdirSync(committed, { recursive: true });
+  writeFileSync(entry, 'x');
+  const old = new Date(Date.now() - 400 * DAY_MS);
+  utimesSync(entry, old, old);
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+  writeFileSync(join(project, '.stim.json'), JSON.stringify({ caches: [committed] }));
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  installExecutor();
+  const previousCwd = process.cwd();
+  process.chdir(project);
+  try {
+    const output = await captureLog(() => cli(['--delete', '--older-than', '30']));
+    expect(output).not.toContain(committed);
+    expect(existsSync(entry)).toBe(true);
+  } finally {
+    process.chdir(previousCwd);
+  }
+});
+
 test('--delete --older-than trims the cache entries nothing has touched', async () => {
   const cacheDir = join(fakeHome, 'my-cache');
   const oldEntry = join(cacheDir, 'entry-old');
@@ -3003,7 +3010,7 @@ describe('--delete against a claim taken while gc is deleting', { timeout: 60_00
         "  spawn: () => { throw new Error('unexpected tool spawn'); },",
         '});',
         `const { runGc } = await import(${JSON.stringify(SRC_URL)} + 'commands/gc.ts');`,
-        'await runGc({ delete: true }, { settingShapeErrors: () => [] });',
+        'await runGc({ delete: true });',
       ].join('\n'),
     );
 
