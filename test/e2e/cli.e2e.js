@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -111,5 +111,24 @@ for (const entry of entries) {
     const literal = run(entry, ['guide', '--', '--version']);
     assert.equal(literal.status, 1);
     assert.notEqual(literal.stdout.trim(), version);
+  });
+
+  test(`${entry}: errors that escape a command print their code or one line, never a stack`, () => {
+    const config = join(home, 'config.json');
+    writeFileSync(config, '{');
+    const coded = run(entry, ['status']);
+    assert.equal(coded.status, 1);
+    assert.match(coded.stderr, /^STIM_CONFIG_CORRUPT: Stim config at /);
+    assert.doesNotMatch(coded.stderr, /\n\s+at /);
+
+    rmSync(config);
+    mkdirSync(config);
+    const unexpected = run(entry, ['status']);
+    assert.equal(unexpected.status, 1);
+    assert.equal(unexpected.stdout, '');
+    assert.match(
+      unexpected.stderr,
+      /^Unexpected error: EISDIR: .+ Report it at https:\/\/github\.com\/appandflow\/stim\/issues\n$/,
+    );
   });
 }

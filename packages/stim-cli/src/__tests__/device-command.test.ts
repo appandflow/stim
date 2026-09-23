@@ -3,7 +3,11 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
+import androidCommand from '../commands/android.ts';
 import { grantLine, registerDevice, releasedLine, runLock, runUnlock, type DeviceDeps } from '../commands/device.ts';
+import iosCommand from '../commands/ios.ts';
+import logsCommand from '../commands/logs.ts';
+import stopCommand from '../commands/stop.ts';
 import { fileLeaseIo, listLeaseFiles, takeLease, type DeviceLease, type LeaseIo } from '../engine/device-lease.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 
@@ -500,6 +504,18 @@ describe('the command surface', () => {
     assert(unlock);
     expect(unlock.options.map((option) => option.long)).toEqual(['--slot', '--json']);
     expect(unlock.usage()).toMatch(/\[platform\]/);
+  });
+
+  test('an invalid --slot is a commander usage error on every command that takes one', async () => {
+    for (const args of [['logs'], ['stop'], ['ios'], ['android'], ['device', 'lock', 'ios'], ['device', 'unlock']]) {
+      const program = new Command();
+      program.exitOverride().configureOutput({ writeErr: () => {} });
+      for (const register of [logsCommand, stopCommand, iosCommand, androidCommand, registerDevice]) register(program);
+      await expect(program.parseAsync(['node', 'stim', ...args, '--slot', 'bad/slot'])).rejects.toMatchObject({
+        code: 'commander.invalidArgument',
+        message: expect.stringMatching(/'--slot <name>' argument 'bad\/slot' is invalid\. A device slot must be/),
+      });
+    }
   });
 
   test('the grant and release lines read the same way the guide says they do', () => {

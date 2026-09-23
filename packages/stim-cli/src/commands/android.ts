@@ -1,5 +1,5 @@
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
-import { deviceSlotFileKey, validateDeviceSlot } from '../devices/device-slots.ts';
+import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
@@ -185,7 +185,7 @@ export function registerAndroid(program: Command): void {
       '--eas-profile <name>',
       'Download a matching EAS development build; on a miss, print the build command without running it',
     )
-    .option('--slot <name>', 'Reusable device slot within this workspace (default: default)', validateDeviceSlot)
+    .option('--slot <name>', 'Reusable device slot within this workspace (default: default)', parseDeviceSlotOption)
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
     .option(
       '--no-metro-check',

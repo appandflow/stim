@@ -1,15 +1,25 @@
+import { InvalidArgumentError } from 'commander';
 import type { DeviceRecord, PlatformRecords, ProjectRecord } from '../workspace/config-types.ts';
 
 const DEFAULT_DEVICE_SLOT = 'default';
+const DEVICE_SLOT_RULE =
+  'A device slot must be 1-64 letters, digits, underscores or hyphens, starting with a letter or digit.';
+
+function isDeviceSlot(slot: string): boolean {
+  return /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(slot) && !['constructor', 'prototype', '__proto__'].includes(slot);
+}
 
 export function validateDeviceSlot(slot: string = 'default'): string {
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(slot) || ['constructor', 'prototype', '__proto__'].includes(slot)) {
-    const error = new Error(
-      'A device slot must be 1-64 letters, digits, underscores or hyphens, starting with a letter or digit.',
-    );
+  if (!isDeviceSlot(slot)) {
+    const error = new Error(DEVICE_SLOT_RULE);
     Object.assign(error, { code: 'STIM_BAD_ARG' });
     throw error;
   }
+  return slot;
+}
+
+export function parseDeviceSlotOption(slot: string): string {
+  if (!isDeviceSlot(slot)) throw new InvalidArgumentError(DEVICE_SLOT_RULE);
   return slot;
 }
 

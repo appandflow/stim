@@ -1,4 +1,4 @@
-import { validateDeviceSlot } from '../devices/device-slots.ts';
+import { parseDeviceSlotOption } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import type { ChalkInstance } from 'chalk';
 import type { Command } from 'commander';
@@ -169,7 +169,7 @@ export default function logsCommand(program: Command): void {
     .description(
       "Query this workspace's merged NDJSON log timeline (bundler, client, device, build). Prints and exits; an existing timeline with nothing matching is a successful, empty result. Use --follow to stream.",
     )
-    .option('--slot <name>', 'Only records attributed to this device slot', validateDeviceSlot)
+    .option('--slot <name>', 'Only records attributed to this device slot', parseDeviceSlotOption)
     .option('--source <s...>', 'Only these sources: metro, client, device, build, or all')
     .option('--level <l>', `Minimum level: ${LEVELS.join(', ')}`)
     .option('--since <d>', 'Only records newer than this, e.g. 30s, 5m, 2h')
