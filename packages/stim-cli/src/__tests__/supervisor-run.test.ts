@@ -373,33 +373,30 @@ describe('runSupervisor', () => {
     );
   });
 
-  test.each(['SIGTERM', 'SIGINT'] as const)(
-    'a %s that arrives while the dev server starts stops it once it is up',
-    async (signal) => {
+  test.each([
+    ['SIGTERM', 143],
+    ['SIGINT', 130],
+  ] as const)(
+    'a %s while the bare server hangs in startup exits at once and clears the records',
+    async (signal, code) => {
       const before = { SIGTERM: process.listeners('SIGTERM'), SIGINT: process.listeners('SIGINT') };
-      const server = fakeServer({ mode: MODE_EXPO, serverPid: 31339 });
       const exits: number[] = [];
-      let started!: () => void;
-      const running = runSupervisor({
+      void runSupervisor({
         root,
         port: 8100,
-        isExpo: () => true,
-        onExit: (code) => exits.push(code),
-        startExpo: () =>
-          new Promise((resolve) => {
-            started = () => resolve(server.handle);
-          }),
+        isExpo: () => false,
+        onExit: (exitCode) => exits.push(exitCode),
+        startBare: () => new Promise(() => {}),
       });
       try {
         const added = process.listeners(signal).filter((listener) => !before[signal].includes(listener));
         expect(added).toHaveLength(1);
         added[0]?.(signal);
-        started();
-        await running;
-        expect(server.state.closed).toBe(1);
-        expect(exits).toEqual([0]);
+        expect(exits).toEqual([code]);
+        expect(existsSync(supervisorPidFile(root))).toBe(false);
         expect(readWorkspaceState(root)).toBe(null);
         expect(getProject(root)?.supervisor).toBe(undefined);
+        expect(readMetroLog().at(-1)?.event).toBe('supervisor_stopped');
       } finally {
         for (const name of ['SIGTERM', 'SIGINT'] as const) {
           for (const listener of process.listeners(name)) {
@@ -409,6 +406,33 @@ describe('runSupervisor', () => {
       }
     },
   );
+
+  test('a SIGTERM once the Expo child is up closes it before the supervisor exits', async () => {
+    const before = { SIGTERM: process.listeners('SIGTERM'), SIGINT: process.listeners('SIGINT') };
+    const server = fakeServer({ mode: MODE_EXPO, serverPid: 31339 });
+    const exits: number[] = [];
+    await runSupervisor({
+      root,
+      port: 8101,
+      isExpo: () => true,
+      onExit: (code) => exits.push(code),
+      startExpo: async () => server.handle,
+    });
+    try {
+      const added = process.listeners('SIGTERM').filter((listener) => !before.SIGTERM.includes(listener));
+      expect(added).toHaveLength(1);
+      added[0]?.('SIGTERM');
+      await vi.waitFor(() => expect(exits).toEqual([0]));
+      expect(server.state.closed).toBe(1);
+      expect(readWorkspaceState(root)).toBe(null);
+    } finally {
+      for (const name of ['SIGTERM', 'SIGINT'] as const) {
+        for (const listener of process.listeners(name)) {
+          if (!before[name].includes(listener)) process.off(name, listener);
+        }
+      }
+    }
+  });
 
   test('forwards `tunnel` to the expo starter, and records the URL it reports', async () => {
     const server = fakeServer({ mode: MODE_EXPO, serverPid: 31338 });

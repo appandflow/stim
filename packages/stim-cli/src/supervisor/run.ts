@@ -175,13 +175,8 @@ export async function runSupervisor({
   };
 
   let server: ServerHandle | undefined;
-  let stopRequest = null as [code: number, event: string, msg: string] | null;
   const shutdown = async (code: number, event: string, msg: string) => {
-    if (stopping) return;
-    if (!server) {
-      stopRequest ??= [code, event, msg];
-      return;
-    }
+    if (stopping || !server) return;
     stopping = true;
     try {
       await server.close();
@@ -194,7 +189,20 @@ export async function runSupervisor({
   if (attachSignals) {
     for (const signal of ['SIGTERM', 'SIGINT']) {
       process.on(signal, () => {
-        shutdown(0, 'supervisor_stopped', `received ${signal}; stopping the ${mode} dev server`);
+        if (server) {
+          shutdown(0, 'supervisor_stopped', `received ${signal}; stopping the ${mode} dev server`);
+          return;
+        }
+        // Node runs signal listeners from the event loop, and startExpoServer spawns and returns
+        // without awaiting, so a listener that finds no server runs before any child exists.
+        if (stopping) return;
+        stopping = true;
+        finish(
+          signal === 'SIGINT' ? 130 : 143,
+          'supervisor_stopped',
+          'warn',
+          `received ${signal} before the ${mode} dev server started; stopping`,
+        );
       });
     }
   }
@@ -225,8 +233,16 @@ export async function runSupervisor({
       },
     });
   } catch (err) {
+    if (stopping) return null;
     stderr(`Stim supervisor: failed to start the ${mode} dev server: ${describeError(err)}`);
     finish(1, 'supervisor_failed', 'fatal', `failed to start the ${mode} dev server: ${describeError(err)}`);
+    return null;
+  }
+
+  if (stopping) {
+    try {
+      await server.close();
+    } catch {}
     return null;
   }
 
@@ -257,8 +273,6 @@ export async function runSupervisor({
       `the ${mode} dev server exited unexpectedly (${detail}); shutting the supervisor down`,
     );
   });
-
-  if (stopRequest) await shutdown(...stopRequest);
 
   return { mode, server, shutdown, startedAt };
 }
