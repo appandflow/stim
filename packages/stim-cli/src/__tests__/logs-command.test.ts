@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
@@ -586,7 +586,11 @@ describe('logs command', () => {
     const before = new Set([...process.listeners('SIGINT'), ...process.listeners('SIGTERM')]);
     try {
       await run({ follow: true, errors: true, json: true });
-      await new Promise((resolve) => setTimeout(resolve, 700));
+      appendFileSync(
+        join(logsDir, 'client.ndjson'),
+        `${JSON.stringify({ ts: Date.now(), src: 'client', level: 'error', msg: 'after follow' })}\n`,
+      );
+      await vi.waitFor(() => expect(out.some((line) => line.includes('after follow'))).toBe(true), { timeout: 4000 });
     } finally {
       resetExecutor();
       for (const signal of ['SIGINT', 'SIGTERM'] as const) {
