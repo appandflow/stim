@@ -79,6 +79,7 @@ afterEach(() => {
   faults.denied.clear();
   faults.denyReads = '';
   faults.denyCreates = '';
+  process.exitCode = undefined;
   delete process.env.STIM_HOME;
   rmSync(home, { recursive: true, force: true });
 });
@@ -114,6 +115,7 @@ test('gc reports a read-only build lock and still clears a later build slot', as
     expect(lines.join('\n')).toContain(`Failed to clear the build lock at ${blocked}: EROFS`);
     expect(lines.join('\n')).toContain('Cleared build slot 0');
     expect(lines.join('\n')).toContain('1 entry could not be deleted');
+    expect(process.exitCode).toBe(1);
   } finally {
     log.mockRestore();
   }

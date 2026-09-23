@@ -471,6 +471,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     for (const s of result.skippedDevices) {
       console.log(chalk.yellow(`  ${s.name}: ${s.reason}`));
     }
+    deleteFailures += result.failedDevices.length;
   }
 
   deleteFailures += deleteProjectDevices(orphanedDevices, staleDevices, staleDeviceRecords);
@@ -535,6 +536,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     console.log(
       chalk.red(`\n${deleteFailures} entr${deleteFailures === 1 ? 'y' : 'ies'} could not be deleted; see above.`),
     );
+    process.exitCode = 1;
   }
 
   if (all) {
