@@ -740,6 +740,10 @@ export async function uploadRemote({
 
   if (outcome.timedOut) return { timedOut: true };
   if (outcome.error) return { failed: firstLine(outcome.error) };
+  if (typeof outcome.value !== 'string' || outcome.value.trim() === '') {
+    const authLine = outcome.lines.find((line) => isEasAuthFailureText(line));
+    return { failed: authLine ? firstLine(authLine) : 'the provider returned no upload destination' };
+  }
   const destination = uploadDestination(outcome.lines);
   return destination ? { uploaded: true, destination } : { uploaded: true };
 }
