@@ -50,7 +50,8 @@ test.skipIf(process.platform !== 'win32')(
     const entry = join(cwd, 'entry.cjs');
     const marker = join(dir, 'started.txt');
     // Windows refuses to remove a live process's working directory, and the detached entry may
-    // still be exiting when the marker appears, so it leaves `cwd` before writing the marker.
+    // still be exiting when the marker appears, so it leaves `cwd` before writing the marker, and
+    // renames the marker into place so the test never deletes it while its write handle is open.
     writeFileSync(
       entry,
       [
