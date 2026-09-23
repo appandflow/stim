@@ -290,6 +290,58 @@ test('pruneCache trims only the listed files when a cache does not own its direc
   }
 });
 
+test('a declared cache that is or contains a protected root is never trimmed', () => {
+  const fakeHome = realpathSync(mkdtempSync(join(tmpdir(), 'stim-declared-home-')));
+  const repo = join(fakeHome, 'src', 'repo');
+  const project = join(repo, 'app');
+  const ordinary = join(fakeHome, 'tool-cache');
+  mkdirSync(project, { recursive: true });
+  mkdirSync(ordinary);
+  writeFileSync(join(project, 'package.json'), '{}');
+  const protectedDirs = [fakeHome, join(fakeHome, 'src'), repo, project];
+  const entries = new Map(
+    [...protectedDirs, ordinary].map((dir) => {
+      const entry = join(dir, 'old-entry');
+      writeFileSync(entry, 'x');
+      age(entry);
+      return [dir, entry];
+    }),
+  );
+  const previousEnv = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  const previousCwd = process.cwd();
+  process.env.HOME = fakeHome;
+  process.env.USERPROFILE = fakeHome;
+  process.chdir(project);
+  try {
+    setExecutor({
+      run: () => '',
+      runQuiet: () => null,
+      runFileQuiet: (_file, args) => (args?.includes('--show-toplevel') ? repo : null),
+      spawn: () => {},
+    });
+
+    const caches = discoverCaches({ declared: ['~', '~/src', repo, project, ordinary] });
+
+    for (const dir of protectedDirs) {
+      const found = caches.find((c) => c.dir === dir);
+      assert(found, dir);
+      expect(found.prune).toBe('report-only');
+      pruneCache(found, { olderThanDays: 30 });
+      expect(existsSync(entries.get(dir) as string)).toBe(true);
+    }
+    const trimmed = caches.find((c) => c.dir === ordinary);
+    assert(trimmed);
+    expect(pruneCache(trimmed, { olderThanDays: 30 }).removed).toBe(1);
+  } finally {
+    process.chdir(previousCwd);
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
 test('declaredCachePaths reads the caches setting of the project it is run in', () => {
   const projectRoot = realpathSync(mkdtempSync(join(tmpdir(), 'stim-declproj-')));
   const declared = mkdtempSync(join(tmpdir(), 'stim-declcache-'));
