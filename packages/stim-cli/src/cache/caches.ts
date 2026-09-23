@@ -1,10 +1,11 @@
 import { existsSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
 import { homedir, tmpdir } from 'os';
-import { dirname, isAbsolute, join, relative, resolve } from 'path';
+import { dirname, isAbsolute, join, parse, relative, resolve } from 'path';
 import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
 import { directorySize } from '../fs-util.ts';
 import { registeredCaches } from './cache-manifest.ts';
 import { findProjectRoot } from '../workspace/project.ts';
+import { getConfigDir } from '../workspace/config.ts';
 import { resolveSettings, settingShapeErrors, type SettingsObject } from '../workspace/settings.ts';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 
@@ -74,10 +75,41 @@ function metroFileMaps(): CacheDescriptor | null {
 }
 
 function declaredCaches(paths: string[]): CacheDescriptor[] {
-  return (paths || [])
+  const dirs = (paths || [])
     .map((p) => resolve(p.startsWith('~') ? join(homedir(), p.slice(1)) : p))
-    .filter((p) => existsSync(p))
-    .map((dir): CacheDescriptor => ({ name: 'declared', dir, prune: 'entries', note: 'from the `caches` setting' }));
+    .filter((p) => existsSync(p));
+  if (!dirs.length) return [];
+  const roots = protectedRoots();
+  return dirs.map((dir): CacheDescriptor => {
+    const canonical = onDiskPath(dir);
+    const root = [parse(canonical).root, ...roots].find((r) => cachePathContains(canonical, r));
+    if (root) {
+      return {
+        name: 'declared',
+        dir,
+        prune: 'report-only',
+        note: `from the \`caches\` setting; contains ${root}, so report only, never trimmed or emptied by Stim`,
+      };
+    }
+    return { name: 'declared', dir, prune: 'entries', note: 'from the `caches` setting' };
+  });
+}
+
+function protectedRoots(): string[] {
+  const project = findProjectRoot(process.cwd());
+  return [homedir(), tmpdir(), getConfigDir(), project, project && repoRoot(project)]
+    .filter((root): root is string => Boolean(root))
+    .map(onDiskPath);
+}
+
+// Node's JS realpathSync keeps the caller's spelling on a case-insensitive volume
+// (APFS default); realpathSync.native returns the name as stored on disk.
+function onDiskPath(dir: string): string {
+  try {
+    return realpathSync.native(dir);
+  } catch {
+    return resolve(dir);
+  }
 }
 
 function projectSettings(cwd: string): SettingsObject {

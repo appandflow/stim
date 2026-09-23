@@ -71,7 +71,7 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `worktree.defaultBranch`      | Branch `worktree warm --refresh` expects the source checkout on      |
 | `cache.provider`              | Optional second-tier cache provider module                           |
 | `cache.options`               | Options passed to that provider                                      |
-| `caches`                      | Additional cache paths reported by `gc`                              |
+| `caches`                      | Additional cache paths `gc` reports and trims                        |
 | `optimizations`               | [Build optimization switches and defaults](./build-optimizations.md) |
 
 `worktree warm` reads repository-wide copy settings from the source checkout's
@@ -144,8 +144,13 @@ workspace to adopt. Absent means 3; `0` turns parking and adoption off. When
 to Android emulators. See [owned devices](/docs/owned-devices) for adoption cleanup.
 
 The committed `.stim.json` `caches` key and this machine-file `caches` key are
-different shapes: the committed key is an array of extra paths for `gc` to
-report, and this machine-file key is an object of named cache locations.
+different shapes: the committed key is an array of extra cache paths for `gc`,
+and this machine-file key is an object of named cache locations. `gc` reports
+each committed path, `gc --delete --older-than N` deletes its top-level entries
+older than N days, and `gc --delete --cache all` empties it. A committed path
+that is or contains `/`, the home directory, the temp directory, `$STIM_HOME`
+(default `~/.stim`), or the project or repository root is report-only; `gc`
+never deletes in it.
 
 Use a top-level [`optimizations` object](./build-optimizations.md) in this file to
 control build optimizations on this machine without changing project files.
