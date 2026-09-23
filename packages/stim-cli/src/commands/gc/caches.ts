@@ -154,6 +154,7 @@ export function emptyCaches(caches: GcCache[]): void {
     }
     if (r.failed) {
       console.log(chalk.red(`  ${r.failed} entr${r.failed === 1 ? 'y' : 'ies'} in ${c.dir} could not be removed`));
+      process.exitCode = 1;
     }
   }
   if (cacheBytes) {

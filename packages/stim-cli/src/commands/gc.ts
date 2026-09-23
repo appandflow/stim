@@ -535,6 +535,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     console.log(
       chalk.red(`\n${deleteFailures} entr${deleteFailures === 1 ? 'y' : 'ies'} could not be deleted; see above.`),
     );
+    process.exitCode = 1;
   }
 
   if (all) {

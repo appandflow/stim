@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   mkdtempSync,
   mkdirSync,
   writeFileSync,
@@ -12,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { declaredCachePaths, discoverCaches, pruneCache, sizeCaches } from '../cache/caches.ts';
+import { emptyCaches } from '../commands/gc/caches.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { makeCacheDescriptor } from './_factories.ts';
 import { setProjectSetting, upsertProject } from '../workspace/config.ts';
@@ -476,3 +478,22 @@ test('current nested Metro stores preserve the parent as report-only and unmarke
   expect(caches.some((cache) => cache.dir === unmarkedParent)).toBe(true);
   expect(caches.some((cache) => cache.dir === unmarkedChild)).toBe(true);
 });
+
+test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
+  'emptying a cache whose entries cannot be removed sets a failing exit code (POSIX directory permissions; skipped on win32)',
+  () => {
+    const dir = join(tmpHome, 'atomic-cache');
+    mkdirSync(join(dir, 'entry'), { recursive: true });
+    chmodSync(dir, 0o500);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      emptyCaches([{ ...makeCacheDescriptor({ dir, prune: 'atomic' }), willEmpty: true }]);
+      expect(log.mock.calls.flat().join('\n')).toContain('1 entry in');
+      expect(process.exitCode).toBe(1);
+    } finally {
+      log.mockRestore();
+      chmodSync(dir, 0o700);
+      process.exitCode = undefined;
+    }
+  },
+);
