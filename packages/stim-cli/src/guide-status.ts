@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getConfigDir, getProject, upsertProject } from './workspace/config.ts';
+import { appProjectProblem } from './workspace/project.ts';
 import type { DoctorPlatform } from './diagnostics/doctor.ts';
 import { compareStimVersions } from './diagnostics/stim-installations.ts';
 import type { DoctorRunRecord, ProjectRecord } from './workspace/config-types.ts';
@@ -20,6 +21,7 @@ export function recordDoctorRun(
 ): void {
   const run: DoctorRunRecord = { at: now.toISOString(), version };
   try {
+    if (appProjectProblem(projectRoot)) return;
     upsertProject(projectRoot, (existing) => {
       const doctorRuns = { ...existing.doctorRuns };
       for (const target of platform ? [platform] : PLATFORMS) doctorRuns[target] = run;
@@ -135,7 +137,7 @@ export async function guideStatus({
   fetch?: typeof fetch;
 }): Promise<string | null> {
   const doctor: DoctorDue[] = [];
-  if (projectRoot) {
+  if (projectRoot && !appProjectProblem(projectRoot)) {
     let runs: NonNullable<ProjectRecord['doctorRuns']> | null = null;
     try {
       runs = getProject(projectRoot)?.doctorRuns ?? {};

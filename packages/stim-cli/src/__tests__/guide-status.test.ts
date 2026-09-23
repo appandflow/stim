@@ -22,6 +22,13 @@ beforeEach(() => {
   delete process.env.STIM_NO_UPDATE_CHECK;
 });
 
+function appRoot(): string {
+  const root = join(home, 'app');
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+  return root;
+}
+
 afterEach(() => {
   delete process.env.STIM_HOME;
   delete process.env.STIM_NO_UPDATE_CHECK;
@@ -40,7 +47,7 @@ test('doctorDueReason: never run, stale, other version, or fresh', () => {
 });
 
 test('recordDoctorRun writes one platform, or both when doctor ran without a platform', () => {
-  const root = join(home, 'app');
+  const root = appRoot();
   recordDoctorRun(root, 'ios', '1.4.0', NOW);
   expect(getProject(root)?.doctorRuns).toEqual({ ios: { at: NOW.toISOString(), version: '1.4.0' } });
   const later = new Date(NOW.getTime() + DAY);
@@ -131,7 +138,7 @@ test('renderGuideStatus names the platforms that need doctor and the available u
 });
 
 test('guideStatus reads the project at cwd and skips doctor lines outside a project', async () => {
-  const root = join(home, 'app');
+  const root = appRoot();
   writeFileSync(join(home, 'not-a-project'), '');
   upsertProject(root, { doctorRuns: { ios: { at: NOW.toISOString(), version: '1.4.0' } } });
   const { fetch } = fakeFetch('1.4.0');
@@ -140,14 +147,27 @@ test('guideStatus reads the project at cwd and skips doctor lines outside a proj
   expect(inProject).not.toContain('ios');
   const outside = await guideStatus({ projectRoot: null, running: '1.4.0', now: NOW, fetch });
   expect(outside).toBe(null);
+  const notApp = join(home, 'monorepo');
+  mkdirSync(notApp);
+  writeFileSync(join(notApp, 'package.json'), JSON.stringify({ name: 'monorepo' }));
+  expect(await guideStatus({ projectRoot: notApp, running: '1.4.0', now: NOW, fetch })).toBe(null);
+});
+
+test('recordDoctorRun leaves the registry alone for a directory that is not an app', () => {
+  const notApp = join(home, 'monorepo');
+  mkdirSync(notApp);
+  writeFileSync(join(notApp, 'package.json'), JSON.stringify({ name: 'monorepo' }));
+  recordDoctorRun(notApp, undefined, '1.4.0', NOW);
+  expect(getProject(notApp)).toBe(null);
 });
 
 test('recordDoctorRun never throws when STIM_HOME cannot be written, so doctor still reports', () => {
+  const root = appRoot();
   const locked = join(home, 'locked');
   mkdirSync(locked, { mode: 0o500 });
   process.env.STIM_HOME = join(locked, 'stim-home');
   try {
-    expect(() => recordDoctorRun(join(home, 'app'), 'ios', '1.4.0', NOW)).not.toThrow();
+    expect(() => recordDoctorRun(root, 'ios', '1.4.0', NOW)).not.toThrow();
   } finally {
     chmodSync(locked, 0o700);
   }
@@ -175,10 +195,10 @@ test('checkForUpdate treats an error status or a body without a version as no an
 });
 
 test('guideStatus skips the doctor lines when the config is corrupt instead of refusing the guide', async () => {
-  mkdirSync(home, { recursive: true });
+  const root = appRoot();
   writeFileSync(join(home, 'config.json'), '{not json');
   const { fetch } = fakeFetch('1.5.0');
-  const status = await guideStatus({ projectRoot: join(home, 'app'), running: '1.4.0', now: NOW, fetch });
+  const status = await guideStatus({ projectRoot: root, running: '1.4.0', now: NOW, fetch });
   expect(status).toContain('stim 1.5.0 is available');
   expect(status).not.toContain('Doctor');
 });

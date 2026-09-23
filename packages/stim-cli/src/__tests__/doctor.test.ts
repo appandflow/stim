@@ -2003,7 +2003,7 @@ test('doctor records its run per platform in the project record', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-record-'));
   const cwd = process.cwd();
   const originalLog = console.log;
-  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app', dependencies: { 'react-native': '*' } }));
   const program = new Command();
   doctorCommand(program, '1.2.3', () => testStimVersions);
   console.log = () => {};
@@ -2014,6 +2014,25 @@ test('doctor records its run per platform in the project record', async () => {
     expect(runs?.ios?.version).toBe('1.2.3');
     expect(runs?.android).toBe(undefined);
     expect(Date.now() - Date.parse(runs?.ios?.at ?? '')).toBeLessThan(60_000);
+  } finally {
+    process.chdir(cwd);
+    console.log = originalLog;
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('doctor leaves the registry alone in a directory that is not an app', async () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-not-app-'));
+  const cwd = process.cwd();
+  const originalLog = console.log;
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'monorepo-root' }));
+  const program = new Command();
+  doctorCommand(program, '1.2.3', () => testStimVersions);
+  console.log = () => {};
+  process.chdir(project);
+  try {
+    await program.parseAsync(['node', 'stim', 'doctor', '--json']);
+    expect(getProject(realpathSync(project))).toBe(null);
   } finally {
     process.chdir(cwd);
     console.log = originalLog;
