@@ -1,6 +1,6 @@
 import { clearNamedPorts } from '../named-ports.ts';
 import { projectDeviceSlots } from './device-slots.ts';
-import { type ProjectRecord, getProject, removeProject } from '../workspace/config.ts';
+import { type ProjectRecord, clearDevice, getProject, removeProject } from '../workspace/config.ts';
 import { existsSync, rmSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTree, pidExists } from '../metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd, type ParkedDevice, type ParkRequest } from './teardown.ts';
@@ -238,6 +238,9 @@ function reclaimOwnedDevices(
         parkedDevices.push(r.parked);
         evictedDevices.push(...(r.evicted ?? []));
       } else if (r.status === 'torn-down') deletedDevices.push(r.label as string);
+      if (!r.parked && (r.status === 'torn-down' || r.status === 'missing')) {
+        clearDevice(projectPath, 'ios', slot, udid);
+      }
       if (r.status === 'skipped') {
         skippedDevices.push({ platform: 'ios', name: label, udid, reason: `${r.reason} -- not touched` });
       } else if (r.status === 'failed') {
@@ -266,6 +269,9 @@ function reclaimOwnedDevices(
       });
       if (r.parkFallback) poolNotes.push(`could not park ${android.avdName}: ${r.parkFallback} -- deleted it instead`);
       for (const failure of r.evictionFailures ?? []) poolNotes.push(failure);
+      if (!r.parked && (r.status === 'torn-down' || r.status === 'missing')) {
+        clearDevice(projectPath, 'android', slot, android.avdName);
+      }
       if (r.parked) {
         parkedDevices.push(r.parked);
         evictedDevices.push(...(r.evicted ?? []));

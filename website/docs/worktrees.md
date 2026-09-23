@@ -170,7 +170,10 @@ identifies the worktree; no Stim registry entry is required. The command
 reclaims any owned resources before removing the linked checkout. It parks
 eligible owned iOS simulators and Android emulators when parking is enabled;
 see [devices and cleanup](/docs/owned-devices) for reuse and eviction rules.
-It refuses uncommitted, untracked, or unpushed work unless you pass `--force`.
+It refuses uncommitted, untracked, or unpushed work and initialized submodules
+unless you pass `--force`. It refuses a worktree locked with `git worktree lock`
+even with `--force`; unlock it first. Both checks run before any resource is
+reclaimed.
 
 Git-created branches stay. An existing Stim ownership record permits deleting
 a branch only when it has no unique commits.

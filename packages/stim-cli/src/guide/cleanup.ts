@@ -51,8 +51,12 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
       body: () => `LINKED WORKTREES
   \`stim worktree remove\` works with any linked worktree, warmed or not.
   Git registration identifies the worktree; a Stim registry entry is not
-  required. The command reclaims any owned resources it finds, checks for
-  uncommitted and unpushed work, and removes the linked checkout. Git-created
+  required. Before it reclaims anything, the command refuses a worktree git
+  has locked (unlock it first; --force does not override) and, without
+  --force, uncommitted or unpushed work and initialized submodules. It then
+  reclaims any owned resources it finds and removes the linked checkout.
+  When git still refuses the removal, the kept ownership record no longer
+  names the devices that were parked or deleted. Git-created
   branches stay. A branch with an existing Stim ownership record is deleted
   only when it has no unique commits.
 
