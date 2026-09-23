@@ -429,6 +429,7 @@ describe('uploadRemote', () => {
     const { provider } = plugin({
       uploadBuildCache: async (props, options) => {
         seen = { props, options };
+        return 'https://example.test/build';
       },
     });
     const result = await uploadRemote({
@@ -456,12 +457,52 @@ describe('uploadRemote', () => {
         resolveRemoteBuildCache: async () => null,
         uploadRemoteBuildCache: async () => {
           called = true;
+          return 'https://example.test/build';
         },
       },
       options: {},
     };
-    await uploadRemote({ provider, platform: 'ios', projectRoot: root, fingerprintHash: 'a', buildPath: '/b.app' });
+    expect(
+      await uploadRemote({ provider, platform: 'ios', projectRoot: root, fingerprintHash: 'a', buildPath: '/b.app' }),
+    ).toEqual({ uploaded: true });
     expect(called).toBe(true);
+  });
+
+  test('an upload that resolves no destination is a failure, not an upload', async () => {
+    const legacy = {
+      plugin: { resolveRemoteBuildCache: async () => null, uploadRemoteBuildCache: async () => {} },
+      options: {},
+    };
+    for (const provider of [
+      plugin({ uploadBuildCache: async () => null }).provider,
+      plugin({ uploadBuildCache: async () => '  ' }).provider,
+      legacy,
+    ]) {
+      expect(
+        await uploadRemote({ provider, platform: 'ios', projectRoot: root, fingerprintHash: 'a', buildPath: '/b.app' }),
+      ).toEqual({ failed: 'the provider returned no upload destination' });
+    }
+  });
+
+  test('an upload that resolves nothing after printing an auth failure reports that line', async () => {
+    const { provider } = plugin({
+      uploadBuildCache: async () => {
+        console.log('Uploading build to EAS');
+        console.log('eas-cli error: Error: npx exited with non-zero code: 1\nError: Not logged in');
+        return null;
+      },
+    });
+    const result = await tapStreams(() =>
+      uploadRemote({
+        provider,
+        platform: 'ios',
+        projectRoot: root,
+        fingerprintHash: 'a',
+        buildPath: '/b.app',
+        logWriter: records().writer,
+      }),
+    );
+    expect(result.value).toEqual({ failed: 'Error: Not logged in' });
   });
 
   test('a throwing upload is a note', async () => {
@@ -714,6 +755,7 @@ describe('provider output containment', () => {
     const { provider } = plugin({
       uploadBuildCache: async () => {
         console.log('Uploading build to https://expo.dev/accounts/acme/projects/app/builds/abc');
+        return 'https://example.test/build';
       },
     });
     const result = await tapStreams(() =>
@@ -740,6 +782,7 @@ describe('provider output containment', () => {
     const { provider } = plugin({
       uploadBuildCache: async () => {
         console.log('Uploading build to EAS');
+        return 'https://example.test/build';
       },
     });
     const result = await tapStreams(() =>
