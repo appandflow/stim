@@ -875,6 +875,7 @@ test('action: a git refusal after the owned sim was deleted keeps a record that 
 
 test('action: a named port that cannot be stopped is reported as retained, before any git removal', async () => {
   upsertProject(wtDir, { metroPort: 8083, ports: { web: 8900 } });
+  upsertProject(mainDir, { metroPort: 8900 });
   const exec = {
     ...makeExecutor({
       worktrees: porcelain([
@@ -882,7 +883,7 @@ test('action: a named port that cannot be stopped is reported as retained, befor
         { path: wtDir, branch: 'feat-x' },
       ]),
     }),
-    findExecutable: () => null,
+    findExecutable: (name: string) => `/usr/bin/${name}`,
   };
   setExecutor(exec);
   const errs: string[] = [];
@@ -896,7 +897,7 @@ test('action: a named port that cannot be stopped is reported as retained, befor
   }
 
   expect(process.exitCode).toBe(1);
-  expect(errs.join('\n')).toMatch(/lsof is not installed/);
+  expect(errs.join('\n')).toMatch(/Port 8900 is reserved for managed Metro/);
   expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBe(false);
   expect(getProject(wtDir)?.ports).toEqual({ web: 8900 });
 });
