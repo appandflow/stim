@@ -6,7 +6,6 @@ export interface SupervisorRecord {
   port?: number;
   startedAt?: string;
   serverPid?: number;
-  serverProcessToken?: string;
   mode?: string;
   [key: string]: unknown;
 }

@@ -370,11 +370,12 @@ test('the dev server a dead supervisor left behind is stopped by its recorded id
   expect(calls.signals).toEqual([]);
 });
 
-test('a recorded dev server that cannot be verified or does not exit keeps its record and the port', async () => {
-  for (const [identity, signalled] of [
-    ['unknown', []],
-    ['same', [4243]],
-  ] as const) {
+test.each([
+  ['unknown', 'refused', []],
+  ['same', 'failed', [4243]],
+] as const)(
+  'a recorded dev server with %s identity that stays up keeps its record and the port',
+  async (identity, metroStatus, signalled) => {
     const signals: number[] = [];
     const { calls, opts } = seams({
       state: { pid: 4242, port: 8083, serverPid: 4243, serverProcessToken: 'server-token' },
@@ -384,17 +385,20 @@ test('a recorded dev server that cannot be verified or does not exit keeps its r
         return true;
       },
       waitForDeath: async () => false,
+      metroTunnel: { kind: 'managed', provider: 'cloudflared', pid: 7, processToken: 'tunnel' },
+      stopMetroTunnel: async () => ({ status: 'failed', reason: 'tunnel refused' }),
       resolveMetro: async () => makeMetroResolution.identified({ metro: { pid: 4243, leader: 4243, cwd: '/proj/a' } }),
     });
     const r = await runStop(opts);
     expect(signals).toEqual(signalled);
     expect(r.ok).toBe(false);
-    expect(r.outcomes.metro.status).toBe(identity === 'same' ? 'failed' : 'refused');
+    expect(r.outcomes.metro.status).toBe(metroStatus);
     expect(r.outcomes.port.status).toBe('kept');
     expect(calls.freed).toEqual([]);
     expect(calls.stateCleared).toBe(0);
-  }
-});
+    expect(calls.cleared).toBe(0);
+  },
+);
 
 test('a recorded dev server that exited before its signal counts as stopped', async () => {
   let checks = 0;

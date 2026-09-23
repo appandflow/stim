@@ -514,11 +514,10 @@ async function stopWorkspace({
   if (stillHolding) {
     outcomes.port = { status: 'kept', port: reservedPort, reason: stillHolding };
     report(chalk.yellow(phaseLine('port', `keeping reservation ${reservedPort ?? '(none)'} -- ${stillHolding}`)));
-    const supervisorIsDown =
-      outcomes.supervisor.status === 'none' ||
-      outcomes.supervisor.status === 'already-stopped' ||
-      outcomes.supervisor.status === 'stopped';
-    if (tunnelHolding && supervisorIsDown) {
+    const serverIsDown =
+      ['none', 'already-stopped', 'stopped'].includes(outcomes.supervisor.status) &&
+      !['refused', 'failed'].includes(outcomes.metro.status);
+    if (tunnelHolding && serverIsDown) {
       clearState(root, sup);
       await clearRegistration(root, proj?.supervisor ?? null);
     }
