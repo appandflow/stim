@@ -621,6 +621,38 @@ describe('session creation', () => {
     expect(booted.reason).toContain('eas sim failed');
   });
 
+  test('every eas and agent-device call runs under a deadline', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteIosDeps(ctx());
+    await deps.ensureBooted({});
+    deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/a.app' });
+    const local = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
+    await local.ensureBooted({});
+    local.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' });
+    teardownRemote(ctx(), { sessionId: null });
+    expect(exec.calls.map((c) => c.args[0])).toEqual([
+      'sim',
+      'close',
+      'connect',
+      'install',
+      'close',
+      'connect',
+      'open',
+      'alert',
+      'disconnect',
+    ]);
+    for (const call of exec.calls) expect(call.timeoutMs).toBeGreaterThan(0);
+  });
+
+  test('an eas sim that outlives its deadline names the session it may have left running', async () => {
+    const timedOut = Object.assign(new Error('Command timed out after 600000ms: /bin/eas sim'), { code: 'ETIMEDOUT' });
+    mockExec({ errors: { sim: timedOut } });
+    const booted = await remoteIosDeps(ctx()).ensureBooted({});
+    expect(booted.failed).toBe(true);
+    expect(booted.reason).toContain('stim-wt');
+    expect(booted.remedy).toContain('eas simulator:list --name stim-wt');
+  });
+
   test('an operator-supplied daemon creates no session at all', async () => {
     const exec = mockExec();
     const deps = remoteIosDeps(ctx({ existingDaemon: { baseUrl: 'https://proxy.local/daemon', token: 'tok_proxy' } }));

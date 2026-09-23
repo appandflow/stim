@@ -338,6 +338,9 @@ export function installConflictKind(text: unknown): 'signature' | 'downgrade' | 
 }
 
 export const ADB_INSTALL_TIMEOUT_MS = 300_000;
+const ADB_UNINSTALL_TIMEOUT_MS = 120_000;
+const ADB_SHELL_TIMEOUT_MS = 30_000;
+const ADB_SHELL_OPTIONS = { timeoutMs: ADB_SHELL_TIMEOUT_MS, killSignal: 'SIGKILL' } as const;
 
 export function installAndroidApp(
   {
@@ -364,7 +367,10 @@ export function installAndroidApp(
       return { failed: true, code: INSTALL_ERROR, reason: `adb install failed for ${apkPath}: ${describe(err)}` };
     }
     try {
-      e.runFile('adb', ['-s', serial, 'uninstall', packageName]);
+      e.runFile('adb', ['-s', serial, 'uninstall', packageName], {
+        timeoutMs: ADB_UNINSTALL_TIMEOUT_MS,
+        killSignal: 'SIGKILL',
+      });
     } catch (uninstallErr) {
       return {
         failed: true,
@@ -411,18 +417,22 @@ export function parseResolvedActivity(text: unknown): string | null {
 function resolveLaunchActivity(serial: string, packageName: string, { exec = null }: ExecOpt = {}) {
   const e = exec || getExecutor();
   try {
-    const out = e.runFile('adb', [
-      '-s',
-      serial,
-      'shell',
-      'cmd',
-      'package',
-      'resolve-activity',
-      '--brief',
-      '-c',
-      'android.intent.category.LAUNCHER',
-      packageName,
-    ]);
+    const out = e.runFile(
+      'adb',
+      [
+        '-s',
+        serial,
+        'shell',
+        'cmd',
+        'package',
+        'resolve-activity',
+        '--brief',
+        '-c',
+        'android.intent.category.LAUNCHER',
+        packageName,
+      ],
+      ADB_SHELL_OPTIONS,
+    );
     return parseResolvedActivity(out);
   } catch {
     return null;
@@ -441,7 +451,7 @@ export function reverseMetroPorts(
   const pairs = (devicePorts ?? [metroPort]).map((device) => [device, metroPort]);
   for (const [device, host] of pairs) {
     try {
-      e.runFile('adb', ['-s', serial, 'reverse', `tcp:${device}`, `tcp:${host}`]);
+      e.runFile('adb', ['-s', serial, 'reverse', `tcp:${device}`, `tcp:${host}`], ADB_SHELL_OPTIONS);
     } catch (err) {
       return {
         failed: true,
@@ -500,7 +510,11 @@ export function writeDebugHttpHost(
   const host = `${androidMetroHost(physical)}:${metroPort}`;
   const script = debugHttpHostScript({ packageName, host });
   try {
-    e.runFile('adb', ['-s', serial, 'shell', 'run-as', packageName, 'sh', '-c', deviceShellArg(script)]);
+    e.runFile(
+      'adb',
+      ['-s', serial, 'shell', 'run-as', packageName, 'sh', '-c', deviceShellArg(script)],
+      ADB_SHELL_OPTIONS,
+    );
     return { ok: true, host };
   } catch (err) {
     return { ok: false, reason: `debug_http_host not written (${describe(err)}); relying on adb reverse` };
@@ -542,7 +556,7 @@ export function openAndroidDevClientUrl(
       ANDROID_DISABLE_AUTO_LAUNCH_EXTRA,
       'true',
     ];
-    out = e.runFile('adb', args);
+    out = e.runFile('adb', args, ADB_SHELL_OPTIONS);
   } catch (err) {
     return { failed: true, reason: `am start -d ${url} failed on ${serial}: ${describe(err)}` };
   }
@@ -594,7 +608,7 @@ export function launchAndroidApp(
   const component = resolveLaunchActivity(serial, packageName, { exec: e });
   if (component) {
     try {
-      e.runFile('adb', ['-s', serial, 'shell', 'am', 'start', '-n', component]);
+      e.runFile('adb', ['-s', serial, 'shell', 'am', 'start', '-n', component], ADB_SHELL_OPTIONS);
       return { ok: true, mode: 'am-start', component, devClientNote, ...wiring };
     } catch (err) {
       return {
@@ -606,7 +620,7 @@ export function launchAndroidApp(
   }
 
   try {
-    e.runFile('adb', ['-s', serial, 'shell', 'monkey', '-p', packageName, '1']);
+    e.runFile('adb', ['-s', serial, 'shell', 'monkey', '-p', packageName, '1'], ADB_SHELL_OPTIONS);
     return { ok: true, mode: 'monkey', devClientNote, ...wiring };
   } catch (err) {
     return {
@@ -625,7 +639,7 @@ export function launchAndroidReleaseApp(
   const component = resolveLaunchActivity(serial, packageName, { exec: e });
   if (component) {
     try {
-      e.runFile('adb', ['-s', serial, 'shell', 'am', 'start', '-n', component]);
+      e.runFile('adb', ['-s', serial, 'shell', 'am', 'start', '-n', component], ADB_SHELL_OPTIONS);
       return { ok: true, mode: 'am-start', component };
     } catch (err) {
       return {
@@ -636,7 +650,7 @@ export function launchAndroidReleaseApp(
     }
   }
   try {
-    e.runFile('adb', ['-s', serial, 'shell', 'monkey', '-p', packageName, '1']);
+    e.runFile('adb', ['-s', serial, 'shell', 'monkey', '-p', packageName, '1'], ADB_SHELL_OPTIONS);
     return { ok: true, mode: 'monkey' };
   } catch (err) {
     return {
@@ -721,11 +735,11 @@ export function androidAppProcess(
 ): number | null | undefined {
   const e = exec || getExecutor();
   try {
-    const pid = parsePidof(e.runFile('adb', ['-s', serial, 'shell', 'pidof', packageName]));
+    const pid = parsePidof(e.runFile('adb', ['-s', serial, 'shell', 'pidof', packageName], ADB_SHELL_OPTIONS));
     if (pid !== null) return pid;
   } catch {}
   try {
-    return parsePsPid(e.runFile('adb', ['-s', serial, 'shell', 'ps', '-A']), packageName);
+    return parsePsPid(e.runFile('adb', ['-s', serial, 'shell', 'ps', '-A'], ADB_SHELL_OPTIONS), packageName);
   } catch {
     return undefined;
   }

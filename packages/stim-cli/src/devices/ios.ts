@@ -104,6 +104,10 @@ export function parseSimctlList(
   return sims;
 }
 
+const SIMCTL_CREATE_TIMEOUT_MS = 180_000;
+const SIMCTL_TIMEOUT_MS = 60_000;
+const SIMCTL_OPTIONS = { timeoutMs: SIMCTL_TIMEOUT_MS, killSignal: 'SIGKILL' } as const;
+
 export function listAllIosSims({
   timeoutMs = 30000,
   includeUnavailable = false,
@@ -142,7 +146,7 @@ export function occupyingApps(udid: string): string[] | null {
     sim = undefined;
   }
   if (sim && sim.state !== 'Booted') return [];
-  const out = getExecutor().runQuiet(`xcrun simctl spawn ${udid} launchctl list`);
+  const out = getExecutor().runQuiet(`xcrun simctl spawn ${udid} launchctl list`, SIMCTL_OPTIONS);
   if (out === null || out === undefined) return null;
   return parseOccupyingApps(out);
 }
@@ -328,7 +332,7 @@ export async function bootIosSim(
 }
 
 export function shutdownIosSim(udid: string): void {
-  getExecutor().runQuiet(`xcrun simctl shutdown ${udid}`);
+  getExecutor().runQuiet(`xcrun simctl shutdown ${udid}`, SIMCTL_OPTIONS);
 }
 
 export function listIosDeviceTypes(): IosDeviceType[] {
@@ -454,24 +458,29 @@ export function createOwnedIosSim(
   choice: IosCreationChoice = resolveIosCreation({ deviceType, runtime }),
 ): { udid: string; name: string; deviceType: string | null; runtime: string | null } {
   const name = ownedSimName(label, { model: choice.deviceType, runtime: choice.runtime }, suffix);
-  const udid = getExecutor().run(`xcrun simctl create "${name}" "${choice.deviceTypeId}" "${choice.runtimeId}"`).trim();
+  const udid = getExecutor()
+    .run(`xcrun simctl create "${name}" "${choice.deviceTypeId}" "${choice.runtimeId}"`, {
+      timeoutMs: SIMCTL_CREATE_TIMEOUT_MS,
+      killSignal: 'SIGKILL',
+    })
+    .trim();
   return { udid, name, deviceType: choice.deviceType, runtime: choice.runtime };
 }
 
 export function renameIosSim(udid: string, name: string): void {
-  getExecutor().runFile('xcrun', ['simctl', 'rename', udid, name]);
+  getExecutor().runFile('xcrun', ['simctl', 'rename', udid, name], SIMCTL_OPTIONS);
 }
 
 export function resetIosPrivacy(udid: string): void {
-  getExecutor().runFile('xcrun', ['simctl', 'privacy', udid, 'reset', 'all']);
+  getExecutor().runFile('xcrun', ['simctl', 'privacy', udid, 'reset', 'all'], SIMCTL_OPTIONS);
 }
 
 export function resetIosKeychain(udid: string): void {
-  getExecutor().runFile('xcrun', ['simctl', 'keychain', udid, 'reset']);
+  getExecutor().runFile('xcrun', ['simctl', 'keychain', udid, 'reset'], SIMCTL_OPTIONS);
 }
 
 export function uninstallIosApp(udid: string, bundleId: string): void {
-  getExecutor().runFile('xcrun', ['simctl', 'uninstall', udid, bundleId]);
+  getExecutor().runFile('xcrun', ['simctl', 'uninstall', udid, bundleId], SIMCTL_OPTIONS);
 }
 
 export function parseUserApps(jsonOutput: string): string[] {
@@ -563,7 +572,7 @@ export function deleteIosSim(udid: string): void {
       `Refusing to delete simulator "${result.notOwned}" (${udid}): not a Stim-owned sim (name must start with "stim-").`,
     );
   }
-  getExecutor().run(`xcrun simctl delete ${udid}`);
+  getExecutor().run(`xcrun simctl delete ${udid}`, SIMCTL_OPTIONS);
 }
 
 const PARKED_DELETE_TIMEOUT_MS = 30000;
