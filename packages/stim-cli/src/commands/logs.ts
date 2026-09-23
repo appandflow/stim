@@ -247,9 +247,8 @@ export default function logsCommand(program: Command): void {
         console.log(formatRecord(rendered, { paint: record?.level ? LEVEL_COLOURS[record.level] : undefined }));
       };
 
-      const offsets = opts.follow ? fileSizes(dir) : null;
-
       captureWorkspaceCrashes(root, dir);
+      const offsets = opts.follow ? fileSizes(dir) : null;
       const rawRecords = queryLogs(query);
       const supervisorPort = readWorkspaceState(root)?.supervisor?.port;
       const records = opts.json
