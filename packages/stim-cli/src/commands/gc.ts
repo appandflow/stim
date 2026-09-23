@@ -471,6 +471,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     for (const s of result.skippedDevices) {
       console.log(chalk.yellow(`  ${s.name}: ${s.reason}`));
     }
+    deleteFailures += result.failedDevices.length;
   }
 
   deleteFailures += deleteProjectDevices(orphanedDevices, staleDevices, staleDeviceRecords);

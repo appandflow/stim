@@ -39,6 +39,7 @@ import gcCommand, {
 } from '../commands/gc.ts';
 import { adoptParked, parkSim, readParked } from '../devices/sim-pool.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
+import * as reclaim from '../devices/reclaim.ts';
 import {
   makeConfig,
   makeIosSim,
@@ -1962,6 +1963,44 @@ test('a dead project on an unmounted volume is not unregistered', async () => {
   expect(cfg.projects[unmountedPath]).toBeTruthy();
   expect(cfg.projects[unmountedPath]?.metroPort).toBe(8100);
   expect(cfg.projects[localDeadPath]).toBe(undefined);
+});
+
+test('--delete exits 1 when a dead project keeps its entry because a collector could not be stopped', async () => {
+  const deadPath = join(fakeHome, 'no-longer-here');
+  saveConfig({ version: 2, projects: { [deadPath]: { metroPort: 8101 } }, repos: {} });
+  installExecutor();
+  const collector = {
+    platform: 'ios' as const,
+    name: 'ios log collector (pid 4242)',
+    reason: 'Collector exit could not be confirmed; keeping its ownership record.',
+  };
+  vi.spyOn(reclaim, 'reclaimProject').mockResolvedValue({
+    path: deadPath,
+    dereferenced: [],
+    killedPid: null,
+    skippedMetro: null,
+    metroPort: 8101,
+    deletedDevices: [],
+    parkedDevices: [],
+    evictedDevices: [],
+    poolNotes: [],
+    skippedDevices: [collector],
+    failedDevices: [collector],
+    keptEntry: true,
+    stoppedSession: null,
+    stoppedTunnel: null,
+    releasedLeases: [],
+    removedWorkspaceDirs: [],
+    failedWorkspaceDirs: [],
+  });
+  try {
+    const output = await captureLog(() => runGc({ delete: true }));
+    expect(output).toContain(`Could not fully prune ${deadPath}`);
+    expect(output).toContain('1 entry could not be deleted');
+    expect(process.exitCode).toBe(1);
+  } finally {
+    process.exitCode = undefined;
+  }
 });
 
 describe('a registry key that is not an absolute path', () => {
