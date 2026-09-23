@@ -107,7 +107,9 @@ function emptyCache(cache: CacheDescriptor): {
 
 function reportFailures(cache: CacheDescriptor, failed: number | undefined): void {
   if (!failed) return;
-  console.log(chalk.red(`  ${failed} entr${failed === 1 ? 'y' : 'ies'} in ${cache.dir} could not be removed`));
+  console.log(
+    chalk.red(`${cache.name}: ${failed} entr${failed === 1 ? 'y' : 'ies'} in ${cache.dir} could not be removed`),
+  );
   process.exitCode = 1;
 }
 

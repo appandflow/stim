@@ -486,7 +486,7 @@ describe.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
       { action: 'emptying', prune: 'atomic' as const },
       { action: 'emptying', prune: 'entries' as const },
       { action: 'trimming', prune: 'entries' as const },
-    ])('$action a $prune cache reports them and sets a failing exit code', ({ action, prune }) => {
+    ])('$action an $prune cache reports them and sets a failing exit code', ({ action, prune }) => {
       const dir = join(tmpHome, 'locked-cache');
       mkdirSync(join(dir, 'entry'), { recursive: true });
       age(join(dir, 'entry'));

@@ -57,20 +57,25 @@ function metroFileMaps(): CacheDescriptor | null {
   } catch {
     return null;
   }
-  if (!names.length) return null;
+  const uid = process.getuid?.();
+  const files: string[] = [];
   let bytes = 0;
   for (const n of names) {
     try {
-      bytes += statSync(join(root, n)).size;
+      const st = statSync(join(root, n));
+      if (uid !== undefined && st.uid !== uid) continue;
+      files.push(join(root, n));
+      bytes += st.size;
     } catch {}
   }
+  if (!files.length) return null;
   return {
     name: 'Metro file maps',
     dir: root,
-    files: names.map((n) => join(root, n)),
+    files,
     bytes,
     prune: 'entries',
-    note: `${names.length} file(s), one per project root Metro has served`,
+    note: `${files.length} file(s), one per project root Metro has served`,
   };
 }
 
