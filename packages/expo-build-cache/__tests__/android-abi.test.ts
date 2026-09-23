@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -53,18 +53,38 @@ describe.skipIf(process.platform === 'win32')('android debug builds', () => {
     if (savedSdkRoot !== undefined) process.env.ANDROID_SDK_ROOT = savedSdkRoot;
   });
 
-  test('a build for an x86_64 emulator is not served to an arm64 phone', async () => {
-    const bc = await provider();
-    connect([['emulator-5554', 'device', 'x86_64,arm64-v8a']]);
-    const runOptions = { variant: 'debug' };
-    expect(await bc.resolveBuildCache({ platform: 'android', fingerprintHash: 'f1', runOptions })).toBeNull();
-    expect(
-      await bc.uploadBuildCache({ platform: 'android', fingerprintHash: 'f1', buildPath: apk, runOptions }),
-    ).toBeTruthy();
-    expect(await bc.resolveBuildCache({ platform: 'android', fingerprintHash: 'f1', runOptions })).toBeTruthy();
+  test.each(['debug', 'previewDebugOptimized'])(
+    'a %s build for an x86_64 emulator is not served to an arm64 phone',
+    async (variant) => {
+      const bc = await provider();
+      connect([['emulator-5554', 'device', 'x86_64,arm64-v8a']]);
+      const runOptions = { variant };
+      expect(await bc.resolveBuildCache({ platform: 'android', fingerprintHash: 'f1', runOptions })).toBeNull();
+      expect(
+        await bc.uploadBuildCache({ platform: 'android', fingerprintHash: 'f1', buildPath: apk, runOptions }),
+      ).toBeTruthy();
+      expect(await bc.resolveBuildCache({ platform: 'android', fingerprintHash: 'f1', runOptions })).toBeTruthy();
 
-    connect([['R5CT', 'device', 'arm64-v8a,armeabi-v7a']]);
-    expect(await bc.resolveBuildCache({ platform: 'android', fingerprintHash: 'f1', runOptions: {} })).toBeNull();
+      connect([['R5CT', 'device', 'arm64-v8a,armeabi-v7a']]);
+      expect(await bc.resolveBuildCache({ platform: 'android', fingerprintHash: 'f1', runOptions })).toBeNull();
+    },
+  );
+
+  test('finds adb in the default SDK location when ANDROID_HOME is unset', async () => {
+    delete process.env.ANDROID_HOME;
+    const savedPath = process.env.PATH;
+    process.env.PATH = '/usr/bin:/bin';
+    mkdirSync(join(root, 'home', 'Library', 'Android'), { recursive: true });
+    symlinkSync(sdk, join(root, 'home', 'Library', 'Android', 'sdk'));
+    try {
+      const bc = await provider();
+      connect([['emulator-5554', 'device', 'x86_64']]);
+      expect(await bc.uploadBuildCache({ platform: 'android', fingerprintHash: 'f6', buildPath: apk })).toMatch(
+        /f6-debug-sim-x86-64/,
+      );
+    } finally {
+      process.env.PATH = savedPath;
+    }
   });
 
   test('an all-arch build is not served to a single-ABI run and vice versa', async () => {

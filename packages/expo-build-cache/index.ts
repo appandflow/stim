@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {
   artifactIn,
@@ -30,14 +31,27 @@ function shortKey(key: string, fingerprintHash: string): string {
 const ANDROID_ABIS = ['armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'];
 
 function adbPath(): string {
-  const sdk = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
+  const configured = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
+  const home = os.homedir();
+  const sdk = configured
+    ? configured
+    : [
+        path.join(home, 'Library', 'Android', 'sdk'),
+        path.join(home, 'Android', 'Sdk'),
+        path.join(home, 'Android', 'sdk'),
+        path.join(home, 'AppData', 'Local', 'Android', 'Sdk'),
+      ].find((candidate) => fs.existsSync(path.join(candidate, 'platform-tools')));
   return sdk ? path.join(sdk, 'platform-tools', 'adb') : 'adb';
 }
 
 function connectedDeviceAbi(): string | null {
   try {
     const adb = adbPath();
-    const serials = execFileSync(adb, ['devices'], { encoding: 'utf8', timeout: 10_000 })
+    const serials = execFileSync(adb, ['devices'], {
+      encoding: 'utf8',
+      timeout: 10_000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
       .split('\n')
       .slice(1)
       .map((line) => line.trim().split(/\s+/))
@@ -47,6 +61,7 @@ function connectedDeviceAbi(): string | null {
     const abis = execFileSync(adb, ['-s', serials[0]!, 'shell', 'getprop', 'ro.product.cpu.abilist'], {
       encoding: 'utf8',
       timeout: 10_000,
+      stdio: ['ignore', 'pipe', 'ignore'],
     });
     return (
       abis
@@ -59,15 +74,15 @@ function connectedDeviceAbi(): string | null {
   }
 }
 
-// Expo `run:android` builds a debug variant without `--all-arch` only for the ABIs of the
-// device it selected, and boots that device before asking the provider for a build.
+// Expo `run:android` builds a `debug` or `debugOptimized` build type without `--all-arch`
+// only for the ABI of the device it selected, and boots that device before asking the
+// provider for a build.
 function keyOptions(platform: string, runOptions: RunOptions = {}): RunOptions | null {
   if (platform !== 'android' || runOptions.abi || runOptions.allArch) return runOptions;
-  const buildType = (runOptions.variant || 'debug')
-    .split(/(?=[A-Z])/)
-    .pop()!
-    .toLowerCase();
-  if (buildType !== 'debug') return runOptions;
+  const parts = (runOptions.variant || 'debug').split(/(?=[A-Z])/);
+  let buildType = parts.pop()!;
+  if (parts.length > 0 && buildType === 'Optimized') buildType = parts.pop()! + buildType;
+  if (!/^debug(optimized)?$/i.test(buildType)) return runOptions;
   const abi = connectedDeviceAbi();
   return abi ? { ...runOptions, abi } : null;
 }
