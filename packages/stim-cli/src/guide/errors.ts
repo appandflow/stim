@@ -1166,6 +1166,15 @@ not on any remote"  (worktree remove)
   Repair the file, or move it aside (\`mv <path> <path>.broken\`) and accept
   that the devices it recorded become orphans you delete by hand.`,
     },
+    STIM_RELATIVE_PATH: {
+      summary: 'STIM_HOME, STIM_BUILD_CACHE or STIM_METRO_CACHE is set to a relative path',
+      body: () => `STIM_RELATIVE_PATH  ("<NAME>=<value> is not an absolute path")
+  Any command refuses before it reads or writes state. A relative value would
+  resolve against each process's working directory, so the CLI, Metro and the
+  Expo build-cache provider would each use a different store. Set the named
+  variable to an absolute path, or unset it to use the default. Metro and the
+  cache provider, which cannot refuse, ignore a relative value with a warning.`,
+    },
   },
 };
 

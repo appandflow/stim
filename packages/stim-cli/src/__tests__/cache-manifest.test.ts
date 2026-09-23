@@ -101,6 +101,18 @@ test('registeredCaches hides a directory that is gone but keeps it on file', () 
   expect(readManifest().caches.length).toBe(2);
 });
 
+test('registeredCaches ignores a relative dir, which would resolve against the reader cwd', () => {
+  mkdirSync(join(cacheDir, 'relative-cache'));
+  writeFileSync(manifestPath(), JSON.stringify({ version: 1, caches: [{ dir: 'relative-cache', name: 'relative' }] }));
+  const cwd = process.cwd();
+  process.chdir(cacheDir);
+  try {
+    expect(registeredCaches()).toEqual([]);
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
 test('unregister reports whether it removed anything', () => {
   register({ dir: cacheDir });
   expect(unregister(cacheDir)).toBe(true);

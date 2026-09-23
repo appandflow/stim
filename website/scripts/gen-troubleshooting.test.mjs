@@ -4,6 +4,9 @@ import { buildTroubleshooting } from './gen-troubleshooting.mjs';
 
 const NOT_A_REFUSAL_CODE = new Set([
   'STIM_ANDROID_CAS_TOOLCHAIN',
+  'STIM_BUILD_CACHE',
+  'STIM_HOME',
+  'STIM_METRO_CACHE',
   'STIM_METRO_PUBLIC_URL',
   'STIM_POOL_ANDROID_PARKED_MAX',
   'STIM_POOL_IOS_PARKED_MAX',

@@ -27,6 +27,18 @@ export function getConfigDir(): string {
   return process.env.STIM_HOME || join(homedir(), '.stim');
 }
 
+export function refuseRelativeStimPaths(env: NodeJS.ProcessEnv = process.env): void {
+  for (const name of ['STIM_HOME', 'STIM_BUILD_CACHE', 'STIM_METRO_CACHE']) {
+    const value = env[name];
+    if (!value || isAbsolute(value)) continue;
+    const error = new Error(
+      `${name}=${value} is not an absolute path. Set it to an absolute path, or unset it to use the default.`,
+    ) as Error & { code?: string };
+    error.code = 'STIM_RELATIVE_PATH';
+    throw error;
+  }
+}
+
 export function getConfigPath(): string {
   return join(getConfigDir(), 'config.json');
 }

@@ -175,6 +175,14 @@ control build optimizations on this machine without changing project files.
 | `STIM_ANDROID_CAS_TOOLCHAIN`   | Absolute path to the [Android CAS toolchain manifest](./build-optimizations.md#experimental-android-cas) |
 | `STIM_NO_UPDATE_CHECK`         | Set to disable the daily check for a newer Stim release in `stim guide`                                  |
 
+`STIM_HOME`, `STIM_BUILD_CACHE`, and `STIM_METRO_CACHE` must be absolute paths.
+A relative value would resolve against each process's working directory, so
+the CLI, Metro, and the Expo build-cache provider would use different stores.
+Every `stim` command refuses a relative value with `STIM_RELATIVE_PATH`. Metro
+and the Expo build-cache provider cannot refuse without breaking the bundler,
+so they print a warning and ignore the value, falling back to the config file
+or the default.
+
 Proxy remote devices also use `AGENT_DEVICE_DAEMON_BASE_URL` and
 `AGENT_DEVICE_DAEMON_AUTH_TOKEN`. Those variables belong to the optional proxy
 service, not to Stim.

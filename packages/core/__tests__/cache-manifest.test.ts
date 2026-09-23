@@ -126,3 +126,13 @@ test('concurrent cache registrations preserve every entry', async () => {
   const parsed = JSON.parse(readFileSync(manifest, 'utf-8')) as { caches: Array<{ dir: string }> };
   expect(new Set(parsed.caches.map((entry) => entry.dir)).size).toBe(count);
 });
+
+test('a relative cache dir is never registered', async () => {
+  const manifest = join(home, 'caches.json');
+  await registerInChild({ dir: 'relative-cache', name: 'relative', readyFile: join(home, 'ready') });
+
+  const caches = existsSync(manifest)
+    ? (JSON.parse(readFileSync(manifest, 'utf-8')) as { caches: unknown[] }).caches
+    : [];
+  expect(caches).toEqual([]);
+});

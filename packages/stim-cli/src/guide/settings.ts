@@ -538,7 +538,11 @@ The shared build cache and Metro transform cache default to living under
 
 STIM_BUILD_CACHE / STIM_METRO_CACHE in the environment override the file.
 The CLI and both cache packages resolve these identically, so every process
-finds the same store regardless of shell profile. A relative path is ignored.
+finds the same store regardless of shell profile. A relative path in the file
+is ignored. A relative STIM_HOME, STIM_BUILD_CACHE or STIM_METRO_CACHE makes
+every command refuse with STIM_RELATIVE_PATH; Metro and the Expo build-cache
+provider, which must not break the bundler, ignore it with a warning and use
+the next source.
 The Metro value is a PARENT root. The sanitized package name is appended below
 it, so apps remain separately reportable and prunable. Earlier releases used an
 overridden Metro root as one flat store. A new registration replaces that legacy
