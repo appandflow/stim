@@ -282,6 +282,7 @@ SHARED BUILD CACHES
   except a path that is or contains /, the home directory, the temp
   directory, $STIM_HOME, or the project or repository root: \`gc\` only
   reports it.
+
   Trim rather than empty. Emptying costs the next build in every project the
   time the cache was saving.`,
     },
