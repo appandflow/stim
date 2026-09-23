@@ -28,6 +28,13 @@ For current Expo SDK versions:
 
 Expo SDK 53 reads this value under `expo.experiments.buildCacheProvider`.
 
+Expo builds a debug APK without `--all-arch` only for the ABIs of the device it
+targets. The provider keys those builds on that device's primary ABI, which it
+reads with `adb` (from `ANDROID_HOME`, `ANDROID_SDK_ROOT`, or `PATH`) when
+exactly one device is online. With several devices online, or when `adb` does
+not answer, it skips the cache for that run and logs `[build-cache] skip
+android`. `--all-arch` builds have their own entry.
+
 The provider works without the `stim` npm package. When Stim is available,
 the provider registers its cache so `stim gc` can report and trim it.
 
