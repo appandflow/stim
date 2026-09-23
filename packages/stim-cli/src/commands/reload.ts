@@ -2,7 +2,7 @@ import { nativeRunCommand } from '../engine/slot-launch.ts';
 import { deviceSlotPlatforms, parseDeviceSlotKey } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
-import { phaseLine } from '../command-output.ts';
+import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { getProject, type ProjectRecord } from '../workspace/config.ts';
 import { androidAppProcess, iosAppProcess } from '../engine/app-install.ts';
 import { reloadThroughMetro } from '../engine/reload.ts';
@@ -357,14 +357,7 @@ export function registerReload(program: Command, deps: Partial<ReloadDeps> = {})
       }
       const root = (deps.findProjectRoot ?? DEFAULT_DEPS.findProjectRoot)(process.cwd());
       if (!root) {
-        const error = failure(
-          'STIM_NO_PROJECT',
-          'Not inside a project (no package.json found above the current directory).',
-          null,
-        );
-        if (opts.json) console.log(JSON.stringify(error));
-        else console.error(chalk.red(phaseLine('error', `${error.code}: ${error.message}`)));
-        process.exitCode = 1;
+        refuseNoProject({ json: Boolean(opts.json) });
         return;
       }
       const result = await runReload({ root, platform: value ?? null, deps });

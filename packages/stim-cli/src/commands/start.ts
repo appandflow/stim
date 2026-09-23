@@ -22,6 +22,7 @@ import {
   detectBundleId,
   detectIsExpo,
   findProjectRoot,
+  NO_PROJECT_REFUSAL,
 } from '../workspace/project.ts';
 import { clearManagedMetroTunnel, readMetroTunnel } from '../supervisor/state.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -338,11 +339,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
 
       const root = findProjectRoot(process.cwd());
       if (!root) {
-        return fail({
-          code: 'STIM_NO_PROJECT',
-          message: 'Not in a React Native project (no package.json found).',
-          remedy: 'Run this from the app directory -- the one holding package.json.',
-        });
+        return fail(NO_PROJECT_REFUSAL);
       }
       const projectProblem = appProjectProblem(root);
       if (projectProblem) {

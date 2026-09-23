@@ -9,7 +9,7 @@ import {
 } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
-import { phaseLine, plural, releasedLeaseFact } from '../command-output.ts';
+import { phaseLine, plural, refuseNoProject, releasedLeaseFact } from '../command-output.ts';
 import { clearSupervisor, getProject, upsertProject, withConfigLock } from '../workspace/config.ts';
 import type { ProjectRecord } from '../workspace/config.ts';
 import { findProjectRoot } from '../workspace/project.ts';
@@ -809,8 +809,8 @@ export default function stopCommand(program: Command): void {
     .action(async (opts: StopOptions) => {
       const root = findProjectRoot(process.cwd());
       if (!root) {
-        console.error(chalk.red('Not inside a project (no package.json found above the current directory).'));
-        process.exit(1);
+        refuseNoProject({ json: Boolean(opts.json) });
+        return;
       }
 
       const { ok, outcomes, summary } = await withWorkspaceProcessLock(

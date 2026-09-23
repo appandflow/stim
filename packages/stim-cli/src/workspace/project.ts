@@ -68,13 +68,19 @@ export function ownedDeviceLabel(projectPath: string): string {
   return worktreeLabel === appLabel ? appLabel : `${worktreeLabel}-${appLabel}`;
 }
 
+export const NO_PROJECT_REFUSAL = {
+  code: 'STIM_NO_PROJECT',
+  message: 'Not in a React Native project (no package.json found).',
+  remedy: 'Run this from the app directory -- the one holding package.json.',
+};
+
 export function resolveRegisteredProject(arg?: string | null): ResolveResult {
   const cfg = loadConfig();
   const projects = cfg?.projects || {};
 
   if (!arg) {
     const root = findProjectRoot(process.cwd());
-    if (!root) return { found: null, error: 'Not in a React Native project (no package.json found).' };
+    if (!root) return { found: null, error: NO_PROJECT_REFUSAL.message };
     if (!projects[root])
       return {
         found: null,

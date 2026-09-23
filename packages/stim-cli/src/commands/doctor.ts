@@ -19,7 +19,7 @@ import {
   runDoctor,
 } from '../diagnostics/doctor.ts';
 import type { DoctorPlatform, Finding } from '../diagnostics/doctor.ts';
-import { phaseLine } from '../command-output.ts';
+import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { compareStimVersions, inspectStimVersions, type StimVersionReport } from '../diagnostics/stim-installations.ts';
 import { repairCxxLauncherState } from '../diagnostics/doctor-cxx.ts';
 
@@ -183,8 +183,7 @@ export default function doctorCommand(
     .action(async (opts: DoctorOptions) => {
       const root = findProjectRoot(process.cwd());
       if (!root) {
-        console.error(chalk.red('Not in a React Native project (no package.json found).'));
-        process.exitCode = 1;
+        refuseNoProject({ json: Boolean(opts.json) });
         return;
       }
 
