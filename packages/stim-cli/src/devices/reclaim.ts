@@ -359,6 +359,10 @@ export async function reclaimProject(
     pid: Number(initialState?.supervisor?.serverPid),
     processToken: initialState?.supervisor?.serverProcessToken,
   };
+  const orphanIdentity =
+    supervisor.status === 'stale' && typeof orphanServer.processToken === 'string'
+      ? inspectProcessIdentity(orphanServer)
+      : null;
   if (supervisor.status === 'ours') {
     if (killMetroTree(supervisor.pid, supervisor.processToken) && (await waitForProcessExit(supervisor, 10_000))) {
       killedPid = supervisor.pid!;
@@ -369,17 +373,23 @@ export async function reclaimProject(
   } else if (supervisor.status === 'unverified') {
     skippedMetro = supervisor.reason ?? 'supervisor identity could not be verified';
     supervisorHeld = true;
-  } else if (supervisor.status === 'stale' && inspectProcessIdentity(orphanServer) === 'same') {
+  } else if (orphanIdentity === 'same') {
     let signalled = false;
     try {
       signalled = signalProcessTree(orphanServer.pid, 'SIGTERM');
     } catch {}
-    if (signalled && (await waitForProcessExit(orphanServer, 10_000))) {
+    const exited = signalled
+      ? await waitForProcessExit(orphanServer, 10_000)
+      : ['gone', 'different'].includes(inspectProcessIdentity(orphanServer));
+    if (exited) {
       killedPid = orphanServer.pid;
     } else {
       skippedMetro = `could not confirm dev server pid ${orphanServer.pid} left by the supervisor exited`;
       supervisorHeld = true;
     }
+  } else if (orphanIdentity === 'unknown') {
+    skippedMetro = `the identity of dev server pid ${orphanServer.pid} left by the supervisor could not be verified`;
+    supervisorHeld = true;
   } else if (typeof project?.metroPort === 'number') {
     const resolution = await resolveProjectMetro(project.metroPort, path);
     if (!resolution.missing) skippedMetro = 'Externally started server left alone; no verified Stim supervisor owns it';

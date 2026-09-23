@@ -684,18 +684,24 @@ async function stopMetro(
 ): Promise<{ outcome: MetroOutcome; keepPort: string | null }> {
   const serverPid = numberOrNull(server?.serverPid);
   const serverProcessToken = server?.serverProcessToken;
-  if (
-    supervisorGone &&
-    serverPid &&
-    typeof serverProcessToken === 'string' &&
-    inspectIdentity({ pid: serverPid, processToken: serverProcessToken }) === 'same'
-  ) {
+  const serverRecord = { pid: serverPid, processToken: serverProcessToken };
+  const identity =
+    supervisorGone && serverPid && typeof serverProcessToken === 'string' ? inspectIdentity(serverRecord) : null;
+  if (identity === 'unknown') {
+    const reason = `the identity of dev server pid ${serverPid} left by the supervisor could not be verified`;
+    report(chalk.yellow(phaseLine('metro', `refusing to signal it: ${reason}`)));
+    return { outcome: { status: 'refused', port, pid: serverPid, reason }, keepPort: null };
+  }
+  if (identity === 'same') {
     report(chalk.dim(phaseLine('metro', `sending SIGTERM to dev server pid ${serverPid} left by the supervisor`)));
     let signalled = false;
     try {
-      signalled = signalServer(serverPid);
+      signalled = signalServer(serverPid as number);
     } catch {}
-    if (signalled && (await waiter(serverPid, serverProcessToken))) {
+    const exited = signalled
+      ? await waiter(serverPid as number, serverProcessToken as string)
+      : ['gone', 'different'].includes(inspectIdentity(serverRecord));
+    if (exited) {
       report(chalk.green(phaseLine('metro', `dev server pid ${serverPid}`)));
       return { outcome: { status: 'stopped', port, pid: serverPid }, keepPort: null };
     }

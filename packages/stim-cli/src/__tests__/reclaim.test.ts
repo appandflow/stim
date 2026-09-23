@@ -603,6 +603,29 @@ test('reclaim stops the dev server a dead supervisor left behind, proven by its 
   }
 });
 
+test('reclaim keeps the entry and leaves a recorded dev server alone when its identity cannot be verified', async () => {
+  const child = await spawnFakeProcess(null);
+  const root = workspaceWithCollector(99999999);
+  try {
+    const foreignToken = captureProcessToken(process.pid);
+    expect(foreignToken).toBeTruthy();
+    writeFileSync(
+      workspaceStateFile(root),
+      JSON.stringify({
+        supervisor: { pid: 99999999, port: 8083, serverPid: child.pid, serverProcessToken: foreignToken },
+      }),
+    );
+    const result = await reclaimProject(root);
+    expect(stillRunning(child.pid!)).toBe(true);
+    expect(result.killedPid).toBe(null);
+    expect(result.keptEntry).toBe(true);
+    expect(existsSync(workspaceStateFile(root))).toBe(true);
+  } finally {
+    child.kill('SIGKILL');
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 describe.skipIf(process.platform === 'win32')('POSIX process groups and SIGTERM handlers; skipped on win32', () => {
   test.each(['collector', 'supervisor'] as const)(
     'reclaim leaves a replacement %s and its device alone after awaiting supervisor exit',
