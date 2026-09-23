@@ -37,9 +37,9 @@ try {
   }
   await program.parseAsync();
 } catch (err) {
-  if ((err as { code?: string })?.code === 'STIM_CONFIG_CORRUPT') {
-    console.error((err as Error).message);
-    process.exit(1);
-  }
-  throw err;
+  const code = (err as { code?: unknown })?.code;
+  const message = err instanceof Error ? err.message : String(err);
+  if (typeof code === 'string' && code.startsWith('STIM_')) console.error(`${code}: ${message}`);
+  else console.error(`Unexpected error: ${message}. Report it at ${pkg.bugs.url}`);
+  process.exit(1);
 }

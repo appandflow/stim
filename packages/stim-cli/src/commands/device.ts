@@ -1,4 +1,4 @@
-import { validateDeviceSlot } from '../devices/device-slots.ts';
+import { parseDeviceSlotOption } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { clockTime } from '../command-output.ts';
@@ -383,7 +383,7 @@ export function registerDevice(program: Command, deps: Partial<DeviceDeps> = {})
       '--wait <seconds>',
       'How long to wait for a device another workspace holds, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once)',
     )
-    .option('--slot <name>', 'Use this workspace device slot', validateDeviceSlot)
+    .option('--slot <name>', 'Use this workspace device slot', parseDeviceSlotOption)
     .option('--json', 'print the lease as JSON on stdout')
     .action(async (platform: string, id: string | undefined, opts: LockOptions) => {
       const result = await runLock(platform, id, opts, deps);
@@ -394,7 +394,7 @@ export function registerDevice(program: Command, deps: Partial<DeviceDeps> = {})
     .command('unlock')
     .argument('[platform]', 'ios or android; without one, every lease this workspace holds is released')
     .description('Release the device lease or leases this workspace holds. Releasing nothing is not an error.')
-    .option('--slot <name>', 'Use this workspace device slot', validateDeviceSlot)
+    .option('--slot <name>', 'Use this workspace device slot', parseDeviceSlotOption)
     .option('--json', 'print the released leases as JSON on stdout')
     .action(async (platform: string | undefined, opts: UnlockOptions) => {
       const result = await runUnlock(platform, opts, deps);
