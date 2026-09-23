@@ -10,13 +10,12 @@ import {
   symlinkSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../exec.ts';
-import { declaredCachePaths, discoverCaches, pruneCache, sizeCaches } from '../cache/caches.ts';
+import { discoverCaches, pruneCache, sizeCaches } from '../cache/caches.ts';
 import { emptyCaches, trimCaches } from '../commands/gc/caches.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { makeCacheDescriptor } from './_factories.ts';
-import { setProjectSetting, upsertProject } from '../workspace/config.ts';
 import assert from 'node:assert';
 import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
 
@@ -35,20 +34,6 @@ afterEach(() => {
   resetExecutor();
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.STIM_HOME;
-});
-
-test('discoverCaches includes declared paths and expands a leading ~', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'stim-declared-'));
-  try {
-    setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
-    const found = discoverCaches({ declared: [dir, '/definitely/not/here'] });
-    const declared = found.filter((c) => c.note.includes('caches` setting'));
-    expect(declared.length).toBe(1);
-    assert(declared[0]);
-    expect(declared[0].dir).toBe(dir);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 test('metro file maps are reported as an explicit file list, never as a directory to remove', () => {
@@ -75,7 +60,7 @@ test('discoverCaches reports the Gradle build cache from GRADLE_USER_HOME as rep
   mkdirSync(buildCache, { recursive: true });
   try {
     process.env.GRADLE_USER_HOME = gradleHome;
-    const caches = discoverCaches({ declared: [buildCache] });
+    const caches = discoverCaches();
     const found = caches.find((c) => c.name === 'Gradle build cache');
     expect(found).toMatchObject({
       dir: buildCache,
@@ -118,7 +103,7 @@ test('a registration cannot make the shared Gradle build cache deletable', () =>
   }
 });
 
-test('a declared ancestor cannot delete its protected Gradle build-cache child', () => {
+test('a registered ancestor cannot delete its protected Gradle build-cache child', () => {
   const gradleHome = mkdtempSync(join(tmpdir(), 'stim-gradle-parent-'));
   const previous = process.env.GRADLE_USER_HOME;
   const cachesRoot = join(gradleHome, 'caches');
@@ -129,7 +114,8 @@ test('a declared ancestor cannot delete its protected Gradle build-cache child',
   age(entry);
   try {
     process.env.GRADLE_USER_HOME = gradleHome;
-    const caches = discoverCaches({ declared: [cachesRoot] });
+    register({ dir: cachesRoot, name: 'Gradle caches root', prune: 'entries' });
+    const caches = discoverCaches();
     const found = caches.find((c) => realpathSync(c.dir) === realpathSync(cachesRoot));
     assert(found);
     expect(found.prune).toBe('report-only');
@@ -292,119 +278,17 @@ test('pruneCache trims only the listed files when a cache does not own its direc
   }
 });
 
-test('a declared cache that is or contains a protected root is never trimmed', () => {
-  const fakeHome = realpathSync(mkdtempSync(join(tmpdir(), 'stim-declared-home-')));
-  const repo = join(fakeHome, 'src', 'repo');
-  const project = join(repo, 'app');
-  const ordinary = join(fakeHome, 'tool-cache');
-  mkdirSync(project, { recursive: true });
-  mkdirSync(ordinary);
-  writeFileSync(join(project, 'package.json'), '{}');
-  const homeCaseVariant = join(dirname(fakeHome), basename(fakeHome).toUpperCase());
-  const protectedDirs = [fakeHome, join(fakeHome, 'src'), repo, project];
-  const entries = new Map(
-    [...protectedDirs, ordinary].map((dir) => {
-      const entry = join(dir, 'old-entry');
-      writeFileSync(entry, 'x');
-      age(entry);
-      return [dir, entry];
-    }),
-  );
-  const previousEnv = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
-  const previousCwd = process.cwd();
-  process.env.HOME = fakeHome;
-  process.env.USERPROFILE = fakeHome;
-  process.chdir(project);
-  try {
-    setExecutor({
-      run: () => '',
-      runQuiet: () => null,
-      runFileQuiet: (_file, args) => (args?.includes('--show-toplevel') ? repo : null),
-      spawn: () => {},
-    });
-
-    const caches = discoverCaches({ declared: ['~', '~/src', repo, project, ordinary, homeCaseVariant] });
-
-    const caseInsensitive = existsSync(homeCaseVariant);
-    for (const dir of caseInsensitive ? [...protectedDirs, homeCaseVariant] : protectedDirs) {
-      const found = caches.find((c) => c.dir === dir);
-      assert(found, dir);
-      expect(found.prune).toBe('report-only');
-      pruneCache(found, { olderThanDays: 30 });
-      expect(existsSync(entries.get(dir) ?? (entries.get(fakeHome) as string))).toBe(true);
-    }
-    const trimmed = caches.find((c) => c.dir === ordinary);
-    assert(trimmed);
-    expect(pruneCache(trimmed, { olderThanDays: 30 }).removed).toBe(1);
-  } finally {
-    process.chdir(previousCwd);
-    for (const [key, value] of Object.entries(previousEnv)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-    rmSync(fakeHome, { recursive: true, force: true });
-  }
-});
-
-test('declaredCachePaths reads the caches setting of the project it is run in', () => {
-  const projectRoot = realpathSync(mkdtempSync(join(tmpdir(), 'stim-declproj-')));
-  const declared = mkdtempSync(join(tmpdir(), 'stim-declcache-'));
-  try {
-    writeFileSync(join(projectRoot, 'package.json'), JSON.stringify({ name: 'demo' }));
-    upsertProject(projectRoot, {});
-    setProjectSetting(projectRoot, 'caches', [declared]);
-    setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
-
-    expect(declaredCachePaths(projectRoot)).toEqual([declared]);
-
-    const found = discoverCaches({ declared: declaredCachePaths(projectRoot) });
-    expect(found.some((c) => c.dir === declared)).toBeTruthy();
-  } finally {
-    rmSync(projectRoot, { recursive: true, force: true });
-    rmSync(declared, { recursive: true, force: true });
-  }
-});
-
-test('declaredCachePaths is empty outside a project rather than an error', () => {
-  const notAProject = mkdtempSync(join(tmpdir(), 'stim-noproj-'));
-  try {
-    setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
-    expect(declaredCachePaths(notAProject)).toEqual([]);
-  } finally {
-    rmSync(notAProject, { recursive: true, force: true });
-  }
-});
-
-test('discoverCaches says of each cache whether a project registered it', () => {
+test('discoverCaches marks a project registration as registered', () => {
   const registeredDir = mkdtempSync(join(tmpdir(), 'stim-src-reg-'));
-  const declaredDir = mkdtempSync(join(tmpdir(), 'stim-src-decl-'));
   try {
     setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
     register({ dir: registeredDir, name: 'Registered one' });
 
-    const found = discoverCaches({ declared: [declaredDir] });
-    const registered = found.find((c) => c.dir === registeredDir);
-    const detected = found.find((c) => c.dir === declaredDir);
+    const registered = discoverCaches().find((c) => c.dir === registeredDir);
     assert(registered);
-    assert(detected);
     expect(registered.source).toBe('registered');
-    expect(detected.source).toBe('detected');
   } finally {
     rmSync(registeredDir, { recursive: true, force: true });
-    rmSync(declaredDir, { recursive: true, force: true });
-  }
-});
-
-test('a declared path that only differs in spelling dedups against the registration', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'stim-dedup-'));
-  try {
-    setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
-    register({ dir, name: 'Registered one' });
-
-    const found = discoverCaches({ declared: [join(dir, 'sub', '..')] });
-    expect(found.filter((c) => c.dir === dir).length).toBe(1);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
   }
 });
 

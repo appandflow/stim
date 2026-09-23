@@ -10,11 +10,10 @@ import { removeExpiredLease } from '../engine/device-lease.ts';
 import { clearFreeClaimSet } from '../ownership-claim.ts';
 import { detectIsExpo, findProjectRoot } from '../workspace/project.ts';
 import { describeDereferenced, reclaimProject } from '../devices/reclaim.ts';
-import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import { listAllIosSims, type IosSimRecord } from '../devices/ios.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { listAvds, listOrphanedAvdDirectories, ownedAvdDirectory } from '../devices/android.ts';
-import { declaredCachePaths, discoverCaches, projectSettingShapeErrors, sizeCaches } from '../cache/caches.ts';
+import { discoverCaches, sizeCaches } from '../cache/caches.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import type { GcSkip, OrphanedDevice } from './gc/types.ts';
 import { emptyCaches, planCacheEmptying, selectCaches, trimCaches } from './gc/caches.ts';
@@ -71,9 +70,7 @@ interface RunGcOptions {
   delete?: boolean;
 }
 
-interface GcDependencies extends EasGcDependencies, GcDeviceDependencies {
-  settingShapeErrors?: () => string[];
-}
+type GcDependencies = EasGcDependencies & GcDeviceDependencies;
 
 function removeInvalidProjectEntries(invalidProjects: string[]): void {
   for (const path of invalidProjects) {
@@ -96,7 +93,7 @@ export async function collectGcReport(
 ): Promise<GcReport> {
   const scope = typeof cache === 'string' && cache.trim() ? cache : null;
   const all = scope !== null && olderThan === null;
-  const selected = selectCaches(discoverCaches({ declared: declaredCachePaths() }), scope);
+  const selected = selectCaches(discoverCaches(), scope);
   const caches = planCacheEmptying(sizeCaches(selected), all);
 
   if (scope) {
@@ -301,13 +298,6 @@ export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}):
   if (poolError) {
     console.error(chalk.yellow(`${poolError} ${POOL_SETTING_REMEDY}`));
   }
-  const shapeErrors = (deps.settingShapeErrors ?? projectSettingShapeErrors)();
-  if (shapeErrors.length) {
-    for (const message of shapeErrors) console.error(chalk.red(message));
-    console.error(chalk.dim(SETTING_SHAPE_REMEDY));
-    process.exitCode = 1;
-    return;
-  }
   if (opts.cache) {
     return runGcCore(opts, {
       ...deps,
@@ -389,7 +379,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     deps,
   );
   if (cache && report.caches.length === 0) {
-    const names = [...new Set(discoverCaches({ declared: declaredCachePaths() }).map((c) => c.name))];
+    const names = [...new Set(discoverCaches().map((c) => c.name))];
     console.log(chalk.yellow(`No shared cache carries "${cache}" in its name or directory.`));
     if (names.length) console.log(chalk.dim(`Caches on this machine: ${names.join(', ')}`));
     return;

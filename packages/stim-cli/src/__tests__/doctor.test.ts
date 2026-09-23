@@ -1292,7 +1292,6 @@ test('runDoctor reports a wrong-typed setting as a finding rather than refusing'
       join(project, '.stim.json'),
       JSON.stringify({
         ios: { configuration: {} },
-        caches: 42,
         optimizations: { metroWarmup: 'false' },
         metro: { warmupUrl: { ios: '/index.bundle?platform=android' } },
       }),
@@ -1303,12 +1302,31 @@ test('runDoctor reports a wrong-typed setting as a finding rather than refusing'
       'Invalid optimizations.metroWarmup setting "false". Expected true or false.',
       'Invalid ios.configuration setting {}. Expected a string.',
       'Invalid metro.warmupUrl.ios setting "/index.bundle?platform=android". Expected an HTTP(S) URL or /path ending in .bundle with a matching platform query and no fragment.',
-      'Invalid caches setting 42. Expected an array of strings.',
     ]);
     for (const finding of shapeFindings) {
       expect(finding.level).toBe('cost');
       expect(finding.fix).toMatch(/guide settings/);
     }
+  } finally {
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('runDoctor names a committed caches setting as inert', () => {
+  const project = realpathSync(mkdtempSync(join(tmpdir(), 'stim-doctor-caches-')));
+  const home = mkdtempSync(join(tmpdir(), 'stim-doctor-caches-home-'));
+  process.env.STIM_HOME = home;
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
+    writeFileSync(join(project, '.stim.json'), JSON.stringify({ caches: ['~/.myapp-metro-cache'] }));
+    const findings = runDoctor(project, { host: 'darwin', concurrency: { maxBuilds: 0, maxDevices: 0 } });
+    expect(findings.filter((finding) => /wrong type/i.test(finding.title))).toEqual([]);
+    const inert = findings.filter((finding) => finding.title === 'A key in the config is inert');
+    expect(inert.map((finding) => finding.detail)).toEqual([
+      `caches in ${join(project, '.stim.json')} is not read by Stim, so its value changes nothing.`,
+    ]);
   } finally {
     delete process.env.STIM_HOME;
     rmSync(home, { recursive: true, force: true });

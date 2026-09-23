@@ -118,7 +118,6 @@ const SETTING_SHAPES: Record<string, SettingShape> = {
   'worktree.defaultBranch': 'string',
   'cache.provider': 'string',
   'cache.options': 'object',
-  caches: 'strings',
 };
 
 const KNOWN_SETTINGS = new Set(Object.keys(SETTING_SHAPES));

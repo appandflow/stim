@@ -1,13 +1,9 @@
 import { existsSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
 import { homedir, tmpdir } from 'os';
-import { dirname, isAbsolute, join, parse, relative, resolve } from 'path';
+import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
 import { directorySize } from '../fs-util.ts';
 import { registeredCaches } from './cache-manifest.ts';
-import { findProjectRoot } from '../workspace/project.ts';
-import { getConfigDir } from '../workspace/config.ts';
-import { resolveSettings, settingShapeErrors, type SettingsObject } from '../workspace/settings.ts';
-import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 
 export interface CacheDescriptor {
   name: string;
@@ -79,64 +75,7 @@ function metroFileMaps(): CacheDescriptor | null {
   };
 }
 
-function declaredCaches(paths: string[]): CacheDescriptor[] {
-  const dirs = (paths || [])
-    .map((p) => resolve(p.startsWith('~') ? join(homedir(), p.slice(1)) : p))
-    .filter((p) => existsSync(p));
-  if (!dirs.length) return [];
-  const roots = protectedRoots();
-  return dirs.map((dir): CacheDescriptor => {
-    const canonical = onDiskPath(dir);
-    const root = [parse(canonical).root, ...roots].find((r) => cachePathContains(canonical, r));
-    if (root) {
-      return {
-        name: 'declared',
-        dir,
-        prune: 'report-only',
-        note: `from the \`caches\` setting; contains ${root}, so report only, never trimmed or emptied by Stim`,
-      };
-    }
-    return { name: 'declared', dir, prune: 'entries', note: 'from the `caches` setting' };
-  });
-}
-
-function protectedRoots(): string[] {
-  const project = findProjectRoot(process.cwd());
-  return [homedir(), tmpdir(), getConfigDir(), project, project && repoRoot(project)]
-    .filter((root): root is string => Boolean(root))
-    .map(onDiskPath);
-}
-
-// Node's JS realpathSync keeps the caller's spelling on a case-insensitive volume
-// (APFS default); realpathSync.native returns the name as stored on disk.
-function onDiskPath(dir: string): string {
-  try {
-    return realpathSync.native(dir);
-  } catch {
-    return resolve(dir);
-  }
-}
-
-function projectSettings(cwd: string): SettingsObject {
-  const root = findProjectRoot(cwd);
-  if (!root) return {};
-  return resolveSettings({
-    projectPath: root,
-    gitCommonDir: gitCommonDir(root),
-    repoRoot: repoRoot(root),
-  });
-}
-
-export function declaredCachePaths(cwd: string = process.cwd()): string[] {
-  const declared = projectSettings(cwd).caches;
-  return Array.isArray(declared) ? (declared as string[]) : [];
-}
-
-export function projectSettingShapeErrors(cwd: string = process.cwd()): string[] {
-  return settingShapeErrors(projectSettings(cwd));
-}
-
-export function discoverCaches({ declared = [] }: { declared?: string[] } = {}): CacheDescriptor[] {
+export function discoverCaches(): CacheDescriptor[] {
   const gradle = gradleBuildCache();
   const gradleDir = gradle ? canonicalCacheDir(gradle.dir) : null;
   const registered = protectNestedMetroAncestors(
@@ -151,7 +90,7 @@ export function discoverCaches({ declared = [] }: { declared?: string[] } = {}):
       ),
     ),
   );
-  const detected = [compilationCache(), gradle, metroFileMaps(), ...declaredCaches(declared)]
+  const detected = [compilationCache(), gradle, metroFileMaps()]
     .filter((c): c is CacheDescriptor => Boolean(c))
     .map((c): CacheDescriptor => Object.assign({}, c, { source: 'detected' as const }));
   return mergeCacheDescriptors([...registered, ...detected], gradleDir);

@@ -33,8 +33,7 @@ An app's .stim.json can contain:
       "runtime": "26.2",
       "simslimProfile": ".simslim/dev.json"
     },
-    "android": { "variant": "productionDebug" },
-    "caches": ["~/.myapp-metro-cache"]
+    "android": { "variant": "productionDebug" }
   }
 
 KEYS STIM READS
@@ -245,14 +244,6 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         provider, or in a lower layer naming none, are
                         ignored. Keep secrets out of the committed file: read
                         them from the environment or the machine layers.
-  caches                extra shared-cache paths for \`gc\`. A JSON array;
-                        every path is treated as a flat store that
-                        \`gc --delete --older-than N\` trims and
-                        \`gc --delete --cache all\` empties. A path that is
-                        or contains /, the home directory, the temp
-                        directory, $STIM_HOME (default ~/.stim), or the
-                        project or repository root is report-only: \`gc\`
-                        never deletes in it.
 
 Each setting takes its documented type: string, array of strings, number,
 boolean, or object. ios.remote, android.remote, metro.tunnel,
@@ -556,7 +547,7 @@ A marked store that later becomes another override parent remains visible but is
 report-only while its marked child exists. Root-level legacy files remain
 untouched for manual cleanup.
 
-PREFER SELF-REGISTRATION OVER THE 'caches' SETTING
+REGISTER A CACHE WITH GC
 There is no 'cache' command. A cache registers itself from code instead, once,
 and every 'gc' report shows it from then on, tagged (registered):
 
