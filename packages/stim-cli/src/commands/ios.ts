@@ -136,7 +136,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     .option(
       '--device-type <name>',
       "Simulator model to create this workspace's owned sim as, exactly as `xcrun simctl list devicetypes` names it " +
-        '(e.g. "iPad Pro 13-inch (M4)"). Overrides the ios.deviceType setting for this invocation. A model no installed ' +
+        '(e.g. "iPad Pro 13-inch (M5)"). Overrides the ios.deviceType setting for this invocation. A model no installed ' +
         'runtime can create refuses with STIM_BAD_ARG and prints the models they do offer.',
     )
     .option(

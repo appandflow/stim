@@ -65,6 +65,10 @@ registers the project for `stim status`, and a run without `--platform` counts
 for both, so `stim guide` can tell when doctor is due again. A run in a
 directory that is not an app records nothing.
 
+Doctor also prints the running CLI version and the `stim` installation resolved
+from `PATH`, and flags a resolved installation that is older than another
+available one.
+
 `doctor` also flags when an agent harness sandboxes shell commands and Stim is
 not allowed through it, which shows up as unrelated-looking failures against
 the simulator service, the adb server, and Stim's own state directory.

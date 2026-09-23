@@ -39,7 +39,7 @@ line by design (see \`guide logs\`), not this single-payload contract.`,
   deviceName      its name, or null
   deviceType      the owned simulator's MODEL, as
                   \`xcrun simctl list devicetypes\` names it ("iPad Pro 13-inch
-                  (M4)"). Read from the simulator itself, so a run driven by
+                  (M5)"). Read from the simulator itself, so a run driven by
                   the ios.deviceType setting reports it too, not only a
                   \`--device-type\` run. Null on \`--device\` and on a
                   simulator Stim does not own
