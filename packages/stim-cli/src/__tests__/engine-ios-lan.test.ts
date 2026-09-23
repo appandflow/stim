@@ -11,6 +11,7 @@ import {
   lanOriginUrlFor,
   writeIpTxt,
 } from '../engine/ios-lan.ts';
+import { makeExecutor } from './_factories.ts';
 
 let dir: string;
 
@@ -101,6 +102,26 @@ test.skipIf(process.platform === 'win32')(
     }
   },
 );
+
+test('copyAppAside removes a clone copy that failed midway before the plain cp -R, which would otherwise nest into it', () => {
+  const targets: boolean[] = [];
+  const exec = makeExecutor({
+    runFile: (_file, args = []) => {
+      const target = args.at(-1)!;
+      targets.push(existsSync(target));
+      if (args[0] === '-c') {
+        mkdirSync(target);
+        writeFileSync(join(target, 'partial'), '');
+        throw new Error('cp: clonefile failed');
+      }
+      return '';
+    },
+  });
+  const aside = join(dir, 'aside');
+  const copy = copyAppAside(join(dir, 'Fixture.app'), { exec, mkdtemp: () => (mkdirSync(aside), aside) });
+  expect(copy.appPath).toBe(join(aside, 'Fixture.app'));
+  expect(targets).toEqual([false, false]);
+});
 
 test('ensureLanReachable passes when the gate proves the origin is this workspace Metro', async () => {
   const gated: Array<Record<string, unknown>> = [];

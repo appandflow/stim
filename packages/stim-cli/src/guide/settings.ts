@@ -489,9 +489,10 @@ swaps, and the doctor fingerprint checkout select a writable directory on the
 relevant filesystem. App/APK preparation uses the artifact volume. Worktree
 warm copies directly to the destination and does not use temporary storage.
 A system temporary directory on that
-volume is preferred, then a writable ancestor of the relevant path. Staging
-is private and outside Git working trees, so ignored secrets cannot enter
-Git status or git add. If no safe location exists, the operation refuses.
+volume is preferred, then a writable ancestor of the relevant path outside
+the shared build cache. Staging is private and outside Git working trees, so
+ignored secrets cannot enter Git status or git add. If no safe location
+exists, the operation refuses.
 
 Set STIM_TMPDIR or top-level tempDir in $STIM_HOME/config.json (default
 ~/.stim/config.json) to override placement. STIM_TMPDIR takes precedence.

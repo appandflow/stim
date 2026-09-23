@@ -169,6 +169,7 @@ export async function swapJsBundle({
     try {
       e.runFile('cp', ['-c', '-R', cachedAppPath, appCopy]);
     } catch {
+      removeTemporaryEntry(appCopy);
       e.runFile('cp', ['-R', cachedAppPath, appCopy]);
     }
   } catch (err) {

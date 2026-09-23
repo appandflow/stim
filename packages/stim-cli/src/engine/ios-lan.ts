@@ -110,6 +110,7 @@ export function copyAppAside(
     e.runFile('cp', ['-c', '-R', appPath, copy]);
   } catch {
     try {
+      removeTemporaryEntry(copy);
       e.runFile('cp', ['-R', appPath, copy]);
     } catch (error) {
       removeTemporaryEntry(tmpDir);

@@ -12,6 +12,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { buildCacheRoot } from '@stim-cli/core';
 import { getConfigDir, loadConfig } from './workspace/config.ts';
 
 function existingPath(path: string): { existing: string; resolved: string } {
@@ -39,12 +40,14 @@ function outsideWorkingTree(path: string): boolean {
   }
 }
 
+function inside(parent: string, path: string): boolean {
+  const rel = relative(parent, path);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
 export function temporaryRoot(near: string): string {
   const reference = existingPath(near);
-  const insideReference = (path: string) => {
-    const rel = relative(reference.resolved, path);
-    return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
-  };
+  const insideReference = (path: string) => inside(reference.resolved, path);
   const override = process.env.STIM_TMPDIR ?? loadConfig()?.tempDir;
   if (override !== undefined) {
     if (typeof override !== 'string' || !isAbsolute(override)) {
@@ -62,6 +65,7 @@ export function temporaryRoot(near: string): string {
   }
 
   const { existing } = reference;
+  const cache = existingPath(buildCacheRoot()).resolved;
   const device = statSync(existing).dev;
   const candidates = [tmpdir()];
   let current = existing === reference.resolved || !statSync(existing).isDirectory() ? dirname(existing) : existing;
@@ -74,7 +78,8 @@ export function temporaryRoot(near: string): string {
   for (const candidate of candidates) {
     try {
       const path = realpathSync(candidate);
-      if (statSync(path).dev !== device || insideReference(path) || !outsideWorkingTree(path)) continue;
+      if (statSync(path).dev !== device || insideReference(path) || inside(cache, path) || !outsideWorkingTree(path))
+        continue;
       accessSync(path, constants.W_OK);
       return path;
     } catch {}
