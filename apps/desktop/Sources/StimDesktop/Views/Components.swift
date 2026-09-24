@@ -83,3 +83,32 @@ struct CommandText: View {
       .textSelection(.enabled)
   }
 }
+
+struct Sparkline: View {
+  var values: [Double]
+  var color: Color = Theme.lavender
+  var minimumPeak: Double = 1
+
+  var body: some View {
+    GeometryReader { geo in
+      let peak = max(values.max() ?? 0, minimumPeak)
+      let step = values.count > 1 ? geo.size.width / CGFloat(values.count - 1) : 0
+      let points = values.enumerated().map { i, v in
+        CGPoint(x: CGFloat(i) * step, y: geo.size.height * (1 - CGFloat(v / peak)))
+      }
+      if points.count > 1 {
+        ZStack {
+          Path { path in
+            path.move(to: CGPoint(x: 0, y: geo.size.height))
+            points.forEach { path.addLine(to: $0) }
+            path.addLine(to: CGPoint(x: points[points.count - 1].x, y: geo.size.height))
+            path.closeSubpath()
+          }
+          .fill(color.opacity(0.18))
+          Path { path in path.addLines(points) }
+            .stroke(color, style: StrokeStyle(lineWidth: 1.25, lineCap: .round, lineJoin: .round))
+        }
+      }
+    }
+  }
+}

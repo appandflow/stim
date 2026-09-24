@@ -4,6 +4,7 @@ import SwiftUI
 
 struct WorkspaceDetail: View {
   var env: Workspace
+  var usage: UsageHistory?
   @State private var focusedID: String?
   @State private var stats: ProjectStats?
   @State private var takenOver: Set<String> = []
@@ -43,7 +44,7 @@ struct WorkspaceDetail: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
 
       Rectangle().fill(Theme.border).frame(width: 1)
-      Inspector(env: env, stats: stats)
+      Inspector(env: env, usage: usage, stats: stats)
         .frame(width: 360)
         .background(Theme.sidebar)
     }
@@ -57,6 +58,7 @@ struct WorkspaceDetail: View {
 
 struct Inspector: View {
   var env: Workspace
+  var usage: UsageHistory?
   var stats: ProjectStats?
 
   var body: some View {
@@ -88,7 +90,20 @@ struct Inspector: View {
             ":\(metro.port) \(metro.running ? "running" : "stopped")" + (metro.pid.map { " \u{00B7} pid \($0)" } ?? "")
           } ?? "none")
           row("Supervisor", env.supervisor.map { "\($0.mode ?? "unknown") \u{00B7} \($0.healthy == true ? "healthy" : "unhealthy")" } ?? "none")
-          if let mb = env.memoryMb, mb > 0 { row("Memory", formatGigabytes(mb: mb)) }
+          if let mb = env.memoryMb, mb > 0 { row("Committed", formatGigabytes(mb: mb)) }
+        }
+
+        if let usage {
+          VStack(alignment: .leading, spacing: 8) {
+            SectionLabel(title: "Resources \u{00B7} \(usage.latest.processCount) processes")
+            HStack(alignment: .top, spacing: 10) {
+              usageCard(
+                "CPU", usage.latest.cpuPercent.map(formatPercent) ?? "--", values: usage.cpu, minimumPeak: 100)
+              usageCard(
+                "Resident memory", formatMemory(usage.latest.residentBytes), values: usage.resident,
+                minimumPeak: 1_073_741_824)
+            }
+          }
         }
 
         VStack(alignment: .leading, spacing: 8) {
@@ -149,6 +164,17 @@ struct Inspector: View {
       Text(label).foregroundStyle(Theme.tertiary).frame(width: 84, alignment: .leading)
       Text(value)
     }
+  }
+
+  private func usageCard(_ title: String, _ value: String, values: [Double], minimumPeak: Double) -> some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text(title).foregroundStyle(Theme.secondary)
+      Text(value).font(Theme.heading(22))
+      Sparkline(values: values, minimumPeak: minimumPeak).frame(height: 32)
+    }
+    .padding(12)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
   }
 
   private func statCard(_ title: String, _ platform: ProjectStats.Platform) -> some View {

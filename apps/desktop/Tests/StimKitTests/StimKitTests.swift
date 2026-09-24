@@ -81,3 +81,92 @@ import Testing
     #expect(warmCommand(worktree: "/Users/dev/it's here") == "cd '/Users/dev/it'\\''s here' && stim worktree warm")
   }
 }
+
+@Suite struct ResourceTests {
+  let ps = """
+      1     0  20176 14:27.71 /sbin/launchd
+    500     1  10240   0:01.00 stim-supervisor
+    501   500  20480 229:34.42 node metro
+    502   501   1024   0:00.50 node worker
+    600     1   2048   0:00.10 launchd_sim /Users/dev/Library/Developer/CoreSimulator/Devices/7466D06C-1AE4-4EDB-8A93-6B8A43A7A47A/data/var/run/launchd_bootstrap.plist
+    601   600   4096 1-02:03:04.50 SpringBoard
+    700     1   8192   0:02.00 /sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64 -avd stim-app -port 5604
+    701     1   8192   0:02.00 /sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64 -avd stim-app-duo -port 5606
+    800     1   1024   0:00.00 launchd_sim /Users/dev/Library/Developer/CoreSimulator/Devices/00000000-0000-0000-0000-000000000000/data/var/run/launchd_bootstrap.plist
+  """
+
+  func workspace(supervisor: Int? = 500, metro: Int? = 501, live: Bool = true) throws -> Workspace {
+    let json = """
+      {"path":"/w","live":\(live),"warnings":[],
+       "supervisor":{"pid":\(supervisor.map(String.init) ?? "null")},
+       "metro":{"port":8081,"running":true,"pid":\(metro.map(String.init) ?? "null")},
+       "ios":{"name":"stim-app (iPhone 18 Pro 27.0)","udid":"7466d06c-1ae4-4edb-8a93-6b8a43a7a47a","owned":true,"state":"Booted"},
+       "android":{"name":"stim-app","owned":true,"physical":false,"serial":"emulator-5604","state":"detected"}}
+      """
+    return try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
+  }
+
+  @Test func parsesPsIncludingLongCpuTimes() {
+    let rows = ProcessTable.parse(ps)
+    #expect(rows.count == 9)
+    #expect(rows[2] == ProcessEntry(pid: 501, ppid: 500, residentBytes: 20480 * 1024, cpuSeconds: 13774.42, args: "node metro"))
+    let expected: Double = 86_400 + 7_384.5
+    #expect(rows[5].cpuSeconds == expected)
+  }
+
+  @Test func findsSimulatorAndEmulatorByIdentityNotPrefix() throws {
+    let roots = workspaceRoots(try workspace(), in: ProcessTable.parse(ps))
+    #expect(roots == [500, 501, 600, 700])
+  }
+
+  @Test func ignoresASupervisorPidOfAWorkspaceThatIsNotLive() throws {
+    let roots = workspaceRoots(try workspace(metro: nil, live: false), in: ProcessTable.parse(ps))
+    #expect(!roots.contains(500))
+  }
+
+  @Test func countsEachProcessOnceWhenRootsNest() throws {
+    var sampler = ResourceSampler()
+    let processes = ProcessTable.parse(ps)
+    let usage = sampler.sample([try workspace()], processes: processes, at: Date(timeIntervalSince1970: 0))["/w"]
+    #expect(usage?.processCount == 6)
+    let resident: Int64 = 46_080 * 1024
+    #expect(usage?.residentBytes == resident)
+    #expect(usage?.cpuPercent == nil)
+  }
+
+  @Test func cpuIsTheChangeInCpuTimeOverTheInterval() throws {
+    var sampler = ResourceSampler()
+    let env = try workspace(supervisor: nil, metro: 700)
+    let first = [ProcessEntry(pid: 700, ppid: 1, residentBytes: 0, cpuSeconds: 10, args: "")]
+    _ = sampler.sample([env], processes: first, at: Date(timeIntervalSince1970: 0))
+    let second = [
+      ProcessEntry(pid: 700, ppid: 1, residentBytes: 0, cpuSeconds: 13, args: ""),
+      ProcessEntry(pid: 701, ppid: 700, residentBytes: 0, cpuSeconds: 1.5, args: ""),
+    ]
+    let usage = sampler.sample([env], processes: second, at: Date(timeIntervalSince1970: 3))["/w"]
+    #expect(usage?.cpuPercent == 150)
+  }
+
+  @Test func sumsOnlyWhatGcDeleteWouldFree() throws {
+    let json = """
+      {"mode":"dry-run","sections":{
+        "orphanedWorkspaces":[{"dir":"/a","projectRoot":"/p","bytes":4096}],
+        "orphanedDevices":[{"kind":"ios","id":"X","name":"n","bytes":null,"directory":null}],
+        "parkedSimulators":[{"udid":"Y","bytes":1000}],
+        "workspaceBuildOutputs":[{"dir":"/b","bytes":9000000000,"willClear":false},{"dir":"/c","bytes":500,"willClear":true}],
+        "caches":[{"name":"c","dir":"/d","bytes":7000,"willEmpty":false}],
+        "staleBuildLocks":[{"path":"/l"}]}}
+      """
+    let reclaimable = try JSONDecoder().decode(GcReport.self, from: Data(json.utf8)).reclaimable
+    #expect(reclaimable == GcReport.Reclaimable(bytes: 4096 + 1000 + 500, entries: 4, unsized: 1))
+  }
+
+  @Test func mergesLocationsOnTheSameVolume() {
+    let volumes = DiskUsage.merge([
+      DiskVolume(id: "/", name: "Macintosh HD", availableBytes: 1, totalBytes: 2, holds: ["Repositories"]),
+      DiskVolume(id: "/Volumes/X", name: "X", availableBytes: 3, totalBytes: 4, holds: ["Simulators"]),
+      DiskVolume(id: "/", name: "Macintosh HD", availableBytes: 1, totalBytes: 2, holds: ["Stim home"]),
+    ])
+    #expect(volumes.map(\.holds) == [["Repositories", "Stim home"], ["Simulators"]])
+  }
+}

@@ -3,6 +3,7 @@ import SwiftUI
 
 struct WallView: View {
   @ObservedObject var store: StatusStore
+  @ObservedObject var metrics: MetricsStore
   var project: Project?
   @Binding var selection: SidebarItem?
 
@@ -28,7 +29,7 @@ struct WallView: View {
           ForEach(live) { env in
             VStack(alignment: .leading, spacing: 12) {
               Button { selection = .environment(env.path) } label: {
-                WorkspaceHeader(env: env, project: store.project(of: env))
+                WorkspaceHeader(env: env, project: store.project(of: env), usage: metrics.usage[env.path])
               }
               .buttonStyle(.plain)
               ScrollView(.horizontal, showsIndicators: false) {
@@ -53,6 +54,7 @@ struct WallView: View {
 struct WorkspaceHeader: View {
   var env: Workspace
   var project: Project
+  var usage: UsageHistory?
 
   var body: some View {
     HStack(spacing: 12) {
@@ -72,8 +74,25 @@ struct WorkspaceHeader: View {
           Text("\(supervisor.mode ?? "supervisor") \u{00B7} \(supervisor.healthy == true ? "healthy" : "unhealthy")")
         }
       }
+      if let usage {
+        if let cpu = usage.latest.cpuPercent {
+          Chip {
+            Sparkline(values: usage.cpu, minimumPeak: 100).frame(width: 34, height: 12)
+            Text("CPU")
+            Text(formatPercent(cpu)).font(Theme.mono())
+          }
+          .help("CPU of the workspace's processes, simulators and emulators, as a percent of one core")
+        }
+        Chip {
+          Sparkline(values: usage.resident, minimumPeak: 1_073_741_824).frame(width: 34, height: 12)
+          Text("RAM")
+          Text(formatMemory(usage.latest.residentBytes)).font(Theme.mono())
+        }
+        .help("Resident memory of the workspace's processes, simulators and emulators")
+      }
       if let mb = env.memoryMb, mb > 0 {
         Chip { Text(formatGigabytes(mb: mb)) }
+          .help("Committed memory estimate from stim status")
       }
       if let errors = env.logs?.errorsSinceMarker {
         Chip(tint: errors > 0 ? Theme.error : nil) { Text(errors == 1 ? "1 error" : "\(errors) errors") }
