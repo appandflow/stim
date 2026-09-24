@@ -23,18 +23,13 @@ describe('the connection profile', () => {
     expect(serialized).not.toContain('AuthToken');
   });
 
-  test('carries the tenant and runId connect refuses to run without', () => {
+  test('carries the lease scope connect and proxy open refuse to run without', () => {
     const profile = remoteProfile({ daemon: DAEMON, platform: 'ios', label: 'wt' });
     expect(profile.tenant).toBe('stim-wt');
     expect(profile.runId).toBe('stim-wt');
     expect(profile.sessionIsolation).toBe('tenant');
-  });
-
-  test('selects the proxy lease policy, whose 5-minute lease outlasts a large install upload', () => {
-    expect(remoteProfile({ daemon: DAEMON, platform: 'android', label: 'wt' })).toMatchObject({
-      leaseProvider: 'proxy',
-      clientId: 'stim-wt',
-    });
+    expect(profile.leaseProvider).toBe('proxy');
+    expect(profile.clientId).toBe('stim-wt');
   });
 
   test('scopes tenant and runId per workspace, so two worktrees never share a lease', () => {
