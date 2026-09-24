@@ -97,7 +97,8 @@ function configFromJson(value: unknown, path: string): Config {
 
 /**
  * An array or scalar container swallows every write silently: `JSON.stringify` drops a string key set on
- * an array, so the record is gone by the time the file is written. Absent is created; unusable is refused.
+ * an array, so the record is gone by the time the file is written. Absent or null is read as empty; an
+ * unusable container or entry is refused.
  */
 function registryFromJson(
   config: Record<string, unknown>,
