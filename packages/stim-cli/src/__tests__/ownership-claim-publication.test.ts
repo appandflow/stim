@@ -164,12 +164,18 @@ describe.skipIf(process.platform !== 'win32')(
       },
     );
 
-    test('a claim record whose removal is in flight reads as absent rather than unreadable', () => {
+    test.each([
+      ['answers at once', 0],
+      ['is itself descheduled past the settle window', 2_100],
+    ])('a claim record whose removal is in flight reads as absent when the read %s', (_, stalledMs) => {
       const exclusive = join(root, 'exclusive');
       const leaving = join(exclusive, 'leaving.claim');
       mkdirSync(exclusive, { recursive: true });
       writeFileSync(leaving, '{}');
-      denyOnce(leaving, () => rmSync(exclusive, { recursive: true }));
+      denyOnce(leaving, () => {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, stalledMs);
+        rmSync(exclusive, { recursive: true });
+      });
       const attempt = tryAcquireClaim({ root, mode: 'exclusive' });
       expect(attempt.acquired).toBeDefined();
       expect(releaseClaim(attempt.acquired)).toBe(true);
@@ -182,7 +188,11 @@ describe.skipIf(process.platform !== 'win32')(
         assert(holder.acquired);
         faults.denyReads = holder.acquired.path;
         expect(() => tryAcquireClaim({ root, mode })).toThrow(
-          expect.objectContaining({ code: 'STIM_CLAIM_REFUSED', claimPath: holder.acquired.path }),
+          expect.objectContaining({
+            code: 'STIM_CLAIM_REFUSED',
+            claimPath: holder.acquired.path,
+            reason: 'its record could not be read (EPERM)',
+          }),
         );
         expect(readdirSync(join(root, 'exclusive'))).toEqual([`${holder.acquired.claimId}.claim`]);
         expect(existsSync(join(root, 'shared'))).toBe(false);
