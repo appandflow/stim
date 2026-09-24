@@ -290,13 +290,28 @@ test('ignored inventory and warm copying still find the target file when raw ls-
 
     writeFileSync(join(root, 'README.md'), 'hello');
     writeFileSync(join(root, '.gitignore'), '*.ignoreme\n.env\n');
-    git('git add README.md .gitignore');
+
+    const dirCount = 8;
+    const dirName = (n: number) => `keepdir-${n}-${'k'.repeat(235)}`;
+    for (let d = 0; d < dirCount; d++) {
+      mkdirSync(join(root, dirName(d)), { recursive: true });
+      writeFileSync(join(root, dirName(d), 'keep.txt'), 'keep');
+    }
+
+    const dirNames = Array.from({ length: dirCount }, (_, d) => dirName(d));
+    git(`git add README.md .gitignore ${dirNames.join(' ')}`);
     git('git commit -q -m init');
     execFileSync('git', ['-C', root, 'worktree', 'add', '-qb', 'copy-target', target]);
 
+    // Reused, long directory names inflate the raw ls-files output without adding
+    // per-file creation cost, which is what made this case slow on windows-latest
+    // (issue #1015).
     const padding = 'x'.repeat(200);
-    for (let i = 0; i < 6000; i++) {
-      writeFileSync(join(root, `bloat-${i}-${padding}.ignoreme`), '');
+    const filesPerDir = 300;
+    for (let d = 0; d < dirCount; d++) {
+      for (let i = 0; i < filesPerDir; i++) {
+        writeFileSync(join(root, dirName(d), `bloat-${i}-${padding}.ignoreme`), '');
+      }
     }
 
     mkdirSync(join(root, 'apps/mobile'), { recursive: true });
