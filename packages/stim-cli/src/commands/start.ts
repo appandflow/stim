@@ -5,7 +5,6 @@ import { dirname } from 'node:path';
 import type { Command } from 'commander';
 import { phaseLine, stepTimer } from '../command-output.ts';
 import type { StartError, StartFacts } from '../supervisor/start-facts.ts';
-import type { SupervisorRecord } from '../workspace/config-types.ts';
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { pidExists, resolveProjectMetro, signalProcessTree } from '../metro.ts';
@@ -153,7 +152,7 @@ export function startFacts({
   alreadyRunning,
 }: {
   port: number;
-  supervisor?: SupervisorRecord | null;
+  supervisor?: Pick<LiveSupervisor, 'pid' | 'mode'> | null;
   logsDir: string;
   alreadyRunning?: unknown;
 }): StartFacts {
@@ -1113,7 +1112,7 @@ function report({
 }): StartFacts {
   const facts = startFacts({
     port,
-    supervisor: supervisor as unknown as SupervisorRecord | null,
+    supervisor,
     logsDir,
     alreadyRunning,
   });

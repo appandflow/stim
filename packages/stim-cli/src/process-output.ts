@@ -24,7 +24,7 @@ export function createLineReader(onLine: (line: string) => void): { push(chunk: 
       if (!buffered) return;
       const rest = buffered;
       buffered = '';
-      onLine(rest);
+      onLine(rest.endsWith('\r') ? rest.slice(0, -1) : rest);
     },
   };
 }

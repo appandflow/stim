@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { getExecutor } from '../exec.ts';
+import { readJsonObject } from '../json-file.ts';
 import { pidExists } from '../metro.ts';
 import { gateMetroOrigin, REMOTE_METRO_WRONG } from './metro-gate.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
@@ -1009,14 +1010,10 @@ export async function ensureMetroReachable({
 
 export function bundleEntryPoint(root: string, isExpo: boolean): string {
   if (!isExpo) return 'index';
-  try {
-    const pkg = JSON.parse(readFileSync(resolvePath(root, 'package.json'), 'utf-8')) as { main?: unknown };
-    if (typeof pkg.main !== 'string' || !pkg.main.trim()) return 'index';
-    const main = pkg.main.trim();
-    const local = main.startsWith('.') || /\.[cm]?[jt]sx?$/.test(main) || existsSync(resolvePath(root, main));
-    const normalized = main.replace(/^\.\//, '').replace(/\.(?:[cm]?[jt]sx?)$/, '');
-    return local ? normalized : `node_modules/${normalized}`;
-  } catch {
-    return 'index';
-  }
+  const declared = readJsonObject(resolvePath(root, 'package.json'))?.main;
+  if (typeof declared !== 'string' || !declared.trim()) return 'index';
+  const main = declared.trim();
+  const local = main.startsWith('.') || /\.[cm]?[jt]sx?$/.test(main) || existsSync(resolvePath(root, main));
+  const normalized = main.replace(/^\.\//, '').replace(/\.(?:[cm]?[jt]sx?)$/, '');
+  return local ? normalized : `node_modules/${normalized}`;
 }

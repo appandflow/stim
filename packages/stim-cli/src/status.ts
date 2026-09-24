@@ -11,13 +11,12 @@ export interface SimFacts {
   udid?: string;
   name?: string;
   state?: string;
-  [key: string]: unknown;
 }
 
 export interface MetroFacts {
+  missing?: true;
   metro?: { pid: number } | null;
   notOurs?: string;
-  [key: string]: unknown;
 }
 
 interface SupervisorFacts {
@@ -36,7 +35,6 @@ interface LogsFacts {
 export interface WorktreeFacts {
   path: string;
   branch?: string;
-  [key: string]: unknown;
 }
 
 export interface AndroidRuntimeFacts {

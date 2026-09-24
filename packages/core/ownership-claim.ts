@@ -91,7 +91,7 @@ const CLAIM_SUFFIX = '.claim';
 const CHILD_SUFFIX = '.child';
 const STAGING_PREFIX = '.staging-';
 const PUBLISH_ATTEMPTS = 64;
-const WIN32_SETTLE_MS = 250;
+const WIN32_SETTLE_MS = 2000;
 const WIN32_SETTLE_STEP_MS = 5;
 const debug = debuglog('stim:claim');
 
@@ -220,23 +220,27 @@ function sleepSync(ms: number): void {
  * Run a read, listing or removal and resolve the one answer Windows leaves ambiguous. NTFS answers
  * ERROR_ACCESS_DENIED, which Node reports as EPERM, for a name whose removal by another process is still
  * in flight, and for every name below it, where POSIX answers ENOENT; measured to settle within 134 ms
- * with 12 processes on 4 cores (https://github.com/appandflow/stim/issues/883). The call is reissued in
- * small steps for at most WIN32_SETTLE_MS: a result or ENOENT is the settled answer, and an EPERM that
- * outlasts the window is a real denial, thrown exactly as a POSIX EACCES is. This bounds the resolution
- * of an ambiguous OS answer; it never waits on a holder.
+ * with 12 processes on 4 cores (https://github.com/appandflow/stim/issues/883), and within 986 ms on an
+ * oversubscribed hosted windows-latest runner (https://github.com/appandflow/stim/issues/943). The call
+ * is reissued in small steps until a call issued WIN32_SETTLE_MS after the first EPERM still answers
+ * EPERM, so a call that was itself descheduled past the window never ends it: a result or ENOENT is the
+ * settled answer, and an EPERM that outlasts the window is a real denial, thrown exactly as a POSIX
+ * EACCES is. This bounds the resolution of an ambiguous OS answer; it never waits on a holder.
  */
 function settledAnswer<T>(path: string, call: () => T): T {
   if (process.platform !== 'win32') return call();
-  const started = Date.now();
+  let denied: number | undefined;
   for (;;) {
+    const asked = Date.now();
     try {
       const result = call();
-      if (Date.now() > started) debug('%s settled after %d ms', path, Date.now() - started);
+      if (denied !== undefined) debug('%s settled after %d ms', path, Date.now() - denied);
       return result;
     } catch (err) {
-      const code = (err as NodeJS.ErrnoException)?.code;
-      if (code !== 'EPERM' || Date.now() - started >= WIN32_SETTLE_MS) {
-        if (code === 'EPERM') debug('%s still answers EPERM after %d ms', path, Date.now() - started);
+      if ((err as NodeJS.ErrnoException)?.code !== 'EPERM') throw err;
+      denied ??= Date.now();
+      if (asked - denied >= WIN32_SETTLE_MS) {
+        debug('%s still answers EPERM after %d ms', path, Date.now() - denied);
         throw err;
       }
     }
@@ -244,39 +248,49 @@ function settledAnswer<T>(path: string, call: () => T): T {
   }
 }
 
-function readChild(claimPath: string): { record: ClaimOwner | null } | null | 'unreadable' {
-  let text;
-  try {
-    text = settledAnswer(childPath(claimPath), () => readFileSync(childPath(claimPath), 'utf-8'));
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
-    return 'unreadable';
-  }
-  try {
-    return { record: asOwner((JSON.parse(text) as { record?: unknown })?.record) };
-  } catch {
-    return 'unreadable';
+class Unreadable {
+  readonly reason: string;
+
+  constructor(reason: string) {
+    this.reason = reason;
   }
 }
 
-function readClaim(path: string, mode: ClaimMode): ClaimHolder | null | 'unreadable' {
-  let text;
+const NOT_JSON = new Unreadable('its record is missing, truncated or not valid JSON');
+
+function readRecord(path: string, what: string): string | null | Unreadable {
   try {
-    text = settledAnswer(path, () => readFileSync(path, 'utf-8'));
+    return settledAnswer(path, () => readFileSync(path, 'utf-8'));
   } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
-    return 'unreadable';
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code === 'ENOENT') return null;
+    return new Unreadable(`its ${what} could not be read (${code || (err as Error)?.message})`);
   }
+}
+
+function readChild(claimPath: string): { record: ClaimOwner | null } | null | Unreadable {
+  const text = readRecord(childPath(claimPath), 'child record');
+  if (text === null || text instanceof Unreadable) return text;
+  try {
+    return { record: asOwner((JSON.parse(text) as { record?: unknown })?.record) };
+  } catch {
+    return NOT_JSON;
+  }
+}
+
+function readClaim(path: string, mode: ClaimMode): ClaimHolder | null | Unreadable {
+  const text = readRecord(path, 'record');
+  if (text === null || text instanceof Unreadable) return text;
   let parsed;
   try {
     parsed = JSON.parse(text) as { claimId?: unknown; owner?: unknown; startedAt?: unknown; details?: unknown };
   } catch {
-    return 'unreadable';
+    return NOT_JSON;
   }
   const owner = asOwner(parsed?.owner);
-  if (!owner || typeof parsed.claimId !== 'string' || !parsed.claimId) return 'unreadable';
+  if (!owner || typeof parsed.claimId !== 'string' || !parsed.claimId) return NOT_JSON;
   const child = readChild(path);
-  if (child === 'unreadable') return 'unreadable';
+  if (child instanceof Unreadable) return child;
   return {
     path,
     claimId: parsed.claimId,
@@ -310,7 +324,7 @@ type Liveness = 'live' | 'dead' | 'unknown';
 function childLiveness(claimPath: string): Liveness | 'none' {
   const child = readChild(claimPath);
   if (child === null) return 'none';
-  if (child === 'unreadable' || !child.record) return 'unknown';
+  if (child instanceof Unreadable || !child.record) return 'unknown';
   const status = inspectProcessIdentity(child.record);
   if (status === 'same') return 'live';
   if (status === 'gone') return processGroupAlive(child.record.pid) ? 'live' : 'dead';
@@ -383,8 +397,8 @@ function survey(dir: string, mode: ClaimMode, into: ClaimSurvey): void {
     const path = join(dir, name);
     const holder = readClaim(path, mode);
     if (holder === null) continue;
-    if (holder === 'unreadable') {
-      into.unresolved.push({ path, reason: 'its record is missing, truncated or not valid JSON' });
+    if (holder instanceof Unreadable) {
+      into.unresolved.push({ path, reason: holder.reason });
       continue;
     }
     const liveness = claimLiveness(holder);
@@ -427,7 +441,7 @@ function removeOrRefuse(path: string, root: string, claimPath: string, label: st
 function reap(holder: ClaimHolder, root: string, label: string): boolean {
   const again = readClaim(holder.path, holder.mode);
   if (again === null) return true;
-  if (again === 'unreadable' || again.claimId !== holder.claimId) return false;
+  if (again instanceof Unreadable || again.claimId !== holder.claimId) return false;
   removeOrRefuse(childPath(holder.path), root, holder.path, label);
   removeOrRefuse(holder.path, root, holder.path, label);
   return true;
@@ -726,7 +740,7 @@ export function releaseClaim(handle: ClaimHandle | null | undefined): boolean {
   if (!handle) return false;
   const current = readClaim(handle.path, handle.mode);
   if (current === null) return true;
-  if (current === 'unreadable' || current.claimId !== handle.claimId) return false;
+  if (current instanceof Unreadable || current.claimId !== handle.claimId) return false;
   try {
     rmSync(childPath(handle.path), { force: true });
     rmSync(handle.path, { force: true });

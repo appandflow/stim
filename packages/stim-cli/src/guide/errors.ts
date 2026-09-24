@@ -1189,9 +1189,12 @@ not on any remote"  (worktree remove)
     STIM_CONFIG_CORRUPT: {
       summary: '~/.stim/config.json is not a valid JSON object and Stim never resets it',
       body: () => `STIM_CONFIG_CORRUPT  ("Stim config at <path> is not valid JSON",
-                     "... is not a JSON object")
+                     "... is not a JSON object",
+                     "... has a projects that is not an object",
+                     "... has a projects entry "<key>" that is not an object")
   Any command can raise it: every command reads ~/.stim/config.json first.
-  The file holding every owned-device record will not parse into an object
+  The file holding every owned-device record will not parse into an object,
+  or its projects or repos registry or one of their entries is not an object
   (a bare [], null or number counts as corrupt, not empty), and Stim never
   resets it for you -- a silent reset would orphan every simulator it names.
   Repair the file, or move it aside (\`mv <path> <path>.broken\`) and accept

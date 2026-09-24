@@ -112,8 +112,10 @@ function covers(entry: string, target: string, home: string): boolean {
     const expanded = expandHome(value, home);
     return sep === '/' ? expanded : expanded.replaceAll(sep, '/');
   };
-  const e = posix(entry.replace(/\/+\*+$/, '').replace(/\/+$/, ''));
-  const t = posix(target.replace(/\/+$/, ''));
+  const e = posix(entry)
+    .replace(/\/+\*+$/, '')
+    .replace(/\/+$/, '');
+  const t = posix(target).replace(/\/+$/, '');
   return e === t || t.startsWith(`${e}/`);
 }
 

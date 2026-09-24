@@ -1,17 +1,20 @@
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { formatElapsed } from '../command-output.ts';
+import { formatDuration, formatElapsed, shortHash } from '../command-output.ts';
 import { getConfigDir } from '../workspace/config.ts';
 import { resolveBuild } from '../cache/build-cache.ts';
 import {
+  claimFailure,
   ClaimRefusedError,
   claimRemoveCommand,
   readClaimSet,
   releaseClaim,
   tryAcquireClaim,
+  type ClaimFailure,
   type ClaimHandle,
   type ClaimHolder,
 } from '../ownership-claim.ts';
+import type { WaitedForBuild } from './build-facts.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
 
 const LOCK_SUFFIX = '.lock';
@@ -301,5 +304,122 @@ export async function waitForBuild({
     }
 
     await sleep(intervalMs);
+  }
+}
+
+interface SharedBuildWaitOptions {
+  platform: string;
+  key: string;
+  fingerprint: string;
+  root: string;
+  logFile: string;
+  command: string;
+  acquire: typeof acquireBuildLock;
+  wait: typeof waitForBuild;
+  now: () => number;
+  phase: (text: string) => void;
+  warn: (text: string) => void;
+  out: (line: string) => void;
+}
+
+type SharedBuildWait =
+  | {
+      refusal: null;
+      lock: BuildLockHandle | null;
+      hit: { path: string; waited: WaitedForBuild } | null;
+      released: { facts: WaitedForBuild; who: string } | null;
+    }
+  | { refusal: ClaimFailure };
+
+export async function waitForSharedBuild({
+  platform,
+  key,
+  fingerprint,
+  root,
+  logFile,
+  command,
+  acquire,
+  wait,
+  now,
+  phase,
+  warn,
+  out,
+}: SharedBuildWaitOptions): Promise<SharedBuildWait> {
+  const waitStarted = now();
+  let failedHolder: BuildLockHandle['held'];
+  let released: { facts: WaitedForBuild; who: string } | null = null;
+  for (;;) {
+    let attempt: BuildLockHandle | null = null;
+    try {
+      attempt = acquire({ platform, key, root, logFile });
+    } catch (err) {
+      const refusal = claimFailure(err, command);
+      if (refusal) return { refusal };
+      warn(`could not take the build lock: ${(err as Error)?.message || err}; building anyway`);
+    }
+
+    if (attempt?.acquired) {
+      const previous = attempt.tookOver ?? failedHolder;
+      if (previous) warn(takeoverLine(previous));
+      return { refusal: null, lock: attempt, hit: null, released };
+    }
+    if (!attempt?.held) return { refusal: null, lock: null, hit: null, released };
+
+    released = null;
+    const holder = attempt.held;
+    const who = holder.projectRoot || 'another workspace';
+    phase(
+      `${who} is already building ${shortHash(fingerprint)} (pid ${holder.pid})` +
+        `${holder.logFile ? ` -- tail ${holder.logFile}` : ''} -- stim guide lifecycle concurrency`,
+    );
+
+    let waited: WaitForBuildResult;
+    try {
+      const ceilingMs = WAIT_CEILING_MS - (now() - waitStarted);
+      if (ceilingMs <= 0) {
+        throw Object.assign(
+          new Error(
+            `Waited ${formatDuration(now() - waitStarted)} for shared builds without an artifact; ${who} (pid ${holder.pid}) holds ${attempt.path}.`,
+          ),
+          {
+            code: 'STIM_BUILD_WAIT_TIMEOUT',
+            lockPath: attempt.path,
+          },
+        );
+      }
+      waited = await wait({ platform, key, out, ceilingMs });
+    } catch (err) {
+      const refusal = claimFailure(err, command);
+      if (refusal) return { refusal };
+      const timeout = err as Error & { code?: string; lockPath?: string };
+      if (timeout?.code !== 'STIM_BUILD_WAIT_TIMEOUT') throw err;
+      return {
+        refusal: {
+          code: 'STIM_BUILD_WAIT_TIMEOUT',
+          message: timeout.message,
+          remedy: `Check pid ${holder.pid}; if it is not really building, remove ${timeout.lockPath} and run \`${command}\` again.`,
+        },
+      };
+    }
+
+    if (waited.hit) {
+      phase(
+        `waited ${formatDuration(waited.waitedMs)} for ${who}'s build -> installed from cache -- stim guide lifecycle concurrency`,
+      );
+      return {
+        refusal: null,
+        lock: null,
+        hit: { path: waited.hit, waited: { pid: holder.pid, ms: waited.waitedMs } },
+        released,
+      };
+    }
+    if (waited.lockReleased) {
+      failedHolder = undefined;
+      released = { facts: { pid: holder.pid, ms: waited.waitedMs }, who };
+      phase(`${who}'s build lock was released; rechecking this workspace before building`);
+    } else {
+      warn(`${who}'s build ended without an artifact (${waited.builderFailed}); retrying the build lock`);
+      failedHolder = holder;
+    }
   }
 }

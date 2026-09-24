@@ -2576,6 +2576,25 @@ describe('single-flight builds', () => {
     expect(h.calls.build.length).toBe(0);
   });
 
+  test('a claim that becomes unresolvable during the wait refuses with its remedy, and builds nothing', async () => {
+    const claim = join(home, 'build-locks', 'android-key.lock', 'exclusive', 'mystery.claim');
+    const h = harness({
+      acquireLock: () => heldBy(),
+      waitForBuild: async () => {
+        throw new ClaimRefusedError({
+          claimPath: claim,
+          root: join(home, 'build-locks', 'android-key.lock'),
+          reason: 'its process identity token does not decode',
+          label: 'android build',
+        });
+      },
+    });
+    const result = await h.run();
+    expect(result.error?.code).toBe('STIM_CLAIM_REFUSED');
+    expect(String(result.error?.remedy)).toContain(claimRemoveCommand(claim));
+    expect(h.calls.build).toHaveLength(0);
+  });
+
   test('a lock that cannot be created is a note, and the build proceeds', async () => {
     const h = harness({
       acquireLock: () => {
