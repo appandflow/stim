@@ -280,87 +280,58 @@ test('ignored inventory and warm copying still find the target file when raw ls-
   const base = mkdtempSync(join(tmpdir(), 'stim-test-bigignore-'));
   const root = join(base, 'repo');
   const target = join(base, 'target');
-  const phase = (name: string, fn: () => void) => {
-    const start = Date.now();
-    fn();
-    console.error(`PHASE_TIMING ${name} ${Date.now() - start}ms`);
-  };
   try {
     mkdirSync(root, { recursive: true });
     mkdirSync(target, { recursive: true });
     const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
-    phase('git-init', () => {
-      git('git init -q');
-      git('git config user.email test@example.com');
-      git('git config user.name test');
-      // Git for Windows refuses paths past the legacy 260-char MAX_PATH unless this
-      // is set; the reused directory names below push paths past that limit.
-      git('git config core.longpaths true');
-    });
+    git('git init -q');
+    git('git config user.email test@example.com');
+    git('git config user.name test');
+    // Git for Windows refuses paths past the legacy 260-char MAX_PATH unless this
+    // is set; the reused directory names below push paths past that limit.
+    git('git config core.longpaths true');
 
     writeFileSync(join(root, 'README.md'), 'hello');
     writeFileSync(join(root, '.gitignore'), '*.ignoreme\n.env\n');
 
     const dirCount = 8;
     const dirName = (n: number) => `keepdir-${n}-${'k'.repeat(235)}`;
-    phase('keepdir-write', () => {
-      for (let d = 0; d < dirCount; d++) {
-        mkdirSync(join(root, dirName(d)), { recursive: true });
-        writeFileSync(join(root, dirName(d), 'keep.txt'), 'keep');
-      }
-    });
+    for (let d = 0; d < dirCount; d++) {
+      mkdirSync(join(root, dirName(d)), { recursive: true });
+      writeFileSync(join(root, dirName(d), 'keep.txt'), 'keep');
+    }
 
     const dirNames = Array.from({ length: dirCount }, (_, d) => dirName(d));
-    phase('git-add-commit', () => {
-      git(`git add README.md .gitignore ${dirNames.join(' ')}`);
-      git('git commit -q -m init');
-    });
-    phase('worktree-add', () => {
-      execFileSync('git', ['-C', root, 'worktree', 'add', '-qb', 'copy-target', target]);
-    });
+    git(`git add README.md .gitignore ${dirNames.join(' ')}`);
+    git('git commit -q -m init');
+    execFileSync('git', ['-C', root, 'worktree', 'add', '-qb', 'copy-target', target]);
 
     const padding = 'x'.repeat(200);
     const filesPerDir = 300;
-    phase('bloat-write', () => {
-      for (let d = 0; d < dirCount; d++) {
-        for (let i = 0; i < filesPerDir; i++) {
-          writeFileSync(join(root, dirName(d), `bloat-${i}-${padding}.ignoreme`), '');
-        }
+    for (let d = 0; d < dirCount; d++) {
+      for (let i = 0; i < filesPerDir; i++) {
+        writeFileSync(join(root, dirName(d), `bloat-${i}-${padding}.ignoreme`), '');
       }
-    });
+    }
 
     mkdirSync(join(root, 'apps/mobile'), { recursive: true });
     writeFileSync(join(root, 'apps/mobile/.env'), 'SECRET=1');
 
-    let rawBytes = 0;
-    phase('raw-ls-files-wc', () => {
-      rawBytes = parseInt(
-        execSync(`git -C "${root}" ls-files --others --ignored --exclude-standard | wc -c`, {
-          encoding: 'utf-8',
-        }).trim(),
-        10,
-      );
-    });
+    const rawBytes = parseInt(
+      execSync(`git -C "${root}" ls-files --others --ignored --exclude-standard | wc -c`, { encoding: 'utf-8' }).trim(),
+      10,
+    );
     expect(rawBytes > 1024 * 1024).toBeTruthy();
 
-    let ignored: string[] = [];
-    phase('listGitignoredEntries', () => {
-      ignored = listGitignoredEntries(root);
-    });
+    const ignored = listGitignoredEntries(root);
     expect(ignored.includes('apps')).toBeTruthy();
 
-    let copied: string[] = [];
-    let failed: unknown[] = [];
-    phase('cloneIgnoredEntries', () => {
-      ({ copied, failed } = cloneIgnoredEntries({ root, target, patterns: ['bloat-*.ignoreme'] }));
-    });
+    const { copied, failed } = cloneIgnoredEntries({ root, target, patterns: ['bloat-*.ignoreme'] });
     expect(copied).toEqual(['apps']);
     expect(failed).toEqual([]);
     expect(existsSync(join(target, 'apps/mobile/.env'))).toBe(true);
   } finally {
-    phase('rmSync-cleanup', () => {
-      rmSync(base, { recursive: true, force: true });
-    });
+    rmSync(base, { recursive: true, force: true });
   }
 }, 30_000);
 
