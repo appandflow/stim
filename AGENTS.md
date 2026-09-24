@@ -126,6 +126,9 @@ changes, and wait for the new checks.
 
 - **Single exec wrapper.** Route all child processes through
   `packages/stim-cli/src/exec.ts`. Use `runFile` for user-controlled paths.
+  Lint rejects value imports of `node:child_process` and `cross-spawn`
+  elsewhere in the CLI source. `expo-build-cache` cannot import CLI code, so it
+  calls `node:child_process` directly.
 - **Pure parsing and decision logic.** Keep parsers and selectors separate from
   thin I/O wrappers. Unit-test the pure functions.
 - **Locked state.** Lock every read-modify-write to global config or workspace
