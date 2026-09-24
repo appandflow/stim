@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { getExecutor } from '../exec.ts';
@@ -5,6 +6,7 @@ import { pidExists } from '../metro.ts';
 import { gateMetroOrigin, REMOTE_METRO_WRONG } from './metro-gate.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { clearRemoteSession, readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
+import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace-state.ts';
 import {
   acceptAlertArgs,
   closeArgs,
@@ -491,7 +493,7 @@ export async function resolveRemoteContext({
   return {
     ctx: {
       root,
-      label,
+      label: workspaceRemoteLabel(root, label),
       backend,
       platform,
       easBin: easBin ?? '',
@@ -501,6 +503,22 @@ export async function resolveRemoteContext({
       existingDaemon,
     },
   };
+}
+
+// Every worktree of a repository shares one project label, and agent-device keys
+// its local connection state by session name, so each workspace suffixes its own.
+// A session recorded without one keeps the plain label: its remote agent-device
+// session stays bound to the name it was opened under.
+function workspaceRemoteLabel(root: string, label: string): string {
+  const current = readWorkspaceState(root)?.remoteLabel;
+  if (typeof current === 'string' && current) return current;
+  if (readRemoteSession(root)) return label;
+  const state = updateWorkspaceState(root, (prev) =>
+    typeof prev.remoteLabel === 'string' && prev.remoteLabel
+      ? prev
+      : { ...prev, remoteLabel: `${label}-${randomUUID()}` },
+  );
+  return state.remoteLabel as string;
 }
 
 export function binOnPath(bin: string): boolean {

@@ -287,6 +287,54 @@ process.stdout.write(${JSON.stringify(CREATED)});
   );
 });
 
+describe('each workspace names its own remote session', () => {
+  async function resolveEas(workspaceRoot: string) {
+    const resolved = await resolveRemoteContext({
+      root: workspaceRoot,
+      label: 'wt',
+      backend: 'eas',
+      easBin: '/bin/eas',
+      env: {},
+      lookupAgentDevice: () => '/bin/agent-device',
+    });
+    if (!('ctx' in resolved)) throw new Error(resolved.failed);
+    return resolved.ctx;
+  }
+
+  async function bootNames(workspaceRoot: string) {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    await remoteIosDeps(await resolveEas(workspaceRoot)).ensureBooted({});
+    const sim = exec.calls.find((call) => call.file === '/bin/eas' && call.args[0] === 'sim');
+    return {
+      eas: sim?.args[sim.args.indexOf('--name') + 1],
+      agentDevice: JSON.parse(readFileSync(remoteProfilePath(workspaceRoot), 'utf-8')).session,
+    };
+  }
+
+  test('two worktrees with one project label do not share an agent-device connection', async () => {
+    const other = mkdtempSync(join(tmpdir(), 'stim-remote-'));
+    try {
+      const first = await bootNames(root);
+      const second = await bootNames(other);
+      expect(first.agentDevice).not.toBe(second.agentDevice);
+      expect(first.eas).not.toBe(second.eas);
+      expect(first.eas).toMatch(/^stim-wt-[0-9a-f-]{36}$/);
+    } finally {
+      rmSync(other, { recursive: true, force: true });
+    }
+  });
+
+  test('a workspace keeps its name across runs', async () => {
+    expect((await resolveEas(root)).label).toBe((await resolveEas(root)).label);
+  });
+
+  test('a session recorded under the plain label keeps it', async () => {
+    ensureWorkspaceStorage(root);
+    writeFileSync(workspaceStateFile(root), JSON.stringify({ remoteDevice: { platform: 'ios', sessionId: 'drs_1' } }));
+    expect((await resolveEas(root)).label).toBe('wt');
+  });
+});
+
 describe('the expensive step happens after the Metro gate', () => {
   test('ensureOwnedDevice creates no session and runs no command', async () => {
     const exec = mockExec();
