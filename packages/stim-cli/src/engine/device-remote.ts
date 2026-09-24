@@ -491,7 +491,7 @@ export async function resolveRemoteContext({
   return {
     ctx: {
       root,
-      // agent-device keys its local connection state by session name.
+      // agent-device stores remote connection state per session name under ~/.agent-device/remote-connections/.
       label: `${ownedDeviceLabel(root)}-${workspaceId(root)}`,
       backend,
       platform,
