@@ -1,5 +1,6 @@
 import AppKit
 import QuartzCore
+import StimKit
 import SwiftUI
 
 public enum EmulatorStreamStatus: Equatable, Sendable {
@@ -8,14 +9,17 @@ public enum EmulatorStreamStatus: Equatable, Sendable {
   case streaming
 }
 
-/// Live, view-only frames of a running emulator's main display, read through
-/// the gRPC endpoint in its discovery file.
+/// Live frames of a running emulator's main display, read through the gRPC
+/// endpoint in its discovery file. When `interactive` is true, clicks, drags,
+/// trackpad scrolls and keys go to the emulator over the same endpoint.
 public struct EmulatorDisplayView: NSViewRepresentable {
   public var serial: String
+  public var interactive: Bool
   public var onStatus: (EmulatorStreamStatus) -> Void
 
-  public init(serial: String, onStatus: @escaping (EmulatorStreamStatus) -> Void) {
+  public init(serial: String, interactive: Bool = false, onStatus: @escaping (EmulatorStreamStatus) -> Void) {
     self.serial = serial
+    self.interactive = interactive
     self.onStatus = onStatus
   }
 
@@ -23,12 +27,14 @@ public struct EmulatorDisplayView: NSViewRepresentable {
     let view = EmulatorDisplayNSView()
     view.onStatus = onStatus
     view.attach(serial: serial)
+    view.setInteractive(interactive)
     return view
   }
 
   public func updateNSView(_ view: EmulatorDisplayNSView, context: Context) {
     view.onStatus = onStatus
     view.attach(serial: serial)
+    view.setInteractive(interactive)
   }
 
   public static func dismantleNSView(_ view: EmulatorDisplayNSView, coordinator: ()) {
@@ -46,6 +52,13 @@ public final class EmulatorDisplayNSView: NSView {
   private var status: EmulatorStreamStatus?
   private var generation = 0
   private let pending = PendingFrame()
+  private var endpoint: EmulatorEndpoint?
+  private var shown: (size: CGSize, rotation: Int)?
+  private var interactive = false
+  private var input: EmulatorInput?
+  private var displaySize: CGSize?
+  private var touchPoint: CGPoint?
+  private var keysDown: Set<UInt16> = []
 
   override init(frame: NSRect) {
     super.init(frame: frame)
@@ -75,6 +88,9 @@ public final class EmulatorDisplayNSView: NSView {
     stream?.cancel()
     stream = nil
     layer?.contents = nil
+    releaseInput()
+    shown = nil
+    endpoint = nil
   }
 
   private func connect() {
@@ -84,6 +100,8 @@ public final class EmulatorDisplayNSView: NSView {
       retry()
       return
     }
+    if endpoint != self.endpoint { releaseInput() }
+    self.endpoint = endpoint
     report(.connecting)
     generation += 1
     let current = generation
@@ -115,6 +133,8 @@ public final class EmulatorDisplayNSView: NSView {
   private func show(_ frame: EmulatorFrame?) {
     guard stream != nil, let frame, let image = Self.image(frame) else { return }
     layer?.contents = image
+    self.shown = (CGSize(width: frame.width, height: frame.height), frame.rotation)
+    _ = inputClient()
     report(.streaming)
   }
 
@@ -137,6 +157,139 @@ public final class EmulatorDisplayNSView: NSView {
     super.viewDidMoveToWindow()
     if window == nil { disconnect() } else { connect() }
   }
+
+  func setInteractive(_ interactive: Bool) {
+    guard interactive != self.interactive else { return }
+    self.interactive = interactive
+    if interactive {
+      window?.makeFirstResponder(self)
+    } else {
+      releaseInput()
+    }
+  }
+
+  private func releaseInput() {
+    if let touchPoint, let input, let displaySize, let shown {
+      let native = displayPixel(touchPoint, rotation: shown.rotation, displaySize: displaySize)
+      input.call("sendMouse", InputMessages.mouse(x: native.x, y: native.y, pressed: false))
+    }
+    for code in keysDown { input?.call("sendKey", InputMessages.key(macKeyCode: code, down: false)) }
+    touchPoint = nil
+    keysDown = []
+    input?.close()
+    input = nil
+    displaySize = nil
+  }
+
+  private func inputClient() -> EmulatorInput? {
+    guard interactive, let endpoint, shown != nil else { return nil }
+    if let input { return input }
+    let input = EmulatorInput(endpoint: endpoint)
+    self.input = input
+    input.call("getStatus", Data()) { [weak self, weak input] response in
+      let size = response.flatMap(InputMessages.displaySize(fromStatus:))
+      DispatchQueue.main.async {
+        guard let self, let size, input != nil, input === self.input else { return }
+        self.displaySize = CGSize(width: size.width, height: size.height)
+      }
+    }
+    return input
+  }
+
+  private func screenPoint(_ event: NSEvent, clamped: Bool) -> CGPoint? {
+    guard let shown else { return nil }
+    return normalizedScreenPoint(
+      convert(event.locationInWindow, from: nil), viewSize: bounds.size, screenSize: shown.size, clamped: clamped)
+  }
+
+  private func mouse(at point: CGPoint, pressed: Bool) {
+    guard let input = inputClient(), let displaySize, let shown else { return }
+    let native = displayPixel(point, rotation: shown.rotation, displaySize: displaySize)
+    input.call("sendMouse", InputMessages.mouse(x: native.x, y: native.y, pressed: pressed))
+    touchPoint = pressed ? point : nil
+  }
+
+  public override var acceptsFirstResponder: Bool { interactive }
+
+  public override func acceptsFirstMouse(for event: NSEvent?) -> Bool { interactive }
+
+  public override func mouseDown(with event: NSEvent) {
+    guard interactive else { return super.mouseDown(with: event) }
+    window?.makeFirstResponder(self)
+    guard touchPoint == nil, let point = screenPoint(event, clamped: false) else { return }
+    mouse(at: point, pressed: true)
+  }
+
+  public override func mouseDragged(with event: NSEvent) {
+    guard touchPoint != nil, let point = screenPoint(event, clamped: true) else { return }
+    mouse(at: point, pressed: true)
+  }
+
+  public override func mouseUp(with event: NSEvent) {
+    guard let last = touchPoint else { return }
+    mouse(at: screenPoint(event, clamped: true) ?? last, pressed: false)
+  }
+
+  // A trackpad scroll becomes a one-finger drag that follows the gesture's
+  // phases, as on iOS. Momentum events are dropped because Android flings on
+  // its own after the finger lifts.
+  public override func scrollWheel(with event: NSEvent) {
+    guard interactive, event.hasPreciseScrollingDeltas, event.momentumPhase.isEmpty else {
+      return super.scrollWheel(with: event)
+    }
+    if event.phase.contains(.began) {
+      guard touchPoint == nil, let point = screenPoint(event, clamped: false) else { return }
+      mouse(at: point, pressed: true)
+    } else if let last = touchPoint, let shown {
+      let fitted = fittedScreenSize(viewSize: bounds.size, screenSize: shown.size)
+      guard fitted.width > 0, fitted.height > 0 else { return }
+      let point = CGPoint(
+        x: min(max(last.x + event.scrollingDeltaX / fitted.width, 0), 1),
+        y: min(max(last.y + event.scrollingDeltaY / fitted.height, 0), 1))
+      let ended = event.phase.contains(.ended) || event.phase.contains(.cancelled)
+      mouse(at: point, pressed: !ended)
+    }
+  }
+
+  // Printable ASCII goes as text so the emulator picks the evdev keys and
+  // Shift itself; other keys go as macOS key codes, which the emulator
+  // translates. Command and Control shortcuts stay with the Mac.
+  public override func keyDown(with event: NSEvent) {
+    guard !event.modifierFlags.contains(.command), !event.modifierFlags.contains(.control),
+      let input = inputClient()
+    else { return super.keyDown(with: event) }
+    if let text = event.characters, isPrintableASCII(text) {
+      input.call("sendKey", InputMessages.text(text))
+    } else if !event.isARepeat {
+      keysDown.insert(event.keyCode)
+      input.call("sendKey", InputMessages.key(macKeyCode: event.keyCode, down: true))
+    }
+  }
+
+  public override func keyUp(with event: NSEvent) {
+    guard keysDown.remove(event.keyCode) != nil, let input = inputClient() else { return super.keyUp(with: event) }
+    input.call("sendKey", InputMessages.key(macKeyCode: event.keyCode, down: false))
+  }
+}
+
+func isPrintableASCII(_ text: String) -> Bool {
+  !text.isEmpty && text.unicodeScalars.allSatisfy { (32..<127).contains($0.value) }
+}
+
+/// Maps a fraction of the upright image, origin top-left, to a pixel of the
+/// display in its native orientation, which is where the emulator places
+/// touches. `rotation` is the image's Rotation.SkinRotation.
+func displayPixel(_ point: CGPoint, rotation: Int, displaySize: CGSize) -> (x: Int, y: Int) {
+  let native: CGPoint
+  switch rotation {
+  case 1: native = CGPoint(x: 1 - point.y, y: point.x)
+  case 2: native = CGPoint(x: 1 - point.x, y: 1 - point.y)
+  case 3: native = CGPoint(x: point.y, y: 1 - point.x)
+  default: native = point
+  }
+  let x = Int((native.x * displaySize.width).rounded(.down))
+  let y = Int((native.y * displaySize.height).rounded(.down))
+  return (min(max(x, 0), Int(displaySize.width) - 1), min(max(y, 0), Int(displaySize.height) - 1))
 }
 
 private final class PendingFrame: @unchecked Sendable {

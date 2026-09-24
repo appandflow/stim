@@ -9,8 +9,8 @@ let package = Package(
   ],
   targets: [
     .target(name: "StimKit"),
-    .target(name: "SimulatorFrames", swiftSettings: [.swiftLanguageMode(.v5)]),
-    .target(name: "EmulatorFrames", swiftSettings: [.swiftLanguageMode(.v5)]),
+    .target(name: "SimulatorFrames", dependencies: ["StimKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
+    .target(name: "EmulatorFrames", dependencies: ["StimKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
     .executableTarget(
       name: "StimDesktop",
       dependencies: ["StimKit", "SimulatorFrames", "EmulatorFrames"],

@@ -28,14 +28,19 @@ on the volumes holding the repositories, `$STIM_HOME`, and CoreSimulator, and
 what `stim gc --delete` would reclaim; the reclaimable figure needs a Stim
 version with `gc --json`.
 
-## Take over a simulator
+## Take over a device
 
-Simulator frames are view-only until you turn on **Take over** above a booted
-iOS simulator in a workspace's detail view. While it is on, the app sends that
-simulator your clicks and drags as touches, trackpad scrolls as one-finger
-drags, and your keys. Turn it off before an agent drives the device again.
-Command-key shortcuts stay with the app's menus, and a mouse wheel without
-precise deltas does not scroll. Android input is not supported yet.
+Device frames are view-only until you turn on **Take over** above a booted iOS
+simulator or a running owned Android emulator in a workspace's detail view.
+While it is on, the app sends that device your clicks and drags as touches,
+trackpad scrolls as one-finger drags, and your keys. Turn it off before an agent
+drives the device again. Command-key shortcuts stay with the app's menus, and a
+mouse wheel without precise deltas does not scroll.
+
+Android input goes through the emulator's gRPC `sendMouse` and `sendKey` calls.
+Printable ASCII is sent as text; other keys, such as Delete, Return, Tab and the
+arrows, are sent as key presses. Control shortcuts are not sent, and an
+emulator without a gRPC endpoint cannot be taken over.
 
 ## Requirements
 
@@ -67,5 +72,5 @@ The bundle copies Inter, JetBrains Mono, and the brand artwork from `website/`.
 
 - `Sources/StimKit`: models for the CLI's JSON, the login shell environment, the CLI client, project grouping, warning remedies, the streaming runner, and process, disk and gc usage. Unit-tested.
 - `Sources/SimulatorFrames`: live simulator frames through CoreSimulator and input through SimulatorKit, both private Apple frameworks. Expect Xcode releases to break it.
-- `Sources/EmulatorFrames`: live emulator frames through the emulator's localhost gRPC `streamScreenshot` call, found through its discovery file. Emulators Stim booted before it passed `-grpc` show no frames until their next boot.
+- `Sources/EmulatorFrames`: live emulator frames through the emulator's localhost gRPC `streamScreenshot` call, found through its discovery file, and input through the same endpoint. Emulators Stim booted before it passed `-grpc` show no frames until their next boot.
 - `Sources/StimDesktop`: the SwiftUI app and its brand theme.
