@@ -44,6 +44,7 @@ import {
   type EasSessionSweep,
 } from './gc/eas-sessions.ts';
 import { formatGcReport, type GcReport } from './gc/report.ts';
+import { collectOrphanedWorkspaces, deleteOrphanedWorkspaces } from './gc/workspaces.ts';
 
 export { selectCaches } from './gc/caches.ts';
 export {
@@ -101,6 +102,7 @@ export async function collectGcReport(
       skipped: [],
       deadProjects: [],
       invalidProjects: [],
+      orphanedWorkspaces: [],
       orphanedDevices: [],
       staleDevices: [],
       staleDeviceRecords: [],
@@ -161,6 +163,8 @@ export async function collectGcReport(
       deadProjects.push(path);
     }
   }
+  const workspaceDirs = collectOrphanedWorkspaces(Object.keys(cfg?.projects ?? {}), mountedVolumes);
+  skipped.push(...workspaceDirs.skipped);
 
   const deviceSweepNotices: string[] = [];
   let orphanedDevices: OrphanedDevice[] = [];
@@ -268,6 +272,7 @@ export async function collectGcReport(
       Object.entries(cfg?.projects[project]?.ports ?? {}).map(([label, port]) => ({ project, label, port })),
     ),
     invalidProjects,
+    orphanedWorkspaces: workspaceDirs.orphaned,
     parkedSims,
     parkedAvds,
     orphanedDevices,
@@ -403,6 +408,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
   } = report;
   const actionable =
     deadProjects.length + invalidProjects.length > 0 ||
+    report.orphanedWorkspaces.length > 0 ||
     report.parkedSims.length > 0 ||
     report.parkedAvds.length > 0 ||
     orphanedDevices.length > 0 ||
@@ -463,6 +469,8 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     }
     deleteFailures += result.failedDevices.length;
   }
+
+  deleteFailures += await deleteOrphanedWorkspaces(report.orphanedWorkspaces);
 
   deleteFailures += deleteProjectDevices(orphanedDevices, staleDevices, staleDeviceRecords);
 
@@ -550,7 +558,7 @@ export default function gcCommand(program: Command): void {
   program
     .command('gc')
     .description(
-      'Report what Stim has left behind: dead project entries, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, expired physical-device leases, and the shared build caches. Reports by default; pass --delete to act.',
+      'Report what Stim has left behind: dead project entries, orphaned workspace directories, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, expired physical-device leases, and the shared build caches. Reports by default; pass --delete to act.',
     )
     .option('--delete', 'actually prune the reported entries and reap the reported devices')
     .option(

@@ -24,7 +24,7 @@ export function workspaceProcessLockError(err: unknown): 'refused' | 'timeout' |
   return null;
 }
 
-function lockPath(root: string, name: string, external: boolean): string {
+export function workspaceProcessLockPath(root: string, name: string, external: boolean): string {
   return external ? join(root, `${name}.lock`) : join(root, '.stim', `${name}.lock`);
 }
 
@@ -42,7 +42,7 @@ export async function withWorkspaceProcessLock<T>(
     declareSpawns = false,
   }: WorkspaceProcessLockOptions = {},
 ): Promise<T> {
-  const path = lockPath(root, name, external);
+  const path = workspaceProcessLockPath(root, name, external);
   const deadline = now() + waitMs;
 
   for (;;) {

@@ -9,7 +9,8 @@ import { setExecutor, resetExecutor } from '../exec.ts';
 import { upsertProject, setDevice, getProject } from '../workspace/config.ts';
 import { describeDereferenced, parkedIosCacheKey, reclaimProject } from '../devices/reclaim.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
-import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.ts';
+import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
+import { liveClaimOwner, plantClaim } from './_factories.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
 let tmpHome: string;
@@ -56,6 +57,43 @@ test('reclaimProject removes the config entry', async () => {
   expect(result.path).toBe('/proj');
   expect(result.dereferenced).toEqual(['ios sim U1']);
   expect(getProject('/proj')).toBe(null);
+});
+
+test('reclaimProject keeps the workspace, its devices and its entry while a native run or a build uses it', async () => {
+  setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+  upsertProject('/proj', { metroPort: 8082 });
+  setDevice('/proj', 'ios', { deviceUdid: 'U1', owned: true });
+  ensureWorkspaceStorage('/proj');
+  const nativeRun = plantClaim(join(workspaceDir('/proj'), 'native-run.lock'), 'exclusive', liveClaimOwner());
+
+  const running = await reclaimProject('/proj', { deleteOwnedDevices: true });
+  expect(running.keptEntry).toBe(true);
+  expect(running.failedDevices[0]?.reason).toMatch(/native-run\.lock/);
+  expect(existsSync(workspaceDir('/proj'))).toBe(true);
+  expect(getProject('/proj')?.platforms?.ios?.deviceUdid).toBe('U1');
+
+  rmSync(nativeRun);
+  plantClaim(join(tmpHome, 'build-locks', 'ios-key.lock'), 'exclusive', liveClaimOwner(), {
+    details: { projectRoot: '/proj' },
+  });
+  const building = await reclaimProject('/proj');
+  expect(building.keptEntry).toBe(true);
+  expect(building.failedDevices[0]?.reason).toMatch(/live build lock/);
+  expect(existsSync(workspaceDir('/proj'))).toBe(true);
+  expect(getProject('/proj')).not.toBe(null);
+});
+
+test('reclaimProject leaves no workspace directory behind for a project that never had one', async () => {
+  setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+  upsertProject('/proj', { metroPort: 8082 });
+  plantClaim(join(tmpHome, 'build-locks', 'ios-key.lock'), 'exclusive', liveClaimOwner(), {
+    details: { projectRoot: '/proj' },
+  });
+
+  const result = await reclaimProject('/proj');
+  expect(result.keptEntry).toBe(true);
+  expect(result.removedWorkspaceDirs).toEqual([]);
+  expect(existsSync(workspaceDir('/proj'))).toBe(false);
 });
 
 test('reclaimProject scans and sizes no build output at all', async () => {

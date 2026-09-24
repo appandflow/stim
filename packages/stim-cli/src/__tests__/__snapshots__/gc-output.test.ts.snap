@@ -3,6 +3,10 @@
 exports[`GC renders a mixed resource report in its established order 1`] = `
 "Dead project entries (1):
   /gone/app
+Orphaned workspace directories (1):
+  /h/workspaces/wt--0123456789abcdef - 8K
+              recorded project root /gone/wt is gone and no registry entry names it
+              --delete re-checks each directory, then removes it whole.
 Parked simulators (1, 2K):
   ios stim-parked (PARK..) iPhone 17 26.5 parked 24h ago 2K
               --delete attempts verified deletions and keeps failures.
@@ -35,6 +39,7 @@ exports[`a cache-scoped report preserves its serialized shape without inspecting
   "skipped": [],
   "deadProjects": [],
   "invalidProjects": [],
+  "orphanedWorkspaces": [],
   "orphanedDevices": [],
   "staleDevices": [],
   "staleDeviceRecords": [],

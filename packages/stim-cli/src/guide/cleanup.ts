@@ -56,9 +56,30 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   --force, uncommitted or unpushed work and initialized submodules. It then
   reclaims any owned resources it finds and removes the linked checkout.
   When git still refuses the removal, the kept ownership record no longer
-  names the devices that were parked or deleted. Git-created
+  names the devices that were parked or deleted. A workspace that is in use
+  (see IN USE below) keeps its directory, devices and registry entry, and the
+  command reports why. Git-created
   branches stay. A branch with an existing Stim ownership record is deleted
   only when it has no unique commits.
+
+IN USE
+  gc and worktree remove never delete a workspace's directory, build outputs
+  or checkout while it is in use: its dev server supervisor is running or
+  cannot be verified, a \`stim ios\` or \`stim android\` run holds its
+  native-run.lock, a live or unresolvable build lock or build slot names it
+  (or names no workspace Stim can identify), or its managed tunnel or managed
+  remote lock is held. The deletion holds native-run.lock itself, so no
+  native run can start partway through.
+
+ORPHANED WORKSPACE DIRECTORIES
+  A worktree deleted with \`git worktree remove\`, \`rm -rf\` or a /tmp wipe
+  leaves its $STIM_HOME/workspaces/<name> directory behind with no registry
+  entry. \`gc\` reads each directory's workspace.json and reports it under
+  "Orphaned workspace directories" when the recorded project root is gone,
+  its volume is mounted, no registry key equals it or sits under it, and the
+  workspace is not in use. \`gc --delete\` re-checks each one, then removes
+  it. A directory with a missing or unparseable workspace.json, or a root on
+  an unmounted volume, is reported under Skipped and never deleted.
 
 NAMED SERVER PORTS
   worktree remove stops TCP listeners on each named allocation and releases

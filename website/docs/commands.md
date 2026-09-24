@@ -483,9 +483,16 @@ worktree locked with `git worktree lock` is refused until you unlock it.
 stim gc [--delete] [--older-than <days>] [--cache <name|all>]
 ```
 
-Reports stale workspace entries, orphaned owned devices and remote sessions,
-stale locks, and shared cache sizes. It does not change anything without
-`--delete`.
+Reports stale workspace entries, orphaned workspace directories, orphaned
+owned devices and remote sessions, stale locks, and shared cache sizes. It does
+not change anything without `--delete`.
+
+A workspace directory is orphaned when the project root its `workspace.json`
+records is gone from a mounted volume and no registry entry names it. Deleting
+a worktree with `git worktree remove` or `rm -rf` leaves one behind. A
+directory without a readable `workspace.json` is reported and never deleted.
+Nothing deletes a workspace that is in use: a running dev server, a `stim ios`
+or `stim android` run, a live build, or a held tunnel or remote lock.
 
 - `--older-than <days>` also selects old devices and unused cache entries.
 - `--cache <name|all>` with `--delete` empties the caches whose name or directory

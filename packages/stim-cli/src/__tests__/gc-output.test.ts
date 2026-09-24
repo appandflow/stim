@@ -34,6 +34,7 @@ test('GC renders a mixed resource report in its established order', () => {
   const output = formatGcReport(
     {
       deadProjects: ['/gone/app'],
+      orphanedWorkspaces: [{ dir: '/h/workspaces/wt--0123456789abcdef', projectRoot: '/gone/wt', bytes: 8192 }],
       parkedSims,
       orphanedDevices: [{ kind: 'android', id: 'stim-orphan', name: 'stim-orphan', bytes: 2048 }],
       staleDeviceRecords: [{ kind: 'ios', id: 'GONE', project: '/app', owned: true }],

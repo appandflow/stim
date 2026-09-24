@@ -3,6 +3,7 @@ import { formatBytes } from '../../fs-util.ts';
 import type { BuildLockInfo } from '../../engine/build-lock.ts';
 import type { BuildSlotInfo } from '../../engine/build-slots.ts';
 import type { GcSkip, OrphanedDevice } from './types.ts';
+import type { OrphanedWorkspace } from './workspaces.ts';
 import type { GcCache } from './caches.ts';
 import type {
   DeviceLeaseGarbage,
@@ -18,6 +19,7 @@ export interface GcReport {
   deadProjects: string[];
   orphanedPorts?: { project: string; label: string; port: number }[];
   invalidProjects: string[];
+  orphanedWorkspaces: OrphanedWorkspace[];
   parkedSims: ParkedSimReport[];
   parkedAvds: ParkedAvdReport[];
   orphanedDevices: OrphanedDevice[];
@@ -101,6 +103,7 @@ export function formatGcReport(
     deadProjects = [],
     orphanedPorts,
     invalidProjects = [],
+    orphanedWorkspaces = [],
     parkedSims = [],
     parkedAvds = [],
     orphanedDevices = [],
@@ -126,17 +129,20 @@ export function formatGcReport(
   if (cacheScope) {
     lines.push(`Cache scope: "${cacheScope}". Devices, project entries and locks were not inspected.`);
   } else if (
-    deadProjects.length === 0 &&
-    invalidProjects.length === 0 &&
-    parkedSims.length === 0 &&
-    parkedAvds.length === 0 &&
-    orphanedDevices.length === 0 &&
-    staleDevices.length === 0 &&
-    staleDeviceRecords.length === 0 &&
-    staleLocks.length === 0 &&
-    staleSlots.length === 0 &&
-    expiredLeases.length === 0 &&
-    easSessionSweep.orphaned.length === 0
+    [
+      deadProjects,
+      invalidProjects,
+      orphanedWorkspaces,
+      parkedSims,
+      parkedAvds,
+      orphanedDevices,
+      staleDevices,
+      staleDeviceRecords,
+      staleLocks,
+      staleSlots,
+      expiredLeases,
+      easSessionSweep.orphaned,
+    ].every((found) => found.length === 0)
   ) {
     const reasons = [];
     if (skipped.length > 0) {
@@ -164,6 +170,7 @@ export function formatGcReport(
   );
 
   lines.push(...namedPortLines(orphanedPorts));
+  lines.push(...orphanedWorkspaceLines(orphanedWorkspaces));
 
   lines.push(...formatParkedSimReport(parkedSims, now));
   lines.push(...formatParkedAvdReport(parkedAvds, now));
@@ -296,4 +303,15 @@ function namedPortLines(ports: NonNullable<GcReport['orphanedPorts']> = []): str
     ...ports.map(({ project, label, port }) => `  ${project}: ${label} (${port})`),
     '              --delete stops TCP listeners and releases these allocations.',
   ];
+}
+
+function orphanedWorkspaceLines(orphaned: readonly OrphanedWorkspace[]): string[] {
+  if (!orphaned.length) return [];
+  const lines = [`Orphaned workspace directories (${orphaned.length}):`];
+  for (const entry of orphaned) {
+    lines.push(`  ${entry.dir}${entry.bytes === undefined ? '' : ` - ${formatBytes(entry.bytes)}`}`);
+    lines.push(`              recorded project root ${entry.projectRoot} is gone and no registry entry names it`);
+  }
+  lines.push('              --delete re-checks each directory, then removes it whole.');
+  return lines;
 }
