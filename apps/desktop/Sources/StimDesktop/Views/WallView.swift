@@ -1,0 +1,84 @@
+import StimKit
+import SwiftUI
+
+struct WallView: View {
+  @ObservedObject var store: StatusStore
+  var project: Project?
+  @Binding var selection: SidebarItem?
+
+  var body: some View {
+    let live = store.environments(in: project).filter(\.live)
+    if store.payload == nil {
+      if let error = store.error {
+        EmptyState(title: "Cannot read stim status", message: error, showsHero: true)
+      } else {
+        ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+      }
+    } else if live.isEmpty {
+      EmptyState(
+        title: project.map { "Nothing running in \($0.name)" } ?? "Nothing running",
+        message: "Devices appear here when an agent runs stim ios or stim android in a workspace.",
+        showsHero: true)
+    } else {
+      ScrollView {
+        VStack(alignment: .leading, spacing: 32) {
+          if let project {
+            Text(project.name).font(Theme.heading(22))
+          }
+          ForEach(live) { env in
+            VStack(alignment: .leading, spacing: 12) {
+              Button { selection = .environment(env.path) } label: {
+                WorkspaceHeader(env: env, project: store.project(of: env))
+              }
+              .buttonStyle(.plain)
+              ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 16) {
+                  ForEach(env.devices.filter(\.isRunning)) { device in
+                    Button { selection = .environment(env.path) } label: {
+                      DeviceTile(device: device, screenHeight: 400)
+                    }
+                    .buttonStyle(.plain)
+                  }
+                }
+              }
+            }
+          }
+        }
+        .padding(28)
+      }
+    }
+  }
+}
+
+struct WorkspaceHeader: View {
+  var env: Workspace
+  var project: Project
+
+  var body: some View {
+    HStack(spacing: 12) {
+      Text(env.names.title).font(Theme.heading(16))
+      Text(project.name).font(Theme.body(12)).foregroundStyle(Theme.primary)
+      Text(env.names.subtitle).font(Theme.body(12)).foregroundStyle(Theme.tertiary)
+      Spacer()
+      if let metro = env.metro {
+        Chip(tint: metro.running ? nil : Theme.error) {
+          StatusDot(color: metro.running ? Theme.live : Theme.error)
+          Text("Metro")
+          Text(":\(String(metro.port))").font(Theme.mono())
+        }
+      }
+      if let supervisor = env.supervisor {
+        Chip(tint: supervisor.healthy == true ? nil : Theme.warn) {
+          Text("\(supervisor.mode ?? "supervisor") \u{00B7} \(supervisor.healthy == true ? "healthy" : "unhealthy")")
+        }
+      }
+      if let mb = env.memoryMb, mb > 0 {
+        Chip { Text(formatGigabytes(mb: mb)) }
+      }
+      if let errors = env.logs?.errorsSinceMarker {
+        Chip(tint: errors > 0 ? Theme.error : nil) { Text(errors == 1 ? "1 error" : "\(errors) errors") }
+      }
+    }
+    .contentShape(Rectangle())
+  }
+}

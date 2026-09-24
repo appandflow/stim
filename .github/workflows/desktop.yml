@@ -1,0 +1,27 @@
+name: Desktop
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['apps/desktop/**', '.github/workflows/desktop.yml']
+  pull_request:
+    paths: ['apps/desktop/**', '.github/workflows/desktop.yml']
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift build
+      - run: swift test
