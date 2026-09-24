@@ -1,4 +1,5 @@
 import AppKit
+import SimulatorFrames
 import StimKit
 import SwiftUI
 
@@ -29,6 +30,7 @@ struct StimDesktopApp: App {
 
   init() {
     BrandAssets.registerFonts()
+    CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
   }
 
   var body: some Scene {

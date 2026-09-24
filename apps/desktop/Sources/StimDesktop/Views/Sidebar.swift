@@ -10,7 +10,7 @@ struct Sidebar: View {
     let envs = store.environments(in: projectFilter)
     List(selection: $selection) {
       Label("All devices", systemImage: "square.grid.2x2")
-        .tag(SidebarItem.wall)
+        .sidebarTag(.wall, selection: selection)
 
       Section("Projects") {
         ForEach(store.projectList, id: \.project) { entry in
@@ -25,15 +25,15 @@ struct Sidebar: View {
               Text("\(entry.total)").font(Theme.body(11)).foregroundStyle(Theme.tertiary)
             }
           }
-          .tag(SidebarItem.project(entry.project))
+          .sidebarTag(.project(entry.project), selection: selection)
         }
       }
 
       Section(projectFilter.map { "Live in \($0.name)" } ?? "Live") {
-        ForEach(envs.filter(\.live)) { env in WorkspaceRow(env: env) }
+        ForEach(envs.filter(\.live)) { env in WorkspaceRow(env: env, selection: selection) }
       }
       Section("Idle") {
-        ForEach(envs.filter { !$0.live }) { env in WorkspaceRow(env: env) }
+        ForEach(envs.filter { !$0.live }) { env in WorkspaceRow(env: env, selection: selection) }
       }
 
       Section("Machine") {
@@ -50,7 +50,7 @@ struct Sidebar: View {
               .foregroundStyle(Theme.warn)
           }
         }
-        .tag(SidebarItem.attention)
+        .sidebarTag(.attention, selection: selection)
       }
     }
     .scrollContentBackground(.hidden)
@@ -73,6 +73,7 @@ struct Sidebar: View {
 
 struct WorkspaceRow: View {
   var env: Workspace
+  var selection: SidebarItem?
 
   var body: some View {
     HStack(spacing: 10) {
@@ -89,6 +90,12 @@ struct WorkspaceRow: View {
         Text(":\(String(metro.port))").font(Theme.mono(10.5)).foregroundStyle(Theme.tertiary)
       }
     }
-    .tag(SidebarItem.environment(env.path))
+    .sidebarTag(.environment(env.path), selection: selection)
+  }
+}
+
+extension View {
+  fileprivate func sidebarTag(_ item: SidebarItem, selection: SidebarItem?) -> some View {
+    tag(item).listRowBackground(item == selection ? Theme.selected : Color.clear)
   }
 }

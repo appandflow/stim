@@ -38,7 +38,7 @@ precise deltas does not scroll. Android input is not supported yet.
 
 ## Requirements
 
-- macOS 14 or later and Xcode 27 at `/Applications/Xcode.app`, or `DEVELOPER_DIR` set to another Xcode.
+- macOS 14 or later and Xcode 27, selected with `xcode-select` or `DEVELOPER_DIR`. Stim Desktop falls back to `/Applications/Xcode.app` when the selected developer directory has no simulator support.
 - `stim` on the login shell's `PATH`, or `STIM_BIN` set to its path. The cleanup
   preview needs a `stim` with `gc --json`.
 
