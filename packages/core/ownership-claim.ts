@@ -248,39 +248,49 @@ function settledAnswer<T>(path: string, call: () => T): T {
   }
 }
 
-function readChild(claimPath: string): { record: ClaimOwner | null } | null | 'unreadable' {
-  let text;
-  try {
-    text = settledAnswer(childPath(claimPath), () => readFileSync(childPath(claimPath), 'utf-8'));
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
-    return 'unreadable';
-  }
-  try {
-    return { record: asOwner((JSON.parse(text) as { record?: unknown })?.record) };
-  } catch {
-    return 'unreadable';
+class Unreadable {
+  readonly reason: string;
+
+  constructor(reason: string) {
+    this.reason = reason;
   }
 }
 
-function readClaim(path: string, mode: ClaimMode): ClaimHolder | null | 'unreadable' {
-  let text;
+const NOT_JSON = new Unreadable('its record is missing, truncated or not valid JSON');
+
+function readRecord(path: string, what: string): string | null | Unreadable {
   try {
-    text = settledAnswer(path, () => readFileSync(path, 'utf-8'));
+    return settledAnswer(path, () => readFileSync(path, 'utf-8'));
   } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
-    return 'unreadable';
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code === 'ENOENT') return null;
+    return new Unreadable(`its ${what} could not be read (${code || (err as Error)?.message})`);
   }
+}
+
+function readChild(claimPath: string): { record: ClaimOwner | null } | null | Unreadable {
+  const text = readRecord(childPath(claimPath), 'child record');
+  if (text === null || text instanceof Unreadable) return text;
+  try {
+    return { record: asOwner((JSON.parse(text) as { record?: unknown })?.record) };
+  } catch {
+    return NOT_JSON;
+  }
+}
+
+function readClaim(path: string, mode: ClaimMode): ClaimHolder | null | Unreadable {
+  const text = readRecord(path, 'record');
+  if (text === null || text instanceof Unreadable) return text;
   let parsed;
   try {
     parsed = JSON.parse(text) as { claimId?: unknown; owner?: unknown; startedAt?: unknown; details?: unknown };
   } catch {
-    return 'unreadable';
+    return NOT_JSON;
   }
   const owner = asOwner(parsed?.owner);
-  if (!owner || typeof parsed.claimId !== 'string' || !parsed.claimId) return 'unreadable';
+  if (!owner || typeof parsed.claimId !== 'string' || !parsed.claimId) return NOT_JSON;
   const child = readChild(path);
-  if (child === 'unreadable') return 'unreadable';
+  if (child instanceof Unreadable) return child;
   return {
     path,
     claimId: parsed.claimId,
@@ -314,7 +324,7 @@ type Liveness = 'live' | 'dead' | 'unknown';
 function childLiveness(claimPath: string): Liveness | 'none' {
   const child = readChild(claimPath);
   if (child === null) return 'none';
-  if (child === 'unreadable' || !child.record) return 'unknown';
+  if (child instanceof Unreadable || !child.record) return 'unknown';
   const status = inspectProcessIdentity(child.record);
   if (status === 'same') return 'live';
   if (status === 'gone') return processGroupAlive(child.record.pid) ? 'live' : 'dead';
@@ -387,8 +397,8 @@ function survey(dir: string, mode: ClaimMode, into: ClaimSurvey): void {
     const path = join(dir, name);
     const holder = readClaim(path, mode);
     if (holder === null) continue;
-    if (holder === 'unreadable') {
-      into.unresolved.push({ path, reason: 'its record is missing, truncated or not valid JSON' });
+    if (holder instanceof Unreadable) {
+      into.unresolved.push({ path, reason: holder.reason });
       continue;
     }
     const liveness = claimLiveness(holder);
@@ -431,7 +441,7 @@ function removeOrRefuse(path: string, root: string, claimPath: string, label: st
 function reap(holder: ClaimHolder, root: string, label: string): boolean {
   const again = readClaim(holder.path, holder.mode);
   if (again === null) return true;
-  if (again === 'unreadable' || again.claimId !== holder.claimId) return false;
+  if (again instanceof Unreadable || again.claimId !== holder.claimId) return false;
   removeOrRefuse(childPath(holder.path), root, holder.path, label);
   removeOrRefuse(holder.path, root, holder.path, label);
   return true;
@@ -730,7 +740,7 @@ export function releaseClaim(handle: ClaimHandle | null | undefined): boolean {
   if (!handle) return false;
   const current = readClaim(handle.path, handle.mode);
   if (current === null) return true;
-  if (current === 'unreadable' || current.claimId !== handle.claimId) return false;
+  if (current instanceof Unreadable || current.claimId !== handle.claimId) return false;
   try {
     rmSync(childPath(handle.path), { force: true });
     rmSync(handle.path, { force: true });

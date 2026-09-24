@@ -188,7 +188,11 @@ describe.skipIf(process.platform !== 'win32')(
         assert(holder.acquired);
         faults.denyReads = holder.acquired.path;
         expect(() => tryAcquireClaim({ root, mode })).toThrow(
-          expect.objectContaining({ code: 'STIM_CLAIM_REFUSED', claimPath: holder.acquired.path }),
+          expect.objectContaining({
+            code: 'STIM_CLAIM_REFUSED',
+            claimPath: holder.acquired.path,
+            reason: 'its record could not be read (EPERM)',
+          }),
         );
         expect(readdirSync(join(root, 'exclusive'))).toEqual([`${holder.acquired.claimId}.claim`]);
         expect(existsSync(join(root, 'shared'))).toBe(false);
