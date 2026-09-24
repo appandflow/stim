@@ -1,4 +1,4 @@
-import { readdirSync, rmdirSync, rmSync } from 'node:fs';
+import { lstatSync, readdirSync, rmdirSync, rmSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { isClaimRefusal, isClaimUnavailable, readClaimSet } from '../ownership-claim.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
@@ -63,6 +63,12 @@ export function workspaceInUse(
 }
 
 export function emptyWorkspaceDir(dir: string): void {
+  if (lstatSync(dir).isSymbolicLink()) {
+    // The native-run claim was taken through this link, so its release cannot reach the target
+    // afterwards; the target keeps that claim, which reads as free once this process exits.
+    unlinkSync(dir);
+    return;
+  }
   for (const name of readdirSync(dir)) {
     if (name !== `${NATIVE_RUN}.lock`) rmSync(join(dir, name), { recursive: true, force: true });
   }
@@ -94,7 +100,8 @@ export async function withIdleWorkspace<T>(
     throw error;
   } finally {
     try {
-      rmdirSync(workspaceDir(root));
+      const dir = workspaceDir(root);
+      if (!lstatSync(dir).isSymbolicLink()) rmdirSync(dir);
     } catch {}
   }
 }

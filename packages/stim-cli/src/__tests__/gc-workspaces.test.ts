@@ -1,9 +1,11 @@
 import { execSync } from 'node:child_process';
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -183,6 +185,31 @@ test('gc reports an orphaned workspace directory and --delete removes only the c
   expect(existsSync(orphan.dir)).toBe(false);
   expect(existsSync(busy.dir)).toBe(true);
   expect(existsSync(unresolved)).toBe(true);
+});
+
+test('--delete removes a symlinked orphaned workspace directory as a link and leaves its target', async () => {
+  const orphan = goneWorkspace('linked-away');
+  const target = join(projects, 'workspace-target');
+  renameSync(orphan.dir, target);
+  symlinkSync(target, orphan.dir, 'junction');
+
+  const output = await captureLog(() => runGc({ delete: true }));
+  expect(output).toContain(`Removed the orphaned workspace directory ${orphan.dir}`);
+  expect(existsSync(orphan.dir)).toBe(false);
+  expect(existsSync(join(target, 'workspace.json'))).toBe(true);
+  expect(existsSync(join(target, 'state.json'))).toBe(true);
+});
+
+test('clearing the build outputs of a symlinked workspace directory keeps the link', async () => {
+  const { dir } = builtWorkspace('linked-outputs', { usedDaysAgo: 10 });
+  const target = join(projects, 'outputs-target');
+  renameSync(dir, target);
+  symlinkSync(target, dir, 'junction');
+
+  await captureLog(() => runGc({ delete: true, cache: 'workspaces' }));
+  expect(existsSync(join(target, 'derived-data'))).toBe(false);
+  expect(lstatSync(dir).isSymbolicLink()).toBe(true);
+  expect(existsSync(join(dir, 'workspace.json'))).toBe(true);
 });
 
 test('--delete keeps an orphan whose native run started after the report', async () => {
