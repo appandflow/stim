@@ -20,6 +20,14 @@ test('createLineReader reassembles split lines and flushes the final line', () =
   expect(lines).toEqual(['Starting Metro', 'iOS Bundled 10ms', 'Error: partial']);
 });
 
+test('createLineReader drops the CR of a CRLF final line that has no newline', () => {
+  const lines: string[] = [];
+  const reader = createLineReader((line) => lines.push(line));
+  reader.push('BUILD FAILED\r\nFAILURE: Build failed\r');
+  reader.flush();
+  expect(lines).toEqual(['BUILD FAILED', 'FAILURE: Build failed']);
+});
+
 test('waitForChild resolves the first exit result', async () => {
   const child = makeChildProcess();
   const result = waitForChild(child);

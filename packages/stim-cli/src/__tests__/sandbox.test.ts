@@ -88,6 +88,28 @@ test('missingAllowance accepts the ways a home path is written, including a pare
   }
 });
 
+test.skipIf(process.platform !== 'win32')(
+  'missingAllowance accepts a Windows path written with backslashes and a trailing glob (win32 only)',
+  () => {
+    const dir = scratch();
+    const path = join(dir, 'settings.local.json');
+    try {
+      for (const value of [
+        'C:\\Users\\example\\.stim\\*',
+        'C:\\Users\\example\\.stim\\**',
+        'C:\\Users\\example\\.stim\\',
+      ]) {
+        writeFileSync(path, JSON.stringify({ sandbox: { filesystem: { allowWrite: [value] } } }));
+        expect(missingAllowance([path], '~/.stim', 'C:\\Users\\example')).not.toContain(
+          'sandbox.filesystem.allowWrite',
+        );
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
 test('missingAllowance tolerates a settings file that is absent or unreadable', () => {
   const dir = scratch();
   try {

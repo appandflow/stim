@@ -104,20 +104,24 @@ function resolveVolumeRoot(path: string): string | null {
   return realish === null ? null : volumeRootFor(realish);
 }
 
-function uncShareIsReachable(volume: string): boolean {
+function uncShareIsReachable(volume: string, statFn: typeof statSync): boolean {
   if (!WINDOWS || !volume.startsWith(`${sep}${sep}`)) return false;
   try {
-    return statSync(volume).isDirectory();
+    return statFn(volume).isDirectory();
   } catch {
     return false;
   }
 }
 
-export function isOnMountedVolume(path: string, mountedVolumes?: string[]): boolean {
+export function isOnMountedVolume(
+  path: string,
+  mountedVolumes?: string[],
+  { statFn = statSync }: { statFn?: typeof statSync } = {},
+): boolean {
   const mounted = new Set(mountedVolumes || listMountedVolumes());
   const volume = resolveVolumeRoot(path);
   if (volume === null) return false;
-  return mounted.has(volume) || uncShareIsReachable(volume);
+  return mounted.has(volume) || uncShareIsReachable(volume, statFn);
 }
 
 export function directorySize(dir: string, { timeoutMs }: { timeoutMs?: number } = {}): number {

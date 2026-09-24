@@ -79,6 +79,18 @@ describe.skipIf(process.platform !== 'win32')('the Windows volume model', () => 
     expect(isOnMountedVolume('Z:\\Developer\\app', ['C:\\'])).toBe(false);
     expect(isOnMountedVolume('\\Users\\j\\Developer\\app', ['C:\\'])).toBe(false);
   });
+
+  test('a path on a UNC share outside the drive list is on a mounted volume only while the share is reachable', () => {
+    const path = '\\\\localhost\\C$\\stim-unc-probe\\app';
+    const share = volumeRootFor(path);
+    const statFor = (reachable: boolean) =>
+      ((target: string) => {
+        if (!reachable || String(target) !== share) throw new Error('unreachable');
+        return { isDirectory: () => true };
+      }) as unknown as typeof import('node:fs').statSync;
+    expect(isOnMountedVolume(path, ['C:\\'], { statFn: statFor(true) })).toBe(true);
+    expect(isOnMountedVolume(path, ['C:\\'], { statFn: statFor(false) })).toBe(false);
+  });
 });
 
 test('isOnMountedVolume returns false for a path it cannot resolve', () => {
