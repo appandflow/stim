@@ -398,7 +398,7 @@ repeat the affected gate rather than waiving it.
    version=X.Y.Z
    cd /tmp && npx "stim@$version" --version
    cd /tmp && npx "stim@$version" guide agent >/dev/null
-   npm pack "stim@$version" --dry-run 2>&1 | grep README.md
+   npm pack "stim@$version" --dry-run 2>&1 | grep ' README.md$'
    npm view "@stim-cli/core@$version" version
    npm view "@stim-cli/cache@$version" version
    npm view "@stim-cli/expo-build-cache@$version" version
