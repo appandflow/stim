@@ -452,6 +452,7 @@ function gitRepoWithWorktrees(names: string[]) {
 
 test('gc --worktrees reports each linked worktree, and --delete removes only the clean idle ones', async () => {
   const { repo, worktrees } = gitRepoWithWorktrees(['idle', 'fresh', 'dirty', 'racing']);
+  const reported = { idle: realpathSync.native(worktrees.idle!), racing: realpathSync.native(worktrees.racing!) };
   for (const [name, path] of Object.entries(worktrees)) {
     upsertProject(path, { metroPort: null });
     recordWorkspaceUse(path, new Date(Date.now() - (name === 'fresh' ? 1 : 10) * DAY_MS));
@@ -484,9 +485,9 @@ test('gc --worktrees reports each linked worktree, and --delete removes only the
   const output = lines.join('\n');
   expect(existsSync(worktrees.idle!)).toBe(false);
   expect(getProject(worktrees.idle!)).toBe(null);
-  expect(output).toContain(`Removed the worktree ${worktrees.idle}`);
+  expect(output).toContain(`Removed the worktree ${reported.idle}`);
   expect(existsSync(worktrees.racing!)).toBe(true);
-  expect(output).toContain(`Kept the worktree ${worktrees.racing}`);
+  expect(output).toContain(`Kept the worktree ${reported.racing}`);
   for (const name of ['fresh', 'dirty']) expect(existsSync(worktrees[name]!)).toBe(true);
   expect(existsSync(join(repo, 'package.json'))).toBe(true);
   expect(process.exitCode).toBe(1);
