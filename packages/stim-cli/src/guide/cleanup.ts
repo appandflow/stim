@@ -20,9 +20,9 @@ WHAT RECLAIMS AN OWNED DEVICE
   stim gc --delete        sweeps stim-* devices no project references, and
                             clears verified parked simulators and emulators
   stim gc --delete --older-than <days>
-                            also reaps the device of a project nothing has
-                            touched in that long, even though the project is
-                            still on disk
+                            also reaps the device of a workspace no Stim
+                            command has used in that long, even though the
+                            project is still on disk
 
 Those are the only two commands that delete. \`stim stop\` shuts a device
 DOWN and leaves it assigned, which is what makes returning to a branch cost a
@@ -239,10 +239,13 @@ THE ONE CASE GC WILL NOT REAP
   Wall-clock timestamps and command names are not ownership proof.`,
     },
     disk: {
-      summary: 'disk usage, AVD and build-log sizes, the data partition, trimming the shared caches',
+      summary:
+        'disk usage, workspace build outputs, AVD and build-log sizes, the data partition, trimming the shared caches',
       body: () => `DISK
   Logs, state, pidfiles and Xcode DerivedData are under the global workspace
-  directory, and \`worktree remove\` reclaims them. Gradle retains its normal
+  directory, and \`worktree remove\` reclaims them. \`gc --delete\` clears the
+  build outputs of workspaces nobody is using (WORKSPACE BUILD OUTPUTS
+  below) and keeps the rest. Gradle retains its normal
   project build directories while sharing task outputs through its build cache.
 
   Android AVDs normally live under ~/.android/avd, and a booted owned AVD can
@@ -283,6 +286,28 @@ setting measured on the selected API 36 profile. Set
 project needs another size. Android userdata grows but does not shrink, so the
 setting applies only to a newly created AVD; recreate the environment to adopt
 a changed value.
+
+WORKSPACE BUILD OUTPUTS
+  Each workspace directory holds derived-data/, gradle-build/, android-cas/
+  and cache-provider/. \`gc\` reports them as one detected cache, "Workspace
+  build outputs", with a per-workspace size, last use and verdict. Plain
+  \`gc --delete\` clears them for every workspace not in use (see \`guide
+  cleanup gc\`), before anything else. \`--older-than <days>\` limits that to
+  workspaces idle at least that long, and keeps one whose last use is
+  unknown. \`--cache workspaces\` acts on them alone; \`--cache all\` includes
+  them. Only those four directories go: workspace.json, state.json, logs/,
+  locks and device records stay, so the workspace keeps its devices and ports.
+    stim gc --delete --cache workspaces --older-than 7
+  Last use is the newest of the lastUsedAt that start, ios, android, reload
+  and worktree warm record in state.json, lastBuild.startedAt,
+  supervisor.startedAt and the mtimes under logs/, so a dev server that keeps
+  logging keeps its workspace in use.
+  The same time decides \`--older-than\` device reaping, and a workspace with
+  no evidence of use keeps its device.
+  The next build of an unchanged app installs from the shared build cache.
+  After a native change the Xcode compilation cache speeds the rebuild, but on
+  React Native 0.86 Swift does not use it (explicit modules are off), so that
+  build recompiles Swift.
 
 SHARED BUILD CACHES
   The caches that make a second workspace fast are alive by design and never

@@ -127,6 +127,32 @@ The first command only reports sizes. Age-based cleanup removes unused entries.
 nothing, so `gc --delete` on its own remains the way to prune stale entries.
 `--cache "compilation cache"` empties one cache instead of every one.
 
+### Workspace build outputs
+
+Each workspace keeps its own `derived-data/`, `gradle-build/`, `android-cas/`
+and `cache-provider/` under `$STIM_HOME/workspaces/<name>/`. They usually take
+most of the disk Stim uses. `gc` reports them as one cache, "Workspace build
+outputs", with the size, last use and verdict of each workspace.
+
+<StimTabs
+code={`stim gc --delete
+stim gc --delete --older-than 7
+stim gc --delete --cache workspaces`}
+/>
+
+Plain `gc --delete` clears the build outputs of every workspace that is not in
+use. A workspace is in use while its dev server runs, a `stim ios` or
+`stim android` run holds it, a build names it, or a tunnel or remote lock is
+held. `--older-than <days>` clears only workspaces no Stim command has used for
+that many days. `--cache workspaces` clears the outputs and nothing else, and
+`--cache all` includes them. The workspace keeps its `workspace.json`,
+`state.json`, logs, devices and ports.
+
+The next build of an unchanged app installs from the shared build cache. After
+a native change, the Xcode compilation cache speeds up the rebuild. On React
+Native 0.86, Swift does not use that cache because explicit modules are off,
+so the first iOS build after a native change recompiles Swift.
+
 Set `STIM_BUILD_CACHE` or `STIM_METRO_CACHE` to an absolute path to place the
 shared caches on a different volume. The same values can live in the machine config under
 `caches.buildCache` and `caches.metroCache`.

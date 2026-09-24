@@ -3,7 +3,12 @@ import { formatBytes } from '../../fs-util.ts';
 import type { BuildLockInfo } from '../../engine/build-lock.ts';
 import type { BuildSlotInfo } from '../../engine/build-slots.ts';
 import type { GcSkip, OrphanedDevice } from './types.ts';
-import type { OrphanedWorkspace } from './workspaces.ts';
+import {
+  REBUILD_COST,
+  WORKSPACE_OUTPUT_DIRS,
+  type OrphanedWorkspace,
+  type WorkspaceOutputsReport,
+} from './workspaces.ts';
 import type { GcCache } from './caches.ts';
 import type {
   DeviceLeaseGarbage,
@@ -31,6 +36,7 @@ export interface GcReport {
   deviceSweepNotices: string[];
   easSessionSweep: EasSessionSweep;
   caches: GcCache[];
+  workspaceOutputs: WorkspaceOutputsReport | null;
   cacheScope: string | null;
   olderThan: number | null;
   all: boolean;
@@ -115,6 +121,7 @@ export function formatGcReport(
     deviceSweepNotices = [],
     easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
     caches = [],
+    workspaceOutputs = null,
     cacheScope = null,
     olderThan = null,
   }: Partial<GcReport>,
@@ -142,6 +149,7 @@ export function formatGcReport(
       staleSlots,
       expiredLeases,
       easSessionSweep.orphaned,
+      workspaceOutputs?.workspaces.filter((entry) => entry.willClear) ?? [],
     ].every((found) => found.length === 0)
   ) {
     const reasons = [];
@@ -181,7 +189,7 @@ export function formatGcReport(
   }
 
   if (staleDevices.length) {
-    lines.push(`Stale owned devices (${staleDevices.length}) - project untouched for ${olderThan ?? '?'}d or more:`);
+    lines.push(`Stale owned devices (${staleDevices.length}) - workspace unused for ${olderThan ?? '?'}d or more:`);
     for (const d of staleDevices) {
       lines.push(`  ${d.kind} ${d.name} (${d.id})${deviceSizeSuffix(d)}`);
       lines.push(`              ${d.project} (idle ${d.idleDays}d)`);
@@ -250,24 +258,7 @@ export function formatGcReport(
     for (const entry of skipped) lines.push(`  ${entry.dir}: ${entry.reason}`);
   }
 
-  if (caches.length) {
-    const total = caches.reduce((n, c) => n + (c.bytes ?? 0), 0);
-    lines.push(`Shared build caches (${caches.length}) - alive, not garbage:`);
-    for (const c of caches) {
-      const tag = c.source ? ` (${c.source})` : '';
-      lines.push(`  ${formatBytes(c.bytes ?? 0).padStart(10)}  ${c.name}${tag}`);
-      lines.push(`              ${c.dir}`);
-      if (c.note) lines.push(`              ${c.note}`);
-      if (c.willEmpty) lines.push('              would be EMPTIED');
-      else if (c.emptySkipped) lines.push(`              would be left alone: ${c.emptySkipped}`);
-    }
-    lines.push(`  total: ${formatBytes(total)}`);
-    const doomed = caches.filter((c) => c.willEmpty);
-    if (doomed.length) {
-      const doomedBytes = doomed.reduce((n, c) => n + (c.bytes ?? 0), 0);
-      lines.push(`  would empty ${doomed.length} of these (${formatBytes(doomedBytes)})`);
-    }
-  }
+  lines.push(...cacheLines(caches, workspaceOutputs));
 
   return lines;
 }
@@ -313,5 +304,53 @@ function orphanedWorkspaceLines(orphaned: readonly OrphanedWorkspace[]): string[
     lines.push(`              recorded project root ${entry.projectRoot} is gone and no registry entry names it`);
   }
   lines.push('              --delete re-checks each directory, then removes it whole.');
+  return lines;
+}
+
+function workspaceOutputLines(outputs: WorkspaceOutputsReport, bytes: number): string[] {
+  const lines = [
+    `  ${formatBytes(bytes).padStart(10)}  Workspace build outputs (detected)`,
+    `              ${outputs.root}`,
+    `              ${WORKSPACE_OUTPUT_DIRS.join(', ')} of each workspace; workspace.json, state.json, logs and device records stay`,
+    `              ${REBUILD_COST}`,
+  ];
+  for (const w of outputs.workspaces) {
+    const idle = w.idleDays === null ? 'last use unknown' : `idle ${w.idleDays}d`;
+    lines.push(`    ${formatBytes(w.bytes).padStart(8)}  ${w.projectRoot ?? w.dir} (${idle})`);
+    lines.push(w.willClear ? '                would be CLEARED' : `                kept: ${w.keptReason}`);
+  }
+  return lines;
+}
+
+function cacheLines(caches: readonly GcCache[], workspaceOutputs: WorkspaceOutputsReport | null): string[] {
+  const lines: string[] = [];
+  const outputs = workspaceOutputs?.workspaces.length ? workspaceOutputs : null;
+  if (caches.length || outputs) {
+    const outputBytes = outputs ? outputs.workspaces.reduce((n, w) => n + w.bytes, 0) : 0;
+    const total = caches.reduce((n, c) => n + (c.bytes ?? 0), 0) + outputBytes;
+    lines.push(`Shared build caches (${caches.length + (outputs ? 1 : 0)}) - alive, not garbage:`);
+    if (outputs) lines.push(...workspaceOutputLines(outputs, outputBytes));
+    for (const c of caches) {
+      const tag = c.source ? ` (${c.source})` : '';
+      lines.push(`  ${formatBytes(c.bytes ?? 0).padStart(10)}  ${c.name}${tag}`);
+      lines.push(`              ${c.dir}`);
+      if (c.note) lines.push(`              ${c.note}`);
+      if (c.willEmpty) lines.push('              would be EMPTIED');
+      else if (c.emptySkipped) lines.push(`              would be left alone: ${c.emptySkipped}`);
+    }
+    lines.push(`  total: ${formatBytes(total)}`);
+    const doomed = caches.filter((c) => c.willEmpty);
+    if (doomed.length) {
+      const doomedBytes = doomed.reduce((n, c) => n + (c.bytes ?? 0), 0);
+      lines.push(`  would empty ${doomed.length} of these (${formatBytes(doomedBytes)})`);
+    }
+    const clearing = outputs?.workspaces.filter((w) => w.willClear) ?? [];
+    if (clearing.length) {
+      const clearBytes = clearing.reduce((n, w) => n + w.bytes, 0);
+      lines.push(
+        `  would clear the build outputs of ${clearing.length} workspace${clearing.length === 1 ? '' : 's'} (${formatBytes(clearBytes)})`,
+      );
+    }
+  }
   return lines;
 }

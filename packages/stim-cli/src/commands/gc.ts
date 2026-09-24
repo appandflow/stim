@@ -1,4 +1,4 @@
-import { existsSync, statSync } from 'fs';
+import { existsSync } from 'fs';
 import { isAbsolute } from 'path';
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
@@ -16,7 +16,7 @@ import { listAvds, listOrphanedAvdDirectories, ownedAvdDirectory } from '../devi
 import { discoverCaches, sizeCaches } from '../cache/caches.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import type { GcSkip, OrphanedDevice } from './gc/types.ts';
-import { emptyCaches, planCacheEmptying, selectCaches, trimCaches } from './gc/caches.ts';
+import { emptyCaches, includesWorkspaceOutputs, planCacheEmptying, selectCaches, trimCaches } from './gc/caches.ts';
 import {
   collectDeviceLeases,
   collectParkedSims,
@@ -44,7 +44,15 @@ import {
   type EasSessionSweep,
 } from './gc/eas-sessions.ts';
 import { formatGcReport, type GcReport } from './gc/report.ts';
-import { collectOrphanedWorkspaces, deleteOrphanedWorkspaces } from './gc/workspaces.ts';
+import {
+  clearWorkspaceOutputs,
+  collectOrphanedWorkspaces,
+  collectWorkspaceOutputs,
+  deleteOrphanedWorkspaces,
+  isInsideWorkspaces,
+} from './gc/workspaces.ts';
+import { workspaceDir } from '../workspace/paths.ts';
+import { workspaceLastUsed } from '../workspace/workspace-state.ts';
 
 export { selectCaches } from './gc/caches.ts';
 export {
@@ -80,21 +88,14 @@ function removeInvalidProjectEntries(invalidProjects: string[]): void {
   }
 }
 
-function projectLastTouched(path: string): number {
-  try {
-    return statSync(path).mtimeMs;
-  } catch {
-    return NaN;
-  }
-}
-
 export async function collectGcReport(
-  { olderThan = null, cache = null, now = Date.now(), lastTouched = projectLastTouched }: CollectGcReportOptions = {},
+  { olderThan = null, cache = null, now = Date.now(), lastTouched = workspaceLastUsed }: CollectGcReportOptions = {},
   deps: GcDependencies = {},
 ): Promise<GcReport> {
   const scope = typeof cache === 'string' && cache.trim() ? cache : null;
   const all = scope !== null && olderThan === null;
-  const selected = selectCaches(discoverCaches(), scope);
+  const withWorkspaces = includesWorkspaceOutputs(scope);
+  const selected = selectCaches(discoverCaches(), scope).filter((c) => !withWorkspaces || !isInsideWorkspaces(c.dir));
   const caches = planCacheEmptying(sizeCaches(selected), all);
 
   if (scope) {
@@ -114,6 +115,7 @@ export async function collectGcReport(
       parkedSims: [],
       parkedAvds: [],
       caches,
+      workspaceOutputs: withWorkspaces ? collectWorkspaceOutputs({ olderThan, now }) : null,
       cacheScope: scope,
       olderThan,
       all,
@@ -292,6 +294,11 @@ export async function collectGcReport(
     deviceSweepNotices,
     easSessionSweep,
     caches,
+    workspaceOutputs: collectWorkspaceOutputs({
+      olderThan,
+      now,
+      exclude: [...workspaceDirs.orphaned.map((entry) => entry.dir), ...deadProjects.map(workspaceDir)],
+    }),
     cacheScope: null,
     olderThan,
     all,
@@ -383,7 +390,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     },
     deps,
   );
-  if (cache && report.caches.length === 0) {
+  if (cache && report.caches.length === 0 && report.workspaceOutputs === null) {
     const names = [...new Set(discoverCaches().map((c) => c.name))];
     console.log(chalk.yellow(`No shared cache carries "${cache}" in its name or directory.`));
     if (names.length) console.log(chalk.dim(`Caches on this machine: ${names.join(', ')}`));
@@ -409,6 +416,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
   const actionable =
     deadProjects.length + invalidProjects.length > 0 ||
     report.orphanedWorkspaces.length > 0 ||
+    Boolean(report.workspaceOutputs?.workspaces.some((entry) => entry.willClear)) ||
     report.parkedSims.length > 0 ||
     report.parkedAvds.length > 0 ||
     orphanedDevices.length > 0 ||
@@ -433,7 +441,10 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     return;
   }
 
-  let deleteFailures = deleteParkedSims(report.parkedSims, deps) + deleteParkedAvds(report.parkedAvds);
+  let deleteFailures = report.workspaceOutputs
+    ? await clearWorkspaceOutputs(report.workspaceOutputs, { olderThan })
+    : 0;
+  deleteFailures += deleteParkedSims(report.parkedSims, deps) + deleteParkedAvds(report.parkedAvds);
 
   removeInvalidProjectEntries(invalidProjects);
 
@@ -558,12 +569,15 @@ export default function gcCommand(program: Command): void {
   program
     .command('gc')
     .description(
-      'Report what Stim has left behind: dead project entries, orphaned workspace directories, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, expired physical-device leases, and the shared build caches. Reports by default; pass --delete to act.',
+      'Report what Stim has left behind: dead project entries, orphaned workspace directories, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, expired physical-device leases, the shared build caches, and the build outputs of each workspace. Reports by default; pass --delete to act.',
     )
-    .option('--delete', 'actually prune the reported entries and reap the reported devices')
+    .option(
+      '--delete',
+      'actually prune the reported entries, reap the reported devices, and clear the build outputs of every workspace not in use',
+    )
     .option(
       '--older-than <days>',
-      'also reap owned devices whose project has been untouched this long, and trim shared cache entries nothing has used in that time',
+      'also reap owned devices whose workspace has not been used this long, trim shared cache entries nothing has used in that time, and clear workspace build outputs only for workspaces idle this long',
       (v: string) => {
         const n = parseInt(v, 10);
         if (!Number.isFinite(n) || String(n) !== String(v).trim()) {
@@ -574,7 +588,7 @@ export default function gcCommand(program: Command): void {
     )
     .option(
       '--cache <name>',
-      'act on the shared caches whose name or directory contains <name>, or every cache with --cache all, a reserved name that never selects a single cache. With --delete they are emptied whole, which is the only way to clear an index-backed cache; add --older-than <days> to trim them by age instead. Only those caches are reported; devices and project entries are not inspected. Caches outside the config dir are refused while STIM_HOME is set.',
+      'act on the shared caches whose name or directory contains <name>, every cache and the workspace build outputs with --cache all, or only the workspace build outputs with --cache workspaces; all and workspaces are reserved names that never select a single cache. With --delete they are emptied whole, which is the only way to clear an index-backed cache; add --older-than <days> to trim them by age instead. Only those caches are reported; devices and project entries are not inspected. Caches outside the config dir are refused while STIM_HOME is set.',
       (v: string) => {
         if (!v.trim()) throw new InvalidArgumentError('must name a cache, e.g. --cache "compilation cache"');
         return v;

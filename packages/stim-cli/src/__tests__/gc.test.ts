@@ -25,6 +25,7 @@ import { deviceLeasePath, deviceLocksDir } from '../engine/device-lease.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
+import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import gcCommand, {
   collectGcReport,
   deleteParkedSims,
@@ -2128,10 +2129,9 @@ function installDeviceExecutor({
   });
 }
 
-function touchedDaysAgo(dir: string, days: number) {
+function usedDaysAgo(dir: string, days: number) {
   mkdirSync(dir, { recursive: true });
-  const when = new Date(Date.now() - days * DAY_MS);
-  utimesSync(dir, when, when);
+  recordWorkspaceUse(dir, new Date(Date.now() - days * DAY_MS));
 }
 
 test('--delete re-verifies ownership before shutdown, shuts down before delete, and contains a per-device teardown throw', async () => {
@@ -2261,7 +2261,7 @@ test('the STIM_HOME guard does not disable dead-entry pruning', async () => {
 
 test('--delete --older-than reaps an owned device whose project went untouched, and clears its record', async () => {
   const stalePath = join(fakeHome, 'abandoned-project');
-  touchedDaysAgo(stalePath, 90);
+  usedDaysAgo(stalePath, 90);
   saveConfig({
     version: 2,
     projects: { [stalePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-STALE', owned: true } } } },
@@ -2284,7 +2284,7 @@ test('--delete --older-than reaps an owned device whose project went untouched, 
 
 test('gc reports a live project whose recorded sim is gone, and --delete clears the record only', async () => {
   const livePath = join(fakeHome, 'live-project');
-  touchedDaysAgo(livePath, 1);
+  usedDaysAgo(livePath, 1);
   saveConfig({
     version: 2,
     projects: { [livePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-VANISHED', owned: true } } } },
@@ -2309,7 +2309,7 @@ test('gc reports a live project whose recorded sim is gone, and --delete clears 
 
 test('a recorded sim that IS on the machine is not a stale record', async () => {
   const livePath = join(fakeHome, 'live-project');
-  touchedDaysAgo(livePath, 1);
+  usedDaysAgo(livePath, 1);
   saveConfig({
     version: 2,
     projects: { [livePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-HERE', owned: true } } } },
@@ -2324,7 +2324,7 @@ test('a recorded sim that IS on the machine is not a stale record', async () => 
 
 test('--older-than without --delete only reports the stale device', async () => {
   const stalePath = join(fakeHome, 'abandoned-project');
-  touchedDaysAgo(stalePath, 90);
+  usedDaysAgo(stalePath, 90);
   saveConfig({
     version: 2,
     projects: { [stalePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-STALE', owned: true } } } },
@@ -2346,7 +2346,7 @@ test('--older-than without --delete only reports the stale device', async () => 
 
 test('a device whose project is still being worked in is never reaped by --older-than', async () => {
   const livePath = join(fakeHome, 'live-project');
-  touchedDaysAgo(livePath, 1);
+  usedDaysAgo(livePath, 1);
   saveConfig({
     version: 2,
     projects: { [livePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-LIVE', owned: true } } } },

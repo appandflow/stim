@@ -27,11 +27,20 @@ EAS session sweep notices (1):
   one session could not be verified
 Skipped (1) - not classified as dead:
   /Volumes/Offline/app: volume /Volumes/Offline is not mounted
-Shared build caches (1) - alive, not garbage:
+Shared build caches (2) - alive, not garbage:
+         12K  Workspace build outputs (detected)
+              /h/workspaces
+              derived-data, gradle-build, android-cas, cache-provider of each workspace; workspace.json, state.json, logs and device records stay
+              The next build of an unchanged app installs from the shared build cache; after a native change the compilation cache speeds the rebuild, but on React Native 0.86 Swift does not use it (explicit modules are off), so that build recompiles Swift.
+          8K  /w/a (idle 4d)
+                would be CLEARED
+          4K  /w/b (last use unknown)
+                kept: in use: its dev server supervisor (pid 7) is running
           4K  Build cache (registered)
               /cache/build
               a test cache
-  total: 4K"
+  total: 16K
+  would clear the build outputs of 1 workspace (8K)"
 `;
 
 exports[`a cache-scoped report preserves its serialized shape without inspecting devices 1`] = `
@@ -67,6 +76,7 @@ exports[`a cache-scoped report preserves its serialized shape without inspecting
   "parkedSims": [],
   "parkedAvds": [],
   "caches": [],
+  "workspaceOutputs": null,
   "cacheScope": "gc-output-test-no-matching-cache",
   "olderThan": null,
   "all": true

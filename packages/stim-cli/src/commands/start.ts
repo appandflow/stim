@@ -24,7 +24,7 @@ import {
   NO_PROJECT_REFUSAL,
 } from '../workspace/project.ts';
 import { clearManagedMetroTunnel, readMetroTunnel } from '../supervisor/state.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { CACHE_PROVIDER_ENV, cacheProviderEnv } from '@stim-cli/cache';
 import { workspaceProcessLockError, withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { stopOwnedMetroForReset } from '../supervisor/cache-reset.ts';
@@ -358,6 +358,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
             'Check that STIM_HOME is writable and has free space. An EPERM on a directory you can write is a sandbox: allow writes to STIM_HOME, or run Stim with the sandbox disabled (`stim guide errors sandbox`).',
         });
       }
+      recordWorkspaceUse(root);
 
       const isExpo = detectIsExpo(root);
       const worktreeRoot = repoRoot(root) ?? root;

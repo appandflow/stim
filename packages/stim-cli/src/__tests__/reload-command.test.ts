@@ -1,7 +1,11 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Command } from 'commander';
 import type { ProjectRecord } from '../workspace/config.ts';
 import { registerReload, runReload, type ReloadDeps } from '../commands/reload.ts';
 import type { WorkspaceLaunchRecord } from '../supervisor/state.ts';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
 
 const iosLaunch: WorkspaceLaunchRecord = {
   appId: 'com.example.ios',
@@ -42,8 +46,31 @@ function reloadDeps(overrides: Partial<ReloadDeps> = {}): Partial<ReloadDeps> {
   };
 }
 
+let tmpHome: string;
+
+beforeEach(() => {
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  process.env.STIM_HOME = tmpHome;
+});
+
 afterEach(() => {
   process.exitCode = undefined;
+  rmSync(tmpHome, { recursive: true, force: true });
+  delete process.env.STIM_HOME;
+});
+
+test('a reload records when the workspace was last used', async () => {
+  const program = new Command();
+  registerReload(program, reloadDeps());
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    await program.parseAsync(['node', 'stim', 'reload', 'android']);
+  } finally {
+    console.log = originalLog;
+  }
+
+  expect(Date.parse(String(readWorkspaceState('/project')?.lastUsedAt))).toBeGreaterThan(Date.now() - 60_000);
 });
 
 test('reload auto-selects the sole live owned app and reports its strategy', async () => {

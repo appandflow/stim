@@ -545,6 +545,7 @@ async function main() {
     const expected = [
       { name: 'the fingerprint build cache', dir: BUILD_CACHE_ROOT },
       { name: 'the shared Metro transform store', dir: storeRoot1 || METRO_CACHE_ROOT },
+      { name: 'the workspace build outputs', dir: join(HOME_DIR, 'workspaces') },
     ];
     if (PLATFORM === 'ios') expected.push({ name: "Xcode's compilation cache (CAS)", dir: CAS_DIR });
     if (PLATFORM === 'android') expected.push({ name: 'the Gradle build cache', dir: GRADLE_CACHE_DIR });

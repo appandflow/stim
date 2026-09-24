@@ -14,6 +14,7 @@ import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } fr
 import type { ReleasedLease } from '../engine/device-lease.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
 import { findProjectRoot } from '../workspace/project.ts';
+import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
 import { claimFailure } from '../ownership-claim.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
@@ -117,6 +118,8 @@ export function registerWarm(worktree: Command): void {
     .action(async (opts: { refresh?: boolean }) => {
       try {
         const { root, target, common } = warmWorktreePaths(process.cwd());
+        const app = findProjectRoot(process.cwd());
+        if (app) recordWorkspaceUse(app);
         const readSettings = (): SettingsObject | null => {
           const settings = resolveSettings({ gitCommonDir: common, repoRoot: root });
           const shapeErrors = settingShapeErrors(settings);
