@@ -1,6 +1,6 @@
 import { join } from 'node:path';
-import { readFileSync } from 'node:fs';
 import { getExecutor } from '../exec.ts';
+import { isJsonObject, readJsonObject } from '../json-file.ts';
 import { isPackageResolvable } from '../workspace/project.ts';
 
 export function devClientScheme(
@@ -11,8 +11,9 @@ export function devClientScheme(
   if (!hasDevClient(root)) return undefined;
   const fromBundle = pickDevClientScheme(readBundleSchemes(appPath, { exec }));
   if (fromBundle) return fromBundle;
-  const app = readJson(join(root, 'app.json')) as { expo?: { scheme?: unknown }; scheme?: unknown } | null;
-  const raw = app?.expo?.scheme ?? app?.scheme ?? null;
+  const app = readJsonObject(join(root, 'app.json'));
+  const expo = app?.expo;
+  const raw = (isJsonObject(expo) ? expo.scheme : undefined) ?? app?.scheme ?? null;
   const scheme = Array.isArray(raw) ? raw.find((s) => typeof s === 'string' && s.trim() !== '') : raw;
   if (typeof scheme !== 'string' || scheme.trim() === '') return undefined;
   return scheme.trim();
@@ -63,19 +64,10 @@ export function pickDevClientScheme(schemes: unknown): string | null {
 }
 
 function hasDevClient(root: string): boolean {
-  const pkg = readJson(join(root, 'package.json')) as {
-    dependencies?: Record<string, unknown>;
-    devDependencies?: Record<string, unknown>;
-  } | null;
-  const deps = { ...pkg?.dependencies, ...pkg?.devDependencies };
-  if ('expo-dev-client' in deps) return true;
+  const pkg = readJsonObject(join(root, 'package.json'));
+  const declared = [pkg?.dependencies, pkg?.devDependencies].some(
+    (deps) => isJsonObject(deps) && 'expo-dev-client' in deps,
+  );
+  if (declared) return true;
   return isPackageResolvable(root, 'expo-dev-client');
-}
-
-function readJson(file: string): unknown {
-  try {
-    return JSON.parse(readFileSync(file, 'utf-8'));
-  } catch {
-    return null;
-  }
 }

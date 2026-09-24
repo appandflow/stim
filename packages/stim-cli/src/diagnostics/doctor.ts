@@ -3,6 +3,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync 
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import { plural, quotedPath } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
+import { readJsonObject } from '../json-file.ts';
 import { makeTemporaryDirectory } from '../temporary.ts';
 import { checkStorageLayout } from './doctor-storage.ts';
 import { inspectIosDebugArchitectures } from './doctor-ios-architectures.ts';
@@ -69,14 +70,6 @@ export type DoctorPlatform = 'ios' | 'android';
 
 function finding(level: 'cost' | 'note', title: string, detail: string, fix: string | null): Finding {
   return { level, title, detail, fix };
-}
-
-function readJson(path: string): AnyJson | null {
-  try {
-    return JSON.parse(readFileSync(path, 'utf-8'));
-  } catch {
-    return null;
-  }
 }
 
 function mainCheckoutProjectRoot(projectRoot: string): string {
@@ -781,12 +774,12 @@ export function runDoctor(
   if (machineSettings.corrupt) return [machineSettings.corrupt];
   const projectSettings = machineSettings.settings;
 
-  const pkg = readJson(join(projectRoot, 'package.json'));
-  const appConfig = readJson(join(projectRoot, 'app.json'));
+  const pkg = readJsonObject(join(projectRoot, 'package.json'));
+  const appConfig = readJsonObject(join(projectRoot, 'app.json'));
   const dynamicConfig = appConfig
     ? null
     : ['app.config.ts', 'app.config.js', 'app.config.mjs'].find((f) => existsSync(join(projectRoot, f))) || null;
-  const podfileProperties = readJson(join(projectRoot, 'ios', 'Podfile.properties.json'));
+  const podfileProperties = readJsonObject(join(projectRoot, 'ios', 'Podfile.properties.json'));
   const podfile = read(join('ios', 'Podfile'));
   const metroConfig = read('metro.config.js') ?? read('metro.config.cjs');
 

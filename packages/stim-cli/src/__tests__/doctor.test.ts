@@ -897,6 +897,22 @@ test('a project whose config is app.config.ts is told the check could not run', 
   expect(f.fix).toMatch(/experiments/);
 });
 
+test('an app.json that is not an object leaves app.config.ts to be reported as unchecked', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'stim-doctor-'));
+  try {
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { expo: '~57.0.0' } }));
+    writeFileSync(join(dir, 'app.json'), '[]');
+    writeFileSync(
+      join(dir, 'app.config.ts'),
+      "import type { ExpoConfig } from 'expo/config';\nexport default (): ExpoConfig => ({ name: 'x', slug: 'x' });\n",
+    );
+    const findings = runDoctor(dir, { concurrency: { maxBuilds: 0, maxDevices: 0 }, lookupCcache: () => false });
+    expect(findings.map((f) => f.title)).toContain('Cannot check the build cache provider in app.config.ts');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('a newer SDK with a dynamic config is pointed at the top-level key', () => {
   const f = checkBuildCacheProvider(null, 57, true, 'app.config.js');
   assert(f);
