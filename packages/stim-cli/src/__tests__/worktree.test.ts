@@ -276,64 +276,74 @@ test('listCarryableIgnoredEntries fails closed when Git cannot list worktrees', 
   );
 });
 
-test('ignored inventory and warm copying still find the target file when raw ls-files output exceeds 1MB', () => {
-  const base = mkdtempSync(join(tmpdir(), 'stim-test-bigignore-'));
-  const root = join(base, 'repo');
-  const target = join(base, 'target');
-  try {
-    mkdirSync(root, { recursive: true });
-    mkdirSync(target, { recursive: true });
-    const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
-    git('git init -q');
-    git('git config user.email test@example.com');
-    git('git config user.name test');
-    // Git for Windows refuses paths past the legacy 260-char MAX_PATH unless this
-    // is set; the reused directory names below push paths past that limit.
-    git('git config core.longpaths true');
+test(
+  'ignored inventory and warm copying still find the target file when raw ls-files output exceeds 1MB',
+  () => {
+    const base = mkdtempSync(join(tmpdir(), 'stim-test-bigignore-'));
+    const root = join(base, 'repo');
+    const target = join(base, 'target');
+    try {
+      mkdirSync(root, { recursive: true });
+      mkdirSync(target, { recursive: true });
+      const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
+      git('git init -q');
+      git('git config user.email test@example.com');
+      git('git config user.name test');
+      // Git for Windows refuses paths past the legacy 260-char MAX_PATH unless this
+      // is set; the reused directory names below push paths past that limit.
+      git('git config core.longpaths true');
 
-    writeFileSync(join(root, 'README.md'), 'hello');
-    writeFileSync(join(root, '.gitignore'), '*.ignoreme\n.env\n');
+      writeFileSync(join(root, 'README.md'), 'hello');
+      writeFileSync(join(root, '.gitignore'), '*.ignoreme\n.env\n');
 
-    const dirCount = 8;
-    const dirName = (n: number) => `keepdir-${n}-${'k'.repeat(235)}`;
-    for (let d = 0; d < dirCount; d++) {
-      mkdirSync(join(root, dirName(d)), { recursive: true });
-      writeFileSync(join(root, dirName(d), 'keep.txt'), 'keep');
-    }
-
-    const dirNames = Array.from({ length: dirCount }, (_, d) => dirName(d));
-    git(`git add README.md .gitignore ${dirNames.join(' ')}`);
-    git('git commit -q -m init');
-    execFileSync('git', ['-C', root, 'worktree', 'add', '-qb', 'copy-target', target]);
-
-    const padding = 'x'.repeat(200);
-    const filesPerDir = 300;
-    for (let d = 0; d < dirCount; d++) {
-      for (let i = 0; i < filesPerDir; i++) {
-        writeFileSync(join(root, dirName(d), `bloat-${i}-${padding}.ignoreme`), '');
+      const dirCount = 8;
+      const dirName = (n: number) => `keepdir-${n}-${'k'.repeat(235)}`;
+      for (let d = 0; d < dirCount; d++) {
+        mkdirSync(join(root, dirName(d)), { recursive: true });
+        writeFileSync(join(root, dirName(d), 'keep.txt'), 'keep');
       }
+
+      const dirNames = Array.from({ length: dirCount }, (_, d) => dirName(d));
+      git(`git add README.md .gitignore ${dirNames.join(' ')}`);
+      git('git commit -q -m init');
+      execFileSync('git', ['-C', root, 'worktree', 'add', '-qb', 'copy-target', target]);
+
+      const padding = 'x'.repeat(200);
+      const filesPerDir = 300;
+      for (let d = 0; d < dirCount; d++) {
+        for (let i = 0; i < filesPerDir; i++) {
+          writeFileSync(join(root, dirName(d), `bloat-${i}-${padding}.ignoreme`), '');
+        }
+      }
+
+      mkdirSync(join(root, 'apps/mobile'), { recursive: true });
+      writeFileSync(join(root, 'apps/mobile/.env'), 'SECRET=1');
+
+      const rawBytes = parseInt(
+        execSync(`git -C "${root}" ls-files --others --ignored --exclude-standard | wc -c`, {
+          encoding: 'utf-8',
+        }).trim(),
+        10,
+      );
+      expect(rawBytes > 1024 * 1024).toBeTruthy();
+
+      const ignored = listGitignoredEntries(root);
+      expect(ignored.includes('apps')).toBeTruthy();
+
+      const { copied, failed } = cloneIgnoredEntries({ root, target, patterns: ['bloat-*.ignoreme'] });
+      expect(copied).toEqual(['apps']);
+      expect(failed).toEqual([]);
+      expect(existsSync(join(target, 'apps/mobile/.env'))).toBe(true);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
     }
-
-    mkdirSync(join(root, 'apps/mobile'), { recursive: true });
-    writeFileSync(join(root, 'apps/mobile/.env'), 'SECRET=1');
-
-    const rawBytes = parseInt(
-      execSync(`git -C "${root}" ls-files --others --ignored --exclude-standard | wc -c`, { encoding: 'utf-8' }).trim(),
-      10,
-    );
-    expect(rawBytes > 1024 * 1024).toBeTruthy();
-
-    const ignored = listGitignoredEntries(root);
-    expect(ignored.includes('apps')).toBeTruthy();
-
-    const { copied, failed } = cloneIgnoredEntries({ root, target, patterns: ['bloat-*.ignoreme'] });
-    expect(copied).toEqual(['apps']);
-    expect(failed).toEqual([]);
-    expect(existsSync(join(target, 'apps/mobile/.env'))).toBe(true);
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-}, 30_000);
+    // windows-latest CI (issue #1015): file creation dominates this case's wall time
+    // (85% of it in one measured run) and its per-file cost varies far more there than
+    // elsewhere -- 10.6s-18.8s across 3 runs of this fixture, against 8.7s-48.7s across
+    // 13 runs of the prior, 6000-file one.
+  },
+  process.platform === 'win32' ? 60_000 : 30_000,
+);
 
 test('removeWorktree runs git via runFile (no shell) from another checkout, with --force only when asked', () => {
   const path = '/tmp/my worktree/repo';
