@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import { NOT_OURS_FOREIGN_CWD } from '../metro.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
-import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../engine/app-install.ts';
+import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../engine/launch-verify.ts';
 
 interface MetroResolutionLike {
   metro?: { pid?: number } | null;

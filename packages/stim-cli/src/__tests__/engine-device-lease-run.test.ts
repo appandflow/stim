@@ -2,7 +2,7 @@ import assert from 'node:assert';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { VERIFY_TIMEOUT_MS } from '../engine/app-install.ts';
+import { VERIFY_TIMEOUT_MS } from '../engine/launch-verify.ts';
 import { APP_READINESS_TIMEOUT_MS } from '../engine/app-readiness.ts';
 import { deviceLeasePath, parseLease, takeLease, type LeaseIo, type WorkspaceLeases } from '../engine/device-lease.ts';
 import {

@@ -5,7 +5,7 @@ import { shortUdid, phaseLine } from '../../command-output.ts';
 import type { DeviceLike, PodStateLike, PodVerdictLike, FailArgs } from './types.ts';
 import type { BuildIosResult } from '../../engine/xcode.ts';
 import type { SettingsObject } from '../../workspace/settings.ts';
-import { unknownIosDeviceTypeRefusal, unknownIosRuntimeRefusal } from '../../engine/device.ts';
+import { unknownIosDeviceTypeRefusal, unknownIosRuntimeRefusal } from '../../engine/device-capacity.ts';
 import { parseIosSimulatorApp, type IosSimulatorApp } from '../../devices/ios-simulator-viewer.ts';
 import { listIosRuntimes } from '../../devices/ios.ts';
 import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';

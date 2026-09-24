@@ -49,7 +49,7 @@ import { ensureBooted } from '../engine/device.ts';
 import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { COMPILATION_CACHE_UNAVAILABLE, type BuildIosResult } from '../engine/xcode.ts';
-import { RELEASE_VERIFY_WAIT_MS } from '../engine/app-install.ts';
+import { RELEASE_VERIFY_WAIT_MS } from '../engine/launch-verify.ts';
 import {
   DEVICECTL_INSTALL_TIMEOUT_MS,
   LAUNCH_PROBE_TIMEOUT_MS,

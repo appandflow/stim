@@ -7,7 +7,7 @@ import {
   type LoadProjectProviderResult,
 } from '../../engine/remote-cache.ts';
 import { PLATFORM, deviceLabel } from './support.ts';
-import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../../engine/app-install.ts';
+import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../../engine/launch-verify.ts';
 import { COMPILATION_CACHE_NOT_RUN, compilationCacheActivityLine } from '../../engine/xcode.ts';
 import type { CompilationCacheActivity, IosFacts, CacheHitLevel } from '../../engine/build-facts.ts';
 import type { WaitedForBuild, RemoteUploadLike, DeviceLike } from './types.ts';

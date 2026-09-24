@@ -24,7 +24,7 @@ import { dependencyState, hasInstalledDependencies, installedNpmTreeIsValid } fr
 import { workspaceDerivedData } from '../workspace/paths.ts';
 import { type Config, type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from '../workspace/config.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
-import { liveOwnedDeviceCount } from '../engine/device.ts';
+import { liveOwnedDeviceCount } from '../engine/device-capacity.ts';
 import { simslimIsOnPath } from '../engine/simslim.ts';
 import { readHostMemoryPressure, hostMemoryPressureAdvice, type HostMemoryPressure } from '../host-memory.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';

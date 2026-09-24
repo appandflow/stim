@@ -10,13 +10,7 @@ import {
   DEFAULT_METRO_PORT,
   INSTALL_ERROR,
   LAUNCH_ERROR,
-  STABILITY_WINDOW_MS,
-  VERIFY_TIMEOUT_MS,
   devClientUrl,
-  isBundleProof,
-  isBundleRequestProof,
-  unverifiedLaunchLines,
-  verifyLaunch,
   amStartError,
   androidAppProcess,
   androidDevClientUrl,
@@ -32,18 +26,26 @@ import {
   launchAndroidReleaseApp,
   parsePidof,
   parsePsPid,
-  verifyAndroidReleaseLaunch,
   openAndroidDevClientUrl,
   jsLocationValue,
   launchAndroidApp,
   launchIosApp,
   parseLaunchedPid,
   parseResolvedActivity,
-  verifyReleaseLaunch,
   reverseMetroPorts,
   writeDebugHttpHost,
   clearOtherUserApps,
 } from '../engine/app-install.ts';
+import {
+  STABILITY_WINDOW_MS,
+  VERIFY_TIMEOUT_MS,
+  isBundleProof,
+  isBundleRequestProof,
+  unverifiedLaunchLines,
+  verifyLaunch,
+  verifyAndroidReleaseLaunch,
+  verifyReleaseLaunch,
+} from '../engine/launch-verify.ts';
 import { hashFile } from '../engine/installed-artifact.ts';
 
 type LaunchResult = {

@@ -19,7 +19,8 @@ import {
   remoteProfilePath,
 } from './agent-device.ts';
 import { planMetroReach, PUBLIC_METRO_ENV, type ManagedProvider, type TunnelMode } from './metro-reach.ts';
-import { devClientDeepLink, INSTALL_ERROR, isBundleProof, LAUNCH_ERROR, readMetroRecords } from './app-install.ts';
+import { devClientDeepLink, INSTALL_ERROR, LAUNCH_ERROR } from './app-install.ts';
+import { isBundleProof, readMetroRecords } from './launch-verify.ts';
 import {
   createSessionArgs,
   getSessionArgs,
