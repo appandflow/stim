@@ -33,14 +33,7 @@ import {
   unprovisionedWorktrees,
 } from '../status.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../devices/sim-pool.ts';
-import type {
-  AndroidRuntimeFacts,
-  EnvironmentState,
-  VolumeInfo,
-  SimFacts,
-  MetroFacts,
-  WorktreeFacts,
-} from '../status.ts';
+import type { AndroidRuntimeFacts, EnvironmentState, VolumeInfo } from '../status.ts';
 
 type SupervisorRecordExt = SupervisorRecord & { mode?: string | null };
 
@@ -90,9 +83,9 @@ export default function statusCommand(program: Command): void {
           environmentState(
             { ...proj, __path: path },
             {
-              simsByUdid: simsByUdid as unknown as Record<string, SimFacts>,
-              metro: metro as unknown as MetroFacts | null,
-              worktrees: worktrees as unknown as WorktreeFacts[],
+              simsByUdid,
+              metro,
+              worktrees,
               simsAvailable,
               androidRuntimes: Object.fromEntries(
                 projectDeviceSlots(proj)
@@ -125,7 +118,7 @@ export default function statusCommand(program: Command): void {
       const totalMemoryMb = Math.round(totalmem() / (1024 * 1024));
       const cap = capacity(states, totalMemoryMb);
       const orphanWorktrees = unprovisionedWorktrees(
-        worktrees as unknown as WorktreeFacts[],
+        worktrees,
         projects.map(([p]) => p),
       );
       const pools = (['ios', 'android'] as const).map((platform) => {
