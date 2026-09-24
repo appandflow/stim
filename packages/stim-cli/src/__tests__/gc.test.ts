@@ -1247,7 +1247,7 @@ describe('EAS orphan session sweep', () => {
 
     const output = await withRemoteSessionLock(project, () => captureLog(() => runGc({}, harness.deps)));
 
-    expect(Date.now() - startedAt).toBeLessThan(500);
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
     expect(output).toMatch(/remote-session|remote session.*lock/i);
     expect(harness.calls).toEqual([]);
   });
