@@ -5,6 +5,7 @@ import SwiftUI
 struct DeviceTile: View {
   var device: DeviceRef
   var screenHeight: CGFloat
+  var interactive = false
 
   var body: some View {
     Card {
@@ -23,6 +24,9 @@ struct DeviceTile: View {
           .frame(height: screenHeight)
           .background(Theme.screen)
       }
+    }
+    .overlay {
+      if interactive { RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.lavender, lineWidth: 2) }
     }
     .frame(width: width)
   }
@@ -45,7 +49,7 @@ struct DeviceTile: View {
   @ViewBuilder private var screen: some View {
     switch device {
     case .ios(_, let sim) where device.isRunning:
-      SimulatorDisplayView(udid: sim.udid).padding(12)
+      SimulatorDisplayView(udid: sim.udid, interactive: interactive).padding(12)
     case .android where device.isRunning:
       placeholder("Android frames are not streamed yet")
     default:

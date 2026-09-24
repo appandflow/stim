@@ -6,6 +6,7 @@ struct WorkspaceDetail: View {
   var env: Workspace
   @State private var focusedID: String?
   @State private var stats: ProjectStats?
+  @State private var takenOver: Set<String> = []
 
   var body: some View {
     let devices = env.devices
@@ -21,7 +22,18 @@ struct WorkspaceDetail: View {
           .fixedSize()
         }
         if let focused {
-          DeviceTile(device: focused, screenHeight: 640)
+          if case .ios = focused, focused.isRunning {
+            Toggle("Take over", isOn: Binding(
+              get: { takenOver.contains(focused.id) },
+              set: { on in if on { takenOver.insert(focused.id) } else { takenOver.remove(focused.id) } }
+            ))
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .help("Send your clicks, trackpad scrolls and keys to this simulator.")
+          }
+          DeviceTile(
+            device: focused, screenHeight: 640,
+            interactive: focused.isRunning && takenOver.contains(focused.id))
         } else {
           EmptyState(title: "No devices", message: "This workspace has no recorded simulator or emulator.")
         }

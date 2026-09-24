@@ -33,10 +33,13 @@ enum CoreSimulator {
       .takeUnretainedValue() as? NSObject
   }()
 
+  static func device(udid: String) -> NSObject? {
+    guard let devices = deviceSet?.value(forKey: "devices") as? [NSObject] else { return nil }
+    return devices.first { ($0.value(forKey: "UDID") as? NSUUID)?.uuidString == udid }
+  }
+
   static func mainDisplay(udid: String) -> SimDisplayIOSurfaceRenderable? {
-    guard let set = deviceSet,
-      let devices = set.value(forKey: "devices") as? [NSObject],
-      let device = devices.first(where: { ($0.value(forKey: "UDID") as? NSUUID)?.uuidString == udid }),
+    guard let device = device(udid: udid),
       let io = device.perform(NSSelectorFromString("io"))?.takeUnretainedValue() as? NSObject,
       let ports = io.perform(NSSelectorFromString("ioPorts"))?.takeUnretainedValue() as? [NSObject],
       let renderable = objc_getProtocol("SimDisplayIOSurfaceRenderable")

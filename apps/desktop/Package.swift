@@ -20,5 +20,6 @@ let package = Package(
       dependencies: ["StimKit"],
       resources: [.copy("Fixtures")]
     ),
+    .testTarget(name: "SimulatorFramesTests", dependencies: ["SimulatorFrames"]),
   ]
 )
