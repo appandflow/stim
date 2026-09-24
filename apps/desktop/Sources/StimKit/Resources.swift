@@ -1,0 +1,247 @@
+import Foundation
+
+/// One row of `ps -axo pid=,ppid=,rss=,time=,args=`.
+public struct ProcessEntry: Equatable, Sendable {
+  public var pid: Int
+  public var ppid: Int
+  public var residentBytes: Int64
+  public var cpuSeconds: Double
+  public var args: String
+
+  public init(pid: Int, ppid: Int, residentBytes: Int64, cpuSeconds: Double, args: String) {
+    self.pid = pid
+    self.ppid = ppid
+    self.residentBytes = residentBytes
+    self.cpuSeconds = cpuSeconds
+    self.args = args
+  }
+}
+
+public enum ProcessTable {
+  public static let psArguments = ["-axo", "pid=,ppid=,rss=,time=,args="]
+
+  public static func snapshot() throws -> [ProcessEntry] {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/ps")
+    process.arguments = psArguments
+    let out = Pipe()
+    process.standardOutput = out
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    let data = out.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return parse(String(decoding: data, as: UTF8.self))
+  }
+
+  public static func parse(_ output: String) -> [ProcessEntry] {
+    output.split(separator: "\n").compactMap { line in
+      let fields = line.split(separator: " ", maxSplits: 4, omittingEmptySubsequences: true)
+      guard fields.count >= 4,
+        let pid = Int(fields[0]), let ppid = Int(fields[1]), let rssKb = Int64(fields[2]),
+        let cpu = cpuSeconds(fields[3])
+      else { return nil }
+      return ProcessEntry(
+        pid: pid, ppid: ppid, residentBytes: rssKb * 1024, cpuSeconds: cpu,
+        args: fields.count > 4 ? String(fields[4]) : "")
+    }
+  }
+
+  /// macOS `ps` prints `time` as `[dd-][hh:]mm:ss.ss`, with minutes past 59 when there is no hour field.
+  static func cpuSeconds(_ field: Substring) -> Double? {
+    var rest = field
+    var days = 0.0
+    if let dash = rest.firstIndex(of: "-") {
+      guard let d = Double(rest[..<dash]) else { return nil }
+      days = d
+      rest = rest[rest.index(after: dash)...]
+    }
+    var total = 0.0
+    for part in rest.split(separator: ":") {
+      guard let value = Double(part) else { return nil }
+      total = total * 60 + value
+    }
+    return days * 86_400 + total
+  }
+}
+
+/// The pids whose process trees make up a workspace: its supervisor and Metro, each owned
+/// simulator's `launchd_sim`, and each emulator's qemu process.
+public func workspaceRoots(_ env: Workspace, in processes: [ProcessEntry]) -> Set<Int> {
+  var roots = Set<Int>()
+  if env.live, let pid = env.supervisor?.pid { roots.insert(pid) }
+  if let metro = env.metro, metro.running, let pid = metro.pid { roots.insert(pid) }
+  for device in env.devices {
+    switch device {
+    case .ios(_, let sim):
+      let marker = "/DEVICES/\(sim.udid.uppercased())/"
+      for p in processes where p.args.hasPrefix("launchd_sim ") && p.args.uppercased().contains(marker) {
+        roots.insert(p.pid)
+      }
+    case .android(_, let avd) where !avd.physical:
+      let port = avd.serial.flatMap { $0.hasPrefix("emulator-") ? String($0.dropFirst("emulator-".count)) : nil }
+      for p in processes where isEmulator(p.args, avd: avd.name, port: port) {
+        roots.insert(p.pid)
+      }
+    case .android:
+      break
+    }
+  }
+  let existing = Set(processes.map(\.pid))
+  return roots.intersection(existing)
+}
+
+private func isEmulator(_ args: String, avd: String, port: String?) -> Bool {
+  let tokens = args.split(separator: " ")
+  guard let exe = tokens.first, exe.split(separator: "/").last?.hasPrefix("qemu-system") == true else { return false }
+  for (flag, value) in zip(tokens, tokens.dropFirst()) {
+    if flag == "-avd" && value == avd { return true }
+    if flag == "-port", let port, value == port { return true }
+  }
+  return false
+}
+
+/// Every pid in the trees under `roots`, each counted once.
+public func processTree(roots: Set<Int>, in processes: [ProcessEntry]) -> Set<Int> {
+  let children = Dictionary(grouping: processes, by: \.ppid)
+  var seen = Set<Int>()
+  var stack = Array(roots)
+  while let pid = stack.popLast() {
+    guard seen.insert(pid).inserted else { continue }
+    stack.append(contentsOf: (children[pid] ?? []).map(\.pid).filter { $0 != pid })
+  }
+  return seen
+}
+
+public struct ResourceUsage: Equatable, Sendable {
+  /// Percent of one core, as Activity Monitor reports it; nil on the first sample.
+  public var cpuPercent: Double?
+  public var residentBytes: Int64
+  public var processCount: Int
+}
+
+/// Turns successive process tables into per-workspace usage. CPU is the change in
+/// cumulative CPU time between two tables, so it needs a previous table.
+public struct ResourceSampler: Sendable {
+  private var previous: (cpu: [Int: Double], at: Date)?
+
+  public init() {}
+
+  public mutating func sample(
+    _ workspaces: [Workspace], processes: [ProcessEntry], at now: Date
+  ) -> [String: ResourceUsage] {
+    let byPid = Dictionary(processes.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
+    let prior = previous
+    let elapsed = prior.map { now.timeIntervalSince($0.at) } ?? 0
+    var out: [String: ResourceUsage] = [:]
+    for env in workspaces {
+      let pids = processTree(roots: workspaceRoots(env, in: processes), in: processes)
+      guard !pids.isEmpty else { continue }
+      var resident: Int64 = 0
+      var cpuDelta = 0.0
+      for pid in pids {
+        guard let p = byPid[pid] else { continue }
+        resident += p.residentBytes
+        cpuDelta += max(0, p.cpuSeconds - (prior?.cpu[pid] ?? 0))
+      }
+      let cpu: Double? = prior != nil && elapsed > 0 ? cpuDelta / elapsed * 100 : nil
+      out[env.path] = ResourceUsage(cpuPercent: cpu, residentBytes: resident, processCount: pids.count)
+    }
+    previous = (Dictionary(processes.map { ($0.pid, $0.cpuSeconds) }, uniquingKeysWith: { first, _ in first }), now)
+    return out
+  }
+}
+
+/// A mounted volume and the Stim locations on it.
+public struct DiskVolume: Equatable, Identifiable, Sendable {
+  public var id: String
+  public var name: String
+  public var availableBytes: Int64
+  public var totalBytes: Int64
+  public var holds: [String]
+
+  public init(id: String, name: String, availableBytes: Int64, totalBytes: Int64, holds: [String]) {
+    self.id = id
+    self.name = name
+    self.availableBytes = availableBytes
+    self.totalBytes = totalBytes
+    self.holds = holds
+  }
+}
+
+public enum DiskUsage {
+  /// Probes the volume of each labelled path and merges paths that share a volume.
+  public static func volumes(for locations: [(label: String, path: String)]) -> [DiskVolume] {
+    merge(locations.compactMap { probe(label: $0.label, path: $0.path) })
+  }
+
+  static func merge(_ probes: [DiskVolume]) -> [DiskVolume] {
+    var out: [DiskVolume] = []
+    for probe in probes {
+      if let i = out.firstIndex(where: { $0.id == probe.id }) {
+        for label in probe.holds where !out[i].holds.contains(label) { out[i].holds.append(label) }
+      } else {
+        out.append(probe)
+      }
+    }
+    return out
+  }
+
+  private static func probe(label: String, path: String) -> DiskVolume? {
+    var url = URL(fileURLWithPath: path)
+    while !FileManager.default.fileExists(atPath: url.path), url.path != "/" {
+      url.deleteLastPathComponent()
+    }
+    let keys: Set<URLResourceKey> = [
+      .volumeURLKey, .volumeNameKey, .volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey,
+    ]
+    guard let values = try? url.resourceValues(forKeys: keys),
+      let volume = values.volume,
+      let available = values.volumeAvailableCapacityForImportantUsage,
+      let total = values.volumeTotalCapacity
+    else { return nil }
+    return DiskVolume(
+      id: volume.path, name: values.volumeName ?? volume.lastPathComponent,
+      availableBytes: available, totalBytes: Int64(total), holds: [label])
+  }
+}
+
+/// What `stim gc --json` (a dry run) says `stim gc --delete` would free.
+public struct GcReport: Decodable, Sendable {
+  struct Sized: Decodable, Sendable {
+    var bytes: Int64?
+    var willClear: Bool?
+    var willEmpty: Bool?
+  }
+
+  struct Sections: Decodable, Sendable {
+    var orphanedWorkspaces: [Sized]?
+    var parkedSimulators: [Sized]?
+    var parkedEmulators: [Sized]?
+    var orphanedDevices: [Sized]?
+    var staleDevices: [Sized]?
+    var workspaceBuildOutputs: [Sized]?
+    var caches: [Sized]?
+  }
+
+  var sections: Sections
+
+  public struct Reclaimable: Equatable, Sendable {
+    public var bytes: Int64
+    public var entries: Int
+    /// Entries `gc` would reclaim whose size it could not measure.
+    public var unsized: Int
+  }
+
+  public var reclaimable: Reclaimable {
+    let s = sections
+    let removed: [Sized] =
+      (s.orphanedWorkspaces ?? []) + (s.parkedSimulators ?? []) + (s.parkedEmulators ?? [])
+      + (s.orphanedDevices ?? []) + (s.staleDevices ?? [])
+      + (s.workspaceBuildOutputs ?? []).filter { $0.willClear == true }
+      + (s.caches ?? []).filter { $0.willEmpty == true }
+    return Reclaimable(
+      bytes: removed.reduce(0) { $0 + ($1.bytes ?? 0) },
+      entries: removed.count,
+      unsized: removed.filter { $0.bytes == nil }.count)
+  }
+}

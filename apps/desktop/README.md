@@ -2,10 +2,20 @@
 
 A macOS app for supervising Stim workspaces: every worktree on the machine,
 grouped by project, with its Metro port, supervisor health, errors, build cache
-stats, and live frames from its iOS simulators.
+stats, live frames from its iOS simulators, and its CPU and resident memory.
 
-It reads Stim state only through `stim status --json` and `stim stats --json`.
-It never reads `$STIM_HOME`, and it runs no command that changes state.
+It reads Stim state only through `stim status --json`, `stim stats --json`, and
+the `stim gc --json` dry run. It never reads `$STIM_HOME`, and it runs no
+command that changes state.
+
+Resource usage is measured with `ps` every 3 seconds: each workspace's
+supervisor and Metro process trees plus the `launchd_sim` tree of each of its
+simulators (matched by UDID) and the qemu process of each emulator (matched by
+AVD name or console port). Memory is the sum of resident sizes, so memory
+shared between processes counts more than once. The toolbar shows free space
+on the volumes holding the repositories, `$STIM_HOME`, and CoreSimulator, and
+what `stim gc --delete` would reclaim; the reclaimable figure needs a Stim
+version with `gc --json`.
 
 ## Take over a simulator
 
@@ -40,6 +50,6 @@ The bundle copies Inter, JetBrains Mono, and the brand artwork from `website/`.
 
 ## Layout
 
-- `Sources/StimKit`: models for the CLI's JSON, the CLI client, project grouping, and warning remedies. Unit-tested.
+- `Sources/StimKit`: models for the CLI's JSON, the CLI client, project grouping, warning remedies, and process, disk and gc usage. Unit-tested.
 - `Sources/SimulatorFrames`: live simulator frames through CoreSimulator and input through SimulatorKit, both private Apple frameworks. Expect Xcode releases to break it.
 - `Sources/StimDesktop`: the SwiftUI app and its brand theme.

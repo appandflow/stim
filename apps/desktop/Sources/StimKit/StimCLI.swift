@@ -25,6 +25,11 @@ public enum StimCLI {
     try JSONDecoder().decode(ProjectStats.self, from: run(["stats", "--json"], cwd: workspace))
   }
 
+  /// `stim gc --json` without `--delete` only reports.
+  public static func gcReport() throws -> GcReport {
+    try JSONDecoder().decode(GcReport.self, from: run(["gc", "--json"]))
+  }
+
   static func run(_ args: [String], cwd: String? = nil) throws -> Data {
     guard let executable else { throw Failure.notFound }
     let process = Process()
