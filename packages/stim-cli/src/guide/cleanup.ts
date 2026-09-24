@@ -89,7 +89,8 @@ SWEEPING FINISHED WORKTREES
   install churn alone does not), unpushed (commits no remote-tracking ref or
   other local branch reaches), initialized submodules, or recently used.
   Idle means no recorded use for --older-than days, 7 without it; a worktree
-  whose last use is unknown is kept.
+  whose last use is unknown is kept. --cache with --worktrees is refused with
+  STIM_BAD_ARG; run them separately.
     stim gc --worktrees --older-than 3            # report only
     stim gc --delete --worktrees --older-than 3   # remove the clean idle ones
   With --delete it runs the \`stim worktree remove\` pipeline, never --force,

@@ -125,7 +125,7 @@ export async function collectGcReport(
       parkedAvds: [],
       caches,
       workspaceOutputs: withWorkspaces ? collectWorkspaceOutputs({ olderThan, now }) : null,
-      worktreeSweep: worktrees ? collectWorktreeSweep({ olderThan, now }) : null,
+      worktreeSweep: null,
       cacheScope: scope,
       olderThan,
       all,
@@ -317,6 +317,13 @@ export async function collectGcReport(
 }
 
 export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}): Promise<void> {
+  if (opts.cache && opts.worktrees) {
+    console.error(chalk.red('--cache acts only on the named caches, and --worktrees sweeps linked worktrees.'));
+    console.error(chalk.dim('Run `stim gc --worktrees` and `stim gc --cache <name>` separately.'));
+    console.error(chalk.red('failed: STIM_BAD_ARG'));
+    process.exitCode = 1;
+    return;
+  }
   const poolError = parkedMaxSetting('ios').error || parkedMaxSetting('android').error;
   if (poolError) {
     console.error(chalk.yellow(`${poolError} ${POOL_SETTING_REMEDY}`));
@@ -402,7 +409,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     },
     deps,
   );
-  if (cache && report.caches.length === 0 && report.workspaceOutputs === null && report.worktreeSweep === null) {
+  if (cache && report.caches.length === 0 && report.workspaceOutputs === null) {
     const names = [...new Set(discoverCaches().map((c) => c.name))];
     console.log(chalk.yellow(`No shared cache carries "${cache}" in its name or directory.`));
     if (names.length) console.log(chalk.dim(`Caches on this machine: ${names.join(', ')}`));

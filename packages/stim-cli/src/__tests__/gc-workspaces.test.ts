@@ -506,6 +506,28 @@ test('gc --worktrees reports each linked worktree, and --delete removes only the
   expect(process.exitCode).toBe(1);
 }, 30_000);
 
+test('gc refuses --cache combined with --worktrees and removes nothing', async () => {
+  const { worktrees } = gitRepoWithWorktrees(['idle']);
+  upsertProject(worktrees.idle!, { metroPort: null });
+  recordWorkspaceUse(worktrees.idle!, new Date(Date.now() - 30 * DAY_MS));
+  const { dir } = builtWorkspace('built', { usedDaysAgo: 30 });
+
+  const originalError = console.error;
+  const errors: string[] = [];
+  console.error = (...args) => errors.push(args.join(' '));
+  let output: string;
+  try {
+    output = await captureLog(() => runGc({ cache: 'workspaces', worktrees: true, delete: true }));
+  } finally {
+    console.error = originalError;
+  }
+  expect(errors.join('\n')).toContain('STIM_BAD_ARG');
+  expect(output).toBe('');
+  expect(process.exitCode).toBe(1);
+  expect(existsSync(worktrees.idle!)).toBe(true);
+  expect(existsSync(join(dir, 'derived-data'))).toBe(true);
+}, 30_000);
+
 test('worktree removal re-checks for new work under its removal locks', async () => {
   const { worktrees } = gitRepoWithWorktrees(['late']);
   const late = worktrees.late!;

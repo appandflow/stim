@@ -510,7 +510,8 @@ workspace keeps its state, logs, devices and ports. See
 - `--worktrees` also reports every clean, idle linked worktree that has a Stim
   workspace, and why each other one is kept. With `--delete` it runs
   `stim worktree remove` without `--force` on each of them. Idle means unused
-  for `--older-than` days, or 7 days without that option. See
+  for `--older-than` days, or 7 days without that option. It cannot be
+  combined with `--cache`. See
   [removing finished worktrees in bulk](./worktrees.md#remove-finished-worktrees-in-bulk).
 
 ## `guide`
