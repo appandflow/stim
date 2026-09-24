@@ -5,8 +5,8 @@ grouped by project, with its Metro port, supervisor health, errors, build cache
 stats, live frames from its iOS simulators and Android emulators, and its CPU
 and resident memory.
 
-It reads Stim state only through `stim status --json`, `stim stats --json`, and
-the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`. Its
+It reads Stim state only through `stim status --json`, `stim stats --json`,
+`stim logs --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`. Its
 actions run the `stim` executable with an argument list, never a shell string,
 in the workspace directory:
 
@@ -27,6 +27,25 @@ shared between processes counts more than once. The toolbar shows free space
 on the volumes holding the repositories, `$STIM_HOME`, and CoreSimulator, and
 what `stim gc --delete` would reclaim; the reclaimable figure needs a Stim
 version with `gc --json`.
+
+## Logs
+
+A workspace's detail view has a **Logs** tab next to its device, and the error
+count on the device wall and in the inspector opens it with **Errors only** on.
+The tab runs `stim logs --json --follow --tail 5000` in the workspace and adds
+the filters you pick: the Metro, App (`client`), Native (`device`) and Build
+sources, a slot, a minimum level, a regular expression search (`--grep`), and
+`--errors`. With every source selected no `--source` is passed, so **Errors
+only** keeps the CLI's default scope, which leaves general device logs out.
+Changing a filter or the workspace restarts the command; leaving the tab or
+quitting the app terminates it.
+
+The list keeps the newest 50,000 records and drops the oldest past that. It
+follows new records until you scroll up, and **Jump to latest** resumes. Each
+row shows a record's first line; select one to read its whole message and
+stack. Command-C or **Copy** copies the selected records, or every loaded
+record when none is selected. **Reveal log folder** opens the workspace's log
+directory from `stim status`.
 
 ## Take over a device
 
@@ -70,7 +89,7 @@ The bundle copies Inter, JetBrains Mono, and the brand artwork from `website/`.
 
 ## Layout
 
-- `Sources/StimKit`: models for the CLI's JSON, the login shell environment, the CLI client, project grouping, warning remedies, the streaming runner, and process, disk and gc usage. Unit-tested.
+- `Sources/StimKit`: models for the CLI's JSON, the login shell environment, the CLI client, project grouping, warning remedies, the streaming runner, `stim logs` records and the follow runner, and process, disk and gc usage. Unit-tested.
 - `Sources/SimulatorFrames`: live simulator frames through CoreSimulator and input through SimulatorKit, both private Apple frameworks. Expect Xcode releases to break it.
 - `Sources/EmulatorFrames`: live emulator frames through the emulator's localhost gRPC `streamScreenshot` call, found through its discovery file, and input through the same endpoint. Emulators Stim booted before it passed `-grpc` show no frames until their next boot.
 - `Sources/StimDesktop`: the SwiftUI app and its brand theme.

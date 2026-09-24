@@ -15,6 +15,8 @@ struct RootView: View {
   @State private var selection: SidebarItem? = .wall
   @State private var projectFilter: Project?
   @State private var focusedDeviceID: String?
+  @State private var detailTab = DetailTab.device
+  @State private var logQuery = LogQuery()
   @ObservedObject private var openRequests = OpenRequests.shared
 
   private let cli: Task<StimCLI, Never>
@@ -70,20 +72,29 @@ struct RootView: View {
     openRequests.simulatorUdid = nil
     selection = .environment(owner.workspace.path)
     focusedDeviceID = owner.device.id
+    detailTab = .device
+  }
+
+  private func openErrors(_ path: String) {
+    selection = .environment(path)
+    detailTab = .logs
+    logQuery.errorsOnly = true
   }
 
   @ViewBuilder private var detail: some View {
     switch selection {
     case .environment(let path):
       if let env = store.payload?.environments.first(where: { $0.path == path }) {
-        WorkspaceDetail(cli: cli, env: env, usage: metrics.usage[env.path], focusedID: $focusedDeviceID)
+        WorkspaceDetail(
+          cli: cli, env: env, usage: metrics.usage[env.path], focusedID: $focusedDeviceID, tab: $detailTab,
+          logQuery: $logQuery, openLogs: { openErrors(env.path) })
       } else {
         EmptyState(title: "Workspace gone", message: "stim status no longer reports this workspace.")
       }
     case .attention:
       AttentionView(store: store)
     default:
-      WallView(store: store, metrics: metrics, project: projectFilter, selection: $selection)
+      WallView(store: store, metrics: metrics, project: projectFilter, selection: $selection, openLogs: openErrors)
     }
   }
 }
