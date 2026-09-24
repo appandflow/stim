@@ -563,11 +563,11 @@ acts on and otherwise a stable code; `detail` is the text the report prints.
 `bytes` is `null` when the size is unknown. `worktreeSweep` is `null` without
 `--worktrees`. With `--delete`, `mode` is `"delete"`, the sections list what
 the run acted on, and `failures` counts the entries it could not delete. A
-nonzero count exits 1. Run `stim gc --json` again to see what is left. A
-`--cache` name that no cache carries, or `--cache` together with `--worktrees`,
-prints `{ "code": "STIM_BAD_ARG", "message": "...", "remedy": "..." }` and exits
-
-1. `stim guide facts gc` lists every section, field and reason code.
+nonzero count exits with status 1. Run `stim gc --json` again to see what is
+left. A `--cache` name that no cache carries, or `--cache` together with
+`--worktrees`, exits with status 1 and prints
+`{ "code": "STIM_BAD_ARG", "message": "...", "remedy": "..." }`.
+`stim guide facts gc` lists every section, field and reason code.
 
 ## `guide`
 
