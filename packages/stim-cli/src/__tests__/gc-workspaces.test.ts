@@ -383,6 +383,19 @@ test('plain gc --delete clears idle workspaces, and --older-than limits it by la
   expect(existsSync(join(busy.dir, 'derived-data'))).toBe(true);
 });
 
+test('a workspace whose project root is on an unmounted volume keeps its build outputs', async () => {
+  const root = '/Volumes/StimTestVolumeThatDoesNotExist/offline-app';
+  const dir = ensureWorkspaceStorage(root);
+  mkdirSync(join(dir, 'derived-data', 'nested'), { recursive: true });
+  writeFileSync(join(dir, 'derived-data', 'nested', 'blob'), 'x');
+  upsertProject(root, { metroPort: 8100 });
+
+  await captureLog(() => runGc({ delete: true }));
+  await captureLog(() => runGc({ delete: true, cache: 'workspaces' }));
+  expect(existsSync(join(dir, 'derived-data', 'nested', 'blob'))).toBe(true);
+  expect(getProject(root)).toBeTruthy();
+});
+
 describe('linked worktree sweep classification', () => {
   const linked = (overrides: Partial<WorktreeFacts> = {}): WorktreeFacts => ({
     source: 'linked',

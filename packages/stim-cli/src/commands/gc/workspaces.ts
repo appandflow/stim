@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, readdirSync, rmSync, statSync } from 'fs';
 import { basename, isAbsolute, join, relative } from 'path';
 import chalk from 'chalk';
-import { formatBytes, isOnMountedVolume, measuredDirectorySize } from '../../fs-util.ts';
+import { formatBytes, isOnMountedVolume, listMountedVolumes, measuredDirectorySize } from '../../fs-util.ts';
 import { isJsonObject, readJsonFile } from '../../json-file.ts';
 import { getConfigDir, isPathPrefix, loadConfig } from '../../workspace/config.ts';
 import { emptyWorkspaceDir, workspaceInUse, withIdleWorkspace } from '../../workspace/in-use.ts';
@@ -223,8 +223,10 @@ export function collectWorkspaceOutputs({
   now: number;
   exclude?: readonly string[];
 }): WorkspaceOutputsReport {
+  const mountedVolumes = listMountedVolumes();
   const entries = listWorkspaceDirs()
     .filter((entry) => !exclude.includes(entry.dir))
+    .filter((entry) => entry.projectRoot === null || isOnMountedVolume(entry.projectRoot, mountedVolumes))
     .map((entry) => Object.assign({}, entry, { paths: outputPaths(entry.dir) }))
     .filter((entry) => entry.paths.length > 0)
     .map(({ paths, ...entry }) => Object.assign({}, entry, { bytes: outputBytes(paths) }))
