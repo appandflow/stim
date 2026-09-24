@@ -18,7 +18,8 @@ npx skills add appandflow/stim
 ```
 
 The installed skill is named `stim`. It is a small discovery router that asks
-the agent to load `stim guide agent` before using Stim. The normal workflow,
+the agent to load `stim guide agent` before using Stim, or `npx stim guide
+agent` when `stim` is not on PATH. The normal workflow,
 ownership rules, destructive-command rules, and routing to detailed topics all
 come from the installed CLI and therefore match its version.
 

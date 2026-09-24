@@ -361,8 +361,9 @@ test('the static skill is only the agent guide router', () => {
   expect(readdirSync(dir).toSorted()).toEqual(['SKILL.md']);
   const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
   const wordCount = skill.split(/\s+/).filter(Boolean).length;
-  expect(wordCount).toBeLessThanOrEqual(100);
-  expect(skill.match(/stim guide agent/g)).toHaveLength(1);
+  expect(wordCount).toBeLessThanOrEqual(110);
+  expect(skill.match(/(?<!npx )stim guide agent/g)).toHaveLength(1);
+  expect(skill.match(/npx stim guide agent/g)).toHaveLength(1);
   expect(skill).toMatch(/Follow the version-matched instructions it prints/);
 
   for (const mutableDetail of [
