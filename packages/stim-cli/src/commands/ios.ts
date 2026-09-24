@@ -40,8 +40,9 @@ import { ensureOwnedDevice } from '../engine/device.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { REMOTE_SESSION_ERROR, binOnPath } from '../engine/device-remote.ts';
 import {
-  DEVICECTL_INSTALL_TIMEOUT_MS,
+  iosDeviceBounds,
   iosPoolCandidates,
+  isWirelessIosDevice,
   iosPoolNoCandidatesRefusal,
   resolveIosPhysicalDevice,
 } from '../engine/ios-device.ts';
@@ -151,7 +152,8 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     .option(
       '--device [udid]',
       "Build the iphoneos slice for a connected iPhone, install it, and launch it, instead of using this workspace's " +
-        'owned simulator. With no UDID, the first connected device this workspace can lease is used. In Debug the app is wired to this ' +
+        'owned simulator. The phone can be cabled or paired over Wi-Fi. With no UDID, the first cabled device this workspace can lease ' +
+        'is used, or a Wi-Fi one when no cabled device is usable. In Debug the app is wired to this ' +
         "workspace's Metro over the LAN. Stim never creates, boots, or deletes a physical device.",
     )
     .option(
@@ -408,7 +410,7 @@ async function runIos(
   if (physical && opts.remote) {
     return fail({
       code: 'STIM_BAD_ARG',
-      message: '--device builds for a phone cabled to this machine, and --remote installs on a remote one.',
+      message: '--device builds for a phone connected to this machine, and --remote installs on a remote one.',
       remedy: 'Pass only one of --device and --remote.',
     });
   }
@@ -498,12 +500,18 @@ async function runIos(
   const limits = d.getConcurrencyLimits();
 
   let physicalDevice: { udid: string; name: string } | null = null;
+  let wireless = false;
   if (physical && typeof deviceFlag !== 'string') {
+    let wirelessIds = new Set<string>();
     const pooled = await d.selectFromPool({
       root,
       platform: PLATFORM,
       idLabel: 'udid',
-      list: () => iosPoolCandidates(d.listIosDevices()).map((entry) => ({ id: entry.udid, name: entry.name })),
+      list: () => {
+        const candidates = iosPoolCandidates(d.listIosDevices());
+        wirelessIds = new Set(candidates.filter(isWirelessIosDevice).map((entry) => entry.udid));
+        return candidates.map((entry) => ({ id: entry.udid, name: entry.name }));
+      },
       noCandidates: () => {
         const resolved = iosPoolNoCandidatesRefusal(d.listIosDevices());
         return { message: resolved.error as string, remedy: resolved.remedy as string };
@@ -522,12 +530,22 @@ async function runIos(
       });
     }
     physicalDevice = { udid: pooled.candidate.id, name: pooled.candidate.name ?? pooled.candidate.id };
+    wireless = wirelessIds.has(pooled.candidate.id);
   } else if (physical) {
     const resolved = resolveIosPhysicalDevice(typeof deviceFlag === 'string' ? deviceFlag : null, d.listIosDevices());
     if (!resolved.udid) {
       return fail({ code: 'STIM_NO_DEVICE', message: resolved.error!, remedy: resolved.remedy! });
     }
     physicalDevice = { udid: resolved.udid, name: resolved.name ?? resolved.udid };
+    wireless = resolved.wireless === true;
+  }
+  if (wireless) {
+    note(
+      phaseLine(
+        'device',
+        `${physicalDevice!.name} is paired over Wi-Fi, so the install and launch go over the network and take longer than over a cable`,
+      ),
+    );
   }
   if (!physical) {
     const capacity = d.checkDeviceCapacity({
@@ -769,7 +787,7 @@ async function runIos(
         idLabel: 'udid',
         waitSeconds,
         noWait,
-        installBoundMs: DEVICECTL_INSTALL_TIMEOUT_MS,
+        installBoundMs: iosDeviceBounds(wireless).installMs,
         appId: artifact.bundleId ?? proj?.bundleId ?? null,
         holderAppId: (holder: string) => d.getProject(holder)?.bundleId ?? null,
         now: d.now,
@@ -815,6 +833,7 @@ async function runIos(
         device,
         udid,
         physical,
+        wireless,
         lanAddress,
         lanOriginUrl,
         remoteDevice,

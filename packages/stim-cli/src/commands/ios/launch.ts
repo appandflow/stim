@@ -22,7 +22,7 @@ import {
   type LaunchErrorRecord,
   stepTimer,
 } from '../../command-output.ts';
-import { localNetworkPending, DEVICECTL_INSTALL_TIMEOUT_MS, LAUNCH_PROBE_TIMEOUT_MS } from '../../engine/ios-device.ts';
+import { localNetworkPending, iosDeviceBounds } from '../../engine/ios-device.ts';
 import { launchErrorPreview } from '../../diagnostics/launch-error-preview.ts';
 import { MODE_BARE, MODE_EXPO } from '../../supervisor/state.ts';
 import type { VerifyLaunchResultLike, DeviceLike, IosBootLike, FailArgs } from './types.ts';
@@ -348,6 +348,7 @@ interface FinishIosRunArgs {
   device: DeviceLike;
   udid: string;
   physical: boolean;
+  wireless: boolean;
   lanAddress: string | null;
   lanOriginUrl: string | null;
   remoteDevice: ReturnType<IosDeps['remoteIosDeps']> | null;
@@ -476,6 +477,7 @@ export async function finishIosRun({
   device,
   udid,
   physical,
+  wireless,
   lanAddress,
   lanOriginUrl,
   remoteDevice,
@@ -551,11 +553,12 @@ export async function finishIosRun({
   let launchedAt = d.now();
 
   if (physical) {
-    const lostBeforeInstall = raiseLeaseFor(DEVICECTL_INSTALL_TIMEOUT_MS, true);
+    const bounds = iosDeviceBounds(wireless);
+    const lostBeforeInstall = raiseLeaseFor(bounds.installMs, true);
     if (lostBeforeInstall) return fail(lostBeforeInstall);
     await d.stopPreviousCollector({ root, note });
     const installTimer = stepTimer(d.now);
-    const installed = d.installIosDeviceApp({ udid, appPath: appPath!, bundleId });
+    const installed = d.installIosDeviceApp({ udid, appPath: appPath!, bundleId, wireless });
     if (installed?.failed) {
       dropSwapDir();
       return fail({
@@ -572,7 +575,7 @@ export async function finishIosRun({
     }
     dropSwapDir();
 
-    raiseLeaseFor(COLLECTOR_EXIT_WAIT_MS + LAUNCH_PROBE_TIMEOUT_MS, false);
+    raiseLeaseFor(COLLECTOR_EXIT_WAIT_MS + bounds.launchMs, false);
     const payloadUrl = scheme && metroPort !== null && lanAddress ? devClientUrl(scheme, metroPort, lanAddress) : null;
     const launchTimer = stepTimer(d.now);
     launchedAt = d.now();
@@ -612,6 +615,7 @@ export async function finishIosRun({
       bundleId: bundleId!,
       appName: appName ?? bundleId!,
       collectorPid: collector.pid,
+      wireless,
       readRecords: () =>
         readCollectorRecords(logsDir).filter(
           (entry) => Number(entry.ts) >= launchedAt && (entry.slot ?? 'default') === (slot ?? 'default'),
@@ -619,7 +623,7 @@ export async function finishIosRun({
     });
     if (started.failed || !started.pid) {
       return fail({
-        code: 'STIM_LAUNCH_FAILED',
+        code: started.code ?? 'STIM_LAUNCH_FAILED',
         message: started.reason ?? `${bundleId} did not start on ${udid}.`,
         remedy: started.remedy ?? null,
         lines: started.lines ?? [],

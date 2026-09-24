@@ -50,7 +50,12 @@ import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { COMPILATION_CACHE_UNAVAILABLE, type BuildIosResult } from '../engine/xcode.ts';
 import { RELEASE_VERIFY_WAIT_MS } from '../engine/app-install.ts';
-import { DEVICECTL_INSTALL_TIMEOUT_MS, LAUNCH_PROBE_TIMEOUT_MS } from '../engine/ios-device.ts';
+import {
+  DEVICECTL_INSTALL_TIMEOUT_MS,
+  LAUNCH_PROBE_TIMEOUT_MS,
+  WIRELESS_INSTALL_TIMEOUT_MS,
+  WIRELESS_LAUNCH_PROBE_TIMEOUT_MS,
+} from '../engine/ios-device.ts';
 import type { RecordStatsResult, StatsRun } from '../engine/stats.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
@@ -4493,7 +4498,7 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     reserve();
     const { errs, exitCode } = await run({ device: '00008120-000A11223C44201E' }, connected([{ udid: PHONE }]));
     expect(exitCode).toBe(1);
-    expect(errs.join('\n')).toMatch(/is not connected\. devicectl reports these cabled devices/);
+    expect(errs.join('\n')).toMatch(/is not connected\. devicectl reports these devices/);
   });
 
   test('the one connected phone is used, never owned, and never booted', async () => {
@@ -5292,6 +5297,34 @@ describe('ios --device: the lease on the phone', () => {
     const { lease, raises } = fakeLease();
     await run({ device: true }, leaseDeps(lease));
     expect(raises).toEqual([DEVICECTL_INSTALL_TIMEOUT_MS, 2000 + LAUNCH_PROBE_TIMEOUT_MS, DEBUG_VERIFY_STEP_MS]);
+  });
+
+  test.each([
+    ['named by UDID', PHONE],
+    ['picked from the pool', true],
+  ])('a Wi-Fi phone %s says so once and gets the Wi-Fi bounds for install and launch', async (_how, device) => {
+    reserve();
+    const { lease, raises } = fakeLease();
+    let installBoundMs: unknown = null;
+    const [phone] = connected().listIosDevices();
+    const wireless = [{ ...phone!, transportType: 'localNetwork' }];
+    const { errs, exitCode, calls } = await run(
+      { device },
+      {
+        ...leaseDeps(lease),
+        listIosDevices: () => wireless,
+        acquireRunLease: async (args: { installBoundMs: number }) => {
+          installBoundMs = args.installBoundMs;
+          return { status: 'leased', kind: 'run', expiresAt: lease.expiresAt };
+        },
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(errs.filter((line) => line.includes('paired over Wi-Fi'))).toHaveLength(1);
+    expect(installBoundMs).toBe(WIRELESS_INSTALL_TIMEOUT_MS);
+    expect(raises.slice(0, 2)).toEqual([WIRELESS_INSTALL_TIMEOUT_MS, 2000 + WIRELESS_LAUNCH_PROBE_TIMEOUT_MS]);
+    expect(calls.args.installIosDeviceApp).toMatchObject({ wireless: true });
+    expect(calls.args.awaitIosDeviceLaunch).toMatchObject({ wireless: true });
   });
 
   test('a release build raises for the release probe instead of the bundle deadline', async () => {

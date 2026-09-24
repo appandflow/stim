@@ -218,7 +218,7 @@ test('the errors topic documents every code the build commands and the iOS signi
   ];
   const sources = [
     ...commandFiles.map((file) => readFileSync(new URL(`../commands/${file}`, import.meta.url), 'utf-8')),
-    ...['engine/ios-profile.ts', 'engine/ios-signing.ts', 'engine/eas-build.ts'].map((f) =>
+    ...['engine/ios-profile.ts', 'engine/ios-signing.ts', 'engine/eas-build.ts', 'engine/ios-device.ts'].map((f) =>
       readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8'),
     ),
   ].join('\n');

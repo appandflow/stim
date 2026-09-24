@@ -1254,6 +1254,17 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   \`android --device\`, it leases the phone for the run
   (\`guide lifecycle lease\`).
 
+  AN IPHONE PAIRED OVER WI-FI is a device too: devicectl reports its
+  transportType as localNetwork. A UDID that names one is accepted, and the
+  run prints one \`device\` line saying the install and launch go over Wi-Fi.
+  With no UDID, a healthy cabled iPhone always wins; a Wi-Fi one is taken
+  only when no cabled one is paired with Developer Mode on. Over Wi-Fi the
+  install may take 15 minutes instead of 5 and the launch 120 seconds
+  instead of 45, and the lease is raised to match. A Wi-Fi install or launch
+  that times out or loses the phone fails with
+  STIM_DEVICE_WIRELESS_FAILED, and the remedy is the cable. Metro is
+  unaffected: a Debug app reaches it over the LAN either way.
+
   \`stop\` releases this workspace's leases and stops its log collectors.
   On a physical iPhone that also closes the app, because its collector owns
   the devicectl launch session. \`gc --delete\` removes expired lease files;

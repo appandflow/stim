@@ -17,6 +17,7 @@ import {
   localNetworkPending,
   parseDevicectlDevices,
   parseDeviceProcesses,
+  iosPoolCandidates,
   iosPoolNoCandidatesRefusal,
   resolveIosPhysicalDevice,
   verifyIosDeviceReleaseLaunch,
@@ -116,7 +117,7 @@ test('resolveIosPhysicalDevice names what is connected when the requested udid i
   expect(refusal.error).toContain(OTHER);
   expect(refusal.error).toContain(PHONE);
   const empty = resolveIosPhysicalDevice(OTHER, []);
-  expect(empty.error).toMatch(/no cabled device at all/);
+  expect(empty.error).toMatch(/no device over a cable or Wi-Fi at all/);
 });
 
 test('resolveIosPhysicalDevice refuses an unpaired phone and a phone without Developer Mode', () => {
@@ -151,10 +152,13 @@ test('iosPoolNoCandidatesRefusal names each unhealthy cabled device with its own
   expect(refusal.remedy).toMatch(/Trust/);
 });
 
-test('iosPoolNoCandidatesRefusal falls back to the resolver when nothing is cabled', () => {
+test('iosPoolNoCandidatesRefusal keeps the health remedy for an unhealthy wireless phone', () => {
   expect(iosPoolNoCandidatesRefusal([])).toEqual(resolveIosPhysicalDevice(null, []));
-  const wireless = entry({ transportType: 'localNetwork' });
-  expect(iosPoolNoCandidatesRefusal([wireless])).toEqual(resolveIosPhysicalDevice(null, [wireless]));
+  const refusal = iosPoolNoCandidatesRefusal([
+    entry({ transportType: 'localNetwork', developerModeStatus: 'disabled' }),
+  ]);
+  expect(refusal.udid).toBeUndefined();
+  expect(refusal.remedy).toMatch(/Developer Mode/);
 });
 
 test('lanCandidates orders en0 first and the remaining en* by index', () => {
@@ -222,19 +226,40 @@ test('hostLanCandidates is lanCandidates over the host os.networkInterfaces()', 
   }
 });
 
-test('a phone reachable only over the network is refused: v1 installs over the cable', () => {
+test('a phone paired over Wi-Fi is accepted by UDID and marked wireless', () => {
   const wireless = entry({ transportType: 'localNetwork' });
-  const refused = resolveIosPhysicalDevice(null, [wireless]);
-  expect(refused.udid).toBeUndefined();
-  expect(refused.error).toContain('localNetwork');
-  expect(refused.remedy).toMatch(/cable/);
-
-  const named = resolveIosPhysicalDevice(PHONE, [wireless]);
-  expect(named.udid).toBeUndefined();
-  expect(named.error).toContain('not a cable');
+  expect(resolveIosPhysicalDevice(PHONE, [wireless])).toEqual({ udid: PHONE, name: 'Test Phone', wireless: true });
+  expect(resolveIosPhysicalDevice(null, [wireless])).toEqual({ udid: PHONE, name: 'Test Phone', wireless: true });
 });
 
-test('a wireless phone is not a candidate, so a single cabled one is still unambiguous', () => {
+test('an unpaired or Developer-Mode-off Wi-Fi phone is still refused with the existing remedies', () => {
+  const unpaired = resolveIosPhysicalDevice(PHONE, [
+    entry({ transportType: 'localNetwork', pairingState: 'unpaired' }),
+  ]);
+  expect(unpaired.udid).toBeUndefined();
+  expect(unpaired.remedy).toMatch(/Trust/);
+  const noDevMode = resolveIosPhysicalDevice(PHONE, [
+    entry({ transportType: 'localNetwork', developerModeStatus: 'disabled' }),
+  ]);
+  expect(noDevMode.udid).toBeUndefined();
+  expect(noDevMode.remedy).toMatch(/Developer Mode/);
+});
+
+test('a simulator devicectl lists as sameMachine is never a phone candidate', () => {
+  const simulator = entry({
+    udid: OTHER,
+    name: 'iPhone 18 Pro',
+    transportType: 'sameMachine',
+    developerModeStatus: null,
+  });
+  expect(resolveIosPhysicalDevice(null, [simulator]).error).toMatch(/No physical iOS device/);
+  expect(iosPoolCandidates([simulator])).toEqual([]);
+  const named = resolveIosPhysicalDevice(OTHER, [simulator]);
+  expect(named.udid).toBeUndefined();
+  expect(named.error).toContain('sameMachine');
+});
+
+test('a cabled phone wins over a Wi-Fi one when none is named', () => {
   expect(
     resolveIosPhysicalDevice(null, [entry({ udid: OTHER, name: 'Wireless', transportType: 'localNetwork' }), entry()]),
   ).toEqual({ udid: PHONE, name: 'Test Phone' });
@@ -496,6 +521,60 @@ test('collectorRecordsFor ignores the predecessor a fresh run just signalled', (
   expect(collectorRecordsFor(records, null)).toEqual([]);
 });
 
+function timedOut(): Error {
+  return Object.assign(new Error('Command timed out'), { code: 'ETIMEDOUT' });
+}
+
+test('a Wi-Fi install that times out or loses the phone maps to the wireless code, with the cable as the remedy', () => {
+  const timeouts: Array<number | undefined> = [];
+  const failures = [timedOut(), new Error('Command failed: xcrun devicectl\nThe device was disconnected.')];
+  for (const failure of failures) {
+    setExecutor({
+      runFile(_file: string, _args: string[], opts: { timeoutMs?: number } = {}) {
+        timeouts.push(opts.timeoutMs);
+        throw failure;
+      },
+    });
+    try {
+      const result = installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: null, wireless: true });
+      expect(result.code).toBe('STIM_DEVICE_WIRELESS_FAILED');
+      expect(result.reason).toContain('Wi-Fi');
+      expect(result.remedy).toMatch(/cable/);
+    } finally {
+      resetExecutor();
+    }
+  }
+  expect(timeouts).toEqual([900_000, 900_000]);
+});
+
+test('a Wi-Fi install refused for a known cause keeps that cause, and a cabled timeout stays an install failure', () => {
+  setExecutor({
+    runFile() {
+      throw new Error('The device is locked.');
+    },
+  });
+  try {
+    const locked = installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', wireless: true });
+    expect(locked.code).toBe('STIM_INSTALL_FAILED');
+    expect(locked.remedy).toBe(iosInstallRemedy('locked', { udid: PHONE, bundleId: null }));
+  } finally {
+    resetExecutor();
+  }
+  const timeouts: Array<number | undefined> = [];
+  setExecutor({
+    runFile(_file: string, _args: string[], opts: { timeoutMs?: number } = {}) {
+      timeouts.push(opts.timeoutMs);
+      throw timedOut();
+    },
+  });
+  try {
+    expect(installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app' }).code).toBe('STIM_INSTALL_FAILED');
+  } finally {
+    resetExecutor();
+  }
+  expect(timeouts).toEqual([300_000]);
+});
+
 test('awaitIosDeviceLaunch returns the device pid as soon as the phone reports it', async () => {
   const pids = [null, null, 767];
   const result = await awaitIosDeviceLaunch({
@@ -552,6 +631,40 @@ test('a launch nothing reports at all times out with the generic devicectl remed
   });
   expect(result.failed).toBe(true);
   expect(result.remedy).toMatch(/devicectl device process launch --console/);
+});
+
+test('a Wi-Fi launch that times out or drops the console maps to the wireless code', async () => {
+  let clock = 0;
+  const timedOutLaunch = await awaitIosDeviceLaunch({
+    udid: PHONE,
+    bundleId: 'com.example.app',
+    appName: 'Fixture',
+    collectorPid: 99,
+    readRecords: () => [],
+    probe: () => null,
+    wireless: true,
+    now: () => (clock += 60_000),
+    sleep: async () => {},
+  });
+  expect(timedOutLaunch).toMatchObject({ failed: true, code: 'STIM_DEVICE_WIRELESS_FAILED' });
+  expect(timedOutLaunch.reason).toMatch(/within 120s of the launch over Wi-Fi/);
+  expect(timedOutLaunch.remedy).toMatch(/cable/);
+
+  const dropped = await awaitIosDeviceLaunch({
+    udid: PHONE,
+    bundleId: 'com.example.app',
+    appName: 'Fixture',
+    collectorPid: 99,
+    readRecords: () => [
+      { ts: 1, event: 'collector_started', msg: 'device log collector pid 99 launching com.example.app on device X' },
+      { ts: 2, msg: 'The connection was interrupted.' },
+      { ts: 3, event: 'collector_failed', msg: 'the devicectl console ended with exit code 1' },
+    ],
+    probe: () => null,
+    wireless: true,
+    sleep: async () => {},
+  });
+  expect(dropped).toMatchObject({ failed: true, code: 'STIM_DEVICE_WIRELESS_FAILED' });
 });
 
 test('verifyIosDeviceReleaseLaunch re-probes the phone rather than a host pid', async () => {
