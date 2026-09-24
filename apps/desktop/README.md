@@ -41,7 +41,10 @@ precise deltas does not scroll. Android input is not supported yet.
 
 - macOS 14 or later and Xcode 27, selected with `xcode-select` or `DEVELOPER_DIR`. Stim Desktop falls back to `/Applications/Xcode.app` when the selected developer directory has no simulator support.
 - `stim` on the login shell's `PATH`, or `STIM_BIN` set to its path. The cleanup
-  preview needs a `stim` with `gc --json`.
+  preview needs a `stim` with `gc --json`. At launch the app reads the
+  environment of `zsh -lic` once and runs every `stim` command with it, so
+  commands see the same `PATH` and variables such as `ANDROID_HOME` as a
+  terminal.
 
 ## Develop
 
@@ -62,7 +65,7 @@ The bundle copies Inter, JetBrains Mono, and the brand artwork from `website/`.
 
 ## Layout
 
-- `Sources/StimKit`: models for the CLI's JSON, the CLI client, project grouping, warning remedies, the streaming runner, and process, disk and gc usage. Unit-tested.
+- `Sources/StimKit`: models for the CLI's JSON, the login shell environment, the CLI client, project grouping, warning remedies, the streaming runner, and process, disk and gc usage. Unit-tested.
 - `Sources/SimulatorFrames`: live simulator frames through CoreSimulator and input through SimulatorKit, both private Apple frameworks. Expect Xcode releases to break it.
 - `Sources/EmulatorFrames`: live emulator frames through the emulator's localhost gRPC `streamScreenshot` call, found through its discovery file. Emulators Stim booted before it passed `-grpc` show no frames until their next boot.
 - `Sources/StimDesktop`: the SwiftUI app and its brand theme.

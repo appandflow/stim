@@ -27,15 +27,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct StimDesktopApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+  private let cli: Task<StimCLI, Never>
 
   init() {
     BrandAssets.registerFonts()
     CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
+    cli = Task.detached {
+      StimCLI(environment: await LoginShell.environment() ?? ProcessInfo.processInfo.environment)
+    }
   }
 
   var body: some Scene {
     WindowGroup("Stim") {
-      RootView()
+      RootView(cli: cli)
         .frame(minWidth: 1100, minHeight: 720)
     }
     .windowToolbarStyle(.unified(showsTitle: false))

@@ -3,6 +3,7 @@ import StimKit
 import SwiftUI
 
 struct WorkspaceDetail: View {
+  var cli: Task<StimCLI, Never>
   var env: Workspace
   var usage: UsageHistory?
   @Binding var focusedID: String?
@@ -51,7 +52,8 @@ struct WorkspaceDetail: View {
     .navigationTitle(env.names.title)
     .task(id: env.path) {
       let path = env.path
-      stats = await Task.detached { try? StimCLI.stats(workspace: path) }.value
+      let cli = await cli.value
+      stats = await Task.detached { try? cli.stats(workspace: path) }.value
     }
   }
 }
