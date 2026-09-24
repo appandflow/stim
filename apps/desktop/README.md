@@ -10,7 +10,7 @@ actions run the `stim` executable with an argument list, never a shell string,
 in the workspace directory:
 
 - Needs attention: preview `stim gc --json`, then run `stim gc --delete` after a
-  confirmation; `stim worktree warm` for an unwarmed worktree; `stim stop` or
+  confirmation; `stim start` for a worktree with no environment; `stim stop` or
   `stim android` for a status warning. Each row can also copy its command.
 - Workspace inspector: `stim stop`, and `stim worktree remove` after a
   confirmation that names the worktree and its branch.

@@ -15,7 +15,11 @@ FACTS CONTRACT
 \`gc\`, and \`device lock\`/\`device unlock\` each print exactly ONE line of JSON on
 stdout for \`--json\`. Every other line goes to stderr, so it is always safe
 to pipe. \`logs --json\` is the one exception: it is NDJSON, one record per
-line by design (see \`guide logs\`), not this single-payload contract.`,
+line by design (see \`guide logs\`), not this single-payload contract.
+
+status's unprovisionedWorktrees lists this repository's linked worktrees with
+no Stim environment. \`worktree warm\` does not create one; \`start\`, \`ios\`,
+\`android\` and \`doctor\` register it.`,
   sections: {
     payloads: {
       summary: 'every field of the start, ios, android and reload payloads, the error contract, the device rules',

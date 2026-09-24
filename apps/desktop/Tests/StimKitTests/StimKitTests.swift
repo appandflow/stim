@@ -78,7 +78,7 @@ import Testing
   }
 
   @Test func quotesPathsForTheShell() {
-    #expect(warmCommand(worktree: "/Users/dev/it's here").shellLine == "cd '/Users/dev/it'\\''s here' && stim worktree warm")
+    #expect(startCommand(worktree: "/Users/dev/it's here").shellLine == "cd '/Users/dev/it'\\''s here' && stim start")
   }
 }
 
