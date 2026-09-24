@@ -287,6 +287,9 @@ test('ignored inventory and warm copying still find the target file when raw ls-
     git('git init -q');
     git('git config user.email test@example.com');
     git('git config user.name test');
+    // Git for Windows refuses paths past the legacy 260-char MAX_PATH unless this
+    // is set; the reused directory names below push paths past that limit.
+    git('git config core.longpaths true');
 
     writeFileSync(join(root, 'README.md'), 'hello');
     writeFileSync(join(root, '.gitignore'), '*.ignoreme\n.env\n');
