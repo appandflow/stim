@@ -148,7 +148,7 @@ describe('the re-seal primitive against the real codesign and security', { timeo
     expect('lastLines' in result && result.lastLines.join(' ')).toMatch(/Missing\.app/);
   });
 
-  test('readEmbeddedProfile decodes a real CMS-wrapped profile through security cms -D', () => {
+  test('readEmbeddedProfile decodes a real CMS-wrapped profile without importing its signer into the keychain', () => {
     const exec = getExecutor();
     const key = join(dir, 'signer.key');
     const pem = join(dir, 'signer.pem');
@@ -191,6 +191,12 @@ describe('the re-seal primitive against the real codesign and security', { timeo
     expect(read.profile?.provisionedDevices).toContain(PHONE);
     expect(read.profile?.expirationDate?.toISOString()).toBe('2027-06-01T12:00:00.000Z');
     expect(certificateCommonName(read.profile?.certificates[0])).toBe(JANE);
+    const sha1 = exec
+      .runFile('openssl', ['x509', '-noout', '-fingerprint', '-sha1', '-in', pem])
+      .replace(/^.*=/, '')
+      .replace(/:/g, '')
+      .trim();
+    expect(exec.runFile('security', ['find-certificate', '-a', '-Z'])).not.toContain(sha1);
   }, 60_000);
 
   test('an app with no embedded.mobileprovision reads as absent rather than throwing', () => {
@@ -326,7 +332,7 @@ describe('the re-seal primitive against the real codesign and security', { timeo
       resetExecutor();
     }
     expect(gated).toMatchObject({ ok: true });
-    expect(calls.some((c) => c.includes('cms'))).toBe(true);
+    expect(calls.some((c) => c.includes('smime'))).toBe(true);
     expect(calls.some((c) => c.includes('find-identity'))).toBe(false);
     expect(sealIsValid()).toBe(false);
   }, 60_000);

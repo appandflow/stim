@@ -299,7 +299,7 @@ export function profileGate(input: SigningGateInput): ProfileGateResult {
     return {
       ok: false,
       code: SIGNING_CODES.noProfile,
-      reason: "`security cms -D` could not decode the app bundle's embedded.mobileprovision.",
+      reason: "`openssl smime` could not decode the app bundle's embedded.mobileprovision.",
       remedy: `The profile inside the app is corrupt. Delete the build cache entry with \`stim gc --delete\`, then ${XCODE_STEP}`,
     };
   }

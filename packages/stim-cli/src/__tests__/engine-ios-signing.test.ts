@@ -30,7 +30,7 @@ function profile(name = 'development-profile.plist'): ProvisioningProfile {
 const BEFORE_EXPIRY = Date.parse('2026-09-01T00:00:00Z');
 const IDENTITIES: SigningIdentity[] = parseSigningIdentities(fixture('find-identity.txt'));
 
-test('parsePlist reads the container types security cms -D emits', () => {
+test('parsePlist reads the container types a decoded profile contains', () => {
   const value = parsePlist(
     '<plist version="1.0"><dict><key>a</key><string>x &amp; y</string>' +
       '<key>n</key><integer>7</integer><key>r</key><real>1.5</real>' +
