@@ -1,13 +1,12 @@
-import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { readJsonObject } from '../json-file.ts';
 import { pidExists } from '../metro.ts';
 import { gateMetroOrigin, REMOTE_METRO_WRONG } from './metro-gate.ts';
-import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
+import { workspaceDir, workspaceId, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { clearRemoteSession, readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
-import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace-state.ts';
+import { ownedDeviceLabel } from '../workspace/project.ts';
 import {
   acceptAlertArgs,
   closeArgs,
@@ -426,7 +425,6 @@ function remoteDeviceDeps(ctx: RemoteContext) {
 
 export async function resolveRemoteContext({
   root,
-  label,
   backend,
   platform = 'ios',
   easBin,
@@ -435,7 +433,6 @@ export async function resolveRemoteContext({
   maxDurationMinutes = null,
 }: {
   root: string;
-  label: string;
   backend: RemoteDeviceBackend;
   platform?: 'ios' | 'android';
   easBin: string | null;
@@ -494,7 +491,8 @@ export async function resolveRemoteContext({
   return {
     ctx: {
       root,
-      label: workspaceRemoteLabel(root, label),
+      // agent-device keys its local connection state by session name.
+      label: `${ownedDeviceLabel(root)}-${workspaceId(root)}`,
       backend,
       platform,
       easBin: easBin ?? '',
@@ -504,22 +502,6 @@ export async function resolveRemoteContext({
       existingDaemon,
     },
   };
-}
-
-// Every worktree of a repository shares one project label, and agent-device keys
-// its local connection state by session name, so each workspace suffixes its own.
-// A session recorded without one keeps the plain label: its remote agent-device
-// session stays bound to the name it was opened under.
-function workspaceRemoteLabel(root: string, label: string): string {
-  const current = readWorkspaceState(root)?.remoteLabel;
-  if (typeof current === 'string' && current) return current;
-  if (readRemoteSession(root)) return label;
-  const state = updateWorkspaceState(root, (prev) =>
-    typeof prev.remoteLabel === 'string' && prev.remoteLabel
-      ? prev
-      : { ...prev, remoteLabel: `${label}-${randomUUID()}` },
-  );
-  return state.remoteLabel as string;
 }
 
 export function binOnPath(bin: string): boolean {

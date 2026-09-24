@@ -10,7 +10,6 @@ export interface WorkspaceState {
   lastBuild?: Record<string, unknown>;
   launches?: Record<string, unknown>;
   remoteDevice?: Record<string, unknown>;
-  remoteLabel?: string;
   metroTunnel?: Record<string, unknown>;
   [key: string]: unknown;
 }
