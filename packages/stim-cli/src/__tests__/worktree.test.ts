@@ -276,49 +276,57 @@ test('listCarryableIgnoredEntries fails closed when Git cannot list worktrees', 
   );
 });
 
-test('ignored inventory and warm copying still find the target file when raw ls-files output exceeds 1MB', () => {
-  const base = mkdtempSync(join(tmpdir(), 'stim-test-bigignore-'));
-  const root = join(base, 'repo');
-  const target = join(base, 'target');
-  try {
-    mkdirSync(root, { recursive: true });
-    mkdirSync(target, { recursive: true });
-    const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
-    git('git init -q');
-    git('git config user.email test@example.com');
-    git('git config user.name test');
+const WARM_1MB_TIMEOUT_MS = process.platform === 'win32' ? 120_000 : 30_000;
 
-    writeFileSync(join(root, 'README.md'), 'hello');
-    writeFileSync(join(root, '.gitignore'), '*.ignoreme\n.env\n');
-    git('git add README.md .gitignore');
-    git('git commit -q -m init');
-    execFileSync('git', ['-C', root, 'worktree', 'add', '-qb', 'copy-target', target]);
+test(
+  'ignored inventory and warm copying still find the target file when raw ls-files output exceeds 1MB',
+  () => {
+    const base = mkdtempSync(join(tmpdir(), 'stim-test-bigignore-'));
+    const root = join(base, 'repo');
+    const target = join(base, 'target');
+    try {
+      mkdirSync(root, { recursive: true });
+      mkdirSync(target, { recursive: true });
+      const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
+      git('git init -q');
+      git('git config user.email test@example.com');
+      git('git config user.name test');
 
-    const padding = 'x'.repeat(200);
-    for (let i = 0; i < 6000; i++) {
-      writeFileSync(join(root, `bloat-${i}-${padding}.ignoreme`), '');
+      writeFileSync(join(root, 'README.md'), 'hello');
+      writeFileSync(join(root, '.gitignore'), '*.ignoreme\n.env\n');
+      git('git add README.md .gitignore');
+      git('git commit -q -m init');
+      execFileSync('git', ['-C', root, 'worktree', 'add', '-qb', 'copy-target', target]);
+
+      const padding = 'x'.repeat(200);
+      for (let i = 0; i < 6000; i++) {
+        writeFileSync(join(root, `bloat-${i}-${padding}.ignoreme`), '');
+      }
+
+      mkdirSync(join(root, 'apps/mobile'), { recursive: true });
+      writeFileSync(join(root, 'apps/mobile/.env'), 'SECRET=1');
+
+      const rawBytes = parseInt(
+        execSync(`git -C "${root}" ls-files --others --ignored --exclude-standard | wc -c`, {
+          encoding: 'utf-8',
+        }).trim(),
+        10,
+      );
+      expect(rawBytes > 1024 * 1024).toBeTruthy();
+
+      const ignored = listGitignoredEntries(root);
+      expect(ignored.includes('apps')).toBeTruthy();
+
+      const { copied, failed } = cloneIgnoredEntries({ root, target, patterns: ['bloat-*.ignoreme'] });
+      expect(copied).toEqual(['apps']);
+      expect(failed).toEqual([]);
+      expect(existsSync(join(target, 'apps/mobile/.env'))).toBe(true);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
     }
-
-    mkdirSync(join(root, 'apps/mobile'), { recursive: true });
-    writeFileSync(join(root, 'apps/mobile/.env'), 'SECRET=1');
-
-    const rawBytes = parseInt(
-      execSync(`git -C "${root}" ls-files --others --ignored --exclude-standard | wc -c`, { encoding: 'utf-8' }).trim(),
-      10,
-    );
-    expect(rawBytes > 1024 * 1024).toBeTruthy();
-
-    const ignored = listGitignoredEntries(root);
-    expect(ignored.includes('apps')).toBeTruthy();
-
-    const { copied, failed } = cloneIgnoredEntries({ root, target, patterns: ['bloat-*.ignoreme'] });
-    expect(copied).toEqual(['apps']);
-    expect(failed).toEqual([]);
-    expect(existsSync(join(target, 'apps/mobile/.env'))).toBe(true);
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-}, 30_000);
+  },
+  WARM_1MB_TIMEOUT_MS,
+);
 
 test('removeWorktree runs git via runFile (no shell) from another checkout, with --force only when asked', () => {
   const path = '/tmp/my worktree/repo';

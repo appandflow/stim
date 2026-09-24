@@ -26,13 +26,11 @@ import {
 } from '../../cache/build-cache.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
 import {
-  takeoverLine,
-  WAIT_CEILING_MS,
+  waitForSharedBuild,
   type acquireBuildLock,
   type releaseBuildLock,
   type waitForBuild as waitForOtherBuild,
   type BuildLockHandle,
-  type WaitForBuildResult,
 } from '../../engine/build-lock.ts';
 import type { acquireBuildSlot, releaseBuildSlot, BuildSlotHandle } from '../../engine/build-slots.ts';
 import { resolveKeystore, type swapApkBundle } from '../../engine/apk-swap.ts';
@@ -416,102 +414,34 @@ export async function acquireAndroidArtifact(
 
   let waitedForBuild: WaitedForBuild | null = null;
   let releasedWait: { facts: WaitedForBuild; who: string } | null = null;
-  async function waitForSharedBuild(): Promise<boolean> {
-    if (!useBuildCache) return true;
-    const waitStarted = now();
-    let failedHolder: BuildLockHandle['held'];
-    while (!apkPath) {
-      let attempt: BuildLockHandle | null = null;
-      try {
-        attempt = acquireLock({ platform: PLATFORM, key: cacheKey, root, logFile: buildLog });
-      } catch (err) {
-        const refusal = claimFailure(err, 'stim android');
-        if (refusal) {
-          phaseFailure = fail(refusal.code, refusal.message, refusal.remedy, { lastBuildStatus: true });
-          return false;
-        }
-        phase(
-          'build',
-          chalk.yellow(`could not take the build lock: ${(err as Error)?.message || err}; building anyway`),
-        );
-      }
-
-      if (attempt?.acquired) {
-        buildLock = attempt;
-        const previous = attempt.tookOver ?? failedHolder;
-        if (previous) phase('build', chalk.yellow(takeoverLine(previous)));
-        break;
-      } else if (attempt?.held) {
-        releasedWait = null;
-        const holder = attempt.held;
-        const who = holder.projectRoot || 'another workspace';
-        phase(
-          'build',
-          `${who} is already building ${shortHash(hash)} (pid ${holder.pid})` +
-            `${holder.logFile ? ` -- tail ${holder.logFile}` : ''} -- stim guide lifecycle concurrency`,
-        );
-
-        let waited: WaitForBuildResult | null = null;
-        try {
-          const ceilingMs = WAIT_CEILING_MS - (now() - waitStarted);
-          if (ceilingMs <= 0) {
-            throw Object.assign(
-              new Error(
-                `Waited ${formatDuration(now() - waitStarted)} for shared builds without an artifact; ${who} (pid ${holder.pid}) holds ${attempt.path}.`,
-              ),
-              {
-                code: 'STIM_BUILD_WAIT_TIMEOUT',
-                lockPath: attempt.path,
-              },
-            );
-          }
-          waited = await waitForBuild({ platform: PLATFORM, key: cacheKey, out, ceilingMs });
-        } catch (err) {
-          const refusal = claimFailure(err, 'stim android');
-          if (refusal) {
-            phaseFailure = fail(refusal.code, refusal.message, refusal.remedy, { lastBuildStatus: true });
-            return false;
-          }
-          const wtErr = err as Error & { code?: string; lockPath?: string };
-          if (wtErr?.code !== 'STIM_BUILD_WAIT_TIMEOUT') throw err;
-          phaseFailure = fail(
-            'STIM_BUILD_WAIT_TIMEOUT',
-            wtErr.message,
-            `Check pid ${holder.pid}; if it is not really building, remove ${wtErr.lockPath} and run \`stim android\` again.`,
-            { lastBuildStatus: true },
-          );
-          return false;
-        }
-
-        if (waited?.hit) {
-          apkPath = waited.hit ?? null;
-          record.cacheHit = 'local';
-          waitedForBuild = { pid: holder.pid, ms: waited.waitedMs };
-          phase(
-            'build',
-            `waited ${formatDuration(waited.waitedMs)} for ${who}'s build -> installed from cache -- stim guide lifecycle concurrency`,
-          );
-        } else if (waited?.lockReleased) {
-          failedHolder = undefined;
-          releasedWait = { facts: { pid: holder.pid, ms: waited.waitedMs }, who };
-          phase('build', `${who}'s build lock was released; rechecking this workspace before building`);
-        } else {
-          phase(
-            'build',
-            chalk.yellow(
-              `${who}'s build ended without an artifact (${waited?.builderFailed}); retrying the build lock`,
-            ),
-          );
-          failedHolder = holder;
-        }
-      } else {
-        break;
-      }
+  if (!easBuild && useBuildCache && !apkPath) {
+    const shared = await waitForSharedBuild({
+      platform: PLATFORM,
+      key: cacheKey,
+      fingerprint: hash,
+      root,
+      logFile: buildLog,
+      command: 'stim android',
+      acquire: acquireLock,
+      wait: waitForBuild,
+      now,
+      phase: (text) => phase('build', text),
+      warn: (text) => phase('build', chalk.yellow(text)),
+      out,
+    });
+    if (shared.refusal) {
+      const { code, message, remedy } = shared.refusal;
+      phaseFailure = fail(code, message, remedy, { lastBuildStatus: true });
+      return refused();
     }
-    return true;
+    buildLock = shared.lock;
+    releasedWait = shared.released;
+    if (shared.hit) {
+      apkPath = shared.hit.path;
+      record.cacheHit = 'local';
+      waitedForBuild = shared.hit.waited;
+    }
   }
-
-  if (!easBuild && !(await waitForSharedBuild())) return refused();
 
   let swapDir: string | null = null;
   let swapFellBack = false;

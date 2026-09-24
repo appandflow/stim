@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'path';
 import { workspaceName, workspaceStateDir as workspaceDir } from '@stim-cli/core';
 import { getConfigDir } from './config.ts';
 import { withDirLock } from '../dir-lock.ts';
+import { readJsonObject } from '../json-file.ts';
 
 export {
   buildCacheRoot as sharedBuildCache,
@@ -46,10 +47,7 @@ export function ensureWorkspaceStorage(projectRoot: string): string {
       }
       return dir;
     }
-    try {
-      const current = JSON.parse(readFileSync(file, 'utf-8')) as Partial<WorkspaceMetadata>;
-      if (current.projectRoot === canonicalRoot) return dir;
-    } catch {}
+    if (readJsonObject(file)?.projectRoot === canonicalRoot) return dir;
     const error = new Error(
       `Stim workspace collision at ${dir}: its workspace.json does not belong to ${canonicalRoot}.`,
     ) as Error & { code?: string };

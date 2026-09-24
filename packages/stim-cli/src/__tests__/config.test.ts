@@ -418,6 +418,30 @@ test('refuses a config whose repos container is an array', () => {
   expect(() => ensureConfig()).toThrow(/repos that is not an object/);
 });
 
+test.each([
+  ['a projects container that is an array', '{ "version": 2, "projects": [] }', /projects that is not an object/],
+  [
+    'a project entry that is null',
+    '{ "version": 2, "projects": { "/a": null } }',
+    /projects entry "\/a" that is not an object/,
+  ],
+  [
+    'a repos entry that is a string',
+    '{ "version": 2, "repos": { "/r": "x" } }',
+    /repos entry "\/r" that is not an object/,
+  ],
+])('loadConfig refuses %s instead of reading it as holding no records', (_label, content, reason) => {
+  writeFileSync(join(tmpHome, 'config.json'), content);
+  let err: unknown;
+  try {
+    loadConfig();
+  } catch (e) {
+    err = e;
+  }
+  expect((err as { code?: string } | undefined)?.code).toBe('STIM_CONFIG_CORRUPT');
+  expect((err as Error).message).toMatch(reason);
+});
+
 test('adopts a null projects container rather than refusing it', () => {
   writeFileSync(join(tmpHome, 'config.json'), '{ "version": 2, "projects": null, "repos": {} }');
   expect(ensureConfig().projects).toEqual({});

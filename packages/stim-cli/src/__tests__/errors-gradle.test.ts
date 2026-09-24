@@ -13,8 +13,8 @@ import type { Diagnostic } from '../engine/errors-gradle.ts';
 const fixture = (name: string) => readFileSync(join(import.meta.dirname, 'fixtures', name), 'utf-8');
 
 describe('what is recognized', () => {
-  test('the FAILURE block reduces to its What went wrong section, causes and all', () => {
-    const diagnostics = extractGradleDiagnostics(`
+  test('the FAILURE block reduces to its What went wrong section, causes and all, LF or CRLF', () => {
+    const transcript = `
 > Task :app:preBuild UP-TO-DATE
 
 FAILURE: Build failed with an exception.
@@ -28,7 +28,9 @@ Execution failed for task ':app:compileDebugKotlin'.
 > Run with --stacktrace option to get the stack trace.
 
 BUILD FAILED in 41s
-`);
+`;
+    const diagnostics = extractGradleDiagnostics(transcript);
+    expect(extractGradleDiagnostics(transcript.replaceAll('\n', '\r\n'))).toEqual(diagnostics);
     expect(diagnostics.length).toBe(1);
     expect(diagnostics[0]?.message).toMatch(/Execution failed for task ':app:compileDebugKotlin'/);
     expect(diagnostics[0]?.message).toMatch(/Compilation error/);

@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { register } from '../cache/cache-manifest.ts';
 import { getConfigDir } from '../workspace/config.ts';
 import { withDirLock } from '../dir-lock.ts';
+import { isJsonObject, readJsonFile } from '../json-file.ts';
 import type { Optimizations } from '../optimizations.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 
@@ -71,10 +72,17 @@ export interface AndroidCasToolchainRead {
   ndkProperties: string;
 }
 
+function isAndroidCasToolchain(value: Record<string, unknown>): value is Record<string, unknown> & AndroidCasToolchain {
+  return CAS_TOOLCHAIN_FIELDS.every((field) => typeof value[field] === 'string');
+}
+
 export function readAndroidCasToolchain(manifest: string): AndroidCasToolchainRead {
-  const toolchain = JSON.parse(readFileSync(manifest, 'utf8')) as AndroidCasToolchain;
-  const missing = CAS_TOOLCHAIN_FIELDS.filter((field) => typeof toolchain?.[field] !== 'string');
-  if (missing.length > 0) throw new Error(`${manifest} declares no ${missing.join(', ')}.`);
+  const parsed = readJsonFile(manifest);
+  const toolchain = isJsonObject(parsed) ? parsed : {};
+  if (!isAndroidCasToolchain(toolchain)) {
+    const missing = CAS_TOOLCHAIN_FIELDS.filter((field) => typeof toolchain[field] !== 'string');
+    throw new Error(`${manifest} declares no ${missing.join(', ')}.`);
+  }
   const notExecutable = CAS_TOOLCHAIN_BINARIES.filter((field) => !executableFile(toolchain[field]));
   if (notExecutable.length > 0) throw new Error(`${manifest} names no executable ${notExecutable.join(', ')}.`);
   if (!directory(toolchain.resourceDir))
