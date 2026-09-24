@@ -1,20 +1,32 @@
-/// The shell command that addresses a `stim status` warning, run from the workspace.
-///
-/// Stim Desktop only shows these commands; it never runs them.
-public func remedyCommand(forWarning warning: String, workspace: String) -> String? {
-  let command: String
-  if warning.contains("stale supervisor record") {
-    command = "stim stop"
-  } else if warning.contains("not detected by adb") {
-    command = "stim android"
-  } else {
-    return nil
+/// A `stim` invocation: its arguments and the directory it runs in.
+public struct StimCommand: Hashable, Sendable {
+  public var arguments: [String]
+  public var cwd: String
+
+  public init(_ arguments: [String], cwd: String) {
+    self.arguments = arguments
+    self.cwd = cwd
   }
-  return "cd \(shellQuote(workspace)) && \(command)"
+
+  /// The same command as one line for a shell, for copying.
+  public var shellLine: String {
+    (["cd", shellQuote(cwd), "&&", "stim"] + arguments).joined(separator: " ")
+  }
 }
 
-public func warmCommand(worktree: String) -> String {
-  "cd \(shellQuote(worktree)) && stim worktree warm"
+/// The command that addresses a `stim status` warning, run from the workspace.
+public func remedyCommand(forWarning warning: String, workspace: String) -> StimCommand? {
+  if warning.contains("stale supervisor record") {
+    return StimCommand(["stop"], cwd: workspace)
+  }
+  if warning.contains("not detected by adb") {
+    return StimCommand(["android"], cwd: workspace)
+  }
+  return nil
+}
+
+public func warmCommand(worktree: String) -> StimCommand {
+  StimCommand(["worktree", "warm"], cwd: worktree)
 }
 
 public func shellQuote(_ s: String) -> String {

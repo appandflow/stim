@@ -1,7 +1,8 @@
 import Foundation
 
-/// Reads Stim state through the CLI's JSON output. Stim Desktop never reads
-/// `$STIM_HOME` itself, so Stim's locking and ownership rules stay in the CLI.
+/// Reads Stim state through the CLI's JSON output and runs its commands. Stim
+/// Desktop never reads or writes `$STIM_HOME` itself, so Stim's locking and
+/// ownership rules stay in the CLI.
 public enum StimCLI {
   public enum Failure: LocalizedError {
     case notFound
@@ -36,12 +37,7 @@ public enum StimCLI {
     process.executableURL = URL(fileURLWithPath: executable)
     process.arguments = args
     if let cwd { process.currentDirectoryURL = URL(fileURLWithPath: cwd) }
-    var env = ProcessInfo.processInfo.environment
-    // stim is a node script; its shebang resolves `node` from PATH, which a
-    // Finder-launched app does not have when node comes from nvm.
-    let binDir = (executable as NSString).deletingLastPathComponent
-    env["PATH"] = "\(binDir):\(env["PATH"] ?? "/usr/bin:/bin")"
-    process.environment = env
+    process.environment = environment(for: executable)
     let out = Pipe()
     process.standardOutput = out
     process.standardError = FileHandle.nullDevice
@@ -50,6 +46,30 @@ public enum StimCLI {
     process.waitUntilExit()
     guard process.terminationStatus == 0 else { throw Failure.exited(process.terminationStatus) }
     return data
+  }
+
+  /// Runs `stim <args>` in `cwd`, reporting output lines as they arrive and
+  /// then the exit status.
+  @discardableResult
+  public static func stream(
+    _ args: [String],
+    cwd: String,
+    onLine: @escaping @Sendable (OutputLine) -> Void,
+    onExit: @escaping @Sendable (Int32) -> Void
+  ) throws -> Process {
+    guard let executable else { throw Failure.notFound }
+    return try ProcessStream.start(
+      executable: executable, arguments: args, cwd: cwd, environment: environment(for: executable),
+      onLine: onLine, onExit: onExit)
+  }
+
+  private static func environment(for executable: String) -> [String: String] {
+    var env = ProcessInfo.processInfo.environment
+    // stim is a node script; its shebang resolves `node` from PATH, which a
+    // Finder-launched app does not have when node comes from nvm.
+    let binDir = (executable as NSString).deletingLastPathComponent
+    env["PATH"] = "\(binDir):\(env["PATH"] ?? "/usr/bin:/bin")"
+    return env
   }
 
   private static func resolveExecutable() -> String? {
