@@ -826,7 +826,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   if (remoteBackend) {
     const resolved = await resolveRemoteDeviceContext({
       root,
-      label,
       platform: PLATFORM,
       backend: remoteBackend,
       easBin: resolveEasBin(root)?.file ?? null,

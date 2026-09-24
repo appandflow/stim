@@ -128,7 +128,6 @@ describe('explicit backend selection', () => {
   test('proxy requires both daemon variables with a precise remedy', async () => {
     const missingToken = await resolveRemoteContext({
       root,
-      label: 'wt',
       backend: 'proxy',
       easBin: '/bin/eas',
       env: { AGENT_DEVICE_DAEMON_BASE_URL: env.AGENT_DEVICE_DAEMON_BASE_URL },
@@ -142,7 +141,6 @@ describe('explicit backend selection', () => {
 
     const missingUrl = await resolveRemoteContext({
       root,
-      label: 'wt',
       backend: 'proxy',
       easBin: '/bin/eas',
       env: { AGENT_DEVICE_DAEMON_AUTH_TOKEN: env.AGENT_DEVICE_DAEMON_AUTH_TOKEN },
@@ -158,7 +156,6 @@ describe('explicit backend selection', () => {
   test('proxy uses only the supplied daemon and never creates an EAS session', async () => {
     const resolved = await resolveRemoteContext({
       root,
-      label: 'wt',
       backend: 'proxy',
       easBin: '/bin/eas',
       env,
@@ -180,7 +177,6 @@ describe('explicit backend selection', () => {
   test('eas requires the EAS CLI even when proxy variables are present', async () => {
     const resolved = await resolveRemoteContext({
       root,
-      label: 'wt',
       backend: 'eas',
       easBin: null,
       env,
@@ -196,7 +192,6 @@ describe('explicit backend selection', () => {
   test('eas ignores proxy variables and creates an EAS session', async () => {
     const resolved = await resolveRemoteContext({
       root,
-      label: 'wt',
       backend: 'eas',
       easBin: '/bin/eas',
       env,
@@ -258,7 +253,6 @@ process.stdout.write(${JSON.stringify(CREATED)});
 
         const resolved = await resolveRemoteContext({
           root,
-          label: 'wt',
           backend: 'eas',
           easBin,
           env: process.env,
@@ -285,6 +279,39 @@ process.stdout.write(${JSON.stringify(CREATED)});
       }
     },
   );
+});
+
+describe('each workspace names its own remote session', () => {
+  async function bootNames(workspaceRoot: string) {
+    resetExecutor();
+    const resolved = await resolveRemoteContext({
+      root: workspaceRoot,
+      backend: 'eas',
+      easBin: '/bin/eas',
+      env: {},
+      lookupAgentDevice: () => '/bin/agent-device',
+    });
+    if (!('ctx' in resolved)) throw new Error(resolved.failed);
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    await remoteIosDeps(resolved.ctx).ensureBooted({});
+    const sim = exec.calls.find((call) => call.file === '/bin/eas' && call.args[0] === 'sim');
+    return {
+      eas: sim?.args[sim.args.indexOf('--name') + 1],
+      agentDevice: JSON.parse(readFileSync(remoteProfilePath(workspaceRoot), 'utf-8')).session,
+    };
+  }
+
+  test('two worktrees whose app directories share a name do not share a session', async () => {
+    const first = join(root, 'a', 'app');
+    const second = join(root, 'b', 'app');
+    mkdirSync(first, { recursive: true });
+    mkdirSync(second, { recursive: true });
+    const one = await bootNames(first);
+    const two = await bootNames(second);
+    expect(one.agentDevice).not.toBe(two.agentDevice);
+    expect(one.eas).not.toBe(two.eas);
+    expect(one.eas).toMatch(/^stim-app-[0-9a-f]{16}$/);
+  });
 });
 
 describe('the expensive step happens after the Metro gate', () => {

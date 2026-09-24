@@ -4,8 +4,9 @@ import { getExecutor } from '../exec.ts';
 import { readJsonObject } from '../json-file.ts';
 import { pidExists } from '../metro.ts';
 import { gateMetroOrigin, REMOTE_METRO_WRONG } from './metro-gate.ts';
-import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
+import { workspaceDir, workspaceId, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { clearRemoteSession, readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
+import { ownedDeviceLabel } from '../workspace/project.ts';
 import {
   acceptAlertArgs,
   closeArgs,
@@ -425,7 +426,6 @@ function remoteDeviceDeps(ctx: RemoteContext) {
 
 export async function resolveRemoteContext({
   root,
-  label,
   backend,
   platform = 'ios',
   easBin,
@@ -434,7 +434,6 @@ export async function resolveRemoteContext({
   maxDurationMinutes = null,
 }: {
   root: string;
-  label: string;
   backend: RemoteDeviceBackend;
   platform?: 'ios' | 'android';
   easBin: string | null;
@@ -493,7 +492,8 @@ export async function resolveRemoteContext({
   return {
     ctx: {
       root,
-      label,
+      // agent-device stores remote connection state per session name under ~/.agent-device/remote-connections/.
+      label: `${ownedDeviceLabel(root)}-${workspaceId(root)}`,
       backend,
       platform,
       easBin: easBin ?? '',

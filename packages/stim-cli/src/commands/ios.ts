@@ -473,13 +473,11 @@ async function runIos(
   const registerProject = () => d.upsertProject(root, { bundleId: d.detectBundleId(root) ?? undefined, isExpo });
   if (remoteBackend !== 'eas') registerProject();
   const proj = d.getProject(root);
-  const label = d.projectShortcut(root, proj);
 
   let remoteDevice: ReturnType<typeof d.remoteIosDeps> | null = null;
   if (remoteBackend) {
     const resolved = await d.resolveRemoteContext({
       root,
-      label,
       backend: remoteBackend,
       easBin: d.resolveEasCliBin(root)?.file ?? null,
     });

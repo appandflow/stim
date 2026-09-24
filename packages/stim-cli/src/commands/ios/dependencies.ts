@@ -49,7 +49,7 @@ import {
 } from '../../engine/xcode.ts';
 import { pidExists, resolveProjectMetro } from '../../metro.ts';
 import { createNdjsonWriter } from '../../ndjson.ts';
-import { detectBundleId, detectIsExpo, findProjectRoot, projectShortcut } from '../../workspace/project.ts';
+import { detectBundleId, detectIsExpo, findProjectRoot } from '../../workspace/project.ts';
 import { resolveCacheProviderConfig, resolveSettings } from '../../workspace/settings.ts';
 import { writeWorkspaceLaunch } from '../../supervisor/state.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../../workspace/workspace-state.ts';
@@ -76,7 +76,6 @@ export interface IosDeps {
   devClientScheme: typeof devClientScheme;
   getProject: typeof getProject;
   upsertProject: typeof upsertProject;
-  projectShortcut: typeof projectShortcut;
   checkDeviceCapacity: typeof checkDeviceCapacity;
   ensureOwnedDevice: typeof ensureOwnedDevice;
   listIosRuntimes: typeof listIosRuntimes;
@@ -154,7 +153,6 @@ export const DEFAULT_DEPS: IosDeps = {
   devClientScheme,
   getProject,
   upsertProject,
-  projectShortcut,
   checkDeviceCapacity,
   ensureOwnedDevice,
   listIosRuntimes,
