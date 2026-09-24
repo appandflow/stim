@@ -98,7 +98,7 @@ describe('orphaned workspace classification', () => {
       registryKeys,
       exists: (path) => existing.includes(path),
       isMounted: (path) => !unmounted.includes(path),
-      inUse: (root) => (busy.includes(root) ? ['a stim ios or android run holds its native-run.lock'] : []),
+      inUse: (root) => (busy.includes(root) ? ['a stim ios, android or stop run holds its native-run.lock'] : []),
     });
 
   test('a workspace whose project root is gone and unregistered is orphaned', () => {
@@ -343,7 +343,7 @@ describe('planning workspace build output clearing', () => {
 
   test('without --older-than every workspace not in use is cleared', () => {
     const [idle, busy] = planWorkspaceOutputs(
-      [entry(), entry({ lastUsed: now, inUse: ['a stim ios or android run holds its native-run.lock'] })],
+      [entry(), entry({ lastUsed: now, inUse: ['a stim ios, android or stop run holds its native-run.lock'] })],
       { olderThan: null, now },
     );
     expect(idle).toMatchObject({ willClear: true, idleDays: 10 });

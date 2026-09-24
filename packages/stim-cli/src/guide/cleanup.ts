@@ -71,8 +71,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
 IN USE
   gc and worktree remove never delete a workspace's directory, build outputs
   or checkout while it is in use: its dev server supervisor is running or
-  cannot be verified, a \`stim ios\` or \`stim android\` run holds its
-  native-run.lock, a live or unresolvable build lock or build slot names it,
+  cannot be verified, a \`stim ios\`, \`stim android\` or \`stim stop\` run
+  holds its native-run.lock, a live or unresolvable build lock or slot names it,
   or its managed tunnel or managed remote lock is held. The deletion holds
   native-run.lock itself, so no native run can start partway through. A lock
   that names no workspace blocks nothing, because every build also holds its
