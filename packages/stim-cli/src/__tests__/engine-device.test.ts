@@ -4,18 +4,16 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import assert from 'node:assert';
+import { claimAndroidConsolePort, AvdRecoveryError } from '../engine/device-android.ts';
+import { clearIosAdoptionPending } from '../engine/device-ios.ts';
 import {
-  claimAndroidConsolePort,
-  clearIosAdoptionPending,
   deviceCapacityRefusal,
   deviceTypeMismatch,
-  ensureBooted,
-  ensureOwnedDevice,
-  AvdRecoveryError,
   unknownAndroidSystemImageRefusal,
   unknownIosDeviceTypeRefusal,
   unknownIosRuntimeRefusal,
-} from '../engine/device.ts';
+} from '../engine/device-capacity.ts';
+import { ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
 import { allConsolePortsAndSerials, getProject, setDevice, upsertProject } from '../workspace/config.ts';
 import type { DeviceRecord } from '../workspace/config-types.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';

@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import type { AndroidFacts, CcacheActivity, WaitedForBuild } from '../../engine/build-facts.ts';
-import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../../engine/app-install.ts';
+import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../../engine/launch-verify.ts';
 import {
   cacheLevel,
   UPLOAD_TIMEOUT_MS,

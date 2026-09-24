@@ -2,17 +2,15 @@ import type { PreparedIosArtifact } from './artifact.ts';
 import { launchSlotScope, nativeRunCommand } from '../../engine/slot-launch.ts';
 import { basename } from 'node:path';
 import chalk from 'chalk';
+import { DEFAULT_METRO_PORT, devClientUrl, iosAppProcess } from '../../engine/app-install.ts';
 import {
-  DEFAULT_METRO_PORT,
   LAUNCH_BUNDLING,
   LAUNCH_FATAL,
   LAUNCH_UNVERIFIED,
-  devClientUrl,
-  iosAppProcess,
   readCollectorRecords,
   unverifiedLaunchLines,
   RELEASE_VERIFY_WAIT_MS,
-} from '../../engine/app-install.ts';
+} from '../../engine/launch-verify.ts';
 import type { IosDeps } from './dependencies.ts';
 import {
   formatDuration,

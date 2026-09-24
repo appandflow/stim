@@ -8,7 +8,7 @@ import {
   parseAndroidCrashes,
   parseIosCrash,
 } from '../diagnostics/native-crash.ts';
-import { verifyLaunch } from '../engine/app-install.ts';
+import { verifyLaunch } from '../engine/launch-verify.ts';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

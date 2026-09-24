@@ -5,7 +5,7 @@ import { resetExecutor, setExecutor } from '../exec.ts';
 import assert from 'node:assert';
 import { captureProcessToken } from '../process-identity.ts';
 import { ClaimRefusedError, ClaimUnavailableError, claimRemoveCommand } from '../ownership-claim.ts';
-import { AvdBootError, AvdRecoveryError } from '../engine/device.ts';
+import { AvdBootError, AvdRecoveryError } from '../engine/device-android.ts';
 import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
@@ -60,12 +60,11 @@ import { newestBuildTools } from '../devices/android.ts';
 import { BUILD_ERROR, type BuildAndroidResult } from '../engine/gradle.ts';
 import {
   ADB_INSTALL_TIMEOUT_MS,
-  LAUNCH_UNVERIFIED,
   installAndroidApp,
   deviceShellArg,
   androidDevClientUrl,
-  verifyLaunch,
 } from '../engine/app-install.ts';
+import { LAUNCH_UNVERIFIED, verifyLaunch } from '../engine/launch-verify.ts';
 import type { AssetManifest } from '../engine/asset-manifest.ts';
 import { PREBUILD_ERROR } from '../engine/prebuild.ts';
 import type { RecordStatsResult, StatsRun } from '../engine/stats.ts';

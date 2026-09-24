@@ -3,7 +3,7 @@ import { writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
-import { isBundleProof, readMetroRecords } from './app-install.ts';
+import { isBundleProof, readMetroRecords } from './launch-verify.ts';
 import { bundleEntryPoint } from './device-remote.ts';
 import { gateMetroOrigin } from './metro-gate.ts';
 import type { LanCandidate } from './lan-address.ts';

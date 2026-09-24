@@ -2,17 +2,14 @@ import { loadCacheProvider } from '@stim-cli/cache';
 import { resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
 import { fingerprintProject, resolveBuild, storeBuild, untrackedNativeFiles } from '../../cache/build-cache.ts';
 import { getConcurrencyLimits, getProject, upsertProject } from '../../workspace/config.ts';
-import {
-  clearOtherUserApps,
-  installIosApp,
-  launchIosApp,
-  verifyLaunch,
-  verifyReleaseLaunch,
-} from '../../engine/app-install.ts';
+import { clearOtherUserApps, installIosApp, launchIosApp } from '../../engine/app-install.ts';
+import { verifyLaunch, verifyReleaseLaunch } from '../../engine/launch-verify.ts';
 import { acquireBuildLock, releaseBuildLock, waitForBuild } from '../../engine/build-lock.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../../engine/build-slots.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../../engine/deps.ts';
-import { checkDeviceCapacity, clearIosAdoptionPending, ensureBooted, ensureOwnedDevice } from '../../engine/device.ts';
+import { checkDeviceCapacity } from '../../engine/device-capacity.ts';
+import { clearIosAdoptionPending } from '../../engine/device-ios.ts';
+import { ensureBooted, ensureOwnedDevice } from '../../engine/device.ts';
 import { listIosRuntimes } from '../../devices/ios.ts';
 import {
   ensureRemoteBootOwned,

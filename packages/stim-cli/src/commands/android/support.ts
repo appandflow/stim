@@ -17,7 +17,8 @@ import {
   physicalDeviceModel,
   probeEmulatorSerial,
 } from '../../devices/android.ts';
-import { unknownAndroidSystemImageRefusal, type OwnedDeviceRecord } from '../../engine/device.ts';
+import { unknownAndroidSystemImageRefusal } from '../../engine/device-capacity.ts';
+import type { OwnedDeviceRecord } from '../../engine/device.ts';
 import { getExecutor } from '../../exec.ts';
 import { devClientScheme as configuredDevClientScheme, pickDevClientScheme } from '../dev-client.ts';
 import { selectFromPool } from '../../engine/device-pool.ts';

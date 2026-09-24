@@ -66,11 +66,10 @@ import {
   installAndroidApp,
   launchAndroidApp,
   launchAndroidReleaseApp,
-  verifyAndroidReleaseLaunch,
-  verifyLaunch,
   ADB_INSTALL_TIMEOUT_MS,
   DEFAULT_METRO_PORT,
 } from '../engine/app-install.ts';
+import { verifyAndroidReleaseLaunch, verifyLaunch } from '../engine/launch-verify.ts';
 import {
   androidDeviceAbi,
   listAdbDevices,
@@ -81,14 +80,9 @@ import {
   resolvePhysicalDevice,
   waitForBoot,
 } from '../devices/android.ts';
-import {
-  checkDeviceCapacity,
-  ensureBooted,
-  ensureOwnedDevice,
-  AvdRecoveryError,
-  AvdBootError,
-  type OwnedDeviceRecord,
-} from '../engine/device.ts';
+import { checkDeviceCapacity } from '../engine/device-capacity.ts';
+import { ensureBooted, ensureOwnedDevice, type OwnedDeviceRecord } from '../engine/device.ts';
+import { AvdRecoveryError, AvdBootError } from '../engine/device-android.ts';
 import {
   ensureRemoteBootOwned,
   ensureMetroReachable as ensureRemoteMetroReachable,
