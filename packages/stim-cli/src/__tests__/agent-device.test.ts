@@ -30,6 +30,13 @@ describe('the connection profile', () => {
     expect(profile.sessionIsolation).toBe('tenant');
   });
 
+  test('selects the proxy lease policy, whose 5-minute lease outlasts a large install upload', () => {
+    expect(remoteProfile({ daemon: DAEMON, platform: 'android', label: 'wt' })).toMatchObject({
+      leaseProvider: 'proxy',
+      clientId: 'stim-wt',
+    });
+  });
+
   test('scopes tenant and runId per workspace, so two worktrees never share a lease', () => {
     const a = remoteProfile({ daemon: DAEMON, platform: 'ios', label: 'wt-a' });
     const b = remoteProfile({ daemon: DAEMON, platform: 'ios', label: 'wt-b' });

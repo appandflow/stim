@@ -17,6 +17,8 @@ export interface RemoteProfile {
   tenant: string;
   runId: string;
   sessionIsolation: 'tenant';
+  leaseProvider: 'proxy';
+  clientId: string;
 }
 
 export function sessionNameFor(label: string): string {
@@ -39,6 +41,8 @@ export function remoteProfile({
   const scope = sessionNameFor(label);
   // agent-device 0.20.10 requires metroProjectRoot to expose a bridge URL; the self-hosted proxy has none.
   // agent-device 0.20.10 requires tenant and runId in remote profiles.
+  // agent-device 0.20.10 does not renew a lease while install uploads; the proxy lease lasts 5 min instead of the
+  // default 60 s, and proxy open admission requires clientId.
   return {
     daemonBaseUrl: daemon.baseUrl,
     daemonTransport: 'http',
@@ -47,6 +51,8 @@ export function remoteProfile({
     tenant: scope,
     runId: scope,
     sessionIsolation: 'tenant',
+    leaseProvider: 'proxy',
+    clientId: scope,
   };
 }
 
