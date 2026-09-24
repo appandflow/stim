@@ -60,7 +60,7 @@ struct DeviceTile: View {
       SimulatorDisplayView(udid: sim.udid, interactive: interactive) { pixelSize = $0 }.padding(screenPadding)
     case .android(_, let avd) where device.isRunning && avd.owned && !avd.physical:
       if let serial = avd.serial {
-        EmulatorScreen(serial: serial).padding(screenPadding)
+        EmulatorScreen(serial: serial, interactive: interactive).padding(screenPadding)
       } else {
         placeholder(device.state)
       }
@@ -74,12 +74,22 @@ struct DeviceTile: View {
   }
 }
 
+extension DeviceRef {
+  var isInteractive: Bool {
+    switch self {
+    case .ios: return isRunning
+    case .android(_, let avd): return isRunning && avd.owned && !avd.physical && avd.serial != nil
+    }
+  }
+}
+
 private struct EmulatorScreen: View {
   var serial: String
+  var interactive: Bool
   @State private var status = EmulatorStreamStatus.connecting
 
   var body: some View {
-    EmulatorDisplayView(serial: serial) { status in
+    EmulatorDisplayView(serial: serial, interactive: interactive) { status in
       DispatchQueue.main.async { self.status = status }
     }
     .overlay {

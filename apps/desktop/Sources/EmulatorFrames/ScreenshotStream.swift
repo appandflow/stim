@@ -7,7 +7,6 @@ import Network
 /// decodes response header blocks: the call ends on END_STREAM, RST_STREAM,
 /// GOAWAY, or a closed connection.
 final class ScreenshotStream {
-  private static let path = "/android.emulation.control.EmulatorController/streamScreenshot"
   private static let window: UInt32 = 1 << 30
 
   private let connection: NWConnection
@@ -55,27 +54,10 @@ final class ScreenshotStream {
   }
 
   static func requestBytes(endpoint: EmulatorEndpoint, width: Int, height: Int) -> [UInt8] {
-    var out = Array("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".utf8)
-    var settings: [UInt8] = []
-    for (id, value) in [(UInt16(2), UInt32(0)), (4, window)] {
-      settings += [UInt8(id >> 8), UInt8(id & 0xff)] + bigEndian(value)
-    }
-    out += frame(type: 4, flags: 0, stream: 0, payload: settings)
-    out += frame(type: 8, flags: 0, stream: 0, payload: bigEndian(window))
-
-    var headers: [UInt8] = [0x83, 0x86]
-    headers += literal(index: 4, value: path)
-    headers += literal(index: 1, value: "127.0.0.1:\(endpoint.grpcPort)")
-    headers += literal(index: 31, value: "application/grpc")
-    headers += [0x00] + string("te") + string("trailers")
-    if let token = endpoint.token {
-      headers += literal(index: 23, value: "Bearer \(token)")
-    }
-    out += frame(type: 1, flags: 0x4, stream: 1, payload: headers)
-
-    let message = [UInt8](ScreenshotMessages.imageFormat(width: width, height: height))
-    out += frame(type: 0, flags: 0x1, stream: 1, payload: [0] + bigEndian(UInt32(message.count)) + message)
-    return out
+    GrpcFraming.preface(window: window)
+      + GrpcFraming.request(
+        method: "streamScreenshot", message: ScreenshotMessages.imageFormat(width: width, height: height),
+        endpoint: endpoint, stream: 1)
   }
 
   private func receive() {
@@ -88,17 +70,9 @@ final class ScreenshotStream {
   }
 
   private func drainFrames() {
-    var offset = 0
-    while !ended, inbox.count - offset >= 9 {
-      let length = Int(inbox[offset]) << 16 | Int(inbox[offset + 1]) << 8 | Int(inbox[offset + 2])
-      guard inbox.count - offset >= 9 + length else { break }
-      let type = inbox[offset + 3]
-      let flags = inbox[offset + 4]
-      let payload = inbox[(offset + 9)..<(offset + 9 + length)]
-      offset += 9 + length
-      handle(type: type, flags: flags, payload: payload)
+    GrpcFraming.drain(&inbox) { type, flags, _, payload in
+      if !ended { handle(type: type, flags: flags, payload: payload) }
     }
-    inbox.removeFirst(offset)
   }
 
   private func handle(type: UInt8, flags: UInt8, payload: ArraySlice<UInt8>) {
@@ -116,12 +90,8 @@ final class ScreenshotStream {
       if flags & 0x1 != 0 { finish() }
     case 3, 7:
       finish()
-    case 4 where flags & 0x1 == 0:
-      send(Self.frame(type: 4, flags: 0x1, stream: 0, payload: []))
-    case 6 where flags & 0x1 == 0:
-      send(Self.frame(type: 6, flags: 0x1, stream: 0, payload: Array(payload)))
     default:
-      break
+      if let reply = GrpcFraming.acknowledgement(type: type, flags: flags, payload: payload) { send(reply) }
     }
   }
 
@@ -140,8 +110,10 @@ final class ScreenshotStream {
   private func acknowledge(_ count: UInt32) {
     unacknowledged += count
     guard unacknowledged >= 1 << 24 else { return }
-    let increment = Self.bigEndian(unacknowledged)
-    send(Self.frame(type: 8, flags: 0, stream: 0, payload: increment) + Self.frame(type: 8, flags: 0, stream: 1, payload: increment))
+    let increment = GrpcFraming.bigEndian(unacknowledged)
+    send(
+      GrpcFraming.frame(type: 8, flags: 0, stream: 0, payload: increment)
+        + GrpcFraming.frame(type: 8, flags: 0, stream: 1, payload: increment))
     unacknowledged = 0
   }
 
@@ -154,39 +126,5 @@ final class ScreenshotStream {
     ended = true
     connection.cancel()
     onEnd()
-  }
-
-  private static func frame(type: UInt8, flags: UInt8, stream: UInt32, payload: [UInt8]) -> [UInt8] {
-    let length = UInt32(payload.count)
-    return [UInt8(length >> 16 & 0xff), UInt8(length >> 8 & 0xff), UInt8(length & 0xff), type, flags]
-      + bigEndian(stream) + payload
-  }
-
-  private static func bigEndian(_ value: UInt32) -> [UInt8] {
-    [UInt8(value >> 24), UInt8(value >> 16 & 0xff), UInt8(value >> 8 & 0xff), UInt8(value & 0xff)]
-  }
-
-  // HPACK (RFC 7541) literal header field without indexing, name taken from
-  // the static table, value as a raw (non-Huffman) string.
-  private static func literal(index: Int, value: String) -> [UInt8] {
-    integer(index, prefixBits: 4, flags: 0x00) + string(value)
-  }
-
-  private static func string(_ value: String) -> [UInt8] {
-    let bytes = Array(value.utf8)
-    return integer(bytes.count, prefixBits: 7, flags: 0x00) + bytes
-  }
-
-  private static func integer(_ value: Int, prefixBits: Int, flags: UInt8) -> [UInt8] {
-    let limit = (1 << prefixBits) - 1
-    if value < limit { return [flags | UInt8(value)] }
-    var out = [flags | UInt8(limit)]
-    var rest = value - limit
-    while rest >= 0x80 {
-      out.append(UInt8(rest & 0x7f) | 0x80)
-      rest >>= 7
-    }
-    out.append(UInt8(rest))
-    return out
   }
 }

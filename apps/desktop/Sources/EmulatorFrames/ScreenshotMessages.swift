@@ -4,6 +4,8 @@ import Foundation
 public struct EmulatorFrame: Sendable {
   public var width: Int
   public var height: Int
+  /// The Rotation.SkinRotation the emulator turned the image upright by.
+  public var rotation: Int
   public var rgba: Data
 }
 
@@ -23,7 +25,7 @@ enum ScreenshotMessages {
 
   static func frame(fromImage bytes: Data) -> EmulatorFrame? {
     var reader = ProtoReader(bytes)
-    var size: (width: Int, height: Int)?
+    var size: (width: Int, height: Int, rotation: Int)?
     var image: Data?
     while let (field, value) = reader.next() {
       switch (field, value) {
@@ -35,24 +37,34 @@ enum ScreenshotMessages {
     guard let size, let image, size.width > 0, size.height > 0,
       image.count == size.width * size.height * 4
     else { return nil }
-    return EmulatorFrame(width: size.width, height: size.height, rgba: image)
+    return EmulatorFrame(width: size.width, height: size.height, rotation: size.rotation, rgba: image)
   }
 
-  private static func rgbaSize(_ bytes: Data) -> (width: Int, height: Int)? {
+  private static func rgbaSize(_ bytes: Data) -> (width: Int, height: Int, rotation: Int)? {
     var reader = ProtoReader(bytes)
     var format: UInt64 = 0
     var width = 0
     var height = 0
+    var rotation = 0
     while let (field, value) = reader.next() {
       switch (field, value) {
       case (1, .varint(let v)): format = v
+      case (2, .bytes(let nested)): rotation = skinRotation(nested)
       case (3, .varint(let v)): width = Int(v)
       case (4, .varint(let v)): height = Int(v)
       default: break
       }
     }
     guard format == rgba8888 else { return nil }
-    return (width, height)
+    return (width, height, rotation)
+  }
+
+  private static func skinRotation(_ bytes: Data) -> Int {
+    var reader = ProtoReader(bytes)
+    while let (field, value) = reader.next() {
+      if field == 1, case .varint(let v) = value { return Int(v & 3) }
+    }
+    return 0
   }
 
   static func appendVarint(_ value: UInt64, to out: inout Data) {
