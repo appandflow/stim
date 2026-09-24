@@ -1,6 +1,7 @@
 public enum DeviceRef: Hashable, Identifiable, Sendable {
   case ios(slot: String, IosDevice)
   case android(slot: String, AndroidDevice)
+  case remote(RemoteDevice)
 
   public static let defaultSlot = "default"
 
@@ -8,12 +9,14 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     switch self {
     case .ios(_, let d): return "ios:\(d.udid)"
     case .android(let slot, let d): return "android:\(slot):\(d.name)"
+    case .remote(let d): return "remote:\(d.sessionId)"
     }
   }
 
   public var slot: String {
     switch self {
     case .ios(let s, _), .android(let s, _): return s
+    case .remote: return DeviceRef.defaultSlot
     }
   }
 
@@ -21,14 +24,17 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     switch self {
     case .ios(_, let d): return d.state
     case .android(_, let d): return d.state
+    case .remote(let d): return d.state
     }
   }
 
   /// `Booted` comes from simctl; `detected` is Stim's Android runtime state for an AVD adb can see.
+  /// A recorded remote session counts as running: `stim status` does not ask the backend.
   public var isRunning: Bool {
     switch self {
     case .ios(_, let d): return d.state == "Booted"
     case .android(_, let d): return d.state == "detected"
+    case .remote: return true
     }
   }
 
@@ -40,6 +46,8 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
       return String(d.name[d.name.index(after: open)..<d.name.index(before: d.name.endIndex)])
     case .android(_, let d):
       return d.name
+    case .remote(let d):
+      return d.platform == "android" ? "Android" : "iOS"
     }
   }
 
@@ -49,7 +57,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
       if d.name.contains("iPad") { return .tablet }
       if d.name.contains("Duo") { return .dual }
       return .phone
-    case .android:
+    case .android, .remote:
       return .phone
     }
   }

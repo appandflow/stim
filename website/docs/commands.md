@@ -397,6 +397,13 @@ stim status [--json]
 Shows every Stim environment on the machine. The output includes worktrees,
 ports, devices, supervisors, builds, logs, capacity, and free disk space.
 
+A workspace with a recorded EAS Simulator session prints a
+`remote <platform>: EAS session <id> billable` line with the session's preview
+URL. In `--json`, each environment's `remoteDevices` array holds
+`platform`, `backend`, `sessionId`, `state`, `startedAt`, and `webPreviewUrl`.
+`status` reads Stim's local records and does not query EAS; `stim stop` in that
+workspace ends the session.
+
 ## `stats`
 
 ```text

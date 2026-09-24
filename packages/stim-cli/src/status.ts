@@ -2,6 +2,7 @@ import { projectDeviceSlots } from './devices/device-slots.ts';
 import { clockTime, formatElapsed, plural } from './command-output.ts';
 import type { ProjectRecord } from './workspace/config.ts';
 import type { LeaseFileEntry } from './engine/device-lease.ts';
+import type { RemoteSessionRecord } from './supervisor/state.ts';
 
 const IOS_SIM_MB = 1500;
 const ANDROID_EMULATOR_MB = 2500;
@@ -43,6 +44,32 @@ export interface AndroidRuntimeFacts {
   error?: string;
 }
 
+export interface RemoteDeviceState {
+  platform: 'ios' | 'android' | null;
+  backend: 'eas';
+  sessionId: string;
+  state: 'claimed' | 'unclaimed' | 'unknown';
+  startedAt: string | null;
+  webPreviewUrl: string | null;
+}
+
+export function remoteDeviceState(
+  record: RemoteSessionRecord | null,
+  ledger: { claims: ReadonlyMap<string, { workspaceRoot: string }>; safe: boolean },
+  root: string,
+): RemoteDeviceState | null {
+  if (!record) return null;
+  const claim = ledger.claims.get(record.sessionId);
+  return {
+    platform: record.platform,
+    backend: 'eas',
+    sessionId: record.sessionId,
+    state: !ledger.safe ? 'unknown' : claim?.workspaceRoot === root ? 'claimed' : 'unclaimed',
+    startedAt: record.startedAt,
+    webPreviewUrl: record.webPreviewUrl,
+  };
+}
+
 export interface EnvironmentState {
   slots?: { slot: string; ios: EnvironmentState['ios']; android: EnvironmentState['android'] }[];
   path: string;
@@ -61,6 +88,7 @@ export interface EnvironmentState {
   supervisor?: { pid: number | null; mode: string | null; startedAt: string | null; healthy: boolean } | null;
   logs?: { dir: string; errorsSinceMarker: number } | null;
   worktree?: WorktreeFacts | null;
+  remoteDevices?: RemoteDeviceState[];
 }
 
 export interface DiskInfo {
@@ -96,6 +124,7 @@ export function environmentState(
     androidRuntimes = {},
     supervisor = null,
     logs = null,
+    remote = null,
   }: {
     simsByUdid?: Record<string, SimFacts>;
     metro?: MetroFacts | null;
@@ -105,6 +134,7 @@ export function environmentState(
     androidRuntimes?: Record<string, AndroidRuntimeFacts | null>;
     supervisor?: SupervisorFacts | null;
     logs?: LogsFacts | null;
+    remote?: RemoteDeviceState | null;
   } = {},
 ): EnvironmentState {
   const ios = project.platforms?.ios;
@@ -114,7 +144,7 @@ export function environmentState(
   const simBooted = Boolean(sim && sim.state === 'Booted');
   const metroRunning = Boolean(metro?.metro);
   const androidDetected = androidRuntime ? Boolean(androidRuntime.serial) : Boolean(android?.serial);
-  let live = simBooted || metroRunning || androidDetected;
+  let live = simBooted || metroRunning || androidDetected || Boolean(remote);
 
   let memoryMb = 0;
   if (simBooted) memoryMb += IOS_SIM_MB;
@@ -192,7 +222,14 @@ export function environmentState(
       : null,
     logs: logs ? { dir: logs.dir, errorsSinceMarker: logs.errorsSinceMarker ?? 0 } : null,
     worktree: worktrees.find((w) => w.path === project.__path) ?? null,
+    remoteDevices: remote ? [remote] : [],
   };
+}
+
+export function remoteDeviceLine(remote: RemoteDeviceState): string {
+  const claim = remote.state === 'claimed' ? '' : ` (${remote.state})`;
+  const watch = remote.webPreviewUrl ? ` -- watch: ${remote.webPreviewUrl}` : '';
+  return `remote ${remote.platform ?? '?'}: EAS session ${remote.sessionId} billable${claim}${watch}`;
 }
 
 export function capacity(

@@ -19,7 +19,26 @@ line by design (see \`guide logs\`), not this single-payload contract.
 
 status's unprovisionedWorktrees lists this repository's linked worktrees with
 no Stim environment. \`worktree warm\` does not create one; \`start\`, \`ios\`,
-\`android\` and \`doctor\` register it.`,
+\`android\` and \`doctor\` register it.
+
+status's remoteDevices lists each environment's recorded EAS Simulator
+session. The session is billable while it runs, and it makes the environment
+live. status reads only local records; it does not ask EAS whether the session
+is still running.
+
+  remoteDevices   [{ platform, backend, sessionId, state, startedAt,
+                  webPreviewUrl }], empty when the workspace has none
+  backend         "eas"
+  state           "claimed"    Stim's ownership ledger holds this workspace's
+                               claim, so \`stop\` and \`gc --delete\` can end it
+                  "unclaimed"  the ledger has no claim for this workspace;
+                               \`stop\` still ends the recorded session
+                  "unknown"    the ledger could not be read
+  webPreviewUrl   the browser page showing the remote screen, recorded when
+                  Stim created the session, or null
+
+Plain status prints one "remote <platform>: EAS session <id> billable" line
+per session, with the preview URL.`,
   sections: {
     payloads: {
       summary: 'every field of the start, ios, android and reload payloads, the error contract, the device rules',

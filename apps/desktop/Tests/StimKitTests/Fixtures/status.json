@@ -38,7 +38,17 @@
         "healthy": true
       },
       "logs": { "dir": "/Users/dev/.stim/workspaces/mobile/logs", "errorsSinceMarker": 0 },
-      "worktree": null
+      "worktree": null,
+      "remoteDevices": [
+        {
+          "platform": "ios",
+          "backend": "eas",
+          "sessionId": "drs_9",
+          "state": "claimed",
+          "startedAt": "2026-09-24T19:50:00.000Z",
+          "webPreviewUrl": "https://preview.example/9"
+        }
+      ]
     }
   ],
   "capacity": { "liveCount": 1, "committedMb": 3700, "totalMemoryMb": 49152, "overCapacity": false },

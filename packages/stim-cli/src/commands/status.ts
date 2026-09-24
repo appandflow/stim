@@ -21,6 +21,8 @@ import { resolveSourceCheckout } from '../workspace/worktree.ts';
 import type { WorktreeEntry } from '../workspace/worktree.ts';
 import { volumeRootFor } from '../fs-util.ts';
 import { listLeaseFiles } from '../engine/device-lease.ts';
+import { readEasSessionLedger } from '../engine/eas-session-ledger.ts';
+import { readRemoteSession } from '../supervisor/state.ts';
 import {
   capacity,
   deviceLeaseLines,
@@ -29,6 +31,8 @@ import {
   environmentState,
   parseDfFree,
   poolLine,
+  remoteDeviceLine,
+  remoteDeviceState,
   tightVolumes,
   unprovisionedWorktrees,
 } from '../status.ts';
@@ -73,6 +77,7 @@ export default function statusCommand(program: Command): void {
 
       const states: EnvironmentState[] = [];
       const labelOnlyRoots: boolean[] = [];
+      const easLedger = readEasSessionLedger();
       for (const [path, proj] of projects) {
         let metro: MetroResolution | null = null;
         if (proj.metroPort) {
@@ -103,6 +108,7 @@ export default function statusCommand(program: Command): void {
                   : null,
               supervisor,
               logs: logFacts(path),
+              remote: remoteDeviceState(readRemoteSession(path), easLedger, path),
             },
           ),
         );
@@ -207,6 +213,7 @@ export default function statusCommand(program: Command): void {
             );
           }
         }
+        for (const remote of state.remoteDevices ?? []) console.log(`  ${remoteDeviceLine(remote)}`);
         for (const w of state.warnings) console.log(chalk.yellow(`  ! ${w}`));
       }
 

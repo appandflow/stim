@@ -2,12 +2,16 @@ import EmulatorFrames
 import SimulatorFrames
 import StimKit
 import SwiftUI
+import WebKit
 
 struct DeviceTile: View {
   var device: DeviceRef
   var screenHeight: CGFloat
   var interactive = false
+  var workspace: String?
   @State private var pixelSize: CGSize?
+  @State private var confirmingStop = false
+  @EnvironmentObject private var actions: ActionCenter
 
   private let screenPadding: CGFloat = 12
 
@@ -16,10 +20,11 @@ struct DeviceTile: View {
       VStack(spacing: 0) {
         HStack(spacing: 8) {
           StatusDot(color: device.isRunning ? Theme.live : Theme.tertiary, filled: device.isRunning)
-          Text(device.slot).font(Theme.body(12, weight: .semibold))
+          Text(device.slot).font(Theme.body(12, weight: .semibold)).lineLimit(1)
           Text(device.model).font(Theme.body(12)).foregroundStyle(Theme.secondary).lineLimit(1)
           Spacer(minLength: 8)
-          Text(source).font(Theme.body(10.5)).foregroundStyle(Theme.tertiary)
+          Text(source).font(Theme.body(10.5)).foregroundStyle(Theme.tertiary).lineLimit(1)
+          if case .remote = device { remoteControls }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
@@ -30,9 +35,36 @@ struct DeviceTile: View {
       }
     }
     .overlay {
-      if interactive { RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.lavender, lineWidth: 2) }
+      if case .remote = device {
+        RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.remote, lineWidth: 2)
+      } else if interactive {
+        RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.lavender, lineWidth: 2)
+      }
     }
     .frame(width: width)
+  }
+
+  @ViewBuilder private var remoteControls: some View {
+    Chip(tint: Theme.warn) { Text("billable") }
+      .fixedSize()
+      .help("This remote session is billed while it runs.")
+    if let workspace {
+      Button("Stop") { confirmingStop = true }
+        .controlSize(.small)
+        .fixedSize()
+        .disabled(actions.active(for: workspace) != nil)
+        .help("stim stop: ends the remote session with the rest of the workspace")
+        .confirmationDialog("Stop this workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
+          Button("Run stim stop", role: .destructive) {
+            actions.run(
+              "Stop \(PathNames(path: workspace).title)", StimCommand(["stop"], cwd: workspace))
+          }
+        } message: {
+          Text(
+            "stim stop ends the billable remote session and halts the workspace's dev server and devices. The session cannot be resumed."
+          )
+        }
+    }
   }
 
   private var width: CGFloat {
@@ -40,6 +72,7 @@ struct DeviceTile: View {
       let inner = screenHeight - screenPadding * 2
       return max(240, inner * pixelSize.width / pixelSize.height + screenPadding * 2)
     }
+    if case .remote = device { return max(360, screenHeight * 0.6) }
     switch device.formFactor {
     case .phone: return max(240, screenHeight * 0.52)
     case .tablet: return screenHeight * 0.78
@@ -51,6 +84,7 @@ struct DeviceTile: View {
     switch device {
     case .ios: return "iOS Simulator"
     case .android: return "Android Emulator"
+    case .remote(let d): return d.backend == "eas" ? "EAS Simulator" : "Remote device"
     }
   }
 
@@ -63,6 +97,12 @@ struct DeviceTile: View {
         EmulatorScreen(serial: serial, interactive: interactive).padding(screenPadding)
       } else {
         placeholder(device.state)
+      }
+    case .remote(let remote):
+      if let url = remote.webPreviewUrl.flatMap(URL.init(string:)), ["http", "https"].contains(url.scheme) {
+        RemotePreview(url: url).padding(screenPadding)
+      } else {
+        placeholder("No preview URL was recorded for session \(remote.sessionId).")
       }
     default:
       placeholder(device.state)
@@ -79,7 +119,26 @@ extension DeviceRef {
     switch self {
     case .ios: return isRunning
     case .android(_, let avd): return isRunning && avd.owned && !avd.physical && avd.serial != nil
+    case .remote: return false
     }
+  }
+}
+
+private struct RemotePreview: NSViewRepresentable {
+  var url: URL
+
+  final class Coordinator {
+    var loaded: URL?
+  }
+
+  func makeCoordinator() -> Coordinator { Coordinator() }
+
+  func makeNSView(context: Context) -> WKWebView { WKWebView() }
+
+  func updateNSView(_ view: WKWebView, context: Context) {
+    guard context.coordinator.loaded != url else { return }
+    context.coordinator.loaded = url
+    view.load(URLRequest(url: url))
   }
 }
 

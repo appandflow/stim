@@ -30,6 +30,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var supervisor: Supervisor?
   public var logs: Logs?
   public var slots: [Slot]?
+  public var remoteDevices: [RemoteDevice]?
 
   public var id: String { path }
 
@@ -42,6 +43,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
       if let ios = slot.ios { out.append(.ios(slot: slot.slot, ios)) }
       if let android = slot.android { out.append(.android(slot: slot.slot, android)) }
     }
+    for remote in remoteDevices ?? [] { out.append(.remote(remote)) }
     return out
   }
 
@@ -67,6 +69,15 @@ public struct AndroidDevice: Decodable, Hashable, Sendable {
   public var physical: Bool
   public var serial: String?
   public var state: String
+}
+
+/// A billable remote session recorded for the workspace, such as an EAS Simulator.
+public struct RemoteDevice: Decodable, Hashable, Sendable {
+  public var platform: String?
+  public var backend: String
+  public var sessionId: String
+  public var state: String
+  public var webPreviewUrl: String?
 }
 
 public struct Metro: Decodable, Hashable, Sendable {

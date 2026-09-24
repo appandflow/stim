@@ -522,9 +522,10 @@ await withRemoteSessionLock(process.argv[2], async () => {
 });
 
 describe('session creation', () => {
-  test('publishes the fixed ownership claim before workspace state', async () => {
+  test('publishes the fixed ownership claim before workspace state, which keeps the preview URL', async () => {
     const ledgerRoot = join(tmpHome, 'machine-eas');
     let claimVisibleDuringStateWrite = false;
+    let statePatch: Record<string, unknown> | null = null;
 
     const result = await ensureRemoteBootOwned({
       root,
@@ -534,8 +535,10 @@ describe('session creation', () => {
       boot: async () => ({ ok: true, udid: 'drs_claimed' }),
       createdSessionId: () => 'drs_claimed',
       abandonCreatedSession: () => ({ ok: true, sessionId: 'drs_claimed' }),
-      writeState: () => {
+      webPreviewUrl: () => 'https://preview.example/drs_claimed',
+      writeState: (_root, patch) => {
         claimVisibleDuringStateWrite = readEasSessionLedger(ledgerRoot).claims.has('drs_claimed');
+        statePatch = patch;
       },
       withProjectLock: async (_project, fn) => fn(),
       withLock: async (_project, fn) => fn(),
@@ -544,6 +547,14 @@ describe('session creation', () => {
 
     expect('failed' in result && result.failed).toBe(false);
     expect(claimVisibleDuringStateWrite).toBe(true);
+    expect(statePatch).toEqual({
+      remoteDevice: {
+        platform: 'ios',
+        sessionId: 'drs_claimed',
+        startedAt: '2026-08-28T00:00:00.000Z',
+        webPreviewUrl: 'https://preview.example/drs_claimed',
+      },
+    });
   });
 
   test('a claim write failure stops the new session before state publication', async () => {

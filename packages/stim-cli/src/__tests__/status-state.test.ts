@@ -9,6 +9,8 @@ import {
   formatSpace,
   parseDfFree,
   poolLine,
+  remoteDeviceLine,
+  remoteDeviceState,
   tightVolumes,
   unprovisionedWorktrees,
   type DeviceLeaseState,
@@ -294,5 +296,43 @@ describe('device lease state', () => {
 
   test('no lease file prints no section', () => {
     expect(deviceLeaseLines([], now)).toEqual([]);
+  });
+});
+
+describe('remote device state', () => {
+  const record = {
+    platform: 'android' as const,
+    sessionId: 'drs_7',
+    startedAt: '2026-09-24T00:00:00.000Z',
+    webPreviewUrl: 'https://preview.example/7',
+  };
+
+  test('a recorded session is claimed only when the ledger names this workspace', () => {
+    const claims = new Map([['drs_7', { workspaceRoot: '/proj/a' }]]);
+    expect(remoteDeviceState(record, { claims, safe: true }, '/proj/a')?.state).toBe('claimed');
+    expect(remoteDeviceState(record, { claims, safe: true }, '/proj/b')?.state).toBe('unclaimed');
+    expect(remoteDeviceState(record, { claims: new Map(), safe: false }, '/proj/a')?.state).toBe('unknown');
+    expect(remoteDeviceState(null, { claims, safe: true }, '/proj/a')).toBe(null);
+  });
+
+  test('a remote session makes the environment live without committing local memory', () => {
+    const remote = remoteDeviceState(record, { claims: new Map(), safe: true }, '/proj/a');
+    const s = environmentState({ __path: '/proj/a', platforms: {} }, { remote });
+    expect(s.live).toBe(true);
+    expect(s.memoryMb).toBe(0);
+    expect(s.remoteDevices).toEqual([
+      {
+        platform: 'android',
+        backend: 'eas',
+        sessionId: 'drs_7',
+        state: 'unclaimed',
+        startedAt: '2026-09-24T00:00:00.000Z',
+        webPreviewUrl: 'https://preview.example/7',
+      },
+    ]);
+    assert(remote);
+    expect(remoteDeviceLine(remote)).toBe(
+      'remote android: EAS session drs_7 billable (unclaimed) -- watch: https://preview.example/7',
+    );
   });
 });

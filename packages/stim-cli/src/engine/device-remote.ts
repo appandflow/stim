@@ -606,6 +606,7 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
   boot,
   createdSessionId,
   abandonCreatedSession,
+  webPreviewUrl = () => null,
   writeState,
   register = () => {},
   withProjectLock = withEasProjectLock,
@@ -620,6 +621,7 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
   boot: () => Promise<T>;
   createdSessionId: () => string | null;
   abandonCreatedSession: () => AbandonCreatedSessionResult;
+  webPreviewUrl?: () => string | null;
   writeState: (root: string, patch: Record<string, unknown>) => unknown;
   register?: () => unknown;
   withProjectLock?: typeof withEasProjectLock;
@@ -649,7 +651,10 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
               },
               ledgerRoot,
             );
-            writeState(root, { remoteDevice: { platform, sessionId, startedAt } });
+            const preview = webPreviewUrl();
+            writeState(root, {
+              remoteDevice: { platform, sessionId, startedAt, ...(preview ? { webPreviewUrl: preview } : {}) },
+            });
             return booted;
           } catch (err) {
             const cleanup = abandonCreatedSession();
