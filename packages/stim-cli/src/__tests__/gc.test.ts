@@ -40,7 +40,6 @@ import gcCommand, {
 } from '../commands/gc.ts';
 import { adoptParked, parkSim, readParked } from '../devices/sim-pool.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
-import { gcReportSections } from '../commands/gc/report.ts';
 import * as reclaim from '../devices/reclaim.ts';
 import {
   makeConfig,
@@ -2875,7 +2874,30 @@ describe('gc --json', () => {
     expect(payload.sections.staleBuildLocks).toEqual([
       { path: lock, platform: 'android', key: 'def-debug-sim', pid: 999999, projectRoot: '/w/dead' },
     ]);
-    expect(Object.keys(payload.sections)).toEqual(Object.keys(gcReportSections({})));
+    expect(Object.keys(payload.sections)).toEqual([
+      'deadProjects',
+      'invalidProjects',
+      'orphanedPorts',
+      'orphanedWorkspaces',
+      'linkedWorktrees',
+      'parkedSimulators',
+      'parkedEmulators',
+      'orphanedDevices',
+      'staleDevices',
+      'staleDeviceRecords',
+      'orphanedEasSessions',
+      'staleBuildLocks',
+      'staleBuildSlots',
+      'unresolvedBuildClaims',
+      'buildsInProgress',
+      'expiredDeviceLeases',
+      'keptDeviceLeases',
+      'deviceSweepNotices',
+      'easSessionSweepNotices',
+      'skipped',
+      'workspaceBuildOutputs',
+      'caches',
+    ]);
     expect(stderr).toContain('Dead project entries (1)');
     expect(loadConfig()).toEqual(before);
     expect(existsSync(lock)).toBe(true);

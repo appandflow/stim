@@ -328,6 +328,22 @@ test('the facts topic documents every reload strategy the command can report', (
   for (const value of values) expect(body).toContain(`"${value}"`);
 });
 
+test('the facts topic documents every gc verdict reason code', () => {
+  const body = renderSection('facts', 'gc');
+  assert(body);
+  for (const [file, type] of [
+    ['../commands/gc/worktrees.ts', 'WorktreeSkipCode'],
+    ['../commands/gc/workspaces.ts', 'WorkspaceKeptCode'],
+  ] as const) {
+    const src = readFileSync(new URL(file, import.meta.url), 'utf-8');
+    const start = src.indexOf(`export type ${type} =`);
+    const union = src.slice(start, src.indexOf(';', start));
+    const codes = [...union.matchAll(/'([a-z-]+)'/g)].map((m) => m[1] as string);
+    expect(codes.length).toBeGreaterThan(0);
+    for (const code of codes) expect(body).toMatch(new RegExp(`(^|[\\s|])${code}(?=[\\s|]|$)`, 'm'));
+  }
+});
+
 test('pool recovery guidance routes claim refusals to the error remedy and back', () => {
   expect(renderSection('lifecycle', 'pool')).toContain(`stim guide errors ${CLAIM_REFUSED}`);
   expect(renderSection('errors', CLAIM_REFUSED)).toContain('stim guide lifecycle pool');
