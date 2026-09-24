@@ -82,7 +82,7 @@ struct MachineSummary: View {
           Text("\(cap.liveCount) live")
         }
         HStack(spacing: 8) {
-          Text("Memory").foregroundStyle(Theme.secondary)
+          Text("Memory").foregroundStyle(Theme.secondary).fixedSize()
           ProgressView(value: min(1, Double(cap.committedMb) / Double(max(1, cap.totalMemoryMb))))
             .tint(cap.overCapacity ? Theme.warn : Theme.lavender)
             .frame(width: 70)
