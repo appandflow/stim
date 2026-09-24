@@ -21,11 +21,11 @@ final class ActionRun: ObservableObject, Identifiable {
     Data(lines.filter { $0.channel == .stdout }.map(\.text).joined(separator: "\n").utf8)
   }
 
-  fileprivate func start(onFinish: @escaping @MainActor () -> Void) {
+  fileprivate func start(cli: StimCLI, onFinish: @escaping @MainActor () -> Void) {
     // ProcessStream calls back on background queues in order; the main queue
     // keeps that order, where unstructured Tasks would not.
     do {
-      try StimCLI.stream(
+      try cli.stream(
         command.arguments, cwd: command.cwd,
         onLine: { line in
           DispatchQueue.main.async { MainActor.assumeIsolated { self.lines.append(line) } }
@@ -53,6 +53,11 @@ final class ActionCenter: ObservableObject {
   @Published private(set) var runs: [String: ActionRun] = [:]
   @Published var presented: ActionRun?
   var onFinish: (() -> Void)?
+  private let cli: Task<StimCLI, Never>
+
+  init(cli: Task<StimCLI, Never>) {
+    self.cli = cli
+  }
 
   func active(for key: String) -> ActionRun? {
     runs[key].flatMap { $0.isRunning ? $0 : nil }
@@ -69,9 +74,12 @@ final class ActionCenter: ObservableObject {
     let run = ActionRun(title: title, command: command)
     runs[key] = run
     presented = run
-    run.start { [weak self] in
-      self?.objectWillChange.send()
-      self?.onFinish?()
+    let cli = cli
+    Task { [weak self] in
+      run.start(cli: await cli.value) { [weak self] in
+        self?.objectWillChange.send()
+        self?.onFinish?()
+      }
     }
   }
 }

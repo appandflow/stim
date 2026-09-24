@@ -22,14 +22,16 @@ final class MetricsStore: ObservableObject {
   @Published private(set) var reclaimable: GcReport.Reclaimable?
 
   private let status: StatusStore
+  private let cli: Task<StimCLI, Never>
   private var sampler = ResourceSampler()
   private var timer: Timer?
   private var sampling = false
   private var gcRunning = false
   private var gcAt: Date?
 
-  init(status: StatusStore) {
+  init(status: StatusStore, cli: Task<StimCLI, Never>) {
     self.status = status
+    self.cli = cli
   }
 
   func start() {
@@ -83,8 +85,9 @@ final class MetricsStore: ObservableObject {
 
   private func refreshGc() {
     gcRunning = true
+    let cli = cli
     Task.detached {
-      let report = try? StimCLI.gcReport()
+      let report = try? await cli.value.gcReport()
       await MainActor.run {
         self.gcRunning = false
         self.gcAt = Date()

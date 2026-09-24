@@ -11,16 +11,20 @@ enum SidebarItem: Hashable {
 struct RootView: View {
   @StateObject private var store: StatusStore
   @StateObject private var metrics: MetricsStore
-  @StateObject private var actions = ActionCenter()
+  @StateObject private var actions: ActionCenter
   @State private var selection: SidebarItem? = .wall
   @State private var projectFilter: Project?
   @State private var focusedDeviceID: String?
   @ObservedObject private var openRequests = OpenRequests.shared
 
-  init() {
-    let store = StatusStore()
+  private let cli: Task<StimCLI, Never>
+
+  init(cli: Task<StimCLI, Never>) {
+    self.cli = cli
+    let store = StatusStore(cli: cli)
     _store = StateObject(wrappedValue: store)
-    _metrics = StateObject(wrappedValue: MetricsStore(status: store))
+    _metrics = StateObject(wrappedValue: MetricsStore(status: store, cli: cli))
+    _actions = StateObject(wrappedValue: ActionCenter(cli: cli))
   }
 
   var body: some View {
@@ -72,7 +76,7 @@ struct RootView: View {
     switch selection {
     case .environment(let path):
       if let env = store.payload?.environments.first(where: { $0.path == path }) {
-        WorkspaceDetail(env: env, usage: metrics.usage[env.path], focusedID: $focusedDeviceID)
+        WorkspaceDetail(cli: cli, env: env, usage: metrics.usage[env.path], focusedID: $focusedDeviceID)
       } else {
         EmptyState(title: "Workspace gone", message: "stim status no longer reports this workspace.")
       }

@@ -8,8 +8,13 @@ final class StatusStore: ObservableObject {
   @Published private(set) var updatedAt: Date?
   @Published private(set) var projects: [String: Project] = [:]
 
+  private let cli: Task<StimCLI, Never>
   private var timer: Timer?
   private var inFlight = false
+
+  init(cli: Task<StimCLI, Never>) {
+    self.cli = cli
+  }
 
   func start() {
     guard timer == nil else { return }
@@ -23,8 +28,10 @@ final class StatusStore: ObservableObject {
     guard !inFlight else { return }
     inFlight = true
     let known = projects
+    let cli = cli
     Task.detached {
-      let result = Result { try StimCLI.status() }
+      let cli = await cli.value
+      let result = Result { try cli.status() }
       let resolved: [String: Project] =
         if case .success(let payload) = result {
           Dictionary(

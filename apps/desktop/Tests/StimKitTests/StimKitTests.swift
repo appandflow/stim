@@ -284,3 +284,37 @@ import Testing
     #expect(payload.owner(ofSimulator: "emulator-5554") == nil)
   }
 }
+
+@Suite struct LoginShellTests {
+  @Test func parsesValuesWithEqualsSignsAndNewlines() {
+    let output = Data("PATH=/a:/b\0OPTS=-Dx=1 -Dy=2\0MULTI=one\ntwo=2\n\0EMPTY=\0".utf8)
+    #expect(
+      LoginShell.parseEnvironment(output) == [
+        "PATH": "/a:/b", "OPTS": "-Dx=1 -Dy=2", "MULTI": "one\ntwo=2\n", "EMPTY": "",
+      ])
+  }
+
+  @Test func capturesTheLoginShellEnvironment() async throws {
+    let environment = try #require(await LoginShell.environment())
+    #expect(environment["HOME"] == NSHomeDirectory())
+    #expect(environment["PATH"]?.contains("/usr/bin") == true)
+  }
+
+  @Test func resolvesStimFromThePathAndLetsStimBinWin() throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let stim = dir.appendingPathComponent("stim").path
+    FileManager.default.createFile(atPath: stim, contents: Data(), attributes: [.posixPermissions: 0o755])
+
+    let found = StimCLI(environment: ["PATH": "/nonexistent:\(dir.path)", "ANDROID_HOME": "/sdk"])
+    #expect(found.executable == stim)
+    #expect(found.environment["ANDROID_HOME"] == "/sdk")
+
+    let explicit = StimCLI(environment: ["PATH": dir.path, "STIM_BIN": "/opt/node/bin/stim"])
+    #expect(explicit.executable == "/opt/node/bin/stim")
+    #expect(explicit.environment["PATH"] == "/opt/node/bin:\(dir.path)")
+
+    #expect(StimCLI(environment: ["PATH": "/nonexistent"]).executable == nil)
+  }
+}
