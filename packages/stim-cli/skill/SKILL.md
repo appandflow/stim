@@ -11,4 +11,6 @@ Before using Stim, load the workflow guide from the installed CLI:
 stim guide agent
 ```
 
+If `stim` is not on PATH, run `npx stim guide agent`.
+
 Follow the version-matched instructions it prints.

@@ -193,14 +193,15 @@ pedantic, or style-only rule.
 ### 1. Keep agent guidance current
 
 Treat `packages/stim-cli/skill/SKILL.md` as a tiny discovery router. Its body
-only tells the agent to run `stim guide agent` and follow the version-matched
-instructions. Keep operational guidance in the version-matched guides.
+only tells the agent to run `stim guide agent`, or `npx stim guide agent` when
+`stim` is not on PATH, and follow the version-matched instructions. Keep
+operational guidance in the version-matched guides.
 `guide agent` covers the normal workflow, safety, recovery actions, and topic
 routing. Put transparent build optimizations and cache internals in the relevant
 detailed topics, not the root agent guide. Detailed topics also own flag,
 payload, setting, backend, cleanup, and remedy references. Do not add a
-version check, compatibility branch, migration path, or failure fallback to the
-static skill. Only one skill ships.
+version check, compatibility branch, migration path, or any other failure
+fallback to the static skill. Only one skill ships.
 
 Update the affected guide topics and their contract tests when commands,
 defaults, safety rules, or remedies change. Change `guide agent` when the agent's
