@@ -150,13 +150,15 @@ Run `stim guide settings` for the complete key and value list.
 `iosSimulatorApp` chooses the macOS app that displays an owned iOS simulator after
 Stim boots it. `"xcode"` (the default) opens the selected Xcode's Device Hub on
 Xcode 27 or Simulator on older Xcode. Set `"siniulator"` to use an installed
-[Siniulator](https://github.com/kmagiera/Siniulator) instead. This is a
+[Siniulator](https://github.com/kmagiera/Siniulator) instead. Set
+`"stim-desktop"` to open no simulator window and show the device in Stim
+Desktop, which selects the workspace that owns it. This is a
 machine-wide preference, not a project setting; Stim still creates, boots, and
 owns the simulator. An invalid value refuses before boot. Opening the chosen
-app is best effort, so install Siniulator before selecting it.
+app is best effort, so install Siniulator or Stim Desktop before selecting it.
 
-Override it for one launch with `stim ios --simulator-app siniulator` or
-`stim ios --simulator-app xcode`. The flag also opens an already running owned
+Override it for one launch with `stim ios --simulator-app siniulator`,
+`stim ios --simulator-app stim-desktop`, or `stim ios --simulator-app xcode`. The flag also opens an already running owned
 simulator without rebooting it and leaves the saved preference unchanged. It
 only applies to local simulators.
 

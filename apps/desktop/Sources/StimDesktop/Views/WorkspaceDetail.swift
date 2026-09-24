@@ -5,7 +5,7 @@ import SwiftUI
 struct WorkspaceDetail: View {
   var env: Workspace
   var usage: UsageHistory?
-  @State private var focusedID: String?
+  @Binding var focusedID: String?
   @State private var stats: ProjectStats?
   @State private var takenOver: Set<String> = []
 

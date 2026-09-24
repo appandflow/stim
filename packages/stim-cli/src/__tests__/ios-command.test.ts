@@ -5511,17 +5511,20 @@ describe('ios --device: the lease on the phone', () => {
 });
 
 describe('--simulator-app', () => {
-  test.each(['xcode', 'siniulator'])('parses %s and passes it to preparation and boot', async (simulatorApp) => {
-    reserve();
-    const program = new Command();
-    registerIos(program);
-    const command = program.commands[0]!;
-    command.parseOptions(['--simulator-app', simulatorApp]);
-    const { calls, exitCode } = await run(command.opts());
-    expect(exitCode).toBe(null);
-    expect(calls.args.ensureOwnedDevice).toMatchObject({ flags: { simulatorApp } });
-    expect(calls.args.ensureBooted).toMatchObject({ simulatorApp });
-  });
+  test.each(['xcode', 'siniulator', 'stim-desktop'])(
+    'parses %s and passes it to preparation and boot',
+    async (simulatorApp) => {
+      reserve();
+      const program = new Command();
+      registerIos(program);
+      const command = program.commands[0]!;
+      command.parseOptions(['--simulator-app', simulatorApp]);
+      const { calls, exitCode } = await run(command.opts());
+      expect(exitCode).toBe(null);
+      expect(calls.args.ensureOwnedDevice).toMatchObject({ flags: { simulatorApp } });
+      expect(calls.args.ensureBooted).toMatchObject({ simulatorApp });
+    },
+  );
 
   test.each(['unknown', ''])('refuses an invalid viewer %j before preparing a device', async (simulatorApp) => {
     reserve();
@@ -5529,7 +5532,7 @@ describe('--simulator-app', () => {
     expect(exitCode).toBe(1);
     expect(parseFirst(logs)).toMatchObject({
       code: 'STIM_BAD_ARG',
-      message: 'Invalid --simulator-app. Use "xcode" or "siniulator".',
+      message: 'Invalid --simulator-app. Use "xcode", "siniulator", or "stim-desktop".',
     });
     expect(calls.order).not.toContain('ensureOwnedDevice');
     expect(calls.order).not.toContain('buildIos');

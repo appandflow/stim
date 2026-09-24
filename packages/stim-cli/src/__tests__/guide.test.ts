@@ -350,10 +350,11 @@ test('pool recovery guidance routes claim refusals to the error remedy and back'
 });
 
 test('the viewer override is discoverable beside the machine preference and boot guidance', () => {
-  expect(renderSection('lifecycle', 'options')).toContain('--simulator-app <xcode|siniulator>');
+  expect(renderSection('lifecycle', 'options')).toContain('--simulator-app <xcode|siniulator|stim-desktop>');
   for (const guide of [renderTopic('settings'), renderSection('lifecycle', 'simslim')]) {
     expect(guide).toContain('iosSimulatorApp');
     expect(guide).toContain('--simulator-app siniulator');
+    expect(guide).toContain('--simulator-app stim-desktop');
     expect(guide).toContain('--simulator-app xcode');
   }
 });

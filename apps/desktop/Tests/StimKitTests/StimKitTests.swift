@@ -170,3 +170,21 @@ import Testing
     #expect(volumes.map(\.holds) == [["Repositories", "Stim home"], ["Simulators"]])
   }
 }
+
+@Suite struct OpenURLTests {
+  @Test func readsTheUdidOnlyFromAnOpenURL() {
+    #expect(simulatorUdid(fromOpenURL: URL(string: "stim-desktop://open?udid=U1")!) == "U1")
+    #expect(simulatorUdid(fromOpenURL: URL(string: "stim-desktop://close?udid=U1")!) == nil)
+    #expect(simulatorUdid(fromOpenURL: URL(string: "siniulator://open?udid=U1")!) == nil)
+    #expect(simulatorUdid(fromOpenURL: URL(string: "stim-desktop://open?udid=")!) == nil)
+  }
+
+  @Test func findsTheWorkspaceThatOwnsASlotSimulator() throws {
+    let url = Bundle.module.url(forResource: "status", withExtension: "json", subdirectory: "Fixtures")!
+    let payload = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url))
+    let owner = try #require(payload.owner(ofSimulator: "D39CAF14-F4A4-4C0A-B8A4-3A30B2D268F0"))
+    #expect(owner.workspace.path == "/Users/dev/app/.worktrees/wide-insets/apps/mobile")
+    #expect(owner.device.slot == "ipad")
+    #expect(payload.owner(ofSimulator: "emulator-5554") == nil)
+  }
+}

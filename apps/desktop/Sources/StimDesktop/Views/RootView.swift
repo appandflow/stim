@@ -13,6 +13,8 @@ struct RootView: View {
   @StateObject private var metrics: MetricsStore
   @State private var selection: SidebarItem? = .wall
   @State private var projectFilter: Project?
+  @State private var focusedDeviceID: String?
+  @ObservedObject private var openRequests = OpenRequests.shared
 
   init() {
     let store = StatusStore()
@@ -41,6 +43,8 @@ struct RootView: View {
       store.start()
       metrics.start()
     }
+    .onReceive(openRequests.$simulatorUdid) { udid in showSimulator(udid, in: store.payload) }
+    .onReceive(store.$payload) { payload in showSimulator(openRequests.simulatorUdid, in: payload) }
     .onChange(of: selection) { _, item in
       switch item {
       case .wall: projectFilter = nil
@@ -50,11 +54,19 @@ struct RootView: View {
     }
   }
 
+  /// `@Published` emits before the property changes, so both values arrive as arguments.
+  private func showSimulator(_ udid: String?, in payload: StatusPayload?) {
+    guard let udid, let owner = payload?.owner(ofSimulator: udid) else { return }
+    openRequests.simulatorUdid = nil
+    selection = .environment(owner.workspace.path)
+    focusedDeviceID = owner.device.id
+  }
+
   @ViewBuilder private var detail: some View {
     switch selection {
     case .environment(let path):
       if let env = store.payload?.environments.first(where: { $0.path == path }) {
-        WorkspaceDetail(env: env, usage: metrics.usage[env.path])
+        WorkspaceDetail(env: env, usage: metrics.usage[env.path], focusedID: $focusedDeviceID)
       } else {
         EmptyState(title: "Workspace gone", message: "stim status no longer reports this workspace.")
       }
