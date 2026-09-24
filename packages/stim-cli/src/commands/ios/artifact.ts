@@ -21,12 +21,7 @@ import {
   untrackedMissLine,
 } from '../../cache/build-cache.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
-import {
-  takeoverLine,
-  WAIT_CEILING_MS,
-  type BuildLockHandle,
-  type WaitForBuildResult,
-} from '../../engine/build-lock.ts';
+import { waitForSharedBuild, type BuildLockHandle } from '../../engine/build-lock.ts';
 import type { BuildSlotHandle } from '../../engine/build-slots.ts';
 import { easDeviceBuildRemedy, type EasBuildResult } from '../../engine/eas-build.ts';
 import { copyAppAside, writeIpTxt } from '../../engine/ios-lan.ts';
@@ -404,109 +399,32 @@ export async function acquireIosArtifact(
     return remote;
   }
 
-  async function waitForSharedBuild(): Promise<void> {
-    if (!useBuildCache) return;
-    const waitStarted = d.now();
-    let failedHolder: BuildLockHandle['held'];
-    while (!appPath) {
-      let attempt: BuildLockHandle | null = null;
-      try {
-        attempt = d.acquireBuildLock({ platform: PLATFORM, key: cacheKey, root, logFile });
-      } catch (e) {
-        const refusal = claimFailure(e, 'stim ios');
-        if (refusal) {
-          fail({
-            code: refusal.code,
-            message: refusal.message,
-            remedy: refusal.remedy,
-            build: { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache },
-          });
-        }
-        note(
-          chalk.yellow(
-            phaseLine('build', `could not take the build lock: ${(e as Error)?.message || e}; building anyway`),
-          ),
-        );
-      }
-
-      if (attempt?.acquired) {
-        buildLock = attempt;
-        const previous = attempt.tookOver ?? failedHolder;
-        if (previous) note(chalk.yellow(phaseLine('build', takeoverLine(previous))));
-        break;
-      } else if (attempt?.held) {
-        releasedWait = null;
-        const held = attempt.held;
-        const who = held.projectRoot || 'another workspace';
-        phase(
-          'build',
-          `${who} is already building ${shortHash(fingerprint)} (pid ${held.pid})` +
-            `${held.logFile ? ` -- tail ${held.logFile}` : ''} -- stim guide lifecycle concurrency`,
-        );
-
-        let waited: WaitForBuildResult | null = null;
-        try {
-          const ceilingMs = WAIT_CEILING_MS - (d.now() - waitStarted);
-          if (ceilingMs <= 0) {
-            throw Object.assign(
-              new Error(
-                `Waited ${formatDuration(d.now() - waitStarted)} for shared builds without an artifact; ${who} (pid ${held.pid}) holds ${attempt.path}.`,
-              ),
-              {
-                code: 'STIM_BUILD_WAIT_TIMEOUT',
-                lockPath: attempt.path,
-              },
-            );
-          }
-          waited = await d.waitForBuild({ platform: PLATFORM, key: cacheKey, out: note, ceilingMs });
-        } catch (e) {
-          const refusal = claimFailure(e, 'stim ios');
-          if (refusal) {
-            fail({
-              code: refusal.code,
-              message: refusal.message,
-              remedy: refusal.remedy,
-              build: { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache },
-            });
-          }
-          const err = e as Error & { code?: string; lockPath?: string };
-          if (err?.code !== 'STIM_BUILD_WAIT_TIMEOUT') throw e;
-          fail({
-            code: 'STIM_BUILD_WAIT_TIMEOUT',
-            message: err.message,
-            remedy: `Check pid ${held.pid}; if it is not really building, remove ${err.lockPath} and run \`stim ios\` again.`,
-            build: { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache },
-          });
-        }
-
-        if (waited?.hit) {
-          appPath = waited.hit ?? null;
-          cacheHit = 'local';
-          waitedForBuild = { pid: held.pid, ms: waited.waitedMs };
-          phase(
-            'build',
-            `waited ${formatDuration(waited.waitedMs)} for ${who}'s build -> installed from cache -- stim guide lifecycle concurrency`,
-          );
-        } else if (waited?.lockReleased) {
-          failedHolder = undefined;
-          releasedWait = { facts: { pid: held.pid, ms: waited.waitedMs }, who };
-          phase('build', `${who}'s build lock was released; rechecking this workspace before building`);
-        } else {
-          note(
-            chalk.yellow(
-              phaseLine(
-                'build',
-                `${who}'s build ended without an artifact (${waited?.builderFailed}); retrying the build lock`,
-              ),
-            ),
-          );
-          failedHolder = held;
-        }
-      } else {
-        break;
-      }
+  async function awaitSharedBuild(): Promise<void> {
+    if (!useBuildCache || appPath) return;
+    const shared = await waitForSharedBuild({
+      platform: PLATFORM,
+      key: cacheKey,
+      fingerprint,
+      root,
+      logFile,
+      command: 'stim ios',
+      acquire: d.acquireBuildLock,
+      wait: d.waitForBuild,
+      now: d.now,
+      phase: (text) => phase('build', text),
+      warn: (text) => note(chalk.yellow(phaseLine('build', text))),
+      out: note,
+    });
+    if (shared.refusal) {
+      fail({ ...shared.refusal, build: { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache } });
     }
-    return;
+    buildLock = shared.lock;
+    releasedWait = shared.released;
+    if (shared.hit) {
+      appPath = shared.hit.path;
+      cacheHit = 'local';
+      waitedForBuild = shared.hit.waited;
+    }
   }
 
   const prepareDeviceApp = async (path: string, { fresh }: { fresh: boolean }): Promise<string | null> => {
@@ -814,7 +732,7 @@ export async function acquireIosArtifact(
     await resolveInitialFingerprint();
     if (!easBuild) {
       remote = await resolveRemoteArtifact();
-      await waitForSharedBuild();
+      await awaitSharedBuild();
       await prepareCachedArtifact();
       await buildArtifact();
     }
