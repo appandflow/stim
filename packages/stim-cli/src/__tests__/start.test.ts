@@ -319,7 +319,7 @@ async function runSpawnedExpoStart({
   };
   const base = exec.runQuiet.bind(exec);
   exec.runQuiet = (cmd) => {
-    if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5150' : '';
+    if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? String(DEAD_LISTENER_PID) : '';
     return base(cmd);
   };
   setExecutor(exec);
@@ -838,7 +838,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     };
     const base = exec.runQuiet.bind(exec);
     exec.runQuiet = (cmd) => {
-      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5150' : '';
+      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? String(DEAD_LISTENER_PID) : '';
       return base(cmd);
     };
     setExecutor(exec);
@@ -896,7 +896,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     };
     const base = exec.runQuiet.bind(exec);
     exec.runQuiet = (cmd) => {
-      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5150' : '';
+      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? String(DEAD_LISTENER_PID) : '';
       return base(cmd);
     };
     setExecutor(exec);
@@ -982,7 +982,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     };
     const base = exec.runQuiet.bind(exec);
     exec.runQuiet = (cmd) => {
-      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5150' : '';
+      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? String(DEAD_LISTENER_PID) : '';
       return base(cmd);
     };
     setExecutor(exec);
@@ -1025,7 +1025,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     };
     const base = exec.runQuiet.bind(exec);
     exec.runQuiet = (cmd) => {
-      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5150' : '';
+      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? String(DEAD_LISTENER_PID) : '';
       return base(cmd);
     };
     setExecutor(exec);
@@ -1177,7 +1177,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     };
     const base = exec.runQuiet.bind(exec);
     exec.runQuiet = (cmd) => {
-      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5150' : '';
+      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? String(DEAD_LISTENER_PID) : '';
       return base(cmd);
     };
     setExecutor(exec);
@@ -1629,7 +1629,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     };
     const base = exec.runQuiet.bind(exec);
     exec.runQuiet = (cmd) => {
-      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5158' : '';
+      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? String(DEAD_LISTENER_PID) : '';
       return base(cmd);
     };
     setExecutor(exec);
@@ -1779,7 +1779,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     };
     const base = exec.runQuiet.bind(exec);
     exec.runQuiet = (cmd) => {
-      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5159' : '';
+      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? String(DEAD_LISTENER_PID) : '';
       return base(cmd);
     };
     setExecutor(exec);
@@ -2112,7 +2112,7 @@ describe('action: an existing supervisor that is not answering', { timeout: 30_0
     const base = exec.runQuiet.bind(exec);
     exec.runQuiet = (cmd) => {
       if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) {
-        return exec.listening ? '5152' : '';
+        return exec.listening ? String(DEAD_LISTENER_PID) : '';
       }
       return base(cmd);
     };
@@ -2215,9 +2215,9 @@ describe('action: an existing supervisor that is not answering', { timeout: 30_0
     const base = exec.runQuiet.bind(exec);
     exec.runQuiet = (cmd) => {
       if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) {
-        return exec.listening ? '5154' : '';
+        return exec.listening ? String(DEAD_LISTENER_PID) : '';
       }
-      if (cmd === 'lsof -a -p 5154 -d cwd -Fn') markHealthy();
+      if (cmd === `lsof -a -p ${DEAD_LISTENER_PID} -d cwd -Fn`) markHealthy();
       return base(cmd);
     };
     setExecutor(exec);
