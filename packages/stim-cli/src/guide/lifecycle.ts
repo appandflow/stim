@@ -1012,7 +1012,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   stats           --json          (this project and machine-wide)
   doctor          --json --fix --platform <ios|android>
                                   (--platform keeps shared checks and filters native findings)
-  gc              --delete --older-than <days> --cache <name|all>
+  gc              --delete --older-than <days> --cache <name|all|workspaces> --worktrees
   worktree warm    --refresh; remove [path] --force
 
   DEVICE SLOTS

@@ -20,11 +20,17 @@ WHAT RECLAIMS AN OWNED DEVICE
   stim gc --delete        sweeps stim-* devices no project references, and
                             clears verified parked simulators and emulators
   stim gc --delete --older-than <days>
-                            also reaps the device of a project nothing has
-                            touched in that long, even though the project is
-                            still on disk
+                            also reaps the device of a workspace no Stim
+                            command has used in that long, even though the
+                            project is still on disk
+  stim gc --delete --worktrees
+                            runs \`stim worktree remove\` on every clean, idle,
+                            Stim-managed linked worktree (\`guide cleanup gc\`)
 
-Those are the only two commands that delete. \`stim stop\` shuts a device
+\`worktree remove\` and \`gc --delete\` are the only two commands that delete;
+\`gc --delete --worktrees\` deletes only through \`worktree remove\`. \`gc
+--delete\` also clears workspace build outputs (\`guide cleanup disk\`) and
+orphaned workspace directories, never a checkout. \`stim stop\` shuts a device
 DOWN and leaves it assigned, which is what makes returning to a branch cost a
 boot rather than a create, a provision and a reinstall.
 
@@ -56,9 +62,53 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   --force, uncommitted or unpushed work and initialized submodules. It then
   reclaims any owned resources it finds and removes the linked checkout.
   When git still refuses the removal, the kept ownership record no longer
-  names the devices that were parked or deleted. Git-created
+  names the devices that were parked or deleted. A workspace that is in use
+  (see IN USE below) keeps its directory, devices and registry entry, and the
+  command reports why. Git-created
   branches stay. A branch with an existing Stim ownership record is deleted
   only when it has no unique commits.
+
+IN USE
+  gc and worktree remove never delete a workspace's directory, build outputs
+  or checkout while it is in use: its dev server supervisor is running or
+  cannot be verified, a \`stim ios\`, \`stim android\` or \`stim stop\` run
+  holds its native-run.lock, a live or unresolvable build lock or slot names it,
+  or its managed tunnel or managed remote lock is held. The deletion holds
+  native-run.lock itself, so no native run can start partway through. A lock
+  that names no workspace blocks nothing, because every build also holds its
+  own workspace's native-run.lock; gc lists it with the command that removes
+  it. \`worktree remove\` re-checks uncommitted and unpushed work under its
+  removal locks, just before it reclaims anything. A project root whose
+  existence cannot be read (a permission error) is never treated as deleted.
+
+SWEEPING FINISHED WORKTREES
+  \`gc --worktrees\` is opt-in; no cache or age flag implies it. It looks at
+  every registered project root and every workspace.json root, grouped by
+  git worktree, and reports each worktree with the reason it is kept:
+  source checkout, bare, locked, in use, dirty (untracked files count; pod
+  install churn alone does not), unpushed (commits no remote-tracking ref or
+  other local branch reaches), initialized submodules, or recently used.
+  Idle means no recorded use for --older-than days, 7 without it; a worktree
+  whose last use is unknown is kept. --cache with --worktrees is refused with
+  STIM_BAD_ARG; run them separately.
+    stim gc --worktrees --older-than 3            # report only
+    stim gc --delete --worktrees --older-than 3   # remove the clean idle ones
+  With --delete it runs the \`stim worktree remove\` pipeline, never --force,
+  on each removable worktree. That pipeline re-inspects the worktree and
+  re-checks use and idleness under the removal locks, then parks devices and
+  handles the branch exactly as a manual \`stim worktree remove\`. A worktree
+  that became busy or recently used since the report is kept with the reason.
+  A worktree that fails is reported, gc exits 1, and the sweep continues.
+
+ORPHANED WORKSPACE DIRECTORIES
+  A worktree deleted with \`git worktree remove\`, \`rm -rf\` or a /tmp wipe
+  leaves its $STIM_HOME/workspaces/<name> directory behind with no registry
+  entry. \`gc\` reads each directory's workspace.json and reports it under
+  "Orphaned workspace directories" when the recorded project root is gone,
+  its volume is mounted, no registry key equals it or sits under it, and the
+  workspace is not in use. \`gc --delete\` re-checks each one, then removes
+  it. A directory with a missing or unparseable workspace.json, or a root on
+  an unmounted volume, is reported under Skipped and never deleted.
 
 NAMED SERVER PORTS
   worktree remove stops TCP listeners on each named allocation and releases
@@ -218,10 +268,13 @@ THE ONE CASE GC WILL NOT REAP
   Wall-clock timestamps and command names are not ownership proof.`,
     },
     disk: {
-      summary: 'disk usage, AVD and build-log sizes, the data partition, trimming the shared caches',
+      summary:
+        'disk usage, workspace build outputs, AVD and build-log sizes, the data partition, trimming the shared caches',
       body: () => `DISK
   Logs, state, pidfiles and Xcode DerivedData are under the global workspace
-  directory, and \`worktree remove\` reclaims them. Gradle retains its normal
+  directory, and \`worktree remove\` reclaims them. \`gc --delete\` clears the
+  build outputs of workspaces nobody is using (WORKSPACE BUILD OUTPUTS
+  below) and keeps the rest. Gradle retains its normal
   project build directories while sharing task outputs through its build cache.
 
   Android AVDs normally live under ~/.android/avd, and a booted owned AVD can
@@ -262,6 +315,28 @@ setting measured on the selected API 36 profile. Set
 project needs another size. Android userdata grows but does not shrink, so the
 setting applies only to a newly created AVD; recreate the environment to adopt
 a changed value.
+
+WORKSPACE BUILD OUTPUTS
+  Each workspace directory holds derived-data/, gradle-build/, android-cas/
+  and cache-provider/. \`gc\` reports them as one detected cache, "Workspace
+  build outputs", with a per-workspace size, last use and verdict. Plain
+  \`gc --delete\` clears them for every workspace not in use (see \`guide
+  cleanup gc\`), before anything else. \`--older-than <days>\` limits that to
+  workspaces idle at least that long, and keeps one whose last use is
+  unknown. \`--cache workspaces\` acts on them alone; \`--cache all\` includes
+  them. Only those four directories go: workspace.json, state.json, logs/,
+  locks and device records stay, so the workspace keeps its devices and ports.
+    stim gc --delete --cache workspaces --older-than 7
+  Last use is the newest of the lastUsedAt that start, ios, android, reload
+  and worktree warm record in state.json, lastBuild.startedAt,
+  supervisor.startedAt and the mtimes under logs/, so a dev server that keeps
+  logging keeps its workspace in use.
+  The same time decides \`--older-than\` device reaping, and a workspace with
+  no evidence of use keeps its device.
+  The next build of an unchanged app installs from the shared build cache.
+  After a native change the Xcode compilation cache speeds the rebuild, but on
+  React Native 0.86 Swift does not use it (explicit modules are off), so that
+  build recompiles Swift.
 
 SHARED BUILD CACHES
   The caches that make a second workspace fast are alive by design and never

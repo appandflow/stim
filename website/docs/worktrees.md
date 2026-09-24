@@ -193,3 +193,28 @@ Named ports allocated by `stim ports get <label>` belong to the workspace.
 `worktree remove` stops their TCP listeners and releases the allocations;
 `gc --delete` does the same for missing workspaces. `stim stop` leaves them
 alone. See [named server ports](./dev-server-and-logs.md#named-server-ports).
+
+## Remove finished worktrees in bulk
+
+<StimTabs
+code={`stim gc --worktrees --older-than 3
+stim gc --delete --worktrees --older-than 3`}
+/>
+
+`gc --worktrees` lists every linked worktree that has a Stim workspace and says
+why each one is kept: source checkout, bare, locked, in use, dirty (untracked
+files count), unpushed, initialized submodules, or recently used. A worktree is
+idle when no Stim command has used it for `--older-than` days, or 7 days
+without that option. With `--delete`, gc runs `stim worktree remove` without
+`--force` on each removable worktree. That command checks the worktree again
+before removing it and handles devices and branches as it does when you run it
+yourself. A worktree that fails is reported and the others still run. A
+worktree removed with `git worktree remove` or `rm -rf` leaves its Stim
+workspace directory behind; plain `gc --delete` removes those.
+
+Ask your agent:
+
+```text
+Run `stim gc --worktrees --older-than 3` and show me which worktrees it would
+remove and why it keeps the others. Do not pass --delete until I confirm.
+```

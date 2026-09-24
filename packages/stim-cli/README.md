@@ -44,7 +44,10 @@ reference:
 - [Getting started](https://stim.appandflow.com/docs/getting-started): terms,
   the first run, parallel worktrees, and what to do when a run fails.
 - [Worktrees](https://stim.appandflow.com/docs/worktrees): `worktree warm`,
-  `--refresh`, and `worktree remove`.
+  `--refresh`, `worktree remove`, and `gc --worktrees` to remove finished
+  worktrees in bulk.
+- [Build caches](https://stim.appandflow.com/docs/build-caches): what `gc`
+  reports and trims, including the build outputs of idle workspaces.
 - [Devices](https://stim.appandflow.com/docs/owned-devices): owned simulators
   and emulators, physical devices, slots, and remote devices.
 - [EAS development builds](https://stim.appandflow.com/docs/eas-builds).

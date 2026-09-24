@@ -547,7 +547,7 @@ describe('action: already running', { timeout: 30_000 }, () => {
     const result = await runAction({ json: true, resetCache: true });
     expect(result.exitCode).toBe(1);
     expect(JSON.parse(result.logs[0] ?? '').message).toContain('externally started');
-    expect(readWorkspaceState(root)).toEqual(before);
+    expect(readWorkspaceState(root)).toEqual({ ...before, lastUsedAt: expect.any(String) });
     expect(getProject(root)?.metroPort).toBe(port);
   });
 

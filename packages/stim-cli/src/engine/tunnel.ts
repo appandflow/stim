@@ -9,7 +9,12 @@ import { captureProcessToken, inspectProcessIdentity } from '../process-identity
 import { createLineReader } from '../process-output.ts';
 import type { ManagedProvider } from './metro-reach.ts';
 import { probePublicHttp } from './public-http-probe.ts';
-import { withWorkspaceProcessLock, type WorkspaceProcessLockOptions } from './workspace-process-lock.ts';
+import { readClaimSet } from '../ownership-claim.ts';
+import {
+  withWorkspaceProcessLock,
+  workspaceProcessLockPath,
+  type WorkspaceProcessLockOptions,
+} from './workspace-process-lock.ts';
 
 type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
 
@@ -124,6 +129,28 @@ export async function withManagedRemoteWorktreeRemovalLock<T>(
     external: true,
     ownerPurpose: 'worktree removal',
   });
+}
+
+export function managedLockHolders(root: string): string[] {
+  const locks = [
+    { label: 'managed tunnel', path: workspaceProcessLockPath(managedTunnelLockRoot(root), 'metro-tunnel', false) },
+    {
+      label: 'managed remote',
+      path: workspaceProcessLockPath(managedRemoteWorktreeLockRoot(root), 'managed-remote', true),
+    },
+  ];
+  const reasons: string[] = [];
+  for (const { label, path } of locks) {
+    const claims = readClaimSet(path);
+    const holder = claims.live[0];
+    if (holder) {
+      const purpose = typeof holder.details.purpose === 'string' ? ` for ${holder.details.purpose}` : '';
+      reasons.push(`the ${label} lock is held${purpose}`);
+    } else if (claims.unresolved[0]) {
+      reasons.push(`the ${label} lock cannot be resolved: ${claims.unresolved[0].reason}`);
+    }
+  }
+  return reasons;
 }
 
 function managedTunnelLockRoot(root: string): string {

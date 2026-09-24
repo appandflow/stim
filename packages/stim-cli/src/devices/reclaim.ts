@@ -1,7 +1,7 @@
 import { clearNamedPorts } from '../named-ports.ts';
 import { projectDeviceSlots } from './device-slots.ts';
 import { type ProjectRecord, clearDevice, getProject, removeProject } from '../workspace/config.ts';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTree, pidExists, signalProcessTree } from '../metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd, type ParkedDevice, type ParkRequest } from './teardown.ts';
 import { acquireAvdClaim } from './avd-claim.ts';
@@ -22,6 +22,7 @@ import { resolveEasCliBin } from '../engine/remote-cache.ts';
 import { stopTunnel, type StopTunnelResult } from '../engine/tunnel.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
+import { emptyWorkspaceDir, withIdleWorkspace } from '../workspace/in-use.ts';
 import {
   inspectProcessIdentity,
   sameProcessRecord,
@@ -165,7 +166,7 @@ async function reclaimMetroTunnel(
 }
 
 interface SkippedDevice {
-  platform: 'ios' | 'android';
+  platform?: 'ios' | 'android';
   name: string;
   udid?: string;
   reason: string;
@@ -317,8 +318,50 @@ export interface ReclaimResult {
   failedWorkspaceDirs: string[];
 }
 
-export async function reclaimProject(
+type ReclaimOptions = {
+  deleteOwnedDevices?: boolean;
+  parkOwnedDevices?: boolean;
+  preserveProjectRecord?: boolean;
+  stopSession?: StopSession;
+  stopMetroTunnel?: StopMetroTunnelFn;
+  releaseLeases?: (root: string) => ReleasedLease[];
+  verifyCollector?: typeof verifyCollectorOwnership;
+};
+
+export async function reclaimProject(path: string, options: ReclaimOptions = {}): Promise<ReclaimResult> {
+  const dir = workspaceDir(path);
+  const existed = existsSync(dir);
+  const run = await withIdleWorkspace(path, () => reclaimIdleProject(path, existed, options), {
+    purpose: 'workspace removal',
+    supervisor: false,
+    managedLocks: false,
+  });
+  if (run.ran) return run.value;
+  const kept: SkippedDevice = { name: `workspace ${dir}`, reason: `kept because ${run.reasons.join('; ')}` };
+  return {
+    path,
+    dereferenced: [],
+    killedPid: null,
+    skippedMetro: null,
+    metroPort: getProject(path)?.metroPort ?? null,
+    deletedDevices: [],
+    parkedDevices: [],
+    evictedDevices: [],
+    poolNotes: [],
+    skippedDevices: [kept],
+    failedDevices: [kept],
+    keptEntry: true,
+    stoppedSession: null,
+    stoppedTunnel: null,
+    releasedLeases: [],
+    removedWorkspaceDirs: [],
+    failedWorkspaceDirs: [],
+  };
+}
+
+async function reclaimIdleProject(
   path: string,
+  workspaceExisted: boolean,
   {
     deleteOwnedDevices = false,
     parkOwnedDevices = false,
@@ -327,15 +370,7 @@ export async function reclaimProject(
     stopMetroTunnel = defaultStopMetroTunnel,
     releaseLeases = releaseWorkspaceLeases,
     verifyCollector = verifyCollectorOwnership,
-  }: {
-    deleteOwnedDevices?: boolean;
-    parkOwnedDevices?: boolean;
-    preserveProjectRecord?: boolean;
-    stopSession?: StopSession;
-    stopMetroTunnel?: StopMetroTunnelFn;
-    releaseLeases?: (root: string) => ReleasedLease[];
-    verifyCollector?: typeof verifyCollectorOwnership;
-  } = {},
+  }: ReclaimOptions,
 ): Promise<ReclaimResult> {
   await clearNamedPorts(path, { stop: true });
   const project = getProject(path);
@@ -463,8 +498,8 @@ export async function reclaimProject(
     const dir = workspaceDir(path);
     if (existsSync(dir)) {
       try {
-        rmSync(dir, { recursive: true, force: true });
-        removedWorkspaceDirs.push(dir);
+        emptyWorkspaceDir(dir);
+        if (workspaceExisted) removedWorkspaceDirs.push(dir);
       } catch {
         failedWorkspaceDirs.push(dir);
       }

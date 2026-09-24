@@ -388,6 +388,16 @@ test('every guide topic explains the npx fallback for short stim commands', () =
   expect(renderIndex('9.9.9')).toMatch(/not installed globally[^.]*npx stim`/i);
 });
 
+test('the agent asks before gc deletes and before the worktree sweep', () => {
+  const agent = renderTopic('agent');
+  assert(agent);
+  const askBefore = agent.match(/Ask the user before these actions:([\s\S]*?)\n\n[A-Z]/)?.[1];
+  assert(askBefore);
+  const actions = [...askBefore.matchAll(/^- ([^,]+),/gm)].map((m) => m[1]);
+  expect(actions).toContain('gc --delete');
+  expect(actions).toContain('gc --delete --worktrees');
+});
+
 test('the agent workflow checks errors before and after edits, before cleanup', () => {
   const agent = renderTopic('agent');
   assert(agent);

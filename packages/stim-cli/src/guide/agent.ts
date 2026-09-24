@@ -206,8 +206,12 @@ Ask the user before these actions:
   existing Stim ownership record is deleted only when it has no unique commits.
 - worktree remove --force, because it also discards uncommitted and untracked
   files.
-- gc --delete, because it deletes orphaned resources. gc --delete --cache all
-  empties the shared build caches instead; it inspects nothing else.
+- gc --delete, because it deletes orphaned resources and clears the build
+  outputs of every workspace not in use. gc --delete --cache all empties the
+  shared build caches and those outputs instead, and gc --delete --cache
+  workspaces clears only the outputs; both inspect nothing else.
+- gc --delete --worktrees, because it runs worktree remove on every clean,
+  idle linked worktree Stim manages, across projects.
 - stop when the workspace owns an EAS session, because it irreversibly ends
   that remote session. For a local device, stop shuts it down but does not
   delete it. An explicit stop shuts down a Stim-owned simulator even when

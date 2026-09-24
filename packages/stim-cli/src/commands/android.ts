@@ -61,7 +61,7 @@ import {
   type RunEstimates,
 } from '../engine/stats.ts';
 import { writeWorkspaceLaunch } from '../supervisor/state.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import {
   installAndroidApp,
   launchAndroidApp,
@@ -229,8 +229,9 @@ export function registerAndroid(program: Command): void {
       const result = await withWorkspaceProcessLock(
         workspaceDir(root),
         'native-run',
-        () =>
-          runAndroid({
+        () => {
+          recordWorkspaceUse(root);
+          return runAndroid({
             root,
             slot: opts.slot,
             easProfile: opts.easProfile,
@@ -243,7 +244,8 @@ export function registerAndroid(program: Command): void {
             device: opts.device ?? null,
             wait: opts.wait,
             waitConflict: waitFlagConflict(process.argv),
-          }),
+          });
+        },
         { external: true, waitMs: 30 * 60_000, declareSpawns: true },
       );
       if (!result.ok) process.exit(1);

@@ -52,6 +52,7 @@ import { createRunRecorder, statsProjectKey, type RunEstimates } from '../engine
 import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
+import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { appProjectProblem, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { isPhysicalDeviceRequest, type SupervisorLike, noMetroMessage, noMetroRemedy } from './native-runtime.ts';
 import {
@@ -176,11 +177,19 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
       const root = (deps.findProjectRoot ?? DEFAULT_DEPS.findProjectRoot)(process.cwd());
       const run = () => runIos({ ...opts, waitConflict: waitFlagConflict(process.argv) }, deps);
       const completion = root
-        ? await withWorkspaceProcessLock(workspaceDir(root), 'native-run', run, {
-            external: true,
-            waitMs: 30 * 60_000,
-            declareSpawns: true,
-          })
+        ? await withWorkspaceProcessLock(
+            workspaceDir(root),
+            'native-run',
+            () => {
+              recordWorkspaceUse(root);
+              return run();
+            },
+            {
+              external: true,
+              waitMs: 30 * 60_000,
+              declareSpawns: true,
+            },
+          )
         : await run();
       if (!completion) process.exit(1);
       else if (completion.uploadsAbandoned) exitAfterFlush(0);

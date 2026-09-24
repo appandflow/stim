@@ -8,6 +8,7 @@ import { androidAppProcess, iosAppProcess } from '../engine/app-install.ts';
 import { reloadThroughMetro } from '../engine/reload.ts';
 import { resolveProjectMetro, type MetroResolution } from '../metro.ts';
 import { findProjectRoot } from '../workspace/project.ts';
+import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { resolveOwnedAvdSerial, type ResolvedAvdSerial } from '../devices/android.ts';
 import { resolveOwnedIosSim, type ResolvedIosSim } from '../devices/ios.ts';
 import {
@@ -360,6 +361,7 @@ export function registerReload(program: Command, deps: Partial<ReloadDeps> = {})
         refuseNoProject({ json: Boolean(opts.json) });
         return;
       }
+      recordWorkspaceUse(root);
       const result = await runReload({ root, platform: value ?? null, deps });
       if (!result.ok) {
         if (opts.json) console.log(JSON.stringify(result.error));

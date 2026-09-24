@@ -34,6 +34,7 @@ test('GC renders a mixed resource report in its established order', () => {
   const output = formatGcReport(
     {
       deadProjects: ['/gone/app'],
+      orphanedWorkspaces: [{ dir: '/h/workspaces/wt--0123456789abcdef', projectRoot: '/gone/wt', bytes: 8192 }],
       parkedSims,
       orphanedDevices: [{ kind: 'android', id: 'stim-orphan', name: 'stim-orphan', bytes: 2048 }],
       staleDeviceRecords: [{ kind: 'ios', id: 'GONE', project: '/app', owned: true }],
@@ -49,6 +50,27 @@ test('GC renders a mixed resource report in its established order', () => {
       },
       skipped: [{ dir: '/Volumes/Offline/app', reason: 'volume /Volumes/Offline is not mounted' }],
       caches: [makeCacheDescriptor({ name: 'Build cache', dir: '/cache/build', bytes: 4096, source: 'registered' })],
+      workspaceOutputs: {
+        root: '/h/workspaces',
+        workspaces: [
+          {
+            dir: '/h/workspaces/a--0',
+            projectRoot: '/w/a',
+            bytes: 8192,
+            idleDays: 4,
+            willClear: true,
+            keptReason: null,
+          },
+          {
+            dir: '/h/workspaces/b--0',
+            projectRoot: '/w/b',
+            bytes: 4096,
+            idleDays: null,
+            willClear: false,
+            keptReason: 'in use: its dev server supervisor (pid 7) is running',
+          },
+        ],
+      },
     },
     { now: Date.parse('2026-09-04T00:00:00Z') },
   ).join('\n');
