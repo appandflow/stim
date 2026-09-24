@@ -365,7 +365,7 @@ modifies with the identity the bundle already names -- so it checks, before
 spending a build or a bundle, that the check can succeed.`,
       body: () => `STIM_NO_PROFILE
   The built or cached .app has no embedded.mobileprovision, or
-  \`security cms -D\` could not decode the one it has. The first means the build
+  \`openssl smime\` could not decode the one it has. The first means the build
   produced an unsigned app -- almost always a simulator-sliced artifact.
   Set a team and a Development profile for the target's configuration in
   Xcode > Signing & Capabilities, then BUILD ONCE FROM XCODE to install the

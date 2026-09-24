@@ -47,7 +47,9 @@ export function readEmbeddedProfile(
   const path = join(appPath, EMBEDDED_PROFILE);
   if (!existsSync(path)) return { present: false, profile: null };
   try {
-    const plist = executor.runFile('security', ['cms', '-D', '-i', path], { timeoutMs: SIGNING_TIMEOUT_MS });
+    const plist = executor.runFile('openssl', ['smime', '-verify', '-noverify', '-inform', 'DER', '-in', path], {
+      timeoutMs: SIGNING_TIMEOUT_MS,
+    });
     return { present: true, profile: parseProvisioningProfilePlist(plist) };
   } catch {
     return { present: true, profile: null };
