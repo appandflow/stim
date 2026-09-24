@@ -35,6 +35,30 @@
   },
   "overrides": [
     {
+      "files": ["packages/stim-cli/src/**/*.ts"],
+      "excludeFiles": ["packages/stim-cli/src/exec.ts", "packages/stim-cli/src/__tests__/**", "**/*.test.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "node:child_process",
+                "allowTypeImports": true,
+                "message": "Start child processes through getExecutor() in exec.ts."
+              },
+              {
+                "name": "child_process",
+                "allowTypeImports": true,
+                "message": "Start child processes through getExecutor() in exec.ts."
+              },
+              { "name": "cross-spawn", "message": "Start child processes through getExecutor() in exec.ts." }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "files": ["**/*.test.ts"],
       "rules": {
         "unicorn/consistent-function-scoping": "off",
