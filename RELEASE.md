@@ -398,13 +398,17 @@ repeat the affected gate rather than waiving it.
    version=X.Y.Z
    cd /tmp && npx "stim@$version" --version
    cd /tmp && npx "stim@$version" guide agent >/dev/null
-   npm view "stim@$version" readme | head -c 200        # NOT "No README data found!"
+   npm pack "stim@$version" --dry-run 2>&1 | grep README.md
    npm view "@stim-cli/core@$version" version
    npm view "@stim-cli/cache@$version" version
    npm view "@stim-cli/expo-build-cache@$version" version
    npm view "@stim-cli/metro@$version" version
    ```
-   A missing README on npm means the package directory lacks one
+   The `npm pack` line lists the published tarball's README. Do not check
+   `npm view "stim@$version" readme`: it prints the registry's package-level
+   README, which is empty whenever the newest publish is not on `latest`, such
+   as a release candidate on `next`. A tarball without `README.md` means the
+   package directory lacks one
    ([docs/release-recovery.md](./docs/release-recovery.md)).
 
 ## 5. After the release

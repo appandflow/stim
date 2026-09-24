@@ -79,6 +79,13 @@ else. Every release up to 0.14.0 shipped without one because the only
 README lived at the repo root. The smoke-test step checks this; if it
 fires, the package directory is missing its README.
 
+An empty `npm view <package> readme` after a release candidate is not this
+failure. The registry fills the package-level README only when a publish
+lands on `latest`, and empties it when the newest publish goes to another
+dist-tag such as `next`. It returns with the next `latest` publish. The
+version entries never carry the README text, so the published tarball is
+the only per-version proof.
+
 ## Stale or wrong dist-tags
 
 The workflow computes the publish dist-tag itself (RELEASE.md section 1): a
