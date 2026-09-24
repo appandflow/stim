@@ -23,8 +23,14 @@ WHAT RECLAIMS AN OWNED DEVICE
                             also reaps the device of a workspace no Stim
                             command has used in that long, even though the
                             project is still on disk
+  stim gc --delete --worktrees
+                            runs \`stim worktree remove\` on every clean, idle,
+                            Stim-managed linked worktree (\`guide cleanup gc\`)
 
-Those are the only two commands that delete. \`stim stop\` shuts a device
+\`worktree remove\` and \`gc --delete\` are the only two commands that delete;
+\`gc --delete --worktrees\` deletes only through \`worktree remove\`. \`gc
+--delete\` also clears workspace build outputs (\`guide cleanup disk\`) and
+orphaned workspace directories, never a checkout. \`stim stop\` shuts a device
 DOWN and leaves it assigned, which is what makes returning to a branch cost a
 boot rather than a create, a provision and a reinstall.
 
@@ -70,6 +76,23 @@ IN USE
   (or names no workspace Stim can identify), or its managed tunnel or managed
   remote lock is held. The deletion holds native-run.lock itself, so no
   native run can start partway through.
+
+SWEEPING FINISHED WORKTREES
+  \`gc --worktrees\` is opt-in; no cache or age flag implies it. It looks at
+  every registered project root and every workspace.json root, grouped by
+  git worktree, and reports each worktree with the reason it is kept:
+  source checkout, bare, locked, in use, dirty (untracked files count; pod
+  install churn alone does not), unpushed (commits no remote-tracking ref or
+  other local branch reaches), initialized submodules, or recently used.
+  Idle means no recorded use for --older-than days, 7 without it; a worktree
+  whose last use is unknown is kept.
+    stim gc --worktrees --older-than 3            # report only
+    stim gc --delete --worktrees --older-than 3   # remove the clean idle ones
+  With --delete it runs the \`stim worktree remove\` pipeline, never --force,
+  on each removable worktree. That pipeline re-inspects the worktree and
+  re-checks use and idleness under the removal locks, then parks devices and
+  handles the branch exactly as a manual \`stim worktree remove\`. A worktree
+  that fails is reported, gc exits 1, and the sweep continues.
 
 ORPHANED WORKSPACE DIRECTORIES
   A worktree deleted with \`git worktree remove\`, \`rm -rf\` or a /tmp wipe

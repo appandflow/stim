@@ -1,9 +1,11 @@
+import { execSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { runGc } from '../commands/gc.ts';
 import { classifyWorkspaceDirs, listWorkspaceDirs, planWorkspaceOutputs } from '../commands/gc/workspaces.ts';
+import { worktreeSkipReason, type WorktreeFacts } from '../commands/gc/worktrees.ts';
 import { getProject, saveConfig, upsertProject } from '../workspace/config.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
@@ -357,3 +359,112 @@ test('plain gc --delete clears idle workspaces, and --older-than limits it by la
   expect(existsSync(join(recent.dir, 'derived-data'))).toBe(false);
   expect(existsSync(join(busy.dir, 'derived-data'))).toBe(true);
 });
+
+describe('linked worktree sweep classification', () => {
+  const linked = (overrides: Partial<WorktreeFacts> = {}): WorktreeFacts => ({
+    source: 'linked',
+    bare: false,
+    locked: false,
+    porcelain: [],
+    unpushed: [],
+    submodules: false,
+    inUse: [],
+    idleDays: 10,
+    ...overrides,
+  });
+
+  test('a clean, pushed, idle linked worktree is removable', () => {
+    expect(worktreeSkipReason(linked(), 7)).toBe(null);
+  });
+
+  test('pod install churn alone does not keep a worktree', () => {
+    expect(
+      worktreeSkipReason(linked({ porcelain: [' M ios/Podfile.lock', ' M ios/App.xcodeproj/project.pbxproj'] }), 7),
+    ).toBe(null);
+  });
+
+  test.each([
+    ['the source checkout', linked({ source: 'source' }), /^source checkout$/],
+    ['an unresolvable source checkout', linked({ source: { refusal: 'detached bare HEAD' } }), /source checkout/],
+    ['a bare repository', linked({ bare: true }), /bare/],
+    ['a locked worktree', linked({ locked: true }), /locked/],
+    ['a dirty worktree', linked({ porcelain: [' M src/App.tsx'] }), /dirty/],
+    ['a worktree with only untracked files', linked({ porcelain: ['?? notes.txt'] }), /dirty/],
+    ['pod churn beside another change', linked({ porcelain: [' M ios/Podfile.lock', '?? x'] }), /dirty/],
+    ['an unreadable git status', linked({ porcelain: null }), /could not be read/],
+    ['unpushed commits', linked({ unpushed: ['abc1234 wip'] }), /unpushed: 1 commit/],
+    ['an unknown unpushed state', linked({ unpushed: null }), /could not be checked/],
+    ['initialized submodules', linked({ submodules: true }), /submodules/],
+    ['a worktree in use', linked({ inUse: ['its dev server supervisor (pid 1) is running'] }), /^in use: /],
+    ['a recently used worktree', linked({ idleDays: 2 }), /recently used 2d ago/],
+    ['a worktree whose last use is unknown', linked({ idleDays: null }), /recently used/],
+  ])('%s is kept', (_name, facts, reason) => {
+    expect(worktreeSkipReason(facts, 7)).toMatch(reason);
+  });
+});
+
+function gitRepoWithWorktrees(names: string[]) {
+  const repo = join(projects, 'repo');
+  const remote = join(projects, 'remote.git');
+  mkdirSync(repo, { recursive: true });
+  const git = (args: string, cwd = repo) => execSync(`git ${args}`, { cwd, encoding: 'utf-8', timeout: 15_000 });
+  git(`init -q --bare "${remote}"`, projects);
+  git('init -q');
+  git('config user.email test@example.com');
+  git('config user.name test');
+  git(`remote add origin "${remote}"`);
+  writeFileSync(join(repo, 'package.json'), '{}');
+  git('add -A');
+  git('commit -q -m init');
+  git('push -q -u origin HEAD');
+  const worktrees = Object.fromEntries(
+    names.map((name) => {
+      const path = join(projects, name);
+      git(`worktree add -q "${path}" -b ${name}`);
+      return [name, path];
+    }),
+  );
+  return { repo, worktrees };
+}
+
+test('gc --worktrees reports each linked worktree, and --delete removes only the clean idle ones', async () => {
+  const { repo, worktrees } = gitRepoWithWorktrees(['idle', 'fresh', 'dirty', 'racing']);
+  for (const [name, path] of Object.entries(worktrees)) {
+    upsertProject(path, { metroPort: null });
+    recordWorkspaceUse(path, new Date(Date.now() - (name === 'fresh' ? 1 : 10) * DAY_MS));
+  }
+  upsertProject(repo, { metroPort: null });
+  recordWorkspaceUse(repo, new Date(Date.now() - 30 * DAY_MS));
+  writeFileSync(join(worktrees.dirty!, 'scratch.txt'), 'wip');
+
+  const report = await captureLog(() => runGc({ worktrees: true }));
+  expect(report).toContain('Linked worktrees (2 removable, 3 kept)');
+  expect(report).toContain('idle 7d or more (the default without --older-than)');
+  expect(report).toMatch(/kept: source checkout/);
+  expect(report).toMatch(/kept: recently used 1d ago/);
+  expect(report).toMatch(/kept: dirty/);
+
+  const originalError = console.error;
+  console.error = () => {};
+  const original = console.log;
+  const lines: string[] = [];
+  console.log = (...args) => {
+    lines.push(args.join(' '));
+    if (String(args[0]).startsWith('Linked worktrees')) writeFileSync(join(worktrees.racing!, 'late.txt'), 'x');
+  };
+  try {
+    await runGc({ worktrees: true, delete: true });
+  } finally {
+    console.log = original;
+    console.error = originalError;
+  }
+  const output = lines.join('\n');
+  expect(existsSync(worktrees.idle!)).toBe(false);
+  expect(getProject(worktrees.idle!)).toBe(null);
+  expect(output).toContain(`Removed the worktree ${worktrees.idle}`);
+  expect(existsSync(worktrees.racing!)).toBe(true);
+  expect(output).toContain(`Kept the worktree ${worktrees.racing}`);
+  for (const name of ['fresh', 'dirty']) expect(existsSync(worktrees[name]!)).toBe(true);
+  expect(existsSync(join(repo, 'package.json'))).toBe(true);
+  expect(process.exitCode).toBe(1);
+}, 30_000);

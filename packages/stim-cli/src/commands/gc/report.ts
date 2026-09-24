@@ -10,6 +10,7 @@ import {
   type WorkspaceOutputsReport,
 } from './workspaces.ts';
 import type { GcCache } from './caches.ts';
+import type { WorktreeSweep } from './worktrees.ts';
 import type {
   DeviceLeaseGarbage,
   ParkedAvdReport,
@@ -37,6 +38,7 @@ export interface GcReport {
   easSessionSweep: EasSessionSweep;
   caches: GcCache[];
   workspaceOutputs: WorkspaceOutputsReport | null;
+  worktreeSweep?: WorktreeSweep | null;
   cacheScope: string | null;
   olderThan: number | null;
   all: boolean;
@@ -122,6 +124,7 @@ export function formatGcReport(
     easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
     caches = [],
     workspaceOutputs = null,
+    worktreeSweep = null,
     cacheScope = null,
     olderThan = null,
   }: Partial<GcReport>,
@@ -150,6 +153,7 @@ export function formatGcReport(
       expiredLeases,
       easSessionSweep.orphaned,
       workspaceOutputs?.workspaces.filter((entry) => entry.willClear) ?? [],
+      worktreeSweep?.worktrees.filter((entry) => !entry.skipped) ?? [],
     ].every((found) => found.length === 0)
   ) {
     const reasons = [];
@@ -179,6 +183,7 @@ export function formatGcReport(
 
   lines.push(...namedPortLines(orphanedPorts));
   lines.push(...orphanedWorkspaceLines(orphanedWorkspaces));
+  lines.push(...worktreeSweepLines(worktreeSweep));
 
   lines.push(...formatParkedSimReport(parkedSims, now));
   lines.push(...formatParkedAvdReport(parkedAvds, now));
@@ -351,6 +356,30 @@ function cacheLines(caches: readonly GcCache[], workspaceOutputs: WorkspaceOutpu
         `  would clear the build outputs of ${clearing.length} workspace${clearing.length === 1 ? '' : 's'} (${formatBytes(clearBytes)})`,
       );
     }
+  }
+  return lines;
+}
+
+function worktreeSweepLines(sweep: WorktreeSweep | null): string[] {
+  if (!sweep) return [];
+  const removable = sweep.worktrees.filter((w) => !w.skipped);
+  const idle = sweep.defaulted
+    ? `idle ${sweep.olderThan}d or more (the default without --older-than)`
+    : `idle ${sweep.olderThan}d or more`;
+  const lines = [
+    `Linked worktrees (${removable.length} removable, ${sweep.worktrees.length - removable.length} kept) - clean, pushed, ${idle}:`,
+  ];
+  for (const w of sweep.worktrees) {
+    const age = w.idleDays === null ? '' : ` (idle ${w.idleDays}d)`;
+    lines.push(`  ${w.path}${age}`);
+    lines.push(
+      w.skipped ? `              kept: ${w.skipped}` : '              would be REMOVED by `stim worktree remove`',
+    );
+  }
+  if (removable.length) {
+    lines.push(
+      '              --delete runs it without --force; use and idleness are re-checked under its removal locks.',
+    );
   }
   return lines;
 }

@@ -369,7 +369,7 @@ interface ReclaimAllResult {
   failedWorkspaceDirs: string[];
 }
 
-function reclaimKeys(rootPath: string): string[] {
+export function reclaimKeys(rootPath: string): string[] {
   const cfg = loadConfig();
   const keys = new Set([rootPath]);
   if (cfg?.projects) {
@@ -567,6 +567,8 @@ async function reclaimEnvironment(root: string, why: string): Promise<void> {
 
 interface RemoveOptions {
   force?: boolean;
+  linkedOnly?: boolean;
+  guard?: (lockedKeys: readonly string[]) => string[];
 }
 
 interface RemovalInspection {
@@ -668,7 +670,15 @@ function printRemovalCleanup(result: ReclaimAllResult, failed: boolean): void {
   }
 }
 
-async function runRemove(target: string | undefined, opts: RemoveOptions = {}): Promise<void> {
+export async function removeWorktreeTarget(target: string | undefined, opts: RemoveOptions = {}): Promise<boolean> {
+  let removed = false;
+  await runRemove(target, opts, () => {
+    removed = true;
+  });
+  return removed;
+}
+
+async function runRemove(target: string | undefined, opts: RemoveOptions, onRemoved: () => void): Promise<void> {
   const poolError = parkedMaxSetting('ios').error || parkedMaxSetting('android').error;
   if (poolError) {
     console.error(chalk.red(poolError));
@@ -740,7 +750,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
   const worktrees = listWorktrees(path);
   const entry = matchWorktreeEntry(worktrees, path);
   if (!entry) {
-    if (gitCommonDir(path) === null && hasRegisteredProjectUnder(path)) {
+    if (!opts.linkedOnly && gitCommonDir(path) === null && hasRegisteredProjectUnder(path)) {
       await reclaimEnvironment(path, 'it is not a git repository');
       return;
     }
@@ -762,6 +772,11 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
   const source = sourceCheckoutOf(worktrees);
   if ('refusal' in source) {
     console.error(chalk.red(`Refusing to remove ${path}: ${source.refusal}`));
+    process.exitCode = 1;
+    return;
+  }
+  if (entry.path === source.path && opts.linkedOnly) {
+    console.error(chalk.red(`Refusing to remove ${path}: ${entry.path} is the source checkout.`));
     process.exitCode = 1;
     return;
   }
@@ -807,6 +822,13 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
 
   await withManagedRemoteWorktreeRemovalLock(path, () =>
     withReclaimLocks(path, async (lockedKeys) => {
+      const busy = opts.guard?.(lockedKeys) ?? [];
+      if (busy.length) {
+        console.error(chalk.red(`Refusing to remove ${path}:`));
+        for (const reason of busy) console.error(chalk.red(`  - ${reason}`));
+        process.exitCode = 1;
+        return;
+      }
       const result = await reclaimAll(path, lockedKeys, { preserveRootProject: true });
       if (result.keptEntries.length) {
         reportRetainedResources(path, result);
@@ -830,6 +852,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
         process.exitCode = 1;
         return;
       }
+      onRemoved();
       const finish = (): void => {
         printRemovalCleanup(result, false);
         console.error(chalk.dim(phaseLine('removed', path)));
@@ -884,7 +907,9 @@ export function registerRemove(worktree: Command): void {
       'Remove a worktree, its unused Stim-created branch, build artifacts, owned devices, and Metro port. Defaults to the current workspace. On the source checkout it reclaims the environment only and leaves the tree in place.',
     )
     .option('--force', 'remove even when the worktree holds uncommitted or unpushed work or initialized submodules')
-    .action(runRemove);
+    .action(async (target: string | undefined, opts: { force?: boolean }) => {
+      await removeWorktreeTarget(target, { force: opts.force });
+    });
 }
 
 export default function worktreeCommand(program: Command): void {

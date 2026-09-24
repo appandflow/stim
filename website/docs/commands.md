@@ -480,7 +480,7 @@ worktree locked with `git worktree lock` is refused until you unlock it.
 ## `gc`
 
 ```text
-stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces>]
+stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces>] [--worktrees]
 ```
 
 Reports stale workspace entries, orphaned workspace directories, orphaned
@@ -507,6 +507,11 @@ workspace keeps its state, logs, devices and ports. See
   outputs with `all`. `workspaces` clears only the workspace build outputs.
   Devices and project entries are not inspected, so a scoped run empties caches
   and reaps nothing.
+- `--worktrees` also reports every clean, idle linked worktree that has a Stim
+  workspace, and why each other one is kept. With `--delete` it runs
+  `stim worktree remove` without `--force` on each of them. Idle means unused
+  for `--older-than` days, or 7 days without that option. See
+  [removing finished worktrees in bulk](./worktrees.md#remove-finished-worktrees-in-bulk).
 
 ## `guide`
 

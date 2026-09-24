@@ -51,6 +51,7 @@ import {
   deleteOrphanedWorkspaces,
   isInsideWorkspaces,
 } from './gc/workspaces.ts';
+import { collectWorktreeSweep, removeWorktrees } from './gc/worktrees.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
 
@@ -69,6 +70,7 @@ export { formatGcReport } from './gc/report.ts';
 interface CollectGcReportOptions {
   olderThan?: number | null;
   cache?: string | null;
+  worktrees?: boolean;
   now?: number;
   lastTouched?: (path: string) => number;
 }
@@ -77,6 +79,7 @@ interface RunGcOptions {
   olderThan?: number;
   cache?: string;
   delete?: boolean;
+  worktrees?: boolean;
 }
 
 type GcDependencies = EasGcDependencies & GcDeviceDependencies;
@@ -89,7 +92,13 @@ function removeInvalidProjectEntries(invalidProjects: string[]): void {
 }
 
 export async function collectGcReport(
-  { olderThan = null, cache = null, now = Date.now(), lastTouched = workspaceLastUsed }: CollectGcReportOptions = {},
+  {
+    olderThan = null,
+    cache = null,
+    worktrees = false,
+    now = Date.now(),
+    lastTouched = workspaceLastUsed,
+  }: CollectGcReportOptions = {},
   deps: GcDependencies = {},
 ): Promise<GcReport> {
   const scope = typeof cache === 'string' && cache.trim() ? cache : null;
@@ -116,6 +125,7 @@ export async function collectGcReport(
       parkedAvds: [],
       caches,
       workspaceOutputs: withWorkspaces ? collectWorkspaceOutputs({ olderThan, now }) : null,
+      worktreeSweep: worktrees ? collectWorktreeSweep({ olderThan, now }) : null,
       cacheScope: scope,
       olderThan,
       all,
@@ -299,6 +309,7 @@ export async function collectGcReport(
       now,
       exclude: [...workspaceDirs.orphaned.map((entry) => entry.dir), ...deadProjects.map(workspaceDir)],
     }),
+    worktreeSweep: worktrees ? collectWorktreeSweep({ olderThan, now }) : null,
     cacheScope: null,
     olderThan,
     all,
@@ -387,10 +398,11 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     {
       olderThan,
       cache,
+      worktrees: Boolean(opts.worktrees),
     },
     deps,
   );
-  if (cache && report.caches.length === 0 && report.workspaceOutputs === null) {
+  if (cache && report.caches.length === 0 && report.workspaceOutputs === null && report.worktreeSweep === null) {
     const names = [...new Set(discoverCaches().map((c) => c.name))];
     console.log(chalk.yellow(`No shared cache carries "${cache}" in its name or directory.`));
     if (names.length) console.log(chalk.dim(`Caches on this machine: ${names.join(', ')}`));
@@ -417,6 +429,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     deadProjects.length + invalidProjects.length > 0 ||
     report.orphanedWorkspaces.length > 0 ||
     Boolean(report.workspaceOutputs?.workspaces.some((entry) => entry.willClear)) ||
+    Boolean(report.worktreeSweep?.worktrees.some((entry) => !entry.skipped)) ||
     report.parkedSims.length > 0 ||
     report.parkedAvds.length > 0 ||
     orphanedDevices.length > 0 ||
@@ -540,6 +553,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     }
   }
   deleteFailures += await deleteEasSessions(easSessionSweep, deps);
+  if (report.worktreeSweep) deleteFailures += await removeWorktrees(report.worktreeSweep);
 
   if (deleteFailures) {
     console.log(
@@ -570,6 +584,10 @@ export default function gcCommand(program: Command): void {
     .command('gc')
     .description(
       'Report what Stim has left behind: dead project entries, orphaned workspace directories, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, expired physical-device leases, the shared build caches, and the build outputs of each workspace. Reports by default; pass --delete to act.',
+    )
+    .option(
+      '--worktrees',
+      'also report every clean, idle, Stim-managed linked worktree, and with --delete run `stim worktree remove` (never --force) on each; idle means unused for --older-than days, 7 without it',
     )
     .option(
       '--delete',
