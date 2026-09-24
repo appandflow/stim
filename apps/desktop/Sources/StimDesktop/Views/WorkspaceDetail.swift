@@ -2,11 +2,19 @@ import AppKit
 import StimKit
 import SwiftUI
 
+enum DetailTab: Hashable {
+  case device
+  case logs
+}
+
 struct WorkspaceDetail: View {
   var cli: Task<StimCLI, Never>
   var env: Workspace
   var usage: UsageHistory?
   @Binding var focusedID: String?
+  @Binding var tab: DetailTab
+  @Binding var logQuery: LogQuery
+  var openLogs: () -> Void
   @State private var stats: ProjectStats?
   @State private var takenOver: Set<String> = []
 
@@ -14,38 +22,25 @@ struct WorkspaceDetail: View {
     let devices = env.devices
     let focused = devices.first { $0.id == focusedID } ?? devices.first
     HStack(spacing: 0) {
-      VStack(spacing: 16) {
-        if devices.count > 1 {
-          Picker("Device", selection: Binding(get: { focused?.id }, set: { focusedID = $0 })) {
-            ForEach(devices) { device in Text(device.slot).tag(Optional(device.id)) }
-          }
-          .pickerStyle(.segmented)
-          .labelsHidden()
-          .fixedSize()
+      VStack(spacing: 0) {
+        Picker("View", selection: $tab) {
+          Text("Device").tag(DetailTab.device)
+          Text("Logs").tag(DetailTab.logs)
         }
-        if let focused {
-          if focused.isInteractive {
-            Toggle("Take over", isOn: Binding(
-              get: { takenOver.contains(focused.id) },
-              set: { on in if on { takenOver.insert(focused.id) } else { takenOver.remove(focused.id) } }
-            ))
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .help("Send your clicks, trackpad scrolls and keys to this device.")
-          }
-          DeviceTile(
-            device: focused, screenHeight: 640,
-            interactive: focused.isRunning && takenOver.contains(focused.id))
-        } else {
-          EmptyState(title: "No devices", message: "This workspace has no recorded simulator or emulator.")
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .padding(.vertical, 12)
+        Rectangle().fill(Theme.border).frame(height: 1)
+        switch tab {
+        case .device: deviceView(devices: devices, focused: focused)
+        case .logs: LogsView(cli: cli, env: env, query: $logQuery)
         }
-        Spacer(minLength: 0)
       }
-      .padding(24)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
 
       Rectangle().fill(Theme.border).frame(width: 1)
-      Inspector(env: env, usage: usage, stats: stats)
+      Inspector(env: env, usage: usage, stats: stats, openLogs: openLogs)
         .frame(width: 360)
         .background(Theme.sidebar)
     }
@@ -56,12 +51,45 @@ struct WorkspaceDetail: View {
       stats = await Task.detached { try? cli.stats(workspace: path) }.value
     }
   }
+
+  private func deviceView(devices: [DeviceRef], focused: DeviceRef?) -> some View {
+    VStack(spacing: 16) {
+      if devices.count > 1 {
+        Picker("Device", selection: Binding(get: { focused?.id }, set: { focusedID = $0 })) {
+          ForEach(devices) { device in Text(device.slot).tag(Optional(device.id)) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+      }
+      if let focused {
+        if focused.isInteractive {
+          Toggle("Take over", isOn: Binding(
+            get: { takenOver.contains(focused.id) },
+            set: { on in if on { takenOver.insert(focused.id) } else { takenOver.remove(focused.id) } }
+          ))
+          .toggleStyle(.switch)
+          .controlSize(.small)
+          .help("Send your clicks, trackpad scrolls and keys to this device.")
+        }
+        DeviceTile(
+          device: focused, screenHeight: 640,
+          interactive: focused.isRunning && takenOver.contains(focused.id))
+      } else {
+        EmptyState(title: "No devices", message: "This workspace has no recorded simulator or emulator.")
+      }
+      Spacer(minLength: 0)
+    }
+    .padding(24)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
 }
 
 struct Inspector: View {
   var env: Workspace
   var usage: UsageHistory?
   var stats: ProjectStats?
+  var openLogs: () -> Void
   @EnvironmentObject private var actions: ActionCenter
   @State private var removal: Removal?
 
@@ -161,7 +189,10 @@ struct Inspector: View {
             systemImage: errors == 0 ? "checkmark.circle.fill" : "xmark.octagon.fill"
           )
           .foregroundStyle(errors == 0 ? Theme.live : Theme.error)
-          CommandText(command: "stim logs --errors")
+          HStack {
+            CommandText(command: "stim logs --errors")
+            Button("Open logs", action: openLogs).controlSize(.small)
+          }
         }
       }
       .font(Theme.body(12))

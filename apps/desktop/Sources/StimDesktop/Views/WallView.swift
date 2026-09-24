@@ -6,6 +6,7 @@ struct WallView: View {
   @ObservedObject var metrics: MetricsStore
   var project: Project?
   @Binding var selection: SidebarItem?
+  var openLogs: (String) -> Void
 
   var body: some View {
     let live = store.environments(in: project).filter(\.live)
@@ -28,10 +29,11 @@ struct WallView: View {
           }
           ForEach(live) { env in
             VStack(alignment: .leading, spacing: 12) {
-              Button { selection = .environment(env.path) } label: {
-                WorkspaceHeader(env: env, project: store.project(of: env), usage: metrics.usage[env.path])
-              }
-              .buttonStyle(.plain)
+              WorkspaceHeader(
+                env: env, project: store.project(of: env), usage: metrics.usage[env.path],
+                openLogs: { openLogs(env.path) }
+              )
+              .onTapGesture { selection = .environment(env.path) }
               ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 16) {
                   ForEach(env.devices.filter(\.isRunning)) { device in
@@ -55,6 +57,7 @@ struct WorkspaceHeader: View {
   var env: Workspace
   var project: Project
   var usage: UsageHistory?
+  var openLogs: () -> Void
 
   var body: some View {
     HStack(spacing: 12) {
@@ -95,7 +98,11 @@ struct WorkspaceHeader: View {
           .help("Committed memory estimate from stim status")
       }
       if let errors = env.logs?.errorsSinceMarker {
-        Chip(tint: errors > 0 ? Theme.error : nil) { Text(errors == 1 ? "1 error" : "\(errors) errors") }
+        Button(action: openLogs) {
+          Chip(tint: errors > 0 ? Theme.error : nil) { Text(errors == 1 ? "1 error" : "\(errors) errors") }
+        }
+        .buttonStyle(.plain)
+        .help("Open logs")
       }
     }
     .contentShape(Rectangle())
