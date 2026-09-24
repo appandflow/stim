@@ -153,7 +153,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
       '--device [udid]',
       "Build the iphoneos slice for a connected iPhone, install it, and launch it, instead of using this workspace's " +
         'owned simulator. The phone can be cabled or paired over Wi-Fi. With no UDID, the first cabled device this workspace can lease ' +
-        'is used, or a Wi-Fi one when no cabled device is usable. In Debug the app is wired to this ' +
+        'is used, waiting for one that is busy; a Wi-Fi device is used only when no cabled one is connected and ready. In Debug the app is wired to this ' +
         "workspace's Metro over the LAN. Stim never creates, boots, or deletes a physical device.",
     )
     .option(
@@ -538,14 +538,6 @@ async function runIos(
     }
     physicalDevice = { udid: resolved.udid, name: resolved.name ?? resolved.udid };
     wireless = resolved.wireless === true;
-  }
-  if (wireless) {
-    note(
-      phaseLine(
-        'device',
-        `${physicalDevice!.name} is paired over Wi-Fi, so the install and launch go over the network and take longer than over a cable`,
-      ),
-    );
   }
   if (!physical) {
     const capacity = d.checkDeviceCapacity({

@@ -37,9 +37,9 @@ function payload(devices: unknown[]): string {
 
 function device(udid: string, overrides: Record<string, unknown> = {}): unknown {
   return {
-    hardwareProperties: { udid, platform: 'iOS' },
+    hardwareProperties: { udid, platform: 'iOS', reality: 'physical' },
     deviceProperties: { name: `Phone ${udid.slice(-4)}`, bootState: 'booted', developerModeStatus: 'enabled' },
-    connectionProperties: { pairingState: 'paired', transportType: 'wired' },
+    connectionProperties: { pairingState: 'paired', transportType: 'wired', tunnelState: 'disconnected' },
     ...overrides,
   };
 }
@@ -65,6 +65,9 @@ test('parseDevicectlDevices reads the fields devicectl -j actually nests', () =>
       developerModeStatus: 'enabled',
       pairingState: 'paired',
       transportType: 'wired',
+      platform: 'iOS',
+      reality: 'physical',
+      tunnelState: 'disconnected',
     },
   ]);
 });
@@ -257,6 +260,45 @@ test('a simulator devicectl lists as sameMachine is never a phone candidate', ()
   expect(named.error).toContain('sameMachine');
 });
 
+test('only a reachable physical iPhone or iPad is a phone, whatever the transport', () => {
+  const tv = entry({
+    udid: OTHER,
+    name: 'Living Room',
+    platform: 'tvOS',
+    reality: 'physical',
+    transportType: 'localNetwork',
+  });
+  const vision = entry({
+    udid: OTHER,
+    name: 'Vision',
+    platform: 'xrOS',
+    reality: 'physical',
+    transportType: 'localNetwork',
+  });
+  const offline = entry({
+    udid: OTHER,
+    name: 'Drawer',
+    platform: 'iOS',
+    transportType: null,
+    tunnelState: 'unavailable',
+  });
+  const simulator = entry({ udid: OTHER, name: 'Sim', platform: 'iOS', reality: 'simulated', transportType: 'wired' });
+  for (const listed of [tv, vision, offline, simulator]) {
+    expect(resolveIosPhysicalDevice(null, [listed]).error).toMatch(/No physical iOS device/);
+    expect(resolveIosPhysicalDevice(OTHER, [listed]).udid).toBeUndefined();
+  }
+  expect(resolveIosPhysicalDevice(OTHER, [tv]).error).toContain('physical tvOS device');
+  expect(resolveIosPhysicalDevice(OTHER, [simulator]).remedy).not.toMatch(/cable/);
+  expect(resolveIosPhysicalDevice(OTHER, [offline]).error).toMatch(/unavailable/);
+  const phone = entry({
+    platform: 'iOS',
+    reality: 'physical',
+    transportType: 'localNetwork',
+    tunnelState: 'disconnected',
+  });
+  expect(resolveIosPhysicalDevice(null, [tv, phone])).toEqual({ udid: PHONE, name: 'Test Phone', wireless: true });
+});
+
 test('an absent transportType is not treated as wireless', () => {
   expect(resolveIosPhysicalDevice(null, [entry({ transportType: null })])).toEqual({ udid: PHONE, name: 'Test Phone' });
   expect(resolveIosPhysicalDevice(null, [entry({ transportType: 'USB' })])).toEqual({
@@ -287,6 +329,9 @@ test('listIosDevices runs devicectl into a temp file, parses it, and removes the
         developerModeStatus: 'enabled',
         pairingState: 'paired',
         transportType: 'wired',
+        platform: 'iOS',
+        reality: 'physical',
+        tunnelState: 'disconnected',
       },
     ]);
   } finally {
@@ -428,9 +473,11 @@ test('installIosDeviceApp installs once and reports the path it installed', () =
 
 test('a signer conflict uninstalls once, retries once, and says the data went with it', () => {
   const calls: string[][] = [];
+  const order: string[] = [];
   setExecutor({
     runFile(_file: string, args: string[]) {
       calls.push(args);
+      order.push(args[2] as string);
       if (args[2] === 'install' && calls.filter((c) => c[2] === 'install').length === 1) {
         throw new Error('MismatchedApplicationIdentifierEntitlement');
       }
@@ -439,15 +486,63 @@ test('a signer conflict uninstalls once, retries once, and says the data went wi
   });
   let result;
   try {
-    result = installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: 'com.example.app' });
+    result = installIosDeviceApp(
+      { udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: 'com.example.app' },
+      { beforeStep: () => order.push('lease') },
+    );
   } finally {
     resetExecutor();
   }
+  expect(order).toEqual(['install', 'lease', 'uninstall', 'lease', 'install']);
   expect(result.ok).toBe(true);
   expect(result.uninstalled).toBe(true);
   expect(result.note).toMatch(/its data went with it/);
   expect(calls.map((c) => c[2])).toEqual(['install', 'uninstall', 'install']);
   expect(calls[1]).toEqual(['devicectl', 'device', 'uninstall', 'app', '--device', PHONE, 'com.example.app']);
+});
+
+test('a failed uninstall or retry keeps the cause devicectl names instead of the signer or generic remedy', () => {
+  const run = (failStep: string, failure: string) => {
+    let installs = 0;
+    setExecutor({
+      runFile(_file: string, args: string[]) {
+        if (args[2] === 'install' && ++installs === 1) throw new Error('MismatchedApplicationIdentifierEntitlement');
+        if (args[2] === failStep) throw new Error(failure);
+        return '';
+      },
+    });
+    try {
+      return installIosDeviceApp({
+        udid: PHONE,
+        appPath: '/tmp/Fixture.app',
+        bundleId: 'com.example.app',
+        wireless: true,
+      });
+    } finally {
+      resetExecutor();
+    }
+  };
+  const ids = { udid: PHONE, bundleId: 'com.example.app' };
+  const uninstall = run('uninstall', 'The device is locked.');
+  expect(uninstall.code).toBe('STIM_INSTALL_FAILED');
+  expect(uninstall.remedy).toBe(iosInstallRemedy('locked', ids));
+  let installs = 0;
+  setExecutor({
+    runFile(_file: string, args: string[]) {
+      if (args[2] !== 'install') return '';
+      installs += 1;
+      throw new Error(
+        installs === 1 ? 'MismatchedApplicationIdentifierEntitlement' : 'There is not enough disk space on the device.',
+      );
+    },
+  });
+  try {
+    const retry = installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: 'com.example.app' });
+    expect(retry.code).toBe('STIM_INSTALL_FAILED');
+    expect(retry.remedy).toBe(iosInstallRemedy('storage', ids));
+  } finally {
+    resetExecutor();
+  }
 });
 
 test("a failure that is not a signer conflict never uninstalls the user's app", () => {
@@ -540,17 +635,22 @@ test('a Wi-Fi install that times out or loses the phone maps to the wireless cod
 });
 
 test('a Wi-Fi install refused for a known cause keeps that cause, and a cabled timeout stays an install failure', () => {
-  setExecutor({
-    runFile() {
-      throw new Error('The device is locked.');
-    },
-  });
-  try {
-    const locked = installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', wireless: true });
-    expect(locked.code).toBe('STIM_INSTALL_FAILED');
-    expect(locked.remedy).toBe(iosInstallRemedy('locked', { udid: PHONE, bundleId: null }));
-  } finally {
-    resetExecutor();
+  for (const failure of [
+    new Error('The device is locked.'),
+    Object.assign(new Error('Command timed out\nThe device is locked.'), { code: 'ETIMEDOUT' }),
+  ]) {
+    setExecutor({
+      runFile() {
+        throw failure;
+      },
+    });
+    try {
+      const locked = installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', wireless: true });
+      expect(locked.code).toBe('STIM_INSTALL_FAILED');
+      expect(locked.remedy).toBe(iosInstallRemedy('locked', { udid: PHONE, bundleId: null }));
+    } finally {
+      resetExecutor();
+    }
   }
   const timeouts: Array<number | undefined> = [];
   setExecutor({
@@ -649,7 +749,7 @@ test('a Wi-Fi launch that times out or drops the console maps to the wireless co
     collectorPid: 99,
     readRecords: () => [
       { ts: 1, event: 'collector_started', msg: 'device log collector pid 99 launching com.example.app on device X' },
-      { ts: 2, msg: 'The connection was interrupted.' },
+      { ts: 2, msg: 'ERROR: The device was disconnected. (com.apple.dt.CoreDeviceError error 4 (0x04))' },
       { ts: 3, event: 'collector_failed', msg: 'the devicectl console ended with exit code 1' },
     ],
     probe: () => null,
@@ -657,6 +757,53 @@ test('a Wi-Fi launch that times out or drops the console maps to the wireless co
     sleep: async () => {},
   });
   expect(dropped).toMatchObject({ failed: true, code: 'STIM_DEVICE_WIRELESS_FAILED' });
+});
+
+test('a launch on a locked phone gets the locked remedy, over Wi-Fi too', async () => {
+  const result = await awaitIosDeviceLaunch({
+    udid: PHONE,
+    bundleId: 'com.example.app',
+    appName: 'Fixture',
+    collectorPid: 99,
+    readRecords: () => [
+      { ts: 1, event: 'collector_started', msg: 'device log collector pid 99 launching com.example.app on device X' },
+      { ts: 2, msg: 'ERROR: The application failed to launch. (com.apple.dt.CoreDeviceError error 10002 (0x2712))' },
+      {
+        ts: 3,
+        msg:
+          "The operation couldn't be completed. Unable to launch com.example.app because the device was not, or could " +
+          'not be, unlocked. (FBSOpenApplicationErrorDomain error 7 (0x07))',
+      },
+      { ts: 4, msg: 'BSErrorCodeDescription = Locked' },
+      ...Array.from({ length: 8 }, (_, i) => ({ ts: 5 + i, msg: `FBSOpenApplicationRequestID = 0x${i}` })),
+      { ts: 20, event: 'collector_failed', msg: 'the devicectl console ended with exit code 1' },
+    ],
+    probe: () => null,
+    wireless: true,
+    sleep: async () => {},
+  });
+  expect(result.code).toBeUndefined();
+  expect(result.remedy).toBe(iosLaunchRemedy('locked', { udid: PHONE, bundleId: 'com.example.app' }));
+});
+
+test("an app's own log lines about lost connections are not a Wi-Fi drop", async () => {
+  const result = await awaitIosDeviceLaunch({
+    udid: PHONE,
+    bundleId: 'com.example.app',
+    appName: 'Fixture',
+    collectorPid: 99,
+    readRecords: () => [
+      { ts: 1, event: 'collector_started', msg: 'device log collector pid 99 launching com.example.app on device X' },
+      { ts: 2, msg: 'The network connection was lost.', proc: 'Fixture(767)' },
+      { ts: 3, msg: 'peripheral device disconnected' },
+      { ts: 4, event: 'collector_failed', msg: 'the devicectl console ended with exit code 1' },
+    ],
+    probe: () => null,
+    wireless: true,
+    sleep: async () => {},
+  });
+  expect(result.failed).toBe(true);
+  expect(result.code).toBeUndefined();
 });
 
 test('verifyIosDeviceReleaseLaunch re-probes the phone rather than a host pid', async () => {

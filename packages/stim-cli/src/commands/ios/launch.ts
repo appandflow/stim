@@ -22,7 +22,7 @@ import {
   type LaunchErrorRecord,
   stepTimer,
 } from '../../command-output.ts';
-import { localNetworkPending, iosDeviceBounds } from '../../engine/ios-device.ts';
+import { localNetworkPending, iosDeviceBounds, isWirelessIosDevice } from '../../engine/ios-device.ts';
 import { launchErrorPreview } from '../../diagnostics/launch-error-preview.ts';
 import { MODE_BARE, MODE_EXPO } from '../../supervisor/state.ts';
 import type { VerifyLaunchResultLike, DeviceLike, IosBootLike, FailArgs } from './types.ts';
@@ -331,6 +331,20 @@ export interface IosRunCompletion {
   uploadsAbandoned: boolean;
 }
 
+function installsOverWifi(d: IosDeps, udid: string, selectedWireless: boolean, note: (line: string) => void): boolean {
+  const current = d.listIosDevices().find((entry) => entry.udid === udid);
+  const wireless = current ? isWirelessIosDevice(current) : selectedWireless;
+  if (wireless) {
+    note(
+      phaseLine(
+        'device',
+        `${current?.name ?? udid} is paired over Wi-Fi, so the install and launch go over the network and take longer than over a cable`,
+      ),
+    );
+  }
+  return wireless;
+}
+
 interface FinishIosRunArgs {
   artifact: PreparedIosArtifact;
   d: IosDeps;
@@ -553,12 +567,16 @@ export async function finishIosRun({
   let launchedAt = d.now();
 
   if (physical) {
-    const bounds = iosDeviceBounds(wireless);
+    const overWifi = installsOverWifi(d, udid, wireless, note);
+    const bounds = iosDeviceBounds(overWifi);
     const lostBeforeInstall = raiseLeaseFor(bounds.installMs, true);
     if (lostBeforeInstall) return fail(lostBeforeInstall);
     await d.stopPreviousCollector({ root, note });
     const installTimer = stepTimer(d.now);
-    const installed = d.installIosDeviceApp({ udid, appPath: appPath!, bundleId, wireless });
+    const installed = d.installIosDeviceApp(
+      { udid, appPath: appPath!, bundleId, wireless: overWifi },
+      { beforeStep: () => raiseLeaseFor(bounds.installMs, false) },
+    );
     if (installed?.failed) {
       dropSwapDir();
       return fail({
@@ -615,7 +633,7 @@ export async function finishIosRun({
       bundleId: bundleId!,
       appName: appName ?? bundleId!,
       collectorPid: collector.pid,
-      wireless,
+      wireless: overWifi,
       readRecords: () =>
         readCollectorRecords(logsDir).filter(
           (entry) => Number(entry.ts) >= launchedAt && (entry.slot ?? 'default') === (slot ?? 'default'),

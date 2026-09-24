@@ -111,6 +111,9 @@ describe('which connected devices are candidates', () => {
       device({ udid: 'D', developerModeStatus: 'disabled' }),
       device({ udid: 'E', transportType: 'localNetwork', pairingState: 'unpaired' }),
       device({ udid: 'F', transportType: 'sameMachine', developerModeStatus: null }),
+      device({ udid: 'G', transportType: 'localNetwork', platform: 'tvOS', reality: 'physical' }),
+      device({ udid: 'H', transportType: 'wired', platform: 'iOS', reality: 'simulated' }),
+      device({ udid: 'I', transportType: null, tunnelState: 'unavailable' }),
     ]);
     expect(accepted.map((entry) => entry.udid)).toEqual([FIRST, 'B']);
     expect(iosPoolCandidates([])).toEqual([]);
@@ -207,6 +210,22 @@ describe('choosing from the pool', () => {
     expect(result.refusal.message).toMatch(/Every connected device is leased by another workspace/);
     expect(result.refusal.message).toMatch(/Unreadable lease file/);
     expect(result.refusal.message).toContain(deviceLeasePath('ios', 'A-CORRUPT'));
+  });
+
+  test('a busy refusal names a free Wi-Fi device the cabled preference passed over', async () => {
+    const h = harness();
+    leasedBy(h, OTHER, FIRST);
+    const result = await pool(h, [], {
+      waitSeconds: 0,
+      list: () => [
+        { id: FIRST, name: 'cabled' },
+        { id: 'WIFI-1', name: 'wifi', fallback: true },
+      ],
+    });
+    assert(result.status === 'refused');
+    expect(result.refusal.code).toBe('STIM_DEVICE_BUSY');
+    expect(result.refusal.remedy).toContain('Also connected and free: WIFI-1');
+    expect(result.refusal.remedy).toContain('--device <udid>');
   });
 
   test('a leased device that is not connected refuses rather than picking another', async () => {

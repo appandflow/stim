@@ -5327,6 +5327,44 @@ describe('ios --device: the lease on the phone', () => {
     expect(calls.args.awaitIosDeviceLaunch).toMatchObject({ wireless: true });
   });
 
+  test('a phone that moves from the cable to Wi-Fi during the build gets the Wi-Fi bounds at install', async () => {
+    reserve();
+    const { lease, raises } = fakeLease();
+    const [phone] = connected().listIosDevices();
+    let listings = 0;
+    const { errs, calls } = await run(
+      { device: PHONE },
+      {
+        ...leaseDeps(lease),
+        listIosDevices: () => [{ ...phone!, transportType: ++listings === 1 ? 'wired' : 'localNetwork' }],
+      },
+    );
+    expect(errs.filter((line) => line.includes('paired over Wi-Fi'))).toHaveLength(1);
+    expect(raises[0]).toBe(WIRELESS_INSTALL_TIMEOUT_MS);
+    expect(calls.args.installIosDeviceApp).toMatchObject({ wireless: true });
+  });
+
+  test('the lease covers each step of a signer-conflict reinstall, not only the first install', async () => {
+    reserve();
+    const { lease, raises } = fakeLease();
+    await run(
+      { device: true },
+      {
+        ...leaseDeps(lease),
+        installIosDeviceApp: (args: { appPath: string }, opts?: { beforeStep?: () => void }) => {
+          opts?.beforeStep?.();
+          opts?.beforeStep?.();
+          return { ok: true, appPath: args.appPath, uninstalled: true, note: 'reinstalled' };
+        },
+      },
+    );
+    expect(raises.slice(0, 3)).toEqual([
+      DEVICECTL_INSTALL_TIMEOUT_MS,
+      DEVICECTL_INSTALL_TIMEOUT_MS,
+      DEVICECTL_INSTALL_TIMEOUT_MS,
+    ]);
+  });
+
   test('a release build raises for the release probe instead of the bundle deadline', async () => {
     reserve();
     const { lease, raises } = fakeLease();

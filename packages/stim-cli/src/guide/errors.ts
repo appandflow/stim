@@ -632,11 +632,13 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   (transportType localNetwork). The \`devicectl device install app\` ran past
   its 15-minute Wi-Fi bound, the phone did not appear in its own process list
   within the 120-second Wi-Fi launch bound, or devicectl reported that the
-  connection dropped. The message names the transport and quotes devicectl.
-  Connect the phone with a cable, keep it unlocked, and run the command again:
-  a cabled phone installs over the cable. A refusal devicectl explains -- a
-  locked phone, an untrusted host, Developer Mode off, full storage, the
-  developer-trust tap -- keeps its own code and remedy over Wi-Fi too.`,
+  connection dropped in its own ERROR output (an app's log lines never count).
+  The message names the transport and quotes devicectl. Connect the phone
+  with a cable, keep it unlocked, and run the command again: a cabled phone
+  installs over the cable. A cause devicectl names -- a locked phone, an
+  untrusted host, Developer Mode off, full storage, the developer-trust tap --
+  keeps STIM_INSTALL_FAILED or STIM_LAUNCH_FAILED and its own remedy, even
+  when the step also timed out and even during a signer-conflict reinstall.`,
     },
     STIM_DEVICE_LOST: {
       summary: 'the lease was gone or re-held at the pre-install check; rerun',

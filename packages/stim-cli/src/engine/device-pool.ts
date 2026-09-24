@@ -89,6 +89,8 @@ function poolBusyRefusal(
   unreadable: readonly string[],
   now: number,
   waitSeconds: number,
+  spare: readonly string[] = [],
+  idLabel = 'id',
 ): RunLeaseRefusal {
   const named = holders.map(
     (holder) => `${holder.id} (${holder.holder}, until ${leaseExpiryText(holder.expiresAt, now)})`,
@@ -109,6 +111,9 @@ function poolBusyRefusal(
       `Every connected device is leased by another workspace${waitSeconds > 0 ? `, and this run waited ${waitSeconds}s for one` : ''}: ` +
       `${named.join('; ')}.${unreadableSentence(unreadable)}`,
     remedy:
+      (spare.length
+        ? `Also connected and free: ${spare.join(', ')}. Name one with \`--device <${idLabel}>\` to use it now. `
+        : '') +
       'Wait longer with `--wait <seconds>`, connect another device, or pass `--no-wait` to install anyway -- ' +
       "which takes no lease and, when both workspaces build the same app id, terminates the holder's running app.",
     lease: {
@@ -179,7 +184,7 @@ export async function selectFromPool({
     if (now() >= until) {
       return {
         status: 'refused',
-        refusal: poolBusyRefusal(selection.holders, leases, unreadable, now(), waitSeconds),
+        refusal: poolBusyRefusal(selection.holders, leases, unreadable, now(), waitSeconds, selection.spare, idLabel),
       };
     }
     if (lastLine === null || now() - lastLine >= DEVICE_WAIT_LINE_MS) {

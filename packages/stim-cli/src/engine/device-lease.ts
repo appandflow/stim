@@ -438,7 +438,7 @@ export interface PoolHolder {
 export type PoolSelection =
   | { status: 'selected'; candidate: PoolCandidate }
   | { status: 'held-disconnected'; id: string }
-  | { status: 'busy'; holders: PoolHolder[] }
+  | { status: 'busy'; holders: PoolHolder[]; spare: string[] }
   | { status: 'none' };
 
 export function selectPoolDevice({
@@ -465,13 +465,18 @@ export function selectPoolDevice({
   const pool = preferred.length > 0 ? preferred : ordered;
   if (pool.length === 0) return { status: 'none' };
   const byId = new Map(leases.map((lease) => [lease.id, lease]));
+  const free = (candidate: PoolCandidate) => {
+    const lease = byId.get(candidate.id);
+    return !lease || leaseIsExpired(lease, now);
+  };
   const holders: PoolHolder[] = [];
   for (const candidate of pool) {
-    const lease = byId.get(candidate.id);
-    if (!lease || leaseIsExpired(lease, now)) return { status: 'selected', candidate };
+    if (free(candidate)) return { status: 'selected', candidate };
+    const lease = byId.get(candidate.id)!;
     holders.push({ id: lease.id, holder: lease.holder, expiresAt: lease.expiresAt });
   }
-  return { status: 'busy', holders };
+  const spare = ordered.filter((candidate) => candidate.fallback && free(candidate)).map((candidate) => candidate.id);
+  return { status: 'busy', holders, spare };
 }
 
 function withHolderLock<T>(io: LeaseIo, root: string, fn: () => T): T {
