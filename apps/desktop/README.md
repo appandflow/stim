@@ -2,7 +2,8 @@
 
 A macOS app for supervising Stim workspaces: every worktree on the machine,
 grouped by project, with its Metro port, supervisor health, errors, build cache
-stats, live frames from its iOS simulators, and its CPU and resident memory.
+stats, live frames from its iOS simulators and Android emulators, and its CPU
+and resident memory.
 
 It reads Stim state only through `stim status --json`, `stim stats --json`, and
 the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`. Its
@@ -63,4 +64,5 @@ The bundle copies Inter, JetBrains Mono, and the brand artwork from `website/`.
 
 - `Sources/StimKit`: models for the CLI's JSON, the CLI client, project grouping, warning remedies, the streaming runner, and process, disk and gc usage. Unit-tested.
 - `Sources/SimulatorFrames`: live simulator frames through CoreSimulator and input through SimulatorKit, both private Apple frameworks. Expect Xcode releases to break it.
+- `Sources/EmulatorFrames`: live emulator frames through the emulator's localhost gRPC `streamScreenshot` call, found through its discovery file. Emulators Stim booted before it passed `-grpc` show no frames until their next boot.
 - `Sources/StimDesktop`: the SwiftUI app and its brand theme.

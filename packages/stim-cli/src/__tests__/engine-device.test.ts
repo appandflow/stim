@@ -481,7 +481,7 @@ describe('ensureBooted: android', () => {
       timeoutMs: 5000,
     });
     expect(result).toEqual({ ok: true, serial: 'emulator-5554' });
-    expect(spawned).toEqual([['emulator', '-avd', 'stim-app', '-port', '5554']]);
+    expect(spawned).toEqual([['emulator', '-avd', 'stim-app', '-port', '5554', '-grpc', '8554', '-grpc-use-token']]);
   });
 
   test('reuses the serial returned by a fresh owned AVD boot when adb listing briefly misses it', async () => {
