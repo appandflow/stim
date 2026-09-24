@@ -41,6 +41,12 @@ running. If Device Hub also opens, quitting it can shut down
 simulators it started; [Siniulator's setup notes](https://github.com/kmagiera/Siniulator#working-with-device-hub)
 describe the macOS preference that keeps them running.
 
+To show owned simulators in Stim Desktop instead of a simulator window, set
+`"iosSimulatorApp": "stim-desktop"`, or pass `--simulator-app stim-desktop` for
+one launch. Stim Desktop selects the workspace that owns the simulator and
+focuses that device. It only displays the simulator; it never boots or shuts
+it down.
+
 ## Multiple devices with slots
 
 Use `--slot <name>` to keep multiple targets in one workspace: phone and tablet
