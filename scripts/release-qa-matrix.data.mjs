@@ -319,6 +319,7 @@ export const pathRules = [
 
   { path: 'docs', exempt: 'documentation' },
   { path: 'website', exempt: 'documentation website' },
+  { path: 'apps', exempt: 'macOS desktop app, not part of the published npm packages' },
   { path: 'scripts', exempt: 'repository tooling, not published behavior' },
   { path: '.claude', exempt: 'local agent configuration, not published behavior' },
   { path: '.github', exempt: 'CI configuration, covered by the exact-commit CI in section 4' },
