@@ -839,13 +839,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
 
   await withManagedRemoteWorktreeRemovalLock(path, () =>
     withReclaimLocks(path, async (lockedKeys) => {
-      const busy = opts.guard?.(lockedKeys) ?? [];
-      if (busy.length) {
-        console.error(chalk.red(`Refusing to remove ${path}:`));
-        for (const reason of busy) console.error(chalk.red(`  - ${reason}`));
-        process.exitCode = 1;
-        return;
-      }
+      if (opts.guard?.(lockedKeys).length) return;
       const current = inspectRemoval(path);
       if (current.blockers.length && !opts.force) {
         printRemovalRefusal(path, current);

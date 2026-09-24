@@ -509,7 +509,8 @@ test('gc --worktrees reports each linked worktree, and --delete removes only the
   expect(report).toMatch(/kept: dirty/);
 
   const originalError = console.error;
-  console.error = () => {};
+  const errors: string[] = [];
+  console.error = (...args) => errors.push(args.join(' '));
   const original = console.log;
   const lines: string[] = [];
   console.log = (...args) => {
@@ -527,10 +528,36 @@ test('gc --worktrees reports each linked worktree, and --delete removes only the
   expect(getProject(worktrees.idle!)).toBe(null);
   expect(output).toContain(`Removed the worktree ${reported.idle}`);
   expect(existsSync(worktrees.racing!)).toBe(true);
-  expect(output).toContain(`Kept the worktree ${reported.racing}`);
+  expect(errors.join('\n')).toMatch(/uncommitted changes or untracked files/);
+  expect(errors.join('\n')).toContain(`Kept the worktree ${reported.racing}`);
   for (const name of ['fresh', 'dirty']) expect(existsSync(worktrees[name]!)).toBe(true);
   expect(existsSync(join(repo, 'package.json'))).toBe(true);
   expect(process.exitCode).toBe(1);
+}, 30_000);
+
+test('a worktree gc --delete --worktrees keeps because it was used after the report is not a failure', async () => {
+  const { worktrees } = gitRepoWithWorktrees(['reused']);
+  const reused = worktrees.reused!;
+  upsertProject(reused, { metroPort: null });
+  recordWorkspaceUse(reused, new Date(Date.now() - 10 * DAY_MS));
+
+  const originalError = console.error;
+  console.error = () => {};
+  const original = console.log;
+  const lines: string[] = [];
+  console.log = (...args) => {
+    lines.push(args.join(' '));
+    if (String(args[0]).startsWith('Linked worktrees')) recordWorkspaceUse(reused);
+  };
+  try {
+    await runGc({ worktrees: true, delete: true });
+  } finally {
+    console.log = original;
+    console.error = originalError;
+  }
+  expect(existsSync(reused)).toBe(true);
+  expect(lines.join('\n')).toMatch(/Kept the worktree .*reused: used 0d ago since gc checked it/);
+  expect(process.exitCode).not.toBe(1);
 }, 30_000);
 
 test('gc refuses --cache combined with --worktrees and removes nothing', async () => {

@@ -97,7 +97,8 @@ SWEEPING FINISHED WORKTREES
   on each removable worktree. That pipeline re-inspects the worktree and
   re-checks use and idleness under the removal locks, then parks devices and
   handles the branch exactly as a manual \`stim worktree remove\`. A worktree
-  that fails is reported, gc exits 1, and the sweep continues.
+  that became busy or recently used since the report is kept with the reason.
+  A worktree that fails is reported, gc exits 1, and the sweep continues.
 
 ORPHANED WORKSPACE DIRECTORIES
   A worktree deleted with \`git worktree remove\`, \`rm -rf\` or a /tmp wipe

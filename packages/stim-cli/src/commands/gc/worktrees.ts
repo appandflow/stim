@@ -130,6 +130,7 @@ export async function removeWorktrees(
   let failures = 0;
   for (const candidate of sweep.worktrees) {
     if (candidate.skipped) continue;
+    let kept: string[] = [];
     const guard = (lockedKeys: readonly string[]): string[] => {
       const keys = [...new Set([...candidate.keys, ...lockedKeys])];
       const unlocked = keys.filter((key) => !lockedKeys.includes(key));
@@ -141,19 +142,22 @@ export async function removeWorktrees(
       if (idleDays === null || idleDays < sweep.olderThan) {
         reasons.push(`used ${idleDays === null ? 'at an unknown time' : `${idleDays}d ago`} since gc checked it`);
       }
+      kept = reasons;
       return reasons;
     };
     let removed = false;
     try {
       removed = await removeWorktreeTarget(candidate.path, { linkedOnly: true, guard });
     } catch (error) {
-      console.log(chalk.red(`Could not remove ${candidate.path}: ${(error as Error)?.message || String(error)}`));
+      console.error(chalk.red(`Could not remove ${candidate.path}: ${(error as Error)?.message || String(error)}`));
     }
     if (removed) {
       console.log(chalk.green(`Removed the worktree ${candidate.path}`));
+    } else if (kept.length) {
+      console.log(chalk.yellow(`Kept the worktree ${candidate.path}: ${kept.join('; ')}`));
     } else {
       failures++;
-      console.log(chalk.yellow(`Kept the worktree ${candidate.path}; see the lines above for why.`));
+      console.error(chalk.yellow(`Kept the worktree ${candidate.path}; see the lines above for why.`));
     }
   }
   return failures;
