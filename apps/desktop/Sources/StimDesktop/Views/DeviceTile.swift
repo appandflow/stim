@@ -9,6 +9,7 @@ struct DeviceTile: View {
   var screenHeight: CGFloat
   var interactive = false
   var workspace: String?
+  var build: Build?
   @State private var pixelSize: CGSize?
   @State private var confirmingStop = false
   @EnvironmentObject private var actions: ActionCenter
@@ -28,6 +29,9 @@ struct DeviceTile: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
+        if let build {
+          BuildProgressBar(build: build, compact: true).padding(.horizontal, 12).padding(.bottom, 9)
+        }
         Rectangle().fill(Theme.border).frame(height: 1)
         screen
           .frame(height: screenHeight)

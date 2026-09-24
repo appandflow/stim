@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
 
 const DEFAULT_WAIT_MS = 60_000;
@@ -31,7 +31,7 @@ export function workspaceProcessLockPath(root: string, name: string, external: b
 export async function withWorkspaceProcessLock<T>(
   root: string,
   name: string,
-  fn: () => Promise<T>,
+  fn: (claim: ClaimHandle) => Promise<T>,
   {
     now = Date.now,
     sleep = defaultSleep,
@@ -56,7 +56,7 @@ export async function withWorkspaceProcessLock<T>(
     if (attempt.acquired) {
       if (declareSpawns) declareSpawnsOn(attempt.acquired);
       try {
-        return await fn();
+        return await fn(attempt.acquired);
       } finally {
         stopDeclaringSpawnsOn(attempt.acquired);
         releaseClaim(attempt.acquired);

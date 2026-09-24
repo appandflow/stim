@@ -52,6 +52,7 @@ import {
   type LoadProjectProviderResult,
 } from '../../engine/remote-cache.ts';
 import type { RunEstimates, RunRecorder } from '../../engine/stats.ts';
+import type { BuildPhase } from '../../engine/build-progress.ts';
 import { claimFailure } from '../../ownership-claim.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import { detectAndroidPackage } from '../../workspace/project.ts';
@@ -85,6 +86,7 @@ interface AndroidArtifactRequest {
     out: (line: string) => void;
     estimates: () => RunEstimates;
     stats: Pick<RunRecorder, 'setCacheKey' | 'setBuildMs'>;
+    step: (phase: BuildPhase) => void;
   };
 }
 
@@ -194,7 +196,7 @@ export async function acquireAndroidArtifact(
     now,
   }: AndroidArtifactDeps,
 ): Promise<AndroidArtifactResult> {
-  const { phase, out, estimates, stats } = progress;
+  const { phase, out, estimates, stats, step } = progress;
   const { variant, release, profile: buildProfile, cas, cache: cachePolicy } = buildPlan;
   const useBuildCache = cachePolicy.read;
   let androidPackage = initialPackage;
@@ -276,6 +278,7 @@ export async function acquireAndroidArtifact(
       stats.setCacheKey(cacheKey);
       return true;
     }
+    step('cache-lookup');
     const fingerprintTimer = stepTimer(now);
     try {
       const computed = await fingerprint(root, { platform: PLATFORM });
@@ -425,7 +428,10 @@ export async function acquireAndroidArtifact(
       acquire: acquireLock,
       wait: waitForBuild,
       now,
-      phase: (text) => phase('build', text),
+      phase: (text) => {
+        step('wait');
+        phase('build', text);
+      },
       warn: (text) => phase('build', chalk.yellow(text)),
       out,
     });
@@ -518,6 +524,7 @@ export async function acquireAndroidArtifact(
         }
 
         if (needsPrebuildFor(root, PLATFORM, isExpo)) {
+          step('prebuild');
           const pre: PrebuildResultLike = await prebuild(root, PLATFORM, writer, { isExpo });
           if (pre.failed) {
             phaseFailure = fail(pre.code!, pre.reason, pre.remedy, {
@@ -565,6 +572,7 @@ export async function acquireAndroidArtifact(
         }
 
         if (!apkPath) {
+          step('compile');
           phase('build', `compiling ${variant || 'debug'} with Gradle`);
           const built = await build(
             { root, logWriter: writer, variant, abi: buildAbi },

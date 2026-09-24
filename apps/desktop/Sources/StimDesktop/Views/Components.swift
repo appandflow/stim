@@ -1,3 +1,4 @@
+import StimKit
 import SwiftUI
 
 struct StatusDot: View {
@@ -110,5 +111,50 @@ struct Sparkline: View {
         }
       }
     }
+  }
+}
+
+struct BuildProgressBar: View {
+  var build: Build
+  var compact = false
+
+  var body: some View {
+    TimelineView(.periodic(from: .now, by: 1)) { context in
+      let progress = build.progress(at: context.date)
+      VStack(alignment: .leading, spacing: 5) {
+        HStack(spacing: 8) {
+          if !compact {
+            Text("Building \(build.platform)\(build.slot == "default" ? "" : " \u{00B7} \(build.slot)")")
+              .foregroundStyle(Theme.text)
+          }
+          Text(build.phase).font(Theme.mono()).foregroundStyle(Theme.primary)
+          Spacer()
+          Text(compact ? (progress.remaining ?? formatDuration(ms: progress.elapsedMs)) : timing(progress))
+            .font(Theme.mono())
+            .foregroundStyle(Theme.secondary)
+            .lineLimit(1)
+        }
+        .font(Theme.body(11.5))
+        if let fraction = progress.fraction {
+          ProgressView(value: fraction).tint(Theme.lavender)
+        } else {
+          ProgressView().progressViewStyle(.linear).tint(Theme.lavender)
+        }
+      }
+      .help(help)
+    }
+  }
+
+  private func timing(_ progress: BuildProgress) -> String {
+    let elapsed = formatDuration(ms: progress.elapsedMs)
+    guard let expected = build.expectedMs, let remaining = progress.remaining else { return elapsed }
+    return "\(elapsed) / ~\(formatDuration(ms: expected)) \u{00B7} \(remaining)"
+  }
+
+  private var help: String {
+    guard build.expectedMs != nil, let outcome = build.outcome else {
+      return "No finished \(build.platform) run of this project to compare against yet"
+    }
+    return "Median of the last \(build.basis) \(outcome) \(build.platform) runs of this project"
   }
 }

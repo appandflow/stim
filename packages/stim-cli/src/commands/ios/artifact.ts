@@ -32,6 +32,7 @@ import {
   type LoadProjectProviderResult,
 } from '../../engine/remote-cache.ts';
 import type { RunRecorder, RunEstimates } from '../../engine/stats.ts';
+import type { BuildPhase } from '../../engine/build-progress.ts';
 import { COMPILATION_CACHE_NOT_RUN, compilationCacheActivityLine } from '../../engine/xcode.ts';
 import type { NdjsonWriter } from '../../ndjson.ts';
 import { artifactCachePolicy, type Optimizations } from '../../optimizations.ts';
@@ -79,6 +80,7 @@ interface IosArtifactRequest {
     logWriter: () => NdjsonWriter;
     estimates: () => RunEstimates;
     stats: Pick<RunRecorder, 'setCacheKey' | 'setBuildMs' | 'setPodsMs'>;
+    step: (phase: BuildPhase) => void;
   };
 }
 
@@ -164,7 +166,7 @@ export async function acquireIosArtifact(
   }: IosArtifactRequest,
   d: IosArtifactDeps,
 ): Promise<IosArtifactResult> {
-  const { phase, note, logWriter, estimates, stats } = progress;
+  const { phase, note, logWriter, estimates, stats, step } = progress;
   const physical = device !== null;
   const lanAddress = device?.lanAddress ?? null;
   const metroPort = device?.metroPort ?? null;
@@ -261,6 +263,7 @@ export async function acquireIosArtifact(
       }
       return;
     }
+    step('cache-lookup');
     const fingerprintTimer = stepTimer(d.now);
     let computedFingerprint: string | null;
     try {
@@ -411,7 +414,10 @@ export async function acquireIosArtifact(
       acquire: d.acquireBuildLock,
       wait: d.waitForBuild,
       now: d.now,
-      phase: (text) => phase('build', text),
+      phase: (text) => {
+        step('wait');
+        phase('build', text);
+      },
       warn: (text) => note(chalk.yellow(phaseLine('build', text))),
       out: note,
     });
@@ -557,6 +563,7 @@ export async function acquireIosArtifact(
       const mutatingSteps: string[] = [];
 
       if (d.needsPrebuild(root, PLATFORM, isExpo)) {
+        step('prebuild');
         const result = await d.runPrebuild(root, PLATFORM, logWriter());
         if (result?.failed) {
           phase('prebuild', 'FAILED');
@@ -576,6 +583,7 @@ export async function acquireIosArtifact(
       const verdict = d.podsAreStale(podState.lockText, podState.manifestText);
       const action = podAction(podState, verdict);
       if (action.install) {
+        step('pods');
         const result = await d.runPodInstall(root, logWriter(), { estimateMs: estimates().podsMs });
         const podCommand = result?.command || 'pod install';
         for (const line of result?.notes || []) note(chalk.dim(phaseLine('pods', line)));
@@ -654,6 +662,7 @@ export async function acquireIosArtifact(
       }
 
       if (!appPath) {
+        step('compile');
         phase('build', `compiling ${configuration || 'Debug'} with xcodebuild`);
         const result = await d.buildIos({
           root,

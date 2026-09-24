@@ -1,6 +1,7 @@
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { NO_BUILD_PROGRESS, startBuildProgress, type BuildProgress } from '../engine/build-progress.ts';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { type Command, InvalidArgumentError } from 'commander';
@@ -229,22 +230,34 @@ export function registerAndroid(program: Command): void {
       const result = await withWorkspaceProcessLock(
         workspaceDir(root),
         'native-run',
-        () => {
+        async (claim) => {
           recordWorkspaceUse(root);
-          return runAndroid({
+          const progress = startBuildProgress({
             root,
-            slot: opts.slot,
-            easProfile: opts.easProfile,
-            json: Boolean(opts.json),
-            metroCheck: opts.metroCheck !== false,
-            useBuildCache: opts.buildCache !== false,
-            variant: opts.variant ?? null,
-            systemImage: opts.systemImage ?? null,
-            remoteDevice: opts.remote ?? null,
-            device: opts.device ?? null,
-            wait: opts.wait,
-            waitConflict: waitFlagConflict(process.argv),
+            platform: PLATFORM,
+            slot: opts.slot ?? 'default',
+            claim,
+            note: (line) => console.error(chalk.dim(line)),
           });
+          try {
+            return await runAndroid({
+              root,
+              slot: opts.slot,
+              easProfile: opts.easProfile,
+              json: Boolean(opts.json),
+              metroCheck: opts.metroCheck !== false,
+              useBuildCache: opts.buildCache !== false,
+              variant: opts.variant ?? null,
+              systemImage: opts.systemImage ?? null,
+              remoteDevice: opts.remote ?? null,
+              device: opts.device ?? null,
+              wait: opts.wait,
+              waitConflict: waitFlagConflict(process.argv),
+              progress,
+            });
+          } finally {
+            progress.clear();
+          }
         },
         { external: true, waitMs: 30 * 60_000, declareSpawns: true },
       );
@@ -253,6 +266,7 @@ export function registerAndroid(program: Command): void {
 }
 
 interface RunAndroidOptions {
+  progress?: BuildProgress;
   easProfile?: string;
   resolveEasDevelopmentBuild?: typeof resolveEasDevelopmentBuild;
   slot?: string;
@@ -629,6 +643,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     out,
     emit,
   } = androidSlotOptions(options);
+  const progress = options.progress ?? NO_BUILD_PROGRESS;
   const slot = validateDeviceSlot(options.slot);
   const started = now();
   const startedAt = new Date(started).toISOString();
@@ -673,6 +688,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     write: recordStats,
     now,
     note: (line) => out(phaseLine('stats', chalk.dim(line))),
+    phases: () => progress.durations(),
   });
   const recordRun = stats.record;
 
@@ -996,7 +1012,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         androidPackage,
         record,
         maxBuilds: limits.maxBuilds,
-        progress: { phase, out, estimates, stats },
+        progress: { phase, out, estimates, stats, step: progress.step },
       },
       {
         deviceAbi,
@@ -1140,6 +1156,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         out,
         emit,
         recordRun,
+        enterPhase: progress.step,
       });
     } finally {
       releaseLease();

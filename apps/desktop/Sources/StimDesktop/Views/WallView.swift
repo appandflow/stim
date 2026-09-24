@@ -9,7 +9,7 @@ struct WallView: View {
   var openLogs: (String) -> Void
 
   var body: some View {
-    let live = store.environments(in: project).filter(\.live)
+    let live = store.environments(in: project).filter { $0.live || $0.build?.isRunning == true }
     if store.payload == nil {
       if let error = store.error {
         EmptyState(title: "Cannot read stim status", message: error, showsHero: true)
@@ -36,9 +36,10 @@ struct WallView: View {
               .onTapGesture { selection = .environment(env.path) }
               ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 16) {
-                  ForEach(env.devices.filter(\.isRunning)) { device in
+                  ForEach(env.devices.filter { $0.isRunning || env.runningBuild(for: $0) != nil }) { device in
                     Button { selection = .environment(env.path) } label: {
-                      DeviceTile(device: device, screenHeight: 400, workspace: env.path)
+                      DeviceTile(
+                        device: device, screenHeight: 400, workspace: env.path, build: env.runningBuild(for: device))
                     }
                     .buttonStyle(.plain)
                   }
@@ -60,6 +61,16 @@ struct WorkspaceHeader: View {
   var openLogs: () -> Void
 
   var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      row
+      if let build = env.build, build.isRunning {
+        BuildProgressBar(build: build).frame(maxWidth: 520)
+      }
+    }
+    .contentShape(Rectangle())
+  }
+
+  private var row: some View {
     HStack(spacing: 12) {
       Text(env.names.title).font(Theme.heading(16))
       Text(project.name).font(Theme.body(12)).foregroundStyle(Theme.primary)
@@ -105,6 +116,5 @@ struct WorkspaceHeader: View {
         .help("Open logs")
       }
     }
-    .contentShape(Rectangle())
   }
 }

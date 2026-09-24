@@ -2,6 +2,7 @@ import type { PreparedIosArtifact } from './artifact.ts';
 import { launchSlotScope, nativeRunCommand } from '../../engine/slot-launch.ts';
 import { basename } from 'node:path';
 import chalk from 'chalk';
+import type { BuildPhase } from '../../engine/build-progress.ts';
 import { DEFAULT_METRO_PORT, devClientUrl, iosAppProcess } from '../../engine/app-install.ts';
 import {
   LAUNCH_BUNDLING,
@@ -376,6 +377,7 @@ interface FinishIosRunArgs {
   lease: RunLease | null;
   releaseLease: () => void;
   recordRun: ReportIosResultArgs['recordRun'];
+  enterPhase: (phase: BuildPhase) => void;
 }
 
 function cleanAdoptedIosApps({
@@ -505,6 +507,7 @@ export async function finishIosRun({
   lease,
   releaseLease,
   recordRun,
+  enterPhase,
 }: FinishIosRunArgs): Promise<IosRunCompletion | null> {
   const { path: appPath, bundleId: initialBundleId, failureFields: buildFailure, cache } = artifact;
   const {
@@ -545,6 +548,7 @@ export async function finishIosRun({
 
   if (bundleId) d.upsertProject(root, { bundleId });
 
+  enterPhase('install');
   const booted = await bootPromise;
   if (!booted?.ok) {
     return fail({
@@ -593,6 +597,7 @@ export async function finishIosRun({
 
     raiseLeaseFor(COLLECTOR_EXIT_WAIT_MS + bounds.launchMs, false);
     const payloadUrl = scheme && metroPort !== null && lanAddress ? devClientUrl(scheme, metroPort, lanAddress) : null;
+    enterPhase('launch');
     const launchTimer = stepTimer(d.now);
     launchedAt = d.now();
     logWriter().write({
@@ -706,6 +711,7 @@ export async function finishIosRun({
 
     if (!remoteDevice)
       await d.replaceCollector({ root, slot, udid, bundleId: bundleId!, appName, appExecutable, note });
+    enterPhase('launch');
     const launchTimer = stepTimer(d.now);
     launchedAt = d.now();
     logWriter().write({

@@ -413,6 +413,34 @@ fallback. It exits with status 0 on Ctrl+C, SIGTERM, or when its stdout
 closes. Use it to wait for a device, a build, or a dev server instead of
 polling `stim status --json`.
 
+While `stim ios` or `stim android` runs, the workspace shows the build's phase
+and an estimate of the time left:
+
+```text
+  build: ios compile, 1m10s elapsed -- about 3 min left (median of 4 cold runs)
+```
+
+In `--json`, each environment carries `build`: `null`, or
+`{ platform, slot, state, phase, startedAt, phaseStartedAt, outcome, expectedMs, expectedPhaseMs, basis }`.
+`phase` is one of `prepare`, `cache-lookup`, `wait`, `prebuild`, `pods`,
+`compile`, `install` and `launch`. `state` is `running` while the run's
+`native-run.lock` claim is live, `stale` when that run was killed (the next run
+replaces the record), and `unknown` when the claim cannot be read. `outcome` is
+`cold` once the run reaches prebuild, pods or compile, and `hit` once it
+reaches install without them; before that it follows the project's most recent
+run. `expectedMs` and `expectedPhaseMs` are medians of this project's last
+successful runs with that outcome, and `basis` counts them. Both are `null`
+until the project has such a run. Stim does not report a completion
+percentage.
+
+Try it with an agent:
+
+```text
+Run `stim ios` in this worktree. While it builds, follow
+`stim status --watch --json` and tell me each phase change and the time left for
+this workspace.
+```
+
 ## `stats`
 
 ```text
@@ -421,9 +449,11 @@ stim stats [--json]
 
 Shows how many `ios` and `android` runs this project and this machine have
 recorded, how many hit the build cache, the mean cold run and hit run, and an
-estimate of the time the cache saved. Only aggregates are kept, in
-`$STIM_HOME/stats.json`; nothing per run is stored, and every worktree of a
-repository counts into the same project bucket. Outside a project only the
+estimate of the time the cache saved. The aggregates are kept in
+`$STIM_HOME/stats.json`, and every worktree of a repository counts into the
+same project bucket. The same file keeps the last 10 successful runs per
+project, platform and cache outcome, with their phase durations, for the
+estimates `stim status` shows; `stats` does not print them. Outside a project only the
 machine section prints. There is no reset flag: delete that file to start over.
 
 `--json` prints one line:

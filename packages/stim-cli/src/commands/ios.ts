@@ -2,6 +2,7 @@ import { acquireIosArtifact, type PreparedIosArtifact } from './ios/artifact.ts'
 import { isEasBuildFailure } from '../engine/eas-build.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { NO_BUILD_PROGRESS, startBuildProgress, type BuildProgress } from '../engine/build-progress.ts';
 import { join } from 'node:path';
 import {
   resolveOptimizations,
@@ -175,14 +176,26 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     )
     .action(async (opts: IosCommandOptions) => {
       const root = (deps.findProjectRoot ?? DEFAULT_DEPS.findProjectRoot)(process.cwd());
-      const run = () => runIos({ ...opts, waitConflict: waitFlagConflict(process.argv) }, deps);
+      const run = (progress?: BuildProgress) =>
+        runIos({ ...opts, waitConflict: waitFlagConflict(process.argv) }, deps, progress);
       const completion = root
         ? await withWorkspaceProcessLock(
             workspaceDir(root),
             'native-run',
-            () => {
+            async (claim) => {
               recordWorkspaceUse(root);
-              return run();
+              const progress = startBuildProgress({
+                root,
+                platform: PLATFORM,
+                slot: opts.slot ?? 'default',
+                claim,
+                note: (line) => writeNote(chalk.dim(line)),
+              });
+              try {
+                return await run(progress);
+              } finally {
+                progress.clear();
+              }
             },
             {
               external: true,
@@ -240,6 +253,7 @@ function iosSlotDeps(d: IosDeps, slot: string): IosDeps {
 async function runIos(
   opts: IosCommandOptions = {},
   overrides: Partial<IosDeps> = {},
+  progress: BuildProgress = NO_BUILD_PROGRESS,
 ): Promise<IosRunCompletion | null> {
   const slot = validateDeviceSlot(opts.slot);
   let d = iosSlotDeps({ ...DEFAULT_DEPS, ...overrides }, slot);
@@ -310,6 +324,7 @@ async function runIos(
     write: (statsRun, at) => d.recordStats(statsRun, at),
     now: () => d.now(),
     note: (line) => note(chalk.dim(line)),
+    phases: () => progress.durations(),
   });
   const recordRun = stats.record;
 
@@ -767,7 +782,7 @@ async function runIos(
         easBuild,
         easProfile: opts.easProfile,
         maxBuilds: limits.maxBuilds,
-        progress: { phase, note, logWriter, estimates, stats },
+        progress: { phase, note, logWriter, estimates, stats, step: progress.step },
       },
       d,
     );
@@ -850,6 +865,7 @@ async function runIos(
         lease: leaseHandle,
         releaseLease,
         recordRun,
+        enterPhase: progress.step,
       });
     } finally {
       releaseLease();
