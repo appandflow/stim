@@ -2,7 +2,7 @@ import type { GuideTopic } from './types.ts';
 
 const facts: GuideTopic = {
   summary:
-    'The --json payloads: `start`, `ios`, `android`, `reload`, `stop`, `status`, `doctor`, `device lock`/`unlock`, and the error contract',
+    'The --json payloads: `start`, `ios`, `android`, `reload`, `stop`, `status`, `doctor`, `device lock`/`unlock`, `gc`, and the error contract',
   preamble: () => `SLOTS
 Named ios/android runs add slot to their JSON facts. Default-run fields remain
 compatible. status adds a slots array per environment with each named slot's
@@ -12,7 +12,7 @@ Named collector, lease-holder, and launch keys use platform:slot internally.
 FACTS CONTRACT
 
 \`start\`, \`ios\`, \`android\`, \`reload\`, \`stop\`, \`status\`, \`stats\`, \`doctor\`,
-and \`device lock\`/\`device unlock\` each print exactly ONE line of JSON on
+\`gc\`, and \`device lock\`/\`device unlock\` each print exactly ONE line of JSON on
 stdout for \`--json\`. Every other line goes to stderr, so it is always safe
 to pipe. \`logs --json\` is the one exception: it is NDJSON, one record per
 line by design (see \`guide logs\`), not this single-payload contract.`,
@@ -390,6 +390,88 @@ RULES
   developer trust, has no API at all and is always the user's.
   \`guide errors unverified\` has the signature and the
   full commands.`,
+    },
+    gc: {
+      summary: 'the gc report payload: mode, sections, reasons, failures, and the gc refusals',
+      body: () => `  stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces>]
+          [--worktrees] --json
+
+  The report the text prints, as one payload. Show the user its sections
+  before you run \`gc --delete\`. Under --delete it is the report that run
+  acted on: each entry's outcome is a stderr line, \`failures\` counts the
+  entries it could not delete, and a nonzero count exits 1. Run
+  \`stim gc --json\` again to see what is left.
+
+  mode            "dry-run" | "delete"
+  cacheScope      the --cache name, or null. When set, devices, project
+                  entries and locks were not inspected and their sections
+                  are empty
+  olderThan       the --older-than days, or null
+  worktreeSweep   null without --worktrees; otherwise { olderThan, defaulted }:
+                  the idle days a linked worktree needs, and whether that is
+                  the default 7 because --older-than was not given
+  actionable      true when --delete with the same flags reclaims something
+  failures        null on a dry run; under --delete, the entries it could
+                  not delete
+  sections        one array per report section, in the text order. Every key
+                  is present, empty when there is nothing to report:
+    deadProjects            { path }
+    invalidProjects         { path }  the registry key is not absolute
+    orphanedPorts           { project, label, port }
+    orphanedWorkspaces      { dir, projectRoot, bytes }  --delete removes the
+                              whole workspace directory
+    linkedWorktrees         { path, idleDays, willRemove, reason, detail }
+                              only with --worktrees
+    parkedSimulators        { udid, name, model, runtime, parkedAt, bytes,
+                              listed }
+    parkedEmulators         { name, systemImage, parkedAt, bytes, listed }
+    orphanedDevices         { kind, id, name, bytes, directory }
+    staleDevices            { kind, id, name, project, slot, idleDays,
+                              bytes }  only with --older-than
+    staleDeviceRecords      { kind, id, project, slot }  --delete clears
+                              the record only
+    orphanedEasSessions     { id, name, platform, status, projectScope }
+    staleBuildLocks         { path, platform, key, pid, projectRoot }
+    staleBuildSlots         { path, index, pid, projectRoot }
+    unresolvedBuildClaims   { kind: "lock" | "slot", path }  never touched
+    buildsInProgress        { path, platform, key, pid, projectRoot }
+                              never touched
+    expiredDeviceLeases     { path, platform, id, deviceName, holder,
+                              expiresAt }
+    keptDeviceLeases        { name, path, detail }  never deleted
+    deviceSweepNotices      { message }
+    easSessionSweepNotices  { message }
+    skipped                 { path, detail }  not classified as dead
+    workspaceBuildOutputs   { dir, projectRoot, bytes, idleDays, willClear,
+                              reason, detail }  derived-data, gradle-build,
+                              android-cas and cache-provider of each
+                              workspace; willClear marks the ones --delete
+                              would clear
+    caches                  { name, dir, source, bytes, note, willEmpty,
+                              emptySkipped }  alive, not garbage; willEmpty
+                              marks the ones --delete would empty
+  bytes is null when the size is unknown: not measured, or the measurement
+  failed. idleDays is null when the last use is unknown. listed is false for
+  a parked device that is no longer on this machine, and null when its
+  listing was unavailable.
+
+  reason is null for an entry --delete acts on, and otherwise a stable code
+  to branch on; detail is the text line, for the user. Never parse detail.
+    workspaceBuildOutputs   unresolved | in-use | last-use-unknown |
+                            recently-used
+    linkedWorktrees         not-a-worktree | bare-repository |
+                            source-checkout-unknown | source-checkout |
+                            locked | in-use | status-unreadable | dirty |
+                            unpushed-unchecked | unpushed | submodules |
+                            last-use-unknown | recently-used
+
+  These print the error contract instead and exit 1:
+
+    { "code": "STIM_BAD_ARG", "message": "...", "remedy": "..." }
+
+  - a --cache name that no shared cache carries; the remedy names the
+    caches on this machine
+  - --cache together with --worktrees`,
     },
     stats: {
       summary: 'the stats payload, what counts as a run, hit, miss and failed, timeSavedMs, the heartbeat estimate',

@@ -480,7 +480,7 @@ worktree locked with `git worktree lock` is refused until you unlock it.
 ## `gc`
 
 ```text
-stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces>] [--worktrees]
+stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces>] [--worktrees] [--json]
 ```
 
 Reports stale workspace entries, orphaned workspace directories, orphaned
@@ -513,6 +513,61 @@ workspace keeps its state, logs, devices and ports. See
   for `--older-than` days, or 7 days without that option. It cannot be
   combined with `--cache`. See
   [removing finished worktrees in bulk](./worktrees.md#remove-finished-worktrees-in-bulk).
+- `--json` prints the report as one object on stdout and every other line on
+  stderr. Agents use it to show you what `gc --delete` would remove before they
+  ask to run it.
+
+`--json` prints one line. Each key under `sections` is one section of the text
+report, in the same order, and is always present. `stim gc --worktrees --json`
+prints, for example:
+
+```json
+{
+  "mode": "dry-run",
+  "cacheScope": null,
+  "olderThan": null,
+  "worktreeSweep": { "olderThan": 7, "defaulted": true },
+  "actionable": true,
+  "failures": null,
+  "sections": {
+    "deadProjects": [{ "path": "/path/to/removed-app" }],
+    "orphanedWorkspaces": [{ "dir": "~/.stim/workspaces/old--1a2b", "projectRoot": "/path/to/old", "bytes": 52428800 }],
+    "linkedWorktrees": [
+      { "path": "/path/to/feature", "idleDays": 12, "willRemove": true, "reason": null, "detail": null },
+      {
+        "path": "/path/to/wip",
+        "idleDays": 20,
+        "willRemove": false,
+        "reason": "dirty",
+        "detail": "dirty: uncommitted changes or untracked files"
+      }
+    ],
+    "workspaceBuildOutputs": [
+      {
+        "dir": "~/.stim/workspaces/app--3c4d",
+        "projectRoot": "/path/to/app",
+        "bytes": 1073741824,
+        "idleDays": 0,
+        "willClear": false,
+        "reason": "in-use",
+        "detail": "in use: its dev server supervisor (pid 4242) is running"
+      }
+    ],
+    "caches": []
+  }
+}
+```
+
+The example omits the empty sections. `reason` is `null` for an entry `--delete`
+acts on and otherwise a stable code; `detail` is the text the report prints.
+`bytes` is `null` when the size is unknown. `worktreeSweep` is `null` without
+`--worktrees`. With `--delete`, `mode` is `"delete"`, the sections list what
+the run acted on, and `failures` counts the entries it could not delete. A
+nonzero count exits with status 1. Run `stim gc --json` again to see what is
+left. A `--cache` name that no cache carries, or `--cache` together with
+`--worktrees`, exits with status 1 and prints
+`{ "code": "STIM_BAD_ARG", "message": "...", "remedy": "..." }`.
+`stim guide facts gc` lists every section, field and reason code.
 
 ## `guide`
 

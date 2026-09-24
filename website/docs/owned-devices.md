@@ -217,7 +217,8 @@ never starts one. `stim stop` ends the session and the tunnel.
   Android emulators for another workspace. Each platform keeps up to three
   parked devices by default and deletes the oldest when full. Disabling
   parking makes removal delete the device; see [settings](/docs/settings).
-- `stim gc` reports stale and orphaned resources.
+- `stim gc` reports stale and orphaned resources. `stim gc --json` prints the
+  same report as one JSON object.
 - `stim gc --delete` removes verified resources from the report, including
   parked simulators, emulators, and expired device lease files.
 

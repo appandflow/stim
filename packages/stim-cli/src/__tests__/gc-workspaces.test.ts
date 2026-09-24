@@ -68,6 +68,20 @@ function captureLog(fn: () => unknown): Promise<string> {
     .then(() => logs.join('\n'));
 }
 
+async function gcJson(opts: Parameters<typeof runGc>[0]) {
+  const stdout: string[] = [];
+  const log = vi.spyOn(console, 'log').mockImplementation((...args) => void stdout.push(args.join(' ')));
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    await runGc({ ...opts, json: true });
+  } finally {
+    log.mockRestore();
+    error.mockRestore();
+  }
+  expect(stdout).toHaveLength(1);
+  return { raw: stdout[0] ?? '', payload: JSON.parse(stdout[0] ?? '') };
+}
+
 function goneWorkspace(name: string): { root: string; dir: string } {
   const root = join(projects, name);
   const dir = ensureWorkspaceStorage(root);
@@ -185,6 +199,42 @@ test('gc reports an orphaned workspace directory and --delete removes only the c
   expect(existsSync(orphan.dir)).toBe(false);
   expect(existsSync(busy.dir)).toBe(true);
   expect(existsSync(unresolved)).toBe(true);
+});
+
+test('gc --json reports orphaned workspace directories and workspace build outputs with stable reasons', async () => {
+  const orphan = goneWorkspace('deleted-worktree');
+  const stale = builtWorkspace('stale', { usedDaysAgo: 10 });
+  const recent = builtWorkspace('recent', { usedDaysAgo: 1 });
+  const busy = builtWorkspace('busy', { usedDaysAgo: 30 });
+  holdNativeRun(busy.root);
+
+  const { raw, payload } = await gcJson({ olderThan: 3 });
+
+  expect(payload.worktreeSweep).toBe(null);
+  expect(payload.sections.linkedWorktrees).toEqual([]);
+  expect(payload.sections.orphanedWorkspaces).toEqual([
+    { dir: orphan.dir, projectRoot: orphan.root, bytes: expect.any(Number) },
+  ]);
+  const outputs = Object.fromEntries(
+    payload.sections.workspaceBuildOutputs.map((w: { projectRoot: string }) => [w.projectRoot, w]),
+  );
+  expect(outputs[stale.root]).toMatchObject({
+    dir: stale.dir,
+    idleDays: 10,
+    willClear: true,
+    reason: null,
+    detail: null,
+    bytes: expect.any(Number),
+  });
+  expect(outputs[recent.root]).toMatchObject({ willClear: false, reason: 'recently-used' });
+  expect(outputs[busy.root]).toMatchObject({
+    willClear: false,
+    reason: 'in-use',
+    detail: expect.stringMatching(/^in use: /),
+  });
+  expect(raw).not.toMatch(/Swift|state\.json, logs/);
+  expect(existsSync(orphan.dir)).toBe(true);
+  expect(existsSync(join(stale.dir, 'derived-data'))).toBe(true);
 });
 
 test('--delete removes a symlinked orphaned workspace directory as a link and leaves its target', async () => {
@@ -347,7 +397,7 @@ describe('planning workspace build output clearing', () => {
       { olderThan: null, now },
     );
     expect(idle).toMatchObject({ willClear: true, idleDays: 10 });
-    expect(busy).toMatchObject({ willClear: false });
+    expect(busy).toMatchObject({ willClear: false, keptCode: 'in-use' });
     expect(busy?.keptReason).toMatch(/^in use: .*native-run/);
   });
 
@@ -357,8 +407,8 @@ describe('planning workspace build output clearing', () => {
       { olderThan: 3, now },
     );
     expect(old?.willClear).toBe(true);
-    expect(recent?.keptReason).toBe('used 2d ago, within --older-than 3');
-    expect(unknown?.keptReason).toBe('its last use is unknown');
+    expect(recent).toMatchObject({ keptCode: 'recently-used', keptReason: 'used 2d ago, within --older-than 3' });
+    expect(unknown).toMatchObject({ keptCode: 'last-use-unknown', keptReason: 'its last use is unknown' });
   });
 
   test('an unresolved workspace directory is never cleared', () => {
@@ -366,7 +416,7 @@ describe('planning workspace build output clearing', () => {
       olderThan: null,
       now,
     });
-    expect(unresolved?.willClear).toBe(false);
+    expect(unresolved).toMatchObject({ willClear: false, keptCode: 'unresolved' });
   });
 });
 
@@ -450,22 +500,29 @@ describe('linked worktree sweep classification', () => {
   });
 
   test.each([
-    ['the source checkout', linked({ source: 'source' }), /^source checkout$/],
-    ['an unresolvable source checkout', linked({ source: { refusal: 'detached bare HEAD' } }), /source checkout/],
-    ['a bare repository', linked({ bare: true }), /bare/],
-    ['a locked worktree', linked({ locked: true }), /locked/],
-    ['a dirty worktree', linked({ porcelain: [' M src/App.tsx'] }), /dirty/],
-    ['a worktree with only untracked files', linked({ porcelain: ['?? notes.txt'] }), /dirty/],
-    ['pod churn beside another change', linked({ porcelain: [' M ios/Podfile.lock', '?? x'] }), /dirty/],
-    ['an unreadable git status', linked({ porcelain: null }), /could not be read/],
-    ['unpushed commits', linked({ unpushed: ['abc1234 wip'] }), /unpushed: 1 commit/],
-    ['an unknown unpushed state', linked({ unpushed: null }), /could not be checked/],
-    ['initialized submodules', linked({ submodules: true }), /submodules/],
-    ['a worktree in use', linked({ inUse: ['its dev server supervisor (pid 1) is running'] }), /^in use: /],
-    ['a recently used worktree', linked({ idleDays: 2 }), /recently used 2d ago/],
-    ['a worktree whose last use is unknown', linked({ idleDays: null }), /recently used/],
-  ])('%s is kept', (_name, facts, reason) => {
-    expect(worktreeSkipReason(facts, 7)).toMatch(reason);
+    ['the source checkout', linked({ source: 'source' }), 'source-checkout', /^source checkout$/],
+    [
+      'an unresolvable source checkout',
+      linked({ source: { refusal: 'detached bare HEAD' } }),
+      'source-checkout-unknown',
+      /source checkout/,
+    ],
+    ['a bare repository', linked({ bare: true }), 'bare-repository', /bare/],
+    ['a locked worktree', linked({ locked: true }), 'locked', /locked/],
+    ['a dirty worktree', linked({ porcelain: [' M src/App.tsx'] }), 'dirty', /dirty/],
+    ['a worktree with only untracked files', linked({ porcelain: ['?? notes.txt'] }), 'dirty', /dirty/],
+    ['pod churn beside another change', linked({ porcelain: [' M ios/Podfile.lock', '?? x'] }), 'dirty', /dirty/],
+    ['an unreadable git status', linked({ porcelain: null }), 'status-unreadable', /could not be read/],
+    ['unpushed commits', linked({ unpushed: ['abc1234 wip'] }), 'unpushed', /unpushed: 1 commit/],
+    ['an unknown unpushed state', linked({ unpushed: null }), 'unpushed-unchecked', /could not be checked/],
+    ['initialized submodules', linked({ submodules: true }), 'submodules', /submodules/],
+    ['a worktree in use', linked({ inUse: ['its dev server supervisor (pid 1) is running'] }), 'in-use', /^in use: /],
+    ['a recently used worktree', linked({ idleDays: 2 }), 'recently-used', /recently used 2d ago/],
+    ['a worktree whose last use is unknown', linked({ idleDays: null }), 'last-use-unknown', /recently used/],
+  ])('%s is kept', (_name, facts, code, text) => {
+    const skip = worktreeSkipReason(facts, 7);
+    expect(skip?.code).toBe(code);
+    expect(skip?.text).toMatch(text);
   });
 });
 
@@ -538,6 +595,41 @@ test('gc --worktrees reports each linked worktree, and --delete removes only the
   expect(process.exitCode).toBe(1);
 }, 30_000);
 
+test('gc --worktrees --json reports each worktree verdict with its idle threshold and no registry keys', async () => {
+  const { repo, worktrees } = gitRepoWithWorktrees(['idle', 'fresh']);
+  for (const [name, path] of Object.entries(worktrees)) {
+    upsertProject(path, { metroPort: null });
+    recordWorkspaceUse(path, new Date(Date.now() - (name === 'fresh' ? 1 : 10) * DAY_MS));
+  }
+  upsertProject(repo, { metroPort: null });
+
+  const { payload } = await gcJson({ worktrees: true });
+
+  expect(payload.worktreeSweep).toEqual({ olderThan: 7, defaulted: true });
+  const byPath = Object.fromEntries(
+    payload.sections.linkedWorktrees.map((w: { path: string }) => [realpathSync.native(w.path), w]),
+  );
+  expect(byPath[realpathSync.native(worktrees.idle!)]).toEqual({
+    path: expect.any(String),
+    idleDays: 10,
+    willRemove: true,
+    reason: null,
+    detail: null,
+  });
+  expect(byPath[realpathSync.native(worktrees.fresh!)]).toMatchObject({
+    willRemove: false,
+    reason: 'recently-used',
+    detail: 'recently used 1d ago',
+  });
+  expect(byPath[realpathSync.native(repo)]).toMatchObject({ willRemove: false, reason: 'source-checkout' });
+  expect(existsSync(worktrees.idle!)).toBe(true);
+
+  expect((await gcJson({ worktrees: true, olderThan: 30 })).payload.worktreeSweep).toEqual({
+    olderThan: 30,
+    defaulted: false,
+  });
+}, 30_000);
+
 test('a worktree gc --delete --worktrees keeps because it was used after the report is not a failure', async () => {
   const { worktrees } = gitRepoWithWorktrees(['reused']);
   const reused = worktrees.reused!;
@@ -580,6 +672,11 @@ test('gc refuses --cache combined with --worktrees and removes nothing', async (
   }
   expect(errors.join('\n')).toContain('STIM_BAD_ARG');
   expect(output).toBe('');
+  expect(process.exitCode).toBe(1);
+
+  process.exitCode = 0;
+  const { payload } = await gcJson({ cache: 'workspaces', worktrees: true, delete: true });
+  expect(payload).toEqual({ code: 'STIM_BAD_ARG', message: expect.any(String), remedy: expect.any(String) });
   expect(process.exitCode).toBe(1);
   expect(existsSync(worktrees.idle!)).toBe(true);
   expect(existsSync(join(dir, 'derived-data'))).toBe(true);

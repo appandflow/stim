@@ -121,6 +121,22 @@ describe('a cache-scoped report', () => {
     expect(output).toContain('No shared cache carries "nothing-carries-this-name"');
     expect(output).not.toContain('Nothing to reclaim');
   });
+
+  test('with --json a name no cache carries is a STIM_BAD_ARG refusal on stdout', async () => {
+    try {
+      const { stdout, stderr } = await captureJson(() => cli(['--cache', 'nothing-carries-this-name', '--json']));
+      expect(stdout).toHaveLength(1);
+      expect(JSON.parse(stdout[0] ?? '')).toMatchObject({
+        code: 'STIM_BAD_ARG',
+        message: 'No shared cache carries "nothing-carries-this-name" in its name or directory.',
+        remedy: expect.any(String),
+      });
+      expect(stderr).toContain('No shared cache carries "nothing-carries-this-name"');
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = undefined;
+    }
+  });
 });
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -707,6 +723,20 @@ async function sweepingGc(opts = {}) {
   } finally {
     scope.mockRestore();
   }
+}
+
+async function captureJson(fn: () => unknown) {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const log = vi.spyOn(console, 'log').mockImplementation((...args) => void stdout.push(args.join(' ')));
+  const error = vi.spyOn(console, 'error').mockImplementation((...args) => void stderr.push(args.join(' ')));
+  try {
+    await fn();
+  } finally {
+    log.mockRestore();
+    error.mockRestore();
+  }
+  return { stdout, stderr: stderr.join('\n') };
 }
 
 function captureLog(fn: () => unknown) {
@@ -2813,6 +2843,80 @@ test('--delete removes the stale lock and leaves the live one alone', async () =
   expect(existsSync(stale)).toBe(false);
   expect(existsSync(live)).toBe(true);
   expect(output).toMatch(/build lock/i);
+});
+
+describe('gc --json', () => {
+  const deadPath = () => join(fakeHome, 'no-longer-here');
+
+  beforeEach(() => {
+    saveConfig({ version: 2, projects: { [deadPath()]: { metroPort: 8101 } }, repos: {} });
+    installExecutor();
+  });
+
+  test('a dry run prints one payload with every section and deletes nothing', async () => {
+    saveConfig({ version: 2, projects: { [deadPath()]: { metroPort: 8101, ports: { web: 8102 } } }, repos: {} });
+    const lock = writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999, projectRoot: '/w/dead' });
+    const before = loadConfig();
+
+    const { stdout, stderr } = await captureJson(() => cli(['--json']));
+
+    expect(stdout).toHaveLength(1);
+    const payload = JSON.parse(stdout[0] ?? '');
+    expect(payload).toMatchObject({
+      mode: 'dry-run',
+      cacheScope: null,
+      olderThan: null,
+      actionable: true,
+      failures: null,
+    });
+    expect(payload.sections.deadProjects).toEqual([{ path: deadPath() }]);
+    expect(payload.sections.orphanedPorts).toEqual([{ project: deadPath(), label: 'web', port: 8102 }]);
+    expect(payload.sections.staleBuildLocks).toEqual([
+      { path: lock, platform: 'android', key: 'def-debug-sim', pid: 999999, projectRoot: '/w/dead' },
+    ]);
+    expect(Object.keys(payload.sections)).toEqual([
+      'deadProjects',
+      'invalidProjects',
+      'orphanedPorts',
+      'orphanedWorkspaces',
+      'linkedWorktrees',
+      'parkedSimulators',
+      'parkedEmulators',
+      'orphanedDevices',
+      'staleDevices',
+      'staleDeviceRecords',
+      'orphanedEasSessions',
+      'staleBuildLocks',
+      'staleBuildSlots',
+      'unresolvedBuildClaims',
+      'buildsInProgress',
+      'expiredDeviceLeases',
+      'keptDeviceLeases',
+      'deviceSweepNotices',
+      'easSessionSweepNotices',
+      'skipped',
+      'workspaceBuildOutputs',
+      'caches',
+    ]);
+    expect(stderr).toContain('Dead project entries (1)');
+    expect(loadConfig()).toEqual(before);
+    expect(existsSync(lock)).toBe(true);
+  });
+
+  test('--delete prints the report it acted on and the failure count', async () => {
+    const lock = writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999, projectRoot: '/w/dead' });
+
+    const { stdout, stderr } = await captureJson(() => cli(['--delete', '--json']));
+
+    expect(stdout).toHaveLength(1);
+    const payload = JSON.parse(stdout[0] ?? '');
+    expect(payload).toMatchObject({ mode: 'delete', actionable: true, failures: 0 });
+    expect(payload.sections.deadProjects).toEqual([{ path: deadPath() }]);
+    expect(payload.sections.staleBuildLocks).toHaveLength(1);
+    expect(stderr).toContain(`Pruned ${deadPath()}`);
+    expect(currentConfig().projects[deadPath()]).toBe(undefined);
+    expect(existsSync(lock)).toBe(false);
+  });
 });
 
 test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(

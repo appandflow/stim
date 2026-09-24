@@ -898,6 +898,9 @@ captured"  (in metro.ndjson, bare RN)
   or android.systemImage setting is checked the same way, and the check applies
   even when this workspace ALREADY owns a device, so a name that could never
   create anything is caught rather than left to a later run.
+  \`gc --json --cache <name>\` refuses with STIM_BAD_ARG when no shared cache
+  carries the name; the remedy names the caches on this machine. \`gc\`
+  refuses --cache together with --worktrees the same way.
   A working directory with no package.json above it gets the same
   STIM_NO_PROJECT refusal from \`start\`, \`ios\`, \`android\`, \`stop\`,
   \`reload\`, \`logs\`, \`doctor\` and \`device lock|unlock\`. With \`--json\` the { code, message, remedy } object
