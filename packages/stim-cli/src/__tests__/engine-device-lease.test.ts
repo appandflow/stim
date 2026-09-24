@@ -414,6 +414,31 @@ describe('choosing a device from the pool', () => {
     expect(selection.holders.map((h) => h.holder)).toEqual([ROOT_B, '/worktree/c']);
   });
 
+  test('a fallback candidate is taken only when no preferred one is connected', () => {
+    const wifi = { id: 'aaa', fallback: true };
+    const cable = { id: 'zzz', fallback: false };
+    expect(selectPoolDevice({ candidates: [wifi, cable], leases: [], now })).toEqual({
+      status: 'selected',
+      candidate: cable,
+    });
+    const busy = selectPoolDevice({ candidates: [wifi, cable], leases: [lease({ id: 'zzz' })], now });
+    assert(busy.status === 'busy');
+    expect(busy.holders.map((h) => h.id)).toEqual(['zzz']);
+    expect(selectPoolDevice({ candidates: [wifi], leases: [], now })).toEqual({ status: 'selected', candidate: wifi });
+  });
+
+  test("this workspace's leased fallback candidate still wins once a preferred one connects", () => {
+    const wifi = { id: 'aaa', fallback: true };
+    expect(
+      selectPoolDevice({
+        candidates: [wifi, { id: 'zzz' }],
+        leases: [lease({ id: 'aaa', holder: ROOT_A })],
+        held: 'aaa',
+        now,
+      }),
+    ).toEqual({ status: 'selected', candidate: wifi });
+  });
+
   test('no candidate at all is its own answer', () => {
     expect(selectPoolDevice({ candidates: [], leases: [], now })).toEqual({ status: 'none' });
   });

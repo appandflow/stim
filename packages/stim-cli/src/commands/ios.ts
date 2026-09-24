@@ -502,16 +502,16 @@ async function runIos(
   let physicalDevice: { udid: string; name: string } | null = null;
   let wireless = false;
   if (physical && typeof deviceFlag !== 'string') {
-    let wirelessIds = new Set<string>();
     const pooled = await d.selectFromPool({
       root,
       platform: PLATFORM,
       idLabel: 'udid',
-      list: () => {
-        const candidates = iosPoolCandidates(d.listIosDevices());
-        wirelessIds = new Set(candidates.filter(isWirelessIosDevice).map((entry) => entry.udid));
-        return candidates.map((entry) => ({ id: entry.udid, name: entry.name }));
-      },
+      list: () =>
+        iosPoolCandidates(d.listIosDevices()).map((entry) => ({
+          id: entry.udid,
+          name: entry.name,
+          fallback: isWirelessIosDevice(entry),
+        })),
       noCandidates: () => {
         const resolved = iosPoolNoCandidatesRefusal(d.listIosDevices());
         return { message: resolved.error as string, remedy: resolved.remedy as string };
@@ -530,7 +530,7 @@ async function runIos(
       });
     }
     physicalDevice = { udid: pooled.candidate.id, name: pooled.candidate.name ?? pooled.candidate.id };
-    wireless = wirelessIds.has(pooled.candidate.id);
+    wireless = pooled.candidate.fallback === true;
   } else if (physical) {
     const resolved = resolveIosPhysicalDevice(typeof deviceFlag === 'string' ? deviceFlag : null, d.listIosDevices());
     if (!resolved.udid) {

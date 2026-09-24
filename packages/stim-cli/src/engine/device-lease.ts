@@ -425,6 +425,8 @@ export function removeExpiredLease(entry: LeaseFileEntry, io: LeaseIo = fileLeas
 export interface PoolCandidate {
   id: string;
   name?: string | null;
+  /** Picked only when no candidate without this flag is connected, unless this workspace already holds it. */
+  fallback?: boolean;
 }
 
 export interface PoolHolder {
@@ -459,10 +461,12 @@ export function selectPoolDevice({
     const mine = ordered.find((candidate) => candidate.id === held);
     return mine ? { status: 'selected', candidate: mine } : { status: 'held-disconnected', id: held };
   }
-  if (ordered.length === 0) return { status: 'none' };
+  const preferred = ordered.filter((candidate) => !candidate.fallback);
+  const pool = preferred.length > 0 ? preferred : ordered;
+  if (pool.length === 0) return { status: 'none' };
   const byId = new Map(leases.map((lease) => [lease.id, lease]));
   const holders: PoolHolder[] = [];
-  for (const candidate of ordered) {
+  for (const candidate of pool) {
     const lease = byId.get(candidate.id);
     if (!lease || leaseIsExpired(lease, now)) return { status: 'selected', candidate };
     holders.push({ id: lease.id, holder: lease.holder, expiresAt: lease.expiresAt });

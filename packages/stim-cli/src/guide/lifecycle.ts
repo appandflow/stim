@@ -1417,13 +1417,15 @@ HOLDING A DEVICE ACROSS RUNS
 
 THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   Candidates are the connected devices the resolver already accepts: on iOS,
-  wired, paired, with Developer Mode on; on Android, every serial adb reports
-  in the \`device\` state that is not an emulator, TCP serials included. Then,
-  in order:
+  paired, with Developer Mode on, over a cable or Wi-Fi; on Android, every
+  serial adb reports in the \`device\` state that is not an emulator, TCP
+  serials included. Then, in order:
 
     1. the device this workspace already leases, when it is among them;
     2. otherwise the first one not leased -- or leased and EXPIRED -- in
-       case-folded id order.
+       case-folded id order. On iOS a Wi-Fi iPhone is considered only when
+       no cabled candidate is connected: a busy cabled phone is waited for,
+       not skipped for a Wi-Fi one.
 
   Ids are sorted on, never names: adb has no name without one \`getprop\` per
   serial, and models repeat.

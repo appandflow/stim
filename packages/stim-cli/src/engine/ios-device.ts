@@ -124,9 +124,7 @@ function unhealthy(device: IosDeviceEntry): ResolvedIosDevice | null {
 }
 
 export function iosPoolCandidates(devices: readonly IosDeviceEntry[]): IosDeviceEntry[] {
-  const healthy = (Array.isArray(devices) ? devices : []).filter((device) => unhealthy(device) === null);
-  const cabled = healthy.filter(isWired);
-  return cabled.length > 0 ? cabled : healthy.filter(isWirelessIosDevice);
+  return (Array.isArray(devices) ? devices : []).filter((device) => isPhysical(device) && unhealthy(device) === null);
 }
 
 export function iosPoolNoCandidatesRefusal(devices: readonly IosDeviceEntry[]): ResolvedIosDevice {
@@ -175,7 +173,7 @@ export function resolveIosPhysicalDevice(requested: string | null, devices: IosD
       remedy: 'Check the cable and `xcrun devicectl list devices`, then retry with a UDID it lists.',
     };
   }
-  const chosen = pickOne(iosPoolCandidates(physical)) ?? pickOne(physical);
+  const chosen = pickOne(physical);
   if (chosen) return chosen;
   return {
     error: 'No physical iOS device is connected.',
@@ -200,6 +198,8 @@ const WIRELESS_REMEDY =
   'Connect the phone with a cable so devicectl uses it instead of Wi-Fi, keep the phone unlocked, then run the command again.';
 const WIRELESS_DROP =
   /disconnected|not connected|connection (?:was )?(?:lost|interrupted|reset)|network connection was lost|timed out/i;
+const WIRELESS_CONSOLE_DROP =
+  /device (?:was |is )?disconnected|connection (?:to the device )?(?:was )?(?:lost|interrupted)/i;
 
 const LOCKED_REMEDY = 'Unlock the phone and keep it awake, then run the command again.';
 
@@ -513,7 +513,7 @@ export async function awaitIosDeviceLaunch({
     if (ended) {
       const lines = launchEvidence(records);
       const kind = iosLaunchRefusalKind(lines.join('\n'));
-      if (wireless && kind === null && WIRELESS_DROP.test(lines.join('\n'))) {
+      if (wireless && kind === null && WIRELESS_CONSOLE_DROP.test(lines.join('\n'))) {
         return {
           failed: true,
           code: WIRELESS_ERROR,

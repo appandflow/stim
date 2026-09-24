@@ -17,7 +17,6 @@ import {
   localNetworkPending,
   parseDevicectlDevices,
   parseDeviceProcesses,
-  iosPoolCandidates,
   iosPoolNoCandidatesRefusal,
   resolveIosPhysicalDevice,
   verifyIosDeviceReleaseLaunch,
@@ -253,16 +252,9 @@ test('a simulator devicectl lists as sameMachine is never a phone candidate', ()
     developerModeStatus: null,
   });
   expect(resolveIosPhysicalDevice(null, [simulator]).error).toMatch(/No physical iOS device/);
-  expect(iosPoolCandidates([simulator])).toEqual([]);
   const named = resolveIosPhysicalDevice(OTHER, [simulator]);
   expect(named.udid).toBeUndefined();
   expect(named.error).toContain('sameMachine');
-});
-
-test('a cabled phone wins over a Wi-Fi one when none is named', () => {
-  expect(
-    resolveIosPhysicalDevice(null, [entry({ udid: OTHER, name: 'Wireless', transportType: 'localNetwork' }), entry()]),
-  ).toEqual({ udid: PHONE, name: 'Test Phone' });
 });
 
 test('an absent transportType is not treated as wireless', () => {

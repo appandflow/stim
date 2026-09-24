@@ -103,25 +103,17 @@ describe('which connected devices are candidates', () => {
     ...over,
   });
 
-  test('an iOS device must be paired and have Developer Mode on, and a healthy cabled one excludes Wi-Fi', () => {
+  test('an iOS candidate is paired with Developer Mode on, over a cable or Wi-Fi, and never a simulator', () => {
     const accepted = iosPoolCandidates([
       device(),
       device({ udid: 'B', transportType: 'localNetwork' }),
       device({ udid: 'C', pairingState: 'unpaired' }),
       device({ udid: 'D', developerModeStatus: 'disabled' }),
+      device({ udid: 'E', transportType: 'localNetwork', pairingState: 'unpaired' }),
+      device({ udid: 'F', transportType: 'sameMachine', developerModeStatus: null }),
     ]);
-    expect(accepted.map((entry) => entry.udid)).toEqual([FIRST]);
+    expect(accepted.map((entry) => entry.udid)).toEqual([FIRST, 'B']);
     expect(iosPoolCandidates([])).toEqual([]);
-  });
-
-  test('the iOS pool falls back to Wi-Fi only when no cabled device is healthy', () => {
-    const fallback = iosPoolCandidates([
-      device({ developerModeStatus: 'disabled' }),
-      device({ udid: 'B', transportType: 'localNetwork' }),
-      device({ udid: 'C', transportType: 'localNetwork', pairingState: 'unpaired' }),
-      device({ udid: 'D', transportType: 'sameMachine', developerModeStatus: null }),
-    ]);
-    expect(fallback.map((entry) => entry.udid)).toEqual(['B']);
   });
 
   test('an Android candidate is any non-emulator adb reports in the device state, TCP included', () => {
