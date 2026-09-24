@@ -158,12 +158,15 @@ export const WORKSPACE_OUTPUT_DIRS: readonly string[] = [
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+export type WorkspaceKeptCode = 'unresolved' | 'in-use' | 'last-use-unknown' | 'recently-used';
+
 export interface WorkspaceOutputs {
   dir: string;
   projectRoot: string | null;
   bytes: number | null;
   idleDays: number | null;
   willClear: boolean;
+  keptCode: WorkspaceKeptCode | null;
   keptReason: string | null;
 }
 
@@ -178,19 +181,19 @@ export function planWorkspaceOutputs(
 ): WorkspaceOutputs[] {
   return entries.map(({ dir, projectRoot, problem, bytes, lastUsed, inUse }) => {
     const idleDays = Number.isFinite(lastUsed) ? Math.max(0, Math.floor((now - lastUsed) / DAY_MS)) : null;
-    const keptReason =
+    const [keptCode, keptReason]: [WorkspaceKeptCode | null, string | null] =
       projectRoot === null
-        ? `workspace directory not resolved: ${problem ?? 'unknown project root'}`
+        ? ['unresolved', `workspace directory not resolved: ${problem ?? 'unknown project root'}`]
         : inUse.length
-          ? `in use: ${inUse.join('; ')}`
+          ? ['in-use', `in use: ${inUse.join('; ')}`]
           : olderThan === null
-            ? null
+            ? [null, null]
             : idleDays === null
-              ? 'its last use is unknown'
+              ? ['last-use-unknown', 'its last use is unknown']
               : idleDays < olderThan
-                ? `used ${idleDays}d ago, within --older-than ${olderThan}`
-                : null;
-    return { dir, projectRoot, bytes, idleDays, willClear: keptReason === null, keptReason };
+                ? ['recently-used', `used ${idleDays}d ago, within --older-than ${olderThan}`]
+                : [null, null];
+    return { dir, projectRoot, bytes, idleDays, willClear: keptCode === null, keptCode, keptReason };
   });
 }
 

@@ -59,6 +59,7 @@ test('GC renders a mixed resource report in its established order', () => {
             bytes: 8192,
             idleDays: 4,
             willClear: true,
+            keptCode: null,
             keptReason: null,
           },
           {
@@ -67,6 +68,7 @@ test('GC renders a mixed resource report in its established order', () => {
             bytes: 4096,
             idleDays: null,
             willClear: false,
+            keptCode: 'in-use',
             keptReason: 'in use: its dev server supervisor (pid 7) is running',
           },
         ],

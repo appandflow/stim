@@ -31,10 +31,31 @@ export interface WorktreeFacts {
   idleDays: number | null;
 }
 
+export type WorktreeSkipCode =
+  | 'not-a-worktree'
+  | 'bare-repository'
+  | 'source-checkout-unknown'
+  | 'source-checkout'
+  | 'locked'
+  | 'in-use'
+  | 'status-unreadable'
+  | 'dirty'
+  | 'unpushed-unchecked'
+  | 'unpushed'
+  | 'submodules'
+  | 'last-use-unknown'
+  | 'recently-used';
+
+interface WorktreeSkip {
+  code: WorktreeSkipCode;
+  text: string;
+}
+
 interface WorktreeCandidate {
   path: string;
   keys: string[];
   idleDays: number | null;
+  skipCode: WorktreeSkipCode | null;
   skipped: string | null;
 }
 
@@ -44,19 +65,29 @@ export interface WorktreeSweep {
   worktrees: WorktreeCandidate[];
 }
 
-export function worktreeSkipReason(facts: WorktreeFacts, olderThan: number): string | null {
-  if (facts.bare) return 'bare repository';
-  if (typeof facts.source === 'object') return `source checkout unknown: ${facts.source.refusal}`;
-  if (facts.source === 'source') return 'source checkout';
-  if (facts.locked) return 'locked with git worktree lock';
-  if (facts.inUse.length) return `in use: ${facts.inUse.join('; ')}`;
-  if (facts.porcelain === null) return 'git status could not be read';
-  if (excludePodChurn(facts.porcelain).lines.length) return 'dirty: uncommitted changes or untracked files';
-  if (facts.unpushed === null) return 'unpushed commits could not be checked';
-  if (facts.unpushed.length) return `unpushed: ${plural(facts.unpushed.length, 'commit')} on no remote or other branch`;
-  if (facts.submodules) return 'initialized submodules';
-  if (facts.idleDays === null) return 'recently used: its last use is unknown';
-  if (facts.idleDays < olderThan) return `recently used ${facts.idleDays}d ago`;
+function skip(code: WorktreeSkipCode, text: string): WorktreeSkip {
+  return { code, text };
+}
+
+export function worktreeSkipReason(facts: WorktreeFacts, olderThan: number): WorktreeSkip | null {
+  if (facts.bare) return skip('bare-repository', 'bare repository');
+  if (typeof facts.source === 'object') {
+    return skip('source-checkout-unknown', `source checkout unknown: ${facts.source.refusal}`);
+  }
+  if (facts.source === 'source') return skip('source-checkout', 'source checkout');
+  if (facts.locked) return skip('locked', 'locked with git worktree lock');
+  if (facts.inUse.length) return skip('in-use', `in use: ${facts.inUse.join('; ')}`);
+  if (facts.porcelain === null) return skip('status-unreadable', 'git status could not be read');
+  if (excludePodChurn(facts.porcelain).lines.length) {
+    return skip('dirty', 'dirty: uncommitted changes or untracked files');
+  }
+  if (facts.unpushed === null) return skip('unpushed-unchecked', 'unpushed commits could not be checked');
+  if (facts.unpushed.length) {
+    return skip('unpushed', `unpushed: ${plural(facts.unpushed.length, 'commit')} on no remote or other branch`);
+  }
+  if (facts.submodules) return skip('submodules', 'initialized submodules');
+  if (facts.idleDays === null) return skip('last-use-unknown', 'recently used: its last use is unknown');
+  if (facts.idleDays < olderThan) return skip('recently-used', `recently used ${facts.idleDays}d ago`);
   return null;
 }
 
@@ -94,7 +125,13 @@ export function collectWorktreeSweep({ olderThan, now }: { olderThan: number | n
   for (const root of candidateRoots()) {
     const entry = matchWorktreeEntry(listWorktrees(root), root);
     if (!entry) {
-      outside.push({ path: root, keys: [root], idleDays: null, skipped: 'not inside a git worktree' });
+      outside.push({
+        path: root,
+        keys: [root],
+        idleDays: null,
+        skipCode: 'not-a-worktree',
+        skipped: 'not inside a git worktree',
+      });
       continue;
     }
     groups.set(entry.path, [...(groups.get(entry.path) ?? []), root]);
@@ -118,7 +155,8 @@ export function collectWorktreeSweep({ olderThan, now }: { olderThan: number | n
       inUse: linked ? inUseOf(keys, { managedLocks: true }) : [],
       idleDays,
     };
-    worktrees.push({ path, keys, idleDays, skipped: worktreeSkipReason(facts, days) });
+    const verdict = worktreeSkipReason(facts, days);
+    worktrees.push({ path, keys, idleDays, skipCode: verdict?.code ?? null, skipped: verdict?.text ?? null });
   }
   return { olderThan: days, defaulted: olderThan === null, worktrees: [...worktrees, ...outside] };
 }

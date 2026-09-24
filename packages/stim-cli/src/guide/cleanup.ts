@@ -173,7 +173,8 @@ A device leaks when a project is abandoned WITHOUT either delete path -- the
 sim survives with nothing pointing at it. \`stim gc\` (no flag, writes
 nothing, always safe) reports those; \`gc --delete\` reaps them, and in the same
 run drops the dead config ENTRIES those projects left behind and frees their
-Metro ports.
+Metro ports. \`stim gc --json\` prints the same report as one payload
+(\`guide facts gc\`); show the user its sections before \`gc --delete\`.
 
 REMOTE EAS SESSIONS
   Plain \`stim gc\` is a dry run. \`gc --delete\` can stop active stim-* EAS

@@ -43,7 +43,7 @@ import {
   type EasGcDependencies,
   type EasSessionSweep,
 } from './gc/eas-sessions.ts';
-import { formatGcReport, type GcReport } from './gc/report.ts';
+import { formatGcReport, gcReportSections, type GcJsonSections, type GcReport } from './gc/report.ts';
 import {
   clearWorkspaceOutputs,
   collectOrphanedWorkspaces,
@@ -80,7 +80,26 @@ interface RunGcOptions {
   cache?: string;
   delete?: boolean;
   worktrees?: boolean;
+  json?: boolean;
 }
+
+interface GcRefusal {
+  code: string;
+  message: string;
+  remedy: string;
+}
+
+type GcPayload =
+  | {
+      mode: 'dry-run' | 'delete';
+      cacheScope: string | null;
+      olderThan: number | null;
+      worktreeSweep: { olderThan: number; defaulted: boolean } | null;
+      actionable: boolean;
+      failures: number | null;
+      sections: GcJsonSections;
+    }
+  | GcRefusal;
 
 type GcDependencies = EasGcDependencies & GcDeviceDependencies;
 
@@ -317,12 +336,32 @@ export async function collectGcReport(
 }
 
 export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}): Promise<void> {
+  if (!opts.json) {
+    await sweep(opts, deps);
+    return;
+  }
+  const log = console.log;
+  console.log = console.error;
+  let payload: GcPayload;
+  try {
+    payload = await sweep(opts, deps);
+  } finally {
+    console.log = log;
+  }
+  console.log(JSON.stringify(payload));
+}
+
+async function sweep(opts: RunGcOptions, deps: GcDependencies): Promise<GcPayload> {
   if (opts.cache && opts.worktrees) {
     console.error(chalk.red('--cache acts only on the named caches, and --worktrees sweeps linked worktrees.'));
     console.error(chalk.dim('Run `stim gc --worktrees` and `stim gc --cache <name>` separately.'));
     console.error(chalk.red('failed: STIM_BAD_ARG'));
     process.exitCode = 1;
-    return;
+    return {
+      code: 'STIM_BAD_ARG',
+      message: '--cache acts only on the named caches, and --worktrees sweeps linked worktrees.',
+      remedy: 'Run `stim gc --worktrees` and `stim gc --cache <name>` separately.',
+    };
   }
   const poolError = parkedMaxSetting('ios').error || parkedMaxSetting('android').error;
   if (poolError) {
@@ -398,7 +437,7 @@ export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}):
   return runGcCore(opts, { ...deps, precollectedEasSessionSweep: easSessionSweep });
 }
 
-async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void> {
+async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPayload> {
   const olderThan = typeof opts.olderThan === 'number' ? opts.olderThan : null;
   const cache = typeof opts.cache === 'string' && opts.cache.trim() ? opts.cache : null;
   const report = await collectGcReport(
@@ -411,9 +450,17 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
   );
   if (cache && report.caches.length === 0 && report.workspaceOutputs === null) {
     const names = [...new Set(discoverCaches().map((c) => c.name))];
-    console.log(chalk.yellow(`No shared cache carries "${cache}" in its name or directory.`));
+    const message = `No shared cache carries "${cache}" in its name or directory.`;
+    console.log(chalk.yellow(message));
     if (names.length) console.log(chalk.dim(`Caches on this machine: ${names.join(', ')}`));
-    return;
+    if (opts.json) process.exitCode = 1;
+    return {
+      code: 'STIM_BAD_ARG',
+      message,
+      remedy: names.length
+        ? `Pass --cache all or a name from: ${names.join(', ')}.`
+        : 'No shared cache was found on this machine.',
+    };
   }
 
   const all = report.all;
@@ -447,6 +494,17 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     deviceLeases.expired.length > 0 ||
     easSessionSweep.orphaned.length > 0 ||
     ((olderThan !== null || all) && caches.length > 0);
+  const payload = (failures: number | null): GcPayload => ({
+    mode: opts.delete ? 'delete' : 'dry-run',
+    cacheScope: report.cacheScope,
+    olderThan,
+    worktreeSweep: report.worktreeSweep
+      ? { olderThan: report.worktreeSweep.olderThan, defaulted: report.worktreeSweep.defaulted }
+      : null,
+    actionable,
+    failures,
+    sections: gcReportSections(report),
+  });
 
   if (!opts.delete) {
     if (all) console.log(chalk.dim('\nDry run. Re-run with --delete to empty the caches above.'));
@@ -458,7 +516,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
         ),
       );
     }
-    return;
+    return payload(null);
   }
 
   let deleteFailures = report.workspaceOutputs
@@ -571,19 +629,16 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
 
   if (all) {
     emptyCaches(caches);
-    return;
-  }
-
-  if (olderThan === null) {
+  } else if (olderThan === null) {
     if (caches.length) {
       console.log(
         chalk.dim('Shared caches left alone: pass --cache all to empty them, or --older-than <days> to trim them.'),
       );
     }
-    return;
+  } else {
+    trimCaches(caches, olderThan);
   }
-
-  trimCaches(caches, olderThan);
+  return payload(deleteFailures);
 }
 
 export default function gcCommand(program: Command): void {
@@ -619,6 +674,7 @@ export default function gcCommand(program: Command): void {
         return v;
       },
     )
+    .option('--json', 'print the report as JSON on stdout; every other line goes to stderr')
     .action(async (opts: RunGcOptions) => {
       await runGc(opts);
     });

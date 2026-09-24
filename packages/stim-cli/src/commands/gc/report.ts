@@ -9,10 +9,11 @@ import {
   sizeText,
   WORKSPACE_OUTPUT_DIRS,
   type OrphanedWorkspace,
+  type WorkspaceKeptCode,
   type WorkspaceOutputsReport,
 } from './workspaces.ts';
 import type { GcCache } from './caches.ts';
-import type { WorktreeSweep } from './worktrees.ts';
+import type { WorktreeSkipCode, WorktreeSweep } from './worktrees.ts';
 import type {
   DeviceLeaseGarbage,
   ParkedAvdReport,
@@ -384,4 +385,217 @@ function worktreeSweepLines(sweep: WorktreeSweep | null): string[] {
     );
   }
   return lines;
+}
+
+interface GcJsonLock {
+  path: string;
+  platform: string;
+  key: string | null;
+  pid: number | null;
+  projectRoot: string | null;
+}
+
+function jsonLock({ path, platform, key, pid, projectRoot }: BuildLockInfo): GcJsonLock {
+  return { path, platform, key, pid, projectRoot };
+}
+
+/** The `gc --json` sections, in text report order. Each section is an array of entries. */
+export interface GcJsonSections {
+  deadProjects: { path: string }[];
+  invalidProjects: { path: string }[];
+  orphanedPorts: { project: string; label: string; port: number }[];
+  orphanedWorkspaces: { dir: string; projectRoot: string; bytes: number | null }[];
+  linkedWorktrees: {
+    path: string;
+    idleDays: number | null;
+    willRemove: boolean;
+    reason: WorktreeSkipCode | null;
+    detail: string | null;
+  }[];
+  parkedSimulators: ParkedSimReport[];
+  parkedEmulators: ParkedAvdReport[];
+  orphanedDevices: {
+    kind: 'ios' | 'android';
+    id: string;
+    name: string;
+    bytes: number | null;
+    directory: string | null;
+  }[];
+  staleDevices: {
+    kind: 'ios' | 'android';
+    id: string;
+    name: string;
+    project: string;
+    slot: string | null;
+    idleDays: number;
+    bytes: number | null;
+  }[];
+  staleDeviceRecords: { kind: 'ios' | 'android'; id: string; project: string; slot: string | null }[];
+  orphanedEasSessions: {
+    id: string;
+    name: string;
+    platform: 'ios' | 'android';
+    status: string;
+    projectScope: string;
+  }[];
+  staleBuildLocks: GcJsonLock[];
+  staleBuildSlots: { path: string; index: number | null; pid: number | null; projectRoot: string | null }[];
+  unresolvedBuildClaims: { kind: 'lock' | 'slot'; path: string }[];
+  buildsInProgress: GcJsonLock[];
+  expiredDeviceLeases: {
+    path: string;
+    platform: string;
+    id: string;
+    deviceName: string | null;
+    holder: string | null;
+    expiresAt: string | null;
+  }[];
+  keptDeviceLeases: { name: string; path: string; detail: string }[];
+  deviceSweepNotices: { message: string }[];
+  easSessionSweepNotices: { message: string }[];
+  skipped: { path: string; detail: string }[];
+  workspaceBuildOutputs: {
+    dir: string;
+    projectRoot: string | null;
+    bytes: number | null;
+    idleDays: number | null;
+    willClear: boolean;
+    reason: WorkspaceKeptCode | null;
+    detail: string | null;
+  }[];
+  caches: {
+    name: string;
+    dir: string;
+    source: 'registered' | 'detected' | null;
+    bytes: number | null;
+    note: string | null;
+    willEmpty: boolean;
+    emptySkipped: string | null;
+  }[];
+}
+
+export function gcReportSections({
+  skipped = [],
+  deadProjects = [],
+  orphanedPorts = [],
+  invalidProjects = [],
+  orphanedWorkspaces = [],
+  worktreeSweep = null,
+  parkedSims = [],
+  parkedAvds = [],
+  orphanedDevices = [],
+  staleDevices = [],
+  staleDeviceRecords = [],
+  buildLocks = { stale: [], live: [], unresolved: [] },
+  buildSlots = { stale: [], live: [], unresolved: [] },
+  deviceLeases = { expired: [], kept: [] },
+  deviceSweepNotices = [],
+  easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
+  workspaceOutputs = null,
+  caches = [],
+}: Partial<GcReport>): GcJsonSections {
+  return {
+    deadProjects: deadProjects.map((path) => ({ path })),
+    invalidProjects: invalidProjects.map((path) => ({ path })),
+    orphanedPorts: orphanedPorts.map(({ project, label, port }) => ({ project, label, port })),
+    orphanedWorkspaces: orphanedWorkspaces.map(({ dir, projectRoot, bytes }) => ({
+      dir,
+      projectRoot,
+      bytes: bytes ?? null,
+    })),
+    linkedWorktrees: (worktreeSweep?.worktrees ?? []).map((w) => ({
+      path: w.path,
+      idleDays: w.idleDays,
+      willRemove: w.skipCode === null,
+      reason: w.skipCode,
+      detail: w.skipped,
+    })),
+    parkedSimulators: parkedSims.map(({ udid, name, model, runtime, parkedAt, bytes, listed }) => ({
+      udid,
+      name,
+      model,
+      runtime,
+      parkedAt,
+      bytes,
+      listed,
+    })),
+    parkedEmulators: parkedAvds.map(({ name, systemImage, parkedAt, bytes, listed }) => ({
+      name,
+      systemImage,
+      parkedAt,
+      bytes,
+      listed,
+    })),
+    orphanedDevices: orphanedDevices.map((d) => ({
+      kind: d.kind,
+      id: d.id,
+      name: d.name,
+      bytes: d.bytes ?? null,
+      directory: d.orphanedDirectory?.directory ?? null,
+    })),
+    staleDevices: staleDevices.map((d) => ({
+      kind: d.kind,
+      id: d.id,
+      name: d.name,
+      project: d.project,
+      slot: d.slot ?? null,
+      idleDays: d.idleDays,
+      bytes: d.bytes ?? null,
+    })),
+    staleDeviceRecords: staleDeviceRecords.map((r) => ({
+      kind: r.kind,
+      id: r.id,
+      project: r.project,
+      slot: r.slot ?? null,
+    })),
+    orphanedEasSessions: easSessionSweep.orphaned.map((s) => ({
+      id: s.id,
+      name: s.name,
+      platform: s.platform,
+      status: s.status,
+      projectScope: s.projectScope,
+    })),
+    staleBuildLocks: buildLocks.stale.map(jsonLock),
+    staleBuildSlots: buildSlots.stale.map((s) => ({
+      path: s.path,
+      index: s.index,
+      pid: s.pid,
+      projectRoot: s.projectRoot,
+    })),
+    unresolvedBuildClaims: [
+      ...(buildLocks.unresolved ?? []).map((l) => ({ kind: 'lock' as const, path: l.path })),
+      ...(buildSlots.unresolved ?? []).map((s) => ({ kind: 'slot' as const, path: s.path })),
+    ],
+    buildsInProgress: buildLocks.live.map(jsonLock),
+    expiredDeviceLeases: deviceLeases.expired.map((entry) => ({
+      path: entry.path,
+      platform: entry.platform,
+      id: entry.id ?? entry.name,
+      deviceName: entry.lease?.deviceName ?? null,
+      holder: entry.lease?.holder ?? null,
+      expiresAt: entry.lease?.expiresAt ?? null,
+    })),
+    keptDeviceLeases: deviceLeases.kept.map(({ name, path, reason }) => ({ name, path, detail: reason })),
+    deviceSweepNotices: deviceSweepNotices.map((message) => ({ message })),
+    easSessionSweepNotices: easSessionSweep.notices.map((message) => ({ message })),
+    skipped: skipped.map(({ dir, reason }) => ({ path: dir, detail: reason })),
+    workspaceBuildOutputs: (workspaceOutputs?.workspaces ?? []).map((w) => ({
+      dir: w.dir,
+      projectRoot: w.projectRoot,
+      bytes: w.bytes,
+      idleDays: w.idleDays,
+      willClear: w.willClear,
+      reason: w.keptCode,
+      detail: w.keptReason,
+    })),
+    caches: caches.map((c) => ({
+      name: c.name,
+      dir: c.dir,
+      source: c.source ?? null,
+      bytes: c.bytes ?? null,
+      note: c.note || null,
+      willEmpty: Boolean(c.willEmpty),
+      emptySkipped: c.emptySkipped ?? null,
+    })),
+  };
 }
