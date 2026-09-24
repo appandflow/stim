@@ -91,7 +91,7 @@ const CLAIM_SUFFIX = '.claim';
 const CHILD_SUFFIX = '.child';
 const STAGING_PREFIX = '.staging-';
 const PUBLISH_ATTEMPTS = 64;
-const WIN32_SETTLE_MS = 250;
+const WIN32_SETTLE_MS = 2000;
 const WIN32_SETTLE_STEP_MS = 5;
 const debug = debuglog('stim:claim');
 
@@ -220,23 +220,27 @@ function sleepSync(ms: number): void {
  * Run a read, listing or removal and resolve the one answer Windows leaves ambiguous. NTFS answers
  * ERROR_ACCESS_DENIED, which Node reports as EPERM, for a name whose removal by another process is still
  * in flight, and for every name below it, where POSIX answers ENOENT; measured to settle within 134 ms
- * with 12 processes on 4 cores (https://github.com/appandflow/stim/issues/883). The call is reissued in
- * small steps for at most WIN32_SETTLE_MS: a result or ENOENT is the settled answer, and an EPERM that
- * outlasts the window is a real denial, thrown exactly as a POSIX EACCES is. This bounds the resolution
- * of an ambiguous OS answer; it never waits on a holder.
+ * with 12 processes on 4 cores (https://github.com/appandflow/stim/issues/883), and within 986 ms on an
+ * oversubscribed hosted windows-latest runner (https://github.com/appandflow/stim/issues/943). The call
+ * is reissued in small steps until a call issued WIN32_SETTLE_MS after the first EPERM still answers
+ * EPERM, so a call that was itself descheduled past the window never ends it: a result or ENOENT is the
+ * settled answer, and an EPERM that outlasts the window is a real denial, thrown exactly as a POSIX
+ * EACCES is. This bounds the resolution of an ambiguous OS answer; it never waits on a holder.
  */
 function settledAnswer<T>(path: string, call: () => T): T {
   if (process.platform !== 'win32') return call();
-  const started = Date.now();
+  let denied: number | undefined;
   for (;;) {
+    const asked = Date.now();
     try {
       const result = call();
-      if (Date.now() > started) debug('%s settled after %d ms', path, Date.now() - started);
+      if (denied !== undefined) debug('%s settled after %d ms', path, Date.now() - denied);
       return result;
     } catch (err) {
-      const code = (err as NodeJS.ErrnoException)?.code;
-      if (code !== 'EPERM' || Date.now() - started >= WIN32_SETTLE_MS) {
-        if (code === 'EPERM') debug('%s still answers EPERM after %d ms', path, Date.now() - started);
+      if ((err as NodeJS.ErrnoException)?.code !== 'EPERM') throw err;
+      denied ??= Date.now();
+      if (asked - denied >= WIN32_SETTLE_MS) {
+        debug('%s still answers EPERM after %d ms', path, Date.now() - denied);
         throw err;
       }
     }
