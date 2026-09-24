@@ -306,9 +306,6 @@ test('ignored inventory and warm copying still find the target file when raw ls-
     git('git commit -q -m init');
     execFileSync('git', ['-C', root, 'worktree', 'add', '-qb', 'copy-target', target]);
 
-    // Reused, long directory names inflate the raw ls-files output without adding
-    // per-file creation cost, which is what made this case slow on windows-latest
-    // (issue #1015).
     const padding = 'x'.repeat(200);
     const filesPerDir = 300;
     for (let d = 0; d < dirCount; d++) {
