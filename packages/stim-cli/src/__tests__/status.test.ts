@@ -14,6 +14,7 @@ import type { NdjsonRecord } from '../ndjson.ts';
 import { ensureWorkspaceStorage, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { deviceLeasePath, deviceLocksDir } from '../engine/device-lease.ts';
 import { findProjectRoot } from '../workspace/project.ts';
+import { recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
 
 let tmpHome: string;
 
@@ -382,6 +383,53 @@ test('the printed lines name the supervisor and the error count', async () => {
     expect(logs.some((l) => /supervisor: pid 999999/.test(l))).toBeTruthy();
     expect(logs.some((l) => /1 error/.test(l))).toBeTruthy();
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('status reports a recorded EAS session with its preview URL', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-proj-'));
+  const previousHome = process.env.HOME;
+  process.env.HOME = tmpHome;
+  try {
+    ensureWorkspaceStorage(root);
+    writeFileSync(
+      workspaceStateFile(root),
+      JSON.stringify({
+        remoteDevice: {
+          platform: 'ios',
+          sessionId: 'drs_9',
+          startedAt: '2026-09-24T00:00:00.000Z',
+          webPreviewUrl: 'https://preview.example/9',
+        },
+      }),
+    );
+    recordEasSessionClaim({
+      sessionId: 'drs_9',
+      name: 'stim-agent-1',
+      platform: 'ios',
+      workspaceRoot: root,
+      workspaceHome: tmpHome,
+      stateFile: workspaceStateFile(root),
+    });
+    saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'agent-1', platforms: {} } } }));
+
+    const payload = await runStatusJson();
+    expect(payload.environments[0].live).toBe(true);
+    expect(payload.environments[0].remoteDevices).toEqual([
+      {
+        platform: 'ios',
+        backend: 'eas',
+        sessionId: 'drs_9',
+        state: 'claimed',
+        startedAt: '2026-09-24T00:00:00.000Z',
+        webPreviewUrl: 'https://preview.example/9',
+      },
+    ]);
+    const logs = await runStatus();
+    expect(logs).toContain('  remote ios: EAS session drs_9 billable -- watch: https://preview.example/9');
+  } finally {
+    process.env.HOME = previousHome;
     rmSync(root, { recursive: true, force: true });
   }
 });

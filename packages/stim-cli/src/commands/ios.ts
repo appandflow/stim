@@ -734,6 +734,7 @@ async function runIos(
             boot,
             createdSessionId: remoteDevice.createdSessionId,
             abandonCreatedSession: remoteDevice.abandonCreatedSession,
+            webPreviewUrl: remoteDevice.webPreviewUrl,
             writeState: d.writeWorkspaceState,
             register: registerProject,
           })

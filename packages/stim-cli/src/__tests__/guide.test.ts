@@ -328,6 +328,14 @@ test('the facts topic documents every reload strategy the command can report', (
   for (const value of values) expect(body).toContain(`"${value}"`);
 });
 
+test('the facts topic documents the status remote device fields and states', () => {
+  const body = renderTopic('facts');
+  for (const field of ['remoteDevices', 'backend', 'sessionId', 'state', 'webPreviewUrl']) {
+    expect(body).toContain(field);
+  }
+  for (const state of ['"claimed"', '"unclaimed"', '"unknown"']) expect(body).toContain(state);
+});
+
 test('the facts topic documents every gc verdict reason code', () => {
   const body = renderSection('facts', 'gc');
   assert(body);

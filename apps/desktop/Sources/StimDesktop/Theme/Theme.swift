@@ -23,6 +23,7 @@ enum Theme {
   static let live = Color(hex: 0x4ADE80)
   static let warn = Color(hex: 0xF5B454)
   static let error = Color(hex: 0xFF6B6B)
+  static let remote = Color(hex: 0x7AA7FF)
 
   static func body(_ size: CGFloat = 13, weight: Font.Weight = .regular) -> Font {
     .custom("InterVariable", size: size).weight(weight)

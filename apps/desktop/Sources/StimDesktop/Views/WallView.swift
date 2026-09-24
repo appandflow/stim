@@ -38,7 +38,7 @@ struct WallView: View {
                 HStack(alignment: .top, spacing: 16) {
                   ForEach(env.devices.filter(\.isRunning)) { device in
                     Button { selection = .environment(env.path) } label: {
-                      DeviceTile(device: device, screenHeight: 400)
+                      DeviceTile(device: device, screenHeight: 400, workspace: env.path)
                     }
                     .buttonStyle(.plain)
                   }

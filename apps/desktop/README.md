@@ -61,6 +61,15 @@ Printable ASCII is sent as text; other keys, such as Delete, Return, Tab and the
 arrows, are sent as key presses. Control shortcuts are not sent, and an
 emulator without a gRPC endpoint cannot be taken over.
 
+## Remote sessions
+
+A workspace with a recorded EAS Simulator session from `stim ios --remote eas`
+or `stim android --remote eas` shows a tile with a blue ring. The tile loads the
+session's `webPreviewUrl` from `stim status --json` in a web view and marks the
+session as billable. Its **Stop** button runs `stim stop` in the workspace after
+a confirmation, which ends the session. A session with no recorded preview URL
+shows a message instead of the page.
+
 ## Requirements
 
 - macOS 14 or later and Xcode 27, selected with `xcode-select` or `DEVELOPER_DIR`. Stim Desktop falls back to `/Applications/Xcode.app` when the selected developer directory has no simulator support.

@@ -212,7 +212,9 @@ stim stop
 The profile is the simulator profile from [EAS builds](./eas-builds.md#choose-a-profile):
 the EAS Simulator runs simulator binaries, so it must set `ios.simulator: true`.
 The build must already exist on EAS; a miss prints the `eas build` command and
-never starts one. `stim stop` ends the session and the tunnel.
+never starts one. `stim status` lists the running session with its browser
+preview URL, and Stim Desktop shows that page as a device tile. `stim stop`
+ends the session and the tunnel.
 
 ## Cleanup behavior
 

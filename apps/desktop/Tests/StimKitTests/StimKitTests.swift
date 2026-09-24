@@ -10,9 +10,20 @@ import Testing
     return payload.environments[0]
   }()
 
-  @Test func listsDefaultDevicesBeforeSlots() {
-    #expect(workspace.devices.map(\.slot) == ["default", "default", "ipad"])
-    #expect(workspace.devices.map(\.isRunning) == [false, true, true])
+  @Test func listsDefaultDevicesBeforeSlotsAndRemoteSessionsLast() {
+    #expect(workspace.devices.map(\.slot) == ["default", "default", "ipad", "default"])
+    #expect(workspace.devices.map(\.isRunning) == [false, true, true, true])
+  }
+
+  @Test func decodesARemoteSessionWithItsPreviewURL() {
+    guard case .remote(let remote) = workspace.devices.last else {
+      Issue.record("expected a remote device last")
+      return
+    }
+    #expect(remote.backend == "eas")
+    #expect(remote.sessionId == "drs_9")
+    #expect(remote.webPreviewUrl == "https://preview.example/9")
+    #expect(workspace.devices.last?.id == "remote:drs_9")
   }
 
   @Test func keepsNestedParenthesesInTheModel() {
