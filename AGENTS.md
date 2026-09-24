@@ -53,6 +53,12 @@ Filter unit tests with `pnpm test <file> -t "case name"`. Do not insert `--`
 before the file: pnpm forwards it to Vitest, which then ignores the filter and
 runs the full suite.
 
+The macOS app lives in `apps/desktop`, a Swift package outside the pnpm
+workspace; see its README. It reads Stim state only through the CLI's JSON
+output and runs Stim commands through the CLI, never by reading or writing
+`$STIM_HOME`. Build and test it with `swift build` and `swift test` from that
+directory.
+
 Native tool compatibility runs separately with `pnpm run test:compat`. Follow
 [the test-stage prerequisites and evidence rules](./docs/testing.md) when changing
 native tool calls or preparing a release. Missing hardware is unavailable
