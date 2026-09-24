@@ -1,9 +1,19 @@
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { runGc } from '../commands/gc.ts';
+import { matchWorktreeEntry, removeWorktreeTarget } from '../commands/worktree.ts';
 import { classifyWorkspaceDirs, listWorkspaceDirs, planWorkspaceOutputs } from '../commands/gc/workspaces.ts';
 import { worktreeSkipReason, type WorktreeFacts } from '../commands/gc/worktrees.ts';
 import { getProject, saveConfig, upsertProject } from '../workspace/config.ts';
@@ -12,7 +22,7 @@ import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 import { withManagedTunnelLock } from '../engine/tunnel.ts';
 import { lastUseFrom, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { exclusiveClaimDir } from '../ownership-claim.ts';
+import { claimRemoveCommand, exclusiveClaimDir } from '../ownership-claim.ts';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
 
 let tmpHome: string;
@@ -95,6 +105,17 @@ describe('orphaned workspace classification', () => {
 
   test('a workspace whose project root still exists is not orphaned', () => {
     expect(classify([entry('/w/here')], { existing: ['/w/here'] })).toEqual({ orphaned: [], skipped: [] });
+  });
+
+  test('a project root whose existence cannot be read is kept, not treated as deleted', () => {
+    const result = classifyWorkspaceDirs([entry('/w/denied')], {
+      registryKeys: [],
+      exists: () => null,
+      isMounted: () => true,
+      inUse: () => [],
+    });
+    expect(result.orphaned).toEqual([]);
+    expect(result.skipped[0]?.reason).toMatch(/cannot tell whether/);
   });
 
   test('a project root on an unmounted volume is kept and reported', () => {
@@ -207,12 +228,14 @@ describe('workspaceInUse', () => {
     expect(workspaceInUse(root).join('\n')).toMatch(/live build slot/);
   });
 
-  test('a build lock whose workspace cannot be identified marks every workspace in use', () => {
+  test('a build lock that names no workspace does not mark every workspace in use, and gc names its remedy', async () => {
     const { root } = goneWorkspace('unknown');
     const lock = exclusiveClaimDir(join(tmpHome, 'build-locks', 'ios-unknown.lock'));
     mkdirSync(lock, { recursive: true });
     writeFileSync(join(lock, 'torn.claim'), '{');
-    expect(workspaceInUse(root).join('\n')).toMatch(/cannot identify/);
+    expect(workspaceInUse(root)).toEqual([]);
+    const report = await captureLog(() => runGc({}));
+    expect(report).toContain(claimRemoveCommand(join(tmpHome, 'build-locks', 'ios-unknown.lock')));
   });
 
   test('a held managed tunnel lock marks it in use', async () => {
@@ -468,3 +491,50 @@ test('gc --worktrees reports each linked worktree, and --delete removes only the
   expect(existsSync(join(repo, 'package.json'))).toBe(true);
   expect(process.exitCode).toBe(1);
 }, 30_000);
+
+test('worktree removal re-checks for new work under its removal locks', async () => {
+  const { worktrees } = gitRepoWithWorktrees(['late']);
+  const late = worktrees.late!;
+  const originalError = console.error;
+  const errors: string[] = [];
+  console.error = (...args) => errors.push(args.join(' '));
+  let removed: boolean;
+  try {
+    removed = await removeWorktreeTarget(late, {
+      guard: () => {
+        writeFileSync(join(late, 'written-after-the-first-check.txt'), 'x');
+        return [];
+      },
+    });
+  } finally {
+    console.error = originalError;
+  }
+  expect(removed).toBe(false);
+  expect(existsSync(join(late, 'written-after-the-first-check.txt'))).toBe(true);
+  expect(errors.join('\n')).toMatch(/uncommitted changes or untracked files/);
+}, 30_000);
+
+test('a worktree registered under a symlinked path still matches the path git reports', () => {
+  const real = join(projects, 'real-worktree');
+  mkdirSync(real, { recursive: true });
+  const link = join(projects, 'linked-worktree');
+  symlinkSync(real, link, 'junction');
+  expect(matchWorktreeEntry([{ path: real }], join(link, 'apps', 'mobile'))?.path).toBe(real);
+});
+
+test('a workspace whose output size cannot be measured is listed as size unknown and still cleared', async () => {
+  const { root, dir } = builtWorkspace('slow', { usedDaysAgo: 10 });
+  const current = getExecutor();
+  setExecutor({
+    ...current,
+    runFile: (file, args, opts) => {
+      if (file === 'du') throw new Error('Command timed out after 60000ms: du');
+      return current.runFile(file, args, opts);
+    },
+  });
+
+  const report = await captureLog(() => runGc({ cache: 'workspaces' }));
+  expect(report).toContain(`size unknown  ${root} (idle 10d)`);
+  await captureLog(() => runGc({ cache: 'workspaces', delete: true }));
+  expect(existsSync(join(dir, 'derived-data'))).toBe(false);
+});

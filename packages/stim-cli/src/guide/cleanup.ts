@@ -72,10 +72,14 @@ IN USE
   gc and worktree remove never delete a workspace's directory, build outputs
   or checkout while it is in use: its dev server supervisor is running or
   cannot be verified, a \`stim ios\` or \`stim android\` run holds its
-  native-run.lock, a live or unresolvable build lock or build slot names it
-  (or names no workspace Stim can identify), or its managed tunnel or managed
-  remote lock is held. The deletion holds native-run.lock itself, so no
-  native run can start partway through.
+  native-run.lock, a live or unresolvable build lock or build slot names it,
+  or its managed tunnel or managed remote lock is held. The deletion holds
+  native-run.lock itself, so no native run can start partway through. A lock
+  that names no workspace blocks nothing, because every build also holds its
+  own workspace's native-run.lock; gc lists it with the command that removes
+  it. \`worktree remove\` re-checks uncommitted and unpushed work under its
+  removal locks, just before it reclaims anything. A project root whose
+  existence cannot be read (a permission error) is never treated as deleted.
 
 SWEEPING FINISHED WORKTREES
   \`gc --worktrees\` is opt-in; no cache or age flag implies it. It looks at

@@ -1,7 +1,7 @@
-import { existsSync, readdirSync, rmSync, statSync } from 'fs';
+import { existsSync, lstatSync, readdirSync, rmSync, statSync } from 'fs';
 import { basename, isAbsolute, join, relative } from 'path';
 import chalk from 'chalk';
-import { directorySize, formatBytes, isOnMountedVolume } from '../../fs-util.ts';
+import { formatBytes, isOnMountedVolume, measuredDirectorySize } from '../../fs-util.ts';
 import { isJsonObject, readJsonFile } from '../../json-file.ts';
 import { getConfigDir, isPathPrefix, loadConfig } from '../../workspace/config.ts';
 import { emptyWorkspaceDir, workspaceInUse, withIdleWorkspace } from '../../workspace/in-use.ts';
@@ -19,7 +19,7 @@ export interface WorkspaceDirEntry {
 export interface OrphanedWorkspace {
   dir: string;
   projectRoot: string;
-  bytes?: number;
+  bytes?: number | null;
 }
 
 function workspacesRoot(): string {
@@ -85,7 +85,7 @@ export function classifyWorkspaceDirs(
     inUse,
   }: {
     registryKeys: readonly string[];
-    exists: (path: string) => boolean;
+    exists: (path: string) => boolean | null;
     isMounted: (path: string) => boolean;
     inUse: (root: string) => string[];
   },
@@ -97,7 +97,12 @@ export function classifyWorkspaceDirs(
       skipped.push({ dir, reason: `workspace directory not resolved: ${problem ?? 'unknown project root'}` });
       continue;
     }
-    if (exists(projectRoot)) continue;
+    const present = exists(projectRoot);
+    if (present === null) {
+      skipped.push({ dir, reason: `cannot tell whether its project root ${projectRoot} still exists` });
+      continue;
+    }
+    if (present) continue;
     if (registryKeys.some((key) => isPathPrefix(projectRoot, key))) continue;
     if (!isMounted(projectRoot)) {
       skipped.push({ dir, reason: `the volume of its project root ${projectRoot} is not mounted` });
@@ -113,18 +118,28 @@ export function classifyWorkspaceDirs(
   return { orphaned, skipped };
 }
 
+function rootPresence(path: string): boolean | null {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    return code === 'ENOENT' || code === 'ENOTDIR' ? false : null;
+  }
+}
+
 export function collectOrphanedWorkspaces(
   registryKeys: readonly string[],
   mountedVolumes: string[],
 ): { orphaned: OrphanedWorkspace[]; skipped: GcSkip[] } {
   const classified = classifyWorkspaceDirs(listWorkspaceDirs(), {
     registryKeys,
-    exists: existsSync,
+    exists: rootPresence,
     isMounted: (path) => isOnMountedVolume(path, mountedVolumes),
     inUse: (root) => workspaceInUse(root),
   });
   return {
-    orphaned: classified.orphaned.map((entry) => Object.assign({}, entry, { bytes: directorySize(entry.dir) })),
+    orphaned: classified.orphaned.map((entry) => Object.assign({}, entry, { bytes: sizeOf(entry.dir) })),
     skipped: classified.skipped,
   };
 }
@@ -146,7 +161,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export interface WorkspaceOutputs {
   dir: string;
   projectRoot: string | null;
-  bytes: number;
+  bytes: number | null;
   idleDays: number | null;
   willClear: boolean;
   keptReason: string | null;
@@ -158,7 +173,7 @@ export interface WorkspaceOutputsReport {
 }
 
 export function planWorkspaceOutputs(
-  entries: readonly (WorkspaceDirEntry & { bytes: number; lastUsed: number; inUse: string[] })[],
+  entries: readonly (WorkspaceDirEntry & { bytes: number | null; lastUsed: number; inUse: string[] })[],
   { olderThan, now }: { olderThan: number | null; now: number },
 ): WorkspaceOutputs[] {
   return entries.map(({ dir, projectRoot, problem, bytes, lastUsed, inUse }) => {
@@ -179,11 +194,24 @@ export function planWorkspaceOutputs(
   });
 }
 
-function outputBytes(dir: string): number {
-  return WORKSPACE_OUTPUT_DIRS.reduce((sum, name) => {
-    const path = join(dir, name);
-    return existsSync(path) ? sum + directorySize(path) : sum;
-  }, 0);
+const SIZE_TIMEOUT_MS = 60_000;
+
+function sizeOf(dir: string): number | null {
+  return measuredDirectorySize(dir, { timeoutMs: SIZE_TIMEOUT_MS });
+}
+
+function outputPaths(dir: string): string[] {
+  return WORKSPACE_OUTPUT_DIRS.map((name) => join(dir, name)).filter((path) => existsSync(path));
+}
+
+function outputBytes(paths: readonly string[]): number | null {
+  let total = 0;
+  for (const path of paths) {
+    const size = sizeOf(path);
+    if (size === null) return null;
+    total += size;
+  }
+  return total;
 }
 
 export function collectWorkspaceOutputs({
@@ -197,8 +225,9 @@ export function collectWorkspaceOutputs({
 }): WorkspaceOutputsReport {
   const entries = listWorkspaceDirs()
     .filter((entry) => !exclude.includes(entry.dir))
-    .map((entry) => Object.assign({}, entry, { bytes: outputBytes(entry.dir) }))
-    .filter((entry) => entry.bytes > 0)
+    .map((entry) => Object.assign({}, entry, { paths: outputPaths(entry.dir) }))
+    .filter((entry) => entry.paths.length > 0)
+    .map(({ paths, ...entry }) => Object.assign({}, entry, { bytes: outputBytes(paths) }))
     .map((entry) =>
       Object.assign({}, entry, {
         lastUsed: entry.projectRoot === null ? NaN : workspaceLastUsed(entry.projectRoot),
@@ -249,8 +278,8 @@ export async function clearWorkspaceOutputs(
       console.log(chalk.yellow(`Kept the build outputs of ${root}: ${kept}`));
       continue;
     }
-    cleared += entry.bytes;
-    console.log(chalk.green(`Cleared the build outputs of ${root} (${formatBytes(entry.bytes)})`));
+    cleared += entry.bytes ?? 0;
+    console.log(chalk.green(`Cleared the build outputs of ${root} (${sizeText(entry.bytes)})`));
   }
   if (cleared) {
     console.log(chalk.dim(`Cleared ${formatBytes(cleared)} of workspace build outputs. ${REBUILD_COST}`));
@@ -260,7 +289,7 @@ export async function clearWorkspaceOutputs(
 
 function stillOrphaned({ dir, projectRoot }: OrphanedWorkspace): boolean {
   const recorded = readRecordedRoot(dir, basename(dir));
-  if (recorded.projectRoot !== projectRoot || existsSync(projectRoot) || !isOnMountedVolume(projectRoot)) {
+  if (recorded.projectRoot !== projectRoot || rootPresence(projectRoot) !== false || !isOnMountedVolume(projectRoot)) {
     return false;
   }
   return !Object.keys(loadConfig()?.projects ?? {}).some((key) => isPathPrefix(projectRoot, key));
@@ -294,8 +323,12 @@ export async function deleteOrphanedWorkspaces(orphaned: readonly OrphanedWorksp
       console.log(chalk.yellow(`Kept ${entry.dir}: it can no longer be confirmed orphaned.`));
       continue;
     }
-    const size = entry.bytes === undefined ? '' : ` (${formatBytes(entry.bytes)})`;
+    const size = entry.bytes === undefined ? '' : ` (${sizeText(entry.bytes)})`;
     console.log(chalk.green(`Removed the orphaned workspace directory ${entry.dir}${size}`));
   }
   return failures;
+}
+
+export function sizeText(bytes: number | null): string {
+  return bytes === null ? 'size unknown' : formatBytes(bytes);
 }

@@ -53,9 +53,7 @@ export function workspaceInUse(
   ] as const) {
     for (const entry of entries) {
       if (!entry.alive && !entry.unresolved) continue;
-      if (entry.projectRoot === null) {
-        reasons.push(`a ${kind} at ${entry.path} is held by a workspace Stim cannot identify`);
-      } else if (canonicalPath(entry.projectRoot) === self) {
+      if (entry.projectRoot !== null && canonicalPath(entry.projectRoot) === self) {
         reasons.push(`a ${entry.alive ? 'live' : 'unresolvable'} ${kind} at ${entry.path} names it`);
       }
     }

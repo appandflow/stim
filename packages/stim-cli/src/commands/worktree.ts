@@ -277,13 +277,29 @@ interface MatchedWorktreeEntry extends WorktreeEntry {
   index: number;
 }
 
+// On Windows, Node's JS realpath keeps 8.3 short names (C:\Users\RUNNER~1) and
+// the caller's letter case, while git reports long names; the native realpath
+// resolves both.
+function nativeCanonicalPath(path: string): string {
+  const missing: string[] = [];
+  for (let existing = resolve(path); ; existing = dirname(existing)) {
+    try {
+      return resolve(realpathSync.native(existing), ...missing);
+    } catch {
+      if (dirname(existing) === existing) return resolve(path);
+      missing.unshift(basename(existing));
+    }
+  }
+}
+
 export function matchWorktreeEntry(
   entries: WorktreeEntry[] | null | undefined,
   path: string,
 ): MatchedWorktreeEntry | null {
   let best: MatchedWorktreeEntry | null = null;
+  const target = nativeCanonicalPath(path);
   (entries || []).forEach((entry, index) => {
-    if (!entry?.path || !isPathPrefix(entry.path, path)) return;
+    if (!entry?.path || !isPathPrefix(nativeCanonicalPath(entry.path), target)) return;
     if (!best || entry.path.length > best.path.length) best = { ...entry, index };
   });
   return best;
@@ -372,9 +388,10 @@ interface ReclaimAllResult {
 export function reclaimKeys(rootPath: string): string[] {
   const cfg = loadConfig();
   const keys = new Set([rootPath]);
+  const root = nativeCanonicalPath(rootPath);
   if (cfg?.projects) {
     for (const key of Object.keys(cfg.projects)) {
-      if (isPathPrefix(rootPath, key)) keys.add(key);
+      if (isPathPrefix(rootPath, key) || isPathPrefix(root, nativeCanonicalPath(key))) keys.add(key);
     }
   }
   return [...keys].toSorted();
@@ -829,12 +846,17 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
         process.exitCode = 1;
         return;
       }
+      const current = inspectRemoval(path);
+      if (current.blockers.length && !opts.force) {
+        printRemovalRefusal(path, current);
+        return;
+      }
       const result = await reclaimAll(path, lockedKeys, { preserveRootProject: true });
       if (result.keptEntries.length) {
         reportRetainedResources(path, result);
         return;
       }
-      restorePodChurn(path, inspection.podChurn);
+      restorePodChurn(path, current.podChurn);
       try {
         removeWorktree(path, { from: source.path, force: opts.force });
       } catch (error) {

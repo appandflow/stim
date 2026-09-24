@@ -1,10 +1,12 @@
 import { formatLongDuration, shortUdid } from '../../command-output.ts';
+import { claimRemoveCommand } from '../../ownership-claim.ts';
 import { formatBytes } from '../../fs-util.ts';
 import type { BuildLockInfo } from '../../engine/build-lock.ts';
 import type { BuildSlotInfo } from '../../engine/build-slots.ts';
 import type { GcSkip, OrphanedDevice } from './types.ts';
 import {
   REBUILD_COST,
+  sizeText,
   WORKSPACE_OUTPUT_DIRS,
   type OrphanedWorkspace,
   type WorkspaceOutputsReport,
@@ -100,8 +102,8 @@ function unresolvedLockLines(
   if (entries.length === 0) return [];
   return [
     `Build locks and slots Stim cannot resolve (${entries.length}) - NOT touched, because a dead holder and a live one cannot be told apart:`,
-    ...entries.map((entry) => `  ${entry.path}`),
-    '              remove one yourself once you know nothing is building with it',
+    ...entries.flatMap((entry) => [`  ${entry.path}`, `              ${claimRemoveCommand(entry.path)}`]),
+    '              run that yourself once you know nothing is building with it',
   ];
 }
 
@@ -305,7 +307,7 @@ function orphanedWorkspaceLines(orphaned: readonly OrphanedWorkspace[]): string[
   if (!orphaned.length) return [];
   const lines = [`Orphaned workspace directories (${orphaned.length}):`];
   for (const entry of orphaned) {
-    lines.push(`  ${entry.dir}${entry.bytes === undefined ? '' : ` - ${formatBytes(entry.bytes)}`}`);
+    lines.push(`  ${entry.dir}${entry.bytes === undefined ? '' : ` - ${sizeText(entry.bytes)}`}`);
     lines.push(`              recorded project root ${entry.projectRoot} is gone and no registry entry names it`);
   }
   lines.push('              --delete re-checks each directory, then removes it whole.');
@@ -321,7 +323,7 @@ function workspaceOutputLines(outputs: WorkspaceOutputsReport, bytes: number): s
   ];
   for (const w of outputs.workspaces) {
     const idle = w.idleDays === null ? 'last use unknown' : `idle ${w.idleDays}d`;
-    lines.push(`    ${formatBytes(w.bytes).padStart(8)}  ${w.projectRoot ?? w.dir} (${idle})`);
+    lines.push(`    ${sizeText(w.bytes).padStart(8)}  ${w.projectRoot ?? w.dir} (${idle})`);
     lines.push(w.willClear ? '                would be CLEARED' : `                kept: ${w.keptReason}`);
   }
   return lines;
@@ -331,7 +333,7 @@ function cacheLines(caches: readonly GcCache[], workspaceOutputs: WorkspaceOutpu
   const lines: string[] = [];
   const outputs = workspaceOutputs?.workspaces.length ? workspaceOutputs : null;
   if (caches.length || outputs) {
-    const outputBytes = outputs ? outputs.workspaces.reduce((n, w) => n + w.bytes, 0) : 0;
+    const outputBytes = outputs ? outputs.workspaces.reduce((n, w) => n + (w.bytes ?? 0), 0) : 0;
     const total = caches.reduce((n, c) => n + (c.bytes ?? 0), 0) + outputBytes;
     lines.push(`Shared build caches (${caches.length + (outputs ? 1 : 0)}) - alive, not garbage:`);
     if (outputs) lines.push(...workspaceOutputLines(outputs, outputBytes));
@@ -351,7 +353,7 @@ function cacheLines(caches: readonly GcCache[], workspaceOutputs: WorkspaceOutpu
     }
     const clearing = outputs?.workspaces.filter((w) => w.willClear) ?? [];
     if (clearing.length) {
-      const clearBytes = clearing.reduce((n, w) => n + w.bytes, 0);
+      const clearBytes = clearing.reduce((n, w) => n + (w.bytes ?? 0), 0);
       lines.push(
         `  would clear the build outputs of ${clearing.length} workspace${clearing.length === 1 ? '' : 's'} (${formatBytes(clearBytes)})`,
       );
