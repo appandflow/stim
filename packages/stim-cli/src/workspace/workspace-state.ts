@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { withDirLock } from '../dir-lock.ts';
+import { readJsonObject } from '../json-file.ts';
 import { ensureWorkspaceStorage, workspaceStateFile, workspaceStateLock } from './paths.ts';
 
 export interface WorkspaceState {
@@ -14,13 +15,7 @@ export interface WorkspaceState {
 }
 
 export function readWorkspaceState(root: string): WorkspaceState | null {
-  try {
-    const parsed = JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8'));
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    return parsed as WorkspaceState;
-  } catch {
-    return null;
-  }
+  return readJsonObject(workspaceStateFile(root));
 }
 
 export function withWorkspaceStateLock<T>(root: string, fn: () => T): T {
