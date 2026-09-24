@@ -9,7 +9,7 @@ struct AttentionView: View {
   var body: some View {
     let envs = store.payload?.environments ?? []
     let warnings = envs.flatMap { env in env.warnings.map { (env: env, text: $0) } }
-    let unwarmed = store.payload?.unprovisionedWorktrees ?? []
+    let noEnvironment = store.payload?.unprovisionedWorktrees ?? []
     ScrollView {
       VStack(alignment: .leading, spacing: 28) {
         VStack(alignment: .leading, spacing: 4) {
@@ -27,14 +27,14 @@ struct AttentionView: View {
               runTitle: "Fix \(item.env.names.title)")
           }
         }
-        group("Worktrees not warmed", count: unwarmed.count) {
-          ForEach(Array(unwarmed.enumerated()), id: \.offset) { index, worktree in
+        group("Worktrees with no environment", count: noEnvironment.count) {
+          ForEach(Array(noEnvironment.enumerated()), id: \.offset) { index, worktree in
             if index > 0 { divider }
             row(
               title: PathNames(path: worktree.path).title,
               detail: worktree.branch ?? worktree.path,
-              command: warmCommand(worktree: worktree.path),
-              runTitle: "Warm \(PathNames(path: worktree.path).title)")
+              command: startCommand(worktree: worktree.path),
+              runTitle: "Start \(PathNames(path: worktree.path).title)")
           }
         }
       }

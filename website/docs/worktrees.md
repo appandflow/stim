@@ -156,7 +156,10 @@ device when Stim starts and runs the app. Build and Metro caches remain shared.
 Several agents can work in parallel without sharing live resources.
 
 `stim status` shows linked worktrees with their environment state, including
-those with no Stim environment yet.
+those with no Stim environment yet. `stim status --json` lists those under
+`unprovisionedWorktrees`. `worktree warm` copies dependencies but does not
+create an environment, so a warmed worktree stays in that list until `start`,
+`ios`, `android`, or `doctor` registers it.
 
 ## Remove a worktree
 

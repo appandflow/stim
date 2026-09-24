@@ -25,8 +25,8 @@ public func remedyCommand(forWarning warning: String, workspace: String) -> Stim
   return nil
 }
 
-public func warmCommand(worktree: String) -> StimCommand {
-  StimCommand(["worktree", "warm"], cwd: worktree)
+public func startCommand(worktree: String) -> StimCommand {
+  StimCommand(["start"], cwd: worktree)
 }
 
 public func shellQuote(_ s: String) -> String {
