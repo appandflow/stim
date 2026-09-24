@@ -1075,7 +1075,12 @@ test('bootAndroidEmulator spawns the resolved emulator binary', () => {
     if (savedDisplay === undefined) delete process.env.DISPLAY;
     else process.env.DISPLAY = savedDisplay;
   }
-  expect(spawned).toEqual([[join(sdk, 'emulator', SDK_TOOL_FILES.emulator), ['-avd', 'stim-app', '-port', '5556']]]);
+  expect(spawned).toEqual([
+    [
+      join(sdk, 'emulator', SDK_TOOL_FILES.emulator),
+      ['-avd', 'stim-app', '-port', '5556', '-grpc', '8556', '-grpc-use-token'],
+    ],
+  ]);
 });
 
 test('bootAndroidEmulator starts the emulator tree from the home directory on Windows so its launcher and crashpad handler never hold a worktree open', () => {

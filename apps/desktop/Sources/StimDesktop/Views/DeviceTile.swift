@@ -1,3 +1,4 @@
+import EmulatorFrames
 import SimulatorFrames
 import StimKit
 import SwiftUI
@@ -57,14 +58,44 @@ struct DeviceTile: View {
     switch device {
     case .ios(_, let sim) where device.isRunning:
       SimulatorDisplayView(udid: sim.udid, interactive: interactive) { pixelSize = $0 }.padding(screenPadding)
-    case .android where device.isRunning:
-      placeholder("Android frames are not streamed yet")
+    case .android(_, let avd) where device.isRunning && avd.owned && !avd.physical:
+      if let serial = avd.serial {
+        EmulatorScreen(serial: serial).padding(screenPadding)
+      } else {
+        placeholder(device.state)
+      }
     default:
       placeholder(device.state)
     }
   }
 
   private func placeholder(_ text: String) -> some View {
+    ScreenMessage(text: text)
+  }
+}
+
+private struct EmulatorScreen: View {
+  var serial: String
+  @State private var status = EmulatorStreamStatus.connecting
+
+  var body: some View {
+    EmulatorDisplayView(serial: serial) { status in
+      DispatchQueue.main.async { self.status = status }
+    }
+    .overlay {
+      switch status {
+      case .connecting: ScreenMessage(text: "Connecting to the emulator")
+      case .noEndpoint: ScreenMessage(text: "This emulator has no gRPC endpoint. Frames appear after Stim next boots it.")
+      case .streaming: EmptyView()
+      }
+    }
+  }
+}
+
+private struct ScreenMessage: View {
+  var text: String
+
+  var body: some View {
     Text(text)
       .font(Theme.body(12))
       .foregroundStyle(Theme.tertiary)

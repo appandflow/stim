@@ -128,6 +128,9 @@ identity and storage paths.
 The validated keys cover CPU count, RAM, heap size, screen density, graphics,
 orientation, network conditions, and common hardware switches. On displayless Linux,
 Stim also launches the emulator with `-no-window -noaudio -no-boot-anim`.
+Every owned emulator starts its gRPC endpoint on the console port plus 3000
+with token authentication (`-grpc <port> -grpc-use-token`); Stim Desktop reads
+emulator frames from it.
 Run `stim guide settings` for the complete key and value list.
 
 ## Machine settings

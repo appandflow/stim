@@ -10,9 +10,10 @@ let package = Package(
   targets: [
     .target(name: "StimKit"),
     .target(name: "SimulatorFrames", swiftSettings: [.swiftLanguageMode(.v5)]),
+    .target(name: "EmulatorFrames", swiftSettings: [.swiftLanguageMode(.v5)]),
     .executableTarget(
       name: "StimDesktop",
-      dependencies: ["StimKit", "SimulatorFrames"],
+      dependencies: ["StimKit", "SimulatorFrames", "EmulatorFrames"],
       swiftSettings: [.swiftLanguageMode(.v5)]
     ),
     .testTarget(
@@ -21,5 +22,6 @@ let package = Package(
       resources: [.copy("Fixtures")]
     ),
     .testTarget(name: "SimulatorFramesTests", dependencies: ["SimulatorFrames"]),
+    .testTarget(name: "EmulatorFramesTests", dependencies: ["EmulatorFrames"]),
   ]
 )
