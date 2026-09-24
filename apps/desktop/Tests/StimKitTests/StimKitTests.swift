@@ -69,16 +69,112 @@ import Testing
   @Test func mapsStatusWarningsToCommands() {
     #expect(
       remedyCommand(forWarning: "stale supervisor record for /w", workspace: "/w")
-        == "cd '/w' && stim stop")
+        == StimCommand(["stop"], cwd: "/w"))
     #expect(
       remedyCommand(
         forWarning: "owned AVD stim-x is not detected by adb; rerun your `stim android` command", workspace: "/w")
-        == "cd '/w' && stim android")
+        == StimCommand(["android"], cwd: "/w"))
     #expect(remedyCommand(forWarning: "something else", workspace: "/w") == nil)
   }
 
   @Test func quotesPathsForTheShell() {
-    #expect(warmCommand(worktree: "/Users/dev/it's here") == "cd '/Users/dev/it'\\''s here' && stim worktree warm")
+    #expect(warmCommand(worktree: "/Users/dev/it's here").shellLine == "cd '/Users/dev/it'\\''s here' && stim worktree warm")
+  }
+}
+
+@Suite struct LineBufferTests {
+  @Test func holdsASplitLineAndCharacterUntilTheNewline() {
+    var buffer = LineBuffer()
+    let bytes = Array("caf\u{00E9} ok\r\nnext".utf8)
+    let cut = 4
+    #expect(buffer.append(Data(bytes[..<cut])) == [])
+    #expect(buffer.append(Data(bytes[cut...])) == ["caf\u{00E9} ok"])
+    #expect(buffer.finish() == ["next"])
+    #expect(buffer.finish() == [])
+  }
+}
+
+@Suite struct ProcessStreamTests {
+  private final class Collector: @unchecked Sendable {
+    let lock = NSLock()
+    var lines: [OutputLine] = []
+    var linesAtExit: Int?
+    var status: Int32?
+  }
+
+  private func run(_ script: String) async throws -> Collector {
+    let collector = Collector()
+    try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, Error>) in
+      do {
+        try ProcessStream.start(
+          executable: "/bin/sh", arguments: ["-c", script], cwd: NSTemporaryDirectory(),
+          onLine: { line in collector.lock.withLock { collector.lines.append(line) } },
+          onExit: { status in
+            collector.lock.withLock {
+              collector.status = status
+              collector.linesAtExit = collector.lines.count
+            }
+            done.resume()
+          })
+      } catch {
+        done.resume(throwing: error)
+      }
+    }
+    return collector
+  }
+
+  @Test func deliversEveryLineOfBothStreamsBeforeTheExitStatus() async throws {
+    let result = try await run("i=0; while [ $i -lt 2000 ]; do echo out$i; i=$((i+1)); done; printf 'err tail' >&2; exit 3")
+    #expect(result.status == 3)
+    #expect(result.linesAtExit == 2001)
+    #expect(result.lines.filter { $0.channel == .stdout }.last == OutputLine(.stdout, "out1999"))
+    #expect(result.lines.filter { $0.channel == .stderr } == [OutputLine(.stderr, "err tail")])
+  }
+
+  @Test func reportsTheExitWhenABackgroundChildKeepsThePipeOpen() async throws {
+    let started = Date()
+    let result = try await run("sleep 30 & echo started")
+    #expect(result.status == 0)
+    #expect(result.lines == [OutputLine(.stdout, "started")])
+    #expect(Date().timeIntervalSince(started) < 10)
+  }
+}
+
+@Suite struct GcPreviewTests {
+  @Test func marksWhatDeleteLeavesAlone() throws {
+    let json = """
+      {"mode":"dry-run","actionable":true,"failures":null,"sections":{
+        "deadProjects":[],
+        "orphanedWorkspaces":[{"dir":"/s/workspaces/a","projectRoot":"/p","bytes":4096}],
+        "workspaceBuildOutputs":[
+          {"dir":"/s/workspaces/b","bytes":1000,"willClear":false,"reason":"in-use","detail":"in use: supervisor running"},
+          {"dir":"/s/workspaces/c","bytes":500,"willClear":true,"reason":null,"detail":null}],
+        "buildsInProgress":[{"path":"/s/build-locks/x.lock","pid":1}],
+        "caches":[{"name":"Metro transform cache","dir":"/s/metro","bytes":7,"willEmpty":false,"note":"no eviction"}],
+        "futureSection":[{"id":"z"}]
+      }}
+      """
+    let report = try GcPreview(json: Data(json.utf8))
+    #expect(report.actionable)
+    #expect(
+      report.sections.map(\.key) == [
+        "orphanedWorkspaces", "buildsInProgress", "workspaceBuildOutputs", "caches", "futureSection",
+      ])
+    let outputs = report.sections.first { $0.key == "workspaceBuildOutputs" }!.entries
+    #expect(outputs.map(\.kept) == ["in use: supervisor running", nil])
+    #expect(report.sections.first { $0.key == "buildsInProgress" }!.entries[0].kept != nil)
+    #expect(report.sections.first { $0.key == "caches" }!.entries[0].kept == "no eviction")
+    #expect(report.deletableCount == 3)
+    #expect(report.reclaimableBytes == 4596)
+  }
+
+  @Test func surfacesTheRefusalContract() {
+    let json = #"{"code":"STIM_BAD_ARG","message":"No shared cache carries \"x\".","remedy":"Pass --cache all."}"#
+    #expect {
+      try GcPreview(json: Data(json.utf8))
+    } throws: { error in
+      (error as? GcPreview.Failure)?.errorDescription == "No shared cache carries \"x\". Pass --cache all."
+    }
   }
 }
 

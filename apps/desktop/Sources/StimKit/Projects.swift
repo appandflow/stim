@@ -44,3 +44,18 @@ public struct Project: Hashable, Identifiable, Sendable {
     return Project(gitCommonDir: (dir as NSString).resolvingSymlinksInPath)
   }
 }
+
+/// The branch checked out at `path`, or nil for a detached HEAD or a path git cannot read.
+public func currentBranch(at path: String) -> String? {
+  let process = Process()
+  process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+  process.arguments = ["-C", path, "branch", "--show-current"]
+  let out = Pipe()
+  process.standardOutput = out
+  process.standardError = FileHandle.nullDevice
+  guard (try? process.run()) != nil else { return nil }
+  let data = out.fileHandleForReading.readDataToEndOfFile()
+  process.waitUntilExit()
+  let branch = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+  return process.terminationStatus == 0 && !branch.isEmpty ? branch : nil
+}

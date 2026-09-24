@@ -5,8 +5,18 @@ grouped by project, with its Metro port, supervisor health, errors, build cache
 stats, live frames from its iOS simulators, and its CPU and resident memory.
 
 It reads Stim state only through `stim status --json`, `stim stats --json`, and
-the `stim gc --json` dry run. It never reads `$STIM_HOME`, and it runs no
-command that changes state.
+the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`. Its
+actions run the `stim` executable with an argument list, never a shell string,
+in the workspace directory:
+
+- Needs attention: preview `stim gc --json`, then run `stim gc --delete` after a
+  confirmation; `stim worktree warm` for an unwarmed worktree; `stim stop` or
+  `stim android` for a status warning. Each row can also copy its command.
+- Workspace inspector: `stim stop`, and `stim worktree remove` after a
+  confirmation that names the worktree and its branch.
+
+Output streams into an activity sheet with the exit status, and status refreshes
+when the command finishes. Each workspace runs one action at a time.
 
 Resource usage is measured with `ps` every 3 seconds: each workspace's
 supervisor and Metro process trees plus the `launchd_sim` tree of each of its
@@ -29,7 +39,8 @@ precise deltas does not scroll. Android input is not supported yet.
 ## Requirements
 
 - macOS 14 or later and Xcode 27 at `/Applications/Xcode.app`, or `DEVELOPER_DIR` set to another Xcode.
-- `stim` on the login shell's `PATH`, or `STIM_BIN` set to its path.
+- `stim` on the login shell's `PATH`, or `STIM_BIN` set to its path. The cleanup
+  preview needs a `stim` with `gc --json`.
 
 ## Develop
 
@@ -50,6 +61,6 @@ The bundle copies Inter, JetBrains Mono, and the brand artwork from `website/`.
 
 ## Layout
 
-- `Sources/StimKit`: models for the CLI's JSON, the CLI client, project grouping, warning remedies, and process, disk and gc usage. Unit-tested.
+- `Sources/StimKit`: models for the CLI's JSON, the CLI client, project grouping, warning remedies, the streaming runner, and process, disk and gc usage. Unit-tested.
 - `Sources/SimulatorFrames`: live simulator frames through CoreSimulator and input through SimulatorKit, both private Apple frameworks. Expect Xcode releases to break it.
 - `Sources/StimDesktop`: the SwiftUI app and its brand theme.

@@ -60,6 +60,12 @@ struct Inspector: View {
   var env: Workspace
   var usage: UsageHistory?
   var stats: ProjectStats?
+  @EnvironmentObject private var actions: ActionCenter
+  @State private var removal: Removal?
+
+  private struct Removal {
+    var branch: String?
+  }
 
   var body: some View {
     ScrollView {
@@ -83,6 +89,8 @@ struct Inspector: View {
           }
           .controlSize(.small)
         }
+
+        actionSection
 
         VStack(alignment: .leading, spacing: 8) {
           SectionLabel(title: "Dev server")
@@ -157,6 +165,63 @@ struct Inspector: View {
       .font(Theme.body(12))
       .padding(20)
     }
+  }
+
+  private var actionSection: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      SectionLabel(title: "Actions")
+      if let active = actions.active(for: env.path) {
+        HStack(spacing: 8) {
+          ProgressView().controlSize(.small)
+          Text(active.title).lineLimit(1)
+          Spacer()
+          Button("Show output") { actions.presented = active }
+        }
+      } else {
+        HStack {
+          Button("Stop") { actions.run("Stop \(env.names.title)", StimCommand(["stop"], cwd: env.path)) }
+            .help("stim stop: halt the dev server and shut the owned devices down")
+          Button("Remove worktree\u{2026}", role: .destructive) {
+            let path = env.path
+            Task {
+              let branch = await Task.detached { currentBranch(at: path) }.value
+              removal = Removal(branch: branch)
+            }
+          }
+          .help("stim worktree remove")
+          if let last = actions.latest(for: env.path) {
+            Spacer()
+            Button("Last output") { actions.presented = last }
+          }
+        }
+      }
+    }
+    .controlSize(.small)
+    .confirmationDialog(
+      "Remove this worktree?",
+      isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
+      titleVisibility: .visible,
+      presenting: removal
+    ) { _ in
+      Button("Run stim worktree remove", role: .destructive) {
+        actions.run("Remove \(env.names.title)", StimCommand(["worktree", "remove"], cwd: env.path))
+      }
+    } message: { removal in
+      Text(removalMessage(branch: removal.branch))
+    }
+  }
+
+  private func removalMessage(branch: String?) -> String {
+    let path = env.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+    return """
+      Worktree: \(path)
+      Branch: \(branch ?? "none (detached HEAD)")
+
+      Stim deletes the worktree, its branch when Stim created it and nothing else uses it, \
+      its build artifacts, owned devices and Metro port. It refuses when the worktree holds \
+      uncommitted or unpushed work. On the source checkout it reclaims the environment only \
+      and leaves the tree in place.
+      """
   }
 
   private func row(_ label: String, _ value: String) -> some View {

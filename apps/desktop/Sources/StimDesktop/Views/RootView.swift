@@ -11,6 +11,7 @@ enum SidebarItem: Hashable {
 struct RootView: View {
   @StateObject private var store: StatusStore
   @StateObject private var metrics: MetricsStore
+  @StateObject private var actions = ActionCenter()
   @State private var selection: SidebarItem? = .wall
   @State private var projectFilter: Project?
   @State private var focusedDeviceID: String?
@@ -39,7 +40,12 @@ struct RootView: View {
     .font(Theme.body())
     .foregroundStyle(Theme.text)
     .preferredColorScheme(.dark)
+    .environmentObject(actions)
+    .sheet(item: $actions.presented) { run in
+      ActivitySheet(run: run).environmentObject(actions)
+    }
     .onAppear {
+      actions.onFinish = store.refresh
       store.start()
       metrics.start()
     }
