@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import { INSTALL_ERROR } from './app-install.ts';
+import { TOOL_ERROR_PREFIX } from '../collector/ios-device.ts';
 
 const DEVICECTL_TIMEOUT_MS = 30_000;
 
@@ -14,6 +15,9 @@ export interface IosDeviceEntry {
   developerModeStatus: string | null;
   pairingState: string | null;
   transportType: string | null;
+  platform?: string | null;
+  reality?: string | null;
+  tunnelState?: string | null;
 }
 
 function text(value: unknown): string | null {
@@ -50,6 +54,9 @@ export function parseDevicectlDevices(payload: unknown): IosDeviceEntry[] {
       developerModeStatus: text(properties.developerModeStatus),
       pairingState: text(connection.pairingState),
       transportType: text(connection.transportType),
+      platform: text(hardware.platform),
+      reality: text(hardware.reality),
+      tunnelState: text(connection.tunnelState),
     });
   }
   return out;
@@ -72,6 +79,7 @@ export function listIosDevices({ exec = null }: { exec?: Executor | null } = {})
 export interface ResolvedIosDevice {
   udid?: string;
   name?: string;
+  wireless?: boolean;
   error?: string;
   remedy?: string;
 }
@@ -79,26 +87,67 @@ export interface ResolvedIosDevice {
 const DEVELOPER_MODE_REMEDY =
   'Turn on Settings > Privacy & Security > Developer Mode on the phone, restart it, then reconnect.';
 const PAIRING_REMEDY = 'Unlock the phone, tap Trust on the pairing prompt, then reconnect the cable.';
-const CABLE_REMEDY = 'Connect the phone with a cable and check `xcrun devicectl list devices`, then retry.';
+const NOT_A_PHONE_REMEDY =
+  "Name a physical iPhone or iPad from `xcrun devicectl list devices`, or run `stim ios` without --device to use this workspace's simulator.";
+const UNREACHABLE_REMEDY =
+  'Connect the phone with a cable, or unlock it on the same Wi-Fi network as this Mac, then check `xcrun devicectl list devices`.';
 
-// devicectl reports transportType 'wired' for a cabled device and 'localNetwork'
-// for one it reached over Wi-Fi. v1 installs over the cable only, so a device
-// paired only over the network is not a candidate.
+// devicectl reports transportType 'wired' for a cabled device, 'localNetwork'
+// for one it reaches over Wi-Fi, and 'sameMachine' for a simulator, whose
+// hardwareProperties.reality is 'simulated'. hardwareProperties.platform is
+// 'iOS' for an iPhone or iPad. A paired device it cannot reach right now
+// reports connectionProperties.tunnelState 'unavailable'.
 const WIRED_TRANSPORTS = new Set(['wired', 'usb']);
+const WIRELESS_TRANSPORT = 'localnetwork';
+
+function isIosHardware(device: IosDeviceEntry): boolean {
+  return (
+    (device.platform == null || device.platform.toLowerCase() === 'ios') &&
+    (device.reality == null || device.reality.toLowerCase() === 'physical')
+  );
+}
+
+function isReachable(device: IosDeviceEntry): boolean {
+  return device.tunnelState?.toLowerCase() !== 'unavailable';
+}
 
 function isWired(device: IosDeviceEntry): boolean {
   return device.transportType === null || WIRED_TRANSPORTS.has(device.transportType.toLowerCase());
+}
+
+export function isWirelessIosDevice(device: IosDeviceEntry): boolean {
+  return device.transportType?.toLowerCase() === WIRELESS_TRANSPORT;
+}
+
+function isPhysical(device: IosDeviceEntry): boolean {
+  return isIosHardware(device) && isReachable(device) && (isWired(device) || isWirelessIosDevice(device));
+}
+
+function notUsableRefusal(device: IosDeviceEntry): ResolvedIosDevice {
+  if (!isIosHardware(device)) {
+    return {
+      error: `${describe(device)} is a ${[device.reality, device.platform].filter(Boolean).join(' ')} device, and \`ios --device\` installs only on a physical iPhone or iPad.`,
+      remedy: NOT_A_PHONE_REMEDY,
+    };
+  }
+  if (!isReachable(device)) {
+    return {
+      error: `${describe(device)} is paired, but devicectl reports it unavailable: it cannot reach the phone right now.`,
+      remedy: UNREACHABLE_REMEDY,
+    };
+  }
+  return {
+    error: `${describe(device)} is reached over ${device.transportType}, and Stim installs on a phone only over a cable or Wi-Fi.`,
+    remedy: NOT_A_PHONE_REMEDY,
+  };
 }
 
 function describe(device: IosDeviceEntry): string {
   return `${device.udid} (${device.name})`;
 }
 
-function wirelessRefusal(device: IosDeviceEntry): ResolvedIosDevice {
-  return {
-    error: `${describe(device)} is paired over ${device.transportType}, not a cable, and Stim installs over the cable only.`,
-    remedy: CABLE_REMEDY,
-  };
+function selected(device: IosDeviceEntry): ResolvedIosDevice {
+  return { udid: device.udid, name: device.name, ...(isWirelessIosDevice(device) ? { wireless: true } : {}) };
 }
 
 function unhealthy(device: IosDeviceEntry): ResolvedIosDevice | null {
@@ -118,14 +167,14 @@ function unhealthy(device: IosDeviceEntry): ResolvedIosDevice | null {
 }
 
 export function iosPoolCandidates(devices: readonly IosDeviceEntry[]): IosDeviceEntry[] {
-  return (Array.isArray(devices) ? devices : []).filter((device) => isWired(device) && unhealthy(device) === null);
+  return (Array.isArray(devices) ? devices : []).filter((device) => isPhysical(device) && unhealthy(device) === null);
 }
 
 export function iosPoolNoCandidatesRefusal(devices: readonly IosDeviceEntry[]): ResolvedIosDevice {
   const listed = Array.isArray(devices) ? devices : [];
-  const cabled = listed.filter(isWired);
-  const problems = cabled.map((device) => unhealthy(device));
-  if (cabled.length > 0 && problems.every((problem) => problem !== null)) {
+  const physical = listed.filter(isPhysical);
+  const problems = physical.map((device) => unhealthy(device));
+  if (physical.length > 0 && problems.every((problem) => problem !== null)) {
     const reasons = problems as ResolvedIosDevice[];
     return {
       error: reasons.map((reason) => reason.error!).join(' '),
@@ -135,34 +184,35 @@ export function iosPoolNoCandidatesRefusal(devices: readonly IosDeviceEntry[]): 
   return resolveIosPhysicalDevice(null, listed);
 }
 
-export function resolveIosPhysicalDevice(requested: string | null, devices: IosDeviceEntry[]): ResolvedIosDevice {
-  const listed = Array.isArray(devices) ? devices : [];
-  const cabled = listed.filter(isWired);
-  const wireless = listed.filter((d) => !isWired(d));
-  if (requested) {
-    const match = cabled.find((d) => d.udid.toLowerCase() === requested.toLowerCase());
-    if (match) return unhealthy(match) ?? { udid: match.udid, name: match.name };
-    const overNetwork = wireless.find((d) => d.udid.toLowerCase() === requested.toLowerCase());
-    if (overNetwork) return wirelessRefusal(overNetwork);
+function pickOne(devices: readonly IosDeviceEntry[]): ResolvedIosDevice | null {
+  if (devices.length === 1) return unhealthy(devices[0]!) ?? selected(devices[0]!);
+  if (devices.length > 1) {
     return {
-      error: cabled.length
-        ? `${requested} is not connected. devicectl reports these cabled devices: ${cabled.map(describe).join(', ')}.`
-        : `${requested} is not connected by cable, and devicectl reports no cabled device at all.`,
-      remedy: 'Check the cable and `xcrun devicectl list devices`, then retry with a UDID it lists.',
-    };
-  }
-  if (cabled.length === 1) {
-    const only = cabled[0]!;
-    return unhealthy(only) ?? { udid: only.udid, name: only.name };
-  }
-  if (cabled.length > 1) {
-    return {
-      error: `Several devices are connected: ${cabled.map(describe).join(', ')}.`,
+      error: `Several devices are connected: ${devices.map(describe).join(', ')}.`,
       remedy: 'Name the one to build for with `stim ios --device <udid>`.',
     };
   }
-  const onlyWireless = wireless[0];
-  if (onlyWireless) return wirelessRefusal(onlyWireless);
+  return null;
+}
+
+export function resolveIosPhysicalDevice(requested: string | null, devices: IosDeviceEntry[]): ResolvedIosDevice {
+  const listed = Array.isArray(devices) ? devices : [];
+  const physical = listed.filter(isPhysical);
+  if (requested) {
+    const same = (d: IosDeviceEntry) => d.udid.toLowerCase() === requested.toLowerCase();
+    const match = physical.find(same);
+    if (match) return unhealthy(match) ?? selected(match);
+    const other = listed.find(same);
+    if (other) return notUsableRefusal(other);
+    return {
+      error: physical.length
+        ? `${requested} is not connected. devicectl reports these devices: ${physical.map(describe).join(', ')}.`
+        : `${requested} is not connected, and devicectl reports no device over a cable or Wi-Fi at all.`,
+      remedy: 'Check the cable and `xcrun devicectl list devices`, then retry with a UDID it lists.',
+    };
+  }
+  const chosen = pickOne(physical);
+  if (chosen) return chosen;
   return {
     error: 'No physical iOS device is connected.',
     remedy:
@@ -171,6 +221,22 @@ export function resolveIosPhysicalDevice(requested: string | null, devices: IosD
 }
 
 export const DEVICECTL_INSTALL_TIMEOUT_MS = 300_000;
+export const WIRELESS_INSTALL_TIMEOUT_MS = 900_000;
+export const LAUNCH_PROBE_TIMEOUT_MS = 45_000;
+export const WIRELESS_LAUNCH_PROBE_TIMEOUT_MS = 120_000;
+const WIRELESS_ERROR = 'STIM_DEVICE_WIRELESS_FAILED';
+
+export function iosDeviceBounds(wireless: boolean): { installMs: number; launchMs: number } {
+  return wireless
+    ? { installMs: WIRELESS_INSTALL_TIMEOUT_MS, launchMs: WIRELESS_LAUNCH_PROBE_TIMEOUT_MS }
+    : { installMs: DEVICECTL_INSTALL_TIMEOUT_MS, launchMs: LAUNCH_PROBE_TIMEOUT_MS };
+}
+
+const WIRELESS_REMEDY =
+  'Connect the phone with a cable so devicectl uses it instead of Wi-Fi, keep the phone unlocked, then run the command again.';
+const WIRELESS_DROP =
+  /disconnected|not connected|connection (?:was )?(?:lost|interrupted|reset)|network connection was lost|timed out/i;
+const WIRELESS_CONSOLE_DROP = /disconnected|connection (?:was )?(?:lost|interrupted|reset)|not connected|timed out/i;
 
 const LOCKED_REMEDY = 'Unlock the phone and keep it awake, then run the command again.';
 
@@ -227,20 +293,52 @@ export interface IosDeviceInstallResult {
   remedy?: string;
 }
 
+function wirelessInstallFailure(
+  error: unknown,
+  { udid, appPath, wireless }: { udid: string; appPath: string; wireless: boolean },
+): IosDeviceInstallResult | null {
+  if (!wireless) return null;
+  const failure = errorText(error);
+  if (iosInstallFailureKind(failure) !== null) return null;
+  const timedOut = (error as NodeJS.ErrnoException)?.code === 'ETIMEDOUT';
+  if (!timedOut && !WIRELESS_DROP.test(failure)) return null;
+  const what = timedOut
+    ? `did not finish within ${Math.round(WIRELESS_INSTALL_TIMEOUT_MS / 1000)}s`
+    : 'lost the connection to the phone';
+  return {
+    failed: true,
+    code: WIRELESS_ERROR,
+    reason: `devicectl ${what} while installing ${appPath} on ${udid} over Wi-Fi (localNetwork): ${failure}`,
+    remedy: WIRELESS_REMEDY,
+  };
+}
+
+/**
+ * Installs with one bounded devicectl call. A signer conflict adds an uninstall and a
+ * second install, each with the same bound; `beforeStep` runs before each of those two
+ * so the caller can extend its device lease.
+ */
 export function installIosDeviceApp(
-  { udid, appPath, bundleId = null }: { udid: string; appPath: string; bundleId?: string | null },
-  { exec = null }: { exec?: Executor | null } = {},
+  {
+    udid,
+    appPath,
+    bundleId = null,
+    wireless = false,
+  }: { udid: string; appPath: string; bundleId?: string | null; wireless?: boolean },
+  { exec = null, beforeStep = () => {} }: { exec?: Executor | null; beforeStep?: () => void } = {},
 ): IosDeviceInstallResult {
   const e = exec || getExecutor();
+  const timeoutMs = iosDeviceBounds(wireless).installMs;
+  const target = { udid, appPath, wireless };
   const install = () => {
-    e.runFile('xcrun', ['devicectl', 'device', 'install', 'app', '--device', udid, appPath], {
-      timeoutMs: DEVICECTL_INSTALL_TIMEOUT_MS,
-    });
+    e.runFile('xcrun', ['devicectl', 'device', 'install', 'app', '--device', udid, appPath], { timeoutMs });
   };
   try {
     install();
     return { ok: true, appPath };
   } catch (err) {
+    const dropped = wirelessInstallFailure(err, target);
+    if (dropped) return dropped;
     const failure = errorText(err);
     const kind = iosInstallFailureKind(failure);
     if (kind !== 'signer' || !bundleId) {
@@ -252,28 +350,33 @@ export function installIosDeviceApp(
       };
     }
     try {
-      e.runFile('xcrun', ['devicectl', 'device', 'uninstall', 'app', '--device', udid, bundleId], {
-        timeoutMs: DEVICECTL_INSTALL_TIMEOUT_MS,
-      });
+      beforeStep();
+      e.runFile('xcrun', ['devicectl', 'device', 'uninstall', 'app', '--device', udid, bundleId], { timeoutMs });
     } catch (uninstallErr) {
-      return {
-        failed: true,
-        code: INSTALL_ERROR,
-        reason:
-          `devicectl refused to install ${appPath} over the copy of ${bundleId} already on ${udid}, ` +
-          `which a different team signed, and the uninstall failed too: ${errorText(uninstallErr)}`,
-        remedy: iosInstallRemedy('signer', { udid, bundleId }),
-      };
+      const uninstallKind = iosInstallFailureKind(errorText(uninstallErr));
+      return (
+        wirelessInstallFailure(uninstallErr, target) ?? {
+          failed: true,
+          code: INSTALL_ERROR,
+          reason:
+            `devicectl refused to install ${appPath} over the copy of ${bundleId} already on ${udid}, ` +
+            `which a different team signed, and the uninstall failed too: ${errorText(uninstallErr)}`,
+          remedy: iosInstallRemedy(uninstallKind ?? 'signer', { udid, bundleId }),
+        }
+      );
     }
     try {
+      beforeStep();
       install();
     } catch (retryErr) {
-      return {
-        failed: true,
-        code: INSTALL_ERROR,
-        reason: `devicectl could not install ${appPath} on ${udid} even after uninstalling ${bundleId}: ${errorText(retryErr)}`,
-        remedy: iosInstallRemedy(null, { udid, bundleId }),
-      };
+      return (
+        wirelessInstallFailure(retryErr, target) ?? {
+          failed: true,
+          code: INSTALL_ERROR,
+          reason: `devicectl could not install ${appPath} on ${udid} even after uninstalling ${bundleId}: ${errorText(retryErr)}`,
+          remedy: iosInstallRemedy(iosInstallFailureKind(errorText(retryErr)), { udid, bundleId }),
+        }
+      );
     }
     return {
       ok: true,
@@ -357,6 +460,8 @@ const LAUNCH_REFUSALS: Array<[IosLaunchRefusalKind, RegExp]> = [
   ['untrusted-developer', /FBSOpenApplicationErrorDomain error 3\b/],
   ['untrusted-developer', /denied by service delegate[^\n]*for reason: Security/],
   ['locked', /device is locked|is locked\b|passcode/i],
+  ['locked', /BSErrorCodeDescription = Locked\b/],
+  ['locked', /\bunlocked\b[^\n]*FBSOpenApplicationErrorDomain error 7\b/],
   ['not-installed', /(?:application|app)[^\n]*\b(?:is )?(?:unknown to FrontBoard|not installed)/i],
 ];
 
@@ -392,12 +497,12 @@ export function iosLaunchRemedy(
 export interface IosDeviceLaunchResult {
   pid?: number | null;
   failed?: boolean;
+  code?: string;
   reason?: string;
   remedy?: string;
   lines?: string[];
 }
 
-export const LAUNCH_PROBE_TIMEOUT_MS = 45_000;
 const LAUNCH_PROBE_POLL_MS = 1000;
 const COLLECTOR_ENDED_EVENTS = new Set(['collector_failed', 'collector_stopped']);
 
@@ -409,7 +514,20 @@ function launchEvidence(records: readonly NdjsonRecord[]): string[] {
     if (entry.event === 'collector_started' || entry.event === 'collector_empty') continue;
     lines.push(msg);
   }
-  return lines.slice(-6);
+  return lines;
+}
+
+// devicectl prints its own failure as an `ERROR: ` block with no os_log mirror
+// prefix, so only that block, never an app log line, can say the link dropped.
+function devicectlErrorText(records: readonly NdjsonRecord[]): string {
+  const own = records.filter((entry) => entry.proc === undefined && typeof entry.msg === 'string');
+  const start = own.findIndex((entry) => (entry.msg as string).startsWith(TOOL_ERROR_PREFIX));
+  return start < 0
+    ? ''
+    : own
+        .slice(start)
+        .map((entry) => entry.msg as string)
+        .join('\n');
 }
 
 export function collectorRecordsFor(records: readonly NdjsonRecord[], collectorPid: number | null): NdjsonRecord[] {
@@ -428,7 +546,8 @@ export async function awaitIosDeviceLaunch({
   collectorPid = null,
   readRecords,
   probe,
-  timeoutMs = LAUNCH_PROBE_TIMEOUT_MS,
+  wireless = false,
+  timeoutMs = iosDeviceBounds(wireless).launchMs,
   pollMs = LAUNCH_PROBE_POLL_MS,
   now = Date.now,
   sleep = (ms: number) => new Promise((r) => setTimeout(r, ms)),
@@ -439,6 +558,7 @@ export async function awaitIosDeviceLaunch({
   collectorPid?: number | null;
   readRecords: () => NdjsonRecord[];
   probe?: () => number | null | undefined;
+  wireless?: boolean;
   timeoutMs?: number;
   pollMs?: number;
   now?: () => number;
@@ -452,8 +572,18 @@ export async function awaitIosDeviceLaunch({
     const pid = probeProcess();
     if (typeof pid === 'number') return { pid };
     if (ended) {
-      const lines = launchEvidence(records);
-      const kind = iosLaunchRefusalKind(lines.join('\n'));
+      const evidence = launchEvidence(records);
+      const lines = evidence.slice(-6);
+      const kind = iosLaunchRefusalKind(evidence.join('\n'));
+      if (wireless && kind === null && WIRELESS_CONSOLE_DROP.test(devicectlErrorText(records))) {
+        return {
+          failed: true,
+          code: WIRELESS_ERROR,
+          reason: `devicectl lost the Wi-Fi (localNetwork) connection to ${udid} while launching ${bundleId}.`,
+          remedy: WIRELESS_REMEDY,
+          lines,
+        };
+      }
       return {
         failed: true,
         reason: `devicectl could not keep ${bundleId} running on ${udid}: the console ended before the app appeared in the device's process list.`,
@@ -462,13 +592,20 @@ export async function awaitIosDeviceLaunch({
       };
     }
     if (now() >= deadline) {
-      const lines = launchEvidence(records);
-      return {
-        failed: true,
-        reason: `${bundleId} did not appear in ${udid}'s process list within ${Math.round(timeoutMs / 1000)}s of the launch.`,
-        remedy: iosLaunchRemedy(iosLaunchRefusalKind(lines.join('\n')), { udid, bundleId }),
-        lines,
-      };
+      const evidence = launchEvidence(records);
+      const lines = evidence.slice(-6);
+      const kind = iosLaunchRefusalKind(evidence.join('\n'));
+      const reason = `${bundleId} did not appear in ${udid}'s process list within ${Math.round(timeoutMs / 1000)}s of the launch`;
+      if (wireless && kind === null) {
+        return {
+          failed: true,
+          code: WIRELESS_ERROR,
+          reason: `${reason} over Wi-Fi (localNetwork).`,
+          remedy: WIRELESS_REMEDY,
+          lines,
+        };
+      }
+      return { failed: true, reason: `${reason}.`, remedy: iosLaunchRemedy(kind, { udid, bundleId }), lines };
     }
     await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
   }

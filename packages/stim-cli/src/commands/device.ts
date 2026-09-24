@@ -16,6 +16,7 @@ import { selectFromPool } from '../engine/device-pool.ts';
 import {
   iosPoolCandidates,
   iosPoolNoCandidatesRefusal,
+  isWirelessIosDevice,
   listIosDevices,
   resolveIosPhysicalDevice,
 } from '../engine/ios-device.ts';
@@ -159,7 +160,11 @@ async function poolDevice(
     idLabel,
     list: () =>
       platform === 'ios'
-        ? iosPoolCandidates(d.listIosDevices()).map((entry) => ({ id: entry.udid, name: entry.name }))
+        ? iosPoolCandidates(d.listIosDevices()).map((entry) => ({
+            id: entry.udid,
+            name: entry.name,
+            fallback: isWirelessIosDevice(entry),
+          }))
         : androidPoolCandidates(d.listAdbDevices(), isEmulator).map((entry) => ({ id: entry.serial })),
     noCandidates: () => {
       const resolved =

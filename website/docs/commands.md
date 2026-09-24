@@ -194,7 +194,14 @@ for the simulator. `--eas-profile <name> --device` uses EAS CLI's artifact cache
 installs the signed app without re-signing it.
 
 A `--device` run installs with `devicectl device install app` and launches with
-`devicectl device process launch`. Every device install is signed, Debug
+`devicectl device process launch`. The iPhone can be cabled or paired over
+Wi-Fi; an Apple TV, Vision Pro, or simulator is never picked. With no UDID, a
+cabled iPhone that is paired and has Developer Mode on is taken first, and a
+Wi-Fi one only when there is none. A Wi-Fi run prints one line saying so,
+allows each install step 15 minutes and the launch 120 seconds, and fails with
+`STIM_DEVICE_WIRELESS_FAILED` when devicectl times out or loses the phone;
+connect the cable and run again. A locked phone or another cause devicectl
+names keeps its own error and remedy. Every device install is signed, Debug
 included, so the app's own `embedded.mobileprovision` must be unexpired and must
 name the phone, and the identity it names must be in this machine's keychain
 whenever Stim modifies the bundle.

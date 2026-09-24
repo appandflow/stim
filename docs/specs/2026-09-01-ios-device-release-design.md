@@ -1101,6 +1101,22 @@ Reused rather than invented:
 - **`STIM_LAUNCH_FAILED`** for a release process that exits inside the 3 s
   window.
 
+Added later for Wi-Fi-paired devices (#1019):
+
+| code                          | when                                                                                                                                           | remedy                                                                                                                       |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `STIM_DEVICE_WIRELESS_FAILED` | a `localNetwork` device's install hits its 15-minute bound, its launch probe hits the 120 s bound, or devicectl reports the connection dropped | "Connect the phone with a cable so devicectl uses it instead of Wi-Fi, keep the phone unlocked, then run the command again." |
+
+A Wi-Fi failure `iosInstallFailureKind` or `iosLaunchRefusalKind` recognises
+(locked, untrusted host, Developer Mode, storage, signer, developer trust)
+keeps `STIM_INSTALL_FAILED` or `STIM_LAUNCH_FAILED` and its own remedy, even
+when the step also timed out, and a failed signer-conflict uninstall or
+reinstall reports the cause of that step. On launch, only devicectl's own
+`ERROR:` block (no os_log mirror prefix) can signal a dropped connection, so an
+app's log lines never do. A locked phone at launch prints
+`BSErrorCodeDescription = Locked` and "could not be, unlocked
+(FBSOpenApplicationErrorDomain error 7)", and gets the locked remedy.
+
 Not a code, but a changed message: **`launched: 'unverified'` on a Debug
 `--device` run gets a new remedy**, because the two causes the LAN gate cannot
 distinguish both land here. It names them — the phone is on a different network
@@ -1176,11 +1192,25 @@ options bag. `commands/doctor.ts`'s "Checked: …" sentence gains a clause.
   `usbmuxd` forwards host-to-device only, so closing this means either a
   device-side listener Stim does not have or a `devicectl`-mediated tunnel
   whose availability is open question 2.
-- **Wireless devices.** `devicectl` can reach a paired device over the
-  network; v1 requires a cable for the install, because a flaky install over
-  Wi-Fi is a confusing failure and the cable case has to work first. (The
-  _Metro_ connection is over the network either way — that is a different
-  link, and it is the one the LAN section is about.)
+- **Wireless devices.** Lifted by #1019. v1 required a cable for the install,
+  because a flaky install over Wi-Fi is a confusing failure and the cable case
+  had to work first. Now a device `devicectl` reports with `transportType`
+  `localNetwork` is a candidate when `hardwareProperties.platform` is `iOS`
+  and `reality` is `physical`; a device whose `tunnelState` is `unavailable`
+  is skipped on any transport. An explicit `--device <udid>` accepts a Wi-Fi
+  phone, and pool selection takes a healthy cabled device first (waiting for
+  a busy one, whose refusal names any free Wi-Fi phone), falling back to
+  Wi-Fi only when no cabled device is paired with Developer Mode on. The
+  pairing and Developer Mode refusals are unchanged. The transport is read
+  again right before the install, which prints one `device` line when it is
+  Wi-Fi. Over Wi-Fi each install step is bounded at 15 minutes instead of 5
+  and the launch probe at 120 s instead of 45 s, and the lease is raised
+  before each step, the signer-conflict uninstall and reinstall included. A Wi-Fi timeout or dropped connection is
+  `STIM_DEVICE_WIRELESS_FAILED`, whose remedy is the cable, so the confusing
+  failure is now a named one. Other transports (`sameMachine`, which is how
+  `devicectl` lists simulators) stay refused. (The _Metro_ connection is over
+  the network either way — that is a different link, and it is the one the
+  LAN section is about; `STIM_NO_LAN_ADDRESS` is unchanged.)
 - **Uploading the device slice to a remote or provider cache.**
 - **Multiple phones per machine.** One UDID per run; the "two workspaces, one
   bundle id, last install wins" limitation #141 documented for Android

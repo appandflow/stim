@@ -19,7 +19,8 @@ with `stim-`. It never creates, boots, or deletes a simulator or emulator that
 another tool made.
 
 `stim android --device [serial]` and `stim ios --device [udid]` install, launch,
-and read available logs on connected physical devices. Stim leases the device
+and read available logs on connected physical devices. An iPhone can be cabled
+or paired over Wi-Fi; with no UDID, Stim picks a cabled iPhone first. Stim leases the device
 for the run, then releases the lease. Use `stim device lock` to hold it across
 runs. Hardware never enters the owned-device registry and is never booted,
 shut down, or deleted by Stim.

@@ -555,8 +555,9 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   a named serial/UDID that is not connected, several connected with none named
   (the refusal lists them), or one that is connected but unusable -- an
   unauthorized Android device, or an iPhone that is unpaired or has Developer
-  Mode off. Hardware is never created or booted, so there is nothing to retry
-  into existence: fix the cable, the trust prompt, or Developer Mode.
+  Mode off, over a cable or over Wi-Fi alike. Hardware is never created or
+  booted, so there is nothing to retry into existence: fix the cable, the
+  trust prompt, or Developer Mode.
   Otherwise the owned simulator/emulator could not be created or could not
   reach a booted state. \`stim doctor\` checks the toolchain; \`stim status\` says what
   Stim thinks it owns. Re-running the command creates a fresh owned device
@@ -623,6 +624,21 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   no token left in its \`state.json\` (its workspace directory was recreated).
   The remedy for that last one is \`stim device unlock\`, which releases by
   holder rather than by token.`,
+    },
+    STIM_DEVICE_WIRELESS_FAILED: {
+      summary: 'an iPhone paired over Wi-Fi timed out or dropped during install or launch; use the cable',
+      body: () => `STIM_DEVICE_WIRELESS_FAILED
+  Only on an \`ios --device\` run whose iPhone devicectl reaches over Wi-Fi
+  (transportType localNetwork). The \`devicectl device install app\` ran past
+  its 15-minute Wi-Fi bound, the phone did not appear in its own process list
+  within the 120-second Wi-Fi launch bound, or devicectl reported that the
+  connection dropped in its own ERROR output (an app's log lines never count).
+  The message names the transport and quotes devicectl. Connect the phone
+  with a cable, keep it unlocked, and run the command again: a cabled phone
+  installs over the cable. A cause devicectl names -- a locked phone, an
+  untrusted host, Developer Mode off, full storage, the developer-trust tap --
+  keeps STIM_INSTALL_FAILED or STIM_LAUNCH_FAILED and its own remedy, even
+  when the step also timed out and even during a signer-conflict reinstall.`,
     },
     STIM_DEVICE_LOST: {
       summary: 'the lease was gone or re-held at the pre-install check; rerun',

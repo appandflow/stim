@@ -1254,6 +1254,24 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   \`android --device\`, it leases the phone for the run
   (\`guide lifecycle lease\`).
 
+  AN IPHONE PAIRED OVER WI-FI is a device too: devicectl reports its
+  transportType as localNetwork. Only a physical iPhone or iPad counts
+  (devicectl platform iOS, reality physical); an Apple TV, a Vision Pro, a
+  simulator, or a paired phone devicectl reports unavailable is never picked.
+  A UDID that names a Wi-Fi phone is accepted. With no UDID, a healthy
+  cabled iPhone always wins, and a busy one is waited for; a Wi-Fi one is
+  taken only when no cabled one is paired with Developer Mode on, and a busy
+  refusal names any free Wi-Fi phone so \`--device <udid>\` can take it.
+  The transport is read again just before the install, so a cable pulled
+  during the build still gets Wi-Fi treatment, and the run prints one
+  \`device\` line saying the install and launch go over Wi-Fi. Over Wi-Fi
+  each devicectl install step may take 15 minutes instead of 5 and the launch
+  120 seconds instead of 45; the lease is raised before each step, including
+  the uninstall and reinstall of a signer conflict. A Wi-Fi install or launch
+  that times out or loses the phone fails with STIM_DEVICE_WIRELESS_FAILED,
+  and the remedy is the cable. Metro is unaffected: a Debug app reaches it
+  over the LAN either way.
+
   \`stop\` releases this workspace's leases and stops its log collectors.
   On a physical iPhone that also closes the app, because its collector owns
   the devicectl launch session. \`gc --delete\` removes expired lease files;
@@ -1406,13 +1424,15 @@ HOLDING A DEVICE ACROSS RUNS
 
 THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   Candidates are the connected devices the resolver already accepts: on iOS,
-  wired, paired, with Developer Mode on; on Android, every serial adb reports
-  in the \`device\` state that is not an emulator, TCP serials included. Then,
-  in order:
+  paired, with Developer Mode on, over a cable or Wi-Fi; on Android, every
+  serial adb reports in the \`device\` state that is not an emulator, TCP
+  serials included. Then, in order:
 
     1. the device this workspace already leases, when it is among them;
     2. otherwise the first one not leased -- or leased and EXPIRED -- in
-       case-folded id order.
+       case-folded id order. On iOS a Wi-Fi iPhone is considered only when
+       no cabled candidate is connected: a busy cabled phone is waited for,
+       not skipped for a Wi-Fi one.
 
   Ids are sorted on, never names: adb has no name without one \`getprop\` per
   serial, and models repeat.
