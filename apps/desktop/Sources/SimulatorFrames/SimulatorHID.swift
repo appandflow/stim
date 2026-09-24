@@ -19,9 +19,7 @@ private typealias KeyboardMessageFn = @convention(c) (UInt32, UInt32) -> UnsafeM
 private typealias UsageForKeyCodeFn = @convention(c) (UInt32) -> UInt32
 
 private enum SimulatorKit {
-  static let handle = dlopen(
-    "\(ProcessInfo.processInfo.environment["DEVELOPER_DIR"] ?? "/Applications/Xcode.app/Contents/Developer")"
-      + "/../SharedFrameworks/SimulatorKit.framework/SimulatorKit", RTLD_NOW)
+  static let handle = dlopen(CoreSimulator.simulatorKitPath(CoreSimulator.developerDir), RTLD_NOW)
   static let mouseMessage = symbol("IndigoHIDMessageForMouseNSEvent", MouseMessageFn.self)
   static let keyboardMessage = symbol("IndigoHIDMessageForKeyboardArbitrary", KeyboardMessageFn.self)
   static let usageForKeyCode = symbol("hidUsageForCGKeyCode", UsageForKeyCodeFn.self)

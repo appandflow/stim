@@ -2,25 +2,31 @@ import AppKit
 import QuartzCore
 import SwiftUI
 
-/// Live frames of a booted iOS simulator's main display. When `interactive`
-/// is true, clicks, drags, trackpad scrolls and keys go to the simulator.
+/// Live frames of a booted iOS simulator's main display, turned upright for
+/// the device's orientation. When `interactive` is true, clicks, drags,
+/// trackpad scrolls and keys go to the simulator. `onPixelSizeChange`
+/// receives the frame's pixel size as displayed, after rotation.
 public struct SimulatorDisplayView: NSViewRepresentable {
   public var udid: String
   public var interactive: Bool
+  public var onPixelSizeChange: (CGSize) -> Void
 
-  public init(udid: String, interactive: Bool = false) {
+  public init(udid: String, interactive: Bool = false, onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }) {
     self.udid = udid
     self.interactive = interactive
+    self.onPixelSizeChange = onPixelSizeChange
   }
 
   public func makeNSView(context: Context) -> SimulatorDisplayNSView {
     let view = SimulatorDisplayNSView()
+    view.onPixelSizeChange = onPixelSizeChange
     view.attach(udid: udid)
     view.setInteractive(interactive)
     return view
   }
 
   public func updateNSView(_ view: SimulatorDisplayNSView, context: Context) {
+    view.onPixelSizeChange = onPixelSizeChange
     view.attach(udid: udid)
     view.setInteractive(interactive)
   }
@@ -31,21 +37,26 @@ public struct SimulatorDisplayView: NSViewRepresentable {
 }
 
 public final class SimulatorDisplayNSView: NSView {
+  var onPixelSizeChange: (CGSize) -> Void = { _ in }
   private var udid: String?
-  private var display: SimDisplayIOSurfaceRenderable?
+  private var display: SimDisplay?
   private let callbackID = NSUUID()
   private var redrawPending = false
   private var retryTimer: Timer?
   private var interactive = false
   private var hid: SimulatorHID?
   private var touchPoint: CGPoint?
+  private let surfaceLayer = CALayer()
+  private var orientation: UInt32 = 1
+  private var reportedSize: CGSize?
 
   override init(frame: NSRect) {
     super.init(frame: frame)
     wantsLayer = true
     layer = CALayer()
-    layer?.contentsGravity = .resizeAspect
-    layer?.minificationFilter = .trilinear
+    surfaceLayer.contentsGravity = .resizeAspect
+    surfaceLayer.minificationFilter = .trilinear
+    layer?.addSublayer(surfaceLayer)
   }
 
   required init?(coder: NSCoder) { nil }
@@ -68,9 +79,11 @@ public final class SimulatorDisplayNSView: NSView {
     if let display {
       display.unregisterDamageCallback(callbackID)
       display.unregisterSurfacesCallback(callbackID)
+      display.unregisterPropertiesCallback(callbackID)
     }
     display = nil
-    layer?.contents = nil
+    surfaceLayer.contents = nil
+    reportedSize = nil
     releaseInput()
   }
 
@@ -84,13 +97,59 @@ public final class SimulatorDisplayNSView: NSView {
       return
     }
     self.display = display
-    layer?.contents = display.framebufferSurface
+    showSurface()
     display.registerSurfacesCallback(callbackID) { [weak self] _ in
-      DispatchQueue.main.async { self?.layer?.contents = display.framebufferSurface }
+      DispatchQueue.main.async { self?.showSurface() }
     }
     display.registerDamageCallback(callbackID) { [weak self] _ in
       DispatchQueue.main.async { self?.scheduleRedraw() }
     }
+    display.registerPropertiesCallback(callbackID) { [weak self] _ in
+      DispatchQueue.main.async { self?.showSurface() }
+    }
+  }
+
+  private func showSurface() {
+    guard let display else { return }
+    let surface = display.framebufferSurface
+    surfaceLayer.contents = surface
+    orientation = display.screenProperties?.uiOrientation ?? 1
+    needsLayout = true
+    guard let displayed = displayedScreenSize, displayed != reportedSize else { return }
+    reportedSize = displayed
+    // SwiftUI state must not change while it is updating this view.
+    DispatchQueue.main.async { [weak self] in self?.onPixelSizeChange(displayed) }
+  }
+
+  private var isQuarterTurn: Bool { orientation == 3 || orientation == 4 }
+
+  private var displayedScreenSize: CGSize? {
+    guard let surface = display?.framebufferSurface else { return nil }
+    return isQuarterTurn
+      ? CGSize(width: surface.height, height: surface.width)
+      : CGSize(width: surface.width, height: surface.height)
+  }
+
+  private var rotation: CGFloat {
+    switch orientation {
+    case 2: return .pi
+    case 3: return -.pi / 2
+    case 4: return .pi / 2
+    default: return 0
+    }
+  }
+
+  public override func layout() {
+    super.layout()
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    surfaceLayer.setAffineTransform(.identity)
+    surfaceLayer.bounds = CGRect(
+      origin: .zero,
+      size: isQuarterTurn ? CGSize(width: bounds.height, height: bounds.width) : bounds.size)
+    surfaceLayer.position = CGPoint(x: bounds.midX, y: bounds.midY)
+    surfaceLayer.setAffineTransform(CGAffineTransform(rotationAngle: rotation))
+    CATransaction.commit()
   }
 
   private func scheduleRedraw() {
@@ -101,7 +160,7 @@ public final class SimulatorDisplayNSView: NSView {
       self.redrawPending = false
       // CALayer keeps drawing its cached copy of an IOSurface until told the
       // contents changed; the method is QuartzCore SPI, not public API.
-      _ = self.layer?.perform(NSSelectorFromString("setContentsChanged"))
+      _ = self.surfaceLayer.perform(NSSelectorFromString("setContentsChanged"))
     }
   }
 
@@ -116,7 +175,7 @@ public final class SimulatorDisplayNSView: NSView {
   }
 
   private func releaseInput() {
-    if let touchPoint { hid?.touch(.up, at: touchPoint) }
+    if let touchPoint { hid?.touch(.up, at: nativeScreenPoint(touchPoint, orientation: orientation)) }
     touchPoint = nil
     hid = nil
   }
@@ -128,15 +187,14 @@ public final class SimulatorDisplayNSView: NSView {
   }
 
   private func screenPoint(_ event: NSEvent, clamped: Bool) -> CGPoint? {
-    guard let surface = display?.framebufferSurface else { return nil }
+    guard let screenSize = displayedScreenSize else { return nil }
     return normalizedScreenPoint(
-      convert(event.locationInWindow, from: nil), viewSize: bounds.size,
-      screenSize: CGSize(width: surface.width, height: surface.height), clamped: clamped)
+      convert(event.locationInWindow, from: nil), viewSize: bounds.size, screenSize: screenSize, clamped: clamped)
   }
 
   private func touch(_ phase: TouchPhase, at point: CGPoint) {
     guard let hid = inputClient() else { return }
-    hid.touch(phase, at: point)
+    hid.touch(phase, at: nativeScreenPoint(point, orientation: orientation))
     touchPoint = phase == .up ? nil : point
   }
 
@@ -171,9 +229,8 @@ public final class SimulatorDisplayNSView: NSView {
     if event.phase.contains(.began) {
       guard touchPoint == nil, let point = screenPoint(event, clamped: false) else { return }
       touch(.down, at: point)
-    } else if let last = touchPoint, let surface = display?.framebufferSurface {
-      let fitted = fittedScreenSize(
-        viewSize: bounds.size, screenSize: CGSize(width: surface.width, height: surface.height))
+    } else if let last = touchPoint, let screenSize = displayedScreenSize {
+      let fitted = fittedScreenSize(viewSize: bounds.size, screenSize: screenSize)
       guard fitted.width > 0, fitted.height > 0 else { return }
       let point = CGPoint(
         x: min(max(last.x + event.scrollingDeltaX / fitted.width, 0), 1),
@@ -234,4 +291,16 @@ func normalizedScreenPoint(_ point: CGPoint, viewSize: CGSize, screenSize: CGSiz
   if clamped { return CGPoint(x: min(max(x, 0), 1), y: min(max(y, 0), 1)) }
   guard (0...1).contains(x), (0...1).contains(y) else { return nil }
   return CGPoint(x: x, y: y)
+}
+
+/// Maps a fraction of the upright screen, origin top-left, to a fraction of
+/// the framebuffer in its native portrait orientation, which is what the
+/// simulator's digitizer expects. `orientation` is a UIInterfaceOrientation.
+func nativeScreenPoint(_ point: CGPoint, orientation: UInt32) -> CGPoint {
+  switch orientation {
+  case 2: return CGPoint(x: 1 - point.x, y: 1 - point.y)
+  case 3: return CGPoint(x: point.y, y: 1 - point.x)
+  case 4: return CGPoint(x: 1 - point.y, y: point.x)
+  default: return point
+  }
 }
