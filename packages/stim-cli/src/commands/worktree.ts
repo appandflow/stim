@@ -62,7 +62,20 @@ export function dependencyInstallCommand(target: string, dir = '.'): string {
 }
 
 function reportCarriedStateHealth(root: string, target: string, copied: string[]): void {
-  const staleDeps = depsOutOfSync(root, target, copied);
+  const outOfSync = depsOutOfSync(root, target, copied);
+  for (const d of outOfSync.filter((dependency) => dependency.reason === 'installed')) {
+    const where = d.dir === '.' ? d.lockfile : `${d.dir}/${d.lockfile}`;
+    const modules = d.dir === '.' ? 'node_modules' : `${d.dir}/node_modules`;
+    console.error(
+      chalk.yellow(
+        phaseLine(
+          'carry',
+          `carried ${modules} was installed from a different ${d.lockfile} than the ${where} on disk here. node_modules is gitignored and cloned from the source checkout; ${d.lockfile} is tracked, so the two can disagree. Run \`${dependencyInstallCommand(target, d.dir)}\` before building, or pod install and native builds see the wrong package versions.`,
+        ),
+      ),
+    );
+  }
+  const staleDeps = outOfSync.filter((dependency) => dependency.reason === 'lockfile');
   if (staleDeps.length) {
     const manifests = staleDeps.map((d) => (d.dir === '.' ? d.lockfile : `${d.dir}/${d.lockfile}`)).join(', ');
     const remedies = [...new Set(staleDeps.map((dependency) => dependencyInstallCommand(target, dependency.dir)))];

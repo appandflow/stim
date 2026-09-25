@@ -89,7 +89,12 @@ Warm writes only to stderr: copied, kept, and failed entry counts, plus any
 lockfile remedies. A failure exits 1; files already copied remain. Inspect
 the named failure before retrying, because a partially copied directory is
 kept on retry. A completed copy does not prove dependencies are installed or
-match the current branch. Install missing dependencies with the project's
+match the current branch. When the carried `node_modules` records the lockfile
+it was installed from (npm `node_modules/.package-lock.json`, pnpm
+`node_modules/.pnpm/lock.yaml`, Yarn `.yarn-integrity` or `.yarn-state.yml`),
+warm compares it with this worktree's lockfile and prints the install command
+when they differ. Otherwise it compares the source checkout's lockfile with
+this one. Warm never installs. Install missing dependencies with the project's
 package manager when the source checkout has none to copy.
 
 ## Refresh the source checkout first

@@ -1107,9 +1107,19 @@ not on any remote"  (worktree remove)
   Warm copied Pods but the destination has no Podfile.lock. Follow the printed
   pod-install command before building.
 
+"carry       carried <dir>/node_modules was installed from a different <lockfile> than ..."
+  The carried node_modules records the lockfile it was installed from (npm
+  node_modules/.package-lock.json, pnpm node_modules/.pnpm/lock.yaml, Yarn
+  .yarn-integrity or .yarn-state.yml), and it differs from this worktree's
+  lockfile. This fires even when both checkouts share the lockfile, because
+  the source checkout itself was not reinstalled after it changed. Run the
+  printed install command before building; otherwise pod install and native
+  builds resolve the old package versions.
+
 "carry       carried dependencies may be stale: they do not match ..."
-  The source checkout's lockfile differs from this branch's lockfile. Run the
-  printed package-manager command before building. A carry whose lockfile
+  node_modules records no install state Stim can read (Bun, or no record),
+  and the source checkout's lockfile differs from this branch's lockfile. Run
+  the printed package-manager command before building. A carry whose lockfile
   matches is silent; the warning means a real difference.
 
   If the source checkout has no dependencies to copy, use this project's

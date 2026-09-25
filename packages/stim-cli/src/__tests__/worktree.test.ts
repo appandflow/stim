@@ -370,16 +370,18 @@ function podsFixture({
   return root;
 }
 
-test('depsOutOfSync flags a carried node_modules whose source lockfile differs from the branch checkout', () => {
+test('depsOutOfSync falls back to comparing lockfiles when node_modules records no install state', () => {
   const base = mkdtempSync(join(tmpdir(), 'stim-test-deps-'));
   const root = join(base, 'src');
   const target = join(base, 'wt');
   try {
     mkdirSync(root, { recursive: true });
-    mkdirSync(target, { recursive: true });
+    mkdirSync(join(target, 'node_modules'), { recursive: true });
     writeFileSync(join(root, 'pnpm-lock.yaml'), 'lock-v1');
     writeFileSync(join(target, 'pnpm-lock.yaml'), 'lock-v2');
-    expect(depsOutOfSync(root, target, ['node_modules'])).toEqual([{ dir: '.', lockfile: 'pnpm-lock.yaml' }]);
+    expect(depsOutOfSync(root, target, ['node_modules'])).toEqual([
+      { dir: '.', lockfile: 'pnpm-lock.yaml', reason: 'lockfile' },
+    ]);
     writeFileSync(join(target, 'pnpm-lock.yaml'), 'lock-v1');
     expect(depsOutOfSync(root, target, ['node_modules'])).toEqual([]);
     expect(depsOutOfSync(root, target, ['assets'])).toEqual([]);
@@ -387,6 +389,44 @@ test('depsOutOfSync flags a carried node_modules whose source lockfile differs f
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+// Each fixture is a real install of the same package.json, including
+// platform-specific optional packages (esbuild) and a peer-dependent package
+// (use-sync-external-store): the lockfile and the state the package manager
+// wrote into node_modules, plus the lockfile after is-odd moved to 3.0.0.
+describe.each([
+  { pm: 'npm', lockfile: 'package-lock.json', state: 'node_modules/.package-lock.json' },
+  { pm: 'pnpm', lockfile: 'pnpm-lock.yaml', state: 'node_modules/.pnpm/lock.yaml' },
+  { pm: 'yarn-classic', lockfile: 'yarn.lock', state: 'node_modules/.yarn-integrity' },
+  { pm: 'yarn-berry', lockfile: 'yarn.lock', state: 'node_modules/.yarn-state.yml' },
+])('depsOutOfSync with $pm install state', ({ pm, lockfile, state }) => {
+  const fixture = (name: string) =>
+    readFileSync(join(import.meta.dirname, 'fixtures', 'installed-deps', pm, name), 'utf-8');
+  let base: string;
+  let root: string;
+  let target: string;
+  beforeEach(() => {
+    base = mkdtempSync(join(tmpdir(), 'stim-test-deps-'));
+    root = join(base, 'src');
+    target = join(base, 'wt');
+    mkdirSync(join(target, state, '..'), { recursive: true });
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(target, state), fixture('installed.txt'));
+  });
+  afterEach(() => rmSync(base, { recursive: true, force: true }));
+
+  test('flags node_modules installed from an older lockfile even when both checkouts share the new one', () => {
+    writeFileSync(join(root, lockfile), fixture('lockfile.next.txt'));
+    writeFileSync(join(target, lockfile), fixture('lockfile.next.txt'));
+    expect(depsOutOfSync(root, target, ['node_modules'])).toEqual([{ dir: '.', lockfile, reason: 'installed' }]);
+  });
+
+  test('accepts node_modules installed from this lockfile even when the source lockfile has moved on', () => {
+    writeFileSync(join(root, lockfile), fixture('lockfile.next.txt'));
+    writeFileSync(join(target, lockfile), fixture('lockfile.txt'));
+    expect(depsOutOfSync(root, target, ['node_modules'])).toEqual([]);
+  });
 });
 
 test('carried Pods matching their Podfile.lock produce no warning', () => {
