@@ -110,7 +110,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     .command('ios')
     .description(
       "Build (or restore from the fingerprint cache), install and launch this workspace's app on its owned " +
-        'simulator, wired to the reserved Metro port. Requires a running dev server (`stim start`).',
+        'simulator, wired to the reserved Metro port. A Debug run starts the dev server when it is not running.',
     )
     .option(
       '--eas-profile <name>',
@@ -122,7 +122,10 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
       '--scheme <name>',
       'Shared Xcode app scheme to build; overrides automatic scheme selection, not the app URL scheme',
     )
-    .option('--no-metro-check', 'Skip the "is this workspace\'s dev server running?" gate and build anyway')
+    .option(
+      '--no-metro-check',
+      'Skip the "is this workspace\'s dev server running?" check: do not start it, and build anyway',
+    )
     .option(
       '--no-build-cache',
       "Build fresh, ignoring cached artifacts (local and the project's build-cache provider); the fresh build still replaces the cache entry",

@@ -884,7 +884,8 @@ captured"  (in metro.ndjson, bare RN)
   "The dev server did not answer on port <n> within <s>s."
   The supervisor is alive, but Metro or its requested Expo tunnel is not ready.
   A Debug \`ios\` or \`android\` run that starts the dev server reports the
-  same refusal. \`start\` has already
+  same refusal after the default 60s; re-running it waits for the same
+  supervisor again, and \`stim start --wait 180\` waits longer. \`start\` has already
   printed the last lines of the global workspace logs/supervisor.log above this -- read
   them. A cold Metro on a large graph can genuinely need more than the default
   60s: re-run with \`--wait 180\`. Otherwise \`stim stop\`, then \`start\`.`,

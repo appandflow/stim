@@ -169,7 +169,7 @@ export function registerAndroid(program: Command): void {
     .command('android')
     .description(
       "Build (or install from the shared cache), install and launch this workspace's Android app on its owned " +
-        'emulator, wired to the reserved Metro port. Never starts the bundler -- run `stim start` first.',
+        'emulator, wired to the reserved Metro port. A Debug run starts the dev server when it is not running.',
     )
     .option(
       '--eas-profile <name>',
@@ -179,7 +179,7 @@ export function registerAndroid(program: Command): void {
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
     .option(
       '--no-metro-check',
-      'Skip the reserved-port Metro health check (the app will load no bundle unless something else serves it)',
+      'Skip the reserved-port Metro health check and do not start it (the app will load no bundle unless something else serves it)',
     )
     .option(
       '--no-build-cache',
@@ -831,7 +831,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       }
       metroPort = gate.port;
       devServer = gate.devServer;
-      phase('metro', `port ${metroPort} (${devServer ? `started: ${devServer.reason}` : `pid ${gate.pid}`})`);
+      phase(
+        'metro',
+        `port ${metroPort} (${devServer ? `started: ${devServer.reason}` : `pid ${gate.pid ?? 'unknown, started outside Stim'}`})`,
+      );
       return true;
     } else {
       phase(
