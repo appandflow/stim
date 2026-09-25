@@ -212,12 +212,22 @@ export interface FrameEvent {
   data: string;
 }
 
+/**
+ * Captures for a `frames.subscribe` subscription are slow or a timed-out capture is being retried; the
+ * app keeps showing its last frame. Followed by `delayed: false` once captures recover.
+ */
+export interface FrameDelayedEvent {
+  event: 'frame-delayed';
+  subscription: string;
+  delayed: boolean;
+}
+
 export interface ErrorEvent {
   event: 'error';
   subscription?: string;
   error: ProtocolError;
 }
 
-export type ServerEvent = StatusEvent | LogsEvent | FrameEvent | ErrorEvent;
+export type ServerEvent = StatusEvent | LogsEvent | FrameEvent | FrameDelayedEvent | ErrorEvent;
 
 export type ServerMessage = Response | ServerEvent;

@@ -200,7 +200,17 @@ export interface FrameEvent {
   data: string;
 }
 
-export type ServerEvent = StatusEvent | LogsEvent | FrameEvent | ErrorEvent;
+/**
+ * Captures for a `frames.subscribe` subscription are slow or a timed-out capture is being retried; the
+ * client keeps showing its last frame. Followed by `delayed: false` once captures recover.
+ */
+export interface FrameDelayedEvent {
+  event: 'frame-delayed';
+  subscription: string;
+  delayed: boolean;
+}
+
+export type ServerEvent = StatusEvent | LogsEvent | FrameEvent | FrameDelayedEvent | ErrorEvent;
 
 export type ServerMessage = ServerResponse | ServerEvent;
 
@@ -424,6 +434,16 @@ export function protocolJsonSchema(): JsonSchema {
               height: { type: 'integer' },
               capturedAt: { type: 'string', format: 'date-time' },
               data: { type: 'string', contentEncoding: 'base64' },
+            },
+          },
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'delayed'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'frame-delayed' },
+              subscription: { type: 'string' },
+              delayed: { type: 'boolean' },
             },
           },
           {

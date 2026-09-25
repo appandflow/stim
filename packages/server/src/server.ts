@@ -6,7 +6,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { configDir } from '@stim-cli/core';
 import { isJsonObject, loadConfig, type StatusPayload } from '@stim-cli/core/state';
 import { FeedPool, type JsonObject } from './feed.ts';
-import { deviceKey, FramePool, ownedDevice, type Frame } from './frames.ts';
+import { DEFAULT_FRAME_LIMITS, deviceKey, FramePool, ownedDevice, type Frame, type FrameLimits } from './frames.ts';
 import { LogBatcher, logArgs, parseLogFilter, type LogLimits } from './logs.ts';
 import {
   PROTOCOL_VERSION,
@@ -45,6 +45,7 @@ export interface ServerOptions {
   failureWindowMs?: number;
   logLimits?: Partial<LogLimits>;
   commandLimits?: Partial<CommandLimits>;
+  frameLimits?: Partial<FrameLimits>;
 }
 
 interface ServerHealth {
@@ -157,7 +158,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const limiter = new FailureLimiter(options.maxAuthFailures ?? 5, options.failureWindowMs ?? 60_000);
   const authTimeoutMs = options.authTimeoutMs ?? 5000;
   const feeds = new FeedPool(options.stimCli, options.env);
-  const frames = new FramePool(options.env);
+  const frameLimits: FrameLimits = { ...DEFAULT_FRAME_LIMITS, ...options.frameLimits };
+  const frames = new FramePool(options.env, frameLimits);
   const running = new Set<() => Promise<void>>();
   const logLimits: LogLimits = { ...LOG_LIMITS, ...options.logLimits };
   const commandLimits: CommandLimits = { ...COMMAND_LIMITS, ...options.commandLimits };
@@ -397,6 +399,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         frame: (frame: Frame) => {
           pending = frame;
           if (!retry) flush();
+        },
+        delayed: (delayed: boolean) => {
+          if (!ended) send(socket, { event: 'frame-delayed', subscription, delayed });
         },
         failed: end,
       };

@@ -4,7 +4,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { ActivityChip } from '@/components/activity-chip';
 import { BuildProgressBar } from '@/components/build-progress';
 import { Card } from '@/components/card';
-import { StatusDot } from '@/components/chip';
+import { Chip, StatusDot } from '@/components/chip';
 import { useFrame } from '@/hooks/mac-connection';
 import type { DeviceRef } from '@/lib/workspaces';
 import type { BuildReport } from '@/protocol/types';
@@ -23,7 +23,7 @@ export function DeviceTile({
 }) {
   const colors = useColors();
   const streams = device.running && device.owned && !device.physical;
-  const { frame, error } = useFrame(workspace, device.platform, device.slot, streams);
+  const { frame, error, delayed } = useFrame(workspace, device.platform, device.slot, streams);
   const aspect = frame && frame.height > 0 ? frame.width / frame.height : device.platform === 'ios' ? 0.46 : 0.45;
   return (
     <Card>
@@ -42,6 +42,7 @@ export function DeviceTile({
       </View>
       <View style={styles.badges}>
         <ActivityChip activity={device.activity} />
+        {streams && delayed ? <Chip tint={colors.warn}>Screen updates delayed</Chip> : null}
       </View>
       {build ? (
         <View style={styles.build}>

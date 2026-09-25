@@ -123,21 +123,35 @@ export function useLogs(filter: LogFilter | null, onChange: (change: LogsChange)
   }, [connection, key, onChange]);
 }
 
+interface FrameState {
+  key: string;
+  frame: FrameEvent | null;
+  error: string | null;
+  delayed: boolean;
+}
+
+const EMPTY_FRAME_STATE: Omit<FrameState, 'key'> = { frame: null, error: null, delayed: false };
+
 export function useFrame(
   workspace: string,
   platform: 'ios' | 'android',
   slot: string,
   enabled: boolean,
-): { frame: FrameEvent | null; error: string | null } {
+): { frame: FrameEvent | null; error: string | null; delayed: boolean } {
   const { connection } = useMacConnection();
-  const [latest, setLatest] = useState<{ key: string; frame: FrameEvent | null; error: string | null } | null>(null);
+  const [latest, setLatest] = useState<FrameState | null>(null);
   const key = connection && enabled ? `${workspace}\n${platform}\n${slot}` : null;
   useEffect(() => {
     if (!connection || key === null) return;
     return connection.subscribe('frames.subscribe', { workspace, platform, slot }, (event) => {
-      if (event.event === 'frame') setLatest({ key, frame: event, error: null });
-      if (event.event === 'error') setLatest({ key, frame: null, error: event.error.message });
+      setLatest((prev) => {
+        const base = prev && prev.key === key ? prev : { key, ...EMPTY_FRAME_STATE };
+        if (event.event === 'frame') return { key, frame: event, error: null, delayed: false };
+        if (event.event === 'frame-delayed') return { ...base, key, delayed: event.delayed };
+        if (event.event === 'error') return { key, frame: null, error: event.error.message, delayed: false };
+        return base;
+      });
     });
   }, [connection, key, workspace, platform, slot]);
-  return latest && latest.key === key ? latest : { frame: null, error: null };
+  return latest && latest.key === key ? latest : EMPTY_FRAME_STATE;
 }
