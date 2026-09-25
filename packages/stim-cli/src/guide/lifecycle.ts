@@ -192,7 +192,16 @@ TWO REPORTS, TWO QUESTIONS
   "What is running" is \`stim status\`: live state, right now. "How much the
   cache saved" is \`stim stats\`: aggregate counters for this project and for
   the machine, with a hit rate and an estimate of the time saved (see
-  \`guide facts stats\`).`,
+  \`guide facts stats\`).
+
+WAITING FOR A CHANGE
+  To wait for a device, a build or a dev server instead of polling, run
+  \`stim status --watch --json\`. It keeps running and prints one complete
+  status payload per line: one at once, then one each time the payload
+  changes, never two identical ones in a row. It reacts to Stim state files,
+  the EAS session ledger, adb device arrivals and departures, and simulator
+  state, and recomputes every 30 seconds as a fallback. Ctrl+C, SIGTERM or
+  closing its stdout ends it with exit 0. Without --json it reprints the human view on change.`,
   sections: {
     eas: {
       summary: 'download a matching EAS development build; explicit profile, costs, cache and miss remedies',
@@ -1008,7 +1017,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
                   unlock [ios|android] --slot <name> --json
   logs            --slot <name> --source --level --since --grep --tail --follow --errors --json
   stop            --slot <name> --json
-  status          --json          (already machine-wide)
+  status          --json --watch  (already machine-wide)
   stats           --json          (this project and machine-wide)
   doctor          --json --fix --platform <ios|android>
                                   (--platform keeps shared checks and filters native findings)

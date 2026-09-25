@@ -1,4 +1,6 @@
 import { projectDeviceSlots } from '../devices/device-slots.ts';
+import { createRefreshScheduler, WATCH_DEBOUNCE_MS, WATCH_FALLBACK_MS, watchStatusSources } from '../status-watch.ts';
+import type { StatusSources } from '../status-watch.ts';
 import chalk from 'chalk';
 import { existsSync } from 'fs';
 import { totalmem } from 'os';
@@ -43,6 +45,7 @@ type SupervisorRecordExt = SupervisorRecord & { mode?: string | null };
 
 interface StatusOptions {
   json?: boolean;
+  watch?: boolean;
 }
 
 function formatGb(mb: number): string {
@@ -56,211 +59,245 @@ export default function statusCommand(program: Command): void {
       'Show every environment on this machine: devices, ports, what is actually running, and anything stuck.',
     )
     .option('--json', 'print the state as JSON')
+    .option('--watch', 'keep running and print the state again each time it changes')
     .action(async (opts: StatusOptions) => {
-      const cfg = loadConfig();
-      const projects = Object.entries(cfg?.projects || {});
-      const cwdRoot = findProjectRoot(process.cwd());
+      if (opts.watch) return watchStatus(Boolean(opts.json));
+      for (const line of await statusLines(Boolean(opts.json))) console.log(line);
+    });
+}
 
-      const simsByUdid: Record<string, IosSimRecord> = {};
-      let simsAvailable = true;
-      let simctlError: string | null = null;
-      try {
-        for (const sim of listAllIosSims()) simsByUdid[sim.udid] = sim;
-      } catch (e) {
-        simsAvailable = false;
-        simctlError = String((e as Error)?.message || e).split('\n')[0] ?? '';
-      }
+async function statusLines(json: boolean): Promise<string[]> {
+  const out: string[] = [];
+  const cfg = loadConfig();
+  const projects = Object.entries(cfg?.projects || {});
+  const cwdRoot = findProjectRoot(process.cwd());
 
-      const source = resolveSourceCheckout(process.cwd());
-      const sourcePath = 'path' in source ? source.path : null;
-      const worktrees: WorktreeEntry[] = source.entries.filter((entry) => !entry.bare && entry.path !== sourcePath);
+  const simsByUdid: Record<string, IosSimRecord> = {};
+  let simsAvailable = true;
+  let simctlError: string | null = null;
+  try {
+    for (const sim of listAllIosSims()) simsByUdid[sim.udid] = sim;
+  } catch (e) {
+    simsAvailable = false;
+    simctlError = String((e as Error)?.message || e).split('\n')[0] ?? '';
+  }
 
-      const states: EnvironmentState[] = [];
-      const labelOnlyRoots: boolean[] = [];
-      const easLedger = readEasSessionLedger();
-      for (const [path, proj] of projects) {
-        let metro: MetroResolution | null = null;
-        if (proj.metroPort) {
-          metro = await resolveOnPort(proj.metroPort, path);
-        }
-        const supervisor = await supervisorFacts(path, proj, metro);
-        states.push(
-          environmentState(
-            { ...proj, __path: path },
-            {
-              simsByUdid,
-              metro,
-              worktrees,
-              simsAvailable,
-              androidRuntimes: Object.fromEntries(
-                projectDeviceSlots(proj)
-                  .slice(1)
-                  .map(({ slot, platforms }) => [
-                    slot,
-                    platforms.android?.owned && platforms.android.avdName
-                      ? readAndroidRuntime(platforms.android.avdName)
-                      : null,
-                  ]),
-              ),
-              androidRuntime:
-                proj.platforms?.android?.owned && proj.platforms.android.avdName
-                  ? readAndroidRuntime(proj.platforms.android.avdName)
+  const source = resolveSourceCheckout(process.cwd());
+  const sourcePath = 'path' in source ? source.path : null;
+  const worktrees: WorktreeEntry[] = source.entries.filter((entry) => !entry.bare && entry.path !== sourcePath);
+
+  const states: EnvironmentState[] = [];
+  const labelOnlyRoots: boolean[] = [];
+  const easLedger = readEasSessionLedger();
+  for (const [path, proj] of projects) {
+    let metro: MetroResolution | null = null;
+    if (proj.metroPort) {
+      metro = await resolveOnPort(proj.metroPort, path);
+    }
+    const supervisor = await supervisorFacts(path, proj, metro);
+    states.push(
+      environmentState(
+        { ...proj, __path: path },
+        {
+          simsByUdid,
+          metro,
+          worktrees,
+          simsAvailable,
+          androidRuntimes: Object.fromEntries(
+            projectDeviceSlots(proj)
+              .slice(1)
+              .map(({ slot, platforms }) => [
+                slot,
+                platforms.android?.owned && platforms.android.avdName
+                  ? readAndroidRuntime(platforms.android.avdName)
                   : null,
-              supervisor,
-              logs: logFacts(path),
-              remote: remoteDeviceState(readRemoteSession(path), easLedger, path),
-            },
+              ]),
           ),
+          androidRuntime:
+            proj.platforms?.android?.owned && proj.platforms.android.avdName
+              ? readAndroidRuntime(proj.platforms.android.avdName)
+              : null,
+          supervisor,
+          logs: logFacts(path),
+          remote: remoteDeviceState(readRemoteSession(path), easLedger, path),
+        },
+      ),
+    );
+    const state = states[states.length - 1];
+    labelOnlyRoots.push(
+      Boolean(proj.worktreeRoot && !proj.bundleId && !state?.metro && !state?.ios && !state?.android),
+    );
+  }
+
+  const leaseNow = Date.now();
+  const leases = deviceLeaseStates(listLeaseFiles(), { root: cwdRoot, now: leaseNow });
+
+  const totalMemoryMb = Math.round(totalmem() / (1024 * 1024));
+  const cap = capacity(states, totalMemoryMb);
+  const orphanWorktrees = unprovisionedWorktrees(
+    worktrees,
+    projects.map(([p]) => p),
+  );
+  const pools = (['ios', 'android'] as const).map((platform) => {
+    const { max, error } = parkedMaxSetting(platform);
+    return { error, line: poolLine({ platform, parked: readParked(platform).length, max }) };
+  });
+
+  if (json) {
+    out.push(
+      JSON.stringify({
+        environments: states.map((state, i) => (labelOnlyRoots[i] ? { ...state, labelOnly: true } : state)),
+        capacity: cap,
+        deviceLeases: leases,
+        unprovisionedWorktrees: orphanWorktrees,
+        simctlAvailable: simsAvailable,
+      }),
+    );
+    return out;
+  }
+
+  if (projects.length === 0 && orphanWorktrees.length === 0) {
+    out.push(chalk.dim('No projects registered.'));
+    for (const pool of pools) {
+      if (pool.error) out.push(chalk.yellow(`${pool.error} ${POOL_SETTING_REMEDY}`));
+      if (pool.line) out.push(chalk.dim(pool.line));
+    }
+    for (const line of deviceLeaseLines(leases, leaseNow)) out.push(line);
+    return out;
+  }
+
+  if (!simsAvailable) {
+    out.push(chalk.yellow(`simctl could not be read (${simctlError}), so no iOS sim below could be checked.`));
+  }
+
+  for (const [i, [path, proj]] of projects.entries()) {
+    const state = states[i];
+    if (!state) continue;
+    const shortcut = projectShortcut(path, proj);
+    const marker = path === cwdRoot ? chalk.bold.cyan(`* ${shortcut}`) : shortcut;
+    const idle = state.live ? '' : chalk.dim(' [idle]');
+    out.push(`\n${marker}${idle} ${chalk.dim(`(${path})`)}`);
+    out.push(
+      labelOnlyRoots[i]
+        ? chalk.dim('  worktree root (holds the label; the app registers its own entry)')
+        : chalk.dim(`  app: ${proj.bundleId ?? '?'} (${proj.isExpo ? 'expo' : 'bare'})`),
+    );
+
+    if (state.metro) {
+      const label = state.metro.running ? chalk.green(`running (pid ${state.metro.pid})`) : chalk.dim('not running');
+      out.push(`  metro: port ${state.metro.port} ${label}`);
+    }
+    if (state.supervisor) {
+      const health = state.supervisor.healthy ? chalk.green('healthy') : chalk.yellow('not answering');
+      const mode = state.supervisor.mode ? chalk.dim(` (${state.supervisor.mode})`) : '';
+      out.push(`  supervisor: pid ${state.supervisor.pid}${mode} ${health}`);
+    }
+    if (state.logs) {
+      const n = state.logs.errorsSinceMarker;
+      const errs = n > 0 ? chalk.yellow(` (${n} error${n === 1 ? '' : 's'} since the last marker)`) : '';
+      out.push(chalk.dim(`  logs: ${state.logs.dir}`) + errs);
+    }
+    for (const deviceState of [{ slot: 'default', ios: state.ios, android: state.android }, ...(state.slots ?? [])]) {
+      const slotLabel = deviceState.slot === 'default' ? '' : ` [${deviceState.slot}]`;
+      if (deviceState.ios) {
+        const booted =
+          deviceState.ios.state === 'Booted' ? chalk.green('booted') : chalk.dim(deviceState.ios.state.toLowerCase());
+        const owned = deviceState.ios.owned ? chalk.dim(' (owned)') : '';
+        out.push(`  ios${slotLabel}: ${chalk.cyan(deviceState.ios.name ?? deviceState.ios.udid)} ${booted}${owned}`);
+      }
+      if (deviceState.android) {
+        const kind = deviceState.android.physical ? chalk.dim('(physical)') : chalk.dim('(emulator)');
+        const observed = deviceState.android.state
+          ? ` ${deviceState.android.state}${deviceState.android.serial ? ` (${deviceState.android.serial})` : ''}`
+          : '';
+        out.push(
+          `  android${slotLabel}: ${chalk.cyan(deviceState.android.name)} ${kind}${observed}${deviceState.android.owned ? chalk.dim(' (owned)') : ''}`,
         );
-        const state = states[states.length - 1];
-        labelOnlyRoots.push(
-          Boolean(proj.worktreeRoot && !proj.bundleId && !state?.metro && !state?.ios && !state?.android),
-        );
       }
+    }
+    for (const remote of state.remoteDevices ?? []) out.push(`  ${remoteDeviceLine(remote)}`);
+    for (const w of state.warnings) out.push(chalk.yellow(`  ! ${w}`));
+  }
 
-      const leaseNow = Date.now();
-      const leases = deviceLeaseStates(listLeaseFiles(), { root: cwdRoot, now: leaseNow });
+  for (const pool of pools) {
+    if (pool.error) out.push(chalk.yellow(`\n${pool.error} ${POOL_SETTING_REMEDY}`));
+    if (pool.line) out.push(chalk.dim(`\n${pool.line}`));
+  }
 
-      const totalMemoryMb = Math.round(totalmem() / (1024 * 1024));
-      const cap = capacity(states, totalMemoryMb);
-      const orphanWorktrees = unprovisionedWorktrees(
-        worktrees,
-        projects.map(([p]) => p),
-      );
-      const pools = (['ios', 'android'] as const).map((platform) => {
-        const { max, error } = parkedMaxSetting(platform);
-        return { error, line: poolLine({ platform, parked: readParked(platform).length, max }) };
-      });
+  const leaseLines = deviceLeaseLines(leases, leaseNow);
+  if (leaseLines.length) {
+    out.push('');
+    for (const line of leaseLines) out.push(line);
+  }
 
-      if (opts.json) {
-        console.log(
-          JSON.stringify({
-            environments: states.map((state, i) => (labelOnlyRoots[i] ? { ...state, labelOnly: true } : state)),
-            capacity: cap,
-            deviceLeases: leases,
-            unprovisionedWorktrees: orphanWorktrees,
-            simctlAvailable: simsAvailable,
-          }),
-        );
-        return;
-      }
+  if (orphanWorktrees.length) {
+    out.push(chalk.dim(`\nWorktrees with no environment (${orphanWorktrees.length}):`));
+    for (const w of orphanWorktrees) out.push(chalk.dim(`  ${w.path}${w.branch ? ` [${w.branch}]` : ''}`));
+  }
 
-      if (projects.length === 0 && orphanWorktrees.length === 0) {
-        console.log(chalk.dim('No projects registered.'));
-        for (const pool of pools) {
-          if (pool.error) console.log(chalk.yellow(`${pool.error} ${POOL_SETTING_REMEDY}`));
-          if (pool.line) console.log(chalk.dim(pool.line));
-        }
-        for (const line of deviceLeaseLines(leases, leaseNow)) console.log(line);
-        return;
-      }
-
-      if (!simsAvailable) {
-        console.log(chalk.yellow(`simctl could not be read (${simctlError}), so no iOS sim below could be checked.`));
-      }
-
-      for (const [i, [path, proj]] of projects.entries()) {
-        const state = states[i];
-        if (!state) continue;
-        const shortcut = projectShortcut(path, proj);
-        const marker = path === cwdRoot ? chalk.bold.cyan(`* ${shortcut}`) : shortcut;
-        const idle = state.live ? '' : chalk.dim(' [idle]');
-        console.log(`\n${marker}${idle} ${chalk.dim(`(${path})`)}`);
-        console.log(
-          labelOnlyRoots[i]
-            ? chalk.dim('  worktree root (holds the label; the app registers its own entry)')
-            : chalk.dim(`  app: ${proj.bundleId ?? '?'} (${proj.isExpo ? 'expo' : 'bare'})`),
-        );
-
-        if (state.metro) {
-          const label = state.metro.running
-            ? chalk.green(`running (pid ${state.metro.pid})`)
-            : chalk.dim('not running');
-          console.log(`  metro: port ${state.metro.port} ${label}`);
-        }
-        if (state.supervisor) {
-          const health = state.supervisor.healthy ? chalk.green('healthy') : chalk.yellow('not answering');
-          const mode = state.supervisor.mode ? chalk.dim(` (${state.supervisor.mode})`) : '';
-          console.log(`  supervisor: pid ${state.supervisor.pid}${mode} ${health}`);
-        }
-        if (state.logs) {
-          const n = state.logs.errorsSinceMarker;
-          const errs = n > 0 ? chalk.yellow(` (${n} error${n === 1 ? '' : 's'} since the last marker)`) : '';
-          console.log(chalk.dim(`  logs: ${state.logs.dir}`) + errs);
-        }
-        for (const deviceState of [
-          { slot: 'default', ios: state.ios, android: state.android },
-          ...(state.slots ?? []),
-        ]) {
-          const slotLabel = deviceState.slot === 'default' ? '' : ` [${deviceState.slot}]`;
-          if (deviceState.ios) {
-            const booted =
-              deviceState.ios.state === 'Booted'
-                ? chalk.green('booted')
-                : chalk.dim(deviceState.ios.state.toLowerCase());
-            const owned = deviceState.ios.owned ? chalk.dim(' (owned)') : '';
-            console.log(
-              `  ios${slotLabel}: ${chalk.cyan(deviceState.ios.name ?? deviceState.ios.udid)} ${booted}${owned}`,
-            );
-          }
-          if (deviceState.android) {
-            const kind = deviceState.android.physical ? chalk.dim('(physical)') : chalk.dim('(emulator)');
-            const observed = deviceState.android.state
-              ? ` ${deviceState.android.state}${deviceState.android.serial ? ` (${deviceState.android.serial})` : ''}`
-              : '';
-            console.log(
-              `  android${slotLabel}: ${chalk.cyan(deviceState.android.name)} ${kind}${observed}${deviceState.android.owned ? chalk.dim(' (owned)') : ''}`,
-            );
-          }
-        }
-        for (const remote of state.remoteDevices ?? []) console.log(`  ${remoteDeviceLine(remote)}`);
-        for (const w of state.warnings) console.log(chalk.yellow(`  ! ${w}`));
-      }
-
-      for (const pool of pools) {
-        if (pool.error) console.log(chalk.yellow(`\n${pool.error} ${POOL_SETTING_REMEDY}`));
-        if (pool.line) console.log(chalk.dim(`\n${pool.line}`));
-      }
-
-      const leaseLines = deviceLeaseLines(leases, leaseNow);
-      if (leaseLines.length) {
-        console.log('');
-        for (const line of leaseLines) console.log(line);
-      }
-
-      if (orphanWorktrees.length) {
-        console.log(chalk.dim(`\nWorktrees with no environment (${orphanWorktrees.length}):`));
-        for (const w of orphanWorktrees) console.log(chalk.dim(`  ${w.path}${w.branch ? ` [${w.branch}]` : ''}`));
-      }
-
-      console.log(
-        chalk.dim(
-          `\n${cap.liveCount} live environment(s), roughly ${formatGb(cap.committedMb)} of ${formatGb(cap.totalMemoryMb)} committed.`,
+  out.push(
+    chalk.dim(
+      `\n${cap.liveCount} live environment(s), roughly ${formatGb(cap.committedMb)} of ${formatGb(cap.totalMemoryMb)} committed.`,
+    ),
+  );
+  const volumes = readVolumes(cwdRoot || process.cwd());
+  const line = diskLine(volumes);
+  if (line) {
+    const tight = tightVolumes(volumes);
+    if (tight.length) {
+      const which = tight.map((v) => v.volume).join(' and ');
+      out.push(
+        chalk.yellow(
+          `${line} A single iOS build can exhaust ${which} -- run \`stim gc\` before starting another environment.`,
         ),
       );
-      const volumes = readVolumes(cwdRoot || process.cwd());
-      const line = diskLine(volumes);
-      if (line) {
-        const tight = tightVolumes(volumes);
-        if (tight.length) {
-          const which = tight.map((v) => v.volume).join(' and ');
-          console.log(
-            chalk.yellow(
-              `${line} A single iOS build can exhaust ${which} -- run \`stim gc\` before starting another environment.`,
-            ),
-          );
-        } else {
-          console.log(chalk.dim(line));
-        }
+    } else {
+      out.push(chalk.dim(line));
+    }
+  }
+  if (cap.overCapacity) {
+    out.push(
+      chalk.yellow(
+        'Over comfortable capacity. A machine that swaps is slower than one working in sequence -- release one before starting another.',
+      ),
+    );
+  }
+  return out;
+}
+
+async function watchStatus(json: boolean): Promise<void> {
+  let last: string | null = null;
+  let sources: StatusSources | null = null;
+  const scheduler = createRefreshScheduler({
+    debounceMs: WATCH_DEBOUNCE_MS,
+    run: async () => {
+      let text: string;
+      try {
+        text = (await statusLines(json)).join('\n');
+      } catch (error) {
+        console.error(chalk.red(String((error as Error)?.message || error)));
+        return;
+      } finally {
+        sources?.reconcile();
       }
-      if (cap.overCapacity) {
-        console.log(
-          chalk.yellow(
-            'Over comfortable capacity. A machine that swaps is slower than one working in sequence -- release one before starting another.',
-          ),
-        );
-      }
-    });
+      if (text === last) return;
+      last = text;
+      process.stdout.write(`${!json && process.stdout.isTTY ? '\x1b[2J\x1b[H' : ''}${text}\n`);
+    },
+  });
+  const fallback = setInterval(() => scheduler.trigger(), WATCH_FALLBACK_MS);
+  const finish = () => {
+    clearInterval(fallback);
+    scheduler.stop();
+    sources?.stop();
+    process.exit(0);
+  };
+  process.on('SIGINT', finish);
+  process.on('SIGTERM', finish);
+  process.stdout.on('error', finish);
+  sources = watchStatusSources({ home: getConfigDir(), onChange: () => scheduler.trigger() });
+  scheduler.trigger(0);
+  await new Promise<never>(() => {});
 }
 
 function readAndroidRuntime(avdName: string): AndroidRuntimeFacts {
