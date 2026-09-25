@@ -194,7 +194,7 @@ enum LogRowText {
     if let slot = record.slot { add("[\(slot)] ", Theme.lavender) }
     let lines = record.msg.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
     let first = lines.first.map(String.init) ?? ""
-    add(first.replacingOccurrences(of: "\t", with: "  "), record.level >= .error ? Theme.error : Theme.text)
+    add(abbreviatingHome(first).replacingOccurrences(of: "\t", with: "  "), record.level >= .error ? Theme.error : Theme.text)
     let extra = record.msg.reduce(0) { $1 == "\n" ? $0 + 1 : $0 } + (record.stack?.count ?? 0)
     if extra > 0 { add("  +\(extra) lines", Theme.tertiary) }
     return text

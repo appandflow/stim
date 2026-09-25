@@ -159,7 +159,7 @@ struct MachineSummary: View {
   var body: some View {
     HStack(spacing: 18) {
       if let error = store.error {
-        Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.warn)
+        Label(abbreviatingHome(error), systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.warn)
       }
       if let cap = store.payload?.capacity {
         HStack(spacing: 6) {

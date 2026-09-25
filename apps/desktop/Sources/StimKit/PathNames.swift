@@ -1,3 +1,5 @@
+import Foundation
+
 /// Short display names for a workspace path.
 ///
 /// A worktree under `.worktrees/<name>` or `worktrees/<name>` is titled by its
@@ -21,4 +23,13 @@ public struct PathNames: Hashable, Sendable {
     title = parts.last ?? path
     subtitle = parts.count > 1 ? parts[parts.count - 2] : ""
   }
+}
+
+/// `text` with the home directory written as `~` wherever a path starts with it.
+public func abbreviatingHome(_ text: String, home: String = NSHomeDirectory()) -> String {
+  guard home.count > 1, text.contains(home) else { return text }
+  let pattern = "(?<![\\w./-])" + NSRegularExpression.escapedPattern(for: home) + "(?![\\w.-])"
+  guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
+  return regex.stringByReplacingMatches(
+    in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "~")
 }

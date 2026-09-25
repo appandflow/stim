@@ -217,7 +217,7 @@ struct StorageView: View {
             Image(systemName: workspace.buildOutputsKept == nil ? "trash" : "lock")
               .font(.system(size: 9))
               .foregroundStyle(workspace.buildOutputsKept == nil ? Theme.warn : Theme.tertiary)
-              .help(workspace.buildOutputsKept.map { "Kept by stim gc --delete: \($0)" } ?? "stim gc --delete clears these")
+              .help(workspace.buildOutputsKept.map { "Kept by stim gc --delete: \(abbreviatingHome($0))" } ?? "stim gc --delete clears these")
           }
         }
       size(workspace.nodeModules)
@@ -246,7 +246,7 @@ struct StorageView: View {
   private func lifecycleChip(_ lifecycle: WorktreeLifecycle?, worktree: GcReport.LinkedWorktree?) -> some View {
     switch lifecycle {
     case .merged:
-      Chip(tint: Theme.live) { Text(lifecycle!.title) }.help(worktree?.detail ?? "")
+      Chip(tint: Theme.live) { Text(lifecycle!.title) }.help(abbreviatingHome(worktree?.detail ?? ""))
     case .pullRequest(_, let url):
       Button { URL(string: url).map { _ = NSWorkspace.shared.open($0) } } label: {
         Chip(tint: Theme.remote) { Text(lifecycle!.title) }
@@ -344,7 +344,7 @@ struct StorageView: View {
       VStack(alignment: .leading, spacing: 3) {
         Text(location.title)
         if let detail = location.detail {
-          Text(detail.replacingOccurrences(of: NSHomeDirectory(), with: "~")).font(Theme.body(11.5))
+          Text(abbreviatingHome(detail)).font(Theme.body(11.5))
             .foregroundStyle(Theme.secondary).lineLimit(1).truncationMode(.middle)
         }
       }

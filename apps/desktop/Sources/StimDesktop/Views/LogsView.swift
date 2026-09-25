@@ -146,7 +146,7 @@ struct LogsView: View {
         Text(model.pinnedToLatest ? "Following" : "Paused")
       case .ended(let message):
         StatusDot(color: Theme.error)
-        Text(message).lineLimit(1).truncationMode(.middle).help(message)
+        Text(abbreviatingHome(message)).lineLimit(1).truncationMode(.middle).help(abbreviatingHome(message))
       case .idle:
         EmptyView()
       }
@@ -229,9 +229,9 @@ private struct RecordDetail: View {
           if let event = record.event { Text(event).foregroundStyle(Theme.tertiary) }
           if let proc = record.proc { Text(proc).foregroundStyle(Theme.tertiary) }
         }
-        Text(record.msg).foregroundStyle(Theme.text)
+        Text(abbreviatingHome(record.msg)).foregroundStyle(Theme.text)
         ForEach(Array((record.stack ?? []).enumerated()), id: \.offset) { _, frame in
-          Text("  at \(frame.description)").foregroundStyle(Theme.secondary)
+          Text("  at \(abbreviatingHome(frame.description))").foregroundStyle(Theme.secondary)
         }
       }
       .font(Theme.mono(11.5))

@@ -24,14 +24,14 @@ struct ActivitySheet: View {
         Spacer()
         status
       }
-      CommandText(command: run.steps.map(\.shellLine).joined(separator: "\n"))
+      CommandText(command: run.steps.map { $0.displayLine() }.joined(separator: "\n"))
 
       if case .success(let report) = report {
         GcPreviewView(report: report)
         DisclosureGroup("Output") { output.frame(height: 160) }
       } else {
         if case .failure(let failure) = report {
-          Label(failure.localizedDescription, systemImage: "xmark.octagon.fill").foregroundStyle(Theme.error)
+          Label(abbreviatingHome(failure.localizedDescription), systemImage: "xmark.octagon.fill").foregroundStyle(Theme.error)
         }
         output
       }
@@ -105,7 +105,7 @@ struct ActivitySheet: View {
 
   @ViewBuilder private var status: some View {
     if let error = run.launchError {
-      Chip(tint: Theme.error) { Text(error) }
+      Chip(tint: Theme.error) { Text(abbreviatingHome(error)) }
     } else if let code = run.exitStatus {
       Chip(tint: code == 0 ? Theme.live : Theme.error) {
         Image(systemName: code == 0 ? "checkmark.circle.fill" : "xmark.octagon.fill")
@@ -124,7 +124,7 @@ struct ActivitySheet: View {
       ScrollView {
         LazyVStack(alignment: .leading, spacing: 1) {
           ForEach(Array(run.lines.enumerated()), id: \.offset) { index, line in
-            Text(line.text.isEmpty ? " " : line.text)
+            Text(line.text.isEmpty ? " " : abbreviatingHome(line.text))
               .foregroundStyle(line.channel == .stderr ? Theme.secondary : Theme.text)
               .frame(maxWidth: .infinity, alignment: .leading)
               .id(index)
@@ -177,13 +177,13 @@ struct GcPreviewView: View {
         .foregroundStyle(entry.kept == nil ? Theme.warn : Theme.tertiary)
         .frame(width: 14)
       VStack(alignment: .leading, spacing: 2) {
-        Text(entry.label.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+        Text(abbreviatingHome(entry.label))
           .font(Theme.mono())
           .foregroundStyle(entry.kept == nil ? Theme.text : Theme.secondary)
           .lineLimit(1)
           .truncationMode(.middle)
         if let kept = entry.kept {
-          Text("kept: \(kept)").foregroundStyle(Theme.tertiary).lineLimit(2)
+          Text("kept: \(abbreviatingHome(kept))").foregroundStyle(Theme.tertiary).lineLimit(2)
         }
       }
       Spacer()

@@ -124,7 +124,7 @@ struct AppPreferencesView: View {
         Toggle("Launch at login", isOn: $launchesAtLogin)
           .onChange(of: launchesAtLogin) { _, enabled in setLaunchAtLogin(enabled) }
         if let loginError {
-          Text(loginError).foregroundStyle(Theme.error)
+          Text(abbreviatingHome(loginError)).foregroundStyle(Theme.error)
         }
       }
 
@@ -202,9 +202,9 @@ private struct AutopilotLogRow: View {
           Spacer()
           Text(entry.date.formatted(date: .abbreviated, time: .shortened)).foregroundStyle(Theme.tertiary)
         }
-        Text(entry.command).font(Theme.mono()).foregroundStyle(Theme.secondary)
+        Text(abbreviatingHome(entry.command)).font(Theme.mono()).foregroundStyle(Theme.secondary)
         if let note = entry.note {
-          Text(note).font(Theme.body(11.5)).foregroundStyle(Theme.tertiary).lineLimit(2)
+          Text(abbreviatingHome(note)).font(Theme.body(11.5)).foregroundStyle(Theme.tertiary).lineLimit(2)
         }
       }
     }

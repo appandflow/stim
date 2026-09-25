@@ -119,7 +119,7 @@ struct Inspector: View {
       VStack(alignment: .leading, spacing: 24) {
         VStack(alignment: .leading, spacing: 8) {
           SectionLabel(title: "Workspace")
-          Text(env.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+          Text(abbreviatingHome(env.path))
             .font(Theme.mono())
             .foregroundStyle(Theme.secondary)
             .textSelection(.enabled)
@@ -191,7 +191,7 @@ struct Inspector: View {
           VStack(alignment: .leading, spacing: 8) {
             SectionLabel(title: "Warnings")
             ForEach(env.warnings, id: \.self) { warning in
-              Label(warning, systemImage: "exclamationmark.triangle.fill")
+              Label(abbreviatingHome(warning), systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(Theme.warn)
                 .textSelection(.enabled)
             }
@@ -277,7 +277,7 @@ struct Inspector: View {
   }
 
   private func removalMessage(branch: String?) -> String {
-    let path = env.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+    let path = abbreviatingHome(env.path)
     return """
       Worktree: \(path)
       Branch: \(branch ?? "none (detached HEAD)")

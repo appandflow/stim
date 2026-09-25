@@ -74,6 +74,16 @@ import Testing
     #expect(names.subtitle == "app")
   }
 
+  @Test func abbreviatesOnlyPathsThatStartAtHome() {
+    #expect(abbreviatingHome("/Users/jan", home: "/Users/jan") == "~")
+    #expect(abbreviatingHome("/Users/jan/app/.worktrees/x", home: "/Users/jan") == "~/app/.worktrees/x")
+    #expect(abbreviatingHome("/Users/janic/x", home: "/Users/jan") == "/Users/janic/x")
+    #expect(abbreviatingHome("/private/Users/jan/x", home: "/Users/jan") == "/private/Users/jan/x")
+    #expect(
+      abbreviatingHome("kept: '/Users/jan/a' and /Users/janic/b, /Users/jan/c", home: "/Users/jan")
+        == "kept: '~/a' and /Users/janic/b, ~/c")
+  }
+
   @Test func projectFromGitCommonDir() {
     #expect(Project(gitCommonDir: "/Users/dev/app/.git").root == "/Users/dev/app")
     #expect(Project(gitCommonDir: "/srv/app.git").root == "/srv/app.git")
@@ -142,6 +152,14 @@ import Testing
         "cd '/Users/dev/it'\\''s here' && stim ios",
         "cd '/Users/dev/it'\\''s here' && stim android",
       ])
+  }
+
+  @Test func displaysHomePathsFromTildeAndStaysAShellLine() {
+    #expect(
+      StimCommand(["worktree", "remove", "/Users/jan/app/.worktrees/x"], cwd: "/Users/jan/it's here").displayLine(
+        home: "/Users/jan") == "cd ~/'it'\\''s here' && stim worktree remove ~/app/.worktrees/x")
+    #expect(StimCommand(["gc"], cwd: "/Users/jan").displayLine(home: "/Users/jan") == "cd ~ && stim gc")
+    #expect(StimCommand(["gc"], cwd: "/Users/janic").displayLine(home: "/Users/jan") == "cd '/Users/janic' && stim gc")
   }
 }
 

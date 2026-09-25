@@ -77,7 +77,7 @@ private struct ScopeSettingsView: View {
           Picker("Workspace", selection: $workspace) {
             Text("None").tag(String?.none)
             ForEach(workspaces, id: \.self) { path in
-              Text("\(PathNames(path: path).title) \u{2014} \(path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))")
+              Text("\(PathNames(path: path).title) \u{2014} \(abbreviatingHome(path))")
                 .tag(String?.some(path))
             }
           }
@@ -85,7 +85,7 @@ private struct ScopeSettingsView: View {
         }
       }
       if let file = model.payload?.file(for: scope) {
-        Text(file.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+        Text(abbreviatingHome(file))
           .font(Theme.mono())
           .foregroundStyle(Theme.secondary)
           .textSelection(.enabled)
@@ -136,9 +136,9 @@ private struct ScopeSettingsView: View {
         ForEach(entries, id: \.self) { entry in
           HStack(alignment: .firstTextBaseline) {
             Text(entry.key).font(Theme.mono(12))
-            Text(entry.value?.display ?? "").font(Theme.mono()).foregroundStyle(Theme.secondary).lineLimit(1)
+            Text(abbreviatingHome(entry.value?.display ?? "")).font(Theme.mono()).foregroundStyle(Theme.secondary).lineLimit(1)
             Spacer()
-            Text(entry.file.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+            Text(abbreviatingHome(entry.file))
               .font(Theme.body(11)).foregroundStyle(Theme.tertiary).lineLimit(1).truncationMode(.head)
           }
         }
@@ -188,7 +188,7 @@ private struct SettingRow: View {
       .disabled(model.writing.contains(id))
       facts
       if let refusal = model.refusals[id] {
-        Text(refusal).font(Theme.body(11.5)).foregroundStyle(Theme.error).textSelection(.enabled)
+        Text(abbreviatingHome(refusal)).font(Theme.body(11.5)).foregroundStyle(Theme.error).textSelection(.enabled)
       }
     }
     .padding(.vertical, 12)
@@ -198,16 +198,16 @@ private struct SettingRow: View {
     HStack(spacing: 12) {
       if let entry {
         if let origin = entry.origin {
-          Text("Effective: \(entry.value.display) from \(origin)")
+          Text(abbreviatingHome("Effective: \(entry.value.display) from \(origin)"))
         } else {
           Text("Not set")
         }
         if let lower = entry.overridden(by: scope, field: field) {
-          Text(layerValue == nil ? "Setting it here overrides \(lower.source): \(lower.value.display)"
-            : "Overrides \(lower.source): \(lower.value.display)")
+          Text(abbreviatingHome(layerValue == nil ? "Setting it here overrides \(lower.source): \(lower.value.display)"
+            : "Overrides \(lower.source): \(lower.value.display)"))
         }
         if let env = entry.env {
-          Text("\(env.name)=\(env.value) in the environment wins").foregroundStyle(Theme.warn)
+          Text(abbreviatingHome("\(env.name)=\(env.value) in the environment wins")).foregroundStyle(Theme.warn)
         }
       }
     }
