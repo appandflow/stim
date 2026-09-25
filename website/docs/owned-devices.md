@@ -275,10 +275,10 @@ Parking erases a simulator with `simctl erase` and wipes an emulator's user
 data and snapshots, so a parked device takes a few megabytes instead of
 gigabytes. The adopting workspace pays a first boot, about 15 seconds for a
 simulator and 20 for an emulator, and installs its app again. Stim erases a
-simulator only after it reports `Shutdown`: it waits up to 15 seconds and
-retries the shutdown once. A simulator that stays booted is deleted instead,
-and `stim worktree remove` prints `could not park <name>: ... -- deleted it
-instead`.
+simulator only after it reports `Shutdown`: it waits up to 15 seconds,
+retries the shutdown once, and waits up to 15 seconds more. A simulator that
+stays booted is deleted instead, and `stim worktree remove` prints `could not
+park <name>: ... -- deleted it instead`.
 
 Android adoption requires the same system image, disk size and AVD creation
 settings. It keeps the AVD name. For an emulator parked with its data by an

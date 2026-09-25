@@ -525,8 +525,9 @@ result as proof instead of requiring an unrelated screenshot.`,
   profile survives the erase.
 
   Park erases only a simulator that reports Shutdown. It waits up to 15s for
-  the shutdown to settle and retries the shutdown once. A simulator that is
-  still booted after that is deleted instead, and \`worktree remove\` prints
+  the shutdown to settle, retries the shutdown once, and waits up to 15s more.
+  A simulator that is still booted after that is deleted instead, and
+  \`worktree remove\` prints
   \`could not park <name>: ... -- deleted it instead\`.
 
   Adoption matches the device type AND the runtime EXACTLY: a ticket that asks
