@@ -348,8 +348,8 @@ Branch on the code, never on the message.`,
   Trust, then run the command again. It is a per-developer-certificate tap, not
   a per-build one -- but an uninstall clears it, including the one Stim's own
   signer-conflict retry performs.
-  On a REMOTE device the remedy names the EAS Simulator session that is still
-  running, as for STIM_INSTALL_FAILED.`,
+  With \`--remote eas\` the remedy names the EAS Simulator session that is
+  still running, as for STIM_INSTALL_FAILED.`,
     },
     STIM_NO_SCHEME: {
       summary: 'Xcode schemes unavailable or no unambiguous app scheme in ios/',
