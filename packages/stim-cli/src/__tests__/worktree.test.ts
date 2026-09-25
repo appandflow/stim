@@ -422,9 +422,9 @@ describe.each([
     expect(depsOutOfSync(root, target, ['node_modules'])).toEqual([{ dir: '.', lockfile, reason: 'installed' }]);
   });
 
-  test('accepts node_modules installed from this lockfile even when the source lockfile has moved on', () => {
+  test('accepts node_modules installed from this lockfile, checked out with CRLF, even when the source lockfile has moved on', () => {
     writeFileSync(join(root, lockfile), fixture('lockfile.next.txt'));
-    writeFileSync(join(target, lockfile), fixture('lockfile.txt'));
+    writeFileSync(join(target, lockfile), fixture('lockfile.txt').replaceAll('\r\n', '\n').replaceAll('\n', '\r\n'));
     expect(depsOutOfSync(root, target, ['node_modules'])).toEqual([]);
   });
 });

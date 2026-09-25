@@ -384,7 +384,7 @@ function installedMatchesLockfile(
 ): boolean | null {
   const text = (rel: string): string | null => {
     try {
-      return read(join(dir, rel), 'utf-8');
+      return read(join(dir, rel), 'utf-8').replaceAll('\r\n', '\n');
     } catch {
       return null;
     }
