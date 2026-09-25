@@ -1,3 +1,4 @@
+import { sep } from 'path';
 import type { BuildReport } from './engine/build-progress.ts';
 import { projectDeviceSlots } from './devices/device-slots.ts';
 import { clockTime, formatElapsed, formatLongDuration, plural } from './command-output.ts';
@@ -38,6 +39,7 @@ interface LogsFacts {
 export interface WorktreeFacts {
   path: string;
   branch?: string;
+  repository?: string;
 }
 
 export interface AndroidRuntimeFacts {
@@ -306,8 +308,10 @@ export function tightVolumes(volumes: VolumeInfo[] | null | undefined): VolumeIn
 }
 
 export function unprovisionedWorktrees(worktrees: WorktreeFacts[], projectPaths: string[]): WorktreeFacts[] {
-  const known = new Set(projectPaths);
-  return worktrees.filter((w) => !known.has(w.path));
+  return worktrees.filter((w) => {
+    const inside = w.path.endsWith(sep) ? w.path : w.path + sep;
+    return !projectPaths.some((p) => p === w.path || p.startsWith(inside));
+  });
 }
 
 export interface DeviceLeaseState {

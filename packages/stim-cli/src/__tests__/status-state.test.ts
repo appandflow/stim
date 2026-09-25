@@ -1,4 +1,5 @@
 import assert from 'node:assert';
+import { join } from 'node:path';
 import {
   activityLabel,
   capacity,
@@ -87,9 +88,12 @@ test('capacity says nothing when the machine size is unknown', () => {
   expect(capacity([makeEnvironmentState({ memoryMb: 9999 })], 0).overCapacity).toBe(false);
 });
 
-test('unprovisioned worktrees are the ones with no registered environment', () => {
-  const worktrees = [{ path: '/wt/a' }, { path: '/wt/b' }];
-  expect(unprovisionedWorktrees(worktrees, ['/wt/a']).map((w) => w.path)).toEqual(['/wt/b']);
+test('unprovisioned worktrees are the ones with no registered environment in or below them', () => {
+  const wt = (...parts: string[]) => join('/wt', ...parts);
+  const worktrees = [{ path: wt('a') }, { path: wt('b') }, { path: wt('c') }, { path: wt('d') }];
+  expect(
+    unprovisionedWorktrees(worktrees, [wt('a'), wt('b', 'apps', 'mobile'), wt('c-other')]).map((w) => w.path),
+  ).toEqual([wt('c'), wt('d')]);
 });
 
 test('poolLine reports a bounded pool and a disabled pool that still has parked devices', () => {

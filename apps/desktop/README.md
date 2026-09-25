@@ -24,7 +24,9 @@ in the workspace directory:
 
 A linked worktree Stim has not registered yet, listed in `unprovisionedWorktrees`
 of `stim status --json`, appears under Idle in the sidebar with its project and
-is marked "no environment". It has no action. Selecting it shows its path and
+is marked "no environment". The project comes from the entry's `repository`,
+so the app does not run git in a worktree that may sit in a macOS-protected
+folder. It has no action. Selecting it shows its path and
 branch and the `stim start`, `stim ios` and `stim android` commands that create
 its environment, each with a Copy button.
 

@@ -4,6 +4,7 @@ import type { StatusSources } from '../status-watch.ts';
 import chalk from 'chalk';
 import { existsSync } from 'fs';
 import { totalmem } from 'os';
+import { basename, dirname } from 'path';
 import type { Command } from 'commander';
 import { getConfigDir, loadConfig } from '../workspace/config.ts';
 import type { ProjectRecord, SupervisorRecord } from '../workspace/config.ts';
@@ -19,7 +20,7 @@ import { findProjectRoot, projectShortcut } from '../workspace/project.ts';
 import { listAllIosSimsAsync } from '../devices/ios.ts';
 import { ownedAvdSerialResolver, type ResolvedAvdSerial } from '../devices/android.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
-import { gitCommonDir, repoRoot, resolveSourceCheckout } from '../workspace/worktree.ts';
+import { gitCommonDir, gitCommonDirOnDisk, linkedWorktreesOnDisk, repoRoot } from '../workspace/worktree.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { readStats, statsProjectKey, type RunHistory } from '../engine/stats.ts';
 import {
@@ -30,7 +31,6 @@ import {
   parseActiveBuild,
   type BuildReport,
 } from '../engine/build-progress.ts';
-import type { WorktreeEntry } from '../workspace/worktree.ts';
 import { volumeRootFor } from '../fs-util.ts';
 import { listLeaseFiles } from '../engine/device-lease.ts';
 import { readEasSessionLedger } from '../engine/eas-session-ledger.ts';
@@ -51,7 +51,7 @@ import {
   unprovisionedWorktrees,
 } from '../status.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../devices/sim-pool.ts';
-import type { AndroidRuntimeFacts, EnvironmentState, VolumeInfo } from '../status.ts';
+import type { AndroidRuntimeFacts, EnvironmentState, VolumeInfo, WorktreeFacts } from '../status.ts';
 
 type SupervisorRecordExt = SupervisorRecord & { mode?: string | null };
 
@@ -95,10 +95,6 @@ async function statusLines(json: boolean): Promise<string[]> {
   );
   processes.catch(() => {});
 
-  const source = resolveSourceCheckout(process.cwd());
-  const sourcePath = 'path' in source ? source.path : null;
-  const worktrees: WorktreeEntry[] = source.entries.filter((entry) => !entry.bare && entry.path !== sourcePath);
-
   const androidRuntimeOf = androidRuntimeReader();
   const devices = projects.map(([, proj]) => ({
     androidRuntimes: Object.fromEntries(
@@ -126,6 +122,7 @@ async function statusLines(json: boolean): Promise<string[]> {
     simctlError = String((e as Error)?.message || e).split('\n')[0] ?? '';
   }
   const running = await processes;
+  const worktrees = linkedWorktrees([process.cwd(), ...projects.map(([path]) => path)]);
 
   const history = readStats().record?.history;
   const states: EnvironmentState[] = [];
@@ -348,6 +345,14 @@ async function watchStatus(json: boolean): Promise<void> {
 function activitySuffix(activity: DeviceActivity | undefined): string {
   const label = activityLabel(activity, Date.now());
   return label ? ` -- ${activity?.state === 'driven' ? chalk.magenta(label) : chalk.dim(label)}` : '';
+}
+
+function linkedWorktrees(paths: string[]): WorktreeFacts[] {
+  const commonDirs = new Set(paths.flatMap((path) => gitCommonDirOnDisk(path) ?? []));
+  return [...commonDirs].flatMap((common) => {
+    const repository = basename(common) === '.git' ? dirname(common) : common;
+    return linkedWorktreesOnDisk(common).map((entry) => Object.assign(entry, { repository }));
+  });
 }
 
 function workspaceBuild(path: string, history: Record<string, RunHistory> | undefined): BuildReport | null {
