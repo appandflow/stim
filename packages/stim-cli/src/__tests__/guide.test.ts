@@ -368,6 +368,10 @@ test('the viewer override is discoverable beside the machine preference and boot
   }
 });
 
+test('emulator boot guidance routes the emulator viewer preference to the settings topic', () => {
+  expect(renderTopic('lifecycle')).toContain('androidEmulatorApp');
+});
+
 test('the settings topic documents every registered setting and its environment override', () => {
   const body = renderTopic('settings');
   assert(body);

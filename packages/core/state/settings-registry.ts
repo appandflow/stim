@@ -63,6 +63,8 @@ export const REMOTE_DEVICE_BACKENDS: readonly RemoteDeviceBackend[] = ['proxy', 
 
 export const IOS_SIMULATOR_APPS = ['xcode', 'siniulator', 'stim-desktop'] as const;
 
+export const ANDROID_EMULATOR_APPS = ['emulator', 'stim-desktop'] as const;
+
 const PROJECT: readonly SettingScope[] = ['workspace', 'repo', 'committed'];
 const EVERY: readonly SettingScope[] = ['machine', 'workspace', 'repo', 'committed'];
 const MACHINE: readonly SettingScope[] = ['machine'];
@@ -244,6 +246,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 'xcode',
     description: 'App that displays an owned iOS simulator',
+  },
+  {
+    key: 'androidEmulatorApp',
+    type: { kind: 'choice', choices: ANDROID_EMULATOR_APPS },
+    scopes: MACHINE,
+    default: 'emulator',
+    description: 'App that displays an owned Android emulator Stim boots on macOS',
   },
   {
     key: 'concurrency.maxBuilds',

@@ -1118,6 +1118,39 @@ test('bootAndroidEmulator starts the emulator tree from the home directory on Wi
   expect(args[2]).not.toContain('-crash-report-mode');
 });
 
+test('only androidEmulatorApp stim-desktop on macOS boots a headless emulator and opens it in Stim Desktop', () => {
+  const sdk = makeFakeSdk(tmpHome);
+  process.env.ANDROID_HOME = sdk;
+  const savedDisplay = process.env.DISPLAY;
+  process.env.DISPLAY = ':0';
+  const spawned: string[][] = [];
+  const opened: string[][] = [];
+  setExecutor({
+    runQuiet: () => null,
+    runFileQuiet: (file: string, args: string[] = []) => {
+      opened.push([file, ...args]);
+      return null;
+    },
+    spawn: (_cmd: string, args: string[]) => {
+      spawned.push(args);
+      return { unref: () => {}, pid: 42 };
+    },
+  });
+  try {
+    bootAndroidEmulator('stim-app', 5554, { platform: 'darwin' });
+    writeFileSync(join(tmpHome, 'config.json'), JSON.stringify({ androidEmulatorApp: 'stim-desktop' }));
+    bootAndroidEmulator('stim-app', 5556, { platform: 'darwin' });
+    bootAndroidEmulator('stim-app', 5558, { platform: 'linux' });
+  } finally {
+    if (savedDisplay === undefined) delete process.env.DISPLAY;
+    else process.env.DISPLAY = savedDisplay;
+  }
+  expect(spawned[0]).not.toContain('-no-window');
+  expect(spawned[1]?.slice(-3)).toEqual(['-no-window', '-gpu', 'host']);
+  expect(spawned[2]).not.toContain('-no-window');
+  expect(opened).toEqual([['open', '-g', '-a', 'Stim', 'stim-desktop://open?serial=emulator-5556']]);
+});
+
 test('suppressEmulatorCrashConsent passes -crash-report-mode never to emulator 37+, and removes the crash database for an older one', () => {
   const removed: string[] = [];
   const databases = () => ['C:\\tmp\\AndroidEmulator\\emu-crash-36.2.12.db'];

@@ -173,6 +173,10 @@ ANDROID EMULATOR RESTARTS
   started is alive. Stim keeps waiting on the same emulator; it never
   launches a duplicate. See \`stim guide errors STIM_NO_DEVICE\` for the
   wait windows, diagnostics, and recovery steps.
+  On macOS, top-level androidEmulatorApp "stim-desktop" in the machine config
+  boots owned emulators without a window and shows them in Stim Desktop; see
+  guide settings. An emulator that is already running keeps its current
+  display until it next boots.
 
 DESTRUCTIVE COMMANDS -- ask the user first
   gc --delete             deletes orphaned devices Stim created, tens of GB

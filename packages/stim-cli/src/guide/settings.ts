@@ -186,7 +186,9 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         On displayless Linux, Stim launches with
                         -gpu swiftshader_indirect -noaudio; those arguments
                         override hw.gpu.enabled, hw.gpu.mode, hw.audioInput,
-                        and hw.audioOutput for that headless launch.
+                        and hw.audioOutput for that headless launch. With
+                        androidEmulatorApp "stim-desktop" on macOS, -gpu host
+                        overrides hw.gpu.mode the same way.
   android.variant       e.g. "productionDebug" -- the gradle variant to
                         assemble and install on a project with product
                         flavors. A repo like tlon-mobile with
@@ -388,6 +390,22 @@ Stim Desktop before selecting it. By default, closing a Siniulator device
 window shuts down that simulator. Enable "Leave simulator running after window
 is closed" in Siniulator Settings if Stim should keep it running. See \`guide lifecycle simslim\` for
 window behavior.
+
+THE ANDROID EMULATOR APP IS MACHINE-LEVEL
+Top-level \`androidEmulatorApp\` in ~/.stim/config.json selects how an owned
+Android emulator that Stim boots on macOS is displayed. Unset or
+\`"emulator"\` opens the emulator's own window. To boot it headlessly and show
+it in Stim Desktop instead:
+
+  { "androidEmulatorApp": "stim-desktop" }
+
+Stim then starts the emulator with \`-no-window -gpu host\` and opens
+\`stim-desktop://open?serial=<serial>\` in the background. Stim Desktop reads
+frames and sends input over the emulator's gRPC endpoint. The setting applies
+only when Stim boots the emulator: one that is already running keeps its
+current display until it next boots, and physical devices are unaffected.
+An invalid value refuses before boot. On Linux and Windows the setting has
+no effect.
 
 THE DEVICE POOL BOUNDS ARE MACHINE-LEVEL TOO
 \`pool.iosParkedMax\` caps how many parked simulators \`worktree remove\` may

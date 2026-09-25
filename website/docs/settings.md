@@ -186,6 +186,8 @@ identity and storage paths.
 The validated keys cover CPU count, RAM, heap size, screen density, graphics,
 orientation, network conditions, and common hardware switches. On displayless Linux,
 Stim also launches the emulator with `-no-window -noaudio -no-boot-anim`.
+With `androidEmulatorApp` set to `"stim-desktop"` on macOS, Stim launches it with
+`-no-window -gpu host`; see [Machine settings](#machine-settings).
 Every owned emulator starts its gRPC endpoint on the console port plus 3000
 with token authentication (`-grpc <port> -grpc-use-token`); Stim Desktop reads
 emulator frames from it and sends input through it while **Take over** is on.
@@ -200,6 +202,7 @@ Run `stim guide settings` for the complete key and value list.
   "concurrency": { "maxBuilds": 2, "maxDevices": 3 },
   "budget": { "minFreeDiskGb": 20, "hardFloorDiskGb": 5 },
   "iosSimulatorApp": "xcode",
+  "androidEmulatorApp": "emulator",
   "tempDir": "/Volumes/SSD/stim-tmp",
   "pool": { "iosParkedMax": 3, "androidParkedMax": 3 },
   "caches": {
@@ -223,6 +226,15 @@ Override it for one launch with `stim ios --simulator-app siniulator`,
 `stim ios --simulator-app stim-desktop`, or `stim ios --simulator-app xcode`. The flag also opens an already running owned
 simulator without rebooting it and leaves the saved preference unchanged. It
 only applies to local simulators.
+
+`androidEmulatorApp` chooses how an owned Android emulator that Stim boots on
+macOS is displayed. `"emulator"` (the default) opens the emulator's own window.
+`"stim-desktop"` boots it with `-no-window -gpu host` and opens it in Stim
+Desktop, which renders frames and sends input through the emulator's gRPC
+endpoint. It applies only when Stim boots the emulator: an emulator that is
+already running keeps its current display until it next boots, and physical
+devices are unaffected. It has no effect on Linux or Windows. An invalid value
+refuses before boot. There is no per-run flag.
 
 `pool.iosParkedMax` bounds the simulators `worktree remove` parks for a later
 workspace to adopt. Absent means 3; `0` turns parking and adoption off. When

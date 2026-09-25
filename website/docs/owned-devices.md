@@ -55,6 +55,21 @@ one launch. Stim Desktop selects the workspace that owns the simulator and
 focuses that device. It only displays the simulator; it never boots or shuts
 it down.
 
+Owned Android emulators open their own window by default. To boot them without
+a window on macOS and show them in Stim Desktop instead, set
+`"androidEmulatorApp": "stim-desktop"`:
+
+```sh
+stim settings set androidEmulatorApp stim-desktop
+```
+
+Stim then starts newly booted owned emulators with `-no-window -gpu host`, which
+keeps GPU acceleration, and opens `stim-desktop://open?serial=<serial>` in the
+background so Stim Desktop focuses that emulator. An emulator that is already
+running keeps its current display until it next boots, and physical devices are
+unaffected. Stim's maintainer runs with `"iosSimulatorApp": "stim-desktop"`;
+setting both shows every owned device in Stim Desktop.
+
 An iPhone Duo simulator shows both of its screens side by side, and the
 unlit one stays black. While **Take over** is on, its tile has a **Fold /
 Unfold** button that sweeps the simulated hinge to the other posture. The
