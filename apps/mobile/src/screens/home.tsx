@@ -1,4 +1,4 @@
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -43,6 +43,13 @@ export function Home() {
   const { macs, connections } = useMacs();
   const { filters, update, view, setView } = useHomeFilters();
   const [visible, setVisible] = useState<Set<string>>(new Set());
+  const [focused, setFocused] = useState(true);
+  useFocusEffect(
+    useCallback(() => {
+      setFocused(true);
+      return () => setFocused(false);
+    }, []),
+  );
   const onViewable = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken<DeviceTileItem>[] }) =>
       setVisible(new Set(viewableItems.map((token) => token.key))),
@@ -170,7 +177,7 @@ export function Home() {
             <DeviceGridTile
               tile={tile}
               connection={byMac.get(tile.item.macId)?.connection ?? null}
-              visible={visible.has(tile.key)}
+              visible={focused && visible.has(tile.key)}
               onPress={() => openWorkspace(tile.item, false)}
             />
           )}

@@ -283,8 +283,9 @@ export function useAction(workspace: string): WorkspaceActions {
 }
 
 /**
- * A device's latest frame, refreshed every `intervalMs`: it subscribes until one frame arrives, then
- * unsubscribes, so the server's capture loop runs only briefly for each refresh.
+ * A device's latest frame, refreshed `intervalMs` after the previous one arrives: it subscribes until one frame
+ * arrives, then unsubscribes, so the server's capture loop runs only briefly for each refresh. After an error
+ * the delay doubles, up to a minute, until a frame arrives again.
  */
 export function useFrameSnapshot(
   connection: StimConnection | null,
@@ -293,21 +294,28 @@ export function useFrameSnapshot(
   slot: string,
   enabled: boolean,
   intervalMs: number,
-): FrameEvent | null {
-  const [latest, setLatest] = useState<{ key: string; frame: FrameEvent } | null>(null);
+): { frame: FrameEvent | null; error: string | null } {
+  const [latest, setLatest] = useState<{ key: string; frame: FrameEvent | null; error: string | null } | null>(null);
   const key = connection && enabled ? `${workspace}\n${platform}\n${slot}` : null;
   useEffect(() => {
     if (!connection || key === null) return;
     let unsubscribe: (() => void) | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;
+    let delay = intervalMs;
     const refresh = () => {
       unsubscribe = connection.subscribe('frames.subscribe', { workspace, platform, slot }, (event) => {
         if (event.event !== 'frame' && event.event !== 'error') return;
-        if (event.event === 'frame') setLatest({ key, frame: event });
+        if (event.event === 'frame') {
+          setLatest({ key, frame: event, error: null });
+          delay = intervalMs;
+        } else {
+          setLatest((prev) => ({ key, frame: prev?.key === key ? prev.frame : null, error: event.error.message }));
+          delay = Math.min(delay * 2, 60_000);
+        }
         unsubscribe?.();
         unsubscribe = null;
-        if (!stopped) timer = setTimeout(refresh, intervalMs);
+        if (!stopped) timer = setTimeout(refresh, delay);
       });
     };
     refresh();
@@ -317,5 +325,5 @@ export function useFrameSnapshot(
       if (timer) clearTimeout(timer);
     };
   }, [connection, key, workspace, platform, slot, intervalMs]);
-  return latest && latest.key === key ? latest.frame : null;
+  return latest && latest.key === key ? latest : { frame: null, error: null };
 }

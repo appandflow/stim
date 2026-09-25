@@ -16,9 +16,10 @@ and shows what Stim Desktop shows, without any actions:
   the list to a grid of every running simulator and emulator on every paired
   machine, with its latest frame, model, workspace, branch and machine.
   Tapping a tile opens its workspace. The grid follows the machine and
-  project filters. Each tile on screen asks for a new frame every 2 seconds
-  and unsubscribes after it arrives, so off-screen tiles cost nothing and the
-  server's capture loop runs only briefly. The chosen view is saved on the
+  project filters. Each tile on screen asks for one frame, unsubscribes when
+  it arrives, and asks again 2 seconds later, backing off after errors. Tiles
+  off screen, or under another screen, ask for nothing, and the server's
+  capture loop runs only briefly. The chosen view is saved on the
   phone.
 - **Filters**: the funnel button filters the list by machine, by project, by live
   or idle, and to workspaces with errors or with remote sessions. The filters

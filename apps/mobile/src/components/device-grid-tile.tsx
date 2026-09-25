@@ -26,7 +26,7 @@ export function DeviceGridTile({
   const colors = useColors();
   const { item, device } = tile;
   const streams = device.owned && !device.physical;
-  const frame = useFrameSnapshot(
+  const { frame, error } = useFrameSnapshot(
     connection,
     item.env.path,
     device.platform,
@@ -48,16 +48,21 @@ export function DeviceGridTile({
           {frame ? (
             <Image
               source={{ uri: `data:${frame.mime};base64,${frame.data}` }}
-              style={{ height: SCREEN_HEIGHT - 16, aspectRatio: aspect, borderRadius: 6 }}
+              style={{ height: SCREEN_HEIGHT - 16, maxWidth: '100%', aspectRatio: aspect, borderRadius: 6 }}
               contentFit="contain"
               transition={0}
             />
           ) : (
             <Text style={[styles.placeholder, { color: colors.tertiary }]}>
-              {streams ? 'Waiting for a frame' : 'Frames are only served for devices Stim owns.'}
+              {streams ? (error ?? 'Waiting for a frame') : 'Frames are only served for devices Stim owns.'}
             </Text>
           )}
         </View>
+        {frame && error ? (
+          <Text style={[styles.stale, { color: colors.warn }]} numberOfLines={2}>
+            {error}
+          </Text>
+        ) : null}
         <View style={styles.meta}>
           <Text style={[styles.model, { color: colors.text }]} numberOfLines={1}>
             {device.model}
@@ -81,12 +86,13 @@ export function DeviceGridTile({
 }
 
 const styles = StyleSheet.create({
-  tile: { flex: 1 },
+  tile: { flex: 1, maxWidth: '50%' },
   card: { flex: 1 },
   pressed: { opacity: 0.7 },
   screen: { height: SCREEN_HEIGHT, alignItems: 'center', justifyContent: 'center', padding: 8 },
   placeholder: { fontSize: 12, textAlign: 'center', paddingHorizontal: 8 },
   meta: { padding: 10, gap: 2 },
+  stale: { fontSize: 11, paddingHorizontal: 10, paddingTop: 8 },
   model: { fontSize: 14, fontWeight: '600' },
   detail: { fontSize: 12, flexShrink: 1 },
   mac: { flexDirection: 'row', alignItems: 'center', gap: 4 },
