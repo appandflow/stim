@@ -20,7 +20,7 @@ struct WorkspaceDetail: View {
 
   var body: some View {
     let devices = env.orderedDevices
-    let focused = devices.first { $0.id == focusedID } ?? devices.first
+    let focused = devices.first { $0.id == focusedID } ?? env.devices.first
     HStack(spacing: 0) {
       VStack(spacing: 0) {
         Picker("View", selection: $tab) {
