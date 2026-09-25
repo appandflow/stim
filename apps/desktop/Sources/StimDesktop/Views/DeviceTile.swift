@@ -9,7 +9,7 @@ struct DeviceTile: View {
   var screenHeight: CGFloat
   var interactive = false
   var workspace: String?
-  var build: Build?
+  var build: Build? = nil
   @State private var pixelSizes: [UInt32: CGSize] = [:]
   @State private var screenIDs: [UInt32] = [1]
   @State private var folding = false

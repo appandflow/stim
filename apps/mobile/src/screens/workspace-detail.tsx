@@ -155,7 +155,6 @@ export function WorkspaceDetail({ path }: { path: string }) {
           key={`${device.platform}-${device.slot}`}
           workspace={env.path}
           device={device}
-          build={runningBuild(env, device)}
           warnings={byDevice.get(device) ?? []}
         />
       ))}
