@@ -11,10 +11,10 @@ import {
 } from 'node:fs';
 import { get } from 'node:http';
 import { createServer as createHttp2Server, type ServerHttp2Stream } from 'node:http2';
-import { homedir, tmpdir } from 'node:os';
+import { homedir, tmpdir, totalmem } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
-import type { HelloResult, ServerMessage } from '../src/protocol.ts';
+import type { HelloResult, MachineUsage, ServerMessage } from '../src/protocol.ts';
 import { readAudit } from '../src/actions.ts';
 import {
   capabilitiesFor,
@@ -307,7 +307,7 @@ describe('pairing', () => {
     expect(reply).toMatchObject({
       result: {
         protocol: 1,
-        server: { name: 'Test Mac', version: '1.2.3', stim: '9.9.9' },
+        server: { name: 'Test Mac', version: '1.2.3', stim: '9.9.9', home: homedir() },
         capabilities: ['read'],
         actions: [],
       },
@@ -699,6 +699,24 @@ describe('logs.subscribe', () => {
     expect(await client.request('unsubscribe', { subscription: 's1' })).toMatchObject({
       error: { code: 'unknown-subscription' },
     });
+  });
+});
+
+describe('machine.get', () => {
+  it('reports the volumes holding Stim state, merged per volume, without running stim', async () => {
+    const port = await start();
+    const client = await authed(port);
+    const reply = await client.request('machine.get');
+    if (!('result' in reply)) throw new Error(JSON.stringify(reply));
+    const usage = reply.result as MachineUsage;
+    const shared = usage.volumes.find((v) => v.holds.includes('Stim home'));
+    expect(shared?.holds).toContain('Workspaces');
+    expect(usage.volumes.filter((v) => v.holds.includes('Workspaces'))).toHaveLength(1);
+    expect(shared!.freeBytes).toBeGreaterThan(0);
+    expect(shared!.freeBytes).toBeLessThanOrEqual(shared!.totalBytes);
+    expect(usage.memory.totalBytes).toBe(totalmem());
+    expect(usage.load.cpus).toBeGreaterThan(0);
+    expect(stimCalls()).toEqual([]);
   });
 });
 

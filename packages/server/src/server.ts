@@ -9,6 +9,7 @@ import { actionArgs, actionOutcome, appendAudit, parseAction, type AuditRecord }
 import { FeedPool, type JsonObject } from './feed.ts';
 import { DEFAULT_FRAME_LIMITS, deviceKey, FramePool, ownedDevice, type Frame, type FrameLimits } from './frames.ts';
 import { LogBatcher, logArgs, parseLogFilter, type LogLimits } from './logs.ts';
+import { readMachineUsage } from './machine.ts';
 import {
   ACTIONS,
   PROTOCOL_VERSION,
@@ -269,7 +270,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       sessions.set(socket, device);
       const result: HelloResult = {
         protocol: PROTOCOL_VERSION,
-        server: { name: options.name, version: options.serverVersion, stim: options.stimVersion },
+        server: { name: options.name, version: options.serverVersion, stim: options.stimVersion, home: homedir() },
         capabilities: device.capabilities,
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
         device: { id: device.id, name: device.name },
@@ -611,6 +612,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (message.method === 'logs.query') return queryLogs(id, message.params);
       if (message.method === 'frames.subscribe') return subscribeFrames(id, message.params);
       if (message.method === 'build.plan') return planBuild(id, message.params);
+      if (message.method === 'machine.get') return send(socket, { id, result: await readMachineUsage() });
       if (message.method === 'stats.get' || message.method === 'settings.get') {
         return workspaceCommand(id, message.method, message.params);
       }

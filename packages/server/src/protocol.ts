@@ -18,6 +18,7 @@ export const METHODS = [
   'settings.get',
   'frames.subscribe',
   'build.plan',
+  'machine.get',
   'unsubscribe',
   'action',
 ] as const;
@@ -73,8 +74,11 @@ export interface HelloParams {
 
 export interface HelloResult {
   protocol: number;
-  /** The Mac's name, this package's version, and the version of the `stim` it runs. */
-  server: { name: string; version: string; stim: string };
+  /**
+   * The Mac's name, this package's version, the version of the `stim` it runs, and the home directory of the
+   * user it runs as, so clients can show paths under it as `~/...`.
+   */
+  server: { name: string; version: string; stim: string; home: string };
   capabilities: Capability[];
   /** The actions this device may run: every one of {@link ACTIONS} with `control`, none without. */
   actions: ActionName[];
@@ -176,6 +180,27 @@ export interface BuildPlanParams {
 
 /** `stim ios|android --plan --json`. It builds, boots and installs nothing, and writes no Stim state. */
 export type BuildPlanResult = BuildPlanPayload;
+export type MemoryPressure = 'normal' | 'warning' | 'critical';
+
+/** A volume that holds Stim workspaces, Stim home, or the simulators. */
+export interface MachineVolume {
+  /** `/`, or `/Volumes/<name>` for an external volume. */
+  mount: string;
+  /** What Stim keeps there: `Workspaces`, `Stim home`, `Simulators`. */
+  holds: string[];
+  /** Free space without purgeable space, which is what Stim's disk budget measures. */
+  freeBytes: number;
+  totalBytes: number;
+}
+
+/** Cheap machine usage, read in the server process without running `stim`. */
+export interface MachineUsage {
+  volumes: MachineVolume[];
+  /** `pressure` is the macOS memory pressure level; null on other systems or when it cannot be read. */
+  memory: { totalBytes: number; pressure: MemoryPressure | null };
+  load: { avg1: number; avg5: number; avg15: number; cpus: number };
+  sampledAt: string;
+}
 
 export interface Methods {
   hello: { params: HelloParams; result: HelloResult };
@@ -186,6 +211,7 @@ export interface Methods {
   'settings.get': { params?: WorkspaceParams; result: SettingsResult };
   'frames.subscribe': { params: FrameTarget; result: SubscribeResult };
   'build.plan': { params: BuildPlanParams; result: BuildPlanResult };
+  'machine.get': { params?: Record<string, never>; result: MachineUsage };
   unsubscribe: { params: UnsubscribeParams; result: Record<string, never> };
   action: { params: ActionParams; result: ActionResult };
 }
@@ -330,9 +356,14 @@ export function protocolJsonSchema(): JsonSchema {
           protocol: { type: 'integer' },
           server: {
             type: 'object',
-            required: ['name', 'version', 'stim'],
+            required: ['name', 'version', 'stim', 'home'],
             additionalProperties: false,
-            properties: { name: { type: 'string' }, version: { type: 'string' }, stim: { type: 'string' } },
+            properties: {
+              name: { type: 'string' },
+              version: { type: 'string' },
+              stim: { type: 'string' },
+              home: { type: 'string' },
+            },
           },
           capabilities: { type: 'array', items: { enum: [...CAPABILITIES] } },
           actions: { type: 'array', items: { enum: [...ACTIONS] } },
@@ -427,6 +458,48 @@ export function protocolJsonSchema(): JsonSchema {
         additionalProperties: false,
         properties: { workspace: { type: 'string', description: 'An environment path from a status payload.' } },
       },
+      MachineUsage: {
+        type: 'object',
+        required: ['volumes', 'memory', 'load', 'sampledAt'],
+        additionalProperties: false,
+        properties: {
+          volumes: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['mount', 'holds', 'freeBytes', 'totalBytes'],
+              additionalProperties: false,
+              properties: {
+                mount: { type: 'string' },
+                holds: { type: 'array', items: { type: 'string' } },
+                freeBytes: { type: 'number' },
+                totalBytes: { type: 'number' },
+              },
+            },
+          },
+          memory: {
+            type: 'object',
+            required: ['totalBytes', 'pressure'],
+            additionalProperties: false,
+            properties: {
+              totalBytes: { type: 'number' },
+              pressure: { enum: ['normal', 'warning', 'critical', null] },
+            },
+          },
+          load: {
+            type: 'object',
+            required: ['avg1', 'avg5', 'avg15', 'cpus'],
+            additionalProperties: false,
+            properties: {
+              avg1: { type: 'number' },
+              avg5: { type: 'number' },
+              avg15: { type: 'number' },
+              cpus: { type: 'integer' },
+            },
+          },
+          sampledAt: { type: 'string', format: 'date-time' },
+        },
+      },
       ClientRequest: {
         oneOf: [
           request('hello', { $ref: '#/$defs/HelloParams' }),
@@ -435,6 +508,7 @@ export function protocolJsonSchema(): JsonSchema {
           request('logs.subscribe', { $ref: '#/$defs/LogFilter' }),
           request('frames.subscribe', { $ref: '#/$defs/FrameTarget' }),
           request('build.plan', { $ref: '#/$defs/BuildPlanParams' }),
+          request('machine.get'),
           optionalParams('stats.get', { $ref: '#/$defs/WorkspaceParams' }),
           optionalParams('settings.get', { $ref: '#/$defs/WorkspaceParams' }),
           request('unsubscribe', {
@@ -458,6 +532,7 @@ export function protocolJsonSchema(): JsonSchema {
                 anyOf: [
                   { $ref: '#/$defs/HelloResult' },
                   { $ref: '#/$defs/ActionResult' },
+                  { $ref: '#/$defs/MachineUsage' },
                   {
                     type: 'object',
                     required: ['subscription'],

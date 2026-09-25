@@ -126,7 +126,8 @@ One request/response shape and one event shape:
 
 Methods in v1: `hello` (versions and capabilities), `status.subscribe`,
 `logs.query`, `logs.subscribe`, `stats.get`, `settings.get`, `frames.subscribe`,
-`unsubscribe`. Events: `status` (a full payload, as `status --watch` prints it),
+`unsubscribe`. `machine.get` (free disk per Stim volume, memory, load
+average) was added later, additively. Events: `status` (a full payload, as `status --watch` prints it),
 `logs`, `frame`, `error`. A client that reconnects resubscribes; the server
 keeps no per-client history.
 
