@@ -3977,6 +3977,25 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
     expect((state.lastBuild as Record<string, unknown>).cacheKey).toBe(calls.args.storeBuild.key);
   });
 
+  test('a launch failure after a post-shift hit records the post-shift key, so the next miss has a baseline', async () => {
+    reserve();
+    const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-debug-sim`, 'Fixture.app');
+    const { exitCode } = await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        planPrebuild: () => 'generate',
+        fingerprintProject: shifting(),
+        resolveBuild: (_platform, key) => (key.startsWith(WARM) ? cachedApp : null),
+        launchIosApp: () => ({ failed: true, code: 'STIM_LAUNCH_FAILED', reason: 'launch timed out' }),
+      },
+    );
+    expect(exitCode).toBe(1);
+    const last = (readWorkspaceState(root) as WorkspaceState).lastIosBuild as Record<string, unknown>;
+    expect(last).toMatchObject({ status: 'failed', fingerprint: WARM, cacheHit: 'local' });
+    expect(String(last.cacheKey)).toMatch(new RegExp(`^${WARM}`));
+  });
+
   test.each([false, true])('a post-shift hit preserves a prior shared-build wait: %s', async (waited) => {
     reserve();
     let acquires = 0;

@@ -802,7 +802,13 @@ export async function acquireIosArtifact(
         waitedForBuild,
         compilation: compilationCache,
       },
-      failureFields: buildFailure,
+      failureFields: {
+        ...buildFailure,
+        fingerprint: storeHash,
+        cacheKey: storeKey,
+        cacheHit,
+        cacheSkipped: !useBuildCache,
+      },
       completeUploads: async () => {
         const uploadWasAbandoned = await finishIosUpload(uploadPending, remote, phase, note);
         const outcome = providerUploadOutcome(providerUpload ? await providerUpload : null, providerName);
