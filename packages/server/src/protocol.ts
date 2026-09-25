@@ -229,7 +229,7 @@ export interface UsageSample {
   at: number;
   cpu: number | null;
   memoryUsedBytes: number | null;
-  memoryPressure: number | null;
+  memoryPressure: 0 | 1 | 2 | null;
   diskFreeBytes: number | null;
 }
 

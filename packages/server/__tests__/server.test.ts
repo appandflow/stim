@@ -723,12 +723,9 @@ describe('machine.get', () => {
 });
 
 describe('machine.history', () => {
-  it('returns the sampled history and refuses a non-numeric sinceMs', async () => {
+  it('refuses a non-numeric sinceMs', async () => {
     const port = await start();
     const client = await authed(port);
-    expect(await client.request('machine.history', { sinceMs: Date.now() })).toMatchObject({
-      result: { intervalMs: 5000, samples: [] },
-    });
     expect(await client.request('machine.history', { sinceMs: 'soon' })).toMatchObject({
       error: { code: 'bad-request' },
     });

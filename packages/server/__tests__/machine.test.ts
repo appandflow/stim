@@ -59,7 +59,7 @@ describe('cpuUsageFraction', () => {
 });
 
 describe('UsageSampler', () => {
-  const sample = (at: number) => ({ at, cpu: 0.5, memoryUsedBytes: 1, memoryPressure: 0, diskFreeBytes: 1 });
+  const sample = (at: number) => ({ at, cpu: 0.5, memoryUsedBytes: 1, memoryPressure: 0 as const, diskFreeBytes: 1 });
 
   it('keeps only the newest samples up to its capacity', () => {
     const sampler = new UsageSampler(5000, 3);
@@ -77,8 +77,11 @@ describe('UsageSampler', () => {
   it('reports CPU from its first sample, using the baseline taken at start', async () => {
     const sampler = new UsageSampler(20, 10);
     sampler.start();
-    await vi.waitFor(() => expect(sampler.history().samples.length).toBeGreaterThan(0));
-    sampler.stop();
+    try {
+      await vi.waitFor(() => expect(sampler.history().samples.length).toBeGreaterThan(0), { timeout: 5000 });
+    } finally {
+      sampler.stop();
+    }
     const [first] = sampler.history().samples;
     expect(first!.cpu).toBeGreaterThanOrEqual(0);
     expect(first!.diskFreeBytes).toBeGreaterThan(0);

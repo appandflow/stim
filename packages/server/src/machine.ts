@@ -143,15 +143,11 @@ export async function readMachineUsage(): Promise<MachineUsage> {
   };
 }
 
-const PRESSURE_LEVEL: Record<MemoryPressure, number> = { normal: 0, warning: 1, critical: 2 };
+const PRESSURE_LEVEL: Record<MemoryPressure, 0 | 1 | 2> = { normal: 0, warning: 1, critical: 2 };
 
 const HISTORY_INTERVAL_MS = 5000;
 const HISTORY_CAPACITY = 720;
 
-/**
- * Samples CPU, memory and main-volume free space every `intervalMs` into a buffer of the last `capacity`
- * samples. Its CPU tick baseline is its own, so `machine.get` callers do not shift it.
- */
 export class UsageSampler {
   private readonly samples: UsageSample[] = [];
   private previousTicks: CpuTicks | null = null;
