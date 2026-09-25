@@ -18,7 +18,7 @@ import { runGc } from '../commands/gc.ts';
 import { matchWorktreeEntry, removeWorktreeTarget } from '../commands/worktree.ts';
 import { classifyWorkspaceDirs, listWorkspaceDirs, planWorkspaceOutputs } from '../commands/gc/workspaces.ts';
 import { worktreeSkipReason, type WorktreeFacts } from '../commands/gc/worktrees.ts';
-import type { MergeState } from '../workspace/merge-state.ts';
+import { mergeState, type MergeState } from '../workspace/merge-state.ts';
 import { getProject, saveConfig, upsertProject } from '../workspace/config.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
@@ -1046,6 +1046,35 @@ test('gc --delete keeps a just-merged worktree for the grace period, then remove
   expect(simctlCalls.some((call) => /(shutdown|delete) U-BOOTED/.test(call))).toBe(false);
   expect(getProject(worktrees.booted!)?.platforms?.ios).toMatchObject({ deviceUdid: 'U-BOOTED', owned: true });
 }, 120_000);
+
+test('mergedAt is the merge commit date, also when the merged branch moved past the local HEAD', () => {
+  const repo = join(projects, 'merge-time');
+  const git = (args: string, env: NodeJS.ProcessEnv = {}) =>
+    execSync(`git ${args}`, { cwd: repo, encoding: 'utf-8', stdio: 'pipe', env: { ...process.env, ...env } }).trim();
+  mkdirSync(repo);
+  git('init -q -b main');
+  git('config user.email test@example.com');
+  git('config user.name test');
+  git('commit -q --allow-empty -m init');
+  git('checkout -q -b feature');
+  writeFileSync(join(repo, 'a.txt'), 'a');
+  git('add a.txt');
+  git('commit -q -m a');
+  const localHead = git('rev-parse HEAD');
+  writeFileSync(join(repo, 'b.txt'), 'b');
+  git('add b.txt');
+  git('commit -q -m b');
+  git('checkout -q main');
+  git('commit -q --allow-empty -m main-moved');
+  git('merge -q --no-ff feature -m merge-feature', { GIT_COMMITTER_DATE: '2026-01-02T03:04:05Z' });
+  git('commit -q --allow-empty -m after', { GIT_COMMITTER_DATE: '2026-01-03T00:00:00Z' });
+  git(`checkout -q -B feature ${localHead}`);
+
+  expect(mergeState(repo, { ref: 'refs/heads/main', name: 'main' })).toMatchObject({
+    merged: true,
+    mergedAt: Date.parse('2026-01-02T03:04:05Z'),
+  });
+});
 
 test('a worktree registered under a symlinked path still matches the path git reports', () => {
   const real = join(projects, 'real-worktree');

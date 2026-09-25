@@ -157,8 +157,12 @@ export function mergeState(
           .split('\n')
           .some((line) => line.split(' ')[1] === head);
       if (mainline || !committedOn(path, branch, head)) return noOwnCommits;
-      const landed = git(['rev-list', '--first-parent', '--ancestry-path', `${head}..${ref}`]).split('\n');
-      return { merged: true, into: name, head, coversUnpushed: false, mergedAt: committedAt(landed.slice(-1)) };
+      const descendants = new Set(git(['rev-list', '--ancestry-path', `${head}..${ref}`]).split('\n'));
+      const landed = git(['rev-list', '--first-parent', '--reverse', `${head}..${ref}`])
+        .split('\n')
+        .find((commit) => descendants.has(commit));
+      if (!landed) throw new Error(`no commit on ${name} merges ${head}`);
+      return { merged: true, into: name, head, coversUnpushed: false, mergedAt: committedAt([landed]) };
     }
     const files = git(['diff', '--name-only', '--no-renames', '-z', base, head]).split('\0').filter(Boolean);
     if (!files.length) return notMerged(`no net change beyond ${name}`);

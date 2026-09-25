@@ -238,7 +238,8 @@ removes a worktree that is idle: no Stim command has used it for
 worktree that is the source checkout, bare, locked, in use, dirty (untracked
 files count), unpushed, or has initialized submodules. In use includes a
 running dev server, a Stim run or live build, a booted owned simulator or
-emulator, and a held device lease. With `--delete`, gc runs
+emulator, and a held device lease; a device left booted keeps the worktree
+until `stim stop` or `stim gc --idle` shuts it down. With `--delete`, gc runs
 `stim worktree remove` without `--force` on each removable worktree. That
 command checks the worktree again before removing it, parks or shuts down its
 devices, and handles branches as it does when you run it yourself. A worktree that fails is

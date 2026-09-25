@@ -108,7 +108,10 @@ SWEEPING FINISHED WORKTREES
   run holds its native-run lock, a live build lock or slot names it, a
   managed tunnel or remote lock is held, an owned simulator or emulator of
   the workspace is booted (an agent-device session needs one), or it holds
-  an unexpired device lease. State that cannot be read counts as in use.
+  an unexpired device lease. When the simulator or emulator list cannot be
+  read, the worktree counts as in use. A device left booted keeps the
+  worktree until \`stim stop\` in it, or \`gc --idle <duration>\`, shuts
+  the device down.
 
   RECENT ACTIVITY keeps a worktree gc would otherwise remove until
   gc.worktreeGraceMinutes (120 by default, \`guide settings\`) have passed

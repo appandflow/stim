@@ -211,13 +211,17 @@ function deviceUseOf(keys: readonly string[]): string[] {
         }
         const sim = sims?.find((entry) => entry.udid === ios.deviceUdid);
         if (sims === null) reasons.push(`the state of its owned simulator ${ios.deviceUdid} cannot be read`);
-        else if (sim && sim.state !== 'Shutdown') reasons.push(`its owned simulator ${sim.name} is ${sim.state}`);
+        else if (sim && sim.state !== 'Shutdown') {
+          reasons.push(`its owned simulator ${sim.name} is ${sim.state}; \`stim stop\` in ${key} shuts it down`);
+        }
       }
       const android = platforms.android;
       if (android?.owned && android.avdName) {
         avdSerial ??= ownedAvdSerialResolver({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
         try {
-          if (avdSerial(android.avdName).serial) reasons.push(`its owned emulator ${android.avdName} is running`);
+          if (avdSerial(android.avdName).serial) {
+            reasons.push(`its owned emulator ${android.avdName} is running; \`stim stop\` in ${key} shuts it down`);
+          }
         } catch {
           reasons.push(`the state of its owned emulator ${android.avdName} cannot be read`);
         }
