@@ -325,22 +325,6 @@ func isPrintableASCII(_ text: String) -> Bool {
   !text.isEmpty && text.unicodeScalars.allSatisfy { (32..<127).contains($0.value) }
 }
 
-/// Maps a fraction of the upright image, origin top-left, to a pixel of the
-/// display in its native orientation, which is where the emulator places
-/// touches. `rotation` is the image's Rotation.SkinRotation.
-func displayPixel(_ point: CGPoint, rotation: Int, displaySize: CGSize) -> (x: Int, y: Int) {
-  let native: CGPoint
-  switch rotation {
-  case 1: native = CGPoint(x: 1 - point.y, y: point.x)
-  case 2: native = CGPoint(x: 1 - point.x, y: 1 - point.y)
-  case 3: native = CGPoint(x: point.y, y: 1 - point.x)
-  default: native = point
-  }
-  let x = Int((native.x * displaySize.width).rounded(.down))
-  let y = Int((native.y * displaySize.height).rounded(.down))
-  return (min(max(x, 0), Int(displaySize.width) - 1), min(max(y, 0), Int(displaySize.height) - 1))
-}
-
 private final class PendingFrame: @unchecked Sendable {
   private let lock = NSLock()
   private var frame: EmulatorFrame?

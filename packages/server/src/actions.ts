@@ -71,6 +71,8 @@ export interface AuditRecord {
   ok: boolean;
   error?: ProtocolError;
   durationMs?: number;
+  /** Why a control session ended, when the server ended it. */
+  reason?: string;
 }
 
 function auditFile(): string {

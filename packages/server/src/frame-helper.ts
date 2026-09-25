@@ -121,7 +121,7 @@ export async function buildFrameHelper(
  * helper exits when its stdin closes, so it cannot outlive the server.
  */
 export class HelperSource {
-  private readonly listeners = new Map<FrameListener, FrameHint>();
+  private readonly listeners = new Map<FrameListener, FrameHint | null>();
   private readonly child: ChildProcess;
   private last: Frame | null = null;
   private config = '';
@@ -150,7 +150,8 @@ export class HelperSource {
     });
   }
 
-  add(listener: FrameListener, hint: FrameHint): () => void {
+  /** A null `hint` keeps the helper running for input without asking for frames. */
+  add(listener: FrameListener, hint: FrameHint | null): () => void {
     this.listeners.set(listener, hint);
     this.configure();
     if (listener.video) this.keyframe();
@@ -191,12 +192,17 @@ export class HelperSource {
     if (this.bitrate.congested(Date.now()) !== null) this.configure();
   }
 
+  send(command: Record<string, unknown>): void {
+    if (!this.stopped) this.child.stdin!.write(`${JSON.stringify(command)}\n`);
+  }
+
   private configure(): void {
-    const hints = [...this.listeners.values()];
-    const jpegFps = [...this.listeners].flatMap(([listener, hint]) => (listener.video ? [] : [hint.fps]));
+    const watching = [...this.listeners].flatMap(([listener, hint]) => (hint ? [{ listener, hint }] : []));
+    const hints = watching.map(({ hint }) => hint);
+    const jpegFps = watching.flatMap(({ listener, hint }) => (listener.video ? [] : [hint.fps]));
     const config = JSON.stringify({
-      fps: Math.max(...hints.map((hint) => hint.fps)),
-      maxEdge: Math.max(...hints.map((hint) => hint.maxEdge)),
+      fps: Math.max(0, ...hints.map((hint) => hint.fps)),
+      maxEdge: Math.max(FRAME_EDGE.min, ...hints.map((hint) => hint.maxEdge)),
       jpeg: jpegFps.length > 0,
       ...(jpegFps.length ? { jpegFps: Math.max(...jpegFps) } : {}),
       video: jpegFps.length < hints.length,
@@ -264,6 +270,8 @@ export class HelperSource {
       const notice: unknown = JSON.parse(text);
       const error = (notice as { error?: unknown } | null)?.error;
       if (typeof error === 'string') this.notice = error;
+      const inputError = (notice as { inputError?: unknown } | null)?.inputError;
+      if (typeof inputError === 'string') console.error(`stim-server: stim-frames: ${inputError}`);
     } catch {}
   }
 }

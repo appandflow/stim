@@ -347,5 +347,5 @@ The bundle copies Inter, JetBrains Mono, and the brand artwork, including the an
 - `Sources/SimulatorFrames`: live simulator frames through CoreSimulator and input through SimulatorKit, both private Apple frameworks. Expect Xcode releases to break it.
 - `Support/SimFold`: the `sim-fold` helper, an iOS Simulator executable that `scripts/bundle.sh` builds into the app's resources.
 - `Sources/EmulatorFrames`: live emulator frames through the emulator's localhost gRPC `streamScreenshot` call, found through its discovery file, and input through the same endpoint. Emulators Stim booted before it passed `-grpc` show no frames until their next boot.
-- stim-server's `stim-frames` helper compiles the non-view files of both modules, listed in `packages/server/helper/desktop-sources.txt`, together with its own `main.swift`. Desktop CI compiles it, so keep those files free of AppKit views, SwiftUI and StimKit.
+- stim-server's `stim-frames` helper compiles the non-view files of both modules, listed in `packages/server/helper/desktop-sources.txt`, together with its own `main.swift`. Desktop CI compiles it, so keep those files free of AppKit views, SwiftUI and StimKit. The helper sends keys and buttons through `SimulatorHID.hardwareKey` and `button`, to the main screen's HID target.
 - `Sources/StimDesktop`: the SwiftUI app and its brand theme.

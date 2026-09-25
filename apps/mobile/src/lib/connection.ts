@@ -243,6 +243,7 @@ export class StimConnection {
       else pending.resolve(message.result);
       return;
     }
+    if (message.event === 'control-ended') return;
     for (const sub of this.subscriptions) {
       if (sub.serverId === null || sub.serverId !== message.subscription) continue;
       if (message.event === 'error') this.resubscribeLater(sub);

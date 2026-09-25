@@ -10,8 +10,12 @@ import IOSurface
 //   stim-frames android <serial>
 //
 // stdin takes one JSON object per line: {"fps": n, "maxEdge": px, "quality": 0-1,
-// "jpeg": bool, "jpegFps": n, "video": bool, "bitrate": bits per second}, or
-// {"keyframe": true} to make the next video frame a keyframe.
+// "jpeg": bool, "jpegFps": n, "video": bool, "bitrate": bits per second}, where fps 0
+// pauses frames; {"keyframe": true} to make the next video frame a keyframe; or an input:
+// {"input": "touch", "phase": "down|move|up", "x": 0-1, "y": 0-1, "display": n} with x
+// and y on the upright screen. A simulator also takes {"input": "text", "text": s},
+// printable ASCII where "\n" is Return, "\t" is Tab and "\u{8}" is Delete, and
+// {"input": "button", "button": "home|lock"}.
 // stdout carries messages framed as a 4-byte big-endian length, then a kind byte:
 // 1 is a frame (2-byte width, 2-byte height, JPEG bytes), 2 is a JSON notice
 // ({"error": message} before a failed exit), 3 is an H.264 access unit (1-byte
@@ -135,7 +139,7 @@ final class Pacer {
   }
 
   private func schedule() {
-    guard dirty, !scheduled else { return }
+    guard dirty, !scheduled, config.fps > 0 else { return }
     let next = last + .nanoseconds(Int(1_000_000_000 / max(config.fps, 0.1)))
     scheduled = true
     queue.asyncAfter(deadline: max(next, .now())) {
@@ -179,7 +183,8 @@ final class JpegGate {
 func now() -> Double { Date().timeIntervalSince1970 * 1000 }
 
 final class SimulatorSource {
-  private let udid: String
+  let udid: String
+  var hid: SimulatorHID?
   private let pacer: Pacer
   private var display: SimDisplay?
   private let callbackID = NSUUID()
@@ -249,12 +254,14 @@ final class SimulatorSource {
 }
 
 final class EmulatorSource {
-  private let serial: String
-  private let queue = DispatchQueue(label: "stim.frames.emulator")
+  let serial: String
+  let queue = DispatchQueue(label: "stim.frames.emulator")
+  var input: EmulatorInput?
+  var screenSize: CGSize?
   private var stream: ScreenshotStream?
   private var generation = 0
   private var config = Config()
-  private var latest: EmulatorFrame?
+  var latest: EmulatorFrame?
   private var pacer: Pacer!
   private let video = videoEncoder()
   private let jpegGate = JpegGate()
@@ -329,20 +336,50 @@ final class EmulatorSource {
   }
 }
 
-func parseConfig(_ line: Substring, base: Config) -> Config? {
-  guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { return nil }
-  var config = base
-  if let fps = object["fps"] as? Double, fps > 0 { config.fps = min(fps, 60) }
-  if let edge = object["maxEdge"] as? Int, edge > 0 { config.maxEdge = min(edge, 4096) }
-  if let quality = object["quality"] as? Double, quality > 0, quality <= 1 { config.quality = quality }
-  if let jpeg = object["jpeg"] as? Bool { config.jpeg = jpeg }
-  if let jpegFps = object["jpegFps"] as? Double, jpegFps > 0 { config.jpegFps = min(jpegFps, 60) }
-  if let video = object["video"] as? Bool { config.video = video }
-  if let bitrate = object["bitrate"] as? Int, bitrate > 0 { config.bitrate = bitrate }
-  return config
+enum Command {
+  case config(Config)
+  case keyframe
+  case touch(TouchPhase, CGPoint, display: Int)
+  case text(String)
+  case button(String)
 }
 
-func readCommands(_ apply: @escaping (Config) -> Void, keyframe: @escaping () -> Void) {
+func parseCommand(_ line: String, base: Config) -> Command? {
+  guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { return nil }
+  if object["keyframe"] as? Bool == true { return .keyframe }
+  switch object["input"] as? String {
+  case "touch":
+    let phases: [String: TouchPhase] = ["down": .down, "move": .move, "up": .up]
+    guard let phase = (object["phase"] as? String).flatMap({ phases[$0] }),
+      let x = object["x"] as? Double, let y = object["y"] as? Double, (0...1).contains(x), (0...1).contains(y)
+    else { return nil }
+    return .touch(phase, CGPoint(x: x, y: y), display: object["display"] as? Int ?? 0)
+  case "text":
+    return (object["text"] as? String).map { .text($0) }
+  case "button":
+    return (object["button"] as? String).map { .button($0) }
+  case nil:
+    var config = base
+    if let fps = object["fps"] as? Double, fps >= 0 { config.fps = min(fps, 60) }
+    if let edge = object["maxEdge"] as? Int, edge > 0 { config.maxEdge = min(edge, 4096) }
+    if let quality = object["quality"] as? Double, quality > 0, quality <= 1 { config.quality = quality }
+    if let jpeg = object["jpeg"] as? Bool { config.jpeg = jpeg }
+    if let jpegFps = object["jpegFps"] as? Double, jpegFps > 0 { config.jpegFps = min(jpegFps, 60) }
+    if let video = object["video"] as? Bool { config.video = video }
+    if let bitrate = object["bitrate"] as? Int, bitrate > 0 { config.bitrate = bitrate }
+    return .config(config)
+  default:
+    return nil
+  }
+}
+
+protocol Source: AnyObject {
+  func configure(_ config: Config)
+  func keyframe()
+  func input(_ command: Command)
+}
+
+func readCommands(_ source: Source) {
   Thread.detachNewThread {
     var buffer = Data()
     var config = Config()
@@ -353,16 +390,120 @@ func readCommands(_ apply: @escaping (Config) -> Void, keyframe: @escaping () ->
       while let newline = buffer.firstIndex(of: 0x0a) {
         let line = String(decoding: buffer[buffer.startIndex..<newline], as: UTF8.self)
         buffer.removeSubrange(buffer.startIndex...newline)
-        if line.contains("\"keyframe\"") {
-          if (try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])?["keyframe"] as? Bool == true {
-            keyframe()
-          }
-        } else if let parsed = parseConfig(Substring(line), base: config) {
+        switch parseCommand(line, base: config) {
+        case .config(let parsed)?:
           config = parsed
-          apply(config)
+          source.configure(config)
+        case .keyframe?:
+          source.keyframe()
+        case let command?:
+          source.input(command)
+        case nil:
+          Output.notice(["inputError": "stim-frames could not read \(line.prefix(80))"])
         }
       }
     }
+  }
+}
+
+// macOS virtual key codes of a US keyboard, which SimulatorKit's
+// hidUsageForCGKeyCode turns into HID usages; shifted characters also hold
+// Shift (0x38).
+let keyCodes: [Character: (code: UInt16, shift: Bool)] = {
+  var map: [Character: (UInt16, Bool)] = [:]
+  let plain: [(String, UInt16)] = [
+    ("a", 0x00), ("s", 0x01), ("d", 0x02), ("f", 0x03), ("h", 0x04), ("g", 0x05), ("z", 0x06), ("x", 0x07),
+    ("c", 0x08), ("v", 0x09), ("b", 0x0B), ("q", 0x0C), ("w", 0x0D), ("e", 0x0E), ("r", 0x0F), ("y", 0x10),
+    ("t", 0x11), ("1", 0x12), ("2", 0x13), ("3", 0x14), ("4", 0x15), ("6", 0x16), ("5", 0x17), ("=", 0x18),
+    ("9", 0x19), ("7", 0x1A), ("-", 0x1B), ("8", 0x1C), ("0", 0x1D), ("]", 0x1E), ("o", 0x1F), ("u", 0x20),
+    ("[", 0x21), ("i", 0x22), ("p", 0x23), ("l", 0x25), ("j", 0x26), ("'", 0x27), ("k", 0x28), (";", 0x29),
+    ("\\", 0x2A), (",", 0x2B), ("/", 0x2C), ("n", 0x2D), ("m", 0x2E), (".", 0x2F), ("`", 0x32), (" ", 0x31),
+    ("\n", 0x24), ("\t", 0x30), ("\u{8}", 0x33),
+  ]
+  for (text, code) in plain { map[Character(text)] = (code, false) }
+  for letter in "abcdefghijklmnopqrstuvwxyz" { map[Character(letter.uppercased())] = (map[letter]!.0, true) }
+  let shifted: [(Character, Character)] = [
+    ("!", "1"), ("@", "2"), ("#", "3"), ("$", "4"), ("%", "5"), ("^", "6"), ("&", "7"), ("*", "8"), ("(", "9"),
+    (")", "0"), ("_", "-"), ("+", "="), ("{", "["), ("}", "]"), ("|", "\\"), (":", ";"), ("\"", "'"), ("<", ","),
+    (">", "."), ("?", "/"), ("~", "`"),
+  ]
+  for (character, base) in shifted { map[character] = (map[base]!.0, true) }
+  return map
+}()
+
+extension SimulatorSource: Source {
+  func input(_ command: Command) {
+    queue.async { self.apply(command) }
+  }
+
+  private func apply(_ command: Command) {
+    hid = hid ?? SimulatorHID(udid: udid)
+    guard let hid else { return Output.notice(["inputError": "SimulatorKit could not open \(udid) for input."]) }
+    switch command {
+    case .touch(let phase, let point, let index):
+      let displays = CoreSimulator.displays(udid: udid)
+      guard displays.indices.contains(index), let properties = displays[index].screenProperties else {
+        return Output.notice(["inputError": "\(udid) has no display \(index)."])
+      }
+      hid.touch(phase, at: nativeScreenPoint(point, orientation: properties.uiOrientation), screenID: properties.screenID)
+    case .text(let text):
+      for character in text {
+        guard let key = keyCodes[character] else { continue }
+        if key.shift { hid.hardwareKey(code: 0x38, down: true) }
+        hid.hardwareKey(code: key.code, down: true)
+        usleep(10_000)
+        hid.hardwareKey(code: key.code, down: false)
+        if key.shift { hid.hardwareKey(code: 0x38, down: false) }
+        usleep(15_000)
+      }
+    case .button(let name):
+      let buttons: [String: SimulatorButton] = ["home": .home, "lock": .lock]
+      guard let button = buttons[name] else { return Output.notice(["inputError": "iOS has no \(name) button."]) }
+      hid.button(button, down: true)
+      usleep(100_000)
+      hid.button(button, down: false)
+    case .config, .keyframe:
+      break
+    }
+  }
+}
+
+extension EmulatorSource: Source {
+  func input(_ command: Command) {
+    queue.async { self.apply(command) }
+  }
+
+  private func apply(_ command: Command) {
+    if input == nil, let endpoint = EmulatorDiscovery.endpoint(serial: serial) { input = EmulatorInput(endpoint: endpoint) }
+    guard let input else { return Output.notice(["inputError": "\(serial) has no gRPC endpoint for input."]) }
+    switch command {
+    case .touch(let phase, let point, let index):
+      guard index == 0 else { return Output.notice(["inputError": "Input goes to the emulator's main display only."]) }
+      guard let size = displaySize(input) else {
+        return Output.notice(["inputError": "\(serial) did not report its display size."])
+      }
+      let pixel = displayPixel(point, rotation: latest?.rotation ?? 0, displaySize: size)
+      input.call("sendTouch", InputMessages.touch(x: pixel.x, y: pixel.y, pressed: phase != .up))
+    case .text, .button:
+      Output.notice(["inputError": "stim-server types text and presses buttons on an emulator with adb."])
+    case .config, .keyframe:
+      break
+    }
+  }
+
+  private func displaySize(_ input: EmulatorInput) -> CGSize? {
+    if let size = screenSize { return size }
+    let done = DispatchSemaphore(value: 0)
+    var reported: CGSize?
+    input.call("getStatus", Data()) { response in
+      if let size = response.flatMap(InputMessages.displaySize(fromStatus:)) {
+        reported = CGSize(width: size.width, height: size.height)
+      }
+      done.signal()
+    }
+    _ = done.wait(timeout: .now() + 5)
+    screenSize = reported
+    return reported
   }
 }
 
@@ -376,12 +517,12 @@ case "ios":
   guard CoreSimulator.deviceSet != nil else { fail("CoreSimulator could not be loaded from \(CoreSimulator.developerDir).") }
   let source = SimulatorSource(udid: arguments[2])
   Output.requestKeyframe = source.keyframe
-  readCommands({ source.configure($0) }, keyframe: source.keyframe)
+  readCommands(source)
   source.queue.async { source.start() }
 case "android":
   let source = EmulatorSource(serial: arguments[2])
   Output.requestKeyframe = source.keyframe
-  readCommands({ source.configure($0) }, keyframe: source.keyframe)
+  readCommands(source)
   source.start()
 default:
   fail("usage: stim-frames ios <udid> | android <serial>")
