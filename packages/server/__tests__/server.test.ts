@@ -981,6 +981,15 @@ if (env.FAKE_XCRUN_DELAYS && basename(process.argv[1]) === 'xcrun') {
   const ms = delays[Math.min(seen, delays.length - 1)];
   if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
+if (basename(process.argv[1]) === 'sips' && args.includes('bmp')) {
+  const bmp = Buffer.alloc(58);
+  bmp.write('BM', 0, 'latin1');
+  bmp.writeUInt32LE(54, 10);
+  bmp.writeUInt16LE(24, 28);
+  bmp.fill(readFileSync(args[args.indexOf('--out') - 1]).includes('BLACK') ? 0 : 255, 54, 57);
+  writeFileSync(args[args.indexOf('--out') + 1], bmp);
+  process.exit(0);
+}
 if (basename(process.argv[1]) === 'sips') {
   writeFileSync(args[args.indexOf('--out') + 1], Buffer.from(env.FAKE_SIPS_JPEG, 'base64'));
   process.exit(0);
@@ -1156,6 +1165,37 @@ describe('frames.subscribe', () => {
     const settled = toolRuns().length;
     await new Promise((resolve) => setTimeout(resolve, 1200));
     expect(toolRuns()).toHaveLength(settled);
+  });
+
+  test.skipIf(!fakeTailscale)('follows the lit iPhone Duo panel and reports its posture', async () => {
+    const cover = jpeg(1398, 2034, 'cover');
+    const inner = jpeg(2853, 2007, 'inner');
+    const port = await startWithTools({
+      FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, name: 'stim-app (iPhone Duo 27.1)' } }),
+      FAKE_FRAMES: JSON.stringify(
+        [cover, jpeg(2034, 1398, 'BLACK'), inner, jpeg(2853, 2007, 'inner 2')].map((bytes) => bytes.toString('base64')),
+      ),
+    });
+    const client = await authed(port);
+    await client.request('frames.subscribe', { workspace, platform: 'ios' });
+    expect(await client.next()).toMatchObject({ event: 'frame', width: 1398, height: 2034, posture: 'folded' });
+    expect(await client.next()).toMatchObject({
+      event: 'frame',
+      width: 2853,
+      height: 2007,
+      data: inner.toString('base64'),
+      posture: 'unfolded',
+    });
+    expect(await client.next()).toMatchObject({ event: 'frame', posture: 'unfolded' });
+    const displays = toolRuns()
+      .filter((run) => run.tool === 'xcrun')
+      .map((run) => run.args.find((arg) => arg.startsWith('--display=')));
+    expect(displays.slice(0, 4)).toEqual([
+      '--display=primary',
+      '--display=primary',
+      '--display=primary-1',
+      '--display=primary-1',
+    ]);
   });
 
   test.skipIf(!fakeTailscale)('captures the default display when simctl rejects primary', async () => {

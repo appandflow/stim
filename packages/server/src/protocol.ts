@@ -269,6 +269,8 @@ export interface FrameEvent {
   capturedAt: string;
   /** Base64-encoded image bytes. */
   data: string;
+  /** Which panel an iPhone Duo's posture lit: the cover when folded, the inner panel when unfolded. */
+  posture?: 'folded' | 'unfolded';
 }
 
 /**
@@ -603,6 +605,7 @@ export function protocolJsonSchema(): JsonSchema {
               height: { type: 'integer' },
               capturedAt: { type: 'string', format: 'date-time' },
               data: { type: 'string', contentEncoding: 'base64' },
+              posture: { enum: ['folded', 'unfolded'] },
             },
           },
           {

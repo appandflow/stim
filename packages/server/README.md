@@ -154,7 +154,9 @@ Events are `{ "event", "subscription", ... }`.
   `frames-failed` `error` event, and so does a device that stops or changes
   owner. Simulators are captured with `xcrun simctl io <udid> screenshot`, of
   the primary display, or of the default display when that `simctl` does not
-  accept `primary`. Emulators are captured through their gRPC `getScreenshot`,
+  accept `primary`. An iPhone Duo lights one of two panels: the capture
+  follows the lit one (`primary`, the cover, or `primary-1`, the inner panel)
+  and the frame carries `posture`, `folded` or `unfolded`. Emulators are captured through their gRPC `getScreenshot`,
   found through the discovery file and token the emulator writes when Stim
   boots it, scaled to fit 1280 pixels and converted with `sips`. An emulator
   Stim booted before it passed `-grpc` has no endpoint. A frame is sent only
