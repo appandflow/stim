@@ -175,7 +175,8 @@ ANDROID EMULATOR RESTARTS
   wait windows, diagnostics, and recovery steps.
   On macOS, top-level androidEmulatorApp "stim-desktop" in the machine config
   boots owned emulators without a window and shows them in Stim Desktop; see
-  guide settings. An emulator that is already running keeps its window.
+  guide settings. An emulator that is already running keeps its current
+  display until it next boots.
 
 DESTRUCTIVE COMMANDS -- ask the user first
   gc --delete             deletes orphaned devices Stim created, tens of GB

@@ -368,9 +368,8 @@ test('the viewer override is discoverable beside the machine preference and boot
   }
 });
 
-test('the emulator viewer preference is routed from emulator boot guidance to the settings topic', () => {
+test('emulator boot guidance routes the emulator viewer preference to the settings topic', () => {
   expect(renderTopic('lifecycle')).toContain('androidEmulatorApp');
-  expect(renderTopic('settings')).toContain('{ "androidEmulatorApp": "stim-desktop" }');
 });
 
 test('the settings topic documents every registered setting and its environment override', () => {

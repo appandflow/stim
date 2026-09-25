@@ -1,4 +1,5 @@
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
+import { configuredAndroidEmulatorApp } from '../devices/android-emulator-viewer.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { NO_BUILD_PROGRESS, startBuildProgress, type BuildProgress } from '../engine/build-progress.ts';
@@ -936,6 +937,17 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     };
     bootPromise = Promise.resolve({ ok: true, serial: resolved.serial });
   } else {
+    if (!remoteDevice) {
+      try {
+        configuredAndroidEmulatorApp();
+      } catch (err) {
+        return fail(
+          'STIM_BAD_ARG',
+          (err as Error).message,
+          'Run `stim settings set androidEmulatorApp emulator` or `stim settings set androidEmulatorApp stim-desktop`.',
+        );
+      }
+    }
     const capacity = checkCapacity({
       platform: PLATFORM,
       project,

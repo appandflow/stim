@@ -403,7 +403,7 @@ Stim then starts the emulator with \`-no-window -gpu host\` and opens
 \`stim-desktop://open?serial=<serial>\` in the background. Stim Desktop reads
 frames and sends input over the emulator's gRPC endpoint. The setting applies
 only when Stim boots the emulator: one that is already running keeps its
-window, and physical devices are unaffected. An invalid value refuses before
+current display until it next boots, and physical devices are unaffected. An invalid value refuses before
 boot. On Linux and Windows the setting has no effect.
 
 THE DEVICE POOL BOUNDS ARE MACHINE-LEVEL TOO

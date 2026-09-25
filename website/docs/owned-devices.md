@@ -66,7 +66,7 @@ stim settings set androidEmulatorApp stim-desktop
 Stim then starts newly booted owned emulators with `-no-window -gpu host`, which
 keeps GPU acceleration, and opens `stim-desktop://open?serial=<serial>` in the
 background so Stim Desktop focuses that emulator. An emulator that is already
-running keeps its window until it next boots, and physical devices are
+running keeps its current display until it next boots, and physical devices are
 unaffected. Stim's maintainer runs with `"iosSimulatorApp": "stim-desktop"`;
 setting both shows every owned device in Stim Desktop.
 

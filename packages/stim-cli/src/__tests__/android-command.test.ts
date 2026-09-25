@@ -751,6 +751,16 @@ describe('explicit remote backend behavior', () => {
     expect(h.stderr.join('\n')).not.toContain('not read by Stim');
   });
 
+  test('an invalid androidEmulatorApp machine setting is refused before device work', async () => {
+    const h = harness({ ensureDevice: never('the device') });
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ ...loadConfig(), androidEmulatorApp: 'qt' }));
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_BAD_ARG');
+    expect(result.error?.message).toMatch(/Invalid androidEmulatorApp/);
+    expect(h.calls.ensureDevice).toEqual([]);
+  });
+
   test('stim android warns about an unknown setting key', async () => {
     const h = harness({ resolveSettingsFor: () => ({ packageManager: 'pnpm' }) });
     const result = await h.run();

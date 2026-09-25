@@ -222,19 +222,19 @@ machine-wide preference, not a project setting; Stim still creates, boots, and
 owns the simulator. An invalid value refuses before boot. Opening the chosen
 app is best effort, so install Siniulator or Stim Desktop before selecting it.
 
+Override it for one launch with `stim ios --simulator-app siniulator`,
+`stim ios --simulator-app stim-desktop`, or `stim ios --simulator-app xcode`. The flag also opens an already running owned
+simulator without rebooting it and leaves the saved preference unchanged. It
+only applies to local simulators.
+
 `androidEmulatorApp` chooses how an owned Android emulator that Stim boots on
 macOS is displayed. `"emulator"` (the default) opens the emulator's own window.
 `"stim-desktop"` boots it with `-no-window -gpu host` and opens it in Stim
 Desktop, which renders frames and sends input through the emulator's gRPC
 endpoint. It applies only when Stim boots the emulator: an emulator that is
-already running keeps its window, and physical devices are unaffected. It has
-no effect on Linux or Windows. An invalid value refuses before boot. There is
-no per-run flag.
-
-Override it for one launch with `stim ios --simulator-app siniulator`,
-`stim ios --simulator-app stim-desktop`, or `stim ios --simulator-app xcode`. The flag also opens an already running owned
-simulator without rebooting it and leaves the saved preference unchanged. It
-only applies to local simulators.
+already running keeps its current display until it next boots, and physical
+devices are unaffected. It has no effect on Linux or Windows. An invalid value
+refuses before boot. There is no per-run flag.
 
 `pool.iosParkedMax` bounds the simulators `worktree remove` parks for a later
 workspace to adopt. Absent means 3; `0` turns parking and adoption off. When
