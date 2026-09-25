@@ -41,7 +41,7 @@ and `npx stim@1.9.0` failed with E404 until then. The `smoke` job waits up to
 - A dist-tag that points elsewhere: see the section above and
   [Stale or wrong dist-tags](#stale-or-wrong-dist-tags).
 - `npx stim@X.Y.Z --version` or `npx -p @stim-cli/server@X.Y.Z stim-server
-  --version` that installs but fails or prints another version: the published package is broken. A published version cannot be
+--version` that installs but fails or prints another version: the published package is broken. A published version cannot be
   replaced, so fix it and release a new version.
 
 ## Manual publish fallback
