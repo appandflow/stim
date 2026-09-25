@@ -88,9 +88,10 @@ the mock server.
 ## Device view
 
 Tapping a running device's frame on the workspace screen opens it full
-screen. The view asks for up to 30 frames a second, scaled to the screen's
-pixels (at most 1600 on the longer edge), and fits them to the device's
-shape. It is view-only until you turn on **Control**, which appears only when
+screen. It renders `DeviceScreen` (see Device video): H.264 video at up to
+60 frames a second when the server offers it, JPEG frames at up to 30
+otherwise, scaled to the screen's pixels (at most 1600 on the longer edge)
+and fitted to the device's shape. It is view-only until you turn on **Control**, which appears only when
 the Mac granted this phone control.
 
 With **Control** on, the server starts a control session (`control.begin`)
@@ -131,8 +132,9 @@ entry.
 
 ## Device video
 
-`DeviceScreen` (`src/components/device-screen.tsx`) shows a device live. It
-subscribes with `video: ["h264"]`. When the server offers video, each binary
+`DeviceScreen` (`src/components/device-screen.tsx`) shows the stream
+`useDeviceStream` (`src/hooks/device-stream.ts`) opens, which subscribes with
+`video: ["h264"]`. When the server offers video, each binary
 message goes straight to `StimVideoView`, a native view from the local Expo
 module in `modules/stim-video`. On iOS it decodes with
 `AVSampleBufferDisplayLayer`, and on Android with `MediaCodec` onto a

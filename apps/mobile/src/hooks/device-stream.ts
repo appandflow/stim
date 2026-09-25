@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import { useMacConnection } from '@/hooks/mac-connection';
 import { VideoMeter } from '@/lib/video';
@@ -6,6 +6,8 @@ import type { FrameEvent, Platform } from '@/protocol/types';
 import { pushAccessUnit } from '../../modules/stim-video/src';
 
 export interface DeviceStream {
+  /** The id the `StimVideoView` showing this stream must carry. */
+  streamId: string;
   /** The latest JPEG frame, while the server sends images instead of video. */
   frame: FrameEvent | null;
   /** The size of the latest video frame, once H.264 arrives. */
@@ -28,15 +30,15 @@ interface StreamState {
 const EMPTY: Omit<StreamState, 'key'> = { frame: null, video: null, error: null, delayed: false };
 
 /**
- * Subscribes to a device's frames, asking for H.264. Video goes straight to the `StimVideoView` with
- * `streamId`, which must be mounted before the first keyframe arrives; JPEG frames come back as `frame`.
+ * Subscribes to a device's frames, asking for H.264. Video goes straight to the `StimVideoView` with the
+ * returned `streamId`, which must be mounted before the first keyframe arrives; JPEG frames come back as `frame`.
  */
 export function useDeviceStream(
-  streamId: string,
   target: { workspace: string; platform: Platform; slot: string },
   options: { enabled: boolean; fps: number; maxEdge: number },
 ): DeviceStream {
   const { connection } = useMacConnection();
+  const streamId = useId();
   const { workspace, platform, slot } = target;
   const { fps, maxEdge } = options;
   const [latest, setLatest] = useState<StreamState | null>(null);
@@ -85,5 +87,5 @@ export function useDeviceStream(
     if (connection && current) connection.request('frames.keyframe', { subscription: current }).catch(() => {});
   }, [connection]);
   const state = latest && latest.key === key ? latest : EMPTY;
-  return { ...state, meter, requestKeyframe };
+  return { ...state, streamId, meter, requestKeyframe };
 }

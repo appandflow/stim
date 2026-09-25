@@ -1,43 +1,32 @@
 import { Image } from 'expo-image';
-import { useEffect, useId, useState, type ReactNode } from 'react';
-import { PixelRatio, StyleSheet, Text, useWindowDimensions, View, type StyleProp, type ViewStyle } from 'react-native';
+import { useEffect, useState, type ReactNode } from 'react';
+import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
-import { useDeviceStream, type DeviceStream } from '@/hooks/device-stream';
+import type { DeviceStream } from '@/hooks/device-stream';
 import type { Platform } from '@/protocol/types';
 import { useColors } from '@/theme';
 import { StimVideoView } from '../../modules/stim-video/src';
 
-const VIDEO_FPS = 60;
-const EDGE = { min: 240, max: 2048 };
-
 /**
- * A live device screen, fitted to the view's bounds at the device's aspect ratio: H.264 video when the server
- * offers it, JPEG frames otherwise. `children` are laid over the fitted screen, so touch overlays share its
- * coordinates.
+ * A device's live `stream`, fitted to the view's bounds at the device's aspect ratio: H.264 video when the
+ * server offers it, JPEG frames otherwise. `children` are laid over the fitted screen, so touch overlays share
+ * its coordinates.
  */
 export function DeviceScreen({
-  workspace,
+  stream,
   platform,
-  slot,
   label,
   style,
   children,
 }: {
-  workspace: string;
+  stream: DeviceStream;
   platform: Platform;
-  slot: string;
   label: string;
   style?: StyleProp<ViewStyle>;
   children?: ReactNode;
 }) {
   const colors = useColors();
-  const streamId = useId();
-  const window = useWindowDimensions();
   const [bounds, setBounds] = useState({ width: 0, height: 0 });
-  const maxEdge = Math.round(
-    Math.min(EDGE.max, Math.max(EDGE.min, Math.max(window.width, window.height) * PixelRatio.get())),
-  );
-  const stream = useDeviceStream(streamId, { workspace, platform, slot }, { enabled: true, fps: VIDEO_FPS, maxEdge });
   const source = stream.video ?? stream.frame;
   const aspect = source && source.height > 0 ? source.width / source.height : platform === 'ios' ? 0.46 : 0.45;
   const fitted =
@@ -53,7 +42,11 @@ export function DeviceScreen({
       accessibilityLabel={`Live screen of ${label}`}
     >
       <View style={[fitted, styles.screen]}>
-        <StimVideoView streamId={streamId} style={StyleSheet.absoluteFill} onKeyframeNeeded={stream.requestKeyframe} />
+        <StimVideoView
+          streamId={stream.streamId}
+          style={StyleSheet.absoluteFill}
+          onKeyframeNeeded={stream.requestKeyframe}
+        />
         {stream.frame && !stream.video ? (
           <Image
             source={{ uri: `data:${stream.frame.mime};base64,${stream.frame.data}` }}
@@ -95,7 +88,7 @@ function StreamStats({ meter, mode }: { meter: DeviceStream['meter']; mode: 'vid
 
 const styles = StyleSheet.create({
   root: { alignItems: 'center', justifyContent: 'center' },
-  screen: { backgroundColor: 'black', overflow: 'hidden', justifyContent: 'center' },
+  screen: { backgroundColor: 'black', borderRadius: 8, overflow: 'hidden', justifyContent: 'center' },
   placeholder: { fontSize: 13, textAlign: 'center', position: 'absolute', left: 12, right: 12 },
   stats: {
     position: 'absolute',
