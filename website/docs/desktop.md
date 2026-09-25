@@ -16,6 +16,9 @@ Apple silicon and Intel Macs, signed with Developer ID and notarized by Apple.
 A 404 from that link means no stable desktop release is out yet; build the app
 from source with `apps/desktop/scripts/bundle.sh` in the meantime.
 
+The app checks for newer releases with Sparkle; **Stim > Check for Updates…**
+checks right away.
+
 That link always serves the newest stable release. Desktop releases are tagged
 `desktop-v<version>`, apart from the CLI's `v<version>` releases, so GitHub's
 "latest release" page shows the CLI. Every desktop version, release candidates

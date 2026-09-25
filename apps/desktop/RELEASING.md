@@ -27,8 +27,9 @@ tags are separate from the npm packages' `v*` tags, which follow
 
 The workflow, `.github/workflows/desktop-release.yml`:
 
-1. Imports the Developer ID certificate into a temporary keychain and writes the
-   App Store Connect API key to a temporary file.
+1. Checks that the tag is on `main` and builds the app before loading any
+   secret. It then imports the Developer ID certificate into a temporary
+   keychain and writes the App Store Connect API key to a temporary file.
 2. Runs `apps/desktop/scripts/release.sh <version>`, which builds, signs,
    notarizes and staples the app, then writes `Stim-<version>.dmg`,
    `Stim-<version>.zip` and `SHA256SUMS` to `apps/desktop/build/release`.
@@ -37,8 +38,9 @@ The workflow, `.github/workflows/desktop-release.yml`:
 5. Creates the `desktop-v<version>` GitHub release, never marked as the
    repository's latest release, and attaches the DMG, the zip and
    `SHA256SUMS`. A version with a prerelease suffix is marked as a prerelease.
-6. For a stable version only: uploads `Stim.dmg` and `appcast.xml` to the
-   `desktop-latest` release and bumps the Homebrew cask.
+6. For a stable version only, unless `desktop-latest` already serves a newer
+   build: uploads `Stim.dmg` and `appcast.xml` to the `desktop-latest` release
+   and bumps the Homebrew cask.
 7. Deletes the keychain and the key file.
 
 A tag push stops before step 5 when the build is not Developer ID signed and
@@ -67,7 +69,10 @@ gh workflow run desktop-release.yml -f version=0.0.0
 ```
 
 A dispatched run needs the same `release` approval, builds with whatever
-secrets are set, uploads the artifact and publishes nothing. Without secrets,
+secrets are set, uploads the artifact and publishes nothing. It runs the
+workflow and scripts of the branch it was dispatched on with the real secrets,
+so approve only branches you trust, or restrict the `release` environment's
+deployment branches to `main`, `v*` and `desktop-v*`. Without secrets,
 it produces an ad-hoc signed build and prints a notice for each skipped step.
 
 ## Build locally
@@ -84,27 +89,31 @@ attribute, and cannot be notarized. To sign and notarize locally, set:
   identity in your keychain.
 - `ASC_KEY_PATH`, `ASC_KEY_ID`, `ASC_ISSUER_ID`: an App Store Connect API key
   file and its IDs.
-- `SPARKLE_PUBLIC_ED_KEY`, when the app embeds Sparkle: the public half of the
-  update signing key, written into `SUPublicEDKey`.
+- `SPARKLE_PUBLIC_ED_KEY`: the public half of the update signing key, which
+  `bundle.sh` writes into `SUPublicEDKey`. Without it, the app never checks for
+  updates.
 
 `CFBundleShortVersionString` is the version you pass. `CFBundleVersion` is the
-commit count of `HEAD`, which grows with every release and is the value Sparkle
-compares, so a release needs full history (the workflow checks out with
-`fetch-depth: 0`).
+commit count of `HEAD`, the value Sparkle compares. Release tags must be on
+`main`, where the count grows with every commit, and the count needs full
+history (the workflow checks out with `fetch-depth: 0`).
 
 ## Signing and entitlements
 
 `release.sh` signs inside out with `--options runtime --timestamp`:
-`Lottie.framework`, then `sim-fold`, then the app, then the DMG.
+`Lottie.framework`; Sparkle's `Installer.xpc`, `Downloader.xpc` (keeping its
+entitlements), `Autoupdate`, `Updater.app` and `Sparkle.framework`, in the
+order [Sparkle documents](https://sparkle-project.org/documentation/sandboxing/#code-signing);
+`sim-fold`; the app; then the DMG.
 
 A Developer ID build carries no entitlements. Hardened Runtime's library
 validation accepts code signed by Apple or by the app's own team, and Xcode's
 CoreSimulator and SimulatorKit are signed by Apple, so the app loads them
 without `com.apple.security.cs.disable-library-validation`. `Lottie.framework`
-is re-signed with the app's identity.
+and `Sparkle.framework` are re-signed with the app's identity.
 
-An ad-hoc build has no team ID, so library validation would reject the ad-hoc
-signed `Lottie.framework`. It signs the app with `Support/adhoc.entitlements`,
+An ad-hoc build has no team ID, so library validation would reject its ad-hoc
+signed frameworks. It signs the app with `Support/adhoc.entitlements`,
 which disables library validation, so the test build still runs with Hardened
 Runtime on.
 

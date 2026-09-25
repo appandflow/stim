@@ -3,7 +3,7 @@ set -eu
 cd "$(dirname "$0")/.."
 
 version=${1:?usage: scripts/release.sh <version>}
-if ! printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+if ! printf '%s' "$version" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?' || [ "$(printf '%s' "$version" | wc -l)" -ne 0 ]; then
   echo "release.sh: $version is not a semver version such as 1.2.3 or 1.2.3-rc.1" >&2
   exit 1
 fi
@@ -28,7 +28,13 @@ else
   sign() { codesign --force --options runtime --sign - "$@"; }
   app_entitlements="--entitlements Support/adhoc.entitlements"
 fi
+sparkle=$app/Contents/Frameworks/Sparkle.framework
 sign "$app/Contents/Frameworks/Lottie.framework"
+sign "$sparkle/Versions/B/XPCServices/Installer.xpc"
+sign --preserve-metadata=entitlements "$sparkle/Versions/B/XPCServices/Downloader.xpc"
+sign "$sparkle/Versions/B/Autoupdate"
+sign "$sparkle/Versions/B/Updater.app"
+sign "$sparkle"
 sign --entitlements Support/SimFold/runtime.entitlements "$app/Contents/Resources/sim-fold"
 sign $app_entitlements "$app"
 codesign --verify --strict --deep "$app"
