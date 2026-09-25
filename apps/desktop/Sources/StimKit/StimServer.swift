@@ -146,6 +146,13 @@ public struct StimServerCLI: Sendable {
     return decoder
   }()
 
+  public static let minimumVersion = SemanticVersion("1.11.0")!
+
+  /// What `stim-server --version` printed, or nil when it is missing, fails to start, or exits non-zero.
+  public func versionOutput() -> String? {
+    (try? run(["--version"])).map { String(decoding: $0, as: UTF8.self) }
+  }
+
   public func pair(port: Int = defaultPort) throws -> PairingCode {
     try Self.decoder.decode(PairingCode.self, from: run(["pair", "--json", "--port", String(port)]))
   }

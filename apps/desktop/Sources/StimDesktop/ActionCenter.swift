@@ -39,12 +39,14 @@ final class ActionRun: ObservableObject, Identifiable {
 
   private func start(step: Int, cli: StimCLI, worst: Int32, onFinish: @escaping @MainActor () -> Void) {
     let command = steps[step]
-    if steps.count > 1 { lines.append(OutputLine(.stderr, "$ stim \(command.arguments.joined(separator: " "))")) }
+    if steps.count > 1 {
+      lines.append(OutputLine(.stderr, "$ \(([command.program] + command.arguments).joined(separator: " "))"))
+    }
     // ProcessStream calls back on background queues in order; the main queue
     // keeps that order, where unstructured Tasks would not.
     do {
       try cli.stream(
-        command.arguments, cwd: command.cwd,
+        command,
         onLine: { line in
           DispatchQueue.main.async { MainActor.assumeIsolated { self.lines.append(line) } }
         },

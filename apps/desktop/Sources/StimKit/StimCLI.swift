@@ -6,12 +6,15 @@ import Foundation
 public struct StimCLI: Sendable {
   public enum Failure: LocalizedError {
     case notFound
+    case toolNotFound(String)
     case exited(Int32)
 
     public var errorDescription: String? {
       switch self {
       case .notFound:
         return "Could not find the stim executable. Install it globally, set STIM_BIN, or choose it in Settings."
+      case .toolNotFound(let name):
+        return "Could not find \(name) on the login shell's PATH. Install Node.js 22.12 or later from nodejs.org, then try again."
       case .exited(let code): return "stim exited with status \(code)."
       }
     }
@@ -28,6 +31,13 @@ public struct StimCLI: Sendable {
       "stim", override: override.flatMap { $0.isEmpty ? nil : $0 } ?? environment["STIM_BIN"],
       environment: &environment)
     self.environment = environment
+  }
+
+  public static let minimumVersion = SemanticVersion("1.11.0")!
+
+  /// What `stim --version` printed, or nil when stim is missing, fails to start, or exits non-zero.
+  public func versionOutput() -> String? {
+    (try? run(["--version"])).map { String(decoding: $0, as: UTF8.self) }
   }
 
   public func status() throws -> StatusPayload {
@@ -115,9 +125,31 @@ public struct StimCLI: Sendable {
     onLine: @escaping @Sendable (OutputLine) -> Void,
     onExit: @escaping @Sendable (Int32) -> Void
   ) throws -> Process {
-    guard let executable else { throw Failure.notFound }
+    try stream(StimCommand(args, cwd: cwd), onLine: onLine, onExit: onExit)
+  }
+
+  /// Runs `command` in its directory, reporting output lines as they arrive and then the exit status.
+  /// A program other than `stim` is looked up on this environment's `PATH`, which starts with the
+  /// directory of the resolved `stim`, so `npm` is the one that installed it.
+  @discardableResult
+  public func stream(
+    _ command: StimCommand,
+    onLine: @escaping @Sendable (OutputLine) -> Void,
+    onExit: @escaping @Sendable (Int32) -> Void
+  ) throws -> Process {
+    var environment = environment
+    let executable: String
+    if command.program == "stim" {
+      guard let stim = self.executable else { throw Failure.notFound }
+      executable = stim
+    } else {
+      guard let tool = resolveExecutable(command.program, override: nil, environment: &environment) else {
+        throw Failure.toolNotFound(command.program)
+      }
+      executable = tool
+    }
     return try ProcessStream.start(
-      executable: executable, arguments: args, cwd: cwd, environment: environment,
+      executable: executable, arguments: command.arguments, cwd: command.cwd, environment: environment,
       onLine: onLine, onExit: onExit)
   }
 }
