@@ -149,12 +149,18 @@ export function Home() {
           ) : (
             <View style={styles.empty}>
               <Text style={[styles.emptyTitle, { color: colors.text }]}>
-                {items.length ? 'Nothing matches the filters' : 'Nothing running'}
+                {items.length
+                  ? 'Nothing matches the filters'
+                  : connections.some((c) => c.state.kind === 'open')
+                    ? 'Nothing running'
+                    : 'No machine connected'}
               </Text>
               <Text style={[styles.emptyMessage, { color: colors.secondary }]}>
                 {items.length
                   ? 'Change the filters to see more workspaces.'
-                  : 'Workspaces appear here when an agent runs stim start, stim ios or stim android on a paired machine.'}
+                  : !connections.some((c) => c.state.kind === 'open')
+                    ? 'The chips above show why each machine is offline.'
+                    : 'Workspaces appear here when an agent runs stim start, stim ios or stim android on a paired machine.'}
               </Text>
             </View>
           )

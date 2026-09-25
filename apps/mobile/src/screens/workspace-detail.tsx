@@ -120,7 +120,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
           ) : null}
           <View style={styles.chips}>
             {env.metro ? (
-              <Chip tint={metroHealthy ? colors.live : colors.error}>
+              <Chip tint={metroHealthy ? colors.live : env.metro.running ? colors.error : colors.tertiary}>
                 {`Metro :${env.metro.port} \u00B7 ${env.metro.running ? (metroHealthy ? 'healthy' : 'unhealthy') : 'stopped'}`}
               </Chip>
             ) : null}

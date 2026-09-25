@@ -234,7 +234,7 @@ function Field({
 function CloseButton({ colors, onPress }: { colors: Colors; onPress: () => void }) {
   return (
     <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel="Close" hitSlop={8}>
-      <Text style={[styles.close, { color: colors.primary }]}>✕</Text>
+      <Text style={[styles.close, { color: colors.primary }]}>{'\u2715'}</Text>
     </Pressable>
   );
 }
