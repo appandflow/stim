@@ -14,12 +14,14 @@ export function terminate(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
   child.kill('SIGTERM');
   const timer = setTimeout(() => child.kill('SIGKILL'), KILL_GRACE_MS);
-  return new Promise((resolve) =>
-    child.once('exit', () => {
+  return new Promise((resolve) => {
+    const done = () => {
       clearTimeout(timer);
       resolve();
-    }),
-  );
+    };
+    child.once('exit', done);
+    child.once('close', done);
+  });
 }
 
 export function runStim(

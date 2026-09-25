@@ -216,7 +216,7 @@ async function until(check: () => boolean): Promise<void> {
 }
 
 function childPids(): number[] {
-  return existsSync(pids) ? readdirSync(pids).map(Number) : [];
+  return existsSync(pids) ? readdirSync(pids).map(Number).filter(alive) : [];
 }
 
 function stimCalls(): { args: string; cwd: string }[] {
@@ -573,28 +573,32 @@ describe('logs.subscribe', () => {
     });
   });
 
-  it('kills a follow child that ignores SIGTERM when its last subscriber leaves or the server closes', async () => {
-    const port = await start({ env: { FAKE_STIM_STUBBORN: '1' } });
-    const client = await authed(port);
-    await client.request('logs.subscribe', { workspace });
-    await records(client, 3);
-    const [pid] = childPids();
-    client.socket.close();
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(alive(pid!)).toBe(true);
-    await until(() => !alive(pid!));
+  // Windows has no catchable SIGTERM: kill() always terminates the process.
+  test.skipIf(process.platform === 'win32')(
+    'kills a follow child that ignores SIGTERM when its last subscriber leaves or the server closes',
+    async () => {
+      const port = await start({ env: { FAKE_STIM_STUBBORN: '1' } });
+      const client = await authed(port);
+      await client.request('logs.subscribe', { workspace });
+      await records(client, 3);
+      const [pid] = childPids();
+      client.socket.close();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(alive(pid!)).toBe(true);
+      await until(() => !alive(pid!));
 
-    const again = await authed(port);
-    await again.request('logs.subscribe', { workspace });
-    await records(again, 3);
-    const next = childPids().find((other) => other !== pid);
-    again.socket.send(JSON.stringify({ id: 9, method: 'stats.get' }));
-    await until(() => childPids().filter((other) => alive(other)).length === 2);
-    const command = childPids().find((other) => other !== pid && other !== next);
-    await server!.close();
-    server = null;
-    expect([alive(next!), alive(command!)]).toEqual([false, false]);
-  });
+      const again = await authed(port);
+      await again.request('logs.subscribe', { workspace });
+      await records(again, 3);
+      const next = childPids().find((other) => other !== pid);
+      again.socket.send(JSON.stringify({ id: 9, method: 'stats.get' }));
+      await until(() => childPids().length === 2);
+      const command = childPids().find((other) => other !== pid && other !== next);
+      await server!.close();
+      server = null;
+      expect([alive(next!), alive(command!)]).toEqual([false, false]);
+    },
+  );
 
   it('drops a client that stops reading and stops the child it no longer needs', async () => {
     const port = await start({
