@@ -345,7 +345,9 @@ streams its frames:
   CoreDevice HID service (`dtuhidd`), the one Xcode's Device Hub uses, so
   input keeps working while Device Hub or Siniulator shows the simulator.
   With an Xcode whose simulators have no such service, input goes through
-  SimulatorKit's legacy HID client instead. Text is typed key by key on a US
+  SimulatorKit's legacy HID client instead. The first input starts that service, as Device
+  Hub does, and from then until the simulator reboots it ignores tools that
+  still use SimulatorKit's legacy HID client. Text is typed key by key on a US
   layout. `lock` is the side button.
 - Emulators take touches through the emulator's gRPC `sendTouch`. Text and
   buttons go through `adb -s <serial> shell input`, because Stim's AVDs have

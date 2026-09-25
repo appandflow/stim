@@ -458,7 +458,7 @@ extension SimulatorSource: Source {
 
   private func apply(_ command: Command) {
     if hid?.isConnected != true { hid = SimulatorHID(udid: udid) }
-    guard let hid else { return Output.notice(["inputError": "SimulatorKit could not open \(udid) for input."]) }
+    guard let hid else { return Output.notice(["inputError": "\(udid) could not be opened for input."]) }
     switch command {
     case .touch(let phase, let point, let index):
       let displays = CoreSimulator.displays(udid: udid)

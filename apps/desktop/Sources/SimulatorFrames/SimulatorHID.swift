@@ -64,10 +64,12 @@ enum TouchPhase {
 
 /// Input for one booted simulator. It uses the simulator's CoreDevice HID
 /// service when the runtime has one, and SimulatorKit's legacy HID client
-/// otherwise. `isConnected` turns false once the CoreDevice connection closes;
-/// make a new instance then.
+/// otherwise. `isConnected` turns false once the CoreDevice connection closes,
+/// and a few seconds after falling back to the legacy client, so a service
+/// that was not up yet is tried again; make a new instance then.
 final class SimulatorHID {
   private let transport: Transport
+  private let legacyUntil = Date().addingTimeInterval(10)
 
   private enum Transport {
     case coreDevice(CoreDeviceHID)
@@ -87,7 +89,7 @@ final class SimulatorHID {
 
   var isConnected: Bool {
     if case .coreDevice(let coreDevice) = transport { return coreDevice.isConnected }
-    return true
+    return Date() < legacyUntil
   }
 
   /// `point` is a fraction of the screen in its native orientation, origin top-left.
@@ -115,13 +117,11 @@ final class SimulatorHID {
   }
 }
 
-// On Xcode 27 the guest's CoreDevice HID daemon, dtuhidd, starts when a
-// CoreDevice client such as Device Hub attaches to the simulator. The guest's
-// SimulatorHID then disconnects the keyboard, button and touch services that
-// SimulatorKit's legacy client feeds, and cannot reconnect them until the
-// simulator reboots. Sending through dtuhidd's own service works in both
-// states. The message shapes follow dtuhidd's IndigoHIDServer, as used by
-// Siniulator (github.com/kmagiera/Siniulator, Sources/Siniulator/Input.swift).
+// Once a CoreDevice client such as Device Hub starts dtuhidd in the simulator,
+// the guest ignores SimulatorKit's legacy HID client until it reboots; dtuhidd's
+// own service takes input in both states. The message shapes follow dtuhidd's
+// IndigoHIDServer as Siniulator uses it
+// (github.com/kmagiera/Siniulator, Sources/Siniulator/Input.swift).
 private final class CoreDeviceHID {
   private static let feature = "com.apple.coredevice.feature.remote.hid.digitizer"
   private static let lookupSelector = NSSelectorFromString("lookup:error:")
@@ -158,7 +158,8 @@ private final class CoreDeviceHID {
       self.lock.unlock()
     }
     xpc_connection_resume(connection)
-    // dtuhidd drops events that arrive before it has answered the activating barrier.
+    // dtuhidd drops events that arrive before it has answered the activating
+    // barrier; a barrier left unanswered fails the connection.
     let activation = message("IndigoKeyboardButtonEvent", dictionary(["usageCode": 0, "state": 2]), barrier: true)
     xpc_connection_send_message_with_reply(connection, activation, queue) { [weak self] reply in
       guard xpc_get_type(reply) != XPC_TYPE_ERROR, let self else { return }
@@ -166,6 +167,15 @@ private final class CoreDeviceHID {
       let queued = self.pending ?? []
       self.pending = nil
       for message in queued { xpc_connection_send_message(self.connection, message) }
+      self.lock.unlock()
+    }
+    queue.asyncAfter(deadline: .now() + 5) { [weak self] in
+      guard let self else { return }
+      self.lock.lock()
+      if self.pending != nil {
+        self.closed = true
+        self.pending = nil
+      }
       self.lock.unlock()
     }
   }
@@ -235,9 +245,9 @@ private final class CoreDeviceHID {
 // SimulatorKit's HID client and Indigo message builders are private. These
 // signatures match the assertion strings and ObjC type encodings that Xcode 27
 // ships. Touch points are fractions of the screen when the size is 1x1, and
-// 0x32 is the Indigo target of the main screen's digitizer. Keyboard and
-// button messages also go to 0x32: a headless Xcode 27 simulator ignores
-// IndigoHIDMessageForKeyboardArbitrary's fixed target (0x64) and buttons on 0x33.
+// 0x32 is the Indigo target of the main screen's digitizer. Keys and buttons
+// also go to 0x32: the keyboard (0x64) and button (0x33) targets stop working
+// once the guest suppresses those services.
 private final class LegacyHID {
   private static let mainScreenTarget: UInt32 = 0x32
   private static let keyboardPage: UInt32 = 0x07
