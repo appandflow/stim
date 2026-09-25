@@ -257,7 +257,8 @@ export interface MachineUsage {
   volumes: MachineVolume[];
   memory: { totalBytes: number; usedBytes: number | null; pressure: MemoryPressure | null };
   load: { avg1: number; avg5: number; avg15: number; cpus: number };
-  cpu: { usage: number | null; cores: number };
+  /** Absent from a server older than the `cpu` field (#1253). */
+  cpu?: { usage: number | null; cores: number };
   sampledAt: string;
 }
 

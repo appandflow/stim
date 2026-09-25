@@ -195,6 +195,12 @@ describe('machineStats', () => {
     delete (older.memory as Partial<MachineUsage['memory']>).usedBytes;
     expect(machineStats(older).map((s) => s.kind)).toEqual(['disk']);
   });
+
+  it('leaves CPU out for a server older than the cpu field, instead of crashing', () => {
+    const older = usage({}, 0.5, 212e9);
+    delete (older as Partial<MachineUsage>).cpu;
+    expect(machineStats(older).map((s) => s.kind)).toEqual(['memory', 'disk']);
+  });
 });
 
 describe('budgetRows', () => {
