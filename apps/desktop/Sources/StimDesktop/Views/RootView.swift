@@ -55,14 +55,15 @@ struct RootView: View {
         .background(Theme.background)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
         .navigationSplitViewColumnWidth(min: 440, ideal: 900)
-    }
-    .toolbar {
-      ToolbarItem(placement: .navigation) { MachineSummary(store: store, metrics: metrics, width: summaryWidth) }
-      if showsWorkspace {
-        ToolbarItem(placement: .primaryAction) {
-          InspectorToggleButton(isShown: inspector != .hidden, action: toggleInspector)
+        .toolbar {
+          ToolbarItem(placement: .navigation) { MachineSummary(store: store, metrics: metrics, width: summaryWidth) }
+          if showsWorkspace {
+            ToolbarItem(placement: .primaryAction) { Spacer() }
+            ToolbarItem(placement: .primaryAction) {
+              InspectorToggleButton(isShown: inspector != .hidden, action: toggleInspector)
+            }
+          }
         }
-      }
     }
     .focusedSceneValue(
       \.inspectorToggle,
