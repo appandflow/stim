@@ -72,11 +72,29 @@ struct WorkspaceHeader: View {
   }
 
   private var row: some View {
+    ViewThatFits(in: .horizontal) {
+      HStack(spacing: 12) {
+        titleGroup
+        Spacer(minLength: 12)
+        chips
+      }
+      VStack(alignment: .leading, spacing: 8) {
+        titleGroup
+        chips
+      }
+    }
+  }
+
+  private var titleGroup: some View {
     HStack(spacing: 12) {
-      Text(env.names.title).font(Theme.heading(16))
-      Text(project.name).font(Theme.body(12)).foregroundStyle(Theme.primary)
-      Text(env.names.subtitle).font(Theme.body(12)).foregroundStyle(Theme.tertiary)
-      Spacer()
+      Text(env.names.title).font(Theme.heading(16)).lineLimit(1).truncationMode(.middle)
+      Text(project.name).font(Theme.body(12)).foregroundStyle(Theme.primary).lineLimit(1).fixedSize()
+      Text(env.names.subtitle).font(Theme.body(12)).foregroundStyle(Theme.tertiary).lineLimit(1).fixedSize()
+    }
+  }
+
+  private var chips: some View {
+    FlowLayout(spacing: 8, lineSpacing: 6) {
       if let metro = env.metro {
         Chip(tint: metro.running ? nil : Theme.error) {
           StatusDot(color: metro.running ? Theme.live : Theme.error)
@@ -84,10 +102,8 @@ struct WorkspaceHeader: View {
           Text(":\(String(metro.port))").font(Theme.mono())
         }
       }
-      if let supervisor = env.supervisor {
-        Chip(tint: supervisor.healthy == true ? nil : Theme.warn) {
-          Text("\(supervisor.mode ?? "supervisor") \u{00B7} \(supervisor.healthy == true ? "healthy" : "unhealthy")")
-        }
+      if let supervisor = env.supervisor, supervisor.healthy != true {
+        Chip(tint: Theme.warn) { Text("supervisor unhealthy") }
       }
       if let usage {
         if let cpu = usage.latest.cpuPercent {
