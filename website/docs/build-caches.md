@@ -35,6 +35,14 @@ build configuration or variant.
 installs the saved `.app` or `.apk`. A miss runs the native build and stores the
 result. Two matching misses use one build through a single-flight lock.
 
+In an Expo project that gitignores `ios/` or `android/` (Continuous Native
+Generation), the fingerprint hashes the app config instead of the native
+directory. Stim records the fingerprint of each prebuild it runs. When a native
+build is needed and the existing directory was not generated from the current
+fingerprint, for example after a config plugin change, Stim regenerates it with
+`expo prebuild --clean` before building. A committed native directory is part
+of the key and is never regenerated.
+
 Release configurations use separate keys. On a cache hit for an iOS simulator
 or Android target, Stim regenerates the current workspace's JavaScript and
 assets in a copy of the artifact. If that swap fails, it builds fresh. iOS

@@ -2008,7 +2008,7 @@ describe('the other refusals', () => {
 
   test('a prebuild failure carries its own code and transcript tail', async () => {
     const h = harness({
-      needsPrebuildFor: () => true,
+      planPrebuildFor: () => 'generate',
       prebuild: async () => ({
         failed: true,
         code: PREBUILD_ERROR,
@@ -2478,7 +2478,7 @@ describe('single-flight builds', () => {
       build: never('the build'),
       prebuild: never('prebuild'),
       storeCached: never('the store'),
-      needsPrebuildFor: () => true,
+      planPrebuildFor: () => 'generate',
     });
     const result = await h.run();
     expect(result.ok).toBe(true);
@@ -4127,6 +4127,23 @@ describe('re-fingerprint after prebuild', () => {
     const warm = harness({ fingerprint: async () => ({ hash: WARM, sources: [] }) });
     await warm.run();
     expect(warm.calls.resolveCached[0]?.[1]).toBe(storedKey);
+  });
+
+  test('an existing CNG android/ is regenerated until a recorded prebuild matches the fingerprint', async () => {
+    cngProject();
+    mkdirSync(join(root, 'android', 'app'), { recursive: true });
+    const stale = harness({ fingerprint: shifting() });
+    expect((await stale.run()).ok).toBe(true);
+    expect(stale.calls.prebuild.length).toBe(1);
+    expect(stale.calls.prebuild[0]?.[3]).toMatchObject({ clean: true });
+    expect(readState().prebuild).toEqual({ android: WARM });
+    expect(String(stale.calls.storeCached[0]?.[1])).toMatch(new RegExp(`^${WARM}`));
+
+    const current = harness({
+      fingerprint: async () => ({ hash: WARM, sources: [{ type: 'dir', filePath: 'android' }] }),
+      prebuild: never('prebuild'),
+    });
+    expect((await current.run()).ok).toBe(true);
   });
 
   test('the shift is one dim line naming both short hashes, and the payload reports what was stored', async () => {

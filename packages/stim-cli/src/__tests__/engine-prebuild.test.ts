@@ -1,12 +1,17 @@
 import assert from 'node:assert';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   PREBUILD_ERROR,
+  nativeDirInFingerprint,
   nativeDirName,
   needsPrebuild,
+  planPrebuild,
+  prebuildAction,
   prebuildRefusal,
+  recordPrebuild,
   runPrebuild,
   shouldPrebuild,
 } from '../engine/prebuild.ts';
@@ -57,6 +62,61 @@ describe('the decision', () => {
     expect(needsPrebuild(root, 'ios', true)).toBe(false);
     expect(needsPrebuild(root, 'android', true)).toBe(true);
     expect(needsPrebuild(root, 'android', false)).toBe(false);
+  });
+
+  test('prebuildAction regenerates a native dir outside the key unless its recorded prebuild ran on this fingerprint', () => {
+    const base = {
+      isExpo: true,
+      nativeDirExists: true,
+      nativeDirFingerprinted: false,
+      nativeDirTracked: false,
+      generatedFrom: 'old',
+      fingerprint: 'new',
+    };
+    expect(prebuildAction(base)).toBe('regenerate');
+    expect(prebuildAction({ ...base, generatedFrom: null })).toBe('regenerate');
+    expect(prebuildAction({ ...base, generatedFrom: 'new' })).toBe('none');
+    expect(prebuildAction({ ...base, nativeDirFingerprinted: true })).toBe('none');
+    expect(prebuildAction({ ...base, nativeDirTracked: true })).toBe('refuse');
+    expect(prebuildAction({ ...base, nativeDirExists: false })).toBe('generate');
+    expect(prebuildAction({ ...base, isExpo: false })).toBe('none');
+  });
+
+  test('nativeDirInFingerprint is true only when the fingerprint hashed that native dir', () => {
+    expect(
+      nativeDirInFingerprint([{ type: 'dir', filePath: 'ios', reasons: ['bareNativeDir'], hash: 'abc' }], 'ios'),
+    ).toBe(true);
+    expect(
+      nativeDirInFingerprint([{ type: 'dir', filePath: 'ios', reasons: ['bareNativeDir'], hash: null }], 'ios'),
+    ).toBe(false);
+    expect(
+      nativeDirInFingerprint([{ type: 'dir', filePath: 'ios', reasons: ['bareNativeDir'], hash: 'abc' }], 'android'),
+    ).toBe(false);
+  });
+
+  test('planPrebuild compares the recorded prebuild fingerprint and refuses a git-tracked native dir', () => {
+    process.env.STIM_HOME = join(root, 'stim-home');
+    try {
+      mkdirSync(join(root, 'ios'), { recursive: true });
+      writeFileSync(join(root, 'ios', 'Podfile'), '');
+      const plan = (fingerprint: string) =>
+        planPrebuild(root, 'ios', {
+          isExpo: true,
+          fingerprint,
+          sources: [{ type: 'dir', filePath: 'ios', reasons: ['bareNativeDir'], hash: null }],
+        });
+      expect(plan('abc')).toBe('regenerate');
+      recordPrebuild(root, 'ios', 'abc');
+      recordPrebuild(root, 'android', 'def');
+      expect(plan('abc')).toBe('none');
+      expect(plan('abd')).toBe('regenerate');
+
+      execFileSync('git', ['init', '-q', root]);
+      execFileSync('git', ['-C', root, 'add', 'ios/Podfile']);
+      expect(plan('abd')).toBe('refuse');
+    } finally {
+      delete process.env.STIM_HOME;
+    }
   });
 
   test('prebuildRefusal names the bare-project case and nothing else', () => {
@@ -155,6 +215,22 @@ describe('runPrebuild', () => {
     expect(writer.records.map((r) => [r.src, r.level, r.msg])).toEqual([
       ['build', 'debug', 'Creating native directory (./ios)'],
     ]);
+  });
+
+  test('regenerating adds --clean to the fixed prebuild invocation', async () => {
+    installFakeExpoBin();
+    mkdirSync(join(root, 'ios'), { recursive: true });
+    const spawnCalls: SpawnCall[] = [];
+    const result = await runPrebuild(root, 'ios', collectingWriter(), {
+      isExpo: true,
+      clean: true,
+      spawnFn: (cmd, args, opts) => {
+        spawnCalls.push({ cmd, args, opts });
+        return fakeExpoChild({});
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(spawnCalls[0]?.args).toEqual(['prebuild', '-p', 'ios', '--no-install', '--clean']);
   });
 
   test('a non-zero exit comes back as {failed, lastLines}', async () => {

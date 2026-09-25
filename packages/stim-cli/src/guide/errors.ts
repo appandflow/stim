@@ -71,11 +71,16 @@ Branch on the code, never on the message.`,
   workspace on the commit compiles from scratch, forever.`,
     },
     STIM_PREBUILD_FAILED: {
-      summary: 'expo prebuild could not generate the native directory',
+      summary: 'expo prebuild could not generate or regenerate the native directory',
       body: () => `STIM_PREBUILD_FAILED
-  \`expo prebuild\` could not generate the missing native directory. The
-  extracted output is above the code; the transcript is in
-  the global workspace logs/build-<platform>.ndjson file.`,
+  \`expo prebuild\` could not generate the missing native directory, or
+  regenerate a stale one. The extracted output is above the code; the
+  transcript is in the global workspace logs/build-<platform>.ndjson file.
+  The same code refuses a native directory that the fingerprint leaves out of
+  the cache key while git tracks its files: Stim cannot show those files came
+  from the current app config, and will not delete tracked files with
+  \`expo prebuild --clean\`. Stop excluding the directory from the fingerprint
+  (.fingerprintignore), or gitignore and untrack it so Stim regenerates it.`,
     },
     STIM_DEPS_FAILED: {
       summary: 'pod install or gradle sync failed; the bundler ladder and BUNDLE_FROZEN',

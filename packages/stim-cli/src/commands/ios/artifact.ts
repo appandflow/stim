@@ -25,6 +25,7 @@ import { waitForSharedBuild, type BuildLockHandle } from '../../engine/build-loc
 import type { BuildSlotHandle } from '../../engine/build-slots.ts';
 import { easDeviceBuildRemedy, type EasBuildResult } from '../../engine/eas-build.ts';
 import { copyAppAside, writeIpTxt } from '../../engine/ios-lan.ts';
+import { recordPrebuild, staleNativeDirRefusal } from '../../engine/prebuild.ts';
 import {
   RESOLVE_TIMEOUT_MS,
   easAuthNote,
@@ -101,7 +102,7 @@ type IosArtifactDeps = Pick<
   | 'waitForBuild'
   | 'acquireBuildSlot'
   | 'releaseBuildSlot'
-  | 'needsPrebuild'
+  | 'planPrebuild'
   | 'runPrebuild'
   | 'readPodState'
   | 'podsAreStale'
@@ -562,9 +563,13 @@ export async function acquireIosArtifact(
 
       const mutatingSteps: string[] = [];
 
-      if (d.needsPrebuild(root, PLATFORM, isExpo)) {
+      const prebuild = d.planPrebuild(root, PLATFORM, { isExpo, fingerprint, sources: fingerprintSources });
+      if (prebuild === 'refuse') {
+        fail({ ...staleNativeDirRefusal(PLATFORM), build: buildFailure });
+      }
+      if (prebuild === 'generate' || prebuild === 'regenerate') {
         step('prebuild');
-        const result = await d.runPrebuild(root, PLATFORM, logWriter());
+        const result = await d.runPrebuild(root, PLATFORM, logWriter(), { clean: prebuild === 'regenerate' });
         if (result?.failed) {
           phase('prebuild', 'FAILED');
           fail({
@@ -575,7 +580,11 @@ export async function acquireIosArtifact(
             build: buildFailure,
           });
         }
-        phase('prebuild', `ios/ absent -> generated (${formatDuration(result?.durationMs ?? 0)})`);
+        const outcome =
+          prebuild === 'generate'
+            ? 'ios/ absent -> generated'
+            : 'ios/ not generated from this fingerprint -> regenerated with --clean';
+        phase('prebuild', `${outcome} (${formatDuration(result?.durationMs ?? 0)})`);
         mutatingSteps.push('prebuild');
       }
 
@@ -612,6 +621,7 @@ export async function acquireIosArtifact(
           previousHash: fingerprint,
           fingerprint: d.fingerprintProject,
         });
+        if (after && mutatingSteps.includes('prebuild')) recordPrebuild(root, PLATFORM, after.hash);
         if (!after) {
           storeHash = null;
           storeKey = null;

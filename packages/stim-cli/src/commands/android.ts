@@ -95,7 +95,7 @@ import {
 } from '../engine/device-remote.ts';
 import { detectProviders } from '../engine/metro-reach.ts';
 import { selectFromPool } from '../engine/device-pool.ts';
-import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
+import { planPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import { buildAndroid } from '../engine/gradle.ts';
 import { CCACHE_NOT_RUN, resolveCcache } from '../engine/ccache.ts';
 import { swapApkBundle } from '../engine/apk-swap.ts';
@@ -330,7 +330,7 @@ interface RunAndroidOptions {
   uploadRemoteBuild?: typeof uploadRemote;
   resolveCacheProvider?: typeof resolveCacheProviderConfig;
   loadCacheProviderModule?: typeof loadCacheProvider;
-  needsPrebuildFor?: typeof needsPrebuild;
+  planPrebuildFor?: typeof planPrebuild;
   prebuild?: typeof runPrebuild;
   build?: typeof buildAndroid;
   ccacheFor?: typeof resolveCcache;
@@ -414,7 +414,7 @@ function resolveRunAndroidOptions(
     uploadRemoteBuild = uploadRemote,
     resolveCacheProvider = resolveCacheProviderConfig,
     loadCacheProviderModule = loadCacheProvider,
-    needsPrebuildFor = needsPrebuild,
+    planPrebuildFor = planPrebuild,
     prebuild = runPrebuild,
     build = buildAndroid,
     ccacheFor = resolveCcache,
@@ -497,7 +497,7 @@ function resolveRunAndroidOptions(
     uploadRemoteBuild,
     resolveCacheProvider,
     loadCacheProviderModule,
-    needsPrebuildFor,
+    planPrebuildFor,
     prebuild,
     build,
     ccacheFor,
@@ -624,7 +624,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     uploadRemoteBuild,
     resolveCacheProvider,
     loadCacheProviderModule,
-    needsPrebuildFor,
+    planPrebuildFor,
     prebuild,
     build,
     ccacheFor,
@@ -1043,7 +1043,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         loadCacheProviderModule,
         acquireSlot,
         releaseSlot,
-        needsPrebuildFor,
+        planPrebuildFor,
         prebuild,
         build,
         ccacheFor,
