@@ -1,4 +1,4 @@
-import type { StatusPayload } from '@stim-cli/core/state';
+import type { NdjsonRecord, StatusPayload } from '@stim-cli/core/state';
 
 export const PROTOCOL_VERSION = 1;
 
@@ -8,7 +8,15 @@ export const CAPABILITIES = ['read'] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
 
-export const METHODS = ['hello', 'status.subscribe', 'unsubscribe'] as const;
+export const METHODS = [
+  'hello',
+  'status.subscribe',
+  'logs.query',
+  'logs.subscribe',
+  'stats.get',
+  'settings.get',
+  'unsubscribe',
+] as const;
 
 export type Method = (typeof METHODS)[number];
 
@@ -25,7 +33,12 @@ export const ERROR_CODES = [
   'unknown-method',
   'already-authenticated',
   'unknown-subscription',
+  'unknown-workspace',
+  'limit-exceeded',
+  'slow-client',
   'status-failed',
+  'logs-failed',
+  'stim-failed',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -68,10 +81,62 @@ export interface UnsubscribeParams {
   subscription: string;
 }
 
-export type ClientRequest =
-  | { id: RequestId; method: 'hello'; params: HelloParams }
-  | { id: RequestId; method: 'status.subscribe'; params?: Record<string, never> }
-  | { id: RequestId; method: 'unsubscribe'; params: UnsubscribeParams };
+export const LOG_SOURCES = ['metro', 'client', 'device', 'build'] as const;
+
+export type LogSource = (typeof LOG_SOURCES)[number];
+
+export const LOG_LEVELS = ['debug', 'info', 'warn', 'error', 'fatal'] as const;
+
+export type LogLevel = (typeof LOG_LEVELS)[number];
+
+export const MAX_LOG_TAIL = 5000;
+
+/**
+ * The Stim Desktop log viewer's filters, passed to `stim logs`. `workspace` is an environment `path` from a
+ * status payload. Without `sources`, `errors` keeps the CLI's default error scope. `tail` defaults to
+ * {@link MAX_LOG_TAIL}, which is also its maximum.
+ */
+export interface LogFilter {
+  workspace: string;
+  sources?: LogSource[];
+  level?: LogLevel;
+  slot?: string;
+  grep?: string;
+  errors?: boolean;
+  tail?: number;
+}
+
+/** One record as `stim logs --json` prints it. */
+export type LogRecord = NdjsonRecord;
+
+export interface LogsQueryResult {
+  records: LogRecord[];
+}
+
+/** Without `workspace`, stats and settings cover the machine only. */
+export interface WorkspaceParams {
+  workspace?: string;
+}
+
+/** `stim stats --json`. */
+export type StatsResult = Record<string, unknown>;
+
+/** `stim settings --json`; the CLI masks sensitive values. */
+export type SettingsResult = Record<string, unknown>;
+
+export interface Methods {
+  hello: { params: HelloParams; result: HelloResult };
+  'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
+  'logs.query': { params: LogFilter; result: LogsQueryResult };
+  'logs.subscribe': { params: LogFilter; result: SubscribeResult };
+  'stats.get': { params?: WorkspaceParams; result: StatsResult };
+  'settings.get': { params?: WorkspaceParams; result: SettingsResult };
+  unsubscribe: { params: UnsubscribeParams; result: Record<string, never> };
+}
+
+export type ClientRequest = {
+  [M in Method]: { id: RequestId; method: M } & Pick<Methods[M], 'params'>;
+}[Method];
 
 export interface ProtocolError {
   code: ErrorCode;
@@ -79,7 +144,7 @@ export interface ProtocolError {
 }
 
 export type ServerResponse =
-  | { id: RequestId; result: HelloResult | SubscribeResult | Record<string, never> }
+  | { id: RequestId; result: Methods[Method]['result'] }
   | { id: RequestId | null; error: ProtocolError };
 
 /** A full status payload, as `stim status --watch --json` prints it. */
@@ -89,14 +154,24 @@ export interface StatusEvent {
   payload: StatusPayload;
 }
 
-/** A subscription ended because its source failed; the client may resubscribe. */
+/**
+ * Records for a `logs.subscribe` subscription: first the last `tail` matching records, then new ones as
+ * they arrive.
+ */
+export interface LogsEvent {
+  event: 'logs';
+  subscription: string;
+  records: LogRecord[];
+}
+
+/** A subscription ended because its source failed or the client fell behind; the client may resubscribe. */
 export interface ErrorEvent {
   event: 'error';
   subscription: string;
   error: ProtocolError;
 }
 
-export type ServerEvent = StatusEvent | ErrorEvent;
+export type ServerEvent = StatusEvent | LogsEvent | ErrorEvent;
 
 export type ServerMessage = ServerResponse | ServerEvent;
 
@@ -117,6 +192,15 @@ function request(method: Method, params?: JsonSchema): JsonSchema {
     required: params ? ['id', 'method', 'params'] : ['id', 'method'],
     additionalProperties: false,
     properties: { id: requestId, method: { const: method }, params: params ?? { type: 'object', maxProperties: 0 } },
+  };
+}
+
+function optionalParams(method: Method, params: JsonSchema): JsonSchema {
+  return {
+    type: 'object',
+    required: ['id', 'method'],
+    additionalProperties: false,
+    properties: { id: requestId, method: { const: method }, params },
   };
 }
 
@@ -180,10 +264,43 @@ export function protocolJsonSchema(): JsonSchema {
           deviceToken: { type: 'string' },
         },
       },
+      LogRecord: {
+        type: 'object',
+        description: 'One record as `stim logs --json` prints it.',
+        properties: {
+          ts: { type: 'number' },
+          src: { type: 'string' },
+          level: { type: 'string' },
+          msg: { type: 'string' },
+        },
+      },
+      LogFilter: {
+        type: 'object',
+        required: ['workspace'],
+        additionalProperties: false,
+        properties: {
+          workspace: { type: 'string', description: 'An environment path from a status payload.' },
+          sources: { type: 'array', minItems: 1, items: { enum: [...LOG_SOURCES] } },
+          level: { enum: [...LOG_LEVELS] },
+          slot: { type: 'string', minLength: 1 },
+          grep: { type: 'string', description: 'A regular expression matched against each message.' },
+          errors: { type: 'boolean' },
+          tail: { type: 'integer', minimum: 1, maximum: MAX_LOG_TAIL, default: MAX_LOG_TAIL },
+        },
+      },
+      WorkspaceParams: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { workspace: { type: 'string', description: 'An environment path from a status payload.' } },
+      },
       ClientRequest: {
         oneOf: [
           request('hello', { $ref: '#/$defs/HelloParams' }),
           request('status.subscribe'),
+          request('logs.query', { $ref: '#/$defs/LogFilter' }),
+          request('logs.subscribe', { $ref: '#/$defs/LogFilter' }),
+          optionalParams('stats.get', { $ref: '#/$defs/WorkspaceParams' }),
+          optionalParams('settings.get', { $ref: '#/$defs/WorkspaceParams' }),
           request('unsubscribe', {
             type: 'object',
             required: ['subscription'],
@@ -201,7 +318,7 @@ export function protocolJsonSchema(): JsonSchema {
             properties: {
               id: requestId,
               result: {
-                oneOf: [
+                anyOf: [
                   { $ref: '#/$defs/HelloResult' },
                   {
                     type: 'object',
@@ -209,7 +326,16 @@ export function protocolJsonSchema(): JsonSchema {
                     additionalProperties: false,
                     properties: { subscription: { type: 'string' } },
                   },
-                  { type: 'object', maxProperties: 0 },
+                  {
+                    type: 'object',
+                    required: ['records'],
+                    additionalProperties: false,
+                    properties: { records: { type: 'array', items: { $ref: '#/$defs/LogRecord' } } },
+                  },
+                  {
+                    type: 'object',
+                    description: 'The payload of `stim stats --json` or `stim settings --json`, or {} for unsubscribe.',
+                  },
                 ],
               },
             },
@@ -232,6 +358,16 @@ export function protocolJsonSchema(): JsonSchema {
               event: { const: 'status' },
               subscription: { type: 'string' },
               payload: { type: 'object', description: 'A full payload, as `stim status --watch --json` prints it.' },
+            },
+          },
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'records'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'logs' },
+              subscription: { type: 'string' },
+              records: { type: 'array', items: { $ref: '#/$defs/LogRecord' } },
             },
           },
           {

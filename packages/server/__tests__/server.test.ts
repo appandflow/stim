@@ -1,32 +1,71 @@
-import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
-import type { ServerMessage } from '../src/protocol.ts';
+import type { HelloResult, ServerMessage } from '../src/protocol.ts';
 import { createPairingToken, PAIRING_TTL_MS, readDevices, revokeDevice } from '../src/registry.ts';
-import { startServer, type RunningServer } from '../src/server.ts';
+import { startServer, type RunningServer, type ServerOptions } from '../src/server.ts';
 
 const FAKE_STIM = `
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-const pidFile = join(process.env.FAKE_STIM_PIDS, String(process.pid));
-mkdirSync(process.env.FAKE_STIM_PIDS, { recursive: true });
-writeFileSync(pidFile, process.argv.slice(2).join(' '));
-const payloads = JSON.parse(process.env.FAKE_STIM_PAYLOADS);
-let index = 0;
-const timer = setInterval(() => {
-  if (index < payloads.length) return void process.stdout.write(JSON.stringify(payloads[index++]) + '\\n');
-  if (process.env.FAKE_STIM_EXIT) {
-    rmSync(pidFile, { force: true });
-    process.stderr.write('status failed on purpose');
-    process.exit(3);
-  }
-}, 20);
-process.on('SIGTERM', () => {
-  clearInterval(timer);
+const args = process.argv.slice(2);
+const env = process.env;
+const pidFile = join(env.FAKE_STIM_PIDS, String(process.pid));
+mkdirSync(env.FAKE_STIM_PIDS, { recursive: true });
+writeFileSync(pidFile, args.join(' '));
+appendFileSync(env.FAKE_STIM_CALLS, JSON.stringify({ args: args.join(' '), cwd: process.cwd() }) + '\\n');
+const exit = (code) => {
   rmSync(pidFile, { force: true });
-  process.exit(0);
-});
+  process.exit(code);
+};
+process.on('SIGTERM', () => env.FAKE_STIM_STUBBORN || exit(0));
+const print = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
+const [command] = args;
+if (command === 'status') {
+  const payloads = JSON.parse(env.FAKE_STIM_PAYLOADS);
+  let index = 0;
+  setInterval(() => {
+    if (index < payloads.length) return void print(payloads[index++]);
+    if (env.FAKE_STIM_EXIT) {
+      process.stderr.write('status failed on purpose');
+      exit(3);
+    }
+  }, 20);
+} else if (command === 'logs') {
+  for (const record of JSON.parse(env.FAKE_STIM_RECORDS)) print(record);
+  if (!args.includes('--follow')) exit(0);
+  if (env.FAKE_STIM_EXIT) {
+    process.stderr.write('logs failed on purpose');
+    setTimeout(() => exit(3), 50);
+  }
+  if (env.FAKE_STIM_FLOOD) {
+    const msg = 'x'.repeat(20000);
+    setInterval(() => {
+      for (let i = 0; i < 20; i++) print({ ts: Date.now(), src: 'device', level: 'info', msg });
+    }, 1);
+  } else {
+    setInterval(() => {}, 1000);
+  }
+} else if (env.FAKE_STIM_HANG || env.FAKE_STIM_STUBBORN) {
+  setInterval(() => {}, 1000);
+} else if (env.FAKE_STIM_FAIL) {
+  process.stderr.write(command + ' failed on purpose');
+  exit(1);
+} else {
+  print({ command, cwd: process.cwd() });
+  exit(0);
+}
 `;
 
 const FAKE_TAILSCALE = `#!/usr/bin/env node
@@ -44,6 +83,12 @@ if (command !== 'whois' || !peer) {
 }
 console.log(JSON.stringify({ Node: { ID: 1, StableID: peer.node, Name: peer.node + '.tail.ts.net.' }, UserProfile: { LoginName: peer.user } }));
 `;
+
+const RECORDS = [
+  { ts: 1, src: 'metro', level: 'info', msg: 'Bundled' },
+  { ts: 2, src: 'client', level: 'warn', msg: 'Slow render', slot: 'tablet' },
+  { ts: 3, src: 'build', level: 'error', msg: 'Compile failed' },
+];
 
 const PAYLOADS = [
   { environments: [], capacity: { live: 0 }, deviceLeases: [], unprovisionedWorktrees: [], simctlAvailable: true },
@@ -69,11 +114,21 @@ interface Client {
 
 let root: string;
 let pids: string;
+let calls: string;
+let workspace: string;
 let server: RunningServer | null;
 let clients: WebSocket[];
 
 async function start(
-  overrides: { exit?: boolean; whoisDelayMs?: number; authTimeoutMs?: number; maxAuthFailures?: number } = {},
+  overrides: {
+    exit?: boolean;
+    whoisDelayMs?: number;
+    authTimeoutMs?: number;
+    maxAuthFailures?: number;
+    env?: Record<string, string>;
+    logLimits?: ServerOptions['logLimits'];
+    commandLimits?: ServerOptions['commandLimits'];
+  } = {},
 ): Promise<number> {
   const stimCli = join(root, 'fake-stim.mjs');
   writeFileSync(stimCli, FAKE_STIM);
@@ -91,13 +146,18 @@ async function start(
     env: {
       ...process.env,
       FAKE_STIM_PIDS: pids,
+      FAKE_STIM_CALLS: calls,
       FAKE_STIM_PAYLOADS: JSON.stringify(PAYLOADS),
+      FAKE_STIM_RECORDS: JSON.stringify(RECORDS),
       FAKE_TAILSCALE_PEERS: JSON.stringify(PEERS),
       ...(overrides.exit ? { FAKE_STIM_EXIT: '1' } : {}),
       ...(overrides.whoisDelayMs ? { FAKE_TAILSCALE_DELAY_MS: String(overrides.whoisDelayMs) } : {}),
+      ...overrides.env,
     },
     authTimeoutMs: overrides.authTimeoutMs,
     maxAuthFailures: overrides.maxAuthFailures,
+    logLimits: overrides.logLimits,
+    commandLimits: overrides.commandLimits,
   });
   return server.addresses[0]!.port;
 }
@@ -135,9 +195,10 @@ async function pair(port: number, peer?: string): Promise<{ id: string; token: s
     client: CLIENT,
     auth: { pairingToken: createPairingToken().token, deviceName: 'Test phone' },
   });
-  if (!('result' in reply) || !('deviceToken' in reply.result)) throw new Error(JSON.stringify(reply));
+  if (!('result' in reply)) throw new Error(JSON.stringify(reply));
+  const result = reply.result as HelloResult;
   client.socket.close();
-  return { id: reply.result.device.id, token: reply.result.deviceToken! };
+  return { id: result.device.id, token: result.deviceToken! };
 }
 
 function alive(pid: number): boolean {
@@ -155,13 +216,43 @@ async function until(check: () => boolean): Promise<void> {
 }
 
 function childPids(): number[] {
-  return readdirSync(pids).map(Number);
+  return existsSync(pids) ? readdirSync(pids).map(Number).filter(alive) : [];
+}
+
+function stimCalls(): { args: string; cwd: string }[] {
+  if (!existsSync(calls)) return [];
+  return readFileSync(calls, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { args: string; cwd: string });
+}
+
+async function authed(port: number): Promise<Client> {
+  const { token } = await pair(port);
+  const client = await connect(port);
+  await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+  return client;
+}
+
+async function records(client: Client, count: number): Promise<unknown[]> {
+  const seen: unknown[] = [];
+  while (seen.length < count) {
+    const message = await client.next();
+    if (!('event' in message) || message.event !== 'logs') throw new Error(JSON.stringify(message));
+    seen.push(...message.records);
+  }
+  return seen;
 }
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'stim-server-'));
+  root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-server-')));
   pids = join(root, 'pids');
+  calls = join(root, 'calls.ndjson');
+  workspace = join(root, 'app');
+  mkdirSync(workspace);
   process.env.STIM_HOME = join(root, 'home');
+  mkdirSync(process.env.STIM_HOME);
+  writeFileSync(join(process.env.STIM_HOME, 'config.json'), JSON.stringify({ projects: { [workspace]: {} } }));
   server = null;
   clients = [];
 });
@@ -395,5 +486,186 @@ describe('status.subscribe', () => {
     expect(await client.request('unsubscribe', { subscription: 's1' })).toMatchObject({
       error: { code: 'unknown-subscription' },
     });
+  });
+});
+
+describe('logs.query', () => {
+  it('runs stim logs --json in the workspace with the Desktop viewer filters and returns the records', async () => {
+    const port = await start();
+    const client = await authed(port);
+    const reply = await client.request('logs.query', {
+      workspace,
+      sources: ['client', 'metro'],
+      level: 'warn',
+      slot: 'tablet',
+      grep: '-render',
+      errors: true,
+      tail: 50,
+    });
+    expect(reply).toEqual({ id: 2, result: { records: RECORDS } });
+    expect(stimCalls().filter((call) => call.args.startsWith('logs'))).toEqual([
+      {
+        args: 'logs --json --tail=50 --source metro client --slot=tablet --level=warn --grep=-render --errors',
+        cwd: workspace,
+      },
+    ]);
+  });
+
+  it('refuses an unregistered workspace and invalid filters without running stim', async () => {
+    const port = await start();
+    const client = await authed(port);
+    const other = join(root, 'other');
+    mkdirSync(other);
+    expect(await client.request('logs.query', { workspace: other })).toMatchObject({
+      error: { code: 'unknown-workspace' },
+    });
+    for (const filter of [{ tail: 5001 }, { sources: ['nope'] }, { sources: [] }, { grep: '(' }, { level: 'loud' }]) {
+      expect(await client.request('logs.query', { workspace, ...filter })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+    }
+    expect(await client.request('logs.subscribe', { workspace: other })).toMatchObject({
+      error: { code: 'unknown-workspace' },
+    });
+    expect(stimCalls().filter((call) => call.args.startsWith('logs'))).toEqual([]);
+  });
+});
+
+describe('logs.subscribe', () => {
+  it('shares one follow child per filter, replays the tail to a late subscriber, and stops with the last', async () => {
+    const port = await start();
+    const first = await authed(port);
+    expect(await first.request('logs.subscribe', { workspace, tail: 2 })).toEqual({
+      id: 2,
+      result: { subscription: 's1' },
+    });
+    expect(await records(first, 3)).toEqual(RECORDS);
+    const [pid] = childPids();
+    expect(stimCalls().at(-1)).toEqual({ args: 'logs --json --follow --tail=2', cwd: workspace });
+
+    const second = await authed(port);
+    await second.request('logs.subscribe', { workspace, tail: 2 });
+    expect(await records(second, 2)).toEqual(RECORDS.slice(1));
+    expect(childPids()).toEqual([pid]);
+
+    const errors = await authed(port);
+    await errors.request('logs.subscribe', { workspace, tail: 2, errors: true });
+    await records(errors, 3);
+    expect(childPids()).toHaveLength(2);
+    errors.socket.close();
+    await until(() => childPids().length === 1);
+
+    expect(await first.request('unsubscribe', { subscription: 's1' })).toEqual({ id: 3, result: {} });
+    expect(alive(pid!)).toBe(true);
+    second.socket.close();
+    await until(() => !alive(pid!));
+  });
+
+  it('delivers the records it has, then an error event, when the follow child exits', async () => {
+    const port = await start({ exit: true });
+    const client = await authed(port);
+    await client.request('logs.subscribe', { workspace });
+    expect(await records(client, 3)).toEqual(RECORDS);
+    expect(await client.next()).toEqual({
+      event: 'error',
+      subscription: 's1',
+      error: { code: 'logs-failed', message: 'stim logs --follow exited (code 3): logs failed on purpose' },
+    });
+  });
+
+  // Windows has no catchable SIGTERM: kill() always terminates the process.
+  test.skipIf(process.platform === 'win32')(
+    'kills a follow child that ignores SIGTERM when its last subscriber leaves or the server closes',
+    async () => {
+      const port = await start({ env: { FAKE_STIM_STUBBORN: '1' } });
+      const client = await authed(port);
+      await client.request('logs.subscribe', { workspace });
+      await records(client, 3);
+      const [pid] = childPids();
+      client.socket.close();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(alive(pid!)).toBe(true);
+      await until(() => !alive(pid!));
+
+      const again = await authed(port);
+      await again.request('logs.subscribe', { workspace });
+      await records(again, 3);
+      const next = childPids().find((other) => other !== pid);
+      again.socket.send(JSON.stringify({ id: 9, method: 'stats.get' }));
+      await until(() => childPids().length === 2);
+      const command = childPids().find((other) => other !== pid && other !== next);
+      await server!.close();
+      server = null;
+      expect([alive(next!), alive(command!)]).toEqual([false, false]);
+    },
+  );
+
+  it('drops a client that stops reading and stops the child it no longer needs', async () => {
+    const port = await start({
+      env: { FAKE_STIM_FLOOD: '1' },
+      logLimits: { maxBufferedBytes: 64 * 1024, maxPendingRecords: 200 },
+    });
+    const client = await authed(port);
+    await client.request('logs.subscribe', { workspace });
+    await until(() => childPids().length === 1);
+    const [pid] = childPids();
+    client.socket.pause();
+    await until(() => !alive(pid!));
+
+    client.socket.resume();
+    let message = await client.next();
+    while ('event' in message && message.event === 'logs') message = await client.next();
+    expect(message).toEqual({
+      event: 'error',
+      subscription: 's1',
+      error: { code: 'slow-client', message: expect.stringContaining('fell behind') },
+    });
+    expect(await client.request('unsubscribe', { subscription: 's1' })).toMatchObject({
+      error: { code: 'unknown-subscription' },
+    });
+  });
+});
+
+describe('stats.get and settings.get', () => {
+  it('return the CLI payload, run in the workspace or in the home directory', async () => {
+    const port = await start();
+    const client = await authed(port);
+    expect(await client.request('stats.get', { workspace })).toEqual({
+      id: 2,
+      result: { command: 'stats', cwd: workspace },
+    });
+    expect(await client.request('settings.get')).toEqual({
+      id: 3,
+      result: { command: 'settings', cwd: realpathSync(homedir()) },
+    });
+    expect(stimCalls().map((call) => call.args)).toEqual(['stats --json', 'settings --json']);
+  });
+
+  it('report a failing command with its stderr', async () => {
+    const port = await start({ env: { FAKE_STIM_FAIL: '1' } });
+    const client = await authed(port);
+    expect(await client.request('settings.get', { workspace })).toMatchObject({
+      error: { code: 'stim-failed', message: 'stim settings exited (code 1): settings failed on purpose' },
+    });
+  });
+
+  it('kill a running command when the client disconnects', async () => {
+    const port = await start({ env: { FAKE_STIM_HANG: '1' } });
+    const client = await authed(port);
+    client.socket.send(JSON.stringify({ id: 2, method: 'stats.get', params: { workspace } }));
+    await until(() => childPids().length === 1);
+    const [pid] = childPids();
+    expect(alive(pid!)).toBe(true);
+    client.socket.terminate();
+    await until(() => !alive(pid!));
+  });
+
+  it('kill a command that runs past its timeout', async () => {
+    const port = await start({ env: { FAKE_STIM_HANG: '1' }, commandLimits: { timeoutMs: 300 } });
+    const client = await authed(port);
+    expect(await client.request('stats.get')).toMatchObject({
+      error: { code: 'stim-failed', message: expect.stringContaining('did not finish') },
+    });
+    expect(childPids()).toEqual([]);
   });
 });

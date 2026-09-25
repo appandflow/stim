@@ -23,6 +23,8 @@ interface Subscription {
   onEvent: (event: ServerEvent) => void;
   onSubscribed?: () => void;
   serverId: string | null;
+  retryMs: number;
+  retry: unknown;
 }
 
 interface Pending {
@@ -55,6 +57,8 @@ const REFUSAL_CODES = new Set(['unauthorized', 'pairing-expired', 'protocol-unsu
 /**
  * One authenticated connection to a Stim server. It reconnects with a delay that doubles from 1 to
  * 30 seconds and resubscribes after each `hello`, because the server keeps no per-client history.
+ * An `error` event ends one subscription on the server; that subscription is sent again after the
+ * same doubling delay, which resets once it delivers an event.
  */
 export class StimConnection {
   private socket: WebSocket | null = null;
@@ -92,6 +96,7 @@ export class StimConnection {
     this.stopped = true;
     if (this.timer !== null) this.clearTimer(this.timer);
     this.timer = null;
+    for (const sub of this.subscriptions) this.cancelRetry(sub);
     this.socket?.close();
     this.socket = null;
     this.failPending('Connection closed.');
@@ -110,11 +115,20 @@ export class StimConnection {
     onEvent: (event: ServerEvent) => void,
     onSubscribed?: () => void,
   ): () => void {
-    const sub: Subscription = { method, params, onEvent, onSubscribed, serverId: null };
+    const sub: Subscription = {
+      method,
+      params,
+      onEvent,
+      onSubscribed,
+      serverId: null,
+      retryMs: MIN_RETRY_MS,
+      retry: null,
+    };
     this.subscriptions.add(sub);
     if (this.open && this.socket) this.sendSubscribe(this.socket, sub);
     return () => {
       this.subscriptions.delete(sub);
+      this.cancelRetry(sub);
       if (sub.serverId && this.open) {
         this.request('unsubscribe', { subscription: sub.serverId }).catch(() => {});
       }
@@ -155,7 +169,10 @@ export class StimConnection {
       if (socket !== this.socket) return;
       this.socket = null;
       this.open = false;
-      for (const sub of this.subscriptions) sub.serverId = null;
+      for (const sub of this.subscriptions) {
+        sub.serverId = null;
+        this.cancelRetry(sub);
+      }
       this.failPending('Connection lost.');
       if (!this.stopped) this.scheduleRetry('Connection lost.');
     };
@@ -211,8 +228,27 @@ export class StimConnection {
       return;
     }
     for (const sub of this.subscriptions) {
-      if (sub.serverId !== null && sub.serverId === message.subscription) sub.onEvent(message);
+      if (sub.serverId === null || sub.serverId !== message.subscription) continue;
+      if (message.event === 'error') this.resubscribeLater(sub);
+      else sub.retryMs = MIN_RETRY_MS;
+      sub.onEvent(message);
     }
+  }
+
+  private resubscribeLater(sub: Subscription): void {
+    const socket = this.socket;
+    const delay = sub.retryMs;
+    sub.serverId = null;
+    sub.retryMs = Math.min(sub.retryMs * 2, MAX_RETRY_MS);
+    sub.retry = this.setTimer(() => {
+      sub.retry = null;
+      if (socket && socket === this.socket && this.open && this.subscriptions.has(sub)) this.sendSubscribe(socket, sub);
+    }, delay);
+  }
+
+  private cancelRetry(sub: Subscription): void {
+    if (sub.retry !== null) this.clearTimer(sub.retry);
+    sub.retry = null;
   }
 
   private failPending(reason: string): void {

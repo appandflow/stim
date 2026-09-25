@@ -28,9 +28,25 @@ the mock server.
 ## Protocol types
 
 `src/protocol/types.ts` holds the protocol messages and the `stim status --json`
-and `stim logs --json` payload types the app reads. They are written from the
-spec until the server and the shared types in `@stim-cli/core` exist; the app
-then imports them from there and this file goes away.
+and `stim logs --json` payload types the app reads. It is a copy of the types
+`@stim-cli/server` exports, not an import, because this npm app cannot consume
+the pnpm workspace packages cleanly:
+
+- `@stim-cli/server` is not published yet, and the app is not a workspace
+  member, so there is no package to install.
+- A TypeScript path into `packages/server/src/protocol.ts` makes the app's `tsc`
+  compile `@stim-cli/core/state` from source, which imports Node built-ins and
+  `unique-pid`, neither of which the app installs. Metro would also have to
+  bundle `PROTOCOL_VERSION` from outside the project root.
+- The built `dist/protocol.d.mts` would make the app's checks depend on a
+  pnpm install and build of the workspace.
+
+`packages/server/__tests__/mobile-protocol.test.ts` keeps the copy honest: the
+root `pnpm run typecheck` fails when the app would send params the server
+refuses, misses a server method, or misreads a result or event the server
+sends. The root CI runs when this file changes. The app's `LogRecord` is
+narrower than the server's on purpose: the server forwards whatever
+`stim logs --json` prints.
 
 ## Develop
 
