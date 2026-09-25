@@ -85,7 +85,8 @@ struct FlowLayout: Layout {
     for row in rows {
       var x = bounds.minX
       for item in row.items {
-        item.subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(item.size))
+        item.subview.place(
+          at: CGPoint(x: x, y: y + (row.height - item.size.height) / 2), proposal: ProposedViewSize(item.size))
         x += item.size.width + spacing
       }
       y += row.height + lineSpacing

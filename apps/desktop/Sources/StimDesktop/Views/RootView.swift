@@ -24,6 +24,12 @@ struct RootView: View {
   @State private var focusedDeviceID: String?
   @State private var detailTab = DetailTab.device
   @State private var logQuery = LogQuery()
+  @AppStorage(AppPreferences.Key.showsInspector) private var showsInspector = true
+  @State private var showsInspectorOverlay = false
+  @State private var windowWidth: CGFloat = 0
+  @State private var sidebarWidth: CGFloat = 0
+  @State private var detailWidth: CGFloat = 0
+  @State private var columnVisibility = NavigationSplitViewVisibility.all
   @ObservedObject private var openRequests = OpenRequests.shared
 
   private let cli: Task<StimCLI, Never>
@@ -38,18 +44,31 @@ struct RootView: View {
   }
 
   var body: some View {
-    NavigationSplitView {
+    NavigationSplitView(columnVisibility: $columnVisibility) {
       Sidebar(store: store, autopilot: autopilot, selection: $selection)
-        .navigationSplitViewColumnWidth(min: 240, ideal: 272)
+        .navigationSplitViewColumnWidth(min: 220, ideal: 272, max: 360)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { sidebarWidth = $0 }
     } detail: {
       detail
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.background)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
+        .navigationSplitViewColumnWidth(min: 440, ideal: 900)
     }
     .toolbar {
-      ToolbarItem(placement: .primaryAction) { MachineSummary(store: store, metrics: metrics) }
+      ToolbarItem(placement: .primaryAction) { MachineSummary(store: store, metrics: metrics, width: summaryWidth) }
+      if showsWorkspace, inspector != .column {
+        ToolbarItem(placement: .primaryAction) {
+          InspectorToggleButton(isShown: inspector == .overlay, action: toggleInspector)
+        }
+      }
     }
-    .toolbarBackground(Theme.background, for: .windowToolbar)
+    .focusedSceneValue(
+      \.inspectorToggle,
+      showsWorkspace ? InspectorToggle(isShown: inspector != .hidden, toggle: toggleInspector) : nil)
+    .onChange(of: inspectorFits) { showsInspectorOverlay = false }
+    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
+    .toolbarBackground(.hidden, for: .windowToolbar)
     .tint(Theme.purple)
     .font(Theme.body())
     .foregroundStyle(Theme.text)
@@ -103,6 +122,29 @@ struct RootView: View {
     }
   }
 
+  private var showsWorkspace: Bool {
+    if case .environment = selection { return true }
+    return false
+  }
+
+  private var inspectorFits: Bool {
+    windowWidth - (columnVisibility == .detailOnly ? 0 : sidebarWidth) >= WorkspaceDetail.widthWithInspector
+  }
+
+  private var inspector: InspectorPresentation {
+    if inspectorFits { return showsInspector ? .column : .hidden }
+    return showsInspectorOverlay ? .overlay : .hidden
+  }
+
+  private func toggleInspector() {
+    if inspectorFits { showsInspector.toggle() } else { showsInspectorOverlay.toggle() }
+  }
+
+  /// macOS moves the traffic lights and the sidebar toggle into the detail's toolbar when the sidebar is hidden.
+  private var summaryWidth: CGFloat {
+    detailWidth - (columnVisibility == .detailOnly ? 200 : 80) - (showsWorkspace && inspector != .column ? 44 : 0)
+  }
+
   private func restoreLastProject() {
     guard !restoredProject, defaultView == .lastProject, !lastProjectPath.isEmpty, selection == .wall else { return }
     guard let entry = store.projectList.first(where: { $0.project.root == lastProjectPath }) else { return }
@@ -130,8 +172,8 @@ struct RootView: View {
     case .environment(let path):
       if let env = store.payload?.environments.first(where: { $0.path == path }) {
         WorkspaceDetail(
-          cli: cli, env: env, usage: metrics.usage[env.path], focusedID: $focusedDeviceID, tab: $detailTab,
-          logQuery: $logQuery, openLogs: { openErrors(env.path) })
+          cli: cli, env: env, usage: metrics.usage[env.path], inspector: inspector, toggleInspector: toggleInspector,
+          focusedID: $focusedDeviceID, tab: $detailTab, logQuery: $logQuery, openLogs: { openErrors(env.path) })
       } else {
         EmptyState(title: "Workspace gone", message: "stim status no longer reports this workspace.")
       }
@@ -154,19 +196,35 @@ struct RootView: View {
 struct MachineSummary: View {
   @ObservedObject var store: StatusStore
   @ObservedObject var metrics: MetricsStore
+  var width: CGFloat
   @State private var showsDisk = false
 
   var body: some View {
+    ProposedWidth(width: max(0, width)) {
+      ViewThatFits(in: .horizontal) {
+        row(showsMemory: true, showsResident: true, showsReclaimable: true)
+        row(showsMemory: true, showsResident: true, showsReclaimable: false)
+        row(showsMemory: true, showsResident: false, showsReclaimable: false)
+        row(showsMemory: false, showsResident: false, showsReclaimable: false)
+      }
+    }
+    .font(Theme.body(12))
+  }
+
+  private func row(showsMemory: Bool, showsResident: Bool, showsReclaimable: Bool) -> some View {
     HStack(spacing: 18) {
       if let error = store.error {
         Label(abbreviatingHome(error), systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.warn)
+          .lineLimit(1)
+          .frame(maxWidth: 220)
+          .help(abbreviatingHome(error))
       }
       if let cap = store.payload?.capacity {
         HStack(spacing: 6) {
           StatusDot(color: Theme.live)
           Text("\(cap.liveCount) live")
         }
-        if let memory = metrics.memory {
+        if showsMemory, let memory = metrics.memory {
           HStack(spacing: 8) {
             Text("Memory").foregroundStyle(Theme.secondary).fixedSize()
             ProgressView(value: min(1, Double(memory.usedBytes) / Double(max(1, memory.totalBytes))))
@@ -190,7 +248,7 @@ struct MachineSummary: View {
         }
         .help("CPU of every live workspace's processes, simulators and emulators, as a percent of one core")
       }
-      if metrics.totalResident > 0 {
+      if showsResident, metrics.totalResident > 0 {
         HStack(spacing: 6) {
           Text("RAM").foregroundStyle(Theme.secondary)
           Text(formatMemory(metrics.totalResident)).font(Theme.mono())
@@ -203,7 +261,7 @@ struct MachineSummary: View {
             Image(systemName: "internaldrive").foregroundStyle(Theme.secondary)
             Text("\(formatDisk(lowest.availableBytes)) free").font(Theme.mono())
               .foregroundStyle(lowest.availableBytes < 20_000_000_000 ? Theme.warn : Theme.text)
-            if let reclaimable = metrics.reclaimable, reclaimable.bytes > 0 {
+            if showsReclaimable, let reclaimable = metrics.reclaimable, reclaimable.bytes > 0 {
               Text("\u{00B7} \(formatDisk(reclaimable.bytes)) reclaimable").foregroundStyle(Theme.primary)
             }
           }
@@ -227,8 +285,20 @@ struct MachineSummary: View {
         }
       }
     }
-    .font(Theme.body(12))
     .padding(.horizontal, 10)
+  }
+}
+
+/// macOS proposes no width to a toolbar item, so this proposes `width` to its content and takes the content's size.
+private struct ProposedWidth: Layout {
+  var width: CGFloat
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    subviews.first?.sizeThatFits(ProposedViewSize(width: width, height: proposal.height)) ?? .zero
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
   }
 }
 
@@ -277,4 +347,31 @@ struct DiskPopover: View {
     .frame(width: 340)
     .background(Theme.sidebar)
   }
+}
+
+enum InspectorPresentation {
+  case column
+  case overlay
+  case hidden
+}
+
+struct InspectorToggleButton: View {
+  var isShown: Bool
+  var action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Label(isShown ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")
+    }
+    .help(isShown ? "Hide the inspector" : "Show the inspector")
+  }
+}
+
+struct InspectorToggle {
+  var isShown: Bool
+  var toggle: () -> Void
+}
+
+extension FocusedValues {
+  @Entry var inspectorToggle: InspectorToggle?
 }

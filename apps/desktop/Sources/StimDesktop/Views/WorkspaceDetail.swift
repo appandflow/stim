@@ -11,6 +11,8 @@ struct WorkspaceDetail: View {
   var cli: Task<StimCLI, Never>
   var env: Workspace
   var usage: UsageHistory?
+  var inspector: InspectorPresentation
+  var toggleInspector: () -> Void
   @Binding var focusedID: String?
   @Binding var tab: DetailTab
   @Binding var logQuery: LogQuery
@@ -18,31 +20,49 @@ struct WorkspaceDetail: View {
   @State private var stats: ProjectStats?
   @State private var takenOver: Set<String> = []
 
+  static let inspectorWidth: CGFloat = 320
+  static let widthWithInspector: CGFloat = 760
+  static let maximumInspectorWidth: CGFloat = 420
+
   var body: some View {
     let devices = env.orderedDevices
     let focused = devices.first { $0.id == focusedID } ?? env.devices.first
-    HStack(spacing: 0) {
-      VStack(spacing: 0) {
-        Picker("View", selection: $tab) {
-          Text("Device").tag(DetailTab.device)
-          Text("Logs").tag(DetailTab.logs)
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .fixedSize()
-        .padding(.vertical, 12)
-        Rectangle().fill(Theme.border).frame(height: 1)
-        switch tab {
-        case .device: deviceView(devices: devices, focused: focused)
-        case .logs: LogsView(cli: cli, env: env, query: $logQuery)
-        }
+    VStack(spacing: 0) {
+      Picker("View", selection: $tab) {
+        Text("Device").tag(DetailTab.device)
+        Text("Logs").tag(DetailTab.logs)
       }
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-      Rectangle().fill(Theme.border).frame(width: 1)
-      Inspector(cli: cli, env: env, usage: usage, stats: stats, openLogs: openLogs)
-        .frame(width: 360)
+      .pickerStyle(.segmented)
+      .labelsHidden()
+      .fixedSize()
+      .padding(.vertical, 12)
+      Rectangle().fill(Theme.border).frame(height: 1)
+      switch tab {
+      case .device: deviceView(devices: devices, focused: focused)
+      case .logs: LogsView(cli: cli, env: env, query: $logQuery)
+      }
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .overlay(alignment: .trailing) {
+      if inspector == .overlay {
+        inspectorPanel
+          .frame(width: Self.inspectorWidth)
+          .background(Theme.sidebar, ignoresSafeAreaEdges: [])
+          .overlay(alignment: .leading) { Rectangle().fill(Theme.border).frame(width: 1) }
+          .shadow(color: .black.opacity(0.25), radius: 16)
+      }
+    }
+    .inspector(
+      isPresented: Binding(
+        get: { inspector == .column },
+        set: { shown in if !shown, inspector == .column { toggleInspector() } })
+    ) {
+      inspectorPanel
         .background(Theme.sidebar)
+        .inspectorColumnWidth(min: 280, ideal: Self.inspectorWidth, max: Self.maximumInspectorWidth)
+        .toolbar {
+          ToolbarItem(placement: .primaryAction) { InspectorToggleButton(isShown: true, action: toggleInspector) }
+        }
     }
     .navigationTitle(env.names.title)
     .task(id: env.path) {
@@ -50,6 +70,11 @@ struct WorkspaceDetail: View {
       let cli = await cli.value
       stats = await Task.detached { try? cli.stats(workspace: path) }.value
     }
+  }
+
+  private var inspectorPanel: some View {
+    Inspector(cli: cli, env: env, usage: usage, stats: stats, openLogs: openLogs)
+      .frame(maxHeight: .infinity)
   }
 
   private func deviceView(devices: [DeviceRef], focused: DeviceRef?) -> some View {
@@ -120,12 +145,9 @@ struct Inspector: View {
         if let usage {
           VStack(alignment: .leading, spacing: 8) {
             SectionLabel(title: "Resources \u{00B7} \(usage.latest.processCount) processes")
-            HStack(alignment: .top, spacing: 10) {
-              usageCard(
-                "CPU", usage.latest.cpuPercent.map(formatPercent) ?? "--", values: usage.cpu, minimumPeak: 100)
-              usageCard(
-                "Resident memory", formatMemory(usage.latest.residentBytes), values: usage.resident,
-                minimumPeak: 1_073_741_824)
+            ViewThatFits(in: .horizontal) {
+              HStack(alignment: .top, spacing: 10) { usageCards(usage) }
+              VStack(spacing: 10) { usageCards(usage) }
             }
           }
         }
@@ -155,9 +177,9 @@ struct Inspector: View {
         if let project = stats?.project, project.ios != nil || project.android != nil {
           VStack(alignment: .leading, spacing: 8) {
             SectionLabel(title: "Build cache \u{00B7} project")
-            HStack(alignment: .top, spacing: 10) {
-              if let ios = project.ios { statCard("iOS", ios) }
-              if let android = project.android { statCard("Android", android) }
+            ViewThatFits(in: .horizontal) {
+              HStack(alignment: .top, spacing: 10) { statCards(project) }
+              VStack(spacing: 10) { statCards(project) }
             }
           }
         }
@@ -338,6 +360,17 @@ struct Inspector: View {
       uncommitted or unpushed work. On the source checkout it reclaims the environment only \
       and leaves the tree in place.
       """
+  }
+
+  @ViewBuilder private func usageCards(_ usage: UsageHistory) -> some View {
+    usageCard("CPU", usage.latest.cpuPercent.map(formatPercent) ?? "--", values: usage.cpu, minimumPeak: 100)
+    usageCard(
+      "Resident memory", formatMemory(usage.latest.residentBytes), values: usage.resident, minimumPeak: 1_073_741_824)
+  }
+
+  @ViewBuilder private func statCards(_ project: ProjectStats.Scope) -> some View {
+    if let ios = project.ios { statCard("iOS", ios) }
+    if let android = project.android { statCard("Android", android) }
   }
 
   private func usageCard(_ title: String, _ value: String, values: [Double], minimumPeak: Double) -> some View {

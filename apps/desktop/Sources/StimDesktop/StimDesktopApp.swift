@@ -87,11 +87,15 @@ struct StimDesktopApp: App {
   var body: some Scene {
     WindowGroup("Stim", id: "main") {
       RootView(cli: cli, store: store, actions: actions, autopilot: autopilot)
-        .frame(minWidth: 1100, minHeight: 720)
+        .frame(minWidth: 700, minHeight: 720)
         .onAppear { notifier.start() }
     }
     .windowToolbarStyle(.unified(showsTitle: false))
     .handlesExternalEvents(matching: [])
+    .commands {
+      SidebarCommands()
+      InspectorCommands()
+    }
 
     Settings {
       SettingsView(cli: cli, store: store).environmentObject(autopilot)
@@ -103,6 +107,18 @@ struct StimDesktopApp: App {
       let live = store.payload?.environments.filter(\.live).count ?? 0
       Label("\(live)", systemImage: "iphone.gen3")
         .labelStyle(.titleAndIcon)
+    }
+  }
+}
+
+struct InspectorCommands: Commands {
+  @FocusedValue(\.inspectorToggle) private var inspector
+
+  var body: some Commands {
+    CommandGroup(after: .sidebar) {
+      Button(inspector?.isShown == true ? "Hide Inspector" : "Show Inspector") { inspector?.toggle() }
+        .keyboardShortcut("i", modifiers: [.command, .option])
+        .disabled(inspector == nil)
     }
   }
 }
