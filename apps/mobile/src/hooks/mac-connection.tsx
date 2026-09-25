@@ -281,3 +281,41 @@ export function useAction(workspace: string): WorkspaceActions {
   );
   return { available: state.kind === 'open' ? state.actions : NO_ACTIONS, pending, error, run };
 }
+
+/**
+ * A device's latest frame, refreshed every `intervalMs`: it subscribes until one frame arrives, then
+ * unsubscribes, so the server's capture loop runs only briefly for each refresh.
+ */
+export function useFrameSnapshot(
+  connection: StimConnection | null,
+  workspace: string,
+  platform: 'ios' | 'android',
+  slot: string,
+  enabled: boolean,
+  intervalMs: number,
+): FrameEvent | null {
+  const [latest, setLatest] = useState<{ key: string; frame: FrameEvent } | null>(null);
+  const key = connection && enabled ? `${workspace}\n${platform}\n${slot}` : null;
+  useEffect(() => {
+    if (!connection || key === null) return;
+    let unsubscribe: (() => void) | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
+    const refresh = () => {
+      unsubscribe = connection.subscribe('frames.subscribe', { workspace, platform, slot }, (event) => {
+        if (event.event !== 'frame' && event.event !== 'error') return;
+        if (event.event === 'frame') setLatest({ key, frame: event });
+        unsubscribe?.();
+        unsubscribe = null;
+        if (!stopped) timer = setTimeout(refresh, intervalMs);
+      });
+    };
+    refresh();
+    return () => {
+      stopped = true;
+      unsubscribe?.();
+      if (timer) clearTimeout(timer);
+    };
+  }, [connection, key, workspace, platform, slot, intervalMs]);
+  return latest && latest.key === key ? latest.frame : null;
+}

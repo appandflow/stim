@@ -9,6 +9,7 @@ import {
   mergeWorkspaces,
   parseFilters,
   projectNames,
+  runningDevices,
 } from '@/lib/home';
 import type { EnvironmentState, MachineUsage, StatusPayload } from '@/protocol/types';
 
@@ -97,6 +98,32 @@ describe('filterWorkspaces', () => {
   it('ignores a selected project that no machine lists any more', () => {
     expect(titles({ projects: ['removed'] })).toEqual(['building', 'live-one', 'other']);
     expect(filtersActive({ ...DEFAULT_FILTERS, projects: ['removed'] }, ids, projectNames(items))).toBe(false);
+  });
+});
+
+describe('runningDevices', () => {
+  it('lists the running devices of every workspace the machine and project filters keep, idle or not', () => {
+    const booted = { name: 'stim-x (iPhone 18 Pro 27.0)', udid: 'A', owned: true, state: 'Booted' };
+    const items = mergeWorkspaces([
+      {
+        id: 'a',
+        name: 'MacBook Pro',
+        status: status([
+          env('/u/app/.worktrees/idle-with-sim', {
+            ios: booted,
+            android: { name: 'stim-x', owned: true, physical: false, state: 'not-detected' },
+          }),
+        ]),
+      },
+      { id: 'b', name: 'Mac mini', status: status([env('/u/other', { live: true, ios: { ...booted, udid: 'B' } })]) },
+    ]);
+    const keys = (f: Partial<typeof DEFAULT_FILTERS>) =>
+      runningDevices(items, { ...DEFAULT_FILTERS, ...f }, ['a', 'b']).map(
+        (t) => `${t.item.title}/${t.device.platform}`,
+      );
+    expect(keys({})).toEqual(['other/ios', 'idle-with-sim/ios']);
+    expect(keys({ macs: ['a'], errorsOnly: true })).toEqual(['idle-with-sim/ios']);
+    expect(keys({ projects: ['other'] })).toEqual(['other/ios']);
   });
 });
 

@@ -1,4 +1,12 @@
-import { isActive, pathInCheckout, projectOf, repositoryRoots, workspaceNames } from '@/lib/workspaces';
+import {
+  devicesOf,
+  isActive,
+  pathInCheckout,
+  projectOf,
+  repositoryRoots,
+  workspaceNames,
+  type DeviceRef,
+} from '@/lib/workspaces';
 import type { EnvironmentState, MachineUsage, StatusPayload } from '@/protocol/types';
 
 export interface MacSnapshot {
@@ -128,6 +136,29 @@ export function filterWorkspaces(
     shown.push(item);
   }
   return { shown, hiddenByActivity };
+}
+
+export interface DeviceTileItem {
+  key: string;
+  item: HomeItem;
+  device: DeviceRef;
+}
+
+/**
+ * Every running device of the workspaces the machine and project filters keep, whatever their activity,
+ * errors or remote sessions, in the list's order.
+ */
+export function runningDevices(items: HomeItem[], filters: HomeFilters, macIds: string[]): DeviceTileItem[] {
+  const { shown } = filterWorkspaces(
+    items,
+    { ...filters, activity: 'all', errorsOnly: false, remoteOnly: false },
+    macIds,
+  );
+  return shown.flatMap((item) =>
+    devicesOf(item.env)
+      .filter((device) => device.running)
+      .map((device) => ({ key: `${item.key}\n${device.platform}\n${device.slot}`, item, device })),
+  );
 }
 
 export function projectNames(items: HomeItem[]): string[] {
