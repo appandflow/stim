@@ -134,9 +134,12 @@ A workspace's detail view has a **Logs** tab next to its device, and the error
 count on the device wall and in the inspector opens it with **Errors only** on.
 The tab runs `stim logs --json --follow --tail 5000` in the workspace and adds
 the filters you pick: the Metro, App (`client`), Native (`device`), Build and
-Agent (`agent`, what agent-device did on the workspace's devices) sources, a slot, a minimum level, a regular expression search (`--grep`), and
-`--errors`. With every source selected no `--source` is passed, so **Errors
-only** keeps the CLI's default scope, which leaves general device logs out.
+Agent (`agent`, what agent-device did on the workspace's devices) sources, a
+slot, a minimum level, a regular expression search (`--grep`), and `--errors`.
+With every source selected no `--source` is passed, so **Errors only** keeps
+the CLI's default scope, which leaves general device logs and agent actions
+out. The Agent source needs a `stim` that has it; an older one refuses
+`--source agent` once any chip is off.
 Changing a filter or the workspace restarts the command; leaving the tab or
 quitting the app terminates it.
 
@@ -150,9 +153,10 @@ directory from `stim status`.
 Under the device on the **Device** tab, **Agent actions** lists the latest
 agent-device actions on that simulator or emulator, newest first: taps, typing,
 app opens, screenshots, and failed commands in red. It runs `stim logs --json
---follow --source agent --slot <slot>` in the workspace and keeps the records
-whose `deviceId` is the device's UDID or serial. It stays hidden until the
-device has an action, and switching devices or tabs terminates the command.
+--follow --tail 200 --source agent --slot <slot>` in the workspace and keeps
+the records whose `deviceId` is the device's UDID or serial. It shows nothing
+until the focused device has an action, and switching devices or tabs
+terminates the command.
 
 ## Build progress
 

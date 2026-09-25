@@ -1,7 +1,6 @@
 import StimKit
 import SwiftUI
 
-/// The agent-device actions on one device, from `stim logs --source agent --follow`.
 @MainActor
 final class AgentFeedModel: ObservableObject {
   static let shown = 6
@@ -22,6 +21,7 @@ final class AgentFeedModel: ObservableObject {
 
   func stop() {
     follower.stop()
+    actions = []
   }
 
   private func handle(_ event: LogFollower.Event) {

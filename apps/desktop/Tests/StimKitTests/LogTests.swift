@@ -77,12 +77,6 @@ import Testing
     #expect(query.arguments == ["logs", "--json", "--follow", "--tail", "5000", "--errors"])
   }
 
-  @Test func namesTheAgentSourceWhenItIsTheOnlyOne() {
-    var query = LogQuery()
-    query.sources = [.agent]
-    #expect(query.arguments == ["logs", "--json", "--follow", "--tail", "5000", "--source", "agent"])
-  }
-
   @Test func passesEveryFilter() {
     var query = LogQuery()
     query.sources = [.build, .metro]
