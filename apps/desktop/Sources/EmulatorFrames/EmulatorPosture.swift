@@ -40,8 +40,7 @@ public enum EmulatorPosture: Int, CaseIterable, Sendable {
 
 // Field numbers follow PhysicalModelValue, ParameterValue and Posture in the
 // emulator's emulator_controller.proto (sdk/emulator/lib); POSTURE is
-// PhysicalType 16, and its single value is the PostureValue as a float. An
-// emulator without a hinge reports POSTURE_UNKNOWN (0).
+// PhysicalType 16, and its single value is the PostureValue as a float.
 enum PostureMessages {
   static let postureTarget = Data([0x08, 0x10])
 
