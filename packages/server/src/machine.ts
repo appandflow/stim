@@ -70,11 +70,39 @@ function readMemoryPressure(): Promise<MemoryPressure | null> {
   });
 }
 
+/**
+ * Activity Monitor's "Memory Used" from `vm_stat` output: app memory (anonymous minus purgeable pages),
+ * wired, and compressed pages, times the page size its header names. Null when a count is missing.
+ */
+export function parseVmStatUsedBytes(output: string): number | null {
+  const pageSize = /page size of (\d+) bytes/.exec(output)?.[1];
+  const count = (label: string) => {
+    const value = new RegExp(`^${label}:\\s+(\\d+)\\.`, 'm').exec(output)?.[1];
+    return value === undefined ? null : Number(value);
+  };
+  const anonymous = count('Anonymous pages');
+  const purgeable = count('Pages purgeable');
+  const wired = count('Pages wired down');
+  const compressed = count('Pages occupied by compressor');
+  if (!pageSize || anonymous === null || purgeable === null || wired === null || compressed === null) return null;
+  return (Math.max(0, anonymous - purgeable) + wired + compressed) * Number(pageSize);
+}
+
+function readMemoryUsed(): Promise<number | null> {
+  if (process.platform !== 'darwin') return Promise.resolve(null);
+  return new Promise((resolve) => {
+    execFile('/usr/bin/vm_stat', { timeout: 2000 }, (error, stdout) => {
+      resolve(error ? null : parseVmStatUsedBytes(stdout));
+    });
+  });
+}
+
 export async function readMachineUsage(): Promise<MachineUsage> {
   const [avg1 = 0, avg5 = 0, avg15 = 0] = loadavg();
+  const [pressure, usedBytes] = await Promise.all([readMemoryPressure(), readMemoryUsed()]);
   return {
     volumes: readVolumes(stimDiskLocations()),
-    memory: { totalBytes: totalmem(), pressure: await readMemoryPressure() },
+    memory: { totalBytes: totalmem(), usedBytes, pressure },
     load: { avg1, avg5, avg15, cpus: availableParallelism() },
     sampledAt: new Date().toISOString(),
   };

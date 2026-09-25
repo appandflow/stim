@@ -17,6 +17,12 @@ export function MacChip({ mac, onPress }: { mac: PairedConnection; onPress: () =
   const summary = macUsageSummary(mac.status, mac.usage);
   const dot = connectionColor(mac.state, mac.missing, colors);
   const name = mac.mac.name;
+  const detailColor =
+    mac.state.kind !== 'open' || summary.tone === 'normal'
+      ? colors.secondary
+      : summary.tone === 'critical'
+        ? colors.error
+        : colors.warn;
   const detail =
     mac.state.kind === 'open' ? summary.parts.join(' \u00B7 ') || 'Loading' : describeState(mac.state, mac.missing);
   return (
@@ -38,10 +44,7 @@ export function MacChip({ mac, onPress }: { mac: PairedConnection; onPress: () =
         <Text style={[styles.name, { color: colors.text }]} numberOfLines={1}>
           {name}
         </Text>
-        <Text
-          style={[styles.detail, { color: summary.warn && mac.state.kind === 'open' ? colors.warn : colors.secondary }]}
-          numberOfLines={1}
-        >
+        <Text style={[styles.detail, { color: detailColor }]} numberOfLines={1}>
           {detail}
         </Text>
       </View>

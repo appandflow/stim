@@ -83,7 +83,11 @@ const usage = () => ({
       totalBytes: 994.66 * GB,
     },
   ],
-  memory: { totalBytes: fixtures.status.capacity.totalMemoryMb * 1024 * 1024, pressure: 'normal' },
+  memory: {
+    totalBytes: fixtures.status.capacity.totalMemoryMb * 1024 * 1024,
+    usedBytes: 31.4 * 2 ** 30,
+    pressure: 'normal',
+  },
   load: { avg1: 6.2, avg5: 5.4, avg15: 4.9, cpus: 14 },
   sampledAt: new Date().toISOString(),
 });

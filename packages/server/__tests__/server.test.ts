@@ -720,6 +720,18 @@ describe('machine.get', () => {
   });
 });
 
+describe.skipIf(process.platform !== 'darwin')('machine.get on macOS', () => {
+  it("reports the Mac's memory used below its total", async () => {
+    const port = await start();
+    const client = await authed(port);
+    const reply = await client.request('machine.get');
+    if (!('result' in reply)) throw new Error(JSON.stringify(reply));
+    const { memory } = reply.result as MachineUsage;
+    expect(memory.usedBytes).toBeGreaterThan(0);
+    expect(memory.usedBytes).toBeLessThan(memory.totalBytes);
+  });
+});
+
 describe('stats.get and settings.get', () => {
   it('return the CLI payload, run in the workspace or in the home directory', async () => {
     const port = await start();

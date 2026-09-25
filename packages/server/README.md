@@ -178,8 +178,10 @@ Events are `{ "event", "subscription", ... }`.
   without running `stim`: `volumes`, one per volume that holds a Stim
   workspace, Stim home, or the simulators, with `mount`, `holds`, `freeBytes`
   (free space without purgeable space, which Stim's disk budget measures) and
-  `totalBytes`; `memory` with `totalBytes` and the macOS `pressure` level
-  (`normal`, `warning`, `critical`, or null); `load` with the 1, 5 and 15
+  `totalBytes`; `memory` with `totalBytes`, `usedBytes` (the Mac's memory in
+  use as Activity Monitor's "Memory Used" counts it: app memory, wired and
+  compressed; null off macOS) and the macOS `pressure` level (`normal`,
+  `warning`, `critical`, or null); `load` with the 1, 5 and 15
   minute load averages and `cpus`; and `sampledAt`.
 - `unsubscribe` ends a subscription.
 - `action` runs an [action](#actions) and returns

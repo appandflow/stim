@@ -174,20 +174,29 @@ export function formatBytes(bytes: number): string {
   return gb >= 100 ? `${Math.round(gb)} GB` : `${gb.toFixed(1)} GB`;
 }
 
+/** Binary units labeled GB, like Activity Monitor's memory figures. */
+export const memoryGb = (bytes: number) => bytes / 2 ** 30;
+
+export type UsageTone = 'normal' | 'warn' | 'critical';
+
 export interface MacUsageSummary {
   parts: string[];
-  warn: boolean;
+  tone: UsageTone;
 }
 
-/** The chip line: live workspaces, memory committed of total, and the lowest free space of Stim's volumes. */
+/**
+ * The chip line: live workspaces, the Mac's memory used of total, and the lowest free space of Stim's volumes.
+ * A server older than `memory.usedBytes` leaves the memory figure out.
+ */
 export function macUsageSummary(status: StatusPayload | null, usage: MachineUsage | null): MacUsageSummary {
   const parts: string[] = [];
-  let warn = false;
-  if (status) {
-    const { liveCount, committedMb, totalMemoryMb, overCapacity } = status.capacity;
-    parts.push(`${liveCount} live`);
-    parts.push(`${(committedMb / 1024).toFixed(1)}/${Math.round(totalMemoryMb / 1024)} GB`);
-    warn ||= overCapacity;
+  let tone: UsageTone = 'normal';
+  if (status) parts.push(`${status.capacity.liveCount} live`);
+  const used = usage?.memory.usedBytes;
+  if (usage && typeof used === 'number') {
+    parts.push(`${memoryGb(used).toFixed(1)}/${Math.round(memoryGb(usage.memory.totalBytes))} GB`);
+    if (usage.memory.pressure === 'critical') tone = 'critical';
+    else if (usage.memory.pressure === 'warning') tone = 'warn';
   }
   const lowest = usage?.volumes.reduce<number | null>(
     (min, v) => (min === null ? v.freeBytes : Math.min(min, v.freeBytes)),
@@ -195,9 +204,9 @@ export function macUsageSummary(status: StatusPayload | null, usage: MachineUsag
   );
   if (lowest !== null && lowest !== undefined) {
     parts.push(`${formatBytes(lowest)} free`);
-    warn ||= lowest < LOW_DISK_BYTES;
+    if (lowest < LOW_DISK_BYTES && tone === 'normal') tone = 'warn';
   }
-  return { parts, warn };
+  return { parts, tone };
 }
 
 export interface BudgetRow {

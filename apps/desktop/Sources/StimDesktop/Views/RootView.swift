@@ -166,14 +166,21 @@ struct MachineSummary: View {
           StatusDot(color: Theme.live)
           Text("\(cap.liveCount) live")
         }
-        HStack(spacing: 8) {
-          Text("Memory").foregroundStyle(Theme.secondary).fixedSize()
-          ProgressView(value: min(1, Double(cap.committedMb) / Double(max(1, cap.totalMemoryMb))))
-            .tint(cap.overCapacity ? Theme.warn : Theme.lavender)
-            .frame(width: 70)
-          Text("\(formatGigabytes(mb: cap.committedMb)) / \(formatGigabytes(mb: cap.totalMemoryMb))")
+        if let memory = metrics.memory {
+          HStack(spacing: 8) {
+            Text("Memory").foregroundStyle(Theme.secondary).fixedSize()
+            ProgressView(value: min(1, Double(memory.usedBytes) / Double(max(1, memory.totalBytes))))
+              .tint(memory.pressure == .critical ? Theme.error : memory.pressure == .warning ? Theme.warn : Theme.lavender)
+              .frame(width: 70)
+            Text(
+              "\(formatGigabytes(mb: Int(memory.usedBytes >> 20))) / \(formatGigabytes(mb: Int(memory.totalBytes >> 20)))"
+            )
             .font(Theme.mono())
             .fixedSize()
+          }
+          .help(
+            "Memory used on this Mac, as Activity Monitor counts it. Stim's share: live workspaces commit \(formatGigabytes(mb: cap.committedMb)) of \(formatGigabytes(mb: cap.totalMemoryMb))."
+          )
         }
       }
       if let cpu = metrics.totalCpu {

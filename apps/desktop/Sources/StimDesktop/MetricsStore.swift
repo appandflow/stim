@@ -19,6 +19,7 @@ struct UsageHistory {
 final class MetricsStore: ObservableObject {
   @Published private(set) var usage: [String: UsageHistory] = [:]
   @Published private(set) var volumes: [DiskVolume] = []
+  @Published private(set) var memory: MachineMemory?
   @Published private(set) var gcReport: GcReport?
   @Published private(set) var gcRunning = false
   @Published private(set) var gcAt: Date?
@@ -79,6 +80,7 @@ final class MetricsStore: ObservableObject {
       var sampler = base
       let result = processes.isEmpty ? [:] : sampler.sample(workspaces, processes: processes, at: Date())
       let volumes = DiskUsage.volumes(for: locations)
+      let memory = MachineMemory.read()
       let updated = processes.isEmpty ? nil : sampler
       await MainActor.run {
         self.sampling = false
@@ -91,6 +93,7 @@ final class MetricsStore: ObservableObject {
         }
         self.usage = next
         self.volumes = volumes
+        self.memory = memory
       }
     }
   }
