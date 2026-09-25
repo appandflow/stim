@@ -23,6 +23,7 @@ struct AppPreferencesView: View {
   @AppStorage(AppPreferences.Key.autopilotPressure) private var actsOnPressure = true
   @AppStorage(AppPreferences.Key.notifiesDiskPressure) private var notifiesPressure = true
   @EnvironmentObject private var autopilot: AutopilotRunner
+  @ObservedObject private var updater = AppUpdater.shared
   @State private var launchesAtLogin = SMAppService.mainApp.status == .enabled
   @State private var loginError: String?
 
@@ -127,6 +128,17 @@ struct AppPreferencesView: View {
           .onChange(of: launchesAtLogin) { _, enabled in setLaunchAtLogin(enabled) }
         if let loginError {
           Text(abbreviatingHome(loginError)).foregroundStyle(Theme.error)
+        }
+      }
+
+      Section {
+        Toggle("Automatically check for updates", isOn: $updater.automaticallyChecksForUpdates)
+          .disabled(!updater.isAvailable)
+      } header: {
+        Text("Updates")
+      } footer: {
+        if !updater.isAvailable {
+          Text("This build has no update key, so it never checks for updates.").foregroundStyle(Theme.tertiary)
         }
       }
 
