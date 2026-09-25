@@ -5,7 +5,7 @@ grouped by project, with its Metro port, supervisor health, errors, build cache
 stats, live frames from its iOS simulators and Android emulators, and its CPU
 and resident memory.
 
-It reads Stim state only through `stim status --json`, `stim stats --json`,
+It reads Stim state only through `stim status --watch --json`, `stim status --json`, `stim stats --json`,
 `stim logs --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`. Its
 actions run the `stim` executable with an argument list, never a shell string,
 in the workspace directory:
@@ -19,7 +19,14 @@ in the workspace directory:
 Output streams into an activity sheet with the exit status, and status refreshes
 when the command finishes. Each workspace runs one action at a time.
 
-Resource usage is measured with `ps` every 3 seconds: each workspace's
+Status stays current through one long-running `stim status --watch --json`,
+which prints a payload each time the state changes, and the toolbar shows
+`live` while it runs. If it exits, the app restarts it after a delay that
+doubles from 1 to 30 seconds. A `stim` without `--watch` makes the app run
+`stim status --json` every 10 seconds instead.
+
+Resource usage is measured with `ps` every 3 seconds while the app is active
+and its window is on screen: each workspace's
 supervisor and Metro process trees plus the `launchd_sim` tree of each of its
 simulators (matched by UDID) and the qemu process of each emulator (matched by
 AVD name or console port). Memory is the sum of resident sizes, so memory

@@ -351,3 +351,18 @@ import Testing
     #expect(StimCLI(environment: ["PATH": "/nonexistent"]).executable == nil)
   }
 }
+
+@Suite struct StatusWatchTests {
+  @Test func fallsBackOnlyWhenStimRefusesTheWatchFlag() {
+    #expect(StatusWatch.isUnsupported(stderr: ["error: unknown option '--watch'"]))
+    #expect(!StatusWatch.isUnsupported(stderr: ["error: unknown option '--wtch'"]))
+    #expect(!StatusWatch.isUnsupported(stderr: ["Error: EACCES: permission denied, open '/Users/dev/.stim/config.json'"]))
+  }
+
+  @Test func restartDelayDoublesToTheCapAndResetsAfterALongRun() {
+    var backoff = RestartBackoff()
+    #expect([0, 0, 0, 0, 0, 0, 0].map { backoff.delay(afterRunning: $0) } == [1, 2, 4, 8, 16, 30, 30])
+    #expect(backoff.delay(afterRunning: 120) == 1)
+    #expect(backoff.delay(afterRunning: 0) == 2)
+  }
+}

@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import StimKit
 
 struct UsageHistory {
@@ -40,6 +40,11 @@ final class MetricsStore: ObservableObject {
     timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
       Task { @MainActor in self?.tick() }
     }
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.tick() }
+    }
   }
 
   var totalCpu: Double? {
@@ -51,7 +56,12 @@ final class MetricsStore: ObservableObject {
     usage.values.reduce(0) { $0 + $1.latest.residentBytes }
   }
 
+  private var onScreen: Bool {
+    NSApp.isActive && NSApp.windows.contains { $0.isVisible && $0.occlusionState.contains(.visible) }
+  }
+
   private func tick() {
+    guard onScreen else { return }
     sample()
     if !gcRunning, gcAt.map({ Date().timeIntervalSince($0) > 300 }) ?? true { refreshGc() }
   }
