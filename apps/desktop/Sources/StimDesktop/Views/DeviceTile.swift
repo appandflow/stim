@@ -14,6 +14,7 @@ struct DeviceTile: View {
   @State private var screenIDs: [UInt32] = [1]
   @State private var lit: [UInt32: Bool] = [:]
   @State private var folding = false
+  @State private var rotateFailed = false
   @State private var foldError: String?
   @State private var confirmingStop = false
   @EnvironmentObject private var actions: ActionCenter
@@ -44,6 +45,10 @@ struct DeviceTile: View {
           }
           if let posture {
             Chip { Text(posture) }.fixedSize()
+          }
+          if interactive {
+            rotateButton(clockwise: false)
+            rotateButton(clockwise: true)
           }
           if interactive, device.formFactor == .dual, screenIDs.count > 1, SimulatorFold.isAvailable,
             case .ios(_, let sim) = device
@@ -115,6 +120,24 @@ struct DeviceTile: View {
     return Chip(tint: tint) { Text(badge.text) }
       .fixedSize()
       .help(device.activity.map { "stim status activity: \($0.basis.joined(separator: ", "))" } ?? "")
+  }
+
+  private func rotateButton(clockwise: Bool) -> some View {
+    Button {
+      Task {
+        switch device {
+        case .ios(_, let sim): rotateFailed = !SimulatorRotation.rotate(udid: sim.udid, clockwise: clockwise)
+        case .android(_, let avd):
+          guard let serial = avd.serial else { return }
+          rotateFailed = !(await EmulatorRotation.rotate(serial: serial, clockwise: clockwise))
+        case .remote: break
+        }
+      }
+    } label: {
+      Image(systemName: clockwise ? "rotate.right" : "rotate.left")
+    }
+    .controlSize(.small)
+    .help(rotateFailed ? "The last rotation did not reach the device." : clockwise ? "Rotate right" : "Rotate left")
   }
 
   private func foldButton(udid: String) -> some View {
