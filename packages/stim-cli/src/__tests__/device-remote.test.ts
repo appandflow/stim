@@ -427,6 +427,169 @@ await withRemoteSessionLock(process.argv[2], async () => {
     }
   });
 
+  test.skipIf(process.platform === 'win32')(
+    'a second EAS start waits, with a notice, for a start that outlasts four minutes (POSIX executable stubs; skipped on win32)',
+    async () => {
+      const easBin = join(root, 'fake-eas.cjs');
+      const agentDeviceBin = join(root, 'fake-agent-device');
+      const easLog = join(root, 'eas-calls.log');
+      const ledgerRoot = join(root, 'machine-eas');
+      writeFileSync(
+        easBin,
+        `#!/usr/bin/env node
+const { appendFileSync } = require('node:fs');
+const args = process.argv.slice(2);
+if (args.includes('--version')) {
+  process.stdout.write('eas-cli/24.8.0 darwin-arm64 node-v22.22.2\\n');
+  process.exit(0);
+}
+if (args[0] !== 'sim') process.exit(0);
+const name = args[args.indexOf('--name') + 1];
+appendFileSync(${JSON.stringify(easLog)}, 'start ' + name + '\\n');
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500);
+appendFileSync(${JSON.stringify(easLog)}, 'end ' + name + '\\n');
+process.stdout.write(JSON.stringify({ ...${CREATED}, id: 'drs_' + name, name }));
+`,
+      );
+      writeFileSync(agentDeviceBin, '#!/bin/sh\nexit 0\n');
+      chmodSync(easBin, 0o755);
+      chmodSync(agentDeviceBin, 0o755);
+      const firstRoot = join(root, 'first');
+      const secondRoot = join(root, 'second');
+      mkdirSync(firstRoot);
+      mkdirSync(secondRoot);
+      const module = new URL('../engine/device-remote.ts', import.meta.url).href;
+      const script = join(root, 'first-run.mjs');
+      writeFileSync(
+        script,
+        `import { ensureRemoteBootOwned, remoteIosDeps, resolveRemoteContext } from ${JSON.stringify(module)};
+const [root, easBin, agentDeviceBin, ledgerRoot] = process.argv.slice(2);
+const resolved = await resolveRemoteContext({ root, backend: 'eas', easBin, lookupAgentDevice: () => agentDeviceBin });
+const result = await ensureRemoteBootOwned({
+  root,
+  platform: 'ios',
+  sessionName: 'stim-first',
+  startedAt: new Date().toISOString(),
+  boot: () => remoteIosDeps(resolved.ctx).ensureBooted({}),
+  createdSessionId: () => null,
+  abandonCreatedSession: () => ({ ok: true, sessionId: null }),
+  writeState: () => {},
+  ledgerRoot,
+});
+process.stdout.write(JSON.stringify(result));
+`,
+      );
+      const first = spawn(
+        process.execPath,
+        ['--experimental-strip-types', script, firstRoot, easBin, agentDeviceBin, ledgerRoot],
+        { stdio: ['ignore', 'pipe', 'pipe'] },
+      );
+      let firstOutput = '';
+      first.stdout?.on('data', (chunk) => (firstOutput += String(chunk)));
+      const firstExited = new Promise<number | null>((resolve) => first.once('exit', resolve));
+      try {
+        while (!existsSync(easLog)) await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+        const resolved = await resolveRemoteContext({
+          root: secondRoot,
+          backend: 'eas',
+          easBin,
+          lookupAgentDevice: () => agentDeviceBin,
+        });
+        assert('ctx' in resolved);
+        const notices: string[] = [];
+        let clockReads = 0;
+        const second = await ensureRemoteBootOwned({
+          root: secondRoot,
+          platform: 'ios',
+          sessionName: 'stim-second',
+          startedAt: new Date().toISOString(),
+          boot: () => remoteIosDeps(resolved.ctx).ensureBooted({}),
+          createdSessionId: () => null,
+          abandonCreatedSession: () => ({ ok: true, sessionId: null }),
+          writeState: () => {},
+          ledgerRoot,
+          notice: (line) => notices.push(line),
+          now: () => Date.now() + (clockReads++ === 0 ? 0 : 10 * 60_000),
+        });
+
+        expect(await firstExited).toBe(0);
+        expect(JSON.parse(firstOutput)).toMatchObject({ ok: true, udid: expect.stringMatching(/^drs_stim-first-/) });
+        expect(second).toMatchObject({ ok: true, udid: expect.stringMatching(/^drs_stim-second-/) });
+        expect(
+          readFileSync(easLog, 'utf8')
+            .replace(/-[0-9a-f]+$/gm, '')
+            .trim()
+            .split('\n'),
+        ).toEqual(['start stim-first', 'end stim-first', 'start stim-second', 'end stim-second']);
+        expect(notices[0]).toContain(
+          `waiting for EAS remote start (pid ${first.pid}, in ${firstRoot}, running for 10m`,
+        );
+      } finally {
+        if (first.exitCode === null) first.kill('SIGKILL');
+      }
+    },
+  );
+
+  test('a start that outlasts every EAS step refuses by naming the holder, and never boots', async () => {
+    const ledgerRoot = join(root, 'machine-eas');
+    let releaseFirst!: () => void;
+    const held = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let firstEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      firstEntered = resolve;
+    });
+    const first = ensureRemoteBootOwned({
+      root,
+      platform: 'ios',
+      sessionName: 'stim-first',
+      startedAt: '2026-09-25T00:00:00.000Z',
+      boot: async () => {
+        firstEntered();
+        await held;
+        return { ok: true };
+      },
+      createdSessionId: () => null,
+      abandonCreatedSession: () => ({ ok: true, sessionId: null }),
+      writeState: () => {},
+      ledgerRoot,
+    });
+    try {
+      await entered;
+      const otherRoot = join(root, 'other');
+      mkdirSync(otherRoot);
+      let secondBooted = false;
+      let clockReads = 0;
+      const second = await ensureRemoteBootOwned({
+        root: otherRoot,
+        platform: 'ios',
+        sessionName: 'stim-second',
+        startedAt: '2026-09-25T00:00:00.000Z',
+        boot: async () => {
+          secondBooted = true;
+          return { ok: true };
+        },
+        createdSessionId: () => null,
+        abandonCreatedSession: () => ({ ok: true, sessionId: null }),
+        writeState: () => {},
+        ledgerRoot,
+        now: () => Date.now() + (clockReads++ === 0 ? 0 : 60 * 60_000),
+      });
+      expect(secondBooted).toBe(false);
+      expect(second).toMatchObject({
+        failed: true,
+        code: 'STIM_LOCK_TIMEOUT',
+        remedy: `Check pid ${process.pid}; stop it if it is stuck, then run the remote command again.`,
+      });
+      expect((second as { reason: string }).reason).toContain(`EAS remote start (pid ${process.pid}, in ${root}`);
+    } finally {
+      releaseFirst();
+      await first;
+    }
+  });
+
   test('workspaces with the same git common directory share the EAS project lock', async () => {
     const otherRoot = join(root, 'other-worktree');
     mkdirSync(otherRoot, { recursive: true });

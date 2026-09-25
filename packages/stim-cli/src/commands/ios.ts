@@ -772,6 +772,7 @@ async function runIos(
               webPreviewUrl: remoteDevice.webPreviewUrl,
               writeState: d.writeWorkspaceState,
               register: registerProject,
+              notice: (line: string) => note(chalk.dim(phaseLine('lock', line))),
             })
           : boot()
       ).then((result) => {

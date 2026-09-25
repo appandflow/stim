@@ -3195,6 +3195,31 @@ describe('--remote', () => {
     },
   );
 
+  test('a remote start refused on the EAS project lock stops before install, with its notice and remedy', async () => {
+    const remote = remoteStub();
+    reserve();
+    const ensureRemoteBootOwnedStub = async (args: { notice?: (line: string) => void }) => {
+      args.notice?.('waiting for EAS remote start (pid 4242) to release the EAS project lock');
+      return {
+        failed: true,
+        code: 'STIM_LOCK_TIMEOUT',
+        reason: 'Waited 18m30s for EAS remote start (pid 4242) to release the EAS project lock.',
+        remedy: 'Check pid 4242; stop it if it is stuck, then run the remote command again.',
+      };
+    };
+    const { logs, stderr, exitCode } = await run(
+      { json: true, remote: 'eas' },
+      { ...remote.deps, ensureRemoteBootOwned: ensureRemoteBootOwnedStub },
+    );
+    expect(exitCode).toBe(1);
+    expect(parseFirst(logs)).toMatchObject({
+      code: 'STIM_LOCK_TIMEOUT',
+      remedy: 'Check pid 4242; stop it if it is stuck, then run the remote command again.',
+    });
+    expect(stderr).toContain('waiting for EAS remote start (pid 4242) to release the EAS project lock');
+    expect(remote.hits).not.toContain('installIosApp');
+  });
+
   test('a new EAS session records when it was created, not when the run started', async () => {
     const remote = remoteStub();
     reserve();

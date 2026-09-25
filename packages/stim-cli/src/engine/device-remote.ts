@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { getExecutor } from '../exec.ts';
+import { formatElapsed } from '../command-output.ts';
+import type { ClaimHolder } from '../ownership-claim.ts';
 import { readJsonObject, type RemoteDeviceBackend } from '@stim-cli/core/state';
 import { pidExists } from '../metro.ts';
 import { gateMetroOrigin, REMOTE_METRO_WRONG } from './metro-gate.ts';
@@ -38,7 +40,8 @@ import {
   type RemoteDaemon,
 } from './eas-simulator.ts';
 import { withWorkspaceProcessLock, type WorkspaceProcessLockOptions } from './workspace-process-lock.ts';
-import { withEasProjectLock } from './eas-project-lock.ts';
+import { describeEasProjectLockHolder, withEasProjectLock } from './eas-project-lock.ts';
+import { nativeRunWaitNotice } from './native-run.ts';
 import {
   easMachineStateRoot,
   readEasSessionLedger,
@@ -627,6 +630,9 @@ export function withRemoteSessionLock<T>(
   });
 }
 
+const REMOTE_START_LOCK_WAIT_MS =
+  3 * EAS_OPERATION_TIMEOUT_MS + EAS_SESSION_CREATE_TIMEOUT_MS + DAEMON_WAIT_MS + 2 * AGENT_DEVICE_TIMEOUT_MS;
+
 export async function ensureRemoteBootOwned<T extends BootResult>({
   root,
   platform,
@@ -642,6 +648,8 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
   withLock = withRemoteSessionLock,
   removeEasSessionClaim: removeClaim = removeEasSessionClaim,
   ledgerRoot = easMachineStateRoot(),
+  notice = () => {},
+  now = Date.now,
 }: {
   root: string;
   platform: 'ios' | 'android';
@@ -657,12 +665,18 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
   withLock?: typeof withRemoteSessionLock;
   removeEasSessionClaim?: typeof removeEasSessionClaim;
   ledgerRoot?: string;
+  notice?: (line: string) => void;
+  now?: () => number;
 }): Promise<T | BootResult> {
+  const waitNotice = nativeRunWaitNotice({ write: notice, now, describe: describeEasProjectLockHolder });
+  let lastHolder: ClaimHolder | null = null;
+  let projectLocked = false;
   try {
     return await withProjectLock(
       root,
-      () =>
-        withLock(root, async () => {
+      () => {
+        projectLocked = true;
+        return withLock(root, async () => {
           register();
           const booted = await boot();
           if (booted.failed) return booted;
@@ -715,11 +729,34 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
               remedy: cleanup.remedy ?? `Run \`eas simulator:stop --id ${sessionId}\`.`,
             };
           }
-        }),
-      { ownerPurpose: 'EAS remote start', machineRoot: ledgerRoot },
+        });
+      },
+      {
+        ownerPurpose: 'EAS remote start',
+        machineRoot: ledgerRoot,
+        waitMs: REMOTE_START_LOCK_WAIT_MS,
+        details: { workspace: root, platform },
+        now,
+        onHeld: (holder) => {
+          lastHolder = holder;
+          waitNotice(
+            holder,
+            `waiting for ${describeEasProjectLockHolder(holder, now())} to release the EAS project lock; one EAS session starts at a time on this machine`,
+          );
+        },
+      },
     );
   } catch (err) {
     const code = (err as Error & { code?: string }).code ?? REMOTE_SESSION_ERROR;
+    if (code === 'STIM_LOCK_TIMEOUT' && lastHolder && !projectLocked) {
+      const holder: ClaimHolder = lastHolder;
+      return {
+        failed: true,
+        code,
+        reason: `Waited ${formatElapsed(REMOTE_START_LOCK_WAIT_MS)} for ${describeEasProjectLockHolder(holder, now())} to release the EAS project lock, longer than any EAS session start takes. ${describe(err)}`,
+        remedy: `Check pid ${holder.owner.pid}; stop it if it is stuck, then run the remote command again.`,
+      };
+    }
     return {
       failed: true,
       code,
