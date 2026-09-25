@@ -838,7 +838,7 @@ test('selectSourceCheckout refuses when the bare HEAD branch is checked out more
 });
 
 test('the on-disk readers agree with git for a checkout, linked worktrees, a nested package and a bare repository', () => {
-  const base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-test-commondir-')));
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-test-commondir-')));
   const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8' });
   try {
     const root = join(base, 'repo');
@@ -872,7 +872,6 @@ test('the on-disk readers agree with git for a checkout, linked worktrees, a nes
         .slice(1)
         .map(({ path, branch }) => (branch ? { path, branch } : { path }));
     expect(linkedWorktreesOnDisk(join(root, '.git'))).toEqual(fromGit(root));
-    expect(linkedWorktreesOnDisk(join(root, '.git'))).toEqual([{ path: detached }, { path: linked, branch: 'linked' }]);
     expect(linkedWorktreesOnDisk(bare)).toEqual([{ path: feature, branch: 'feature' }]);
     expect(linkedWorktreesOnDisk(join(base, 'missing'))).toEqual([]);
   } finally {

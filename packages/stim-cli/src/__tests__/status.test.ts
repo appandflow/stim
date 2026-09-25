@@ -721,7 +721,7 @@ test.each(['moved', 'absent', 'missing', 'unavailable'] as const)(
 );
 
 test('status lists worktrees with no environment for every registered repository, from outside any repository', async () => {
-  const base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-test-repos-')));
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-test-repos-')));
   const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8' });
   const repo = (name: string) => {
     const root = join(base, name);
@@ -744,7 +744,7 @@ test('status lists worktrees with no environment for every registered repository
       return path;
     };
     const nested = worktree(first, 'nested');
-    const bare = worktree(first, 'bare');
+    const loose = worktree(first, 'loose');
     const other = worktree(second, 'other');
     saveConfig(
       makeConfig({
@@ -770,7 +770,7 @@ test('status lists worktrees with no environment for every registered repository
 
     const payload = await runStatusJson();
     expect(payload.unprovisionedWorktrees).toEqual([
-      { path: bare, branch: 'bare', repository: first },
+      { path: loose, branch: 'loose', repository: first },
       { path: other, branch: 'other', repository: second },
     ]);
   } finally {
