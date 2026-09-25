@@ -216,6 +216,82 @@ struct Sparkline: View {
   }
 }
 
+enum StimButtonVariant {
+  case primary
+  case secondary
+  case destructive
+}
+
+enum StimButtonSizing {
+  case small
+  case regular
+
+  fileprivate var height: CGFloat { self == .small ? 24 : 28 }
+  fileprivate var horizontalPadding: CGFloat { self == .small ? 10 : 13 }
+  fileprivate var font: Font { self == .small ? Theme.body(11.5, weight: .semibold) : Theme.body(12.5, weight: .semibold) }
+}
+
+/// The small rounded pill used for card and inline actions across Desktop: an accent-tinted fill
+/// for `secondary`, a solid accent fill for `primary`, and a red tint for `destructive`.
+struct StimButtonStyle: ButtonStyle {
+  var variant: StimButtonVariant = .secondary
+  var sizing: StimButtonSizing = .small
+
+  func makeBody(configuration: Configuration) -> some View {
+    StimButtonBody(configuration: configuration, variant: variant, sizing: sizing)
+  }
+}
+
+extension ButtonStyle where Self == StimButtonStyle {
+  static func stim(_ variant: StimButtonVariant = .secondary, _ sizing: StimButtonSizing = .small) -> StimButtonStyle {
+    StimButtonStyle(variant: variant, sizing: sizing)
+  }
+}
+
+private struct StimButtonBody: View {
+  var configuration: ButtonStyleConfiguration
+  var variant: StimButtonVariant
+  var sizing: StimButtonSizing
+  @Environment(\.isEnabled) private var isEnabled
+  @Environment(\.isFocused) private var isFocused
+  @State private var hovering = false
+
+  var body: some View {
+    configuration.label
+      .font(sizing.font)
+      .foregroundStyle(foreground)
+      .padding(.horizontal, sizing.horizontalPadding)
+      .frame(height: sizing.height)
+      .background(Capsule().fill(fill))
+      .overlay(Capsule().strokeBorder(Theme.lavender.opacity(isFocused ? 0.8 : 0), lineWidth: 2))
+      .contentShape(Capsule())
+      .opacity(isEnabled ? 1 : 0.45)
+      .scaleEffect(configuration.isPressed ? 0.97 : 1)
+      .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
+      .animation(.easeOut(duration: 0.1), value: hovering)
+      .onHover { hovering = $0 }
+  }
+
+  private var accent: Color {
+    switch variant {
+    case .primary: return Theme.purple
+    case .secondary: return Theme.lavender
+    case .destructive: return Theme.error
+    }
+  }
+
+  private var foreground: Color { variant == .primary ? .white : accent }
+
+  private var fill: Color {
+    switch variant {
+    case .primary:
+      return accent.opacity(configuration.isPressed ? 0.8 : hovering ? 1 : 0.92)
+    case .secondary, .destructive:
+      return accent.opacity(configuration.isPressed ? 0.22 : hovering ? 0.17 : 0.11)
+    }
+  }
+}
+
 struct BuildProgressBar: View {
   var build: Build
   var compact = false

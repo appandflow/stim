@@ -100,7 +100,7 @@ struct AppPreferencesView: View {
           Text("Autopilot activity")
           Spacer()
           if !autopilot.log.isEmpty {
-            Button("Clear") { autopilot.clearLog() }.controlSize(.small)
+            Button("Clear") { autopilot.clearLog() }.buttonStyle(.stim())
           }
         }
       }

@@ -206,7 +206,7 @@ struct Inspector: View {
         actions.run("Stop \(device.slot)", stopCommand(for: device, cwd: env.path))
       }
     }
-    .controlSize(.small)
+    .buttonStyle(.stim(.destructive))
     .disabled(actions.active(for: env.path) != nil)
     .help(
       isRemote

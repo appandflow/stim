@@ -175,7 +175,7 @@ private struct SettingRow: View {
         if model.writing.contains(id) { ProgressView().controlSize(.small) }
         if layerValue != nil {
           Button("Reset") { model.write(field, scope: scope, value: nil) }
-            .controlSize(.small)
+            .buttonStyle(.stim())
             .help("stim settings unset \(field.key) --scope \(scope.rawValue)")
         }
       }
@@ -280,12 +280,14 @@ private struct SettingEditor: View {
             commit(.string(draft))
           }
         }
-        .controlSize(.small)
+        .buttonStyle(.stim(.primary))
       }
     case .secure:
       HStack {
         SecureField(value == nil ? "Not set" : "Hidden; type to replace", text: $draft).onSubmit { commitText() }
-        Button("Set") { commitText() }.disabled(draft.isEmpty)
+        Button("Set") { commitText() }
+          .buttonStyle(.stim(.primary))
+          .disabled(draft.isEmpty)
       }
     case .text:
       TextField(placeholder, text: $draft).onSubmit { commitText() }
