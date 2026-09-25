@@ -113,10 +113,10 @@ final class AutopilotRunner: ObservableObject {
     checkPressure()
   }
 
-  /// Booted devices with no build running for them, which `gc --idle` also skips.
+  /// Booted devices of workspaces with no build running, which `gc --idle` skips.
   private var bootedDevices: [AutopilotSchedule.Device] {
-    (status.payload?.environments ?? []).flatMap { env in
-      env.devices.filter { $0.isRunning && env.runningBuild(for: $0) == nil }
+    (status.payload?.environments ?? []).filter { $0.build?.isRunning != true }.flatMap { env in
+      env.devices.filter(\.isRunning)
     }
     .map {
       AutopilotSchedule.Device(activity: $0.activity, screenChangedAt: $0.activityKey.flatMap(ScreenActivity.shared.lastChange))

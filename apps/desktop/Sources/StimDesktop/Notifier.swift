@@ -32,9 +32,8 @@ final class Notifier: ObservableObject {
 
   static func removeDeliveredPressure() {
     guard isAvailable else { return }
-    let center = UNUserNotificationCenter.current()
-    center.getDeliveredNotifications { delivered in
-      center.removeDeliveredNotifications(
+    UNUserNotificationCenter.current().getDeliveredNotifications { delivered in
+      UNUserNotificationCenter.current().removeDeliveredNotifications(
         withIdentifiers: delivered.map(\.request.identifier).filter { $0.hasPrefix("pressure") })
     }
   }
