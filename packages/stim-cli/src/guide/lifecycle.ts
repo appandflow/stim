@@ -613,7 +613,8 @@ result as proof instead of requiring an unrelated screenshot.`,
   \`pool.androidParkedMax\` (default 3) or STIM_POOL_ANDROID_PARKED_MAX.
   A redirected STIM_HOME disables parking unless that environment override
   is set. Zero disables parking and adoption. \`stop\` keeps the assignment;
-  \`worktree remove\` parks eligible AVDs, and \`gc --delete\` empties the pool.
+  \`worktree remove\` parks eligible AVDs, and \`gc --delete\` empties the pool
+  (with --older-than, only the AVDs parked that long).
 
   Adoption matches the system image, data partition size, and the creation
   settings from android.avdConfig / android.avdConfigFile. The AVD keeps its

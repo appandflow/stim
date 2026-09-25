@@ -225,7 +225,7 @@ test('parked deletion skips a simulator adopted after report collection', async 
   expect(getProject('/tmp/adopter')?.platforms?.ios).toEqual(device);
 });
 
-test('--older-than keeps devices parked more recently, or at an unknown time, out of the report and the deletion', async () => {
+test('--older-than keeps devices parked more recently, or at an unknown time, out of the report', async () => {
   const now = Date.parse('2026-09-25T03:00:00.000Z');
   const parkedDaysAgo = (days: number) => new Date(now - days * DAY_MS).toISOString();
   const park = (platform: 'ios' | 'android', id: string, parkedAt: string) => {
