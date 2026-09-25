@@ -3,13 +3,11 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { ActivityChip } from '@/components/activity-chip';
 import { AgentFeed } from '@/components/agent-feed';
-import { BuildProgressBar } from '@/components/build-progress';
 import { Card } from '@/components/card';
 import { Chip, StatusDot } from '@/components/chip';
 import { useFrame, useMacConnection } from '@/hooks/mac-connection';
 import { tildeHome } from '@/lib/paths';
 import type { DeviceRef } from '@/lib/workspaces';
-import type { BuildReport } from '@/protocol/types';
 import { useColors } from '@/theme';
 
 const SCREEN_HEIGHT = 420;
@@ -17,12 +15,10 @@ const SCREEN_HEIGHT = 420;
 export function DeviceTile({
   workspace,
   device,
-  build,
   warnings,
 }: {
   workspace: string;
   device: DeviceRef;
-  build: BuildReport | null;
   warnings: string[];
 }) {
   const colors = useColors();
@@ -45,7 +41,6 @@ export function DeviceTile({
               {` \u00B7 ${device.model} \u00B7 ${device.state}`}
             </Text>
           </View>
-          {build ? <BuildProgressBar build={build} compact /> : null}
           {notes}
         </View>
       </Card>
@@ -72,11 +67,6 @@ export function DeviceTile({
         {streams && delayed ? <Chip tint={colors.warn}>Screen updates delayed</Chip> : null}
       </View>
       {notes.length ? <View style={styles.notes}>{notes}</View> : null}
-      {build ? (
-        <View style={styles.build}>
-          <BuildProgressBar build={build} compact />
-        </View>
-      ) : null}
       <View
         style={[
           styles.screen,
@@ -118,7 +108,6 @@ const styles = StyleSheet.create({
   spacer: { flex: 1 },
   source: { fontSize: 11, flexShrink: 1 },
   badges: { flexDirection: 'row', gap: 6, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 10 },
-  build: { paddingHorizontal: 12, paddingBottom: 10 },
   screen: {
     height: SCREEN_HEIGHT,
     alignItems: 'center',
