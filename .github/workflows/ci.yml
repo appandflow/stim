@@ -13,9 +13,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths-ignore: ['apps/desktop/**', '.github/workflows/desktop.yml']
+    paths-ignore: ['apps/desktop/**', '.github/workflows/desktop.yml', 'apps/mobile/**', '.github/workflows/mobile.yml']
   pull_request:
-    paths-ignore: ['apps/desktop/**', '.github/workflows/desktop.yml']
+    paths-ignore: ['apps/desktop/**', '.github/workflows/desktop.yml', 'apps/mobile/**', '.github/workflows/mobile.yml']
 
 concurrency:
   group: ci-v2-${{ github.workflow }}-${{ github.ref }}

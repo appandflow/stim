@@ -2,6 +2,7 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "ignore": [
     "website/**",
+    "apps/mobile/**",
     "packages/stim-cli/shim/**",
     "scripts/agent-benchmark/compat/ps-bridge.mjs",
     "scripts/agent-benchmark/stamp.mjs",

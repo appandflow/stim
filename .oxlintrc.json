@@ -14,7 +14,7 @@
     "node": true,
     "es2023": true
   },
-  "ignorePatterns": ["website/build/**", "website/.docusaurus/**"],
+  "ignorePatterns": ["website/build/**", "website/.docusaurus/**", "apps/mobile/**"],
   "rules": {
     "complexity": ["error", { "max": 80 }],
     "no-unused-vars": "warn",
