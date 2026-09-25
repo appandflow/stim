@@ -4,6 +4,7 @@ import { join } from 'path';
 import { createServer } from 'http';
 import { Command } from 'commander';
 import { setExecutor, resetExecutor } from '../exec.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { saveConfig, loadConfig } from '../workspace/config.ts';
 import type { AddressInfo } from 'node:net';
 import assert from 'node:assert';
@@ -21,6 +22,8 @@ let tmpHome: string;
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
+  for (const udid of ['PARKED-1', 'UDID-ABC', 'UDID-DEF', 'UDID-GONE', 'stim-parked']) recordCreatedDevice('ios', udid);
+  for (const name of ['stim-agent-1', 'stim-app', 'stim-parked', 'stim-projA']) recordCreatedDevice('android', name);
 
   const listJson = JSON.stringify({
     devices: {

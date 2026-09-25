@@ -2,6 +2,7 @@ import { hashFile } from '../engine/installed-artifact.ts';
 import { vi } from 'vitest';
 import * as crashDiagnostics from '../diagnostics/native-crash.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
 import assert from 'node:assert';
 import { captureProcessToken } from '../process-identity.ts';
 import { ClaimRefusedError, ClaimUnavailableError, claimRemoveCommand } from '../ownership-claim.ts';
@@ -96,6 +97,7 @@ let androidSdkRoot: string | undefined;
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-home-'));
   process.env.STIM_HOME = home;
+  for (const name of ['stim-adopted', 'stim-app-412', 'stim-replacement']) recordCreatedDevice('android', name);
   androidHome = process.env.ANDROID_HOME;
   androidSdkRoot = process.env.ANDROID_SDK_ROOT;
   process.env.ANDROID_HOME = join(home, 'sdk');

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { getProject, loadConfig, setDevice, upsertProject } from '../workspace/config.ts';
 import { ensureOwnedDevice } from '../engine/device.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { adoptParked, parkSim, readParked, removeParkedAfter } from '../devices/sim-pool.ts';
 import { avdPoolConfiguration, hostSystemImageArch, resetAdoptedAvd } from '../devices/android.ts';
 import { teardownOwnedAvd, teardownParkedAvd } from '../devices/teardown.ts';
@@ -38,6 +39,7 @@ beforeEach(() => {
     ].map((key) => [key, process.env[key]]),
   );
   process.env.STIM_HOME = home;
+  for (const name of ['stim-new', 'stim-old', 'stim-replacement', 'stim-source']) recordCreatedDevice('android', name);
   process.env.STIM_POOL_ANDROID_PARKED_MAX = '1';
   process.env.ANDROID_HOME = join(home, 'sdk');
   process.env.ANDROID_AVD_HOME = join(home, 'avd');

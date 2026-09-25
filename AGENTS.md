@@ -239,8 +239,15 @@ remedies, which cannot assume a global install.
 
 Stim can create, boot, shut down, or delete only devices it created. Owned iOS
 simulators are named `stim-<label> (<model> <runtime>)`; owned Android AVDs
-remain `stim-<label>`. Both are recorded with `owned: true`. Never do any of
-those actions to a user-created emulator or simulator. Keep a device record
+remain `stim-<label>`. Both are recorded with `owned: true`, and every device
+Stim creates is also listed in the locked `$STIM_HOME/created-devices.json`
+ledger. A `stim-` name alone never proves ownership: a device is Stim's when
+the ledger lists it or, for devices created before the ledger, when its name
+matches the iOS format exactly or the AVD's `config.ini` carries the
+byte-valued `disk.dataPartition.size` Stim writes. The ownership re-check
+before boot and teardown applies that rule, and `gc` only lists other `stim-*`
+devices with a manual delete command. Never do any of those actions to a
+user-created emulator or simulator. Keep a device record
 when teardown fails so `gc` can find the device later.
 
 Stim parks an eligible owned simulator or emulator it no longer needs instead

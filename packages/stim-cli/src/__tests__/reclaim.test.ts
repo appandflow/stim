@@ -6,6 +6,7 @@ import { realpathSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileS
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { upsertProject, setDevice, getProject } from '../workspace/config.ts';
 import { describeDereferenced, parkedIosCacheKey, reclaimProject } from '../devices/reclaim.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
@@ -18,6 +19,8 @@ let tmpHome: string;
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
+  for (const udid of ['U1']) recordCreatedDevice('ios', udid);
+  for (const name of ['stim-collector-ios', 'stim-proj', 'stim-wt']) recordCreatedDevice('android', name);
 });
 
 afterEach(() => {

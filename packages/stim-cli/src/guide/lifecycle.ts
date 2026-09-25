@@ -167,7 +167,7 @@ ANDROID EMULATOR RESTARTS
   wait windows, diagnostics, and recovery steps.
 
 DESTRUCTIVE COMMANDS -- ask the user first
-  gc --delete             deletes orphaned stim-* devices, tens of GB
+  gc --delete             deletes orphaned devices Stim created, tens of GB
   gc --delete --cache all empties the shared build caches every project uses
   gc --delete --cache <name>
                           empties only the caches that carry <name>

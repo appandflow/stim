@@ -20,7 +20,9 @@ import type {
   ParkedSimReport,
   StaleDeviceRecord,
   StaleProjectDevice,
+  UnverifiedDevice,
 } from './devices.ts';
+import { unverifiedDeviceCommand } from './devices.ts';
 import type { EasSessionSweep } from './eas-sessions.ts';
 import { idleDeviceLines, type IdleDevice } from './idle.ts';
 
@@ -33,6 +35,7 @@ export interface GcReport {
   parkedSims: ParkedSimReport[];
   parkedAvds: ParkedAvdReport[];
   orphanedDevices: OrphanedDevice[];
+  unverifiedDevices: UnverifiedDevice[];
   staleDevices: StaleProjectDevice[];
   staleDeviceRecords: StaleDeviceRecord[];
   buildLocks: { stale: BuildLockInfo[]; live: BuildLockInfo[]; unresolved?: BuildLockInfo[] };
@@ -120,6 +123,7 @@ export function formatGcReport(
     parkedSims = [],
     parkedAvds = [],
     orphanedDevices = [],
+    unverifiedDevices = [],
     staleDevices = [],
     staleDeviceRecords = [],
     buildLocks = { stale: [], live: [], unresolved: [] },
@@ -197,6 +201,17 @@ export function formatGcReport(
   if (orphanedDevices.length) {
     lines.push(`Orphaned devices (${orphanedDevices.length}):`);
     for (const d of orphanedDevices) lines.push(`  ${d.kind} ${d.name} (${d.id})${deviceSizeSuffix(d)}`);
+  }
+
+  if (unverifiedDevices.length) {
+    lines.push(
+      `Unrecognized stim-* devices (${unverifiedDevices.length}) - NOT deleted, because Stim has no record of creating them:`,
+    );
+    for (const d of unverifiedDevices) {
+      lines.push(`  ${d.kind} ${d.name} (${d.id})`);
+      lines.push(`              ${unverifiedDeviceCommand(d)}`);
+    }
+    lines.push('              run that yourself if you no longer need it');
   }
 
   if (staleDevices.length) {
@@ -426,6 +441,7 @@ export interface GcJsonSections {
     bytes: number | null;
     directory: string | null;
   }[];
+  unverifiedDevices: { kind: 'ios' | 'android'; id: string; name: string; command: string }[];
   staleDevices: {
     kind: 'ios' | 'android';
     id: string;
@@ -490,6 +506,7 @@ export function gcReportSections({
   parkedSims = [],
   parkedAvds = [],
   orphanedDevices = [],
+  unverifiedDevices = [],
   staleDevices = [],
   staleDeviceRecords = [],
   buildLocks = { stale: [], live: [], unresolved: [] },
@@ -539,6 +556,12 @@ export function gcReportSections({
       name: d.name,
       bytes: d.bytes ?? null,
       directory: d.orphanedDirectory?.directory ?? null,
+    })),
+    unverifiedDevices: unverifiedDevices.map((d) => ({
+      kind: d.kind,
+      id: d.id,
+      name: d.name,
+      command: unverifiedDeviceCommand(d),
     })),
     staleDevices: staleDevices.map((d) => ({
       kind: d.kind,

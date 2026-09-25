@@ -1,3 +1,5 @@
+import { forgetCreatedDevice, recordCreatedDevice } from './created-devices.ts';
+import { isStimOwnedAvd } from './device-ownership.ts';
 import {
   existsSync,
   lstatSync,
@@ -242,6 +244,7 @@ export async function createOwnedAvd(
     );
   }
   const avdName = ownedAvdName(label);
+  recordCreatedDevice('android', avdName);
   const tool = androidToolPath('avdmanager');
   const args = ['create', 'avd', '-n', avdName, '-k', pick.pkg, '--device', DEFAULT_AVD_DEVICE];
   const child = spawn(tool, args, { detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -302,6 +305,25 @@ function sanitizeAvdLabel(label: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
+function avdConfigIni(avdName: string, directory: string | null = ownedAvdDirectory(avdName)): string | null {
+  if (!directory) return null;
+  try {
+    return readFileSync(join(directory, 'config.ini'), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+function registeredOrOrphanedAvdDirectory(avdName: string): string | null {
+  return ownedAvdDirectory(avdName) ?? listOrphanedAvdDirectories(avdName)[0]?.directory ?? null;
+}
+
+export function isStimOwnedAvdName(avdName: string, directory?: string | null): boolean {
+  return isStimOwnedAvd(avdName, () =>
+    avdConfigIni(avdName, directory === undefined ? registeredOrOrphanedAvdDirectory(avdName) : directory),
+  );
+}
+
 export function ownedAvdName(label: string): string {
   const clean = sanitizeAvdLabel(label);
   return `stim-${clean.startsWith('stim-') ? clean.slice('stim-'.length) : clean}`;
@@ -310,13 +332,14 @@ export function ownedAvdName(label: string): string {
 const AVDMANAGER_DELETE_TIMEOUT_MS = 120_000;
 
 export function deleteAvd(avdName: string): void {
-  if (!avdName?.startsWith('stim-')) {
-    throw new Error(`Refusing to delete AVD "${avdName}": not a Stim-owned AVD (name must start with "stim-").`);
+  if (!isStimOwnedAvdName(avdName)) {
+    throw new Error(`Refusing to delete AVD "${avdName}": not a Stim-owned AVD; Stim has no record of creating it.`);
   }
   getExecutor().run(`${androidTool('avdmanager')} delete avd -n "${avdName}"`, {
     timeoutMs: AVDMANAGER_DELETE_TIMEOUT_MS,
     killSignal: 'SIGKILL',
   });
+  forgetCreatedDevice('android', avdName);
 }
 
 export function parseAvdList(text: string): string[] {
@@ -1296,7 +1319,7 @@ export function ownedAvdSerialResolver({ timeoutMs }: { timeoutMs?: number } = {
   };
   return (avdName) => {
     if (!avds().includes(avdName)) return { missing: true };
-    if (!avdName?.startsWith('stim-')) return { notOwned: true };
+    if (!isStimOwnedAvdName(avdName)) return { notOwned: true };
     const devices = adb();
     const candidates = [
       ...devices.emulators,

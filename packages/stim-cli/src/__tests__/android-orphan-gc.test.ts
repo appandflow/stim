@@ -119,6 +119,7 @@ function orphan(name = 'stim-orphan', root = avdRoot): string {
   const directory = join(root, `${name}.avd`);
   mkdirSync(directory, { recursive: true });
   writeFileSync(join(directory, 'userdata.img'), Buffer.alloc(8192, 1));
+  writeFileSync(join(directory, 'config.ini'), 'disk.dataPartition.size=8589934592\n');
   return directory;
 }
 
@@ -191,6 +192,7 @@ test('orphan deletion refuses a directory replaced by a symlink after survey', (
   const outside = join(home, 'outside');
   mkdirSync(outside);
   writeFileSync(join(outside, 'keep'), 'mine');
+  writeFileSync(join(outside, 'config.ini'), 'disk.dataPartition.size=8589934592\n');
   rmSync(directory, { recursive: true });
   symlinkSync(outside, directory);
   expect(teardownOwnedAvd('stim-orphan', { del: true, orphanedDirectory: candidate }).status).toBe('failed');

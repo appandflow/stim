@@ -50,6 +50,7 @@ exports[`a cache-scoped report preserves its serialized shape without inspecting
   "invalidProjects": [],
   "orphanedWorkspaces": [],
   "orphanedDevices": [],
+  "unverifiedDevices": [],
   "staleDevices": [],
   "staleDeviceRecords": [],
   "buildLocks": {

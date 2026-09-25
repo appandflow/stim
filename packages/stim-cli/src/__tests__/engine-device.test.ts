@@ -17,6 +17,7 @@ import { ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
 import { allConsolePortsAndSerials, getProject, setDevice, upsertProject } from '../workspace/config.ts';
 import type { DeviceRecord } from '../workspace/config-types.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
 import { workspaceId } from '../workspace/paths.ts';
 import { ownedSimName } from '../devices/ios.ts';
@@ -41,6 +42,21 @@ let savedDisplay: string | undefined;
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
+  for (const name of [
+    'stim-a',
+    'stim-b',
+    'stim-app',
+    'stim-app-PHONE',
+    'stim-default',
+    'stim-old',
+    'stim-phone',
+    'stim-x',
+    'stim-0',
+    'stim-1',
+  ])
+    recordCreatedDevice('android', name);
+  for (const udid of ['U1', 'U2', 'OTHER', 'NEW-UDID', 'BF2A1C3D-4E5F-6071-8293-A4B5C6D7E8F9'])
+    recordCreatedDevice('ios', udid);
   savedAndroidHome = process.env.ANDROID_HOME;
   savedSdkRoot = process.env.ANDROID_SDK_ROOT;
   process.env.ANDROID_HOME = join(tmpHome, 'no-sdk-here');

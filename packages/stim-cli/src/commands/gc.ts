@@ -12,7 +12,8 @@ import { detectIsExpo, findProjectRoot } from '../workspace/project.ts';
 import { describeDereferenced, reclaimProject } from '../devices/reclaim.ts';
 import { listAllIosSims, type IosSimRecord } from '../devices/ios.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
-import { listAvds, listOrphanedAvdDirectories, ownedAvdDirectory } from '../devices/android.ts';
+import { isStimOwnedAvdName, listAvds, listOrphanedAvdDirectories, ownedAvdDirectory } from '../devices/android.ts';
+import { isStimOwnedSim } from '../devices/device-ownership.ts';
 import { discoverCaches, sizeCaches } from '../cache/caches.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import type { GcSkip, OrphanedDevice } from './gc/types.ts';
@@ -34,6 +35,7 @@ import {
   type GcDeviceDependencies,
   type StaleDeviceRecord,
   type StaleProjectDevice,
+  type UnverifiedDevice,
 } from './gc/devices.ts';
 import {
   collectEasSessionSweep,
@@ -136,6 +138,7 @@ export async function collectGcReport(
       invalidProjects: [],
       orphanedWorkspaces: [],
       orphanedDevices: [],
+      unverifiedDevices: [],
       staleDevices: [],
       staleDeviceRecords: [],
       buildLocks: { stale: [], live: [], unresolved: [] },
@@ -203,6 +206,7 @@ export async function collectGcReport(
 
   const deviceSweepNotices: string[] = [];
   let orphanedDevices: OrphanedDevice[] = [];
+  let unverifiedDevices: UnverifiedDevice[] = [];
   let staleDevices: StaleProjectDevice[] = [];
   let staleDeviceRecords: StaleDeviceRecord[] = [];
   let idleDevices: IdleDevice[] = [];
@@ -257,8 +261,25 @@ export async function collectGcReport(
     }
     avds = [...new Set([...avds, ...orphanedAvdDirectories.map((entry) => entry.name)])];
     const isMounted = (path: string) => isOnMountedVolume(path, mountedVolumes);
+    const found = findOrphanedDevices({
+      sims,
+      avds,
+      config: cfg,
+      isMounted,
+      deadProjects,
+      isOwned: (device) =>
+        device.kind === 'ios'
+          ? isStimOwnedSim({ udid: device.id, name: device.name })
+          : isStimOwnedAvdName(
+              device.id,
+              ownedAvdDirectory(device.id) ??
+                orphanedAvdDirectories.find((entry) => entry.name === device.id)?.directory ??
+                null,
+            ),
+    });
+    unverifiedDevices = found.unverified;
     orphanedDevices = withAndroidAvdSizes(
-      findOrphanedDevices({ sims, avds, config: cfg, isMounted, deadProjects }).orphaned.flatMap((device) => {
+      found.orphaned.flatMap((device) => {
         const directories =
           device.kind === 'android' ? orphanedAvdDirectories.filter((entry) => entry.name === device.name) : [];
         return directories.length
@@ -313,6 +334,7 @@ export async function collectGcReport(
     parkedSims,
     parkedAvds,
     orphanedDevices,
+    unverifiedDevices,
     staleDevices,
     staleDeviceRecords,
     buildLocks: {

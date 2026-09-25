@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
 import {
   parseSimctlList,
   listAllIosSims,
@@ -20,6 +21,7 @@ import {
   parkedSimName,
   parseUserApps,
   createOwnedIosSim,
+  resolveOwnedIosSim,
   renameIosSim,
   resetIosKeychain,
   resetIosPrivacy,
@@ -34,6 +36,20 @@ let tmpHome: string;
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
+  for (const udid of ['IOS-1', 'TV-1', 'U1', 'UDID-A', 'UDID-B', 'UDID-C', 'UDID-OLD', 'UDID-X', 'VISION-1', 'WATCH-1'])
+    recordCreatedDevice('ios', udid);
+  for (const name of [
+    'stim-app',
+    'stim-app-tablet',
+    'stim-desktop',
+    'stim-feat-a-tlon-mobile',
+    'stim-my-project',
+    'stim-old',
+    'stim-test-dialogue',
+    'stim-wt',
+    'stim-x',
+  ])
+    recordCreatedDevice('android', name);
 });
 
 afterEach(() => {
@@ -362,6 +378,30 @@ const OWNED_SIM_LIST = JSON.stringify({
       },
     ],
   },
+});
+
+test('a created simulator stays Stim-owned through the ledger until Stim deletes it', () => {
+  const list = (name: string) =>
+    JSON.stringify({
+      devices: {
+        'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+          { udid: 'NEW-1', name, state: 'Shutdown', isAvailable: true, deviceTypeIdentifier: 'iphone-17' },
+        ],
+      },
+    });
+  let name = 'stim-wt';
+  setExecutor({
+    run: (cmd: string) => (cmd.includes('simctl create') ? 'NEW-1\n' : cmd.includes('list') ? list(name) : ''),
+    runFile: (_file: string, args: string[] = []) => (args.includes('list') ? list(name) : ''),
+  });
+  expect(resolveOwnedIosSim('NEW-1').notOwned).toBe('stim-wt');
+  createOwnedIosSim('wt', {}, { deviceTypeId: 'dt', runtimeId: 'rt', deviceType: null, runtime: null });
+  expect(resolveOwnedIosSim('NEW-1').sim?.udid).toBe('NEW-1');
+  name = 'My Phone';
+  expect(resolveOwnedIosSim('NEW-1').notOwned).toBe('My Phone');
+  name = 'stim-wt';
+  deleteIosSim('NEW-1');
+  expect(resolveOwnedIosSim('NEW-1').notOwned).toBe('stim-wt');
 });
 
 const BOOTED_OWNED_SIM_LIST = OWNED_SIM_LIST.replace('"Shutdown"', '"Booted"');
