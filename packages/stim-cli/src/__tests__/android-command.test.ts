@@ -4146,6 +4146,24 @@ describe('re-fingerprint after prebuild', () => {
     expect((await current.run()).ok).toBe(true);
   });
 
+  test('a config change that renames the Android package is read from the regenerated android/ dir, not the stale one', async () => {
+    cngProject();
+    writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
+    mkdirSync(join(root, 'android', 'app'), { recursive: true });
+    writeFileSync(join(root, 'android', 'app', 'build.gradle'), 'android {\n  namespace "com.old.app"\n}\n');
+    const h = harness({
+      fingerprint: shifting(),
+      prebuild: async () => {
+        writeFileSync(join(root, 'android', 'app', 'build.gradle'), 'android {\n  namespace "com.new.app"\n}\n');
+        return { ok: true, durationMs: 12000, nativeDir: join(root, 'android') };
+      },
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.install[0]?.packageName).toBe('com.new.app');
+    expect(h.calls.launch[0]?.packageName).toBe('com.new.app');
+  });
+
   test('the shift is one dim line naming both short hashes, and the payload reports what was stored', async () => {
     cngProject();
     const h = harness({ fingerprint: shifting() });

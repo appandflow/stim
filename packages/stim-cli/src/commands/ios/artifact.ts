@@ -104,6 +104,8 @@ type IosArtifactDeps = Pick<
   | 'releaseBuildSlot'
   | 'planPrebuild'
   | 'runPrebuild'
+  | 'discoverXcodeProject'
+  | 'resolveScheme'
   | 'readPodState'
   | 'podsAreStale'
   | 'runPodInstall'
@@ -587,6 +589,13 @@ export async function acquireIosArtifact(
             : 'ios/ not generated from this fingerprint -> regenerated with --clean';
         phase('prebuild', `${outcome} (${formatDuration(result?.durationMs ?? 0)})`);
         mutatingSteps.push('prebuild');
+      }
+
+      if (buildScheme !== undefined) {
+        const project = d.discoverXcodeProject(root);
+        if (project.error) fail({ ...project.error, build: buildFailure });
+        const schemeError = d.resolveScheme(project, { scheme: buildScheme }).error;
+        if (schemeError) fail({ ...schemeError, build: buildFailure });
       }
 
       const podState = d.readPodState(root);

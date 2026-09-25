@@ -3413,7 +3413,10 @@ describe('explicit Xcode schemes', () => {
     expect(selected.calls.order).not.toContain('loadProjectProvider');
   });
 
-  test('an unknown explicit scheme refuses before any device, cache lookup, or native build', async () => {
+  // The scheme is validated against the native project as it stands after any prebuild regeneration
+  // (appandflow/stim#1146), so the refusal now lands after the cache-miss and prebuild steps, not before
+  // device boot -- but still before pod install or the native compile.
+  test('an unknown explicit scheme refuses before pod install or the native build', async () => {
     reserve();
     const result = await run(
       { scheme: 'unknown', json: true },
@@ -3430,8 +3433,9 @@ describe('explicit Xcode schemes', () => {
     );
     expect(result.exitCode).toBe(1);
     expect(parseFirst(result.logs).code).toBe('STIM_NO_SCHEME');
-    expect(result.calls.order).not.toContain('ensureOwnedDevice');
-    expect(result.calls.order).not.toContain('resolveBuild');
+    expect(result.calls.order).toContain('ensureOwnedDevice');
+    expect(result.calls.order).toContain('resolveBuild');
+    expect(result.calls.order).not.toContain('runPodInstall');
     expect(result.calls.order).not.toContain('buildIos');
   });
 
@@ -3442,25 +3446,72 @@ describe('explicit Xcode schemes', () => {
     expect(result.calls.order).not.toContain('buildIos');
   });
 
-  test('a matching explicit-scheme cache hit still validates selection and skips compilation', async () => {
+  // Nothing is regenerated on a cache hit, so there is nothing stale to re-check: the scheme that was
+  // valid when this cache entry was built is still the one named by its (unchanged) cache key.
+  test('a matching explicit-scheme cache hit is installed without re-validating the scheme', async () => {
     reserve();
-    let validated = false;
+    let resolveSchemeCalls = 0;
     const result = await run(
       { scheme: 'App Staging', json: true },
       {
         ...schemeDeps,
         resolveScheme: () => {
-          validated = true;
+          resolveSchemeCalls++;
           return { scheme: 'App Staging' };
         },
-        resolveBuild: () => {
-          expect(validated).toBe(true);
-          return join(root, 'build', 'Fixture.app');
-        },
+        resolveBuild: () => join(root, 'build', 'Fixture.app'),
       },
     );
     expect(result.exitCode).toBeNull();
     expect(parseFirst(result.logs)).toMatchObject({ scheme: 'App Staging', cacheHit: 'local' });
+    expect(result.calls.order).not.toContain('buildIos');
+    expect(resolveSchemeCalls).toBe(0);
+  });
+
+  test('a config change that adds the requested scheme only after regeneration is accepted, not refused early', async () => {
+    reserve();
+    let planned: unknown[] = [];
+    const result = await run(
+      { scheme: 'App Staging', json: true },
+      {
+        detectIsExpo: () => true,
+        planPrebuild: (...args) => {
+          planned = args;
+          return 'regenerate';
+        },
+        readPodState: () => ({ hasPodfile: false, lockText: null, manifestText: null }),
+        discoverXcodeProject: () => ({ kind: 'workspace', flag: '-workspace', path: '/app/ios/App.xcworkspace' }),
+        resolveScheme: () => ({ scheme: 'App Staging', schemes: ['App', 'App Staging'] }),
+      },
+    );
+    expect(result.exitCode).toBeNull();
+    expect(planned[1]).toBe('ios');
+    expect(result.calls.args.buildIos.scheme).toBe('App Staging');
+    expect(result.calls.order.indexOf('runPrebuild')).toBeLessThan(result.calls.order.indexOf('buildIos'));
+  });
+
+  test('a config change that removes the requested scheme by regeneration is refused, not accepted from the stale dir', async () => {
+    reserve();
+    const result = await run(
+      { scheme: 'App Staging', json: true },
+      {
+        detectIsExpo: () => true,
+        planPrebuild: () => 'regenerate',
+        readPodState: () => ({ hasPodfile: false, lockText: null, manifestText: null }),
+        discoverXcodeProject: () => ({ kind: 'workspace', flag: '-workspace', path: '/app/ios/App.xcworkspace' }),
+        resolveScheme: () => ({
+          error: {
+            code: 'STIM_NO_SCHEME',
+            message: 'No shared Xcode scheme named "App Staging". Available schemes: App.',
+            remedy: 'Pass an exact available name with --scheme.',
+          },
+        }),
+      },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(parseFirst(result.logs).code).toBe('STIM_NO_SCHEME');
+    expect(result.calls.order).toContain('runPrebuild');
+    expect(result.calls.order).not.toContain('runPodInstall');
     expect(result.calls.order).not.toContain('buildIos');
   });
 });
@@ -3799,6 +3850,8 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
             lookedUp.push(key);
             return null;
           },
+          discoverXcodeProject: () => ({ kind: 'workspace', flag: '-workspace', path: '/app/ios/App.xcworkspace' }),
+          resolveScheme: () => ({ scheme: scheme ?? 'App' }),
         },
       );
       expect(cold.exitCode).toBe(null);
