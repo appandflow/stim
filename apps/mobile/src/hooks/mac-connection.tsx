@@ -1,14 +1,24 @@
 import Constants from 'expo-constants';
 import { useLocalSearchParams } from 'expo-router';
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
 import { AppState } from 'react-native';
 
 import { RequestError, StimConnection, type ConnectionState } from '@/lib/connection';
 import { listMacs, macToken, type PairedMac } from '@/lib/macs';
+import { PlanChecks, type PlanSnapshot, type PlanState } from '@/lib/plan-checks';
 import type {
   ActionName,
   ActionParams,
-  BuildPlan,
   FrameEvent,
   InputButton,
   LogFilter,
@@ -333,42 +343,45 @@ export function useFrameSnapshot(
   return latest && latest.key === key ? latest : { frame: null, error: null };
 }
 
-export type PlanState = { kind: 'checking' } | { kind: 'done'; plan: BuildPlan } | { kind: 'failed'; message: string };
-
-type Plans = Partial<Record<Platform, PlanState>>;
+const planChecks = new WeakMap<StimConnection, PlanChecks>();
+const NO_PLANS: PlanSnapshot = new Map();
+const noSubscription = () => () => {};
 
 /**
- * `build.plan`: what the next build of `workspace` would find. It builds nothing, so a read-only pairing may ask.
- * Results belong to `key`; a new workspace, connection or key drops them, and late answers for an old one are ignored.
+ * `build.plan` for each platform in `builds` (platform to `planKey` of its last build), checked while the
+ * calling screen is mounted and no build runs. It builds nothing, so a read-only pairing may ask.
  */
-export function useBuildPlan(workspace: string, key: string): { plans: Plans; check: (platform: Platform) => void } {
+export function useBuildPlans(
+  workspace: string,
+  builds: Partial<Record<Platform, string>>,
+  building: boolean,
+): { plan: (platform: Platform) => PlanState | undefined; recheck: ((platform: Platform) => void) | null } {
   const { connection } = useMacConnection();
-  const [state, setState] = useState<{ owner: unknown; plans: Plans } | null>(null);
-  const owner = useMemo(() => ({ connection, workspace, key }), [connection, workspace, key]);
-  const check = useCallback(
-    (platform: Platform) => {
-      const set = (plan: PlanState) =>
-        setState((prev) => {
-          const plans = prev && prev.owner === owner ? prev.plans : {};
-          return { owner, plans: { ...plans, [platform]: plan } };
-        });
-      const settle = (plan: PlanState) =>
-        setState((prev) =>
-          prev && prev.owner === owner ? { owner, plans: { ...prev.plans, [platform]: plan } } : prev,
-        );
-      if (!owner.connection) {
-        set({ kind: 'failed', message: 'Not connected.' });
-        return;
-      }
-      set({ kind: 'checking' });
-      owner.connection.request('build.plan', { workspace: owner.workspace, platform }).then(
-        (plan) => settle({ kind: 'done', plan }),
-        (cause: Error) => settle({ kind: 'failed', message: cause.message }),
-      );
-    },
-    [owner],
+  const checks = useMemo(() => {
+    if (!connection) return null;
+    let found = planChecks.get(connection);
+    if (!found) {
+      found = new PlanChecks((path, platform) => connection.request('build.plan', { workspace: path, platform }));
+      planChecks.set(connection, found);
+    }
+    return found;
+  }, [connection]);
+  const snapshot = useSyncExternalStore(checks?.subscribe ?? noSubscription, checks?.snapshot ?? (() => NO_PLANS));
+  const wanted = JSON.stringify(builds);
+  useEffect(() => {
+    if (!checks) return;
+    if (building) checks.cancel(workspace);
+    else checks.check(workspace, JSON.parse(wanted) as Partial<Record<Platform, string>>);
+  }, [checks, workspace, wanted, building]);
+  useEffect(() => () => checks?.cancel(workspace), [checks, workspace]);
+  const recheck = useCallback(
+    (platform: Platform) => checks?.check(workspace, { [platform]: builds[platform] ?? '' }, true),
+    [checks, workspace, builds],
   );
-  return { plans: state && state.owner === owner ? state.plans : {}, check };
+  return {
+    plan: (platform) => PlanChecks.state(snapshot, workspace, platform),
+    recheck: checks && !building ? recheck : null,
+  };
 }
 
 export type ControlState =

@@ -56,8 +56,11 @@ reload and stop a workspace:
   "Cold build", "Likely ..." before the run reaches a phase that decides it);
   each platform's last build (local cache, remote cache, compiled, or failed,
   with its duration and age), with why a compiled build missed the cache,
-  which opens a sheet listing the changed fingerprint sources, and a **Check next build** button that asks the server's read-only
-  `build.plan` what the next build would find and how long it should take;
+  which opens a sheet listing the changed fingerprint sources, and what the next build would find and how long it
+  should take ("Next build: cache hit (local)" or "cold build, ~5:40"), from the server's read-only `build.plan`. The
+  screen asks for each platform with a last build or a device when it opens, one plan at a time, reuses a result for
+  60 seconds unless that platform's last build changes, ignores a reply that arrives after it closes, and asks nothing
+  while a build runs. The refresh icon asks again;
   warnings, remote sessions, and each
   device: a running device with the latest frame the server sends for it,
   fitted to the screen's width, and **Folded** or **Unfolded** for an iPhone

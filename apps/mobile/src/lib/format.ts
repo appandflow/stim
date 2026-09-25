@@ -85,19 +85,26 @@ export function lastBuildSummary(last: LastBuild, now: number): string {
   return `${last.cacheSkipped ? 'Compiled' : 'Cache miss, compiled'}${took}`;
 }
 
-export function planSummary(plan: BuildPlan): string {
-  if (plan.refusal) return `Would refuse: ${plan.refusal.code}`;
-  if (plan.cacheHit === 'local') return 'Local cache hit';
-  if (plan.cacheHit === 'remote') return `Remote cache hit (${plan.provider ?? 'provider'})`;
+/** What the next build would do, worded to follow "Next build: ". */
+export function nextBuild(plan: BuildPlan): string {
+  if (plan.refusal) return `would refuse (${plan.refusal.code})`;
+  const took = plan.expectedMs === null ? '' : `, ~${clockDuration(plan.expectedMs)}`;
+  if (plan.cacheHit === 'local') return `cache hit (local)${took}`;
+  if (plan.cacheHit === 'remote') return `cache hit (remote)${took}`;
+  const off = plan.cacheSkipped ? ' (cache reads off)' : '';
   const native =
     plan.prebuild === 'generate' || plan.prebuild === 'regenerate' ? `, ${plan.prebuild}s the native dir` : '';
-  return `${plan.cacheSkipped ? 'Cache reads off' : 'Cache miss'}: compiles${native}`;
+  return `cold build${off}${native}${took}`;
 }
 
-export function planExpectation(plan: BuildPlan): string | null {
+/** The remote provider and the runs behind the estimate. */
+export function planDetail(plan: BuildPlan): string | null {
   if (plan.refusal || !plan.outcome) return null;
-  if (plan.expectedMs === null) return `No ${plan.outcome} run of this project recorded yet`;
-  return `~${clockDuration(plan.expectedMs)}, median of ${plan.basis} ${plan.outcome} run${plan.basis === 1 ? '' : 's'}`;
+  const runs =
+    plan.expectedMs === null
+      ? `No ${plan.outcome} run of this project recorded yet`
+      : `Median of ${plan.basis} ${plan.outcome} run${plan.basis === 1 ? '' : 's'}`;
+  return plan.cacheHit === 'remote' ? `From ${plan.provider ?? 'the cache provider'}. ${runs}` : runs;
 }
 
 export interface GitBadges {

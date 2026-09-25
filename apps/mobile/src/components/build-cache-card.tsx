@@ -2,35 +2,47 @@ import { useRouter } from 'expo-router';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Card } from '@/components/card';
-import { useBuildPlan, useMacConnection, type PlanState } from '@/hooks/mac-connection';
+import { Icon } from '@/components/icon';
+import { useBuildPlans, useMacConnection } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
-import { lastBuildSummary, planExpectation, planSummary } from '@/lib/format';
-import type { EnvironmentState, Platform } from '@/protocol/types';
+import { lastBuildSummary, nextBuild, planDetail } from '@/lib/format';
+import { planKey, type PlanState } from '@/lib/plan-checks';
+import { runningBuild } from '@/lib/workspaces';
+import type { BuildReport, EnvironmentState, Platform } from '@/protocol/types';
 import { useColors } from '@/theme';
 
 const PLATFORMS: Platform[] = ['ios', 'android'];
 
-function platformsOf(env: EnvironmentState): Platform[] {
-  const used = PLATFORMS.filter(
+function usedPlatforms(env: EnvironmentState): Platform[] {
+  return PLATFORMS.filter(
     (platform) =>
       env.lastBuilds?.[platform] ||
       env[platform] ||
       env.slots?.some((slot) => slot[platform]) ||
       env.remoteDevices?.some((remote) => remote.platform === platform),
   );
-  return used.length ? used : PLATFORMS;
 }
 
 export function BuildCacheCard({ env }: { env: EnvironmentState }) {
-  const { plans, check } = useBuildPlan(
+  const used = usedPlatforms(env);
+  const build = runningBuild(env);
+  const { plan, recheck } = useBuildPlans(
     env.path,
-    PLATFORMS.map((platform) => env.lastBuilds?.[platform]?.startedAt ?? '').join('\n'),
+    Object.fromEntries(used.map((platform) => [platform, planKey(env.lastBuilds?.[platform])])),
+    build !== null,
   );
   return (
     <Card>
       <View style={styles.card}>
-        {platformsOf(env).map((platform) => (
-          <PlatformBuilds key={platform} env={env} platform={platform} plan={plans[platform]} check={check} />
+        {(used.length ? used : PLATFORMS).map((platform) => (
+          <PlatformBuilds
+            key={platform}
+            env={env}
+            platform={platform}
+            plan={plan(platform)}
+            build={build}
+            recheck={recheck}
+          />
         ))}
       </View>
     </Card>
@@ -41,12 +53,14 @@ function PlatformBuilds({
   env,
   platform,
   plan,
-  check,
+  build,
+  recheck,
 }: {
   env: EnvironmentState;
   platform: Platform;
   plan: PlanState | undefined;
-  check: (platform: Platform) => void;
+  build: BuildReport | null;
+  recheck: ((platform: Platform) => void) | null;
 }) {
   const colors = useColors();
   const router = useRouter();
@@ -54,20 +68,19 @@ function PlatformBuilds({
   const now = useNow(30_000);
   const last = env.lastBuilds?.[platform];
   const name = platform === 'ios' ? 'iOS' : 'Android';
+  const disabled = !recheck || plan?.kind === 'checking';
   return (
     <View style={styles.platform}>
       <View style={styles.header}>
         <Text style={[styles.name, { color: colors.text }]}>{name}</Text>
         <Pressable
-          onPress={() => check(platform)}
-          disabled={plan?.kind === 'checking'}
+          onPress={() => recheck?.(platform)}
+          disabled={disabled}
           accessibilityRole="button"
-          accessibilityLabel={`Check the next ${name} build`}
-          hitSlop={6}
+          accessibilityLabel={`Check the next ${name} build again`}
+          hitSlop={10}
         >
-          <Text style={[styles.action, { color: plan?.kind === 'checking' ? colors.tertiary : colors.primary }]}>
-            Check next build
-          </Text>
+          <Icon name="arrow.clockwise" size={15} color={disabled ? colors.tertiary : colors.primary} />
         </Pressable>
       </View>
       <Text style={[styles.line, { color: last?.status === 'failed' ? colors.error : colors.secondary }]}>
@@ -89,33 +102,50 @@ function PlatformBuilds({
           <Text style={[styles.line, { color: colors.tertiary }]}>{'\u203A'}</Text>
         </Pressable>
       ) : null}
-      {plan?.kind === 'checking' ? <ActivityIndicator style={styles.spinner} color={colors.primary} /> : null}
-      {plan?.kind === 'failed' ? (
-        <Text style={[styles.line, { color: colors.warn }]} selectable>
-          {`Cannot plan: ${plan.message}`}
+      {build ? (
+        <Text style={[styles.line, { color: colors.tertiary }]}>
+          {build.platform === platform ? 'Building now' : 'Next build: checked after the running build'}
+        </Text>
+      ) : (
+        <NextBuild plan={plan} />
+      )}
+    </View>
+  );
+}
+
+function NextBuild({ plan }: { plan: PlanState | undefined }) {
+  const colors = useColors();
+  if (plan?.kind === 'checking') {
+    return (
+      <View style={styles.checking}>
+        <ActivityIndicator size="small" color={colors.tertiary} />
+        <Text style={[styles.line, { color: colors.tertiary }]}>{'Checking next build\u2026'}</Text>
+      </View>
+    );
+  }
+  if (plan?.kind === 'failed') {
+    return (
+      <Text style={[styles.line, { color: colors.warn }]} selectable>
+        {`Cannot plan: ${plan.message}`}
+      </Text>
+    );
+  }
+  if (plan?.kind !== 'done') return null;
+  const detail = planDetail(plan.plan);
+  return (
+    <>
+      <Text
+        style={[styles.line, { color: plan.plan.refusal || plan.plan.cacheHit === false ? colors.warn : colors.live }]}
+      >
+        {`Next build: ${nextBuild(plan.plan)}`}
+      </Text>
+      {detail ? <Text style={[styles.line, { color: colors.tertiary }]}>{detail}</Text> : null}
+      {plan.plan.refusal ? (
+        <Text style={[styles.line, { color: colors.secondary }]} selectable>
+          {`${plan.plan.refusal.message} ${plan.plan.refusal.remedy}`}
         </Text>
       ) : null}
-      {plan?.kind === 'done' ? (
-        <>
-          <Text
-            style={[
-              styles.line,
-              { color: plan.plan.refusal || plan.plan.cacheHit === false ? colors.warn : colors.live },
-            ]}
-          >
-            {`Next: ${planSummary(plan.plan)}`}
-          </Text>
-          {planExpectation(plan.plan) ? (
-            <Text style={[styles.line, { color: colors.secondary }]}>{planExpectation(plan.plan)}</Text>
-          ) : null}
-          {plan.plan.refusal ? (
-            <Text style={[styles.line, { color: colors.secondary }]} selectable>
-              {`${plan.plan.refusal.message} ${plan.plan.refusal.remedy}`}
-            </Text>
-          ) : null}
-        </>
-      ) : null}
-    </View>
+    </>
   );
 }
 
@@ -124,9 +154,8 @@ const styles = StyleSheet.create({
   platform: { gap: 4 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   name: { fontSize: 14, fontWeight: '600' },
-  action: { fontSize: 13, fontWeight: '600' },
   line: { fontSize: 13, lineHeight: 18 },
-  spinner: { alignSelf: 'flex-start' },
+  checking: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   reason: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   reasonText: { flexShrink: 1 },
 });

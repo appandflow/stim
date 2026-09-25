@@ -38,8 +38,8 @@ result. Two matching misses use one build through a single-flight lock.
 To find out before a run whether it will hit, and how long it should take, run
 `stim ios --plan` or `stim android --plan`. See
 [Predict the next build](./commands.md#predict-the-next-build). Stim Desktop
-runs the same check when a workspace opens and shows the result on its build
-row.
+and the phone app run the same check when a workspace opens and show the
+result on its build row.
 
 In an Expo project that gitignores `ios/` or `android/` (Continuous Native
 Generation), the fingerprint hashes the app config instead of the native
