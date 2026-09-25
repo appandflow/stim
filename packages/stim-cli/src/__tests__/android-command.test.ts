@@ -698,6 +698,29 @@ describe('explicit remote backend behavior', () => {
     expect(result.error?.remedy).not.toContain('adb');
   });
 
+  test('a remote debug launch names the public Metro origin and attaches no adb collector', async () => {
+    const { h } = remoteHarness('eas', {
+      remoteDeviceDeps: () => ({
+        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        checkCapacity: () => null,
+        ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
+        ensureDeviceBooted: async () => ({ ok: true, serial: 'drs_42' }),
+        install: (args: InstallArgs = {}) => ({ ok: true, apkPath: args.apkPath ?? '' }),
+        launch: () => ({ ok: true, mode: 'openurl', jsLocation: 'https://metro.example.dev' }),
+        createdSessionId: () => null,
+        webPreviewUrl: () => null,
+      }),
+      spawn: never('the local adb collector'),
+    });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(labelled(h.stderr, 'metro').join('\n')).toContain('public origin https://metro.example.dev');
+    expect(h.stderr.join('\n')).not.toContain('adb reverse');
+    const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
+    expect(records.map((record) => record.event)).not.toContain('debug_http_host_failed');
+    expect(records.find((record) => record.event === 'collector_skipped')?.msg).toContain('remote session drs_42');
+  });
+
   test('android.remote selects the same explicit backend as the CLI', async () => {
     const selected: unknown[] = [];
     const h = harness({

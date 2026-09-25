@@ -663,21 +663,8 @@ export async function finishAndroidRun({
     }
   }
 
-  const reversedSummary = (launched.reversed ?? []).join(', ') || `tcp:${metroPort}->tcp:${metroPort}`;
-  if (!release && launched.debugHttpHost) {
-    phase('metro', `debug_http_host ${launched.debugHttpHost} + adb reverse ${reversedSummary}`);
-  } else if (!release) {
-    phase(
-      'metro',
-      chalk.yellow(`adb reverse ${reversedSummary}; ${launched.debugHttpHostNote || 'debug_http_host not written'}`),
-    );
-    writer.write({
-      src: 'build',
-      level: 'warn',
-      event: 'debug_http_host_failed',
-      msg: `debug_http_host was not written for ${androidPackage} on ${serial}: ${launched.debugHttpHostNote || 'unknown reason'}`,
-    });
-  }
+  if (!release)
+    reportMetroRoute({ launched, remote: Boolean(remoteDevice), metroPort, androidPackage, serial, phase, writer });
   if (launched.devClientNote) {
     phase('metro', chalk.yellow(launched.devClientNote));
     writer.write({ src: 'build', level: 'warn', event: 'dev_client_link_failed', msg: launched.devClientNote });
@@ -690,7 +677,14 @@ export async function finishAndroidRun({
   persistLastBuild({ writeState, root, record, startedAt, durationMs: now() - started, status: 'ok', out });
 
   const remoteRelease = Boolean(remoteDevice && release);
-  if (!remoteRelease) {
+  if (remoteDevice) {
+    writer.write({
+      src: 'build',
+      level: 'info',
+      event: 'collector_skipped',
+      msg: `remote session ${serial}: device logs come from agent-device/EAS, so no adb logcat collector is attached`,
+    });
+  } else {
     if (physical) raiseLeaseFor(0, false);
     const collectorPid = await startCollector({
       root,
@@ -808,6 +802,44 @@ function launchRemedy(
     remoteDevice?.failureRemedy() ??
     `Check the app installed correctly (\`adb -s ${serial} shell pm list packages ${packageName}\`).`
   );
+}
+
+function reportMetroRoute({
+  launched,
+  remote,
+  metroPort,
+  androidPackage,
+  serial,
+  phase,
+  writer,
+}: {
+  launched: LaunchResultLike;
+  remote: boolean;
+  metroPort: number | null;
+  androidPackage: string;
+  serial: string;
+  phase: (name: string, text: string) => void;
+  writer: AndroidWriter;
+}): void {
+  if (remote) {
+    phase('metro', launched.jsLocation ? `public origin ${launched.jsLocation}` : 'public origin');
+    return;
+  }
+  const reversedSummary = (launched.reversed ?? []).join(', ') || `tcp:${metroPort}->tcp:${metroPort}`;
+  if (launched.debugHttpHost) {
+    phase('metro', `debug_http_host ${launched.debugHttpHost} + adb reverse ${reversedSummary}`);
+    return;
+  }
+  phase(
+    'metro',
+    chalk.yellow(`adb reverse ${reversedSummary}; ${launched.debugHttpHostNote || 'debug_http_host not written'}`),
+  );
+  writer.write({
+    src: 'build',
+    level: 'warn',
+    event: 'debug_http_host_failed',
+    msg: `debug_http_host was not written for ${androidPackage} on ${serial}: ${launched.debugHttpHostNote || 'unknown reason'}`,
+  });
 }
 
 function diagnoseBootFailure(booted: AndroidBootLike, logFile: string, runCommand: string, physical: boolean) {
