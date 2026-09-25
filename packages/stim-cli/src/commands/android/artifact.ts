@@ -553,7 +553,7 @@ export async function acquireAndroidArtifact(
               ? 'android/ generated'
               : 'android/ not generated from this fingerprint -> regenerated with --clean';
           phase('prebuild', `${outcome} (${formatDuration(pre.durationMs)})`);
-          androidPackage = androidPackage || detectAndroidPackage(root);
+          androidPackage = detectAndroidPackage(root) || androidPackage;
           record.bundleId = androidPackage;
 
           const after = await refingerprintAfterMutation({

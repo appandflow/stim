@@ -31,7 +31,7 @@ import { gateProfileForDevice, sealAppForDevice } from '../../engine/ios-signing
 import { ensureLanReachable } from '../../engine/ios-lan.ts';
 import { hostLanCandidates } from '../../engine/lan-address.ts';
 import { detectProviders } from '../../engine/metro-reach.ts';
-import { needsPrebuild, planPrebuild, runPrebuild } from '../../engine/prebuild.ts';
+import { planPrebuild, runPrebuild } from '../../engine/prebuild.ts';
 import {
   checkEasAuth,
   loadProjectProvider,
@@ -103,7 +103,6 @@ export interface IosDeps {
   checkEasAuth: typeof checkEasAuth;
   resolveRemote: typeof resolveRemote;
   uploadRemote: typeof uploadRemote;
-  needsPrebuild: typeof needsPrebuild;
   planPrebuild: typeof planPrebuild;
   runPrebuild: typeof runPrebuild;
   readPodState: typeof readPodState;
@@ -188,7 +187,6 @@ export const DEFAULT_DEPS: IosDeps = {
   resolveEasCliBin,
   resolveRemote,
   uploadRemote,
-  needsPrebuild,
   planPrebuild,
   runPrebuild,
   readPodState,

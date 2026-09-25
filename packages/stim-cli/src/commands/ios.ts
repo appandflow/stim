@@ -219,7 +219,9 @@ function explicitSchemeRefusal(root: string, scheme: string | undefined, isExpo:
       remedy: 'Pass the exact scheme name shown by xcodebuild -list.',
     };
   }
-  if (d.needsPrebuild(root, PLATFORM, isExpo)) return null;
+  // An Expo project's ios/ can be regenerated before the build; that check runs in
+  // acquireIosArtifact, after regeneration, instead of against this possibly-stale read.
+  if (isExpo) return null;
   const project = d.discoverXcodeProject(root);
   if (project.error) return project.error;
   return d.resolveScheme(project, { scheme }).error ?? null;
