@@ -212,6 +212,24 @@ final class SimulatorSource {
     display.registerSurfacesCallback(callbackID) { [weak self] _ in self?.pacer.changed() }
     display.registerPropertiesCallback(callbackID) { [weak self] _ in self?.pacer.changed() }
     pacer.changed()
+    watch(display)
+  }
+
+  // A simulator that shuts down and boots again gets new display objects, and
+  // the old ones stop reporting damage; so does its HID client.
+  private func watch(_ display: SimDisplay) {
+    queue.asyncAfter(deadline: .now() + 2) {
+      let current = CoreSimulator.displays(udid: self.udid).first
+      guard current.map({ ObjectIdentifier($0 as AnyObject) }) != ObjectIdentifier(display as AnyObject) else {
+        return self.watch(display)
+      }
+      display.unregisterDamageCallback(self.callbackID)
+      display.unregisterSurfacesCallback(self.callbackID)
+      display.unregisterPropertiesCallback(self.callbackID)
+      self.display = nil
+      self.inputQueue.async { self.hid = nil }
+      self.start()
+    }
   }
 
   func configure(_ config: Config) {
