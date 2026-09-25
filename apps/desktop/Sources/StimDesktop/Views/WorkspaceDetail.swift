@@ -1,4 +1,3 @@
-import AppKit
 import StimKit
 import SwiftUI
 
@@ -117,25 +116,9 @@ struct Inspector: View {
   var stats: ProjectStats?
   var openLogs: () -> Void
   @EnvironmentObject private var actions: ActionCenter
-  @State private var removal: Removal?
+  @State private var removal: WorktreeRemoval?
   @State private var confirmingStop = false
   @State private var confirmingStopDevice: DeviceRef?
-  @AppStorage(AppPreferences.Key.editorBundleID) private var editorID = ""
-  @AppStorage(AppPreferences.Key.terminalBundleID) private var terminalID = ""
-
-  private func chosen(_ preferred: String, from apps: [ExternalApp]) -> ExternalApp? {
-    ExternalApp.choose(preferred, from: apps) { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) != nil }
-  }
-
-  private func open(_ path: String, in app: ExternalApp) {
-    guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app.bundleID) else { return }
-    NSWorkspace.shared.open(
-      [URL(fileURLWithPath: path)], withApplicationAt: url, configuration: NSWorkspace.OpenConfiguration())
-  }
-
-  private struct Removal {
-    var branch: String?
-  }
 
   var body: some View {
     ScrollView {
@@ -283,41 +266,25 @@ struct Inspector: View {
   }
 
   private var actionsMenu: some View {
-    Menu {
-      Button("Open logs", systemImage: "text.alignleft", action: openLogs)
-      Button("Copy path", systemImage: "doc.on.doc") {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(env.path, forType: .string)
-      }
-      Button("Reveal in Finder", systemImage: "folder") {
-        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: env.path)])
-      }
-      if let editor = chosen(editorID, from: ExternalApp.editors) {
-        Button("Open in \(editor.name)", systemImage: "chevron.left.forwardslash.chevron.right") { open(env.path, in: editor) }
-      }
-      if let terminal = chosen(terminalID, from: ExternalApp.terminals) {
-        Button("Open in \(terminal.name)", systemImage: "terminal") { open(env.path, in: terminal) }
-      }
-      if let last = actions.latest(for: env.path) {
-        Button("Last output", systemImage: "doc.plaintext") { actions.presented = last }
-      }
-      Divider()
-      Button("Stop", systemImage: "stop.circle") {
-        if env.remoteDevices?.isEmpty == false {
-          confirmingStop = true
-        } else {
-          stop()
-        }
-      }
-      .disabled(actions.active(for: env.path) != nil)
-      Button("Remove worktree\u{2026}", systemImage: "trash", role: .destructive) {
-        let path = env.path
-        Task {
-          let branch = await Task.detached { currentBranch(at: path) }.value
-          removal = Removal(branch: branch)
-        }
-      }
-      .disabled(actions.active(for: env.path) != nil)
+    let busy = actions.active(for: env.path) != nil
+    return Menu {
+      WorkspaceActionsMenu(
+        kind: .workspace(metroRunning: env.metro?.running == true),
+        path: env.path,
+        busy: busy,
+        removalAllowed: worktreeRemovalAllowed(git: env.worktree?.git),
+        onShowLastOutput: actions.latest(for: env.path).map { last in { actions.presented = last } },
+        onReload: { actions.run("Reload \(env.names.title)", StimCommand(["reload"], cwd: env.path)) },
+        onStartDevServer: { actions.run("Start \(env.names.title)", StimCommand(["start"], cwd: env.path)) },
+        onStopDevServer: {
+          if env.remoteDevices?.isEmpty == false {
+            confirmingStop = true
+          } else {
+            stop()
+          }
+        },
+        onShowLogs: openLogs,
+        onRemoveWorktree: { requestRemoval() })
     } label: {
       Image(systemName: "ellipsis")
     }
@@ -341,7 +308,7 @@ struct Inspector: View {
         actions.run("Remove \(env.names.title)", StimCommand(["worktree", "remove"], cwd: env.path))
       }
     } message: { removal in
-      Text(removalMessage(branch: removal.branch))
+      Text(worktreeRemovalMessage(path: env.path, branch: removal.branch))
     }
   }
 
@@ -349,17 +316,8 @@ struct Inspector: View {
     actions.run("Stop \(env.names.title)", StimCommand(["stop"], cwd: env.path))
   }
 
-  private func removalMessage(branch: String?) -> String {
-    let path = abbreviatingHome(env.path)
-    return """
-      Worktree: \(path)
-      Branch: \(branch ?? "none (detached HEAD)")
-
-      Stim deletes the worktree, its branch when Stim created it and nothing else uses it, \
-      its build artifacts, owned devices and Metro port. It refuses when the worktree holds \
-      uncommitted or unpushed work. On the source checkout it reclaims the environment only \
-      and leaves the tree in place.
-      """
+  private func requestRemoval() {
+    resolveRemovalBranch(at: env.path) { removal = WorktreeRemoval(branch: $0) }
   }
 
   @ViewBuilder private func usageCards(_ usage: UsageHistory) -> some View {
