@@ -699,7 +699,9 @@ describe('explicit remote backend behavior', () => {
   });
 
   test('a remote debug launch names the public Metro origin and attaches no adb collector', async () => {
+    writeWorkspaceState(root, { collectors: { android: { pid: 4242, startedAt: 'then' } } });
     const { h } = remoteHarness('eas', {
+      verifyCollector: () => ({ status: 'ours' as const }),
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
         checkCapacity: () => null,
@@ -719,6 +721,7 @@ describe('explicit remote backend behavior', () => {
     const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
     expect(records.map((record) => record.event)).not.toContain('debug_http_host_failed');
     expect(records.find((record) => record.event === 'collector_skipped')?.msg).toContain('remote session drs_42');
+    expect(h.calls.kill).toEqual([[4242, 'SIGTERM']]);
   });
 
   test('android.remote selects the same explicit backend as the CLI', async () => {

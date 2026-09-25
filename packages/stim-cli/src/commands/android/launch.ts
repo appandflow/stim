@@ -64,7 +64,7 @@ import { loadConfig, saveConfig, setDevice, withConfigLock, upsertProject } from
 import { providerUploadOutcome } from '../../cache/build-cache.ts';
 import { detectAndroidPackage } from '../../workspace/project.ts';
 import { launchOutcomeRecord } from '../native-runtime.ts';
-import { startCollector } from './collector.ts';
+import { killPreviousCollector, startCollector } from './collector.ts';
 import { captureNativeCrashes, printNativeCrashReport } from '../../diagnostics/native-crash.ts';
 import { errorDiagnostics } from '../../diagnostics/error-diagnostics.ts';
 
@@ -678,6 +678,13 @@ export async function finishAndroidRun({
 
   const remoteRelease = Boolean(remoteDevice && release);
   if (remoteDevice) {
+    killPreviousCollector(root, {
+      slot,
+      kill,
+      isAlive: pidAlive,
+      verify: verifyCollector,
+      note: (line) => out(phaseLine('logs', line)),
+    });
     writer.write({
       src: 'build',
       level: 'info',
@@ -822,7 +829,7 @@ function reportMetroRoute({
   writer: AndroidWriter;
 }): void {
   if (remote) {
-    phase('metro', launched.jsLocation ? `public origin ${launched.jsLocation}` : 'public origin');
+    phase('metro', `public origin ${launched.jsLocation}`);
     return;
   }
   const reversedSummary = (launched.reversed ?? []).join(', ') || `tcp:${metroPort}->tcp:${metroPort}`;
