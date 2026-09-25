@@ -694,8 +694,9 @@ PREDICTING THE NEXT BUILD (--plan)
   --runtime, --system-image, --eas-profile and --no-build-cache, then looks
   in the build's order: the local cache, the cache.provider setting's
   provider, then the app config's build cache provider. A provider has no
-  lookup that skips the download, so a remote check downloads the artifact
-  into a temporary directory the plan removes. On a miss it adds the prebuild
+  lookup that skips the download, so a remote check downloads the artifact:
+  the cache.provider tier into a temporary directory the plan removes, the
+  app config's provider wherever it keeps its downloads, as during a run. On a miss it adds the prebuild
   decision the run would make (generate, regenerate, none, or refuse with
   STIM_PREBUILD_FAILED). With --eas-profile it asks EAS for a matching
   build (config, fingerprint:generate, build:list) and downloads nothing.
@@ -707,7 +708,7 @@ PREDICTING THE NEXT BUILD (--plan)
   pod install can move the fingerprint, and the run then looks up the new
   key once; and a Release hit that fails its JS swap builds fresh.
   An Android plan reads the ABI from the emulator the slot records, or from
-  the system image a new one would use. It refuses --device, --remote,
+  the system image a new one would use. Without --eas-profile it refuses --device, --remote,
   --wait, --no-wait, --no-metro-check and --simulator-app, the
   android.remote setting, and the experimental compiler CAS, with
   STIM_BAD_ARG; and STIM_NO_DEVICE when no system image is installed.

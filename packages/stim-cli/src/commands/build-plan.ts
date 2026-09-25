@@ -13,7 +13,17 @@ import {
   type resolveRemote,
 } from '../engine/remote-cache.ts';
 import { readStats } from '../engine/stats.ts';
+import type { NdjsonWriter } from '../ndjson.ts';
 import { makeTemporaryDirectory, removeTemporaryEntry } from '../temporary.ts';
+
+const DISCARD: NdjsonWriter = {
+  file: '',
+  written: 0,
+  dropped: 0,
+  lastError: null,
+  write: () => true,
+  close: () => ({ file: '', written: 0, dropped: 0, lastError: null }),
+};
 
 interface Refusal {
   code: string;
@@ -52,7 +62,13 @@ async function providerHit(
   deps: CachedBuildLookupDeps,
 ): Promise<string | null> {
   if (!providerConfig) return null;
-  const destinationDir = makeTemporaryDirectory(root, 'stim-plan-');
+  let destinationDir: string;
+  try {
+    destinationDir = makeTemporaryDirectory(root, 'stim-plan-');
+  } catch (error) {
+    deps.note(chalk.yellow(phaseLine('cache', `provider not checked: ${(error as Error)?.message || error}`)));
+    return null;
+  }
   try {
     const found = await resolveTieredBuild({
       local: { resolve: () => null, store: () => null },
@@ -89,6 +105,7 @@ async function expoRemoteHit(lookup: CachedBuildLookup, deps: CachedBuildLookupD
     projectRoot: root,
     fingerprintHash: fingerprint,
     runOptions: lookup.expoRemote.runOptions,
+    logWriter: DISCARD,
   });
   if (hit?.timedOut) deps.note(chalk.yellow(phaseLine('cache', `${name} did not answer; counted as a miss`)));
   else if (hit?.failed) deps.note(chalk.yellow(phaseLine('cache', `${name} could not be used: ${hit.failed}`)));

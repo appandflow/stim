@@ -43,7 +43,7 @@ function lastBuildReport(platform: StatsPlatform, value: unknown): LastBuildRepo
   if (record.platform !== platform || (record.status !== 'ok' && record.status !== 'failed')) return null;
   if (typeof record.startedAt !== 'string') return null;
   const durationMs = typeof record.durationMs === 'number' && record.durationMs >= 0 ? record.durationMs : null;
-  const started = Date.parse(record.startedAt);
+  const finished = new Date(Date.parse(record.startedAt) + (durationMs ?? Number.NaN));
   return {
     platform,
     status: record.status,
@@ -52,7 +52,7 @@ function lastBuildReport(platform: StatsPlatform, value: unknown): LastBuildRepo
     durationMs,
     fingerprint: typeof record.fingerprint === 'string' ? record.fingerprint : null,
     startedAt: record.startedAt,
-    finishedAt: durationMs !== null && Number.isFinite(started) ? new Date(started + durationMs).toISOString() : null,
+    finishedAt: Number.isNaN(finished.getTime()) ? null : finished.toISOString(),
     ...(typeof record.errorCode === 'string' ? { errorCode: record.errorCode } : {}),
   };
 }
@@ -62,8 +62,12 @@ export function readLastBuilds(
 ): Partial<Record<StatsPlatform, LastBuildReport>> {
   const reports: Partial<Record<StatsPlatform, LastBuildReport>> = {};
   for (const platform of ['ios', 'android'] as const) {
-    const report =
-      lastBuildReport(platform, state?.[LAST_BUILD_KEYS[platform]]) ?? lastBuildReport(platform, state?.lastBuild);
+    const [report] = [
+      lastBuildReport(platform, state?.[LAST_BUILD_KEYS[platform]]),
+      lastBuildReport(platform, state?.lastBuild),
+    ]
+      .filter((candidate): candidate is LastBuildReport => candidate !== null)
+      .toSorted((a, b) => (Date.parse(b.startedAt) || 0) - (Date.parse(a.startedAt) || 0));
     if (report) reports[platform] = report;
   }
   return reports;

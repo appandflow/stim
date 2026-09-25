@@ -2,7 +2,7 @@ import type { GuideTopic } from './types.ts';
 
 const facts: GuideTopic = {
   summary:
-    'The --json payloads: `start`, `ios`, `android`, `ios --plan`, `reload`, `stop`, `status`, `doctor`, `device lock`/`unlock`, `gc`, and the error contract',
+    'The --json payloads: `start`, `ios`, `android`, `ios|android --plan`, `reload`, `stop`, `status`, `doctor`, `device lock`/`unlock`, `gc`, and the error contract',
   preamble: () => `SLOTS
 Named ios/android runs add slot to their JSON facts. Default-run fields remain
 compatible. status adds a slots array per environment with each named slot's

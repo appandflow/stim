@@ -61,4 +61,13 @@ describe('last build per platform', () => {
     expect(readLastBuilds({ lastBuild: ios })).toEqual({ ios: expect.objectContaining({ cacheHit: 'remote' }) });
     expect(readLastBuilds({ lastBuild: { ...ios, status: 'running' } })).toEqual({});
   });
+
+  test('a newer lastBuild wins over an older per-platform record, as after an older Stim ran', () => {
+    const newer = { ...ios, cacheHit: 'local', startedAt: '2026-09-25T11:00:00.000Z' };
+    expect(readLastBuilds({ lastIosBuild: ios, lastBuild: newer }).ios).toMatchObject({ cacheHit: 'local' });
+  });
+
+  test('a duration too large for a date leaves finishedAt null instead of failing status', () => {
+    expect(readLastBuilds({ lastBuild: { ...ios, durationMs: 1e308 } }).ios).toMatchObject({ finishedAt: null });
+  });
 });

@@ -20,13 +20,7 @@ interface Refusal {
 
 export type EasBuildResult =
   | ({ ok: false } & Refusal)
-  | {
-      ok: true;
-      path: string;
-      fingerprint: string;
-      cacheKey: string;
-      cacheHit: 'remote';
-    };
+  | { ok: true; path: string; fingerprint: string; cacheKey: string; cacheHit: 'remote' };
 
 export function isEasBuildFailure(result: EasBuildResult | null): result is { ok: false } & Refusal {
   return result?.ok === false;
@@ -83,13 +77,7 @@ export function selectEasBuild(
     fingerprint,
     projectId,
     physical = false,
-  }: {
-    platform: Platform;
-    profile: string;
-    fingerprint: string;
-    projectId: string;
-    physical?: boolean;
-  },
+  }: { platform: Platform; profile: string; fingerprint: string; projectId: string; physical?: boolean },
 ): string | null {
   if (!Array.isArray(builds)) throw new Error('EAS build:list did not return an array.');
   for (const value of builds) {

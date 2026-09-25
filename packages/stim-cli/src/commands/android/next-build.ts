@@ -4,7 +4,9 @@ import { buildCacheKey, fingerprintProject } from '../../cache/build-cache.ts';
 import { phaseLine } from '../../command-output.ts';
 import {
   hostSystemImageArch,
+  listAvds,
   listInstalledSystemImages,
+  ownedAvdDirectory,
   ownedAvdSystemImage,
   pickDefaultSystemImage,
 } from '../../devices/android.ts';
@@ -41,6 +43,8 @@ export interface AndroidPlanDeps {
   fingerprint: typeof fingerprintProject;
   listSystemImages: typeof listInstalledSystemImages;
   avdSystemImage: typeof ownedAvdSystemImage;
+  avdDirectory: typeof ownedAvdDirectory;
+  listAvds: typeof listAvds;
   loadCacheProvider: typeof loadCacheProvider;
   loadProjectProvider: typeof loadProjectProvider;
   checkEasAuth: typeof checkEasAuth;
@@ -53,6 +57,8 @@ const DEFAULT_PLAN_DEPS: AndroidPlanDeps = {
   fingerprint: fingerprintProject,
   listSystemImages: listInstalledSystemImages,
   avdSystemImage: ownedAvdSystemImage,
+  avdDirectory: ownedAvdDirectory,
+  listAvds,
   loadCacheProvider,
   loadProjectProvider,
   checkEasAuth,
@@ -78,12 +84,13 @@ function emulatorImage(
   root: string,
   slot: string,
   requested: string | null,
-  deps: Pick<AndroidPlanDeps, 'listSystemImages' | 'avdSystemImage'>,
+  deps: Pick<AndroidPlanDeps, 'listSystemImages' | 'avdSystemImage' | 'avdDirectory' | 'listAvds'>,
 ): EmulatorImage {
   const record = deviceSlotPlatforms(getProject(root), slot)?.android;
-  if (record?.avdName && !record.owned) return { systemImage: null };
-  const recorded = record?.avdName ? deps.avdSystemImage(record.avdName) : null;
-  if (recorded) return { systemImage: recorded };
+  if (record?.avdName && !record.setupIncomplete) {
+    if (record.owned && deps.avdDirectory(record.avdName)) return { systemImage: deps.avdSystemImage(record.avdName) };
+    if (!record.owned && avdListed(record.avdName, deps.listAvds)) return { systemImage: null };
+  }
   let images;
   try {
     images = deps.listSystemImages();
@@ -106,6 +113,14 @@ function emulatorImage(
       remedy: `Install one, e.g.: sdkmanager "system-images;android-36;google_apis;${arch}", then try again.`,
     },
   };
+}
+
+function avdListed(avdName: string, list: AndroidPlanDeps['listAvds']): boolean {
+  try {
+    return list({ timeoutMs: 10_000 }).includes(avdName);
+  } catch {
+    return false;
+  }
 }
 
 export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<AndroidPlanDeps> = {}): Promise<void> {
@@ -144,21 +159,6 @@ export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<A
   );
   if (!planned.ok) return refuse(planned, planned.lines);
   const { build, target, isExpo, cacheProviderConfig } = planned.plan;
-  if (target.kind !== 'emulator') {
-    if (target.kind === 'physical') return refuse(planFlagRefusal('--device'));
-    return refuse({
-      code: 'STIM_BAD_ARG',
-      message: `android.remote routes this workspace's runs to a ${target.backend} device, whose ABI --plan cannot read without a session.`,
-      remedy: 'Run `stim android` to build for the remote device, or unset android.remote to plan the owned emulator.',
-    });
-  }
-  if (build.compilerCache === 'cas') {
-    return refuse({
-      code: 'STIM_BAD_ARG',
-      message: 'The experimental Android compiler CAS keys builds by a toolchain Stim sets up, which --plan does not.',
-      remedy: 'Run `stim android` to build with the CAS, or set optimizations.android.compilerCache to ccache.',
-    });
-  }
   const planTarget = {
     platform: PLATFORM,
     slot,
@@ -191,6 +191,21 @@ export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<A
     );
   }
 
+  if (target.kind !== 'emulator') {
+    if (target.kind === 'physical') return refuse(planFlagRefusal('--device'));
+    return refuse({
+      code: 'STIM_BAD_ARG',
+      message: `android.remote routes this workspace's runs to a ${target.backend} device, whose ABI --plan cannot read without a session.`,
+      remedy: 'Run `stim android` to build for the remote device, or unset android.remote to plan the owned emulator.',
+    });
+  }
+  if (build.compilerCache === 'cas') {
+    return refuse({
+      code: 'STIM_BAD_ARG',
+      message: 'The experimental Android compiler CAS keys builds by a toolchain Stim sets up, which --plan does not.',
+      remedy: 'Run `stim android` to build with the CAS, or set optimizations.android.compilerCache to ccache.',
+    });
+  }
   const image =
     build.targetAbiOnly && !build.release ? emulatorImage(root, slot, target.systemImage, deps) : { systemImage: null };
   if ('refusal' in image) return refuse(image.refusal);

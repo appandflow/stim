@@ -66,6 +66,7 @@ import {
 } from '../engine/ios-device.ts';
 import { recordRunStats, type RecordStatsResult, type StatsRun } from '../engine/stats.ts';
 import { buildCacheKey, entryDir } from '../cache/build-cache.ts';
+import { resolveRemote } from '../engine/remote-cache.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
 const RUNTIMES = [
@@ -6480,6 +6481,25 @@ describe('--plan', () => {
     const payload = parseFirst(logs);
     expect(payload).toMatchObject({ prebuild: 'refuse', outcome: null, expectedMs: null });
     expect(payload.refusal.code).toBe('STIM_PREBUILD_FAILED');
+  });
+
+  test("an app config provider's output reaches neither stdout nor the workspace build log", async () => {
+    const plugin = {
+      resolveBuildCache: async () => {
+        console.log('provider: looking up the build');
+        return null;
+      },
+    };
+    const { logs } = await run(
+      { plan: true, json: true },
+      {
+        loadProjectProvider: async () => ({ name: 'chatty', provider: { plugin, options: {} } }),
+        resolveRemote,
+      },
+    );
+    expect(logs).toHaveLength(1);
+    expect(parseFirst(logs)).toMatchObject({ cacheHit: false });
+    expect(existsSync(buildLogFile(root))).toBe(false);
   });
 
   test.each([

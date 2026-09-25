@@ -305,8 +305,9 @@ honors `--slot`, `--scheme`, `--configuration`, `--variant`, `--device-type`,
 `--runtime`, `--system-image`, `--eas-profile` and `--no-build-cache`. It then
 checks the caches in the run's order: the local cache, the `cache.provider`
 setting's provider, and the app config's build cache provider. Providers have no
-lookup that skips the download, so a remote check downloads the artifact to a
-temporary directory and then removes it. On a miss, the plan also reports the
+lookup that skips the download, so a remote check downloads the artifact. The
+`cache.provider` tier downloads to a temporary directory that the plan removes;
+the app config's provider keeps its download wherever it does during a run. On a miss, the plan also reports the
 [prebuild decision](./build-caches.md#native-artifact-cache) the run would make. With
 `--eas-profile`, it asks EAS for a matching build and downloads nothing.
 
@@ -321,7 +322,8 @@ A plan cannot see everything that happens during a run. Another workspace may
 store the key first. A `prebuild` or `pod install` may move the fingerprint,
 and the run then checks the new key. A Release hit whose JavaScript swap fails
 builds from scratch. An Android plan uses the ABI of the emulator the slot
-records, or of the system image a new emulator would use. A plan refuses
+records, or of the system image a new emulator would use. Without
+`--eas-profile`, a plan refuses
 `--device`, `--remote`, `--wait`, `--no-wait`, `--no-metro-check`,
 `--simulator-app`, the `android.remote` setting, and the experimental compiler
 CAS with `STIM_BAD_ARG`.

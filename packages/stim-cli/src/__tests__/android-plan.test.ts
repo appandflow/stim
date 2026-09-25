@@ -228,6 +228,8 @@ describe('planAndroid', () => {
           fingerprint: async () => ({ hash: HASH, sources: [] }),
           listSystemImages: () => [ARM, X86],
           avdSystemImage: () => null,
+          avdDirectory: () => null,
+          listAvds: () => [],
           loadProjectProvider: async () => ({ none: true }),
           planPrebuild: () => 'none',
           ...deps,
@@ -261,8 +263,20 @@ describe('planAndroid', () => {
     mkdirSync(entryDir('android', key), { recursive: true });
     writeFileSync(join(entryDir('android', key), 'app-debug.apk'), 'apk');
 
-    const { payload } = await plan({}, { avdSystemImage: () => X86.pkg });
+    const { payload } = await plan({}, { avdDirectory: () => join(app, 'avd'), avdSystemImage: () => X86.pkg });
     expect(payload).toMatchObject({ cacheKey: key, cacheHit: 'local', outcome: 'hit', prebuild: null });
+  });
+
+  test('a recorded AVD whose image cannot be read keys without an ABI, as the reusing run does', async () => {
+    upsertProject(app, { platforms: { android: { avdName: 'stim-fixture', owned: true } } });
+    const { payload } = await plan({}, { avdDirectory: () => join(app, 'avd'), avdSystemImage: () => null });
+    expect(payload.cacheKey).toBe(buildCacheKey('android', HASH, { variant: 'debug' }));
+  });
+
+  test('a recorded AVD that no longer exists keys by the image a new emulator would use', async () => {
+    upsertProject(app, { platforms: { android: { avdName: 'stim-fixture', owned: true } } });
+    const { payload } = await plan({ systemImage: X86.pkg }, { avdSystemImage: () => ARM.pkg });
+    expect(payload.cacheKey).toBe(buildCacheKey('android', HASH, { variant: 'debug', abi: 'x86_64' }));
   });
 
   test('no installed system image refuses, because the ABI in the key is unknown', async () => {
