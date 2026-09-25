@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { join, sep } from 'node:path';
+import { join, posix } from 'node:path';
 import { gitMergeCacheDir, type WorktreeFacts, type WorktreeGit } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 import { mergeState, type DefaultBranch } from './merge-state.ts';
@@ -42,10 +42,10 @@ export function parseGitStatus(text: string): GitStatusSummary {
  * Desktop runs status as its child, so status opens a worktree there only when the user registered an environment in it.
  */
 export function inPrivacyProtectedFolder(path: string, home: string): boolean {
-  const guarded = ['Desktop', 'Documents', 'Downloads', join('Library', 'Mobile Documents')].map((dir) =>
-    join(home, dir),
+  const guarded = ['Desktop', 'Documents', 'Downloads', 'Library/Mobile Documents', 'Library/CloudStorage'].map((dir) =>
+    posix.join(home, dir),
   );
-  return [...guarded, '/Volumes'].some((dir) => path === dir || path.startsWith(dir + sep));
+  return [...guarded, '/Volumes'].some((dir) => path === dir || path.startsWith(`${dir}/`));
 }
 
 async function git(path: string, args: string[]): Promise<string | null> {
@@ -98,18 +98,22 @@ function writeMergeCache(entry: MergeCacheEntry): void {
   }
 }
 
-/**
- * `gc`'s merge verdict for HEAD, cached per worktree with the HEAD and default-branch commit it was judged at. Past
- * `deadline`, a verdict for the same HEAD judged at an older default-branch commit stands in: the branch may have
- * merged since, but a merged branch stays merged.
- */
-function mergedInto(path: string, head: string, target: DefaultBranch & { sha: string }, deadline: number) {
+function mergedInto(
+  path: string,
+  head: string,
+  target: DefaultBranch & { sha: string },
+  budget: { deadline?: number },
+) {
   const targetKey = `${target.ref} ${target.sha}`;
   const cached = readMergeCache(path);
   const known = cached?.head === head ? cached : null;
-  if (known && (known.target === targetKey || Date.now() > deadline)) return known.mergedInto;
-  if (Date.now() > deadline) return null;
+  if (known?.target === targetKey) return known.mergedInto;
+  if (budget.deadline !== undefined && Date.now() > budget.deadline) {
+    return known?.target.startsWith(`${target.ref} `) ? known.mergedInto : null;
+  }
+  budget.deadline ??= Date.now() + MERGE_BUDGET_MS;
   const state = mergeState(path, target, { timeoutMs: GIT_TIMEOUT_MS });
+  if (!state.merged && state.timedOut) return null;
   const verdict = state.merged ? state.into : null;
   writeMergeCache({ path, head, target: targetKey, mergedInto: verdict });
   return verdict;
@@ -119,8 +123,10 @@ const recent = new Map<string, { at: number; git: WorktreeGit | null }>();
 
 /**
  * Reads every worktree's git summary in parallel, each git call bounded by a timeout. A worktree `skip` rejects, or
- * one git cannot answer in time, maps to null. Merge verdicts missing from the cache are judged for up to 250 ms per
- * call; later calls judge the rest. With `maxAgeMs`, a summary read that recently in this process is reused.
+ * one git cannot answer in time, maps to null. After every read, merge verdicts missing from the cache are judged one
+ * at a time; no new judgement starts 250 ms after the first, and a verdict for the same HEAD judged at an older
+ * default-branch commit stands in, because a merged branch stays merged. With `maxAgeMs`, a summary read that
+ * recently in this process is reused.
  */
 export async function readWorktreeGit(
   worktrees: readonly WorktreeFacts[],
@@ -128,26 +134,34 @@ export async function readWorktreeGit(
 ): Promise<Map<string, WorktreeGit | null>> {
   const now = Date.now();
   const targets = new Map<string, ReturnType<typeof defaultBranchOf>>();
-  let deadline: number | undefined;
-  const reads = worktrees.map(async (worktree): Promise<[string, WorktreeGit | null]> => {
-    const memo = recent.get(worktree.path);
-    if (memo && now - memo.at < maxAgeMs) return [worktree.path, memo.git];
-    if (skip(worktree)) return [worktree.path, null];
-    const repository = worktree.repository;
-    if (repository && !targets.has(repository)) targets.set(repository, defaultBranchOf(repository));
-    const [out, target] = await Promise.all([
-      git(worktree.path, ['status', '--porcelain=v2', '--branch', '--untracked-files=normal']),
-      repository ? targets.get(repository) : null,
-    ]);
-    if (out === null) return [worktree.path, null];
-    const { head, ...counts } = parseGitStatus(out);
-    deadline ??= Date.now() + MERGE_BUDGET_MS;
+  const reads = await Promise.all(
+    worktrees.map(async (worktree) => {
+      const memo = recent.get(worktree.path);
+      if (memo && now - memo.at < maxAgeMs) return { path: worktree.path, memo: memo.git };
+      if (skip(worktree)) return { path: worktree.path, memo: null };
+      const repository = worktree.repository;
+      if (repository && !targets.has(repository)) targets.set(repository, defaultBranchOf(repository));
+      const [out, target] = await Promise.all([
+        git(worktree.path, ['status', '--porcelain=v2', '--branch', '--untracked-files=normal']),
+        repository ? targets.get(repository) : null,
+      ]);
+      return { path: worktree.path, status: out === null ? null : parseGitStatus(out), target };
+    }),
+  );
+  const budget: { deadline?: number } = {};
+  const summaries = new Map<string, WorktreeGit | null>();
+  for (const read of reads) {
+    if ('memo' in read || !read.status) {
+      summaries.set(read.path, 'memo' in read ? (read.memo ?? null) : null);
+      continue;
+    }
+    const { head, ...counts } = read.status;
     const summary = {
       ...counts,
-      mergedInto: head && target ? mergedInto(worktree.path, head, target, deadline) : null,
+      mergedInto: head && read.target ? mergedInto(read.path, head, read.target, budget) : null,
     };
-    recent.set(worktree.path, { at: now, git: summary });
-    return [worktree.path, summary];
-  });
-  return new Map(await Promise.all(reads));
+    recent.set(read.path, { at: now, git: summary });
+    summaries.set(read.path, summary);
+  }
+  return summaries;
 }

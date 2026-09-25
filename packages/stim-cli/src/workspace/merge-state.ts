@@ -13,7 +13,7 @@ export interface DefaultBranch {
 
 export type MergeState =
   | { merged: true; into: string; head: string; coversUnpushed: boolean }
-  | { merged: false; unknown: boolean; detail: string };
+  | { merged: false; unknown: boolean; detail: string; timedOut?: true };
 
 function failure(error: unknown): string {
   const { stderr, message } = error as { stderr?: unknown; message?: string };
@@ -161,6 +161,7 @@ export function mergeState(
     }
     return notMerged(`not merged into ${name}`);
   } catch (error) {
-    return { merged: false, unknown: true, detail: `merge state unknown: ${failure(error)}` };
+    const timedOut = (error as NodeJS.ErrnoException)?.code === 'ETIMEDOUT' ? { timedOut: true as const } : {};
+    return { merged: false, unknown: true, detail: `merge state unknown: ${failure(error)}`, ...timedOut };
   }
 }
