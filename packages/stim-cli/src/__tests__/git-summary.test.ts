@@ -1,4 +1,3 @@
-import { join } from 'node:path';
 import { inPrivacyProtectedFolder, parseGitStatus } from '../workspace/git-summary.ts';
 
 const oid = 'a'.repeat(40);
@@ -45,9 +44,10 @@ test('parseGitStatus leaves ahead and behind null when the upstream is gone or m
 
 test('inPrivacyProtectedFolder matches the folders macOS guards and nothing that only shares a prefix', () => {
   const home = '/Users/me';
-  expect(inPrivacyProtectedFolder(join(home, 'Documents', 'Codex', 'stim'), home)).toBe(true);
-  expect(inPrivacyProtectedFolder(join(home, 'Library', 'Mobile Documents', 'repo'), home)).toBe(true);
+  expect(inPrivacyProtectedFolder('/Users/me/Documents/Codex/stim', home)).toBe(true);
+  expect(inPrivacyProtectedFolder('/Users/me/Library/Mobile Documents/repo', home)).toBe(true);
+  expect(inPrivacyProtectedFolder('/Users/me/Library/CloudStorage/Dropbox/repo', home)).toBe(true);
   expect(inPrivacyProtectedFolder('/Volumes/External/repo', home)).toBe(true);
-  expect(inPrivacyProtectedFolder(join(home, 'Documentsx', 'repo'), home)).toBe(false);
-  expect(inPrivacyProtectedFolder(join(home, 'Developer', 'Documents'), home)).toBe(false);
+  expect(inPrivacyProtectedFolder('/Users/me/Documentsx/repo', home)).toBe(false);
+  expect(inPrivacyProtectedFolder('/Users/me/Developer/Documents', home)).toBe(false);
 });
