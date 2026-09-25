@@ -7,10 +7,11 @@ Date: 2026-09-25. Status: proposed. Issue: #1110.
 A new package, `@stim-cli/server`, runs a long-lived process on the Mac that
 serves Stim state to paired clients: workspaces, devices, device activity,
 build progress, logs, and device frames. A read-only mobile app (Expo) pairs
-with it by scanning a QR code in Stim Desktop and connects over the local
-network or Tailscale. Every connection is end-to-end encrypted to a server key
-pinned by the QR code, so the security does not depend on the network. Stim
-Desktop can start the server, or it runs alone as `stim-server`.
+with it by scanning a QR code in Stim Desktop and connects over Tailscale, which
+already encrypts the traffic and identifies both devices; Stim adds no
+cryptography of its own. The QR code carries a single-use pairing token that
+the phone exchanges for a revocable device token. Stim Desktop can start the
+server, or it runs alone as `stim-server`.
 
 The server reads state with the same code and locks as the CLI, through state
 types and readers moved into `@stim-cli/core`. It never changes Stim state.
@@ -60,7 +61,7 @@ Out (non-goals):
         ^ reads                 ^ reads
  +-------------+        +-------------------------------+      +------------------+
  | stim (CLI)  |        | @stim-cli/server (stim-server)|<---->| mobile app (Expo)|
- | all writes  |<-spawn-| read-only; Noise-encrypted WS |      | read-only        |
+ | all writes  |<-spawn-| read-only; wss over Tailscale |      | read-only        |
  +-------------+        | frames: screenshots (v1),     |      +------------------+
                         |   stim-frames helper (v2)     |
                         +-------------------------------+
@@ -111,7 +112,7 @@ as Desktop does (#1066).
 
 ### Protocol
 
-JSON messages over a WebSocket, inside the encrypted channel described below.
+JSON messages over a WebSocket (`wss://` over Tailscale, see below).
 One request/response shape and one event shape:
 
 ```json
@@ -136,48 +137,56 @@ input; it is out of scope here.
 
 ### Pairing and transport security
 
-Security is a property of the pairing, not of the network, so the same QR code
-works on any transport.
+Tailscale provides the transport security: WireGuard encrypts traffic end to
+end between the phone and the Mac, on the same Wi-Fi or across networks, and
+ties each node to a tailnet identity. Stim writes no cryptography and adds no
+encryption layer.
 
-- The server has a long-term X25519 key pair, created on first start and stored
-  in `$STIM_HOME/server/identity.json` with mode 0600. (The macOS Keychain is an
-  option to evaluate; the file keeps headless machines working.)
+- The server listens only on loopback and on the Mac's Tailscale address, never
+  on every interface. `tailscale serve` fronts it with a valid HTTPS
+  certificate for the Mac's `*.ts.net` name, so clients use standard `wss://`
+  with no certificate pinning. Port 7787 by default, configurable in the
+  server's own settings.
 - Desktop shows a QR code on request:
 
   ```json
   {
     "v": 1,
     "name": "Janic's MacBook Pro",
-    "serverKey": "<X25519 public key>",
-    "pairingToken": "<random, single use, expires in 5 minutes>",
-    "endpoints": ["ws://192.168.1.20:7787", "ws://janics-mbp.tail1234.ts.net:7787"]
+    "endpoint": "wss://janics-mbp.tail1234.ts.net",
+    "pairingToken": "<random, single use, expires in 5 minutes>"
   }
   ```
 
-- The phone creates its own key pair, connects to the first endpoint that
-  answers, and runs a Noise handshake that pins `serverKey` from the QR code. A
-  server that cannot prove it holds that key is rejected, so a network, relay,
-  or tunnel in between can neither read nor impersonate it.
-- The first message spends the pairing token and registers the phone's public
-  key. After that the server accepts only registered keys. Paired devices are
-  listed in `$STIM_HOME/server/devices.json` (name, key, paired at, last seen,
-  capabilities) and can be revoked from Desktop or with `stim-server devices`.
-- Use a maintained Noise implementation on both sides; write no cryptography.
-- Unauthenticated connections are rate-limited and closed after a short
-  handshake timeout.
+- The phone connects to `endpoint` through its own Tailscale app and spends
+  the pairing token. The server returns a random device token, stored in the
+  phone's secure storage; the server keeps only its hash. Every later
+  connection presents the device token.
+- Before accepting a connection, the server asks `tailscale whois` for the
+  peer's node and user, and records them at pairing. A device token presented
+  from a different tailnet node is refused, so a leaked token alone is not
+  enough.
+- Paired devices are listed in `$STIM_HOME/server/devices.json` (name, token
+  hash, tailnet node and user, paired at, last seen, capabilities) and can be
+  revoked from Desktop or with `stim-server devices`.
+- Connections that fail authentication are rate-limited and closed after a
+  short timeout.
 
-### Transport
+Requirements this creates: Tailscale on the Mac and on the phone, in the same
+tailnet or with the Mac's node shared to the phone's user. Without Tailscale
+the app cannot connect in v1.
 
-- LAN: the server listens on the LAN interface and on the Tailscale interface
-  when present, never on every interface by default. Port 7787 by default,
-  configurable in the server's own settings.
-- Tailscale: the QR code includes the MagicDNS name. Tailscale's own node
-  identity (`tailscale whois`) can be required as a second check; off by default.
-- Anywhere without Tailscale (not in v1): because the channel is end-to-end
-  encrypted, a Cloudflare quick tunnel (the `cloudflared` Stim already runs for
-  remote Metro) can carry it safely. It would be opt-in and time-limited, and
-  appear as a third endpoint in the QR code. Plain TLS pinning is not enough
-  there, because Cloudflare terminates TLS at its edge.
+### Transport alternatives (not in v1)
+
+- Same Wi-Fi without Tailscale: TLS with a self-signed certificate whose
+  fingerprint the QR code carries, pinned by the app. Adds certificate pinning
+  to the mobile app; deferred until someone needs it.
+- Anywhere without Tailscale on the phone: Tailscale Funnel exposes the server
+  publicly with TLS terminated on the Mac, not at a relay, so the same device
+  tokens and `wss://` apply; `tailscale whois` identity would then be missing,
+  so Funnel access needs its own opt-in and time limit. A Cloudflare quick
+  tunnel would need an application-layer encryption channel, because
+  Cloudflare terminates TLS at its edge; avoid it.
 
 ### Frames
 
@@ -187,7 +196,7 @@ works on any transport.
   native code, so it works on a headless Mac with only `stim-server`.
 - v2: a native helper, `stim-frames`, shipped inside Stim.app. It encodes
   simulator IOSurface frames with VideoToolbox (H.264) and streams them over
-  WebRTC, with DTLS fingerprints exchanged over the encrypted channel. The
+  WebRTC, with DTLS fingerprints exchanged over the authenticated WebSocket. The
   server discovers the helper and falls back to screenshots without it.
 - Only devices `stim status` lists as owned are served.
 
@@ -226,22 +235,21 @@ An Expo app, built and run with Stim itself:
 Each step is its own issue and pull request:
 
 1. Move state types and read helpers into `@stim-cli/core` (no behavior change).
-2. `@stim-cli/server` skeleton: identity, pairing registry, Noise channel,
-   `hello`, `status.subscribe` backed by `stim status --watch --json`, loopback
-   integration tests.
+2. `@stim-cli/server` skeleton: pairing registry and device tokens, the
+   `tailscale whois` check, `tailscale serve` setup, `hello`, `status.subscribe`
+   backed by `stim status --watch --json`, loopback integration tests.
 3. `logs.*`, `stats.get`, `settings.get`.
 4. v1 frames (screenshots).
 5. Desktop: start or connect to the server, pairing sheet, device list.
 6. The mobile app, v1.
 7. Release: the sixth package in the release tooling; full-lane release.
 8. Later: v2 frames with `stim-frames` and WebRTC; status computed in process;
-   opt-in tunnel transport; the `control` capability.
+   the transport alternatives above; the `control` capability.
 
 ## Open questions
 
-- The Noise library pairing on both sides (Node and React Native) and its
-  maintenance status.
-- Keychain versus file storage for the server identity.
+- Whether the server configures `tailscale serve` itself or documents the
+  one-time command, and how it behaves when Tailscale is not running.
 - Where the mobile app lives (`apps/mobile`) and how it is distributed to the
   maintainer's devices (TestFlight is outside Stim's own feature set but fine
   for Stim's own app).
