@@ -212,8 +212,8 @@ the app cannot connect in v1.
   native code, so it works on a headless Mac with only `stim-server`.
 - v2 (#1236, added 2026-09-25): a native helper, `stim-frames`, streams
   JPEG frames over the same WebSocket and `frame` event, not H.264 over
-  WebRTC. The helper is a small Swift CLI that the server compiles on first
-  use with `xcrun swiftc` from sources shipped in the npm package. Those
+  WebRTC. The helper is a small Swift CLI that the server compiles at
+  startup with `xcrun swiftc` from sources shipped in the npm package. Those
   sources are its own `main.swift` and the non-view `SimulatorFrames` and
   `EmulatorFrames` files of Stim Desktop, compiled in place, not copied. The
   helper is cached under `$STIM_HOME/server/helpers/` by a hash of the

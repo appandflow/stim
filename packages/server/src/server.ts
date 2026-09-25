@@ -54,7 +54,10 @@ export interface ServerOptions {
   commandLimits?: Partial<CommandLimits>;
   actionLimits?: Partial<CommandLimits>;
   frameLimits?: Partial<FrameLimits>;
-  /** The `stim-frames` helper to stream frames with, or null for screenshots only. Without it, the server builds one. */
+  /**
+   * The `stim-frames` helper to stream frames with, or null for screenshots only. Without it, the server builds
+   * one at startup, and devices subscribed before the build finishes get screenshots.
+   */
   frameHelper?: string | null;
 }
 
@@ -100,6 +103,7 @@ const MAX_COMMANDS = 4;
 const LOG_LIMITS: LogLimits = { maxBufferedBytes: 4 * 1024 * 1024, maxPendingRecords: 20_000 };
 const FRAME_BUFFER_FRAMES = 2;
 const FRAME_RETRY_MS = 50;
+const HELPER_RETRY_MS = 5 * 60_000;
 const STATUS_FEED = { args: ['status', '--watch', '--json'], cwd: homedir(), keep: 1, label: 'stim status --watch' };
 const HEALTH_ROUTE_TIMEOUT_MS = 1000;
 const COMMAND_LIMITS: CommandLimits = { timeoutMs: 60_000, maxOutputBytes: 32 * 1024 * 1024 };
@@ -194,15 +198,32 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const authTimeoutMs = options.authTimeoutMs ?? 5000;
   const feeds = new FeedPool(options.stimCli, options.env);
   const frameLimits: FrameLimits = { ...DEFAULT_FRAME_LIMITS, ...options.frameLimits };
-  let helperBuild: Promise<string | null> | null = null;
-  const frameHelper = () => {
-    if (options.frameHelper !== undefined) return Promise.resolve(options.frameHelper);
-    helperBuild ??= buildFrameHelper(options.env).catch((cause: unknown) => {
-      console.error(`stim-server: frames come from screenshots: ${(cause as Error).message}`);
-      return null;
-    });
-    return helperBuild;
+  let helperPath = options.frameHelper ?? null;
+  let helperBuilding = false;
+  let helperRetryAt = 0;
+  const helperAbort = new AbortController();
+  const buildHelper = () => {
+    helperBuilding = true;
+    void (async () => {
+      try {
+        helperPath = await buildFrameHelper(options.env, helperAbort.signal);
+      } catch (cause) {
+        helperRetryAt = Date.now() + HELPER_RETRY_MS;
+        if (!helperAbort.signal.aborted) {
+          console.error(`stim-server: frames come from screenshots: ${(cause as Error).message}`);
+        }
+      } finally {
+        helperBuilding = false;
+      }
+    })();
   };
+  const frameHelper = () => {
+    if (options.frameHelper === undefined && !helperPath && !helperBuilding && Date.now() >= helperRetryAt) {
+      buildHelper();
+    }
+    return helperPath;
+  };
+  if (options.frameHelper === undefined) buildHelper();
   const frames = new FramePool(options.env, frameLimits, frameHelper);
   const running = new Set<() => Promise<void>>();
   const logLimits: LogLimits = { ...LOG_LIMITS, ...options.logLimits };
@@ -718,6 +739,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const addresses: RunningServer['addresses'] = [];
   const close = async () => {
     watcher.close();
+    helperAbort.abort();
     if (revocationCheck) clearTimeout(revocationCheck);
     for (const client of wss.clients) client.terminate();
     await Promise.all([frames.close(), feeds.close(), ...[...running].map((cancel) => cancel())]);

@@ -20,26 +20,28 @@ struct Config: Equatable {
 }
 
 enum Output {
-  private static let queue = DispatchQueue(label: "stim.frames.output")
+  private static let writer = DispatchQueue(label: "stim.frames.output")
+  private static let lock = NSLock()
   private static var writing = false
 
-  /// Drops the frame while the previous one is still being written, so a slow reader gets the newest frame.
   static func frame(jpeg: Data, width: Int, height: Int) {
-    queue.sync {
-      guard !writing else { return }
-      writing = true
-      var body = Data([1, UInt8(width >> 8), UInt8(width & 0xff), UInt8(height >> 8), UInt8(height & 0xff)])
-      body += jpeg
-      DispatchQueue.global().async {
-        write(body)
-        queue.sync { writing = false }
-      }
+    lock.lock()
+    defer { lock.unlock() }
+    guard !writing else { return }
+    writing = true
+    var body = Data([1, UInt8(width >> 8), UInt8(width & 0xff), UInt8(height >> 8), UInt8(height & 0xff)])
+    body += jpeg
+    writer.async {
+      write(body)
+      lock.lock()
+      writing = false
+      lock.unlock()
     }
   }
 
   static func notice(_ object: [String: String]) {
     guard let json = try? JSONSerialization.data(withJSONObject: object) else { return }
-    queue.sync { write(Data([2]) + json) }
+    writer.sync { write(Data([2]) + json) }
   }
 
   private static func write(_ body: Data) {
@@ -72,8 +74,6 @@ func jpeg(_ image: CIImage, config: Config) -> (Data, Int, Int)? {
   return (data, Int(size.width), Int(size.height))
 }
 
-/// Emits at most `fps` frames a second. A change inside the interval is rendered when the interval ends, so
-/// the last frame of a burst is never lost.
 final class Pacer {
   let queue = DispatchQueue(label: "stim.frames.pacer")
   var config = Config()
@@ -163,6 +163,7 @@ final class EmulatorSource {
   private let serial: String
   private let queue = DispatchQueue(label: "stim.frames.emulator")
   private var stream: ScreenshotStream?
+  private var generation = 0
   private var config = Config()
   private var latest: EmulatorFrame?
   private var pacer: Pacer!
@@ -196,8 +197,9 @@ final class EmulatorSource {
     guard let endpoint = EmulatorDiscovery.endpoint(serial: serial) else {
       fail("\(serial) has no gRPC endpoint. Frames appear after Stim next boots this emulator.")
     }
-    var stream: ScreenshotStream!
-    stream = ScreenshotStream(
+    generation += 1
+    let current = generation
+    let stream = ScreenshotStream(
       endpoint: endpoint, width: config.maxEdge, height: config.maxEdge,
       onFrame: { [weak self] frame in
         guard let self else { return }
@@ -207,7 +209,7 @@ final class EmulatorSource {
       onEnd: { [weak self] in
         guard let self else { return }
         self.queue.async {
-          if self.stream === stream { fail("The emulator \(self.serial) ended its screenshot stream.") }
+          if self.generation == current { fail("The emulator \(self.serial) ended its screenshot stream.") }
         }
       })
     self.stream = stream

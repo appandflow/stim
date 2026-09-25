@@ -157,8 +157,8 @@ Events are `{ "event", "subscription", ... }`.
   socket has more than two frames unsent skips frames and gets the newest
   once it catches up.
 
-  Frames come from the `stim-frames` helper. On the first subscription the
-  server compiles it with `xcrun swiftc` from the Swift sources shipped in
+  Frames come from the `stim-frames` helper. When it starts, the server
+  compiles it with `xcrun swiftc` from the Swift sources shipped in
   `dist/stim-frames/` (its own `main.swift` and the frame and input code it
   shares with Stim Desktop), which takes a few seconds, and keeps it in
   `$STIM_HOME/server/helpers/`, named by a hash of the sources and the
@@ -171,9 +171,10 @@ Events are `{ "event", "subscription", ... }`.
   share one helper, which sends a new subscriber the latest frame and exits
   with the last subscriber or when the server's end of its stdin closes.
 
-  Without the helper (the compiler is missing or fails, or the helper fails
-  before its first frame) and for an iPhone Duo, frames come from
-  screenshots, and `fps` and `maxEdge` only cap the rate. Simulators are
+  Without the helper (the compiler is missing or fails, which the server
+  retries every 5 minutes, or the helper fails before its first frame), for a
+  subscription made while it is still being built, and for an iPhone Duo,
+  frames come from screenshots, and `fps` and `maxEdge` only cap the rate. Simulators are
   captured with `xcrun simctl io <udid> screenshot`, of the primary display,
   or of the default display when that `simctl` does not accept `primary`. An
   iPhone Duo lights one of two panels: the capture follows the lit one

@@ -23,25 +23,41 @@ const MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 const FRAME_MESSAGE = 1;
 const NOTICE_MESSAGE = 2;
 
-function run(file: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs: number): Promise<string> {
+/** Runs the compiler in its own process group, so a timeout or `signal` also stops `swift-frontend` and `ld`. */
+function run(
+  file: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(file, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(file, args, { env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
     let output = '';
-    const timer = setTimeout(() => {
-      void terminate(child);
-      reject(new Error(`${file} ${args[0]} did not finish within ${timeoutMs / 1000} s.`));
-    }, timeoutMs);
+    let stopped: string | null = null;
+    const stop = (reason: string) => {
+      stopped ??= reason;
+      try {
+        process.kill(-child.pid!, 'SIGKILL');
+      } catch {}
+    };
+    const timer = setTimeout(() => stop(`${file} ${args[0]} did not finish within ${timeoutMs / 1000} s.`), timeoutMs);
+    const abort = () => stop(`${file} ${args[0]} was stopped with the server.`);
+    signal?.addEventListener('abort', abort);
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => (output = (output + chunk).slice(-4000)));
     child.stderr.on('data', (chunk: string) => (output = (output + chunk).slice(-4000)));
     child.on('error', (error) => {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
       reject(new Error(`${file} could not start (${error.message}).`));
     });
     child.on('close', (code) => {
       clearTimeout(timer);
-      if (code === 0) resolve(output);
+      signal?.removeEventListener('abort', abort);
+      if (stopped) reject(new Error(stopped));
+      else if (code === 0) resolve(output);
       else reject(new Error(`${file} ${args[0]} exited (code ${code}): ${output.trim()}`));
     });
   });
@@ -49,21 +65,24 @@ function run(file: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs: nu
 
 /**
  * Compiles the `stim-frames` helper from the Swift sources shipped in `dist/stim-frames/` into
- * `$STIM_HOME/server/helpers/`, named by a hash of the sources and the compiler version, and removes helpers
- * built from other sources. Resolves to the helper's path, or rejects with the reason it cannot be built.
+ * `$STIM_HOME/server/helpers/`, named by a hash of the sources and the compiler version. Resolves to the
+ * helper's path, or rejects with the reason it cannot be built.
  */
-export async function buildFrameHelper(env: NodeJS.ProcessEnv, sourcesDir: string = SOURCES_DIR): Promise<string> {
+export async function buildFrameHelper(
+  env: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
+  sourcesDir: string = SOURCES_DIR,
+): Promise<string> {
   if (process.platform !== 'darwin') throw new Error('stim-frames runs only on macOS.');
   const sources = readdirSync(sourcesDir)
     .filter((name) => name.endsWith('.swift'))
     .toSorted();
   if (!sources.length) throw new Error(`${sourcesDir} has no Swift sources.`);
-  const version = await run('xcrun', ['swiftc', '--version'], env, VERSION_TIMEOUT_MS);
+  const version = await run('xcrun', ['swiftc', '--version'], env, VERSION_TIMEOUT_MS, signal);
   const hash = createHash('sha256').update(version);
   for (const name of sources) hash.update(name).update(readFileSync(join(sourcesDir, name)));
   const dir = join(serverDir(), 'helpers');
-  const name = `stim-frames-${hash.digest('hex').slice(0, 16)}`;
-  const helper = join(dir, name);
+  const helper = join(dir, `stim-frames-${hash.digest('hex').slice(0, 16)}`);
   if (existsSync(helper)) return helper;
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const output = `${helper}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`;
@@ -83,13 +102,11 @@ export async function buildFrameHelper(env: NodeJS.ProcessEnv, sourcesDir: strin
       ],
       env,
       BUILD_TIMEOUT_MS,
+      signal,
     );
     renameSync(output, helper);
   } finally {
     rmSync(output, { force: true });
-  }
-  for (const entry of readdirSync(dir)) {
-    if (entry.startsWith('stim-frames-') && entry !== name) rmSync(join(dir, entry), { force: true });
   }
   return helper;
 }
@@ -170,7 +187,10 @@ export class HelperSource {
       buffer = buffer.length ? Buffer.concat([buffer, chunk]) : chunk;
       while (buffer.length >= 4) {
         const length = buffer.readUInt32BE(0);
-        if (length < 1 || length > MAX_MESSAGE_BYTES) return this.fail(`stim-frames wrote a malformed message.`);
+        if (length < 1 || length > MAX_MESSAGE_BYTES) {
+          this.child.stdout!.removeAllListeners('data');
+          return this.fail('stim-frames wrote a malformed message.');
+        }
         if (buffer.length < 4 + length) break;
         const body = buffer.subarray(4, 4 + length);
         buffer = buffer.subarray(4 + length);

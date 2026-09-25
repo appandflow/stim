@@ -553,11 +553,11 @@ class FrameSource {
 
 /**
  * One capture per device, shared by its subscribers and stopped with the last of them. With the `stim-frames`
- * helper, a device streams frames as its screen changes, at the rate its subscribers ask for. Without it, and
- * for an iPhone Duo, a screenshot loop sends a frame only when the screen changed: up to 5 times a second
- * while it changes, backing off to once a second while it does not, spending at most half of its time
- * capturing, with at most two captures at once across all devices. A helper that fails before its first frame
- * gives way to the screenshot loop.
+ * helper, a device streams frames as its screen changes, at the rate its subscribers ask for. Without it, for
+ * an iPhone Duo, and while the helper is still being built, a screenshot loop sends a frame only when the
+ * screen changed: up to 5 times a second while it changes, backing off to once a second while it does not,
+ * spending at most half of its time capturing, with at most two captures at once across all devices. A helper
+ * that fails before its first frame gives way to the screenshot loop.
  */
 export class FramePool {
   private readonly sources = new Map<string, FrameSource | HelperSource>();
@@ -565,13 +565,12 @@ export class FramePool {
   private readonly litPanels = new Map<string, DuoPanel>();
   private readonly env: NodeJS.ProcessEnv;
   private readonly limits: FrameLimits;
-  private readonly helper: () => Promise<string | null>;
-  private closed = false;
+  private readonly helper: () => string | null;
 
   constructor(
     env: NodeJS.ProcessEnv,
     limits: FrameLimits = DEFAULT_FRAME_LIMITS,
-    helper: () => Promise<string | null> = () => Promise.resolve(null),
+    helper: () => string | null = () => null,
   ) {
     this.env = env;
     this.limits = limits;
@@ -579,44 +578,30 @@ export class FramePool {
   }
 
   subscribe(device: Device, listener: FrameListener, hint: FrameHint = DEFAULT_FRAME_HINT): () => void {
-    let detach: (() => void) | null = null;
+    const helper = this.helper();
+    if (helper === null || (device.platform === 'ios' && device.foldable)) {
+      return this.screenshots(device).add(listener);
+    }
+    let streamed = false;
     let cancelled = false;
-    let waited = false;
-    const slow = setTimeout(() => {
-      waited = true;
-      listener.delayed(true);
-    }, this.limits.slowCaptureMs);
-    void (async () => {
-      const helper = await this.helper();
-      clearTimeout(slow);
-      if (cancelled || this.closed) return;
-      if (waited) listener.delayed(false);
-      const useHelper = helper !== null && !(device.platform === 'ios' && device.foldable);
-      if (!useHelper) {
-        detach = this.screenshots(device).add(listener);
-        return;
-      }
-      let streamed = false;
-      detach = this.stream(helper, device).add(
-        {
-          frame: (frame) => {
-            streamed = true;
-            listener.frame(frame);
-          },
-          delayed: listener.delayed,
-          failed: (message) => {
-            if (streamed || cancelled) return listener.failed(message);
-            console.error(`stim-server: ${message} Falling back to screenshots.`);
-            detach = this.screenshots(device).add(listener);
-          },
+    let detach = this.stream(helper, device).add(
+      {
+        frame: (frame) => {
+          streamed = true;
+          listener.frame(frame);
         },
-        hint,
-      );
-    })();
+        delayed: listener.delayed,
+        failed: (message) => {
+          if (streamed || cancelled) return listener.failed(message);
+          console.error(`stim-server: ${message} Falling back to screenshots.`);
+          detach = this.screenshots(device).add(listener);
+        },
+      },
+      hint,
+    );
     return () => {
       cancelled = true;
-      clearTimeout(slow);
-      detach?.();
+      detach();
     };
   }
 
@@ -647,7 +632,6 @@ export class FramePool {
   }
 
   async close(): Promise<void> {
-    this.closed = true;
     await Promise.all([...this.sources.values()].map((source) => source.stop()));
   }
 }

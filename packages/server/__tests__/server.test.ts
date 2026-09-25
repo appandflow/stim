@@ -1373,7 +1373,7 @@ describe('frames.subscribe', () => {
         { fps: 20, maxEdge: 960 },
         { fps: 2, maxEdge: 480 },
       ]);
-      expect(alive(run!.pid)).toBe(false);
+      await until(() => !alive(run!.pid));
       expect(toolRuns().filter((entry) => entry.tool === 'xcrun')).toEqual([]);
     },
     10_000,
