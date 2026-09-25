@@ -41,6 +41,8 @@ function harness(over: Partial<DeviceDeps> = {}) {
   const deps: Partial<DeviceDeps> = {
     io,
     findProjectRoot: () => root,
+    getProject: () => null,
+    avdNameOf: () => null,
     listIosDevices: () => [
       {
         udid: PHONE,
@@ -87,7 +89,63 @@ function heldByAnother(io: LeaseIo, durationMs = 10 * 60_000) {
   return taken.lease;
 }
 
+const SIM = '3D1C4135-97E4-4846-BF61-27D341566334';
+const OWNED_PROJECT = {
+  platforms: {
+    ios: { deviceUdid: SIM, owned: true, deviceName: 'stim-app (iPhone 18 Pro 27.0)' },
+    android: { avdName: 'stim-app', consolePort: 5728, owned: true, deviceName: 'stim-app' },
+  },
+  deviceSlots: {
+    tablet: { ios: { deviceUdid: 'TABLET-UDID', owned: true, deviceName: 'stim-app-tablet (iPad Pro 27.0)' } },
+    borrowed: { ios: { deviceUdid: 'USER-UDID', owned: false } },
+  },
+};
+
 describe('stim device lock', () => {
+  test("leases the workspace's own simulator by UDID, in its slot, without asking devicectl", async () => {
+    const h = harness({
+      getProject: () => OWNED_PROJECT,
+      listIosDevices: () => {
+        throw new Error('devicectl must not be asked about an owned simulator');
+      },
+    });
+    const facts = await runLock('ios', 'tablet-udid', { json: true, for: '2m', wait: '0' }, h.deps);
+    assert(!('code' in facts));
+    expect(facts).toMatchObject({ slot: 'tablet', id: 'TABLET-UDID', holder: root, leaseSeconds: 120 });
+    expect(readWorkspaceState(root)?.deviceLeases).toEqual({
+      'ios:tablet': { id: 'TABLET-UDID', token: expect.any(String), kind: 'declared' },
+    });
+    expect(await runUnlock('ios', {}, h.deps)).toEqual([expect.objectContaining({ id: 'TABLET-UDID' })]);
+  });
+
+  test('refuses ids the workspace does not own as simulators or emulators', async () => {
+    const h = harness({ getProject: () => OWNED_PROJECT, avdNameOf: () => 'Pixel_9_user', listIosDevices: () => [] });
+    expect(await runLock('ios', 'USER-UDID', { wait: '0' }, h.deps)).toMatchObject({ code: 'STIM_NO_DEVICE' });
+    expect(await runLock('android', 'emulator-5554', { wait: '0' }, h.deps)).toMatchObject({ code: 'STIM_NO_DEVICE' });
+    expect(listLeaseFiles()).toEqual([]);
+  });
+
+  test('refuses to replace the lease this workspace holds on another device in the same slot', async () => {
+    const h = harness({ getProject: () => OWNED_PROJECT });
+    assert(!('code' in (await runLock('ios', PHONE, {}, h.deps))));
+    expect(await runLock('ios', SIM.toLowerCase(), {}, h.deps)).toMatchObject({ code: 'STIM_DEVICE_BUSY' });
+    expect(h.lease()?.holder).toBe(root);
+    expect(h.lease('ios', SIM)).toBeNull();
+  });
+
+  test("leases the workspace's own emulator by serial, and refuses a --slot it is not in", async () => {
+    const h = harness({ getProject: () => OWNED_PROJECT, avdNameOf: () => 'stim-app' });
+    const facts = await runLock('android', 'emulator-5728', {}, h.deps);
+    assert(!('code' in facts));
+    expect(facts).toMatchObject({ id: 'emulator-5728', deviceName: 'stim-app' });
+    expect(facts).not.toHaveProperty('slot');
+    expect(h.lease('android', 'emulator-5728')?.holder).toBe(root);
+
+    const refused = await runLock('ios', SIM, { slot: 'tablet' }, h.deps);
+    expect(refused).toMatchObject({ code: 'STIM_BAD_ARG' });
+    expect(h.lease('ios', SIM)).toBeNull();
+  });
+
   test('a free phone is leased to this workspace, and said so on stdout', async () => {
     const h = harness();
     const facts = await runLock('ios', undefined, {}, h.deps);
