@@ -1,6 +1,6 @@
 import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { inspectProcessStart, type ProcessStart } from '../process-identity.ts';
 import { leaseIsExpired, listLeaseFiles, type LeaseFileEntry } from '../engine/device-lease.ts';
@@ -100,11 +100,7 @@ export function parseAgentDeviceRecord(
   raw: string | null,
 ): AgentDeviceRecord {
   const entry = parseObject(raw);
-  const stem =
-    path
-      .split('/')
-      .pop()
-      ?.replace(/\.json$/, '') ?? '';
+  const stem = basename(path, '.json');
   const device = entry?.device && typeof entry.device === 'object' ? (entry.device as Record<string, unknown>) : null;
   const recordedId = kind === 'claim' ? device?.id : entry?.deviceId;
   const deviceId = typeof recordedId === 'string' && recordedId ? recordedId : kind === 'runner-lease' ? stem : null;
