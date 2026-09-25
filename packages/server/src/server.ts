@@ -6,10 +6,12 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { configDir } from '@stim-cli/core';
 import { isJsonObject, loadConfig, type StatusPayload } from '@stim-cli/core/state';
 import { FeedPool, type JsonObject } from './feed.ts';
+import { deviceKey, FramePool, ownedDevice, type Frame } from './frames.ts';
 import { LogBatcher, logArgs, parseLogFilter, type LogLimits } from './logs.ts';
 import {
   PROTOCOL_VERSION,
   type ErrorCode,
+  type FrameTarget,
   type HelloResult,
   type Methods,
   type ProtocolError,
@@ -84,6 +86,9 @@ const MAX_PAYLOAD = 64 * 1024;
 const MAX_SUBSCRIPTIONS = 32;
 const MAX_COMMANDS = 4;
 const LOG_LIMITS: LogLimits = { maxBufferedBytes: 4 * 1024 * 1024, maxPendingRecords: 20_000 };
+const FRAME_BUFFER_BYTES = 1024 * 1024;
+const FRAME_RETRY_MS = 100;
+const STATUS_FEED = { args: ['status', '--watch', '--json'], cwd: homedir(), keep: 1, label: 'stim status --watch' };
 const COMMAND_LIMITS: CommandLimits = { timeoutMs: 60_000, maxOutputBytes: 32 * 1024 * 1024 };
 
 const AUTH_REFUSALS: Record<Exclude<AuthOutcome, { ok: true }>['reason'], ProtocolError> = {
@@ -150,6 +155,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const limiter = new FailureLimiter(options.maxAuthFailures ?? 5, options.failureWindowMs ?? 60_000);
   const authTimeoutMs = options.authTimeoutMs ?? 5000;
   const feeds = new FeedPool(options.stimCli, options.env);
+  const frames = new FramePool(options.env);
   const running = new Set<() => Promise<void>>();
   const logLimits: LogLimits = { ...LOG_LIMITS, ...options.logLimits };
   const commandLimits: CommandLimits = { ...COMMAND_LIMITS, ...options.commandLimits };
@@ -277,17 +283,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     function subscribeStatus(id: RequestId): void {
       const subscription = openSubscription(id);
       if (!subscription) return;
-      const unsubscribe = feeds.subscribe(
-        { args: ['status', '--watch', '--json'], cwd: homedir(), keep: 1, label: 'stim status --watch' },
-        {
-          item: (payload) =>
-            send(socket, { event: 'status', subscription, payload: payload as unknown as StatusPayload }),
-          failed: (message) => {
-            subscriptions.delete(subscription);
-            send(socket, { event: 'error', subscription, error: { code: 'status-failed', message } });
-          },
+      const unsubscribe = feeds.subscribe(STATUS_FEED, {
+        item: (payload) =>
+          send(socket, { event: 'status', subscription, payload: payload as unknown as StatusPayload }),
+        failed: (message) => {
+          subscriptions.delete(subscription);
+          send(socket, { event: 'error', subscription, error: { code: 'status-failed', message } });
         },
-      );
+      });
       subscriptions.set(subscription, unsubscribe);
     }
 
@@ -333,6 +336,83 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         batcher.stop();
         unsubscribe();
       });
+    }
+
+    function subscribeFrames(id: RequestId, params: unknown): void {
+      const target = isJsonObject(params) ? params : {};
+      const { workspace, platform, slot } = target;
+      if (typeof workspace !== 'string' || (platform !== 'ios' && platform !== 'android')) {
+        return error(
+          id,
+          'bad-request',
+          'frames.subscribe needs params.workspace and params.platform (ios or android).',
+        );
+      }
+      if (slot !== undefined && (typeof slot !== 'string' || slot === '')) {
+        return error(id, 'bad-request', 'slot must be a slot name.');
+      }
+      if (!workspaceDir(id, workspace, true)) return;
+      const subscription = openSubscription(id);
+      if (!subscription) return;
+      const frameTarget: FrameTarget = { workspace, platform, ...(slot ? { slot } : {}) };
+      let attached: string | null = null;
+      let detach: (() => void) | null = null;
+      let pending: Frame | null = null;
+      let retry: NodeJS.Timeout | null = null;
+      let ended = false;
+      const flush = () => {
+        retry = null;
+        if (!pending || ended) return;
+        if (socket.bufferedAmount > FRAME_BUFFER_BYTES) {
+          retry = setTimeout(flush, FRAME_RETRY_MS);
+          return;
+        }
+        const frame = pending;
+        pending = null;
+        send(socket, {
+          event: 'frame',
+          subscription,
+          platform,
+          slot: slot ?? 'default',
+          mime: 'image/jpeg',
+          ...frame,
+        });
+      };
+      const cleanup = () => {
+        ended = true;
+        if (retry) clearTimeout(retry);
+        detach?.();
+        detach = null;
+        unsubscribeStatus?.();
+      };
+      const end = (message: string) => {
+        if (ended) return;
+        cleanup();
+        subscriptions.delete(subscription);
+        send(socket, { event: 'error', subscription, error: { code: 'frames-failed', message } });
+      };
+      const listener = {
+        frame: (frame: Frame) => {
+          pending = frame;
+          if (!retry) flush();
+        },
+        failed: end,
+      };
+      let unsubscribeStatus: (() => void) | null = null;
+      unsubscribeStatus = feeds.subscribe(STATUS_FEED, {
+        item: (payload) => {
+          if (ended) return;
+          const resolved = ownedDevice(payload as unknown as StatusPayload, frameTarget);
+          if (typeof resolved === 'string') return queueMicrotask(() => end(resolved));
+          if (deviceKey(resolved) === attached) return;
+          detach?.();
+          attached = deviceKey(resolved);
+          detach = frames.subscribe(resolved, listener);
+        },
+        failed: (message) => queueMicrotask(() => end(message)),
+      });
+      if (ended) unsubscribeStatus();
+      subscriptions.set(subscription, cleanup);
     }
 
     function command<M extends 'logs.query' | 'stats.get' | 'settings.get'>(
@@ -405,6 +485,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (message.method === 'status.subscribe') return subscribeStatus(id);
       if (message.method === 'logs.subscribe') return subscribeLogs(id, message.params);
       if (message.method === 'logs.query') return queryLogs(id, message.params);
+      if (message.method === 'frames.subscribe') return subscribeFrames(id, message.params);
       if (message.method === 'stats.get' || message.method === 'settings.get') {
         return workspaceCommand(id, message.method, message.params);
       }
@@ -465,6 +546,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     watcher.close();
     if (revocationCheck) clearTimeout(revocationCheck);
     for (const client of wss.clients) client.terminate();
+    frames.close();
     await Promise.all([feeds.close(), ...[...running].map((cancel) => cancel())]);
     wss.close();
     await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));
