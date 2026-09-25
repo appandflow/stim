@@ -172,6 +172,7 @@ test('headlessEmulatorArgs is headless on displayless linux only', () => {
   expect(headlessEmulatorArgs({ DISPLAY: ':0' }, 'linux')).toEqual([]);
   expect(headlessEmulatorArgs({ WAYLAND_DISPLAY: 'wayland-0' }, 'linux')).toEqual([]);
   expect(headlessEmulatorArgs({}, 'darwin')).toEqual([]);
+  expect(headlessEmulatorArgs({}, 'darwin', 'stim-desktop')).toEqual(['-no-window', '-gpu', 'host']);
 });
 
 test('parseAvdRootIni keeps the content paths and ignores unrelated lines', () => {
@@ -1116,6 +1117,54 @@ test('bootAndroidEmulator starts the emulator tree from the home directory on Wi
   expect(args[0]?.slice(-2)).toEqual(['-crash-report-mode', 'never']);
   expect(args[1]).not.toContain('-crash-report-mode');
   expect(args[2]).not.toContain('-crash-report-mode');
+});
+
+test('androidEmulatorApp stim-desktop boots a headless emulator on macOS and opens it in Stim Desktop', () => {
+  const sdk = makeFakeSdk(tmpHome);
+  process.env.ANDROID_HOME = sdk;
+  const savedDisplay = process.env.DISPLAY;
+  process.env.DISPLAY = ':0';
+  writeFileSync(join(tmpHome, 'config.json'), JSON.stringify({ androidEmulatorApp: 'stim-desktop' }));
+  const spawned: string[][] = [];
+  const opened: string[][] = [];
+  setExecutor({
+    runQuiet: () => null,
+    runFileQuiet: (file: string, args: string[] = []) => {
+      opened.push([file, ...args]);
+      return null;
+    },
+    spawn: (_cmd: string, args: string[]) => {
+      spawned.push(args);
+      return { unref: () => {}, pid: 42 };
+    },
+  });
+  try {
+    bootAndroidEmulator('stim-app', 5556, { platform: 'darwin' });
+    bootAndroidEmulator('stim-app', 5558, { platform: 'linux' });
+  } finally {
+    if (savedDisplay === undefined) delete process.env.DISPLAY;
+    else process.env.DISPLAY = savedDisplay;
+  }
+  expect(spawned[0]?.slice(-3)).toEqual(['-no-window', '-gpu', 'host']);
+  expect(spawned[1]).not.toContain('-no-window');
+  expect(opened).toEqual([['open', '-g', '-a', 'Stim', 'stim-desktop://open?serial=emulator-5556']]);
+});
+
+test('an invalid androidEmulatorApp refuses before the emulator starts', () => {
+  process.env.ANDROID_HOME = makeFakeSdk(tmpHome);
+  writeFileSync(join(tmpHome, 'config.json'), JSON.stringify({ androidEmulatorApp: 'qt' }));
+  let spawns = 0;
+  setExecutor({
+    runQuiet: () => null,
+    spawn: () => {
+      spawns++;
+      return { unref: () => {} };
+    },
+  });
+  expect(() => bootAndroidEmulator('stim-app', 5556, { platform: 'darwin' })).toThrow(
+    expect.objectContaining({ code: 'STIM_BAD_ARG', message: expect.stringMatching(/Invalid androidEmulatorApp/) }),
+  );
+  expect(spawns).toBe(0);
 });
 
 test('suppressEmulatorCrashConsent passes -crash-report-mode never to emulator 37+, and removes the crash database for an older one', () => {

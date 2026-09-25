@@ -1,3 +1,8 @@
+import {
+  type AndroidEmulatorApp,
+  configuredAndroidEmulatorApp,
+  openEmulatorInStimDesktop,
+} from './android-emulator-viewer.ts';
 import { forgetCreatedDevice, recordCreatedDevice } from './created-devices.ts';
 import { isStimOwnedAvd } from './device-ownership.ts';
 import {
@@ -587,8 +592,10 @@ export function nextConsolePort(claimedPorts: number[]): number {
 export function headlessEmulatorArgs(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
+  app: AndroidEmulatorApp = 'emulator',
 ): string[] {
   const args: string[] = [];
+  if (platform === 'darwin' && app === 'stim-desktop') args.push('-no-window', '-gpu', 'host');
   if (platform === 'linux' && !env.DISPLAY && !env.WAYLAND_DISPLAY) {
     args.push(
       '-no-window',
@@ -992,6 +999,7 @@ export function bootAndroidEmulator(
   { logFile, platform = process.platform }: { logFile?: string | null; platform?: NodeJS.Platform } = {},
 ): number | null {
   const exec = getExecutor();
+  const app = configuredAndroidEmulatorApp();
   const child = exec.spawn(
     androidToolPath('emulator'),
     [
@@ -1002,7 +1010,7 @@ export function bootAndroidEmulator(
       '-grpc',
       String(consolePort + 3000),
       '-grpc-use-token',
-      ...headlessEmulatorArgs(),
+      ...headlessEmulatorArgs(process.env, platform, app),
       ...suppressEmulatorCrashConsent({ platform }),
     ],
     {
@@ -1012,7 +1020,11 @@ export function bootAndroidEmulator(
     },
   );
   child?.unref?.();
-  return child?.pid ?? null;
+  const pid = child?.pid ?? null;
+  if (pid !== null && platform === 'darwin' && app === 'stim-desktop') {
+    openEmulatorInStimDesktop(`emulator-${consolePort}`);
+  }
+  return pid;
 }
 
 function emulatorStdio(logFile?: string | null): 'ignore' | (number | 'ignore')[] {
