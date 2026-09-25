@@ -332,7 +332,11 @@ The EAS session ledger and project lock under `~/.stim/machine/eas` ignore
 `STIM_HOME` so every Stim home finds billable sessions. A test that reaches
 them passes a temporary `ledgerRoot`, `machineRoot`, or `easLedgerRoot`, or
 points `HOME` (and `USERPROFILE` on Windows) at a temporary directory.
-`vitest.setup.ts` fails a test file that changes the real directory.
+`vitest.setup.ts` records the real root in `STIM_TEST_GUARD_REAL_EAS_ROOT`
+before any test can redirect `HOME`, and the ledger and project-lock writers
+throw when they would write that root while the marker is set. Attribution is
+per process, so a real `stim` run elsewhere on the machine, which carries no
+marker, is unaffected.
 
 ### 6. Compare canonical paths
 

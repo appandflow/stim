@@ -3,6 +3,9 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { withDirLock } from '../dir-lock.ts';
 import { workspaceName } from '../workspace/paths.ts';
+import { EAS_TEST_GUARD_ROOT_ENV } from './eas-machine-root-guard-env.ts';
+
+export { EAS_TEST_GUARD_ROOT_ENV };
 
 export interface EasSessionClaim {
   sessionId: string;
@@ -26,6 +29,19 @@ export interface EasSessionLedgerRead {
 
 export function easMachineStateRoot(): string {
   return join(homedir(), '.stim', 'machine', 'eas');
+}
+
+// vitest.setup.ts records the real machine root under EAS_TEST_GUARD_ROOT_ENV,
+// in every test process, before a test can redirect HOME. A writer that still
+// resolves to this path is a leak into the real ~/.stim/machine/eas (issue
+// #1091); a write from a process without this marker, such as a real stim
+// run, is unaffected.
+export function assertEasMachineRootWritable(root: string): void {
+  const guardedRoot = process.env[EAS_TEST_GUARD_ROOT_ENV];
+  if (!guardedRoot || resolve(root) !== resolve(guardedRoot)) return;
+  throw new Error(
+    `Refusing to write the real EAS machine root ${root} from a test process. Pass a temporary ledgerRoot, machineRoot, or easLedgerRoot, or point HOME (and USERPROFILE on Windows) at a temporary directory.`,
+  );
 }
 
 function easSessionLedgerFile(root: string = easMachineStateRoot()): string {
@@ -100,6 +116,7 @@ function writeLedger(root: string, ledger: EasSessionLedger): void {
 }
 
 export function recordEasSessionClaim(claim: EasSessionClaim, root: string = easMachineStateRoot()): void {
+  assertEasMachineRootWritable(root);
   const normalized = validClaim(claim.sessionId, claim);
   if (!normalized) throw new Error(`Invalid EAS session claim for ${claim.sessionId}.`);
   withDirLock(
@@ -117,6 +134,7 @@ export function recordEasSessionClaim(claim: EasSessionClaim, root: string = eas
 export function removeEasSessionClaim(sessionId: string, root: string = easMachineStateRoot()): boolean {
   const file = easSessionLedgerFile(root);
   if (!existsSync(file)) return false;
+  assertEasMachineRootWritable(root);
   return withDirLock(join(root, 'ledger.lock'), () => {
     const current = readEasSessionLedger(root);
     if (!current.safe) return false;
