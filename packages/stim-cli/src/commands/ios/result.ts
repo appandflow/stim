@@ -9,7 +9,7 @@ import {
 import { PLATFORM, deviceLabel } from './support.ts';
 import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../../engine/launch-verify.ts';
 import { COMPILATION_CACHE_NOT_RUN, compilationCacheActivityLine } from '../../engine/xcode.ts';
-import type { CompilationCacheActivity, IosFacts, CacheHitLevel } from '../../engine/build-facts.ts';
+import type { CompilationCacheActivity, DevServerStart, IosFacts, CacheHitLevel } from '../../engine/build-facts.ts';
 import type { WaitedForBuild, RemoteUploadLike, DeviceLike } from './types.ts';
 import { writeWorkspaceState } from '../../workspace/workspace-state.ts';
 import { formatDuration, phaseLine } from '../../command-output.ts';
@@ -79,6 +79,7 @@ export function iosFacts({
   launched = true,
   webPreviewUrl = null,
   lease,
+  devServer = null,
 }: {
   slot?: string;
   udid: string;
@@ -102,6 +103,7 @@ export function iosFacts({
   launched?: boolean | string;
   webPreviewUrl?: string | null;
   lease?: { kind: string; expiresAt: string } | null;
+  devServer?: DevServerStart | null;
 }): IosFacts {
   return {
     platform: PLATFORM,
@@ -127,6 +129,7 @@ export function iosFacts({
     durationMs,
     ...(webPreviewUrl ? { webPreviewUrl } : {}),
     ...(lease === undefined ? {} : { lease }),
+    ...(devServer ? { devServer } : {}),
   };
 }
 
@@ -203,6 +206,7 @@ export interface ReportIosResultArgs {
   lease?: { kind: string; expiresAt: string } | null;
   recordRun: RunRecorder['record'];
   reclaimed?: ReclaimedStep[];
+  devServer?: DevServerStart | null;
 }
 
 export function reportIosResult({
@@ -237,6 +241,7 @@ export function reportIosResult({
   lease,
   recordRun,
   reclaimed = [],
+  devServer = null,
 }: ReportIosResultArgs): IosFacts {
   const durationMs = elapsed();
   recordRun({ failed: false, cacheHit, waited: waitedForBuild, durationMs });
@@ -280,6 +285,7 @@ export function reportIosResult({
     launched: launchState,
     webPreviewUrl,
     lease,
+    devServer,
   });
   if (json) {
     console.log(JSON.stringify(reclaimed.length ? { ...facts, reclaimed } : facts));
@@ -303,7 +309,7 @@ export function reportIosResult({
         ? `check skipped on port ${metroPort}`
         : launchState === LAUNCH_UNVERIFIED
           ? `state unverified on port ${metroPort}`
-          : `running on port ${metroPort}`;
+          : `running on port ${metroPort}${devServer ? ` (started: ${devServer.reason})` : ''}`;
     console.log(
       [
         outcome,

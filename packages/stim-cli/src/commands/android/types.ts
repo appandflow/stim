@@ -3,12 +3,6 @@ import type { LeaseFacts } from '../../engine/device-lease-run.ts';
 import type { AndroidFacts } from '../../engine/build-facts.ts';
 import type { createNdjsonWriter } from '../../ndjson.ts';
 
-export interface SupervisorLike {
-  pid?: number;
-  port?: number;
-  mode?: string;
-}
-
 export interface RemoteUploadLike {
   uploaded?: boolean;
   timedOut?: boolean;

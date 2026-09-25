@@ -226,7 +226,9 @@ async function statusLines(json: boolean): Promise<string[]> {
       const label = state.metro.running
         ? chalk.green(`running (pid ${state.metro.pid})`)
         : state.metro.idleStop
-          ? chalk.dim(`stopped (idle) after ${state.metro.idleStop.idleMinutes}m; \`stim start\` restarts it`)
+          ? chalk.dim(
+              `stopped (idle) after ${state.metro.idleStop.idleMinutes}m; \`stim start\`, \`ios\` or \`android\` restarts it`,
+            )
           : chalk.dim('not running');
       out.push(`  metro: port ${state.metro.port} ${label}`);
     }

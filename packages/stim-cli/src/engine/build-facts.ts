@@ -26,6 +26,11 @@ export interface CcacheActivity {
   hitRatePercent: number | null;
 }
 
+export interface DevServerStart {
+  started: true;
+  reason: 'not running' | 'stopped (idle)';
+}
+
 interface RunLeaseFacts {
   kind: string;
   expiresAt: string;
@@ -55,6 +60,7 @@ export interface IosFacts {
   durationMs?: number;
   webPreviewUrl?: string | null;
   lease?: RunLeaseFacts | null;
+  devServer?: DevServerStart;
 }
 
 export interface AndroidFacts {
@@ -82,4 +88,5 @@ export interface AndroidFacts {
   logs: string | null;
   durationMs: number | null;
   lease?: RunLeaseFacts | null;
+  devServer?: DevServerStart;
 }

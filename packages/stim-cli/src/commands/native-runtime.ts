@@ -1,91 +1,62 @@
 import chalk from 'chalk';
-import { NOT_OURS_FOREIGN_CWD } from '../metro.ts';
+import { readIdleStop } from '@stim-cli/core/state';
+import type { ReclaimedStep } from '../budget.ts';
+import { phaseLine } from '../command-output.ts';
+import type { DevServerStart } from '../engine/build-facts.ts';
+import { resolveProjectMetro } from '../metro.ts';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { startDevServer, type StartDevServerRequest } from './start.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../engine/launch-verify.ts';
 
-interface MetroResolutionLike {
-  metro?: { pid?: number } | null;
-  kind?: string;
-  notOurs?: string | null;
-}
-
-export interface SupervisorLike {
-  pid?: number;
-  port?: number;
-  mode?: string;
-}
-
 export const sleep = (ms: number): Promise<void> => new Promise<void>((r) => setTimeout(r, ms));
 
-const GATE_RETRY_DELAYS_MS: number[] = [3000, 7000, 10000];
+export type DevServerGate =
+  | { ok: true; port: number; pid: number | null; devServer: DevServerStart | null; reclaimed: ReclaimedStep[] }
+  | { ok: false; code: string; message: string; remedy: string | null; lines: string[]; reclaimed: ReclaimedStep[] };
 
-export function gateShouldRetry(resolution: MetroResolutionLike | null | undefined): boolean {
-  if (resolution?.metro) return false;
-  return resolution?.kind !== NOT_OURS_FOREIGN_CWD;
-}
-
-export async function resolveMetroWithRetry(
-  resolve: (port: number, root: string) => Promise<MetroResolutionLike>,
-  port: number,
-  root: string,
-  {
-    delays = GATE_RETRY_DELAYS_MS,
-    sleep: wait = sleep,
-    onRetry = (_info: { attempt: number; delayMs: number; resolution: MetroResolutionLike }) => {},
-  }: {
-    delays?: number[];
-    sleep?: (ms: number) => Promise<void>;
-    onRetry?: (info: { attempt: number; delayMs: number; resolution: MetroResolutionLike }) => void;
-  } = {},
-): Promise<MetroResolutionLike> {
-  let resolution = await resolve(port, root);
-  for (let i = 0; i < delays.length && gateShouldRetry(resolution); i++) {
-    const delayMs = delays[i];
-    if (delayMs === undefined) break;
-    onRetry({ attempt: i + 1, delayMs, resolution });
-    await wait(delayMs);
-    resolution = await resolve(port, root);
-  }
-  return resolution;
-}
-
-export function noMetroMessage({
+export async function ensureDevServer({
+  root,
   port,
-  resolution,
-  supervisor,
-  supervisorAlive,
+  settings,
+  remote,
+  note,
+  resolve = resolveProjectMetro,
+  start = startDevServer,
+  readState = readWorkspaceState,
 }: {
-  port: number;
-  resolution?: MetroResolutionLike | null;
-  supervisor?: SupervisorLike | null;
-  supervisorAlive?: boolean;
-}): string {
-  const foreign = resolution?.notOurs;
-  if (supervisor && supervisor.port === port && supervisorAlive) {
-    const mode = supervisor.mode ? `${supervisor.mode} ` : '';
-    return (
-      `A supervisor record exists for port ${port} (pid ${supervisor.pid}, ${mode}dev server) but it did not verify as this workspace's Metro` +
-      `${foreign ? `: ${foreign}` : ' -- nothing answered /status'}.` +
-      ' Metro may still be indexing this project (a monorepo file-map crawl blocks its event loop for ~20s after the port opens).'
-    );
+  root: string;
+  port: number | null;
+  settings: StartDevServerRequest['settings'];
+  remote: boolean;
+  note: (line: string) => void;
+  resolve?: (port: number, root: string) => Promise<{ metro?: { pid?: number } | null }>;
+  start?: typeof startDevServer;
+  readState?: typeof readWorkspaceState;
+}): Promise<DevServerGate> {
+  const held = port === null ? null : (await resolve(port, root)).metro;
+  if (port !== null && held) return { ok: true, port, pid: held.pid ?? null, devServer: null, reclaimed: [] };
+  const reason = readIdleStop(readState(root)) ? 'stopped (idle)' : 'not running';
+  note(chalk.dim(phaseLine('metro', `dev server ${reason}; starting it${remote ? ' for a remote device' : ''}`)));
+  const result = await start({ root, settings, remote, out: note, note });
+  if (!result.ok) {
+    return {
+      ok: false,
+      code: result.error.code,
+      message: `Could not start this workspace's dev server: ${result.error.message}`,
+      remedy: result.error.remedy,
+      lines: result.lines,
+      reclaimed: result.reclaimed,
+    };
   }
-  if (foreign) return `Port ${port} is in use but is NOT this workspace's dev server: ${foreign}.`;
-  return `Nothing is serving this workspace's dev server on port ${port}.`;
-}
-
-export function noMetroRemedy({
-  port,
-  supervisor,
-  supervisorAlive,
-}: {
-  port: number;
-  supervisor?: SupervisorLike | null;
-  supervisorAlive?: boolean;
-}): string {
-  if (supervisor && supervisor.port === port && supervisorAlive) {
-    return 'Re-run `stim ios` in a few seconds, or give the dev server longer to verify with `stim start --wait <seconds>`.';
-  }
-  return 'Run `stim start` first, or pass --no-metro-check.';
+  const { facts } = result;
+  return {
+    ok: true,
+    port: facts.port,
+    pid: facts.supervisorPid,
+    devServer: facts.alreadyRunning ? null : { started: true, reason },
+    reclaimed: result.reclaimed,
+  };
 }
 
 export async function ensureWorkspaceStorageSafely(

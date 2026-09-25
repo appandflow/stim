@@ -114,9 +114,10 @@ RULES DURING THE LOOP
 - Put runtime .stim.json beside that app's package.json. Monorepo apps do not
   inherit a repository-root runtime file. Keep repository-wide worktree-copy
   rules at the source checkout root; see guide settings for the two scopes.
-- Run start before a debug ios or android build. If it returns STIM_NO_METRO,
-  run stim start and retry. The dev server stops itself after an hour with
-  no use (guide metro); the same retry brings it back.
+- A debug ios or android run starts this workspace's dev server when it is
+  not running, including after it stopped itself for an hour with no use
+  (guide metro). Running start first is optional; it lets Metro warm up while
+  you do other work.
 - Run ios or android again after a native input changes. A JavaScript-only
   change does not need one.
 - For stale Metro transforms or file-map state, use stim start --reset-cache.

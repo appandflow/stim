@@ -105,8 +105,6 @@ export function isReleaseVariant(variant: string | null | undefined): boolean {
   return typeof variant === 'string' && /release$/i.test(variant.trim());
 }
 
-export const NO_METRO = 'STIM_NO_METRO';
-
 export const NO_FINGERPRINT = 'STIM_NO_FINGERPRINT';
 
 export const NO_DEVICE = 'STIM_NO_DEVICE';

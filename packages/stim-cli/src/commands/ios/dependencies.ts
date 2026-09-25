@@ -56,7 +56,8 @@ import { writeWorkspaceLaunch } from '../../supervisor/state.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../../workspace/workspace-state.ts';
 import { gitCommonDir, repoRoot } from '../../workspace/worktree.ts';
 import { warmMetro } from '../../engine/metro-warmup.ts';
-import { resolveMetroWithRetry, ensureWorkspaceStorageSafely } from '../native-runtime.ts';
+import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
+import { startDevServer } from '../start.ts';
 import { devClientScheme } from '../dev-client.ts';
 import { stopPreviousCollector, replaceCollector } from './collector.ts';
 
@@ -83,7 +84,7 @@ export interface IosDeps {
   listIosRuntimes: typeof listIosRuntimes;
   ensureBooted: typeof ensureBooted;
   resolveProjectMetro: typeof resolveProjectMetro;
-  resolveMetroWithRetry: typeof resolveMetroWithRetry;
+  startDevServer: typeof startDevServer;
   warmMetro: typeof warmMetro;
   readWorkspaceState: typeof readWorkspaceState;
   pidExists: typeof pidExists;
@@ -166,7 +167,7 @@ export const DEFAULT_DEPS: IosDeps = {
   ensureRemoteBootOwned,
   detectProviders,
   resolveProjectMetro,
-  resolveMetroWithRetry,
+  startDevServer,
   warmMetro,
   readWorkspaceState,
   pidExists,

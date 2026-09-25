@@ -28,11 +28,9 @@ import { loadConfig, setDevice, setProjectSetting, upsertProject } from '../work
 import { parseNdjsonText } from '../ndjson.ts';
 import { emulatorLogFile, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { resolveMetroWithRetry } from '../commands/ios.ts';
 import {
   NO_DEVICE,
   NO_FINGERPRINT,
-  NO_METRO,
   androidDevClientScheme,
   androidFacts,
   androidSystemImageSetting,
@@ -469,12 +467,12 @@ function harness(
       calls.kill.push([pid, signal]);
       return true;
     },
-    resolveMetroRetrying: (
-      resolve: Parameters<typeof resolveMetroWithRetry>[0],
-      port: Parameters<typeof resolveMetroWithRetry>[1],
-      path: Parameters<typeof resolveMetroWithRetry>[2],
-      opts: Parameters<typeof resolveMetroWithRetry>[3],
-    ) => resolveMetroWithRetry(resolve, port, path, { ...opts, sleep: async () => {} }),
+    startServer: async () => ({
+      ok: false as const,
+      error: { code: 'STIM_METRO_TIMEOUT', message: 'The dev server did not answer.', remedy: 'Run `stim logs`.' },
+      lines: [],
+      reclaimed: [],
+    }),
     verifyLaunched: async (args: VerifyArgs = {}) => {
       calls.verify.push(args);
       return { verified: true, waitedMs: 3100, timedOut: false, mode: null };
@@ -821,7 +819,7 @@ describe('explicit remote backend behavior', () => {
     const order: string[] = [];
     const h = harness({
       remoteDevice: 'eas',
-      resolveMetroRetrying: async () => {
+      resolveMetro: async () => {
         order.push('localMetro');
         return { metro: { pid: 41233, leader: 41233, cwd: root } };
       },
@@ -1682,83 +1680,111 @@ describe('the applicationId comes from the built APK', () => {
   });
 });
 
+const devServerStarted = (port = 8082, alreadyRunning = false) => ({
+  ok: true as const,
+  facts: { port, supervisorPid: 4242, mode: 'bare-inproc', logsDir: '/logs', alreadyRunning },
+  waited: '(2.0s)',
+  reclaimed: [],
+});
+
 describe('metro is verified before any build work', () => {
-  test('an unhealthy reserved port fails fast with STIM_NO_METRO', async () => {
+  test('a dead port starts the dev server through the start path, then builds against it', async () => {
+    const starts: { root: string; remote?: boolean }[] = [];
     const h = harness({
+      json: true,
       resolveMetro: async () => ({ missing: true }),
-      fingerprint: never('the fingerprint'),
-      resolveCached: never('the cache lookup'),
-      build: never('the build'),
-      install: never('the install'),
-    });
-    const result = await h.run();
-
-    expect(result.ok).toBe(false);
-    assert(result.error);
-    expect(result.error.code).toBe(NO_METRO);
-    expect(result.error.message).toMatch(/port 8082/);
-    expect(result.error.remedy).toMatch(/stim start/);
-    expect(result.error.remedy).toMatch(/--no-metro-check/);
-    expect(h.stderr.at(-2)).toMatch(/STIM_NO_METRO/);
-    expect(existsSync(workspaceStateFile(root))).toBe(false);
-  });
-
-  test('a foreign holder of the port is named rather than built against', async () => {
-    const h = harness({
-      resolveMetro: async () => ({ notOurs: 'pid 900 runs from /elsewhere', kind: 'foreign-cwd' }),
-      build: never('the build'),
-    });
-    const result = await h.run();
-    assert(result.error);
-    expect(result.error.code).toBe(NO_METRO);
-    expect(result.error.message).toMatch(/pid 900 runs from \/elsewhere/);
-  });
-
-  test('an indexing Metro is retried rather than refused', async () => {
-    let attempts = 0;
-    const h = harness({
-      resolveMetro: async () => {
-        attempts += 1;
-        if (attempts < 3)
-          return { notOurs: "pid 42 on port 8082 does not answer Metro's /status", kind: 'unresponsive' };
-        return { metro: { pid: 42, leader: 42, cwd: root } };
+      startServer: async (args: { root: string; remote?: boolean }) => {
+        starts.push(args);
+        return devServerStarted();
       },
     });
     const result = await h.run();
     expect(result.ok).toBe(true);
-    expect(attempts).toBe(3);
+    expect(starts).toEqual([expect.objectContaining({ root, remote: false })]);
+    expect(h.calls.launch[0]?.metroPort).toBe(8082);
+    expect(JSON.parse(h.stdout[0] ?? '{}').devServer).toEqual({ started: true, reason: 'not running' });
   });
 
-  test('a refusal names our own supervisor when there is a record for this port', async () => {
-    writeWorkspaceState(root, { supervisor: { pid: process.pid, port: 8082, mode: 'bare-inproc', startedAt: 'now' } });
+  test('an idle-stopped dev server is started again and reported as such', async () => {
+    writeWorkspaceState(root, { devServerStop: { reason: 'idle', at: '2026-09-25T00:00:00.000Z', idleMinutes: 60 } });
+    const h = harness({ resolveMetro: async () => ({ missing: true }), startServer: async () => devServerStarted() });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(labelled(h.stderr, 'metro')).toContain(phaseLine('metro', 'port 8082 (started: stopped (idle))'));
+    expect(h.stdout[0]).toContain(phaseLine('metro', 'running on port 8082 (started: stopped (idle))'));
+  });
+
+  test('the app is wired to the port the start reserved when a foreign process held the old one', async () => {
     const h = harness({
-      resolveMetro: async () => ({
-        notOurs: "pid 4242 on port 8082 does not answer Metro's /status",
-        kind: 'unresponsive',
+      resolveMetro: async () => ({ notOurs: 'pid 900 runs from /elsewhere', kind: 'foreign-cwd' }),
+      startServer: async () => devServerStarted(8090),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.launch[0]?.metroPort).toBe(8090);
+  });
+
+  test('no reservation at all starts the dev server too', async () => {
+    upsertProject(root, { metroPort: null });
+    const h = harness({ resolveMetro: never('the metro probe'), startServer: async () => devServerStarted(8095) });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.launch[0]?.metroPort).toBe(8095);
+  });
+
+  test('a healthy dev server is used as is: no start and no devServer fact', async () => {
+    const h = harness({ json: true, startServer: never('the dev server start') });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(JSON.parse(h.stdout[0] ?? '{}')).not.toHaveProperty('devServer');
+  });
+
+  test('a failed start refuses with its cause before any build work', async () => {
+    const h = harness({
+      resolveMetro: async () => ({ missing: true }),
+      startServer: async () => ({
+        ok: false as const,
+        error: { code: 'STIM_SUPERVISOR_EXITED', message: 'The supervisor exited (code 1).', remedy: 'Fix it.' },
+        lines: ['metro: SyntaxError in metro.config.js'],
+        reclaimed: [],
       }),
+      fingerprint: never('the fingerprint'),
       build: never('the build'),
     });
     const result = await h.run();
     assert(result.error);
-    expect(result.error.code).toBe(NO_METRO);
-    expect(result.error.message).toMatch(/A supervisor record exists for port 8082/);
-    expect(result.error.message).toMatch(/still be indexing/);
-    expect(result.error.remedy).toMatch(/--wait/);
+    expect(result.error).toEqual({
+      code: 'STIM_SUPERVISOR_EXITED',
+      message: "Could not start this workspace's dev server: The supervisor exited (code 1).",
+      remedy: 'Fix it.',
+    });
+    expect(h.stderr.join('\n')).toContain('metro: SyntaxError in metro.config.js');
+    expect(existsSync(workspaceStateFile(root))).toBe(false);
   });
 
-  test('no reservation at all is the same refusal', async () => {
-    upsertProject(root, { metroPort: null });
-    const h = harness({ resolveMetro: never('the metro probe'), build: never('the build') });
-    const result = await h.run();
-    assert(result.error);
-    expect(result.error.code).toBe(NO_METRO);
-    expect(result.error.message).toMatch(/No Metro port is reserved/);
+  test('a remote run starts the dev server for the remote device', async () => {
+    const starts: { remote?: boolean }[] = [];
+    const h = harness({
+      remoteDevice: 'eas',
+      resolveMetro: async () => ({ missing: true }),
+      startServer: async (args: { root: string; remote?: boolean }) => {
+        starts.push(args);
+        return devServerStarted();
+      },
+      resolveRemoteDeviceContext: async () => ({
+        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+      }),
+      ensureMetroReachable: async () => ({ failed: 'stop here', remedy: 'none' }),
+    });
+    await h.run();
+    expect(starts).toEqual([expect.objectContaining({ remote: true })]);
   });
 
   test('--no-metro-check proceeds without probing anything on a new emulator', async () => {
     const h = harness({
       metroCheck: false,
       resolveMetro: never('the metro probe'),
+      startServer: never('the dev server start'),
       ensureDevice: async () => ({ avdName: 'stim-app-412', consolePort: 5584, owned: true, created: true }),
     });
     const result = await h.run();
@@ -1777,7 +1803,7 @@ describe('metro is verified before any build work', () => {
     const stdout0 = h.stdout[0];
     assert(stdout0);
     const payload = JSON.parse(stdout0);
-    expect(payload.code).toBe(NO_METRO);
+    expect(payload.code).toBe('STIM_METRO_TIMEOUT');
     expect(payload.message && payload.remedy).toBeTruthy();
   });
 });
@@ -3765,12 +3791,12 @@ describe('release skips Metro entirely', () => {
     const h = harness({
       variant: 'productionRelease',
       resolveMetro: never('the metro probe'),
+      startServer: never('the dev server start'),
       ensureDevice: async () => ({ avdName: 'stim-app-412', consolePort: 5584, owned: true, created: true }),
     });
     const result = await h.run();
     expect(result.ok).toBe(true);
     expect(h.calls.metro.length).toBe(0);
-    expect(h.stderr.join('\n')).not.toMatch(/STIM_NO_METRO/);
     expect(labelled(h.stderr, 'metro')[0]).toMatch(/skipped \(productionRelease: the JS bundle is embedded/);
     expect(h.calls.launch.length).toBe(0);
     expect(h.calls.launchRelease[0]?.packageName).toBe('com.example.app');

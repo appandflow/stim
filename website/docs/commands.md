@@ -131,7 +131,8 @@ stim start [--wait <seconds>] [--remote] [--reset-cache] [--json]
 
 Starts the project dev server on the workspace's reserved port. Stim supervises
 the process and captures its output. A healthy existing server for the same
-project is reused.
+project is reused. A Debug `ios` or `android` run starts the dev server the
+same way when it is not running, so running `start` first is optional.
 
 - `--wait <seconds>` changes the startup timeout. The default is 60 seconds.
   It waits for the dev server; `--wait` on `ios`, `android`, and `device lock`
@@ -187,9 +188,16 @@ app, opens it, and checks launch logs. Native builds run locally by default;
   including with `--device`. It needs eas-cli 18.9.0 or later. A miss stops
   and prints an EAS build command; cloud builds require authorization. Cannot
   be combined with `--scheme`, `--configuration`, or `--no-build-cache`.
-- `--no-metro-check` skips the Debug dev-server gate.
+- `--no-metro-check` skips the Debug dev-server check and does not start the
+  dev server.
 - `--no-build-cache` ignores cached artifacts and replaces the matching entry.
 - `--json` prints one stable result object on stdout.
+
+A Debug run starts the workspace's dev server as `stim start` would when it is
+not running, including after an idle stop. With `--remote`, it starts it as
+`stim start --remote` would. The JSON result then carries
+`devServer: { "started": true, "reason": "not running" | "stopped (idle)" }`.
+The run refuses only when that start fails, with the start's error code.
 
 A non-Debug configuration embeds its JavaScript bundle.
 
@@ -265,9 +273,13 @@ the app, opens it, and checks launch logs.
   including with `--device`. It needs eas-cli 18.9.0 or later. A miss stops
   and prints an EAS build command; cloud builds require authorization. Cannot
   be combined with `--variant` or `--no-build-cache`.
-- `--no-metro-check` skips the Debug dev-server gate.
+- `--no-metro-check` skips the Debug dev-server check and does not start the
+  dev server.
 - `--no-build-cache` ignores cached artifacts and replaces the matching entry.
 - `--json` prints one stable result object on stdout.
+
+A Debug variant starts the workspace's dev server when it is not running, as
+described for `ios`.
 
 A variant that ends in `Release` embeds its JavaScript bundle and skips Metro.
 

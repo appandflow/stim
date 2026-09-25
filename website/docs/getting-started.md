@@ -64,7 +64,7 @@ The agent normally runs:
 
 <StimTabs
 code={`stim doctor           # inspect the source checkout and warm-state gaps
-stim start            # start this workspace's dev server
+stim start            # optional: start this workspace's dev server early
 stim ios              # build or restore, install, launch, and verify
 stim logs --errors    # check for errors in the captured logs
 stim stop             # release the live environment`}
@@ -212,7 +212,7 @@ OK: com.appandflow.trailhead on stim-trailhead (iPhone 17 26.5) (4F2A..), Metro 
 - Run `stim doctor` to check the machine and project setup.
 - Run `stim logs --errors` for Metro, app, and build errors since the last
   launch or bundle.
-- A refusal prints a code such as `STIM_NO_METRO`. Run
+- A refusal prints a code such as `STIM_METRO_TIMEOUT`. Run
   `stim guide errors <CODE>` for its cause and remedy, or look it up on the
   [troubleshooting page](./troubleshooting.md).
 
