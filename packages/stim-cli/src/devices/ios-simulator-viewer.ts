@@ -26,7 +26,7 @@ export function configuredIosSimulatorViewer(override?: IosSimulatorApp): IosSim
   if (app === 'stim-desktop') {
     return {
       open: (udid) => {
-        exec.runFileQuiet('open', ['-a', 'Stim', `stim-desktop://open?udid=${udid}`], OPEN_OPTIONS);
+        exec.runFileQuiet('open', ['-g', '-a', 'Stim', `stim-desktop://open?udid=${udid}`], OPEN_OPTIONS);
       },
     };
   }
