@@ -20,7 +20,6 @@ import { EmptyState } from '@/components/empty-state';
 import { Icon } from '@/components/icon';
 import { MacChip } from '@/components/mac-chip';
 import { useMenuDrawer } from '@/components/menu-drawer';
-import { Toggle } from '@/components/toggle';
 import { WorkspaceRow } from '@/components/workspace-row';
 import { useHomeFilters } from '@/hooks/home-filters';
 import { useMacs } from '@/hooks/mac-connection';
@@ -50,7 +49,7 @@ export function Home() {
   const router = useRouter();
   const menu = useMenuDrawer();
   const { macs, connections } = useMacs();
-  const { filters, update, view, setView } = useHomeFilters();
+  const { filters, update, view } = useHomeFilters();
   const [visible, setVisible] = useState<Set<string>>(new Set());
   const [aspects, setAspects] = useState<ReadonlyMap<string, number>>(new Map());
   const onAspect = useCallback(
@@ -98,15 +97,18 @@ export function Home() {
     <>
       <Stack.Screen
         options={{
-          headerTitle: () => (
-            <Image
-              source={WORDMARK}
-              tintColor={colors.primary}
-              style={styles.wordmark}
-              contentFit="contain"
-              accessibilityLabel="Stim"
-            />
-          ),
+          headerTitle: () =>
+            view === 'workspaces' ? (
+              <Image
+                source={WORDMARK}
+                tintColor={colors.primary}
+                style={styles.wordmark}
+                contentFit="contain"
+                accessibilityLabel="Stim"
+              />
+            ) : (
+              <Text style={[styles.headerTitleText, { color: colors.text }]}>Devices</Text>
+            ),
         }}
       />
       <Stack.Toolbar placement="left">
@@ -181,10 +183,6 @@ export function Home() {
           />
         ))}
       </ScrollView>
-      <View style={styles.views}>
-        <Toggle colors={colors} label="Workspaces" on={view === 'workspaces'} onPress={() => setView('workspaces')} />
-        <Toggle colors={colors} label="Devices" on={view === 'devices'} onPress={() => setView('devices')} />
-      </View>
     </View>
   );
 
@@ -304,6 +302,7 @@ export function Home() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   wordmark: { width: 50, height: 24 },
+  headerTitleText: { fontSize: 17, fontWeight: '600' },
   list: { paddingBottom: 32 },
   sectionHeader: {
     flexDirection: 'row',
@@ -315,7 +314,6 @@ const styles = StyleSheet.create({
   },
   sectionTitle: { fontSize: 15, fontWeight: '500' },
   chips: { gap: 10, paddingHorizontal: 20, paddingBottom: 4 },
-  views: { flexDirection: 'row', gap: 8, paddingHorizontal: 20, paddingTop: 16 },
   gridRow: { flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingTop: 12 },
   loading: { marginTop: 48 },
   empty: { alignItems: 'center', padding: 32, gap: 8 },
