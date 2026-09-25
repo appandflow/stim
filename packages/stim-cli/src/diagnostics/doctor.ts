@@ -1238,7 +1238,7 @@ export async function detectFingerprintParity(
       previousHash: clean.hash,
       current: project,
       differ,
-    });
+    }).map((change) => change.name);
     return checkFingerprintParity({
       projectHash: project.hash,
       worktreeHash: clean.hash,

@@ -70,4 +70,26 @@ describe('last build per platform', () => {
   test('a duration too large for a date leaves finishedAt null instead of failing status', () => {
     expect(readLastBuilds({ lastBuild: { ...ios, durationMs: 1e308 } }).ios).toMatchObject({ finishedAt: null });
   });
+
+  test('a miss reason is reported for a compiled run, bounded, and dropped from a cache hit', () => {
+    const missReason = {
+      kind: 'changed',
+      summary: 'native dependency added: expo-clipboard',
+      changes: [
+        ...Array.from({ length: 25 }, (_, i) => ({ source: `f${i}`, change: 'changed', category: 'file' })),
+        { source: 'bad', change: 'renamed' },
+      ],
+      changeCount: 40,
+      baseline: { fingerprint: 'old', from: 'elsewhere' },
+      rekeyedBy: ['prebuild', 3],
+    };
+    const compiled = readLastBuilds({ lastBuild: { ...ios, cacheHit: false, missReason } }).ios?.missReason;
+    expect(compiled).toMatchObject({ kind: 'changed', changeCount: 40, baseline: null, rekeyedBy: ['prebuild'] });
+    expect(compiled?.changes).toHaveLength(20);
+    expect(readLastBuilds({ lastBuild: { ...ios, missReason } }).ios?.missReason).toBeUndefined();
+    expect(
+      readLastBuilds({ lastBuild: { ...ios, cacheHit: false, missReason: { kind: 'bogus', summary: 'x' } } }).ios
+        ?.missReason,
+    ).toBeUndefined();
+  });
 });

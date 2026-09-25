@@ -57,6 +57,34 @@ export interface BuildReport {
 
 export type BuildCacheHit = 'local' | 'remote' | false;
 
+export type BuildMissCategory =
+  | 'native-dependency'
+  | 'config-plugin'
+  | 'app-config'
+  | 'app-asset'
+  | 'package'
+  | 'native-dir'
+  | 'autolinking'
+  | 'package-scripts'
+  | 'file'
+  | 'other';
+
+export interface BuildMissChange {
+  source: string;
+  change: 'added' | 'removed' | 'changed';
+  category: BuildMissCategory;
+}
+
+/** Why a run compiled instead of installing a cached app; `changes` holds at most 20 of `changeCount`. */
+export interface BuildMissReason {
+  kind: 'changed' | 'no-baseline' | 'same-sources' | 'cache-skipped' | 'fingerprint-error';
+  summary: string;
+  changes: BuildMissChange[];
+  changeCount: number;
+  baseline: { fingerprint: string; from: 'workspace' | 'project' } | null;
+  rekeyedBy: string[];
+}
+
 /** `stim ios|android --plan --json`: what the next build would find, without building. */
 export interface BuildPlan {
   platform: Platform;
@@ -123,6 +151,7 @@ export interface LastBuild {
   startedAt: string;
   finishedAt: string | null;
   errorCode?: string;
+  missReason?: BuildMissReason;
 }
 
 export interface DeviceLeaseState {

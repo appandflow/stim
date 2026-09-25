@@ -528,6 +528,7 @@ export async function finishIosRun({
     hit: cacheHit,
     providerName,
     readEnabled: useBuildCache,
+    missReason,
     waitedForBuild,
     compilation: compilationCache,
   } = cache;
@@ -864,6 +865,7 @@ export async function finishIosRun({
     storeHash,
     storeKey,
     cacheHit,
+    missReason,
     compilationCache,
     useBuildCache,
     waitedForBuild,

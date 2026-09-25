@@ -69,10 +69,14 @@ describe('build cache outcome', () => {
       startedAt: ago(90_000),
       finishedAt: ago(7_000),
     };
-    expect(lastBuildSummary(last)).toBe('Compiled in 1:23');
-    expect(lastBuildSummary({ ...last, status: 'failed', errorCode: 'STIM_BUILD_FAILED' })).toBe(
-      'Failed (STIM_BUILD_FAILED) in 1:23',
-    );
+    expect(lastBuildSummary(last, now)).toBe('Cache miss, compiled in 1:23 \u00B7 <1m ago');
+    expect(lastBuildSummary({ ...last, cacheSkipped: true }, now)).toBe('Compiled in 1:23 \u00B7 <1m ago');
+    expect(
+      lastBuildSummary(
+        { ...last, status: 'failed', errorCode: 'STIM_BUILD_FAILED', finishedAt: ago(3 * 3600_000) },
+        now,
+      ),
+    ).toBe('Failed (STIM_BUILD_FAILED) in 1:23 \u00B7 3h ago');
   });
 
   it('describes a planned hit, a miss that regenerates, and a refusal', () => {

@@ -47,8 +47,9 @@ reload and stop a workspace:
   its checkout, Metro's port and health, memory, and the error count, which
   opens the errors; build progress with its cache outcome ("Cache hit" or
   "Cold build", "Likely ..." before the run reaches a phase that decides it);
-  each platform's last build (local cache, remote cache, compiled, or failed)
-  and a **Check next build** button that asks the server's read-only
+  each platform's last build (local cache, remote cache, compiled, or failed,
+  with its duration and age), with why a compiled build missed the cache,
+  which opens a sheet listing the changed fingerprint sources, and a **Check next build** button that asks the server's read-only
   `build.plan` what the next build would find and how long it should take;
   warnings, remote sessions, and each
   device: a running device with the latest frame the server sends for it, a
@@ -138,7 +139,8 @@ status timestamps are moved forward to the time the server starts, so build
 and activity durations read as they did at capture. The workspace that ran
 the build carries a remote EAS session added by hand (listed under `edits` in
 `status.json`), because the capture machine had none. Two workspaces carry
-`lastBuilds` added the same way. `build.plan` answers from
+`lastBuilds` added the same way; the compiled Android one also carries a `missReason`
+in the shape of a real miss. `build.plan` answers from
 `mock-server/fixtures/plans.json`, a local hit for iOS and a cold build that
 generates the native dir for Android, captured from `stim ios|android --plan
 --json`.

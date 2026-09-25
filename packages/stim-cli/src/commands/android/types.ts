@@ -1,3 +1,4 @@
+import type { BuildMissReason } from '@stim-cli/core/state';
 import type { LaunchErrorRecord } from '../../command-output.ts';
 import type { LeaseFacts } from '../../engine/device-lease-run.ts';
 import type { AndroidFacts } from '../../engine/build-facts.ts';
@@ -61,6 +62,7 @@ export interface FailExtra {
 }
 
 export interface AndroidRecord {
+  missReason?: BuildMissReason | null;
   fingerprint?: string | null;
   cacheKey?: string | null;
   cacheHit?: boolean | string;

@@ -27,6 +27,7 @@ public struct LastBuild: Decodable, Hashable, Sendable {
   public var startedAt: String
   public var finishedAt: String?
   public var errorCode: String?
+  public var missReason: BuildMissReason?
 
   public var summary: String {
     let took = durationMs.map { " in \(formatDuration(ms: $0))" } ?? ""
@@ -34,8 +35,37 @@ public struct LastBuild: Decodable, Hashable, Sendable {
     switch cacheHit {
     case .local: return "Local cache\(took)"
     case .remote: return "Remote cache\(took)"
-    case .none: return "Compiled\(took)"
+    case .none: return "\(cacheSkipped == true ? "Compiled" : "Cache miss, compiled")\(took)"
     }
+  }
+
+  public var endedAt: Date? { parseTimestamp(finishedAt ?? startedAt) }
+}
+
+/// Why a run compiled instead of installing a cached app, from `lastBuilds.<platform>.missReason`.
+public struct BuildMissReason: Decodable, Hashable, Sendable {
+  public struct Change: Decodable, Hashable, Sendable {
+    public var source: String
+    public var change: String
+    public var category: String
+  }
+
+  public struct Baseline: Decodable, Hashable, Sendable {
+    public var fingerprint: String
+    public var from: String
+  }
+
+  public var kind: String
+  public var summary: String
+  public var changes: [Change]
+  public var changeCount: Int
+  public var baseline: Baseline?
+  public var rekeyedBy: [String]
+
+  public var baselineLine: String? {
+    guard let baseline else { return nil }
+    let place = baseline.from == "workspace" ? "in this workspace" : "of this project in another worktree"
+    return "Compared with \(baseline.fingerprint.prefix(8)), the last build \(place)."
   }
 }
 

@@ -45,6 +45,40 @@ export interface LastBuildReport {
   startedAt: string;
   finishedAt: string | null;
   errorCode?: string;
+  missReason?: BuildMissReason;
+}
+
+/** What kind of native input a changed fingerprint source is. */
+export type BuildMissCategory =
+  | 'native-dependency'
+  | 'config-plugin'
+  | 'app-config'
+  | 'app-asset'
+  | 'package'
+  | 'native-dir'
+  | 'autolinking'
+  | 'package-scripts'
+  | 'file'
+  | 'other';
+
+export interface BuildMissChange {
+  source: string;
+  change: 'added' | 'removed' | 'changed';
+  category: BuildMissCategory;
+}
+
+/**
+ * Why a run compiled instead of installing a cached app. `changes` holds at most 20 entries,
+ * ordered by importance; `changeCount` is the full number of changed fingerprint sources.
+ */
+export interface BuildMissReason {
+  kind: 'changed' | 'no-baseline' | 'same-sources' | 'cache-skipped' | 'fingerprint-error';
+  summary: string;
+  changes: BuildMissChange[];
+  changeCount: number;
+  /** `cacheKey` is kept in workspace state so a later miss can find this baseline; status omits it. */
+  baseline: { fingerprint: string; cacheKey?: string; from: 'workspace' | 'project' } | null;
+  rekeyedBy: string[];
 }
 
 /** The payload `stim ios --plan --json` and `stim android --plan --json` print. */

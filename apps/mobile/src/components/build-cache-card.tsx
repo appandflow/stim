@@ -1,7 +1,9 @@
+import { useRouter } from 'expo-router';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Card } from '@/components/card';
-import { useBuildPlan, type PlanState } from '@/hooks/mac-connection';
+import { useBuildPlan, useMacConnection, type PlanState } from '@/hooks/mac-connection';
+import { useNow } from '@/hooks/use-now';
 import { lastBuildSummary, planExpectation, planSummary } from '@/lib/format';
 import type { EnvironmentState, Platform } from '@/protocol/types';
 import { useColors } from '@/theme';
@@ -47,6 +49,9 @@ function PlatformBuilds({
   check: (platform: Platform) => void;
 }) {
   const colors = useColors();
+  const router = useRouter();
+  const macId = useMacConnection().mac?.id ?? '';
+  const now = useNow(30_000);
   const last = env.lastBuilds?.[platform];
   const name = platform === 'ios' ? 'iOS' : 'Android';
   return (
@@ -66,8 +71,24 @@ function PlatformBuilds({
         </Pressable>
       </View>
       <Text style={[styles.line, { color: last?.status === 'failed' ? colors.error : colors.secondary }]}>
-        {last ? `Last: ${lastBuildSummary(last)}` : 'No build recorded'}
+        {last ? `Last: ${lastBuildSummary(last, now)}` : 'No build recorded'}
       </Text>
+      {last?.missReason ? (
+        <Pressable
+          onPress={() =>
+            router.push({ pathname: '/mac/[id]/build-miss', params: { id: macId, path: env.path, platform } })
+          }
+          accessibilityRole="button"
+          accessibilityLabel={`Why the last ${name} build missed the cache`}
+          hitSlop={6}
+          style={styles.reason}
+        >
+          <Text style={[styles.line, styles.reasonText, { color: colors.warn }]} numberOfLines={1}>
+            {`Why: ${last.missReason.summary}`}
+          </Text>
+          <Text style={[styles.line, { color: colors.tertiary }]}>{'\u203A'}</Text>
+        </Pressable>
+      ) : null}
       {plan?.kind === 'checking' ? <ActivityIndicator style={styles.spinner} color={colors.primary} /> : null}
       {plan?.kind === 'failed' ? (
         <Text style={[styles.line, { color: colors.warn }]} selectable>
@@ -106,4 +127,6 @@ const styles = StyleSheet.create({
   action: { fontSize: 13, fontWeight: '600' },
   line: { fontSize: 13, lineHeight: 18 },
   spinner: { alignSelf: 'flex-start' },
+  reason: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  reasonText: { flexShrink: 1 },
 });

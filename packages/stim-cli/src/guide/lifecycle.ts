@@ -925,10 +925,18 @@ THE BUILD CACHE HAS THREE LEVELS
   trims, and clears local caches only: the provider contract has no delete
   operation, so no local command can remove data a team or CI system shares.
 
-  A MISS explains itself when it can. When this workspace's previous build
-  stored its fingerprint sources beside the cache entry, the fingerprint line
-  gains " -- N sources changed: <up to three paths>", and the full list
-  (capped at 20 names) lands in the build log as a fingerprint_diff record.
+  A MISS EXPLAINS ITSELF. Each local cache entry keeps the per-source hashes
+  of its fingerprint (hashes only, pruned with the entry). Before compiling,
+  Stim compares the sources it is about to store with a baseline: the entry
+  this workspace's last build of the same platform used, else the newest one
+  another worktree of the same project used. It prints one line:
+
+    cache       miss: native dependency added: expo-clipboard (+2 more)
+
+  records the reason as lastBuilds.<platform>.missReason in status --json
+  (see \`guide facts status\`), and writes the changed sources (capped at 20
+  names) to the build log as a fingerprint_diff record. With no baseline the
+  line says there was nothing to compare with.
 
   THE KEY CAN MOVE MID-RUN, and the run says so in two facts rather than two
   explanations. \`expo prebuild\` and \`pod install\` rewrite fingerprinted

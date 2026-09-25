@@ -1,3 +1,4 @@
+import type { BuildMissReason } from '@stim-cli/core/state';
 import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
 import type { LaunchErrorRecord } from '../../command-output.ts';
 import type { LeaseFacts } from '../../engine/device-lease-run.ts';
@@ -86,6 +87,7 @@ export interface FailArgs {
 }
 
 export interface BuildFailureFields {
+  missReason?: BuildMissReason | null;
   fingerprint?: string | null;
   cacheKey?: string | null;
   cacheHit?: boolean | string;

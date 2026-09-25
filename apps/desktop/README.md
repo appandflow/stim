@@ -57,7 +57,9 @@ build" once the run has reached install or prebuild, pods or compile, and
 outcome of the project's previous run. Its tooltip names how many runs the time
 estimate comes from. The workspace inspector's **Builds** section shows each
 platform's last build from `lastBuilds` (local cache, remote cache, compiled,
-or failed, with its duration), and **Check next build** runs
+or failed, with its duration and age). A compiled build shows why it missed
+the cache from `missReason`; clicking it opens a popover with the changed
+fingerprint sources. **Check next build** runs
 `stim <platform> --plan --json` in the workspace. That builds, boots and
 installs nothing; the result says whether the next build would hit the local
 or remote cache or compile, the prebuild it would run, and the expected

@@ -622,7 +622,7 @@ RULES
 
   lastBuilds   { ios?, android? }, each { platform, status, cacheHit,
                cacheSkipped, durationMs, fingerprint, startedAt, finishedAt,
-               errorCode? }
+               errorCode?, missReason? }
 
   status       "ok" or "failed"
   cacheHit     "local" or "remote" for an app from that cache tier; false
@@ -630,6 +630,16 @@ RULES
   durationMs   the run's wall time; finishedAt is startedAt plus it. Both
                are null when the record carries no duration.
   fingerprint  the key's fingerprint after any prebuild or pod install
+  missReason   only on a run that did not install a cached app (it
+               compiled, or failed before finding one): { kind, summary, changes,
+               changeCount, baseline, rekeyedBy }. kind is "changed",
+               "no-baseline", "same-sources", "cache-skipped" or
+               "fingerprint-error"; summary names the cause, such as
+               "native dependency added: expo-clipboard". changes holds up to
+               20 { source, change, category } of changeCount changed sources;
+               baseline is { fingerprint, from: "workspace" | "project" }, the
+               cached build compared with; rekeyedBy lists "prebuild" or
+               "pod install" when those steps moved the key.
 
   Plain status prints "last build: ios local cache in 12s, android compiled
   in 7m02s". To predict the next run instead, see \`guide facts plan\`.
