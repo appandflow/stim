@@ -97,16 +97,18 @@ EXPO_PUBLIC_STIM_DEV_DEVICE_TOKEN=...
 
 On launch, a development build stores that Mac, named from the server's
 `hello`, and opens its workspaces. Release builds ignore both variables.
-`.env.local` is gitignored; never commit a device token. Restart Metro after
-`dev:pair` so Expo reads the new values.
+`.env.local` is gitignored; never commit a device token. Metro picks up a
+rewritten `.env.local`; reload the app after `dev:pair`.
 
 - `--mock` pairs with `npm run mock-server` instead of `stim-server`. The mock
   server writes its current pairing code to a file in the system temporary
-  directory, and issues a new code after each pairing.
+  directory, and issues and prints a new code after each pairing and every 5
+  minutes.
 - `--port <n>` targets a server on another port than 7787, such as a
   `stim-server --port <n>` running with a scratch `STIM_HOME`.
-- `--endpoint <url>` sets the endpoint the app connects to instead of
-  `ws://127.0.0.1:<port>`, such as the tailnet endpoint `stim-server` prints.
+- `--endpoint <url>` sets the endpoint the app connects to, such as the
+  tailnet endpoint `stim-server` prints. The default, `ws://127.0.0.1:<port>`,
+  reaches the Mac from the iOS Simulator but not from an Android emulator.
   The server binds a device token to the machine that paired it, so a token
   from `dev:pair` works only in a simulator or emulator on this Mac.
 

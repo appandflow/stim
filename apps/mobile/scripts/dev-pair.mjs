@@ -33,22 +33,22 @@ function pairingToken(mock, port) {
       fail(`no mock server pairing code in ${file}. Start it with \`npm run mock-server -- --port ${port}\`.`);
     }
   }
-  let output;
   try {
-    output = execFileSync('stim-server', ['pair', '--json', '--port', String(port)], {
+    const output = execFileSync('stim-server', ['pair', '--json', '--port', String(port)], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'inherit'],
     });
+    return JSON.parse(output).qr.pairingToken;
   } catch (error) {
     fail(`\`stim-server pair --json\` failed: ${error.message}`);
   }
-  return JSON.parse(output).qr.pairingToken;
 }
 
 function spend(endpoint, token) {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(endpoint);
-    socket.onerror = () => reject(new Error(`cannot reach ${endpoint}. Is the server running?`));
+    socket.onerror = () => reject(new Error(`cannot connect to ${endpoint}.`));
+    socket.onclose = () => reject(new Error(`${endpoint} closed the connection without answering hello.`));
     socket.onopen = () =>
       socket.send(
         JSON.stringify({
@@ -62,7 +62,12 @@ function spend(endpoint, token) {
         }),
       );
     socket.onmessage = (message) => {
-      const reply = JSON.parse(String(message.data));
+      let reply;
+      try {
+        reply = JSON.parse(String(message.data));
+      } catch {
+        return;
+      }
       if (reply.id !== 1) return;
       socket.close();
       if (reply.error) reject(new Error(`${reply.error.code}: ${reply.error.message}`));
@@ -76,7 +81,8 @@ function writeEnv(values) {
   try {
     lines = readFileSync(ENV_FILE, 'utf8').split('\n');
   } catch {}
-  const kept = lines.filter((line) => line !== '' && !Object.keys(values).some((key) => line.startsWith(`${key}=`)));
+  const kept = lines.filter((line) => !Object.keys(values).some((key) => line.startsWith(`${key}=`)));
+  while (kept.at(-1) === '') kept.pop();
   const added = Object.entries(values).map(([key, value]) => `${key}=${value}`);
   writeFileSync(ENV_FILE, `${[...kept, ...added].join('\n')}\n`, { mode: 0o600 });
 }
@@ -102,7 +108,7 @@ if (!result.deviceToken) fail('the server did not issue a device token.');
 writeEnv({ [ENDPOINT_KEY]: endpoint, [TOKEN_KEY]: result.deviceToken });
 
 console.log(`Paired with ${result.server.name} at ${endpoint}; wrote ${ENDPOINT_KEY} and ${TOKEN_KEY} to .env.local.`);
-console.log('Development builds open that Mac on launch. Restart Metro (`stim start`) if it is running, then reload.');
+console.log('Development builds open that Mac on launch; reload the app (`stim reload`) if it is running.');
 if (result.device) console.log(`Revoke this device when you are done: stim-server devices revoke ${result.device.id}`);
 else
   console.log('Device tokens the mock server issues last until its token file in the temporary directory is deleted.');

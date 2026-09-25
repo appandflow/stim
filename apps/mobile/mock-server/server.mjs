@@ -36,7 +36,11 @@ function newPairing() {
 }
 
 let pairing = newPairing();
-setInterval(() => (pairing = newPairing()), PAIRING_TTL_MS);
+setInterval(() => {
+  pairing = newPairing();
+  console.log('Pairing code:');
+  console.log(pairing.code);
+}, PAIRING_TTL_MS);
 
 const server = new WebSocketServer({ host: '127.0.0.1', port: Number(values.port) });
 server.on('listening', () => {
