@@ -207,7 +207,7 @@ struct Inspector: View {
     .help(
       isRemote
         ? "stim stop: ends the billable remote session with the rest of the workspace"
-        : "stim stop --slot \(device.slot): stops this device, keeping the shared server and other slots running"
+        : "stim stop --slot \(device.slot): stops every device in this slot, keeping the shared server and other slots running"
     )
   }
 

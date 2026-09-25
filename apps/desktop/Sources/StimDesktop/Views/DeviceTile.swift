@@ -75,7 +75,7 @@ struct DeviceTile: View {
     .controlSize(.small)
     .fixedSize()
     .disabled(actions.active(for: workspace) != nil)
-    .help("stim stop --slot \(device.slot): stops this device, keeping the shared server and other slots running")
+    .help("stim stop --slot \(device.slot): stops every device in this slot, keeping the shared server and other slots running")
   }
 
   @ViewBuilder private var remoteControls: some View {

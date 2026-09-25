@@ -17,7 +17,9 @@ in the workspace directory:
   confirmation that names the worktree and its branch. Each running device,
   in the device tile and the inspector's device list, has its own **Stop**
   button, running `stim stop --slot <name>` (`default` for the workspace's
-  default device) so the shared server and other slots keep running.
+  default device) so the shared server and other slots keep running --
+  `--slot` is per slot, not per platform, so it also stops that slot's
+  Android device if the slot holds one.
 - Idle devices: when the `stim gc --json` preview lists idle devices, the
   sheet offers **Shut down idle** with a duration (30 minutes to 1 day), then
   runs `stim gc --idle <duration>` after a confirmation. That shuts the devices
