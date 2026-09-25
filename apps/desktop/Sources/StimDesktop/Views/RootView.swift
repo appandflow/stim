@@ -39,7 +39,7 @@ struct RootView: View {
 
   var body: some View {
     NavigationSplitView {
-      Sidebar(store: store, autopilot: autopilot, selection: $selection, projectFilter: projectFilter)
+      Sidebar(store: store, autopilot: autopilot, selection: $selection)
         .navigationSplitViewColumnWidth(min: 240, ideal: 272)
     } detail: {
       detail

@@ -164,16 +164,16 @@ final class StatusStore: ObservableObject {
     return all.filter { self.project(of: $0) == project }
   }
 
-  func unprovisionedWorktrees(in project: Project?) -> [UnprovisionedWorktree] {
-    let all = payload?.unprovisionedWorktrees ?? []
-    guard let project else { return all }
-    return all.filter { self.project(ofPath: $0.path) == project }
-  }
-
   var projectList: [ProjectSummary] {
     projectSummaries(
       environments: payload?.environments ?? [], unprovisioned: payload?.unprovisionedWorktrees ?? [],
       project: project(ofPath:))
+  }
+
+  func projectTree(liveOnly: Bool, hidesUnprovisioned: Bool) -> [ProjectTree] {
+    projectTrees(
+      environments: payload?.environments ?? [], unprovisioned: payload?.unprovisionedWorktrees ?? [],
+      project: project(ofPath:), liveOnly: liveOnly, hidesUnprovisioned: hidesUnprovisioned)
   }
 
   var warningCount: Int {

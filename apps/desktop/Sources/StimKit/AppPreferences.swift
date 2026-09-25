@@ -5,6 +5,8 @@ public enum AppPreferences {
   public enum Key {
     public static let appearance = "appearance"
     public static let showsIdleWorkspaces = "showsIdleWorkspaces"
+    public static let hidesUnprovisionedWorktrees = "hidesUnprovisionedWorktrees"
+    public static let expandedProjects = "sidebar.expandedProjects"
     public static let defaultView = "defaultView"
     public static let lastProjectPath = "lastProjectPath"
     public static let tileSize = "tileSize"

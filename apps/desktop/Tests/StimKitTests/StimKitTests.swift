@@ -143,6 +143,38 @@ import Testing
       ])
   }
 
+  @Test func buildsAProjectTreeWithLiveWorkspacesFirstAndFilters() throws {
+    let json = #"""
+      [{"path":"/r/app/.worktrees/idle","live":false,"warnings":[]},
+       {"path":"/r/app/.worktrees/live","live":true,"warnings":[]},
+       {"path":"/r/zed","live":false,"warnings":[]}]
+      """#
+    let envs = try JSONDecoder().decode([Workspace].self, from: Data(json.utf8))
+    let worktrees = [
+      UnprovisionedWorktree(path: "/r/app/.worktrees/b", branch: "feat/b"),
+      UnprovisionedWorktree(path: "/r/new/.worktrees/c", branch: nil),
+    ]
+    func tree(liveOnly: Bool = false, hidesUnprovisioned: Bool = false) -> [String] {
+      projectTrees(
+        environments: envs, unprovisioned: worktrees, project: Project.init(fallbackFor:), liveOnly: liveOnly,
+        hidesUnprovisioned: hidesUnprovisioned
+      ).map { node in
+        "\(node.summary.project.name) \(node.summary.live)/\(node.summary.total): "
+          + (node.environments.map(\.path) + node.worktrees.map(\.path)).joined(separator: ",")
+      }
+    }
+    #expect(
+      tree() == [
+        "app 1/3: /r/app/.worktrees/live,/r/app/.worktrees/idle,/r/app/.worktrees/b",
+        "new 0/1: /r/new/.worktrees/c", "zed 0/1: /r/zed",
+      ])
+    #expect(tree(liveOnly: true) == ["app 1/3: /r/app/.worktrees/live"])
+    #expect(
+      tree(hidesUnprovisioned: true) == [
+        "app 1/3: /r/app/.worktrees/live,/r/app/.worktrees/idle", "zed 0/1: /r/zed",
+      ])
+  }
+
   private func git(_ args: [String]) throws {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
