@@ -2,7 +2,7 @@ import type { GuideTopic } from './types.ts';
 
 const facts: GuideTopic = {
   summary:
-    'The --json payloads: `start`, `ios`, `android`, `reload`, `stop`, `status`, `doctor`, `device lock`/`unlock`, `gc`, and the error contract',
+    'The --json payloads: `start`, `ios`, `android`, `ios|android --plan`, `reload`, `stop`, `status`, `doctor`, `device lock`/`unlock`, `gc`, and the error contract',
   preamble: () => `SLOTS
 Named ios/android runs add slot to their JSON facts. Default-run fields remain
 compatible. status adds a slots array per environment with each named slot's
@@ -548,7 +548,7 @@ RULES
     },
     status: {
       summary:
-        "the status payload's build and device activity fields: a running build, its estimate, and who drives each device",
+        "the status payload's build and device activity fields: a running build, its estimate, each platform's last build, and who drives each device",
       body: () => `  stim status --json
 
   Each booted simulator and detected emulator in environments (and in
@@ -617,8 +617,55 @@ RULES
 
     build: ios compile, 1m10s elapsed -- about 3 min left (median of 4 cold runs)
 
+  An environment with a recorded run also carries lastBuilds, each
+  platform's most recent ios or android run, finished or failed:
+
+  lastBuilds   { ios?, android? }, each { platform, status, cacheHit,
+               cacheSkipped, durationMs, fingerprint, startedAt, finishedAt,
+               errorCode? }
+
+  status       "ok" or "failed"
+  cacheHit     "local" or "remote" for an app from that cache tier; false
+               for an ok run that compiled, or a failed run that had none
+  durationMs   the run's wall time; finishedAt is startedAt plus it. Both
+               are null when the record carries no duration.
+  fingerprint  the key's fingerprint after any prebuild or pod install
+
+  Plain status prints "last build: ios local cache in 12s, android compiled
+  in 7m02s". To predict the next run instead, see \`guide facts plan\`.
+
   There is no completion fraction: a compile's log volume depends on what
   is already built, so it does not measure progress.`,
+    },
+    plan: {
+      summary: 'the ios and android --plan payload: fingerprint, cacheHit, prebuild, expectedMs and basis',
+      body: () => `  stim ios --plan --json            # or: stim android --plan --json
+
+  { platform, slot?, fingerprint, cacheKey, cacheHit, provider,
+    cacheSkipped, prebuild, outcome, expectedMs, basis, refusal? }
+
+  fingerprint   the fingerprint the run would look up first; with
+                --eas-profile, the one EAS CLI computes
+  cacheKey      the key under that fingerprint; null for an EAS miss
+  cacheHit      "local", "remote", or false for a miss
+  provider      the remote tier that answered, "eas" with --eas-profile,
+                otherwise null
+  cacheSkipped  true when cache reads are off (--no-build-cache or config)
+  prebuild      on a miss, the run's decision for the native dir: "none",
+                "generate", "regenerate" or "refuse"; null on a hit
+  outcome       "hit" or "cold"; null when the run would refuse
+  expectedMs    the median wall time of this project's last successful runs
+                with that outcome on that platform, or null with none
+  basis         how many runs expectedMs comes from (at most 10)
+  refusal       { code, message, remedy } when the run would refuse:
+                STIM_PREBUILD_FAILED for a tracked native dir the fingerprint
+                leaves out, STIM_EAS_BUILD_MISSING for an EAS miss
+
+  A plan that would refuse still exits 0: the payload is the answer. A plan
+  that cannot be computed prints the error contract and exits 1, for example
+  STIM_NO_FINGERPRINT, STIM_EAS_UNAVAILABLE, or STIM_BAD_ARG for a flag that
+  picks a device. When and why a plan and the run can differ: \`guide
+  lifecycle builds\`.`,
     },
     stats: {
       summary: 'the stats payload, what counts as a run, hit, miss and failed, timeSavedMs, the heartbeat estimate',

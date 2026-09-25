@@ -2,6 +2,7 @@ import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { readJsonObject } from './json-file.ts';
 import { workspaceLogsDir, workspaceStateFile } from './paths.ts';
+import type { LastBuildReport, StatsPlatform } from './status.ts';
 
 export interface WorkspaceState {
   supervisor?: Record<string, unknown>;
@@ -28,6 +29,48 @@ export function readIdleStop(state: WorkspaceState | null | undefined): IdleStop
     return null;
   }
   return { reason: 'idle', at: record.at, idleMinutes: record.idleMinutes };
+}
+
+/** Each platform's latest run; `lastBuild` holds whichever platform ran last. */
+export const LAST_BUILD_KEYS: Readonly<Record<StatsPlatform, string>> = {
+  ios: 'lastIosBuild',
+  android: 'lastAndroidBuild',
+};
+
+function lastBuildReport(platform: StatsPlatform, value: unknown): LastBuildReport | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (record.platform !== platform || (record.status !== 'ok' && record.status !== 'failed')) return null;
+  if (typeof record.startedAt !== 'string') return null;
+  const durationMs = typeof record.durationMs === 'number' && record.durationMs >= 0 ? record.durationMs : null;
+  const finished = new Date(Date.parse(record.startedAt) + (durationMs ?? Number.NaN));
+  return {
+    platform,
+    status: record.status,
+    cacheHit: record.cacheHit === 'local' || record.cacheHit === 'remote' ? record.cacheHit : false,
+    cacheSkipped: record.cacheSkipped === true,
+    durationMs,
+    fingerprint: typeof record.fingerprint === 'string' ? record.fingerprint : null,
+    startedAt: record.startedAt,
+    finishedAt: Number.isNaN(finished.getTime()) ? null : finished.toISOString(),
+    ...(typeof record.errorCode === 'string' ? { errorCode: record.errorCode } : {}),
+  };
+}
+
+export function readLastBuilds(
+  state: WorkspaceState | null | undefined,
+): Partial<Record<StatsPlatform, LastBuildReport>> {
+  const reports: Partial<Record<StatsPlatform, LastBuildReport>> = {};
+  for (const platform of ['ios', 'android'] as const) {
+    const [report] = [
+      lastBuildReport(platform, state?.[LAST_BUILD_KEYS[platform]]),
+      lastBuildReport(platform, state?.lastBuild),
+    ]
+      .filter((candidate): candidate is LastBuildReport => candidate !== null)
+      .toSorted((a, b) => (Date.parse(b.startedAt) || 0) - (Date.parse(a.startedAt) || 0));
+    if (report) reports[platform] = report;
+  }
+  return reports;
 }
 
 export function readWorkspaceState(root: string): WorkspaceState | null {

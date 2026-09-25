@@ -1,4 +1,4 @@
-import { lastUseFrom } from '../state/workspace-state.ts';
+import { lastUseFrom, readLastBuilds } from '../state/workspace-state.ts';
 
 describe('last use of a workspace', () => {
   const at = (iso: string) => Date.parse(iso);
@@ -26,5 +26,48 @@ describe('last use of a workspace', () => {
   test('a workspace with no evidence of use has no last use', () => {
     expect(lastUseFrom(null, [])).toBeNaN();
     expect(lastUseFrom({ lastUsedAt: 'garbage' }, [])).toBeNaN();
+  });
+});
+
+describe('last build per platform', () => {
+  const ios = {
+    platform: 'ios',
+    fingerprint: 'abc',
+    cacheHit: 'remote',
+    cacheSkipped: false,
+    durationMs: 42_000,
+    startedAt: '2026-09-25T10:00:00.000Z',
+    status: 'ok',
+  };
+
+  test('each platform keeps its own record, so an android run does not hide the last ios build', () => {
+    const android = { ...ios, platform: 'android', cacheHit: false, status: 'failed', errorCode: 'STIM_BUILD_FAILED' };
+    expect(readLastBuilds({ lastIosBuild: ios, lastAndroidBuild: android, lastBuild: android })).toEqual({
+      ios: {
+        platform: 'ios',
+        status: 'ok',
+        cacheHit: 'remote',
+        cacheSkipped: false,
+        durationMs: 42_000,
+        fingerprint: 'abc',
+        startedAt: '2026-09-25T10:00:00.000Z',
+        finishedAt: '2026-09-25T10:00:42.000Z',
+      },
+      android: expect.objectContaining({ status: 'failed', cacheHit: false, errorCode: 'STIM_BUILD_FAILED' }),
+    });
+  });
+
+  test('a state written before the per-platform keys reports its single lastBuild under its platform', () => {
+    expect(readLastBuilds({ lastBuild: ios })).toEqual({ ios: expect.objectContaining({ cacheHit: 'remote' }) });
+    expect(readLastBuilds({ lastBuild: { ...ios, status: 'running' } })).toEqual({});
+  });
+
+  test('a newer lastBuild wins over an older per-platform record, as after an older Stim ran', () => {
+    const newer = { ...ios, cacheHit: 'local', startedAt: '2026-09-25T11:00:00.000Z' };
+    expect(readLastBuilds({ lastIosBuild: ios, lastBuild: newer }).ios).toMatchObject({ cacheHit: 'local' });
+  });
+
+  test('a duration too large for a date leaves finishedAt null instead of failing status', () => {
+    expect(readLastBuilds({ lastBuild: { ...ios, durationMs: 1e308 } }).ios).toMatchObject({ finishedAt: null });
   });
 });

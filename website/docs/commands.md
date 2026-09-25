@@ -152,7 +152,7 @@ same way when it is not running, so running `start` first is optional.
 ```text
 stim ios [--slot <name>] [--scheme <name>] [--configuration <name>] [--device-type <name>] [--runtime <version>]
          [--simulator-app <xcode|siniulator|stim-desktop>] [--device [udid]] [--wait <seconds> | --no-wait] [--remote <proxy|eas>]
-         [--eas-profile <name>] [--no-metro-check] [--no-build-cache] [--json]
+         [--eas-profile <name>] [--no-metro-check] [--no-build-cache] [--plan] [--json]
 ```
 
 Builds or restores the iOS app. Stim then boots an owned simulator, installs the
@@ -191,6 +191,8 @@ app, opens it, and checks launch logs. Native builds run locally by default;
 - `--no-metro-check` skips the Debug dev-server check and does not start the
   dev server.
 - `--no-build-cache` ignores cached artifacts and replaces the matching entry.
+- `--plan` predicts the next build instead of running it. See
+  [Predict the next build](#predict-the-next-build).
 - `--json` prints one stable result object on stdout.
 
 A Debug run starts the workspace's dev server as `stim start` would when it is
@@ -248,7 +250,7 @@ into cached iOS physical-device builds.
 ```text
 stim android [--slot <name>] [--variant <name>] [--system-image <id>] [--device [serial]]
              [--wait <seconds> | --no-wait] [--remote <proxy|eas>]
-             [--eas-profile <name>] [--no-metro-check] [--no-build-cache] [--json]
+             [--eas-profile <name>] [--no-metro-check] [--no-build-cache] [--plan] [--json]
 ```
 
 Builds or restores the Android app. Stim then boots an owned emulator, installs
@@ -276,12 +278,61 @@ the app, opens it, and checks launch logs.
 - `--no-metro-check` skips the Debug dev-server check and does not start the
   dev server.
 - `--no-build-cache` ignores cached artifacts and replaces the matching entry.
+- `--plan` predicts the next build instead of running it. See
+  [Predict the next build](#predict-the-next-build).
 - `--json` prints one stable result object on stdout.
 
 A Debug variant starts the workspace's dev server when it is not running, as
 described for `ios`.
 
 A variant that ends in `Release` embeds its JavaScript bundle and skips Metro.
+
+### Predict the next build
+
+`stim ios --plan` and `stim android --plan` tell you whether the next run will
+come from the cache and how long it should take, without building, booting a
+device, installing, or starting Metro. A plan takes no workspace lock and
+writes no Stim state, so it can run while another build is in progress.
+
+```text
+$ stim ios --plan
+  plan        ios 1b625d.. -> local cache hit
+  expect      ~2.7s (median of 1 hit run)
+```
+
+A plan computes the fingerprint and cache key the same way the run does. It
+honors `--slot`, `--scheme`, `--configuration`, `--variant`, `--device-type`,
+`--runtime`, `--system-image`, `--eas-profile` and `--no-build-cache`. It then
+checks the caches in the run's order: the local cache, the `cache.provider`
+setting's provider, and the app config's build cache provider. Providers have no
+lookup that skips the download, so a remote check downloads the artifact. The
+`cache.provider` tier downloads to a temporary directory that the plan removes;
+the app config's provider keeps its download wherever it does during a run. On a miss, the plan also reports the
+[prebuild decision](./build-caches.md#native-artifact-cache) the run would make. With
+`--eas-profile`, it asks EAS for a matching build and downloads nothing.
+
+`--json` prints
+`{ platform, slot?, fingerprint, cacheKey, cacheHit, provider, cacheSkipped, prebuild, outcome, expectedMs, basis, refusal? }`.
+`cacheHit` is `"local"`, `"remote"` or `false`. `expectedMs` is the median of
+this project's recorded runs with that outcome, `basis` counts those runs, and
+both are empty (`null` and `0`) until the project has such a run. A run that
+would refuse, such as an EAS miss, carries `refusal` and still exits 0.
+
+A plan cannot see everything that happens during a run. Another workspace may
+store the key first. A `prebuild` or `pod install` may move the fingerprint,
+and the run then checks the new key. A Release hit whose JavaScript swap fails
+builds from scratch. An Android plan uses the ABI of the emulator the slot
+records, or of the system image a new emulator would use. A plan refuses
+`--device`, `--remote`, `--wait`, `--no-wait`, `--no-metro-check` and
+`--simulator-app` with `STIM_BAD_ARG`. Without `--eas-profile`, it also refuses
+the `android.remote` setting and the experimental compiler CAS.
+
+Try it with an agent:
+
+```text
+Before building, run `stim ios --plan --json` in this worktree and tell me
+whether the next build is a cache hit and how long it should take.
+```
 
 ## `reload`
 
@@ -519,6 +570,19 @@ run. `expectedMs` and `expectedPhaseMs` are medians of this project's last
 successful runs with that outcome, and `basis` counts them. Both are `null`
 until the project has such a run. Stim does not report a completion
 percentage.
+
+Each workspace also shows its last build per platform:
+
+```text
+  last build: ios local cache in 12s, android compiled in 7m02s
+```
+
+In `--json`, an environment with a recorded run carries
+`lastBuilds: { ios?, android? }`, each
+`{ platform, status, cacheHit, cacheSkipped, durationMs, fingerprint, startedAt, finishedAt, errorCode? }`.
+`status` is `ok` or `failed`, and `cacheHit` is `local`, `remote`, or `false`
+when the run compiled or failed before finding an app. To predict the next
+build instead, use [`--plan`](#predict-the-next-build).
 
 Each booted simulator and detected emulator also shows who is using it:
 

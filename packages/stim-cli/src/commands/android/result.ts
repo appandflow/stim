@@ -15,6 +15,7 @@ import type { RemoteUploadLike, LaunchResultLike, AndroidRecord, AndroidWriter }
 import type { RunRecorder } from '../../engine/stats.ts';
 import type { ReclaimedStep } from '../../budget.ts';
 import { writeWorkspaceState } from '../../workspace/workspace-state.ts';
+import { LAST_BUILD_KEYS } from '@stim-cli/core/state';
 
 export function androidFacts({
   slot,
@@ -319,7 +320,7 @@ export function persistLastBuild({
 }): Record<string, unknown> {
   const lastBuild = lastBuildRecord({ ...record, startedAt, durationMs, status, errorCode });
   try {
-    writeState(root, { lastBuild });
+    writeState(root, { lastBuild, [LAST_BUILD_KEYS[PLATFORM]]: lastBuild });
   } catch (err) {
     out(phaseLine('state', chalk.yellow(`could not record lastBuild: ${(err as Error)?.message || err}`)));
   }

@@ -67,6 +67,7 @@ export interface IosCommandOptions {
   remote?: RemoteDeviceBackend;
   wait?: string | boolean;
   waitConflict?: boolean;
+  plan?: boolean;
 }
 
 export interface WaitedForBuild {
