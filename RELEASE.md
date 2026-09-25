@@ -83,7 +83,7 @@ done
 Use `X.Y.Z-rc.N` for a release candidate. The workflow computes the publish
 dist-tag itself from the tag and the registry: it reads `npm view
 @stim-cli/core version` -- the first package every run publishes, not
-`stim`, the last -- as its stable-or-not signal, and a candidate
+`@stim-cli/server`, the last -- as its stable-or-not signal, and a candidate
 publishes to `next` instead of `latest` only when that signal is already a
 stable version, so a plain `npm install` never regresses to a candidate.
 Every other publish -- a stable version, or a candidate published while no

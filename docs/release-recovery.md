@@ -40,8 +40,8 @@ and `npx stim@1.9.0` failed with E404 until then. The `smoke` job waits up to
   republish or bump the version.
 - A dist-tag that points elsewhere: see the section above and
   [Stale or wrong dist-tags](#stale-or-wrong-dist-tags).
-- `npx stim@X.Y.Z --version` that installs but fails or prints another
-  version: the published package is broken. A published version cannot be
+- `npx stim@X.Y.Z --version` or `npx -p @stim-cli/server@X.Y.Z stim-server
+  --version` that installs but fails or prints another version: the published package is broken. A published version cannot be
   replaced, so fix it and release a new version.
 
 ## Manual publish fallback
@@ -73,11 +73,25 @@ package's trusted publisher for `appandflow/stim`, workflow `release.yml`,
 environment `release`. The workflow's already-exists skip makes the next
 tagged release pick it up cleanly.
 
+When an acquired package name already has a placeholder version, publish the
+CLI at the version the scoped packages already share. Verify that version
+exists for every dependency before packing. The rename goes through a reviewed
+PR and required CI; inspect and smoke-test its pnpm tarball before the manual
+publish. Preserve existing version tags and publish only the new package name.
+Future releases resume the normal workflow.
+
+For a from-scratch bootstrap (first release ever): confirm all the package
+names are available, use the intended first version, review the full release
+diff, create the `@stim-cli` npm organization, publish every package
+manually in dependency order, then configure each package's trusted
+publisher as above -- all before pushing the first tag.
+
 ### A package added to the lockstep set
 
-A new workspace package cannot be published at the shared version before the
-release that adds it: its `workspace:` ranges resolve to that version, and the
-registry does not serve its dependencies at that version yet. Reserve the name
+Do not publish a new workspace package by hand at the shared version before
+the release that adds it. Its `workspace:` ranges pack as that version, so it
+would install against dependencies that do not contain what it imports yet, or
+that are not published yet. Reserve the name
 with a placeholder instead, configure its trusted publisher, and let the next
 tagged release publish the real version. Do this before pushing that tag; a
 missing package or trusted publisher fails its publish step after the earlier
@@ -108,8 +122,11 @@ rm -rf "$dir"
 
 Then, on npmjs.com, open `@stim-cli/server` -> Settings -> Trusted Publisher, choose
 GitHub Actions, and enter organization `appandflow`, repository `stim`,
-workflow filename `release.yml`, and environment `release`. Set its publishing
-access to match the other `@stim-cli` packages. Confirm with
+workflow filename `release.yml`, and environment `release`. Under allowed
+actions, also allow direct publishing with `npm publish`: a trusted publisher
+created after 2026-09-03 allows only `npm stage publish` by default, and the
+workflow publishes directly. Set its publishing access to match the other
+`@stim-cli` packages. Confirm with
 `npm view @stim-cli/server versions` that only `0.0.0` exists.
 
 The first tagged release that contains the package runs the full lane (RELEASE.md
@@ -122,19 +139,6 @@ npm deprecate @stim-cli/server@0.0.0 "Placeholder; install a released version." 
 
 If that release is a candidate on `next`, `latest` keeps pointing at `0.0.0`
 until the next stable release moves it.
-
-When an acquired package name already has a placeholder version, publish the
-CLI at the version the four scoped packages already share. Verify that version
-exists for every dependency before packing. The rename goes through a reviewed
-PR and required CI; inspect and smoke-test its pnpm tarball before the manual
-publish. Preserve existing version tags and publish only the new package name.
-Future releases resume the normal workflow.
-
-For a from-scratch bootstrap (first release ever): confirm all the package
-names are available, use the intended first version, review the full release
-diff, create the `@stim-cli` npm organization, publish every package
-manually in dependency order, then configure each package's trusted
-publisher as above -- all before pushing the first tag.
 
 ## Provenance publish rejected (E422)
 
