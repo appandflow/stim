@@ -116,7 +116,7 @@ struct DeviceTile: View {
     Button("Stop") {
       actions.run("Stop \(device.slot)", stopCommand(for: device, cwd: workspace))
     }
-    .controlSize(.small)
+    .buttonStyle(.stim(.destructive))
     .fixedSize()
     .disabled(actions.active(for: workspace) != nil)
     .help("stim stop --slot \(device.slot): stops every device in this slot, keeping the shared server and other slots running")
@@ -128,7 +128,7 @@ struct DeviceTile: View {
       .help("This remote session is billed while it runs.")
     if let workspace {
       Button("Stop") { confirmingStop = true }
-        .controlSize(.small)
+        .buttonStyle(.stim(.destructive))
         .fixedSize()
         .disabled(actions.active(for: workspace) != nil)
         .help("stim stop: ends the remote session with the rest of the workspace")
@@ -171,7 +171,7 @@ struct DeviceTile: View {
     } label: {
       Image(systemName: clockwise ? "rotate.right" : "rotate.left")
     }
-    .controlSize(.small)
+    .buttonStyle(.stim())
     .help(rotateFailed ? "The last rotation did not reach the device." : clockwise ? "Rotate right" : "Rotate left")
   }
 
@@ -184,7 +184,7 @@ struct DeviceTile: View {
         folding = false
       }
     }
-    .controlSize(.small)
+    .buttonStyle(.stim())
     .fixedSize()
     .disabled(folding)
     .help(foldError ?? "Sweeps the hinge to the other posture, which lights the other screen.")

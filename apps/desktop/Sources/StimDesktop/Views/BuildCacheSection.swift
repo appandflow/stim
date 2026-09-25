@@ -34,10 +34,21 @@ struct BuildCacheSection: View {
       HStack {
         Text(platform == "ios" ? "iOS" : "Android").font(Theme.body(12, weight: .semibold))
         Spacer()
-        Button("Check next build") { check(platform) }
-          .controlSize(.small)
-          .disabled(isRunning(platform))
-          .help("stim \(platform) --plan: fingerprint and look up the caches without building")
+        Button {
+          check(platform)
+        } label: {
+          HStack(spacing: 5) {
+            if isRunning(platform) {
+              ProgressView().controlSize(.mini)
+            } else {
+              Image(systemName: "sparkle.magnifyingglass")
+            }
+            Text("Check next build")
+          }
+        }
+        .buttonStyle(.stim())
+        .disabled(isRunning(platform))
+        .help("stim \(platform) --plan: fingerprint and look up the caches without building")
       }
       if let last = env.lastBuilds?.build(for: platform) {
         TimelineView(.periodic(from: .now, by: 30)) { context in

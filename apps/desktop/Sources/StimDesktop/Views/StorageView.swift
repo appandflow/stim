@@ -63,6 +63,7 @@ struct StorageView: View {
         storage.refresh(force: true)
         metrics.refreshGc()
       }
+      .buttonStyle(.stim())
       .disabled(storage.measuring || metrics.gcRunning)
     }
   }
@@ -81,7 +82,7 @@ struct StorageView: View {
       Spacer()
       if !plan.isEmpty {
         Button("Do it") { autopilot.runPressurePlan(trigger: .manual, present: true) }
-          .buttonStyle(.borderedProminent)
+          .buttonStyle(.stim(.primary))
           .help("stim gc --delete")
       }
     }
@@ -141,6 +142,7 @@ struct StorageView: View {
           awaitingMerged = true
           metrics.refreshGc()
         }
+          .buttonStyle(.stim(.destructive))
           .disabled(merged.isEmpty || awaitingMerged || actions.active(for: ActionCenter.machineKey) != nil)
           .help("stim worktree remove on each worktree stim gc reports as merged")
           .confirmationDialog(
@@ -327,7 +329,10 @@ struct StorageView: View {
             ForEach(Array(report.unmanaged.enumerated()), id: \.element.id) { index, location in
               if index > 0 { Rectangle().fill(Theme.border).frame(height: 1) }
               locationRow(location, icon: "folder") {
-                if let path = location.path { Button("Reveal in Finder") { reveal(path) } }
+                if let path = location.path {
+                  Button("Reveal in Finder") { reveal(path) }
+                    .buttonStyle(.stim())
+                }
               }
             }
           }
@@ -363,14 +368,16 @@ struct StorageView: View {
         actions.presented = active
       } label: {
         HStack(spacing: 6) {
-          ProgressView().controlSize(.small)
+          ProgressView().controlSize(.mini)
           Text("Running")
         }
       }
+      .buttonStyle(.stim())
     } else {
       Button(title) {
         actions.run("Preview cleanup", StimCommand(arguments, cwd: NSHomeDirectory()), key: ActionCenter.machineKey)
       }
+      .buttonStyle(.stim())
       .help("stim \(arguments.joined(separator: " ")), then a confirmation before stim gc --delete")
     }
   }
