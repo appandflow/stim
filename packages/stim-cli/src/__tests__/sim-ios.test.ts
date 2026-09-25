@@ -335,6 +335,43 @@ test('pickDefaultIosCreation still picks a lettered model when it is the only iP
   expect(pick.deviceTypeId).toBe('dt.se3');
 });
 
+test('pickDefaultIosCreation skips a newer runtime whose only iPhone is a special model (#1172)', () => {
+  const duo = [{ identifier: 'dt.duo', name: 'iPhone Duo' }];
+  const gen18Pro = [{ identifier: 'dt.18pro', name: 'iPhone 18 Pro' }];
+  const gen16Pro = [{ identifier: 'dt.16pro', name: 'iPhone 16 Pro' }];
+  const runtimes = [
+    { identifier: 'rt.27-1', name: 'iOS 27.1', version: '27.1', supportedDeviceTypes: duo },
+    { identifier: 'rt.27-0', name: 'iOS 27.0', version: '27.0', supportedDeviceTypes: gen18Pro },
+    { identifier: 'rt.18-6', name: 'iOS 18.6', version: '18.6', supportedDeviceTypes: gen16Pro },
+  ];
+  const pick = pickDefaultIosCreation([], runtimes, {});
+  assert(pick);
+  expect(pick.runtimeId).toBe('rt.27-0');
+  expect(pick.deviceTypeId).toBe('dt.18pro');
+});
+
+test('pickDefaultIosCreation falls back to a special model when no runtime offers a numbered iPhone', () => {
+  const duo = [{ identifier: 'dt.duo', name: 'iPhone Duo' }];
+  const runtimes = [{ identifier: 'rt.27-1', name: 'iOS 27.1', version: '27.1', supportedDeviceTypes: duo }];
+  const pick = pickDefaultIosCreation([], runtimes, {});
+  assert(pick);
+  expect(pick.runtimeId).toBe('rt.27-1');
+  expect(pick.deviceTypeId).toBe('dt.duo');
+});
+
+test('pickDefaultIosCreation keeps the special-model runtime when it is explicitly requested', () => {
+  const duo = [{ identifier: 'dt.duo', name: 'iPhone Duo' }];
+  const gen18Pro = [{ identifier: 'dt.18pro', name: 'iPhone 18 Pro' }];
+  const runtimes = [
+    { identifier: 'rt.27-1', name: 'iOS 27.1', version: '27.1', supportedDeviceTypes: duo },
+    { identifier: 'rt.27-0', name: 'iOS 27.0', version: '27.0', supportedDeviceTypes: gen18Pro },
+  ];
+  const pick = pickDefaultIosCreation([], runtimes, { deviceType: 'iPhone Duo' });
+  assert(pick);
+  expect(pick.runtimeId).toBe('rt.27-1');
+  expect(pick.deviceTypeId).toBe('dt.duo');
+});
+
 test('sanitizeDeviceLabel strips characters simctl names should not carry', () => {
   expect(sanitizeDeviceLabel('feat-a/tlon-mobile')).toBe('feat-a-tlon-mobile');
   expect(sanitizeDeviceLabel('x  y"z`$')).toBe('x-y-z');

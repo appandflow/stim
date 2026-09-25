@@ -133,9 +133,12 @@ while named assignments exist, because older versions cannot manage them.
 
 ## Local devices
 
-`stim ios` selects the newest suitable iPhone model and installed runtime by
-default. `stim android` selects the newest installed system image matching the
-host architecture: `arm64-v8a` on ARM64 or `x86_64` on x64. Set `.stim.json`
+`stim ios` selects the newest installed runtime that offers a regular numbered
+iPhone model (for example "iPhone 18 Pro"), and the newest such model on it, by
+default. It falls back to a special model (no generation number, such as
+"iPhone Duo") only when no installed runtime offers a numbered one. `stim
+android` selects the newest installed system image matching the host
+architecture: `arm64-v8a` on ARM64 or `x86_64` on x64. Set `.stim.json`
 defaults or use `ios --device-type`, `ios --runtime`, and
 `android --system-image` for a specific target.
 
