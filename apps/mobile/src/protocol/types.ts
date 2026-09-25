@@ -1,7 +1,7 @@
 /**
- * Stim server protocol v1: docs/specs/2026-09-25-stim-server-design.md ("Protocol", "Pairing").
- * The status and log shapes mirror `stim status --json` and `stim logs --json`.
- * Replaced by `@stim-cli/core` imports once #1118 and #1119 land.
+ * Stim server protocol v1, copied from `@stim-cli/server` (packages/server/src/protocol.ts) because this
+ * npm app cannot import the pnpm workspace packages; see "Protocol types" in the README.
+ * packages/server/__tests__/mobile-protocol.test.ts fails the root typecheck when the two drift apart.
  */
 
 export const PROTOCOL_VERSION = 1;
@@ -73,7 +73,7 @@ export interface WorktreeFacts {
 export interface EnvironmentState {
   path: string;
   labelOnly?: boolean;
-  slots?: { slot: string; ios: SimState | null; android: AndroidState | null }[];
+  slots?: { slot: string; ios?: SimState | null; android?: AndroidState | null }[];
   live: boolean;
   memoryMb: number;
   warnings: string[];
