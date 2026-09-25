@@ -361,3 +361,12 @@ test('device activity labels name the driver and its duration, and an unknown st
     'activity unknown (agent-device-lease)',
   );
 });
+
+test('an idle-stopped dev server is reported on metro only while nothing serves the port', () => {
+  const idleStop = { reason: 'idle' as const, at: '2026-09-25T10:00:00.000Z', idleMinutes: 60 };
+  const stopped = environmentState(project(), { metro: { missing: true }, idleStop });
+  expect(stopped.metro).toEqual({ port: 8082, running: false, pid: null, idleStop });
+
+  const restarted = environmentState(project(), { metro: { metro: { pid: 42 } }, idleStop });
+  expect(restarted.metro).toEqual({ port: 8082, running: true, pid: 42 });
+});

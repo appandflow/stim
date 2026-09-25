@@ -855,7 +855,15 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     const spawned = exec.calls.spawn[0];
     assert(spawned);
     expect(spawned.cmd).toBe(process.execPath);
-    expect(spawned.args).toEqual([supervisorEntry(), '--root', root, '--port', String(port)]);
+    expect(spawned.args).toEqual([
+      supervisorEntry(),
+      '--root',
+      root,
+      '--port',
+      String(port),
+      '--idle-stop-minutes',
+      '60',
+    ]);
     expect(spawned.opts.cwd).toBe(root);
     expect(spawned.opts.detached).toBe(true);
     const stdio = spawned.opts.stdio;
@@ -917,7 +925,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     expect(spawned.args.at(-1)).toContain('[System.Diagnostics.Process]::Start($start)');
     expect(spawned.opts.env).toMatchObject({
       STIM_WINDOWS_LAUNCH_FILE: process.execPath,
-      STIM_WINDOWS_LAUNCH_ARGS: `"${supervisorEntry()}" "--root" "${root}" "--port" "${port}" "--log-file" "${supervisorLogFile(root)}"`,
+      STIM_WINDOWS_LAUNCH_ARGS: `"${supervisorEntry()}" "--root" "${root}" "--port" "${port}" "--idle-stop-minutes" "60" "--log-file" "${supervisorLogFile(root)}"`,
       STIM_WINDOWS_LAUNCH_CWD: root,
     });
     const facts = JSON.parse(result.logs[0] ?? '');
@@ -1053,7 +1061,16 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     });
     const spawned = exec.calls.spawn[0];
     assert(spawned);
-    expect(spawned.args).toEqual([supervisorEntry(), '--root', root, '--port', String(port), '--tunnel']);
+    expect(spawned.args).toEqual([
+      supervisorEntry(),
+      '--root',
+      root,
+      '--port',
+      String(port),
+      '--tunnel',
+      '--idle-stop-minutes',
+      '60',
+    ]);
   });
 
   test('start --remote waits for the Expo tunnel URL after Metro becomes healthy', async () => {
@@ -1084,7 +1101,15 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     const { exec, port } = await runSpawnedExpoStart({ options: { json: true, wait: '10' } });
     const spawned = exec.calls.spawn[0];
     assert(spawned);
-    expect(spawned.args).toEqual([supervisorEntry(), '--root', root, '--port', String(port)]);
+    expect(spawned.args).toEqual([
+      supervisorEntry(),
+      '--root',
+      root,
+      '--port',
+      String(port),
+      '--idle-stop-minutes',
+      '60',
+    ]);
   });
 
   test('plain start does not inject a configured public URL into the dev server', async () => {
@@ -1155,7 +1180,16 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       settings: { [platform]: { remote: 'proxy' }, metro: { tunnel: 'expo' } },
       tunnelDelayMs: 0,
     });
-    expect(exec.calls.spawn[0]?.args).toEqual([supervisorEntry(), '--root', root, '--port', String(port), '--tunnel']);
+    expect(exec.calls.spawn[0]?.args).toEqual([
+      supervisorEntry(),
+      '--root',
+      root,
+      '--port',
+      String(port),
+      '--tunnel',
+      '--idle-stop-minutes',
+      '60',
+    ]);
   });
 
   test('plain start does not start an explicitly configured managed provider', async () => {
@@ -1181,7 +1215,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       return base(cmd);
     };
     setExecutor(exec);
-    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok', idleStopMinutes: 0 } } });
 
     try {
       await runAction({ json: true, wait: '10' }, (cmd) =>
@@ -1198,7 +1232,15 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
 
     const spawned = exec.calls.spawn[0];
     assert(spawned);
-    expect(spawned.args).toEqual([supervisorEntry(), '--root', root, '--port', String(port)]);
+    expect(spawned.args).toEqual([
+      supervisorEntry(),
+      '--root',
+      root,
+      '--port',
+      String(port),
+      '--idle-stop-minutes',
+      '0',
+    ]);
   });
 
   test('start --remote records a managed tunnel before starting the bare dev server', async () => {

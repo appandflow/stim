@@ -35,6 +35,7 @@ import { volumeRootFor } from '../fs-util.ts';
 import { listLeaseFiles } from '../engine/device-lease.ts';
 import { readEasSessionLedger } from '../engine/eas-session-ledger.ts';
 import { readRemoteSession } from '../supervisor/state.ts';
+import { readIdleStop } from '@stim-cli/core/state';
 import { createActivityReader, type ActivityTarget, type DeviceActivity } from '../devices/activity.ts';
 import {
   activityLabel,
@@ -143,6 +144,7 @@ async function statusLines(json: boolean): Promise<string[]> {
           supervisor,
           logs: logs[i],
           remote: remoteDeviceState(readRemoteSession(path), easLedger, path),
+          idleStop: readIdleStop(readWorkspaceState(path)),
         },
       ),
     );
@@ -221,7 +223,11 @@ async function statusLines(json: boolean): Promise<string[]> {
     );
 
     if (state.metro) {
-      const label = state.metro.running ? chalk.green(`running (pid ${state.metro.pid})`) : chalk.dim('not running');
+      const label = state.metro.running
+        ? chalk.green(`running (pid ${state.metro.pid})`)
+        : state.metro.idleStop
+          ? chalk.dim(`stopped (idle) after ${state.metro.idleStop.idleMinutes}m; \`stim start\` restarts it`)
+          : chalk.dim('not running');
       out.push(`  metro: port ${state.metro.port} ${label}`);
     }
     if (state.supervisor) {

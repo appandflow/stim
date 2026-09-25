@@ -113,6 +113,7 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `metro.publicUrl`             | Existing public Metro URL                                            |
 | `metro.warmupUrl.ios`         | Bundle URL `stim ios` prefetches to warm Metro                       |
 | `metro.warmupUrl.android`     | Bundle URL `stim android` prefetches to warm Metro                   |
+| `metro.idleStopMinutes`       | Minutes of no use before the dev server stops; `0` never, default 60 |
 | `worktree.exclude`            | Ignored paths skipped by `worktree warm`                             |
 | `worktree.defaultBranch`      | Branch `worktree warm --refresh` expects the source checkout on      |
 | `cache.provider`              | Optional second-tier cache provider module                           |

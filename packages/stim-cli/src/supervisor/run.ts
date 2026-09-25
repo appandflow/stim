@@ -10,7 +10,14 @@ import { detectIsExpo } from '../workspace/project.ts';
 import { describeError } from './errors.ts';
 import { relaunchWithLogFile } from '../detached-entry.ts';
 import { MODE_BARE, MODE_EXPO, clearExpoMetroTunnel, clearWorkspaceSupervisor, writePidFile } from './state.ts';
-import { writeWorkspaceState, readWorkspaceState, withWorkspaceStateLock } from '../workspace/workspace-state.ts';
+import {
+  clearWorkspaceStateKeys,
+  writeWorkspaceState,
+  readWorkspaceState,
+  withWorkspaceStateLock,
+} from '../workspace/workspace-state.ts';
+import { IDLE_STOP_KEY } from '@stim-cli/core/state';
+import { isDevServerActivity, watchIdleDevServer, workspaceIdleProbe, type IdleProbe } from './idle-stop.ts';
 
 export {
   MODE_BARE,
@@ -26,14 +33,18 @@ interface ParsedSupervisorArgs {
   port?: number;
   tunnel?: boolean;
   resetCache?: boolean;
+  idleStopMinutes?: number;
   error?: string;
 }
+
+const USAGE = 'Usage: run.js --root <path> --port <n> [--tunnel] [--reset-cache] [--idle-stop-minutes <n>]';
 
 export function parseArgs(argv: string[]): ParsedSupervisorArgs {
   let root: string | undefined;
   let port: string | undefined;
   let tunnel = false;
   let resetCache = false;
+  let idleStopMinutes = '0';
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--root') {
@@ -52,17 +63,22 @@ export function parseArgs(argv: string[]): ParsedSupervisorArgs {
       resetCache = true;
       continue;
     }
-    return {
-      error: `Unknown supervisor argument "${arg}". Usage: run.js --root <path> --port <n> [--tunnel] [--reset-cache]`,
-    };
+    if (arg === '--idle-stop-minutes') {
+      idleStopMinutes = argv[++i] ?? '';
+      continue;
+    }
+    return { error: `Unknown supervisor argument "${arg}". ${USAGE}` };
   }
-  if (!root) return { error: 'Missing --root. Usage: run.js --root <path> --port <n> [--tunnel] [--reset-cache]' };
+  if (!root) return { error: `Missing --root. ${USAGE}` };
   if (!isAbsolute(root)) return { error: `--root must be an absolute path, got "${root}".` };
   const parsedPort = Number(port);
   if (!Number.isInteger(parsedPort) || parsedPort <= 0 || parsedPort > 65535) {
     return { error: `--port must be a TCP port number, got "${port}".` };
   }
-  return { root: resolve(root), port: parsedPort, tunnel, resetCache };
+  if (!/^\d+$/.test(idleStopMinutes)) {
+    return { error: `--idle-stop-minutes must be a whole number of minutes, got "${idleStopMinutes}".` };
+  }
+  return { root: resolve(root), port: parsedPort, tunnel, resetCache, idleStopMinutes: Number(idleStopMinutes) };
 }
 
 export interface ServerExitInfo {
@@ -93,6 +109,8 @@ export interface RunSupervisorOptions {
   port: number;
   tunnel?: boolean;
   resetCache?: boolean;
+  idleStopMinutes?: number;
+  idleProbe?: IdleProbe;
   isExpo?: (projectRoot: string) => boolean;
   startBare?: ServerStarter | null;
   startExpo?: ServerStarter | null;
@@ -107,6 +125,8 @@ export async function runSupervisor({
   port,
   tunnel = false,
   resetCache = false,
+  idleStopMinutes = 0,
+  idleProbe,
   isExpo = detectIsExpo,
   startBare = null,
   startExpo = null,
@@ -137,6 +157,7 @@ export async function runSupervisor({
   clearExpoMetroTunnel(root);
   writePidFile(root, process.pid);
   writeWorkspaceState(root, { supervisor: record });
+  clearWorkspaceStateKeys(root, [IDLE_STOP_KEY]);
   try {
     setSupervisor(root, record);
   } catch (err) {
@@ -157,7 +178,9 @@ export async function runSupervisor({
   });
 
   let stopping = false;
+  let stopWatchingIdle: (() => void) | null = null;
   const finish = (code: number, event: string, level: string, msg: string) => {
+    stopWatchingIdle?.();
     writer.write({ src: 'metro', level, event, msg });
     try {
       clearSupervisor(root, record);
@@ -207,6 +230,14 @@ export async function runSupervisor({
     }
   }
 
+  let serverActivityAt = now();
+  const serverWriter: NdjsonWriter = Object.assign(Object.create(writer) as NdjsonWriter, {
+    write(entry: unknown) {
+      if (isDevServerActivity(entry)) serverActivityAt = now();
+      return writer.write(entry);
+    },
+  });
+
   try {
     const start: ServerStarter =
       mode === MODE_EXPO
@@ -216,7 +247,7 @@ export async function runSupervisor({
       root,
       port,
       logsDir,
-      writer,
+      writer: serverWriter,
       tunnel,
       resetCache,
       onTunnelUrl: (url: string) => {
@@ -264,6 +295,33 @@ export async function runSupervisor({
     msg: `${mode} dev server listening on port ${port}`,
   });
 
+  if (idleStopMinutes > 0) {
+    stopWatchingIdle = watchIdleDevServer({
+      idleStopMs: idleStopMinutes * 60_000,
+      now,
+      serverActivityAt: () => serverActivityAt,
+      probe: idleProbe ?? workspaceIdleProbe(root),
+      onIdle: (idleMinutes) => {
+        try {
+          withWorkspaceStateLock(root, () => {
+            if (readWorkspaceState(root)?.supervisor?.processToken === processToken) {
+              writeWorkspaceState(root, {
+                [IDLE_STOP_KEY]: { reason: 'idle', at: new Date(now()).toISOString(), idleMinutes },
+              });
+            }
+          });
+        } catch (err) {
+          stderr(`Stim supervisor: could not record the idle stop: ${describeError(err)}`);
+        }
+        void shutdown(
+          0,
+          'supervisor_idle_stopped',
+          `no bundle request, client log or Stim command for ${idleMinutes} minutes (metro.idleStopMinutes is ${idleStopMinutes}); stopped the ${mode} dev server`,
+        );
+      },
+    });
+  }
+
   server.onExit?.((info) => {
     if (stopping) return;
     const detail = info?.signal ? `signal ${info.signal}` : `exit code ${info?.code ?? 'unknown'}`;
@@ -300,6 +358,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     port: parsed.port as number,
     tunnel: parsed.tunnel ?? false,
     resetCache: parsed.resetCache ?? false,
+    idleStopMinutes: parsed.idleStopMinutes ?? 0,
   });
 }
 

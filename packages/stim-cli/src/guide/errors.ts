@@ -48,6 +48,8 @@ Branch on the code, never on the message.`,
   reserved port -- or no port is reserved at all. The gate fires in about a
   second, before the device is even booted, rather than after four minutes of
   compiling an app that could not load a bundle. Run \`stim start\` first.
+  A dev server stopped after metro.idleStopMinutes with no use (\`status\`
+  shows "stopped (idle)") is restarted the same way.
   \`--no-metro-check\` overrides it and wires the app to the reservation (or to
   8081 when there is none). A non-Debug \`ios --configuration\` never emits
   this: a release-shaped build embeds its JS, so the gate does not run at all.

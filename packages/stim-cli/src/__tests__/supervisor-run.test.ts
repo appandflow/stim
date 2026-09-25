@@ -2,6 +2,7 @@ import assert from 'node:assert';
 import {
   realpathSync,
   existsSync,
+  utimesSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -16,7 +17,13 @@ import { getProject, upsertProject } from '../workspace/config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { supervisorPidFile, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { describeError, supervisorError } from '../supervisor/errors.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { readIdleStop } from '@stim-cli/core/state';
+import { workspaceIdleProbe, type IdleProbe } from '../supervisor/idle-stop.ts';
+import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { startBuildProgress } from '../engine/build-progress.ts';
+import { takeLease } from '../engine/device-lease.ts';
+import type { NdjsonWriter } from '../ndjson.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import {
   MODE_BARE,
@@ -90,7 +97,14 @@ describe('parseArgs', () => {
       port: 8082,
       tunnel: false,
       resetCache: false,
+      idleStopMinutes: 0,
     });
+  });
+
+  test('parses --idle-stop-minutes and refuses a value that is not a whole number', () => {
+    expect(parseArgs(['--root', absRoot, '--port', '1', '--idle-stop-minutes', '60']).idleStopMinutes).toBe(60);
+    expect(parseArgs(['--root', absRoot, '--port', '1', '--idle-stop-minutes', '1.5']).error).toMatch(/whole number/);
+    expect(parseArgs(['--root', absRoot, '--port', '1', '--idle-stop-minutes']).error).toMatch(/whole number/);
   });
 
   test('accepts --tunnel', () => {
@@ -99,6 +113,7 @@ describe('parseArgs', () => {
       port: 8082,
       tunnel: true,
       resetCache: false,
+      idleStopMinutes: 0,
     });
   });
 
@@ -614,5 +629,136 @@ describe('runSupervisor', () => {
     expect(last.msg).toMatch(/STIM_BARE_DEPS/);
     expect(last.msg).toMatch(/Remedy: Run `npm install`\./);
     expect(stderr.join('\n')).toMatch(/STIM_BARE_DEPS: metro is not resolvable/);
+  });
+});
+
+describe('idle stop', () => {
+  const MINUTE = 60_000;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function startIdleSupervisor({ probe, minutes = 60 }: { probe?: IdleProbe; minutes?: number } = {}) {
+    const seen = { closed: 0, exits: [] as number[], writer: null as NdjsonWriter | null };
+    const running = await runSupervisor({
+      root,
+      port: 8095,
+      isExpo: () => false,
+      attachSignals: false,
+      onExit: (code) => seen.exits.push(code),
+      idleStopMinutes: minutes,
+      idleProbe: probe,
+      startBare: async ({ writer }) => {
+        seen.writer = writer ?? null;
+        return {
+          close() {
+            seen.closed += 1;
+          },
+        };
+      },
+    });
+    assert(running);
+    return seen;
+  }
+
+  const quiet: IdleProbe = { lastActivityAt: () => NaN, blocker: () => null };
+
+  test('stops the dev server after metro.idleStopMinutes with no activity and records why', async () => {
+    const seen = await startIdleSupervisor({ probe: quiet });
+    await vi.advanceTimersByTimeAsync(59 * MINUTE);
+    expect(seen.closed).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(seen.closed).toBe(1);
+    expect(seen.exits).toEqual([0]);
+    const state = readWorkspaceState(root);
+    expect(readIdleStop(state)).toEqual({ reason: 'idle', at: expect.any(String), idleMinutes: 60 });
+    expect(state?.supervisor).toBeUndefined();
+    const stopped = readMetroLog().find((record) => record.event === 'supervisor_idle_stopped');
+    expect(stopped?.msg).toMatch(/no bundle request, client log or Stim command for 60 minutes/);
+  });
+
+  test('a bundle request, an Expo client log line, a Stim command and a client log write each restart the clock', async () => {
+    const seen = await startIdleSupervisor();
+    await vi.advanceTimersByTimeAsync(50 * MINUTE);
+    seen.writer?.write({ src: 'metro', event: 'bundle_response_started', platform: 'ios', requestId: 'r1' });
+    await vi.advanceTimersByTimeAsync(50 * MINUTE);
+    seen.writer?.write({ src: 'metro', event: 'expo_stdout', msg: ' LOG  hello', raw: true });
+    await vi.advanceTimersByTimeAsync(50 * MINUTE);
+    recordWorkspaceUse(root);
+    await vi.advanceTimersByTimeAsync(50 * MINUTE);
+    const clientLog = join(workspaceLogsDir(root), 'client.ndjson');
+    writeFileSync(clientLog, '{}\n');
+    const at = new Date(Date.now());
+    utimesSync(clientLog, at, at);
+    await vi.advanceTimersByTimeAsync(59 * MINUTE);
+    expect(seen.closed).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(2 * MINUTE);
+    expect(seen.closed).toBe(1);
+    expect(readIdleStop(readWorkspaceState(root))?.idleMinutes).toBe(60);
+  });
+
+  test('keeps an idle dev server while a blocker holds and stops it at the first check after', async () => {
+    let blocker: string | null = 'a build is in progress';
+    const seen = await startIdleSupervisor({ probe: { lastActivityAt: () => NaN, blocker: () => blocker } });
+    await vi.advanceTimersByTimeAsync(180 * MINUTE);
+    expect(seen.closed).toBe(0);
+
+    blocker = null;
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(seen.closed).toBe(1);
+    expect(readIdleStop(readWorkspaceState(root))?.idleMinutes).toBe(181);
+  });
+
+  test('a probe that throws keeps the dev server running', async () => {
+    const seen = await startIdleSupervisor({
+      probe: {
+        lastActivityAt: () => NaN,
+        blocker: () => {
+          throw new Error('adb did not answer');
+        },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(180 * MINUTE);
+    expect(seen.closed).toBe(0);
+  });
+
+  test('metro.idleStopMinutes 0 never stops the dev server', async () => {
+    const seen = await startIdleSupervisor({ probe: quiet, minutes: 0 });
+    await vi.advanceTimersByTimeAsync(24 * 60 * MINUTE);
+    expect(seen.closed).toBe(0);
+  });
+
+  test('the workspace probe blocks during a build and while a workspace device is driven', () => {
+    const probe = workspaceIdleProbe(root);
+    expect(probe.blocker()).toBe(null);
+
+    const attempt = tryAcquireClaim({
+      root: join(tmpHome, 'native-run.lock'),
+      mode: 'exclusive',
+      label: 'native-run lock',
+    });
+    assert(attempt.acquired);
+    startBuildProgress({ root, platform: 'ios', slot: 'default', claim: attempt.acquired });
+    expect(probe.blocker()).toBe('a build is in progress');
+    releaseClaim(attempt.acquired);
+    expect(probe.blocker()).toBe(null);
+
+    upsertProject(root, { platforms: { ios: { deviceUdid: 'STIM-IDLE-TEST-UDID', owned: true } } });
+    expect(probe.blocker()).toBe(null);
+    takeLease({ root, platform: 'ios', id: 'STIM-IDLE-TEST-UDID', kind: 'declared' });
+    expect(probe.blocker()).toBe('ios device STIM-IDLE-TEST-UDID is driven by stim device lock');
+  });
+
+  test('a new supervisor clears the previous idle stop', async () => {
+    writeWorkspaceState(root, { devServerStop: { reason: 'idle', at: new Date().toISOString(), idleMinutes: 60 } });
+    await startIdleSupervisor({ probe: quiet });
+    expect(readIdleStop(readWorkspaceState(root))).toBe(null);
   });
 });

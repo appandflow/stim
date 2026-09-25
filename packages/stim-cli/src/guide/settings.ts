@@ -236,6 +236,12 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         validates the shape and platform but cannot discover
                         runtime entry-point or dev-menu overrides or auto-fix
                         them. See \`guide metro\` for warmup behavior.
+  metro.idleStopMinutes minutes without a bundle request, client log record or
+                        Stim command before the supervisor stops the dev
+                        server (default 60). 0 never stops it. Never during a
+                        build or while a workspace device is driven. Read
+                        when \`start\` spawns the supervisor; see
+                        \`guide metro\`.
   worktree.exclude      ignored-path skip list for worktree warm. Settings
                         come from the source checkout's repository-root
                         .stim.json. A nonempty .worktreeexclude in the source

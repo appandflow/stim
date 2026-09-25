@@ -576,6 +576,10 @@ RULES
   \`gc --idle <duration>\` shuts down owned devices idle that long
   (\`guide cleanup gc\`).
 
+  An environment's metro carries idleStop { reason: "idle", at, idleMinutes }
+  when its supervisor stopped the dev server for idleness and nothing serves
+  the port since; plain \`status\` prints "stopped (idle)" (\`guide metro\`).
+
   Each entry of environments also carries build: null, or the ios or android
   run that holds this workspace's native-run.lock:
 

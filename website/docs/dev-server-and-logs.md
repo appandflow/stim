@@ -21,6 +21,26 @@ Bare React Native runs Metro in the supervisor. Expo runs the project's Expo CLI
 as a supervised child. A healthy server that another process started for the
 same project can be reused, but Stim cannot capture its full output.
 
+## Idle stop
+
+A dev server holds about 450 MB. The supervisor stops it after
+[`metro.idleStopMinutes`](./settings.md#committed-settings) minutes, 60 by
+default, with no bundle request, no client log record and no Stim command
+(`start`, `ios`, `android` or `reload`) in the workspace. For Expo, every line
+the Expo CLI prints on stdout counts as a client log. The supervisor never stops
+the server while a build in the workspace runs, or while one of the workspace's
+devices is driven, for example by agent-device or `stim device lock`, or its
+activity cannot be read. Set the value to `0` to keep the server running.
+
+The stop is recorded in the timeline as `supervisor_idle_stopped`, and
+`stim status` shows the port as `stopped (idle)` instead of a crash. The devices
+stay booted. The next `stim start` starts the server again. Until then,
+`stim ios` and `stim android` refuse with `STIM_NO_METRO`, and `stim start` is
+the fix, as it is for any missing dev server. The setting is read when
+`stim start` launches the supervisor.
+
+<StimTabs code={`stim settings set metro.idleStopMinutes 120 --scope workspace`} />
+
 ## Launch readiness
 
 `stim ios` and `stim android` open the installed app, then check launch
