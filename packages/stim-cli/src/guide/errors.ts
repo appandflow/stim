@@ -1013,7 +1013,8 @@ captured"  (in metro.ndjson, bare RN)
       body: () => `STIM_LOCK_TIMEOUT
   The same locks, held by an ordinary command that is still running, for
   longer than the wait -- 60s by default, 4 minutes for the remote-session lock
-  and for \`gc\` on the EAS project lock, and ~90 minutes for the \`worktree warm\` lock, which one
+  and for \`gc\` deleting EAS sessions under the EAS project lock (its sweep
+  skips at once while that lock is held), and ~90 minutes for the \`worktree warm\` lock, which one
   \`--refresh\` can hold for a whole dependency install. The machine-wide EAS
   project lock admits one EAS session start at a time. A \`--remote eas\` run
   waits on it after its build with no overall limit, printing \`lock  waiting
