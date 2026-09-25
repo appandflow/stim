@@ -313,7 +313,9 @@ struct PairSheet: View {
           Label(
             route.state == "missing"
               ? "No tailscale serve route to stim-server was found, so a phone cannot reach this endpoint yet. See the Phones tab."
-              : "Could not read tailscale serve status, so this endpoint is assumed. See the Phones tab.",
+              : route.state == "funneled"
+                ? "Tailscale Funnel now exposes stim-server publicly. Do not use this code; see the Phones tab."
+                : "Could not read tailscale serve status, so this endpoint is assumed. See the Phones tab.",
             systemImage: "exclamationmark.triangle.fill"
           )
           .foregroundStyle(Theme.warn)

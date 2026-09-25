@@ -155,8 +155,8 @@ encryption layer.
   port 443 with another app. The server reads `tailscale serve status --json`
   to find the port that proxies to it and assumes 7443 when there is none.
   When any handler or TCP forward to it is on a Funnel port, it is public:
-  pairing is refused,
-  and no suggested command adds a handler to a Funnel port.
+  pairing is refused, and no suggested command adds a handler to a Funnel
+  port.
 - Desktop shows a QR code on request:
 
   ```json

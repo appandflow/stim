@@ -93,7 +93,14 @@ function portOf(hostPort: string): number {
  */
 function parseServeStatus(value: unknown, target: number, ips: string[]): ServeRoute {
   if (!isJsonObject(value)) return { state: 'unknown', reason: 'it printed no serve config', port: SERVE_PORT };
-  const hosts = new Set(['127.0.0.1', 'localhost', '[::1]', ...ips.map((ip) => (ip.includes(':') ? `[${ip}]` : ip))]);
+  const hosts = new Set([
+    '127.0.0.1',
+    'localhost',
+    '[::1]',
+    '0.0.0.0',
+    '[::]',
+    ...ips.map((ip) => (ip.includes(':') ? `[${ip}]` : ip)),
+  ]);
   const configs = [value, ...(isJsonObject(value.Foreground) ? Object.values(value.Foreground) : [])].filter(
     isJsonObject,
   );
@@ -142,21 +149,26 @@ export function serveRoute(
   if (!binary)
     return Promise.resolve({ state: 'unknown', reason: 'the tailscale command was not found', port: SERVE_PORT });
   return new Promise((resolve) => {
-    execFile(binary, ['serve', 'status', '--json'], { env, timeout: timeoutMs, encoding: 'utf8' }, (error, stdout) => {
-      let route: ServeRoute;
-      try {
-        route = error
-          ? {
-              state: 'unknown',
-              reason: error.killed ? 'it timed out' : error.message.split('\n')[0]!,
-              port: SERVE_PORT,
-            }
-          : parseServeStatus(stdout.trim() ? JSON.parse(stdout) : {}, target, ips);
-      } catch {
-        route = { state: 'unknown', reason: 'it printed output that is not JSON', port: SERVE_PORT };
-      }
-      resolve(route);
-    });
+    execFile(
+      binary,
+      ['serve', 'status', '--json'],
+      { env, timeout: timeoutMs, killSignal: 'SIGKILL', encoding: 'utf8' },
+      (error, stdout) => {
+        let route: ServeRoute;
+        try {
+          route = error
+            ? {
+                state: 'unknown',
+                reason: error.killed ? 'it timed out' : error.message.split('\n')[0]!,
+                port: SERVE_PORT,
+              }
+            : parseServeStatus(stdout.trim() ? JSON.parse(stdout) : {}, target, ips);
+        } catch {
+          route = { state: 'unknown', reason: 'it printed output that is not JSON', port: SERVE_PORT };
+        }
+        resolve(route);
+      },
+    );
   });
 }
 
