@@ -219,6 +219,14 @@ Ask the user before these actions:
   delete it. An explicit stop shuts down a Stim-owned simulator even when
   another process uses it. It never shuts down an unowned simulator.
 
+LEAVE THE MACHINE CLEAN
+
+Run stim stop when you pause or finish a task, and stim worktree remove once
+it is merged or abandoned. Never create a simulator or emulator by hand;
+every device comes from Stim. Before starting a new workspace, check stim
+status for an idle workspace to reuse and confirm capacity headroom instead of
+adding another.
+
 SANDBOXES
 
 An agent harness that sandboxes shell commands usually permits writes inside
