@@ -696,9 +696,9 @@ PREDICTING THE NEXT BUILD (--plan)
   provider, then the app config's build cache provider. A provider has no
   lookup that skips the download, so a remote check downloads the artifact:
   the cache.provider tier into a temporary directory the plan removes, the
-  app config's provider wherever it keeps its downloads, as during a run. On a miss it adds the prebuild
-  decision the run would make (generate, regenerate, none, or refuse with
-  STIM_PREBUILD_FAILED). With --eas-profile it asks EAS for a matching
+  app config's provider wherever it keeps its downloads, as during a run.
+  On a miss it adds the prebuild decision the run would make (generate,
+  regenerate, none, or refuse with STIM_PREBUILD_FAILED). With --eas-profile it asks EAS for a matching
   build (config, fingerprint:generate, build:list) and downloads nothing.
   expectedMs is the median of this project's recorded runs with that outcome;
   the payload is in \`guide facts plan\`.
@@ -708,10 +708,11 @@ PREDICTING THE NEXT BUILD (--plan)
   pod install can move the fingerprint, and the run then looks up the new
   key once; and a Release hit that fails its JS swap builds fresh.
   An Android plan reads the ABI from the emulator the slot records, or from
-  the system image a new one would use. Without --eas-profile it refuses --device, --remote,
-  --wait, --no-wait, --no-metro-check and --simulator-app, the
-  android.remote setting, and the experimental compiler CAS, with
-  STIM_BAD_ARG; and STIM_NO_DEVICE when no system image is installed.
+  the system image a new one would use. A plan refuses --device, --remote,
+  --wait, --no-wait, --no-metro-check and --simulator-app with STIM_BAD_ARG.
+  Without --eas-profile it also refuses the android.remote setting and the
+  experimental compiler CAS with STIM_BAD_ARG, and refuses with
+  STIM_NO_DEVICE when no system image is installed.
 
 IOS SCHEME SELECTION
   Pass \`stim ios --scheme "App Staging"\` to select an exact shared Xcode

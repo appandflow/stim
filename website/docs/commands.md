@@ -322,11 +322,10 @@ A plan cannot see everything that happens during a run. Another workspace may
 store the key first. A `prebuild` or `pod install` may move the fingerprint,
 and the run then checks the new key. A Release hit whose JavaScript swap fails
 builds from scratch. An Android plan uses the ABI of the emulator the slot
-records, or of the system image a new emulator would use. Without
-`--eas-profile`, a plan refuses
-`--device`, `--remote`, `--wait`, `--no-wait`, `--no-metro-check`,
-`--simulator-app`, the `android.remote` setting, and the experimental compiler
-CAS with `STIM_BAD_ARG`.
+records, or of the system image a new emulator would use. A plan refuses
+`--device`, `--remote`, `--wait`, `--no-wait`, `--no-metro-check` and
+`--simulator-app` with `STIM_BAD_ARG`. Without `--eas-profile`, it also refuses
+the `android.remote` setting and the experimental compiler CAS.
 
 Try it with an agent:
 
