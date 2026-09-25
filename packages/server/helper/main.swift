@@ -278,6 +278,7 @@ final class SimulatorSource {
 final class EmulatorSource {
   let serial: String
   let queue = DispatchQueue(label: "stim.frames.emulator")
+  let inputQueue = DispatchQueue(label: "stim.frames.emulator-input")
   var input: EmulatorInput?
   private var status: (size: CGSize?, keyboard: Bool)?
   private var stream: ScreenshotStream?
@@ -297,8 +298,8 @@ final class EmulatorSource {
   }
 
   func start() {
-    queue.async {
-      self.connect()
+    queue.async { self.connect() }
+    inputQueue.async {
       if let status = self.inputClient().flatMap(self.readStatus) {
         Output.notice(["keyboard": status.keyboard ? "yes" : "no"])
       }
@@ -497,7 +498,7 @@ extension SimulatorSource: Source {
 
 extension EmulatorSource: Source {
   func input(_ command: Command) {
-    queue.async { self.apply(command) }
+    inputQueue.async { self.apply(command) }
   }
 
   private func apply(_ command: Command) {
@@ -508,7 +509,8 @@ extension EmulatorSource: Source {
       guard let size = readStatus(input)?.size else {
         return Output.notice(["inputError": "\(serial) did not report its display size."])
       }
-      let pixel = displayPixel(point, rotation: latest?.rotation ?? 0, displaySize: size)
+      let rotation = queue.sync { latest?.rotation ?? 0 }
+      let pixel = displayPixel(point, rotation: rotation, displaySize: size)
       input.call("sendTouch", InputMessages.touch(x: pixel.x, y: pixel.y, pressed: phase != .up))
     case .text(let text):
       guard readStatus(input)?.keyboard == true else { return noKeyboard() }

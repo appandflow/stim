@@ -234,13 +234,14 @@ export async function ensureOwnedAndroidDevice({
         avdName: parked.name,
         deviceName: parked.name,
         owned: true,
-        poolConfiguration: configuration,
+        poolConfiguration: parked.configuration,
         adoptionPending: true,
       };
       if (!adoptParked({ platform: 'android', projectPath, slot, udid: parked.udid, device: adopted })) continue;
       if (parked.configuration !== configuration) {
         try {
           configureAvd(parked.name, { dataPartitionSizeGb: androidDataPartitionSizeGbSetting(settings), avdConfig });
+          adopted.poolConfiguration = configuration;
         } catch (error) {
           out(
             phaseLine(

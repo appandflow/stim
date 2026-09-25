@@ -339,8 +339,6 @@ public final class EmulatorDisplayNSView: NSView {
   }
 }
 
-/// The Android key event `adb shell input keyevent` takes for a macOS virtual
-/// key code that types no text.
 func androidKeyEvent(macKeyCode: UInt16) -> String? {
   let keys: [UInt16: String] = [
     0x24: "KEYCODE_ENTER", 0x4C: "KEYCODE_ENTER", 0x30: "KEYCODE_TAB", 0x33: "KEYCODE_DEL",
@@ -351,7 +349,6 @@ func androidKeyEvent(macKeyCode: UInt16) -> String? {
   return keys[macKeyCode]
 }
 
-/// `adb shell input` for one emulator, one command at a time in order.
 private final class AdbInput {
   private let serial: String
   private let queue = DispatchQueue(label: "stim.emulator-adb")

@@ -127,7 +127,6 @@ export class HelperSource {
   private config = '';
   private stopped = false;
   private notice: string | null = null;
-  /** Whether the emulator reported a hardware keyboard; null until it reports. */
   keyboard: boolean | null = null;
   private stderr = '';
   private readonly ended: () => void;
