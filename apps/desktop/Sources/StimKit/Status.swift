@@ -34,6 +34,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var slots: [Slot]?
   public var remoteDevices: [RemoteDevice]?
   public var build: Build?
+  public var lastBuilds: LastBuilds?
   public var worktree: WorktreeInfo?
 
   public var id: String { path }

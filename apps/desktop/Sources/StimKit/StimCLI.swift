@@ -38,6 +38,16 @@ public struct StimCLI: Sendable {
     try JSONDecoder().decode(ProjectStats.self, from: run(["stats", "--json"], cwd: workspace))
   }
 
+  /// `stim <platform> --plan --json` in `workspace`: what the next build would find. It builds nothing.
+  public func plan(platform: String, workspace: String) throws -> BuildPlanOutcome {
+    let (status, data) = try execute([platform, "--plan", "--json"], cwd: workspace)
+    if status == 0 { return .plan(try JSONDecoder().decode(BuildPlan.self, from: data)) }
+    guard let refusal = try? JSONDecoder().decode(CommandRefusal.self, from: data) else {
+      throw Failure.exited(status)
+    }
+    return .refused(refusal)
+  }
+
   /// `stim gc --json` without `--delete` only reports.
   public func gcReport() throws -> GcReport {
     try JSONDecoder().decode(GcReport.self, from: run(["gc", "--json"]))

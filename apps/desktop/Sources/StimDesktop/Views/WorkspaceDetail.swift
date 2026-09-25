@@ -40,7 +40,7 @@ struct WorkspaceDetail: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
 
       Rectangle().fill(Theme.border).frame(width: 1)
-      Inspector(env: env, usage: usage, stats: stats, openLogs: openLogs)
+      Inspector(cli: cli, env: env, usage: usage, stats: stats, openLogs: openLogs)
         .frame(width: 360)
         .background(Theme.sidebar)
     }
@@ -90,6 +90,7 @@ struct WorkspaceDetail: View {
 }
 
 struct Inspector: View {
+  var cli: Task<StimCLI, Never>
   var env: Workspace
   var usage: UsageHistory?
   var stats: ProjectStats?
@@ -151,6 +152,8 @@ struct Inspector: View {
             .background(RoundedRectangle(cornerRadius: 8).fill(Theme.surface))
           }
         }
+
+        BuildCacheSection(cli: cli, env: env).id(env.path)
 
         if let project = stats?.project, project.ios != nil || project.android != nil {
           VStack(alignment: .leading, spacing: 8) {

@@ -199,6 +199,7 @@ struct BuildProgressBar: View {
           }
           .lineLimit(1)
           .truncationMode(.tail)
+          BuildOutcomeBadge(build: build)
           Spacer(minLength: 4)
           Text(timing(progress))
             .font(Theme.mono())
