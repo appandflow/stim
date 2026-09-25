@@ -17,6 +17,7 @@ import { DeviceGridTile } from '@/components/device-grid-tile';
 import { EmptyState } from '@/components/empty-state';
 import { Icon } from '@/components/icon';
 import { MacChip } from '@/components/mac-chip';
+import { useMenuDrawer } from '@/components/menu-drawer';
 import { Toggle } from '@/components/toggle';
 import { WorkspaceRow } from '@/components/workspace-row';
 import { useHomeFilters } from '@/hooks/home-filters';
@@ -40,6 +41,7 @@ const VIEWABILITY = { itemVisiblePercentThreshold: 10 };
 export function Home() {
   const colors = useColors();
   const router = useRouter();
+  const menu = useMenuDrawer();
   const { macs, connections } = useMacs();
   const { filters, update, view, setView } = useHomeFilters();
   const [visible, setVisible] = useState<Set<string>>(new Set());
@@ -85,7 +87,7 @@ export function Home() {
           icon={Platform.OS === 'ios' ? 'line.3.horizontal' : MENU_ICON}
           tintColor={colors.text}
           accessibilityLabel="Menu"
-          onPress={() => router.push('/menu')}
+          onPress={menu.open}
         />
       </Stack.Toolbar>
       <Stack.Toolbar placement="right">
