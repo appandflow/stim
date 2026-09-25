@@ -224,6 +224,10 @@ export interface FrameTarget {
   workspace: string;
   platform: Platform;
   slot?: string;
+  fps?: number;
+  maxEdge?: number;
+  /** The codecs the app decodes; a result with `video` sends binary H.264 messages instead of `frame` events. */
+  video?: 'h264'[];
 }
 
 export type ActionName = 'reload' | 'stop';
@@ -278,7 +282,8 @@ export interface Methods {
   'logs.subscribe': { params: LogFilter; result: { subscription: string } };
   'stats.get': { params: { workspace?: string }; result: Record<string, unknown> };
   'settings.get': { params: { workspace?: string }; result: Record<string, unknown> };
-  'frames.subscribe': { params: FrameTarget; result: { subscription: string } };
+  'frames.subscribe': { params: FrameTarget; result: { subscription: string; video?: 'h264' } };
+  'frames.keyframe': { params: { subscription: string }; result: Record<string, never> };
   'build.plan': { params: BuildPlanParams; result: BuildPlan };
   'machine.get': { params: Record<string, never>; result: MachineUsage };
   unsubscribe: { params: { subscription: string }; result: Record<string, never> };

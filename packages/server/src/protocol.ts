@@ -17,6 +17,7 @@ export const METHODS = [
   'stats.get',
   'settings.get',
   'frames.subscribe',
+  'frames.keyframe',
   'build.plan',
   'machine.get',
   'unsubscribe',
@@ -141,7 +142,7 @@ export type SettingsResult = Record<string, unknown>;
 
 export type Platform = 'ios' | 'android';
 
-export const FRAME_FPS = { default: 5, max: 30 } as const;
+export const FRAME_FPS = { default: 5, max: 30, video: 60 } as const;
 
 export const FRAME_EDGE = { min: 240, default: 1280, max: 2048 } as const;
 
@@ -157,6 +158,47 @@ export interface FrameTarget {
   slot?: string;
   fps?: number;
   maxEdge?: number;
+  /** The codecs this client decodes. The server picks one when it can encode video; see {@link FramesSubscribeResult}. */
+  video?: VideoCodec[];
+}
+
+export const VIDEO_CODECS = ['h264'] as const;
+
+export type VideoCodec = (typeof VIDEO_CODECS)[number];
+
+/**
+ * With `video`, frames arrive as binary WebSocket messages, one H.264 access unit each; see {@link VideoPacket}.
+ * A subscription whose device cannot be encoded, such as an iPhone Duo, still sends JSON `frame` events.
+ */
+export interface FramesSubscribeResult extends SubscribeResult {
+  video?: VideoCodec;
+}
+
+/** Asks for a keyframe on a video subscription, after the client lost its decoder state. */
+export interface KeyframeParams {
+  subscription: string;
+}
+
+export const VIDEO_HEADER_VERSION = 1;
+
+/** The keyframe bit of a {@link VideoPacket}'s flags. */
+export const VIDEO_KEYFRAME = 1;
+
+/**
+ * The layout of a binary video message, big-endian: u8 version ({@link VIDEO_HEADER_VERSION}), u8 flags
+ * ({@link VIDEO_KEYFRAME}), u16 header length, u32 sequence number of the messages sent on this subscription, f64 capture time in milliseconds since the
+ * epoch on the Mac's clock, u16 width, u16 height, u8 subscription id length N, N bytes of ASCII subscription
+ * id. After the header comes one Annex-B H.264 access unit; a keyframe carries its SPS and PPS. The stream has
+ * no B-frames, so each access unit is shown as it arrives.
+ */
+export interface VideoPacket {
+  subscription: string;
+  keyframe: boolean;
+  sequence: number;
+  capturedAt: number;
+  width: number;
+  height: number;
+  accessUnit: Uint8Array;
 }
 
 /** Each action runs one fixed `stim` command in the workspace. */
@@ -226,7 +268,8 @@ export interface Methods {
   'logs.subscribe': { params: LogFilter; result: SubscribeResult };
   'stats.get': { params?: WorkspaceParams; result: StatsResult };
   'settings.get': { params?: WorkspaceParams; result: SettingsResult };
-  'frames.subscribe': { params: FrameTarget; result: SubscribeResult };
+  'frames.subscribe': { params: FrameTarget; result: FramesSubscribeResult };
+  'frames.keyframe': { params: KeyframeParams; result: Record<string, never> };
   'build.plan': { params: BuildPlanParams; result: BuildPlanResult };
   'machine.get': { params?: Record<string, never>; result: MachineUsage };
   unsubscribe: { params: UnsubscribeParams; result: Record<string, never> };
@@ -427,13 +470,20 @@ export function protocolJsonSchema(): JsonSchema {
           workspace: { type: 'string', description: 'An environment path from a status payload.' },
           platform: { enum: ['ios', 'android'] },
           slot: { type: 'string', minLength: 1, default: 'default' },
-          fps: { type: 'integer', minimum: 1, maximum: FRAME_FPS.max, default: FRAME_FPS.default },
+          fps: {
+            type: 'integer',
+            minimum: 1,
+            maximum: FRAME_FPS.video,
+            default: FRAME_FPS.default,
+            description: `At most ${FRAME_FPS.max} unless the result offers video.`,
+          },
           maxEdge: {
             type: 'integer',
             minimum: FRAME_EDGE.min,
             maximum: FRAME_EDGE.max,
             default: FRAME_EDGE.default,
           },
+          video: { type: 'array', items: { enum: [...VIDEO_CODECS] } },
         },
       },
       ActionParams: {
@@ -543,6 +593,12 @@ export function protocolJsonSchema(): JsonSchema {
           request('logs.query', { $ref: '#/$defs/LogFilter' }),
           request('logs.subscribe', { $ref: '#/$defs/LogFilter' }),
           request('frames.subscribe', { $ref: '#/$defs/FrameTarget' }),
+          request('frames.keyframe', {
+            type: 'object',
+            required: ['subscription'],
+            additionalProperties: false,
+            properties: { subscription: { type: 'string' } },
+          }),
           request('build.plan', { $ref: '#/$defs/BuildPlanParams' }),
           request('machine.get'),
           optionalParams('stats.get', { $ref: '#/$defs/WorkspaceParams' }),
@@ -573,7 +629,7 @@ export function protocolJsonSchema(): JsonSchema {
                     type: 'object',
                     required: ['subscription'],
                     additionalProperties: false,
-                    properties: { subscription: { type: 'string' } },
+                    properties: { subscription: { type: 'string' }, video: { enum: [...VIDEO_CODECS] } },
                   },
                   {
                     type: 'object',

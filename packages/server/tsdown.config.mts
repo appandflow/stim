@@ -21,7 +21,11 @@ export default defineConfig({
       rmSync('dist/stim-frames', { recursive: true, force: true });
       mkdirSync('dist/stim-frames');
       const desktop = readFileSync('helper/desktop-sources.txt', 'utf8').split(/\s+/).filter(Boolean);
-      for (const source of ['helper/main.swift', ...desktop.map((path) => `../../apps/desktop/Sources/${path}`)]) {
+      for (const source of [
+        'helper/main.swift',
+        'helper/VideoEncoder.swift',
+        ...desktop.map((path) => `../../apps/desktop/Sources/${path}`),
+      ]) {
         copyFileSync(source, `dist/stim-frames/${basename(source)}`);
       }
     },

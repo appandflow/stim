@@ -8,7 +8,15 @@ import { isJsonObject, loadConfig, type StatusPayload } from '@stim-cli/core/sta
 import { actionArgs, actionOutcome, appendAudit, parseAction, type AuditRecord } from './actions.ts';
 import { FeedPool, type JsonObject } from './feed.ts';
 import { buildFrameHelper, type FrameHint } from './frame-helper.ts';
-import { DEFAULT_FRAME_LIMITS, deviceKey, FramePool, ownedDevice, type Frame, type FrameLimits } from './frames.ts';
+import {
+  DEFAULT_FRAME_LIMITS,
+  deviceKey,
+  FramePool,
+  ownedDevice,
+  type Device,
+  type Frame,
+  type FrameLimits,
+} from './frames.ts';
 import { LogBatcher, logArgs, parseLogFilter, type LogLimits } from './logs.ts';
 import { readMachineUsage } from './machine.ts';
 import {
@@ -24,6 +32,7 @@ import {
   type ProtocolError,
   type RequestId,
   type ServerMessage,
+  type VideoCodec,
 } from './protocol.ts';
 import {
   authenticateDevice,
@@ -36,6 +45,7 @@ import {
 } from './registry.ts';
 import { runStim, type CommandLimits } from './stim-command.ts';
 import { serveRoute, whois, type ServeRoute, type TailscaleState } from './tailscale.ts';
+import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
 
 export interface ServerOptions {
   name: string;
@@ -248,6 +258,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   function connection(socket: WebSocket, peer: string | null): void {
     const limitKey = peer ?? 'local';
     const subscriptions = new Map<string, () => void>();
+    const keyframes = new Map<string, () => void>();
     const commands = new Set<() => Promise<void>>();
     let nextSubscription = 1;
     let device: PairedDevice | null = null;
@@ -328,13 +339,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return resolved.dir;
     }
 
-    function openSubscription(id: RequestId): string | null {
+    function openSubscription(id: RequestId, result: { video?: VideoCodec } = {}): string | null {
       if (subscriptions.size >= MAX_SUBSCRIPTIONS) {
         error(id, 'limit-exceeded', `A connection can hold ${MAX_SUBSCRIPTIONS} subscriptions.`);
         return null;
       }
       const subscription = `s${nextSubscription++}`;
-      send(socket, { id, result: { subscription } });
+      send(socket, { id, result: { subscription, ...result } });
       return subscription;
     }
 
@@ -398,7 +409,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
     function subscribeFrames(id: RequestId, params: unknown): void {
       const target = isJsonObject(params) ? params : {};
-      const { workspace, platform, slot, fps, maxEdge } = target;
+      const { workspace, platform, slot, fps, maxEdge, video } = target;
       if (typeof workspace !== 'string' || (platform !== 'ios' && platform !== 'android')) {
         return error(
           id,
@@ -409,8 +420,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (slot !== undefined && (typeof slot !== 'string' || slot === '')) {
         return error(id, 'bad-request', 'slot must be a slot name.');
       }
-      if (fps !== undefined && (!Number.isInteger(fps) || (fps as number) < 1 || (fps as number) > FRAME_FPS.max)) {
-        return error(id, 'bad-request', `fps must be a whole number from 1 to ${FRAME_FPS.max}.`);
+      if (video !== undefined && (!Array.isArray(video) || !video.every((codec) => typeof codec === 'string'))) {
+        return error(id, 'bad-request', 'video must be a list of codec names.');
+      }
+      const wantsVideo = (video as string[] | undefined)?.includes('h264') === true;
+      const offersVideo = wantsVideo && frameHelper() !== null;
+      const maxFps = wantsVideo ? FRAME_FPS.video : FRAME_FPS.max;
+      if (fps !== undefined && (!Number.isInteger(fps) || (fps as number) < 1 || (fps as number) > maxFps)) {
+        return error(id, 'bad-request', `fps must be a whole number from 1 to ${maxFps}.`);
       }
       if (
         maxEdge !== undefined &&
@@ -423,13 +440,24 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         );
       }
       const hint: FrameHint = {
-        fps: (fps as number | undefined) ?? FRAME_FPS.default,
+        fps: Math.min((fps as number | undefined) ?? FRAME_FPS.default, offersVideo ? FRAME_FPS.video : FRAME_FPS.max),
         maxEdge: (maxEdge as number | undefined) ?? FRAME_EDGE.default,
       };
       if (!workspaceDir(id, workspace, true)) return;
-      const subscription = openSubscription(id);
+      const subscription = openSubscription(id, offersVideo ? { video: 'h264' } : {});
       if (!subscription) return;
       const frameTarget: FrameTarget = { workspace, platform, ...(slot ? { slot } : {}) };
+      const gate = new VideoGate(DEFAULT_VIDEO_LIMITS.congestedBytes);
+      let sequence = 0;
+      let streamed: Device | null = null;
+      let draining: NodeJS.Timeout | null = null;
+      const drain = () => {
+        draining = null;
+        if (ended || !streamed) return;
+        if (socket.bufferedAmount <= DEFAULT_VIDEO_LIMITS.congestedBytes) return frames.keyframe(streamed);
+        frames.congested(streamed);
+        draining = setTimeout(drain, FRAME_RETRY_MS);
+      };
       let attached: string | null = null;
       let detach: (() => void) | null = null;
       let pending: Frame | null = null;
@@ -462,7 +490,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       };
       const cleanup = () => {
         ended = true;
+        keyframes.delete(subscription);
         if (retry) clearTimeout(retry);
+        if (draining) clearTimeout(draining);
         detach?.();
         detach = null;
         unsubscribeStatus?.();
@@ -482,7 +512,23 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           if (!ended) send(socket, { event: 'frame-delayed', subscription, delayed });
         },
         failed: end,
+        ...(offersVideo
+          ? {
+              video: (unit: AccessUnit) => {
+                if (ended || socket.readyState !== socket.OPEN) return;
+                const verdict = gate.admit(unit, socket.bufferedAmount);
+                if (verdict === 'send') socket.send(videoPacket(subscription, sequence++, unit));
+                else if (verdict === 'congested' && !draining) drain();
+              },
+            }
+          : {}),
       };
+      if (offersVideo) {
+        keyframes.set(subscription, () => {
+          gate.reset();
+          if (streamed) frames.keyframe(streamed);
+        });
+      }
       let unsubscribeStatus: (() => void) | null = null;
       unsubscribeStatus = feeds.subscribe(STATUS_FEED, {
         item: (payload) => {
@@ -491,6 +537,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           if (typeof resolved === 'string') return queueMicrotask(() => end(resolved));
           if (deviceKey(resolved) === attached) return;
           detach?.();
+          gate.reset();
+          streamed = resolved;
           attached = deviceKey(resolved);
           detach = frames.subscribe(resolved, listener, hint);
         },
@@ -670,6 +718,18 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (message.method === 'logs.subscribe') return subscribeLogs(id, message.params);
       if (message.method === 'logs.query') return queryLogs(id, message.params);
       if (message.method === 'frames.subscribe') return subscribeFrames(id, message.params);
+      if (message.method === 'frames.keyframe') {
+        const name = isJsonObject(message.params) ? message.params.subscription : undefined;
+        const keyframe = typeof name === 'string' ? keyframes.get(name) : undefined;
+        if (!keyframe) {
+          return send(socket, {
+            id,
+            error: { code: 'unknown-subscription', message: `No video subscription ${String(name)}.` },
+          });
+        }
+        keyframe();
+        return send(socket, { id, result: {} });
+      }
       if (message.method === 'build.plan') return planBuild(id, message.params);
       if (message.method === 'machine.get') return send(socket, { id, result: await readMachineUsage() });
       if (message.method === 'stats.get' || message.method === 'settings.get') {

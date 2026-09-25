@@ -198,8 +198,8 @@ function connect(port: number, peer?: string): Promise<Client> {
   clients.push(socket);
   const inbox: ServerMessage[] = [];
   const waiting: ((message: ServerMessage) => void)[] = [];
-  socket.on('message', (data) => {
-    const message = JSON.parse(data.toString()) as ServerMessage;
+  socket.on('message', (data, isBinary) => {
+    const message = (isBinary ? { binary: data } : JSON.parse(data.toString())) as ServerMessage;
     const waiter = waiting.shift();
     if (waiter) waiter(message);
     else inbox.push(message);
@@ -1028,17 +1028,32 @@ if (env.FAKE_HELPER_FAIL && !env.FAKE_HELPER_FAIL_AFTER) {
   process.exit(1);
 }
 let lines = '';
+let config = {};
+let keyframe = true;
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => {
   lines += chunk;
   for (let at = lines.indexOf('\\n'); at >= 0; at = lines.indexOf('\\n')) {
-    run.configs.push(JSON.parse(lines.slice(0, at)));
+    const line = JSON.parse(lines.slice(0, at));
+    run.configs.push(line);
+    if (line.keyframe) keyframe = true;
+    else config = line;
     lines = lines.slice(at + 1);
   }
 });
 process.stdin.on('end', () => process.exit(0));
 let sent = 0;
 setInterval(() => {
+  if (config.video) {
+    const header = Buffer.alloc(13);
+    header[0] = keyframe ? 1 : 0;
+    header.writeDoubleBE(1759000000000 + sent, 1);
+    header.writeUInt16BE(588, 9);
+    header.writeUInt16BE(1280, 11);
+    message(3, Buffer.concat([header, Buffer.from([0, 0, 0, 1, keyframe ? 0x65 : 0x41, sent % 256])]));
+    keyframe = false;
+  }
+  if (config.jpeg === false) return sent++;
   const size = Buffer.alloc(4);
   size.writeUInt16BE(390, 0);
   size.writeUInt16BE(844, 2);
@@ -1335,10 +1350,12 @@ describe('frames.subscribe', () => {
     return helper;
   }
 
-  function helperRuns(): { args: string[]; pid: number; configs: { fps: number; maxEdge: number }[] }[] {
+  type HelperRun = { args: string[]; pid: number; configs: Record<string, unknown>[] };
+
+  function helperRuns(): HelperRun[] {
     return toolRuns()
       .filter((run) => run.tool === 'stim-frames')
-      .map((run) => run as unknown as { args: string[]; pid: number; configs: { fps: number; maxEdge: number }[] });
+      .map((run) => run as unknown as HelperRun);
   }
 
   test.skipIf(!fakeTailscale)(
@@ -1368,16 +1385,76 @@ describe('frames.subscribe', () => {
       await until(() => helperRuns().length === 1);
       const [run] = helperRuns();
       expect(run!.args).toEqual(['ios', 'SIM-1']);
+      const jpegOnly = { jpeg: true, video: false, bitrate: 3_000_000 };
       expect(run!.configs).toEqual([
-        { fps: 2, maxEdge: 480 },
-        { fps: 20, maxEdge: 960 },
-        { fps: 2, maxEdge: 480 },
+        { fps: 2, maxEdge: 480, jpegFps: 2, ...jpegOnly },
+        { fps: 20, maxEdge: 960, jpegFps: 20, ...jpegOnly },
+        { fps: 2, maxEdge: 480, jpegFps: 2, ...jpegOnly },
       ]);
       await until(() => !alive(run!.pid));
       expect(toolRuns().filter((entry) => entry.tool === 'xcrun')).toEqual([]);
     },
     10_000,
   );
+
+  test.skipIf(!fakeTailscale)(
+    'streams H.264 as binary messages to a client that decodes it, and a keyframe on request',
+    async () => {
+      const port = await startWithTools(
+        { FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }), FAKE_FRAMES: '[]', FAKE_HELPER_INTERVAL_MS: '10' },
+        undefined,
+        fakeHelper(),
+      );
+      const client = await authed(port);
+      expect(
+        await client.request('frames.subscribe', { workspace, platform: 'ios', fps: 60, video: ['vp9', 'h264'] }),
+      ).toMatchObject({ result: { subscription: 's1', video: 'h264' } });
+      const packet = (await client.next()) as unknown as { binary: Buffer };
+      expect(packet.binary.readUInt8(1)).toBe(1);
+      expect(packet.binary.readUInt32BE(4)).toBe(0);
+      expect(packet.binary.toString('ascii', 21, 23)).toBe('s1');
+      expect([packet.binary.readUInt16BE(16), packet.binary.readUInt16BE(18)]).toEqual([588, 1280]);
+      expect([...packet.binary.subarray(23, 28)]).toEqual([0, 0, 0, 1, 0x65]);
+      expect(await client.request('frames.keyframe', { subscription: 's1' })).toMatchObject({ result: {} });
+      let message = await client.next();
+      while ('binary' in message && !((message as unknown as { binary: Buffer }).binary.readUInt8(1) & 1)) {
+        message = await client.next();
+      }
+      expect(message).toHaveProperty('binary');
+      expect(await client.request('frames.keyframe', { subscription: 's9' })).toMatchObject({
+        error: { code: 'unknown-subscription' },
+      });
+      client.socket.close();
+      await until(() => helperRuns().length === 1);
+      expect(helperRuns()[0]!.configs.slice(0, 2)).toEqual([
+        { fps: 60, maxEdge: 1280, jpeg: false, video: true, bitrate: 3_000_000 },
+        { keyframe: true },
+      ]);
+      expect(helperRuns()[0]!.configs.filter((line) => 'keyframe' in line)).toHaveLength(2);
+    },
+    10_000,
+  );
+
+  test.skipIf(!fakeTailscale)('sends JPEG frame events when no helper can encode video', async () => {
+    const port = await startWithTools({
+      FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }),
+      FAKE_FRAMES: JSON.stringify([jpeg(10, 20, 'A').toString('base64')]),
+    });
+    const client = await authed(port);
+    expect(
+      await client.request('frames.subscribe', { workspace, platform: 'ios', fps: 61, video: ['h264'] }),
+    ).toMatchObject({ error: { code: 'bad-request' } });
+    const reply = await client.request('frames.subscribe', { workspace, platform: 'ios', fps: 60, video: ['h264'] });
+    expect(reply).toMatchObject({ result: { subscription: 's1' } });
+    expect(reply).not.toHaveProperty('result.video');
+    expect(await client.next()).toMatchObject({ event: 'frame', width: 10, height: 20 });
+    expect(await client.request('frames.keyframe', { subscription: 's1' })).toMatchObject({
+      error: { code: 'unknown-subscription' },
+    });
+    expect(await client.request('frames.subscribe', { workspace, platform: 'ios', video: 'h264' })).toMatchObject({
+      error: { code: 'bad-request' },
+    });
+  });
 
   test.skipIf(!fakeTailscale)('falls back to screenshots when the helper fails before its first frame', async () => {
     const port = await startWithTools(

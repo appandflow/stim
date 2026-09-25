@@ -7,6 +7,7 @@ import type { Device, Frame, FrameListener } from './frames.ts';
 import { FRAME_EDGE, FRAME_FPS } from './protocol.ts';
 import { serverDir } from './registry.ts';
 import { terminate } from './stim-command.ts';
+import { Bitrate, DEFAULT_VIDEO_LIMITS, type AccessUnit } from './video.ts';
 
 /** How a subscriber wants its frames: at most `fps` a second, scaled to fit `maxEdge` pixels. */
 export interface FrameHint {
@@ -22,6 +23,9 @@ const VERSION_TIMEOUT_MS = 30_000;
 const MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 const FRAME_MESSAGE = 1;
 const NOTICE_MESSAGE = 2;
+const VIDEO_MESSAGE = 3;
+const VIDEO_HEADER_BYTES = 14;
+const KEYFRAME_INTERVAL_MS = 250;
 
 /** Runs the compiler in its own process group, so a timeout or `signal` also stops `swift-frontend` and `ld`. */
 function run(
@@ -125,6 +129,9 @@ export class HelperSource {
   private notice: string | null = null;
   private stderr = '';
   private readonly ended: () => void;
+  private readonly bitrate = new Bitrate(DEFAULT_VIDEO_LIMITS, Date.now());
+  private keyframeAt = -Infinity;
+  private keyframeTimer: NodeJS.Timeout | null = null;
 
   constructor(helper: string, device: Device, env: NodeJS.ProcessEnv, ended: () => void) {
     this.ended = ended;
@@ -146,7 +153,8 @@ export class HelperSource {
   add(listener: FrameListener, hint: FrameHint): () => void {
     this.listeners.set(listener, hint);
     this.configure();
-    if (this.last) listener.frame(this.last);
+    if (listener.video) this.keyframe();
+    else if (this.last) listener.frame(this.last);
     return () => {
       if (!this.listeners.delete(listener)) return;
       if (this.listeners.size === 0) void this.stop();
@@ -157,18 +165,44 @@ export class HelperSource {
   stop(): Promise<void> {
     if (this.stopped) return Promise.resolve();
     this.stopped = true;
+    if (this.keyframeTimer) clearTimeout(this.keyframeTimer);
     this.listeners.clear();
     this.ended();
     this.child.stdin!.end();
     return terminate(this.child);
   }
 
+  /** Asks for at most one keyframe per {@link KEYFRAME_INTERVAL_MS}; a request inside the interval is sent at its end. */
+  keyframe(): void {
+    if (this.stopped || this.keyframeTimer) return;
+    const wait = this.keyframeAt + KEYFRAME_INTERVAL_MS - Date.now();
+    if (wait > 0) {
+      this.keyframeTimer = setTimeout(() => {
+        this.keyframeTimer = null;
+        this.keyframe();
+      }, wait);
+      return;
+    }
+    this.keyframeAt = Date.now();
+    this.child.stdin!.write('{"keyframe":true}\n');
+  }
+
+  congested(): void {
+    if (this.bitrate.congested(Date.now()) !== null) this.configure();
+  }
+
   private configure(): void {
     const hints = [...this.listeners.values()];
+    const jpegFps = [...this.listeners].flatMap(([listener, hint]) => (listener.video ? [] : [hint.fps]));
     const config = JSON.stringify({
       fps: Math.max(...hints.map((hint) => hint.fps)),
       maxEdge: Math.max(...hints.map((hint) => hint.maxEdge)),
+      jpeg: jpegFps.length > 0,
+      ...(jpegFps.length ? { jpegFps: Math.max(...jpegFps) } : {}),
+      video: jpegFps.length < hints.length,
+      bitrate: this.bitrate.current,
     });
+    if (!jpegFps.length) this.last = null;
     if (config === this.config || this.stopped) return;
     this.config = config;
     this.child.stdin!.write(`${config}\n`);
@@ -195,6 +229,7 @@ export class HelperSource {
         const body = buffer.subarray(4, 4 + length);
         buffer = buffer.subarray(4 + length);
         if (body[0] === FRAME_MESSAGE && body.length > 5) this.frame(body);
+        else if (body[0] === VIDEO_MESSAGE && body.length > VIDEO_HEADER_BYTES) this.video(body);
         else if (body[0] === NOTICE_MESSAGE) this.readNotice(body.subarray(1).toString('utf8'));
       }
     });
@@ -208,7 +243,20 @@ export class HelperSource {
       capturedAt: new Date().toISOString(),
       data: body.subarray(5).toString('base64'),
     };
-    for (const listener of this.listeners.keys()) listener.frame(this.last);
+    for (const listener of this.listeners.keys()) if (!listener.video) listener.frame(this.last);
+  }
+
+  private video(body: Buffer): void {
+    if (this.stopped) return;
+    const unit: AccessUnit = {
+      keyframe: (body[1]! & 1) !== 0,
+      capturedAt: body.readDoubleBE(2),
+      width: body.readUInt16BE(10),
+      height: body.readUInt16BE(12),
+      data: body.subarray(VIDEO_HEADER_BYTES),
+    };
+    if (this.bitrate.tick(Date.now()) !== null) this.configure();
+    for (const listener of this.listeners.keys()) listener.video?.(unit);
   }
 
   private readNotice(text: string): void {
