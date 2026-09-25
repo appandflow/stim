@@ -1000,6 +1000,9 @@ captured"  (in metro.ndjson, bare RN)
     still holds the claim": the run itself died and its build tool keeps the
     claim. Stim signals only a claim owner whose recorded identity it can
     prove, so it leaves the tool alone. Wait for pid <m> to exit or end it.
+    On Windows this is the usual outcome of an interrupt: Node cannot deliver
+    a catchable SIGINT to another process there, so the run ends at once and
+    its Gradle build keeps the claim until it exits.
   A recorded EAS session is ended before this refusal: ending a billable
   session never waits on a build. The JSON payload carries the session
   outcome under device.remote. Devices, collectors and the dev server are left

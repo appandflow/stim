@@ -171,50 +171,56 @@ describe('stop against a real native-run holder', { timeout: 30_000 }, () => {
     summary: 'stopped',
   });
 
-  test('stop names the build, interrupts it, and the build cancels its tool and reports stop as the cause', async () => {
-    const holder = await startHolder('ios', 'default', 'tool');
-    const lines: string[] = [];
-    const calls: { slot?: string }[] = [];
-    const result = await stopWorkspaceNow({
-      root,
-      report: (line) => lines.push(line),
-      endRemote: () => null,
-      stop: async (options) => {
-        calls.push(options);
-        return stopped();
-      },
-    });
-    expect(result).toMatchObject({ ok: true });
-    expect(calls).toEqual([{ root, slot: undefined }]);
-    expect(lines.join('\n')).toMatch(
-      new RegExp(`interrupting \`stim ios\` \\(pid ${holder.child.pid}, running for \\d+s\\): sent SIGINT`),
-    );
-    const [code] = await holder.exited;
-    expect(code).toBe(0);
-    const { out, err } = holder.output();
-    expect(JSON.parse(out.trim().split('\n').at(-1)!)).toEqual({
-      result: `cancelled by \`stim stop\` (pid ${process.pid})`,
-    });
-    expect(err).toContain('stopping the running build tool');
-  });
+  test.skipIf(process.platform === 'win32')(
+    'stop names the build, interrupts it, and the build cancels its tool and reports stop as the cause',
+    async () => {
+      const holder = await startHolder('ios', 'default', 'tool');
+      const lines: string[] = [];
+      const calls: { slot?: string }[] = [];
+      const result = await stopWorkspaceNow({
+        root,
+        report: (line) => lines.push(line),
+        endRemote: () => null,
+        stop: async (options) => {
+          calls.push(options);
+          return stopped();
+        },
+      });
+      expect(result).toMatchObject({ ok: true });
+      expect(calls).toEqual([{ root, slot: undefined }]);
+      expect(lines.join('\n')).toMatch(
+        new RegExp(`interrupting \`stim ios\` \\(pid ${holder.child.pid}, running for \\d+s\\): sent SIGINT`),
+      );
+      const [code] = await holder.exited;
+      expect(code).toBe(0);
+      const { out, err } = holder.output();
+      expect(JSON.parse(out.trim().split('\n').at(-1)!)).toEqual({
+        result: `cancelled by \`stim stop\` (pid ${process.pid})`,
+      });
+      expect(err).toContain('stopping the running build tool');
+    },
+  );
 
-  test('a build that ignores SIGINT is refused by name within the bounded wait', async () => {
-    const holder = await startHolder('android', 'default', 'stubborn');
-    const lines: string[] = [];
-    const result = await stopWorkspaceNow({
-      root,
-      interruptWaitMs: 300,
-      report: (line) => lines.push(line),
-      endRemote: () => null,
-      stop: stopped,
-    });
-    expect(result).toMatchObject({ refusal: { code: 'STIM_STOP_BLOCKED' } });
-    const { message, remedy } = (result as { refusal: { message: string; remedy: string } }).refusal;
-    expect(message).toContain(`pid ${holder.child.pid}`);
-    expect(message).toContain(join('native-run.lock', 'exclusive'));
-    expect(remedy).toContain(`kill ${holder.child.pid}`);
-    expect(holder.child.exitCode).toBe(null);
-  });
+  test.skipIf(process.platform === 'win32')(
+    'a build that ignores SIGINT is refused by name within the bounded wait',
+    async () => {
+      const holder = await startHolder('android', 'default', 'stubborn');
+      const lines: string[] = [];
+      const result = await stopWorkspaceNow({
+        root,
+        interruptWaitMs: 300,
+        report: (line) => lines.push(line),
+        endRemote: () => null,
+        stop: stopped,
+      });
+      expect(result).toMatchObject({ refusal: { code: 'STIM_STOP_BLOCKED' } });
+      const { message, remedy } = (result as { refusal: { message: string; remedy: string } }).refusal;
+      expect(message).toContain(`pid ${holder.child.pid}`);
+      expect(message).toContain(join('native-run.lock', 'exclusive'));
+      expect(remedy).toContain(`kill ${holder.child.pid}`);
+      expect(holder.child.exitCode).toBe(null);
+    },
+  );
 
   test('stopping another slot leaves the build running and does not wait for its lock', async () => {
     const holder = await startHolder('ios', 'default', 'sleep');
