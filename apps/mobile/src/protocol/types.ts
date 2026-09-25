@@ -106,7 +106,7 @@ export interface StatusPayload {
   environments: EnvironmentState[];
   capacity: { liveCount: number; committedMb: number; totalMemoryMb: number; overCapacity: boolean };
   deviceLeases: DeviceLeaseState[];
-  unprovisionedWorktrees: WorktreeFacts[];
+  unprovisionedWorktrees?: WorktreeFacts[];
   simctlAvailable: boolean;
 }
 

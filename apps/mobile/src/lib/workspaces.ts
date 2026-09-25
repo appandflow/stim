@@ -51,7 +51,7 @@ export function repositoryRoots(payload: Pick<StatusPayload, 'environments' | 'u
   for (const { path, worktree } of payload.environments) {
     roots.add(worktreeRoot(path) ?? worktree?.repository ?? path);
   }
-  for (const { path } of payload.unprovisionedWorktrees) {
+  for (const { path } of payload.unprovisionedWorktrees ?? []) {
     const root = worktreeRoot(path);
     if (root) roots.add(root);
   }
