@@ -19,7 +19,8 @@ The theme and landing page follow the [Stim branding board](https://www.figma.co
 and [landing page reference](https://www.figma.com/design/ENnvWM98Hb0S1jk43T1tx7?node-id=8426-12140).
 The Figma SVG exports, optimized with ImageOptim, live in `static/img/branding`.
 The 1200x630 social card that `themeConfig.image` serves as the `og:image` is the Figma PNG export
-`static/img/branding/social-card.png`; re-export it there when the tagline or artwork changes. Inter and JetBrains Mono
+`static/img/branding/social-card.png`; re-export it there when the tagline or artwork changes.
+Regenerate the animated hero, `hero-animated.svg` and `hero-dark-animated.svg`, from `hero.svg` and `hero-dark.svg` with `node scripts/gen-hero-animated.mjs`. Inter and JetBrains Mono
 are bundled with their licenses in `src/css/fonts`.
 
 The reference uses GT Maru Trial Bold for the hero. This prototype uses Inter Bold

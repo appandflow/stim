@@ -100,7 +100,7 @@ export default function Home(): ReactNode {
             onContextMenu={(event) => event.preventDefault()}
           >
             <ThemedImage
-              sources={{ light: `${assetBase}hero.svg`, dark: `${assetBase}hero-dark.svg` }}
+              sources={{ light: `${assetBase}hero-animated.svg`, dark: `${assetBase}hero-dark-animated.svg` }}
               alt=""
               width="520"
               height="520"
