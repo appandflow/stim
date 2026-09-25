@@ -7,7 +7,6 @@ struct Sidebar: View {
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
   @AppStorage(AppPreferences.Key.expandedProjects) private var expandedProjects = Data()
-  @Environment(\.colorScheme) private var colorScheme
   let prefs = SidebarPreferences()
 
   var body: some View {
@@ -87,10 +86,7 @@ struct Sidebar: View {
 
   private var brand: some View {
     HStack(spacing: 10) {
-      if let logo = BrandAssets.logo(colorScheme) {
-        Image(nsImage: logo).resizable().frame(width: 28, height: 28)
-      }
-      Text("Stim").font(Theme.heading(16))
+      StimWordmark()
       Spacer()
       ViewOptionsButton(
         projects: store.projectList.map(\.project).sorted { $0.name.lowercased() < $1.name.lowercased() })
@@ -358,5 +354,20 @@ private struct PlainSelectionHighlight: NSViewRepresentable {
 extension View {
   fileprivate func sidebarTag(_ item: SidebarItem, selection: SidebarItem?) -> some View {
     tag(item).listRowBackground(item == selection ? Theme.selected : Color.clear)
+  }
+}
+
+/// The hand-lettered "Stim" wordmark, tinted to `Theme.primary` for both appearances.
+struct StimWordmark: View {
+  var body: some View {
+    if let wordmark = BrandAssets.wordmark {
+      Image(nsImage: wordmark)
+        .resizable()
+        .renderingMode(.template)
+        .aspectRatio(contentMode: .fit)
+        .frame(height: 22)
+        .foregroundStyle(Theme.primary)
+        .accessibilityLabel("Stim")
+    }
   }
 }
