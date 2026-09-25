@@ -65,15 +65,14 @@ class StimVideoView(context: Context, appContext: AppContext) : ExpoView(context
 
   override fun surfaceDestroyed(holder: SurfaceHolder) {
     val done = java.util.concurrent.CountDownLatch(1)
-    handler.post {
+    val posted = handler.post {
       surfaceReady = false
       release()
       done.countDown()
     }
-    done.await()
+    if (posted) done.await(1, java.util.concurrent.TimeUnit.SECONDS)
   }
 
-  /** Called on the JS thread with bytes it owns; decoding runs on the decoder thread. */
   fun push(accessUnit: ByteArray, width: Int, height: Int) {
     handler.post { decode(accessUnit, width, height) }
   }
@@ -97,11 +96,9 @@ class StimVideoView(context: Context, appContext: AppContext) : ExpoView(context
       size = Pair(width, height)
     }
     if (!surfaceReady) return
-    if (codec == null) {
-      if (!keyframe || !configure()) return
-    }
+    if (codec == null && (!keyframe || !configure())) return requestKeyframe()
     if (waitingForKeyframe) {
-      if (!keyframe) return
+      if (!keyframe) return requestKeyframe()
       waitingForKeyframe = false
     }
     if (inputs.size >= MAX_BACKLOG) {
@@ -117,13 +114,17 @@ class StimVideoView(context: Context, appContext: AppContext) : ExpoView(context
   private fun configure(): Boolean {
     val sps = sps ?: return false
     val pps = pps ?: return false
-    val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, size.first, size.second).apply {
+    val (width, height) = size
+    if (width <= 0 || height <= 0) return false
+    val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
       setByteBuffer("csd-0", ByteBuffer.wrap(START_CODE + sps))
       setByteBuffer("csd-1", ByteBuffer.wrap(START_CODE + pps))
+      setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, width * height)
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
     }
+    var created: MediaCodec? = null
     return try {
-      val created = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+      created = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
       created.setCallback(Callbacks(), handler)
       created.configure(format, surfaceView.holder.surface, null, 0)
       created.start()
@@ -132,6 +133,7 @@ class StimVideoView(context: Context, appContext: AppContext) : ExpoView(context
       true
     } catch (error: Exception) {
       android.util.Log.w("StimVideo", "Could not start the H.264 decoder: ${error.message}")
+      created?.release()
       false
     }
   }
@@ -144,6 +146,7 @@ class StimVideoView(context: Context, appContext: AppContext) : ExpoView(context
       val buffer = codec.getInputBuffer(index) ?: continue
       if (bytes.size > buffer.capacity()) {
         codec.queueInputBuffer(index, 0, 0, 0, 0)
+        inputs.clear()
         waitingForKeyframe = true
         requestKeyframe()
         continue
@@ -191,8 +194,10 @@ class StimVideoView(context: Context, appContext: AppContext) : ExpoView(context
     override fun onError(codec: MediaCodec, error: MediaCodec.CodecException) {
       if (codec !== this@StimVideoView.codec) return
       android.util.Log.w("StimVideo", "The H.264 decoder failed: ${error.diagnosticInfo}")
-      release()
-      requestKeyframe()
+      handler.post {
+        if (codec === this@StimVideoView.codec) release()
+        requestKeyframe()
+      }
     }
 
     override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {}

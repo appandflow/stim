@@ -46,9 +46,10 @@ export function useDeviceStream(
   useEffect(() => {
     if (!connection || key === null) return;
     let size = '';
+    subscription.current = null;
     const update = (patch: Partial<StreamState>) =>
       setLatest((prev) => ({ ...(prev && prev.key === key ? prev : { key, ...EMPTY }), ...patch, key }));
-    return connection.subscribe(
+    const unsubscribe = connection.subscribe(
       'frames.subscribe',
       { workspace, platform, slot, fps, maxEdge, video: ['h264'] },
       (event) => {
@@ -74,6 +75,10 @@ export function useDeviceStream(
         update({ frame: null, video: { width: packet.width, height: packet.height }, error: null });
       },
     );
+    return () => {
+      subscription.current = null;
+      unsubscribe();
+    };
   }, [connection, key, streamId, workspace, platform, slot, fps, maxEdge, meter]);
   const requestKeyframe = useCallback(() => {
     const current = subscription.current;

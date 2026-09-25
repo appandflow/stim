@@ -41,7 +41,6 @@ class StimVideoView: ExpoView {
     display.frame = bounds
   }
 
-  /// Called on the JS thread with bytes it owns; decoding runs on `queue`.
   func push(_ accessUnit: Data) {
     queue.async { self.decode(accessUnit) }
   }
@@ -73,14 +72,14 @@ class StimVideoView: ExpoView {
       }
     }
     if parametersChanged || format == nil { makeFormat() }
-    guard let format, !slices.isEmpty else { return }
+    guard let format, !slices.isEmpty else { return requestKeyframe() }
     if !layer.isReadyForMoreMediaData {
       waitingForKeyframe = true
       requestKeyframe()
       return
     }
     if waitingForKeyframe {
-      guard keyframe else { return }
+      guard keyframe else { return requestKeyframe() }
       waitingForKeyframe = false
     }
     guard let sample = sampleBuffer(slices, format: format) else { return }
