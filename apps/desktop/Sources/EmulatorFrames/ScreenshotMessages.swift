@@ -6,6 +6,10 @@ public struct EmulatorFrame: Sendable {
   public var height: Int
   /// The Rotation.SkinRotation the emulator turned the image upright by.
   public var rotation: Int
+  /// The display's own size while a foldable is folded; the frame already
+  /// shows only that display. Touches address its pixels, not the unfolded
+  /// display's.
+  public var folded: (width: Int, height: Int)?
   public var rgba: Data
 }
 
@@ -25,7 +29,7 @@ enum ScreenshotMessages {
 
   static func frame(fromImage bytes: Data) -> EmulatorFrame? {
     var reader = ProtoReader(bytes)
-    var size: (width: Int, height: Int, rotation: Int)?
+    var size: (width: Int, height: Int, rotation: Int, folded: (width: Int, height: Int)?)?
     var image: Data?
     while let (field, value) = reader.next() {
       switch (field, value) {
@@ -37,26 +41,45 @@ enum ScreenshotMessages {
     guard let size, let image, size.width > 0, size.height > 0,
       image.count == size.width * size.height * 4
     else { return nil }
-    return EmulatorFrame(width: size.width, height: size.height, rotation: size.rotation, rgba: image)
+    return EmulatorFrame(
+      width: size.width, height: size.height, rotation: size.rotation, folded: size.folded, rgba: image)
   }
 
-  private static func rgbaSize(_ bytes: Data) -> (width: Int, height: Int, rotation: Int)? {
+  private static func rgbaSize(_ bytes: Data) -> (
+    width: Int, height: Int, rotation: Int, folded: (width: Int, height: Int)?
+  )? {
     var reader = ProtoReader(bytes)
     var format: UInt64 = 0
     var width = 0
     var height = 0
     var rotation = 0
+    var folded: (width: Int, height: Int)?
     while let (field, value) = reader.next() {
       switch (field, value) {
       case (1, .varint(let v)): format = v
       case (2, .bytes(let nested)): rotation = skinRotation(nested)
       case (3, .varint(let v)): width = Int(v)
       case (4, .varint(let v)): height = Int(v)
+      case (7, .bytes(let nested)): folded = foldedSize(nested)
       default: break
       }
     }
     guard format == rgba8888 else { return nil }
-    return (width, height, rotation)
+    return (width, height, rotation, folded)
+  }
+
+  private static func foldedSize(_ bytes: Data) -> (width: Int, height: Int)? {
+    var reader = ProtoReader(bytes)
+    var width = 0
+    var height = 0
+    while let (field, value) = reader.next() {
+      switch (field, value) {
+      case (1, .varint(let v)): width = Int(v)
+      case (2, .varint(let v)): height = Int(v)
+      default: break
+      }
+    }
+    return width > 0 && height > 0 ? (width, height) : nil
   }
 
   private static func skinRotation(_ bytes: Data) -> Int {

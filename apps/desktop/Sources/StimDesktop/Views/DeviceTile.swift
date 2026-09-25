@@ -18,6 +18,8 @@ struct DeviceTile: View {
   @State private var folding = false
   @State private var rotateFailed = false
   @State private var foldError: String?
+  @State private var emulatorPosture: EmulatorPosture?
+  @State private var postureFailed = false
   @State private var confirmingStop = false
   @EnvironmentObject private var actions: ActionCenter
 
@@ -76,6 +78,9 @@ struct DeviceTile: View {
         {
           foldButton(udid: sim.udid)
         }
+        if interactive, let emulatorPosture, case .android(_, let avd) = device, let serial = avd.serial {
+          postureMenu(serial: serial, current: emulatorPosture)
+        }
       }
       FlowLayout(spacing: 6) {
         TimelineView(.periodic(from: .now, by: 30)) { context in
@@ -87,7 +92,7 @@ struct DeviceTile: View {
           }
         }
         Text(source).font(Theme.body(10.5)).foregroundStyle(Theme.tertiary).lineLimit(1).fixedSize()
-        if let posture {
+        if let posture = posture ?? emulatorPosture?.label {
           Chip { Text(posture) }.fixedSize()
         }
       }
@@ -191,6 +196,27 @@ struct DeviceTile: View {
     .help(foldError ?? "Sweeps the hinge to the other posture, which lights the other screen.")
   }
 
+  private func postureMenu(serial: String, current: EmulatorPosture) -> some View {
+    Menu(postureFailed ? "Posture failed, retry" : "Posture") {
+      ForEach([EmulatorPosture.closed, .halfOpened, .opened], id: \.self) { posture in
+        Toggle(
+          posture.label,
+          isOn: Binding(
+            get: { posture == current },
+            set: { _ in
+              Task {
+                postureFailed = !(await posture.apply(serial: serial))
+                emulatorPosture = await EmulatorPosture.current(serial: serial)
+              }
+            }))
+      }
+    }
+    .menuStyle(.button)
+    .buttonStyle(.stim())
+    .fixedSize()
+    .help(postureFailed ? "The last posture change did not reach the emulator." : "Moves the emulator's hinge.")
+  }
+
   /// The panel an iPhone Duo's posture lit: the only lit one, else the first.
   private var mainScreenID: UInt32? {
     let litIDs = screenIDs.filter { lit[$0] == true }
@@ -268,6 +294,12 @@ struct DeviceTile: View {
         EmulatorScreen(serial: serial, interactive: interactive) { pixelSizes[1] = $0 }
           .frame(width: screenWidth(1))
           .padding(screenPadding)
+          .task(id: "\(serial) \(String(describing: pixelSizes[1]))") {
+            while !Task.isCancelled {
+              emulatorPosture = await EmulatorPosture.current(serial: serial)
+              try? await Task.sleep(for: .seconds(emulatorPosture == nil ? 30 : 5))
+            }
+          }
       } else {
         placeholder(device.state)
       }
