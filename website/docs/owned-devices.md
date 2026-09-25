@@ -215,7 +215,9 @@ Stim supports two optional remote backends:
 The app builds locally by default; `--eas-profile` can instead download an
 [EAS development build](./eas-builds.md). `stim start --remote` creates the
 Metro route required by the remote device. Remote EAS sessions can incur cost
-independently of the build source.
+independently of the build source. Stim prepares the app before it creates or
+reconnects the session, so a failed build starts no session and the install
+follows the connection directly.
 
 ### From Windows or Linux
 

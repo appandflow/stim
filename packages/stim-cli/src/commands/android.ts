@@ -910,6 +910,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   let device: OwnedDeviceRecord;
   let bootDuration = '';
   let bootPromise: Promise<AndroidBootLike>;
+  let startRemoteBoot: (() => Promise<AndroidBootLike>) | null = null;
 
   if (target.kind === 'physical' && !target.serial) {
     const pooled = await pooledAndroidDevice({
@@ -968,7 +969,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       );
     }
 
-    const bootTimer = stepTimer(now);
     const boot = (): Promise<AndroidBootLike> =>
       Promise.resolve(
         ensureDeviceBooted({ platform: PLATFORM, device, projectPath: root, out, logFile: emuLog }),
@@ -977,45 +977,35 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         reason: String((e as Error)?.message || e),
         serial: undefined,
       }));
-    bootPromise = (
-      remoteDevice?.ctx.backend === 'eas'
-        ? ensureRemoteOwned({
-            root,
-            platform: PLATFORM,
-            sessionName: ownedSessionName(remoteDevice.ctx.label),
-            startedAt,
-            boot,
-            createdSessionId: remoteDevice.createdSessionId,
-            abandonCreatedSession: remoteDevice.abandonCreatedSession,
-            webPreviewUrl: remoteDevice.webPreviewUrl,
-            writeState,
-            register: registerProject,
-          })
-        : boot()
-    ).then((result) => {
-      bootDuration = bootTimer();
-      return result;
-    });
+    const startBoot = (): Promise<AndroidBootLike> => {
+      const bootTimer = stepTimer(now);
+      return (
+        remoteDevice?.ctx.backend === 'eas'
+          ? ensureRemoteOwned({
+              root,
+              platform: PLATFORM,
+              sessionName: ownedSessionName(remoteDevice.ctx.label),
+              startedAt: new Date(now()).toISOString(),
+              boot,
+              createdSessionId: remoteDevice.createdSessionId,
+              abandonCreatedSession: remoteDevice.abandonCreatedSession,
+              webPreviewUrl: remoteDevice.webPreviewUrl,
+              writeState,
+              register: registerProject,
+            })
+          : boot()
+      ).then((result) => {
+        bootDuration = bootTimer();
+        return result;
+      });
+    };
+    // A remote device boots after the build: agent-device's daemon exits five
+    // minutes after its last request while no session is open, and nothing
+    // restarts it on an EAS host (https://github.com/appandflow/stim/issues/1212).
+    if (remoteDevice) startRemoteBoot = startBoot;
+    else bootPromise = startBoot();
   }
 
-  if (remoteDevice) {
-    const booted = await bootPromise;
-    if (booted.failed) {
-      if (booted.code) {
-        return fail(booted.code, booted.reason ?? 'The remote device did not boot.', booted.remedy ?? null);
-      }
-      const diag = noDeviceDiagnostic({
-        reason: booted.reason ?? 'The remote device did not boot.',
-        logFile: emuLog,
-        remedy: 'Run `stim status` to inspect the remote device, then retry the command.',
-        localEmulator: false,
-      });
-      return fail(NO_DEVICE, diag.message, diag.remedy, {
-        lines: diag.lines,
-        logPath: diag.logPath ? displayPath(root, diag.logPath) : null,
-      });
-    }
-  }
   record.avdName = device.avdName ?? null;
   record.deviceName = device.deviceName ?? device.avdName ?? null;
   record.systemImage = device.systemImage;
@@ -1085,6 +1075,27 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     ccacheActivity = artifact.ccache;
     androidPackage = artifact.androidPackage;
     record.appPath = apkPath;
+
+    if (startRemoteBoot) {
+      progress.step('install');
+      bootPromise = startRemoteBoot();
+      const booted = await bootPromise;
+      if (booted.failed) {
+        if (booted.code) {
+          return fail(booted.code, booted.reason ?? 'The remote device did not boot.', booted.remedy ?? null);
+        }
+        const diag = noDeviceDiagnostic({
+          reason: booted.reason ?? 'The remote device did not boot.',
+          logFile: emuLog,
+          remedy: 'Run `stim status` to inspect the remote device, then retry the command.',
+          localEmulator: false,
+        });
+        return fail(NO_DEVICE, diag.message, diag.remedy, {
+          lines: diag.lines,
+          logPath: diag.logPath ? displayPath(root, diag.logPath) : null,
+        });
+      }
+    }
 
     let leaseHandle: RunLease | null = null;
     let stopLeaseSignals: (() => void) | null = null;
