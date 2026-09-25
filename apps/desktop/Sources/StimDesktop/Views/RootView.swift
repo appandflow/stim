@@ -60,6 +60,9 @@ struct RootView: View {
     .onReceive(openRequests.$simulatorUdid) { udid in showSimulator(udid, in: store.payload) }
     .onReceive(store.$payload) { payload in
       showSimulator(openRequests.simulatorUdid, in: payload)
+      if case .worktree(let path) = selection, payload?.environments.contains(where: { $0.path == path }) == true {
+        selection = .environment(path)
+      }
       restoreLastProject()
     }
     .onReceive(store.$projects) { _ in restoreLastProject() }
@@ -80,6 +83,8 @@ struct RootView: View {
         openRequests.selectedWorkspace = store.environments(in: project).first?.path
       case .environment(let path):
         openRequests.selectedWorkspace = path
+      case .worktree:
+        openRequests.selectedWorkspace = nil
       default: break
       }
     }
@@ -107,25 +112,19 @@ struct RootView: View {
     logQuery.errorsOnly = true
   }
 
-  private func workspaceDetail(_ env: Workspace) -> some View {
-    WorkspaceDetail(
-      cli: cli, env: env, usage: metrics.usage[env.path], focusedID: $focusedDeviceID, tab: $detailTab,
-      logQuery: $logQuery, openLogs: { openErrors(env.path) })
-  }
-
   @ViewBuilder private var detail: some View {
     switch selection {
     case .environment(let path):
       if let env = store.payload?.environments.first(where: { $0.path == path }) {
-        workspaceDetail(env)
+        WorkspaceDetail(
+          cli: cli, env: env, usage: metrics.usage[env.path], focusedID: $focusedDeviceID, tab: $detailTab,
+          logQuery: $logQuery, openLogs: { openErrors(env.path) })
       } else {
         EmptyState(title: "Workspace gone", message: "stim status no longer reports this workspace.")
       }
     case .worktree(let path):
       if let worktree = store.payload?.unprovisionedWorktrees?.first(where: { $0.path == path }) {
         NoEnvironmentDetail(worktree: worktree)
-      } else if let env = store.payload?.environments.first(where: { $0.path == path }) {
-        workspaceDetail(env)
       } else {
         EmptyState(title: "Worktree gone", message: "stim status no longer reports this worktree.")
       }
