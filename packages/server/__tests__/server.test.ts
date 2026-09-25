@@ -614,15 +614,29 @@ describe('logs.query', () => {
     expect(await client.request('logs.query', { workspace: other })).toMatchObject({
       error: { code: 'unknown-workspace' },
     });
-    for (const filter of [{ tail: 5001 }, { sources: ['nope'] }, { sources: [] }, { grep: '(' }, { level: 'loud' }]) {
-      expect(await client.request('logs.query', { workspace, ...filter })).toMatchObject({
-        error: { code: 'bad-request' },
-      });
+    for (const filter of [
+      { tail: 5001 },
+      { sources: ['nope'] },
+      { sources: [] },
+      { grep: '(' },
+      { grep: 'a\0b' },
+      { slot: 'tab\0let' },
+      { slot: '--errors' },
+      { level: 'loud' },
+    ]) {
+      for (const method of ['logs.query', 'logs.subscribe']) {
+        expect(await client.request(method, { workspace, ...filter })).toMatchObject({
+          error: { code: 'bad-request' },
+        });
+      }
     }
+    expect(await client.request('logs.query', { workspace })).toMatchObject({ result: { records: RECORDS } });
     expect(await client.request('logs.subscribe', { workspace: other })).toMatchObject({
       error: { code: 'unknown-workspace' },
     });
-    expect(stimCalls().filter((call) => call.args.startsWith('logs'))).toEqual([]);
+    expect(stimCalls().filter((call) => call.args.startsWith('logs'))).toEqual([
+      { args: 'logs --json --tail=5000', cwd: workspace },
+    ]);
   });
 });
 

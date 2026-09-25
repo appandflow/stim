@@ -1,4 +1,5 @@
 import { compileGrep, isJsonObject } from '@stim-cli/core/state';
+import { SLOT_NAME } from './control.ts';
 import type { JsonObject } from './feed.ts';
 import { LOG_LEVELS, LOG_SOURCES, MAX_LOG_TAIL, type LogFilter, type LogLevel, type LogSource } from './protocol.ts';
 
@@ -16,9 +17,11 @@ export function parseLogFilter(params: unknown): { filter: LogFilter } | { error
   if (level !== undefined && !LOG_LEVELS.includes(level as LogLevel)) {
     return { error: `level must be one of ${LOG_LEVELS.join(', ')}.` };
   }
-  if (slot !== undefined && (typeof slot !== 'string' || slot === '')) return { error: 'slot must be a slot name.' };
-  if (grep !== undefined && (typeof grep !== 'string' || compileGrep(grep).error)) {
-    return { error: 'grep must be a valid regular expression.' };
+  if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot))) {
+    return { error: 'slot must be 1-64 letters, digits, underscores or hyphens.' };
+  }
+  if (grep !== undefined && (typeof grep !== 'string' || grep.includes('\0') || compileGrep(grep).error)) {
+    return { error: 'grep must be a valid regular expression without NUL characters.' };
   }
   if (errors !== undefined && typeof errors !== 'boolean') return { error: 'errors must be true or false.' };
   if (tail !== undefined && (!Number.isInteger(tail) || (tail as number) < 1 || (tail as number) > MAX_LOG_TAIL)) {
