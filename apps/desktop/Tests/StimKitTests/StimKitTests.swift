@@ -15,6 +15,20 @@ import Testing
     #expect(workspace.devices.map(\.isRunning) == [false, true, true, true])
   }
 
+  @Test func namesDefaultSlotsAfterTheirDeviceAndNamedSlotsAfterTheSlot() {
+    #expect(workspace.devices.map(\.label) == ["iPhone 18 Pro", "Android emulator", "ipad", "EAS iOS"])
+    #expect(workspace.devices.map(\.detail) == ["iOS 27.0", "stim-wide-insets-mobile", "iPad Pro 11-inch (M5) 27.0", nil])
+  }
+
+  @Test func appendsTheKindWhenTwoDevicesShareALabel() {
+    let sim = IosDevice(name: "Pixel", udid: "U1", owned: false, state: "Booted")
+    let phone = AndroidDevice(name: "Pixel", owned: false, physical: true, serial: "S1", state: "detected")
+    let devices: [DeviceRef] = [.ios(slot: "default", sim), .android(slot: "default", phone)]
+    #expect(devices.map { $0.label(among: devices) } == ["Pixel \u{00B7} iOS", "Pixel \u{00B7} Android"])
+    #expect(workspace.devices.map { $0.label(among: workspace.devices) } == workspace.devices.map(\.label))
+  }
+
+
   @Test func decodesARemoteSessionWithItsPreviewURL() {
     guard case .remote(let remote) = workspace.devices.last else {
       Issue.record("expected a remote device last")

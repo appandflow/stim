@@ -26,6 +26,7 @@ struct RootView: View {
   @State private var logQuery = LogQuery()
   @AppStorage(AppPreferences.Key.showsInspector) private var showsInspector = true
   @State private var showsInspectorOverlay = false
+  @State private var inspectorWidth = WorkspaceDetail.inspectorWidth
   @State private var windowWidth: CGFloat = 0
   @State private var sidebarWidth: CGFloat = 0
   @State private var detailWidth: CGFloat = 0
@@ -54,14 +55,15 @@ struct RootView: View {
         .background(Theme.background)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
         .navigationSplitViewColumnWidth(min: 440, ideal: 900)
-    }
-    .toolbar {
-      ToolbarItem(placement: .primaryAction) { MachineSummary(store: store, metrics: metrics, width: summaryWidth) }
-      if showsWorkspace, inspector != .column {
-        ToolbarItem(placement: .primaryAction) {
-          InspectorToggleButton(isShown: inspector == .overlay, action: toggleInspector)
+        .toolbar {
+          ToolbarItem(placement: .navigation) { MachineSummary(store: store, metrics: metrics, width: summaryWidth) }
+          if showsWorkspace {
+            ToolbarItem(placement: .primaryAction) { Spacer() }
+            ToolbarItem(placement: .primaryAction) {
+              InspectorToggleButton(isShown: inspector != .hidden, action: toggleInspector)
+            }
+          }
         }
-      }
     }
     .focusedSceneValue(
       \.inspectorToggle,
@@ -142,7 +144,9 @@ struct RootView: View {
 
   /// macOS moves the traffic lights and the sidebar toggle into the detail's toolbar when the sidebar is hidden.
   private var summaryWidth: CGFloat {
-    detailWidth - (columnVisibility == .detailOnly ? 200 : 80) - (showsWorkspace && inspector != .column ? 44 : 0)
+    detailWidth - (columnVisibility == .detailOnly ? 200 : 80) - (showsWorkspace ? 44 : 0)
+      - (showsWorkspace && inspector == .column
+        ? WorkspaceDetail.clampedInspectorWidth(inspectorWidth, detailWidth: detailWidth) + 1 : 0)
   }
 
   private func restoreLastProject() {
@@ -177,7 +181,8 @@ struct RootView: View {
     case .environment(let path):
       if let env = store.payload?.environments.first(where: { $0.path == path }) {
         WorkspaceDetail(
-          cli: cli, env: env, usage: metrics.usage[env.path], inspector: inspector, toggleInspector: toggleInspector,
+          cli: cli, env: env, usage: metrics.usage[env.path], inspector: inspector,
+          inspectorWidth: $inspectorWidth,
           focusedID: $focusedDeviceID, tab: $detailTab, logQuery: $logQuery, openLogs: { openErrors(env.path) })
       } else {
         EmptyState(title: "Workspace gone", message: "stim status no longer reports this workspace.")

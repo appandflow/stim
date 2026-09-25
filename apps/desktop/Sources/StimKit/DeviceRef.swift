@@ -76,6 +76,46 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     }
   }
 
+  /// Desktop's name for the device: a named slot keeps its name, and the default slot takes the device's own name.
+  /// `stim status` does not report an emulator's hardware profile, so an owned AVD is "Android emulator".
+  public var label: String {
+    guard slot == DeviceRef.defaultSlot else { return slot }
+    switch self {
+    case .ios: return iosModel.name
+    case .android(_, let d): return d.owned ? "Android emulator" : d.name
+    case .remote(let d): return "\(d.backend.uppercased()) \(model)"
+    }
+  }
+
+  /// `label`, followed by the device's kind when another device in `devices` has the same label.
+  public func label(among devices: [DeviceRef]) -> String {
+    let own = label
+    guard devices.contains(where: { $0.id != id && $0.label == own }) else { return own }
+    switch self {
+    case .ios: return "\(own) \u{00B7} iOS"
+    case .android: return "\(own) \u{00B7} Android"
+    case .remote: return "\(own) \u{00B7} remote"
+    }
+  }
+
+  /// What `label` leaves out: the model for a named slot, the runtime for a default-slot simulator.
+  public var detail: String? {
+    if slot != DeviceRef.defaultSlot { return model }
+    switch self {
+    case .ios: return iosModel.runtime.map { "iOS \($0)" }
+    case .android(_, let d): return d.owned ? d.name : nil
+    case .remote: return nil
+    }
+  }
+
+  private var iosModel: (name: String, runtime: String?) {
+    let model = self.model
+    guard let space = model.lastIndex(of: " ") else { return (model, nil) }
+    let runtime = model[model.index(after: space)...]
+    guard runtime.first?.isNumber == true, runtime.allSatisfy({ $0.isNumber || $0 == "." }) else { return (model, nil) }
+    return (String(model[..<space]), String(runtime))
+  }
+
   public var formFactor: FormFactor {
     switch self {
     case .ios(_, let d):
