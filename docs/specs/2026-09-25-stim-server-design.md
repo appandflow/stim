@@ -130,6 +130,11 @@ Methods in v1: `hello` (versions and capabilities), `status.subscribe`,
 `logs`, `frame`, `error`. A client that reconnects resubscribes; the server
 keeps no per-client history.
 
+Log sources are the CLI's: `metro`, `client`, `device`, `build`, and `agent`,
+the agent-device actions `stim logs --source agent` reads for the workspace's
+owned devices. The apps show what an agent does on a device through
+`logs.subscribe` with `sources: ["agent"]`; there is no separate method.
+
 The message types live in core and are exported as JSON Schema at build time,
 like the settings schema. Swift models for Desktop and TypeScript types for the
 mobile app are generated from it, so the three cannot drift.

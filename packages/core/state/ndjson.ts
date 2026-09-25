@@ -11,7 +11,7 @@ export interface NdjsonRecord {
 
 export const LEVELS: string[] = ['debug', 'info', 'warn', 'error', 'fatal'];
 
-export const SOURCES: string[] = ['metro', 'client', 'device', 'build'];
+export const SOURCES: string[] = ['metro', 'client', 'device', 'build', 'agent'];
 
 export function levelRank(level?: string): number {
   const i = LEVELS.indexOf(level as string);

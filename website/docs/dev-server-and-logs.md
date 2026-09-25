@@ -240,10 +240,13 @@ validation you could not complete.
 code={`stim logs --errors
 stim logs --source client --since 5m
 stim logs --follow --level warn
+stim logs --source agent --follow
 stim logs --errors --json`}
 />
 
-The merged timeline includes Metro, client, device, and build records. Logs live
+The merged timeline includes Metro, client, device, and build records, and the
+actions [agent-device](https://github.com/callstack/agent-device) takes on
+the workspace's owned simulators and emulators. Logs live
 in the global workspace directory under `$STIM_HOME/workspaces`, not in the
 project checkout. The Metro, client, and device files are capped at about 8 MiB each.
 Stim keeps one previous generation of each file, and queries read both. The oldest
@@ -255,6 +258,19 @@ captured logs. Human mode prints `No matching log records` on stderr for zero
 matches; JSON mode writes NDJSON and writes zero bytes for zero matches. A
 workspace that has never produced a timeline refuses with `STIM_NO_PROJECT`
 and, in a monorepo, names the nearest registered descendant app with logs.
+
+### Agent-device actions
+
+When an agent drives an owned simulator or emulator with agent-device, `stim logs
+--source agent` shows each action as an `info` record with source `agent`: taps
+with their coordinates, typed text, app opens, and screenshots. A failed
+agent-device command is an `error` record. Stim reads agent-device's own session
+records under `~/.agent-device` (or `AGENT_DEVICE_STATE_DIR`) and never writes
+there. An iOS session is matched to a simulator through its runner log, including
+a session that moved between simulators. An Android session is matched only
+while agent-device holds its claim on the emulator. Records from a newer
+agent-device format that Stim does not recognize are replaced by one `warn`
+record saying the session's actions are not shown.
 
 `stim stop` ends the supervisor and log collectors. It also frees the reserved
 port and shuts down the owned local device.

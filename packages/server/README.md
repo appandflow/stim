@@ -114,7 +114,7 @@ Events are `{ "event", "subscription", ... }`.
 - `logs.query` returns `{ "records" }`, and `logs.subscribe` sends `logs`
   events: first the last `tail` matching records, then new ones in batches.
   Both take the Stim Desktop log viewer's filters: `workspace` (required),
-  `sources` (`metro`, `client`, `device`, `build`), `slot`, `level` (the
+  `sources` (`metro`, `client`, `device`, `build`, `agent`), `slot`, `level` (the
   minimum), `grep` (a regular expression), `errors`, and `tail` (1 to 5000,
   5000 by default). Without `sources`, `errors` keeps the CLI's default error
   scope. They run `stim logs --json` and `stim logs --json --follow` in the
