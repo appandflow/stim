@@ -9,6 +9,7 @@ import type {
   DeviceActivity,
   DeviceLeaseState,
   EnvironmentState,
+  IdleStopRecord,
   RemoteDeviceState,
   StatusCapacity,
   WorktreeFacts,
@@ -102,6 +103,7 @@ export function environmentState(
     supervisor = null,
     logs = null,
     remote = null,
+    idleStop = null,
   }: {
     simsByUdid?: Record<string, SimFacts>;
     metro?: MetroFacts | null;
@@ -112,6 +114,7 @@ export function environmentState(
     supervisor?: SupervisorFacts | null;
     logs?: LogsFacts | null;
     remote?: RemoteDeviceState | null;
+    idleStop?: IdleStopRecord | null;
   } = {},
 ): EnvironmentState {
   const ios = project.platforms?.ios;
@@ -187,7 +190,12 @@ export function environmentState(
         }
       : null,
     metro: project.metroPort
-      ? { port: project.metroPort, running: metroRunning, pid: metro?.metro?.pid ?? null }
+      ? {
+          port: project.metroPort,
+          running: metroRunning,
+          pid: metro?.metro?.pid ?? null,
+          ...(idleStop && !metroRunning ? { idleStop } : {}),
+        }
       : null,
     supervisor: supervisor
       ? {

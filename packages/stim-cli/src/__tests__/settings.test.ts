@@ -28,6 +28,7 @@ import {
   resolveSettings,
   settingShapeErrors,
   tunnelModeSetting,
+  metroIdleStopMinutesSetting,
   unknownSettingKeys,
 } from '../workspace/settings.ts';
 import { resolveOptimizations, resolveMetroSharedCache } from '../optimizations.ts';
@@ -400,6 +401,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'android.keystorePassword': { valid: 'env:MY_KS_PASS', invalid: 1234, expected: 'a string' },
   'android.remote': { valid: 'eas', invalid: 'cloud', expected: 'one of: proxy, eas' },
   'metro.tunnel': { valid: 'ngrok', invalid: 'bogus', expected: 'one of: auto, off, expo, cloudflared, ngrok' },
+  'metro.idleStopMinutes': { valid: 30, invalid: '30', expected: 'a number' },
   'metro.ngrokUrl': { valid: 'https://a.ngrok.app', invalid: {}, expected: 'a string' },
   'metro.publicUrl': { valid: 'https://metro.example', invalid: false, expected: 'a string' },
   'metro.warmupUrl': { valid: {}, invalid: '/index.bundle', expected: 'an object' },
@@ -511,6 +513,13 @@ test('unknownSettingKeys accepts metro.tunnel, metro.ngrokUrl, and metro.publicU
       },
     }),
   ).toEqual([]);
+});
+
+test('metro.idleStopMinutes reads a whole number of minutes, 0 included, and defaults to 60', () => {
+  expect(metroIdleStopMinutesSetting({})).toBe(60);
+  expect(metroIdleStopMinutesSetting({ metro: { idleStopMinutes: 0 } })).toBe(0);
+  expect(metroIdleStopMinutesSetting({ metro: { idleStopMinutes: 15 } })).toBe(15);
+  expect(metroIdleStopMinutesSetting({ metro: { idleStopMinutes: -1 } })).toBe(60);
 });
 
 describe('tunnelModeSetting', () => {

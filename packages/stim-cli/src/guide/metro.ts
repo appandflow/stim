@@ -104,6 +104,22 @@ WHAT THE SUPERVISOR IS
   the device-log collectors, shuts the owned device down (never deletes it)
   and frees the port.
 
+  IDLE STOP: the supervisor stops its dev server after metro.idleStopMinutes
+  (default 60; 0 never stops) with no bundle request, no client log record
+  (in-app console logs; for Expo, any stdout line of the Expo CLI) and no Stim
+  command in the workspace (start, ios, android, reload, worktree warm). It
+  checks once a minute. It keeps running while a build in the workspace is in
+  progress, while one of the workspace's devices is driven or its activity is
+  unknown (\`guide facts status\`), and while a \`stim start\` holds the
+  workspace's metro-start lock. A Fast Refresh update is not a bundle request:
+  an open app that only hot-reloads and logs nothing counts as idle, and a
+  connected app alone does not keep the server. It records a
+  supervisor_idle_stopped line in metro.ndjson and devServerStop in
+  state.json, so \`status\` shows "stopped (idle)" rather than a crash.
+  Devices stay booted. The next \`stim start\` starts it again; \`ios\` and
+  \`android\` refuse with STIM_NO_METRO until then. The setting is read when
+  \`start\` spawns the supervisor.
+
   ENVIRONMENT: the supervisor -- and through it the dev server, including a
   metro.config.js evaluated inside the expo child -- inherits the environment
   of the \`start\` call that SPAWNED it. A later \`start\` that finds a healthy

@@ -33,6 +33,7 @@ import { windowsLauncherArgs } from '../detached-entry.ts';
 import {
   publicUrlSetting,
   ngrokUrlSetting,
+  metroIdleStopMinutesSetting,
   metroTunnelSettingError,
   remoteAndroidSetting,
   cacheProviderSettingError,
@@ -542,6 +543,8 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
             String(port),
             ...(tunnel ? ['--tunnel'] : []),
             ...(opts.resetCache ? ['--reset-cache'] : []),
+            '--idle-stop-minutes',
+            String(metroIdleStopMinutesSetting(settings)),
           ];
           const childEnv: NodeJS.ProcessEnv = {
             ...process.env,

@@ -10,6 +10,7 @@ import {
   acceptsShape,
   expectedShape,
   isLayeredSetting,
+  settingDefinition,
   REMOTE_DEVICE_BACKENDS,
   SETTING_GROUPS,
   SETTINGS,
@@ -580,6 +581,15 @@ function remoteSetting(settings: SettingsObject, platform: 'ios' | 'android'): R
   return typeof remote === 'string' && (REMOTE_DEVICE_BACKENDS as readonly string[]).includes(remote)
     ? (remote as RemoteDeviceBackend)
     : null;
+}
+
+export function metroIdleStopMinutesSetting(settings: SettingsObject): number {
+  const block = settings.metro;
+  const value =
+    typeof block === 'object' && block !== null ? (block as { idleStopMinutes?: unknown }).idleStopMinutes : undefined;
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+    ? value
+    : Number(settingDefinition('metro.idleStopMinutes')?.default);
 }
 
 export function tunnelModeSetting(settings: SettingsObject): TunnelMode | null {

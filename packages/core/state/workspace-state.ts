@@ -13,6 +13,23 @@ export interface WorkspaceState {
   [key: string]: unknown;
 }
 
+export const IDLE_STOP_KEY = 'devServerStop';
+
+/** Why the supervisor last stopped the dev server on its own: `metro.idleStopMinutes` with no use. */
+export interface IdleStopRecord {
+  reason: 'idle';
+  at: string;
+  idleMinutes: number;
+}
+
+export function readIdleStop(state: WorkspaceState | null | undefined): IdleStopRecord | null {
+  const record = state?.[IDLE_STOP_KEY] as Partial<IdleStopRecord> | undefined;
+  if (record?.reason !== 'idle' || typeof record.at !== 'string' || typeof record.idleMinutes !== 'number') {
+    return null;
+  }
+  return { reason: 'idle', at: record.at, idleMinutes: record.idleMinutes };
+}
+
 export function readWorkspaceState(root: string): WorkspaceState | null {
   return readJsonObject(workspaceStateFile(root));
 }

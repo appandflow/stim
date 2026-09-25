@@ -209,6 +209,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Bundle URL `stim android` prefetches to warm Metro',
   },
   {
+    key: 'metro.idleStopMinutes',
+    type: { kind: 'number', integer: true, minimum: 0 },
+    scopes: PROJECT,
+    default: 60,
+    description: 'Minutes without a bundle request, client log or Stim command before the dev server stops; 0 never',
+  },
+  {
     key: 'worktree.exclude',
     type: { kind: 'strings' },
     scopes: ['repo', 'committed'],

@@ -115,7 +115,8 @@ RULES DURING THE LOOP
   inherit a repository-root runtime file. Keep repository-wide worktree-copy
   rules at the source checkout root; see guide settings for the two scopes.
 - Run start before a debug ios or android build. If it returns STIM_NO_METRO,
-  run stim start and retry.
+  run stim start and retry. The dev server stops itself after an hour with
+  no use (guide metro); the same retry brings it back.
 - Run ios or android again after a native input changes. A JavaScript-only
   change does not need one.
 - For stale Metro transforms or file-map state, use stim start --reset-cache.

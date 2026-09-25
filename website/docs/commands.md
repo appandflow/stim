@@ -466,6 +466,11 @@ URL. In `--json`, each environment's `remoteDevices` array holds
 `status` reads Stim's local records and does not query EAS; `stim stop` in that
 workspace ends the session.
 
+A dev server that its supervisor stopped after
+[`metro.idleStopMinutes`](./dev-server-and-logs.md#idle-stop) with no use
+prints as `metro: port <port> stopped (idle)`. In `--json` that environment's
+`metro` carries `idleStop` with `reason`, `at`, and `idleMinutes`.
+
 `--watch` keeps running and prints the status again each time it changes.
 With `--json` it prints one complete payload per line: one immediately, then
 one per change, never two identical payloads in a row. It reacts to changes in
