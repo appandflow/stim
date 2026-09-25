@@ -88,9 +88,10 @@ the mock server.
 ## Device view
 
 Tapping a running device's frame on the workspace screen opens it full
-screen. The view asks for up to 30 frames a second, scaled to the screen's
-pixels (at most 1600 on the longer edge), and fits them to the device's
-shape. It is view-only until you turn on **Control**, which appears only when
+screen. It renders `DeviceScreen` (see Device video): H.264 video at up to
+60 frames a second when the server offers it, JPEG frames at up to 30
+otherwise, scaled to the screen's pixels (at most 1600 on the longer edge)
+and fitted to the device's shape. It is view-only until you turn on **Control**, which appears only when
 the Mac granted this phone control.
 
 With **Control** on, the server starts a control session (`control.begin`)
@@ -128,6 +129,28 @@ from `hello`, so its **Reconnect** button opens a new connection to pick up the
 grant. When control is taken away while connected, the server refuses the
 action and the toast shows why. A server that predates actions shows neither
 entry.
+
+## Device video
+
+`DeviceScreen` (`src/components/device-screen.tsx`) shows the stream
+`useDeviceStream` (`src/hooks/device-stream.ts`) opens, which subscribes with
+`video: ["h264"]`. When the server offers video, each binary
+message goes straight to `StimVideoView`, a native view from the local Expo
+module in `modules/stim-video`. On iOS it decodes with
+`AVSampleBufferDisplayLayer`, and on Android with `MediaCodec` onto a
+`SurfaceView`. The view stays black until the first keyframe. A decoder that
+lost its state, for example after the app was in the background, or one
+that fell more than three frames behind on Android, drops frames until a
+keyframe it asks the server for with `frames.keyframe`. A server without
+video sends JPEG `frame` events, which the same component shows as images.
+The screen is fitted to the component's bounds at the device's aspect ratio,
+and children render over the fitted screen, so touch overlays share its
+coordinates. Development builds show H.264 fps, bitrate and latency (arrival
+time minus the Mac's capture time) in the corner. The grid tiles keep
+requesting JPEG frames.
+
+`modules/stim-video` is native code: pull it, then rebuild the app with
+`stim ios` or `stim android`. Fast Refresh does not load it.
 
 ## Protocol types
 

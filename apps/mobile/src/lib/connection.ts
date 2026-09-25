@@ -9,6 +9,7 @@ import {
   type ServerEvent,
   type ServerMessage,
 } from '@/protocol/types';
+import { parseVideoPacket, type VideoPacket } from '@/lib/video';
 
 export type ConnectionState =
   | { kind: 'connecting' }
@@ -24,11 +25,14 @@ export type ConnectionState =
 
 type SubscribeMethod = 'status.subscribe' | 'logs.subscribe' | 'frames.subscribe';
 
+type SubscribeResult = Methods[SubscribeMethod]['result'];
+
 interface Subscription {
   method: SubscribeMethod;
   params: Methods[SubscribeMethod]['params'];
   onEvent: (event: ServerEvent) => void;
-  onSubscribed?: () => void;
+  onSubscribed?: (result: SubscribeResult) => void;
+  onVideo?: (packet: VideoPacket) => void;
   serverId: string | null;
   retryMs: number;
   retry: unknown;
@@ -127,18 +131,23 @@ export class StimConnection {
     return this.send(this.socket, method, params);
   }
 
-  /** `onSubscribed` runs each time the server accepts the subscription, before the events it then sends. */
+  /**
+   * `onSubscribed` runs each time the server accepts the subscription, with its result, before the events it
+   * then sends. `onVideo` gets the binary video messages of a `frames.subscribe` whose result offered video.
+   */
   subscribe<M extends SubscribeMethod>(
     method: M,
     params: Methods[M]['params'],
     onEvent: (event: ServerEvent) => void,
-    onSubscribed?: () => void,
+    onSubscribed?: (result: Methods[M]['result']) => void,
+    onVideo?: (packet: VideoPacket) => void,
   ): () => void {
     const sub: Subscription = {
       method,
       params,
       onEvent,
-      onSubscribed,
+      onSubscribed: onSubscribed as Subscription['onSubscribed'],
+      onVideo,
       serverId: null,
       retryMs: MIN_RETRY_MS,
       retry: null,
@@ -163,6 +172,7 @@ export class StimConnection {
   private connect(): void {
     this.options.onState?.({ kind: 'connecting' });
     const socket = this.createSocket(this.options.endpoint);
+    socket.binaryType = 'arraybuffer';
     this.socket = socket;
     socket.onopen = () => {
       this.send(socket, 'hello', {
@@ -193,7 +203,9 @@ export class StimConnection {
       );
     };
     socket.onmessage = (message) => {
-      if (socket === this.socket) this.receive(String(message.data));
+      if (socket !== this.socket) return;
+      if (message.data instanceof ArrayBuffer) this.receiveVideo(message.data);
+      else this.receive(String(message.data));
     };
     socket.onclose = () => {
       if (socket !== this.socket) return;
@@ -230,7 +242,7 @@ export class StimConnection {
           return;
         }
         sub.serverId = result.subscription;
-        sub.onSubscribed?.();
+        sub.onSubscribed?.(result);
       },
       (error: Error) => {
         sub.onEvent({ event: 'error', error: { code: 'subscribe-failed', message: error.message } });
@@ -270,6 +282,16 @@ export class StimConnection {
       if (message.event === 'error') this.resubscribeLater(sub);
       else sub.retryMs = MIN_RETRY_MS;
       sub.onEvent(message);
+    }
+  }
+
+  private receiveVideo(buffer: ArrayBuffer): void {
+    const packet = parseVideoPacket(buffer);
+    if (!packet) return;
+    for (const sub of this.subscriptions) {
+      if (sub.serverId === null || sub.serverId !== packet.subscription) continue;
+      sub.retryMs = MIN_RETRY_MS;
+      sub.onVideo?.(packet);
     }
   }
 

@@ -1,4 +1,3 @@
-import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { useRef, useState } from 'react';
 import {
@@ -13,22 +12,22 @@ import {
   useWindowDimensions,
   View,
   type GestureResponderEvent,
-  type LayoutRectangle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Chip } from '@/components/chip';
+import { DeviceScreen } from '@/components/device-screen';
 import { Toggle } from '@/components/toggle';
-import { useDeviceControl, useFrame, useStatus } from '@/hooks/mac-connection';
-import { framePoint, keyboardDelta, otherDriver } from '@/lib/device-control';
+import { useDeviceStream } from '@/hooks/device-stream';
+import { useDeviceControl, useStatus } from '@/hooks/mac-connection';
+import { framePoint, keyboardDelta, otherDriver, type Size } from '@/lib/device-control';
 import { devicesOf } from '@/lib/workspaces';
 import type { InputButton, Platform } from '@/protocol/types';
 import { useColors, type Colors } from '@/theme';
 
-const LIVE_FPS = 30;
+const LIVE_FPS = 60;
 const MAX_EDGE = 1600;
 const MOVE_INTERVAL_MS = 16;
-const STAGE_PADDING = 8;
 
 export function DeviceView({ workspace, platform, slot }: { workspace: string; platform: Platform; slot: string }) {
   const colors = useColors();
@@ -38,22 +37,19 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
   const env = status?.environments.find((candidate) => candidate.path === workspace);
   const device = env ? devicesOf(env).find((entry) => entry.platform === platform && entry.slot === slot) : undefined;
   const streams = Boolean(device?.running && device.owned && !device.physical);
-  const { frame, error, delayed } = useFrame(workspace, platform, slot, streams, { fps: LIVE_FPS, maxEdge });
+  const stream = useDeviceStream({ workspace, platform, slot }, { enabled: streams, fps: LIVE_FPS, maxEdge });
+  const source = stream.video ?? stream.frame;
   const control = useDeviceControl(workspace, platform, slot);
   const controlling = control.state.kind === 'on';
   const driver = otherDriver(device?.activity, control.state.kind === 'on' ? control.state.leaseSince : null);
-  const [stage, setStage] = useState<LayoutRectangle | null>(null);
+  const [screen, setScreen] = useState<Size | null>(null);
   const keyboard = useRef<TextInput>(null);
   const [typing, setTyping] = useState(false);
   const [typed, setTyped] = useState('');
 
-  const aspect = frame && frame.height > 0 ? frame.width / frame.height : platform === 'ios' ? 0.46 : 0.45;
-  const room = stage ? { width: stage.width - STAGE_PADDING * 2, height: stage.height - STAGE_PADDING * 2 } : null;
-  const box = room
-    ? { width: Math.min(room.width, room.height * aspect), height: Math.min(room.height, room.width / aspect) }
-    : null;
   const touches = useRef({ active: false, lastMove: 0, pending: null as { x: number; y: number } | null });
-  const point = (x: number, y: number, clamp: boolean) => (frame && box ? framePoint(x, y, box, frame, clamp) : null);
+  const point = (x: number, y: number, clamp: boolean) =>
+    source && screen ? framePoint(x, y, screen, source, clamp) : null;
   const touchHandlers = {
     onStartShouldSetResponder: () => true,
     onMoveShouldSetResponder: () => true,
@@ -130,32 +126,27 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
           canTakeOver={control.allowed === true}
           onTakeOver={takeOver}
         />
-        {delayed ? (
+        {stream.delayed ? (
           <View style={styles.chips}>
             <Chip tint={colors.warn}>Screen updates delayed</Chip>
           </View>
         ) : null}
-        <View style={styles.stage} onLayout={(event) => setStage(event.nativeEvent.layout)}>
-          {frame && box ? (
-            <View
-              style={[styles.frame, box, controlling && { borderColor: colors.primary }]}
-              {...(controlling ? touchHandlers : {})}
-            >
-              <Image
-                source={{ uri: `data:${frame.mime};base64,${frame.data}` }}
-                style={styles.image}
-                contentFit="contain"
-                transition={0}
-                pointerEvents="none"
-                accessibilityLabel={`Live screen of ${title}`}
+        {streams ? (
+          <DeviceScreen stream={stream} platform={platform} label={title} style={styles.stage}>
+            {source ? (
+              <View
+                style={[styles.overlay, controlling && { borderColor: colors.primary }]}
+                onLayout={(event) => setScreen(event.nativeEvent.layout)}
+                pointerEvents={controlling ? 'auto' : 'none'}
+                {...(controlling ? touchHandlers : {})}
               />
-            </View>
-          ) : (
-            <Text style={styles.placeholder}>
-              {streams ? (error ?? 'Waiting for frames') : (device?.state ?? 'This device is not running.')}
-            </Text>
-          )}
-        </View>
+            ) : null}
+          </DeviceScreen>
+        ) : (
+          <View style={styles.stage}>
+            <Text style={styles.placeholder}>{device?.state ?? 'This device is not running.'}</Text>
+          </View>
+        )}
         {controlling ? (
           <View style={styles.toolbar}>
             <ToolButton
@@ -258,9 +249,17 @@ const styles = StyleSheet.create({
   title: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
   subtitle: { color: '#FFFFFF99', fontSize: 12 },
   chips: { flexDirection: 'row', paddingHorizontal: 16, paddingBottom: 6 },
-  stage: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: STAGE_PADDING },
-  frame: { borderRadius: 8, borderWidth: 2, borderColor: 'transparent', overflow: 'hidden' },
-  image: { flex: 1 },
+  stage: { flex: 1, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center', margin: 8 },
+  overlay: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
   placeholder: { color: '#FFFFFF99', fontSize: 14, textAlign: 'center', paddingHorizontal: 24 },
   banner: {
     flexDirection: 'row',
