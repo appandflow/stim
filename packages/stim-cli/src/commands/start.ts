@@ -11,7 +11,7 @@ import { pidExists, resolveProjectMetro, signalProcessTree } from '../metro.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { resolveSupervisorTarget, type SupervisorStateRecord } from '../supervisor/ownership.ts';
 import type { MetroResolution } from '../metro.ts';
-import { queryLogs } from '@stim-cli/core/state';
+import { IDLE_STOP_KEY, queryLogs } from '@stim-cli/core/state';
 import { levelRank } from '../ndjson.ts';
 import { ensureWorkspaceStorage, supervisorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
 import { reserveMetroPort } from '../ports.ts';
@@ -24,7 +24,12 @@ import {
   NO_PROJECT_REFUSAL,
 } from '../workspace/project.ts';
 import { clearManagedMetroTunnel, readMetroTunnel } from '../supervisor/state.ts';
-import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import {
+  clearWorkspaceStateKeys,
+  readWorkspaceState,
+  recordWorkspaceUse,
+  writeWorkspaceState,
+} from '../workspace/workspace-state.ts';
 import { CACHE_PROVIDER_ENV, cacheProviderEnv } from '@stim-cli/cache';
 import { workspaceProcessLockError, withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { stopOwnedMetroForReset } from '../supervisor/cache-reset.ts';
@@ -858,6 +863,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
             note(chalk.dim('Leaving it alone: Stim will not start a second bundler over a working one.'));
           }
           if (managedTunnelExited()) return failExitedManagedTunnel();
+          clearWorkspaceStateKeys(root, [IDLE_STOP_KEY]);
           report({ json, out, port, supervisor, logsDir, alreadyRunning: true, waited: waitTimer() });
           return;
         }

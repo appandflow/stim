@@ -11,6 +11,7 @@ import {
   expectedShape,
   isLayeredSetting,
   settingDefinition,
+  settingValueError,
   REMOTE_DEVICE_BACKENDS,
   SETTING_GROUPS,
   SETTINGS,
@@ -43,6 +44,8 @@ const LAYERED_SETTINGS = SETTINGS.filter(isLayeredSetting);
 
 const KNOWN_SETTINGS = new Set([...LAYERED_SETTINGS.map((setting) => setting.key), ...SETTING_GROUPS]);
 
+const BOUNDS_CHECKED_WHEN_USED: ReadonlySet<string> = new Set(['android.dataPartitionSizeGb']);
+
 export const SETTINGS_WITH_RESOLVE_TIME_FALLBACK: ReadonlySet<string> = new Set(['optimizations.android.casToolchain']);
 
 export const PATH_SETTINGS: readonly string[] = Object.freeze(
@@ -68,8 +71,14 @@ export function settingShapeErrors(settings: unknown): string[] {
   for (const setting of LAYERED_SETTINGS) {
     if (SETTINGS_WITH_RESOLVE_TIME_FALLBACK.has(setting.key)) continue;
     const value = settingValueAt(settings, setting.key);
-    if (value === undefined || acceptsShape(setting, value)) continue;
-    errors.push(`Invalid ${setting.key} setting ${JSON.stringify(value)}. Expected ${expectedShape(setting.type)}.`);
+    if (value === undefined) continue;
+    const expected =
+      setting.type.kind === 'number' && !BOUNDS_CHECKED_WHEN_USED.has(setting.key)
+        ? settingValueError(setting, value)
+        : acceptsShape(setting, value)
+          ? null
+          : expectedShape(setting.type);
+    if (expected) errors.push(`Invalid ${setting.key} setting ${JSON.stringify(value)}. Expected ${expected}.`);
   }
   return errors;
 }
@@ -587,9 +596,10 @@ export function metroIdleStopMinutesSetting(settings: SettingsObject): number {
   const block = settings.metro;
   const value =
     typeof block === 'object' && block !== null ? (block as { idleStopMinutes?: unknown }).idleStopMinutes : undefined;
-  return typeof value === 'number' && Number.isInteger(value) && value >= 0
-    ? value
-    : Number(settingDefinition('metro.idleStopMinutes')?.default);
+  const setting = settingDefinition('metro.idleStopMinutes');
+  return setting && value !== undefined && settingValueError(setting, value) === null
+    ? (value as number)
+    : Number(setting?.default);
 }
 
 export function tunnelModeSetting(settings: SettingsObject): TunnelMode | null {
