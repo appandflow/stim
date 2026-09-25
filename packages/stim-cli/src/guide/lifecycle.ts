@@ -524,6 +524,12 @@ result as proof instead of requiring an unrelated screenshot.`,
   boot's few seconds, and the app is always installed again. A SimSlim
   profile survives the erase.
 
+  Park erases only a simulator that reports Shutdown. It waits up to 15s for
+  the shutdown to settle, retries the shutdown once, and waits up to 15s more.
+  A simulator that is still booted after that is deleted instead, and
+  \`worktree remove\` prints
+  \`could not park <name>: ... -- deleted it instead\`.
+
   Adoption matches the device type AND the runtime EXACTLY: a ticket that asks
   for an iPad never gets an iPhone, and a request for iOS 18.5 never gets 26.5.
   No match creates a new simulator, as before. After a runtime upgrade the
