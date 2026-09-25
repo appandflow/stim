@@ -127,6 +127,8 @@ export class HelperSource {
   private config = '';
   private stopped = false;
   private notice: string | null = null;
+  /** Whether the emulator reported a hardware keyboard; null until it reports. */
+  keyboard: boolean | null = null;
   private stderr = '';
   private readonly ended: () => void;
   private readonly bitrate = new Bitrate(DEFAULT_VIDEO_LIMITS, Date.now());
@@ -270,6 +272,8 @@ export class HelperSource {
       const notice: unknown = JSON.parse(text);
       const error = (notice as { error?: unknown } | null)?.error;
       if (typeof error === 'string') this.notice = error;
+      const keyboard = (notice as { keyboard?: unknown } | null)?.keyboard;
+      if (keyboard === 'yes' || keyboard === 'no') this.keyboard = keyboard === 'yes';
       const inputError = (notice as { inputError?: unknown } | null)?.inputError;
       if (typeof inputError === 'string') console.error(`stim-server: stim-frames: ${inputError}`);
     } catch {}

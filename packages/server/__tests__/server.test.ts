@@ -1113,13 +1113,14 @@ const run = { tool: 'stim-frames', args: process.argv.slice(2), pid: process.pid
 const record = () => appendFileSync(env.FAKE_TOOL_CALLS, JSON.stringify(run) + '\\n');
 process.on('exit', record);
 process.on('SIGTERM', () => process.exit(0));
-appendFileSync(env.FAKE_TOOL_CALLS + '.started', process.pid + '\\n');
 const message = (kind, body) => {
   const header = Buffer.alloc(5);
   header.writeUInt32BE(body.length + 1, 0);
   header[4] = kind;
   process.stdout.write(Buffer.concat([header, body]));
 };
+if (env.FAKE_HELPER_KEYBOARD) message(2, Buffer.from(JSON.stringify({ keyboard: env.FAKE_HELPER_KEYBOARD })));
+appendFileSync(env.FAKE_TOOL_CALLS + '.started', process.pid + '\\n');
 if (env.FAKE_HELPER_FAIL && !env.FAKE_HELPER_FAIL_AFTER) {
   message(2, Buffer.from(JSON.stringify({ error: env.FAKE_HELPER_FAIL })));
   process.exit(1);
@@ -1695,6 +1696,27 @@ describe('frames.subscribe', () => {
       ['-s', 'emulator-5554', 'shell', 'input', 'keyevent', 'KEYCODE_APP_SWITCH'],
     ]);
   });
+
+  test.skipIf(!fakeTailscale)(
+    'types and presses buttons through the helper on an emulator with a hardware keyboard',
+    async () => {
+      const port = await startControl({ FAKE_HELPER_KEYBOARD: 'yes' });
+      const client = await authed(port, true);
+      const begun = await client.request('control.begin', { workspace, platform: 'android' });
+      const { session } = (begun as { result: { session: string } }).result;
+      await until(() => existsSync(`${toolCalls}.started`));
+      expect(await client.request('input.text', { session, text: "it's ok\b" })).toMatchObject({ result: {} });
+      expect(await client.request('input.button', { session, button: 'app-switch' })).toMatchObject({ result: {} });
+      expect(await client.request('control.end', { session })).toMatchObject({ result: {} });
+      await until(() => helperRuns().length === 1);
+      expect(helperRuns()[0]!.configs.slice(1)).toEqual([
+        { input: 'text', text: "it's ok\b" },
+        { input: 'button', button: 'app-switch' },
+      ]);
+      expect(toolRuns().filter((run) => run.tool === 'adb')).toEqual([]);
+    },
+    10_000,
+  );
 
   test.skipIf(!fakeTailscale)(
     'refuses a device an agent drives, and takes it over only when asked, keeping the agent lease',

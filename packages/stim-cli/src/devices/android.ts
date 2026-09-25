@@ -844,6 +844,12 @@ export function configureNewOwnedAvd(
   return configPath;
 }
 
+/**
+ * Values every AVD Stim creates gets unless `android.avdConfig` or `android.avdConfigFile` sets the key. The
+ * emulator drops gRPC `sendKey` events on an AVD without a hardware keyboard.
+ */
+export const OWNED_AVD_CONFIG_DEFAULTS: Readonly<Record<string, string>> = Object.freeze({ 'hw.keyboard': 'yes' });
+
 export function avdPoolConfiguration(
   dataPartitionSizeGb: number,
   avdConfig: Record<string, string>,

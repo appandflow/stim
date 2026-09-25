@@ -127,9 +127,9 @@ const ANDROID_KEYS: Record<InputButton | '\n' | '\t' | '\b', string> = {
 };
 
 /**
- * The `adb shell` argument lists that type `text` or press `button` on an emulator. Stim's AVDs have no
- * hardware keyboard (`hw.keyboard=no`), so the emulator drops gRPC key events. `adb shell` joins its
- * arguments into one device shell command, so text goes single-quoted; `input text` reads `%s` as a space.
+ * The `adb shell` argument lists that type `text` or press `button` on an emulator without a hardware keyboard
+ * (`hw.keyboard=no`), which drops gRPC key events. `adb shell` joins its arguments into one device shell
+ * command, so text goes single-quoted; `input text` reads `%s` as a space.
  */
 function adbInputArgs(command: Extract<InputCommand, { input: 'text' | 'button' }>): string[][] {
   if (command.input === 'button') return [['shell', 'input', 'keyevent', ANDROID_KEYS[command.button]]];
@@ -370,7 +370,7 @@ export class ControlHub {
       return Promise.resolve({ code: 'unknown-session', message: `No control session ${id} on this connection.` });
     }
     session.idle.refresh();
-    if (session.device.platform === 'ios' || command.input === 'touch') {
+    if (session.device.platform === 'ios' || command.input === 'touch' || session.input.keys()) {
       session.input.send(command);
       return Promise.resolve(null);
     }

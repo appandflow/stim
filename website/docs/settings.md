@@ -181,7 +181,11 @@ old generic profile are not adopted by new workspaces.
 `android.avdConfigFile` reads an Android `config.ini` file. `android.avdConfig`
 provides the same safe keys as JSON. Stim applies these values only when it
 creates a new owned AVD. It never rewrites an existing AVD or changes generated
-identity and storage paths.
+identity and storage paths, with one exception: every AVD Stim creates gets
+`hw.keyboard=yes` unless these settings set `hw.keyboard`, and a parked AVD
+created before that default gets it when a workspace adopts it. A hardware
+keyboard lets Stim Desktop and stim-server type through the emulator's gRPC
+endpoint; the on-screen keyboard still opens.
 
 The validated keys cover CPU count, RAM, heap size, screen density, graphics,
 orientation, network conditions, and common hardware switches. On displayless Linux,
