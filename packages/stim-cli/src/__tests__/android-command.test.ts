@@ -860,15 +860,15 @@ describe('explicit remote backend behavior', () => {
     });
 
     expect((await h.run()).ok).toBe(true);
-    expect(order.slice(0, 7)).toEqual([
+    expect(order.slice(0, 6)).toEqual([
       'resolveBackend',
       'localMetro',
       'publicMetro',
       'ensureDevice',
-      'ensureDeviceBooted',
       'warmMetro',
       'fingerprint',
     ]);
+    expect(order.indexOf('ensureDeviceBooted')).toBeGreaterThan(order.lastIndexOf('fingerprint'));
   });
 
   test('a failed public Metro gate starts no remote session or device operation', async () => {
@@ -937,7 +937,7 @@ describe('explicit remote backend behavior', () => {
     expect(resolveEasDevelopmentBuild).not.toHaveBeenCalled();
   });
 
-  test('an EAS session is recorded after boot and survives a later build failure', async () => {
+  test('an EAS session is recorded after boot and survives a later install failure', async () => {
     const order: string[] = [];
     const h = harness({
       remoteDevice: 'eas',
@@ -953,13 +953,17 @@ describe('explicit remote backend behavior', () => {
           order.push('boot');
           return { ok: true, serial: 'drs_42' };
         },
-        install: never('install'),
+        install: () => {
+          order.push('install');
+          return { failed: true, code: 'STIM_INSTALL_FAILED', reason: 'Remote daemon is unavailable' };
+        },
         launch: never('launch'),
         createdSessionId: () => {
           order.push('sessionId');
           return 'drs_42';
         },
         webPreviewUrl: () => null,
+        failureRemedy: () => 'EAS Simulator session drs_42 is still running; run `stim stop` to end it.',
       }),
       resolveEasBin: () => ({ file: '/bin/eas', args: [] }),
       writeState: (projectRoot: string, patch: Record<string, unknown>) => {
@@ -970,15 +974,37 @@ describe('explicit remote backend behavior', () => {
         order.push('fingerprint');
         return { hash: FINGERPRINT, sources: [] };
       },
-      build: async () => {
-        order.push('build');
-        return makeAndroidBuildFailure({ code: BUILD_ERROR, reason: 'Gradle failed.', durationMs: 1, lastLines: [] });
-      },
     });
 
     expect((await h.run()).ok).toBe(false);
-    expect(order.slice(0, 5)).toEqual(['boot', 'sessionId', 'writeSession', 'fingerprint', 'build']);
+    expect(order.slice(order.indexOf('boot'))).toEqual(['boot', 'sessionId', 'writeSession', 'install']);
     expect(readState().remoteDevice).toMatchObject({ platform: 'android', sessionId: 'drs_42' });
+  });
+
+  test('a failed build starts no EAS session', async () => {
+    const h = harness({
+      remoteDevice: 'eas',
+      resolveRemoteDeviceContext: async () => ({
+        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+      }),
+      ensureMetroReachable: async () => ({ ok: true as const }),
+      remoteDeviceDeps: () => ({
+        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        checkCapacity: () => null,
+        ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
+        ensureDeviceBooted: never('ensureDeviceBooted'),
+        install: never('install'),
+        launch: never('launch'),
+        createdSessionId: () => 'drs_42',
+        webPreviewUrl: () => null,
+      }),
+      resolveEasBin: () => ({ file: '/bin/eas', args: [] }),
+      build: async () =>
+        makeAndroidBuildFailure({ code: BUILD_ERROR, reason: 'Gradle failed.', durationMs: 1, lastLines: [] }),
+    });
+
+    expect((await h.run()).error?.code).toBe(BUILD_ERROR);
+    expect(readState().remoteDevice).toBeUndefined();
   });
 
   test('a state write failure stops only the EAS session created by this run', async () => {
@@ -1004,10 +1030,10 @@ describe('explicit remote backend behavior', () => {
         webPreviewUrl: () => null,
       }),
       resolveEasBin: () => ({ file: '/bin/eas', args: [] }),
-      writeState: () => {
-        throw new Error('disk full');
+      writeState: (projectRoot: string, patch: Record<string, unknown>) => {
+        if ('remoteDevice' in patch) throw new Error('disk full');
+        return writeWorkspaceState(projectRoot, patch);
       },
-      fingerprint: never('fingerprint'),
     });
 
     const result = await h.run();
@@ -1044,10 +1070,10 @@ describe('explicit remote backend behavior', () => {
         webPreviewUrl: () => null,
       }),
       resolveEasBin: () => ({ file: '/bin/eas', args: [] }),
-      writeState: () => {
-        throw new Error('disk full');
+      writeState: (projectRoot: string, patch: Record<string, unknown>) => {
+        if ('remoteDevice' in patch) throw new Error('disk full');
+        return writeWorkspaceState(projectRoot, patch);
       },
-      fingerprint: never('fingerprint'),
     });
 
     const result = await h.run();

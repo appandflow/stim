@@ -3154,6 +3154,27 @@ describe('--remote', () => {
     expect(failure.remedy).toContain('`stim stop`');
   });
 
+  test.each([true, false])('a remote device boots only after its build succeeds (build ok=%s)', async (buildOk) => {
+    const remote = remoteStub();
+    reserve();
+    const buildIos = async () => {
+      remote.hits.push('buildIos');
+      return buildOk
+        ? makeIosBuildSuccess({
+            appPath: join(root, 'build', 'Fixture.app'),
+            bundleId: 'com.example.app',
+            durationMs: 1,
+          })
+        : makeIosBuildFailure({ code: 'STIM_BUILD_FAILED', durationMs: 1, diagnostics: [] });
+    };
+    const { exitCode } = await run({ remote: 'eas' }, { ...remote.deps, buildIos });
+    expect(Boolean(exitCode)).toBe(!buildOk);
+    const afterPrepare = remote.hits.slice(remote.hits.indexOf('ensureOwnedDevice') + 1);
+    expect(afterPrepare).toEqual(
+      buildOk ? ['buildIos', 'ensureBooted', 'installIosApp', 'launchIosApp'] : ['buildIos'],
+    );
+  });
+
   test('the build still happens locally -- only the device moved', async () => {
     const remote = remoteStub();
     reserve();

@@ -737,7 +737,6 @@ async function runIos(
 
   let artifact: PreparedIosArtifact | null = null;
   try {
-    const bootTimer = stepTimer(d.now);
     const boot = (): Promise<IosBootLike> =>
       physicalDevice
         ? Promise.resolve({ ok: true, udid: physicalDevice.udid })
@@ -745,26 +744,34 @@ async function runIos(
             ok: false,
             reason: String((e as Error)?.message || e),
           }));
-    bootPromise = (
-      remoteDevice?.ctx.backend === 'eas'
-        ? d.ensureRemoteBootOwned({
-            root,
-            platform: PLATFORM,
-            sessionName: ownedSessionName(remoteDevice.ctx.label),
-            startedAt,
-            boot,
-            createdSessionId: remoteDevice.createdSessionId,
-            abandonCreatedSession: remoteDevice.abandonCreatedSession,
-            webPreviewUrl: remoteDevice.webPreviewUrl,
-            writeState: d.writeWorkspaceState,
-            register: registerProject,
-          })
-        : boot()
-    ).then((result) => {
-      bootDuration = bootTimer();
-      return result;
-    });
-    udid = (device.deviceUdid as string | undefined) ?? (await bootPromise)?.udid ?? '';
+    const startBoot = (): Promise<string> => {
+      const bootTimer = stepTimer(d.now);
+      bootPromise = (
+        remoteDevice?.ctx.backend === 'eas'
+          ? d.ensureRemoteBootOwned({
+              root,
+              platform: PLATFORM,
+              sessionName: ownedSessionName(remoteDevice.ctx.label),
+              startedAt,
+              boot,
+              createdSessionId: remoteDevice.createdSessionId,
+              abandonCreatedSession: remoteDevice.abandonCreatedSession,
+              webPreviewUrl: remoteDevice.webPreviewUrl,
+              writeState: d.writeWorkspaceState,
+              register: registerProject,
+            })
+          : boot()
+      ).then((result) => {
+        bootDuration = bootTimer();
+        return result;
+      });
+      return bootPromise.then((result) => result?.udid ?? '');
+    };
+    // A remote device boots after the build: agent-device's daemon exits five
+    // minutes after its last request while no session is open, and nothing
+    // restarts it on an EAS host (https://github.com/appandflow/stim/issues/1212).
+    const localBoot = remoteDevice ? null : startBoot();
+    udid = (device.deviceUdid as string | undefined) ?? (await localBoot) ?? '';
     const acquiredArtifact = await acquireIosArtifact(
       {
         root,
@@ -798,6 +805,7 @@ async function runIos(
     }
     artifact = acquiredArtifact.artifact;
     compilationCache = artifact.cache.compilation;
+    if (!localBoot) udid = await startBoot();
 
     if (physicalDevice) {
       const acquired = await d.acquireRunLease({
