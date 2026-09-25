@@ -24,7 +24,8 @@ reload and stop a workspace:
   Phones sit two to a row; a device whose frame is wider than tall, such as a
   landscape iPad or an unfolded iPhone Duo, takes a whole row.
   Tapping a tile opens its workspace. The grid follows the machine and
-  project filters. Each tile on screen asks for one frame, unsubscribes when
+  project filters. Each tile on screen asks for one frame, scaled to fit 640
+  pixels, unsubscribes when
   it arrives, and asks again 2 seconds later, backing off after errors. Tiles
   off screen, or under another screen, ask for nothing, and the server's
   capture loop runs only briefly. The chosen view is saved on the
@@ -60,8 +61,9 @@ reload and stop a workspace:
   warnings, remote sessions, and each
   device: a running device with the latest frame the server sends for it,
   fitted to the screen's width, and **Folded** or **Unfolded** for an iPhone
-  Duo or an Android foldable emulator, a stopped one as a single row. Under a
-  running simulator or emulator that Stim owns, **Agent actions** lists the latest agent-device actions on it
+  Duo or an Android foldable emulator, a stopped one as a single row. Tapping
+  the frame opens the [device view](#device-view). Under a running simulator or
+  emulator that Stim owns, **Agent actions** lists the latest agent-device actions on it
   (taps, typing, app opens, screenshots, failed commands), from
   `logs.subscribe` with `sources: ["agent"]`. The **...** menu opens the logs, copies the
   full path, shows errors, or opens the machine's status. With control, it
@@ -79,6 +81,29 @@ The design and protocol are in
 The phone reaches the Mac over Tailscale with `wss://`; plain `ws://` is
 accepted only for a loopback endpoint, which is what the simulator uses with
 the mock server.
+
+## Device view
+
+Tapping a running device's frame on the workspace screen opens it full
+screen. The view asks for up to 30 frames a second, scaled to the screen's
+pixels (at most 1600 on the longer edge), and fits them to the device's
+shape. It is view-only until you turn on **Control**, which appears only when
+the Mac granted this phone control.
+
+With **Control** on, the server starts a control session (`control.begin`)
+and holds a `stim device lock` lease on the device, so agents see it as
+driven. Touches on the frame go to the device as a touch that follows your
+finger: a tap, a drag or swipe, or a long press. The toolbar has **Keyboard**,
+which opens the phone's keyboard and types what you type (printable ASCII;
+Return and Delete included), **Home**, **Lock**, and on Android **Back** and
+**Apps**. The session ends when you turn Control off, leave the view, lose the
+connection, or after 5 minutes without input; the banner says why.
+
+When status reports the device driven by something else, such as
+agent-device, a `stim device lock`, or another phone, a banner names it and
+Control is refused with the server's reason. **Take over** asks for
+confirmation, then starts control anyway; the Mac records the takeover in its
+action log.
 
 ## Actions
 

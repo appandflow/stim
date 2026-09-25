@@ -10,16 +10,20 @@ import type {
   ActionParams,
   BuildPlan,
   FrameEvent,
+  InputButton,
   LogFilter,
   LogRecord,
   MachineUsage,
+  Methods,
   Platform,
   StatusPayload,
+  TouchPhase,
 } from '@/protocol/types';
 
 export const CLIENT = { name: 'stim-mobile', version: Constants.expoConfig?.version ?? '0.0.0' };
 
 const USAGE_INTERVAL_MS = 15_000;
+const SNAPSHOT_EDGE = 640;
 
 export interface MacConnection {
   mac: PairedMac | null;
@@ -217,18 +221,22 @@ interface FrameState {
 
 const EMPTY_FRAME_STATE: Omit<FrameState, 'key'> = { frame: null, error: null, delayed: false };
 
+/** `hint` asks for up to `fps` frames a second, scaled to fit `maxEdge` pixels; the server defaults to 5 and 1280. */
 export function useFrame(
   workspace: string,
   platform: 'ios' | 'android',
   slot: string,
   enabled: boolean,
+  hint: { fps?: number; maxEdge?: number } = {},
 ): { frame: FrameEvent | null; error: string | null; delayed: boolean } {
   const { connection } = useMacConnection();
   const [latest, setLatest] = useState<FrameState | null>(null);
-  const key = connection && enabled ? `${workspace}\n${platform}\n${slot}` : null;
+  const { fps, maxEdge } = hint;
+  const key = connection && enabled ? `${workspace}\n${platform}\n${slot}\n${fps}\n${maxEdge}` : null;
   useEffect(() => {
     if (!connection || key === null) return;
-    return connection.subscribe('frames.subscribe', { workspace, platform, slot }, (event) => {
+    const params = { workspace, platform, slot, ...(fps ? { fps } : {}), ...(maxEdge ? { maxEdge } : {}) };
+    return connection.subscribe('frames.subscribe', params, (event) => {
       setLatest((prev) => {
         const base = prev && prev.key === key ? prev : { key, ...EMPTY_FRAME_STATE };
         if (event.event === 'frame') return { key, frame: event, error: null, delayed: false };
@@ -237,7 +245,7 @@ export function useFrame(
         return base;
       });
     });
-  }, [connection, key, workspace, platform, slot]);
+  }, [connection, key, workspace, platform, slot, fps, maxEdge]);
   return latest && latest.key === key ? latest : EMPTY_FRAME_STATE;
 }
 
@@ -296,19 +304,23 @@ export function useFrameSnapshot(
     let stopped = false;
     let delay = intervalMs;
     const refresh = () => {
-      unsubscribe = connection.subscribe('frames.subscribe', { workspace, platform, slot }, (event) => {
-        if (event.event !== 'frame' && event.event !== 'error') return;
-        if (event.event === 'frame') {
-          setLatest({ key, frame: event, error: null });
-          delay = intervalMs;
-        } else {
-          setLatest((prev) => ({ key, frame: prev?.key === key ? prev.frame : null, error: event.error.message }));
-          delay = Math.min(delay * 2, 60_000);
-        }
-        unsubscribe?.();
-        unsubscribe = null;
-        if (!stopped) timer = setTimeout(refresh, delay);
-      });
+      unsubscribe = connection.subscribe(
+        'frames.subscribe',
+        { workspace, platform, slot, maxEdge: SNAPSHOT_EDGE },
+        (event) => {
+          if (event.event !== 'frame' && event.event !== 'error') return;
+          if (event.event === 'frame') {
+            setLatest({ key, frame: event, error: null });
+            delay = intervalMs;
+          } else {
+            setLatest((prev) => ({ key, frame: prev?.key === key ? prev.frame : null, error: event.error.message }));
+            delay = Math.min(delay * 2, 60_000);
+          }
+          unsubscribe?.();
+          unsubscribe = null;
+          if (!stopped) timer = setTimeout(refresh, delay);
+        },
+      );
     };
     refresh();
     return () => {
@@ -356,4 +368,83 @@ export function useBuildPlan(workspace: string, key: string): { plans: Plans; ch
     [owner],
   );
   return { plans: state && state.owner === owner ? state.plans : {}, check };
+}
+
+export type ControlState =
+  | { kind: 'off'; ended?: string }
+  | { kind: 'starting' }
+  | { kind: 'on'; session: string; leaseSince: string | null }
+  | { kind: 'busy'; message: string }
+  | { kind: 'failed'; message: string };
+
+export interface DeviceControl {
+  /** Whether this pairing may control devices: null while not connected. */
+  allowed: boolean | null;
+  state: ControlState;
+  begin: (takeOver?: boolean) => void;
+  end: () => void;
+  touch: (phase: TouchPhase, x: number, y: number) => void;
+  text: (text: string) => void;
+  button: (button: InputButton) => void;
+}
+
+type HeldState = ControlState | { kind: 'on'; session: string; leaseSince: string | null; link: unknown };
+
+/**
+ * A control session on one device. It ends when the screen unmounts, when the connection drops (the server
+ * ends a disconnected client's sessions), and when the server ends it; input sent while no session is on is
+ * dropped.
+ */
+export function useDeviceControl(workspace: string, platform: Platform, slot: string): DeviceControl {
+  const { connection, state: link } = useMacConnection();
+  const allowed = link.kind === 'open' ? link.capabilities.includes('control') : null;
+  const [held, setHeld] = useState<HeldState>({ kind: 'off' });
+  const state: ControlState =
+    held.kind === 'on' && 'link' in held && held.link !== link
+      ? { kind: 'off', ended: 'The connection dropped.' }
+      : held;
+  const session = state.kind === 'on' ? state.session : null;
+
+  useEffect(() => {
+    if (!connection || !session) return;
+    const stop = connection.onControlEnded((event) => {
+      if (event.session === session) setHeld({ kind: 'off', ended: event.message });
+    });
+    return () => {
+      stop();
+      connection.request('control.end', { session }).catch(() => {});
+    };
+  }, [connection, session]);
+
+  const begin = useCallback(
+    (takeOver = false) => {
+      if (!connection) return;
+      setHeld({ kind: 'starting' });
+      connection.request('control.begin', { workspace, platform, slot, ...(takeOver ? { takeOver } : {}) }).then(
+        (result) => setHeld({ kind: 'on', session: result.session, leaseSince: result.lease?.grantedAt ?? null, link }),
+        (cause: Error) =>
+          setHeld(
+            cause instanceof RequestError && cause.error.code === 'device-busy'
+              ? { kind: 'busy', message: cause.message }
+              : { kind: 'failed', message: cause.message },
+          ),
+      );
+    },
+    [connection, link, workspace, platform, slot],
+  );
+  const end = useCallback(() => setHeld({ kind: 'off' }), []);
+  const send = useCallback(
+    <M extends 'input.touch' | 'input.text' | 'input.button'>(
+      method: M,
+      params: Omit<Methods[M]['params'], 'session'>,
+    ) => {
+      if (!connection || !session) return;
+      connection.request(method, { session, ...params } as Methods[M]['params']).catch(() => {});
+    },
+    [connection, session],
+  );
+  const touch = useCallback((phase: TouchPhase, x: number, y: number) => send('input.touch', { phase, x, y }), [send]);
+  const text = useCallback((value: string) => send('input.text', { text: value }), [send]);
+  const button = useCallback((value: InputButton) => send('input.button', { button: value }), [send]);
+  return { allowed, state, begin, end, touch, text, button };
 }

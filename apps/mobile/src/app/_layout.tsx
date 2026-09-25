@@ -53,6 +53,7 @@ export default function RootLayout() {
                   options={{ title: 'Workspace', headerBackButtonDisplayMode: 'minimal', headerShadowVisible: false }}
                 />
                 <Stack.Screen name="mac/[id]/logs" options={{ title: 'Logs' }} />
+                <Stack.Screen name="mac/[id]/device" options={{ headerShown: false, animation: 'fade_from_bottom' }} />
                 <Stack.Screen name="mac/[id]/build-miss" options={sheet([0.5, 1])} />
               </Stack>
             </MenuDrawer>

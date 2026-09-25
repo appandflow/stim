@@ -2,6 +2,7 @@ import {
   PROTOCOL_VERSION,
   type ActionName,
   type ClientAuth,
+  type ControlEndedEvent,
   type Method,
   type Methods,
   type ProtocolError,
@@ -11,7 +12,12 @@ import {
 
 export type ConnectionState =
   | { kind: 'connecting' }
-  | { kind: 'open'; server: Methods['hello']['result']['server']; actions: ActionName[] | null }
+  | {
+      kind: 'open';
+      server: Methods['hello']['result']['server'];
+      actions: ActionName[] | null;
+      capabilities: string[];
+    }
   | { kind: 'waiting'; retryInMs: number; reason: string }
   | { kind: 'refused'; code: string; reason: string }
   | { kind: 'closed' };
@@ -66,6 +72,7 @@ export class StimConnection {
   private nextId = 1;
   private pending = new Map<number, Pending>();
   private subscriptions = new Set<Subscription>();
+  private controlListeners = new Set<(event: ControlEndedEvent) => void>();
   private retryMs = MIN_RETRY_MS;
   private timer: unknown = null;
   private stopped = false;
@@ -147,6 +154,12 @@ export class StimConnection {
     };
   }
 
+  /** Control sessions the server ended; a lost connection ends them too, without an event. */
+  onControlEnded(listener: (event: ControlEndedEvent) => void): () => void {
+    this.controlListeners.add(listener);
+    return () => this.controlListeners.delete(listener);
+  }
+
   private connect(): void {
     this.options.onState?.({ kind: 'connecting' });
     const socket = this.createSocket(this.options.endpoint);
@@ -161,7 +174,12 @@ export class StimConnection {
           if (socket !== this.socket) return;
           this.open = true;
           this.retryMs = MIN_RETRY_MS;
-          this.options.onState?.({ kind: 'open', server: hello.server, actions: hello.actions ?? null });
+          this.options.onState?.({
+            kind: 'open',
+            server: hello.server,
+            actions: hello.actions ?? null,
+            capabilities: hello.capabilities,
+          });
           for (const sub of this.subscriptions) this.sendSubscribe(socket, sub);
         },
         (error: Error) => {
@@ -243,7 +261,10 @@ export class StimConnection {
       else pending.resolve(message.result);
       return;
     }
-    if (message.event === 'control-ended') return;
+    if (message.event === 'control-ended') {
+      for (const listener of this.controlListeners) listener(message);
+      return;
+    }
     for (const sub of this.subscriptions) {
       if (sub.serverId === null || sub.serverId !== message.subscription) continue;
       if (message.event === 'error') this.resubscribeLater(sub);
