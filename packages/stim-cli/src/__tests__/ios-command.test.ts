@@ -35,16 +35,13 @@ import {
   ensureWorkspaceStorageSafely,
   registerIos,
   replaceCollector,
-  resolveMetroWithRetry,
-  gateShouldRetry,
-  noMetroMessage,
   pickDevClientScheme,
   schemesFromInfoPlist,
   shortHash,
   shortUdid,
   writeLastBuild,
 } from '../commands/ios.ts';
-import { asProcessExit, makeChildProcess, makeError, makeExecutor, makeMetroResolution } from './_factories.ts';
+import { asProcessExit, makeChildProcess, makeError, makeExecutor } from './_factories.ts';
 import { ensureBooted } from '../engine/device.ts';
 import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
@@ -346,8 +343,15 @@ function harness(overrides: LooseDeps = {}) {
       record('stopPreviousCollector', args);
       return { killed: null };
     },
-    resolveMetroWithRetry: (resolve, port, path, opts) =>
-      resolveMetroWithRetry(resolve, port, path, { ...opts, sleep: async () => {} }),
+    startDevServer: async (args) => {
+      record('startDevServer', args);
+      return {
+        ok: false,
+        error: { code: 'STIM_METRO_TIMEOUT', message: 'The dev server did not answer.', remedy: 'Run `stim logs`.' },
+        lines: [],
+        reclaimed: [],
+      };
+    },
     verifyLaunch: async (args) => {
       record('verifyLaunch', args);
       return { verified: true, waitedMs: 2500, record: { event: 'bundle_build_started' } };
@@ -473,42 +477,122 @@ describe('the project gate', () => {
   });
 });
 
+const devServerStarted = (port = 8082, alreadyRunning = false) => ({
+  ok: true as const,
+  facts: { port, supervisorPid: 4242, mode: 'bare-inproc', logsDir: '/logs', alreadyRunning },
+  waited: '(2.0s)',
+  reclaimed: [],
+});
+
 describe('the Metro gate', () => {
-  test('fires before the device, boot, and fingerprint: a dead port costs a second, not a build', async () => {
+  test('a healthy dev server is used as is: no start and no devServer fact', async () => {
     reserve();
-    const { errs, exitCode, calls } = await run(
-      {},
+    const { exitCode, calls, logs } = await run({ json: true });
+    expect(exitCode).toBe(null);
+    expect(calls.order).not.toContain('startDevServer');
+    expect(parseFirst(logs)).not.toHaveProperty('devServer');
+  });
+
+  test('a dead port starts the dev server through the start path, then builds against it', async () => {
+    reserve();
+    const starts: unknown[] = [];
+    const { exitCode, calls, logs } = await run(
+      { json: true },
       {
         resolveProjectMetro: async () => ({ missing: true }),
+        startDevServer: async (args) => {
+          starts.push(args);
+          return devServerStarted();
+        },
       },
     );
-    expect(exitCode).toBe(1);
-    expect(!calls.order.includes('ensureOwnedDevice')).toBeTruthy();
-    expect(!calls.order.includes('ensureBooted')).toBeTruthy();
-    expect(!calls.order.includes('fingerprintProject')).toBeTruthy();
-    expect(!calls.order.includes('buildIos')).toBeTruthy();
-    expect(errs.join('\n')).toMatch(/STIM_NO_METRO/);
-    expect(errs.join('\n')).toMatch(/stim start/);
+    expect(exitCode).toBe(null);
+    expect(starts).toEqual([expect.objectContaining({ root, remote: false })]);
+    expect(calls.order.includes('buildIos')).toBeTruthy();
+    expect(calls.args.launchIosApp.metroPort).toBe(8082);
+    expect(parseFirst(logs).devServer).toEqual({ started: true, reason: 'not running' });
   });
 
-  test('a foreign listener on the reserved port is refused, not built against', async () => {
+  test('an idle-stopped dev server is started again and reported as such', async () => {
     reserve();
-    const { errs, exitCode } = await run(
+    writeWorkspaceState(root, { devServerStop: { reason: 'idle', at: '2026-09-25T00:00:00.000Z', idleMinutes: 60 } });
+    const { exitCode, logs, errs } = await run(
+      {},
+      { resolveProjectMetro: async () => ({ missing: true }), startDevServer: async () => devServerStarted() },
+    );
+    expect(exitCode).toBe(null);
+    expect(errs.join('\n')).toContain(phaseLine('metro', 'dev server stopped (idle); starting it'));
+    expect(logs[0]).toContain(phaseLine('metro', 'running on port 8082 (started: stopped (idle))'));
+  });
+
+  test('the app is wired to the port the start reserved when a foreign process held the old one', async () => {
+    reserve();
+    const { exitCode, calls } = await run(
       {},
       {
-        resolveProjectMetro: async () => ({ notOurs: 'pid 42 on port 8082 runs from /elsewhere' }),
+        resolveProjectMetro: async () => ({ notOurs: 'pid 42 on port 8082 runs from /elsewhere', kind: 'foreign-cwd' }),
+        startDevServer: async () => devServerStarted(8090),
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(calls.args.launchIosApp.metroPort).toBe(8090);
+  });
+
+  test('no reservation at all starts the dev server too', async () => {
+    const { exitCode, calls } = await run({}, { startDevServer: async () => devServerStarted(8095) });
+    expect(exitCode).toBe(null);
+    expect(calls.order).not.toContain('resolveProjectMetro');
+    expect(calls.args.launchIosApp.metroPort).toBe(8095);
+  });
+
+  test('a start that found the dev server already running is not reported as a start', async () => {
+    reserve();
+    const { exitCode, logs } = await run(
+      { json: true },
+      {
+        resolveProjectMetro: async () => ({ missing: true }),
+        startDevServer: async () => devServerStarted(8082, true),
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(parseFirst(logs)).not.toHaveProperty('devServer');
+  });
+
+  test('a failed start refuses with its cause before the device, boot, and fingerprint', async () => {
+    reserve();
+    const { errs, exitCode, calls, logs } = await run(
+      { json: true },
+      {
+        resolveProjectMetro: async () => ({ missing: true }),
+        startDevServer: async () => ({
+          ok: false,
+          error: { code: 'STIM_SUPERVISOR_EXITED', message: 'The supervisor exited (code 1).', remedy: 'Fix it.' },
+          lines: ['metro: SyntaxError in metro.config.js'],
+          reclaimed: [],
+        }),
       },
     );
     expect(exitCode).toBe(1);
-    expect(errs.join('\n')).toMatch(/NOT this workspace's dev server/);
-    expect(errs.join('\n')).toMatch(/STIM_NO_METRO/);
+    expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
+    expect(calls.order.includes('fingerprintProject')).toBeFalsy();
+    expect(parseFirst(logs)).toMatchObject({
+      code: 'STIM_SUPERVISOR_EXITED',
+      message: "Could not start this workspace's dev server: The supervisor exited (code 1).",
+      remedy: 'Fix it.',
+    });
+    expect(errs.join('\n')).toContain('metro: SyntaxError in metro.config.js');
   });
 
-  test('no reservation at all is the same failure', async () => {
-    const { errs, exitCode } = await run({});
-    expect(exitCode).toBe(1);
-    expect(errs.join('\n')).toMatch(/STIM_NO_METRO/);
-  });
+  test.each([{ configuration: 'Release' }, { metroCheck: false }])(
+    '%j neither probes nor starts the dev server',
+    async (opts) => {
+      reserve();
+      const { exitCode, calls } = await run(opts, { resolveProjectMetro: async () => ({ missing: true }) });
+      expect(exitCode).toBe(null);
+      expect(calls.order).not.toContain('resolveProjectMetro');
+      expect(calls.order).not.toContain('startDevServer');
+    },
+  );
 
   test('--no-metro-check proceeds without probing the port at all', async () => {
     reserve();
@@ -832,98 +916,11 @@ describe('Metro prefetch', () => {
     expect(warmMetro).not.toHaveBeenCalled();
   });
 
-  test('does not prefetch a server that fails ownership verification', async () => {
+  test('does not prefetch a dev server that could not be started', async () => {
     reserve();
     const warmMetro = vi.fn<() => Promise<void>>(async () => {});
     await run({}, { warmMetro, resolveProjectMetro: async () => ({ missing: true }) });
     expect(warmMetro).not.toHaveBeenCalled();
-  });
-});
-
-describe('the Metro gate retries an indexing Metro', () => {
-  test('a port that verifies after the 20-second indexing window is not refused', async () => {
-    reserve();
-    let attempts = 0;
-    const { exitCode, calls } = await run(
-      {},
-      {
-        resolveProjectMetro: async () => {
-          attempts += 1;
-          if (attempts < 4)
-            return { notOurs: "pid 42 on port 8082 does not answer Metro's /status", kind: 'unresponsive' };
-          return { metro: { pid: 42, leader: 42, cwd: root } };
-        },
-      },
-    );
-    expect(exitCode).toBe(null);
-    expect(attempts).toBe(4);
-    expect(calls.order.includes('buildIos')).toBeTruthy();
-  });
-
-  test('a FOREIGN listener is refused immediately: waiting cannot make it ours', async () => {
-    reserve();
-    let attempts = 0;
-    const { exitCode, errs } = await run(
-      {},
-      {
-        resolveProjectMetro: async () => {
-          attempts += 1;
-          return { notOurs: 'pid 42 on port 8082 runs from /elsewhere, outside ' + root, kind: 'foreign-cwd' };
-        },
-      },
-    );
-    expect(exitCode).toBe(1);
-    expect(attempts).toBe(1);
-    expect(errs.join('\n')).toMatch(/NOT this workspace's dev server/);
-  });
-
-  test('gateShouldRetry is the rule, stated once', () => {
-    expect(gateShouldRetry(makeMetroResolution.missing())).toBe(true);
-    expect(gateShouldRetry({ notOurs: 'x', kind: 'unresponsive' })).toBe(true);
-    expect(gateShouldRetry({ notOurs: 'x', kind: 'unreadable-cwd' })).toBe(true);
-    expect(gateShouldRetry({ notOurs: 'x', kind: 'foreign-cwd' })).toBe(false);
-    expect(gateShouldRetry({ metro: { pid: 1 } })).toBe(false);
-  });
-
-  test('the refusal distinguishes "our supervisor is still indexing" from a foreign listener', async () => {
-    reserve();
-    writeWorkspaceState(root, { supervisor: { pid: process.pid, port: 8082, mode: 'bare-inproc', startedAt: 'now' } });
-    const { errs, exitCode } = await run(
-      {},
-      {
-        resolveProjectMetro: async () => ({
-          notOurs: "pid 4242 on port 8082 does not answer Metro's /status",
-          kind: 'unresponsive',
-        }),
-      },
-    );
-    expect(exitCode).toBe(1);
-    const text = errs.join('\n');
-    expect(text).toMatch(/A supervisor record exists for port 8082/);
-    expect(text).toMatch(/still be indexing/);
-    expect(text).toMatch(/stim start --wait/);
-    expect(text).not.toMatch(/Run `stim start` first/);
-  });
-
-  test('with no supervisor record the refusal is the plain one', async () => {
-    reserve();
-    const { errs } = await run({}, { resolveProjectMetro: async () => ({ missing: true }) });
-    const text = errs.join('\n');
-    expect(text).toMatch(/Nothing is serving this workspace's dev server on port 8082/);
-    expect(text).toMatch(/Run `stim start` first/);
-  });
-
-  test('noMetroMessage names a supervisor only when it is for THIS port and alive', () => {
-    const supervisor = { pid: 7, port: 8082, mode: 'expo-child' };
-    expect(
-      noMetroMessage({ port: 8082, resolution: makeMetroResolution.missing(), supervisor, supervisorAlive: true }),
-    ).toMatch(/supervisor record exists/);
-    expect(
-      noMetroMessage({ port: 8082, resolution: makeMetroResolution.missing(), supervisor, supervisorAlive: false }),
-    ).toMatch(/Nothing is serving/);
-    expect(
-      noMetroMessage({ port: 8099, resolution: makeMetroResolution.missing(), supervisor, supervisorAlive: true }),
-    ).toMatch(/Nothing is serving/);
   });
 });
 
@@ -2118,10 +2115,9 @@ describe('failure output', () => {
     expect(exitCode).toBe(1);
     expect(logs.length).toBe(1);
     const payload = parseFirst(logs);
-    expect(payload.code).toBe('STIM_NO_METRO');
+    expect(payload.code).toBe('STIM_METRO_TIMEOUT');
     expect(payload).not.toHaveProperty('compilationCache');
-    expect(payload.message).toMatch(/no dev server/);
-    expect(payload.remedy).toMatch(/stim start/);
+    expect(payload.remedy).toBeTruthy();
   });
 
   test('without --json a failure still writes nothing to stdout', async () => {
@@ -3194,6 +3190,29 @@ describe('--remote', () => {
     expect(remote.hits.includes('ensureBooted')).toBeFalsy();
   });
 
+  test('a dead port starts the dev server for a remote device, before the reach step', async () => {
+    const remote = remoteStub();
+    reserve();
+    const order: string[] = [];
+    const { exitCode } = await run(
+      { remote: 'eas' },
+      {
+        ...remote.deps,
+        resolveProjectMetro: async () => ({ missing: true }),
+        startDevServer: async (args) => {
+          order.push(`start remote=${args.remote}`);
+          return devServerStarted();
+        },
+        ensureMetroReachable: async () => {
+          order.push('reach');
+          return { ok: true as const };
+        },
+      },
+    );
+    expect(exitCode).toBeNull();
+    expect(order).toEqual(['start remote=true', 'reach']);
+  });
+
   test('an unusable remote setup refuses before any build work', async () => {
     const resolveEasDevelopmentBuild = vi.fn<NonNullable<IosDeps['resolveEasDevelopmentBuild']>>(async () => null);
     const { exitCode, calls, stderr } = await run(
@@ -3283,7 +3302,7 @@ describe('--remote', () => {
       { remote: 'eas' },
       {
         ...remote.deps,
-        resolveMetroWithRetry: async () => {
+        resolveProjectMetro: async () => {
           order.push('metroGate');
           return { metro: { pid: 1, leader: 1 } };
         },
@@ -3577,7 +3596,6 @@ describe('release skips Metro entirely', () => {
     const { exitCode, calls, errs } = await run({ configuration: 'Release' });
     expect(exitCode).toBe(null);
     expect(!calls.order.includes('resolveProjectMetro')).toBeTruthy();
-    expect(errs.join('\n')).not.toMatch(/STIM_NO_METRO/);
     expect(errs.join('\n')).toMatch(/skipped \(Release: the JS bundle is embedded/);
     expect(calls.args.launchIosApp.metroPort).toBe(null);
     expect(calls.args.launchIosApp.devClientScheme).toBeUndefined();
@@ -3616,8 +3634,7 @@ describe('release skips Metro entirely', () => {
     expect(!first.calls.order.includes('resolveProjectMetro')).toBeTruthy();
     expect(first.calls.args.launchIosApp.metroPort).toBe(null);
     const second = await run({ configuration: 'Debug' }, { resolveSettings: () => settings });
-    expect(second.exitCode).toBe(1);
-    expect(second.stderr).toMatch(/STIM_NO_METRO/);
+    expect(second.calls.order).toContain('startDevServer');
   });
 });
 

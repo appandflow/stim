@@ -15,7 +15,7 @@ import chalk from 'chalk';
 import { formatDuration, phaseLine, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
 import { waitFlagConflict, leaseExpiryText, parseDeviceWait, type RunLease } from '../engine/device-lease-run.ts';
 import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
-import type { CompilationCacheActivity } from '../engine/build-facts.ts';
+import type { CompilationCacheActivity, DevServerStart } from '../engine/build-facts.ts';
 import { exitAfterFlush } from '../engine/remote-cache.ts';
 import {
   REMOTE_DEVICE_BACKENDS,
@@ -56,7 +56,7 @@ import type { ReclaimedStep } from '../budget.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { appProjectProblem, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
-import { isPhysicalDeviceRequest, type SupervisorLike, noMetroMessage, noMetroRemedy } from './native-runtime.ts';
+import { ensureDevServer, isPhysicalDeviceRequest } from './native-runtime.ts';
 import {
   PLATFORM,
   buildLogFile,
@@ -77,12 +77,7 @@ export { devClientScheme, schemesFromInfoPlist, pickDevClientScheme } from './de
 
 export { collectorEntry, replaceCollector } from './ios/collector.ts';
 
-export {
-  gateShouldRetry,
-  resolveMetroWithRetry,
-  noMetroMessage,
-  ensureWorkspaceStorageSafely,
-} from './native-runtime.ts';
+export { ensureWorkspaceStorageSafely } from './native-runtime.ts';
 
 export {
   buildLogFile,
@@ -581,6 +576,7 @@ async function runIos(
   let metroPort = proj?.metroPort ?? null;
   let lanAddress: string | null = null;
   let lanOriginUrl: string | null = null;
+  let devServer: DevServerStart | null = null;
   if (!(await resolveMetroPort())) return null;
 
   let device: Awaited<ReturnType<typeof ensureOwnedDevice>>;
@@ -625,35 +621,23 @@ async function runIos(
       metroPort = null;
       phase('metro', `skipped (${configuration}: the JS bundle is embedded, no dev server is used)`);
     } else if (metroCheck) {
-      if (!metroPort) {
-        fail({
-          code: 'STIM_NO_METRO',
-          message: 'No Metro port is reserved for this workspace, so there is no dev server to build against.',
-          remedy: 'Run `stim start` first, or pass --no-metro-check.',
-        });
-        return false;
-      }
-      const resolution = await d.resolveMetroWithRetry(d.resolveProjectMetro, metroPort, root, {
-        onRetry: ({ delayMs }) =>
-          note(
-            chalk.dim(
-              phaseLine(
-                'metro',
-                `port ${metroPort} did not verify yet; retrying in ${Math.round(delayMs / 1000)}s (Metro may still be indexing)`,
-              ),
-            ),
-          ),
+      const gate = await ensureDevServer({
+        root,
+        port: metroPort,
+        settings,
+        remote: Boolean(remoteDevice),
+        note,
+        resolve: d.resolveProjectMetro,
+        start: d.startDevServer,
+        readState: d.readWorkspaceState,
       });
-      if (!resolution?.metro) {
-        const supervisor = (d.readWorkspaceState(root)?.supervisor ?? null) as SupervisorLike | null;
-        const supervisorAlive = Boolean(supervisor?.pid && d.pidExists(supervisor.pid));
-        fail({
-          code: 'STIM_NO_METRO',
-          message: noMetroMessage({ port: metroPort, resolution, supervisor, supervisorAlive }),
-          remedy: noMetroRemedy({ port: metroPort, supervisor, supervisorAlive }),
-        });
+      reclaimed = [...reclaimed, ...gate.reclaimed];
+      if (!gate.ok) {
+        fail({ code: gate.code, message: gate.message, remedy: gate.remedy, lines: gate.lines });
         return false;
       }
+      metroPort = gate.port;
+      devServer = gate.devServer;
     } else if (!metroPort) {
       metroPort = DEFAULT_METRO_PORT;
       note(chalk.yellow(`No Metro port is reserved for this workspace; wiring the app to ${metroPort}.`));
@@ -874,6 +858,7 @@ async function runIos(
         releaseLease,
         recordRun,
         reclaimed,
+        devServer,
         enterPhase: progress.step,
       });
     } finally {

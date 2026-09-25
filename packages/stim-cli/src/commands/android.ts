@@ -8,7 +8,7 @@ import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { formatDuration, phaseLine, refuseNoProject, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
-import type { CcacheActivity } from '../engine/build-facts.ts';
+import type { CcacheActivity, DevServerStart } from '../engine/build-facts.ts';
 import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
 import {
   appProjectProblem,
@@ -48,12 +48,8 @@ import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { pidExists, resolveProjectMetro } from '../metro.ts';
 import { warmMetro } from '../engine/metro-warmup.ts';
-import {
-  ensureWorkspaceStorageSafely,
-  resolveMetroWithRetry,
-  noMetroMessage,
-  noMetroRemedy,
-} from './native-runtime.ts';
+import { ensureDevServer, ensureWorkspaceStorageSafely } from './native-runtime.ts';
+import { startDevServer } from './start.ts';
 import {
   readRunEstimates,
   recordRunStats,
@@ -112,7 +108,6 @@ import {
   dumpApkManifest,
   apkPackage,
   PLATFORM,
-  NO_METRO,
   NO_DEVICE,
   noDeviceDiagnostic,
   displayPath,
@@ -122,7 +117,7 @@ import { getExecutor } from '../exec.ts';
 import { emulatorLogFile, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
-import type { SupervisorLike, FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from './android/types.ts';
+import type { FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from './android/types.ts';
 import { acquireAndroidArtifact } from './android/artifact.ts';
 import { persistLastBuild } from './android/result.ts';
 import { finishAndroidRun } from './android/launch.ts';
@@ -138,7 +133,6 @@ export {
   androidSystemImageSetting,
   resolveSystemImage,
   isReleaseVariant,
-  NO_METRO,
   NO_FINGERPRINT,
   NO_DEVICE,
   findAapt,
@@ -309,7 +303,7 @@ interface RunAndroidOptions {
   waitForDeviceBoot?: typeof waitForBoot;
   resolveMetro?: typeof resolveProjectMetro;
   warmMetro?: typeof warmMetro;
-  resolveMetroRetrying?: typeof resolveMetroWithRetry;
+  startServer?: typeof startDevServer;
   readState?: typeof readWorkspaceState;
   pidAlive?: typeof pidExists;
   verifyCollector?: typeof verifyCollectorOwnership;
@@ -393,7 +387,7 @@ function resolveRunAndroidOptions(
     waitForDeviceBoot = waitForBoot,
     resolveMetro = resolveProjectMetro,
     warmMetro: prewarmMetro = warmMetro,
-    resolveMetroRetrying = resolveMetroWithRetry,
+    startServer = startDevServer,
     readState = readWorkspaceState,
     pidAlive = pidExists,
     verifyCollector = verifyCollectorOwnership,
@@ -476,7 +470,7 @@ function resolveRunAndroidOptions(
     waitForDeviceBoot,
     resolveMetro,
     prewarmMetro,
-    resolveMetroRetrying,
+    startServer,
     readState,
     pidAlive,
     verifyCollector,
@@ -603,7 +597,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     waitForDeviceBoot,
     resolveMetro,
     prewarmMetro,
-    resolveMetroRetrying,
+    startServer,
     readState,
     pidAlive,
     verifyCollector,
@@ -813,38 +807,32 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
   const reservedPort = project?.metroPort ?? null;
   let metroPort: number | null = null;
+  let devServer: DevServerStart | null = null;
   let phaseFailure: RunAndroidResult | null = null;
 
   async function resolveMetroPort(): Promise<boolean> {
     if (release) {
       phase('metro', `skipped (${variant}: the JS bundle is embedded, no dev server is used)`);
     } else if (metroCheck) {
-      if (!reservedPort) {
-        phaseFailure = fail(
-          NO_METRO,
-          'No Metro port is reserved for this workspace.',
-          'Run `stim start` first, or pass --no-metro-check.',
-        );
-        return false;
-      }
-      const held = await resolveMetroRetrying(resolveMetro, reservedPort, root, {
-        onRetry: ({ delayMs }) =>
-          phase(
-            'metro',
-            `port ${reservedPort} did not verify yet; retrying in ${Math.round(delayMs / 1000)}s (Metro may still be indexing)`,
-          ),
+      const gate = await ensureDevServer({
+        root,
+        port: reservedPort,
+        settings,
+        remote: remoteContext !== null,
+        note: out,
+        resolve: resolveMetro,
+        start: startServer,
+        readState,
       });
-      if (!held.metro) {
-        const supervisor = (readState(root)?.supervisor ?? null) as SupervisorLike | null;
-        const supervisorAlive = Boolean(supervisor?.pid && pidAlive(supervisor.pid));
-        phaseFailure = fail(
-          NO_METRO,
-          noMetroMessage({ port: reservedPort, resolution: held, supervisor, supervisorAlive }),
-          noMetroRemedy({ port: reservedPort, supervisor, supervisorAlive }),
-        );
+      reclaimed = [...reclaimed, ...gate.reclaimed];
+      if (!gate.ok) {
+        phaseFailure = fail(gate.code, gate.message, gate.remedy, { lines: gate.lines });
         return false;
       }
-      phase('metro', `port ${reservedPort} (pid ${held.metro?.pid})`);
+      metroPort = gate.port;
+      devServer = gate.devServer;
+      phase('metro', `port ${metroPort} (${devServer ? `started: ${devServer.reason}` : `pid ${gate.pid}`})`);
+      return true;
     } else {
       phase(
         'metro',
@@ -1168,6 +1156,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         emit,
         recordRun,
         reclaimed,
+        devServer,
         enterPhase: progress.step,
       });
     } finally {

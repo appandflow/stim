@@ -17,6 +17,10 @@ Commands use `stim`. If it is not installed globally, replace `stim` with
 Expo dev server under a detached supervisor. The command exits only after the
 server answers and Stim verifies its project identity.
 
+A Debug `stim ios` or `stim android` run starts the dev server the same way
+when it is not running, so `stim start` is optional. Running it first lets
+Metro warm up while you do other work.
+
 Bare React Native runs Metro in the supervisor. Expo runs the project's Expo CLI
 as a supervised child. A healthy server that another process started for the
 same project can be reused, but Stim cannot capture its full output.
@@ -48,10 +52,10 @@ without reloading and without console output therefore counts as idle. Raise
 The stop is recorded in the timeline as `supervisor_idle_stopped`, and
 `stim status` shows the port as `stopped (idle)` instead of a crash. The devices
 stay booted. The next `stim start` starts the server again, or reuses one that
-another process started, and clears that state. Until then,
-`stim ios` and `stim android` refuse with `STIM_NO_METRO`, and `stim start` is
-the fix, as it is for any missing dev server. The setting is read when
-`stim start` launches the supervisor.
+another process started, and clears that state. A Debug `stim ios` or
+`stim android` run starts it again too, and its JSON result reports
+`devServer: { "started": true, "reason": "stopped (idle)" }`. The setting is
+read when the supervisor is launched.
 
 <StimTabs code={`stim settings set metro.idleStopMinutes 120 --scope workspace`} />
 

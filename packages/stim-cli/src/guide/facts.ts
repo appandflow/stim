@@ -263,6 +263,11 @@ per session, with the preview URL.`,
                   "workspace-outputs" or "stale-cache-entries"; targets names
                   the devices, workspaces or caches it acted on; freedMb is the
                   free disk the step added. See \`guide lifecycle budget\`
+  devServer       present only when this run started the workspace's dev
+                  server because none was running (\`ios\` and \`android\`):
+                    { started: true, reason }
+                  reason is "not running" or "stopped (idle)" when the
+                  supervisor had stopped it after metro.idleStopMinutes
 
   stim reload [ios|android] --json
 
@@ -316,7 +321,7 @@ ON FAILURE
   \`start\`, \`ios\` and \`android\` all print the error contract instead,
   still one line on stdout, and exit 1:
 
-    { "code": "STIM_NO_METRO", "message": "...", "remedy": "..." }
+    { "code": "STIM_METRO_TIMEOUT", "message": "...", "remedy": "..." }
 
   If a native build returned before the failure, this payload also carries
   \`ccache\` (Android) or \`compilationCache\` (iOS), with the status and

@@ -34,8 +34,9 @@ a seed belongs to this workflow.
     deps        source /w/main: pnpm-lock.yaml changed -> pnpm install (41s)
     pods        source /w/main/apps/mobile: ios/Podfile.lock unchanged -> skipped
 
-  # 2. The dev server, under a detached supervisor. Blocks until it is
-  #    verifiably THIS project's, then hands your shell back.
+  # 2. Optional: the dev server, under a detached supervisor. Blocks until it
+  #    is verifiably THIS project's, then hands your shell back. Step 3 runs
+  #    this same start when the dev server is not running.
   stim start
     port       8082 (reserved)
     supervisor pid 41233
@@ -79,10 +80,17 @@ a seed belongs to this workflow.
   #    unwarmed worktrees with no Stim registry entry. Git-created branches stay.
   stim worktree remove
 
-Steps 2 and 3 are ordered, not interchangeable: \`ios\` and \`android\` never
-start the bundler, and refuse with STIM_NO_METRO when nothing holds the
-reserved port. That refusal costs a second; the alternative costs four minutes
-and produces an app that cannot load a bundle.
+A Debug \`ios\` or \`android\` run checks the reserved port before the device
+or the build. When no healthy dev server of this workspace answers there, it
+runs the same start as step 2: a dev server started outside Stim is reused, a
+reservation held by a foreign process moves to a free port, and the budgets
+apply. The run then reports \`devServer: { started: true, reason }\` in its
+JSON, with reason "not running" or "stopped (idle)". When that start fails,
+the run refuses with the start's own code (STIM_METRO_TIMEOUT,
+STIM_SUPERVISOR_EXITED, ...) before any build work. Release builds and
+\`--no-metro-check\` neither check nor start the dev server. \`--remote\`
+starts it the way \`stim start --remote\` does. Step 2 remains useful to warm
+Metro while other work happens.
 
 Repeat step 3 whenever a NATIVE input changes. A JS-only edit needs nothing --
 that is what Fast Refresh over the running dev server is for. \`stim reload\` is

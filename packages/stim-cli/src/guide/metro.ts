@@ -123,8 +123,9 @@ WHAT THE SUPERVISOR IS
   supervisor_idle_stopped line in metro.ndjson and devServerStop in
   state.json, so \`status\` shows "stopped (idle)" rather than a crash.
   Devices stay booted. The next \`stim start\` starts it again and clears the
-  record, also when it reuses a dev server that another process started;
-  \`ios\` and \`android\` refuse with STIM_NO_METRO until then. The setting
+  record, also when it reuses a dev server that another process started. A
+  Debug \`ios\` or \`android\` run starts it the same way and reports
+  devServer.reason "stopped (idle)". The setting
   is read when \`start\` spawns the supervisor; a value that is not a whole
   number of 0 or more is refused, as \`stim settings set\` refuses it.
 

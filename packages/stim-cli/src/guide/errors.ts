@@ -42,24 +42,18 @@ Branch on the code, never on the message.`,
   which workspace owns it.`,
     },
     STIM_NO_METRO: {
-      summary: "nothing provably this workspace's dev server holds the reserved port (ios, android, reload)",
+      summary: "the recorded launch's port is not this workspace's live dev server (reload)",
       body: () => `STIM_NO_METRO
-  Nothing that could be proven to be THIS workspace's dev server holds the
-  reserved port -- or no port is reserved at all. The gate fires in about a
-  second, before the device is even booted, rather than after four minutes of
-  compiling an app that could not load a bundle. Run \`stim start\` first.
-  A dev server stopped after metro.idleStopMinutes with no use (\`status\`
-  shows "stopped (idle)") is restarted the same way.
-  \`--no-metro-check\` overrides it and wires the app to the reservation (or to
-  8081 when there is none). A non-Debug \`ios --configuration\` never emits
-  this: a release-shaped build embeds its JS, so the gate does not run at all.
-  A port held by SOMETHING ELSE reports what: usually a bundler started from
-  the wrong directory (the repo root instead of the app dir in a monorepo), or
-  another repo's Metro. Restart it from inside the project, or free the port
-  and run \`stim start\` to get a fresh reservation.
-
   Reload requires the recorded launch's port to be this workspace's live
-  Metro. It refuses a missing, changed, unresponsive, or foreign port.`,
+  Metro. It refuses a missing, changed, unresponsive, or foreign port. Run
+  \`stim start\`, or run \`ios\` or \`android\` again.
+
+  \`ios\` and \`android\` do not emit this code. A Debug run with no healthy
+  dev server on the reserved port starts one, as \`stim start\` would, and
+  refuses only when that start fails, with the start's code
+  (STIM_METRO_TIMEOUT, STIM_SUPERVISOR_EXITED, ...). A port held by SOMETHING
+  ELSE, usually a bundler started from the wrong directory or another repo's
+  Metro, gets a fresh reservation.`,
     },
     STIM_NO_FINGERPRINT: {
       summary: '@expo/fingerprint produced no hash, so the shared cache cannot be addressed',
@@ -889,7 +883,8 @@ captured"  (in metro.ndjson, bare RN)
       body: () => `STIM_METRO_TIMEOUT
   "The dev server did not answer on port <n> within <s>s."
   The supervisor is alive, but Metro or its requested Expo tunnel is not ready.
-  \`start\` has already
+  A Debug \`ios\` or \`android\` run that starts the dev server reports the
+  same refusal. \`start\` has already
   printed the last lines of the global workspace logs/supervisor.log above this -- read
   them. A cold Metro on a large graph can genuinely need more than the default
   60s: re-run with \`--wait 180\`. Otherwise \`stim stop\`, then \`start\`.`,

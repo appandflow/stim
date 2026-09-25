@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import type { AndroidFacts, CcacheActivity, WaitedForBuild } from '../../engine/build-facts.ts';
+import type { AndroidFacts, CcacheActivity, DevServerStart, WaitedForBuild } from '../../engine/build-facts.ts';
 import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../../engine/launch-verify.ts';
 import {
   cacheLevel,
@@ -40,6 +40,7 @@ export function androidFacts({
   devClientUrl = null,
   durationMs,
   lease,
+  devServer = null,
 }: {
   slot?: string;
   serial?: string | null;
@@ -64,6 +65,7 @@ export function androidFacts({
   devClientUrl?: string | null;
   durationMs?: number;
   lease?: { kind: string; expiresAt: string } | null;
+  devServer?: DevServerStart | null;
 }): AndroidFacts {
   return {
     platform: PLATFORM,
@@ -90,6 +92,7 @@ export function androidFacts({
     logs: logs ?? null,
     durationMs: typeof durationMs === 'number' && Number.isFinite(durationMs) ? durationMs : null,
     ...(lease === undefined ? {} : { lease }),
+    ...(devServer ? { devServer } : {}),
   };
 }
 
@@ -190,6 +193,7 @@ export interface ReportAndroidResultArgs {
   emit: (line: string) => void;
   recordRun: RunRecorder['record'];
   reclaimed?: ReclaimedStep[];
+  devServer?: DevServerStart | null;
 }
 
 export function reportAndroidResult({
@@ -219,6 +223,7 @@ export function reportAndroidResult({
   lease,
   recordRun,
   reclaimed = [],
+  devServer = null,
 }: ReportAndroidResultArgs): AndroidFacts {
   recordRun({ failed: false, cacheHit: cacheLevel(record.cacheHit), waited: waitedForBuild, durationMs });
   const facts = androidFacts({
@@ -245,6 +250,7 @@ export function reportAndroidResult({
     logs: logsDir,
     durationMs,
     lease,
+    devServer,
   });
   writer.close();
 
@@ -270,7 +276,7 @@ export function reportAndroidResult({
         ? `check skipped on port ${metroPort}`
         : launchState === LAUNCH_UNVERIFIED
           ? `state unverified on port ${metroPort}`
-          : `running on port ${metroPort}`;
+          : `running on port ${metroPort}${devServer ? ` (started: ${devServer.reason})` : ''}`;
     emit(
       [
         outcome,
