@@ -6,6 +6,7 @@ import CodeBlock from '@theme/CodeBlock';
 import Heading from '@theme/Heading';
 import ThemedImage from '@theme/ThemedImage';
 import { StimInstallTabs } from '@site/src/components/StimTabs';
+import HeroJar from '@site/src/components/HeroJar';
 import ThemeSwitch from '@site/src/components/ThemeSwitch';
 import { canTilt } from '../components/canTilt';
 import styles from './index.module.css';
@@ -13,7 +14,7 @@ import styles from './index.module.css';
 function tapIllustration({ currentTarget, clientX, clientY, detail }: MouseEvent<HTMLButtonElement>) {
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
-  const illustration = currentTarget.querySelector('img')!;
+  const illustration = currentTarget.firstElementChild!;
   const { x, y } = detail === 0 ? { x: -4, y: 4 } : canTilt(currentTarget.getBoundingClientRect(), clientX, clientY);
   const angle = Math.hypot(x, y);
   for (const animation of illustration.getAnimations()) animation.cancel();
@@ -99,14 +100,16 @@ export default function Home(): ReactNode {
             onClick={tapIllustration}
             onContextMenu={(event) => event.preventDefault()}
           >
-            <ThemedImage
-              sources={{ light: `${assetBase}hero.svg`, dark: `${assetBase}hero-dark.svg` }}
-              alt=""
-              width="520"
-              height="520"
-              fetchPriority="high"
-              draggable={false}
-            />
+            <span className={styles.heroStage}>
+              <ThemedImage
+                sources={{ light: `${assetBase}hero-bg.svg`, dark: `${assetBase}hero-bg-dark.svg` }}
+                alt=""
+                width="520"
+                height="520"
+                draggable={false}
+              />
+              <HeroJar assetBase={assetBase} className={styles.heroJar} />
+            </span>
           </button>
           <section aria-label="Features" className={styles.features}>
             <article className={styles.feature}>
