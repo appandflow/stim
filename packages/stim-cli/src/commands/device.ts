@@ -1,4 +1,4 @@
-import { parseDeviceSlotOption } from '../devices/device-slots.ts';
+import { parseDeviceSlotOption, projectDeviceSlots } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { clockTime } from '../command-output.ts';
@@ -20,9 +20,11 @@ import {
   listIosDevices,
   resolveIosPhysicalDevice,
 } from '../engine/ios-device.ts';
+import { getProject, type ProjectRecord } from '../workspace/config.ts';
 import { findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import {
   androidPoolCandidates,
+  getAvdNameForSerial,
   androidPoolNoCandidatesRefusal,
   listAdbDevices,
   memoizeEmulatorProbe,
@@ -35,6 +37,8 @@ const DEFAULT_FOR = '5m';
 
 export interface DeviceDeps {
   findProjectRoot: typeof findProjectRoot;
+  getProject: (root: string) => ProjectRecord | null;
+  avdNameOf: (serial: string) => string | null;
   listIosDevices: typeof listIosDevices;
   listAdbDevices: typeof listAdbDevices;
   physicalDeviceModel: typeof physicalDeviceModel;
@@ -52,6 +56,8 @@ export interface DeviceDeps {
 
 const DEFAULT_DEPS: DeviceDeps = {
   findProjectRoot,
+  getProject,
+  avdNameOf: (serial) => getAvdNameForSerial(serial),
   listIosDevices,
   listAdbDevices,
   physicalDeviceModel,
@@ -137,6 +143,37 @@ function resolveDevice(
     return { code: 'STIM_NO_DEVICE', message: resolved.error as string, remedy: resolved.remedy ?? null };
   }
   return { id: resolved.serial, deviceName: d.physicalDeviceModel(resolved.serial) ?? resolved.serial };
+}
+
+export interface OwnedVirtualDevice extends ResolvedDevice {
+  slot: string;
+}
+
+/**
+ * The simulator or emulator named by `id` that this workspace's registry records as Stim-owned, in any slot.
+ * An emulator matches when the AVD running on serial `id` is the slot's owned AVD.
+ */
+export function findOwnedVirtualDevice(
+  project: ProjectRecord | null,
+  platform: LeasePlatform,
+  id: string,
+  avdNameOf: (serial: string) => string | null,
+): OwnedVirtualDevice | null {
+  let running: string | null | undefined;
+  for (const { slot, platforms } of projectDeviceSlots(project)) {
+    if (platform === 'ios') {
+      const sim = platforms.ios;
+      if (sim?.owned && sim.deviceUdid && sim.deviceUdid.toLowerCase() === id.toLowerCase()) {
+        return { id: sim.deviceUdid, deviceName: sim.deviceName ?? null, slot };
+      }
+      continue;
+    }
+    const emulator = platforms.android;
+    if (!emulator?.owned || !emulator.avdName || !/^emulator-\d+$/.test(id)) continue;
+    running ??= avdNameOf(id);
+    if (running === emulator.avdName) return { id, deviceName: emulator.deviceName ?? emulator.avdName, slot };
+  }
+  return null;
 }
 
 function isFailure(value: object): value is DeviceFailure {
@@ -254,14 +291,25 @@ export async function runLock(
   const deadline = d.now() + wait.seconds * 1000;
   const lastLine: { at: number | null } = { at: null };
 
-  const device = idArg
-    ? resolveDevice(platform, idArg, d)
-    : await poolDevice(platform, idLabel, wait.seconds, deadline, root, d, opts.slot);
+  const owned = idArg ? findOwnedVirtualDevice(d.getProject(root), platform, idArg, d.avdNameOf) : null;
+  if (owned && opts.slot && opts.slot !== owned.slot) {
+    return report({
+      code: 'STIM_BAD_ARG',
+      message: `${owned.id} is this workspace's ${platform} device in slot ${owned.slot}, not ${opts.slot}.`,
+      remedy: `Run \`stim device lock ${platform} ${owned.id}\` without --slot, or with --slot ${owned.slot}.`,
+    });
+  }
+  const slot = owned ? (owned.slot === 'default' ? undefined : owned.slot) : opts.slot;
+  const device = owned
+    ? owned
+    : idArg
+      ? resolveDevice(platform, idArg, d)
+      : await poolDevice(platform, idLabel, wait.seconds, deadline, root, d, opts.slot);
   if (isFailure(device)) return report(device);
 
   for (;;) {
     const outcome = await d.waitForDevice({
-      ...(opts.slot ? { slot: opts.slot } : {}),
+      ...(slot ? { slot } : {}),
       root,
       platform,
       id: device.id,
@@ -280,7 +328,7 @@ export async function runLock(
 
     const taken = d.takeLease(
       {
-        ...(opts.slot ? { slot: opts.slot } : {}),
+        ...(slot ? { slot } : {}),
         root,
         platform,
         id: device.id,
@@ -367,10 +415,14 @@ export function registerDevice(program: Command, deps: Partial<DeviceDeps> = {})
   device
     .command('lock')
     .argument('<platform>', 'ios or android')
-    .argument('[id]', 'the UDID or serial to lease; without one, the first free connected device is used')
+    .argument(
+      '[id]',
+      "the UDID or serial to lease, a connected device or this workspace's own simulator or emulator; without one, the first free connected device is used",
+    )
     .description(
-      "Lease a connected physical device to this workspace for a declared time, so another workspace's " +
-        '`--device` run waits instead of installing over it. Nothing but this command and a `--device` run moves the expiry.',
+      "Lease a connected physical device, or this workspace's own simulator or emulator, to this workspace for a " +
+        "declared time, so another workspace's `--device` run waits and agents see the device as driven. Nothing but " +
+        'this command and a `--device` run moves the expiry.',
     )
     .option(
       '--for <duration>',

@@ -1598,6 +1598,12 @@ HOLDING A DEVICE ACROSS RUNS
   With no id, \`lock\` and a \`--device\` run pick from the POOL of connected
   devices, so two phones on one machine no longer refuse.
 
+  An id may also name this workspace's own Stim-owned simulator (UDID) or
+  running emulator (\`emulator-NNNN\`), in any slot; \`--slot\`, if given,
+  must match it. Status then reports the device \`driven by stim device
+  lock\`, so other agents leave it alone. Stim Server takes such a lease
+  while a paired phone controls the device.
+
 THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   Candidates are the connected devices the resolver already accepts: on iOS,
   paired, with Developer Mode on, over a cable or Wi-Fi; on Android, every
