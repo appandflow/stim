@@ -234,11 +234,12 @@ public struct GcReport: Decodable, Sendable {
 
   public var reclaimable: Reclaimable {
     let s = sections
-    let removed: [Sized] =
-      (s.orphanedWorkspaces ?? []) + (s.parkedSimulators ?? []) + (s.parkedEmulators ?? [])
-      + (s.orphanedDevices ?? []) + (s.staleDevices ?? [])
-      + (s.workspaceBuildOutputs ?? []).filter { $0.willClear == true }
-      + (s.caches ?? []).filter { $0.willEmpty == true }
+    var removed: [Sized] = []
+    for group in [s.orphanedWorkspaces, s.parkedSimulators, s.parkedEmulators, s.orphanedDevices, s.staleDevices] {
+      removed += group ?? []
+    }
+    removed += (s.workspaceBuildOutputs ?? []).filter { $0.willClear == true }
+    removed += (s.caches ?? []).filter { $0.willEmpty == true }
     return Reclaimable(
       bytes: removed.reduce(0) { $0 + ($1.bytes ?? 0) },
       entries: removed.count,
