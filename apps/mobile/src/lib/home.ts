@@ -232,8 +232,9 @@ const pressureTone = (level: number): UsageTone => PRESSURE_TONES[level] ?? 'nor
 export function machineStats(usage: MachineUsage | null): MachineStat[] {
   if (!usage) return [];
   const stats: MachineStat[] = [];
-  if (typeof usage.cpu.usage === 'number') {
-    const fraction = usage.cpu.usage;
+  const cpuUsage = usage.cpu?.usage;
+  if (typeof cpuUsage === 'number') {
+    const fraction = cpuUsage;
     stats.push({
       kind: 'cpu',
       label: 'CPU',
