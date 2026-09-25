@@ -221,10 +221,12 @@ export function collectWorkspaceOutputs({
   olderThan,
   now,
   exclude = [],
+  measure = true,
 }: {
   olderThan: number | null;
   now: number;
   exclude?: readonly string[];
+  measure?: boolean;
 }): WorkspaceOutputsReport {
   const mountedVolumes = listMountedVolumes();
   const entries = listWorkspaceDirs()
@@ -232,7 +234,7 @@ export function collectWorkspaceOutputs({
     .filter((entry) => entry.projectRoot === null || isOnMountedVolume(entry.projectRoot, mountedVolumes))
     .map((entry) => Object.assign({}, entry, { paths: outputPaths(entry.dir) }))
     .filter((entry) => entry.paths.length > 0)
-    .map(({ paths, ...entry }) => Object.assign({}, entry, { bytes: outputBytes(paths) }))
+    .map(({ paths, ...entry }) => Object.assign({}, entry, { bytes: measure ? outputBytes(paths) : null }))
     .map((entry) =>
       Object.assign({}, entry, {
         lastUsed: entry.projectRoot === null ? NaN : workspaceLastUsed(entry.projectRoot),
@@ -245,9 +247,10 @@ export function collectWorkspaceOutputs({
 export async function clearWorkspaceOutputs(
   report: WorkspaceOutputsReport,
   { olderThan, now = Date.now() }: { olderThan: number | null; now?: number },
-): Promise<number> {
+): Promise<{ failures: number; cleared: string[] }> {
   let failures = 0;
   let cleared = 0;
+  const clearedRoots: string[] = [];
   for (const entry of report.workspaces) {
     const root = entry.projectRoot;
     if (!entry.willClear || root === null) {
@@ -284,12 +287,13 @@ export async function clearWorkspaceOutputs(
       continue;
     }
     cleared += entry.bytes ?? 0;
+    clearedRoots.push(root);
     console.log(chalk.green(`Cleared the build outputs of ${root} (${sizeText(entry.bytes)})`));
   }
   if (cleared) {
     console.log(chalk.dim(`Cleared ${formatBytes(cleared)} of workspace build outputs. ${REBUILD_COST}`));
   }
-  return failures;
+  return { failures, cleared: clearedRoots };
 }
 
 function stillOrphaned({ dir, projectRoot }: OrphanedWorkspace): boolean {

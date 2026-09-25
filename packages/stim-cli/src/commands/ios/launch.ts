@@ -377,6 +377,7 @@ interface FinishIosRunArgs {
   lease: RunLease | null;
   releaseLease: () => void;
   recordRun: ReportIosResultArgs['recordRun'];
+  reclaimed: ReportIosResultArgs['reclaimed'];
   enterPhase: (phase: BuildPhase) => void;
 }
 
@@ -517,6 +518,7 @@ export async function finishIosRun({
   lease,
   releaseLease,
   recordRun,
+  reclaimed,
   enterPhase,
 }: FinishIosRunArgs): Promise<IosRunCompletion | null> {
   const { path: appPath, bundleId: initialBundleId, failureFields: buildFailure, cache } = artifact;
@@ -870,6 +872,7 @@ export async function finishIosRun({
     webPreviewUrl: remoteDevice?.webPreviewUrl() ?? null,
     lease: physical ? leaseFacts : undefined,
     recordRun,
+    reclaimed,
   });
   return { facts, uploadsAbandoned };
 }

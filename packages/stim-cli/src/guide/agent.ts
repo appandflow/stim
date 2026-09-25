@@ -253,6 +253,7 @@ Read the matching guide before acting in these situations:
 | Remote device, custom Metro, or tunnel                | stim guide metro                 |
 | Cache miss, bypass, or fingerprint exclusions         | stim guide lifecycle builds      |
 | Capacity limits                                       | stim guide lifecycle concurrency |
+| budget lines, reclaimed field, or low disk            | stim guide lifecycle budget      |
 | Cache statistics from stim stats                      | stim guide facts stats           |
 | Worktree carry-over                                   | stim guide lifecycle options     |
 | Doctor finding: seed checkout or cross-volume copy    | stim guide lifecycle options     |
@@ -286,6 +287,7 @@ FULL TOPIC LIST
   stim guide lifecycle readiness  # add optional app readiness logs; no package required
   stim guide lifecycle builds     # build optimizations, optional cache warm-up, fingerprints
   stim guide lifecycle concurrency # shared builds, wait timeouts, capacity limits
+  stim guide lifecycle budget     # disk and memory budgets, automatic reclaim
   stim guide lifecycle options    # every flag, Android variants, --device-type, --system-image
   stim guide lifecycle devices    # ios --device and android --device on a physical phone
   stim guide lifecycle release    # Release configurations and ...Release variants

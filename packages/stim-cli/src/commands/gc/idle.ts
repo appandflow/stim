@@ -30,28 +30,36 @@ export interface IdleDeviceInputs {
   deadProjects?: readonly string[];
 }
 
-export function findIdleDevices({
+export interface OwnedDeviceActivity {
+  kind: 'ios' | 'android';
+  id: string;
+  name: string;
+  project: string;
+  slot: string;
+  activity: DeviceActivity;
+}
+
+function findOwnedDeviceActivity({
   config,
   sims,
   androidSerial,
   readActivity,
-  buildInProgress,
-  now,
   deadProjects = [],
-}: IdleDeviceInputs): IdleDevice[] {
+}: Omit<IdleDeviceInputs, 'buildInProgress' | 'now'>): OwnedDeviceActivity[] {
   const booted = new Map(sims.filter((sim) => sim.state === 'Booted').map((sim) => [sim.udid, sim.name]));
   const dead = new Set(deadProjects);
-  const idle: IdleDevice[] = [];
+  const found: OwnedDeviceActivity[] = [];
   for (const [project, record] of Object.entries(config?.projects ?? {})) {
     if (dead.has(project)) continue;
     for (const { slot, platforms } of projectDeviceSlots(record)) {
-      const found: { kind: IdleDevice['kind']; id: string; name: string; activity: DeviceActivity }[] = [];
       const ios = platforms.ios;
       if (ios?.owned && ios.deviceUdid && booted.has(ios.deviceUdid)) {
         found.push({
           kind: 'ios',
           id: ios.deviceUdid,
           name: booted.get(ios.deviceUdid) ?? ios.deviceUdid,
+          project,
+          slot,
           activity: readActivity({ platform: 'ios', id: ios.deviceUdid, slot, workspace: project }),
         });
       }
@@ -62,25 +70,29 @@ export function findIdleDevices({
           kind: 'android',
           id: android.avdName,
           name: android.avdName,
-          activity: readActivity({ platform: 'android', id: serial, slot, workspace: project }),
-        });
-      }
-      for (const device of found) {
-        if (device.activity.state !== 'idle') continue;
-        idle.push({
-          kind: device.kind,
-          id: device.id,
-          name: device.name,
           project,
           slot,
-          lastActivityAt: device.activity.lastActivityAt ?? null,
-          idleForMs: idleForMs(device.activity, now),
-          buildInProgress: buildInProgress(project),
+          activity: readActivity({ platform: 'android', id: serial, slot, workspace: project }),
         });
       }
     }
   }
-  return idle;
+  return found;
+}
+
+export function findIdleDevices({ buildInProgress, now, ...inputs }: IdleDeviceInputs): IdleDevice[] {
+  return findOwnedDeviceActivity(inputs)
+    .filter((device) => device.activity.state === 'idle')
+    .map(({ kind, id, name, project, slot, activity }) => ({
+      kind,
+      id,
+      name,
+      project,
+      slot,
+      lastActivityAt: activity.lastActivityAt ?? null,
+      idleForMs: idleForMs(activity, now),
+      buildInProgress: buildInProgress(project),
+    }));
 }
 
 export function idleShutdownCandidates(devices: readonly IdleDevice[], idleMs: number): IdleDevice[] {
@@ -94,7 +106,7 @@ export function parseIdleDuration(value: string): number | null {
   return Number(match[1]) * unit;
 }
 
-function workspaceBuildInProgress(project: string): boolean {
+export function workspaceBuildInProgress(project: string): boolean {
   const record = parseActiveBuild(readWorkspaceState(project)?.[ACTIVE_BUILD_KEY]);
   if (!record) return false;
   try {
@@ -104,27 +116,41 @@ function workspaceBuildInProgress(project: string): boolean {
   }
 }
 
-export function collectIdleDevices(
-  config: Config | null,
-  sims: readonly IosSimRecord[],
-  deadProjects: readonly string[],
-  now: number = Date.now(),
-): IdleDevice[] {
+function deviceActivityInputs(config: Config | null, sims: readonly IosSimRecord[], now: number) {
   const resolve = ownedAvdSerialResolver({ timeoutMs: 5000 });
-  return findIdleDevices({
+  return {
     config,
     sims,
-    deadProjects,
-    now,
     readActivity: createActivityReader({ now }),
-    buildInProgress: workspaceBuildInProgress,
-    androidSerial: (avdName) => {
+    androidSerial: (avdName: string) => {
       try {
         return resolve(avdName).serial ?? null;
       } catch {
         return null;
       }
     },
+  };
+}
+
+export function collectOwnedDeviceActivity(
+  config: Config | null,
+  sims: readonly IosSimRecord[],
+  now: number = Date.now(),
+): OwnedDeviceActivity[] {
+  return findOwnedDeviceActivity(deviceActivityInputs(config, sims, now));
+}
+
+export function collectIdleDevices(
+  config: Config | null,
+  sims: readonly IosSimRecord[],
+  deadProjects: readonly string[],
+  now: number = Date.now(),
+): IdleDevice[] {
+  return findIdleDevices({
+    ...deviceActivityInputs(config, sims, now),
+    deadProjects,
+    now,
+    buildInProgress: workspaceBuildInProgress,
   });
 }
 
@@ -145,11 +171,12 @@ export function shutDownIdleDevices(
   devices: readonly IdleDevice[],
   idleMs: number,
   recollect: () => IdleDevice[],
-): number {
+): { failures: number; shutDown: IdleDevice[] } {
   const candidates = idleShutdownCandidates(devices, idleMs);
+  const shutDown: IdleDevice[] = [];
   if (candidates.length === 0) {
     console.log(chalk.dim(`No owned device has been idle for ${formatLongDuration(idleMs)} or more.`));
-    return 0;
+    return { failures: 0, shutDown };
   }
   const fresh = idleShutdownCandidates(recollect(), idleMs);
   let failures = 0;
@@ -167,6 +194,7 @@ export function shutDownIdleDevices(
         ? teardownOwnedIosSim(device.id, { label: device.name })
         : teardownOwnedAvd(device.id, { owner: { projectPath: device.project, slot: device.slot } });
     if (outcome.status === 'torn-down') {
+      shutDown.push(device);
       console.log(chalk.green(`Shut down ${what}, idle ${formatLongDuration(current.idleForMs)}`));
     } else if (outcome.status === 'missing') {
       console.log(chalk.dim(`${what} is already gone; nothing to shut down.`));
@@ -177,5 +205,5 @@ export function shutDownIdleDevices(
       console.log(chalk.red(`Failed to shut down ${what}: ${outcome.reason}`));
     }
   }
-  return failures;
+  return { failures, shutDown };
 }

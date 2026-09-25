@@ -53,6 +53,7 @@ const OBJECT = { kind: 'object' } as const;
 const REMOTE = { kind: 'choice', choices: REMOTE_DEVICE_BACKENDS } as const;
 const PARKED_MAX = { kind: 'number', integer: true, minimum: 0 } as const;
 const CAPACITY = { kind: 'number', integer: true, minimum: 0 } as const;
+const GIGABYTES = { kind: 'number', minimum: 0 } as const;
 
 function optimization(key: string, description: string, type: SettingType = BOOLEAN): SettingDefinition {
   return {
@@ -222,6 +223,40 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 0,
     env: 'STIM_MAX_DEVICES',
     description: 'Booted owned devices; 0 means no limit',
+  },
+  {
+    key: 'budget.minFreeDiskGb',
+    type: GIGABYTES,
+    scopes: MACHINE,
+    default: 20,
+    env: 'STIM_BUDGET_MIN_FREE_DISK_GB',
+    scopedHomeValue: 0,
+    description: 'Free disk, in GB, ios, android and start reclaim toward; 0 turns reclaiming off',
+  },
+  {
+    key: 'budget.hardFloorDiskGb',
+    type: GIGABYTES,
+    scopes: MACHINE,
+    default: 5,
+    env: 'STIM_BUDGET_HARD_FLOOR_DISK_GB',
+    scopedHomeValue: 0,
+    description: 'Free disk, in GB, below which ios, android and start refuse with STIM_LOW_DISK; 0 never refuses',
+  },
+  {
+    key: 'budget.maxCommittedMemoryGb',
+    type: GIGABYTES,
+    scopes: MACHINE,
+    env: 'STIM_BUDGET_MAX_COMMITTED_MEMORY_GB',
+    scopedHomeValue: 0,
+    description:
+      'Estimated memory, in GB, of live environments before idle ones are reclaimed; unset is 60% of RAM, 0 is off',
+  },
+  {
+    key: 'budget.maxLiveWorkspaces',
+    type: CAPACITY,
+    scopes: MACHINE,
+    env: 'STIM_BUDGET_MAX_LIVE_WORKSPACES',
+    description: 'Live workspaces before idle ones are reclaimed; unset or 0 means no limit',
   },
   {
     key: 'pool.iosParkedMax',

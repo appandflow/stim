@@ -82,6 +82,7 @@ import {
   waitForBoot,
 } from '../devices/android.ts';
 import { checkDeviceCapacity } from '../engine/device-capacity.ts';
+import { budgetGate, type ReclaimedStep } from '../budget.ts';
 import { ensureBooted, ensureOwnedDevice, type OwnedDeviceRecord } from '../engine/device.ts';
 import { AvdRecoveryError, AvdBootError } from '../engine/device-android.ts';
 import {
@@ -299,6 +300,7 @@ interface RunAndroidOptions {
   detectRemoteProviders?: typeof detectProviders;
   getLimits?: typeof getConcurrencyLimits;
   checkCapacity?: typeof checkDeviceCapacity;
+  checkBudget?: typeof budgetGate;
   acquireSlot?: typeof acquireBuildSlot;
   releaseSlot?: typeof releaseBuildSlot;
   ensureDevice?: typeof ensureOwnedDevice;
@@ -693,6 +695,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const recordRun = stats.record;
 
   let ccacheActivity: CcacheActivity = CCACHE_NOT_RUN;
+  let reclaimed: ReclaimedStep[] = [];
 
   const fail = (
     code: string | undefined,
@@ -726,6 +729,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           remedy: remedy ?? null,
           ...(ccacheActivity.status === 'not-run' ? {} : { ccache: ccacheActivity }),
           ...(lease === undefined ? {} : { lease }),
+          ...(reclaimed.length ? { reclaimed } : {}),
         }),
       );
     }
@@ -768,6 +772,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const useBuildCache = cachePolicy.read;
   const physical = target.kind === 'physical';
   const remoteBackend = target.kind === 'remote' ? target.backend : null;
+  const budget = await (options.checkBudget ?? budgetGate)({ root, note: out });
+  reclaimed = budget.reclaimed;
+  if (budget.refusal) return fail(budget.refusal.code, budget.refusal.message, budget.refusal.remedy);
   const remoteContext = remoteBackend
     ? await resolveRemoteDeviceContext({
         root,
@@ -1160,6 +1167,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         out,
         emit,
         recordRun,
+        reclaimed,
         enterPhase: progress.step,
       });
     } finally {

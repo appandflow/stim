@@ -358,6 +358,7 @@ interface FinishAndroidRunArgs {
   out: (line: string) => void;
   emit: (line: string) => void;
   recordRun: ReportAndroidResultArgs['recordRun'];
+  reclaimed: ReportAndroidResultArgs['reclaimed'];
   enterPhase: (phase: BuildPhase) => void;
 }
 
@@ -458,6 +459,7 @@ export async function finishAndroidRun({
   out,
   emit,
   recordRun,
+  reclaimed,
   enterPhase,
 }: FinishAndroidRunArgs): Promise<RunAndroidResult> {
   let androidPackage = initialPackage;
@@ -771,6 +773,7 @@ export async function finishAndroidRun({
     emit,
     lease: physical ? leaseFacts : undefined,
     recordRun,
+    reclaimed,
   });
   if (remoteWasAbandoned || uploadWasAbandoned) exitAfterFlush(0);
   return { ok: true, facts };

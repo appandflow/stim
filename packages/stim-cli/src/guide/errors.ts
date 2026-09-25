@@ -671,6 +671,30 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   behaves differently: a compile WAITS for a free slot rather than refusing.
   See \`guide lifecycle concurrency\`.)`,
     },
+    STIM_LOW_DISK: {
+      summary: 'free disk stayed below budget.hardFloorDiskGb after reclaiming',
+      body: () => `STIM_LOW_DISK
+  \`start\`, \`ios\` and \`android\` check free disk on the volumes holding
+  the app and $STIM_HOME before they build or boot anything. Below
+  budget.minFreeDiskGb (20 GB by default) they first reclaim what Stim can
+  prove idle (\`guide lifecycle budget\`). This code means a volume was still
+  below budget.hardFloorDiskGb (5 GB by default) afterwards, so the run
+  stopped instead of filling the disk. Nothing was built or booted.
+
+  The message names the free space and the largest uses it could measure:
+  Stim state, the shared build cache, simulators, Xcode DerivedData and
+  Android emulators. The \`--json\` payload lists what was already reclaimed
+  under \`reclaimed\`. To free more:
+
+    stim gc                            # what else Stim can reclaim
+    stim gc --delete                   # clear idle workspace outputs, dead entries
+    stim gc --delete --cache all       # empty the shared caches
+    stim gc --delete --worktrees       # remove clean, idle worktrees
+
+  Ask before deleting anything outside Stim, such as Xcode DerivedData or
+  simulators Stim did not create. Lowering budget.hardFloorDiskGb (0 never
+  refuses) only removes the protection.`,
+    },
     STIM_BUILD_SLOT_TIMEOUT: {
       summary: 'the maxBuilds wait gave up with every slot held by a running process',
       body: () => `STIM_BUILD_SLOT_TIMEOUT

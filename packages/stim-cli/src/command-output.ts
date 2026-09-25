@@ -91,6 +91,7 @@ export const OUTPUT_LABELS: readonly string[] = [
   '',
   'app',
   'branch',
+  'budget',
   'build',
   'cache',
   'caches',

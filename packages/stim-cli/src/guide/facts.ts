@@ -254,6 +254,15 @@ per session, with the preview URL.`,
                   error, and this field is separate from cacheHit
   logs            the workspace log directory
   durationMs      wall time for the whole run
+  reclaimed       present only when the run was over its disk or memory
+                  budget and reclaimed first (\`start\`, \`ios\` and
+                  \`android\`, on success and failure alike). One entry per
+                  step that acted, in order:
+                    { step, targets, failures, freedMb }
+                  step is "idle-devices", "idle-dev-servers",
+                  "workspace-outputs" or "stale-cache-entries"; targets names
+                  the devices, workspaces or caches it acted on; freedMb is the
+                  free disk the step added. See \`guide lifecycle budget\`
 
   stim reload [ios|android] --json
 
@@ -292,6 +301,14 @@ per session, with the preview URL.`,
                   PATH and the version each reports. resolvedIsOlder is true
                   only when that first executable is below the highest version
                   available from this invocation or PATH
+  budget          { budget, volumes, memory, plan } or null when a budget
+                  setting is invalid. budget echoes minFreeDiskGb,
+                  hardFloorDiskGb, maxCommittedMemoryGb and maxLiveWorkspaces;
+                  volumes is { volume, freeGb } for the volumes holding the app
+                  and $STIM_HOME; memory is { committedGb, liveWorkspaces } or
+                  null when off; plan lists what the next start, ios or
+                  android would reclaim, in the \`reclaimed\` shape without
+                  freedMb, and is empty while under budget
   findings        the diagnostic findings; a lower resolved Stim is a
                   costs-time finding with a PATH or installation remedy
 
@@ -305,6 +322,8 @@ ON FAILURE
   \`ccache\` (Android) or \`compilationCache\` (iOS), with the status and
   counters described above. This includes failed builds and later install
   or launch failures. The field is absent when no native build returned.
+  \`reclaimed\` is present the same way as on success when the run reclaimed
+  before failing, including a STIM_LOW_DISK refusal.
 
   Branch on \`code\`, never on the message text. \`guide errors\` enumerates
   every code.

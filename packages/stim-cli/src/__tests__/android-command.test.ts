@@ -3638,6 +3638,30 @@ describe('concurrency limits', () => {
     expect(h.stderr.join('\n')).toMatch(/stim stop/);
   });
 
+  test('a budget refusal stops before any device or build and reports what was reclaimed', async () => {
+    const reclaimed = [{ step: 'idle-dev-servers' as const, targets: ['/w/b'], failures: 0, freedMb: 0 }];
+    const h = harness({
+      json: true,
+      checkBudget: async () => ({
+        reclaimed,
+        refusal: { code: 'STIM_LOW_DISK', message: 'low', remedy: 'stim gc' },
+      }),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(JSON.parse(h.stdout[0]!)).toMatchObject({ code: 'STIM_LOW_DISK', reclaimed });
+    expect(h.calls.ensureDevice.length).toBe(0);
+    expect(h.calls.build.length).toBe(0);
+  });
+
+  test('a run that reclaimed first reports the steps in its success payload', async () => {
+    const reclaimed = [{ step: 'stale-cache-entries' as const, targets: ['Gradle'], failures: 0, freedMb: 512 }];
+    const h = harness({ json: true, checkBudget: async () => ({ reclaimed, refusal: null }) });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(JSON.parse(h.stdout.at(-1)!)).toMatchObject({ reclaimed });
+  });
+
   test('maxBuilds takes a slot to build and releases it, with the right args', async () => {
     const slotCalls: Record<string, unknown>[] = [];
     let released = 0;

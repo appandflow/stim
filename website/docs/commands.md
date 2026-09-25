@@ -69,6 +69,12 @@ Doctor also prints the running CLI version and the `stim` installation resolved
 from `PATH`, and flags a resolved installation that is older than another
 available one.
 
+A `budget` line reports the free disk on the volumes that hold the app and
+`$STIM_HOME`, and the estimated committed memory, against the
+[machine budget](./settings.md#machine-settings). When the machine is over
+budget, a finding lists what the next `start`, `ios`, or `android` would reclaim
+first. Doctor itself never reclaims. `--json` adds this report as `budget`.
+
 `doctor` also flags when an agent harness sandboxes shell commands and Stim is
 not allowed through it, which shows up as unrelated-looking failures against
 the simulator service, the adb server, and Stim's own state directory.
@@ -745,3 +751,10 @@ facts needed for the next step. Use `--json` when a script must parse the result
 Commands exit with code 0 on success. Build, launch, ownership, or input errors
 exit with a nonzero code and print an error code, message, and remedy. An empty
 `logs` result exits with code 0.
+
+When `start`, `ios`, or `android` reclaimed disk or memory before it started,
+its `--json` payload, on success or failure, carries a `reclaimed` array with
+one `{ step, targets, failures, freedMb }` entry per step that acted. A machine
+still below `budget.hardFloorDiskGb` after reclaiming refuses with
+`STIM_LOW_DISK`, naming the largest uses of disk. Run `stim guide errors
+STIM_LOW_DISK` for the remedies.

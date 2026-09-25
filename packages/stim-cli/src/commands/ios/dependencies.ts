@@ -8,6 +8,7 @@ import { acquireBuildLock, releaseBuildLock, waitForBuild } from '../../engine/b
 import { acquireBuildSlot, releaseBuildSlot } from '../../engine/build-slots.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../../engine/deps.ts';
 import { checkDeviceCapacity } from '../../engine/device-capacity.ts';
+import { budgetGate } from '../../budget.ts';
 import { clearIosAdoptionPending } from '../../engine/device-ios.ts';
 import { ensureBooted, ensureOwnedDevice } from '../../engine/device.ts';
 import { listIosRuntimes } from '../../devices/ios.ts';
@@ -77,6 +78,7 @@ export interface IosDeps {
   getProject: typeof getProject;
   upsertProject: typeof upsertProject;
   checkDeviceCapacity: typeof checkDeviceCapacity;
+  budgetGate: typeof budgetGate;
   ensureOwnedDevice: typeof ensureOwnedDevice;
   listIosRuntimes: typeof listIosRuntimes;
   ensureBooted: typeof ensureBooted;
@@ -154,6 +156,7 @@ export const DEFAULT_DEPS: IosDeps = {
   getProject,
   upsertProject,
   checkDeviceCapacity,
+  budgetGate,
   ensureOwnedDevice,
   listIosRuntimes,
   ensureBooted,

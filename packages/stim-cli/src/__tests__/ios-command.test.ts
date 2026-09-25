@@ -2920,6 +2920,34 @@ describe('concurrency limits', () => {
     expect(!calls.order.includes('ensureOwnedDevice')).toBeTruthy();
   });
 
+  test('a budget refusal stops before any device or build and reports what was reclaimed', async () => {
+    reserve();
+    const reclaimed = [{ step: 'idle-devices' as const, targets: ['ios stim-b in /w/b'], failures: 0, freedMb: 0 }];
+    const gate: { root?: string } = {};
+    const { logs, exitCode, calls } = await run(
+      { json: true },
+      {
+        budgetGate: async (args) => {
+          gate.root = args.root;
+          return { reclaimed, refusal: { code: 'STIM_LOW_DISK', message: 'low', remedy: 'stim gc' } };
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(gate.root).toBe(root);
+    expect(parseFirst(logs)).toMatchObject({ code: 'STIM_LOW_DISK', reclaimed });
+    expect(calls.order.includes('ensureOwnedDevice')).toBe(false);
+    expect(calls.order.includes('buildIos')).toBe(false);
+  });
+
+  test('a run that reclaimed first reports the steps in its success payload', async () => {
+    reserve();
+    const reclaimed = [{ step: 'workspace-outputs' as const, targets: ['/w/b'], failures: 0, freedMb: 2048 }];
+    const { logs, exitCode } = await run({ json: true }, { budgetGate: async () => ({ reclaimed, refusal: null }) });
+    expect(exitCode).toBe(null);
+    expect(parseFirst(logs)).toMatchObject({ bundleId: expect.any(String), reclaimed });
+  });
+
   test('maxBuilds takes a slot AFTER the single-flight lock and releases it after the build', async () => {
     reserve();
     const seq: string[] = [];
