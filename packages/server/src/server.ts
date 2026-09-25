@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { isIP, type AddressInfo, type Socket } from 'node:net';
 import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
+import { configDir } from '@stim-cli/core';
 import { isJsonObject, loadConfig, type StatusPayload } from '@stim-cli/core/state';
 import { FeedPool, type JsonObject } from './feed.ts';
 import { LogBatcher, logArgs, parseLogFilter, type LogLimits } from './logs.ts';
@@ -50,7 +51,25 @@ interface ServerHealth {
   version: string;
   stim: string;
   protocol: number;
-  tailscale: TailscaleState;
+  stimHome: string;
+  tailscale: { state: TailscaleState['state']; dnsName?: string | null; backendState?: string; reason?: string };
+}
+
+function healthTailscale(tailscale: TailscaleState): ServerHealth['tailscale'] {
+  if (tailscale.state === 'running') return { state: 'running', dnsName: tailscale.dnsName };
+  if (tailscale.state === 'not-running') return { state: 'not-running', backendState: tailscale.backendState };
+  return { state: 'unavailable', reason: tailscale.reason };
+}
+
+/** Only a request made to this Mac's loopback name, so a DNS-rebound web page cannot read the health payload. */
+function localHealthRequest(request: IncomingMessage): boolean {
+  const host = request.headers.host?.replace(/:\d+$/, '');
+  return (
+    request.method === 'GET' &&
+    request.url === '/health' &&
+    (host === '127.0.0.1' || host === 'localhost') &&
+    peerAddress(request) === null
+  );
 }
 
 export interface RunningServer {
@@ -437,7 +456,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     version: options.serverVersion,
     stim: options.stimVersion,
     protocol: PROTOCOL_VERSION,
-    tailscale: options.tailscaleState,
+    stimHome: configDir(),
+    tailscale: healthTailscale(options.tailscaleState),
   };
   const servers: Server[] = [];
   const addresses: RunningServer['addresses'] = [];
@@ -452,7 +472,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   try {
     for (const host of options.hosts) {
       const server = createServer((request, response) => {
-        if (request.method === 'GET' && request.url === '/health' && peerAddress(request) === null) {
+        if (localHealthRequest(request)) {
           response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(health));
           return;
         }

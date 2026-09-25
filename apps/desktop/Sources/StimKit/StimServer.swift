@@ -26,10 +26,12 @@ public struct ServerHealth: Decodable, Equatable, Sendable {
   public var version: String
   public var stim: String
   public var protocolVersion: Int
+  /// The `STIM_HOME` the server keeps its pairing state under.
+  public var stimHome: String
   public var tailscale: TailscaleState
 
   enum CodingKeys: String, CodingKey {
-    case server, name, version, stim, tailscale
+    case server, name, version, stim, stimHome, tailscale
     case protocolVersion = "protocol"
   }
 }

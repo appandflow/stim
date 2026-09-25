@@ -19,10 +19,21 @@ final class ServerController: ObservableObject {
 
   private var environment: Task<[String: String], Never>?
   private var process: Process?
+  private var exiting: Process?
   private var output: [String] = []
   private var generation = 0
 
   var port: Int { StimServerCLI.defaultPort }
+
+  var isRunning: Bool {
+    if case .running = state { return true }
+    return false
+  }
+
+  var canRestart: Bool {
+    if case .running(_, owned: true) = state { return true }
+    return false
+  }
 
   func configure(environment: Task<[String: String], Never>) {
     self.environment = environment
@@ -30,8 +41,10 @@ final class ServerController: ObservableObject {
   }
 
   func cli() async -> StimServerCLI {
-    StimServerCLI(
-      environment: await environment?.value ?? ProcessInfo.processInfo.environment,
+    var environment = await environment?.value ?? ProcessInfo.processInfo.environment
+    if case .running(let health, _) = state { environment["STIM_HOME"] = health.stimHome }
+    return StimServerCLI(
+      environment: environment,
       override: UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable))
   }
 
@@ -44,6 +57,11 @@ final class ServerController: ObservableObject {
     let current = generation
     state = .starting
     Task {
+      if let exiting {
+        await Task.detached { Self.waitForExit(exiting) }.value
+        self.exiting = nil
+      }
+      guard current == generation else { return }
       if let health = await StimServerCLI.health(port: port) {
         if current == generation { state = .running(health, owned: false) }
         return
@@ -74,6 +92,7 @@ final class ServerController: ObservableObject {
         }
       }
       guard current == generation else { return }
+      generation += 1
       terminate()
       state = .failed("stim-server did not answer on port \(port) within \(Int(Self.startTimeout)) seconds.")
     }
@@ -86,18 +105,16 @@ final class ServerController: ObservableObject {
   }
 
   func restart() {
-    guard case .running(_, owned: true) = state, let process else { return }
+    guard canRestart else { return }
     stop()
-    Task.detached {
-      Self.waitForExit(process)
-      await MainActor.run { self.start() }
-    }
+    start()
   }
 
   func refresh() {
     if case .running(_, owned: false) = state {
+      let current = generation
       Task {
-        if await StimServerCLI.health(port: port) == nil, case .running(_, owned: false) = state {
+        if await StimServerCLI.health(port: port) == nil, current == generation {
           state = .off
           if UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) { start() }
         }
@@ -123,28 +140,34 @@ final class ServerController: ObservableObject {
   func revoke(_ device: PairedDevice) {
     Task {
       let cli = await cli()
-      if case .failure(let error) = await Task.detached(operation: { Result { try cli.revoke(device.id) } }).value {
-        devicesError = error.localizedDescription
+      switch await Task.detached(operation: { Result { try cli.revoke(device.id) } }).value {
+      case .success: reloadDevices()
+      case .failure(let error): devicesError = error.localizedDescription
       }
-      reloadDevices()
     }
   }
 
   func stopForQuit() {
-    guard let process else { return }
     generation += 1
     terminate()
-    Self.waitForExit(process)
+    if let exiting { Self.waitForExit(exiting) }
   }
 
   private func terminate() {
-    if let process, process.isRunning { process.terminate() }
+    if let process, process.isRunning {
+      process.terminate()
+      exiting = process
+    }
     process = nil
   }
 
+  /// SIGTERM lets the server close its clients and its `stim status` child; SIGKILL follows after 3 seconds.
   private nonisolated static func waitForExit(_ process: Process) {
     let deadline = Date().addingTimeInterval(3)
     while process.isRunning, Date() < deadline { usleep(50_000) }
+    guard process.isRunning else { return }
+    kill(process.processIdentifier, SIGKILL)
+    process.waitUntilExit()
   }
 
   private func record(_ line: String, generation: Int) {

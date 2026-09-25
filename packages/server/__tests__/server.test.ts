@@ -9,6 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { get } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
@@ -388,10 +389,18 @@ describe('health', () => {
       version: '1.2.3',
       stim: '9.9.9',
       protocol: 1,
+      stimHome: process.env.STIM_HOME,
       tailscale: { state: 'not-running', backendState: 'Stopped' },
     });
     const forwarded = await fetch(`http://127.0.0.1:${port}/health`, { headers: { 'x-forwarded-for': '100.64.0.2' } });
     expect(forwarded.status).toBe(426);
+    const rebound = await new Promise<number | undefined>((resolve, reject) => {
+      get({ host: '127.0.0.1', port, path: '/health', headers: { host: `attacker.example:${port}` } }, (response) => {
+        response.resume();
+        resolve(response.statusCode);
+      }).on('error', reject);
+    });
+    expect(rebound).toBe(426);
   });
 });
 

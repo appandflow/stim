@@ -8,14 +8,14 @@ import Testing
     let stopped = try StimServerCLI.decoder.decode(
       ServerHealth.self,
       from: Data(
-        #"{"server":"stim-server","name":"Mac","version":"1.9.0","stim":"1.9.0","protocol":1,"tailscale":{"state":"not-running","backendState":"Stopped"}}"#
+        #"{"server":"stim-server","name":"Mac","version":"1.9.0","stim":"1.9.0","protocol":1,"stimHome":"/Users/me/.stim","tailscale":{"state":"not-running","backendState":"Stopped"}}"#
           .utf8))
-    #expect(stopped.protocolVersion == 1)
+    #expect(stopped.protocolVersion == 1 && stopped.stimHome == "/Users/me/.stim")
     #expect(!stopped.tailscale.isRunning)
     #expect(stopped.tailscale.summary == "Tailscale is not running (Stopped).")
     let running = try StimServerCLI.decoder.decode(
       TailscaleState.self,
-      from: Data(#"{"state":"running","ips":["100.64.0.1"],"dnsName":"mac.tail1.ts.net","hostName":"mac"}"#.utf8))
+      from: Data(#"{"state":"running","dnsName":"mac.tail1.ts.net"}"#.utf8))
     #expect(running.isRunning && running.dnsName == "mac.tail1.ts.net")
   }
 

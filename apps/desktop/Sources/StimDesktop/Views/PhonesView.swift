@@ -63,7 +63,12 @@ struct PhonesView: View {
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
     .background(Theme.background)
-    .onAppear { server.refresh() }
+    .task {
+      while !Task.isCancelled {
+        server.refresh()
+        try? await Task.sleep(for: .seconds(5))
+      }
+    }
     .sheet(isPresented: $pairing, onDismiss: server.reloadDevices) {
       PairSheet(server: server)
     }
@@ -111,18 +116,6 @@ struct PhonesView: View {
     panel.canChooseDirectories = false
     panel.prompt = "Choose"
     if panel.runModal() == .OK, let url = panel.url { executable = url.path }
-  }
-}
-
-extension ServerController {
-  var isRunning: Bool {
-    if case .running = state { return true }
-    return false
-  }
-
-  var canRestart: Bool {
-    if case .running(_, owned: true) = state { return true }
-    return false
   }
 }
 

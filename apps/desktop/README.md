@@ -189,9 +189,11 @@ shows a message instead of the page.
 checks `http://127.0.0.1:7787/health` at launch. When a server answers, the app
 uses it and never starts a second one. Otherwise it runs `stim-server --port
 7787` and stops it with SIGTERM when the app quits, or when you turn the
-preference off. A server the app did not start keeps running after the app
+preference off, followed by SIGKILL if it has not exited after 3 seconds. A server the app did not start keeps running after the app
 quits. `stim-server` is found on the login shell's `PATH`, or at the path you
-choose in the same tab.
+choose in the same tab. While a server runs, the tab re-checks it every 5
+seconds, and the pairing and device commands use the `STIM_HOME` its health
+reports, so they act on that server's pairing state.
 
 **Pair a Phone** runs `stim-server pair --json` and shows its single-use code as
 a QR code with the time left before it expires, plus the endpoint and token for
@@ -202,7 +204,8 @@ devices revoke <id>` after a confirmation.
 
 When the server reports that Tailscale is not running, the tab shows the
 steps: `tailscale up`, restart the server (a button when the app started it),
-then `tailscale serve --bg http://127.0.0.1:7787` once. Until then, the pairing
+then `tailscale serve --bg http://127.0.0.1:7787` once. The server reports the
+Tailscale state it started with, so the steps stay until it restarts. Until then, the pairing
 endpoint is `ws://127.0.0.1:7787` and works only on this Mac, for example from
 an iOS Simulator.
 
