@@ -95,6 +95,25 @@ public struct IosDevice: Decodable, Hashable, Sendable {
   public var owned: Bool
   public var state: String
   public var activity: DeviceActivity?
+
+  enum CodingKeys: String, CodingKey { case name, udid, owned, state, activity }
+
+  public init(name: String, udid: String, owned: Bool, state: String, activity: DeviceActivity? = nil) {
+    self.name = name
+    self.udid = udid
+    self.owned = owned
+    self.state = state
+    self.activity = activity
+  }
+
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    udid = try c.decode(String.self, forKey: .udid)
+    name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Missing simulator"
+    owned = try c.decode(Bool.self, forKey: .owned)
+    state = try c.decode(String.self, forKey: .state)
+    activity = try c.decodeIfPresent(DeviceActivity.self, forKey: .activity)
+  }
 }
 
 public struct AndroidDevice: Decodable, Hashable, Sendable {
