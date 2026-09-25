@@ -88,7 +88,7 @@ export function Pair() {
               label="Endpoint"
               value={endpoint}
               onChangeText={setEndpoint}
-              placeholder="wss://my-mac.tail1234.ts.net"
+              placeholder="wss://my-mac.tail1234.ts.net:7443"
             />
             <Field
               colors={colors}

@@ -150,13 +150,20 @@ encryption layer.
   certificate for the Mac's `*.ts.net` name, so clients use standard `wss://`
   with no certificate pinning. Port 7787 by default, configurable in the
   server's own settings.
+- The setup command serves it on a dedicated tailnet-only HTTPS port,
+  `tailscale serve --bg --https=7443 http://127.0.0.1:7787`, so it never shares
+  port 443 with another app. The server reads `tailscale serve status --json`
+  to find the port that proxies to it and assumes 7443 when there is none.
+  When any handler or TCP forward to it is on a Funnel port, it is public:
+  pairing is refused, and no suggested command adds a handler to a Funnel
+  port.
 - Desktop shows a QR code on request:
 
   ```json
   {
     "v": 1,
     "name": "Janic's MacBook Pro",
-    "endpoint": "wss://janics-mbp.tail1234.ts.net",
+    "endpoint": "wss://janics-mbp.tail1234.ts.net:7443",
     "pairingToken": "<random, single use, expires in 5 minutes>"
   }
   ```

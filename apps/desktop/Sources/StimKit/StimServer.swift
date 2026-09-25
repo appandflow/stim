@@ -19,6 +19,24 @@ public struct TailscaleState: Decodable, Equatable, Sendable {
   }
 }
 
+/// How the Mac's `tailscale serve` config reaches the server: `routed` on a tailnet-only HTTPS
+/// `port`, `funneled` through Funnel `ports` and so public, `missing`, or `unknown` with a
+/// `reason`. Outside `routed`, `port` is the one the setup command would use.
+public struct ServeRoute: Decodable, Equatable, Sendable {
+  public var state: String
+  public var port: Int
+  public var ports: [Int]?
+  public var reason: String?
+
+  public func endpoint(dnsName: String) -> String {
+    port == 443 ? "wss://\(dnsName)" : "wss://\(dnsName):\(port)"
+  }
+
+  public func setupCommand(serverPort: Int) -> String {
+    "tailscale serve --bg --https=\(port) http://127.0.0.1:\(serverPort)"
+  }
+}
+
 /// `GET /health` on the server's loopback port.
 public struct ServerHealth: Decodable, Equatable, Sendable {
   public var server: String
@@ -29,9 +47,11 @@ public struct ServerHealth: Decodable, Equatable, Sendable {
   /// The `STIM_HOME` the server keeps its pairing state under.
   public var stimHome: String
   public var tailscale: TailscaleState
+  /// The `tailscale serve` route read on this request, present while Tailscale runs.
+  public var route: ServeRoute?
 
   enum CodingKeys: String, CodingKey {
-    case server, name, version, stim, stimHome, tailscale
+    case server, name, version, stim, stimHome, tailscale, route
     case protocolVersion = "protocol"
   }
 }

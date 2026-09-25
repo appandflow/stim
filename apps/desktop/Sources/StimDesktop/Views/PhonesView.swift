@@ -32,6 +32,10 @@ struct PhonesView: View {
         }
       }
 
+      if case .running(let health, _) = server.state, let route = health.route, let dnsName = health.tailscale.dnsName {
+        RouteSection(route: route, dnsName: dnsName, port: server.port)
+      }
+
       Section {
         ForEach([server.devicesError, server.revokeError].compactMap { $0 }, id: \.self) { error in
           Text(error).foregroundStyle(Theme.error)
@@ -141,7 +145,7 @@ private struct TailscaleSetup: View {
         if canRestart {
           Button("Restart Server", action: restart)
         }
-        step("3. Once, forward the Mac's tailnet name to the server.", command: "tailscale serve --bg http://127.0.0.1:\(port)")
+        Text("3. Run the tailscale serve command this tab then shows, once.")
       }
       .padding(.vertical, 4)
     }
@@ -154,6 +158,58 @@ private struct TailscaleSetup: View {
         CommandText(command: command)
         Button("Copy") { copy(command) }
       }
+    }
+  }
+}
+
+private struct RouteSection: View {
+  var route: ServeRoute
+  var dnsName: String
+  var port: Int
+
+  var body: some View {
+    Section("Tailscale route") {
+      VStack(alignment: .leading, spacing: 10) {
+        switch route.state {
+        case "routed":
+          Label("Phones connect to \(route.endpoint(dnsName: dnsName)), tailnet only.", systemImage: "checkmark.circle.fill")
+            .foregroundStyle(Theme.live)
+          Text("tailscale serve forwards HTTPS port \(String(route.port)) to 127.0.0.1:\(String(port)).")
+            .foregroundStyle(Theme.secondary)
+        case "funneled":
+          Label(
+            "Tailscale Funnel is on for port \((route.ports ?? []).map(String.init).joined(separator: ", ")), which forwards to stim-server, so the server is reachable from the public internet. Pairing is refused.",
+            systemImage: "exclamationmark.octagon.fill"
+          )
+          .foregroundStyle(Theme.error)
+          .fixedSize(horizontal: false, vertical: true)
+          Text("Remove that handler (see tailscale serve status), then serve stim-server on a tailnet-only port:")
+            .foregroundStyle(Theme.secondary)
+          command
+        case "missing":
+          Label("No tailscale serve route reaches port \(String(port)), so phones cannot connect yet.", systemImage: "exclamationmark.triangle.fill")
+            .foregroundStyle(Theme.warn)
+          Text("Once, serve it on a dedicated tailnet-only port. Phones then connect to \(route.endpoint(dnsName: dnsName)).")
+            .foregroundStyle(Theme.secondary)
+          command
+        default:
+          Label(
+            "Could not read tailscale serve status: \(route.reason ?? "unknown reason"). Pairing assumes \(route.endpoint(dnsName: dnsName)).",
+            systemImage: "exclamationmark.triangle.fill"
+          )
+          .foregroundStyle(Theme.warn)
+          .fixedSize(horizontal: false, vertical: true)
+        }
+      }
+      .padding(.vertical, 4)
+    }
+  }
+
+  private var command: some View {
+    let command = route.setupCommand(serverPort: port)
+    return HStack {
+      CommandText(command: command)
+      Button("Copy") { copy(command) }
     }
   }
 }
@@ -252,6 +308,19 @@ struct PairSheet: View {
         VStack(alignment: .leading, spacing: 6) {
           detail("Endpoint", code.qr.endpoint)
           detail("Token", code.qr.pairingToken)
+        }
+        if case .running(let health, _) = server.state, let route = health.route, route.state != "routed" {
+          Label(
+            route.state == "missing"
+              ? "No tailscale serve route to stim-server was found, so a phone cannot reach this endpoint yet. See the Phones tab."
+              : route.state == "funneled"
+                ? "Tailscale Funnel now exposes stim-server publicly. Do not use this code; see the Phones tab."
+                : "Could not read tailscale serve status, so this endpoint is assumed. See the Phones tab.",
+            systemImage: "exclamationmark.triangle.fill"
+          )
+          .foregroundStyle(Theme.warn)
+          .font(Theme.body(12))
+          .fixedSize(horizontal: false, vertical: true)
         }
         if code.isLocalOnly {
           Label(

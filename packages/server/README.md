@@ -22,7 +22,12 @@ stim-server devices revoke <id>   # revoke a paired device
 
 `GET http://127.0.0.1:7787/health` answers requests from this Mac with the
 server's name, versions, protocol, `stimHome`, and the Tailscale state it
-started with. Stim Desktop uses it to find a running server. A request through
+started with. While Tailscale runs, it also carries `route`, read from
+`tailscale serve status --json` on each request: `routed` with the HTTPS
+`port` that proxies to the server, `funneled` with the Funnel `ports` that do,
+`missing`, or `unknown` with a `reason`; the last three carry the `port` the
+setup command would use. Stim Desktop uses it to find a running server and
+show its route. A request through
 `tailscale serve`, on a Tailscale address, or with a `Host` other than
 `127.0.0.1` or `localhost` gets HTTP 426, like any other plain HTTP request.
 
@@ -40,11 +45,22 @@ same tailnet or with the Mac shared to the phone's user.
 
 `stim-server` listens only on `127.0.0.1` and on the Mac's Tailscale
 addresses, never on every interface. Run this once so clients can use
-`wss://<mac>.<tailnet>.ts.net` with a valid certificate:
+`wss://<mac>.<tailnet>.ts.net:7443` with a valid certificate:
 
 ```bash
-tailscale serve --bg http://127.0.0.1:7787
+tailscale serve --bg --https=7443 http://127.0.0.1:7787
 ```
+
+The dedicated port 7443 keeps the server tailnet only and leaves port 443 to
+other apps. Do not serve `stim-server` on a port where Tailscale Funnel is on:
+Funnel makes every handler on that port reachable from the public internet.
+
+`stim-server` reads `tailscale serve status --json` at start and on every
+`pair`. It uses the HTTPS port whose `/` handler proxies to its loopback port,
+preferring 7443. Without such a route, it assumes 7443 and prints the command
+above, or the next free port when 7443 is taken. It never suggests a Funnel
+port. Any handler, at any path, or TCP forward that reaches the server on a
+Funnel port makes it public, and `pair` refuses.
 
 When Tailscale is not running, `stim-server` listens on loopback only and
 says so on stderr. Start Tailscale, then restart `stim-server`.
@@ -54,8 +70,12 @@ says so on stderr. Start Tailscale, then restart `stim-server`.
 `stim-server pair` prints the JSON that the pairing QR code encodes:
 
 ```json
-{ "v": 1, "name": "Janic's MacBook Pro", "endpoint": "wss://janics-mbp.tail1234.ts.net", "pairingToken": "..." }
+{ "v": 1, "name": "Janic's MacBook Pro", "endpoint": "wss://janics-mbp.tail1234.ts.net:7443", "pairingToken": "..." }
 ```
+
+The endpoint names the route's port, and omits it for 443. When a route to
+the server is on a port with Funnel on, `pair` refuses and exits 1 without
+creating a token.
 
 The pairing token works once and expires after 5 minutes. A client spends it in
 `hello` and receives a random device token, which it presents on every later

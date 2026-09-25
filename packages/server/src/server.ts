@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, watch, type FSWatcher } from 'node:fs';
-import { createServer, type IncomingMessage, type Server } from 'node:http';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { isIP, type AddressInfo, type Socket } from 'node:net';
 import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -28,7 +28,7 @@ import {
   type PeerIdentity,
 } from './registry.ts';
 import { runStim, type CommandLimits } from './stim-command.ts';
-import { whois, type TailscaleState } from './tailscale.ts';
+import { serveRoute, whois, type ServeRoute, type TailscaleState } from './tailscale.ts';
 
 export interface ServerOptions {
   name: string;
@@ -55,6 +55,7 @@ interface ServerHealth {
   protocol: number;
   stimHome: string;
   tailscale: { state: TailscaleState['state']; dnsName?: string | null; backendState?: string; reason?: string };
+  route?: ServeRoute;
 }
 
 function healthTailscale(tailscale: TailscaleState): ServerHealth['tailscale'] {
@@ -89,6 +90,7 @@ const LOG_LIMITS: LogLimits = { maxBufferedBytes: 4 * 1024 * 1024, maxPendingRec
 const FRAME_BUFFER_BYTES = 1024 * 1024;
 const FRAME_RETRY_MS = 100;
 const STATUS_FEED = { args: ['status', '--watch', '--json'], cwd: homedir(), keep: 1, label: 'stim status --watch' };
+const HEALTH_ROUTE_TIMEOUT_MS = 1000;
 const COMMAND_LIMITS: CommandLimits = { timeoutMs: 60_000, maxOutputBytes: 32 * 1024 * 1024 };
 
 const AUTH_REFUSALS: Record<Exclude<AuthOutcome, { ok: true }>['reason'], ProtocolError> = {
@@ -539,6 +541,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     stimHome: configDir(),
     tailscale: healthTailscale(options.tailscaleState),
   };
+  const answerHealth = async (response: ServerResponse) => {
+    const tailscale = options.tailscaleState;
+    const route =
+      tailscale.state === 'running' && tailscale.dnsName
+        ? await serveRoute(options.tailscale, options.env, addresses[0]!.port, tailscale.ips, HEALTH_ROUTE_TIMEOUT_MS)
+        : undefined;
+    response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ...health, route }));
+  };
   const servers: Server[] = [];
   const addresses: RunningServer['addresses'] = [];
   const close = async () => {
@@ -553,7 +563,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     for (const host of options.hosts) {
       const server = createServer((request, response) => {
         if (localHealthRequest(request)) {
-          response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(health));
+          void answerHealth(response);
           return;
         }
         response.writeHead(426, { 'content-type': 'text/plain' }).end('stim-server speaks WebSocket only.\n');

@@ -6,7 +6,15 @@ import { bundledStim, loginShellEnvironment } from '../src/environment.ts';
 import { PROTOCOL_VERSION } from '../src/protocol.ts';
 import { createPairingToken, readDevices, revokeDevice, type PairedDevice } from '../src/registry.ts';
 import { startServer } from '../src/server.ts';
-import { findTailscale, tailscaleStatus, type TailscaleState } from '../src/tailscale.ts';
+import {
+  findTailscale,
+  serveCommand,
+  serveRoute,
+  tailnetEndpoint,
+  tailscaleStatus,
+  type ServeRoute,
+  type TailscaleState,
+} from '../src/tailscale.ts';
 
 const DEFAULT_PORT = 7787;
 
@@ -25,10 +33,24 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-function tailscaleNote(tailscale: TailscaleState, port: number): string | null {
-  const remedy = `Remote clients cannot connect until Tailscale runs; then restart stim-server and run \`tailscale serve --bg http://127.0.0.1:${port}\` once.`;
+function tailscaleNote(tailscale: TailscaleState): string | null {
+  const remedy = `Remote clients cannot connect until Tailscale runs; then restart stim-server, which prints the \`tailscale serve\` command to run once.`;
   if (tailscale.state === 'not-running') return `Tailscale is not running (${tailscale.backendState}). ${remedy}`;
   if (tailscale.state === 'unavailable') return `Tailscale is unavailable: ${tailscale.reason}. ${remedy}`;
+  return null;
+}
+
+function routeNote(route: ServeRoute, port: number): string | null {
+  if (route.state === 'missing') {
+    return `No \`tailscale serve\` route reaches port ${port}, so phones cannot connect yet. Run this once to serve it on a tailnet-only port: \`${serveCommand(route.port, port)}\``;
+  }
+  if (route.state === 'unknown') {
+    return `Could not read \`tailscale serve status --json\` (${route.reason}); assuming stim-server is served on port ${route.port}.`;
+  }
+  if (route.state === 'funneled') {
+    const ports = route.ports.join(', ');
+    return `Tailscale Funnel is on for port ${ports}, which proxies to stim-server, so the server is reachable from the public internet. Remove that handler (see \`tailscale serve status\`), then serve stim-server on a tailnet-only port: \`${serveCommand(route.port, port)}\``;
+  }
   return null;
 }
 
@@ -70,8 +92,13 @@ async function serve(port: number): Promise<void> {
   for (const { host, port: bound } of server.addresses) {
     console.log(`listening on ws://${host.includes(':') ? `[${host}]` : host}:${bound}`);
   }
-  if (tailscale.state === 'running' && tailscale.dnsName) console.log(`tailnet endpoint: wss://${tailscale.dnsName}`);
-  const note = tailscaleNote(tailscale, port);
+  let note = tailscaleNote(tailscale);
+  if (tailscale.state === 'running' && tailscale.dnsName) {
+    const route = await serveRoute(tailscaleBinary, env, port, tailscale.ips);
+    if (route.state !== 'funneled') console.log(`tailnet endpoint: ${tailnetEndpoint(tailscale.dnsName, route.port)}`);
+    note = routeNote(route, port);
+    if (route.state === 'funneled') note = `${note} Pairing is refused until then.`;
+  }
   if (note) console.error(note);
   const shutdown = () => {
     void server.close().then(() => process.exit(0));
@@ -81,21 +108,24 @@ async function serve(port: number): Promise<void> {
   process.on('SIGHUP', shutdown);
 }
 
-function pair(port: number, json: boolean): void {
-  const tailscale = tailscaleStatus(findTailscale(process.env), process.env);
+async function pair(port: number, json: boolean): Promise<void> {
+  const binary = findTailscale(process.env);
+  const tailscale = tailscaleStatus(binary, process.env);
+  let endpoint = `ws://127.0.0.1:${port}`;
+  let note = tailscaleNote(tailscale);
+  if (note) note = `${note} The endpoint above only works on this Mac.`;
+  if (tailscale.state === 'running' && tailscale.dnsName) {
+    const route = await serveRoute(binary, process.env, port, tailscale.ips);
+    if (route.state === 'funneled') fail(`refusing to pair. ${routeNote(route, port)}`);
+    endpoint = tailnetEndpoint(tailscale.dnsName, route.port);
+    note = routeNote(route, port);
+  }
   const { token, expiresAt } = createPairingToken();
-  const running = tailscale.state === 'running';
-  const payload = {
-    v: 1,
-    name: macName(tailscale),
-    endpoint: running && tailscale.dnsName ? `wss://${tailscale.dnsName}` : `ws://127.0.0.1:${port}`,
-    pairingToken: token,
-  };
+  const payload = { v: 1, name: macName(tailscale), endpoint, pairingToken: token };
   if (json) return void console.log(JSON.stringify({ qr: payload, expiresAt }));
   console.log(JSON.stringify(payload));
   console.error(`The pairing token is single use and expires at ${expiresAt}.`);
-  const note = tailscaleNote(tailscale, port);
-  if (note) console.error(`${note} The endpoint above only works on this Mac.`);
+  if (note) console.error(note);
 }
 
 function describe(device: PairedDevice): string {
