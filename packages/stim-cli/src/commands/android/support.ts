@@ -5,6 +5,7 @@ import {
   androidDeviceAbi,
   androidSystemImageAbi,
   listInstalledSystemImages,
+  listAvdDeviceProfiles,
   androidHome,
   findBuildTool,
   emulatorDiskSpaceRemedy,
@@ -17,7 +18,7 @@ import {
   physicalDeviceModel,
   probeEmulatorSerial,
 } from '../../devices/android.ts';
-import { unknownAndroidSystemImageRefusal } from '../../engine/device-capacity.ts';
+import { unknownAndroidDeviceProfileRefusal, unknownAndroidSystemImageRefusal } from '../../engine/device-capacity.ts';
 import type { OwnedDeviceRecord } from '../../engine/device.ts';
 import { getExecutor } from '../../exec.ts';
 import { devClientScheme as configuredDevClientScheme, pickDevClientScheme } from '../dev-client.ts';
@@ -98,6 +99,55 @@ export function systemImageRefusal({
     };
   }
   const refusal = unknownAndroidSystemImageRefusal(resolved, images);
+  return refusal ? { code: 'STIM_BAD_ARG', message: refusal.message, remedy: refusal.remedy } : null;
+}
+
+export function resolveDeviceProfile(
+  flag: string | null | undefined,
+  settings: SettingsObject | null | undefined,
+): string | null {
+  const fromFlag = typeof flag === 'string' && flag.trim() !== '' ? flag.trim() : null;
+  const android = settings?.['android'];
+  const raw =
+    android && typeof android === 'object' && !Array.isArray(android)
+      ? (android as Record<string, unknown>)['deviceProfile']
+      : undefined;
+  return fromFlag || (typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null);
+}
+
+export function deviceProfileRefusal({
+  flag,
+  resolved,
+  physical,
+  remoteBackend,
+  listProfiles,
+}: {
+  flag: string | null | undefined;
+  resolved: string | null;
+  physical: boolean;
+  remoteBackend: string | null;
+  listProfiles: typeof listAvdDeviceProfiles;
+}): { code: string; message: string; remedy: string } | null {
+  if (typeof flag === 'string' && flag.trim() === '') {
+    return {
+      code: 'STIM_BAD_ARG',
+      message: '--device-profile was given an empty id.',
+      remedy: 'Pass `--device-profile <id>` with an id `avdmanager list device -c` prints, e.g. "pixel_fold".',
+    };
+  }
+  if (physical || remoteBackend || !resolved) return null;
+  let profiles;
+  try {
+    profiles = listProfiles();
+  } catch (error) {
+    return {
+      code: NO_DEVICE,
+      message: `Could not list the Android hardware profiles with avdmanager: ${(error as Error)?.message || error}`,
+      remedy:
+        'Check that JAVA_HOME and ANDROID_HOME are set and the SDK command-line tools are installed, then try again.',
+    };
+  }
+  const refusal = unknownAndroidDeviceProfileRefusal(resolved, profiles);
   return refusal ? { code: 'STIM_BAD_ARG', message: refusal.message, remedy: refusal.remedy } : null;
 }
 

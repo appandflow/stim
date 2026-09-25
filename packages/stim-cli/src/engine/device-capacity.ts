@@ -194,3 +194,16 @@ export function unknownAndroidSystemImageRefusal(
       'Pass `--system-image` (or set android.systemImage) to one of the package ids printed above. Install more with `sdkmanager "system-images;android-36;google_apis;arm64-v8a"`.',
   };
 }
+
+export function unknownAndroidDeviceProfileRefusal(
+  requested: string | null | undefined,
+  profiles: string[],
+): UnknownDeviceNameRefusal | null {
+  if (!requested) return null;
+  if (profiles.includes(requested)) return null;
+  return {
+    message: `No Android hardware profile is named "${requested}". Profiles avdmanager offers: ${installedNames(profiles)}.`,
+    remedy:
+      'Pass `--device-profile` (or set android.deviceProfile) to one of the ids printed above, exactly as `avdmanager list device -c` spells it, e.g. "pixel_fold" or "pixel_tablet".',
+  };
+}

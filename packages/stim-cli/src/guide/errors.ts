@@ -615,7 +615,12 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   The project already owns a simulator of a different model, and Stim will
   not silently boot a different one. Reap it (\`worktree remove\`, or
   \`gc --delete\`) and run \`stim ios\` again to create the requested model.
-  That loses the old sim's app state.`,
+  That loses the old sim's app state.
+
+"this project's emulator uses device profile X, but Y was requested"
+  The Android counterpart, from \`--device-profile\` or android.deviceProfile.
+  Reap the AVD the same way, or pass \`--slot <name>\` to create the requested
+  profile beside it.`,
     },
     STIM_DEVICE_BUSY: {
       summary: 'another workspace holds the lease on that phone and the wait ran out',
@@ -927,14 +932,16 @@ captured"  (in metro.ndjson, bare RN)
   nearest registered descendant app with logs when one exists), an
   android/app/build.gradle that declares product flavors with
   no variant selected (the refusal names the debug variants), or a
-  \`--device-type\`, \`--runtime\` or \`--system-image\` name that is BLANK or
-  is not installed on this machine. For the unknown-name case the installed
-  names are printed in the message -- the versions \`xcrun simctl list
-  runtimes\` reports, the models those runtimes can actually CREATE (not the
-  whole \`simctl list devicetypes\` table, which also names watchOS, tvOS and
-  visionOS models no iOS runtime offers), or the system images the SDK has --
-  so the remedy is to re-run with one of them. An ios.deviceType, ios.runtime
-  or android.systemImage setting is checked the same way, and the check applies
+  \`--device-type\`, \`--runtime\`, \`--system-image\` or \`--device-profile\`
+  name that is BLANK or is not installed on this machine. For the
+  unknown-name case the installed names are printed in the message -- the
+  versions \`xcrun simctl list runtimes\` reports, the models those runtimes
+  can actually CREATE (not the whole \`simctl list devicetypes\` table, which
+  also names watchOS, tvOS and visionOS models no iOS runtime offers), the
+  system images the SDK has, or the hardware profiles \`avdmanager list device
+  -c\` offers -- so the remedy is to re-run with one of them. An
+  ios.deviceType, ios.runtime, android.systemImage or android.deviceProfile
+  setting is checked the same way, and the check applies
   even when this workspace ALREADY owns a device, so a name that could never
   create anything is caught rather than left to a later run.
   \`gc --json --cache <name>\` refuses with STIM_BAD_ARG when no shared cache
@@ -948,7 +955,8 @@ captured"  (in metro.ndjson, bare RN)
   reporting that nothing was running.
   These errors are caught before the port is reserved and before any build or
   device work, so nothing was started. The one listing they need
-  (\`simctl list runtimes\`, the SDK's system-images directory) runs only when
+  (\`simctl list runtimes\`, the SDK's system-images directory, \`avdmanager
+  list device -c\`) runs only when
   a name was actually given, and a listing that fails is reported as
   STIM_NO_DEVICE naming the tool, never as a crash.`,
     },

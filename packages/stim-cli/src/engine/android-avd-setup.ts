@@ -19,6 +19,7 @@ import {
   assertOwnedAvdStopped,
   createOwnedAvd,
   listAvds,
+  ownedAvdDeviceProfile,
   ownedAvdName,
   ownedAvdSystemImage,
   resolveOwnedAvdSerial,
@@ -39,6 +40,7 @@ export class AvdRecoveryError extends AvdBootError {}
 interface PreparedAvd {
   avdName: string;
   systemImage: string | null;
+  deviceProfile: string | null;
   created: boolean;
   serial?: string;
   consolePort?: number;
@@ -64,6 +66,7 @@ export async function prepareOwnedAvd({
   label,
   previousAvdName,
   systemImage,
+  deviceProfile,
   configuration,
   configure,
   teardown = teardownOwnedAvd,
@@ -73,6 +76,7 @@ export async function prepareOwnedAvd({
   label: string;
   previousAvdName?: string;
   systemImage?: string;
+  deviceProfile?: string;
   configuration: string;
   configure: (avdName: string) => void;
   teardown?: typeof teardownOwnedAvd;
@@ -132,6 +136,7 @@ export async function prepareOwnedAvd({
     try {
       const creation = await createOwnedAvd(label, {
         systemImage,
+        deviceProfile,
         spawn: (...args) => {
           markClaimChildPending(claim);
           child = getExecutor().spawn(...args);
@@ -182,6 +187,7 @@ export async function prepareOwnedAvd({
           avdName,
           created: false,
           systemImage: ownedAvdSystemImage(avdName),
+          deviceProfile: ownedAvdDeviceProfile(avdName),
           ...(resolved.serial
             ? { serial: resolved.serial, consolePort: Number(resolved.serial.replace(/^emulator-/, '')) }
             : {}),

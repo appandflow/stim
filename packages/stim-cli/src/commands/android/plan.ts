@@ -10,7 +10,7 @@ import { resolveAndroidCas, resolveAndroidCompilerCache } from '../../engine/and
 import { parseDeviceWait } from '../../engine/device-lease-run.ts';
 import { productFlavorRefusal, readProductFlavors } from '../../engine/gradle.ts';
 import { detectIsExpo } from '../../workspace/project.ts';
-import { listInstalledSystemImages } from '../../devices/android.ts';
+import { listAvdDeviceProfiles, listInstalledSystemImages } from '../../devices/android.ts';
 import { parkedMaxSetting } from '../../devices/sim-pool.ts';
 import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
 import type { SettingsObject } from '@stim-cli/core/state';
@@ -26,7 +26,14 @@ import {
   unknownSettingKeys,
 } from '../../workspace/settings.ts';
 import { isPhysicalDeviceRequest } from '../native-runtime.ts';
-import { isReleaseVariant, resolveSystemImage, resolveVariant, systemImageRefusal } from './support.ts';
+import {
+  deviceProfileRefusal,
+  isReleaseVariant,
+  resolveDeviceProfile,
+  resolveSystemImage,
+  resolveVariant,
+  systemImageRefusal,
+} from './support.ts';
 
 interface SettingsContext {
   readonly projectPath: string;
@@ -41,6 +48,7 @@ export interface AndroidPlanInputs {
   readonly easProfile?: string;
   readonly variant: string | null;
   readonly systemImage: string | null;
+  readonly deviceProfile?: string | null;
   readonly device: string | boolean | null;
   readonly wait: string | boolean | undefined;
   readonly waitConflict: boolean;
@@ -49,8 +57,13 @@ export interface AndroidPlanInputs {
 }
 
 type AndroidTargetPlan =
-  | { readonly kind: 'emulator'; readonly systemImage: string | null }
-  | { readonly kind: 'remote'; readonly backend: RemoteDeviceBackend; readonly systemImage: string | null }
+  | { readonly kind: 'emulator'; readonly systemImage: string | null; readonly deviceProfile: string | null }
+  | {
+      readonly kind: 'remote';
+      readonly backend: RemoteDeviceBackend;
+      readonly systemImage: string | null;
+      readonly deviceProfile: string | null;
+    }
   | {
       readonly kind: 'physical';
       readonly serial: string | null;
@@ -93,6 +106,7 @@ export interface AndroidPlanDependencies {
   readFlavors?: typeof readProductFlavors;
   detectExpo?: typeof detectIsExpo;
   listSystemImages?: typeof listInstalledSystemImages;
+  listDeviceProfiles?: typeof listAvdDeviceProfiles;
   parkedLimit?: typeof parkedMaxSetting;
 }
 
@@ -136,6 +150,7 @@ export function resolveAndroidRunPlan(
     easProfile,
     variant: variantFlag,
     systemImage: systemImageFlag,
+    deviceProfile: deviceProfileFlag,
     device: deviceFlag,
     wait: waitFlag,
     waitConflict,
@@ -150,6 +165,7 @@ export function resolveAndroidRunPlan(
     readFlavors = readProductFlavors,
     detectExpo = detectIsExpo,
     listSystemImages = listInstalledSystemImages,
+    listDeviceProfiles = listAvdDeviceProfiles,
     parkedLimit = parkedMaxSetting,
   }: AndroidPlanDependencies,
 ): AndroidPlanResult {
@@ -194,6 +210,7 @@ export function resolveAndroidRunPlan(
     );
   }
   const systemImage = resolveSystemImage(systemImageFlag, settings);
+  const deviceProfile = resolveDeviceProfile(deviceProfileFlag, settings);
   const variant = easProfile !== undefined ? 'debug' : resolveVariant(variantFlag, settings);
   const flavorRefusal = productFlavorRefusal({ flavors: readFlavors(root), variant });
   if (flavorRefusal) return fail(flavorRefusal.code, flavorRefusal.reason, flavorRefusal.remedy);
@@ -252,11 +269,19 @@ export function resolveAndroidRunPlan(
     listImages: listSystemImages,
   });
   if (imageRefusal) return fail(imageRefusal.code, imageRefusal.message, imageRefusal.remedy);
+  const profileRefusal = deviceProfileRefusal({
+    flag: deviceProfileFlag,
+    resolved: deviceProfile,
+    physical,
+    remoteBackend,
+    listProfiles: listDeviceProfiles,
+  });
+  if (profileRefusal) return fail(profileRefusal.code, profileRefusal.message, profileRefusal.remedy);
   const target: AndroidTargetPlan = physical
     ? { kind: 'physical', serial: typeof deviceFlag === 'string' ? deviceFlag : null, lease: { waitSeconds, noWait } }
     : remoteBackend
-      ? { kind: 'remote', backend: remoteBackend, systemImage }
-      : { kind: 'emulator', systemImage };
+      ? { kind: 'remote', backend: remoteBackend, systemImage, deviceProfile }
+      : { kind: 'emulator', systemImage, deviceProfile };
   return {
     ok: true,
     plan: {

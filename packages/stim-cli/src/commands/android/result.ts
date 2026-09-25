@@ -23,6 +23,7 @@ export function androidFacts({
   avdName = null,
   deviceName = null,
   systemImage = null,
+  deviceProfile = null,
   fingerprint,
   cacheKey = null,
   variant = null,
@@ -48,6 +49,7 @@ export function androidFacts({
   avdName?: string | null;
   deviceName?: string | null;
   systemImage?: string | null;
+  deviceProfile?: string | null;
   fingerprint?: string | null;
   cacheKey?: string | null;
   variant?: string | null;
@@ -75,6 +77,7 @@ export function androidFacts({
     avdName: avdName ?? null,
     deviceName: deviceName ?? avdName ?? null,
     systemImage: systemImage ?? null,
+    deviceProfile: deviceProfile ?? null,
     fingerprint: fingerprint ?? null,
     cacheKey: cacheKey ?? null,
     variant: variant ?? null,
@@ -236,6 +239,7 @@ export function reportAndroidResult({
     avdName: record.avdName,
     deviceName: record.deviceName,
     systemImage: record.systemImage,
+    deviceProfile: record.deviceProfile,
     debugHttpHost: launched.debugHttpHost ?? null,
     debugHttpHostNote: launched.debugHttpHostNote ?? null,
     devClientUrl: launched.devClientUrl ?? null,

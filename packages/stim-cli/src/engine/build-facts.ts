@@ -70,6 +70,7 @@ export interface AndroidFacts {
   avdName: string | null;
   deviceName: string | null;
   systemImage: string | null;
+  deviceProfile: string | null;
   fingerprint: string | null;
   cacheKey: string | null;
   variant: string | null;

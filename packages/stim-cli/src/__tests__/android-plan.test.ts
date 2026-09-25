@@ -72,15 +72,22 @@ function inspection(events: string[]): AndroidPlanDependencies {
       events.push('images');
       return [{ api: 36, tag: 'google_apis', arch: 'arm64-v8a', pkg: 'installed-image' }];
     },
+    listDeviceProfiles: () => {
+      events.push('profiles');
+      return ['pixel_6', 'pixel_fold', '7.6in Foldable'];
+    },
   };
 }
 
 test('a plan binds build selectors and cache policy to the selected emulator', () => {
   const result = resolveAndroidRunPlan(
     inputs({
-      settings: { android: { variant: 'settingDebug', systemImage: 'setting-image' } },
+      settings: {
+        android: { variant: 'settingDebug', systemImage: 'setting-image', deviceProfile: 'setting-profile' },
+      },
       variant: ' flagRelease ',
       systemImage: ' installed-image ',
+      deviceProfile: ' 7.6in Foldable ',
       buildCache: false,
     }),
     inspection([]),
@@ -92,7 +99,11 @@ test('a plan binds build selectors and cache policy to the selected emulator', (
     release: true,
     cache: { read: false, write: true },
   });
-  expect(result.plan.target).toEqual({ kind: 'emulator', systemImage: 'installed-image' });
+  expect(result.plan.target).toEqual({
+    kind: 'emulator',
+    systemImage: 'installed-image',
+    deviceProfile: '7.6in Foldable',
+  });
 });
 
 test('a physical target overrides configured remote mode and carries its parsed lease options', () => {
@@ -109,6 +120,7 @@ test('a physical target overrides configured remote mode and carries its parsed 
     lease: { waitSeconds: 90, noWait: false },
   });
   expect(events).not.toContain('images');
+  expect(events).not.toContain('profiles');
 });
 
 test('EAS selection keeps a Debug build plan while an explicit remote flag overrides settings', () => {
@@ -119,7 +131,7 @@ test('EAS selection keeps a Debug build plan while an explicit remote flag overr
 
   assert(result.ok);
   expect(result.plan.build).toMatchObject({ variant: 'debug', release: false });
-  expect(result.plan.target).toEqual({ kind: 'remote', backend: 'proxy', systemImage: null });
+  expect(result.plan.target).toEqual({ kind: 'remote', backend: 'proxy', systemImage: null, deviceProfile: null });
 });
 
 const REFUSALS: Array<{
@@ -169,6 +181,13 @@ const REFUSALS: Array<{
     inputs: { remote: 'proxy', slot: 'second', systemImage: 'installed-image' },
     message: /Named slots currently support local simulators and physical devices/,
     events: ['pool', 'compiler', 'warning:cache', 'provider', 'avd', 'flavors', 'expo'],
+  },
+  {
+    name: 'a device profile avdmanager does not offer refuses with the offered ids',
+    inputs: { settings: { android: { deviceProfile: 'pixel_fold' } }, deviceProfile: 'pixel_folded' },
+    message:
+      /^No Android hardware profile is named "pixel_folded"\. Profiles avdmanager offers: pixel_6, pixel_fold, 7\.6in Foldable\.$/,
+    events: ['pool', 'compiler', 'warning:cache', 'provider', 'avd', 'flavors', 'expo', 'profiles'],
   },
 ];
 

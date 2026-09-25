@@ -248,7 +248,8 @@ into cached iOS physical-device builds.
 ## `android`
 
 ```text
-stim android [--slot <name>] [--variant <name>] [--system-image <id>] [--device [serial]]
+stim android [--slot <name>] [--variant <name>] [--system-image <id>] [--device-profile <id>]
+             [--device [serial]]
              [--wait <seconds> | --no-wait] [--remote <proxy|eas>]
              [--eas-profile <name>] [--no-metro-check] [--no-build-cache] [--plan] [--json]
 ```
@@ -261,6 +262,13 @@ the app, opens it, and checks launch logs.
   package id, overriding `android.systemImage` for one invocation; an id this
   SDK has not installed refuses with `STIM_BAD_ARG` and prints the installed
   ids.
+- `--device-profile <id>` creates this workspace's owned AVD with that
+  avdmanager hardware profile, such as `pixel_tablet` or `pixel_fold`,
+  overriding `android.deviceProfile` for one invocation. An id that
+  `avdmanager list device -c` does not print refuses with `STIM_BAD_ARG` and
+  prints the offered ids. When the workspace already owns an AVD of another
+  profile, Stim refuses instead of booting it; use another `--slot` or remove
+  the workspace's devices first.
 - `--device [serial]` installs and launches on a connected physical device.
   With no serial it selects a connected device this workspace can lease. It
   cannot be combined with `--remote`.
@@ -302,7 +310,8 @@ $ stim ios --plan
 
 A plan computes the fingerprint and cache key the same way the run does. It
 honors `--slot`, `--scheme`, `--configuration`, `--variant`, `--device-type`,
-`--runtime`, `--system-image`, `--eas-profile` and `--no-build-cache`. It then
+`--runtime`, `--system-image`, `--device-profile`, `--eas-profile` and
+`--no-build-cache`. It then
 checks the caches in the run's order: the local cache, the `cache.provider`
 setting's provider, and the app config's build cache provider. Providers have no
 lookup that skips the download, so a remote check downloads the artifact. The

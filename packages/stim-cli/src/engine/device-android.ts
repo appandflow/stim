@@ -15,6 +15,8 @@ import { adoptParked, isLegacyDeletionClaim, parkedMaxSetting, readParked } from
 import {
   assertOwnedAvdStopped,
   avdPoolConfiguration,
+  DEFAULT_AVD_DEVICE_PROFILE,
+  ownedAvdDeviceProfile,
   ownedAvdMatchesConfiguration,
   pickDefaultSystemImage,
   listInstalledSystemImages,
@@ -78,7 +80,9 @@ export async function ensureOwnedAndroidDevice({
   teardownAvd: typeof teardownOwnedAvd;
 } & EmulatorLogging): Promise<OwnedDeviceRecord> {
   const avdConfig = androidAvdConfigSetting(settings, settingsRoot);
-  const configuration = avdPoolConfiguration(androidDataPartitionSizeGbSetting(settings), avdConfig);
+  const requestedProfile = flags.deviceProfile || settings.android?.deviceProfile || null;
+  const deviceProfile = requestedProfile ?? DEFAULT_AVD_DEVICE_PROFILE;
+  const configuration = avdPoolConfiguration(androidDataPartitionSizeGbSetting(settings), avdConfig, deviceProfile);
   if (record?.setupIncomplete && record.avdName) {
     const avdName = record.avdName;
     const cleanup = teardownAvd(avdName, {
@@ -99,6 +103,13 @@ export async function ensureOwnedAndroidDevice({
   if (record?.avdName) {
     if (record.owned) {
       const resolved = resolveOwnedAvdSerial(record.avdName);
+      const currentProfile = resolved.notOwned || resolved.missing ? null : ownedAvdDeviceProfile(record.avdName);
+      if (requestedProfile && currentProfile && currentProfile !== requestedProfile) {
+        throw new AvdRecoveryError(
+          `this project's emulator uses device profile ${currentProfile}, but ${requestedProfile} was requested. Stim will not silently boot a different model.`,
+          'Run `stim worktree remove` (or `stim gc --delete`) to reap the current emulator, then `stim android` again to create the requested one, or pass `--slot <name>` to create it beside the current one.',
+        );
+      }
       if (resolved.notOwned) {
         note(
           chalk.yellow(
@@ -123,7 +134,11 @@ export async function ensureOwnedAndroidDevice({
           deviceName: record.deviceName ?? record.avdName,
         };
         setDevice(projectPath, 'android', updated, slot);
-        return { ...updated, systemImage: ownedAvdSystemImage(record.avdName) };
+        return {
+          ...updated,
+          systemImage: ownedAvdSystemImage(record.avdName),
+          deviceProfile: currentProfile,
+        };
       } else if (!resolved.missing) {
         out(
           chalk.dim(
@@ -142,6 +157,7 @@ export async function ensureOwnedAndroidDevice({
             alive,
           })),
           systemImage: ownedAvdSystemImage(record.avdName),
+          deviceProfile: currentProfile,
         };
       }
     } else {
@@ -223,6 +239,7 @@ export async function ensureOwnedAndroidDevice({
         })),
         adopted: true,
         systemImage,
+        deviceProfile,
       };
     }
   }
@@ -232,6 +249,7 @@ export async function ensureOwnedAndroidDevice({
     label,
     previousAvdName: record?.avdName,
     systemImage: flags.systemImage || settings.android?.systemImage || undefined,
+    deviceProfile,
     configuration,
     configure: (avdName) =>
       configureAvd(avdName, {
@@ -257,6 +275,7 @@ export async function ensureOwnedAndroidDevice({
     })),
     created: created.created,
     systemImage: created.systemImage,
+    deviceProfile: created.deviceProfile,
   };
 }
 

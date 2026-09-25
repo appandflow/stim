@@ -234,6 +234,10 @@ per session, with the preview URL.`,
                   android.systemImage setting reports it too, not only a
                   \`--system-image\` run. Null on \`--device\` and on an
                   emulator Stim does not own
+  deviceProfile   the avdmanager hardware profile of the owned AVD
+                  ("pixel_6", "pixel_fold"), read from its config.ini
+                  hw.device.name. Null where systemImage is null, and on an
+                  AVD created before Stim recorded a profile
   fingerprint / cacheKey / cacheHit / cacheSkipped / waitedForBuild /
   appPath / installSkipped / launched
                   as above -- cacheKey keys on the VARIANT here
@@ -512,7 +516,7 @@ RULES
     parkedSimulators        { udid, name, model, runtime, parkedAt, bytes,
                               listed }  with --older-than, only those parked
                               at least that long
-    parkedEmulators         { name, systemImage, parkedAt, bytes, listed }
+    parkedEmulators         { name, systemImage, deviceProfile, parkedAt, bytes, listed }
                               likewise
     orphanedDevices         { kind, id, name, bytes, directory }
     unverifiedDevices       { kind, id, name, command }  stim-* devices Stim

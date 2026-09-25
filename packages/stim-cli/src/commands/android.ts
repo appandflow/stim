@@ -71,6 +71,7 @@ import {
   androidDeviceAbi,
   listAdbDevices,
   listInstalledSystemImages,
+  listAvdDeviceProfiles,
   physicalDeviceModel,
   probeEmulatorSerial,
   resolveOwnedAvdSerial,
@@ -156,6 +157,7 @@ interface AndroidCommandOptions {
   buildCache?: boolean;
   variant?: string;
   systemImage?: string;
+  deviceProfile?: string;
   remote?: RemoteDeviceBackend;
   device?: string | boolean;
   wait?: string | boolean;
@@ -201,6 +203,12 @@ export function registerAndroid(program: Command): void {
       "Android system image to create this workspace's owned AVD from, as the sdkmanager package id " +
         '(e.g. "system-images;android-36;google_apis;arm64-v8a"). Overrides the android.systemImage setting for this ' +
         'invocation. An unknown id refuses with STIM_BAD_ARG and prints the installed images.',
+    )
+    .option(
+      '--device-profile <id>',
+      "Hardware profile to create this workspace's owned AVD with, as an `avdmanager list device -c` id " +
+        '(e.g. "pixel_fold", "pixel_tablet"). Overrides the android.deviceProfile setting for this invocation. ' +
+        'An unknown id refuses with STIM_BAD_ARG and prints the available ids.',
     )
     .option(
       '--device [serial]',
@@ -252,6 +260,7 @@ export function registerAndroid(program: Command): void {
               useBuildCache: opts.buildCache !== false,
               variant: opts.variant ?? null,
               systemImage: opts.systemImage ?? null,
+              deviceProfile: opts.deviceProfile ?? null,
               remoteDevice: opts.remote ?? null,
               device: opts.device ?? null,
               wait: opts.wait,
@@ -279,7 +288,9 @@ interface RunAndroidOptions {
   useBuildCache?: boolean;
   variant?: string | null;
   systemImage?: string | null;
+  deviceProfile?: string | null;
   listSystemImages?: typeof listInstalledSystemImages;
+  listDeviceProfiles?: typeof listAvdDeviceProfiles;
   device?: string | boolean | null;
   wait?: string | boolean;
   waitConflict?: boolean;
@@ -372,6 +383,7 @@ function resolveRunAndroidOptions(
     resolveEasDevelopmentBuild: resolveEasBuild = resolveEasDevelopmentBuild,
     variant: variantFlag = null,
     systemImage: systemImageFlag = null,
+    deviceProfile: deviceProfileFlag,
     device: deviceFlag = null,
     wait: waitFlag = undefined,
     waitConflict = false,
@@ -390,6 +402,7 @@ function resolveRunAndroidOptions(
     releaseSlot = releaseBuildSlot,
     ensureDevice = ensureOwnedDevice,
     listSystemImages = listInstalledSystemImages,
+    listDeviceProfiles,
     ensureDeviceBooted = ensureBooted,
     resolveAvdSerial = resolveOwnedAvdSerial,
     waitForDeviceBoot = waitForBoot,
@@ -455,6 +468,7 @@ function resolveRunAndroidOptions(
     resolveEasBuild,
     variantFlag,
     systemImageFlag,
+    deviceProfileFlag,
     deviceFlag,
     waitFlag,
     waitConflict,
@@ -473,6 +487,7 @@ function resolveRunAndroidOptions(
     releaseSlot,
     ensureDevice,
     listSystemImages,
+    listDeviceProfiles,
     ensureDeviceBooted,
     resolveAvdSerial,
     waitForDeviceBoot,
@@ -582,6 +597,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     resolveEasBuild,
     variantFlag,
     systemImageFlag,
+    deviceProfileFlag,
     deviceFlag,
     waitFlag,
     waitConflict,
@@ -600,6 +616,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     releaseSlot,
     ensureDevice,
     listSystemImages,
+    listDeviceProfiles,
     ensureDeviceBooted,
     resolveAvdSerial,
     waitForDeviceBoot,
@@ -759,13 +776,19 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       easProfile,
       variant: variantFlag,
       systemImage: systemImageFlag,
+      deviceProfile: deviceProfileFlag,
       device: deviceFlag,
       wait: waitFlag,
       waitConflict,
       remote: commandRemoteBackend,
       buildCache: requestedBuildCache,
     },
-    { resolveCacheProvider, listSystemImages, warn: (label, message) => out(phaseLine(label, chalk.yellow(message))) },
+    {
+      resolveCacheProvider,
+      listSystemImages,
+      listDeviceProfiles,
+      warn: (label, message) => out(phaseLine(label, chalk.yellow(message))),
+    },
   );
   if (!planned.ok) return fail(planned.code, planned.message, planned.remedy, { lines: planned.lines });
   const { plan } = planned;
@@ -928,7 +951,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         projectPath: root,
         settingsRoot,
         settings,
-        flags: { systemImage: target.systemImage },
+        flags: { systemImage: target.systemImage, deviceProfile: target.deviceProfile },
         note: out,
         out,
         logFile: emuLog,
@@ -996,6 +1019,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   record.avdName = device.avdName ?? null;
   record.deviceName = device.deviceName ?? device.avdName ?? null;
   record.systemImage = device.systemImage;
+  record.deviceProfile = device.deviceProfile;
 
   const runFromFingerprint = async (): Promise<RunAndroidResult> => {
     if (metroCheck && metroPort !== null && plan.metroWarmup)
