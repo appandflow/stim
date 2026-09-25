@@ -1,6 +1,7 @@
 import { Image } from 'expo-image';
+import { router } from 'expo-router';
 import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ActivityChip } from '@/components/activity-chip';
 import { AgentFeed } from '@/components/agent-feed';
@@ -24,7 +25,7 @@ export function DeviceTile({
   warnings: string[];
 }) {
   const colors = useColors();
-  const home = useMacConnection().home;
+  const { home, mac } = useMacConnection();
   const [screenWidth, setScreenWidth] = useState(0);
   const streams = device.running && device.owned && !device.physical;
   const { frame, error, delayed } = useFrame(workspace, device.platform, device.slot, streams);
@@ -82,13 +83,25 @@ export function DeviceTile({
         ]}
       >
         {streams && frame ? (
-          <Image
-            source={{ uri: `data:${frame.mime};base64,${frame.data}` }}
-            style={{ height: Math.max(imageHeight, 0), aspectRatio: aspect, borderRadius: 6 }}
-            contentFit="contain"
-            transition={0}
-            accessibilityLabel={`Latest frame of ${device.name}`}
-          />
+          <Pressable
+            onPress={() =>
+              mac &&
+              router.push({
+                pathname: '/mac/[id]/device',
+                params: { id: mac.id, path: workspace, platform: device.platform, slot: device.slot },
+              })
+            }
+            accessibilityRole="button"
+            accessibilityLabel={`Open the live screen of ${device.name}`}
+          >
+            <Image
+              source={{ uri: `data:${frame.mime};base64,${frame.data}` }}
+              style={{ height: Math.max(imageHeight, 0), aspectRatio: aspect, borderRadius: 6 }}
+              contentFit="contain"
+              transition={0}
+              accessibilityLabel={`Latest frame of ${device.name}`}
+            />
+          </Pressable>
         ) : (
           <Text style={[styles.placeholder, { color: colors.tertiary }]}>
             {streams
