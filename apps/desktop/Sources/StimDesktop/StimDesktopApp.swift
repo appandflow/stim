@@ -14,6 +14,8 @@ final class OpenRequests: ObservableObject {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+  private var terminationSource: DispatchSourceSignal?
+
   func application(_ application: NSApplication, open urls: [URL]) {
     guard let udid = urls.lazy.compactMap(simulatorUdid(fromOpenURL:)).last else { return }
     MainActor.assumeIsolated { OpenRequests.shared.simulatorUdid = udid }
@@ -27,9 +29,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // `swift run` starts a bare executable as a background process with no Dock icon or focus.
     NSApp.setActivationPolicy(.regular)
     NSApp.activate(ignoringOtherApps: true)
+    // AppKit exits on SIGTERM without calling applicationWillTerminate, which would orphan stim-server.
+    signal(SIGTERM, SIG_IGN)
+    let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+    source.setEventHandler {
+      MainActor.assumeIsolated { ServerController.shared.stopForQuit() }
+      exit(0)
+    }
+    source.resume()
+    terminationSource = source
     MainActor.assumeIsolated {
       Theme.apply(Appearance(rawValue: UserDefaults.standard.string(forKey: AppPreferences.Key.appearance) ?? "") ?? .auto)
     }
+  }
+
+  func applicationWillTerminate(_ notification: Notification) {
+    MainActor.assumeIsolated { ServerController.shared.stopForQuit() }
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -52,10 +67,10 @@ struct StimDesktopApp: App {
     UserDefaults.standard.register(defaults: AppPreferences.defaults)
     CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
     let override = UserDefaults.standard.string(forKey: AppPreferences.Key.stimExecutable)
-    let cli = Task.detached {
-      StimCLI(environment: await LoginShell.environment() ?? ProcessInfo.processInfo.environment, override: override)
-    }
+    let environment = Task.detached { await LoginShell.environment() ?? ProcessInfo.processInfo.environment }
+    let cli = Task.detached { StimCLI(environment: await environment.value, override: override) }
     self.cli = cli
+    ServerController.shared.configure(environment: environment)
     let store = StatusStore(cli: cli)
     _store = StateObject(wrappedValue: store)
     _notifier = StateObject(wrappedValue: Notifier(store: store))
