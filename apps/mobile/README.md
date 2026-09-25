@@ -84,3 +84,86 @@ npm test
 ```
 
 `.github/workflows/mobile.yml` runs them for changes under `apps/mobile`.
+
+## Ship to TestFlight
+
+The app ships to TestFlight with EAS, under the App&Flow Expo account
+(`appandflow`) and the App&Flow Apple Developer team. `eas.json` has three
+build profiles:
+
+- `development`: a development client, distributed internally.
+- `preview`: a release build, distributed internally.
+- `production`: an App Store build. EAS owns the build number
+  (`appVersionSource: "remote"`) and increments it on every build. The
+  marketing version is `version` in `app.json`.
+
+`development` and `preview` builds install only on devices registered with
+`eas device:create`.
+
+The app declares `ITSAppUsesNonExemptEncryption` as `false`: it uses only the
+TLS that iOS provides, so App Store Connect does not ask the export compliance
+question for each build.
+
+### One-time setup
+
+Run these from `apps/mobile` with the EAS CLI (`npm install --global eas-cli`,
+or prefix each command with `npx`).
+
+1. Log in to Expo with an account that belongs to the `appandflow`
+   organization:
+
+   ```bash
+   eas login
+   eas whoami
+   ```
+
+2. Create the EAS project under the App&Flow owner and link it:
+
+   ```bash
+   eas init --account appandflow
+   ```
+
+   This writes `owner` and `extra.eas.projectId` to `app.json`; commit that
+   change. If the project already exists on expo.dev, link it with
+   `eas init --id <project-id>` instead.
+
+3. Create the App Store Connect app record, if it does not exist yet. In
+   [App Store Connect](https://appstoreconnect.apple.com), under the App&Flow
+   team, open **Apps**, choose **+**, then **New App**: platform iOS, name
+   `Stim`, bundle ID `com.appandflow.stim`, and any SKU. If the list does not
+   offer the bundle ID, run step 4 first, which registers it, or register it
+   under **Certificates, Identifiers & Profiles**. `eas submit` can create the record only when it signs in with an
+   Apple ID; an App Store Connect API key cannot create apps.
+
+   Copy the app's **Apple ID** (a number, under **App Information**) into
+   `eas.json`:
+
+   ```json
+   "submit": { "production": { "ios": { "ascAppId": "<Apple ID>" } } }
+   ```
+
+4. Set up signing and submission credentials:
+
+   ```bash
+   eas credentials --platform ios
+   ```
+
+   Choose the `production` profile, sign in with an Apple ID on the App&Flow
+   team, and let EAS create or reuse the distribution certificate and the App
+   Store provisioning profile. In the same menu, under **App Store Connect:
+   Manage your API Key**, add an API key so `eas submit` runs without Apple ID
+   prompts. To create the key yourself: App Store Connect, **Users and
+   Access**, **Integrations**, **App Store Connect API**, a key with the **App
+   Manager** role; keep the downloaded `.p8` file out of the repository.
+
+### Each release
+
+```bash
+eas build --platform ios --profile production
+eas submit --platform ios --latest
+```
+
+The build appears in TestFlight after Apple finishes processing it, usually
+within 30 minutes. Add testers under the app's **TestFlight** tab. Raise
+`version` in `app.json` for a new marketing version; build numbers need no
+change.
