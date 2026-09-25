@@ -15,6 +15,13 @@ import Testing
     #expect(workspace.devices.map(\.isRunning) == [false, true, true, true])
   }
 
+  @Test func labelsSlotsSharedAcrossPlatformsWithTheirKind() {
+    #expect(
+      workspace.devices.map { $0.slotLabel(among: workspace.devices) } == [
+        "default \u{00B7} iOS", "default \u{00B7} Android", "ipad", "default \u{00B7} Remote iOS",
+      ])
+  }
+
   @Test func decodesARemoteSessionWithItsPreviewURL() {
     guard case .remote(let remote) = workspace.devices.last else {
       Issue.record("expected a remote device last")

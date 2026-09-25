@@ -76,6 +76,16 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     }
   }
 
+  /// The device's label in a slot picker: its slot, followed by its kind when another device shares the slot.
+  public func slotLabel(among devices: [DeviceRef]) -> String {
+    guard devices.contains(where: { $0.id != id && $0.slot == slot }) else { return slot }
+    switch self {
+    case .ios: return "\(slot) \u{00B7} iOS"
+    case .android: return "\(slot) \u{00B7} Android"
+    case .remote: return "\(slot) \u{00B7} Remote \(model)"
+    }
+  }
+
   public var formFactor: FormFactor {
     switch self {
     case .ios(_, let d):

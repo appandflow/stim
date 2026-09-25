@@ -11,21 +11,55 @@ struct WorkspaceDetail: View {
   var env: Workspace
   var usage: UsageHistory?
   var inspector: InspectorPresentation
-  var toggleInspector: () -> Void
+  @Binding var inspectorWidth: CGFloat
   @Binding var focusedID: String?
   @Binding var tab: DetailTab
   @Binding var logQuery: LogQuery
   var openLogs: () -> Void
   @State private var stats: ProjectStats?
   @State private var takenOver: Set<String> = []
+  @State private var resizeStartWidth: CGFloat?
+  @State private var width: CGFloat = 0
 
   static let inspectorWidth: CGFloat = 320
   static let widthWithInspector: CGFloat = 760
+  static let minimumInspectorWidth: CGFloat = 280
   static let maximumInspectorWidth: CGFloat = 420
+  private static let minimumContentWidth: CGFloat = 440
 
   var body: some View {
     let devices = env.orderedDevices
     let focused = devices.first { $0.id == focusedID } ?? env.devices.first
+    HStack(spacing: 0) {
+      content(devices: devices, focused: focused)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+      if inspector == .column {
+        Rectangle().fill(Theme.border).frame(width: 1)
+          .overlay { resizeHandle }
+        inspectorPanel
+          .frame(width: Self.clampedInspectorWidth(inspectorWidth, detailWidth: width))
+          .background(Theme.sidebar)
+      }
+    }
+    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+    .overlay(alignment: .trailing) {
+      if inspector == .overlay {
+        inspectorPanel
+          .frame(width: Self.inspectorWidth)
+          .background(Theme.sidebar, ignoresSafeAreaEdges: [])
+          .overlay(alignment: .leading) { Rectangle().fill(Theme.border).frame(width: 1) }
+          .shadow(color: .black.opacity(0.25), radius: 16)
+      }
+    }
+    .navigationTitle(env.names.title)
+    .task(id: env.path) {
+      let path = env.path
+      let cli = await cli.value
+      stats = await Task.detached { try? cli.stats(workspace: path) }.value
+    }
+  }
+
+  private func content(devices: [DeviceRef], focused: DeviceRef?) -> some View {
     VStack(spacing: 0) {
       Picker("View", selection: $tab) {
         Text("Device").tag(DetailTab.device)
@@ -41,34 +75,28 @@ struct WorkspaceDetail: View {
       case .logs: LogsView(cli: cli, env: env, query: $logQuery)
       }
     }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .overlay(alignment: .trailing) {
-      if inspector == .overlay {
-        inspectorPanel
-          .frame(width: Self.inspectorWidth)
-          .background(Theme.sidebar, ignoresSafeAreaEdges: [])
-          .overlay(alignment: .leading) { Rectangle().fill(Theme.border).frame(width: 1) }
-          .shadow(color: .black.opacity(0.25), radius: 16)
+  }
+
+  static func clampedInspectorWidth(_ proposed: CGFloat, detailWidth: CGFloat) -> CGFloat {
+    let maximum = min(maximumInspectorWidth, detailWidth - 1 - minimumContentWidth)
+    return max(minimumInspectorWidth, min(maximum, proposed))
+  }
+
+  private var resizeHandle: some View {
+    Color.clear
+      .frame(width: 8)
+      .contentShape(Rectangle())
+      .onHover { inside in
+        if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
       }
-    }
-    .inspector(
-      isPresented: Binding(
-        get: { inspector == .column },
-        set: { shown in if !shown, inspector == .column { toggleInspector() } })
-    ) {
-      inspectorPanel
-        .background(Theme.sidebar)
-        .inspectorColumnWidth(min: 280, ideal: Self.inspectorWidth, max: Self.maximumInspectorWidth)
-        .toolbar {
-          ToolbarItem(placement: .primaryAction) { InspectorToggleButton(isShown: true, action: toggleInspector) }
-        }
-    }
-    .navigationTitle(env.names.title)
-    .task(id: env.path) {
-      let path = env.path
-      let cli = await cli.value
-      stats = await Task.detached { try? cli.stats(workspace: path) }.value
-    }
+      .gesture(
+        DragGesture(minimumDistance: 1, coordinateSpace: .global)
+          .onChanged { drag in
+            let start = resizeStartWidth ?? Self.clampedInspectorWidth(inspectorWidth, detailWidth: width)
+            resizeStartWidth = start
+            inspectorWidth = Self.clampedInspectorWidth(start - drag.translation.width, detailWidth: width)
+          }
+          .onEnded { _ in resizeStartWidth = nil })
   }
 
   private var inspectorPanel: some View {
@@ -80,7 +108,7 @@ struct WorkspaceDetail: View {
     VStack(spacing: 16) {
       if devices.count > 1 {
         Picker("Device", selection: Binding(get: { focused?.id }, set: { focusedID = $0 })) {
-          ForEach(devices) { device in Text(device.slot).tag(Optional(device.id)) }
+          ForEach(devices) { device in Text(device.slotLabel(among: devices)).tag(Optional(device.id)) }
         }
         .pickerStyle(.segmented)
         .labelsHidden()
@@ -141,9 +169,9 @@ struct Inspector: View {
             HStack(spacing: 8) {
               StatusDot(color: device.isRunning ? Theme.live : Theme.tertiary, filled: device.isRunning)
               Text(device.slot).font(Theme.body(12, weight: .semibold))
-              Text(device.model).foregroundStyle(Theme.secondary).lineLimit(1)
+              Text(device.model).foregroundStyle(Theme.secondary).lineLimit(1).layoutPriority(1)
               Spacer()
-              Text(device.state).foregroundStyle(Theme.tertiary)
+              Text(device.state).foregroundStyle(Theme.tertiary).lineLimit(1)
               if device.isRunning {
                 deviceStopButton(device)
               }
