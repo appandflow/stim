@@ -15,6 +15,7 @@ const ANDROID_GLYPHS = {
   cpu: '\u25A3',
   memorychip: '\u25A4',
   internaldrive: '\u25CF',
+  'arrow.clockwise': '\u21BB',
 } as const;
 
 export type IconName = keyof typeof ANDROID_GLYPHS;

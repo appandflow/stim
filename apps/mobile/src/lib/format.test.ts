@@ -4,8 +4,8 @@ import {
   gitBadges,
   lastBuildSummary,
   outcomeLabel,
-  planExpectation,
-  planSummary,
+  nextBuild,
+  planDetail,
 } from '@/lib/format';
 import type { BuildPlan, BuildReport } from '@/protocol/types';
 
@@ -93,7 +93,7 @@ describe('build cache outcome', () => {
       expectedMs: 2656,
       basis: 1,
     };
-    expect([planSummary(hit), planExpectation(hit)]).toEqual(['Remote cache hit (eas)', '~0:02, median of 1 hit run']);
+    expect([nextBuild(hit), planDetail(hit)]).toEqual(['cache hit (remote), ~0:02', 'From eas. Median of 1 hit run']);
     const miss: BuildPlan = {
       ...hit,
       cacheHit: false,
@@ -103,8 +103,8 @@ describe('build cache outcome', () => {
       expectedMs: null,
       basis: 0,
     };
-    expect([planSummary(miss), planExpectation(miss)]).toEqual([
-      'Cache miss: compiles, regenerates the native dir',
+    expect([nextBuild(miss), planDetail(miss)]).toEqual([
+      'cold build, regenerates the native dir',
       'No cold run of this project recorded yet',
     ]);
     const refused: BuildPlan = {
@@ -112,7 +112,7 @@ describe('build cache outcome', () => {
       outcome: null,
       refusal: { code: 'STIM_EAS_BUILD_MISSING', message: 'No build.', remedy: 'Build one.' },
     };
-    expect([planSummary(refused), planExpectation(refused)]).toEqual(['Would refuse: STIM_EAS_BUILD_MISSING', null]);
+    expect([nextBuild(refused), planDetail(refused)]).toEqual(['would refuse (STIM_EAS_BUILD_MISSING)', null]);
   });
 });
 
