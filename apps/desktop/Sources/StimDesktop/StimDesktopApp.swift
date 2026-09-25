@@ -6,7 +6,7 @@ import SwiftUI
 @MainActor
 final class OpenRequests: ObservableObject {
   static let shared = OpenRequests()
-  @Published var simulatorUdid: String?
+  @Published var device: DeviceOpenRequest?
   @Published var workspacePath: String?
   /// The workspace selected in the main window, which the Settings window edits.
   @Published var selectedWorkspace: String?
@@ -17,8 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var terminationSource: DispatchSourceSignal?
 
   func application(_ application: NSApplication, open urls: [URL]) {
-    guard let udid = urls.lazy.compactMap(simulatorUdid(fromOpenURL:)).last else { return }
-    MainActor.assumeIsolated { OpenRequests.shared.simulatorUdid = udid }
+    guard let request = urls.lazy.compactMap(deviceOpenRequest(fromOpenURL:)).last else { return }
+    MainActor.assumeIsolated { OpenRequests.shared.device = request }
   }
 
   func applicationWillFinishLaunching(_ notification: Notification) {

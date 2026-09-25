@@ -542,20 +542,29 @@ import Testing
 }
 
 @Suite struct OpenURLTests {
-  @Test func readsTheUdidOnlyFromAnOpenURL() {
-    #expect(simulatorUdid(fromOpenURL: URL(string: "stim-desktop://open?udid=U1")!) == "U1")
-    #expect(simulatorUdid(fromOpenURL: URL(string: "stim-desktop://close?udid=U1")!) == nil)
-    #expect(simulatorUdid(fromOpenURL: URL(string: "siniulator://open?udid=U1")!) == nil)
-    #expect(simulatorUdid(fromOpenURL: URL(string: "stim-desktop://open?udid=")!) == nil)
+  @Test func readsTheDeviceOnlyFromAnOpenURL() {
+    #expect(deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://open?udid=U1")!) == .simulator(udid: "U1"))
+    #expect(
+      deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://open?serial=emulator-5554")!)
+        == .emulator(serial: "emulator-5554"))
+    #expect(deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://close?udid=U1")!) == nil)
+    #expect(deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://close?serial=emulator-5554")!) == nil)
+    #expect(deviceOpenRequest(fromOpenURL: URL(string: "siniulator://open?udid=U1")!) == nil)
+    #expect(deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://open?udid=")!) == nil)
+    #expect(deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://open?serial=")!) == nil)
   }
 
-  @Test func findsTheWorkspaceThatOwnsASlotSimulator() throws {
+  @Test func findsTheWorkspaceThatOwnsTheRequestedDevice() throws {
     let url = Bundle.module.url(forResource: "status", withExtension: "json", subdirectory: "Fixtures")!
     let payload = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url))
-    let owner = try #require(payload.owner(ofSimulator: "D39CAF14-F4A4-4C0A-B8A4-3A30B2D268F0"))
-    #expect(owner.workspace.path == "/Users/dev/app/.worktrees/wide-insets/apps/mobile")
-    #expect(owner.device.slot == "ipad")
-    #expect(payload.owner(ofSimulator: "emulator-5554") == nil)
+    let simulator = try #require(payload.owner(of: .simulator(udid: "D39CAF14-F4A4-4C0A-B8A4-3A30B2D268F0")))
+    #expect(simulator.workspace.path == "/Users/dev/app/.worktrees/wide-insets/apps/mobile")
+    #expect(simulator.device.slot == "ipad")
+    let emulator = try #require(payload.owner(of: .emulator(serial: "emulator-5554")))
+    #expect(emulator.workspace.path == "/Users/dev/app/.worktrees/wide-insets/apps/mobile")
+    #expect(emulator.device.id == "android:default:stim-wide-insets-mobile")
+    #expect(payload.owner(of: .simulator(udid: "emulator-5554")) == nil)
+    #expect(payload.owner(of: .emulator(serial: "emulator-5556")) == nil)
   }
 }
 
