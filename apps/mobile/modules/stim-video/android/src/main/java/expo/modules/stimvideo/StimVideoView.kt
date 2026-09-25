@@ -103,9 +103,11 @@ class StimVideoView(context: Context, appContext: AppContext) : ExpoView(context
     }
     if (inputs.size >= MAX_BACKLOG) {
       inputs.clear()
-      waitingForKeyframe = true
-      requestKeyframe()
-      return
+      if (!keyframe) {
+        waitingForKeyframe = true
+        requestKeyframe()
+        return
+      }
     }
     inputs.add(accessUnit)
     feed()
