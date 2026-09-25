@@ -574,6 +574,24 @@ import Testing
     #expect(environment["PATH"]?.contains("/usr/bin") == true)
   }
 
+  @Test func killsALoginShellThatNeverExits() async throws {
+    let shell = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: shell) }
+    let script = "#!/bin/sh\nexec /usr/bin/perl -e '$SIG{TERM} = \"IGNORE\"; sleep 30'\n"
+    FileManager.default.createFile(
+      atPath: shell.path, contents: Data(script.utf8), attributes: [.posixPermissions: 0o755])
+
+    let started = Date()
+    #expect(await LoginShell.environment(shell: shell.path, timeout: 0.5) == nil)
+    #expect(Date().timeIntervalSince(started) < 10)
+  }
+
+  @Test func fallbackPutsHomebrewFirstAndKeepsSystemDirectories() {
+    let environment = LoginShell.fallback(["PATH": "/usr/bin:/usr/local/bin:/custom", "HOME": "/Users/dev"])
+    #expect(environment["PATH"] == "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/custom:/bin:/usr/sbin:/sbin")
+    #expect(environment["HOME"] == "/Users/dev")
+  }
+
   @Test func resolvesStimFromThePathAndLetsStimBinWin() throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
