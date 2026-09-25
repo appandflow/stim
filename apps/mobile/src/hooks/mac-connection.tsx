@@ -1,6 +1,6 @@
 import Constants from 'expo-constants';
 import { useLocalSearchParams } from 'expo-router';
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AppState } from 'react-native';
 
 import { RequestError, StimConnection, type ConnectionState } from '@/lib/connection';
@@ -24,6 +24,7 @@ export const CLIENT = { name: 'stim-mobile', version: Constants.expoConfig?.vers
 
 const USAGE_INTERVAL_MS = 15_000;
 const SNAPSHOT_EDGE = 640;
+const MAX_INPUT_TEXT = 256;
 
 export interface MacConnection {
   mac: PairedMac | null;
@@ -404,6 +405,14 @@ export function useDeviceControl(workspace: string, platform: Platform, slot: st
       ? { kind: 'off', ended: 'The connection dropped.' }
       : held;
   const session = state.kind === 'on' ? state.session : null;
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!connection || !session) return;
@@ -444,7 +453,14 @@ export function useDeviceControl(workspace: string, platform: Platform, slot: st
     [connection, session],
   );
   const touch = useCallback((phase: TouchPhase, x: number, y: number) => send('input.touch', { phase, x, y }), [send]);
-  const text = useCallback((value: string) => send('input.text', { text: value }), [send]);
+  const text = useCallback(
+    (value: string) => {
+      for (let at = 0; at < value.length; at += MAX_INPUT_TEXT) {
+        send('input.text', { text: value.slice(at, at + MAX_INPUT_TEXT) });
+      }
+    },
+    [send],
+  );
   const button = useCallback((value: InputButton) => send('input.button', { button: value }), [send]);
   return { allowed, state, begin, end, touch, text, button };
 }

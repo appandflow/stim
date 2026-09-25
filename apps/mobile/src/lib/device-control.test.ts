@@ -46,5 +46,7 @@ describe('keyboardDelta', () => {
     expect(keyboardDelta('Hel', 'He')).toBe('\b');
     expect(keyboardDelta('teh', 'the ')).toBe('\b\bhe ');
     expect(keyboardDelta('', '')).toBe('');
+    expect(keyboardDelta('caf\u00E9', 'caf')).toBe('');
+    expect(keyboardDelta('ok\u2026', 'ok')).toBe('\b\b\b');
   });
 });

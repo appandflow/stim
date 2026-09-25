@@ -55,13 +55,16 @@ export function asciiText(text: string): string {
 }
 
 /**
- * What to type on the device when the phone's text field changes from `previous` to `next`: a Delete (`\b`)
- * for each character removed after their common prefix, then the characters added.
+ * What to type on the device when the phone's text field changes from `previous` to `next`, both as the
+ * ASCII the device receives: a Delete (`\b`) for each character removed after their common prefix, then the
+ * characters added.
  */
 export function keyboardDelta(previous: string, next: string): string {
+  const before = asciiText(previous);
+  const after = asciiText(next);
   let common = 0;
-  while (common < previous.length && common < next.length && previous[common] === next[common]) common++;
-  return '\b'.repeat(previous.length - common) + asciiText(next.slice(common));
+  while (common < before.length && common < after.length && before[common] === after[common]) common++;
+  return '\b'.repeat(before.length - common) + after.slice(common);
 }
 
 /**

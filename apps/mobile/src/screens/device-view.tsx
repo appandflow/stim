@@ -95,7 +95,12 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
         { text: 'Take over', style: 'destructive', onPress: () => control.begin(true) },
       ],
     );
-  const toggle = () => (controlling ? control.end() : control.begin(false));
+  const toggle = () => {
+    if (control.state.kind === 'starting') return;
+    if (controlling) return control.end();
+    setTyped('');
+    control.begin(false);
+  };
   const press = (button: InputButton) => control.button(button);
   const title = device?.model ?? (platform === 'ios' ? 'iOS Simulator' : 'Android Emulator');
 
@@ -121,7 +126,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
         <Banner
           colors={colors}
           control={control.state}
-          driver={controlling ? null : driver}
+          driver={driver}
           canTakeOver={control.allowed === true}
           onTakeOver={takeOver}
         />
