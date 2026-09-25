@@ -13,6 +13,8 @@ const { values } = parseArgs({
     port: { type: 'string', default: '7787' },
     name: { type: 'string', default: 'Mock Mac' },
     read: { type: 'boolean', default: false },
+    workspaces: { type: 'string' },
+    'free-gb': { type: 'string', default: '212' },
   },
 });
 
@@ -55,7 +57,36 @@ const ACTION_MS = 800;
 const busy = new Set();
 
 const startedAt = Date.now();
-const status = () => shiftTimestamps(fixtures.status, startedAt - Date.parse(fixtures.capturedAt));
+const only = values.workspaces ? new RegExp(values.workspaces) : null;
+const status = () => {
+  const payload = shiftTimestamps(fixtures.status, startedAt - Date.parse(fixtures.capturedAt));
+  if (!only) return payload;
+  const environments = payload.environments.filter((env) => only.test(env.path));
+  const live = environments.filter((env) => env.live);
+  return {
+    ...payload,
+    environments,
+    capacity: {
+      ...payload.capacity,
+      liveCount: live.length,
+      committedMb: live.reduce((sum, env) => sum + env.memoryMb, 0),
+    },
+  };
+};
+const GB = 1e9;
+const usage = () => ({
+  volumes: [
+    {
+      mount: '/',
+      holds: ['Workspaces', 'Stim home', 'Simulators'],
+      freeBytes: Number(values['free-gb']) * GB,
+      totalBytes: 994.66 * GB,
+    },
+  ],
+  memory: { totalBytes: fixtures.status.capacity.totalMemoryMb * 1024 * 1024, pressure: 'normal' },
+  load: { avg1: 6.2, avg5: 5.4, avg15: 4.9, cpus: 14 },
+  sampledAt: new Date().toISOString(),
+});
 
 server.on('connection', (socket) => {
   let authed = false;
@@ -158,6 +189,9 @@ server.on('connection', (socket) => {
       }, ACTION_MS);
       return { deferred: true };
     },
+    'machine.get'() {
+      return { result: usage() };
+    },
     unsubscribe(params) {
       stop(params.subscription);
       return { result: {} };
@@ -196,7 +230,7 @@ server.on('connection', (socket) => {
 function hello() {
   return {
     protocol: 1,
-    server: { name: values.name, version: '0.0.0-mock', stim: fixtures.stimVersion },
+    server: { name: values.name, version: '0.0.0-mock', stim: fixtures.stimVersion, home: fixtures.home },
     capabilities: values.read ? ['read'] : ['read', 'control'],
     actions: values.read ? [] : ACTIONS,
   };

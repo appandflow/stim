@@ -173,3 +173,32 @@ export function runningBuild(env: EnvironmentState, device?: Pick<DeviceRef, 'pl
   if (device && (build.platform !== device.platform || build.slot !== device.slot)) return null;
   return build;
 }
+
+const deviceRank = (d: DeviceRef) => (d.running ? (d.activity?.state === 'driven' ? 0 : 1) : 2);
+
+/** Driven devices first, then other running ones, then stopped ones; by slot name inside each group. */
+export function orderDevices(devices: DeviceRef[]): DeviceRef[] {
+  return [...devices].sort(
+    (a, b) => deviceRank(a) - deviceRank(b) || a.slot.localeCompare(b.slot) || a.platform.localeCompare(b.platform),
+  );
+}
+
+/**
+ * Attaches each warning to the device whose name it mentions, the longest name winning so an AVD named after
+ * another (`stim-app` and `stim-app-ipad`) keeps its own warnings. Warnings that name no device stay general.
+ */
+export function deviceWarnings(
+  warnings: string[],
+  devices: DeviceRef[],
+): { byDevice: Map<DeviceRef, string[]>; general: string[] } {
+  const byDevice = new Map<DeviceRef, string[]>();
+  const general: string[] = [];
+  for (const warning of warnings) {
+    const device = devices
+      .filter((d) => warning.includes(d.name))
+      .reduce<DeviceRef | null>((best, d) => (best === null || d.name.length > best.name.length ? d : best), null);
+    if (device) byDevice.set(device, [...(byDevice.get(device) ?? []), warning]);
+    else general.push(warning);
+  }
+  return { byDevice, general };
+}

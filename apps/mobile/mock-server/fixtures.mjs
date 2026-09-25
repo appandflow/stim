@@ -16,6 +16,7 @@ export function loadFixtures() {
   return {
     capturedAt: status.capturedAt,
     stimVersion: status.stimVersion,
+    home: status.home,
     status: status.payload,
     logs,
     frames: {

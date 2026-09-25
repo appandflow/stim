@@ -1,6 +1,15 @@
 import fixture from '../../mock-server/fixtures/status.json';
 
-import { devicesOf, groupByProject, projectOf, repositoryRoots, runningBuild, workspaceNames } from '@/lib/workspaces';
+import {
+  deviceWarnings,
+  devicesOf,
+  groupByProject,
+  orderDevices,
+  projectOf,
+  repositoryRoots,
+  runningBuild,
+  workspaceNames,
+} from '@/lib/workspaces';
 import type { EnvironmentState, StatusPayload } from '@/protocol/types';
 
 const payload = fixture.payload as StatusPayload;
@@ -77,5 +86,54 @@ describe('runningBuild', () => {
     if (!building) throw new Error('fixture lost its building workspace');
     expect(runningBuild(building, { platform: 'ios', slot: 'phone' })?.phase).toBe('install');
     expect(runningBuild(building, { platform: 'ios', slot: 'default' })).toBeNull();
+  });
+});
+
+describe('orderDevices and deviceWarnings', () => {
+  const devices = devicesOf(
+    env('/w', {
+      ios: { name: 'stim-w (iPhone 18 Pro 27.0)', udid: 'A', owned: true, state: 'Shutdown' },
+      android: { name: 'stim-w-app', owned: true, physical: false, state: 'not-detected' },
+      slots: [
+        {
+          slot: 'tablet',
+          ios: { name: 'stim-w-tablet (iPad Pro 27.0)', udid: 'B', owned: true, state: 'Booted' },
+          android: { name: 'stim-w-app-tablet', owned: true, physical: false, state: 'not-detected' },
+        },
+        {
+          slot: 'duo',
+          ios: {
+            name: 'stim-w-duo (iPhone Duo 27.1)',
+            udid: 'C',
+            owned: true,
+            state: 'Booted',
+            activity: { state: 'driven', basis: [] },
+          },
+          android: null,
+        },
+      ],
+    }),
+  );
+
+  it('puts driven devices first, then running, then stopped, by slot inside each group', () => {
+    expect(orderDevices(devices).map((d) => `${d.slot}/${d.platform}`)).toEqual([
+      'duo/ios',
+      'tablet/ios',
+      'default/android',
+      'default/ios',
+      'tablet/android',
+    ]);
+  });
+
+  it('gives a warning to the device with the longest name it mentions', () => {
+    const { byDevice, general } = deviceWarnings(
+      ['owned AVD stim-w-app-tablet is not detected by adb', 'owned AVD stim-w-app is not detected', 'Metro is slow'],
+      devices,
+    );
+    expect([...byDevice].map(([d, w]) => [d.name, w])).toEqual([
+      ['stim-w-app-tablet', ['owned AVD stim-w-app-tablet is not detected by adb']],
+      ['stim-w-app', ['owned AVD stim-w-app is not detected']],
+    ]);
+    expect(general).toEqual(['Metro is slow']);
   });
 });

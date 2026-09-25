@@ -1,8 +1,9 @@
 import Constants from 'expo-constants';
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+import { useLocalSearchParams } from 'expo-router';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AppState } from 'react-native';
 
-import { StimConnection, type ConnectionState } from '@/lib/connection';
+import { RequestError, StimConnection, type ConnectionState } from '@/lib/connection';
 import { listMacs, macToken, type PairedMac } from '@/lib/macs';
 import type {
   ActionName,
@@ -10,71 +11,90 @@ import type {
   FrameEvent,
   LogFilter,
   LogRecord,
+  MachineUsage,
   Platform,
   StatusPayload,
 } from '@/protocol/types';
 
 export const CLIENT = { name: 'stim-mobile', version: Constants.expoConfig?.version ?? '0.0.0' };
 
-interface MacConnection {
+const USAGE_INTERVAL_MS = 15_000;
+
+export interface MacConnection {
   mac: PairedMac | null;
   connection: StimConnection | null;
   state: ConnectionState;
   missing: boolean;
   status: StatusPayload | null;
+  usage: MachineUsage | null;
+  /** The Mac's home folder, from `hello`; null until connected or from an older server. */
+  home: string | null;
 }
 
-const Context = createContext<MacConnection>({
-  mac: null,
+interface Live {
+  connection: StimConnection | null;
+  state: ConnectionState;
+  missing: boolean;
+  status: StatusPayload | null;
+  usage: MachineUsage | null;
+  home: string | null;
+}
+
+const IDLE: Live = {
   connection: null,
   state: { kind: 'connecting' },
   missing: false,
   status: null,
-});
+  usage: null,
+  home: null,
+};
 
-interface Entry {
-  id: string;
-  mac: PairedMac | null;
-  connection: StimConnection | null;
-  state: ConnectionState;
-  missing: boolean;
+interface Pool {
+  macs: PairedMac[] | null;
+  live: Record<string, Live>;
+  reload: () => void;
 }
 
-/** Holds one connection for the Mac the current route names; `id` null closes it. */
-export function MacConnectionProvider({ id, children }: { id: string | null; children: ReactNode }) {
-  const [entry, setEntry] = useState<Entry | null>(null);
-  const [status, setStatus] = useState<{ connection: StimConnection; payload: StatusPayload } | null>(null);
+const Context = createContext<Pool>({ macs: null, live: {}, reload: () => {} });
+
+type Update = (id: string, patch: Partial<Live>) => void;
+
+/** One connection to one paired Mac, with its status subscription and machine usage polling. */
+function MacLink({ mac, update }: { mac: PairedMac; update: Update }) {
+  const [connection, setConnection] = useState<StimConnection | null>(null);
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    if (id === null) return;
-    let connection: StimConnection | null = null;
+    let created: StimConnection | null = null;
     let cancelled = false;
     (async () => {
-      const mac = (await listMacs()).find((m) => m.id === id) ?? null;
-      const token = mac ? await macToken(mac.id) : null;
+      const token = await macToken(mac.id);
       if (cancelled) return;
-      if (!mac || !token) {
-        setEntry({ id, mac, connection: null, state: { kind: 'closed' }, missing: true });
+      if (!token) {
+        update(mac.id, { missing: true, state: { kind: 'closed' } });
         return;
       }
-      const created = new StimConnection({
+      const next = new StimConnection({
         endpoint: mac.endpoint,
         auth: { deviceToken: token },
         client: CLIENT,
-        onState: (state) => setEntry((e) => (e?.connection === created ? { ...e, state } : e)),
+        onState: (state) => {
+          if (cancelled) return;
+          setOpen(state.kind === 'open');
+          update(mac.id, state.kind === 'open' ? { state, home: state.server.home ?? null } : { state });
+        },
       });
-      connection = created;
-      setEntry({ id, mac, connection: created, state: { kind: 'connecting' }, missing: false });
-      created.start();
+      created = next;
+      setConnection(next);
+      update(mac.id, { connection: next, missing: false, state: { kind: 'connecting' } });
+      next.start();
     })();
     return () => {
       cancelled = true;
-      connection?.close();
+      created?.close();
     };
-  }, [id]);
+  }, [mac.id, mac.endpoint, update]);
 
-  const current = entry && entry.id === id ? entry : null;
-  const connection = current?.connection ?? null;
   useEffect(() => {
     if (!connection) return;
     const listener = AppState.addEventListener('change', (state) => {
@@ -86,26 +106,78 @@ export function MacConnectionProvider({ id, children }: { id: string | null; chi
   useEffect(() => {
     if (!connection) return;
     return connection.subscribe('status.subscribe', {}, (event) => {
-      if (event.event === 'status') setStatus({ connection, payload: event.payload });
+      if (event.event === 'status') update(mac.id, { status: event.payload });
     });
-  }, [connection]);
+  }, [connection, mac.id, update]);
 
-  const value: MacConnection = {
-    mac: current?.mac ?? null,
-    connection,
-    state: current?.state ?? { kind: id ? 'connecting' : 'closed' },
-    missing: current?.missing ?? false,
-    status: status && status.connection === connection ? status.payload : null,
-  };
-  return <Context.Provider value={value}>{children}</Context.Provider>;
+  useEffect(() => {
+    if (!connection || !open) return;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const poll = () =>
+      connection.request('machine.get', {}).then(
+        (usage) => update(mac.id, { usage }),
+        (error: Error) => {
+          if (error instanceof RequestError && error.error.code === 'unknown-method' && timer) clearInterval(timer);
+        },
+      );
+    timer = setInterval(poll, USAGE_INTERVAL_MS);
+    void poll();
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [connection, open, mac.id, update]);
+
+  return null;
 }
 
+/** Keeps a connection to every paired Mac for as long as the app runs; `reload` rereads the paired list. */
+export function MacsProvider({ children }: { children: ReactNode }) {
+  const [macs, setMacs] = useState<PairedMac[] | null>(null);
+  const [live, setLive] = useState<Record<string, Live>>({});
+
+  const reload = useCallback(() => {
+    listMacs().then(setMacs, () => setMacs([]));
+  }, []);
+  useEffect(reload, [reload]);
+
+  const update = useCallback<Update>((id, patch) => {
+    setLive((all) => ({ ...all, [id]: { ...(all[id] ?? IDLE), ...patch } }));
+  }, []);
+
+  const value = useMemo(() => ({ macs, live, reload }), [macs, live, reload]);
+  return (
+    <Context.Provider value={value}>
+      {(macs ?? []).map((mac) => (
+        <MacLink key={`${mac.id}\n${mac.endpoint}\n${mac.pairedAt}`} mac={mac} update={update} />
+      ))}
+      {children}
+    </Context.Provider>
+  );
+}
+
+export type PairedConnection = MacConnection & { mac: PairedMac };
+
+export function useMacs(): { macs: PairedMac[] | null; reload: () => void; connections: PairedConnection[] } {
+  const { macs, live, reload } = useContext(Context);
+  const connections = useMemo(() => (macs ?? []).map((mac) => ({ mac, ...(live[mac.id] ?? IDLE) })), [macs, live]);
+  return { macs, reload, connections };
+}
+
+export function useMacById(id: string | undefined): MacConnection {
+  const { macs, live } = useContext(Context);
+  const mac = macs?.find((m) => m.id === id) ?? null;
+  if (!mac) return { ...IDLE, mac: null, missing: macs !== null, state: { kind: macs ? 'closed' : 'connecting' } };
+  return { mac, ...(live[mac.id] ?? IDLE) };
+}
+
+/** The Mac the current `/mac/[id]/...` route names. */
 export function useMacConnection(): MacConnection {
-  return useContext(Context);
+  const { id } = useLocalSearchParams<{ id?: string }>();
+  return useMacById(id);
 }
 
 export function useStatus(): StatusPayload | null {
-  return useContext(Context).status;
+  return useMacConnection().status;
 }
 
 export type LogsChange =

@@ -1,5 +1,8 @@
-import { Workspaces } from '@/screens/workspaces';
+import { useLocalSearchParams } from 'expo-router';
 
-export default function WorkspacesRoute() {
-  return <Workspaces />;
+import { MacStatus } from '@/screens/mac-status';
+
+export default function MacStatusRoute() {
+  const { id } = useLocalSearchParams<{ id: string }>();
+  return <MacStatus id={id} />;
 }

@@ -186,6 +186,22 @@ export interface ActionResult {
   output: Record<string, unknown>;
 }
 
+export type MemoryPressure = 'normal' | 'warning' | 'critical';
+
+export interface MachineVolume {
+  mount: string;
+  holds: string[];
+  freeBytes: number;
+  totalBytes: number;
+}
+
+export interface MachineUsage {
+  volumes: MachineVolume[];
+  memory: { totalBytes: number; pressure: MemoryPressure | null };
+  load: { avg1: number; avg5: number; avg15: number; cpus: number };
+  sampledAt: string;
+}
+
 export type ClientAuth = { deviceToken: string } | { pairingToken: string; deviceName: string };
 
 export interface Methods {
@@ -193,7 +209,8 @@ export interface Methods {
     params: { protocol: number; client: { name: string; version: string }; auth: ClientAuth };
     result: {
       protocol: number;
-      server: { name: string; version: string; stim: string };
+      /** `home` is absent from servers older than the `machine.get` method. */
+      server: { name: string; version: string; stim: string; home?: string };
       capabilities: string[];
       /** The actions this device may run; absent from servers that predate actions. */
       actions?: ActionName[];
@@ -208,6 +225,7 @@ export interface Methods {
   'settings.get': { params: { workspace?: string }; result: Record<string, unknown> };
   'frames.subscribe': { params: FrameTarget; result: { subscription: string } };
   'build.plan': { params: BuildPlanParams; result: BuildPlan };
+  'machine.get': { params: Record<string, never>; result: MachineUsage };
   unsubscribe: { params: { subscription: string }; result: Record<string, never> };
   action: { params: ActionParams; result: ActionResult };
 }

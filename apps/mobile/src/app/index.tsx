@@ -1,5 +1,5 @@
-import { MacList } from '@/screens/mac-list';
+import { Home } from '@/screens/home';
 
-export default function MacsRoute() {
-  return <MacList />;
+export default function HomeRoute() {
+  return <Home />;
 }
