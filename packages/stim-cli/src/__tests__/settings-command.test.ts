@@ -79,7 +79,7 @@ test('--json reports each layer, the winning one, environment overrides, and def
   });
   expect(entry(payload, 'worktree.defaultBranch')).toMatchObject({ value: 'trunk', origin: 'committed' });
   expect(entry(payload, 'concurrency.maxBuilds')).toMatchObject({
-    value: '2',
+    value: 2,
     origin: 'env',
     layers: { machine: 4 },
     env: { name: 'STIM_MAX_BUILDS', value: '2' },
@@ -173,4 +173,33 @@ test('a sensitive value is masked in every output while the layer keeps the real
   });
   for (const output of [plain.out, json.out, listing.out]) expect(output.join('\n')).not.toContain('hunter2');
   expect(JSON.stringify(loadConfig()?.repos)).toContain('hunter2');
+});
+
+test('an environment-provided value is reported through the registry type, not as the raw string', async () => {
+  const env = { STIM_HOME: home, STIM_BUDGET_MIN_FREE_DISK_GB: '40' };
+
+  const json = await settings(['--json'], env);
+  const get = await settings(['get', 'budget.minFreeDiskGb', '--json'], env);
+
+  expect(entry(JSON.parse(json.out[0]!), 'budget.minFreeDiskGb')).toMatchObject({
+    value: 40,
+    origin: 'env',
+    env: { name: 'STIM_BUDGET_MIN_FREE_DISK_GB', value: '40' },
+  });
+  expect(JSON.parse(get.out[0]!)).toMatchObject({ value: 40, origin: 'env' });
+});
+
+test('an invalid environment value refuses with STIM_BAD_ARG, like an invalid `settings set` value', async () => {
+  const env = { STIM_HOME: home, STIM_BUDGET_MIN_FREE_DISK_GB: 'lots' };
+
+  const json = await settings(['--json'], env);
+  const get = await settings(['get', 'budget.minFreeDiskGb', '--json'], env);
+
+  for (const { exitCode, out } of [json, get]) {
+    expect(exitCode).toBe(1);
+    expect(out).toHaveLength(1);
+    const failure = JSON.parse(out[0]!);
+    expect(failure.code).toBe('STIM_BAD_ARG');
+    expect(failure.message).toBe('Invalid STIM_BUDGET_MIN_FREE_DISK_GB value "lots". Expected a number, 0 or more.');
+  }
 });
