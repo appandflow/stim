@@ -17,7 +17,7 @@ class FakeSocket {
     this.onclose?.();
   }
   reply(method: string, result: unknown) {
-    const request = this.sent.find((m) => m.method === method);
+    const request = this.sent.findLast((m) => m.method === method);
     if (!request) throw new Error(`no ${method} request`);
     this.onmessage?.({ data: JSON.stringify({ id: request.id, result }) });
   }
@@ -128,6 +128,36 @@ describe('StimConnection', () => {
       timers[i].fn();
     }
     expect(subscribed).toBe(2);
+  });
+
+  it('subscribes again, after a doubling delay, when the server ends a subscription with an error', async () => {
+    const { connection, sockets, timers } = setup();
+    const events: ServerEvent[] = [];
+    connection.subscribe('logs.subscribe', { workspace: '/w' }, (event) => events.push(event));
+    connection.start();
+    sockets[0].onopen?.();
+    sockets[0].reply('hello', hello);
+    await flush();
+    sockets[0].reply('logs.subscribe', { subscription: 's1' });
+    await flush();
+
+    const error = { code: 'logs-failed', message: 'stim logs --follow exited (code 1)' };
+    sockets[0].emit({ event: 'error', subscription: 's1', error });
+    expect(events).toEqual([{ event: 'error', subscription: 's1', error }]);
+    expect(timers.map((t) => t.ms)).toEqual([1000]);
+    timers[0].fn();
+    expect(sockets[0].sent.map((m) => m.method)).toEqual(['hello', 'logs.subscribe', 'logs.subscribe']);
+
+    sockets[0].reply('logs.subscribe', { subscription: 's2' });
+    await flush();
+    sockets[0].emit({ event: 'error', subscription: 's2', error });
+    expect(timers.map((t) => t.ms)).toEqual([1000, 2000]);
+    timers[1].fn();
+    sockets[0].reply('logs.subscribe', { subscription: 's3' });
+    await flush();
+    sockets[0].emit({ event: 'logs', subscription: 's3', records: [] });
+    sockets[0].emit({ event: 'error', subscription: 's3', error });
+    expect(timers.at(-1)?.ms).toBe(1000);
   });
 
   it('unsubscribes on the server when a screen stops listening', async () => {
