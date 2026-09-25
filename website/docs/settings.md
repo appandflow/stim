@@ -171,8 +171,10 @@ keys from the profile. The machine layer can set a default for every workspace:
 stim settings set android.deviceProfile pixel_tablet --scope machine
 ```
 
-An id that avdmanager does not offer refuses with `STIM_BAD_ARG` and lists the
-offered ids. A parked AVD is adopted only by a workspace that requests the same
+A set profile counts as a request, so a workspace that already owns an AVD of
+another profile refuses until that AVD is removed, and each run checks the id
+with avdmanager. An id that avdmanager does not offer refuses with
+`STIM_BAD_ARG` and lists the offered ids. A parked AVD is adopted only by a workspace that requests the same
 profile. Existing AVDs keep their display settings. Parked AVDs created with the
 old generic profile are not adopted by new workspaces.
 

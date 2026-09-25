@@ -660,7 +660,7 @@ result as proof instead of requiring an unrelated screenshot.`,
   The wipe resets apps, accounts, device settings and the shared storage
   inside the data partition; the AVD's creation settings and any separate
   SD card image remain. Status lists parked Android emulators; GC
-  reports their system image, age and disk size.
+  reports their system image, hardware profile, age and disk size.
 `,
     },
     builds: {

@@ -237,7 +237,7 @@ per session, with the preview URL.`,
   deviceProfile   the avdmanager hardware profile of the owned AVD
                   ("pixel_6", "pixel_fold"), read from its config.ini
                   hw.device.name. Null where systemImage is null, and on an
-                  AVD created before Stim recorded a profile
+                  AVD of the old generic profile, which has no hw.device.name
   fingerprint / cacheKey / cacheHit / cacheSkipped / waitedForBuild /
   appPath / installSkipped / launched
                   as above -- cacheKey keys on the VARIANT here

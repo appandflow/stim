@@ -144,7 +144,10 @@ KEYS STIM READS
                         avdmanager writes the foldable's hinge and posture
                         keys from its profile. Readable from the machine
                         layer too, so one machine can default every workspace
-                        to a tablet. The \`--device-profile\` flag overrides it
+                        to a tablet. A set profile counts as a request: each
+                        run then checks it with avdmanager (about 2s), and a
+                        workspace that already owns an AVD of another profile
+                        refuses until that AVD is reaped. The \`--device-profile\` flag overrides it
                         per invocation, and an id avdmanager does not offer is
                         STIM_BAD_ARG with the offered ids printed; that check
                         runs avdmanager only when a profile is given. A
