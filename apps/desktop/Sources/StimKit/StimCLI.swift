@@ -39,8 +39,17 @@ public struct StimCLI: Sendable {
   }
 
   /// `stim <platform> --plan --json` in `workspace`: what the next build would find. It builds nothing.
-  public func plan(platform: String, workspace: String) throws -> BuildPlanOutcome {
-    let (status, data) = try execute([platform, "--plan", "--json"], cwd: workspace)
+  /// Cancelling the task terminates the `stim` process and throws `CancellationError`.
+  public func plan(platform: String, workspace: String) async throws -> BuildPlanOutcome {
+    let run = CancellableRun()
+    let (status, data) = try await withTaskCancellationHandler {
+      try await Task.detached {
+        try execute([platform, "--plan", "--json"], cwd: workspace, started: run.started)
+      }.value
+    } onCancel: {
+      run.cancel()
+    }
+    try Task.checkCancellation()
     if status == 0 { return .plan(try JSONDecoder().decode(BuildPlan.self, from: data)) }
     guard let refusal = try? JSONDecoder().decode(CommandRefusal.self, from: data) else {
       throw Failure.exited(status)
@@ -79,7 +88,9 @@ public struct StimCLI: Sendable {
     return data
   }
 
-  private func execute(_ args: [String], cwd: String?) throws -> (Int32, Data) {
+  private func execute(
+    _ args: [String], cwd: String?, started: (Process) throws -> Void = { try $0.run() }
+  ) throws -> (Int32, Data) {
     guard let executable else { throw Failure.notFound }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: executable)
@@ -89,7 +100,7 @@ public struct StimCLI: Sendable {
     let out = Pipe()
     process.standardOutput = out
     process.standardError = FileHandle.nullDevice
-    try process.run()
+    try started(process)
     let data = out.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
     return (process.terminationStatus, data)
@@ -108,6 +119,28 @@ public struct StimCLI: Sendable {
     return try ProcessStream.start(
       executable: executable, arguments: args, cwd: cwd, environment: environment,
       onLine: onLine, onExit: onExit)
+  }
+}
+
+/// Starts a process unless the run was already cancelled, and terminates it on cancel.
+private final class CancellableRun: @unchecked Sendable {
+  private let lock = NSLock()
+  private var process: Process?
+  private var cancelled = false
+
+  func started(_ process: Process) throws {
+    try lock.withLock {
+      if cancelled { throw CancellationError() }
+      try process.run()
+      self.process = process
+    }
+  }
+
+  func cancel() {
+    lock.withLock {
+      cancelled = true
+      process?.terminate()
+    }
   }
 }
 

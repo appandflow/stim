@@ -89,22 +89,28 @@ public struct BuildPlan: Decodable, Hashable, Sendable {
   public var basis: Int
   public var refusal: CommandRefusal?
 
-  public var summary: String {
-    if let refusal { return "Would refuse: \(refusal.code)" }
+  /// What the next build would do, as the Builds section words it after "Next build: ".
+  public var nextBuild: String {
+    if let refusal { return "would refuse (\(refusal.code))" }
+    let took = expectedMs.map { ", ~\(formatDuration(ms: $0))" } ?? ""
     switch cacheHit {
-    case .local: return "Local cache hit"
-    case .remote: return "Remote cache hit (\(provider ?? "provider"))"
+    case .local: return "cache hit (local)\(took)"
+    case .remote: return "cache hit (remote)\(took)"
     case .none:
-      let why = cacheSkipped ? "Cache reads off" : "Cache miss"
+      let off = cacheSkipped ? " (cache reads off)" : ""
       let native = prebuild == "generate" || prebuild == "regenerate" ? ", \(prebuild!)s the native dir" : ""
-      return "\(why): compiles\(native)"
+      return "cold build\(off)\(native)\(took)"
     }
   }
 
-  public var expectation: String? {
+  /// The remote provider and the runs behind the estimate.
+  public var detail: String? {
     guard refusal == nil, let outcome else { return nil }
-    guard let expectedMs else { return "No \(outcome) run of this project recorded yet" }
-    return "~\(formatDuration(ms: expectedMs)), median of \(basis) \(outcome) run\(basis == 1 ? "" : "s")"
+    let runs =
+      expectedMs == nil
+      ? "No \(outcome) run of this project recorded yet"
+      : "Median of \(basis) \(outcome) run\(basis == 1 ? "" : "s")"
+    return cacheHit == .remote ? "From \(provider ?? "the cache provider"). \(runs)" : runs
   }
 }
 

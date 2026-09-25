@@ -84,11 +84,15 @@ estimate comes from. The workspace inspector's **Builds** section shows each
 platform's last build from `lastBuilds` (local cache, remote cache, compiled,
 or failed, with its duration and age). A compiled build shows why it missed
 the cache from `missReason`; clicking it opens a popover with the changed
-fingerprint sources. **Check next build** runs
-`stim <platform> --plan --json` in the workspace. That builds, boots and
-installs nothing; the result says whether the next build would hit the local
-or remote cache or compile, the prebuild it would run, and the expected
-duration.
+fingerprint sources. When the section opens, it runs
+`stim <platform> --plan --json` in the workspace for each platform with a last
+build or a device, and shows the result on the platform's row: "Next build:
+cache hit (local)", "cache hit (remote)" or "cold build, ~5m 40s", or the
+refusal with its remedy. That builds, boots and installs nothing, but it
+fingerprints the project, so a workspace runs one plan at a time, a result
+stays for 60 seconds unless that platform's last build changes, closing the
+section stops the plan, and nothing is checked while a build runs; the row
+shows the running build instead. The refresh button checks again.
 
 Each device tile shows the `activity` that `stim status` reports: "Driven by
 <tool> · 12m" while agent-device, a Stim device lock, or a test runner drives
