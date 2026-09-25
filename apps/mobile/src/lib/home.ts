@@ -204,34 +204,58 @@ export const memoryGb = (bytes: number) => bytes / 2 ** 30;
 
 export type UsageTone = 'normal' | 'warn' | 'critical';
 
-export interface MacUsageSummary {
-  parts: string[];
+export type StatKind = 'cpu' | 'memory' | 'disk';
+
+export interface MachineStat {
+  kind: StatKind;
+  label: string;
+  value: string;
   tone: UsageTone;
 }
 
+const CPU_WARN_FRACTION = 0.8;
+const CPU_CRITICAL_FRACTION = 0.95;
+// A quarter of the low-disk warning, so the compact stat also has a red tier before Stim's own hard floor bites.
+const DISK_CRITICAL_BYTES = LOW_DISK_BYTES / 4;
+
 /**
- * The chip line: live workspaces, the Mac's memory used of total, and the lowest free space of Stim's volumes.
- * A server older than `memory.usedBytes` leaves the memory figure out.
+ * The chip and sheet's compact stats: CPU busy fraction, the Mac's memory used of total, and the lowest free
+ * space of Stim's volumes. A stat is left out when the server or platform cannot report it.
  */
-export function macUsageSummary(status: StatusPayload | null, usage: MachineUsage | null): MacUsageSummary {
-  const parts: string[] = [];
-  let tone: UsageTone = 'normal';
-  if (status) parts.push(`${status.capacity.liveCount} live`);
-  const used = usage?.memory.usedBytes;
-  if (usage && typeof used === 'number') {
-    parts.push(`${memoryGb(used).toFixed(1)}/${Math.round(memoryGb(usage.memory.totalBytes))} GB`);
-    if (usage.memory.pressure === 'critical') tone = 'critical';
-    else if (usage.memory.pressure === 'warning') tone = 'warn';
+export function machineStats(usage: MachineUsage | null): MachineStat[] {
+  if (!usage) return [];
+  const stats: MachineStat[] = [];
+  if (typeof usage.cpu.usage === 'number') {
+    const fraction = usage.cpu.usage;
+    stats.push({
+      kind: 'cpu',
+      label: 'CPU',
+      value: `${Math.round(fraction * 100)}%`,
+      tone: fraction >= CPU_CRITICAL_FRACTION ? 'critical' : fraction >= CPU_WARN_FRACTION ? 'warn' : 'normal',
+    });
   }
-  const lowest = usage?.volumes.reduce<number | null>(
+  const used = usage.memory.usedBytes;
+  if (typeof used === 'number') {
+    stats.push({
+      kind: 'memory',
+      label: 'RAM',
+      value: `${Math.round(memoryGb(used))}/${Math.round(memoryGb(usage.memory.totalBytes))} GB`,
+      tone: usage.memory.pressure === 'critical' ? 'critical' : usage.memory.pressure === 'warning' ? 'warn' : 'normal',
+    });
+  }
+  const lowest = usage.volumes.reduce<number | null>(
     (min, v) => (min === null ? v.freeBytes : Math.min(min, v.freeBytes)),
     null,
   );
-  if (lowest !== null && lowest !== undefined) {
-    parts.push(`${formatBytes(lowest)} free`);
-    if (lowest < LOW_DISK_BYTES && tone === 'normal') tone = 'warn';
+  if (lowest !== null) {
+    stats.push({
+      kind: 'disk',
+      label: 'Disk',
+      value: `${Math.round(lowest / 1e9)} GB free`,
+      tone: lowest < DISK_CRITICAL_BYTES ? 'critical' : lowest < LOW_DISK_BYTES ? 'warn' : 'normal',
+    });
   }
-  return { parts, tone };
+  return stats;
 }
 
 export interface BudgetRow {

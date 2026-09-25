@@ -89,6 +89,7 @@ const usage = () => ({
     pressure: 'normal',
   },
   load: { avg1: 6.2, avg5: 5.4, avg15: 4.9, cpus: 14 },
+  cpu: { usage: 0.34, cores: 14 },
   sampledAt: new Date().toISOString(),
 });
 

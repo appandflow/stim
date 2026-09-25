@@ -6,7 +6,7 @@ import {
   filterWorkspaces,
   filtersActive,
   gridRows,
-  macUsageSummary,
+  machineStats,
   mergeWorkspaces,
   parseFilters,
   projectNames,
@@ -157,30 +157,42 @@ describe('parseFilters', () => {
   });
 });
 
-describe('macUsageSummary', () => {
-  const usage = (memory: Partial<MachineUsage['memory']>, ...free: number[]): MachineUsage => ({
+describe('machineStats', () => {
+  const usage = (
+    memory: Partial<MachineUsage['memory']>,
+    cpuUsage: number | null,
+    ...free: number[]
+  ): MachineUsage => ({
     volumes: free.map((freeBytes, i) => ({ mount: `/v${i}`, holds: [], freeBytes, totalBytes: 1e12 })),
     memory: { totalBytes: 48 * 2 ** 30, usedBytes: 23.4 * 2 ** 30, pressure: 'normal', ...memory },
     load: { avg1: 1, avg5: 1, avg15: 1, cpus: 8 },
+    cpu: { usage: cpuUsage, cores: 8 },
     sampledAt: '2026-09-25T00:00:00.000Z',
   });
-  const capacity = { liveCount: 0, committedMb: 0, totalMemoryMb: 49152, overCapacity: false };
 
-  it("reads live workspaces, the Mac's memory used and the lowest free space, and warns below 20 GB", () => {
-    expect(macUsageSummary({ ...payload, capacity }, usage({}, 212e9, 500e9))).toEqual({
-      parts: ['0 live', '23.4/48 GB', '212 GB free'],
-      tone: 'normal',
-    });
-    expect(macUsageSummary({ ...payload, capacity }, usage({}, 14e9)).tone).toBe('warn');
-    expect(macUsageSummary({ ...payload, capacity }, null)).toEqual({ parts: ['0 live'], tone: 'normal' });
+  it('reads CPU busy fraction, memory used and the lowest free space, and warns below their thresholds', () => {
+    expect(machineStats(usage({}, 0.34, 212e9, 500e9))).toEqual([
+      { kind: 'cpu', label: 'CPU', value: '34%', tone: 'normal' },
+      { kind: 'memory', label: 'RAM', value: '23/48 GB', tone: 'normal' },
+      { kind: 'disk', label: 'Disk', value: '212 GB free', tone: 'normal' },
+    ]);
+    expect(machineStats(usage({}, 0.85, 212e9)).find((s) => s.kind === 'cpu')?.tone).toBe('warn');
+    expect(machineStats(usage({}, 0.99, 212e9)).find((s) => s.kind === 'cpu')?.tone).toBe('critical');
+    expect(machineStats(usage({}, 0.34, 14e9)).find((s) => s.kind === 'disk')?.tone).toBe('warn');
+    expect(machineStats(usage({}, 0.34, 2e9)).find((s) => s.kind === 'disk')?.tone).toBe('critical');
+    expect(machineStats(null)).toEqual([]);
   });
 
-  it('colors by memory pressure, and leaves memory out when the server does not report it', () => {
-    expect(macUsageSummary(null, usage({ pressure: 'warning' }, 212e9)).tone).toBe('warn');
-    expect(macUsageSummary(null, usage({ pressure: 'critical' }, 14e9)).tone).toBe('critical');
-    const older = usage({}, 212e9);
+  it('colors by memory pressure, and leaves a stat out when the server does not report it', () => {
+    expect(machineStats(usage({ pressure: 'warning' }, 0.1, 212e9)).find((s) => s.kind === 'memory')?.tone).toBe(
+      'warn',
+    );
+    expect(machineStats(usage({ pressure: 'critical' }, 0.1, 14e9)).find((s) => s.kind === 'memory')?.tone).toBe(
+      'critical',
+    );
+    const older = usage({}, null, 212e9);
     delete (older.memory as Partial<MachineUsage['memory']>).usedBytes;
-    expect(macUsageSummary(null, older).parts).toEqual(['212 GB free']);
+    expect(machineStats(older).map((s) => s.kind)).toEqual(['disk']);
   });
 });
 

@@ -1,9 +1,10 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Icon } from '@/components/icon';
+import { MachineStatsRow } from '@/components/machine-stats';
 import type { PairedConnection } from '@/hooks/mac-connection';
 import type { ConnectionState } from '@/lib/connection';
-import { macUsageSummary } from '@/lib/home';
+import { machineStats } from '@/lib/home';
 import { useColors, type Colors } from '@/theme';
 
 export function connectionColor(state: ConnectionState, missing: boolean, colors: Colors): string {
@@ -14,17 +15,13 @@ export function connectionColor(state: ConnectionState, missing: boolean, colors
 
 export function MacChip({ mac, onPress }: { mac: PairedConnection; onPress: () => void }) {
   const colors = useColors();
-  const summary = macUsageSummary(mac.status, mac.usage);
   const dot = connectionColor(mac.state, mac.missing, colors);
   const name = mac.mac.name;
-  const detailColor =
-    mac.state.kind !== 'open' || summary.tone === 'normal'
-      ? colors.secondary
-      : summary.tone === 'critical'
-        ? colors.error
-        : colors.warn;
-  const detail =
-    mac.state.kind === 'open' ? summary.parts.join(' \u00B7 ') || 'Loading' : describeState(mac.state, mac.missing);
+  const open = mac.state.kind === 'open';
+  const stats = open ? machineStats(mac.usage) : [];
+  const detail = open
+    ? stats.map((s) => `${s.label} ${s.value}`).join(', ') || 'Loading'
+    : describeState(mac.state, mac.missing);
   return (
     <Pressable
       onPress={onPress}
@@ -44,9 +41,13 @@ export function MacChip({ mac, onPress }: { mac: PairedConnection; onPress: () =
         <Text style={[styles.name, { color: colors.text }]} numberOfLines={1}>
           {name}
         </Text>
-        <Text style={[styles.detail, { color: detailColor }]} numberOfLines={1}>
-          {detail}
-        </Text>
+        {open && stats.length > 0 ? (
+          <MachineStatsRow usage={mac.usage} />
+        ) : (
+          <Text style={[styles.detail, { color: colors.secondary }]} numberOfLines={1}>
+            {open ? 'Loading' : detail}
+          </Text>
+        )}
       </View>
     </Pressable>
   );

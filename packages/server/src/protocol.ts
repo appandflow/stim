@@ -203,6 +203,11 @@ export interface MachineUsage {
    */
   memory: { totalBytes: number; usedBytes: number | null; pressure: MemoryPressure | null };
   load: { avg1: number; avg5: number; avg15: number; cpus: number };
+  /**
+   * `usage` is the Mac's overall CPU busy fraction (0..1), from the tick delta between this call and the
+   * previous one. Null on the first call of a server process, since there is no previous sample yet.
+   */
+  cpu: { usage: number | null; cores: number };
   sampledAt: string;
 }
 
@@ -466,7 +471,7 @@ export function protocolJsonSchema(): JsonSchema {
       },
       MachineUsage: {
         type: 'object',
-        required: ['volumes', 'memory', 'load', 'sampledAt'],
+        required: ['volumes', 'memory', 'load', 'cpu', 'sampledAt'],
         additionalProperties: false,
         properties: {
           volumes: {
@@ -502,6 +507,15 @@ export function protocolJsonSchema(): JsonSchema {
               avg5: { type: 'number' },
               avg15: { type: 'number' },
               cpus: { type: 'integer' },
+            },
+          },
+          cpu: {
+            type: 'object',
+            required: ['usage', 'cores'],
+            additionalProperties: false,
+            properties: {
+              usage: { type: ['number', 'null'] },
+              cores: { type: 'integer' },
             },
           },
           sampledAt: { type: 'string', format: 'date-time' },

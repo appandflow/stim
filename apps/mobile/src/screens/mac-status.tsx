@@ -4,6 +4,7 @@ import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-nat
 import { ConnectionBanner } from '@/components/connection-banner';
 import { Icon } from '@/components/icon';
 import { connectionColor, describeState } from '@/components/mac-chip';
+import { MachineStatsRow } from '@/components/machine-stats';
 import { useMacById } from '@/hooks/mac-connection';
 import { budgetRows, formatBytes, LOW_DISK_BYTES, memoryGb, type BudgetRow } from '@/lib/home';
 import { tildeHome } from '@/lib/paths';
@@ -73,6 +74,7 @@ export function MacStatus({ id }: { id: string }) {
         {mac.endpoint}
       </Text>
       <ConnectionBanner state={state} />
+      {usage ? <MachineStatsRow usage={usage} large /> : null}
 
       {capacity ? (
         <Section title="Capacity">
