@@ -591,7 +591,8 @@ export async function acquireIosArtifact(
         mutatingSteps.push('prebuild');
       }
 
-      if (buildScheme !== undefined) {
+      // A bare (non-Expo) project's ios/ never regenerates; ios.ts already validated --scheme against it.
+      if (isExpo && buildScheme !== undefined) {
         const project = d.discoverXcodeProject(root);
         if (project.error) fail({ ...project.error, build: buildFailure });
         const schemeError = d.resolveScheme(project, { scheme: buildScheme }).error;

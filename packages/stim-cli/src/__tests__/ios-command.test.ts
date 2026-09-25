@@ -308,7 +308,6 @@ function harness(overrides: LooseDeps = {}) {
       record('uploadRemote', args);
       return { uploaded: true };
     },
-    needsPrebuild: () => false,
     planPrebuild: () => 'none',
     runPrebuild: async (...args) => {
       record('runPrebuild', args);
@@ -3413,15 +3412,13 @@ describe('explicit Xcode schemes', () => {
     expect(selected.calls.order).not.toContain('loadProjectProvider');
   });
 
-  // The scheme is validated against the native project as it stands after any prebuild regeneration
-  // (appandflow/stim#1146), so the refusal now lands after the cache-miss and prebuild steps, not before
-  // device boot -- but still before pod install or the native compile.
-  test('an unknown explicit scheme refuses before pod install or the native build', async () => {
+  test('for an Expo project, an unknown explicit scheme refuses before pod install or the native build', async () => {
     reserve();
     const result = await run(
       { scheme: 'unknown', json: true },
       {
         ...schemeDeps,
+        detectIsExpo: () => true,
         resolveScheme: () => ({
           error: {
             code: 'STIM_NO_SCHEME',
@@ -3446,15 +3443,14 @@ describe('explicit Xcode schemes', () => {
     expect(result.calls.order).not.toContain('buildIos');
   });
 
-  // Nothing is regenerated on a cache hit, so there is nothing stale to re-check: the scheme that was
-  // valid when this cache entry was built is still the one named by its (unchanged) cache key.
-  test('a matching explicit-scheme cache hit is installed without re-validating the scheme', async () => {
+  test('for an Expo project, a matching explicit-scheme cache hit is installed without re-validating the scheme', async () => {
     reserve();
     let resolveSchemeCalls = 0;
     const result = await run(
       { scheme: 'App Staging', json: true },
       {
         ...schemeDeps,
+        detectIsExpo: () => true,
         resolveScheme: () => {
           resolveSchemeCalls++;
           return { scheme: 'App Staging' };
@@ -3468,49 +3464,62 @@ describe('explicit Xcode schemes', () => {
     expect(resolveSchemeCalls).toBe(0);
   });
 
+  const NO_SCHEME_ERROR = {
+    error: {
+      code: 'STIM_NO_SCHEME',
+      message: 'No shared Xcode scheme named "App Staging". Available schemes: App.',
+      remedy: 'Pass an exact available name with --scheme.',
+    },
+  } as const;
+  const SCHEME_OK = { scheme: 'App Staging', schemes: ['App', 'App Staging'] } as const;
+
   test('a config change that adds the requested scheme only after regeneration is accepted, not refused early', async () => {
     reserve();
-    let planned: unknown[] = [];
-    const result = await run(
-      { scheme: 'App Staging', json: true },
-      {
-        detectIsExpo: () => true,
-        planPrebuild: (...args) => {
-          planned = args;
-          return 'regenerate';
-        },
-        readPodState: () => ({ hasPodfile: false, lockText: null, manifestText: null }),
-        discoverXcodeProject: () => ({ kind: 'workspace', flag: '-workspace', path: '/app/ios/App.xcworkspace' }),
-        resolveScheme: () => ({ scheme: 'App Staging', schemes: ['App', 'App Staging'] }),
-      },
-    );
-    expect(result.exitCode).toBeNull();
-    expect(planned[1]).toBe('ios');
-    expect(result.calls.args.buildIos.scheme).toBe('App Staging');
-    expect(result.calls.order.indexOf('runPrebuild')).toBeLessThan(result.calls.order.indexOf('buildIos'));
-  });
-
-  test('a config change that removes the requested scheme by regeneration is refused, not accepted from the stale dir', async () => {
-    reserve();
+    // A stale ios/ already exists, so an unfixed pre-flight check (which does not bypass an existing
+    // dir) would validate against it, before regeneration adds the requested scheme.
+    mkdirSync(join(root, 'ios'), { recursive: true });
+    let regenerated = false;
     const result = await run(
       { scheme: 'App Staging', json: true },
       {
         detectIsExpo: () => true,
         planPrebuild: () => 'regenerate',
         readPodState: () => ({ hasPodfile: false, lockText: null, manifestText: null }),
+        runPrebuild: async () => {
+          regenerated = true;
+          return { ok: true, durationMs: 42000 };
+        },
         discoverXcodeProject: () => ({ kind: 'workspace', flag: '-workspace', path: '/app/ios/App.xcworkspace' }),
-        resolveScheme: () => ({
-          error: {
-            code: 'STIM_NO_SCHEME',
-            message: 'No shared Xcode scheme named "App Staging". Available schemes: App.',
-            remedy: 'Pass an exact available name with --scheme.',
-          },
-        }),
+        resolveScheme: () => (regenerated ? SCHEME_OK : NO_SCHEME_ERROR),
+      },
+    );
+    expect(result.exitCode).toBeNull();
+    expect(regenerated).toBe(true);
+    expect(result.calls.args.buildIos.scheme).toBe('App Staging');
+    expect(result.calls.order.indexOf('runPrebuild')).toBeLessThan(result.calls.order.indexOf('buildIos'));
+  });
+
+  test('a config change that removes the requested scheme by regeneration is refused, not accepted from the stale dir', async () => {
+    reserve();
+    mkdirSync(join(root, 'ios'), { recursive: true });
+    let regenerated = false;
+    const result = await run(
+      { scheme: 'App Staging', json: true },
+      {
+        detectIsExpo: () => true,
+        planPrebuild: () => 'regenerate',
+        readPodState: () => ({ hasPodfile: false, lockText: null, manifestText: null }),
+        runPrebuild: async () => {
+          regenerated = true;
+          return { ok: true, durationMs: 42000 };
+        },
+        discoverXcodeProject: () => ({ kind: 'workspace', flag: '-workspace', path: '/app/ios/App.xcworkspace' }),
+        resolveScheme: () => (regenerated ? NO_SCHEME_ERROR : SCHEME_OK),
       },
     );
     expect(result.exitCode).toBe(1);
     expect(parseFirst(result.logs).code).toBe('STIM_NO_SCHEME');
-    expect(result.calls.order).toContain('runPrebuild');
+    expect(regenerated).toBe(true);
     expect(result.calls.order).not.toContain('runPodInstall');
     expect(result.calls.order).not.toContain('buildIos');
   });
@@ -3842,7 +3851,6 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
         { scheme },
         {
           detectIsExpo: () => true,
-          needsPrebuild: () => true,
           planPrebuild: () => 'generate',
           readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
           fingerprintProject: shifting(),

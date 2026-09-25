@@ -210,9 +210,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     });
 }
 
-// The scheme's existence is checked in acquireIosArtifact, after any prebuild regeneration, so it
-// reads the current native dir instead of a stale one about to be regenerated.
-function explicitSchemeRefusal(scheme: string | undefined): FailArgs | null {
+function explicitSchemeRefusal(root: string, scheme: string | undefined, isExpo: boolean, d: IosDeps): FailArgs | null {
   if (scheme === undefined) return null;
   if (!scheme.trim()) {
     return {
@@ -221,7 +219,12 @@ function explicitSchemeRefusal(scheme: string | undefined): FailArgs | null {
       remedy: 'Pass the exact scheme name shown by xcodebuild -list.',
     };
   }
-  return null;
+  // An Expo project's ios/ can be regenerated before the build; that check runs in
+  // acquireIosArtifact, after regeneration, instead of against this possibly-stale read.
+  if (isExpo) return null;
+  const project = d.discoverXcodeProject(root);
+  if (project.error) return project.error;
+  return d.resolveScheme(project, { scheme }).error ?? null;
 }
 
 function iosSlotLogFile(root: string, slot: string): string {
@@ -468,7 +471,7 @@ async function runIos(
   const waitSeconds = waitParsed.seconds;
 
   const isExpo = d.detectIsExpo(root);
-  const schemeRefusal = explicitSchemeRefusal(buildScheme);
+  const schemeRefusal = explicitSchemeRefusal(root, buildScheme, isExpo, d);
   if (schemeRefusal) return fail(schemeRefusal);
   const remoteBackend = physical ? null : (opts.remote ?? remoteIosSetting(settings));
   const viewer = resolveSimulatorAppFlag(opts.simulatorApp, physical, remoteBackend);
