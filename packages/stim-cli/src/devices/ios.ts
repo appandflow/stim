@@ -366,6 +366,14 @@ export function iosRuntimeMatches(runtime: IosRuntime, requested: string): boole
   return runtime.version === requested || runtime.name === requested;
 }
 
+function bestIphone(candidates: IosDeviceType[]): IosDeviceType | undefined {
+  return candidates.toSorted((a, b) => {
+    const ra = rankIphone(a.name),
+      rb = rankIphone(b.name);
+    return rb.gen - ra.gen || rb.variant - ra.variant || b.name.localeCompare(a.name, undefined, { numeric: true });
+  })[0];
+}
+
 export function pickDefaultIosCreation(
   _deviceTypes: IosDeviceType[],
   runtimes: IosRuntime[],
@@ -375,16 +383,24 @@ export function pickDefaultIosCreation(
     String(b.version).localeCompare(String(a.version), undefined, { numeric: true }),
   );
   const wantedRts = runtime ? rts.filter((r) => iosRuntimeMatches(r, runtime)) : rts;
+  // Maintainer decision (#1172): with no explicit device type, prefer the newest runtime
+  // offering a regular numbered iPhone ("iPhone NN ...") over a newer runtime whose only
+  // iPhone is a special model (e.g. "iPhone Duo"). Fall back to special models only when
+  // no runtime offers a numbered one.
+  if (!deviceType) {
+    for (const rt of wantedRts) {
+      const numbered = (rt.supportedDeviceTypes || []).filter(
+        (d) => /^iPhone/i.test(d.name) && rankIphone(d.name).gen >= 0,
+      );
+      const best = bestIphone(numbered);
+      if (best !== undefined) return { deviceTypeId: best.identifier, runtimeId: rt.identifier };
+    }
+  }
   for (const rt of wantedRts) {
     const supported = (rt.supportedDeviceTypes || []).filter((d) =>
       deviceType ? d.name === deviceType : /^iPhone/i.test(d.name),
     );
-    if (supported.length === 0) continue;
-    const best = supported.toSorted((a, b) => {
-      const ra = rankIphone(a.name),
-        rb = rankIphone(b.name);
-      return rb.gen - ra.gen || rb.variant - ra.variant || b.name.localeCompare(a.name, undefined, { numeric: true });
-    })[0];
+    const best = bestIphone(supported);
     if (best === undefined) continue;
     return { deviceTypeId: best.identifier, runtimeId: rt.identifier };
   }
