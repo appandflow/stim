@@ -1519,12 +1519,13 @@ describe('frames.subscribe', () => {
 
   describe.skipIf(!fakeTailscale)('emulator screenshots over gRPC', () => {
     test.each([
-      { device: 'a phone', posture: 0, folded: false, reported: undefined },
-      { device: 'a folded foldable', posture: 1, folded: true, reported: 'folded' },
-      { device: 'an unfolded foldable', posture: 3, folded: false, reported: 'unfolded' },
+      { device: 'a phone', posture: 0, folded: false, refused: false, reported: undefined },
+      { device: 'a folded foldable', posture: 1, folded: true, refused: false, reported: 'folded' },
+      { device: 'an unfolded foldable', posture: 3, folded: false, refused: false, reported: 'unfolded' },
+      { device: 'an emulator that refuses POSTURE', posture: 3, folded: false, refused: true, reported: undefined },
     ])(
       'reads an emulator screenshot over gRPC with the discovery token and converts it to JPEG: $device',
-      async ({ posture, folded, reported }) => {
+      async ({ posture, folded, refused, reported }) => {
         const png = Buffer.from('not really a png');
         const requests: { path: string; authorization: string | undefined; body: Buffer }[] = [];
         const grpc = createHttp2Server();
@@ -1548,13 +1549,14 @@ describe('frames.subscribe', () => {
               0x04,
               ...(folded ? [0x3a, 0x06, 0x08, 0xb8, 0x08, 0x10, 0xac, 0x10] : []),
             ]);
-            const message = String(headers[':path']).endsWith('/getPhysicalModel')
+            const physical = String(headers[':path']).endsWith('/getPhysicalModel');
+            const message = physical
               ? Buffer.from([0x08, 0x10, 0x1a, 0x06, 0x0a, 0x04, ...value])
               : Buffer.concat([Buffer.from([0x0a, format.length]), format, Buffer.from([0x22, png.length]), png]);
             const frameHeader = Buffer.alloc(5);
             frameHeader.writeUInt32BE(message.length, 1);
             stream.respond({ ':status': 200, 'content-type': 'application/grpc' }, { waitForTrailers: true });
-            stream.on('wantTrailers', () => stream.sendTrailers({ 'grpc-status': '0' }));
+            stream.on('wantTrailers', () => stream.sendTrailers({ 'grpc-status': physical && refused ? '12' : '0' }));
             stream.end(Buffer.concat([frameHeader, message]));
           });
         });
@@ -1607,9 +1609,9 @@ describe('frames.subscribe', () => {
           ]);
           expect([...requests[0]!.body]).toEqual([0, 0, 0, 0, 2, 0x08, 0x10]);
           expect([...requests[1]!.body]).toEqual([0, 0, 0, 0, 6, 0x18, 0x80, 0x0a, 0x20, 0x80, 0x0a]);
-          expect(requests.filter((request) => request.path.endsWith('/getPhysicalModel'))).toHaveLength(1);
           const seen = requests.length;
           await until(() => requests.length > seen + 1);
+          expect(requests.filter((request) => request.path.endsWith('/getPhysicalModel'))).toHaveLength(1);
           expect(client.socket.readyState).toBe(WebSocket.OPEN);
           const [sips] = toolRuns();
           expect(sips?.tool).toBe('sips');

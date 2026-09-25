@@ -60,8 +60,8 @@ reload and stop a workspace:
   warnings, remote sessions, and each
   device: a running device with the latest frame the server sends for it,
   fitted to the screen's width, and **Folded** or **Unfolded** for an iPhone
-  Duo or an Android foldable emulator, a stopped one as a single row. Under a running simulator or emulator that
-  Stim owns, **Agent actions** lists the latest agent-device actions on it
+  Duo or an Android foldable emulator, a stopped one as a single row. Under a
+  running simulator or emulator that Stim owns, **Agent actions** lists the latest agent-device actions on it
   (taps, typing, app opens, screenshots, failed commands), from
   `logs.subscribe` with `sources: ["agent"]`. The **...** menu opens the logs, copies the
   full path, shows errors, or opens the machine's status. With control, it

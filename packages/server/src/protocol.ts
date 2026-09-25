@@ -352,8 +352,8 @@ export interface FrameEvent {
   data: string;
   /**
    * An iPhone Duo's or Android foldable emulator's posture. A Duo reports the panel it lit: the cover when
-   * folded, the inner panel when unfolded. An emulator with a hinge reports folded while it shows only its
-   * outer display, including a half-open one as unfolded.
+   * folded, the inner panel when unfolded. An emulator with a hinge reports `folded` while it shows only its
+   * outer display, and `unfolded` otherwise, including half open.
    */
   posture?: 'folded' | 'unfolded';
 }

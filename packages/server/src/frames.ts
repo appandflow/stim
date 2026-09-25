@@ -451,7 +451,9 @@ function emulatorCapturer(serial: string, env: NodeJS.ProcessEnv, limits: FrameL
       if (!endpoint) {
         throw new Error(`${serial} has no gRPC endpoint. Frames appear after Stim next boots this emulator.`);
       }
-      hinged ??= await call(endpoint, 'getPhysicalModel', grpcMessage([1 << 3, 16])).then(hasHinge, () => false);
+      hinged ??= await call(endpoint, 'getPhysicalModel', grpcMessage([1 << 3, 16]))
+        .then(hasHinge)
+        .catch(() => false);
       const { png, folded } = screenshotReply(
         await call(endpoint, 'getScreenshot', grpcMessage([3 << 3, ...varint(MAX_EDGE), 4 << 3, ...varint(MAX_EDGE)])),
       );
