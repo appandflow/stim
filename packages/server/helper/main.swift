@@ -13,12 +13,14 @@ import IOSurface
 // "jpeg": bool, "jpegFps": n, "video": bool, "bitrate": bits per second}, where fps 0
 // pauses frames; {"keyframe": true} to make the next video frame a keyframe; or an input:
 // {"input": "touch", "phase": "down|move|up", "x": 0-1, "y": 0-1, "display": n} with x
-// and y on the upright screen. A simulator also takes {"input": "text", "text": s},
-// printable ASCII where "\n" is Return, "\t" is Tab and "\u{8}" is Delete, and
-// {"input": "button", "button": "home|lock"}.
+// and y on the upright screen; {"input": "text", "text": s}, printable ASCII where "\n"
+// is Return, "\t" is Tab and "\u{8}" is Delete; and {"input": "button", "button":
+// "home|lock"}, or on an emulator also "back|app-switch". An emulator types and presses
+// buttons only with a hardware keyboard.
 // stdout carries messages framed as a 4-byte big-endian length, then a kind byte:
 // 1 is a frame (2-byte width, 2-byte height, JPEG bytes), 2 is a JSON notice
-// ({"error": message} before a failed exit), 3 is an H.264 access unit (1-byte
+// ({"error": message} before a failed exit, {"inputError": message}, or on an emulator
+// {"keyboard": "yes|no"} once it reports its hardware), 3 is an H.264 access unit (1-byte
 // flags with bit 0 set on a keyframe, 8-byte big-endian float capture time in
 // milliseconds since the epoch, 2-byte width, 2-byte height, Annex-B bytes).
 // The helper exits when stdin closes.
@@ -276,8 +278,9 @@ final class SimulatorSource {
 final class EmulatorSource {
   let serial: String
   let queue = DispatchQueue(label: "stim.frames.emulator")
+  let inputQueue = DispatchQueue(label: "stim.frames.emulator-input")
   var input: EmulatorInput?
-  var screenSize: CGSize?
+  private var status: (size: CGSize?, keyboard: Bool)?
   private var stream: ScreenshotStream?
   private var generation = 0
   private var config = Config()
@@ -296,6 +299,11 @@ final class EmulatorSource {
 
   func start() {
     queue.async { self.connect() }
+    inputQueue.async {
+      if let status = self.inputClient().flatMap(self.readStatus) {
+        Output.notice(["keyboard": status.keyboard ? "yes" : "no"])
+      }
+    }
   }
 
   func configure(_ config: Config) {
@@ -427,8 +435,8 @@ func readCommands(_ source: Source) {
 }
 
 // macOS virtual key codes of a US keyboard, which SimulatorKit's
-// hidUsageForCGKeyCode turns into HID usages; shifted characters also hold
-// Shift (0x38).
+// hidUsageForCGKeyCode turns into HID usages and the emulator turns into evdev
+// keys; shifted characters also hold Shift (0x38).
 let keyCodes: [Character: (code: UInt16, shift: Bool)] = {
   var map: [Character: (UInt16, Bool)] = [:]
   let plain: [(String, UInt16)] = [
@@ -490,40 +498,69 @@ extension SimulatorSource: Source {
 
 extension EmulatorSource: Source {
   func input(_ command: Command) {
-    queue.async { self.apply(command) }
+    inputQueue.async { self.apply(command) }
   }
 
   private func apply(_ command: Command) {
-    if input == nil, let endpoint = EmulatorDiscovery.endpoint(serial: serial) { input = EmulatorInput(endpoint: endpoint) }
-    guard let input else { return Output.notice(["inputError": "\(serial) has no gRPC endpoint for input."]) }
+    guard let input = inputClient() else { return Output.notice(["inputError": "\(serial) has no gRPC endpoint for input."]) }
     switch command {
     case .touch(let phase, let point, let index):
       guard index == 0 else { return Output.notice(["inputError": "Input goes to the emulator's main display only."]) }
-      guard let size = displaySize(input) else {
+      guard let size = readStatus(input)?.size else {
         return Output.notice(["inputError": "\(serial) did not report its display size."])
       }
-      let pixel = displayPixel(point, rotation: latest?.rotation ?? 0, displaySize: size)
+      let rotation = queue.sync { latest?.rotation ?? 0 }
+      let pixel = displayPixel(point, rotation: rotation, displaySize: size)
       input.call("sendTouch", InputMessages.touch(x: pixel.x, y: pixel.y, pressed: phase != .up))
-    case .text, .button:
-      Output.notice(["inputError": "stim-server types text and presses buttons on an emulator with adb."])
+    case .text(let text):
+      guard readStatus(input)?.keyboard == true else { return noKeyboard() }
+      for character in text {
+        guard let key = keyCodes[character] else { continue }
+        if key.shift { send(input, InputMessages.key(macKeyCode: 0x38, down: true)) }
+        send(input, InputMessages.key(macKeyCode: key.code, down: true))
+        send(input, InputMessages.key(macKeyCode: key.code, down: false))
+        if key.shift { send(input, InputMessages.key(macKeyCode: 0x38, down: false)) }
+        // The emulator reorders a shifted key and the next one when they arrive back to back.
+        usleep(30_000)
+      }
+    case .button(let name):
+      guard readStatus(input)?.keyboard == true else { return noKeyboard() }
+      let keys = ["home": "GoHome", "back": "GoBack", "app-switch": "AppSwitch", "lock": "Power"]
+      guard let key = keys[name] else { return Output.notice(["inputError": "Android has no \(name) button."]) }
+      input.call("sendKey", InputMessages.namedKey(key))
     case .config, .keyframe:
       break
     }
   }
 
-  private func displaySize(_ input: EmulatorInput) -> CGSize? {
-    if let size = screenSize { return size }
+  private func send(_ input: EmulatorInput, _ key: Data) {
     let done = DispatchSemaphore(value: 0)
-    var reported: CGSize?
-    input.call("getStatus", Data()) { response in
-      if let size = response.flatMap(InputMessages.displaySize(fromStatus:)) {
-        reported = CGSize(width: size.width, height: size.height)
-      }
+    input.call("sendKey", key) { _ in done.signal() }
+    _ = done.wait(timeout: .now() + 5)
+  }
+
+  private func noKeyboard() {
+    Output.notice(["inputError": "\(serial) has no hardware keyboard (hw.keyboard=no), so it drops key events."])
+  }
+
+  private func inputClient() -> EmulatorInput? {
+    if input == nil, let endpoint = EmulatorDiscovery.endpoint(serial: serial) { input = EmulatorInput(endpoint: endpoint) }
+    return input
+  }
+
+  private func readStatus(_ input: EmulatorInput) -> (size: CGSize?, keyboard: Bool)? {
+    if let status { return status }
+    let done = DispatchSemaphore(value: 0)
+    var response: Data?
+    input.call("getStatus", Data()) { reply in
+      response = reply
       done.signal()
     }
     _ = done.wait(timeout: .now() + 5)
-    screenSize = reported
-    return reported
+    guard let response else { return nil }
+    let size = InputMessages.displaySize(fromStatus: response).map { CGSize(width: $0.width, height: $0.height) }
+    status = (size, InputMessages.hasKeyboard(fromStatus: response))
+    return status
   }
 }
 

@@ -98,18 +98,27 @@ import Testing
     #expect([UInt8](InputMessages.text("Hi")) == [0x2a, 0x02, 0x48, 0x69])
   }
 
-  @Test func readsTheDisplaySizeFromHardwareConfig() {
+  @Test func readsTheDisplaySizeAndKeyboardFromHardwareConfig() {
     func entry(_ key: String, _ value: String) -> Data {
       let k = Data(key.utf8)
       let v = Data(value.utf8)
       let body = Data([0x0a, UInt8(k.count)]) + k + Data([0x12, UInt8(v.count)]) + v
       return Data([0x0a, UInt8(body.count)]) + body
     }
+    func status(_ list: Data) -> Data {
+      Data([0x0a, 0x04]) + Data("35.6".utf8) + Data([0x18, 0x01, 0x2a, UInt8(list.count)]) + list
+    }
     let list = entry("hw.cpu.ncore", "4") + entry("hw.lcd.height", "2400") + entry("hw.lcd.width", "1080")
-    let status = Data([0x0a, 0x04]) + Data("35.6".utf8) + Data([0x18, 0x01, 0x2a, UInt8(list.count)]) + list
-    let size = InputMessages.displaySize(fromStatus: status)
+    let size = InputMessages.displaySize(fromStatus: status(list))
     #expect(size?.width == 1080)
     #expect(size?.height == 2400)
+    #expect(InputMessages.hasKeyboard(fromStatus: status(list + entry("hw.keyboard", "true"))))
+    #expect(!InputMessages.hasKeyboard(fromStatus: status(list + entry("hw.keyboard", "false"))))
+    #expect(!InputMessages.hasKeyboard(fromStatus: status(list)))
+  }
+
+  @Test func encodesANamedKeyAsAKeypress() {
+    #expect([UInt8](InputMessages.namedKey("GoHome")) == [0x10, 0x02, 0x22, 0x06] + Array("GoHome".utf8))
   }
 
   @Test func sendsOnlyPrintableAsciiAsText() {

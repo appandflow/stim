@@ -21,7 +21,7 @@ let failDelete: boolean;
 let packageOutput: string;
 let cleanupResult: string;
 const image = `system-images;android-36;google_apis;${hostSystemImageArch()}`;
-const configuration = avdPoolConfiguration(8, {});
+const configuration = avdPoolConfiguration(8, { 'hw.keyboard': 'yes' });
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-android-pool-'));
@@ -109,14 +109,14 @@ afterEach(() => {
   }
 });
 
-function makeAvd(name: string): void {
+function makeAvd(name: string, keyboard = 'hw.keyboard=yes\n'): void {
   avds.add(name);
   const directory = join(home, 'avd', `${name}.avd`);
   mkdirSync(directory, { recursive: true });
   writeFileSync(join(home, 'avd', `${name}.ini`), `path=${directory}\n`);
   writeFileSync(
     join(directory, 'config.ini'),
-    `image.sysdir.1=${image.split(';').join('/')}\ndisk.dataPartition.size=8589934592\nhw.device.name=pixel_6\n`,
+    `image.sysdir.1=${image.split(';').join('/')}\ndisk.dataPartition.size=8589934592\nhw.device.name=pixel_6\n${keyboard}`,
   );
 }
 
@@ -150,6 +150,22 @@ test('adoption recovers a stopped AVD from a dead deletion owner and retains cle
   const retried = await ensureOwnedDevice({ ...options, project: getProject('/adopter') });
   expect(retried.adoptionPending).toBe(true);
   expect(getProject('/adopter')?.platforms?.android?.adoptionPending).toBe(true);
+});
+
+test('adopting an AVD parked before the hardware keyboard default turns its keyboard on', async () => {
+  park('stim-source', { configuration: avdPoolConfiguration(8, {}) });
+  makeAvd('stim-source', 'hw.keyboard=no\n');
+  upsertProject('/adopter', {});
+  const adopted = await ensureOwnedDevice({
+    platform: 'android',
+    projectPath: '/adopter',
+    label: 'adopter',
+    settings: {},
+  });
+  expect(adopted).toMatchObject({ avdName: 'stim-source', adopted: true, poolConfiguration: configuration });
+  const config = readFileSync(join(home, 'avd', 'stim-source.avd', 'config.ini'), 'utf8');
+  expect(config.split('\n')).toContain('hw.keyboard=yes');
+  expect(config).not.toContain('hw.keyboard=no');
 });
 
 test.each([

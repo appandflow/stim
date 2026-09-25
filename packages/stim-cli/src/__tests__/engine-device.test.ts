@@ -1861,7 +1861,7 @@ describe('ensureOwnedDevice: android', () => {
         },
       });
       expect(readFileSync(join(process.env.ANDROID_AVD_HOME!, 'stim-app.avd', 'config.ini'), 'utf8')).toBe(
-        'hw.cpu.ncore=4\ndisk.dataPartition.size=8589934592\nhw.ramSize=3072\nhw.keyboard=yes\nvm.heapSize=512\n',
+        'hw.cpu.ncore=4\ndisk.dataPartition.size=8589934592\nhw.keyboard=yes\nhw.ramSize=3072\nvm.heapSize=512\n',
       );
     } finally {
       rmSync(root, { recursive: true, force: true });

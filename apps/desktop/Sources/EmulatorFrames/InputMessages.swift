@@ -5,6 +5,7 @@ import Foundation
 enum InputMessages {
   static let macKeyCodeType: UInt64 = 4
   static let keyup: UInt64 = 1
+  static let keypress: UInt64 = 2
 
   /// A MouseEvent on the main display. `pressed` sets the primary button; the
   /// emulator turns it into a single touch on a touchscreen device.
@@ -39,23 +40,42 @@ enum InputMessages {
     message([(1, macKeyCodeType), (2, down ? 0 : keyup), (3, UInt64(macKeyCode))])
   }
 
+  /// A KeyboardEvent that presses and releases the key a DOM key name such as
+  /// `GoHome` or `Power` names.
+  static func namedKey(_ key: String) -> Data {
+    var out = message([(2, keypress)])
+    appendBytes(field: 4, Data(key.utf8), to: &out)
+    return out
+  }
+
   /// The main display's size in pixels, read from `hw.lcd.width` and
   /// `hw.lcd.height` in an EmulatorStatus's hardwareConfig.
   static func displaySize(fromStatus bytes: Data) -> (width: Int, height: Int)? {
+    let config = hardwareConfig(fromStatus: bytes)
+    guard let width = config["hw.lcd.width"].flatMap({ Int($0) }), let height = config["hw.lcd.height"].flatMap({ Int($0) }),
+      width > 0, height > 0
+    else { return nil }
+    return (width, height)
+  }
+
+  /// Whether the emulator has a hardware keyboard (`hw.keyboard` in an
+  /// EmulatorStatus's hardwareConfig). Without one it drops every KeyboardEvent.
+  static func hasKeyboard(fromStatus bytes: Data) -> Bool {
+    hardwareConfig(fromStatus: bytes)["hw.keyboard"] == "true"
+  }
+
+  private static func hardwareConfig(fromStatus bytes: Data) -> [String: String] {
     var reader = ProtoReader(bytes)
-    var width: Int?
-    var height: Int?
+    var config: [String: String] = [:]
     while let (field, value) = reader.next() {
       guard field == 5, case .bytes(let list) = value else { continue }
       var entries = ProtoReader(list)
       while let (entryField, entryValue) = entries.next() {
         guard entryField == 1, case .bytes(let entry) = entryValue, let (key, value) = pair(entry) else { continue }
-        if key == "hw.lcd.width" { width = Int(value) }
-        if key == "hw.lcd.height" { height = Int(value) }
+        config[key] = value
       }
     }
-    guard let width, let height, width > 0, height > 0 else { return nil }
-    return (width, height)
+    return config
   }
 
   private static func pair(_ bytes: Data) -> (String, String)? {

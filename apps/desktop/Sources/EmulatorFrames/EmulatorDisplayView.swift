@@ -66,6 +66,8 @@ public final class EmulatorDisplayNSView: NSView {
   private var shown: (size: CGSize, rotation: Int, folded: CGSize?)?
   private var interactive = false
   private var input: EmulatorInput?
+  private var adb: AdbInput?
+  private var hasKeyboard: Bool?
   private var displaySize: CGSize?
   private var touchPoint: CGPoint?
   private var keysDown: Set<UInt16> = []
@@ -227,6 +229,8 @@ public final class EmulatorDisplayNSView: NSView {
     keysDown = []
     input?.close()
     input = nil
+    adb = nil
+    hasKeyboard = nil
     displaySize = nil
   }
 
@@ -236,10 +240,13 @@ public final class EmulatorDisplayNSView: NSView {
     let input = EmulatorInput(endpoint: endpoint)
     self.input = input
     input.call("getStatus", Data()) { [weak self, weak input] response in
-      let size = response.flatMap(InputMessages.displaySize(fromStatus:))
+      guard let response else { return }
+      let size = InputMessages.displaySize(fromStatus: response)
+      let keyboard = InputMessages.hasKeyboard(fromStatus: response)
       DispatchQueue.main.async {
-        guard let self, let size, input != nil, input === self.input else { return }
-        self.displaySize = CGSize(width: size.width, height: size.height)
+        guard let self, input != nil, input === self.input else { return }
+        if let size { self.displaySize = CGSize(width: size.width, height: size.height) }
+        self.hasKeyboard = keyboard
       }
     }
     return input
@@ -302,12 +309,23 @@ public final class EmulatorDisplayNSView: NSView {
 
   // Printable ASCII goes as text so the emulator picks the evdev keys and
   // Shift itself; other keys go as macOS key codes, which the emulator
-  // translates. Command and Control shortcuts stay with the Mac.
+  // translates. An emulator without a hardware keyboard drops both, so its
+  // keys go through `adb shell input`. Command and Control shortcuts stay with
+  // the Mac.
   public override func keyDown(with event: NSEvent) {
     guard !event.modifierFlags.contains(.command), !event.modifierFlags.contains(.control),
       let input = inputClient()
     else { return super.keyDown(with: event) }
-    if let text = event.characters, isPrintableASCII(text) {
+    let text = event.characters.flatMap { isPrintableASCII($0) ? $0 : nil }
+    if hasKeyboard == false, let serial {
+      let adb = self.adb ?? AdbInput(serial: serial)
+      self.adb = adb
+      if let text {
+        adb.text(text)
+      } else if let key = androidKeyEvent(macKeyCode: event.keyCode) {
+        adb.keyEvent(key)
+      }
+    } else if let text {
       input.call("sendKey", InputMessages.text(text))
     } else if !event.isARepeat {
       keysDown.insert(event.keyCode)
@@ -319,6 +337,63 @@ public final class EmulatorDisplayNSView: NSView {
     guard keysDown.remove(event.keyCode) != nil, let input = inputClient() else { return super.keyUp(with: event) }
     input.call("sendKey", InputMessages.key(macKeyCode: event.keyCode, down: false))
   }
+}
+
+func androidKeyEvent(macKeyCode: UInt16) -> String? {
+  let keys: [UInt16: String] = [
+    0x24: "KEYCODE_ENTER", 0x4C: "KEYCODE_ENTER", 0x30: "KEYCODE_TAB", 0x33: "KEYCODE_DEL",
+    0x75: "KEYCODE_FORWARD_DEL", 0x35: "KEYCODE_ESCAPE", 0x73: "KEYCODE_MOVE_HOME", 0x77: "KEYCODE_MOVE_END",
+    0x74: "KEYCODE_PAGE_UP", 0x79: "KEYCODE_PAGE_DOWN", 0x7B: "KEYCODE_DPAD_LEFT", 0x7C: "KEYCODE_DPAD_RIGHT",
+    0x7D: "KEYCODE_DPAD_DOWN", 0x7E: "KEYCODE_DPAD_UP",
+  ]
+  return keys[macKeyCode]
+}
+
+private final class AdbInput {
+  private let serial: String
+  private let queue = DispatchQueue(label: "stim.emulator-adb")
+
+  init(serial: String) {
+    self.serial = serial
+  }
+
+  // `adb shell` joins its arguments into one device shell command, so text
+  // goes single-quoted; `input text` reads `%s` as a space.
+  func text(_ text: String) {
+    let quoted = text.replacingOccurrences(of: " ", with: "%s").replacingOccurrences(of: "'", with: "'\\''")
+    run(["shell", "input", "text", "'\(quoted)'"])
+  }
+
+  func keyEvent(_ key: String) {
+    run(["shell", "input", "keyevent", key])
+  }
+
+  private func run(_ arguments: [String]) {
+    let serial = serial
+    queue.async {
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: Self.adbPath)
+      process.arguments = ["-s", serial] + arguments
+      process.standardInput = FileHandle.nullDevice
+      process.standardOutput = FileHandle.nullDevice
+      process.standardError = FileHandle.nullDevice
+      guard (try? process.run()) != nil else { return }
+      let timeout = DispatchWorkItem { if process.isRunning { process.terminate() } }
+      DispatchQueue.global().asyncAfter(deadline: .now() + 10, execute: timeout)
+      process.waitUntilExit()
+      timeout.cancel()
+    }
+  }
+
+  private static let adbPath: String = {
+    let environment = ProcessInfo.processInfo.environment
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    let sdks = [environment["ANDROID_HOME"], environment["ANDROID_SDK_ROOT"], "\(home)/Library/Android/sdk"]
+    for case let sdk? in sdks where FileManager.default.isExecutableFile(atPath: "\(sdk)/platform-tools/adb") {
+      return "\(sdk)/platform-tools/adb"
+    }
+    return "/opt/homebrew/bin/adb"
+  }()
 }
 
 func isPrintableASCII(_ text: String) -> Bool {

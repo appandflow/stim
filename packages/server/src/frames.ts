@@ -25,6 +25,8 @@ export interface Frame {
 
 export interface DeviceInput {
   send: (command: Record<string, unknown>) => void;
+  /** Whether the helper can type and press buttons on an emulator: once it reports a hardware keyboard. */
+  keys: () => boolean;
   detach: () => void;
 }
 
@@ -684,7 +686,11 @@ export class FramePool {
     if (helper === null) return null;
     const source = this.stream(helper, device);
     const detach = source.add({ frame: () => {}, delayed: () => {}, failed }, null);
-    return { send: (command) => source.send(command), detach };
+    return {
+      send: (command) => source.send(command),
+      keys: () => source.keyboard === true,
+      detach,
+    };
   }
 
   private stream(helper: string, device: Device): HelperSource {

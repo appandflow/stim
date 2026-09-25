@@ -183,6 +183,10 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         keys are protected. The emulator may normalize a valid
                         value. These overrides apply only to a newly created
                         AVD; existing and recovered AVDs are never rewritten.
+                        Unless these settings set hw.keyboard, every AVD Stim
+                        creates gets hw.keyboard=yes, so the emulator takes
+                        gRPC key events. The one rewrite: a parked AVD created
+                        before that default gets it when a workspace adopts it.
                         On displayless Linux, Stim launches with
                         -gpu swiftshader_indirect -noaudio; those arguments
                         override hw.gpu.enabled, hw.gpu.mode, hw.audioInput,

@@ -16,6 +16,7 @@ import {
   assertOwnedAvdStopped,
   avdPoolConfiguration,
   DEFAULT_AVD_DEVICE_PROFILE,
+  OWNED_AVD_CONFIG_DEFAULTS,
   ownedAvdDeviceProfile,
   ownedAvdMatchesConfiguration,
   pickDefaultSystemImage,
@@ -79,10 +80,16 @@ export async function ensureOwnedAndroidDevice({
   configureAvd: typeof configureNewOwnedAvd;
   teardownAvd: typeof teardownOwnedAvd;
 } & EmulatorLogging): Promise<OwnedDeviceRecord> {
-  const avdConfig = androidAvdConfigSetting(settings, settingsRoot);
+  const projectAvdConfig = androidAvdConfigSetting(settings, settingsRoot);
+  const avdConfig = { ...OWNED_AVD_CONFIG_DEFAULTS, ...projectAvdConfig };
   const requestedProfile = flags.deviceProfile || settings.android?.deviceProfile || null;
   const deviceProfile = requestedProfile ?? DEFAULT_AVD_DEVICE_PROFILE;
   const configuration = avdPoolConfiguration(androidDataPartitionSizeGbSetting(settings), avdConfig, deviceProfile);
+  const configurationBeforeDefaults = avdPoolConfiguration(
+    androidDataPartitionSizeGbSetting(settings),
+    projectAvdConfig,
+    deviceProfile,
+  );
   if (record?.setupIncomplete && record.avdName) {
     const avdName = record.avdName;
     const cleanup = teardownAvd(avdName, {
@@ -194,7 +201,11 @@ export async function ensureOwnedAndroidDevice({
       systemImage: flags.systemImage || settings.android?.systemImage,
     })?.pkg;
     const candidates = readParked('android')
-      .filter((entry) => entry.systemImage === systemImage && entry.configuration === configuration)
+      .filter(
+        (entry) =>
+          entry.systemImage === systemImage &&
+          (entry.configuration === configuration || entry.configuration === configurationBeforeDefaults),
+      )
       .toSorted((a, b) => a.parkedAt.localeCompare(b.parkedAt));
     for (const parked of candidates) {
       if (isLegacyDeletionClaim(parked.deletionClaim)) continue;
@@ -213,7 +224,7 @@ export async function ensureOwnedAndroidDevice({
       }
       if (
         ownedAvdSystemImage(parked.name) !== systemImage ||
-        !ownedAvdMatchesConfiguration(parked.name, configuration)
+        !ownedAvdMatchesConfiguration(parked.name, parked.configuration)
       ) {
         const result = teardownParkedAvd(parked.name);
         if (result.status === 'failed') out(phaseLine('device', `kept ${parked.name}: ${result.reason}`));
@@ -223,10 +234,23 @@ export async function ensureOwnedAndroidDevice({
         avdName: parked.name,
         deviceName: parked.name,
         owned: true,
-        poolConfiguration: configuration,
+        poolConfiguration: parked.configuration,
         adoptionPending: true,
       };
       if (!adoptParked({ platform: 'android', projectPath, slot, udid: parked.udid, device: adopted })) continue;
+      if (parked.configuration !== configuration) {
+        try {
+          configureAvd(parked.name, { dataPartitionSizeGb: androidDataPartitionSizeGbSetting(settings), avdConfig });
+          adopted.poolConfiguration = configuration;
+        } catch (error) {
+          out(
+            phaseLine(
+              'device',
+              `${parked.name} keeps its old AVD settings: ${String((error as Error)?.message || error)}`,
+            ),
+          );
+        }
+      }
       return {
         ...(await bootOwnedAvdOnFreshPort({
           avdName: parked.name,

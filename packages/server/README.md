@@ -327,9 +327,8 @@ lists as owned by a workspace. Nothing it sends reaches any other device.
   `input.text` takes up to 256 printable ASCII characters, where `\n` presses
   Return, `\t` Tab and `\b` Delete. `input.button` takes `home` or `lock`,
   and on Android also `back` or `app-switch`. Each answers `{}` once the input
-  is handed to the device: for a simulator, and for an emulator touch, that
-  is when the helper receives it, so a failure there shows only in the
-  server's log. A connection may send 120 inputs a second and type 40
+  is handed to the device: when it goes through the helper, that is when the
+  helper receives it, so a failure there shows only in the server's log. A connection may send 120 inputs a second and type 40
   characters a second, with a burst of 256; more fail with `limit-exceeded`.
 - `control.end` ends a session. The server also ends it with a
   `control-ended` event `{ "session", "reason", "message" }` after 5 minutes
@@ -350,8 +349,9 @@ streams its frames:
   still use SimulatorKit's legacy HID client. Text is typed key by key on a US
   layout. `lock` is the side button.
 - Emulators take touches through the emulator's gRPC `sendTouch`. Text and
-  buttons go through `adb -s <serial> shell input`, because Stim's AVDs have
-  no hardware keyboard and the emulator drops gRPC key events.
+  buttons go through gRPC `sendKey` when the emulator reports a hardware
+  keyboard, which AVDs Stim creates have. An emulator without one drops key
+  events, so for it text and buttons go through `adb -s <serial> shell input`.
 
 Every session start, takeover and end, and every refused `control.begin`,
 appends a line to the action log, with `action` set to `control.begin`,
