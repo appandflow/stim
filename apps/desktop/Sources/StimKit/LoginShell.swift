@@ -5,10 +5,10 @@ import Foundation
 /// as `ANDROID_HOME` that the shell profile sets.
 public enum LoginShell {
   /// Runs `zsh -lic` once and returns the environment it exports, or nil when
-  /// the shell fails to report one. The shell writes to a file rather than a
-  /// pipe because a background process started by a profile can keep a pipe
-  /// open after the shell exits.
-  public static func environment(shell: String = "/bin/zsh") async -> [String: String]? {
+  /// the shell fails to report one or has not exited after `timeout`. The shell
+  /// writes to a file rather than a pipe because a background process started
+  /// by a profile can keep a pipe open after the shell exits.
+  public static func environment(shell: String = "/bin/zsh", timeout: TimeInterval = 10) async -> [String: String]? {
     let file = FileManager.default.temporaryDirectory.appendingPathComponent("stim-login-env-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: file) }
     let process = Process()
@@ -21,14 +21,31 @@ public enum LoginShell {
       process.terminationHandler = { _ in done.resume() }
       do {
         try process.run()
+        // An interactive zsh ignores SIGTERM, so only SIGKILL stops a profile that never returns.
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+          if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+        }
       } catch {
         process.terminationHandler = nil
         done.resume()
       }
     }
-    guard let data = try? Data(contentsOf: file) else { return nil }
+    guard process.terminationReason == .exit, let data = try? Data(contentsOf: file) else { return nil }
     let environment = parseEnvironment(data)
     return environment.isEmpty ? nil : environment
+  }
+
+  /// `environment` with the Homebrew and system directories on `PATH`, for when
+  /// the login shell reports nothing: launchd's `PATH` holds only system directories.
+  public static func fallback(_ environment: [String: String]) -> [String: String] {
+    let preferred = ["/opt/homebrew/bin", "/usr/local/bin"]
+    let system = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+    let current = (environment["PATH"] ?? "").split(separator: ":").map(String.init)
+    var path = preferred + current.filter { !preferred.contains($0) }
+    path += system.filter { !path.contains($0) }
+    var environment = environment
+    environment["PATH"] = path.joined(separator: ":")
+    return environment
   }
 
   /// Parses `env -0` output: `NAME=value` entries, each ending in a NUL byte.

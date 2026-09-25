@@ -68,7 +68,7 @@ struct StimDesktopApp: App {
     AppPreferences.migrate(.standard)
     CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
     let override = UserDefaults.standard.string(forKey: AppPreferences.Key.stimExecutable)
-    let environment = Task.detached { await LoginShell.environment() ?? ProcessInfo.processInfo.environment }
+    let environment = Task.detached { await LoginShell.environment() ?? LoginShell.fallback(ProcessInfo.processInfo.environment) }
     let cli = Task.detached { StimCLI(environment: await environment.value, override: override) }
     self.cli = cli
     ServerController.shared.configure(environment: environment)
