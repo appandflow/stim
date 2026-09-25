@@ -10,7 +10,6 @@ import {
   SectionList,
   StyleSheet,
   Text,
-  useColorScheme,
   View,
   type ViewToken,
 } from 'react-native';
@@ -19,6 +18,7 @@ import { DeviceGridTile } from '@/components/device-grid-tile';
 import { EmptyState } from '@/components/empty-state';
 import { Icon } from '@/components/icon';
 import { MacChip } from '@/components/mac-chip';
+import { StimJar } from '@/components/stim-jar';
 import { useMenuDrawer } from '@/components/menu-drawer';
 import { WorkspaceRow } from '@/components/workspace-row';
 import { useHomeFilters } from '@/hooks/home-filters';
@@ -39,13 +39,10 @@ import { radius, useColors } from '@/theme';
 const MENU_ICON = require('@/assets/icons/menu.png');
 const FUNNEL_ICON = require('@/assets/icons/funnel.png');
 const WORDMARK = require('@/assets/images/wordmark.png');
-const ILLUSTRATION_LIGHT = require('@/assets/images/empty-illustration.png');
-const ILLUSTRATION_DARK = require('@/assets/images/empty-illustration-dark.png');
 const VIEWABILITY = { itemVisiblePercentThreshold: 10 };
 
 export function Home() {
   const colors = useColors();
-  const illustration = useColorScheme() === 'dark' ? ILLUSTRATION_DARK : ILLUSTRATION_LIGHT;
   const router = useRouter();
   const menu = useMenuDrawer();
   const { macs, connections } = useMacs();
@@ -218,7 +215,7 @@ export function Home() {
               <ActivityIndicator style={styles.loading} color={colors.primary} />
             ) : (
               <View style={styles.empty}>
-                <Image source={illustration} style={styles.illustration} contentFit="contain" />
+                <StimJar playing={focused} />
                 <Text style={[styles.emptyTitle, { color: colors.text }]}>No device running</Text>
                 <Text style={[styles.emptyMessage, { color: colors.secondary }]}>
                   Simulators and emulators appear here while they run, on every paired machine the filters keep.
@@ -262,7 +259,7 @@ export function Home() {
             <ActivityIndicator style={styles.loading} color={colors.primary} />
           ) : (
             <View style={styles.empty}>
-              <Image source={illustration} style={styles.illustration} contentFit="contain" />
+              <StimJar playing={focused} />
               <Text style={[styles.emptyTitle, { color: colors.text }]}>
                 {items.length
                   ? noFilterSet
@@ -317,7 +314,6 @@ const styles = StyleSheet.create({
   gridRow: { flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingTop: 12 },
   loading: { marginTop: 48 },
   empty: { alignItems: 'center', padding: 32, gap: 8 },
-  illustration: { width: 160, height: 160, marginBottom: 8 },
   emptyTitle: { fontSize: 17, fontWeight: '600' },
   emptyMessage: { fontSize: 14, lineHeight: 20, textAlign: 'center' },
   footer: { paddingHorizontal: 20, paddingVertical: 16 },

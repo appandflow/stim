@@ -9,7 +9,9 @@ import pathops
 from lottie.exporters.svg import export_svg
 from lottie.importers.core import import_lottie
 
-BRANDING = Path(__file__).resolve().parent.parent / 'static' / 'img' / 'branding'
+ROOT = Path(__file__).resolve().parent.parent.parent
+BRANDING = ROOT / 'website' / 'static' / 'img' / 'branding'
+MOBILE_ANIMATIONS = ROOT / 'apps' / 'mobile' / 'assets' / 'animations'
 CROP_X, CROP_Y, CROP_W, CROP_H = 426, 665, 278, 450
 OX, OY = CROP_X, CROP_Y
 FPS = 60
@@ -367,6 +369,7 @@ for theme, svg, electron in (('light', 'hero.svg', '#FFFFFF'), ('dark', 'hero-da
     anim = build(BRANDING / svg, electron)
     json_path = BRANDING / f'stim-jar-{theme}.json'
     json_path.write_text(json.dumps(anim, separators=(',', ':')))
+    (MOBILE_ANIMATIONS / json_path.name).write_text(json_path.read_text())
     (BRANDING / f'stim-jar-{theme}.svg').write_text(first_frame(json_path))
     suffix = '' if theme == 'light' else '-dark'
     (BRANDING / f'hero-bg{suffix}.svg').write_text(background(BRANDING / svg))
