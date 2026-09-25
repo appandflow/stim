@@ -16,7 +16,7 @@ describe('missReasonFromChanges', () => {
     ];
     const reason = missReasonFromChanges({ changes, baseline });
     expect(reason.kind).toBe('changed');
-    expect(reason.summary).toBe('native dependency added: expo-clipboard (+1 more)');
+    expect(reason.summary).toBe('native dependency added: expo-clipboard');
     expect(reason.changes).toEqual([
       { source: 'node_modules/expo-clipboard/ios', change: 'added', category: 'native-dependency' },
       { source: 'expoAutolinkingConfig:ios', change: 'changed', category: 'autolinking' },

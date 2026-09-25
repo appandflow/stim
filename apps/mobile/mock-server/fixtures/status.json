@@ -124,7 +124,29 @@
             "durationMs": 421300,
             "fingerprint": "4b7d9e1c2a3f5061728394a5b6c7d8e9f0a1b2c3",
             "startedAt": "2026-09-25T03:51:40.002Z",
-            "finishedAt": "2026-09-25T03:58:41.302Z"
+            "finishedAt": "2026-09-25T03:58:41.302Z",
+            "missReason": {
+              "kind": "changed",
+              "summary": "native dependency added: expo-clipboard",
+              "changes": [
+                {
+                  "source": "node_modules/expo-clipboard/android",
+                  "change": "added",
+                  "category": "native-dependency"
+                },
+                {
+                  "source": "expoAutolinkingConfig:android",
+                  "change": "changed",
+                  "category": "autolinking"
+                }
+              ],
+              "changeCount": 2,
+              "baseline": {
+                "fingerprint": "9a0b1c2d3e4f5061728394a5b6c7d8e9f0a1b2c3",
+                "from": "workspace"
+              },
+              "rekeyedBy": []
+            }
           }
         }
       },
@@ -649,6 +671,6 @@
   "edits": [
     "environments[path*=1123-mobile-app].remoteDevices: added by hand in the RemoteDeviceState shape; the capture machine had no EAS session",
     "environments[path*=chat-perf-demo].android: added by hand, so one workspace runs both platforms and reload needs a platform",
-    "environments[path*=react-native-reserved-regions].lastBuilds and environments[path*=wide-insets].lastBuilds: added by hand in the LastBuild shape; the capture predates the field"
+    "environments[path*=react-native-reserved-regions].lastBuilds and environments[path*=wide-insets].lastBuilds: added by hand in the LastBuild shape; the capture predates the field; the reserved-regions Android missReason follows the shape of a real miss recorded by stim ios after adding expo-clipboard"
   ]
 }

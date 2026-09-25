@@ -183,7 +183,12 @@ export function missReasonFromChanges({
   const described = changes
     .map((change, index) => ({ change, index, ...describeChange(change) }))
     .toSorted((a, b) => CATEGORY_RANK[a.category] - CATEGORY_RANK[b.category] || a.index - b.index);
-  const labels = [...new Set(described.map((entry) => entry.label))];
+  const dependencyMoved = described.some((entry) => entry.category === 'native-dependency');
+  const labels = [
+    ...new Set(
+      described.filter((entry) => !(dependencyMoved && entry.category === 'autolinking')).map((entry) => entry.label),
+    ),
+  ];
   const more = labels.length > 1 ? ` (+${labels.length - 1} more)` : '';
   return {
     kind: 'changed',

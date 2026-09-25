@@ -139,8 +139,8 @@ status timestamps are moved forward to the time the server starts, so build
 and activity durations read as they did at capture. The workspace that ran
 the build carries a remote EAS session added by hand (listed under `edits` in
 `status.json`), because the capture machine had none. Two workspaces carry
-`lastBuilds` added the same way; the iOS one also carries a `missReason`
-captured from a real miss. `build.plan` answers from
+`lastBuilds` added the same way; the compiled Android one also carries a `missReason`
+in the shape of a real miss. `build.plan` answers from
 `mock-server/fixtures/plans.json`, a local hit for iOS and a cold build that
 generates the native dir for Android, captured from `stim ios|android --plan
 --json`.
