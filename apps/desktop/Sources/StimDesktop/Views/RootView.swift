@@ -56,6 +56,7 @@ struct RootView: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
         .navigationSplitViewColumnWidth(min: 440, ideal: 900)
         .toolbar {
+          ToolbarItem(placement: .navigation) { ActivityToolbarIndicator(actions: actions) }
           ToolbarItem(placement: .navigation) { MachineSummary(store: store, metrics: metrics, width: summaryWidth) }
           if showsWorkspace {
             ToolbarItem(placement: .primaryAction) { Spacer() }
@@ -363,6 +364,25 @@ enum InspectorPresentation {
   case column
   case overlay
   case hidden
+}
+
+/// A small toolbar button showing background Stim runs, so closing an activity sheet
+/// does not lose track of it. Hidden when nothing is running.
+struct ActivityToolbarIndicator: View {
+  @ObservedObject var actions: ActionCenter
+
+  var body: some View {
+    let active = actions.activeRuns
+    if let latest = active.last {
+      Button { actions.presented = latest } label: {
+        HStack(spacing: 5) {
+          ProgressView().controlSize(.mini)
+          if active.count > 1 { Text("\(active.count)").font(Theme.mono()) }
+        }
+      }
+      .help(active.count == 1 ? latest.title : "\(active.count) commands running")
+    }
+  }
 }
 
 struct InspectorToggleButton: View {
