@@ -9,6 +9,9 @@ const ANDROID_GLYPHS = {
   'chevron.right': '\u203A',
   eye: '\u25C9',
   'eye.slash': '\u25CE',
+  'rectangle.stack': '\u2261',
+  'square.grid.2x2': '\u25A6',
+  'arrow.triangle.branch': '\u2442',
 } as const;
 
 export type IconName = keyof typeof ANDROID_GLYPHS;
