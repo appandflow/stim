@@ -20,6 +20,8 @@ import {
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import { readEasSessionLedger, recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
 
+const EAS_CLI_VERSION = () => 'eas-cli/24.8.0 darwin-arm64 node-v22.22.2';
+
 const LOOPBACK = { baseUrl: 'http://127.0.0.1:4310', token: 'tok_proxy' };
 
 const CREATED = JSON.stringify({
@@ -192,6 +194,46 @@ describe('explicit backend selection', () => {
     });
   });
 
+  test.each([
+    [
+      'eas-cli/21.5.0 darwin-arm64 node-v22.22.2',
+      'eas-cli 21.5.0 (/bin/eas) has no EAS Simulator commands; the eas backend needs eas-cli 21.6.0 or later.',
+    ],
+    [
+      null,
+      'Could not read an eas-cli version from `/bin/eas --version`; the eas backend needs eas-cli 21.6.0 or later.',
+    ],
+  ])('eas refuses before any session work when eas-cli lacks the simulator commands (%s)', async (output, failed) => {
+    const exec = mockExec();
+    const resolved = await resolveRemoteContext({
+      root,
+      backend: 'eas',
+      easBin: '/bin/eas',
+      env,
+      lookupAgentDevice: () => '/bin/agent-device',
+      readEasCliVersion: () => output,
+    });
+    expect(resolved).toEqual({
+      failed,
+      remedy:
+        "Upgrade eas-cli to 21.6.0 or later (`npm install --global eas-cli@latest`, or the project's eas-cli dependency), then run the device command with `--remote eas` again.",
+      code: 'STIM_REMOTE_EAS_UNAVAILABLE',
+    });
+    expect(exec.calls).toEqual([]);
+  });
+
+  test('eas accepts the first eas-cli release with the simulator commands', async () => {
+    const resolved = await resolveRemoteContext({
+      root,
+      backend: 'eas',
+      easBin: '/bin/eas',
+      env,
+      lookupAgentDevice: () => '/bin/agent-device',
+      readEasCliVersion: () => 'eas-cli/21.6.0 linux-x64 node-v22.18.0',
+    });
+    expect('ctx' in resolved).toBe(true);
+  });
+
   test('eas ignores proxy variables and creates an EAS session', async () => {
     const resolved = await resolveRemoteContext({
       root,
@@ -199,6 +241,7 @@ describe('explicit backend selection', () => {
       easBin: '/bin/eas',
       env,
       lookupAgentDevice: () => '/bin/agent-device',
+      readEasCliVersion: EAS_CLI_VERSION,
     });
     expect('ctx' in resolved).toBe(true);
     if (!('ctx' in resolved)) return;
@@ -222,6 +265,10 @@ describe('explicit backend selection', () => {
       writeFileSync(
         easBin,
         `#!/usr/bin/env node
+if (process.argv.includes('--version')) {
+  process.stdout.write('eas-cli/24.8.0 darwin-arm64 node-v22.22.2\\n');
+  process.exit(0);
+}
 const { writeFileSync } = require('node:fs');
 writeFileSync(${JSON.stringify(reportPath)}, JSON.stringify({
   hasProxyUrl: Object.hasOwn(process.env, 'AGENT_DEVICE_DAEMON_BASE_URL'),
@@ -293,6 +340,7 @@ describe('each workspace names its own remote session', () => {
       easBin: '/bin/eas',
       env: {},
       lookupAgentDevice: () => '/bin/agent-device',
+      readEasCliVersion: EAS_CLI_VERSION,
     });
     if (!('ctx' in resolved)) throw new Error(resolved.failed);
     const exec = mockExec({ outputs: { sim: CREATED } });

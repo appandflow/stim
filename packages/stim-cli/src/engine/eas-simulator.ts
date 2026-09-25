@@ -1,4 +1,5 @@
 import { sanitizeDeviceLabel } from '../devices/ios.ts';
+import { compareStimVersions } from '../diagnostics/stim-installations.ts';
 
 const OWNED_PREFIX = 'stim-';
 
@@ -50,6 +51,16 @@ export type SessionTeardownInspection =
 const LIVE_SESSION_STATUSES = new Set(['NEW', 'IN_PROGRESS']);
 const TERMINAL_SESSION_STATUSES = new Set(['STOPPED', 'ERRORED']);
 const SESSION_PLATFORMS = new Set(['ios', 'android']);
+
+export const MIN_EAS_CLI_SIMULATOR_VERSION: string = '21.6.0';
+
+export const EAS_CLI_UPGRADE_REMEDY: string = `Upgrade eas-cli to ${MIN_EAS_CLI_SIMULATOR_VERSION} or later (\`npm install --global eas-cli@latest\`, or the project's eas-cli dependency)`;
+
+export function easCliSimulatorSupport(versionOutput: string | null): { supported: boolean; version: string | null } {
+  const version = /\beas-cli\/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/.exec(versionOutput ?? '')?.[1] ?? null;
+  const order = version ? compareStimVersions(version, MIN_EAS_CLI_SIMULATOR_VERSION) : null;
+  return { supported: order !== null && order >= 0, version };
+}
 
 export function ownedSessionName(label: string): string {
   const clean = sanitizeDeviceLabel(label);

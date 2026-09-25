@@ -698,9 +698,13 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   proxy is selected. They never select the backend.`,
     },
     STIM_REMOTE_EAS_UNAVAILABLE: {
-      summary: '--remote eas needs eas-cli',
+      summary: '--remote eas needs eas-cli 21.6.0 or later',
       body: () => `STIM_REMOTE_EAS_UNAVAILABLE
-  \`--remote eas\` requires eas-cli. Proxy environment variables do not change
+  \`--remote eas\` requires eas-cli 21.6.0 or later, the first release with
+  the \`eas simulator:*\` commands Stim runs. Stim reads \`eas --version\` and
+  refuses before any build or session work when eas-cli is missing, older, or
+  reports no version. Upgrade it (\`npm install --global eas-cli@latest\`, or
+  the project's eas-cli dependency). Proxy environment variables do not change
   this selection and are not passed to EAS.`,
     },
     STIM_REMOTE_PLATFORM_MISMATCH: {

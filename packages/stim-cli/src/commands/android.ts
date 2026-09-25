@@ -768,6 +768,17 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const useBuildCache = cachePolicy.read;
   const physical = target.kind === 'physical';
   const remoteBackend = target.kind === 'remote' ? target.backend : null;
+  const remoteContext = remoteBackend
+    ? await resolveRemoteDeviceContext({
+        root,
+        platform: PLATFORM,
+        backend: remoteBackend,
+        easBin: resolveEasBin(root)?.file ?? null,
+      })
+    : null;
+  if (remoteContext && 'failed' in remoteContext) {
+    return fail(remoteContext.code ?? REMOTE_SESSION_ERROR, remoteContext.failed, remoteContext.remedy);
+  }
   const easBuild = await resolveEasBuild({
     root,
     platform: PLATFORM,
@@ -841,15 +852,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
   if (!(await resolveMetroPort())) return phaseFailure!;
 
-  if (remoteBackend) {
-    const resolved = await resolveRemoteDeviceContext({
-      root,
-      platform: PLATFORM,
-      backend: remoteBackend,
-      easBin: resolveEasBin(root)?.file ?? null,
-    });
-    if ('failed' in resolved) return fail(resolved.code ?? REMOTE_SESSION_ERROR, resolved.failed, resolved.remedy);
-    remoteDevice = makeRemoteDeviceDeps(resolved.ctx);
+  if (remoteContext) {
+    remoteDevice = makeRemoteDeviceDeps(remoteContext.ctx);
 
     if (metroPort !== null) {
       const reachable = await ensureRemoteMetro({

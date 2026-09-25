@@ -176,7 +176,7 @@ app, opens it, and checks launch logs. Native builds run locally by default;
   device. Installing the same app terminates that workspace's running app.
   Only with `--device`; cannot be combined with `--wait`.
 - `--remote proxy` uses a configured Agent Device daemon.
-- `--remote eas` uses an EAS remote simulator.
+- `--remote eas` uses an EAS remote simulator. It needs eas-cli 21.6.0 or later.
 - `--eas-profile <name>` selects a compatible [EAS development build](./eas-builds.md),
   including with `--device`. A miss stops and prints an EAS build command;
   cloud builds require authorization. Cannot be combined with `--scheme`,
@@ -254,7 +254,7 @@ the app, opens it, and checks launch logs.
   the same app terminates that workspace's running app. Only with `--device`;
   cannot be combined with `--wait`.
 - `--remote proxy` uses a configured Agent Device daemon.
-- `--remote eas` uses an EAS remote emulator.
+- `--remote eas` uses an EAS remote emulator. It needs eas-cli 21.6.0 or later.
 - `--eas-profile <name>` selects a compatible [EAS development build](./eas-builds.md),
   including with `--device`. A miss stops and prints an EAS build command;
   cloud builds require authorization. Cannot be combined with `--variant` or
