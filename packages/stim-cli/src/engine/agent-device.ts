@@ -17,8 +17,8 @@ export interface RemoteProfile {
   tenant: string;
   runId: string;
   sessionIsolation: 'tenant';
-  leaseProvider: 'proxy';
-  clientId: string;
+  leaseProvider?: 'proxy';
+  clientId?: string;
 }
 
 export function sessionNameFor(label: string): string {
@@ -42,7 +42,8 @@ export function remoteProfile({
   // agent-device 0.20.10 requires metroProjectRoot to expose a bridge URL; the self-hosted proxy has none.
   // agent-device 0.20.10 requires tenant and runId in remote profiles.
   // agent-device 0.20.10 does not renew a lease while install uploads; the proxy lease lasts 5 min instead of the
-  // default 60 s, and proxy open admission requires clientId.
+  // default 60 s, and proxy open admission requires clientId. agent-device 0.21.12 refuses iOS install and open
+  // under a proxy lease: the resolved device platform "apple" never equals the connection's "ios".
   return {
     daemonBaseUrl: daemon.baseUrl,
     daemonTransport: 'http',
@@ -51,8 +52,7 @@ export function remoteProfile({
     tenant: scope,
     runId: scope,
     sessionIsolation: 'tenant',
-    leaseProvider: 'proxy',
-    clientId: scope,
+    ...(platform === 'android' ? { leaseProvider: 'proxy', clientId: scope } : {}),
   };
 }
 

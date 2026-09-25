@@ -323,7 +323,10 @@ Branch on the code, never on the message.`,
   installed -- the built APK's applicationId, which on a flavored project is
   the flavor's id and not the gradle namespace -- and gives you the
   \`adb -s <serial> uninstall <applicationId>\` that clears it. Re-running after
-  that is a cache hit: one install, no build.`,
+  that is a cache hit: one install, no build.
+  On a REMOTE device (\`--remote\`) agent-device refused the upload or install.
+  With \`--remote eas\` the EAS Simulator session stays up and billed; the
+  remedy names it. Rerun to reuse it, or run \`stim stop\` to end it.`,
     },
     STIM_LAUNCH_FAILED: {
       summary: 'installed but would not start; the developer-trust tap on a phone',
@@ -344,7 +347,9 @@ Branch on the code, never on the message.`,
   VPN & Device Management, tap the developer profile under DEVELOPER APP, tap
   Trust, then run the command again. It is a per-developer-certificate tap, not
   a per-build one -- but an uninstall clears it, including the one Stim's own
-  signer-conflict retry performs.`,
+  signer-conflict retry performs.
+  On a REMOTE device the remedy names the EAS Simulator session that is still
+  running, as for STIM_INSTALL_FAILED.`,
     },
     STIM_NO_SCHEME: {
       summary: 'Xcode schemes unavailable or no unambiguous app scheme in ios/',

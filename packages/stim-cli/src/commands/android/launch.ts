@@ -548,16 +548,9 @@ export async function finishAndroidRun({
     allowUninstall: release || adopting,
   });
   if (installed.failed) {
-    const conflict = installConflictKind(installed.reason);
-    const rerun = useBuildCache
-      ? ' Then run this command again; it installs the APK from cache without building it again.'
-      : ' Then run this command again.';
-    const installRemedy = conflict
-      ? `${androidPackage} is already installed on ${serial} ` +
-        (conflict === 'signature' ? 'with a different signer' : 'at a higher versionCode') +
-        `. Uninstall it first (\`adb -s ${serial} uninstall ${androidPackage}\`); its data goes with it.` +
-        rerun
-      : `Check that ${serial} is still connected (\`adb devices\`) and has room for the APK.`;
+    const installRemedy =
+      remoteDevice?.failureRemedy() ??
+      localInstallRemedy({ reason: installed.reason, packageName: androidPackage, serial, useBuildCache });
     return fail(installed.code || INSTALL_FAILED, installed.reason, installRemedy, { lastBuildStatus: true });
   }
   if (adopting) {
@@ -642,12 +635,9 @@ export async function finishAndroidRun({
       (line) => phase('launch', chalk.red(line)),
       Boolean(remoteDevice),
     );
-    return fail(
-      launched.code || LAUNCH_FAILED,
-      launched.reason,
-      `Check the app installed correctly (\`adb -s ${serial} shell pm list packages ${androidPackage}\`).`,
-      { lastBuildStatus: true },
-    );
+    return fail(launched.code || LAUNCH_FAILED, launched.reason, launchRemedy(remoteDevice, serial, androidPackage), {
+      lastBuildStatus: true,
+    });
   }
   writer.write({
     src: 'build',
@@ -783,6 +773,41 @@ export async function finishAndroidRun({
   });
   if (remoteWasAbandoned || uploadWasAbandoned) exitAfterFlush(0);
   return { ok: true, facts };
+}
+
+function localInstallRemedy({
+  reason,
+  packageName,
+  serial,
+  useBuildCache,
+}: {
+  reason: string | undefined;
+  packageName: string | null | undefined;
+  serial: string;
+  useBuildCache: boolean;
+}): string {
+  const conflict = installConflictKind(reason);
+  if (!conflict) return `Check that ${serial} is still connected (\`adb devices\`) and has room for the APK.`;
+  const rerun = useBuildCache
+    ? ' Then run this command again; it installs the APK from cache without building it again.'
+    : ' Then run this command again.';
+  return (
+    `${packageName} is already installed on ${serial} ` +
+    (conflict === 'signature' ? 'with a different signer' : 'at a higher versionCode') +
+    `. Uninstall it first (\`adb -s ${serial} uninstall ${packageName}\`); its data goes with it.` +
+    rerun
+  );
+}
+
+function launchRemedy(
+  remoteDevice: { failureRemedy: () => string } | null,
+  serial: string,
+  packageName: string,
+): string {
+  return (
+    remoteDevice?.failureRemedy() ??
+    `Check the app installed correctly (\`adb -s ${serial} shell pm list packages ${packageName}\`).`
+  );
 }
 
 function diagnoseBootFailure(booted: AndroidBootLike, logFile: string, runCommand: string, physical: boolean) {

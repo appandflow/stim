@@ -24,12 +24,19 @@ describe('the connection profile', () => {
   });
 
   test('carries the lease scope connect and proxy open refuse to run without', () => {
-    const profile = remoteProfile({ daemon: DAEMON, platform: 'ios', label: 'wt' });
+    const profile = remoteProfile({ daemon: DAEMON, platform: 'android', label: 'wt' });
     expect(profile.tenant).toBe('stim-wt');
     expect(profile.runId).toBe('stim-wt');
     expect(profile.sessionIsolation).toBe('tenant');
     expect(profile.leaseProvider).toBe('proxy');
     expect(profile.clientId).toBe('stim-wt');
+  });
+
+  test('keeps iOS off the proxy lease, which refuses every iOS install', () => {
+    const profile = remoteProfile({ daemon: DAEMON, platform: 'ios', label: 'wt' });
+    expect(profile).toMatchObject({ platform: 'ios', session: 'stim-wt', tenant: 'stim-wt', runId: 'stim-wt' });
+    expect('leaseProvider' in profile).toBe(false);
+    expect('clientId' in profile).toBe(false);
   });
 
   test('scopes tenant and runId per workspace, so two worktrees never share a lease', () => {
