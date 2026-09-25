@@ -245,7 +245,8 @@ names the session: rerun the command to reuse it, or run `stim stop` to end it.
 - `stim gc` reports stale and orphaned resources. `stim gc --json` prints the
   same report as one JSON object.
 - `stim gc --delete` removes verified resources from the report, including
-  parked simulators, emulators, and expired device lease files.
+  parked simulators, emulators, and expired device lease files. With
+  `--older-than <days>`, it removes only the devices parked at least that long.
 
 Before shutting down, parking or deleting an owned simulator or emulator, Stim
 attempts to close local `agent-device` sessions on that exact iOS UDID or live

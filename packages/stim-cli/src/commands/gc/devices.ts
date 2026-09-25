@@ -340,8 +340,22 @@ export function describeParkedSims(
   });
 }
 
-export function collectParkedSims(deps: GcDeviceDependencies): ParkedSimReport[] {
-  const records = readParked('ios');
+interface ParkedAge {
+  olderThanDays?: number | null;
+  now?: number;
+}
+
+function parkedAtLeast<T extends { parkedAt: string }>(
+  records: readonly T[],
+  { olderThanDays = null, now = Date.now() }: ParkedAge,
+): T[] {
+  if (olderThanDays === null) return [...records];
+  const cutoff = now - olderThanDays * DAY_MS;
+  return records.filter((record) => Date.parse(record.parkedAt) <= cutoff);
+}
+
+export function collectParkedSims(deps: GcDeviceDependencies, age: ParkedAge = {}): ParkedSimReport[] {
+  const records = parkedAtLeast(readParked('ios'), age);
   if (records.length === 0) return [];
   let sims: IosSimRecord[];
   let deviceTypes: { identifier: string; name: string }[] = [];
@@ -364,8 +378,8 @@ export interface ParkedAvdReport {
   listed: boolean | null;
 }
 
-export function collectParkedAvds(deps: GcDeviceDependencies): ParkedAvdReport[] {
-  const records = readParked('android');
+export function collectParkedAvds(deps: GcDeviceDependencies, age: ParkedAge = {}): ParkedAvdReport[] {
+  const records = parkedAtLeast(readParked('android'), age);
   if (!records.length) return [];
   let avds: string[] | null = null;
   try {

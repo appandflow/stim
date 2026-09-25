@@ -126,6 +126,12 @@ import Testing
     #expect(AutopilotSchedule.nightlyDue(now: date(25, 1), hour: 3, lastRun: date(23, 3, 1), calendar: calendar))
   }
 
+  @Test func boundsTheNightlyCleanupByAgeAndLeavesPressureRunsUnbounded() {
+    #expect(AutopilotSchedule.nightlyArguments(olderThanDays: 7) == ["gc", "--delete", "--worktrees", "--older-than", "7"])
+    #expect(AutopilotSchedule.nightlyArguments(olderThanDays: 14).suffix(2) == ["--older-than", "14"])
+    #expect(PressurePlan.arguments == ["gc", "--delete"])
+  }
+
   func device(idleSince: Date, screen: Date? = nil) -> AutopilotSchedule.Device {
     let stamp = ISO8601DateFormatter().string(from: idleSince)
     return AutopilotSchedule.Device(

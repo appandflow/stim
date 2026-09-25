@@ -25,7 +25,8 @@ WHAT RECLAIMS AN OWNED DEVICE
   stim gc --delete --older-than <days>
                             also reaps the device of a workspace no Stim
                             command has used in that long, even though the
-                            project is still on disk
+                            project is still on disk, and clears only the
+                            devices parked at least that long
   stim gc --delete --worktrees
                             also runs \`stim worktree remove\` on every clean,
                             idle, Stim-managed linked worktree

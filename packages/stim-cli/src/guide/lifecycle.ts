@@ -595,6 +595,9 @@ result as proof instead of requiring an unrelated screenshot.`,
       ios stim-parked (iPhone 17 26.5) 9c1f (9C1F..) iPhone 17 26.5 parked 3d ago 18 MB
                   --delete attempts every parked simulator and keeps failures.
 
+  \`gc --older-than <days>\` reports and deletes only the devices parked at
+  least that long; one parked at an unknown time stays.
+
   If simulator listing or deletion fails, \`gc --delete\` reports the failure
   and keeps that entry. It never turns an unverified absence into a dropped
   ownership record.
@@ -610,7 +613,8 @@ result as proof instead of requiring an unrelated screenshot.`,
   \`pool.androidParkedMax\` (default 3) or STIM_POOL_ANDROID_PARKED_MAX.
   A redirected STIM_HOME disables parking unless that environment override
   is set. Zero disables parking and adoption. \`stop\` keeps the assignment;
-  \`worktree remove\` parks eligible AVDs, and \`gc --delete\` empties the pool.
+  \`worktree remove\` parks eligible AVDs, and \`gc --delete\` empties the pool
+  (with --older-than, only the AVDs parked that long).
 
   Adoption matches the system image, data partition size, and the creation
   settings from android.avdConfig / android.avdConfigFile. The AVD keeps its

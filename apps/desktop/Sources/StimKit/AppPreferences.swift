@@ -19,6 +19,7 @@ public enum AppPreferences {
     public static let autopilotIdleMinutes = "autopilot.idleMinutes"
     public static let autopilotNightly = "autopilot.nightly"
     public static let autopilotNightlyHour = "autopilot.nightlyHour"
+    public static let autopilotNightlyOlderThanDays = "autopilot.nightlyOlderThanDays"
     public static let autopilotPressure = "autopilot.pressure"
     public static let autopilotLastNightly = "autopilot.lastNightly"
     public static let autopilotLog = "autopilot.log"
@@ -31,20 +32,22 @@ public enum AppPreferences {
 
   public static let frameRates: [Double] = [60, 30, 15, 5]
 
-  /// Autopilot is on by default: idle devices shut down after an hour, `stim gc --delete` runs at 3:00, and
-  /// disk pressure is acted on.
+  /// Autopilot is on by default: idle devices shut down after an hour, a cleanup of what has gone unused for
+  /// 7 days runs at 3:00, and disk pressure is acted on.
   public static var defaults: [String: Any] {
     [
       Key.autopilotIdleShutdown: true,
       Key.autopilotIdleMinutes: 60,
       Key.autopilotNightly: true,
       Key.autopilotNightlyHour: 3,
+      Key.autopilotNightlyOlderThanDays: 7,
       Key.autopilotPressure: true,
       Key.notifiesDiskPressure: true,
     ]
   }
 
   public static let idleMinuteChoices = [30, 60, 120, 240]
+  public static let nightlyOlderThanDayChoices = [1, 3, 7, 14, 30]
 
   /// The live-frame cap the simulator and emulator views read on every frame.
   public static var maxFramesPerSecond: Double {

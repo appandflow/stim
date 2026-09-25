@@ -225,6 +225,52 @@ test('parked deletion skips a simulator adopted after report collection', async 
   expect(getProject('/tmp/adopter')?.platforms?.ios).toEqual(device);
 });
 
+test('--older-than keeps devices parked more recently, or at an unknown time, out of the report', async () => {
+  const now = Date.parse('2026-09-25T03:00:00.000Z');
+  const parkedDaysAgo = (days: number) => new Date(now - days * DAY_MS).toISOString();
+  const park = (platform: 'ios' | 'android', id: string, parkedAt: string) => {
+    const project = `/tmp/source-${platform}-${id}`;
+    if (platform === 'ios') {
+      upsertProject(project, { platforms: { ios: { deviceUdid: id, deviceName: 'stim-source', owned: true } } });
+      parkSim({
+        platform,
+        projectPath: project,
+        max: 5,
+        record: {
+          udid: id,
+          name: `stim-parked (iPhone 17 26.5) ${id}`,
+          deviceTypeIdentifier: 'iphone-17',
+          runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+          parkedAt,
+          simslimManaged: false,
+        },
+      });
+    } else {
+      upsertProject(project, { platforms: { android: { avdName: id, owned: true } } });
+      parkSim({
+        platform,
+        projectPath: project,
+        max: 5,
+        record: { udid: id, name: id, systemImage: 'image', configuration: 'config', parkedAt },
+      });
+    }
+  };
+  park('ios', 'OLD', parkedDaysAgo(8));
+  park('ios', 'NEW', parkedDaysAgo(2));
+  park('ios', 'UNKNOWN', 'not a date');
+  park('android', 'stim-old', parkedDaysAgo(7));
+  park('android', 'stim-new', parkedDaysAgo(6));
+  const deps = { listAllIosSims: () => [], listIosDeviceTypes: () => [], listAvds: () => [], avdDirectory: () => null };
+
+  const bounded = await collectGcReport({ olderThan: 7, now }, deps);
+  const unbounded = await collectGcReport({ now }, deps);
+
+  expect(bounded.parkedSims.map((sim) => sim.udid)).toEqual(['OLD']);
+  expect(bounded.parkedAvds.map((avd) => avd.name)).toEqual(['stim-old']);
+  expect(unbounded.parkedSims.map((sim) => sim.udid).toSorted()).toEqual(['NEW', 'OLD', 'UNKNOWN']);
+  expect(unbounded.parkedAvds.map((avd) => avd.name).toSorted()).toEqual(['stim-new', 'stim-old']);
+});
+
 test('parked deletion keeps ownership records when simulator listing was unavailable', async () => {
   upsertProject('/tmp/source', { platforms: { ios: { deviceUdid: 'P1', deviceName: 'stim-source', owned: true } } });
   const record = {

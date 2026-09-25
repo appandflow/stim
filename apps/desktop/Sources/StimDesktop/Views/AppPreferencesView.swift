@@ -19,6 +19,7 @@ struct AppPreferencesView: View {
   @AppStorage(AppPreferences.Key.autopilotIdleMinutes) private var idleMinutes = 60
   @AppStorage(AppPreferences.Key.autopilotNightly) private var nightly = true
   @AppStorage(AppPreferences.Key.autopilotNightlyHour) private var nightlyHour = 3
+  @AppStorage(AppPreferences.Key.autopilotNightlyOlderThanDays) private var nightlyOlderThanDays = 7
   @AppStorage(AppPreferences.Key.autopilotPressure) private var actsOnPressure = true
   @AppStorage(AppPreferences.Key.notifiesDiskPressure) private var notifiesPressure = true
   @EnvironmentObject private var autopilot: AutopilotRunner
@@ -70,12 +71,18 @@ struct AppPreferencesView: View {
           ForEach(0..<24, id: \.self) { hour in Text(String(format: "%02d:00", hour)).tag(hour) }
         }
         .disabled(!nightly)
+        Picker("Only what is unused for", selection: $nightlyOlderThanDays) {
+          ForEach(AppPreferences.nightlyOlderThanDayChoices, id: \.self) { days in
+            Text(days == 1 ? "1 day" : "\(days) days").tag(days)
+          }
+        }
+        .disabled(!nightly)
         Toggle("Reclaim space when free disk is under the Stim budget", isOn: $actsOnPressure)
       } header: {
         Text("Autopilot")
       } footer: {
         Text(
-          "Idle shutdown runs stim gc --idle, which shuts owned simulators and emulators down and never deletes them. A device whose screen changed in this app is left running. Nightly cleanup and disk pressure run stim gc --delete: it clears the build outputs of every workspace not in use, so their next build installs from the shared cache, removes merged worktrees, and deletes parked and unused owned devices. The budget is budget.minFreeDiskGb. A nightly run the Mac slept through runs at the next check."
+          "Idle shutdown runs stim gc --idle, which shuts owned simulators and emulators down and never deletes them. A device whose screen changed in this app is left running. Nightly cleanup runs stim gc --delete --worktrees --older-than with the chosen days (7 by default): it removes merged worktrees and clean ones idle that long, clears the build outputs of workspaces and the cache entries unused that long, and deletes devices parked or unused that long. Disk pressure runs stim gc --delete with no age limit: it clears the build outputs of every workspace not in use, so their next build installs from the shared cache, removes merged worktrees, and deletes parked and unused owned devices. The budget is budget.minFreeDiskGb. A nightly run the Mac slept through runs at the next check."
         )
         .multilineTextAlignment(.leading)
         .frame(maxWidth: .infinity, alignment: .leading)
