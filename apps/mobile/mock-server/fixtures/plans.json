@@ -1,0 +1,26 @@
+{
+  "ios": {
+    "platform": "ios",
+    "fingerprint": "1b625d4a3805bdce596992567f20e7b0bbaf10dc",
+    "cacheKey": "1b625d4a3805bdce596992567f20e7b0bbaf10dc-debug-sim",
+    "cacheHit": "local",
+    "provider": null,
+    "cacheSkipped": false,
+    "prebuild": null,
+    "outcome": "hit",
+    "expectedMs": 2656,
+    "basis": 1
+  },
+  "android": {
+    "platform": "android",
+    "fingerprint": "fce3f812521e26e266649b2bfb73765fd73823ef",
+    "cacheKey": "fce3f812521e26e266649b2bfb73765fd73823ef-debug-sim-arm64-v8a",
+    "cacheHit": false,
+    "provider": null,
+    "cacheSkipped": false,
+    "prebuild": "generate",
+    "outcome": "cold",
+    "expectedMs": null,
+    "basis": 0
+  }
+}

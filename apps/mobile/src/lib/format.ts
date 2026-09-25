@@ -1,4 +1,4 @@
-import type { BuildReport, DeviceActivity } from '@/protocol/types';
+import type { BuildPlan, BuildReport, DeviceActivity, LastBuild } from '@/protocol/types';
 
 const ACTIVE_WINDOW_MS = 10 * 60 * 1000;
 
@@ -64,4 +64,35 @@ export function buildProgress(build: BuildReport, now: number): BuildProgress {
         ? 'under a minute left'
         : `about ${Math.ceil(remainingMs / 60_000)} min left`;
   return { elapsedMs, fraction: Math.min(elapsedMs / expected, 0.99), remaining };
+}
+
+/** Before prebuild, pods, compile or install, `stim status` reports the outcome of the project's previous run. */
+export function outcomeLabel(build: Pick<BuildReport, 'outcome' | 'phase'>): string | null {
+  if (!build.outcome) return null;
+  const settled = !['prepare', 'cache-lookup', 'wait'].includes(build.phase);
+  if (build.outcome === 'hit') return settled ? 'Cache hit' : 'Likely cache hit';
+  return settled ? 'Cold build' : 'Likely cold';
+}
+
+export function lastBuildSummary(last: LastBuild): string {
+  const took = last.durationMs === null ? '' : ` in ${clockDuration(last.durationMs)}`;
+  if (last.status !== 'ok') return `Failed (${last.errorCode ?? 'error'})${took}`;
+  if (last.cacheHit === 'local') return `Local cache${took}`;
+  if (last.cacheHit === 'remote') return `Remote cache${took}`;
+  return `Compiled${took}`;
+}
+
+export function planSummary(plan: BuildPlan): string {
+  if (plan.refusal) return `Would refuse: ${plan.refusal.code}`;
+  if (plan.cacheHit === 'local') return 'Local cache hit';
+  if (plan.cacheHit === 'remote') return `Remote cache hit (${plan.provider ?? 'provider'})`;
+  const native =
+    plan.prebuild === 'generate' || plan.prebuild === 'regenerate' ? `, ${plan.prebuild}s the native dir` : '';
+  return `${plan.cacheSkipped ? 'Cache reads off' : 'Cache miss'}: compiles${native}`;
+}
+
+export function planExpectation(plan: BuildPlan): string | null {
+  if (plan.refusal || !plan.outcome) return null;
+  if (plan.expectedMs === null) return `No ${plan.outcome} run of this project recorded yet`;
+  return `~${clockDuration(plan.expectedMs)}, median of ${plan.basis} ${plan.outcome} run${plan.basis === 1 ? '' : 's'}`;
 }

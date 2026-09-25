@@ -6,7 +6,7 @@ stats, live frames from its iOS simulators and Android emulators, and its CPU
 and resident memory.
 
 It reads Stim state only through `stim status --watch --json`, `stim status --json`, `stim stats --json`,
-`stim logs --json`, `stim settings --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`. Its
+`stim logs --json`, `stim settings --json`, `stim ios|android --plan --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`. Its
 actions run the `stim` executable with an argument list, never a shell string,
 in the workspace directory:
 
@@ -43,6 +43,18 @@ which prints a payload each time the state changes, and the toolbar shows
 `live` while it runs. If it exits, the app restarts it after a delay that
 doubles from 1 to 30 seconds. A `stim` without `--watch` makes the app run
 `stim status --json` every 10 seconds instead.
+
+A running build's progress bar carries its cache outcome: "Cache hit" or "Cold
+build" once the run has reached install or prebuild, pods or compile, and
+"Likely cache hit" or "Likely cold" before that, when `stim status` reports the
+outcome of the project's previous run. Its tooltip names how many runs the time
+estimate comes from. The workspace inspector's **Builds** section shows each
+platform's last build from `lastBuilds` (local cache, remote cache, compiled,
+or failed, with its duration), and **Check next build** runs
+`stim <platform> --plan --json` in the workspace. That builds, boots and
+installs nothing; the result says whether the next build would hit the local
+or remote cache or compile, the prebuild it would run, and the expected
+duration.
 
 Each device tile shows the `activity` that `stim status` reports: "Driven by
 <tool> · 12m" while agent-device, a Stim device lock, or a test runner drives

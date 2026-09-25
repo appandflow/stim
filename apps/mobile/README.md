@@ -42,7 +42,12 @@ reload and stop a workspace:
   Keystore on Android) and never shown.
 - **Workspace**: a status card with the branch and the app's folder inside
   its checkout, Metro's port and health, memory, and the error count, which
-  opens the errors; build progress; warnings, remote sessions, and each
+  opens the errors; build progress with its cache outcome ("Cache hit" or
+  "Cold build", "Likely ..." before the run reaches a phase that decides it);
+  each platform's last build (local cache, remote cache, compiled, or failed)
+  and a **Check next build** button that asks the server's read-only
+  `build.plan` what the next build would find and how long it should take;
+  warnings, remote sessions, and each
   device: a running device with the latest frame the server sends for it, a
   stopped one as a single row. Under a running simulator or emulator that
   Stim owns, **Agent actions** lists the latest agent-device actions on it
@@ -129,7 +134,11 @@ iOS device. It prints a pairing code; in the app, choose
 status timestamps are moved forward to the time the server starts, so build
 and activity durations read as they did at capture. The workspace that ran
 the build carries a remote EAS session added by hand (listed under `edits` in
-`status.json`), because the capture machine had none.
+`status.json`), because the capture machine had none. Two workspaces carry
+`lastBuilds` added the same way. `build.plan` answers from
+`mock-server/fixtures/plans.json`, a local hit for iOS and a cold build that
+generates the native dir for Android, captured from `stim ios|android --plan
+--json`.
 
 Device tokens the mock server issues survive its restarts in a file in the
 system temporary directory. The mock server grants every phone control and

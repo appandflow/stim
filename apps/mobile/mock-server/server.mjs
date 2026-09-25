@@ -170,6 +170,11 @@ server.on('connection', (socket) => {
     'stats.get'() {
       return { error: ['not-implemented', 'The mock server does not serve stats.'] };
     },
+    'build.plan'(params) {
+      const plan = fixtures.plans[params.platform];
+      if (!plan) return { error: ['stim-failed', `The mock server has no ${params.platform} plan fixture.`] };
+      return { result: { ...plan, ...(params.slot && params.slot !== 'default' ? { slot: params.slot } : {}) } };
+    },
     'settings.get'() {
       return { error: ['not-implemented', 'The mock server does not serve settings.'] };
     },

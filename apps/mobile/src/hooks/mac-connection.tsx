@@ -8,6 +8,7 @@ import { listMacs, macToken, type PairedMac } from '@/lib/macs';
 import type {
   ActionName,
   ActionParams,
+  BuildPlan,
   FrameEvent,
   LogFilter,
   LogRecord,
@@ -317,4 +318,42 @@ export function useFrameSnapshot(
     };
   }, [connection, key, workspace, platform, slot, intervalMs]);
   return latest && latest.key === key ? latest : { frame: null, error: null };
+}
+
+export type PlanState = { kind: 'checking' } | { kind: 'done'; plan: BuildPlan } | { kind: 'failed'; message: string };
+
+type Plans = Partial<Record<Platform, PlanState>>;
+
+/**
+ * `build.plan`: what the next build of `workspace` would find. It builds nothing, so a read-only pairing may ask.
+ * Results belong to `key`; a new workspace, connection or key drops them, and late answers for an old one are ignored.
+ */
+export function useBuildPlan(workspace: string, key: string): { plans: Plans; check: (platform: Platform) => void } {
+  const { connection } = useMacConnection();
+  const [state, setState] = useState<{ owner: unknown; plans: Plans } | null>(null);
+  const owner = useMemo(() => ({ connection, workspace, key }), [connection, workspace, key]);
+  const check = useCallback(
+    (platform: Platform) => {
+      const set = (plan: PlanState) =>
+        setState((prev) => {
+          const plans = prev && prev.owner === owner ? prev.plans : {};
+          return { owner, plans: { ...plans, [platform]: plan } };
+        });
+      const settle = (plan: PlanState) =>
+        setState((prev) =>
+          prev && prev.owner === owner ? { owner, plans: { ...prev.plans, [platform]: plan } } : prev,
+        );
+      if (!owner.connection) {
+        set({ kind: 'failed', message: 'Not connected.' });
+        return;
+      }
+      set({ kind: 'checking' });
+      owner.connection.request('build.plan', { workspace: owner.workspace, platform }).then(
+        (plan) => settle({ kind: 'done', plan }),
+        (cause: Error) => settle({ kind: 'failed', message: cause.message }),
+      );
+    },
+    [owner],
+  );
+  return { plans: state && state.owner === owner ? state.plans : {}, check };
 }
