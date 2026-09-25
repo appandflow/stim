@@ -26,7 +26,7 @@ import { runStim, terminate, type CommandLimits } from './stim-command.ts';
 type Refusal = { code: ErrorCode; message: string };
 type Parsed<T> = { value: T } | Refusal;
 
-const SLOT_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+export const SLOT_NAME: RegExp = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const TEXT = /^[\x20-\x7e\n\t\b]+$/;
 
 export function parseControlBegin(params: unknown): Parsed<ControlBeginParams> {

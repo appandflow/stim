@@ -6,7 +6,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { configDir } from '@stim-cli/core';
 import { isJsonObject, loadConfig, type StatusPayload } from '@stim-cli/core/state';
 import { actionArgs, actionOutcome, appendAudit, parseAction, type AuditRecord } from './actions.ts';
-import { ControlHub, parseControlBegin, parseInput, type Controller } from './control.ts';
+import { ControlHub, parseControlBegin, parseInput, SLOT_NAME, type Controller } from './control.ts';
 import { FeedPool, type JsonObject } from './feed.ts';
 import { buildFrameHelper, type FrameHint } from './frame-helper.ts';
 import {
@@ -137,7 +137,6 @@ const STATUS_FEED = { args: ['status', '--watch', '--json'], cwd: homedir(), kee
 const HEALTH_ROUTE_TIMEOUT_MS = 1000;
 const COMMAND_LIMITS: CommandLimits = { timeoutMs: 60_000, maxOutputBytes: 32 * 1024 * 1024 };
 const PLAN_TIMEOUT_MS = 150_000;
-const SLOT_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const AUDIT_FIELD_CHARS = 256;
 const ACTION_LIMITS: CommandLimits = { timeoutMs: 120_000, maxOutputBytes: 1024 * 1024 };
 
