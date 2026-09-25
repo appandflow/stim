@@ -3,7 +3,7 @@ import { createRefreshScheduler, WATCH_DEBOUNCE_MS, WATCH_FALLBACK_MS, watchStat
 import type { StatusSources } from '../status-watch.ts';
 import chalk from 'chalk';
 import { existsSync } from 'fs';
-import { totalmem } from 'os';
+import { homedir, totalmem } from 'os';
 import { basename, dirname } from 'path';
 import type { Command } from 'commander';
 import { getConfigDir, loadConfig } from '../workspace/config.ts';
@@ -21,6 +21,7 @@ import { listAllIosSimsAsync } from '../devices/ios.ts';
 import { ownedAvdSerialResolver, type ResolvedAvdSerial } from '../devices/android.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { gitCommonDir, gitCommonDirOnDisk, linkedWorktreesOnDisk, repoRoot } from '../workspace/worktree.ts';
+import { inPrivacyProtectedFolder, readWorktreeGit } from '../workspace/git-summary.ts';
 import { readWorkspaceState, type WorkspaceState } from '../workspace/workspace-state.ts';
 import { readStats, statsProjectKey, type RunHistory } from '../engine/stats.ts';
 import {
@@ -45,6 +46,7 @@ import {
   deviceLeaseStates,
   diskLine,
   environmentState,
+  gitSummaryText,
   parseDfFree,
   poolLine,
   remoteDeviceLine,
@@ -62,6 +64,8 @@ interface StatusOptions {
   watch?: boolean;
 }
 
+const WATCH_GIT_MAX_AGE_MS = 5000;
+
 function formatGb(mb: number): string {
   return `${(mb / 1024).toFixed(1)} GB`;
 }
@@ -76,15 +80,20 @@ export default function statusCommand(program: Command): void {
     .option('--watch', 'keep running and print the state again each time it changes')
     .action(async (opts: StatusOptions) => {
       if (opts.watch) return watchStatus(Boolean(opts.json));
-      for (const line of await statusLines(Boolean(opts.json))) console.log(line);
+      for (const line of await statusLines(Boolean(opts.json), 0)) console.log(line);
     });
 }
 
-async function statusLines(json: boolean): Promise<string[]> {
+async function statusLines(json: boolean, gitMaxAgeMs: number): Promise<string[]> {
   const out: string[] = [];
   const cfg = loadConfig();
   const projects = Object.entries(cfg?.projects || {});
   const cwdRoot = findProjectRoot(process.cwd());
+  const worktrees = linkedWorktrees([process.cwd(), ...projects.map(([path]) => path)]);
+  const orphanWorktrees = unprovisionedWorktrees(
+    worktrees,
+    projects.map(([p]) => p),
+  );
 
   const simsRead = listAllIosSimsAsync();
   simsRead.catch(() => {});
@@ -96,6 +105,7 @@ async function statusLines(json: boolean): Promise<string[]> {
     }),
   );
   processes.catch(() => {});
+  const gitRead = readGitInto(worktrees, orphanWorktrees, gitMaxAgeMs);
 
   const androidRuntimeOf = androidRuntimeReader();
   const devices = projects.map(([, proj]) => ({
@@ -124,7 +134,7 @@ async function statusLines(json: boolean): Promise<string[]> {
     simctlError = String((e as Error)?.message || e).split('\n')[0] ?? '';
   }
   const running = await processes;
-  const worktrees = linkedWorktrees([process.cwd(), ...projects.map(([path]) => path)]);
+  await gitRead;
 
   const history = readStats().record?.history;
   const states: EnvironmentState[] = [];
@@ -174,10 +184,6 @@ async function statusLines(json: boolean): Promise<string[]> {
 
   const totalMemoryMb = Math.round(totalmem() / (1024 * 1024));
   const cap = capacity(states, totalMemoryMb);
-  const orphanWorktrees = unprovisionedWorktrees(
-    worktrees,
-    projects.map(([p]) => p),
-  );
   const pools = (['ios', 'android'] as const).map((platform) => {
     const { max, error } = parkedMaxSetting(platform);
     return { error, line: poolLine({ platform, parked: readParked(platform).length, max }) };
@@ -243,6 +249,7 @@ async function statusLines(json: boolean): Promise<string[]> {
       out.push(state.build.state === 'running' ? line : chalk.yellow(line));
     }
     out.push(...lastBuildsLines(state.lastBuilds));
+    if (state.worktree?.git) out.push(chalk.dim(`  git: ${gitSummaryText(state.worktree.git)}`));
     if (state.logs) {
       const n = state.logs.errorsSinceMarker;
       const errs = n > 0 ? chalk.yellow(` (${n} error${n === 1 ? '' : 's'} since the last marker)`) : '';
@@ -285,7 +292,7 @@ async function statusLines(json: boolean): Promise<string[]> {
 
   if (orphanWorktrees.length) {
     out.push(chalk.dim(`\nWorktrees with no environment (${orphanWorktrees.length}):`));
-    for (const w of orphanWorktrees) out.push(chalk.dim(`  ${w.path}${w.branch ? ` [${w.branch}]` : ''}`));
+    for (const w of orphanWorktrees) out.push(chalk.dim(`  ${orphanWorktreeLine(w)}`));
   }
 
   out.push(
@@ -326,7 +333,7 @@ async function watchStatus(json: boolean): Promise<void> {
     run: async () => {
       let text: string;
       try {
-        text = (await statusLines(json)).join('\n');
+        text = (await statusLines(json, WATCH_GIT_MAX_AGE_MS)).join('\n');
       } catch (error) {
         console.error(chalk.red(String((error as Error)?.message || error)));
         return;
@@ -351,6 +358,19 @@ async function watchStatus(json: boolean): Promise<void> {
   sources = watchStatusSources({ home: getConfigDir(), onChange: () => scheduler.trigger() });
   scheduler.trigger(0);
   await new Promise<never>(() => {});
+}
+
+async function readGitInto(worktrees: WorktreeFacts[], orphans: WorktreeFacts[], maxAgeMs: number): Promise<void> {
+  const home = homedir();
+  const byPath = await readWorktreeGit(worktrees, {
+    maxAgeMs,
+    skip: (w) => process.platform === 'darwin' && orphans.includes(w) && inPrivacyProtectedFolder(w.path, home),
+  });
+  for (const worktree of worktrees) worktree.git = byPath.get(worktree.path) ?? null;
+}
+
+function orphanWorktreeLine(w: WorktreeFacts): string {
+  return `${w.path}${w.branch ? ` [${w.branch}]` : ''}${w.git ? ` -- ${gitSummaryText(w.git)}` : ''}`;
 }
 
 function lastBuildsLines(reports: EnvironmentState['lastBuilds']): string[] {

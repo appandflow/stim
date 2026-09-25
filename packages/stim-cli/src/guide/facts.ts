@@ -21,12 +21,38 @@ status's unprovisionedWorktrees lists the linked worktrees with no Stim
 environment in every repository with a registered environment, plus the
 repository status runs from. A worktree counts as having an
 environment when one is registered at it or inside it. Each entry is
-{ path, branch, repository }; repository is the main checkout, or the git
-directory of a bare repository. status reads git's own worktree records and
-never opens the worktree directories, so a worktree under a macOS-protected
-folder such as ~/Documents is listed without a privacy prompt.
+{ path, branch, repository, git }; repository is the main checkout, or the git
+directory of a bare repository. status lists worktrees from git's own worktree
+records, and on macOS runs no git in a worktree with no environment under a
+protected folder such as ~/Documents, so listing it raises no privacy prompt.
 \`worktree warm\` does not create an environment; \`start\`, \`ios\`,
-\`android\` and \`doctor\` register it.
+\`android\` and \`doctor\` register it. An environment's worktree is the
+linked worktree it is registered at or inside.
+
+Each worktree entry, in unprovisionedWorktrees and in an environment's
+worktree, carries git:
+
+  git          { changed, untracked, upstream, ahead, behind, mergedInto }, or
+               null when git fails or does not answer within 3 s, or the
+               worktree has no environment and sits in ~/Desktop, ~/Documents,
+               ~/Downloads, iCloud Drive, ~/Library/CloudStorage or /Volumes,
+               which status does not open on macOS
+  changed      tracked paths with staged or unstaged changes, conflicts included
+  untracked    untracked entries as git status lists them; a new directory
+               counts once
+  upstream     the branch's upstream, such as "origin/feat/x", or null
+  ahead        commits on HEAD and not on upstream; null with no upstream, or
+  behind       when the upstream branch no longer exists
+  mergedInto   "origin/<default>" when gc would call the branch merged, judged
+               from local refs without fetching, else null
+
+status runs \`git status --porcelain=v2 --branch\` in every worktree in
+parallel, and caches the merge verdict by HEAD and default-branch commit
+under $STIM_HOME/git-merge. One call starts no new merge check 250 ms after
+its first; later calls judge the rest, and until then a verdict for the same
+HEAD at an older default-branch commit stands in. \`status --watch\` reuses a worktree's git read
+for 5 s. Plain status prints "git: 2 changed, 1 untracked, ahead 3" under
+each environment, and the same after each worktree with no environment.
 
 status's remoteDevices lists each environment's recorded EAS Simulator
 session. The session is billable while it runs, and it makes the environment

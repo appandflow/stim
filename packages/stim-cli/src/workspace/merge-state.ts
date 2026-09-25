@@ -13,7 +13,7 @@ export interface DefaultBranch {
 
 export type MergeState =
   | { merged: true; into: string; head: string; coversUnpushed: boolean }
-  | { merged: false; unknown: boolean; detail: string };
+  | { merged: false; unknown: boolean; detail: string; timedOut?: true };
 
 function failure(error: unknown): string {
   const { stderr, message } = error as { stderr?: unknown; message?: string };
@@ -112,14 +112,15 @@ function committedOn(path: string, branch: string | null, head: string): boolean
  * Anything git cannot answer is unknown, never merged. `coversUnpushed` is true for a patch-equivalent HEAD whose
  * upstream branch was deleted: its commits exist only locally, but their change is on the default branch.
  */
-export function mergeState(path: string, { ref, name }: DefaultBranch): MergeState {
+export function mergeState(
+  path: string,
+  { ref, name }: DefaultBranch,
+  { timeoutMs = GIT_TIMEOUT_MS }: { timeoutMs?: number } = {},
+): MergeState {
   const git = (args: string[], input?: string): string =>
-    getExecutor().runFile('git', ['--literal-pathspecs', '-C', path, ...args], { timeoutMs: GIT_TIMEOUT_MS, input });
+    getExecutor().runFile('git', ['--literal-pathspecs', '-C', path, ...args], { timeoutMs, input });
   const patch = (args: string[]): string =>
-    getExecutor().runFile('git', ['--literal-pathspecs', '-C', path, ...args], {
-      timeoutMs: GIT_TIMEOUT_MS,
-      untrimmed: true,
-    });
+    getExecutor().runFile('git', ['--literal-pathspecs', '-C', path, ...args], { timeoutMs, untrimmed: true });
   const patchIds = (text: string): string[] =>
     text
       ? git(['patch-id', '--verbatim'], text)
@@ -160,6 +161,7 @@ export function mergeState(path: string, { ref, name }: DefaultBranch): MergeSta
     }
     return notMerged(`not merged into ${name}`);
   } catch (error) {
-    return { merged: false, unknown: true, detail: `merge state unknown: ${failure(error)}` };
+    const timedOut = (error as NodeJS.ErrnoException)?.code === 'ETIMEDOUT' ? { timedOut: true as const } : {};
+    return { merged: false, unknown: true, detail: `merge state unknown: ${failure(error)}`, ...timedOut };
   }
 }
