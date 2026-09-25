@@ -557,7 +557,7 @@ result as proof instead of requiring an unrelated screenshot.`,
 
   and an adopting run says so where a plain boot would say \`booted\`:
 
-    device      stim-app-412 (iPhone 17 26.5) (9C1F..) adopted (11s)
+    device      stim-app-412 (iPhone 17 26.5) (9C1F..) adopted (17s)
 
   That time includes the first boot after the erase and the two resets, so it
   runs longer than a plain boot.
@@ -622,8 +622,9 @@ result as proof instead of requiring an unrelated screenshot.`,
   If the retained APK has a conflicting signer or version, adoption uninstalls
   it and retries installation. Adoption stays pending until installation succeeds.
 
-  The wipe resets apps, shared storage, accounts and device settings; the
-  AVD's creation settings remain. Status lists parked Android emulators; GC
+  The wipe resets apps, accounts, device settings and the shared storage
+  inside the data partition; the AVD's creation settings and any separate
+  SD card image remain. Status lists parked Android emulators; GC
   reports their system image, age and disk size.
 `,
     },
