@@ -28,9 +28,10 @@ and shows what Stim Desktop shows, without any actions:
 - **Machine status**: tapping a chip shows that machine's capacity, load average,
   memory pressure, free disk per volume, Stim budgets, running devices and
   device leases, warnings, and its server and `stim` versions.
-- **Menu**: the menu button lists **Machines** (rename and forget), **Pair a
-  machine**,
-  and the app and server versions. Pairing scans the QR code Stim Desktop
+- **Menu**: the menu button, or a swipe from the left edge of home, opens a
+  drawer with **Machines** (rename and forget), **Pair a machine**, and the app
+  and server versions. A tap outside, a swipe back, or Android's back button
+  closes it. Pairing scans the QR code Stim Desktop
   shows under **Pair a phone**, or takes the endpoint and pairing token typed
   in; the token field is masked, with a button that shows it. The device token
   the server issues is kept in the phone's secure storage (Keychain on iOS,

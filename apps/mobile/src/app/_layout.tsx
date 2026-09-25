@@ -2,6 +2,7 @@ import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useColorScheme } from 'react-native';
 
+import { MenuDrawer } from '@/components/menu-drawer';
 import { DevPairing } from '@/hooks/dev-pairing';
 import { HomeFiltersProvider } from '@/hooks/home-filters';
 import { MacsProvider } from '@/hooks/mac-connection';
@@ -36,20 +37,21 @@ export default function RootLayout() {
       <MacsProvider>
         <DevPairing />
         <HomeFiltersProvider>
-          <Stack screenOptions={{ headerTintColor: colors.primary, headerTitleStyle: { color: colors.text } }}>
-            <Stack.Screen name="index" options={{ title: 'Stim', headerShadowVisible: false }} />
-            <Stack.Screen name="menu" options={sheet([0.55, 1])} />
-            <Stack.Screen name="filters" options={sheet([0.6, 1])} />
-            <Stack.Screen name="macs" options={{ title: 'Machines', headerLargeTitle: true }} />
-            <Stack.Screen name="pair" options={{ title: 'Pair a machine', presentation: 'modal' }} />
-            <Stack.Screen name="rename" options={{ title: 'Rename machine', presentation: 'modal' }} />
-            <Stack.Screen name="mac/[id]/index" options={sheet([0.75, 1])} />
-            <Stack.Screen
-              name="mac/[id]/workspace"
-              options={{ title: 'Workspace', headerBackButtonDisplayMode: 'minimal', headerShadowVisible: false }}
-            />
-            <Stack.Screen name="mac/[id]/logs" options={{ title: 'Logs' }} />
-          </Stack>
+          <MenuDrawer>
+            <Stack screenOptions={{ headerTintColor: colors.primary, headerTitleStyle: { color: colors.text } }}>
+              <Stack.Screen name="index" options={{ title: 'Stim', headerShadowVisible: false }} />
+              <Stack.Screen name="filters" options={sheet([0.6, 1])} />
+              <Stack.Screen name="macs" options={{ title: 'Machines', headerLargeTitle: true }} />
+              <Stack.Screen name="pair" options={{ title: 'Pair a machine', presentation: 'modal' }} />
+              <Stack.Screen name="rename" options={{ title: 'Rename machine', presentation: 'modal' }} />
+              <Stack.Screen name="mac/[id]/index" options={sheet([0.75, 1])} />
+              <Stack.Screen
+                name="mac/[id]/workspace"
+                options={{ title: 'Workspace', headerBackButtonDisplayMode: 'minimal', headerShadowVisible: false }}
+              />
+              <Stack.Screen name="mac/[id]/logs" options={{ title: 'Logs' }} />
+            </Stack>
+          </MenuDrawer>
         </HomeFiltersProvider>
       </MacsProvider>
     </ThemeProvider>

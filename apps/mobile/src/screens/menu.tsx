@@ -1,6 +1,8 @@
 import Constants from 'expo-constants';
+import { Image } from 'expo-image';
 import { useRouter, type Href } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon, type IconName } from '@/components/icon';
 import { describeState } from '@/components/mac-chip';
@@ -8,18 +10,30 @@ import { useMacs } from '@/hooks/mac-connection';
 import { PROTOCOL_VERSION } from '@/protocol/types';
 import { useColors } from '@/theme';
 
-export function Menu() {
+const WORDMARK = require('@/assets/images/wordmark.png');
+
+export function Menu({ onClose }: { onClose: () => void }) {
   const colors = useColors();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { connections } = useMacs();
   const go = (href: Href) => {
-    router.back();
+    onClose();
     router.push(href);
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container} style={{ backgroundColor: colors.background }}>
-      <Text style={[styles.title, { color: colors.text }]}>Stim</Text>
+    <ScrollView
+      contentContainerStyle={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 20 }]}
+      style={{ backgroundColor: colors.background }}
+    >
+      <Image
+        source={WORDMARK}
+        tintColor={colors.primary}
+        style={styles.wordmark}
+        contentFit="contain"
+        accessibilityLabel="Stim"
+      />
       <View style={[styles.group, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <Row
           icon="laptopcomputer"
@@ -76,8 +90,8 @@ function Row({ icon, title, detail, onPress }: { icon: IconName; title: string; 
 }
 
 const styles = StyleSheet.create({
-  container: { padding: 20, paddingTop: 28, gap: 12 },
-  title: { fontSize: 20, fontWeight: '700', marginBottom: 4 },
+  container: { paddingHorizontal: 20, gap: 12 },
+  wordmark: { width: 59, height: 28, marginBottom: 12 },
   group: { borderRadius: 14, borderCurve: 'continuous', borderWidth: 1, overflow: 'hidden' },
   separator: { height: StyleSheet.hairlineWidth, marginLeft: 50 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 13 },
