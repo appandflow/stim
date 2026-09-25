@@ -213,9 +213,15 @@ jobs:
 
       - name: Check that this is the newest stable release
         if: github.event_name == 'push' && env.PRERELEASE == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' apps/desktop/build/Stim.app/Contents/Info.plist)
-          current=$(curl -fsSL --retry 3 "$APPCAST_URL" 2>/dev/null | sed -n 's|.*<sparkle:version>\([0-9]*\)</sparkle:version>.*|\1|p' | head -1 || true)
+          current=
+          if gh release view desktop-latest --json assets --jq '.assets[].name' 2>/dev/null | grep -qx appcast.xml; then
+            appcast=$(curl -fsSL --retry 3 "$APPCAST_URL")
+            current=$(printf '%s\n' "$appcast" | sed -n 's|.*<sparkle:version>\([0-9]*\)</sparkle:version>.*|\1|p' | head -1)
+          fi
           if [ -n "$current" ] && [ "$current" -gt "$build" ]; then
             echo "::notice::desktop-latest serves the newer build $current, so it and the cask stay on that release."
             echo "NEWEST=false" >> "$GITHUB_ENV"
