@@ -1012,9 +1012,17 @@ captured"  (in metro.ndjson, bare RN)
       summary: 'a lock held past the wait; workspace-process and short directory locks',
       body: () => `STIM_LOCK_TIMEOUT
   The same locks, held by an ordinary command that is still running, for
-  longer than the wait -- 60s by default, 4 minutes for the remote-session and
-  EAS project locks, and ~90 minutes for the \`worktree warm\` lock, which one
-  \`--refresh\` can hold for a whole dependency install. That wait prints its
+  longer than the wait -- 60s by default, 4 minutes for the remote-session lock
+  and for \`gc\` deleting EAS sessions under the EAS project lock (its sweep
+  skips at once while that lock is held), and ~90 minutes for the \`worktree warm\` lock, which one
+  \`--refresh\` can hold for a whole dependency install. The machine-wide EAS
+  project lock admits one EAS session start at a time. A \`--remote eas\` run
+  waits on it after its build with no overall limit, printing \`lock  waiting
+  for EAS remote start (pid 41233, in <workspace>, running for 1m12s) to
+  release the EAS project lock\` at once and \`still waiting for ...\` every 30
+  seconds. It refuses only when one holder has held the lock for longer than
+  the slowest EAS session start (39 minutes), naming that pid.
+  The \`worktree warm\` wait prints its
   elapsed waiting time and holder every 30 seconds (\`lock        waiting 40s
   for stim worktree warm --refresh (pid 41233)\`) and the refusal names the same holder
   and the lock directory under ~/.stim/warm-locks.

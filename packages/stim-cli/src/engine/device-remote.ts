@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { getExecutor } from '../exec.ts';
+import { formatElapsed } from '../command-output.ts';
+import type { ClaimHolder } from '../ownership-claim.ts';
 import { readJsonObject, type RemoteDeviceBackend } from '@stim-cli/core/state';
 import { pidExists } from '../metro.ts';
 import { gateMetroOrigin, REMOTE_METRO_WRONG } from './metro-gate.ts';
@@ -38,7 +40,8 @@ import {
   type RemoteDaemon,
 } from './eas-simulator.ts';
 import { withWorkspaceProcessLock, type WorkspaceProcessLockOptions } from './workspace-process-lock.ts';
-import { withEasProjectLock } from './eas-project-lock.ts';
+import { describeEasProjectLockHolder, withEasProjectLock } from './eas-project-lock.ts';
+import { nativeRunWaitNotice } from './native-run.ts';
 import {
   easMachineStateRoot,
   readEasSessionLedger,
@@ -627,6 +630,12 @@ export function withRemoteSessionLock<T>(
   });
 }
 
+const EAS_START_HOLD_MS =
+  4 * EAS_OPERATION_TIMEOUT_MS +
+  3 * AGENT_DEVICE_TIMEOUT_MS +
+  EAS_SESSION_CREATE_TIMEOUT_MS +
+  Math.ceil(DAEMON_WAIT_MS / DAEMON_POLL_MS) * (EAS_OPERATION_TIMEOUT_MS + DAEMON_POLL_MS);
+
 export async function ensureRemoteBootOwned<T extends BootResult>({
   root,
   platform,
@@ -642,6 +651,8 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
   withLock = withRemoteSessionLock,
   removeEasSessionClaim: removeClaim = removeEasSessionClaim,
   ledgerRoot = easMachineStateRoot(),
+  notice = () => {},
+  now = Date.now,
 }: {
   root: string;
   platform: 'ios' | 'android';
@@ -657,12 +668,19 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
   withLock?: typeof withRemoteSessionLock;
   removeEasSessionClaim?: typeof removeEasSessionClaim;
   ledgerRoot?: string;
+  notice?: (line: string) => void;
+  now?: () => number;
 }): Promise<T | BootResult> {
+  const waitNotice = nativeRunWaitNotice({ write: notice, now, describe: describeEasProjectLockHolder });
+  let stuck: { holder: ClaimHolder; heldMs: number } | null = null;
+  let seen: { claimId: string; at: number } | null = null;
+  let projectLocked = false;
   try {
     return await withProjectLock(
       root,
-      () =>
-        withLock(root, async () => {
+      () => {
+        projectLocked = true;
+        return withLock(root, async () => {
           register();
           const booted = await boot();
           if (booted.failed) return booted;
@@ -715,11 +733,43 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
               remedy: cleanup.remedy ?? `Run \`eas simulator:stop --id ${sessionId}\`.`,
             };
           }
-        }),
-      { ownerPurpose: 'EAS remote start', machineRoot: ledgerRoot },
+        });
+      },
+      {
+        ownerPurpose: 'EAS remote start',
+        machineRoot: ledgerRoot,
+        waitMs: Number.POSITIVE_INFINITY,
+        details: { workspace: root, platform },
+        now,
+        onHeld: (holder) => {
+          const at = now();
+          if (seen?.claimId !== holder.claimId) seen = { claimId: holder.claimId, at };
+          const claimedAt = Date.parse(holder.startedAt);
+          const heldMs = at - (Number.isFinite(claimedAt) ? Math.min(claimedAt, seen.at) : seen.at);
+          if (heldMs > EAS_START_HOLD_MS) {
+            stuck = { holder, heldMs };
+            const error = new Error(`The eas-project lock was held past ${formatElapsed(EAS_START_HOLD_MS)}.`);
+            (error as Error & { code?: string }).code = 'STIM_LOCK_TIMEOUT';
+            throw error;
+          }
+          waitNotice(
+            holder,
+            `waiting for ${describeEasProjectLockHolder(holder, at)} to release the EAS project lock; one EAS session starts at a time on this machine`,
+          );
+        },
+      },
     );
   } catch (err) {
     const code = (err as Error & { code?: string }).code ?? REMOTE_SESSION_ERROR;
+    if (stuck && !projectLocked) {
+      const { holder, heldMs }: { holder: ClaimHolder; heldMs: number } = stuck;
+      return {
+        failed: true,
+        code,
+        reason: `${describeEasProjectLockHolder(holder, now())} has held the EAS project lock for ${formatElapsed(heldMs)}; an EAS session start holds it for at most ${formatElapsed(EAS_START_HOLD_MS)}.`,
+        remedy: `If pid ${holder.owner.pid} is stuck, stop it, then run the remote command again.`,
+      };
+    }
     return {
       failed: true,
       code,

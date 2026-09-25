@@ -234,6 +234,14 @@ independently of the build source. Stim prepares the app before it creates or
 reconnects the session, so a failed build starts no session and the install
 follows the connection directly.
 
+Workspaces can hold EAS sessions at the same time, but only one session starts
+at a time on a machine. A `--remote eas` run that finishes its build while
+another workspace is starting a session waits for that start. It prints a
+`lock  waiting for EAS remote start (pid …, in <workspace>, running for …)`
+line right away and a `still waiting` line every 30 seconds. If one holder
+keeps the lock longer than the slowest EAS session start (39 minutes), the run
+refuses with `STIM_LOCK_TIMEOUT`, names that process, and installs nothing.
+
 ### From Windows or Linux
 
 `--remote eas` is the supported way to run iOS from a host without Xcode.

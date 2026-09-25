@@ -1006,6 +1006,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
               webPreviewUrl: remoteDevice.webPreviewUrl,
               writeState,
               register: registerProject,
+              notice: (line: string) => out(chalk.dim(phaseLine('lock', line))),
             })
           : boot()
       ).then((result) => {

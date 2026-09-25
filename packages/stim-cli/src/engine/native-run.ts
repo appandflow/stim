@@ -50,9 +50,11 @@ export function describeNativeRunHolder(holder: ClaimHolder, now: number): strin
 export function nativeRunWaitNotice({
   write,
   now = Date.now,
+  describe = describeNativeRunHolder,
 }: {
   write: (line: string) => void;
   now?: () => number;
+  describe?: (holder: ClaimHolder, now: number) => string;
 }): (holder: ClaimHolder, firstLine?: string) => void {
   let claimId: string | null = null;
   let lastAt = 0;
@@ -61,12 +63,12 @@ export function nativeRunWaitNotice({
     if (holder.claimId !== claimId) {
       claimId = holder.claimId;
       lastAt = at;
-      write(firstLine ?? `waiting for ${describeNativeRunHolder(holder, at)} in this workspace to finish`);
+      write(firstLine ?? `waiting for ${describe(holder, at)} in this workspace to finish`);
       return;
     }
     if (at - lastAt < WAIT_HEARTBEAT_MS) return;
     lastAt = at;
-    write(`still waiting for ${describeNativeRunHolder(holder, at)}`);
+    write(`still waiting for ${describe(holder, at)}`);
   };
 }
 
