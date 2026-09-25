@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createPairingToken, spendPairingToken } from '../src/registry.ts';
+import { createPairingToken, readDevices, spendPairingToken } from '../src/registry.ts';
 
 const BIN = join(import.meta.dirname, '..', 'bin', 'stim-server.ts');
 
@@ -87,6 +87,34 @@ describe('--json', () => {
       'pairedAt',
     ]);
     expect(devices[0]!.name).toBe('Phone');
+  });
+});
+
+describe('control', () => {
+  function plain(...args: string[]) {
+    return spawnSync(process.execPath, [BIN, ...args], {
+      env: { ...process.env, STIM_HOME: home, PATH: '' },
+      encoding: 'utf8',
+    });
+  }
+
+  it('pair --control pairs a device that can run actions; devices grant changes it from the Mac', () => {
+    const { qr } = run('pair', '--json', '--port', '17787') as { qr: { pairingToken: string } };
+    const control = run('pair', '--control', '--json', '--port', '17787') as { qr: { pairingToken: string } };
+    spendPairingToken(qr.pairingToken, 'Reader', { kind: 'local' });
+    spendPairingToken(control.qr.pairingToken, 'Controller', { kind: 'local' });
+    const [reader, controller] = readDevices();
+    expect(reader!.capabilities).toEqual(['read']);
+    expect(controller!.capabilities).toEqual(['read', 'control']);
+
+    expect(plain('devices', 'grant', reader!.id, '--control').status).toBe(0);
+    expect(plain('devices', 'grant', controller!.id, '--read').status).toBe(0);
+    expect(readDevices().map((device) => device.capabilities)).toEqual([['read', 'control'], ['read']]);
+
+    expect(plain('devices', 'grant', reader!.id).status).toBe(1);
+    expect(plain('devices', 'grant', reader!.id, '--read', '--control').status).toBe(1);
+    expect(plain('devices', 'grant', 'nope', '--read').stderr).toContain('no paired device nope');
+    expect(plain('devices', '--control').status).toBe(1);
   });
 });
 

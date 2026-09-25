@@ -5,12 +5,13 @@ import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 
-const USAGE = `Usage: npm run dev:pair -- [--mock] [--port <n>] [--endpoint <url>]
+const USAGE = `Usage: npm run dev:pair -- [--mock] [--control] [--port <n>] [--endpoint <url>]
 
 Pairs this app's development builds with the Stim server on this Mac and writes
 the endpoint and device token to .env.local.
 
   --mock            pair with \`npm run mock-server\` instead of stim-server
+  --control         let this pairing run actions (stim-server only)
   --port <n>        the server's port (default 7787)
   --endpoint <url>  the endpoint the app connects to (default ws://127.0.0.1:<port>),
                     such as the tailnet endpoint stim-server prints`;
@@ -24,7 +25,7 @@ function fail(message) {
   process.exit(1);
 }
 
-function pairingToken(mock, port) {
+function pairingToken(mock, port, control) {
   if (mock) {
     const file = join(tmpdir(), `stim-mobile-mock-server-pairing-${port}.json`);
     try {
@@ -34,7 +35,8 @@ function pairingToken(mock, port) {
     }
   }
   try {
-    const output = execFileSync('stim-server', ['pair', '--json', '--port', String(port)], {
+    const args = ['pair', '--json', '--port', String(port), ...(control ? ['--control'] : [])];
+    const output = execFileSync('stim-server', args, {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'inherit'],
     });
@@ -90,6 +92,7 @@ function writeEnv(values) {
 const { values } = parseArgs({
   options: {
     mock: { type: 'boolean', default: false },
+    control: { type: 'boolean', default: false },
     port: { type: 'string', default: '7787' },
     endpoint: { type: 'string' },
     help: { type: 'boolean', short: 'h' },
@@ -103,7 +106,9 @@ const port = Number(values.port);
 if (!Number.isInteger(port) || port <= 0 || port > 65535) fail(`--port must be a port number, got ${values.port}.`);
 const endpoint = (values.endpoint ?? `ws://127.0.0.1:${port}`).replace(/\/+$/, '');
 
-const result = await spend(endpoint, pairingToken(values.mock, port)).catch((error) => fail(error.message));
+const result = await spend(endpoint, pairingToken(values.mock, port, values.control)).catch((error) =>
+  fail(error.message),
+);
 if (!result.deviceToken) fail('the server did not issue a device token.');
 writeEnv({ [ENDPOINT_KEY]: endpoint, [TOKEN_KEY]: result.deviceToken });
 

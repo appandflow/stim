@@ -19,6 +19,12 @@ and shows what Stim Desktop shows, without any actions:
   expression search. The list follows new records until you scroll up, keeps
   the newest 5,000, and a tap on a record shows its whole message and stack.
 
+The app has no action buttons yet. `useAction(workspace)` in
+`src/hooks/mac-connection.tsx` runs the server's `reload` and `stop` actions
+and reports which ones the Mac lets this phone run (`available`), the one in
+flight (`pending`), and the last failure (`error`). A phone paired without
+control gets an empty `available` list.
+
 The design and protocol are in
 [docs/specs/2026-09-25-stim-server-design.md](../../docs/specs/2026-09-25-stim-server-design.md).
 The phone reaches the Mac over Tailscale with `wss://`; plain `ws://` is
@@ -72,7 +78,11 @@ the build carries a remote EAS session added by hand (listed under `edits` in
 `status.json`), because the capture machine had none.
 
 Device tokens the mock server issues survive its restarts in a file in the
-system temporary directory.
+system temporary directory. The mock server grants every phone control and
+answers `reload` and `stop` for the fixture workspaces after 0.8 seconds, one
+at a time per workspace, without changing the fixtures. Start it with
+`npm run mock-server -- --read` to see a read-only pairing, which gets no
+actions.
 
 ## Driving the app
 
@@ -104,6 +114,8 @@ rewritten `.env.local`; reload the app after `dev:pair`.
   server writes its current pairing code to a file in the system temporary
   directory, and issues and prints a new code after each pairing and every 5
   minutes.
+- `--control` pairs with control, so the app can run actions. Without it the
+  pairing is read-only. The mock server ignores it.
 - `--port <n>` targets a server on another port than 7787, such as a
   `stim-server --port <n>` running with a scratch `STIM_HOME`.
 - `--endpoint <url>` sets the endpoint the app connects to, such as the

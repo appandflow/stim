@@ -1,8 +1,10 @@
 # @stim-cli/server
 
-`stim-server` serves Stim state to paired read-only clients, such as the Stim
-phone app. It runs on the Mac, next to Stim, and changes no Stim state: it
-writes only its own pairing state under `$STIM_HOME/server/`.
+`stim-server` serves Stim state to paired clients, such as the Stim phone app,
+and lets the clients the Mac grants control run `stim reload` and `stim stop`
+in a workspace. It runs on the Mac, next to Stim. It changes Stim state only
+through those two commands, and writes only its own pairing state and action
+log under `$STIM_HOME/server/`.
 
 The design is in
 [`docs/specs/2026-09-25-stim-server-design.md`](../../docs/specs/2026-09-25-stim-server-design.md).
@@ -11,14 +13,20 @@ The design is in
 
 ```bash
 stim-server [--port <n>]          # serve paired clients, port 7787 by default
-stim-server pair [--port <n>]     # print a single-use pairing payload
+stim-server pair [--port <n>] [--control]
+                                  # print a single-use pairing payload
 stim-server devices [list]        # list paired devices
+stim-server devices grant <id> --control|--read
+                                  # let a paired device run actions, or only read
 stim-server devices revoke <id>   # revoke a paired device
+stim-server log                   # list the actions paired devices ran
 ```
 
 `pair --json` prints `{ "qr": <payload>, "expiresAt": "<ISO time>" }`, and
 `devices --json` prints `{ "devices": [...] }` with each device's `id`, `name`,
 `identity`, `pairedAt`, `lastSeenAt` and `capabilities`, never its token hash.
+`log --json` prints `{ "actions": [...] }`, the records described under
+[Actions](#actions).
 
 `GET http://127.0.0.1:7787/health` answers requests from this Mac with the
 server's name, versions, protocol, `stimHome`, and the Tailscale state it
@@ -96,6 +104,18 @@ same peer within a minute block new connections from it for up to a minute.
 Paired devices live in `$STIM_HOME/server/devices.json`. Revoking a device
 closes its open connections.
 
+## Scopes
+
+A paired device has the `read` capability, which serves state, or also
+`control`, which runs [actions](#actions). Pairing grants `read` only, unless
+the pairing code came from `stim-server pair --control`. On the Mac,
+`stim-server devices grant <id> --control` adds control to a paired device and
+`--read` takes it away. Nothing a client sends changes its own capabilities.
+The server checks the device's capabilities in `devices.json` on every action,
+so taking control away applies to open connections at once. `hello` reports
+the capabilities and actions of the connection's device when it connects; a
+connection sees a new grant after it reconnects.
+
 ## Protocol
 
 JSON messages over a WebSocket. Requests are `{ "id", "method", "params" }`,
@@ -105,8 +125,9 @@ Events are `{ "event", "subscription", ... }`.
 - `hello` must come first. Params: `protocol` (1), `client` (`name`,
   `version`), and `auth`, either `{ "pairingToken", "deviceName" }` or
   `{ "deviceToken" }`. The result carries the server name and versions, the
-  granted capabilities (`read` only in protocol 1), the paired device, and the
-  new `deviceToken` when the hello paired.
+  device's `capabilities` (see [Scopes](#scopes)), the `actions` it may run
+  (none without `control`), the paired device, and the new `deviceToken` when
+  the hello paired.
 - `status.subscribe` returns a subscription id. Each `status` event carries a
   full payload as `stim status --watch --json` prints it. All subscribers share
   one `stim status --watch --json` child, which stops with the last
@@ -142,6 +163,8 @@ Events are `{ "event", "subscription", ... }`.
   subscriber, and at most two captures run at once. A client whose socket has
   more than 1 MiB unsent skips frames and gets the newest once it catches up.
 - `unsubscribe` ends a subscription.
+- `action` runs an [action](#actions) and returns
+  `{ "action", "workspace", "output" }`.
 - An `error` event ends a subscription whose source failed, or whose client
   fell behind (`slow-client`); subscribe again.
 
@@ -153,6 +176,40 @@ refused with `unknown-workspace` and runs nothing. A connection holds at most
 ignores SIGTERM gets SIGKILL a second later. A log subscriber whose socket has more than
 4 MiB unsent gets no more batches until it catches up; past 20,000
 waiting records the server ends that subscription with `slow-client`.
+
+## Actions
+
+A device with `control` can send `action` with params `{ "action", "workspace" }`:
+
+| Action   | Params                                                               | Runs in the workspace           |
+| -------- | -------------------------------------------------------------------- | ------------------------------- |
+| `reload` | `platform` (`ios` or `android`), optional; needed when both are live | `stim reload [platform] --json` |
+| `stop`   | none                                                                 | `stim stop --json`              |
+
+Each action is one fixed argument list passed to the bundled `stim`, never
+through a shell. `workspace` must be a project path Stim has registered, the
+`path` a status payload lists; the command runs there. The result's `output`
+is the JSON the command printed. The server refuses the request and runs
+nothing with:
+
+- `forbidden` when the device has only `read`;
+- `unknown-action` for any other action;
+- `bad-request` for a missing `workspace`, a `platform` that is not `ios` or
+  `android`, or any other param;
+- `unknown-workspace` for a path Stim has not registered or that no longer
+  exists;
+- `action-busy` while another action runs in that workspace. The server runs
+  one action per workspace at a time, across all connections.
+
+A command that exits with an error fails with `action-failed` and the message
+and remedy it printed. An action fails with `action-failed` after 120 seconds,
+and its `stim` child gets SIGTERM. An action keeps running when its client
+disconnects, and stopping `stim-server` stops it.
+
+Every `action` request from a paired device, refused or run, appends one line
+to `$STIM_HOME/server/actions.ndjson`: `at`, `device` (`id` and `name`),
+`action`, `workspace`, `platform` when given, `ok`, `error` when it failed,
+and `durationMs` when it ran. `stim-server log` prints them.
 
 The error codes `unauthorized`, `pairing-expired`, and `protocol-unsupported`
 refuse the client until it pairs again or updates; clients retry the others.

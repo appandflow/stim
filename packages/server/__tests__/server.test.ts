@@ -15,7 +15,15 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import type { HelloResult, ServerMessage } from '../src/protocol.ts';
-import { createPairingToken, PAIRING_TTL_MS, readDevices, revokeDevice } from '../src/registry.ts';
+import { readAudit } from '../src/actions.ts';
+import {
+  capabilitiesFor,
+  createPairingToken,
+  grantDevice,
+  PAIRING_TTL_MS,
+  readDevices,
+  revokeDevice,
+} from '../src/registry.ts';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server.ts';
 
 const FAKE_STIM = `
@@ -61,6 +69,9 @@ if (command === 'status') {
   }
 } else if (env.FAKE_STIM_HANG || env.FAKE_STIM_STUBBORN) {
   setInterval(() => {}, 1000);
+} else if (env.FAKE_STIM_JSON_FAIL) {
+  print({ code: 'STIM_NO_LIVE_APP', message: 'No live app in this workspace.', remedy: 'Run stim ios.' });
+  exit(1);
 } else if (env.FAKE_STIM_FAIL) {
   process.stderr.write(command + ' failed on purpose');
   exit(1);
@@ -134,6 +145,7 @@ async function start(
     env?: Record<string, string>;
     logLimits?: ServerOptions['logLimits'];
     commandLimits?: ServerOptions['commandLimits'];
+    actionLimits?: ServerOptions['actionLimits'];
     tailscaleState?: ServerOptions['tailscaleState'];
     frameLimits?: ServerOptions['frameLimits'];
   } = {},
@@ -167,6 +179,7 @@ async function start(
     maxAuthFailures: overrides.maxAuthFailures,
     logLimits: overrides.logLimits,
     commandLimits: overrides.commandLimits,
+    actionLimits: overrides.actionLimits,
     frameLimits: overrides.frameLimits,
   });
   return server.addresses[0]!.port;
@@ -198,12 +211,12 @@ function connect(port: number, peer?: string): Promise<Client> {
   });
 }
 
-async function pair(port: number, peer?: string): Promise<{ id: string; token: string }> {
+async function pair(port: number, peer?: string, control = false): Promise<{ id: string; token: string }> {
   const client = await connect(port, peer);
   const reply = await client.request('hello', {
     protocol: 1,
     client: CLIENT,
-    auth: { pairingToken: createPairingToken().token, deviceName: 'Test phone' },
+    auth: { pairingToken: createPairingToken(Date.now(), capabilitiesFor(control)).token, deviceName: 'Test phone' },
   });
   if (!('result' in reply)) throw new Error(JSON.stringify(reply));
   const result = reply.result as HelloResult;
@@ -237,8 +250,8 @@ function stimCalls(): { args: string; cwd: string }[] {
     .map((line) => JSON.parse(line) as { args: string; cwd: string });
 }
 
-async function authed(port: number): Promise<Client> {
-  const { token } = await pair(port);
+async function authed(port: number, control = false): Promise<Client> {
+  const { token } = await pair(port, undefined, control);
   const client = await connect(port);
   await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
   return client;
@@ -290,6 +303,7 @@ describe('pairing', () => {
         protocol: 1,
         server: { name: 'Test Mac', version: '1.2.3', stim: '9.9.9' },
         capabilities: ['read'],
+        actions: [],
       },
     });
     const deviceToken = 'result' in reply && 'deviceToken' in reply.result ? reply.result.deviceToken! : '';
@@ -723,6 +737,133 @@ describe('stats.get and settings.get', () => {
       error: { code: 'stim-failed', message: expect.stringContaining('did not finish') },
     });
     expect(childPids()).toEqual([]);
+  });
+});
+
+describe('action', () => {
+  it('refuses a read-only device, runs nothing, and audits the refusal', async () => {
+    const port = await start();
+    const client = await authed(port);
+    expect(await client.request('action', { action: 'stop', workspace })).toMatchObject({
+      error: { code: 'forbidden', message: expect.stringContaining('--control') },
+    });
+    expect(stimCalls()).toEqual([]);
+    expect(readAudit()).toEqual([
+      expect.objectContaining({
+        device: { id: readDevices()[0]!.id, name: 'Test phone' },
+        action: 'stop',
+        workspace,
+        ok: false,
+        error: expect.objectContaining({ code: 'forbidden' }),
+      }),
+    ]);
+  });
+
+  it('advertises the actions to a control device and stops honoring them once the Mac takes control back', async () => {
+    const port = await start();
+    const { id, token } = await pair(port, undefined, true);
+    const client = await connect(port);
+    expect(await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } })).toMatchObject({
+      result: { capabilities: ['read', 'control'], actions: ['reload', 'stop'] },
+    });
+    expect(grantDevice(id, capabilitiesFor(false))).toBe(true);
+    expect(await client.request('action', { action: 'reload', workspace })).toMatchObject({
+      error: { code: 'forbidden' },
+    });
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('refuses unknown actions, invalid params and workspaces the server does not list, running nothing', async () => {
+    const port = await start();
+    const client = await authed(port, true);
+    const refusals = [
+      [{ action: 'gc', workspace }, 'unknown-action'],
+      [{ action: 'reload --delete', workspace }, 'unknown-action'],
+      ['stop', 'bad-request'],
+      [{ action: 'stop' }, 'bad-request'],
+      [{ action: 'stop', workspace, platform: 'ios' }, 'bad-request'],
+      [{ action: 'stop', workspace, args: ['--delete'] }, 'bad-request'],
+      [{ action: 'reload', workspace, platform: '--help' }, 'bad-request'],
+      [{ action: 'stop', workspace: join(root, 'other') }, 'unknown-workspace'],
+      [{ action: 'stop', workspace: `${workspace}/` }, 'unknown-workspace'],
+      [{ action: 'stop', workspace: `${workspace}/../app` }, 'unknown-workspace'],
+    ] as const;
+    for (const [params, code] of refusals) {
+      expect(await client.request('action', params)).toMatchObject({ error: { code } });
+    }
+    expect(stimCalls()).toEqual([]);
+    expect(readAudit().map((record) => record.error?.code)).toEqual(refusals.map(([, code]) => code));
+  });
+
+  it('runs one fixed stim command in the workspace and audits the result', async () => {
+    const port = await start();
+    const client = await authed(port, true);
+    expect(await client.request('action', { action: 'reload', workspace, platform: 'ios' })).toEqual({
+      id: 2,
+      result: { action: 'reload', workspace, output: { command: 'reload', cwd: workspace } },
+    });
+    await client.request('action', { action: 'reload', workspace });
+    await client.request('action', { action: 'stop', workspace });
+    expect(stimCalls()).toEqual([
+      { args: 'reload ios --json', cwd: workspace },
+      { args: 'reload --json', cwd: workspace },
+      { args: 'stop --json', cwd: workspace },
+    ]);
+    const [first] = readAudit();
+    expect(first).toEqual({
+      at: expect.any(String),
+      device: { id: readDevices()[0]!.id, name: 'Test phone' },
+      action: 'reload',
+      workspace,
+      platform: 'ios',
+      ok: true,
+      durationMs: expect.any(Number),
+    });
+    expect(readAudit().map((record) => [record.action, record.ok])).toEqual([
+      ['reload', true],
+      ['reload', true],
+      ['stop', true],
+    ]);
+  });
+
+  it('reports the error the command printed', async () => {
+    const port = await start({ env: { FAKE_STIM_JSON_FAIL: '1' } });
+    const client = await authed(port, true);
+    expect(await client.request('action', { action: 'reload', workspace })).toMatchObject({
+      error: { code: 'action-failed', message: 'STIM_NO_LIVE_APP: No live app in this workspace. Run stim ios.' },
+    });
+    expect(readAudit()).toEqual([
+      expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'action-failed' }) }),
+    ]);
+  });
+
+  it('runs one action per workspace at a time and ends one that runs past its timeout', async () => {
+    const port = await start({ env: { FAKE_STIM_HANG: '1' }, actionLimits: { timeoutMs: 500 } });
+    const client = await authed(port, true);
+    const other = await authed(port, true);
+    client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'stop', workspace } }));
+    await until(() => childPids().length === 1);
+    expect(await other.request('action', { action: 'reload', workspace })).toMatchObject({
+      error: { code: 'action-busy' },
+    });
+    expect(await client.next()).toMatchObject({
+      id: 10,
+      error: { code: 'action-failed', message: expect.stringContaining('did not finish') },
+    });
+    expect(childPids()).toEqual([]);
+    expect(readAudit().map((record) => record.error?.code)).toEqual(['action-busy', 'action-failed']);
+  });
+
+  it('keeps running an action when the client disconnects', async () => {
+    const port = await start({ env: { FAKE_STIM_HANG: '1' }, actionLimits: { timeoutMs: 400 } });
+    const client = await authed(port, true);
+    client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'stop', workspace } }));
+    await until(() => childPids().length === 1);
+    const [pid] = childPids();
+    client.socket.terminate();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(alive(pid!)).toBe(true);
+    await until(() => readAudit().length === 1);
   });
 });
 

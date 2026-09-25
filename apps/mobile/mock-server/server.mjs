@@ -12,6 +12,7 @@ const { values } = parseArgs({
   options: {
     port: { type: 'string', default: '7787' },
     name: { type: 'string', default: 'Mock Mac' },
+    read: { type: 'boolean', default: false },
   },
 });
 
@@ -48,6 +49,10 @@ server.on('listening', () => {
   console.log('Pairing code (valid 5 minutes, single use):');
   console.log(pairing.code);
 });
+
+const ACTIONS = ['reload', 'stop'];
+const ACTION_MS = 800;
+const busy = new Set();
 
 const startedAt = Date.now();
 const status = () => shiftTimestamps(fixtures.status, startedAt - Date.parse(fixtures.capturedAt));
@@ -133,6 +138,23 @@ server.on('connection', (socket) => {
     'settings.get'() {
       return { error: ['not-implemented', 'The mock server does not serve settings.'] };
     },
+    action(params, id) {
+      if (values.read) return { error: ['forbidden', 'This device can only read (mock server started with --read).'] };
+      if (!ACTIONS.includes(params.action)) return { error: ['unknown-action', `Unknown action ${params.action}.`] };
+      if (!fixtures.status.environments.some((env) => env.path === params.workspace)) {
+        return { error: ['unknown-workspace', `${params.workspace} is not a Stim workspace on this Mac.`] };
+      }
+      if (busy.has(params.workspace)) {
+        return { error: ['action-busy', `An action is already running in ${params.workspace}.`] };
+      }
+      busy.add(params.workspace);
+      console.log(`${params.action} ${params.workspace}`);
+      setTimeout(() => {
+        busy.delete(params.workspace);
+        send({ id, result: { action: params.action, workspace: params.workspace, output: { mock: true } } });
+      }, ACTION_MS);
+      return { deferred: true };
+    },
     unsubscribe(params) {
       stop(params.subscription);
       return { result: {} };
@@ -152,7 +174,7 @@ server.on('connection', (socket) => {
     if (method !== 'hello' && !authed) return fail(id, 'unauthorized', 'Send hello first.');
     let outcome;
     try {
-      outcome = handler(params);
+      outcome = handler(params, id);
     } catch (error) {
       return fail(id, 'bad-request', error.message);
     }
@@ -161,7 +183,7 @@ server.on('connection', (socket) => {
       if (method === 'hello') socket.close();
       return;
     }
-    send({ id, result: outcome.result });
+    if (!outcome.deferred) send({ id, result: outcome.result });
   });
   socket.on('close', () => {
     for (const subscription of timers.keys()) stop(subscription);
@@ -172,6 +194,7 @@ function hello() {
   return {
     protocol: 1,
     server: { name: values.name, version: '0.0.0-mock', stim: fixtures.stimVersion },
-    capabilities: ['read'],
+    capabilities: values.read ? ['read'] : ['read', 'control'],
+    actions: values.read ? [] : ACTIONS,
   };
 }

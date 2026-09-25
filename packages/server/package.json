@@ -1,7 +1,7 @@
 {
   "name": "@stim-cli/server",
   "version": "1.10.1",
-  "description": "Serves Stim status to paired read-only clients over Tailscale.",
+  "description": "Serves Stim status to paired clients over Tailscale, and runs reload and stop for clients granted control.",
   "license": "MIT",
   "repository": {
     "type": "git",

@@ -230,6 +230,51 @@ An Expo app, built and run with Stim itself:
 - Push notifications (build finished, new errors) are out of scope for v1; they
   need an outbound notification path and are a later design.
 
+## Actions
+
+Added 2026-09-25 by #1183. This section narrows the non-goal "Actions from the
+phone" and the invariant "The server changes no Stim state": a paired device
+the Mac grants `control` can run `reload` and `stop`. Every other action, and
+device input, stays out of scope.
+
+- Scopes: each paired device holds `read` (the default, and what every device
+  paired before this change keeps) or `read` and `control`. Only the Mac
+  grants `control`: `stim-server pair --control` mints a pairing code whose
+  device gets it, and `stim-server devices grant <id> --control|--read`
+  changes a paired device. The capabilities are stored with the token hash in
+  `devices.json`. No message a client sends changes them. The tailnet node
+  binding and the Funnel refusal apply unchanged.
+- Protocol: a request `{ "id", "method": "action", "params": { "action",
+"workspace", ... } }`, answered by `{ "action", "workspace", "output" }` or
+  an error. This follows the existing `{ id, method, params }` request shape
+  instead of a separate `type` field. `hello` reports the device's
+  `capabilities` and the `actions` it may run, so the app hides what it cannot
+  do. The server refuses the request and runs nothing with `forbidden` when
+  the device, as `devices.json` lists it at that moment, lacks `control`;
+  `unknown-action` for an action outside the allowlist; `bad-request` for
+  params the action does not take; `unknown-workspace` for a path the project
+  registry does not list; and `action-busy` while another action runs in the
+  workspace.
+- Execution: each action maps to one fixed argument list for the bundled
+  `stim`, the binary the server already runs for `status` and `logs`, spawned
+  without a shell. Params select from enums; no client string reaches the
+  argument list. `reload` runs `stim reload [ios|android] --json` and `stop`
+  runs `stim stop --json`. The working directory is the registry's own path
+  for the workspace, matched exactly against the client's string. The server
+  runs one action per workspace at a time, stops one after 120 seconds, and
+  lets one finish when its client disconnects.
+- Audit: every action request from a paired device, refused or run, appends
+  a record to `$STIM_HOME/server/actions.ndjson` with the time, the device id
+  and name, the action, the workspace, and the result. `stim-server log`
+  prints it.
+- Mobile: the app gets the types and a `useAction(workspace)` hook. Its
+  buttons (Reload and Stop in the workspace menu, with a confirmation on Stop)
+  are a separate change.
+
+Both actions are recoverable: `reload` restarts the JavaScript and `stop`
+shuts the owned device down without deleting it. Actions that delete state,
+such as `gc --delete` or `worktree remove`, stay out of scope.
+
 ## Invariants
 
 - One implementation of state reading and locking: the server uses core's
