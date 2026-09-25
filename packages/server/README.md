@@ -207,7 +207,10 @@ Events are `{ "event", "subscription", ... }`.
   (`primary`, the cover, or `primary-1`, the inner panel) and the frame
   carries `posture`, `folded` or `unfolded`. Emulators are captured through
   their gRPC `getScreenshot`, scaled to fit 1280 pixels and converted with
-  `sips`. A screenshot is sent only when the screen changed: up to 5 per
+  `sips`. An emulator whose gRPC POSTURE physical model reports a posture,
+  such as a `pixel_fold` AVD, is a foldable: its frames carry `posture`,
+  `folded` while the screenshot reports a folded display and `unfolded`
+  otherwise. The server asks once per capture session. A screenshot is sent only when the screen changed: up to 5 per
   second while it changes, backing off to one capture per second while it
   does not, with capturing taking at most half of each device's time, and at
   most two captures run at once. An emulator Stim booted before it passed
