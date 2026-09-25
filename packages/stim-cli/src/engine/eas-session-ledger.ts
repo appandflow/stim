@@ -5,8 +5,6 @@ import { withDirLock } from '../dir-lock.ts';
 import { workspaceName } from '../workspace/paths.ts';
 import { EAS_TEST_GUARD_ROOT_ENV } from './eas-machine-root-guard-env.ts';
 
-export { EAS_TEST_GUARD_ROOT_ENV };
-
 export interface EasSessionClaim {
   sessionId: string;
   name: string;
@@ -31,11 +29,6 @@ export function easMachineStateRoot(): string {
   return join(homedir(), '.stim', 'machine', 'eas');
 }
 
-// vitest.setup.ts records the real machine root under EAS_TEST_GUARD_ROOT_ENV,
-// in every test process, before a test can redirect HOME. A writer that still
-// resolves to this path is a leak into the real ~/.stim/machine/eas (issue
-// #1091); a write from a process without this marker, such as a real stim
-// run, is unaffected.
 export function assertEasMachineRootWritable(root: string): void {
   const guardedRoot = process.env[EAS_TEST_GUARD_ROOT_ENV];
   if (!guardedRoot || resolve(root) !== resolve(guardedRoot)) return;

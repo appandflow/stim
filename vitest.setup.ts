@@ -10,11 +10,6 @@ for (const key of Object.keys(process.env)) {
   if (key.startsWith('STIM_')) delete process.env[key];
 }
 
-// The EAS session ledger and project lock ignore STIM_HOME and read the real
-// ~/.stim/machine/eas, so a test that forgets to redirect ledgerRoot,
-// machineRoot, easLedgerRoot, or HOME (and USERPROFILE on Windows) would
-// write there. Recording the real root here, before any test in this process
-// can override HOME, lets those writers refuse a write whose resolved root
-// still matches it (see assertEasMachineRootWritable). A write by a process
-// without this marker, such as a real stim run, is unaffected.
+// Must run before a test can redirect HOME, so this captures the real root
+// (see assertEasMachineRootWritable in eas-session-ledger.ts).
 process.env[EAS_TEST_GUARD_ROOT_ENV] = join(homedir(), '.stim', 'machine', 'eas');
