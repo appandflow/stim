@@ -163,8 +163,9 @@ Events are `{ "event", "subscription", ... }`.
   `-grpc` has no endpoint. A frame is sent only when the screen changed: up
   to 5 per second while it changes, backing off to one capture per second
   while it does not, with capturing taking at most half of each device's
-  time. All subscribers of a device share one capture loop, which sends a new subscriber the latest frame and stops with the last
-  subscriber, and at most two captures run at once. A client whose socket has
+  time. All subscribers of a device share one capture loop, which sends a
+  new subscriber the latest frame and stops with the last subscriber, and at
+  most two captures run at once. A client whose socket has
   more than 1 MiB unsent skips frames and gets the newest once it catches up.
 - `build.plan` takes `workspace`, `platform` (`ios` or `android`) and `slot`
   (`default` when absent), and returns the payload of
