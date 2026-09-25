@@ -9,14 +9,14 @@ private typealias InitFn = @convention(c) (
 private typealias SendFn = @convention(c) (
   AnyObject, Selector, UnsafeMutableRawPointer, Bool, DispatchQueue?, (@convention(block) (NSError?) -> Void)?
 ) -> Void
-private typealias MouseMessageFn = @convention(c) (
+typealias MouseMessageFn = @convention(c) (
   UnsafePointer<CGPoint>, UnsafePointer<CGPoint>?, UInt32, UInt, CGSize, UInt32
 ) -> UnsafeMutableRawPointer?
-private typealias UsageForKeyCodeFn = @convention(c) (UInt32) -> UInt32
-private typealias ButtonMessageFn = @convention(c) (UInt32, UInt32, UInt32) -> UnsafeMutableRawPointer?
-private typealias HIDMessageFn = @convention(c) (UInt32, UInt32, UInt32, UInt32) -> UnsafeMutableRawPointer?
+typealias UsageForKeyCodeFn = @convention(c) (UInt32) -> UInt32
+typealias ButtonMessageFn = @convention(c) (UInt32, UInt32, UInt32) -> UnsafeMutableRawPointer?
+typealias HIDMessageFn = @convention(c) (UInt32, UInt32, UInt32, UInt32) -> UnsafeMutableRawPointer?
 
-private enum SimulatorKit {
+enum SimulatorKit {
   static let handle = dlopen(CoreSimulator.simulatorKitPath(CoreSimulator.developerDir), RTLD_NOW)
   static let mouseMessage = symbol("IndigoHIDMessageForMouseNSEvent", MouseMessageFn.self)
   static let usageForKeyCode = symbol("hidUsageForCGKeyCode", UsageForKeyCodeFn.self)

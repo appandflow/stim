@@ -33,3 +33,17 @@ import Testing
     #expect(deviceOrientation(interface: 3) == 4)
   }
 }
+
+@Suite struct KeyUsageTests {
+  @Test func mapsEditingAndNavigationKeysToTheirHIDUsages() throws {
+    let usage = try #require(SimulatorKit.usageForKeyCode)
+    let expected: [(keyCode: UInt32, usage: UInt32)] = [
+      (0, 0x04), (36, 0x28), (53, 0x29), (51, 0x2A), (48, 0x2B), (49, 0x2C),
+      (115, 0x4A), (116, 0x4B), (117, 0x4C), (119, 0x4D), (121, 0x4E),
+      (124, 0x4F), (123, 0x50), (125, 0x51), (126, 0x52), (56, 0xE1),
+    ]
+    for key in expected {
+      #expect(usage(key.keyCode) == key.usage, "key code \(key.keyCode)")
+    }
+  }
+}
