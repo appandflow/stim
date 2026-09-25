@@ -10,6 +10,8 @@ struct DeviceTile: View {
   var interactive = false
   var workspace: String?
   var build: Build? = nil
+  var takenOver = false
+  var onToggleTakeOver: (() -> Void)? = nil
   @State private var pixelSizes: [UInt32: CGSize] = [:]
   @State private var screenIDs: [UInt32] = [1]
   @State private var lit: [UInt32: Bool] = [:]
@@ -24,40 +26,9 @@ struct DeviceTile: View {
   var body: some View {
     Card {
       VStack(spacing: 0) {
-        HStack(spacing: 8) {
-          StatusDot(color: device.isRunning ? Theme.live : Theme.tertiary, filled: device.isRunning)
-          Text(device.slot).font(Theme.body(12, weight: .semibold)).lineLimit(1)
-          Text(device.model).font(Theme.body(12)).foregroundStyle(Theme.secondary).lineLimit(1)
-          Spacer(minLength: 8)
-          TimelineView(.periodic(from: .now, by: 30)) { context in
-            if let badge = ActivityBadge(
-              device.activity, screenChangedAt: device.activityKey.flatMap(ScreenActivity.shared.lastChange),
-              now: context.date)
-            {
-              activityChip(badge)
-            }
-          }
-          Text(source).font(Theme.body(10.5)).foregroundStyle(Theme.tertiary).lineLimit(1)
-          if case .remote = device {
-            remoteControls
-          } else if device.isRunning, let workspace {
-            stopButton(workspace: workspace)
-          }
-          if let posture {
-            Chip { Text(posture) }.fixedSize()
-          }
-          if interactive {
-            rotateButton(clockwise: false)
-            rotateButton(clockwise: true)
-          }
-          if interactive, device.formFactor == .dual, screenIDs.count > 1, SimulatorFold.isAvailable,
-            case .ios(_, let sim) = device
-          {
-            foldButton(udid: sim.udid)
-          }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+        header
+          .padding(.horizontal, 12)
+          .padding(.vertical, 9)
         if let build {
           BuildProgressBar(build: build, compact: true).padding(.horizontal, 12).padding(.bottom, 9)
         }
@@ -75,6 +46,70 @@ struct DeviceTile: View {
       }
     }
     .frame(width: width)
+  }
+
+  private var header: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(spacing: 8) {
+        StatusDot(color: device.isRunning ? Theme.live : Theme.tertiary, filled: device.isRunning)
+        HStack(spacing: 4) {
+          Text(device.slot).font(Theme.body(12, weight: .semibold))
+          Text(device.model).font(Theme.body(12)).foregroundStyle(Theme.secondary)
+        }
+        .lineLimit(1)
+        .truncationMode(.middle)
+        .layoutPriority(1)
+        Spacer(minLength: 8)
+        takeOverButton
+        if case .remote = device {
+          remoteControls
+        } else if device.isRunning, let workspace {
+          stopButton(workspace: workspace)
+        }
+        if interactive {
+          rotateButton(clockwise: false)
+          rotateButton(clockwise: true)
+        }
+        if interactive, device.formFactor == .dual, screenIDs.count > 1, SimulatorFold.isAvailable,
+          case .ios(_, let sim) = device
+        {
+          foldButton(udid: sim.udid)
+        }
+      }
+      FlowLayout(spacing: 6) {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+          if let badge = ActivityBadge(
+            device.activity, screenChangedAt: device.activityKey.flatMap(ScreenActivity.shared.lastChange),
+            now: context.date)
+          {
+            activityChip(badge)
+          }
+        }
+        Text(source).font(Theme.body(10.5)).foregroundStyle(Theme.tertiary).lineLimit(1).fixedSize()
+        if let posture {
+          Chip { Text(posture) }.fixedSize()
+        }
+      }
+    }
+  }
+
+  @ViewBuilder private var takeOverButton: some View {
+    if let onToggleTakeOver {
+      if takenOver {
+        Button("Release", systemImage: "hand.raised.fill", action: onToggleTakeOver)
+          .buttonStyle(.borderedProminent)
+          .tint(Theme.lavender)
+          .controlSize(.small)
+          .fixedSize()
+          .help("Release control so an agent can drive this device again.")
+      } else {
+        Button("Take over", systemImage: "hand.raised", action: onToggleTakeOver)
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+          .fixedSize()
+          .help("Send your clicks, trackpad scrolls and keys to this device. If an agent is driving it, taking over may disrupt it.")
+      }
+    }
   }
 
   private func stopButton(workspace: String) -> some View {

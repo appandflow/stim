@@ -63,19 +63,15 @@ struct WorkspaceDetail: View {
         .fixedSize()
       }
       if let focused {
-        if focused.isInteractive {
-          Toggle("Take over", isOn: Binding(
-            get: { takenOver.contains(focused.id) },
-            set: { on in if on { takenOver.insert(focused.id) } else { takenOver.remove(focused.id) } }
-          ))
-          .toggleStyle(.switch)
-          .controlSize(.small)
-          .help("Send your clicks, trackpad scrolls and keys to this device.")
-        }
         DeviceTile(
           device: focused, screenHeight: 640,
           interactive: focused.isRunning && takenOver.contains(focused.id), workspace: env.path,
-          build: env.runningBuild(for: focused))
+          build: env.runningBuild(for: focused),
+          takenOver: takenOver.contains(focused.id),
+          onToggleTakeOver: focused.isInteractive
+            ? {
+              if takenOver.contains(focused.id) { takenOver.remove(focused.id) } else { takenOver.insert(focused.id) }
+            } : nil)
         AgentFeed(cli: cli, workspace: env.path, device: focused)
           .id(focused.id)
           .frame(maxWidth: 520)
