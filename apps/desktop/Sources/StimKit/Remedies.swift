@@ -25,8 +25,9 @@ public func remedyCommand(forWarning warning: String, workspace: String) -> Stim
   return nil
 }
 
-public func startCommand(worktree: String) -> StimCommand {
-  StimCommand(["start"], cwd: worktree)
+/// The commands that create an environment for a worktree Stim has not registered.
+public func environmentCommands(worktree: String) -> [StimCommand] {
+  [["start"], ["ios"], ["android"]].map { StimCommand($0, cwd: worktree) }
 }
 
 public func shellQuote(_ s: String) -> String {

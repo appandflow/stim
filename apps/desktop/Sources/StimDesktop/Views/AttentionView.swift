@@ -9,7 +9,6 @@ struct AttentionView: View {
   var body: some View {
     let envs = store.payload?.environments ?? []
     let warnings = envs.flatMap { env in env.warnings.map { (env: env, text: $0) } }
-    let noEnvironment = store.payload?.unprovisionedWorktrees ?? []
     ScrollView {
       VStack(alignment: .leading, spacing: 28) {
         VStack(alignment: .leading, spacing: 4) {
@@ -25,16 +24,6 @@ struct AttentionView: View {
               detail: "\(item.env.names.title) \u{00B7} \(store.project(of: item.env).name)",
               command: remedyCommand(forWarning: item.text, workspace: item.env.path),
               runTitle: "Fix \(item.env.names.title)")
-          }
-        }
-        group("Worktrees with no environment", count: noEnvironment.count) {
-          ForEach(Array(noEnvironment.enumerated()), id: \.offset) { index, worktree in
-            if index > 0 { divider }
-            row(
-              title: PathNames(path: worktree.path).title,
-              detail: worktree.branch ?? worktree.path,
-              command: startCommand(worktree: worktree.path),
-              runTitle: "Start \(PathNames(path: worktree.path).title)")
           }
         }
       }

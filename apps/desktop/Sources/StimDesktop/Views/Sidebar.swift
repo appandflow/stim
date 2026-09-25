@@ -37,6 +37,9 @@ struct Sidebar: View {
       if showsIdle {
         Section("Idle") {
           ForEach(envs.filter { !$0.live }) { env in WorkspaceRow(env: env, selection: selection) }
+          ForEach(store.unprovisionedWorktrees(in: projectFilter), id: \.path) { worktree in
+            NoEnvironmentRow(worktree: worktree, selection: selection)
+          }
         }
       }
 
@@ -44,7 +47,7 @@ struct Sidebar: View {
         HStack {
           Label("Needs attention", systemImage: "exclamationmark.triangle")
           Spacer()
-          let count = store.warningCount + (store.payload?.unprovisionedWorktrees?.count ?? 0)
+          let count = store.warningCount
           if count > 0 {
             Text("\(count)")
               .font(Theme.body(11, weight: .medium))
@@ -95,6 +98,25 @@ struct WorkspaceRow: View {
       }
     }
     .sidebarTag(.environment(env.path), selection: selection)
+  }
+}
+
+struct NoEnvironmentRow: View {
+  var worktree: UnprovisionedWorktree
+  var selection: SidebarItem?
+
+  var body: some View {
+    let names = PathNames(path: worktree.path)
+    HStack(spacing: 10) {
+      StatusDot(color: Theme.tertiary, filled: false)
+      VStack(alignment: .leading, spacing: 1) {
+        Text(names.title).lineLimit(1)
+        Text(worktree.branch ?? names.subtitle).font(Theme.body(11)).foregroundStyle(Theme.secondary).lineLimit(1)
+      }
+      Spacer()
+      Text("no environment").font(Theme.body(10.5)).foregroundStyle(Theme.tertiary)
+    }
+    .sidebarTag(.worktree(worktree.path), selection: selection)
   }
 }
 
