@@ -20,6 +20,8 @@ on:
       - '!apps/mobile/**'
       - '!.github/workflows/mobile.yml'
       - 'apps/mobile/src/protocol/types.ts'
+      - 'apps/desktop/Sources/SimulatorFrames/**'
+      - 'apps/desktop/Sources/EmulatorFrames/**'
   pull_request:
     paths:
       - '**'
@@ -28,6 +30,8 @@ on:
       - '!apps/mobile/**'
       - '!.github/workflows/mobile.yml'
       - 'apps/mobile/src/protocol/types.ts'
+      - 'apps/desktop/Sources/SimulatorFrames/**'
+      - 'apps/desktop/Sources/EmulatorFrames/**'
 
 concurrency:
   group: ci-v2-${{ github.workflow }}-${{ github.ref }}

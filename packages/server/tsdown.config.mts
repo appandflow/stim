@@ -20,7 +20,7 @@ export default defineConfig({
       writeFileSync(`dist/${PROTOCOL_SCHEMA_FILE}`, `${JSON.stringify(protocolJsonSchema(), null, 2)}\n`);
       rmSync('dist/stim-frames', { recursive: true, force: true });
       mkdirSync('dist/stim-frames');
-      const desktop = readFileSync('helper/desktop-sources.txt', 'utf8').split('\n').filter(Boolean);
+      const desktop = readFileSync('helper/desktop-sources.txt', 'utf8').split(/\s+/).filter(Boolean);
       for (const source of ['helper/main.swift', ...desktop.map((path) => `../../apps/desktop/Sources/${path}`)]) {
         copyFileSync(source, `dist/stim-frames/${basename(source)}`);
       }
