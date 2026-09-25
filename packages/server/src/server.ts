@@ -90,6 +90,7 @@ const LOG_LIMITS: LogLimits = { maxBufferedBytes: 4 * 1024 * 1024, maxPendingRec
 const FRAME_BUFFER_BYTES = 1024 * 1024;
 const FRAME_RETRY_MS = 100;
 const STATUS_FEED = { args: ['status', '--watch', '--json'], cwd: homedir(), keep: 1, label: 'stim status --watch' };
+const HEALTH_ROUTE_TIMEOUT_MS = 1000;
 const COMMAND_LIMITS: CommandLimits = { timeoutMs: 60_000, maxOutputBytes: 32 * 1024 * 1024 };
 
 const AUTH_REFUSALS: Record<Exclude<AuthOutcome, { ok: true }>['reason'], ProtocolError> = {
@@ -541,8 +542,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     tailscale: healthTailscale(options.tailscaleState),
   };
   const answerHealth = async (response: ServerResponse) => {
-    const tailnet = options.tailscaleState.state === 'running' && options.tailscaleState.dnsName;
-    const route = tailnet ? await serveRoute(options.tailscale, options.env, addresses[0]!.port) : undefined;
+    const tailscale = options.tailscaleState;
+    const route =
+      tailscale.state === 'running' && tailscale.dnsName
+        ? await serveRoute(options.tailscale, options.env, addresses[0]!.port, tailscale.ips, HEALTH_ROUTE_TIMEOUT_MS)
+        : undefined;
     response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ...health, route }));
   };
   const servers: Server[] = [];

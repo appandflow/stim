@@ -94,7 +94,7 @@ async function serve(port: number): Promise<void> {
   }
   let note = tailscaleNote(tailscale);
   if (tailscale.state === 'running' && tailscale.dnsName) {
-    const route = await serveRoute(tailscaleBinary, env, port);
+    const route = await serveRoute(tailscaleBinary, env, port, tailscale.ips);
     if (route.state !== 'funneled') console.log(`tailnet endpoint: ${tailnetEndpoint(tailscale.dnsName, route.port)}`);
     note = routeNote(route, port);
     if (route.state === 'funneled') note = `${note} Pairing is refused until then.`;
@@ -115,7 +115,7 @@ async function pair(port: number, json: boolean): Promise<void> {
   let note = tailscaleNote(tailscale);
   if (note) note = `${note} The endpoint above only works on this Mac.`;
   if (tailscale.state === 'running' && tailscale.dnsName) {
-    const route = await serveRoute(binary, process.env, port);
+    const route = await serveRoute(binary, process.env, port, tailscale.ips);
     if (route.state === 'funneled') fail(`refusing to pair. ${routeNote(route, port)}`);
     endpoint = tailnetEndpoint(tailscale.dnsName, route.port);
     note = routeNote(route, port);

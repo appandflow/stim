@@ -311,7 +311,9 @@ struct PairSheet: View {
         }
         if case .running(let health, _) = server.state, let route = health.route, route.state != "routed" {
           Label(
-            "No tailscale serve route to stim-server was found, so a phone may not reach this endpoint. See the Phones tab.",
+            route.state == "missing"
+              ? "No tailscale serve route to stim-server was found, so a phone cannot reach this endpoint yet. See the Phones tab."
+              : "Could not read tailscale serve status, so this endpoint is assumed. See the Phones tab.",
             systemImage: "exclamationmark.triangle.fill"
           )
           .foregroundStyle(Theme.warn)

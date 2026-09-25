@@ -69,69 +69,89 @@ export type ServeRoute =
   | { state: 'missing'; port: number }
   | { state: 'unknown'; reason: string; port: number };
 
-function proxiesTo(proxy: unknown, target: number): boolean {
-  if (typeof proxy !== 'string') return false;
+function reaches(address: unknown, target: number, hosts: Set<string>): URL | null {
+  if (typeof address !== 'string') return null;
   let url: URL;
   try {
-    url = new URL(proxy);
+    url = new URL(address.includes('://') ? address : `tcp://${address}`);
   } catch {
-    return false;
+    return null;
   }
-  return (
-    url.protocol === 'http:' &&
-    ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) &&
-    url.port === String(target) &&
-    url.pathname === '/'
-  );
+  return hosts.has(url.hostname) && url.port === String(target) ? url : null;
+}
+
+function portOf(hostPort: string): number {
+  return Number(hostPort.slice(hostPort.lastIndexOf(':') + 1));
 }
 
 /**
- * Reads `tailscale serve status --json`, an ipn.ServeConfig: `TCP` maps a port to `{ HTTPS }`,
- * `Web` maps `<host>:<port>` to `{ Handlers: { <mount>: { Proxy } } }`, `AllowFunnel` maps
- * `<host>:<port>` to true, and `Foreground` holds the same shape per foreground session.
+ * Reads `tailscale serve status --json`, an ipn.ServeConfig: `TCP` maps a port to `{ HTTPS }` or
+ * `{ TCPForward }`, `Web` maps `<host>:<port>` to `{ Handlers: { <mount>: { Proxy } } }`,
+ * `AllowFunnel` maps `<host>:<port>` to true, and `Foreground` holds the same shape per
+ * foreground session. Any handler or TCP forward that reaches the server on a Funnel port exposes
+ * it; only a `/` HTTP proxy on an HTTPS port is a route a client can use.
  */
-function parseServeStatus(value: unknown, target: number): ServeRoute {
+function parseServeStatus(value: unknown, target: number, ips: string[]): ServeRoute {
   if (!isJsonObject(value)) return { state: 'unknown', reason: 'it printed no serve config', port: SERVE_PORT };
+  const hosts = new Set(['127.0.0.1', 'localhost', '[::1]', ...ips.map((ip) => (ip.includes(':') ? `[${ip}]` : ip))]);
   const configs = [value, ...(isJsonObject(value.Foreground) ? Object.values(value.Foreground) : [])].filter(
     isJsonObject,
   );
   const used = new Set<number>();
   const funneled = new Set<number>();
+  const reaching = new Set<number>();
   const routes = new Set<number>();
   for (const config of configs) {
     const tcp = isJsonObject(config.TCP) ? config.TCP : {};
-    for (const port of Object.keys(tcp)) used.add(Number(port));
+    for (const [port, listener] of Object.entries(tcp)) {
+      used.add(Number(port));
+      if (isJsonObject(listener) && reaches(listener.TCPForward, target, hosts)) reaching.add(Number(port));
+    }
     for (const [hostPort, allowed] of Object.entries(isJsonObject(config.AllowFunnel) ? config.AllowFunnel : {})) {
-      if (allowed === true) funneled.add(Number(hostPort.slice(hostPort.lastIndexOf(':') + 1)));
+      if (allowed === true) funneled.add(portOf(hostPort));
     }
     for (const [hostPort, web] of Object.entries(isJsonObject(config.Web) ? config.Web : {})) {
-      const port = Number(hostPort.slice(hostPort.lastIndexOf(':') + 1));
+      const port = portOf(hostPort);
       const listener = tcp[String(port)];
-      const root = isJsonObject(web) && isJsonObject(web.Handlers) ? web.Handlers['/'] : undefined;
-      if (isJsonObject(listener) && listener.HTTPS === true && isJsonObject(root) && proxiesTo(root.Proxy, target)) {
-        routes.add(port);
+      const https = isJsonObject(listener) && listener.HTTPS === true;
+      const handlers = isJsonObject(web) && isJsonObject(web.Handlers) ? web.Handlers : {};
+      for (const [mount, handler] of Object.entries(handlers)) {
+        const url = isJsonObject(handler) ? reaches(handler.Proxy, target, hosts) : null;
+        if (!url) continue;
+        reaching.add(port);
+        if (https && mount === '/' && url.protocol === 'http:' && url.pathname === '/') routes.add(port);
       }
     }
   }
   let free = SERVE_PORT;
   while (used.has(free) || funneled.has(free)) free++;
-  const exposed = [...routes].filter((port) => funneled.has(port)).toSorted((a, b) => a - b);
+  const exposed = [...reaching].filter((port) => funneled.has(port)).toSorted((a, b) => a - b);
   if (exposed.length) return { state: 'funneled', ports: exposed, port: free };
   const tailnet = [...routes].toSorted((a, b) => a - b);
   if (tailnet.length) return { state: 'routed', port: tailnet.includes(SERVE_PORT) ? SERVE_PORT : tailnet[0]! };
   return { state: 'missing', port: free };
 }
 
-export function serveRoute(binary: string | null, env: NodeJS.ProcessEnv, target: number): Promise<ServeRoute> {
+export function serveRoute(
+  binary: string | null,
+  env: NodeJS.ProcessEnv,
+  target: number,
+  ips: string[],
+  timeoutMs: number = TIMEOUT_MS,
+): Promise<ServeRoute> {
   if (!binary)
     return Promise.resolve({ state: 'unknown', reason: 'the tailscale command was not found', port: SERVE_PORT });
   return new Promise((resolve) => {
-    execFile(binary, ['serve', 'status', '--json'], { env, timeout: TIMEOUT_MS, encoding: 'utf8' }, (error, stdout) => {
+    execFile(binary, ['serve', 'status', '--json'], { env, timeout: timeoutMs, encoding: 'utf8' }, (error, stdout) => {
       let route: ServeRoute;
       try {
         route = error
-          ? { state: 'unknown', reason: error.message, port: SERVE_PORT }
-          : parseServeStatus(stdout.trim() ? JSON.parse(stdout) : {}, target);
+          ? {
+              state: 'unknown',
+              reason: error.killed ? 'it timed out' : error.message.split('\n')[0]!,
+              port: SERVE_PORT,
+            }
+          : parseServeStatus(stdout.trim() ? JSON.parse(stdout) : {}, target, ips);
       } catch {
         route = { state: 'unknown', reason: 'it printed output that is not JSON', port: SERVE_PORT };
       }

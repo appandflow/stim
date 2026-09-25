@@ -115,10 +115,21 @@ withTailscale('pair with Tailscale running', () => {
     expect(stderr).not.toContain('tailscale serve --bg');
   });
 
-  it('refuses to pair when a route to the server is funneled, and creates no token', () => {
-    const { status, stderr } = pairWith(
-      serveConfig({ 443: 'http://127.0.0.1:7787', 8443: 'http://localhost:7787' }, [443]),
-    );
+  const pathMount = JSON.stringify({
+    TCP: { '443': { HTTPS: true } },
+    Web: { [`${DNS}:443`]: { Handlers: { '/stim': { Proxy: 'http://127.0.0.1:7787' } } } },
+    AllowFunnel: { [`${DNS}:443`]: true },
+  });
+  const tcpForward = JSON.stringify({
+    TCP: { '443': { TCPForward: '127.0.0.1:7787' } },
+    AllowFunnel: { [`${DNS}:443`]: true },
+  });
+  it.each([
+    ['a / route', serveConfig({ 443: 'http://127.0.0.1:7787', 8443: 'http://localhost:7787' }, [443])],
+    ['a path mount', pathMount],
+    ['a TCP forward', tcpForward],
+  ])('refuses to pair when %s to the server is funneled, and creates no token', (_, config) => {
+    const { status, stderr } = pairWith(config);
     expect(status).toBe(1);
     expect(stderr).toContain('Funnel is on for port 443');
     expect(stderr).toContain('--https=7443');

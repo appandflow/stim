@@ -59,7 +59,8 @@ Funnel makes every handler on that port reachable from the public internet.
 `pair`. It uses the HTTPS port whose `/` handler proxies to its loopback port,
 preferring 7443. Without such a route, it assumes 7443 and prints the command
 above, or the next free port when 7443 is taken. It never suggests a Funnel
-port.
+port. Any handler, at any path, or TCP forward that reaches the server on a
+Funnel port makes it public, and `pair` refuses.
 
 When Tailscale is not running, `stim-server` listens on loopback only and
 says so on stderr. Start Tailscale, then restart `stim-server`.

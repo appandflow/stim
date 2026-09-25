@@ -154,7 +154,8 @@ encryption layer.
   `tailscale serve --bg --https=7443 http://127.0.0.1:7787`, so it never shares
   port 443 with another app. The server reads `tailscale serve status --json`
   to find the port that proxies to it and assumes 7443 when there is none.
-  When a route to it is on a Funnel port, it is public: pairing is refused,
+  When any handler or TCP forward to it is on a Funnel port, it is public:
+  pairing is refused,
   and no suggested command adds a handler to a Funnel port.
 - Desktop shows a QR code on request:
 
