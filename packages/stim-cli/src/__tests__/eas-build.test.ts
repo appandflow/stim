@@ -47,6 +47,7 @@ function fixture({
   failCommand = '',
   projectFromEnv = false,
   physical = false,
+  easCliVersion = 'eas-cli/24.8.0 darwin-arm64 node-v22.22.2',
 }: {
   platform?: 'ios' | 'android';
   builds?: unknown;
@@ -54,6 +55,7 @@ function fixture({
   failCommand?: string;
   projectFromEnv?: boolean;
   physical?: boolean;
+  easCliVersion?: string | null;
 } = {}) {
   const calls: string[][] = [];
   setExecutor({
@@ -90,7 +92,15 @@ function fixture({
       }
     },
   });
-  const resolve = () => resolveEasDevelopmentBuild({ root, platform, profile, physical, note: () => {} });
+  const resolve = () =>
+    resolveEasDevelopmentBuild({
+      root,
+      platform,
+      profile,
+      physical,
+      note: () => {},
+      readEasCliVersion: () => easCliVersion,
+    });
   return { calls, resolve };
 }
 
@@ -168,6 +178,28 @@ test('a miss gives a build command without running it', async () => {
   expect(result.remedy).toContain('charges');
   expect(calls.map((call) => call[0])).toEqual(['config', 'fingerprint:generate', 'build:list']);
   expect(locks.releaseBuildLock).toHaveBeenCalled();
+});
+
+test.each([
+  ['eas-cli/18.8.0 darwin-arm64 node-v22.22.2', 'eas-cli 18.8.0 (/eas) cannot download a build by ID'],
+  [null, 'Could not read an eas-cli version from `/eas --version`'],
+])(
+  'an eas-cli without build:download --build-id refuses before any EAS command (%s)',
+  async (easCliVersion, message) => {
+    const { resolve, calls } = fixture({ easCliVersion });
+    const result = await resolve();
+    expect(result).toMatchObject({ ok: false, code: 'STIM_EAS_UNAVAILABLE' });
+    if (result?.ok !== false) throw new Error('Expected a refusal');
+    expect(result.message).toContain(message);
+    expect(result.message).toContain('needs eas-cli 18.9.0 or later');
+    expect(result.remedy).toContain('npm install --global eas-cli@latest');
+    expect(calls).toEqual([]);
+  },
+);
+
+test('the first eas-cli release with build:download --build-id downloads the build', async () => {
+  const { resolve } = fixture({ easCliVersion: 'eas-cli/18.9.0 linux-x64 node-v22.18.0' });
+  expect(await resolve()).toMatchObject({ ok: true, cacheHit: 'remote' });
 });
 
 test.each(['config', 'fingerprint:generate', 'build:list', 'build:download'])(

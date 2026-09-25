@@ -54,11 +54,16 @@ const SESSION_PLATFORMS = new Set(['ios', 'android']);
 
 export const MIN_EAS_CLI_SIMULATOR_VERSION: string = '21.6.0';
 
-export const EAS_CLI_UPGRADE_REMEDY: string = `Upgrade eas-cli to ${MIN_EAS_CLI_SIMULATOR_VERSION} or later (\`npm install --global eas-cli@latest\`, or the project's eas-cli dependency)`;
+export function easCliUpgradeRemedy(minimum: string): string {
+  return `Upgrade eas-cli to ${minimum} or later (\`npm install --global eas-cli@latest\`, or the project's eas-cli dependency)`;
+}
 
-export function easCliSimulatorSupport(versionOutput: string | null): { supported: boolean; version: string | null } {
+export function easCliSupport(
+  versionOutput: string | null,
+  minimum: string,
+): { supported: boolean; version: string | null } {
   const version = /\beas-cli\/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/.exec(versionOutput ?? '')?.[1] ?? null;
-  const order = version ? compareStimVersions(version, MIN_EAS_CLI_SIMULATOR_VERSION) : null;
+  const order = version ? compareStimVersions(version, minimum) : null;
   return { supported: order !== null && order >= 0, version };
 }
 

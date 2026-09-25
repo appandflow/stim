@@ -4,9 +4,13 @@ import { getExecutor } from '../exec.ts';
 import { claimFailure } from '../ownership-claim.ts';
 import { acquireBuildLock, releaseBuildLock } from './build-lock.ts';
 import { resolveEasCliBin } from './remote-cache.ts';
+import { readInstalledEasCliVersion } from './device-remote.ts';
+import { easCliSupport, easCliUpgradeRemedy } from './eas-simulator.ts';
 
 type Platform = 'ios' | 'android';
 type JsonObject = Record<string, unknown>;
+
+export const MIN_EAS_CLI_BUILD_DOWNLOAD_VERSION: string = '18.9.0';
 
 interface Refusal {
   code: string;
@@ -104,6 +108,7 @@ export async function resolveEasDevelopmentBuild({
   physical = false,
   selectors = [],
   buildCache,
+  readEasCliVersion = readInstalledEasCliVersion,
 }: {
   root: string;
   platform: Platform;
@@ -113,6 +118,7 @@ export async function resolveEasDevelopmentBuild({
   selectors?: (string | null | undefined)[];
   buildCache?: boolean;
   note: (line: string) => void;
+  readEasCliVersion?: (easBin: string, root: string) => string | null;
 }): Promise<EasBuildResult | null> {
   if (profile === undefined) return null;
   const refusal = easOptionRefusal({
@@ -132,6 +138,15 @@ export async function resolveEasDevelopmentBuild({
         'STIM_EAS_UNAVAILABLE',
         'EAS CLI is not installed.',
         'Install eas-cli, run eas login, then retry.',
+      );
+    const easCli = easCliSupport(readEasCliVersion(cli.file, root), MIN_EAS_CLI_BUILD_DOWNLOAD_VERSION);
+    if (!easCli.supported)
+      throw new EasFailure(
+        'STIM_EAS_UNAVAILABLE',
+        easCli.version
+          ? `eas-cli ${easCli.version} (${cli.file}) cannot download a build by ID; --eas-profile needs eas-cli ${MIN_EAS_CLI_BUILD_DOWNLOAD_VERSION} or later.`
+          : `Could not read an eas-cli version from \`${cli.file} --version\`; --eas-profile needs eas-cli ${MIN_EAS_CLI_BUILD_DOWNLOAD_VERSION} or later.`,
+        `${easCliUpgradeRemedy(MIN_EAS_CLI_BUILD_DOWNLOAD_VERSION)}, then retry ${retry}.`,
       );
     let profileEnv: Record<string, string> = {};
     const run = (args: string[], timeoutMs = 120_000): unknown => {

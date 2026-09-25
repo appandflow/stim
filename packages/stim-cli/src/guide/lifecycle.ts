@@ -279,6 +279,9 @@ cloud build. Once it completes, retry the same Stim command. No build-on-miss
 flag exists, and Stim never starts a cloud build or falls back to local
 compilation in this mode. Authentication, network, invalid output or download
 failures produce STIM_EAS_UNAVAILABLE, with the failed EAS command to inspect.
+An eas-cli older than 18.9.0 cannot run build:download --build-id; Stim reads
+eas --version first and refuses with STIM_EAS_UNAVAILABLE and the upgrade
+command before any EAS lookup. stim doctor reports it in a project with eas.json.
 If another run holds the artifact claim, wait for it to finish and retry.`,
     },
 

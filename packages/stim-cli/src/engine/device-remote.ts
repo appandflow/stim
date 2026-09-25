@@ -24,8 +24,8 @@ import { devClientDeepLink, INSTALL_ERROR, LAUNCH_ERROR } from './app-install.ts
 import { isBundleProof, readMetroRecords } from './launch-verify.ts';
 import {
   createSessionArgs,
-  EAS_CLI_UPGRADE_REMEDY,
-  easCliSimulatorSupport,
+  easCliSupport,
+  easCliUpgradeRemedy,
   getSessionArgs,
   inspectSessionForTeardown,
   isDefinitiveMissingSessionError,
@@ -498,13 +498,13 @@ export async function resolveRemoteContext({
       code: 'STIM_REMOTE_EAS_UNAVAILABLE',
     };
   } else {
-    const { supported, version } = easCliSimulatorSupport(readEasCliVersion(easBin, root));
+    const { supported, version } = easCliSupport(readEasCliVersion(easBin, root), MIN_EAS_CLI_SIMULATOR_VERSION);
     if (!supported) {
       return {
         failed: version
           ? `eas-cli ${version} (${easBin}) has no EAS Simulator commands; the eas backend needs eas-cli ${MIN_EAS_CLI_SIMULATOR_VERSION} or later.`
           : `Could not read an eas-cli version from \`${easBin} --version\`; the eas backend needs eas-cli ${MIN_EAS_CLI_SIMULATOR_VERSION} or later.`,
-        remedy: `${EAS_CLI_UPGRADE_REMEDY}, then run the device command with \`--remote eas\` again.`,
+        remedy: `${easCliUpgradeRemedy(MIN_EAS_CLI_SIMULATOR_VERSION)}, then run the device command with \`--remote eas\` again.`,
         code: 'STIM_REMOTE_EAS_UNAVAILABLE',
       };
     }
