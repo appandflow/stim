@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,7 +31,7 @@ const makeWorkspace = () => {
   mkdirSync(join(root, 'website'), { recursive: true });
   for (const file of ['pnpm-workspace.yaml', 'pnpm-lock.yaml']) cpSync(join(REPO, file), join(root, file));
   cpSync(join(REPO, 'website', 'package.json'), join(root, 'website', 'package.json'));
-  for (const dir of PACKAGE_DIRS) {
+  for (const dir of readdirSync(join(REPO, 'packages'))) {
     mkdirSync(join(root, 'packages', dir), { recursive: true });
     cpSync(join(REPO, 'packages', dir, 'package.json'), manifestIn(root, dir));
   }

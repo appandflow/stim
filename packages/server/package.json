@@ -1,0 +1,44 @@
+{
+  "name": "@stim-cli/server",
+  "version": "1.9.0",
+  "description": "Serves Stim status to paired read-only clients over Tailscale.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/appandflow/stim.git",
+    "directory": "packages/server"
+  },
+  "bin": {
+    "stim-server": "dist/stim-server.mjs"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "main": "dist/protocol.mjs",
+  "types": "dist/protocol.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/protocol.d.mts",
+      "module-sync": "./dist/protocol.mjs",
+      "default": "./dist/protocol.mjs"
+    },
+    "./protocol.schema.json": "./dist/protocol.schema.json"
+  },
+  "scripts": {
+    "build": "tsdown"
+  },
+  "dependencies": {
+    "@stim-cli/core": "workspace:^",
+    "stim": "workspace:*",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

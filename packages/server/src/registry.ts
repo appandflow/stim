@@ -1,0 +1,187 @@
+import { createHash, randomBytes } from 'node:crypto';
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+import { configDir, withDirLock } from '@stim-cli/core';
+import { isJsonObject, readJsonObject } from '@stim-cli/core/state';
+import { CAPABILITIES, type Capability } from './protocol.ts';
+
+export const PAIRING_TTL_MS: number = 5 * 60_000;
+
+export type PeerIdentity = { kind: 'local' } | { kind: 'tailnet'; nodeId: string; nodeName: string; user: string };
+
+export interface PairedDevice {
+  id: string;
+  name: string;
+  tokenHash: string;
+  identity: PeerIdentity;
+  pairedAt: string;
+  lastSeenAt: string | null;
+  capabilities: Capability[];
+}
+
+interface PairingRecord {
+  tokenHash: string;
+  expiresAt: string;
+}
+
+export type AuthOutcome =
+  | { ok: true; device: PairedDevice; deviceToken?: string }
+  | { ok: false; reason: 'pairing-unknown' | 'pairing-expired' | 'device-unknown' | 'node-mismatch' };
+
+export function serverDir(): string {
+  return join(configDir(), 'server');
+}
+
+function devicesFile(): string {
+  return join(serverDir(), 'devices.json');
+}
+
+function pairingFile(): string {
+  return join(serverDir(), 'pairing.json');
+}
+
+function hashToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+function newToken(): string {
+  return randomBytes(32).toString('base64url');
+}
+
+function parseIdentity(value: unknown): PeerIdentity | null {
+  if (!isJsonObject(value)) return null;
+  if (value.kind === 'local') return { kind: 'local' };
+  const { nodeId, nodeName, user } = value;
+  if (
+    value.kind === 'tailnet' &&
+    typeof nodeId === 'string' &&
+    typeof nodeName === 'string' &&
+    typeof user === 'string'
+  )
+    return { kind: 'tailnet', nodeId, nodeName, user };
+  return null;
+}
+
+function parseDevice(value: unknown): PairedDevice | null {
+  if (!isJsonObject(value)) return null;
+  const { id, name, tokenHash, pairedAt, lastSeenAt } = value;
+  const identity = parseIdentity(value.identity);
+  if (typeof id !== 'string' || typeof name !== 'string' || typeof tokenHash !== 'string' || !identity) return null;
+  if (typeof pairedAt !== 'string') return null;
+  const capabilities = Array.isArray(value.capabilities)
+    ? CAPABILITIES.filter((capability) => (value.capabilities as unknown[]).includes(capability))
+    : [];
+  return {
+    id,
+    name,
+    tokenHash,
+    identity,
+    pairedAt,
+    lastSeenAt: typeof lastSeenAt === 'string' ? lastSeenAt : null,
+    capabilities,
+  };
+}
+
+export function readDevices(): PairedDevice[] {
+  const devices = readJsonObject(devicesFile())?.devices;
+  return Array.isArray(devices) ? devices.flatMap((entry) => parseDevice(entry) ?? []) : [];
+}
+
+function readPairings(): PairingRecord[] {
+  const tokens = readJsonObject(pairingFile())?.tokens;
+  if (!Array.isArray(tokens)) return [];
+  return tokens.flatMap((entry) =>
+    isJsonObject(entry) && typeof entry.tokenHash === 'string' && typeof entry.expiresAt === 'string'
+      ? [{ tokenHash: entry.tokenHash, expiresAt: entry.expiresAt }]
+      : [],
+  );
+}
+
+function writeJson(file: string, value: unknown): void {
+  const temporary = join(dirname(file), `.${basename(file)}.${process.pid}.tmp`);
+  try {
+    writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+    renameSync(temporary, file);
+  } catch (error) {
+    rmSync(temporary, { force: true });
+    throw error;
+  }
+}
+
+function transaction<T>(fn: () => T): T {
+  return withDirLock(join(serverDir(), 'registry.lock'), fn, {
+    ensureParent: () => mkdirSync(serverDir(), { recursive: true, mode: 0o700 }),
+  });
+}
+
+function unexpired(record: PairingRecord, now: number): boolean {
+  return Date.parse(record.expiresAt) > now;
+}
+
+export function createPairingToken(now: number = Date.now()): { token: string; expiresAt: string } {
+  const token = newToken();
+  const expiresAt = new Date(now + PAIRING_TTL_MS).toISOString();
+  transaction(() => {
+    const pending = readPairings().filter((record) => unexpired(record, now));
+    writeJson(pairingFile(), { version: 1, tokens: [...pending, { tokenHash: hashToken(token), expiresAt }] });
+  });
+  return { token, expiresAt };
+}
+
+function sameNode(a: PeerIdentity, b: PeerIdentity): boolean {
+  if (a.kind === 'local' || b.kind === 'local') return a.kind === b.kind;
+  return a.nodeId === b.nodeId;
+}
+
+export function spendPairingToken(
+  token: string,
+  name: string,
+  identity: PeerIdentity,
+  now: number = Date.now(),
+): AuthOutcome {
+  return transaction(() => {
+    const pairings = readPairings();
+    const tokenHash = hashToken(token);
+    const match = pairings.find((record) => record.tokenHash === tokenHash);
+    const pending = pairings.filter((record) => record !== match && unexpired(record, now));
+    if (pending.length !== pairings.length) writeJson(pairingFile(), { version: 1, tokens: pending });
+    if (!match) return { ok: false, reason: 'pairing-unknown' };
+    if (!unexpired(match, now)) return { ok: false, reason: 'pairing-expired' };
+    const deviceToken = newToken();
+    const at = new Date(now).toISOString();
+    const device: PairedDevice = {
+      id: randomBytes(4).toString('hex'),
+      name,
+      tokenHash: hashToken(deviceToken),
+      identity,
+      pairedAt: at,
+      lastSeenAt: at,
+      capabilities: ['read'],
+    };
+    writeJson(devicesFile(), { version: 1, devices: [...readDevices(), device] });
+    return { ok: true, device, deviceToken };
+  });
+}
+
+export function authenticateDevice(token: string, identity: PeerIdentity, now: number = Date.now()): AuthOutcome {
+  return transaction(() => {
+    const devices = readDevices();
+    const tokenHash = hashToken(token);
+    const device = devices.find((entry) => entry.tokenHash === tokenHash);
+    if (!device) return { ok: false, reason: 'device-unknown' };
+    if (!sameNode(device.identity, identity)) return { ok: false, reason: 'node-mismatch' };
+    device.lastSeenAt = new Date(now).toISOString();
+    writeJson(devicesFile(), { version: 1, devices });
+    return { ok: true, device };
+  });
+}
+
+export function revokeDevice(id: string): boolean {
+  return transaction(() => {
+    const devices = readDevices();
+    const remaining = devices.filter((device) => device.id !== id);
+    if (remaining.length === devices.length) return false;
+    writeJson(devicesFile(), { version: 1, devices: remaining });
+    return true;
+  });
+}

@@ -71,6 +71,8 @@ stim guide settings
 - [`@stim-cli/cache`](./packages/cache) holds the cache provider contract and
   the local-first tier coordination behind both caches.
 - [`@stim-cli/core`](./packages/core) contains shared internal cache contracts.
+- [`@stim-cli/server`](./packages/server) serves Stim status to paired
+  read-only clients, such as the phone app, over Tailscale.
 
 ## Development
 
