@@ -58,6 +58,64 @@ on the volumes holding the repositories, `$STIM_HOME`, and CoreSimulator, and
 what `stim gc --delete` would reclaim; the reclaimable figure needs a Stim
 version with `gc --json`.
 
+## Storage
+
+**Storage** under Machine in the sidebar shows what uses disk space. It never
+blocks on a measurement: sizes load in the background at low priority, are kept
+for 15 minutes, and **Refresh** measures again.
+
+- **Workspaces**: each workspace's build outputs, from `stim gc --json`, and its
+  `node_modules` and owned simulators and emulators, which the app sizes with
+  `du` (`~/Library/Developer/CoreSimulator/Devices/<UDID>` and
+  `~/.android/avd/<name>.avd`, or `ANDROID_AVD_HOME`). A trash icon marks build
+  outputs `stim gc --delete` clears; a lock marks ones it keeps, with the reason.
+  The lifecycle column reads **Merged into main** from `stim gc --json`, **PR #n
+  open** from `gh pr list` in the repository when the GitHub CLI is on the login
+  shell's `PATH` and signed in, **Stale Nd** after 7 days without recorded use,
+  or **Active**. Without `gh` the column still shows merged and stale.
+  **Remove merged worktrees** runs `stim worktree remove <path>` for each
+  worktree gc reports as merged, after a confirmation. A row's menu reveals the
+  worktree in Finder or runs `stim worktree remove` in it.
+- **Stim caches and devices**: build outputs of idle workspaces, each shared
+  cache, and parked, orphaned or stale owned devices, from `stim gc --json`.
+  Each row previews a scoped dry run (`stim gc --json --cache workspaces`,
+  `stim gc --json --cache <name>`, or `stim gc --json`) in the activity sheet,
+  whose **Delete** runs the same scope with `--delete`.
+- **Outside Stim**: simulators Stim does not own, Xcode DerivedData, Gradle
+  caches and `~/Library/Caches`, measured with `du` and shown for information
+  with **Reveal in Finder**. A Stim cache inside one of them is subtracted and
+  listed under Stim instead.
+- **Reclaim everything safe** previews `stim gc --json` and runs `stim gc
+--delete` after a confirmation.
+
+## Autopilot
+
+The **Autopilot** section of the App preferences is on by default. It checks
+every minute while the app runs, uses the same action slot as the cleanup the
+user starts, so the two never overlap, and records every run with its exit
+status under **Autopilot activity**.
+
+- **Shut down idle devices** after 30 minutes to 4 hours (1 hour by default)
+  runs `stim gc --idle <minutes>m` when `stim status` shows a booted device idle
+  that long. It waits while a device the CLI counts as idle has a screen the app
+  saw change more recently, because `gc --idle` would shut that device down too.
+- **Clean up every night** runs `stim gc --delete` at the chosen hour (3:00 by
+  default), or at the next check when the Mac slept through it. The first launch
+  only records the time, so installing the app never starts a cleanup.
+- **Reclaim space when free disk is under the Stim budget** compares the free
+  space on the volumes Stim writes to, without purgeable space, with
+  `budget.minFreeDiskGb` and `budget.hardFloorDiskGb` from `stim settings --json`.
+  0 turns the check off, as in the CLI. Under it, the app previews `stim gc
+--json` and runs `stim gc --delete` at most once an hour.
+
+While free disk is under the budget, the Storage view shows the plan, such as
+"Clear the build outputs of 3 idle workspaces and remove 1 merged worktree to
+free about 300 MB", with a **Do it** button that runs `stim gc --delete`, and
+the sidebar marks Storage. With autopilot reclaiming, the app posts a
+notification after each run. Without it, the app posts the plan once per
+episode with a **Do it** button. The **Free disk falls under the Stim budget**
+notification is on by default and needs the bundled app.
+
 ## Logs
 
 A workspace's detail view has a **Logs** tab next to its device, and the error
@@ -140,7 +198,7 @@ config: appearance (Auto, Light, Dark), showing idle workspaces, opening to all
 devices or the last project, device tile size, a live frame rate cap, pausing
 frames while the window is hidden, the editor and terminal the workspace
 inspector opens, notifications, a menu bar extra with the live workspace count
-and quick open, launch at login, and a `stim` executable override that applies
+and quick open, launch at login, the autopilot (see Autopilot), and a `stim` executable override that applies
 at the next launch. Notifications and launch at login need the bundled app.
 
 ## Requirements
@@ -171,7 +229,7 @@ The bundle copies Inter, JetBrains Mono, and the brand artwork from `website/`.
 
 ## Layout
 
-- `Sources/StimKit`: models for the CLI's JSON, the login shell environment, the CLI client, project grouping, warning remedies, the streaming runner, `stim logs` records and the follow runner, and process, disk and gc usage. Unit-tested.
+- `Sources/StimKit`: models for the CLI's JSON, the login shell environment, the CLI client, project grouping, warning remedies, the streaming runner, `stim logs` records and the follow runner, process, disk and gc usage, the Storage report and worktree lifecycle, and the autopilot schedule, pressure plan and log. Unit-tested.
 - `Sources/SimulatorFrames`: live simulator frames through CoreSimulator and input through SimulatorKit, both private Apple frameworks. Expect Xcode releases to break it.
 - `Support/SimFold`: the `sim-fold` helper, an iOS Simulator executable that `scripts/bundle.sh` builds into the app's resources.
 - `Sources/EmulatorFrames`: live emulator frames through the emulator's localhost gRPC `streamScreenshot` call, found through its discovery file, and input through the same endpoint. Emulators Stim booted before it passed `-grpc` show no frames until their next boot.

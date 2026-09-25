@@ -158,13 +158,18 @@ public struct DiskVolume: Equatable, Identifiable, Sendable {
   public var availableBytes: Int64
   public var totalBytes: Int64
   public var holds: [String]
+  /// Free space without purgeable space, which is what Stim's disk budget measures.
+  public var unpurgeableFreeBytes: Int64?
 
-  public init(id: String, name: String, availableBytes: Int64, totalBytes: Int64, holds: [String]) {
+  public init(
+    id: String, name: String, availableBytes: Int64, totalBytes: Int64, holds: [String], unpurgeableFreeBytes: Int64? = nil
+  ) {
     self.id = id
     self.name = name
     self.availableBytes = availableBytes
     self.totalBytes = totalBytes
     self.holds = holds
+    self.unpurgeableFreeBytes = unpurgeableFreeBytes
   }
 }
 
@@ -193,6 +198,7 @@ public enum DiskUsage {
     }
     let keys: Set<URLResourceKey> = [
       .volumeURLKey, .volumeNameKey, .volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey,
+      .volumeAvailableCapacityKey,
     ]
     guard let values = try? url.resourceValues(forKeys: keys),
       let volume = values.volume,
@@ -201,29 +207,61 @@ public enum DiskUsage {
     else { return nil }
     return DiskVolume(
       id: volume.path, name: values.volumeName ?? volume.lastPathComponent,
-      availableBytes: available, totalBytes: Int64(total), holds: [label])
+      availableBytes: available, totalBytes: Int64(total), holds: [label],
+      unpurgeableFreeBytes: values.volumeAvailableCapacity.map(Int64.init))
   }
 }
 
-/// What `stim gc --json` (a dry run) says `stim gc --delete` would free.
+/// The parts of the `stim gc --json` dry run that size what Stim can reclaim.
 public struct GcReport: Decodable, Sendable {
-  struct Sized: Decodable, Sendable {
-    var bytes: Int64?
-    var willClear: Bool?
-    var willEmpty: Bool?
+  public struct Sized: Decodable, Hashable, Sendable {
+    public var bytes: Int64?
   }
 
-  struct Sections: Decodable, Sendable {
-    var orphanedWorkspaces: [Sized]?
-    var parkedSimulators: [Sized]?
-    var parkedEmulators: [Sized]?
-    var orphanedDevices: [Sized]?
-    var staleDevices: [Sized]?
-    var workspaceBuildOutputs: [Sized]?
-    var caches: [Sized]?
+  public struct Device: Decodable, Hashable, Sendable {
+    public var udid: String?
+    public var id: String?
+    public var name: String?
+    public var bytes: Int64?
   }
 
-  var sections: Sections
+  public struct LinkedWorktree: Decodable, Hashable, Sendable {
+    public var path: String
+    public var idleDays: Int?
+    public var mergedInto: String?
+    public var willRemove: Bool
+    public var detail: String?
+  }
+
+  public struct BuildOutputs: Decodable, Hashable, Sendable {
+    public var dir: String?
+    public var projectRoot: String?
+    public var bytes: Int64?
+    public var idleDays: Int?
+    public var willClear: Bool?
+    public var detail: String?
+  }
+
+  public struct Cache: Decodable, Hashable, Sendable {
+    public var name: String
+    public var dir: String
+    public var bytes: Int64?
+    public var note: String?
+    public var willEmpty: Bool?
+  }
+
+  public struct Sections: Decodable, Sendable {
+    public var orphanedWorkspaces: [Sized]?
+    public var linkedWorktrees: [LinkedWorktree]?
+    public var parkedSimulators: [Device]?
+    public var parkedEmulators: [Device]?
+    public var orphanedDevices: [Device]?
+    public var staleDevices: [Device]?
+    public var workspaceBuildOutputs: [BuildOutputs]?
+    public var caches: [Cache]?
+  }
+
+  public var sections: Sections
 
   public struct Reclaimable: Equatable, Sendable {
     public var bytes: Int64
@@ -232,17 +270,29 @@ public struct GcReport: Decodable, Sendable {
     public var unsized: Int
   }
 
-  public var reclaimable: Reclaimable {
+  /// Owned devices `stim gc --delete` deletes.
+  public var deletableDevices: [Device] {
     let s = sections
-    var removed: [Sized] = []
-    for group in [s.orphanedWorkspaces, s.parkedSimulators, s.parkedEmulators, s.orphanedDevices, s.staleDevices] {
-      removed += group ?? []
-    }
-    removed += (s.workspaceBuildOutputs ?? []).filter { $0.willClear == true }
-    removed += (s.caches ?? []).filter { $0.willEmpty == true }
+    return [s.parkedSimulators, s.parkedEmulators, s.orphanedDevices, s.staleDevices].flatMap { $0 ?? [] }
+  }
+
+  /// Build outputs `stim gc --delete` clears because their workspace is not in use.
+  public var clearableOutputs: [BuildOutputs] {
+    (sections.workspaceBuildOutputs ?? []).filter { $0.willClear == true }
+  }
+
+  /// Linked worktrees `stim gc --delete` removes because their branch is merged.
+  public var mergedWorktrees: [LinkedWorktree] {
+    (sections.linkedWorktrees ?? []).filter { $0.willRemove && $0.mergedInto != nil }
+  }
+
+  public var reclaimable: Reclaimable {
+    let removed =
+      (sections.orphanedWorkspaces ?? []).map(\.bytes) + deletableDevices.map(\.bytes)
+      + clearableOutputs.map(\.bytes) + (sections.caches ?? []).filter { $0.willEmpty == true }.map(\.bytes)
     return Reclaimable(
-      bytes: removed.reduce(0) { $0 + ($1.bytes ?? 0) },
+      bytes: removed.reduce(0) { $0 + ($1 ?? 0) },
       entries: removed.count,
-      unsized: removed.filter { $0.bytes == nil }.count)
+      unsized: removed.filter { $0 == nil }.count)
   }
 }

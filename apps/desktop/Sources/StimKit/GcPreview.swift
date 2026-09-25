@@ -99,6 +99,15 @@ public struct GcPreview: Sendable {
     "easSessionSweepNotices", "skipped", "idleDevices", "unverifiedDevices",
   ]
 
+  /// The `stim gc` arguments that act on what a dry run with `preview` reported: the same scope with
+  /// `--delete`, so a preview of one cache never becomes a full `gc --delete`. Nil for arguments that are
+  /// not a `gc --json` dry run.
+  public static func deleteArguments(after preview: [String]) -> [String]? {
+    guard preview.first == "gc", preview.contains("--json"), !preview.contains("--delete"), !preview.contains("--idle")
+    else { return nil }
+    return preview.filter { $0 != "--json" } + ["--delete"]
+  }
+
   /// Durations offered for `stim gc --idle`.
   public static let idleDurations = ["30m", "1h", "2h", "4h", "1d"]
 

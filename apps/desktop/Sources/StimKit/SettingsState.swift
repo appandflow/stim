@@ -30,6 +30,10 @@ public struct SettingEntry: Decodable, Hashable, Sendable {
 
   public func layer(_ scope: SettingScope) -> JSONValue? { layers[scope.rawValue] }
 
+  /// The effective number. `stim settings --json` reports a value set by an environment variable as the
+  /// variable's string, so a numeric string counts.
+  public var number: Double? { value.number ?? value.string.flatMap { Double($0.trimmingCharacters(in: .whitespaces)) } }
+
   /// The layer a value in `scope` would override: the next lower layer that
   /// holds a value, or the default.
   public func overridden(by scope: SettingScope, field: SettingField) -> (source: String, value: JSONValue)? {

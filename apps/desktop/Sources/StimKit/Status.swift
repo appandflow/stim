@@ -34,6 +34,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var slots: [Slot]?
   public var remoteDevices: [RemoteDevice]?
   public var build: Build?
+  public var worktree: WorktreeInfo?
 
   public var id: String { path }
 
@@ -59,6 +60,13 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   }
 
   public var names: PathNames { PathNames(path: path) }
+}
+
+/// The git worktree that holds a workspace.
+public struct WorktreeInfo: Decodable, Hashable, Sendable {
+  public var path: String
+  public var branch: String?
+  public var repository: String?
 }
 
 public struct Slot: Decodable, Hashable, Sendable {
