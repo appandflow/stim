@@ -509,23 +509,20 @@ result as proof instead of requiring an unrelated screenshot.`,
       body: () => `  THE SIMULATOR POOL
   \`worktree remove\` PARKS this workspace's owned simulator instead of
   deleting it, and the next workspace that wants the same model and runtime
-  ADOPTS it. A simulator that has booted before boots in about 9s; a freshly
-  created one costs about 30s, and \`simctl erase\` puts most of that back, so
-  a parked simulator keeps its app installed and is cleaned in pieces:
+  ADOPTS it. Adoption reuses the simulator but not its contents:
 
-    at park       shut down, the app's data cleared on disk (Documents,
-                  Library, tmp, SystemData: NSUserDefaults, AsyncStorage,
-                  SQLite), renamed \`stim-parked (<model> <runtime>) <4 hex>\`
+    at park       shut down, \`simctl erase\` (apps, app data, keychain,
+                  privacy grants, pasteboard, photos, settings), renamed
+                  \`stim-parked (<model> <runtime>) <4 hex>\`
     at adoption   renamed for the adopting workspace, then, inside the boot
                   the run pays anyway, \`simctl privacy reset all\` and
-                  \`simctl keychain reset\`; at install, every OTHER app the
-                  previous workspace left is uninstalled
+                  \`simctl keychain reset\`; at install, any other app is
+                  uninstalled
 
-  A parked simulator KEEPS its system state: pasteboard, Safari data, photos,
-  contacts, calendars, installed profiles, Simulator settings, app-group
-  containers, and device-level defaults. Isolation covers the app's data, the
-  privacy grants, the keychain and the installed apps -- not a clean system
-  image. Set the bound to 0 when a project needs one.
+  An erased simulator takes about 18 MB on disk instead of the gigabytes a used
+  one holds. Its first boot after the erase takes about 15s instead of a warm
+  boot's few seconds, and the app is always installed again. A SimSlim
+  profile survives the erase.
 
   Adoption matches the device type AND the runtime EXACTLY: a ticket that asks
   for an iPad never gets an iPhone, and a request for iOS 18.5 never gets 26.5.
@@ -533,8 +530,7 @@ result as proof instead of requiring an unrelated screenshot.`,
   parked simulators on the old runtime are never adopted; they leave by
   eviction or \`gc --delete\`.
 
-  The pool targets at most \`pool.iosParkedMax\` simulators (default 3, about
-  2.5 GB each). Past that the oldest parked one is deleted:
+  The pool targets at most \`pool.iosParkedMax\` simulators (default 3). Past that the oldest parked one is deleted:
 
     device      parked stim-parked (iPhone 17 26.5) 9c1f (9C1F..)
     device      deleted stim-parked (iPhone 17 26.5) 4b02 (pool over 3)
@@ -561,9 +557,10 @@ result as proof instead of requiring an unrelated screenshot.`,
 
   and an adopting run says so where a plain boot would say \`booted\`:
 
-    device      stim-app-412 (iPhone 17 26.5) (9C1F..) adopted (11s)
+    device      stim-app-412 (iPhone 17 26.5) (9C1F..) adopted (17s)
 
-  That time includes the two resets, so it runs longer than a plain boot.
+  That time includes the first boot after the erase and the two resets, so it
+  runs longer than a plain boot.
   \`stim status\` prints one line while the pool is not empty:
 
     pool: 2 parked iOS simulators (max 3)
@@ -571,8 +568,8 @@ result as proof instead of requiring an unrelated screenshot.`,
   \`stim gc\` reports the pool, and \`stim gc --delete\` empties every entry
   it can re-verify:
 
-    Parked simulators (2, 5.1 GB):
-      ios stim-parked (iPhone 17 26.5) 9c1f (9C1F..) iPhone 17 26.5 parked 3d ago 2.6 GB
+    Parked simulators (2, 36 MB):
+      ios stim-parked (iPhone 17 26.5) 9c1f (9C1F..) iPhone 17 26.5 parked 3d ago 18 MB
                   --delete attempts every parked simulator and keeps failures.
 
   If simulator listing or deletion fails, \`gc --delete\` reports the failure
@@ -594,8 +591,10 @@ result as proof instead of requiring an unrelated screenshot.`,
 
   Adoption matches the system image, data partition size, and the creation
   settings from android.avdConfig / android.avdConfigFile. The AVD keeps its
-  original stim-<label> name so its Quick Boot snapshot can survive reuse.
-  Normal desktop boots allow Quick Boot; headless Linux disables snapshots.
+  original stim-<label> name. Parking wipes its user data, cache and
+  encryption-key images and its snapshots, the files the emulator recreates
+  on the next boot, so a parked AVD takes a few MB and adoption pays a cold
+  boot (about 20s) and a fresh install.
   Incompatible AVDs stay parked until eviction or GC. AVDs created by older
   versions without a recorded creation configuration are deleted at removal.
 
@@ -611,9 +610,10 @@ result as proof instead of requiring an unrelated screenshot.`,
   manually clearing a claim, and keep the AVD data while its process state
   cannot be verified.
 
-  Android cleanup happens AFTER boot, before install or launch: \`adb shell
-  pm clear\` clears the adopting app's data while retaining its APK, and
-  other third-party apps are uninstalled. If ADB goes offline or closes the
+  Android cleanup happens AFTER boot, before install or launch, for AVDs
+  parked with their data by older versions: \`adb shell pm clear\` clears
+  the adopting app's data while retaining its APK, and other third-party apps
+  are uninstalled. If ADB goes offline or closes the
   connection, Stim waits for boot readiness and retries cleanup for up to 30
   seconds, verifying the same owned AVD before each destructive command.
   Failed cleanup blocks launch and remains pending for a retry. The installed APK's SHA-256 must match the
@@ -622,10 +622,10 @@ result as proof instead of requiring an unrelated screenshot.`,
   If the retained APK has a conflicting signer or version, adoption uninstalls
   it and retries installation. Adoption stays pending until installation succeeds.
 
-  Parked AVDs retain app data until adoption. System apps, shared storage,
-  accounts and device settings also remain: this is not a factory reset.
-  Set the Android bound to 0 when a project needs a fresh device. Status lists
-  parked Android emulators; GC reports their system image, age and disk size.
+  The wipe resets apps, accounts, device settings and the shared storage
+  inside the data partition; the AVD's creation settings and any separate
+  SD card image remain. Status lists parked Android emulators; GC
+  reports their system image, age and disk size.
 `,
     },
     builds: {

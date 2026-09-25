@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getProject, loadConfig, setDevice, upsertProject } from '../workspace/config.ts';
@@ -269,6 +269,49 @@ test('parking shuts down an owned AVD and overflow deletion failures keep both o
   failDelete = false;
   expect(teardownParkedAvd('stim-old').status).toBe('torn-down');
   expect(readParked('android').map((record) => record.name)).toEqual(['stim-new']);
+});
+
+test('parking wipes the AVD user data and snapshots but keeps its creation files', () => {
+  makeAvd('stim-new');
+  const directory = join(home, 'avd', 'stim-new.avd');
+  const userData = [
+    'userdata-qemu.img',
+    'userdata-qemu.img.qcow2',
+    'encryptionkey.img',
+    'encryptionkey.img.qcow2',
+    'cache.img',
+    'cache.img.qcow2',
+  ];
+  for (const name of [...userData, 'userdata.img']) writeFileSync(join(directory, name), 'data');
+  mkdirSync(join(directory, 'snapshots', 'default_boot'), { recursive: true });
+  upsertProject('/source', { platforms: { android: { avdName: 'stim-new', owned: true } } });
+
+  const result = teardownOwnedAvd('stim-new', {
+    del: true,
+    owner: { projectPath: '/source' },
+    park: { projectPath: '/source', max: 1, configuration },
+  });
+
+  expect(result.parked?.name).toBe('stim-new');
+  expect(readdirSync(directory).toSorted()).toEqual(['config.ini', 'userdata.img']);
+});
+
+test('an AVD that cannot be parked keeps its user data until it is deleted', () => {
+  makeAvd('stim-new');
+  const directory = join(home, 'avd', 'stim-new.avd');
+  writeFileSync(join(directory, 'userdata-qemu.img.qcow2'), 'data');
+  upsertProject('/source', { platforms: { android: { avdName: 'stim-new', owned: true } } });
+  failDelete = true;
+
+  const result = teardownOwnedAvd('stim-new', {
+    del: true,
+    owner: { projectPath: '/source' },
+    park: { projectPath: '/source', max: 1, configuration: avdPoolConfiguration(16, {}) },
+  });
+
+  expect(result.status).toBe('failed');
+  expect(readdirSync(directory)).toContain('userdata-qemu.img.qcow2');
+  expect(readParked('android')).toEqual([]);
 });
 
 test('parking retains a busy eviction for later GC without deleting or losing either device', () => {

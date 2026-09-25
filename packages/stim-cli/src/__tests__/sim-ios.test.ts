@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
@@ -14,9 +14,7 @@ import {
   deleteIosSim,
   occupyingApps,
   bootIosSim,
-  clearAppDataContainer,
   deleteParkedIosSim,
-  findAppDataContainer,
   listUserApps,
   parkedSimName,
   parseUserApps,
@@ -612,52 +610,6 @@ test('listUserApps passes the udid as one argv element and converts the property
   expect(listUserApps('UDID WITH SPACES')).toEqual(['com.example.app']);
   expect(calls[0]).toEqual(['xcrun', 'simctl', 'listapps', 'UDID WITH SPACES']);
   expect(calls[1]?.slice(0, 5)).toEqual(['plutil', '-convert', 'json', '-o', '-']);
-});
-
-test('the parked app data lookup reads metadata and clearing preserves the container directories', () => {
-  const dataPath = join(tmpHome, 'device-data');
-  const app = join(dataPath, 'Containers', 'Data', 'Application', 'APP-UUID');
-  for (const dir of ['Documents', 'Library', 'tmp', 'SystemData']) {
-    mkdirSync(join(app, dir), { recursive: true });
-    writeFileSync(join(app, dir, 'state.txt'), 'old');
-  }
-  writeFileSync(join(app, '.com.apple.mobile_container_manager.metadata.plist'), 'metadata');
-  setExecutor({
-    run: () => '',
-    runFile(file, args = []) {
-      expect(file).toBe('plutil');
-      expect(args.at(-1)).toBe(join(app, '.com.apple.mobile_container_manager.metadata.plist'));
-      return 'com.example.app';
-    },
-    runQuiet: () => null,
-    spawn: () => null,
-  });
-  expect(findAppDataContainer(dataPath, 'com.example.app')).toBe(app);
-  clearAppDataContainer(app);
-  for (const dir of ['Documents', 'Library', 'tmp', 'SystemData']) {
-    expect(existsSync(join(app, dir))).toBe(true);
-    expect(existsSync(join(app, dir, 'state.txt'))).toBe(false);
-  }
-});
-
-test('parked app data cleanup fails closed on unreadable metadata and invalid container directories', () => {
-  const dataPath = join(tmpHome, 'bad-device-data');
-  const app = join(dataPath, 'Containers', 'Data', 'Application', 'APP-UUID');
-  mkdirSync(app, { recursive: true });
-  setExecutor({
-    run: () => '',
-    runFile() {
-      throw new Error('metadata unreadable');
-    },
-    runQuiet: () => null,
-    spawn: () => null,
-  });
-  expect(() => findAppDataContainer(dataPath, 'com.example.app')).toThrow(/metadata unreadable/);
-
-  const container = join(tmpHome, 'bad-container');
-  mkdirSync(container, { recursive: true });
-  writeFileSync(join(container, 'Library'), 'not a directory');
-  expect(() => clearAppDataContainer(container)).toThrow(/to be a directory/);
 });
 
 test('deleteParkedIosSim bounds ownership revalidation and deletion', () => {

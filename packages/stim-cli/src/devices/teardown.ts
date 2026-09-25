@@ -6,10 +6,9 @@ import { lstatSync, renameSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { loadConfig, withConfigLock } from '../workspace/config.ts';
 import {
-  clearAppDataContainer,
   deleteParkedIosSim,
   deleteIosSim,
-  findAppDataContainer,
+  eraseIosSim,
   listIosDeviceTypes,
   parkedSimName,
   parseRuntimeVersion,
@@ -32,6 +31,7 @@ import {
   isStimOwnedAvdName,
   ownedAvdMatchesConfiguration,
   ownedAvdSystemImage,
+  wipeAvdUserData,
 } from './android.ts';
 import { parkSim, readParked, removeParkedAfter, type ParkedSim } from './sim-pool.ts';
 import { acquireAvdClaim } from './avd-claim.ts';
@@ -60,8 +60,6 @@ export interface ParkRequest {
   slot?: string;
   projectPath: string;
   max: number;
-  bundleId?: string | null;
-  cacheKey?: string | null;
   simslimManaged?: boolean;
   configuration?: string;
 }
@@ -104,11 +102,7 @@ function parkOwnedIosSim(udid: string, park: ParkRequest): { record: ParkedSim; 
   if (sim.state !== 'Shutdown') throw new Error(`simulator ${udid} is still ${sim.state} after shutdown`);
   const model = listIosDeviceTypes().find((d) => d.identifier === sim.deviceTypeIdentifier)?.name ?? null;
   const runtime = parseRuntimeVersion(sim.runtime);
-  if (park.bundleId) {
-    if (!sim.dataPath) throw new Error(`simulator ${udid} did not report a data path for app cleanup`);
-    const container = findAppDataContainer(sim.dataPath, park.bundleId);
-    if (container) clearAppDataContainer(container);
-  }
+  eraseIosSim(sim.udid);
   const name = parkedSimName(sim.udid, { model, runtime });
   renameIosSim(sim.udid, name);
   const record: ParkedSim = {
@@ -118,8 +112,6 @@ function parkOwnedIosSim(udid: string, park: ParkRequest): { record: ParkedSim; 
     runtimeIdentifier: sim.runtime,
     parkedAt: new Date().toISOString(),
     simslimManaged: Boolean(park.simslimManaged),
-    ...(park.bundleId ? { bundleId: park.bundleId } : {}),
-    ...(park.cacheKey ? { cacheKey: park.cacheKey } : {}),
   };
   const evicted = parkSim({ platform: 'ios', projectPath: park.projectPath, slot: park.slot, record, max: park.max });
   return { record, evicted };
@@ -377,6 +369,9 @@ function teardownClaimedAvd(
           if (!systemImage || !park.configuration || !ownedAvdMatchesConfiguration(avdName, park.configuration)) {
             throw new Error('the AVD has no verified creation configuration');
           }
+          const directory = ownedAvdDirectory(avdName);
+          if (!directory) throw new Error('the AVD data directory could not be resolved');
+          wipeAvdUserData(directory);
           const evicted = parkSim({
             platform: 'android',
             projectPath: park.projectPath,

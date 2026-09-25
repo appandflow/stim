@@ -271,11 +271,14 @@ for the recovery steps.
 Runtime state lives under `$STIM_HOME`, which defaults to `~/.stim`. Each
 workspace stores state and logs in a directory derived from its absolute path.
 
+Parking erases a simulator with `simctl erase` and wipes an emulator's user
+data and snapshots, so a parked device takes a few megabytes instead of
+gigabytes. The adopting workspace pays a first boot, about 15 seconds for a
+simulator and 20 for an emulator, and installs its app again.
+
 Android adoption requires the same system image, disk size and AVD creation
-settings. It keeps the AVD name and installed APK, clears the adopting app's
-data, and uninstalls other third-party apps before launch. Installation is
-skipped only when the installed APK matches the requested file by SHA-256.
-App data remains on disk while parked; system apps, shared storage, accounts
-and device settings persist across reuse. Set `pool.androidParkedMax` to `0`
-when a fresh device is required. AVDs created before Stim recorded their
-creation configuration are deleted when removed.
+settings. It keeps the AVD name. For an emulator parked with its data by an
+older Stim, adoption clears the adopting app's data and uninstalls other
+third-party apps before launch. Installation is skipped only when the
+installed APK matches the requested file by SHA-256. AVDs created before Stim
+recorded their creation configuration are deleted when removed.

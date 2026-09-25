@@ -371,7 +371,7 @@ window behavior.
 THE DEVICE POOL BOUNDS ARE MACHINE-LEVEL TOO
 \`pool.iosParkedMax\` caps how many parked simulators \`worktree remove\` may
 leave behind for a later workspace to adopt. It is machine-level for the same
-reason: the disk they sit on is the whole machine's, about 2.5 GB each.
+reason: the disk they sit on is the whole machine's, about 18 MB each once erased.
 
   {
     "pool": { "iosParkedMax": 3 }
