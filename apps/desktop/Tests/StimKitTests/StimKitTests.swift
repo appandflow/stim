@@ -33,6 +33,13 @@ import Testing
     #expect(workspace.devices[0].activity == nil)
   }
 
+  @Test func decodesAMissingSimulatorWithoutAName() throws {
+    let json = #"{"name":null,"udid":"1F11A62B","owned":true,"state":"missing"}"#
+    let device = try JSONDecoder().decode(IosDevice.self, from: Data(json.utf8))
+    #expect(device.name == "Missing simulator")
+    #expect(device.state == "missing")
+  }
+
   @Test func keepsNestedParenthesesInTheModel() {
     #expect(workspace.devices[2].model == "iPad Pro 11-inch (M5) 27.0")
     #expect(workspace.devices[2].formFactor == .tablet)
