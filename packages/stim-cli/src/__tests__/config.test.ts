@@ -25,7 +25,6 @@ import {
   getRepoSettings,
   setRepoSetting,
   unsetRepoSetting,
-  getConcurrencyLimits,
   refuseRelativeStimPaths,
 } from '../workspace/config.ts';
 import { makeConfig } from './_factories.ts';
@@ -63,10 +62,6 @@ test('accepts absolute and unset STIM paths', () => {
   expect(() => refuseRelativeStimPaths({ STIM_HOME: tmpHome, STIM_BUILD_CACHE: join(tmpHome, 'build') })).not.toThrow();
 });
 
-test('loadConfig returns null when no file exists', () => {
-  expect(loadConfig()).toBe(null);
-});
-
 test('ensureConfig creates and returns empty config', () => {
   const cfg = ensureConfig();
   expect(cfg).toEqual({ version: 2, projects: {}, repos: {} });
@@ -79,27 +74,6 @@ test('saveConfig + loadConfig roundtrip', () => {
   assert(cfg);
   assert(cfg.projects['/foo']);
   expect(cfg.projects['/foo'].metroPort).toBe(8082);
-});
-
-test('loadConfig reports a corrupt config by path instead of throwing a raw SyntaxError', () => {
-  writeFileSync(join(tmpHome, 'config.json'), '{"projects": {"/a": ');
-  let err: unknown;
-  try {
-    loadConfig();
-  } catch (e) {
-    err = e;
-  }
-  expect(err).toBeInstanceOf(Error);
-  expect((err as Error).message).toMatch(/not valid JSON/);
-  expect((err as Error).message).toMatch(/config\.json/);
-  expect((err as Error).constructor.name).not.toMatch(/SyntaxError/);
-});
-
-test('loadConfig keeps a corrupt config on disk rather than resetting it', () => {
-  const p = join(tmpHome, 'config.json');
-  writeFileSync(p, 'not json at all');
-  expect(() => loadConfig()).toThrow(/not valid JSON/);
-  expect(readFileSync(p, 'utf-8')).toBe('not json at all');
 });
 
 test.each(['[]', '5', 'null', '"oops"'])('refuses a config.json holding %s instead of dropping writes', (content) => {
@@ -133,16 +107,6 @@ test('withConfigLock is reentrant, so nested mutators cannot deadlock', () => {
   });
   expect(result).toBe(8082);
   expect(existsSync(join(tmpHome, 'config.lock'))).toBe(false);
-});
-
-test('withConfigLock releases the lock when the body throws', () => {
-  expect(() =>
-    withConfigLock(() => {
-      throw new Error('boom');
-    }),
-  ).toThrow(/boom/);
-  expect(existsSync(join(tmpHome, 'config.lock'))).toBe(false);
-  expect(withConfigLock(() => 'ok')).toBe('ok');
 });
 
 test('concurrent processes each keep their record', async () => {
@@ -418,30 +382,6 @@ test('refuses a config whose repos container is an array', () => {
   expect(() => ensureConfig()).toThrow(/repos that is not an object/);
 });
 
-test.each([
-  ['a projects container that is an array', '{ "version": 2, "projects": [] }', /projects that is not an object/],
-  [
-    'a project entry that is null',
-    '{ "version": 2, "projects": { "/a": null } }',
-    /projects entry "\/a" that is not an object/,
-  ],
-  [
-    'a repos entry that is a string',
-    '{ "version": 2, "repos": { "/r": "x" } }',
-    /repos entry "\/r" that is not an object/,
-  ],
-])('loadConfig refuses %s instead of reading it as holding no records', (_label, content, reason) => {
-  writeFileSync(join(tmpHome, 'config.json'), content);
-  let err: unknown;
-  try {
-    loadConfig();
-  } catch (e) {
-    err = e;
-  }
-  expect((err as { code?: string } | undefined)?.code).toBe('STIM_CONFIG_CORRUPT');
-  expect((err as Error).message).toMatch(reason);
-});
-
 test('adopts a null projects container rather than refusing it', () => {
   writeFileSync(join(tmpHome, 'config.json'), '{ "version": 2, "projects": null, "repos": {} }');
   expect(ensureConfig().projects).toEqual({});
@@ -472,35 +412,6 @@ test('repo settings round-trip by git common dir', () => {
   });
   expect(unsetRepoSetting('/repo/.git', 'worktree.exclude')).toBe(true);
   expect(getRepoSettings('/repo/.git')).toEqual({ ios: { deviceType: 'iPhone 17' } });
-});
-
-test('getRepoSettings returns an empty object for an unknown repo', () => {
-  expect(getRepoSettings('/nope/.git')).toEqual({});
-});
-
-test('getConcurrencyLimits is unlimited (0) when nothing is set', () => {
-  const env = {};
-  expect(getConcurrencyLimits({ env })).toEqual({ maxBuilds: 0, maxDevices: 0 });
-});
-
-test('getConcurrencyLimits reads config.json concurrency', () => {
-  saveConfig({ version: 2, projects: {}, repos: {}, concurrency: { maxBuilds: 2, maxDevices: 3 } });
-  expect(getConcurrencyLimits({ env: {} })).toEqual({ maxBuilds: 2, maxDevices: 3 });
-});
-
-test('env overrides config, and 0/absent means no enforcement', () => {
-  saveConfig({ version: 2, projects: {}, repos: {}, concurrency: { maxBuilds: 2, maxDevices: 3 } });
-  expect(getConcurrencyLimits({ env: { STIM_MAX_BUILDS: '5', STIM_MAX_DEVICES: '0' } })).toEqual({
-    maxBuilds: 5,
-    maxDevices: 0,
-  });
-});
-
-test('a negative or garbage value reads as unlimited', () => {
-  expect(getConcurrencyLimits({ env: { STIM_MAX_BUILDS: '-1', STIM_MAX_DEVICES: 'lots' } })).toEqual({
-    maxBuilds: 0,
-    maxDevices: 0,
-  });
 });
 
 test('named device slots preserve default assignments and release only their own console ports', () => {

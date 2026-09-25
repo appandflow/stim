@@ -31,6 +31,11 @@
       "types": "./dist/process-identity.d.mts",
       "module-sync": "./dist/process-identity.mjs",
       "default": "./dist/process-identity.mjs"
+    },
+    "./state": {
+      "types": "./dist/state.d.mts",
+      "module-sync": "./dist/state.mjs",
+      "default": "./dist/state.mjs"
     }
   },
   "scripts": {

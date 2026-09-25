@@ -19,7 +19,7 @@ import {
   parseSince,
   queryLogs,
   readLogRecords,
-} from '../diagnostics/logs-query.ts';
+} from '@stim-cli/core/state';
 import { errorDiagnostics } from '../diagnostics/error-diagnostics.ts';
 import { launchErrorPreview } from '../diagnostics/launch-error-preview.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';

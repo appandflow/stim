@@ -2,7 +2,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { countErrorsSinceMarker } from '../diagnostics/error-index.ts';
-import { queryLogs } from '../diagnostics/logs-query.ts';
+import { queryLogs } from '@stim-cli/core/state';
 import { parseNdjsonLine } from '../ndjson.ts';
 
 vi.mock('../ndjson.ts', async (importOriginal) => {

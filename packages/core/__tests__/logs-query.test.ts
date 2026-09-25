@@ -15,7 +15,7 @@ import {
   tailRead,
   advanceTail,
   followLogs,
-} from '../diagnostics/logs-query.ts';
+} from '../state/logs-query.ts';
 
 let dir: string;
 beforeEach(() => {

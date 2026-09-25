@@ -8,7 +8,7 @@ import { decode } from 'unique-pid';
 import { captureProcessToken } from '../process-identity.ts';
 import { exclusiveClaimDir, sharedClaimDir, type ClaimOwner } from '../ownership-claim.ts';
 
-import type { StimConfig } from '../workspace/config-types.ts';
+import type { StimConfig } from '@stim-cli/core/state';
 import type { CacheDescriptor } from '../cache/caches.ts';
 import type { EnvironmentState } from '../status.ts';
 import type { IosSimRecord } from '../devices/ios.ts';

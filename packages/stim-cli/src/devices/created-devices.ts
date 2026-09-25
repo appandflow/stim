@@ -1,44 +1,25 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  createdDevicesFile,
+  createdDevicesLock,
+  readCreatedDevices,
+  type CreatedDevicePlatform,
+} from '@stim-cli/core/state';
 import { withDirLock } from '../dir-lock.ts';
 import { getConfigDir } from '../workspace/config.ts';
 
-export type CreatedDevicePlatform = 'ios' | 'android';
-
-export interface CreatedDevices {
-  ios: ReadonlySet<string>;
-  android: ReadonlySet<string>;
-}
-
-function ledgerFile(): string {
-  return join(getConfigDir(), 'created-devices.json');
-}
-
-function ids(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === 'string' && entry !== '')
-    : [];
-}
-
-export function readCreatedDevices(): CreatedDevices {
-  try {
-    const parsed = JSON.parse(readFileSync(ledgerFile(), 'utf8')) as Record<string, unknown>;
-    return { ios: new Set(ids(parsed?.ios)), android: new Set(ids(parsed?.android)) };
-  } catch {
-    return { ios: new Set(), android: new Set() };
-  }
-}
+export { readCreatedDevices, type CreatedDevicePlatform, type CreatedDevices } from '@stim-cli/core/state';
 
 function update(platform: CreatedDevicePlatform, change: (entries: Set<string>) => boolean): void {
   const dir = getConfigDir();
   withDirLock(
-    join(dir, 'created-devices.lock'),
+    createdDevicesLock(),
     () => {
       const current = readCreatedDevices();
       const entries = new Set(current[platform]);
       if (!change(entries)) return;
       const next = { version: 1, ios: [...current.ios], android: [...current.android], [platform]: [...entries] };
-      const file = ledgerFile();
+      const file = createdDevicesFile();
       const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
       writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`);
       try {

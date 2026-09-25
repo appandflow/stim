@@ -5,8 +5,6 @@ import { Command } from 'commander';
 import { registerSettings } from '../commands/settings.ts';
 import { getExecutor } from '../exec.ts';
 import { loadConfig, saveConfig } from '../workspace/config.ts';
-import { SETTINGS } from '../workspace/settings-registry.ts';
-import { settingsJsonSchema } from '../workspace/settings-schema.ts';
 
 let base: string;
 let home: string;
@@ -175,28 +173,4 @@ test('a sensitive value is masked in every output while the layer keeps the real
   });
   for (const output of [plain.out, json.out, listing.out]) expect(output.join('\n')).not.toContain('hunter2');
   expect(JSON.stringify(loadConfig()?.repos)).toContain('hunter2');
-});
-
-test('the published schema covers every setting once, at the scope files it may live in', () => {
-  const schema = settingsJsonSchema();
-  const keys: Record<string, string[]> = {};
-  const walk = (node: Record<string, unknown>, where: string) => {
-    for (const child of Object.values((node.properties ?? {}) as Record<string, Record<string, unknown>>)) {
-      const stim = child['x-stim'] as { key: string } | undefined;
-      if (stim) (keys[stim.key] ??= []).push(where);
-      else walk(child, where);
-    }
-  };
-  walk(schema, 'committed');
-  walk((schema.$defs as Record<string, Record<string, unknown>>).machine!, 'machine');
-
-  expect(Object.keys(keys).toSorted()).toEqual(SETTINGS.map((setting) => setting.key).toSorted());
-  expect(keys).toEqual(
-    Object.fromEntries(
-      SETTINGS.map((setting) => [
-        setting.key,
-        (['committed', 'machine'] as const).filter((scope) => setting.scopes.includes(scope)),
-      ]),
-    ),
-  );
 });

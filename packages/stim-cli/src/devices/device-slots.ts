@@ -1,5 +1,5 @@
 import { InvalidArgumentError } from 'commander';
-import type { DeviceRecord, PlatformRecords, ProjectRecord } from '../workspace/config-types.ts';
+import type { DeviceRecord, PlatformRecords, ProjectRecord } from '@stim-cli/core/state';
 
 const DEFAULT_DEVICE_SLOT = 'default';
 const DEVICE_SLOT_RULE =

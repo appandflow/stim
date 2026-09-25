@@ -12,8 +12,7 @@ import {
   unknownSettingKeys,
   type SettingsLayer,
 } from '../workspace/settings.ts';
-import type { SettingsObject } from '../workspace/settings-types.ts';
-import { settingDefinition } from '../workspace/settings-registry.ts';
+import { settingDefinition, type SettingsObject } from '@stim-cli/core/state';
 
 export interface MachineSettings {
   settings: SettingsObject;

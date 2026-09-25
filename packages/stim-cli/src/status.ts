@@ -1,11 +1,26 @@
 import { sep } from 'path';
-import type { BuildReport } from './engine/build-progress.ts';
 import { projectDeviceSlots } from './devices/device-slots.ts';
 import { clockTime, formatElapsed, formatLongDuration, plural } from './command-output.ts';
 import type { ProjectRecord } from './workspace/config.ts';
 import type { LeaseFileEntry } from './engine/device-lease.ts';
 import type { RemoteSessionRecord } from './supervisor/state.ts';
-import type { DeviceActivity } from './devices/activity.ts';
+import type {
+  AndroidRuntimeFacts,
+  DeviceActivity,
+  DeviceLeaseState,
+  EnvironmentState,
+  RemoteDeviceState,
+  StatusCapacity,
+  WorktreeFacts,
+} from '@stim-cli/core/state';
+
+export type {
+  AndroidRuntimeFacts,
+  DeviceLeaseState,
+  EnvironmentState,
+  RemoteDeviceState,
+  WorktreeFacts,
+} from '@stim-cli/core/state';
 
 const IOS_SIM_MB = 1500;
 const ANDROID_EMULATOR_MB = 2500;
@@ -36,27 +51,6 @@ interface LogsFacts {
   errorsSinceMarker?: number;
 }
 
-export interface WorktreeFacts {
-  path: string;
-  branch?: string;
-  repository?: string;
-}
-
-export interface AndroidRuntimeFacts {
-  serial: string | null;
-  state: 'detected' | 'not-detected' | 'missing' | 'unknown';
-  error?: string;
-}
-
-export interface RemoteDeviceState {
-  platform: 'ios' | 'android' | null;
-  backend: 'eas';
-  sessionId: string;
-  state: 'claimed' | 'unclaimed' | 'unknown';
-  startedAt: string | null;
-  webPreviewUrl: string | null;
-}
-
 export function remoteDeviceState(
   record: RemoteSessionRecord | null,
   ledger: { claims: ReadonlyMap<string, { workspaceRoot: string }>; safe: boolean },
@@ -72,29 +66,6 @@ export function remoteDeviceState(
     startedAt: record.startedAt,
     webPreviewUrl: record.webPreviewUrl,
   };
-}
-
-export interface EnvironmentState {
-  slots?: { slot: string; ios: EnvironmentState['ios']; android: EnvironmentState['android'] }[];
-  path: string;
-  live: boolean;
-  memoryMb: number;
-  warnings: string[];
-  ios?: { name: string | null; udid: string; owned: boolean; state: string; activity?: DeviceActivity } | null;
-  android?: {
-    name: string | undefined;
-    owned: boolean;
-    physical: boolean;
-    serial?: string | null;
-    state?: AndroidRuntimeFacts['state'];
-    activity?: DeviceActivity;
-  } | null;
-  metro?: { port: number; running: boolean; pid: number | null } | null;
-  supervisor?: { pid: number | null; mode: string | null; startedAt: string | null; healthy: boolean } | null;
-  logs?: { dir: string; errorsSinceMarker: number } | null;
-  worktree?: WorktreeFacts | null;
-  remoteDevices?: RemoteDeviceState[];
-  build?: BuildReport | null;
 }
 
 export interface DiskInfo {
@@ -251,10 +222,7 @@ export function remoteDeviceLine(remote: RemoteDeviceState): string {
   return `remote ${remote.platform ?? '?'}: EAS session ${remote.sessionId} billable${claim}${watch}`;
 }
 
-export function capacity(
-  states: EnvironmentState[],
-  totalMemoryMb: number,
-): { liveCount: number; committedMb: number; totalMemoryMb: number; overCapacity: boolean } {
+export function capacity(states: EnvironmentState[], totalMemoryMb: number): StatusCapacity {
   const committedMb = states.reduce((n: number, s) => n + s.memoryMb, 0);
   const liveCount = states.filter((s) => s.live).length;
   return {
@@ -312,20 +280,6 @@ export function unprovisionedWorktrees(worktrees: WorktreeFacts[], projectPaths:
     const inside = w.path.endsWith(sep) ? w.path : w.path + sep;
     return !projectPaths.some((p) => p === w.path || p.startsWith(inside));
   });
-}
-
-export interface DeviceLeaseState {
-  slot?: string;
-  path: string;
-  platform: string;
-  id: string | null;
-  deviceName: string | null;
-  holder: string | null;
-  grantedAt: string | null;
-  expiresAt: string | null;
-  mine: boolean;
-  expired: boolean;
-  parsed: boolean;
 }
 
 export function deviceLeaseStates(

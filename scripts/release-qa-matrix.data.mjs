@@ -65,6 +65,9 @@ const android = ['android'];
 
 export const pathRules = [
   { path: 'packages/core', rows: ['caches', 'loop'] },
+  { path: 'packages/core/state', rows: everyRow },
+  { path: 'packages/core/state/logs-query.ts', rows: ['logs'] },
+  { path: 'packages/core/state/ndjson.ts', rows: ['logs'] },
   { path: 'packages/cache', rows: ['caches', 'remote-provider'] },
   { path: 'packages/metro', rows: ['caches', 'logs'] },
   { path: 'packages/expo-build-cache', rows: ['caches'] },
@@ -121,18 +124,15 @@ export const pathRules = [
   { path: 'packages/stim-cli/src/diagnostics/error-diagnostics.ts', rows: ['logs'] },
   { path: 'packages/stim-cli/src/diagnostics/error-symbolication.ts', rows: ['logs'] },
   { path: 'packages/stim-cli/src/diagnostics/launch-error-preview.ts', rows: ['logs', 'launch-evidence'] },
-  { path: 'packages/stim-cli/src/diagnostics/logs-query.ts', rows: ['logs'] },
   { path: 'packages/stim-cli/src/diagnostics/native-crash.ts', rows: ['logs', 'launch-evidence'] },
   { path: 'packages/stim-cli/src/diagnostics/sandbox.ts', rows: ['loop', 'caches'] },
   { path: 'packages/stim-cli/src/diagnostics/stim-installations.ts', rows: ['loop'] },
 
   { path: 'packages/stim-cli/src/workspace', rows: everyRow },
   { path: 'packages/stim-cli/src/workspace/config.ts', rows: ['loop', 'caches'] },
-  { path: 'packages/stim-cli/src/workspace/config-types.ts', rows: ['loop', 'caches'] },
   { path: 'packages/stim-cli/src/workspace/paths.ts', rows: ['loop', 'caches'] },
   { path: 'packages/stim-cli/src/workspace/project.ts', rows: ['real-repository', 'loop'] },
   { path: 'packages/stim-cli/src/workspace/settings.ts', rows: ['loop', 'caches', 'remote-provider'] },
-  { path: 'packages/stim-cli/src/workspace/settings-types.ts', rows: ['loop', 'caches', 'remote-provider'] },
   { path: 'packages/stim-cli/src/workspace/workspace-state.ts', rows: ['loop'] },
   { path: 'packages/stim-cli/src/workspace/worktree.ts', rows: ['loop', 'caches'] },
   { path: 'packages/stim-cli/src/workspace/worktree-refresh.ts', rows: ['loop', 'caches'] },

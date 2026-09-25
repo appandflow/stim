@@ -1,6 +1,6 @@
-export type TunnelMode = 'auto' | 'off' | 'expo' | 'cloudflared' | 'ngrok';
+import type { TunnelMode } from '@stim-cli/core/state';
 
-export const TUNNEL_MODES: readonly TunnelMode[] = ['auto', 'off', 'expo', 'cloudflared', 'ngrok'];
+export { TUNNEL_MODES, type TunnelMode } from '@stim-cli/core/state';
 
 export const PUBLIC_METRO_ENV = 'STIM_METRO_PUBLIC_URL';
 

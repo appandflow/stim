@@ -16,7 +16,7 @@ import {
   teardownParkedIosSim,
   teardownParkedAvd,
 } from '../../devices/teardown.ts';
-import type { Config } from '../../workspace/config-types.ts';
+import type { Config } from '@stim-cli/core/state';
 import type { OrphanedDevice } from './types.ts';
 
 export interface StaleProjectDevice {

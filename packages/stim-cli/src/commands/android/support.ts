@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { relative } from 'node:path';
-import type { SettingsObject } from '../../workspace/settings-types.ts';
+import type { SettingsObject } from '@stim-cli/core/state';
 import {
   androidDeviceAbi,
   androidSystemImageAbi,

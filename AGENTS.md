@@ -172,11 +172,15 @@ changes, and wait for the new checks.
   Markdown can use Unicode.
 - **Concurrency limits.** Build and device caps are opt-in through config or
   environment variables.
-- **Settings registry.** `src/workspace/settings-registry.ts` defines every
-  project and machine setting: type, layers, default, environment override,
-  and sensitivity. Validation, doctor, `stim settings`, the shipped JSON
-  Schema, and the guide contract tests derive from it; add a setting there
+- **Settings registry.** `packages/core/state/settings-registry.ts` defines
+  every project and machine setting: type, layers, default, environment
+  override, and sensitivity. Validation, doctor, `stim settings`, the shipped
+  JSON Schema, and the guide contract tests derive from it; add a setting there
   first.
+- **Shared state reads.** `@stim-cli/core/state` owns the `$STIM_HOME` path
+  layout, the state and payload types, and the readers of config, workspace
+  state, ledgers, and logs. The CLI owns every write to that state and imports
+  the readers instead of parsing those files itself.
 
 ## Comment policy
 

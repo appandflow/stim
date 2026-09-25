@@ -6,24 +6,12 @@ import { inspectProcessStart, type ProcessStart } from '../process-identity.ts';
 import { leaseIsExpired, listLeaseFiles, type LeaseFileEntry } from '../engine/device-lease.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import type { ActivityDriver, DeviceActivity } from '@stim-cli/core/state';
+
+export type { DeviceActivity } from '@stim-cli/core/state';
 
 const ACTIVE_WINDOW_MS = 10 * 60 * 1000;
 const LOG_TAIL_BYTES = 256 * 1024;
-
-type ActivityState = 'driven' | 'active' | 'idle' | 'unknown';
-
-interface ActivityDriver {
-  tool: string;
-  pid: number | null;
-  since: string | null;
-}
-
-export interface DeviceActivity {
-  state: ActivityState;
-  driver?: ActivityDriver;
-  lastActivityAt?: string;
-  basis: string[];
-}
 
 export interface ActivityEvidence {
   drivers: (ActivityDriver & { basis: string })[];

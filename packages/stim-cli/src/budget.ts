@@ -29,7 +29,7 @@ import { resolveSupervisorTarget } from './supervisor/ownership.ts';
 import { getConfigDir, loadConfig, type Config, type ProjectRecord } from './workspace/config.ts';
 import { withIdleWorkspace } from './workspace/in-use.ts';
 import { sharedBuildCache, workspaceDir } from './workspace/paths.ts';
-import { settingDefinition, settingValueError } from './workspace/settings-registry.ts';
+import { settingDefinition, settingValueError } from '@stim-cli/core/state';
 import { readWorkspaceState } from './workspace/workspace-state.ts';
 
 const MB = 1024 * 1024;

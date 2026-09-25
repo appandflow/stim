@@ -3,7 +3,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync 
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import { plural, quotedPath } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
-import { readJsonObject } from '../json-file.ts';
+import { readJsonObject } from '@stim-cli/core/state';
 import { makeTemporaryDirectory } from '../temporary.ts';
 import { checkStorageLayout } from './doctor-storage.ts';
 import { inspectIosDebugArchitectures } from './doctor-ios-architectures.ts';

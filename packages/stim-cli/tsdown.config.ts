@@ -1,6 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import { defineConfig } from 'tsdown';
-import { SETTINGS_SCHEMA_FILE, settingsJsonSchema } from './src/workspace/settings-schema.ts';
+import { SETTINGS_SCHEMA_FILE, settingsJsonSchema } from '@stim-cli/core/state';
 
 export default defineConfig({
   entry: {

@@ -11,7 +11,7 @@ import { pidExists, resolveProjectMetro, signalProcessTree } from '../metro.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { resolveSupervisorTarget, type SupervisorStateRecord } from '../supervisor/ownership.ts';
 import type { MetroResolution } from '../metro.ts';
-import { queryLogs } from '../diagnostics/logs-query.ts';
+import { queryLogs } from '@stim-cli/core/state';
 import { levelRank } from '../ndjson.ts';
 import { ensureWorkspaceStorage, supervisorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
 import { reserveMetroPort } from '../ports.ts';

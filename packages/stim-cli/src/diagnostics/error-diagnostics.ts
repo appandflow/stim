@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { NdjsonRecord } from '../ndjson.ts';
 import { bundleLocations, symbolicateErrors } from './error-symbolication.ts';
 import { resolveProjectMetro } from '../metro.ts';
-import { attachExpoErrorContext, readLogRecords } from './logs-query.ts';
+import { attachExpoErrorContext, readLogRecords } from '@stim-cli/core/state';
 import { writeDiagnosticOnce } from './diagnostic-store.ts';
 
 function key(record: NdjsonRecord): string {

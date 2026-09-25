@@ -10,7 +10,7 @@ import { DEPS_ERROR, podsAreStale, readPodState, runCaptured, runPodInstall } fr
 import { NO_INSTALLER_CLAIM, type InstallerClaim } from '../engine/warm-claim.ts';
 import { HEARTBEAT_INTERVAL_MS } from '../engine/xcode.ts';
 import { getExecutor } from '../exec.ts';
-import type { SettingsObject } from './settings-types.ts';
+import type { SettingsObject } from '@stim-cli/core/state';
 import { locallyKnownUpstream, resolveFullRef, type UpstreamState } from './worktree.ts';
 
 export interface RefreshFailure {

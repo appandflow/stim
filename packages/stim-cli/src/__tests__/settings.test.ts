@@ -33,7 +33,7 @@ import {
 import { resolveOptimizations, resolveMetroSharedCache } from '../optimizations.ts';
 import { saveConfig, setProjectSetting, setRepoSetting, upsertProject } from '../workspace/config.ts';
 import { findProjectRoot } from '../workspace/project.ts';
-import { SETTINGS } from '../workspace/settings-registry.ts';
+import { SETTINGS } from '@stim-cli/core/state';
 
 type SettingsView = {
   worktree?: { exclude?: string[] };
