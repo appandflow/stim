@@ -1594,7 +1594,7 @@ describe('frames.subscribe', () => {
       expect(await client.request('control.end', { session })).toMatchObject({ result: {} });
       await until(() => helperRuns().length === 1);
       expect(helperRuns()[0]!.configs).toEqual([
-        { fps: 0, maxEdge: 240 },
+        { fps: 0, maxEdge: 240, jpeg: false, video: false, bitrate: expect.any(Number) },
         { input: 'touch', phase: 'down', x: 0.25, y: 0.75, display: 0 },
         { input: 'text', text: 'Hi!\n' },
         { input: 'button', button: 'home' },

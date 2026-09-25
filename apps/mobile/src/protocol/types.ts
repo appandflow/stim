@@ -224,17 +224,12 @@ export interface FrameTarget {
   workspace: string;
   platform: Platform;
   slot?: string;
-<<<<<<< HEAD
-  fps?: number;
-  maxEdge?: number;
-  /** The codecs the app decodes; a result with `video` sends binary H.264 messages instead of `frame` events. */
-  video?: 'h264'[];
-=======
   /** Frames a second, 1 to 30; the server's default is 5. */
   fps?: number;
   /** Pixels on the longer edge, 240 to 2048; the server's default is 1280. */
   maxEdge?: number;
->>>>>>> cdc9f809a (feat(server): control owned devices with touch, text and buttons)
+  /** The codecs the app decodes; a result with `video` sends binary H.264 messages instead of `frame` events. */
+  video?: 'h264'[];
 }
 
 /** Needs `control`. The server refuses with `device-busy` while something else drives the device. */
