@@ -793,6 +793,23 @@ describe('action', () => {
     }
     expect(stimCalls()).toEqual([]);
     expect(readAudit().map((record) => record.error?.code)).toEqual(refusals.map(([, code]) => code));
+
+    await client.request('action', { action: 'x'.repeat(10_000), workspace: 'y'.repeat(10_000) });
+    const long = readAudit().at(-1)!;
+    expect([long.action!.length, long.workspace!.length, long.error!.message.length]).toEqual([256, 256, 256]);
+  });
+
+  it('frees the workspace when the command cannot start', async () => {
+    const file = join(root, 'not-a-dir');
+    writeFileSync(file, '');
+    writeFileSync(join(process.env.STIM_HOME!, 'config.json'), JSON.stringify({ projects: { [file]: {} } }));
+    const port = await start();
+    const client = await authed(port, true);
+    for (let i = 0; i < 2; i++) {
+      expect(await client.request('action', { action: 'stop', workspace: file })).toMatchObject({
+        error: { code: 'action-failed', message: expect.stringContaining('could not start') },
+      });
+    }
   });
 
   it('runs one fixed stim command in the workspace and audits the result', async () => {

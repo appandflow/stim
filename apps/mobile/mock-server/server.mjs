@@ -141,6 +141,9 @@ server.on('connection', (socket) => {
     action(params, id) {
       if (values.read) return { error: ['forbidden', 'This device can only read (mock server started with --read).'] };
       if (!ACTIONS.includes(params.action)) return { error: ['unknown-action', `Unknown action ${params.action}.`] };
+      const platformOk =
+        params.platform === undefined || (params.action === 'reload' && ['ios', 'android'].includes(params.platform));
+      if (!platformOk) return { error: ['bad-request', 'platform must be ios or android, and only for reload.'] };
       if (!fixtures.status.environments.some((env) => env.path === params.workspace)) {
         return { error: ['unknown-workspace', `${params.workspace} is not a Stim workspace on this Mac.`] };
       }

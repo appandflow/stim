@@ -209,7 +209,9 @@ disconnects, and stopping `stim-server` stops it.
 Every `action` request from a paired device, refused or run, appends one line
 to `$STIM_HOME/server/actions.ndjson`: `at`, `device` (`id` and `name`),
 `action`, `workspace`, `platform` when given, `ok`, `error` when it failed,
-and `durationMs` when it ran. `stim-server log` prints them.
+and `durationMs` when it ran. Strings from the client and error messages are
+cut to 256 characters. `stim-server log` prints them, with control characters
+replaced by `?`.
 
 The error codes `unauthorized`, `pairing-expired`, and `protocol-unsupported`
 refuse the client until it pairs again or updates; clients retry the others.

@@ -189,9 +189,8 @@ async function main(): Promise<void> {
     if (!records.length) console.log('No actions.');
     for (const record of records) {
       const outcome = record.ok ? 'ok' : `${record.error?.code ?? 'failed'}: ${record.error?.message ?? ''}`;
-      console.log(
-        `${record.at}  ${record.device.id} (${record.device.name})  ${record.action}  ${record.workspace}  ${outcome}`,
-      );
+      const line = `${record.at}  ${record.device.id} (${record.device.name})  ${record.action}  ${record.workspace}  ${outcome}`;
+      console.log(Array.from(line, (char) => (/\p{Cc}/u.test(char) ? '?' : char)).join(''));
     }
     return;
   }

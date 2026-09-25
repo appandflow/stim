@@ -96,6 +96,7 @@ const FRAME_RETRY_MS = 100;
 const STATUS_FEED = { args: ['status', '--watch', '--json'], cwd: homedir(), keep: 1, label: 'stim status --watch' };
 const HEALTH_ROUTE_TIMEOUT_MS = 1000;
 const COMMAND_LIMITS: CommandLimits = { timeoutMs: 60_000, maxOutputBytes: 32 * 1024 * 1024 };
+const AUDIT_FIELD_CHARS = 256;
 const ACTION_LIMITS: CommandLimits = { timeoutMs: 120_000, maxOutputBytes: 1024 * 1024 };
 
 const AUTH_REFUSALS: Record<Exclude<AuthOutcome, { ok: true }>['reason'], ProtocolError> = {
@@ -489,16 +490,25 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     function runAction(id: RequestId, params: unknown, session: PairedDevice): void {
       const startedAt = Date.now();
       const raw = isJsonObject(params) ? params : {};
+      const clip = (value: unknown) => (typeof value === 'string' ? value.slice(0, AUDIT_FIELD_CHARS) : null);
       const record: AuditRecord = {
         at: new Date(startedAt).toISOString(),
         device: { id: session.id, name: session.name },
-        action: typeof raw.action === 'string' ? raw.action : null,
-        workspace: typeof raw.workspace === 'string' ? raw.workspace : null,
-        ...(typeof raw.platform === 'string' ? { platform: raw.platform } : {}),
+        action: clip(raw.action),
+        workspace: clip(raw.workspace),
+        ...(typeof raw.platform === 'string' ? { platform: clip(raw.platform)! } : {}),
         ok: false,
       };
+      const audit = (outcome: Pick<AuditRecord, 'ok' | 'error' | 'durationMs'>) => {
+        const logged = outcome.error ? { ...outcome.error, message: clip(outcome.error.message)! } : undefined;
+        try {
+          appendAudit({ ...record, ...outcome, ...(logged ? { error: logged } : {}) });
+        } catch (cause) {
+          console.error(`stim-server: could not append to the action log: ${(cause as Error).message}`);
+        }
+      };
       const refuseAction = (code: ErrorCode, message: string) => {
-        appendAudit({ ...record, error: { code, message } });
+        audit({ ok: false, error: { code, message } });
         error(id, code, message);
       };
       const current = readDevices().find((entry) => entry.id === session.id);
@@ -519,17 +529,20 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           `An action is already running in ${resolved.dir}. Try again when it finishes.`,
         );
       }
+      let run: ReturnType<typeof runStim>;
+      try {
+        run = runStim(options.stimCli, options.env, actionArgs(action), resolved.dir, actionLimits);
+      } catch (cause) {
+        return refuseAction('action-failed', `stim ${action.action} could not start (${(cause as Error).message}).`);
+      }
       busyWorkspaces.add(resolved.dir);
-      const run = runStim(options.stimCli, options.env, actionArgs(action), resolved.dir, actionLimits);
+      let finished = false;
       const finish = (outcome: ReturnType<typeof actionOutcome>) => {
+        if (finished) return;
+        finished = true;
         running.delete(cancel);
         busyWorkspaces.delete(resolved.dir);
-        const durationMs = Date.now() - startedAt;
-        try {
-          appendAudit({ ...record, ok: outcome.ok, ...(outcome.ok ? {} : { error: outcome.error }), durationMs });
-        } catch (cause) {
-          console.error(`stim-server: could not append to the action log: ${(cause as Error).message}`);
-        }
+        audit({ ok: outcome.ok, ...(outcome.ok ? {} : { error: outcome.error }), durationMs: Date.now() - startedAt });
         if (outcome.ok)
           send(socket, { id, result: { action: action.action, workspace: resolved.dir, output: outcome.output } });
         else send(socket, { id, error: outcome.error });
