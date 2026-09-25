@@ -5,13 +5,13 @@ import { machineStats, type MachineStat, type StatKind } from '@/lib/home';
 import type { MachineUsage } from '@/protocol/types';
 import { useColors, type Colors } from '@/theme';
 
-const STAT_ICON: Record<StatKind, IconName> = {
+export const STAT_ICON: Record<StatKind, IconName> = {
   cpu: 'cpu',
   memory: 'memorychip',
   disk: 'internaldrive',
 };
 
-function toneColor(tone: MachineStat['tone'], colors: Colors): string {
+export function toneColor(tone: MachineStat['tone'], colors: Colors): string {
   return tone === 'critical' ? colors.error : tone === 'warn' ? colors.warn : colors.text;
 }
 

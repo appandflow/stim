@@ -7,7 +7,7 @@ import {
   workspaceNames,
   type DeviceRef,
 } from '@/lib/workspaces';
-import type { EnvironmentState, MachineUsage, StatusPayload } from '@/protocol/types';
+import type { EnvironmentState, MachineUsage, StatusPayload, UsageSample } from '@/protocol/types';
 
 export interface MacSnapshot {
   id: string;
@@ -217,6 +217,13 @@ const CPU_WARN_FRACTION = 0.8;
 const CPU_CRITICAL_FRACTION = 0.95;
 // A quarter of the low-disk warning, so the compact stat also has a red tier before Stim's own hard floor bites.
 const DISK_CRITICAL_BYTES = LOW_DISK_BYTES / 4;
+const PRESSURE_TONES: UsageTone[] = ['normal', 'warn', 'critical'];
+
+const cpuTone = (fraction: number): UsageTone =>
+  fraction >= CPU_CRITICAL_FRACTION ? 'critical' : fraction >= CPU_WARN_FRACTION ? 'warn' : 'normal';
+const diskTone = (freeBytes: number): UsageTone =>
+  freeBytes < DISK_CRITICAL_BYTES ? 'critical' : freeBytes < LOW_DISK_BYTES ? 'warn' : 'normal';
+const pressureTone = (level: number): UsageTone => PRESSURE_TONES[level] ?? 'normal';
 
 /**
  * The chip and sheet's compact stats: CPU busy fraction, the Mac's memory used of total, and the lowest free
@@ -231,7 +238,7 @@ export function machineStats(usage: MachineUsage | null): MachineStat[] {
       kind: 'cpu',
       label: 'CPU',
       value: `${Math.round(fraction * 100)}%`,
-      tone: fraction >= CPU_CRITICAL_FRACTION ? 'critical' : fraction >= CPU_WARN_FRACTION ? 'warn' : 'normal',
+      tone: cpuTone(fraction),
     });
   }
   const used = usage.memory.usedBytes;
@@ -252,10 +259,110 @@ export function machineStats(usage: MachineUsage | null): MachineStat[] {
       kind: 'disk',
       label: 'Disk',
       value: `${Math.round(lowest / 1e9)} GB free`,
-      tone: lowest < DISK_CRITICAL_BYTES ? 'critical' : lowest < LOW_DISK_BYTES ? 'warn' : 'normal',
+      tone: diskTone(lowest),
     });
   }
   return stats;
+}
+
+export const HISTORY_WINDOW_MS = 60 * 60 * 1000;
+const HISTORY_COLUMNS = 60;
+const TONE_RANK: Record<UsageTone, number> = { normal: 0, warn: 1, critical: 2 };
+
+export interface HistoryColumn {
+  fraction: number;
+  tone: UsageTone;
+}
+
+export interface UsageChart {
+  kind: StatKind;
+  label: string;
+  value: string;
+  tone: UsageTone;
+  /** Oldest first; null where the hour has no sample. */
+  columns: (HistoryColumn | null)[];
+}
+
+interface Metric {
+  kind: StatKind;
+  label: string;
+  read: (sample: UsageSample) => number | null;
+  fraction: (value: number) => number;
+  tone: (value: number, sample: UsageSample) => UsageTone;
+  format: (value: number) => string;
+}
+
+/**
+ * The status sheet's charts over the hour ending at the newest sample, which is the Mac's clock rather than the
+ * phone's. Each column averages its samples and takes their worst tone. A chart is left out when no sample
+ * reports it, or when `usage` lacks the total it is drawn against.
+ */
+export function usageCharts(samples: UsageSample[], usage: MachineUsage | null): UsageChart[] {
+  const end = samples.at(-1)?.at;
+  if (end === undefined || !usage) return [];
+  const memoryTotal = usage.memory.totalBytes;
+  const diskTotal = usage.volumes.find((volume) => volume.mount === '/')?.totalBytes;
+  const metrics: Metric[] = [
+    {
+      kind: 'cpu',
+      label: 'CPU',
+      read: (s) => s.cpu,
+      fraction: (v) => v,
+      tone: cpuTone,
+      format: (v) => `${Math.round(v * 100)}%`,
+    },
+    {
+      kind: 'memory',
+      label: 'RAM',
+      read: (s) => s.memoryUsedBytes,
+      fraction: (v) => v / memoryTotal,
+      tone: (_, s) => pressureTone(s.memoryPressure ?? 0),
+      format: (v) => `${Math.round(memoryGb(v))}/${Math.round(memoryGb(memoryTotal))} GB`,
+    },
+    ...(diskTotal
+      ? [
+          {
+            kind: 'disk' as const,
+            label: 'Disk free',
+            read: (s: UsageSample) => s.diskFreeBytes,
+            fraction: (v: number) => v / diskTotal,
+            tone: diskTone,
+            format: (v: number) => `${Math.round(v / 1e9)} GB`,
+          },
+        ]
+      : []),
+  ];
+  const start = end - HISTORY_WINDOW_MS;
+  const width = HISTORY_WINDOW_MS / HISTORY_COLUMNS;
+  const charts: UsageChart[] = [];
+  for (const metric of metrics) {
+    const buckets: { sum: number; count: number; tone: UsageTone }[] = [];
+    let latest: { value: number; sample: UsageSample } | null = null;
+    for (const sample of samples) {
+      const value = metric.read(sample);
+      if (value === null || sample.at <= start) continue;
+      latest = { value, sample };
+      const index = Math.min(HISTORY_COLUMNS - 1, Math.floor((sample.at - start) / width));
+      const tone = metric.tone(value, sample);
+      const bucket = (buckets[index] ??= { sum: 0, count: 0, tone });
+      bucket.sum += value;
+      bucket.count += 1;
+      if (TONE_RANK[tone] > TONE_RANK[bucket.tone]) bucket.tone = tone;
+    }
+    if (!latest) continue;
+    charts.push({
+      kind: metric.kind,
+      label: metric.label,
+      value: metric.format(latest.value),
+      tone: metric.tone(latest.value, latest.sample),
+      columns: Array.from({ length: HISTORY_COLUMNS }, (_, i) => {
+        const bucket = buckets[i];
+        if (!bucket) return null;
+        return { fraction: Math.min(1, Math.max(0, metric.fraction(bucket.sum / bucket.count))), tone: bucket.tone };
+      }),
+    });
+  }
+  return charts;
 }
 
 export interface BudgetRow {

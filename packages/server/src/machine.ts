@@ -4,7 +4,7 @@ import { availableParallelism, cpus, homedir, loadavg, totalmem } from 'node:os'
 import { dirname, join } from 'node:path';
 import { configDir } from '@stim-cli/core';
 import { loadConfig } from '@stim-cli/core/state';
-import type { MachineUsage, MachineVolume, MemoryPressure } from './protocol.ts';
+import type { MachineHistory, MachineUsage, MachineVolume, MemoryPressure, UsageSample } from './protocol.ts';
 
 interface DiskLocation {
   label: string;
@@ -141,4 +141,69 @@ export async function readMachineUsage(): Promise<MachineUsage> {
     cpu: readCpuUsage(),
     sampledAt: new Date().toISOString(),
   };
+}
+
+const PRESSURE_LEVEL: Record<MemoryPressure, number> = { normal: 0, warning: 1, critical: 2 };
+
+const HISTORY_INTERVAL_MS = 5000;
+const HISTORY_CAPACITY = 720;
+
+/**
+ * Samples CPU, memory and main-volume free space every `intervalMs` into a buffer of the last `capacity`
+ * samples. Its CPU tick baseline is its own, so `machine.get` callers do not shift it.
+ */
+export class UsageSampler {
+  private readonly samples: UsageSample[] = [];
+  private previousTicks: CpuTicks | null = null;
+  private timer: NodeJS.Timeout | null = null;
+  private readonly intervalMs: number;
+  private readonly capacity: number;
+
+  constructor(intervalMs: number = HISTORY_INTERVAL_MS, capacity: number = HISTORY_CAPACITY) {
+    this.intervalMs = intervalMs;
+    this.capacity = capacity;
+  }
+
+  start(): void {
+    if (this.timer) return;
+    this.previousTicks = cpuTicks(cpus());
+    this.timer = setInterval(() => void this.sample(), this.intervalMs);
+  }
+
+  stop(): void {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    this.previousTicks = null;
+  }
+
+  record(sample: UsageSample): void {
+    this.samples.push(sample);
+    if (this.samples.length > this.capacity) this.samples.splice(0, this.samples.length - this.capacity);
+  }
+
+  history(sinceMs?: number): MachineHistory {
+    const samples = sinceMs === undefined ? [...this.samples] : this.samples.filter((s) => s.at > sinceMs);
+    return { intervalMs: this.intervalMs, samples };
+  }
+
+  private async sample(): Promise<void> {
+    const at = Date.now();
+    const ticks = cpuTicks(cpus());
+    const cpu = this.previousTicks ? cpuUsageFraction(this.previousTicks, ticks) : null;
+    this.previousTicks = ticks;
+    const [pressure, memoryUsedBytes] = await Promise.all([readMemoryPressure(), readMemoryUsed()]);
+    let diskFreeBytes: number | null = null;
+    try {
+      const fs = statfsSync('/');
+      diskFreeBytes = fs.bavail * fs.bsize;
+    } catch {}
+    if (!this.timer) return;
+    this.record({
+      at,
+      cpu,
+      memoryUsedBytes,
+      memoryPressure: pressure === null ? null : PRESSURE_LEVEL[pressure],
+      diskFreeBytes,
+    });
+  }
 }

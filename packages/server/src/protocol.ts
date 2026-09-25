@@ -19,6 +19,7 @@ export const METHODS = [
   'frames.subscribe',
   'build.plan',
   'machine.get',
+  'machine.history',
   'unsubscribe',
   'action',
 ] as const;
@@ -219,6 +220,29 @@ export interface MachineUsage {
   sampledAt: string;
 }
 
+/**
+ * One `machine.history` sample. `at` is epoch milliseconds. `cpu` is the busy fraction (0..1) since the previous
+ * sample. `memoryPressure` is 0 (normal), 1 (warning) or 2 (critical). `diskFreeBytes` is the free space of the
+ * startup volume, `/`. A field is null when it could not be read.
+ */
+export interface UsageSample {
+  at: number;
+  cpu: number | null;
+  memoryUsedBytes: number | null;
+  memoryPressure: number | null;
+  diskFreeBytes: number | null;
+}
+
+/** Returns only the samples taken after `sinceMs`, epoch milliseconds. */
+export interface MachineHistoryParams {
+  sinceMs?: number;
+}
+
+export interface MachineHistory {
+  intervalMs: number;
+  samples: UsageSample[];
+}
+
 export interface Methods {
   hello: { params: HelloParams; result: HelloResult };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
@@ -229,6 +253,7 @@ export interface Methods {
   'frames.subscribe': { params: FrameTarget; result: SubscribeResult };
   'build.plan': { params: BuildPlanParams; result: BuildPlanResult };
   'machine.get': { params?: Record<string, never>; result: MachineUsage };
+  'machine.history': { params?: MachineHistoryParams; result: MachineHistory };
   unsubscribe: { params: UnsubscribeParams; result: Record<string, never> };
   action: { params: ActionParams; result: ActionResult };
 }
@@ -484,6 +509,29 @@ export function protocolJsonSchema(): JsonSchema {
         additionalProperties: false,
         properties: { workspace: { type: 'string', description: 'An environment path from a status payload.' } },
       },
+      MachineHistory: {
+        type: 'object',
+        required: ['intervalMs', 'samples'],
+        additionalProperties: false,
+        properties: {
+          intervalMs: { type: 'integer' },
+          samples: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['at', 'cpu', 'memoryUsedBytes', 'memoryPressure', 'diskFreeBytes'],
+              additionalProperties: false,
+              properties: {
+                at: { type: 'integer' },
+                cpu: { type: ['number', 'null'] },
+                memoryUsedBytes: { type: ['number', 'null'] },
+                memoryPressure: { enum: [0, 1, 2, null] },
+                diskFreeBytes: { type: ['number', 'null'] },
+              },
+            },
+          },
+        },
+      },
       MachineUsage: {
         type: 'object',
         required: ['volumes', 'memory', 'load', 'cpu', 'sampledAt'],
@@ -545,6 +593,11 @@ export function protocolJsonSchema(): JsonSchema {
           request('frames.subscribe', { $ref: '#/$defs/FrameTarget' }),
           request('build.plan', { $ref: '#/$defs/BuildPlanParams' }),
           request('machine.get'),
+          optionalParams('machine.history', {
+            type: 'object',
+            additionalProperties: false,
+            properties: { sinceMs: { type: 'number' } },
+          }),
           optionalParams('stats.get', { $ref: '#/$defs/WorkspaceParams' }),
           optionalParams('settings.get', { $ref: '#/$defs/WorkspaceParams' }),
           request('unsubscribe', {
@@ -569,6 +622,7 @@ export function protocolJsonSchema(): JsonSchema {
                   { $ref: '#/$defs/HelloResult' },
                   { $ref: '#/$defs/ActionResult' },
                   { $ref: '#/$defs/MachineUsage' },
+                  { $ref: '#/$defs/MachineHistory' },
                   {
                     type: 'object',
                     required: ['subscription'],

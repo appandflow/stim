@@ -10,7 +10,7 @@ import { FeedPool, type JsonObject } from './feed.ts';
 import { buildFrameHelper, type FrameHint } from './frame-helper.ts';
 import { DEFAULT_FRAME_LIMITS, deviceKey, FramePool, ownedDevice, type Frame, type FrameLimits } from './frames.ts';
 import { LogBatcher, logArgs, parseLogFilter, type LogLimits } from './logs.ts';
-import { readMachineUsage } from './machine.ts';
+import { readMachineUsage, UsageSampler } from './machine.ts';
 import {
   ACTIONS,
   FRAME_EDGE,
@@ -231,6 +231,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const actionLimits: CommandLimits = { ...ACTION_LIMITS, ...options.actionLimits };
   const busyWorkspaces = new Set<string>();
   const sessions = new Map<WebSocket, PairedDevice>();
+  const sampler = new UsageSampler();
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
 
   mkdirSync(serverDir(), { recursive: true, mode: 0o700 });
@@ -303,6 +304,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       device = outcome.device;
       sessions.set(socket, device);
+      sampler.start();
       const result: HelloResult = {
         protocol: PROTOCOL_VERSION,
         server: { name: options.name, version: options.serverVersion, stim: options.stimVersion, home: homedir() },
@@ -672,6 +674,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (message.method === 'frames.subscribe') return subscribeFrames(id, message.params);
       if (message.method === 'build.plan') return planBuild(id, message.params);
       if (message.method === 'machine.get') return send(socket, { id, result: await readMachineUsage() });
+      if (message.method === 'machine.history') {
+        const params = message.params ?? {};
+        const sinceMs = isJsonObject(params) ? params.sinceMs : undefined;
+        if (!isJsonObject(params) || (sinceMs !== undefined && typeof sinceMs !== 'number')) {
+          return error(id, 'bad-request', 'machine.history takes an optional numeric sinceMs.');
+        }
+        return send(socket, { id, result: sampler.history(sinceMs) });
+      }
       if (message.method === 'stats.get' || message.method === 'settings.get') {
         return workspaceCommand(id, message.method, message.params);
       }
@@ -699,6 +709,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     socket.on('close', () => {
       clearTimeout(timer);
       sessions.delete(socket);
+      if (sessions.size === 0) sampler.stop();
       for (const unsubscribe of subscriptions.values()) unsubscribe();
       subscriptions.clear();
       for (const cancel of commands) {
@@ -740,6 +751,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const close = async () => {
     watcher.close();
     helperAbort.abort();
+    sampler.stop();
     if (revocationCheck) clearTimeout(revocationCheck);
     for (const client of wss.clients) client.terminate();
     await Promise.all([frames.close(), feeds.close(), ...[...running].map((cancel) => cancel())]);

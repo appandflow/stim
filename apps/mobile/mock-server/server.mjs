@@ -93,6 +93,24 @@ const usage = () => ({
   sampledAt: new Date().toISOString(),
 });
 
+const HISTORY_INTERVAL_MS = 5000;
+const history = (sinceMs = -Infinity) => {
+  const end = Math.floor(Date.now() / HISTORY_INTERVAL_MS) * HISTORY_INTERVAL_MS;
+  const samples = [];
+  for (let at = end - 719 * HISTORY_INTERVAL_MS; at <= end; at += HISTORY_INTERVAL_MS) {
+    if (at <= sinceMs) continue;
+    const phase = at / 600_000;
+    samples.push({
+      at,
+      cpu: 0.3 + 0.25 * Math.sin(phase * 2 * Math.PI) ** 2,
+      memoryUsedBytes: (29 + 3 * Math.sin(phase)) * 2 ** 30,
+      memoryPressure: 0,
+      diskFreeBytes: Number(values['free-gb']) * GB,
+    });
+  }
+  return { intervalMs: HISTORY_INTERVAL_MS, samples };
+};
+
 server.on('connection', (socket) => {
   let authed = false;
   let nextSubscription = 1;
@@ -208,6 +226,9 @@ server.on('connection', (socket) => {
     },
     'machine.get'() {
       return { result: usage() };
+    },
+    'machine.history'(params) {
+      return { result: history(params.sinceMs) };
     },
     unsubscribe(params) {
       stop(params.subscription);

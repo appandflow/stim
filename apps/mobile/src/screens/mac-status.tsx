@@ -1,12 +1,13 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ConnectionBanner } from '@/components/connection-banner';
 import { Icon } from '@/components/icon';
 import { connectionColor, describeState } from '@/components/mac-chip';
 import { MachineStatsRow } from '@/components/machine-stats';
+import { UsageCharts, useUsageHistory } from '@/components/usage-charts';
 import { useMacById } from '@/hooks/mac-connection';
-import { budgetRows, formatBytes, LOW_DISK_BYTES, memoryGb, type BudgetRow } from '@/lib/home';
+import { budgetRows, formatBytes, LOW_DISK_BYTES, memoryGb, usageCharts, type BudgetRow } from '@/lib/home';
 import { tildeHome } from '@/lib/paths';
 import { devicesOf, workspaceNames } from '@/lib/workspaces';
 import { mono, useColors } from '@/theme';
@@ -16,6 +17,8 @@ export function MacStatus({ id }: { id: string }) {
   const { mac, connection, state, missing, status, usage, home } = useMacById(id);
   const [budgets, setBudgets] = useState<BudgetRow[] | null>(null);
   const open = state.kind === 'open';
+  const samples = useUsageHistory(connection, open, usage);
+  const charts = useMemo(() => usageCharts(samples ?? [], usage), [samples, usage]);
 
   useEffect(() => {
     if (!connection || !open) return;
@@ -95,6 +98,11 @@ export function MacStatus({ id }: { id: string }) {
 
       {usage ? (
         <>
+          {charts.length > 0 ? (
+            <Section title="Last hour">
+              <UsageCharts charts={charts} />
+            </Section>
+          ) : null}
           <Section title="Machine">
             <Line
               label="Load average"
