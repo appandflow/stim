@@ -1517,87 +1517,112 @@ describe('frames.subscribe', () => {
     }
   });
 
-  test.skipIf(!fakeTailscale)(
-    'reads an emulator screenshot over gRPC with the discovery token and converts it to JPEG',
-    async () => {
-      const png = Buffer.from('not really a png');
-      const requests: { path: string; authorization: string | undefined; body: Buffer }[] = [];
-      const grpc = createHttp2Server();
-      grpc.on('stream', (stream: ServerHttp2Stream, headers) => {
-        const chunks: Buffer[] = [];
-        stream.on('data', (chunk: Buffer) => chunks.push(chunk));
-        stream.on('end', () => {
-          requests.push({
-            path: String(headers[':path']),
-            authorization: headers.authorization,
-            body: Buffer.concat(chunks),
+  describe.skipIf(!fakeTailscale)('emulator screenshots over gRPC', () => {
+    test.each([
+      { device: 'a phone', posture: 0, folded: false, refused: false, reported: undefined },
+      { device: 'a folded foldable', posture: 1, folded: true, refused: false, reported: 'folded' },
+      { device: 'an unfolded foldable', posture: 3, folded: false, refused: false, reported: 'unfolded' },
+      { device: 'an emulator that refuses POSTURE', posture: 3, folded: false, refused: true, reported: undefined },
+    ])(
+      'reads an emulator screenshot over gRPC with the discovery token and converts it to JPEG: $device',
+      async ({ posture, folded, refused, reported }) => {
+        const png = Buffer.from('not really a png');
+        const requests: { path: string; authorization: string | undefined; body: Buffer }[] = [];
+        const grpc = createHttp2Server();
+        grpc.on('stream', (stream: ServerHttp2Stream, headers) => {
+          const chunks: Buffer[] = [];
+          stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+          stream.on('end', () => {
+            requests.push({
+              path: String(headers[':path']),
+              authorization: headers.authorization,
+              body: Buffer.concat(chunks),
+            });
+            const value = Buffer.alloc(4);
+            value.writeFloatLE(posture);
+            const format = Buffer.from([
+              0x18,
+              0xa0,
+              0x02,
+              0x20,
+              0xc0,
+              0x04,
+              ...(folded ? [0x3a, 0x06, 0x08, 0xb8, 0x08, 0x10, 0xac, 0x10] : []),
+            ]);
+            const physical = String(headers[':path']).endsWith('/getPhysicalModel');
+            const message = physical
+              ? Buffer.from([0x08, 0x10, 0x1a, 0x06, 0x0a, 0x04, ...value])
+              : Buffer.concat([Buffer.from([0x0a, format.length]), format, Buffer.from([0x22, png.length]), png]);
+            const frameHeader = Buffer.alloc(5);
+            frameHeader.writeUInt32BE(message.length, 1);
+            stream.respond({ ':status': 200, 'content-type': 'application/grpc' }, { waitForTrailers: true });
+            stream.on('wantTrailers', () => stream.sendTrailers({ 'grpc-status': physical && refused ? '12' : '0' }));
+            stream.end(Buffer.concat([frameHeader, message]));
           });
-          const format = Buffer.from([0x18, 0xa0, 0x02, 0x20, 0xc0, 0x04]);
-          const message = Buffer.concat([
-            Buffer.from([0x0a, format.length]),
-            format,
-            Buffer.from([0x22, png.length]),
-            png,
+        });
+        await new Promise<void>((resolve) => grpc.listen(0, '127.0.0.1', resolve));
+        const grpcPort = (grpc.address() as { port: number }).port;
+        const home = join(root, 'fake-home');
+        const running = join(home, 'Library/Caches/TemporaryItems/avd/running');
+        mkdirSync(running, { recursive: true });
+        writeFileSync(
+          join(running, `pid_${process.pid}.ini`),
+          `port.serial=5554\ngrpc.port=${grpcPort}\ngrpc.token=secret-token\n`,
+        );
+        const converted = jpeg(288, 640, 'android');
+        try {
+          const port = await startWithTools({
+            HOME: home,
+            FAKE_STIM_PAYLOADS: JSON.stringify([
+              statusPayload({
+                android: { name: 'stim-app', owned: true, physical: false, serial: 'emulator-5554', state: 'detected' },
+              }),
+              statusPayload({
+                android: { name: 'stim-app', owned: true, physical: false, serial: null, state: 'unknown' },
+              }),
+            ]),
+            FAKE_FRAMES: '[]',
+            FAKE_SIPS_JPEG: converted.toString('base64'),
+          });
+          const client = await authed(port);
+          await client.request('frames.subscribe', { workspace, platform: 'android' });
+          const frame = await client.next();
+          expect(frame).toMatchObject({
+            event: 'frame',
+            platform: 'android',
+            slot: 'default',
+            mime: 'image/jpeg',
+            width: 288,
+            height: 640,
+            data: converted.toString('base64'),
+          });
+          expect((frame as { posture?: string }).posture).toBe(reported);
+          expect(requests.slice(0, 2)).toMatchObject([
+            {
+              path: '/android.emulation.control.EmulatorController/getPhysicalModel',
+              authorization: 'Bearer secret-token',
+            },
+            {
+              path: '/android.emulation.control.EmulatorController/getScreenshot',
+              authorization: 'Bearer secret-token',
+            },
           ]);
-          const frameHeader = Buffer.alloc(5);
-          frameHeader.writeUInt32BE(message.length, 1);
-          stream.respond({ ':status': 200, 'content-type': 'application/grpc' }, { waitForTrailers: true });
-          stream.on('wantTrailers', () => stream.sendTrailers({ 'grpc-status': '0' }));
-          stream.end(Buffer.concat([frameHeader, message]));
-        });
-      });
-      await new Promise<void>((resolve) => grpc.listen(0, '127.0.0.1', resolve));
-      const grpcPort = (grpc.address() as { port: number }).port;
-      const home = join(root, 'fake-home');
-      const running = join(home, 'Library/Caches/TemporaryItems/avd/running');
-      mkdirSync(running, { recursive: true });
-      writeFileSync(
-        join(running, `pid_${process.pid}.ini`),
-        `port.serial=5554\ngrpc.port=${grpcPort}\ngrpc.token=secret-token\n`,
-      );
-      const converted = jpeg(288, 640, 'android');
-      try {
-        const port = await startWithTools({
-          HOME: home,
-          FAKE_STIM_PAYLOADS: JSON.stringify([
-            statusPayload({
-              android: { name: 'stim-app', owned: true, physical: false, serial: 'emulator-5554', state: 'detected' },
-            }),
-            statusPayload({
-              android: { name: 'stim-app', owned: true, physical: false, serial: null, state: 'unknown' },
-            }),
-          ]),
-          FAKE_FRAMES: '[]',
-          FAKE_SIPS_JPEG: converted.toString('base64'),
-        });
-        const client = await authed(port);
-        await client.request('frames.subscribe', { workspace, platform: 'android' });
-        expect(await client.next()).toMatchObject({
-          event: 'frame',
-          platform: 'android',
-          slot: 'default',
-          mime: 'image/jpeg',
-          width: 288,
-          height: 640,
-          data: converted.toString('base64'),
-        });
-        expect(requests[0]).toMatchObject({
-          path: '/android.emulation.control.EmulatorController/getScreenshot',
-          authorization: 'Bearer secret-token',
-        });
-        expect([...requests[0]!.body]).toEqual([0, 0, 0, 0, 6, 0x18, 0x80, 0x0a, 0x20, 0x80, 0x0a]);
-        const seen = requests.length;
-        await until(() => requests.length > seen + 1);
-        expect(client.socket.readyState).toBe(WebSocket.OPEN);
-        const [sips] = toolRuns();
-        expect(sips?.tool).toBe('sips');
-        expect(sips?.args.slice(0, 4)).toEqual(['-s', 'format', 'jpeg', '-s']);
-        expect(readFileSync(sips!.args.at(-3)!)).toEqual(png);
-      } finally {
-        await server?.close();
-        server = null;
-        await new Promise((resolve) => grpc.close(resolve));
-      }
-    },
-  );
+          expect([...requests[0]!.body]).toEqual([0, 0, 0, 0, 2, 0x08, 0x10]);
+          expect([...requests[1]!.body]).toEqual([0, 0, 0, 0, 6, 0x18, 0x80, 0x0a, 0x20, 0x80, 0x0a]);
+          const seen = requests.length;
+          await until(() => requests.length > seen + 1);
+          expect(requests.filter((request) => request.path.endsWith('/getPhysicalModel'))).toHaveLength(1);
+          expect(client.socket.readyState).toBe(WebSocket.OPEN);
+          const [sips] = toolRuns();
+          expect(sips?.tool).toBe('sips');
+          expect(sips?.args.slice(0, 4)).toEqual(['-s', 'format', 'jpeg', '-s']);
+          expect(readFileSync(sips!.args.at(-3)!)).toEqual(png);
+        } finally {
+          await server?.close();
+          server = null;
+          await new Promise((resolve) => grpc.close(resolve));
+        }
+      },
+    );
+  });
 });

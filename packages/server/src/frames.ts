@@ -356,28 +356,57 @@ function* protoFields(bytes: Buffer): Generator<ProtoField> {
   }
 }
 
-/** `ImageFormat` and `Image` in the emulator's emulator_controller.proto; format 0 is PNG. */
-function screenshotRequest(): Buffer {
-  const message = Buffer.from([3 << 3, ...varint(MAX_EDGE), 4 << 3, ...varint(MAX_EDGE)]);
+function grpcMessage(message: number[]): Buffer {
   const header = Buffer.alloc(5);
   header.writeUInt32BE(message.length, 1);
-  return Buffer.concat([header, message]);
+  return Buffer.concat([header, Buffer.from(message)]);
 }
 
-function screenshotImage(body: Buffer): Buffer {
-  if (body.length < 5 || body[0] !== 0) throw new Error('getScreenshot returned no message.');
-  const message = body.subarray(5, 5 + body.readUInt32BE(1));
-  for (const entry of protoFields(message)) {
-    if (entry.field === 4 && 'bytes' in entry) return Buffer.from(entry.bytes);
+function grpcReply(body: Buffer, method: string): Buffer {
+  if (body.length < 5 || body[0] !== 0) throw new Error(`${method} returned no message.`);
+  return body.subarray(5, 5 + body.readUInt32BE(1));
+}
+
+/**
+ * `ImageFormat` and `Image` in the emulator's emulator_controller.proto; format 0 is PNG. The reply's
+ * format carries `foldedDisplay` (field 7) while a foldable is folded.
+ */
+function screenshotReply(body: Buffer): { png: Buffer; folded: boolean } {
+  let png: Buffer | null = null;
+  let folded = false;
+  for (const entry of protoFields(grpcReply(body, 'getScreenshot'))) {
+    if (entry.field === 4 && 'bytes' in entry) png = Buffer.from(entry.bytes);
+    if (entry.field === 1 && 'bytes' in entry) {
+      folded = [...protoFields(entry.bytes)].some((format) => format.field === 7);
+    }
   }
-  throw new Error('getScreenshot returned no image.');
+  if (!png) throw new Error('getScreenshot returned no image.');
+  return { png, folded };
+}
+
+/**
+ * `PhysicalModelValue` for POSTURE (PhysicalType 16), whose one float is a `Posture.PostureValue`; 1 to 5
+ * are real postures, so any of them means the emulator has a hinge.
+ */
+function hasHinge(body: Buffer): boolean {
+  for (const entry of protoFields(grpcReply(body, 'getPhysicalModel'))) {
+    if (entry.field === 2 && 'varint' in entry && entry.varint !== 0) return false;
+    if (entry.field !== 3 || !('bytes' in entry)) continue;
+    for (const value of protoFields(entry.bytes)) {
+      if (value.field !== 1 || !('bytes' in value) || value.bytes.length < 4) continue;
+      const posture = Math.round(value.bytes.readFloatLE(0));
+      return posture >= 1 && posture <= 5;
+    }
+  }
+  return false;
 }
 
 function emulatorCapturer(serial: string, env: NodeJS.ProcessEnv, limits: FrameLimits): Capturer {
   let session: ClientHttp2Session | null = null;
   let tmp: string | null = null;
   const running = new Set<ChildProcess>();
-  const call = (endpoint: EmulatorEndpoint) =>
+  let hinged: boolean | null = null;
+  const call = (endpoint: EmulatorEndpoint, method: string, requestBody: Buffer) =>
     new Promise<Buffer>((resolve, reject) => {
       if (!session || session.closed || session.destroyed) {
         session = connect(`http://127.0.0.1:${endpoint.grpcPort}`);
@@ -385,7 +414,7 @@ function emulatorCapturer(serial: string, env: NodeJS.ProcessEnv, limits: FrameL
       }
       const request = session.request({
         ':method': 'POST',
-        ':path': '/android.emulation.control.EmulatorController/getScreenshot',
+        ':path': `/android.emulation.control.EmulatorController/${method}`,
         'content-type': 'application/grpc',
         te: 'trailers',
         ...(endpoint.token ? { authorization: `Bearer ${endpoint.token}` } : {}),
@@ -406,15 +435,15 @@ function emulatorCapturer(serial: string, env: NodeJS.ProcessEnv, limits: FrameL
       request.on('trailers', record);
       request.on('data', (chunk: Buffer) => chunks.push(chunk));
       request.on('error', (error) => {
-        const text = `getScreenshot failed on ${serial}: ${error.message}`;
+        const text = `${method} failed on ${serial}: ${error.message}`;
         reject(timedOut ? timeoutError(text) : new Error(text));
       });
       request.on('close', () => {
         if (status === '0') return resolve(Buffer.concat(chunks));
-        const text = `getScreenshot failed on ${serial}: ${message ?? `status ${status ?? 'missing'}`}`;
+        const text = `${method} failed on ${serial}: ${message ?? `status ${status ?? 'missing'}`}`;
         reject(timedOut ? timeoutError(text) : new Error(text));
       });
-      request.end(screenshotRequest());
+      request.end(requestBody);
     });
   return {
     capture: async () => {
@@ -422,9 +451,15 @@ function emulatorCapturer(serial: string, env: NodeJS.ProcessEnv, limits: FrameL
       if (!endpoint) {
         throw new Error(`${serial} has no gRPC endpoint. Frames appear after Stim next boots this emulator.`);
       }
-      const png = screenshotImage(await call(endpoint));
+      hinged ??= await call(endpoint, 'getPhysicalModel', grpcMessage([1 << 3, 16]))
+        .then(hasHinge)
+        .catch(() => false);
+      const { png, folded } = screenshotReply(
+        await call(endpoint, 'getScreenshot', grpcMessage([3 << 3, ...varint(MAX_EDGE), 4 << 3, ...varint(MAX_EDGE)])),
+      );
       return {
         raw: png,
+        ...(hinged ? { posture: folded ? ('folded' as const) : ('unfolded' as const) } : {}),
         jpeg: async () => {
           tmp ??= mkdtempSync(join(serverDir(), 'frames-'));
           const input = join(tmp, 'frame.png');
