@@ -87,8 +87,8 @@ function missReason(value: unknown): BuildMissReason | null {
     summary: record.summary,
     changes,
     changeCount:
-      typeof record.changeCount === 'number' && record.changeCount >= changes.length
-        ? record.changeCount
+      Number.isInteger(record.changeCount) && (record.changeCount as number) >= changes.length
+        ? (record.changeCount as number)
         : changes.length,
     baseline:
       baseline &&

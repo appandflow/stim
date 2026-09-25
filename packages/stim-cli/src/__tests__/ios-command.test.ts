@@ -3409,7 +3409,7 @@ test('a miss against a stored entry says what changed, logs fingerprint_diff and
     summary: 'ios/Podfile.lock changed',
     changes: [{ source: 'ios/Podfile.lock', change: 'changed', category: 'file' }],
     changeCount: 1,
-    baseline: { fingerprint: 'oldhash', from: 'workspace' },
+    baseline: { fingerprint: 'oldhash', cacheKey: 'old-key', from: 'workspace' },
     rekeyedBy: [],
   });
 

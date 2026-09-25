@@ -40,9 +40,13 @@ struct BuildCacheSection: View {
           .help("stim \(platform) --plan: fingerprint and look up the caches without building")
       }
       if let last = env.lastBuilds?.build(for: platform) {
-        Text("Last: \(last.summary)\(last.endedAt.map { " \u{00B7} \(formatAgo(Date().timeIntervalSince($0)))" } ?? "")")
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+          Text(
+            "Last: \(last.summary)\(last.endedAt.map { " \u{00B7} \(formatAgo(context.date.timeIntervalSince($0)))" } ?? "")"
+          )
           .foregroundStyle(last.status == "ok" ? Theme.secondary : Theme.error)
           .help(last.fingerprint.map { "Fingerprint \($0)" } ?? "")
+        }
         if let reason = last.missReason {
           MissReasonButton(reason: reason)
         }

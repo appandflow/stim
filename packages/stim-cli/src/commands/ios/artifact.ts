@@ -668,7 +668,7 @@ export async function acquireIosArtifact(
             ),
           );
         } else if (after.moved) {
-          rekeyedBy.push(...mutatingSteps);
+          rekeyedBy.push(...mutatingSteps.map((step) => (step === 'prebuild' ? step : 'pod install')));
           storeHash = after.hash;
           storeSources = after.sources;
           storeKey = buildCacheKey(PLATFORM, after.hash, {
@@ -677,6 +677,7 @@ export async function acquireIosArtifact(
             isSimulator: !physical,
             ...(buildProfile ? { buildProfile } : {}),
           });
+          buildFailure = { ...buildFailure, fingerprint: storeHash, cacheKey: storeKey };
           note(
             chalk.dim(
               phaseLine(

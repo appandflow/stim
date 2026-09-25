@@ -630,7 +630,8 @@ RULES
   durationMs   the run's wall time; finishedAt is startedAt plus it. Both
                are null when the record carries no duration.
   fingerprint  the key's fingerprint after any prebuild or pod install
-  missReason   only on a run that compiled: { kind, summary, changes,
+  missReason   only on a run that did not install a cached app (it
+               compiled, or failed before finding one): { kind, summary, changes,
                changeCount, baseline, rekeyedBy }. kind is "changed",
                "no-baseline", "same-sources", "cache-skipped" or
                "fingerprint-error"; summary names the cause, such as

@@ -76,7 +76,8 @@ export interface BuildMissReason {
   summary: string;
   changes: BuildMissChange[];
   changeCount: number;
-  baseline: { fingerprint: string; from: 'workspace' | 'project' } | null;
+  /** `cacheKey` is kept in workspace state so a later miss can find this baseline; status omits it. */
+  baseline: { fingerprint: string; cacheKey?: string; from: 'workspace' | 'project' } | null;
   rekeyedBy: string[];
 }
 

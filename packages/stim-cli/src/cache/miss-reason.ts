@@ -19,6 +19,7 @@ const MISS_CHANGE_CAP = 20;
 
 interface MissBaseline {
   fingerprint: string;
+  cacheKey: string;
   sources: FingerprintSource[];
   from: 'workspace' | 'project';
 }
@@ -29,21 +30,23 @@ interface RecordedBuild {
   startedAt: string;
 }
 
-function recordedBuild(state: WorkspaceState | null, platform: StatsPlatform): RecordedBuild | null {
+function recordedBuilds(state: WorkspaceState | null, platform: StatsPlatform): RecordedBuild[] {
+  const builds: RecordedBuild[] = [];
   for (const value of [state?.[LAST_BUILD_KEYS[platform]], state?.lastBuild]) {
     const record = value as Record<string, unknown> | null | undefined;
     if (record?.platform !== platform) continue;
-    if (typeof record.fingerprint !== 'string' || typeof record.cacheKey !== 'string') continue;
-    return {
-      fingerprint: record.fingerprint,
-      cacheKey: record.cacheKey,
-      startedAt: typeof record.startedAt === 'string' ? record.startedAt : '',
-    };
+    const startedAt = typeof record.startedAt === 'string' ? record.startedAt : '';
+    if (typeof record.fingerprint === 'string' && typeof record.cacheKey === 'string') {
+      builds.push({ fingerprint: record.fingerprint, cacheKey: record.cacheKey, startedAt });
+    }
+    const carried = (record.missReason as { baseline?: Record<string, unknown> | null } | undefined)?.baseline;
+    if (typeof carried?.fingerprint === 'string' && typeof carried.cacheKey === 'string') {
+      builds.push({ fingerprint: carried.fingerprint, cacheKey: carried.cacheKey, startedAt });
+    }
   }
-  return null;
+  return builds;
 }
 
-/** The repository a project lives in plus its path inside it, so every worktree of one project agrees. */
 export function projectIdentity(root: string): string | null {
   let real: string;
   try {
@@ -67,10 +70,6 @@ export interface MissBaselineDeps {
   sourcesOf?: (platform: string, key: string) => FingerprintSource[] | null;
 }
 
-/**
- * The cached build to compare a miss against: the entry this workspace's last build of the platform used,
- * else the most recent one another workspace of the same project used.
- */
 export function findMissBaseline(
   root: string,
   platform: StatsPlatform,
@@ -81,21 +80,21 @@ export function findMissBaseline(
     sourcesOf = (p, key) => storedSources(p, key, cacheRoot()),
   }: MissBaselineDeps = {},
 ): MissBaseline | null {
-  const own = recordedBuild(readState(root), platform);
-  const ownSources = own ? sourcesOf(platform, own.cacheKey) : null;
-  if (own && ownSources) return { fingerprint: own.fingerprint, sources: ownSources, from: 'workspace' };
+  for (const build of recordedBuilds(readState(root), platform)) {
+    const sources = sourcesOf(platform, build.cacheKey);
+    if (sources) return { fingerprint: build.fingerprint, cacheKey: build.cacheKey, sources, from: 'workspace' };
+  }
 
   const project = identity(root);
   if (!project) return null;
   const others: RecordedBuild[] = [];
   for (const other of projectRoots()) {
     if (other === root || identity(other) !== project) continue;
-    const build = recordedBuild(readState(other), platform);
-    if (build) others.push(build);
+    others.push(...recordedBuilds(readState(other), platform));
   }
   for (const build of others.toSorted((a, b) => (Date.parse(b.startedAt) || 0) - (Date.parse(a.startedAt) || 0))) {
     const sources = sourcesOf(platform, build.cacheKey);
-    if (sources) return { fingerprint: build.fingerprint, sources, from: 'project' };
+    if (sources) return { fingerprint: build.fingerprint, cacheKey: build.cacheKey, sources, from: 'project' };
   }
   return null;
 }
@@ -156,7 +155,7 @@ export function missReasonFromChanges({
   rekeyedBy = [],
 }: {
   changes: SourceChange[];
-  baseline: { fingerprint: string; from: 'workspace' | 'project' } | null;
+  baseline: BuildMissReason['baseline'];
   rekeyedBy?: string[];
 }): BuildMissReason {
   const prefix = rekeyPrefix(rekeyedBy);
@@ -202,7 +201,6 @@ export function missReasonFromChanges({
   };
 }
 
-/** Explains a compile: what changed between the sources about to be stored and the baseline build. */
 export function explainBuildMiss({
   root,
   platform,
@@ -225,7 +223,9 @@ export function explainBuildMiss({
   return {
     reason: missReasonFromChanges({
       changes,
-      baseline: baseline ? { fingerprint: baseline.fingerprint, from: baseline.from } : null,
+      baseline: baseline
+        ? { fingerprint: baseline.fingerprint, cacheKey: baseline.cacheKey, from: baseline.from }
+        : null,
       rekeyedBy,
     }),
     changedNames: changes.map((change) => change.name),

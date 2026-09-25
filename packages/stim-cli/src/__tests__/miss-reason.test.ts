@@ -102,6 +102,19 @@ describe('findMissBaseline', () => {
     expect(found).toMatchObject({ fingerprint: 'own', from: 'workspace' });
   });
 
+  test('a failed compile keeps the baseline its miss was compared with', () => {
+    const failed = {
+      ...build('broken-debug-sim', '2026-09-02T00:00:00Z'),
+      status: 'failed',
+      missReason: { kind: 'changed', baseline: { fingerprint: 'good', cacheKey: 'good-debug-sim', from: 'workspace' } },
+    };
+    const states = { '/wt/a': { lastBuild: failed, lastIosBuild: failed } };
+    expect(findMissBaseline('/wt/a', 'ios', deps(states, { 'good-debug-sim': sources }))).toMatchObject({
+      fingerprint: 'good',
+      from: 'workspace',
+    });
+  });
+
   test('falls back to the newest build of the same project that still has its sources', () => {
     const states = {
       '/wt/a': { lastBuild: build('gone-debug', '2026-09-21T00:00:00Z', 'android') },

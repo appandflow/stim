@@ -591,14 +591,18 @@ In `--json`, an environment with a recorded run carries
 `status` is `ok` or `failed`, and `cacheHit` is `local`, `remote`, or `false`
 when the run compiled or failed before finding an app.
 
-A run that compiled carries `missReason`: why the cache had no app for it.
+A run that did not install a cached app (it compiled, or failed before finding
+one) carries `missReason`: why the cache had no app for it.
 
 ```json
 {
   "kind": "changed",
   "summary": "native dependency added: expo-clipboard",
-  "changes": [{ "source": "node_modules/expo-clipboard", "change": "added", "category": "native-dependency" }],
-  "changeCount": 3,
+  "changes": [
+    { "source": "node_modules/expo-clipboard/ios", "change": "added", "category": "native-dependency" },
+    { "source": "expoAutolinkingConfig:ios", "change": "changed", "category": "autolinking" }
+  ],
+  "changeCount": 2,
   "baseline": { "fingerprint": "5f9c79...", "from": "workspace" },
   "rekeyedBy": []
 }
