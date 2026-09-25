@@ -10,7 +10,6 @@ export interface StatusListener {
 
 const STDERR_TAIL = 2000;
 
-/** One shared `stim status --watch --json` child, running while at least one listener is subscribed. */
 export class StatusFeed {
   private readonly listeners = new Set<StatusListener>();
   private child: ChildProcess | null = null;

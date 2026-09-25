@@ -5,7 +5,7 @@ import { isJsonObject } from '@stim-cli/core/state';
 import type { PeerIdentity } from './registry.ts';
 
 const MAC_APP_BINARY = '/Applications/Tailscale.app/Contents/MacOS/Tailscale';
-const TIMEOUT_MS = 5000;
+const TIMEOUT_MS = 3000;
 
 export type TailscaleState =
   | { state: 'running'; ips: string[]; dnsName: string | null; hostName: string | null }

@@ -56,9 +56,11 @@ At pairing, the server records the peer's tailnet node and user from
 a leaked token alone is not enough. A device paired over loopback, from this
 Mac, is accepted only over loopback. `tailscale serve` connects from loopback
 and names the peer in `X-Forwarded-For`, which the server trusts only on
-loopback connections.
+loopback connections. Forward only `tailscale serve` in HTTP mode to the
+loopback port: a forwarder that omits that header, such as `tailscale serve
+--tcp`, `ssh -L`, or a tunnel, makes every remote peer look like this Mac.
 
-A connection must authenticate within 5 seconds. Five failed attempts from the
+A connection must send `hello` within 5 seconds. Five failed attempts from the
 same peer within a minute block new connections from it for up to a minute.
 
 Paired devices live in `$STIM_HOME/server/devices.json`. Revoking a device

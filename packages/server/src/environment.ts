@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 function parseEnvironment(output: string): Record<string, string> {
@@ -17,9 +18,9 @@ function parseEnvironment(output: string): Record<string, string> {
  * PATH entries and variables such as ANDROID_HOME that the shell profile sets. The shell writes to a
  * file because a background process started by a profile can keep a pipe open after the shell exits.
  */
-export function loginShellEnvironment(scratchDir: string): Record<string, string> | null {
-  mkdirSync(scratchDir, { recursive: true, mode: 0o700 });
-  const file = join(scratchDir, `.login-env.${process.pid}`);
+export function loginShellEnvironment(): Record<string, string> | null {
+  const dir = mkdtempSync(join(tmpdir(), 'stim-server-env-'));
+  const file = join(dir, 'env');
   try {
     spawnSync(process.env.SHELL || '/bin/zsh', ['-lic', 'command env -0 > "$1"', 'stim-server', file], {
       stdio: 'ignore',
@@ -30,11 +31,10 @@ export function loginShellEnvironment(scratchDir: string): Record<string, string
   } catch {
     return null;
   } finally {
-    rmSync(file, { force: true });
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 
-/** The `stim` CLI this package depends on, run with this Node.js binary. */
 export function bundledStim(): { cli: string; version: string } {
   const manifest = createRequire(import.meta.url).resolve('stim/package.json');
   const pkg = JSON.parse(readFileSync(manifest, 'utf8')) as { version: string; bin: { stim: string } };

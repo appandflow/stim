@@ -31,6 +31,8 @@ process.on('SIGTERM', () => {
 
 const FAKE_TAILSCALE = `#!/usr/bin/env node
 const [command, , ip] = process.argv.slice(2);
+const delay = Number(process.env.FAKE_TAILSCALE_DELAY_MS || 0);
+if (delay) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
 if (command === 'status') {
   console.log(JSON.stringify({ BackendState: 'Stopped' }));
   process.exit(0);
@@ -47,6 +49,9 @@ const PAYLOADS = [
   { environments: [], capacity: { live: 0 }, deviceLeases: [], unprovisionedWorktrees: [], simctlAvailable: true },
   { environments: [{ path: '/work/app', live: true }], capacity: { live: 1 }, deviceLeases: [], simctlAvailable: true },
 ];
+
+// The fake tailscale is a script with a shebang, which Windows cannot execute.
+const fakeTailscale = process.platform !== 'win32';
 
 const CLIENT = { name: 'test client', version: '0.0.0' };
 
@@ -68,7 +73,7 @@ let server: RunningServer | null;
 let clients: WebSocket[];
 
 async function start(
-  overrides: { exit?: boolean; authTimeoutMs?: number; maxAuthFailures?: number } = {},
+  overrides: { exit?: boolean; whoisDelayMs?: number; authTimeoutMs?: number; maxAuthFailures?: number } = {},
 ): Promise<number> {
   const stimCli = join(root, 'fake-stim.mjs');
   writeFileSync(stimCli, FAKE_STIM);
@@ -89,6 +94,7 @@ async function start(
       FAKE_STIM_PAYLOADS: JSON.stringify(PAYLOADS),
       FAKE_TAILSCALE_PEERS: JSON.stringify(PEERS),
       ...(overrides.exit ? { FAKE_STIM_EXIT: '1' } : {}),
+      ...(overrides.whoisDelayMs ? { FAKE_TAILSCALE_DELAY_MS: String(overrides.whoisDelayMs) } : {}),
     },
     authTimeoutMs: overrides.authTimeoutMs,
     maxAuthFailures: overrides.maxAuthFailures,
@@ -230,7 +236,7 @@ describe('pairing', () => {
     expect(readDevices()).toEqual([]);
   });
 
-  it('binds a device token to the tailnet node that paired it', async () => {
+  test.skipIf(!fakeTailscale)('binds a device token to the tailnet node that paired it', async () => {
     const port = await start();
     const { token } = await pair(port, '100.64.0.2');
     expect(readDevices()[0]?.identity).toEqual({
@@ -288,16 +294,44 @@ describe('unauthenticated connections', () => {
     expect(readdirSync(root)).not.toContain('pids');
   });
 
-  it('closes a silent connection after the timeout and rate-limits repeated failures', async () => {
-    const port = await start({ authTimeoutMs: 100, maxAuthFailures: 2 });
-    const silent = await connect(port, '100.64.0.2');
-    expect(await silent.closed).toBe(4408);
-    const wrong = await connect(port, '100.64.0.2');
-    await wrong.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: 'nope' } });
+  test.skipIf(!fakeTailscale)(
+    'closes a silent connection after the timeout and rate-limits repeated failures',
+    async () => {
+      const port = await start({ authTimeoutMs: 100, maxAuthFailures: 2 });
+      const silent = await connect(port, '100.64.0.2');
+      expect(await silent.closed).toBe(4408);
+      const wrong = await connect(port, '100.64.0.2');
+      await wrong.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: 'nope' } });
 
-    await expect(connect(port, '100.64.0.2')).rejects.toThrow('HTTP 429');
-    const otherPeer = await connect(port, '100.64.0.3');
-    expect(otherPeer.socket.readyState).toBe(WebSocket.OPEN);
+      await expect(connect(port, '100.64.0.2')).rejects.toThrow('HTTP 429');
+      const otherPeer = await connect(port, '100.64.0.3');
+      expect(otherPeer.socket.readyState).toBe(WebSocket.OPEN);
+    },
+  );
+});
+
+describe('a client that leaves during hello', () => {
+  test.skipIf(!fakeTailscale)('keeps the pairing token and starts no status child', async () => {
+    const port = await start({ whoisDelayMs: 300 });
+    const { token } = createPairingToken();
+    const leaving = await connect(port, '100.64.0.2');
+    leaving.socket.send(
+      JSON.stringify({
+        id: 1,
+        method: 'hello',
+        params: { protocol: 1, client: CLIENT, auth: { pairingToken: token, deviceName: 'Gone' } },
+      }),
+    );
+    leaving.socket.send(JSON.stringify({ id: 2, method: 'status.subscribe' }));
+    leaving.socket.terminate();
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    expect(readDevices()).toEqual([]);
+    expect(readdirSync(root)).not.toContain('pids');
+    const retry = await connect(port, '100.64.0.2');
+    expect(
+      await retry.request('hello', { protocol: 1, client: CLIENT, auth: { pairingToken: token, deviceName: 'Back' } }),
+    ).toHaveProperty('result.deviceToken');
   });
 });
 

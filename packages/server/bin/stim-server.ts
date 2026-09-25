@@ -4,7 +4,7 @@ import { hostname } from 'node:os';
 import { parseArgs } from 'node:util';
 import { bundledStim, loginShellEnvironment } from '../src/environment.ts';
 import { PROTOCOL_VERSION } from '../src/protocol.ts';
-import { createPairingToken, readDevices, revokeDevice, serverDir, type PairedDevice } from '../src/registry.ts';
+import { createPairingToken, readDevices, revokeDevice, type PairedDevice } from '../src/registry.ts';
 import { startServer } from '../src/server.ts';
 import { findTailscale, tailscaleStatus, type TailscaleState } from '../src/tailscale.ts';
 
@@ -35,7 +35,7 @@ function macName(tailscale: TailscaleState): string {
 }
 
 async function serve(port: number): Promise<void> {
-  const login = loginShellEnvironment(serverDir());
+  const login = loginShellEnvironment();
   if (!login) console.error('stim-server: could not read the login shell environment; using this process environment.');
   const env: NodeJS.ProcessEnv = { ...(login ?? process.env) };
   if (!process.env.STIM_HOME && env.STIM_HOME) process.env.STIM_HOME = env.STIM_HOME;

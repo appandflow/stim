@@ -1,6 +1,6 @@
 import { mkdirSync, watch, type FSWatcher } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
-import type { AddressInfo, Socket } from 'node:net';
+import { isIP, type AddressInfo, type Socket } from 'node:net';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { isJsonObject } from '@stim-cli/core/state';
 import {
@@ -144,7 +144,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }, authTimeoutMs);
 
     async function identify(): Promise<PeerIdentity | null> {
-      return peer === null ? { kind: 'local' } : whois(options.tailscale, options.env, peer);
+      if (peer === null) return { kind: 'local' };
+      return isIP(peer) ? whois(options.tailscale, options.env, peer) : null;
     }
 
     async function hello(id: RequestId, params: unknown): Promise<void> {
@@ -162,7 +163,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           CLOSE_BAD_REQUEST,
         );
       }
+      clearTimeout(timer);
       const identity = await identify();
+      if (socket.readyState !== socket.OPEN) return;
       if (!identity) {
         return refuse(id, 'identity-unavailable', `tailscale whois did not identify ${peer}.`, CLOSE_UNAUTHORIZED);
       }
@@ -178,7 +181,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         const { code, message } = AUTH_REFUSALS[outcome.reason];
         return refuse(id, code, message, CLOSE_UNAUTHORIZED);
       }
-      clearTimeout(timer);
       device = outcome.device;
       sessions.set(socket, device);
       const result: HelloResult = {
@@ -205,6 +207,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     async function handle(raw: string): Promise<void> {
+      if (socket.readyState !== socket.OPEN) return;
       let message: unknown;
       try {
         message = JSON.parse(raw);
