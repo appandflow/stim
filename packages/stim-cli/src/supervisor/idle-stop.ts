@@ -1,10 +1,10 @@
-import { statSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { createActivityReader, type ActivityTarget } from '../devices/activity.ts';
 import { ownedAvdSerialResolver } from '../devices/android.ts';
-import { projectDeviceSlots } from '../devices/device-slots.ts';
+import { parseDeviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
 import { workspaceBuildInProgress } from '../commands/gc/idle.ts';
-import { leaseIsExpired, listLeaseFiles, parseWorkspaceLeases } from '../engine/device-lease.ts';
+import { deviceLeasePath, leaseIsExpired, parseLease, parseWorkspaceLeases } from '../engine/device-lease.ts';
 import { getProject } from '../workspace/config.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
@@ -55,18 +55,21 @@ function deviceTargets(root: string): Omit<ActivityTarget, 'workspace'>[] {
 }
 
 function heldDeviceLease(root: string, now: number): string | null {
-  const held = new Map(
-    Object.values(parseWorkspaceLeases(readWorkspaceState(root)?.deviceLeases)).map((record) => [
-      record.token,
-      record.kind,
-    ]),
-  );
-  if (held.size === 0) return null;
-  for (const { lease } of listLeaseFiles()) {
-    const kind = lease ? held.get(lease.token) : undefined;
-    if (!lease || !kind || leaseIsExpired(lease, now)) continue;
-    const by = kind === 'declared' ? 'stim device lock' : 'a stim ios or android run';
-    return `${lease.platform} device ${lease.id} is leased by ${by} until ${lease.expiresAt}`;
+  for (const [key, record] of Object.entries(parseWorkspaceLeases(readWorkspaceState(root)?.deviceLeases))) {
+    const platform = parseDeviceSlotKey(key)?.platform;
+    if (!platform) continue;
+    let raw: string;
+    try {
+      raw = readFileSync(deviceLeasePath(platform, record.id), 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      return `${platform} device ${record.id} has a lease that cannot be read (${describeError(error)})`;
+    }
+    const lease = parseLease(raw);
+    if (!lease) return `${platform} device ${record.id} has a lease that cannot be read`;
+    if (lease.token !== record.token || leaseIsExpired(lease, now)) continue;
+    const by = record.kind === 'declared' ? 'stim device lock' : 'a stim ios or android run';
+    return `${platform} device ${record.id} is leased by ${by} until ${lease.expiresAt}`;
   }
   return null;
 }

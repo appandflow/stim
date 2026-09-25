@@ -22,7 +22,7 @@ import { readIdleStop } from '@stim-cli/core/state';
 import { workspaceIdleProbe, type IdleProbe } from '../supervisor/idle-stop.ts';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
 import { startBuildProgress } from '../engine/build-progress.ts';
-import { takeLease } from '../engine/device-lease.ts';
+import { deviceLeasePath, takeLease } from '../engine/device-lease.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -825,6 +825,11 @@ describe('idle stop', () => {
     expect(probe.blocker()).toMatch(/^android device PHYSICAL-SERIAL is leased by stim device lock until /);
 
     vi.setSystemTime(Date.now() + 30 * MINUTE);
+    expect(probe.blocker()).toBe(null);
+
+    writeFileSync(deviceLeasePath('android', 'PHYSICAL-SERIAL'), '{');
+    expect(probe.blocker()).toBe('android device PHYSICAL-SERIAL has a lease that cannot be read');
+    rmSync(deviceLeasePath('android', 'PHYSICAL-SERIAL'));
     expect(probe.blocker()).toBe(null);
   });
 
