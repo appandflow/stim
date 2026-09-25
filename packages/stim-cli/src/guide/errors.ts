@@ -973,6 +973,37 @@ captured"  (in metro.ndjson, bare RN)
   then run the command again. \`start --remote\` reports this same case as
   STIM_WORKTREE_REMOVAL_IN_PROGRESS instead.`,
     },
+    STIM_CANCELLED: {
+      summary: 'an ios or android run was interrupted by `stim stop` or Ctrl-C before it finished',
+      body: () => `STIM_CANCELLED  (ios, android; exit 130)
+  "The ios run was cancelled by \`stim stop\` (pid <n>) before it finished."
+  The run received SIGINT: from \`stim stop\`, which interrupts a build it
+  leaves with nothing to deploy to, or from Ctrl-C. It forwarded the interrupt
+  to the build tool it was running (xcodebuild, Gradle, pod install, expo
+  prebuild) and failed through its own cleanup; the next line names the step it
+  stopped at. An interrupted build stores no artifact, so the next run looks
+  up the cache as usual. Stopped between build tools, a run that \`stop\`
+  cancelled starts no further build tool and finishes the step it is in. A
+  second SIGINT exits at once. Run the same command again when you want the
+  app on a device.`,
+    },
+    STIM_STOP_BLOCKED: {
+      summary: '`stop` could not interrupt the ios or android run holding this workspace; names its pid and claim',
+      body: () => `STIM_STOP_BLOCKED  (stop)
+  \`stop\` found a live \`ios\` or \`android\` run holding this workspace's
+  native-run claim and could not end it:
+  - "... did not exit within 60s of SIGINT": the run was interrupted but is
+    still running. Wait for it, or end it with the \`kill <pid>\` the remedy
+    prints, then run \`stim stop\` again.
+  - "... pid <n> is no longer that run; the build tool it started (pid <m>)
+    still holds the claim": the run itself died and its build tool keeps the
+    claim. Stim signals only a claim owner whose recorded identity it can
+    prove, so it leaves the tool alone. Wait for pid <m> to exit or end it.
+  A recorded EAS session is ended before this refusal: ending a billable
+  session never waits on a build. The JSON payload carries the session
+  outcome under device.remote. Devices, collectors and the dev server are left
+  as they were.`,
+    },
     STIM_LOCK_TIMEOUT: {
       summary: 'a lock held past the wait; workspace-process and short directory locks',
       body: () => `STIM_LOCK_TIMEOUT

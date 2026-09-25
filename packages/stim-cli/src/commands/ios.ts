@@ -1,7 +1,7 @@
 import { acquireIosArtifact, type PreparedIosArtifact } from './ios/artifact.ts';
 import { isEasBuildFailure } from '../engine/eas-build.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
-import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { cancelledFailure, runCancellation, withNativeBuildRun } from '../engine/native-run.ts';
 import { NO_BUILD_PROGRESS, startBuildProgress, type BuildProgress } from '../engine/build-progress.ts';
 import { join } from 'node:path';
 import {
@@ -53,7 +53,7 @@ import { createRunRecorder, statsProjectKey, type RunEstimates } from '../engine
 import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import type { ReclaimedStep } from '../budget.ts';
-import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
+import { workspaceLogsDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { appProjectProblem, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { ensureDevServer, isPhysicalDeviceRequest } from './native-runtime.ts';
@@ -189,9 +189,9 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
       const run = (progress?: BuildProgress) =>
         runIos({ ...opts, waitConflict: waitFlagConflict(process.argv) }, deps, progress);
       const completion = root
-        ? await withWorkspaceProcessLock(
-            workspaceDir(root),
-            'native-run',
+        ? await withNativeBuildRun(
+            root,
+            { command: 'ios', platform: PLATFORM, slot: opts.slot ?? 'default' },
             async (claim) => {
               recordWorkspaceUse(root);
               const progress = startBuildProgress({
@@ -207,14 +207,10 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
                 progress.clear();
               }
             },
-            {
-              external: true,
-              waitMs: 30 * 60_000,
-              declareSpawns: true,
-            },
+            { write: (line) => writeNote(chalk.dim(phaseLine('lock', line))) },
           )
         : await run();
-      if (!completion) process.exit(1);
+      if (!completion) process.exit(runCancellation() ? 130 : 1);
       else if (completion.uploadsAbandoned) exitAfterFlush(0);
     });
 }
@@ -344,6 +340,12 @@ async function runIos(
   let reclaimed: ReclaimedStep[] = [];
 
   const fail = ({ code, message, remedy = null, lines = [], logPath = null, build = null, lease }: FailArgs): null => {
+    ({ code, message, remedy, lines } = cancelledFailure(PLATFORM, { code, message }) ?? {
+      code,
+      message,
+      remedy,
+      lines,
+    });
     releaseLease();
     if (message) note(chalk.red(phaseLine('error', message)));
     for (const line of lines) note(chalk.dim(phaseLine('', line)));

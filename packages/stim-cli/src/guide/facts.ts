@@ -360,6 +360,17 @@ ON FAILURE
   \`reclaimed\` is present the same way as on success when the run reclaimed
   before failing, including a STIM_LOW_DISK refusal.
 
+  An \`ios\` or \`android\` run that \`stim stop\` or Ctrl-C interrupted
+  reports STIM_CANCELLED and exits 130.
+
+  \`stop --json\` prints { root, ok, supervisor, collectors, metro, device,
+  port, metroTunnel, releasedLeases }. When it cannot end the \`ios\` or
+  \`android\` run holding the workspace, it prints the error contract with
+  root and ok: false instead, plus device.remote when it ended a recorded EAS
+  session first, and exits 1:
+
+    { "root": "...", "ok": false, "code": "STIM_STOP_BLOCKED", "message": "...", "remedy": "..." }
+
   Branch on \`code\`, never on the message text. \`guide errors\` enumerates
   every code.
 

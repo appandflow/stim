@@ -1,5 +1,11 @@
 import { join } from 'node:path';
-import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
+import {
+  releaseClaim,
+  tryAcquireClaim,
+  type ClaimDetails,
+  type ClaimHandle,
+  type ClaimHolder,
+} from '../ownership-claim.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
 
 const DEFAULT_WAIT_MS = 60_000;
@@ -10,6 +16,9 @@ export interface WorkspaceProcessLockOptions {
   sleep?: (ms: number) => Promise<void>;
   waitMs?: number;
   ownerPurpose?: string;
+  details?: ClaimDetails;
+  /** Called on every poll while another claim holds the lock; a throw ends the wait with that error. */
+  onHeld?: (holder: ClaimHolder) => void | Promise<void>;
   rejectOwnerPurposes?: readonly string[];
   external?: boolean;
   declareSpawns?: boolean;
@@ -37,6 +46,8 @@ export async function withWorkspaceProcessLock<T>(
     sleep = defaultSleep,
     waitMs = DEFAULT_WAIT_MS,
     ownerPurpose,
+    details = {},
+    onHeld,
     rejectOwnerPurposes = [],
     external = false,
     declareSpawns = false,
@@ -50,7 +61,7 @@ export async function withWorkspaceProcessLock<T>(
       root: path,
       mode: 'exclusive',
       label: `${name} lock`,
-      details: ownerPurpose ? { purpose: ownerPurpose } : {},
+      details: ownerPurpose ? { ...details, purpose: ownerPurpose } : details,
     });
     if (attempt.pending) releaseClaim(attempt.pending);
     if (attempt.acquired) {
@@ -70,6 +81,7 @@ export async function withWorkspaceProcessLock<T>(
       (error as Error & { code?: string }).code = 'STIM_LOCK_REFUSED';
       throw error;
     }
+    if (holder && onHeld) await onHeld(holder);
     if (now() >= deadline) {
       const error = new Error(`Timed out waiting for the ${name} lock at ${path}.`);
       (error as Error & { code?: string }).code = 'STIM_LOCK_TIMEOUT';

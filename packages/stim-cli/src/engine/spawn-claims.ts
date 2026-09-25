@@ -3,6 +3,8 @@ import { captureProcessIdentity } from '../process-identity.ts';
 import { clearClaimChild, markClaimChildPending, setClaimChild, type ClaimHandle } from '../ownership-claim.ts';
 
 const declaring = new Set<ClaimHandle>();
+const running = new Set<ChildProcess>();
+let refusal: string | null = null;
 
 /** Record every child later started through `spawnDeclared` on `claim` until `stopDeclaringSpawnsOn(claim)`. */
 export function declareSpawnsOn(claim: ClaimHandle | null | undefined): void {
@@ -20,6 +22,7 @@ export function stopDeclaringSpawnsOn(claim: ClaimHandle | null | undefined): vo
  * records one child, so declared spawns must not overlap.
  */
 export function spawnDeclared(spawn: () => ChildProcess): ChildProcess {
+  if (refusal !== null) throw new Error(refusal);
   const claims = [...declaring];
   if (claims.length === 0) return spawn();
   const forget = () => {
@@ -42,6 +45,8 @@ export function spawnDeclared(spawn: () => ChildProcess): ChildProcess {
     forget();
     return child;
   }
+  running.add(child);
+  child.once('exit', () => running.delete(child));
   const captured = captureProcessIdentity(pid);
   if (captured.ok) {
     for (const claim of claims) {
@@ -52,4 +57,25 @@ export function spawnDeclared(spawn: () => ChildProcess): ChildProcess {
   }
   child.once('exit', forget);
   return child;
+}
+
+/** Refuse every later `spawnDeclared` with `reason` until `allowDeclaredSpawns()`. */
+export function refuseDeclaredSpawns(reason: string): void {
+  refusal = reason;
+}
+
+export function allowDeclaredSpawns(): void {
+  refusal = null;
+}
+
+/** Send `signal` to every child started through `spawnDeclared` that has not exited; returns how many were signalled. */
+export function signalDeclaredSpawns(signal: NodeJS.Signals): number {
+  let signalled = 0;
+  for (const child of running) {
+    if (child.exitCode !== null || child.signalCode !== null) continue;
+    try {
+      if (child.kill(signal)) signalled += 1;
+    } catch {}
+  }
+  return signalled;
 }

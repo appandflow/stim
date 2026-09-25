@@ -194,6 +194,24 @@ one answers from the project. A dev server whose supervisor died is stopped
 only when its recorded process identity still matches. There is no
 \`--delete\` flag on \`stop\`.
 
+STOP DURING A BUILD
+  \`ios\`, \`android\` and \`stop\` take turns on the workspace's
+  native-run lock. A command that has to wait says so on stderr at once and
+  every 30 seconds:
+    lock        waiting for \`stim ios\` (pid 41233, running for 12m04s) in this workspace to finish
+  \`stop\` does not wait out a build it leaves with nothing to deploy to: a
+  plain \`stop\`, \`stop --slot <name>\` for the slot the build targets, or
+  for the workspace's only device. It sends that run SIGINT, only after
+  proving the run's recorded process identity, and waits up to 60 seconds for
+  it to exit. The run stops its build tool, stores nothing from the
+  interrupted build, and exits 130 with STIM_CANCELLED. A run that does not
+  exit in time, or whose build tool outlived it, is refused with
+  STIM_STOP_BLOCKED naming its pid and claim. \`stop --slot <name>\` while the
+  build targets another slot that stays leaves the build running and stops
+  the slot without the lock. A plain \`stop\` ends a recorded EAS session as
+  soon as it sees the lock held: ending a billable session never waits on a
+  build.
+
 CAPACITY
   A booted iOS sim is roughly 1-2 GB of RAM, an Android emulator 2-3 GB. On a
   16 GB machine plan for 2-3 live environments. Nothing enforces this;
@@ -1207,7 +1225,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
     stim stop --slot tablet
 
   All slots share this workspace's Metro server and build cache. Native CLI
-  runs serialize workspace mutations; a waiting run can wait up to 30 minutes.
+  runs serialize workspace mutations; a waiting run can wait up to 30 minutes
+  and prints what it waits for. \`stop --slot\` interrupts only a build for
+  its own slot (see STOP DURING A BUILD).
   Named slots support local devices; remote sessions use the default slot.
   Names use 1-64 letters, digits, underscores or hyphens, starting with a letter
   or digit. Reserved object-property names are refused.

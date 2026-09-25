@@ -452,6 +452,28 @@ Use `--slot default` to stop only the workspace's default device -- the one
 label -- while a named slot stays up. `--slot` never ends an owned remote
 session, even `--slot default`; use plain `stop` for that.
 
+### Stopping during a build
+
+`ios`, `android`, and `stop` take turns on the workspace's build lock. A
+command that has to wait prints what it is waiting for on stderr right away and
+every 30 seconds:
+
+```text
+  lock        waiting for `stim ios` (pid 41233, running for 12m04s) in this workspace to finish
+```
+
+`stop` does not wait out a build that would be left with nothing to deploy to:
+a plain `stop`, `stop --slot <name>` for the slot the build targets, or for the
+workspace's only device. It sends that run SIGINT after verifying its recorded
+process identity and waits up to 60 seconds. The run stops xcodebuild or
+Gradle, caches nothing from the interrupted build, and exits 130 with
+`STIM_CANCELLED`. If the run does not exit in time, `stop` refuses with
+`STIM_STOP_BLOCKED` and names the pid and lock to deal with. `stop --slot
+<name>` while a build for another, still-running slot is in progress leaves
+that build alone and stops the slot right away. A plain `stop` ends an EAS
+session as soon as it sees a build holding the lock, so the session stops
+billing even when the build cannot be interrupted.
+
 On a physical iPhone, stopping the log collector closes the running app.
 `stop` also releases this workspace's device leases. It never uninstalls the
 app or shuts down the phone; hardware has no owned-device registry entry.

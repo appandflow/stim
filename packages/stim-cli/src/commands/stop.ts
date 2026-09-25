@@ -1,4 +1,16 @@
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import {
+  NATIVE_RUN_LOCK,
+  NATIVE_RUN_WAIT_MS,
+  clearNativeRunCancel,
+  decideStopAction,
+  describeNativeRunHolder,
+  nativeRunHolder,
+  nativeRunWaitNotice,
+  requestNativeRunCancel,
+  type StopHolderAction,
+} from '../engine/native-run.ts';
+import { isClaimRefusal, type ClaimHolder } from '../ownership-claim.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import {
   deviceSlotPlatforms,
@@ -218,6 +230,32 @@ function defaultTeardownRemoteSession(
   sessionId: string,
 ): { status: 'torn-down' | 'failed'; reason?: string } {
   return endRecordedSession({ root, sessionId, easBin: resolveEasCliBin(root)?.file ?? null });
+}
+
+function endRemoteSession(
+  root: string,
+  sessionId: string,
+  {
+    teardownRemoteSession,
+    report,
+  }: {
+    teardownRemoteSession: (root: string, sessionId: string) => { status: 'torn-down' | 'failed'; reason?: string };
+    report: (line: string) => void;
+  },
+): DeviceOutcomeEntry {
+  const result = teardownRemoteSession(root, sessionId);
+  if (result.status === 'failed') {
+    report(chalk.red(phaseLine('device', result.reason ?? `could not stop remote session ${sessionId}`)));
+  } else {
+    report(chalk.dim(phaseLine('device', `stopped remote session ${sessionId}`)));
+    if (result.reason) report(chalk.yellow(phaseLine('device', result.reason)));
+    else clearRemoteSession(root, sessionId);
+  }
+  return { status: result.status, label: sessionId, reason: result.reason };
+}
+
+function remoteEnded(entry: DeviceOutcomeEntry): boolean {
+  return entry.status !== 'failed' && !entry.reason;
 }
 
 type StopArgs = Parameters<typeof stopWorkspace>[0];
@@ -459,20 +497,8 @@ async function stopWorkspace({
   const remote = remoteDevice === undefined ? readRemoteSession(root) : remoteDevice;
   const sessionId = typeof remote?.sessionId === 'string' ? remote.sessionId : null;
   if (sessionId) {
-    const result = teardownRemoteSession(root, sessionId);
-    outcomes.device.remote = { status: result.status, label: sessionId, reason: result.reason };
-    if (result.status === 'failed') {
-      ok = false;
-      report(chalk.red(phaseLine('device', result.reason ?? `could not stop remote session ${sessionId}`)));
-    } else {
-      report(chalk.dim(phaseLine('device', `stopped remote session ${sessionId}`)));
-      if (result.reason) {
-        ok = false;
-        report(chalk.yellow(phaseLine('device', result.reason)));
-      } else {
-        clearRemoteSession(root, sessionId);
-      }
-    }
+    outcomes.device.remote = endRemoteSession(root, sessionId, { teardownRemoteSession, report });
+    if (!remoteEnded(outcomes.device.remote)) ok = false;
   }
 
   const tunnel = metroTunnel === undefined ? readMetroTunnel(root) : metroTunnel;
@@ -869,6 +895,164 @@ async function defaultClearRegistration(root: string, expected?: ProcessRecord |
   }
 }
 
+const INTERRUPT_WAIT_MS = 60_000;
+
+interface StopRefusal {
+  code: string;
+  message: string;
+  remedy: string;
+}
+
+class StopBlocked extends Error {
+  readonly refusal: StopRefusal;
+
+  constructor(refusal: StopRefusal) {
+    super(refusal.message);
+    this.refusal = refusal;
+  }
+}
+
+class LeaveBuildRunning extends Error {}
+
+function workspaceDeviceSlots(root: string): string[] {
+  const slots = projectDeviceSlots(getProject(root))
+    .filter(({ platforms }) => Object.values(platforms).some(Boolean))
+    .map(({ slot }) => slot);
+  if (typeof readRemoteSession(root)?.sessionId === 'string' && !slots.includes('default')) slots.push('default');
+  return slots;
+}
+
+function readRemoteSessionEntry(root: string, report: (line: string) => void): DeviceOutcomeEntry | null {
+  const sessionId = readRemoteSession(root)?.sessionId;
+  if (typeof sessionId !== 'string') return null;
+  report(chalk.dim(phaseLine('device', `ending remote session ${sessionId} without waiting on the build lock`)));
+  return endRemoteSession(root, sessionId, { teardownRemoteSession: defaultTeardownRemoteSession, report });
+}
+
+/**
+ * `stop` under the workspace's native-run lock. A billable remote session is ended as soon as the lock is
+ * seen held; a live `ios` or `android` run that the stop leaves nothing to deploy to is interrupted with
+ * SIGINT and given INTERRUPT_WAIT_MS to exit; a build for another slot that stays is left running while
+ * the slot stops without the lock; any other holder is waited on with a visible notice.
+ */
+export async function stopWorkspaceNow({
+  root,
+  slot,
+  report = (line: string) => console.error(line),
+  now = Date.now,
+  sleep,
+  waitMs = NATIVE_RUN_WAIT_MS,
+  interruptWaitMs = INTERRUPT_WAIT_MS,
+  inspectIdentity = inspectProcessIdentity,
+  interrupt = (pid: number) => process.kill(pid, 'SIGINT'),
+  endRemote = (projectRoot: string) => readRemoteSessionEntry(projectRoot, report),
+  deviceSlots = workspaceDeviceSlots,
+  stop = (options: { root: string; slot?: string }) => runStop(options),
+}: {
+  root: string;
+  slot?: string;
+  report?: (line: string) => void;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+  waitMs?: number;
+  interruptWaitMs?: number;
+  inspectIdentity?: typeof inspectProcessIdentity;
+  interrupt?: (pid: number) => void;
+  endRemote?: (root: string) => DeviceOutcomeEntry | null;
+  deviceSlots?: (root: string) => string[];
+  stop?: (options: { root: string; slot?: string }) => ReturnType<typeof runStop>;
+}): Promise<Awaited<ReturnType<typeof runStop>> | { refusal: StopRefusal; remote: DeviceOutcomeEntry | null }> {
+  let remote: DeviceOutcomeEntry | null = null;
+  let remoteHandled = slot !== undefined;
+  const endRemoteNow = () => {
+    if (remoteHandled) return;
+    remoteHandled = true;
+    remote = endRemote(root);
+  };
+  const notice = nativeRunWaitNotice({ write: (line) => report(chalk.dim(phaseLine('lock', line))), now });
+  let seen: { claimId: string; action: StopHolderAction['action']; deadline: number } | null = null;
+  const interrupted: string[] = [];
+
+  const onHeld = (holder: ClaimHolder): void => {
+    const at = now();
+    if (seen?.claimId === holder.claimId) {
+      if (seen.action === 'interrupt' && at >= seen.deadline) {
+        throw new StopBlocked({
+          code: 'STIM_STOP_BLOCKED',
+          message: `${describeNativeRunHolder(holder, at)} did not exit within ${Math.round(interruptWaitMs / 1000)}s of SIGINT; it still holds this workspace's native-run claim at ${holder.path}.`,
+          remedy: `Wait for it to finish, or end it with \`kill ${holder.owner.pid}\`, then run \`stim stop\` again.`,
+        });
+      }
+      notice(holder);
+      return;
+    }
+    endRemoteNow();
+    const target = nativeRunHolder(holder);
+    const { action } = decideStopAction({
+      stopSlot: slot,
+      holder: target,
+      ownerIdentity: inspectIdentity(holder.owner),
+      deviceSlots: deviceSlots(root),
+    });
+    seen = { claimId: holder.claimId, action, deadline: at + interruptWaitMs };
+    const who = describeNativeRunHolder(holder, at);
+    if (action === 'proceed') {
+      notice(holder, `leaving ${who} running: slot ${target.slot} stays, so slot ${slot} stops without the build lock`);
+      throw new LeaveBuildRunning();
+    }
+    if (action === 'refuse') {
+      const child = holder.child ? ` (pid ${holder.child.pid})` : '';
+      throw new StopBlocked({
+        code: 'STIM_STOP_BLOCKED',
+        message: `${who} holds this workspace's native-run claim at ${holder.path}, but pid ${holder.owner.pid} is no longer that run; the build tool it started${child} still holds the claim. Stim signals only a claim owner whose identity it can prove.`,
+        remedy: `Wait for the build tool${child} to exit, or end it yourself, then run \`stim stop\` again.`,
+      });
+    }
+    if (action === 'interrupt') {
+      requestNativeRunCancel(root, holder.claimId);
+      interrupted.push(holder.claimId);
+      try {
+        interrupt(holder.owner.pid);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== 'ESRCH') throw error;
+      }
+      notice(
+        holder,
+        `interrupting ${who}: sent SIGINT, waiting up to ${Math.round(interruptWaitMs / 1000)}s for it to exit`,
+      );
+      return;
+    }
+    notice(holder);
+  };
+
+  const withRemote = (result: Awaited<ReturnType<typeof runStop>>): Awaited<ReturnType<typeof runStop>> => {
+    if (!remote || result.outcomes.device.remote) return result;
+    result.outcomes.device.remote = remote;
+    if (!remoteEnded(remote)) result.ok = false;
+    return result;
+  };
+
+  try {
+    return withRemote(
+      await withWorkspaceProcessLock(workspaceDir(root), NATIVE_RUN_LOCK, () => stop({ root, slot }), {
+        external: true,
+        waitMs,
+        now,
+        ...(sleep ? { sleep } : {}),
+        details: { command: 'stop', ...(slot === undefined ? {} : { slot }) },
+        onHeld,
+      }),
+    );
+  } catch (error) {
+    if (error instanceof LeaveBuildRunning) return withRemote(await stop({ root, slot }));
+    if (error instanceof StopBlocked) return { refusal: error.refusal, remote };
+    if (isClaimRefusal(error)) endRemoteNow();
+    throw error;
+  } finally {
+    for (const claimId of interrupted) clearNativeRunCancel(root, claimId);
+  }
+}
+
 interface StopOptions {
   slot?: string;
   json?: boolean;
@@ -893,12 +1077,18 @@ export default function stopCommand(program: Command): void {
         return;
       }
 
-      const { ok, outcomes, summary } = await withWorkspaceProcessLock(
-        workspaceDir(root),
-        'native-run',
-        () => runStop({ root, slot: opts.slot }),
-        { external: true, waitMs: 30 * 60_000 },
-      );
+      const stopped = await stopWorkspaceNow({ root, slot: opts.slot });
+      if ('refusal' in stopped) {
+        const { code, message, remedy } = stopped.refusal;
+        console.error(chalk.red(phaseLine('error', `${code}: ${message}`)));
+        console.error(phaseLine('remedy', remedy));
+        if (opts.json) {
+          const remote = stopped.remote ? { device: { remote: stopped.remote } } : {};
+          console.log(JSON.stringify({ root, ok: false, code, message, remedy, ...remote }));
+        }
+        process.exit(1);
+      }
+      const { ok, outcomes, summary } = stopped;
 
       if (opts.json) {
         console.log(JSON.stringify({ root, ok, ...outcomes }));
