@@ -2,7 +2,8 @@ import AppKit
 import StimKit
 
 /// Runs Stim's cleanup commands on a schedule while the app runs: `stim gc --idle` for idle devices,
-/// a nightly `stim gc --delete`, and `stim gc --delete` when free disk falls under the Stim budget.
+/// a nightly `stim gc --delete` bounded by age, and an unbounded `stim gc --delete` when free disk falls under
+/// the Stim budget.
 /// Every run goes through the CLI on the machine action slot, so it never overlaps a cleanup the user
 /// started, and is recorded in the activity log.
 @MainActor
@@ -98,7 +99,8 @@ final class AutopilotRunner: ObservableObject {
     {
       defaults.set(now, forKey: AppPreferences.Key.autopilotLastNightly)
       lastPressureRun = now
-      run(.nightly, "Nightly cleanup", ["gc", "--delete"], present: false)
+      let days = defaults.integer(forKey: AppPreferences.Key.autopilotNightlyOlderThanDays)
+      run(.nightly, "Nightly cleanup", AutopilotSchedule.nightlyArguments(olderThanDays: days), present: false)
       return
     }
     let minutes = defaults.integer(forKey: AppPreferences.Key.autopilotIdleMinutes)

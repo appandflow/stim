@@ -41,6 +41,13 @@ public enum AutopilotSchedule {
   }
 
   public static func idleDuration(minutes: Int) -> String { "\(minutes)m" }
+
+  /// The nightly cleanup reclaims only what has gone unused for `olderThanDays`: merged worktrees and clean ones
+  /// idle that long, build outputs and cache entries unused that long, and devices parked or unused that long.
+  /// Pressure runs stay unbounded with `PressurePlan.arguments`.
+  public static func nightlyArguments(olderThanDays: Int) -> [String] {
+    ["gc", "--delete", "--worktrees", "--older-than", String(olderThanDays)]
+  }
 }
 
 /// Free disk under the `budget.minFreeDiskGb` Stim enforces, and what `stim gc --delete` would do about it.

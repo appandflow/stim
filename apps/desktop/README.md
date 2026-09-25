@@ -99,18 +99,23 @@ status under **Autopilot activity**.
   runs `stim gc --idle <minutes>m` when `stim status` shows a booted device idle
   that long. It waits while a device the CLI counts as idle has a screen the app
   saw change more recently, because `gc --idle` would shut that device down too.
-- **Clean up every night** runs `stim gc --delete` at the chosen hour (3:00 by
-  default), or at the next check when the Mac slept through it. That clears the
-  build outputs of every workspace not in use, so its next build installs from
-  the shared build cache, removes merged worktrees, and deletes parked and
-  unused owned devices, which empties the parked device pool. The first launch,
-  turning the option on and changing the hour only record the time, so none of
-  them starts a cleanup.
+- **Clean up every night** runs at the chosen hour (3:00 by default), or at
+  the next check when the Mac slept through it. It runs
+  `stim gc --delete --worktrees --older-than <days>`, and **Only what is
+  unused for** sets the days, 7 by default. The run removes merged worktrees
+  and clean, pushed worktrees idle that long, clears the build outputs of
+  workspaces no Stim command has used that long, trims shared cache entries
+  unused that long, and deletes owned devices of workspaces unused that long
+  and devices parked that long. A workspace used since keeps its build
+  outputs, and recently parked devices stay in the pool. The first launch, turning the option on and changing the
+  hour only record the time, so none of them starts a cleanup.
 - **Reclaim space when free disk is under the Stim budget** compares the free
   space on the volumes Stim writes to, without purgeable space, with
   `budget.minFreeDiskGb` and `budget.hardFloorDiskGb` from `stim settings --json`.
   0 turns the check off, as in the CLI. Under it, the app previews `stim gc
---json` and runs `stim gc --delete` at most once an hour.
+--json` and runs `stim gc --delete` at most once an hour. This run has no age
+  limit: it clears the build outputs of every workspace not in use and empties
+  the parked device pool.
 
 While free disk is under the budget, the Storage view shows the plan, such as
 "Clear the build outputs of 3 idle workspaces and remove 1 merged worktree to
