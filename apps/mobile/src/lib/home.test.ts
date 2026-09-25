@@ -7,6 +7,7 @@ import {
   filtersActive,
   gridRows,
   machineStats,
+  usageCharts,
   mergeWorkspaces,
   parseFilters,
   projectNames,
@@ -214,5 +215,61 @@ describe('budgetRows', () => {
       { label: 'Live workspaces', value: '4' },
     ]);
     expect(budgetRows({ settings: 'nope' })).toEqual([]);
+  });
+});
+
+describe('usageCharts', () => {
+  const MIN = 60_000;
+  const END = 1_800_000_000_000;
+  const usage: MachineUsage = {
+    volumes: [{ mount: '/', holds: [], freeBytes: 100e9, totalBytes: 1000e9 }],
+    memory: { totalBytes: 64 * 2 ** 30, usedBytes: 32 * 2 ** 30, pressure: 'normal' },
+    load: { avg1: 1, avg5: 1, avg15: 1, cpus: 8 },
+    cpu: { usage: 0.2, cores: 8 },
+    sampledAt: '2026-09-25T00:00:00.000Z',
+  };
+  const sample = (at: number, cpu: number | null, memoryPressure = 0, diskFreeBytes = 100e9) => ({
+    at,
+    cpu,
+    memoryUsedBytes: 32 * 2 ** 30,
+    memoryPressure,
+    diskFreeBytes,
+  });
+
+  it('averages each minute of the hour ending at the newest sample, leaving empty minutes null', () => {
+    const [cpu] = usageCharts(
+      [
+        sample(END - 61 * MIN, 0.9),
+        sample(END - 30 * MIN - 10, 0.2),
+        sample(END - 30 * MIN - 20, 0.4),
+        sample(END, 0.1),
+      ],
+      usage,
+    );
+    expect(cpu!.columns).toHaveLength(60);
+    expect(cpu!.columns.filter(Boolean)).toHaveLength(2);
+    expect(cpu!.columns[29]!.fraction).toBeCloseTo(0.3);
+    expect(cpu!.columns[59]).toEqual({ fraction: 0.1, tone: 'normal' });
+    expect(cpu!.columns[0]).toBeNull();
+    expect(cpu!.value).toBe('10%');
+  });
+
+  it('takes the worst tone in a column and the newest sample for the headline', () => {
+    const [cpu, memory, disk] = usageCharts(
+      [sample(END - 10_000, 0.99, 2, 4e9), sample(END - 5000, 0.1, 0, 15e9), sample(END, null, 1, 15e9)],
+      usage,
+    );
+    expect(cpu!.columns[59]!.tone).toBe('critical');
+    expect(cpu).toMatchObject({ value: '10%', tone: 'normal' });
+    expect(memory).toMatchObject({ kind: 'memory', value: '32/64 GB', tone: 'warn' });
+    expect(memory!.columns[59]).toEqual({ fraction: 0.5, tone: 'critical' });
+    expect(disk).toMatchObject({ kind: 'disk', value: '15 GB', tone: 'warn' });
+    expect(disk!.columns[59]!.fraction).toBeCloseTo(34e9 / 3 / 1000e9);
+  });
+
+  it('draws nothing without samples or the totals it scales by', () => {
+    expect(usageCharts([], usage)).toEqual([]);
+    expect(usageCharts([sample(END, 0.5)], null)).toEqual([]);
+    expect(usageCharts([sample(END, 0.5)], { ...usage, volumes: [] }).map((c) => c.kind)).toEqual(['cpu', 'memory']);
   });
 });

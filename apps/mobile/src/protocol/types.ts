@@ -261,6 +261,20 @@ export interface MachineUsage {
   sampledAt: string;
 }
 
+/** `memoryPressure` is 0 (normal), 1 (warning) or 2 (critical); `diskFreeBytes` is the startup volume's. */
+export interface UsageSample {
+  at: number;
+  cpu: number | null;
+  memoryUsedBytes: number | null;
+  memoryPressure: number | null;
+  diskFreeBytes: number | null;
+}
+
+export interface MachineHistory {
+  intervalMs: number;
+  samples: UsageSample[];
+}
+
 export type ClientAuth = { deviceToken: string } | { pairingToken: string; deviceName: string };
 
 export interface Methods {
@@ -286,6 +300,7 @@ export interface Methods {
   'frames.keyframe': { params: { subscription: string }; result: Record<string, never> };
   'build.plan': { params: BuildPlanParams; result: BuildPlan };
   'machine.get': { params: Record<string, never>; result: MachineUsage };
+  'machine.history': { params: { sinceMs?: number }; result: MachineHistory };
   unsubscribe: { params: { subscription: string }; result: Record<string, never> };
   action: { params: ActionParams; result: ActionResult };
 }

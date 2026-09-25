@@ -232,6 +232,13 @@ Events are `{ "event", "subscription", ... }`.
   compressed; null off macOS) and the macOS `pressure` level (`normal`,
   `warning`, `critical`, or null); `load` with the 1, 5 and 15
   minute load averages and `cpus`; and `sampledAt`.
+- `machine.history` returns `{ "intervalMs", "samples" }`: machine usage
+  sampled every 5 seconds while at least one client is connected, the last
+  720 samples (an hour of connected time), kept in memory only. Each sample
+  has `at` (epoch milliseconds), `cpu` (busy fraction since the previous
+  sample), `memoryUsedBytes`, `memoryPressure` (0 normal, 1 warning, 2
+  critical) and `diskFreeBytes` of the startup volume; a field is null when it
+  cannot be read. `sinceMs` returns only the samples taken after it.
 - `unsubscribe` ends a subscription.
 - `action` runs an [action](#actions) and returns
   `{ "action", "workspace", "output" }`.

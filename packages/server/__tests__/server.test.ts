@@ -722,6 +722,16 @@ describe('machine.get', () => {
   });
 });
 
+describe('machine.history', () => {
+  it('refuses a non-numeric sinceMs', async () => {
+    const port = await start();
+    const client = await authed(port);
+    expect(await client.request('machine.history', { sinceMs: 'soon' })).toMatchObject({
+      error: { code: 'bad-request' },
+    });
+  });
+});
+
 describe.skipIf(process.platform !== 'darwin')('machine.get on macOS', () => {
   it("reports the Mac's memory used below its total", async () => {
     const port = await start();
