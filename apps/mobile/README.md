@@ -70,8 +70,8 @@ the mock server.
 the workspace **...** menu shows **Reload** and **Stop**:
 
 - **Reload** runs `stim reload` at once. When the workspace has both a running
-  iOS device and a running Android device, it asks which app to reload, because
-  `stim reload` without a platform refuses to choose.
+  owned iOS simulator and a running owned Android emulator, it asks which app
+  to reload, because `stim reload` without a platform refuses to choose.
 - **Stop** asks for confirmation, then runs `stim stop`.
 
 A toast shows the action while it runs, then its result or the server's error
@@ -82,7 +82,8 @@ explains the grant: on the Mac, `stim-server devices grant <id> --control`,
 with the id `stim-server devices` lists. A connection learns its actions only
 from `hello`, so its **Reconnect** button opens a new connection to pick up the
 grant. When control is taken away while connected, the server refuses the
-action and the toast shows why.
+action and the toast shows why. A server that predates actions shows neither
+entry.
 
 ## Protocol types
 

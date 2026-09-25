@@ -149,7 +149,7 @@ export function livePlatforms(env: EnvironmentState): Platform[] {
   return [
     ...new Set(
       devicesOf(env)
-        .filter((d) => d.running)
+        .filter((d) => d.running && d.owned && !d.physical)
         .map((d) => d.platform),
     ),
   ];

@@ -100,7 +100,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
           tintColor={colors.text}
           accessibilityLabel="More"
         >
-          {actions.available.length > 0 ? (
+          {env && actions.available?.length ? (
             <Stack.Toolbar.Menu inline>
               {actions.available.includes('reload') ? (
                 <Stack.Toolbar.MenuAction icon="arrow.clockwise" disabled={actions.pending !== null} onPress={reload}>
@@ -118,7 +118,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
                 </Stack.Toolbar.MenuAction>
               ) : null}
             </Stack.Toolbar.Menu>
-          ) : state.kind === 'open' ? (
+          ) : env && actions.available ? (
             <Stack.Toolbar.Menu inline>
               <Stack.Toolbar.MenuAction icon="lock" subtitle="This phone can only read" onPress={explainReadOnly}>
                 Reload and Stop

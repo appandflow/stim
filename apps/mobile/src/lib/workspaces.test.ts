@@ -69,7 +69,7 @@ describe('devicesOf', () => {
 });
 
 describe('livePlatforms', () => {
-  it('names each platform with a running device once, across slots', () => {
+  it('names each platform with a running owned simulator or emulator once, across slots', () => {
     const booted = (udid: string) => ({
       name: `stim-w-${udid} (iPhone 18 Pro 27.0)`,
       udid,
@@ -79,7 +79,10 @@ describe('livePlatforms', () => {
     const iosOnly = env('/w', {
       ios: booted('A'),
       android: { name: 'stim-w', owned: true, physical: false, state: 'not-detected' },
-      slots: [{ slot: 'duo', ios: booted('B'), android: null }],
+      slots: [
+        { slot: 'duo', ios: booted('B'), android: null },
+        { slot: 'pixel', android: { name: 'Pixel 9', serial: 'P9', owned: false, physical: true, state: 'detected' } },
+      ],
     });
     expect(livePlatforms(iosOnly)).toEqual(['ios']);
     const both = env('/w', {

@@ -11,7 +11,7 @@ import {
 
 export type ConnectionState =
   | { kind: 'connecting' }
-  | { kind: 'open'; server: Methods['hello']['result']['server']; actions: ActionName[] }
+  | { kind: 'open'; server: Methods['hello']['result']['server']; actions: ActionName[] | null }
   | { kind: 'waiting'; retryInMs: number; reason: string }
   | { kind: 'refused'; code: string; reason: string }
   | { kind: 'closed' };
@@ -161,7 +161,7 @@ export class StimConnection {
           if (socket !== this.socket) return;
           this.open = true;
           this.retryMs = MIN_RETRY_MS;
-          this.options.onState?.({ kind: 'open', server: hello.server, actions: hello.actions ?? [] });
+          this.options.onState?.({ kind: 'open', server: hello.server, actions: hello.actions ?? null });
           for (const sub of this.subscriptions) this.sendSubscribe(socket, sub);
         },
         (error: Error) => {

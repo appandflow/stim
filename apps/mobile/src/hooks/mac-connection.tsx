@@ -240,47 +240,37 @@ export function useFrame(
   return latest && latest.key === key ? latest : EMPTY_FRAME_STATE;
 }
 
-const NO_ACTIONS: ActionName[] = [];
-
 export interface WorkspaceActions {
-  /** The actions this Mac lets this phone run; empty for a read-only pairing. */
-  available: ActionName[];
+  /** The actions this Mac lets this phone run: empty for a read-only pairing, null while not connected or from a server that predates actions. */
+  available: ActionName[] | null;
   pending: ActionName | null;
-  error: string | null;
-  /** Resolves null when the action succeeded, and the error message, also set in `error`, when it failed. */
+  /** Resolves null when the action succeeded, and the error message when it failed. */
   run: (action: ActionName, options?: { platform?: Platform }) => Promise<string | null>;
 }
 
 export function useAction(workspace: string): WorkspaceActions {
   const { connection, state } = useMacConnection();
   const [pending, setPending] = useState<ActionName | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const run = useCallback(
     async (action: ActionName, options: { platform?: Platform } = {}) => {
-      if (!connection) {
-        setError('Not connected.');
-        return 'Not connected.';
-      }
+      if (!connection) return 'Not connected.';
       const params: ActionParams =
         action === 'reload'
           ? { action, workspace, ...(options.platform ? { platform: options.platform } : {}) }
           : { action, workspace };
       setPending(action);
-      setError(null);
       try {
         await connection.request('action', params);
         return null;
       } catch (cause) {
-        const message = (cause as Error).message;
-        setError(message);
-        return message;
+        return (cause as Error).message;
       } finally {
         setPending(null);
       }
     },
     [connection, workspace],
   );
-  return { available: state.kind === 'open' ? state.actions : NO_ACTIONS, pending, error, run };
+  return { available: state.kind === 'open' ? state.actions : null, pending, run };
 }
 
 /**

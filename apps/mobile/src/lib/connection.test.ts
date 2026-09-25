@@ -108,7 +108,7 @@ describe('StimConnection', () => {
     expect(states.at(-1)).toEqual({ kind: 'refused', code: 'unauthorized', reason: 'unauthorized' });
   });
 
-  it('reports the actions hello grants, and none from a server that predates actions', async () => {
+  it('reports the actions hello grants, and null from a server that predates actions', async () => {
     const { connection, sockets, timers, states } = setup();
     connection.start();
     sockets[0].onopen?.();
@@ -120,7 +120,7 @@ describe('StimConnection', () => {
     sockets[1].onopen?.();
     sockets[1].reply('hello', hello);
     await flush();
-    expect(states.at(-1)).toMatchObject({ kind: 'open', actions: [] });
+    expect(states.at(-1)).toMatchObject({ kind: 'open', actions: null });
   });
 
   it('reconnects at once on request, so a grant made on the Mac shows without waiting for a drop', async () => {
@@ -128,7 +128,7 @@ describe('StimConnection', () => {
     connection.subscribe('status.subscribe', {}, () => {});
     connection.start();
     sockets[0].onopen?.();
-    sockets[0].reply('hello', hello);
+    sockets[0].reply('hello', { ...hello, actions: [] });
     await flush();
     expect(states.at(-1)).toMatchObject({ kind: 'open', actions: [] });
 
