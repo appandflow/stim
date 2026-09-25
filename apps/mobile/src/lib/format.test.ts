@@ -1,5 +1,12 @@
-import { activityBadge, buildProgress } from '@/lib/format';
-import type { BuildReport } from '@/protocol/types';
+import {
+  activityBadge,
+  buildProgress,
+  lastBuildSummary,
+  outcomeLabel,
+  planExpectation,
+  planSummary,
+} from '@/lib/format';
+import type { BuildPlan, BuildReport } from '@/protocol/types';
 
 const now = Date.parse('2026-09-25T12:00:00Z');
 const ago = (ms: number) => new Date(now - ms).toISOString();
@@ -40,5 +47,66 @@ describe('buildProgress', () => {
   it('never reaches 100% while the build still runs', () => {
     expect(buildProgress(build(300_000), now)).toMatchObject({ fraction: 0.3, remaining: 'about 4 min left' });
     expect(buildProgress(build(60_000), now)).toMatchObject({ fraction: 0.99, remaining: 'longer than usual' });
+  });
+});
+
+describe('build cache outcome', () => {
+  it('marks the running outcome likely until the run reaches a phase that settles it', () => {
+    expect(outcomeLabel({ outcome: 'cold', phase: 'cache-lookup' })).toBe('Likely cold');
+    expect(outcomeLabel({ outcome: 'cold', phase: 'compile' })).toBe('Cold build');
+    expect(outcomeLabel({ outcome: 'hit', phase: 'install' })).toBe('Cache hit');
+    expect(outcomeLabel({ outcome: null, phase: 'prepare' })).toBeNull();
+  });
+
+  it('reads a last build whose cacheHit is false as compiled, and a failed one by its code', () => {
+    const last = {
+      platform: 'ios' as const,
+      status: 'ok' as const,
+      cacheHit: false as const,
+      cacheSkipped: false,
+      durationMs: 83_123,
+      fingerprint: '1b62',
+      startedAt: ago(90_000),
+      finishedAt: ago(7_000),
+    };
+    expect(lastBuildSummary(last)).toBe('Compiled in 1:23');
+    expect(lastBuildSummary({ ...last, status: 'failed', errorCode: 'STIM_BUILD_FAILED' })).toBe(
+      'Failed (STIM_BUILD_FAILED) in 1:23',
+    );
+  });
+
+  it('describes a planned hit, a miss that regenerates, and a refusal', () => {
+    const hit: BuildPlan = {
+      platform: 'ios',
+      fingerprint: '1b62',
+      cacheKey: 'k',
+      cacheHit: 'remote',
+      provider: 'eas',
+      cacheSkipped: false,
+      prebuild: null,
+      outcome: 'hit',
+      expectedMs: 2656,
+      basis: 1,
+    };
+    expect([planSummary(hit), planExpectation(hit)]).toEqual(['Remote cache hit (eas)', '~0:02, median of 1 hit run']);
+    const miss: BuildPlan = {
+      ...hit,
+      cacheHit: false,
+      provider: null,
+      prebuild: 'regenerate',
+      outcome: 'cold',
+      expectedMs: null,
+      basis: 0,
+    };
+    expect([planSummary(miss), planExpectation(miss)]).toEqual([
+      'Cache miss: compiles, regenerates the native dir',
+      'No cold run of this project recorded yet',
+    ]);
+    const refused: BuildPlan = {
+      ...miss,
+      outcome: null,
+      refusal: { code: 'STIM_EAS_BUILD_MISSING', message: 'No build.', remedy: 'Build one.' },
+    };
+    expect([planSummary(refused), planExpectation(refused)]).toEqual(['Would refuse: STIM_EAS_BUILD_MISSING', null]);
   });
 });

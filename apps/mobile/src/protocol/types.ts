@@ -109,6 +109,20 @@ export interface EnvironmentState {
   worktree?: WorktreeFacts | null;
   remoteDevices?: RemoteDeviceState[];
   build?: BuildReport | null;
+  lastBuilds?: { ios?: LastBuild; android?: LastBuild };
+}
+
+/** A platform's most recent `ios` or `android` run in one workspace. */
+export interface LastBuild {
+  platform: Platform;
+  status: 'ok' | 'failed';
+  cacheHit: BuildCacheHit;
+  cacheSkipped: boolean;
+  durationMs: number | null;
+  fingerprint: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  errorCode?: string;
 }
 
 export interface DeviceLeaseState {

@@ -13,12 +13,14 @@ export function loadFixtures() {
     .filter(Boolean)
     .map((line) => JSON.parse(line));
   const frame = JSON.parse(readFileSync(fixture('frame-ios.json'), 'utf8'));
+  const plans = JSON.parse(readFileSync(fixture('plans.json'), 'utf8'));
   return {
     capturedAt: status.capturedAt,
     stimVersion: status.stimVersion,
     home: status.home,
     status: status.payload,
     logs,
+    plans,
     frames: {
       ios: { ...frame, data: readFileSync(fixture('frame-ios.jpg')).toString('base64') },
     },

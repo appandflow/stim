@@ -8,6 +8,7 @@ import { listMacs, macToken, type PairedMac } from '@/lib/macs';
 import type {
   ActionName,
   ActionParams,
+  BuildPlan,
   FrameEvent,
   LogFilter,
   LogRecord,
@@ -317,4 +318,30 @@ export function useFrameSnapshot(
     };
   }, [connection, key, workspace, platform, slot, intervalMs]);
   return latest && latest.key === key ? latest : { frame: null, error: null };
+}
+
+export type PlanState = { kind: 'checking' } | { kind: 'done'; plan: BuildPlan } | { kind: 'failed'; message: string };
+
+/** `build.plan`: what the next build of `workspace` would find. It builds nothing, so a read-only pairing may ask. */
+export function useBuildPlan(workspace: string): {
+  plans: Partial<Record<Platform, PlanState>>;
+  check: (platform: Platform) => void;
+} {
+  const { connection } = useMacConnection();
+  const [plans, setPlans] = useState<Partial<Record<Platform, PlanState>>>({});
+  const check = useCallback(
+    (platform: Platform) => {
+      if (!connection) {
+        setPlans((prev) => ({ ...prev, [platform]: { kind: 'failed', message: 'Not connected.' } }));
+        return;
+      }
+      setPlans((prev) => ({ ...prev, [platform]: { kind: 'checking' } }));
+      connection.request('build.plan', { workspace, platform }).then(
+        (plan) => setPlans((prev) => ({ ...prev, [platform]: { kind: 'done', plan } })),
+        (cause: Error) => setPlans((prev) => ({ ...prev, [platform]: { kind: 'failed', message: cause.message } })),
+      );
+    },
+    [connection, workspace],
+  );
+  return { plans, check };
 }

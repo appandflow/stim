@@ -104,7 +104,29 @@
         "logs": null,
         "worktree": null,
         "remoteDevices": [],
-        "build": null
+        "build": null,
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 12400,
+            "fingerprint": "8c1e2f0a93b1d4c6e7f8091a2b3c4d5e6f708192",
+            "startedAt": "2026-09-25T04:10:02.114Z",
+            "finishedAt": "2026-09-25T04:10:14.514Z"
+          },
+          "android": {
+            "platform": "android",
+            "status": "ok",
+            "cacheHit": false,
+            "cacheSkipped": false,
+            "durationMs": 421300,
+            "fingerprint": "4b7d9e1c2a3f5061728394a5b6c7d8e9f0a1b2c3",
+            "startedAt": "2026-09-25T03:51:40.002Z",
+            "finishedAt": "2026-09-25T03:58:41.302Z"
+          }
+        }
       },
       {
         "path": "/Users/dev/Developer/react-native-hinges/example",
@@ -304,6 +326,19 @@
           "expectedMs": null,
           "expectedPhaseMs": null,
           "basis": 0
+        },
+        "lastBuilds": {
+          "android": {
+            "platform": "android",
+            "status": "failed",
+            "cacheHit": false,
+            "cacheSkipped": false,
+            "durationMs": 95000,
+            "fingerprint": "d2c4e6f8a0b1c3d5e7f9a1b3c5d7e9f1a3b5c7d9",
+            "startedAt": "2026-09-25T03:30:00.000Z",
+            "finishedAt": "2026-09-25T03:31:35.000Z",
+            "errorCode": "STIM_BUILD_FAILED"
+          }
         }
       },
       {
@@ -613,6 +648,7 @@
   },
   "edits": [
     "environments[path*=1123-mobile-app].remoteDevices: added by hand in the RemoteDeviceState shape; the capture machine had no EAS session",
-    "environments[path*=chat-perf-demo].android: added by hand, so one workspace runs both platforms and reload needs a platform"
+    "environments[path*=chat-perf-demo].android: added by hand, so one workspace runs both platforms and reload needs a platform",
+    "environments[path*=react-native-reserved-regions].lastBuilds and environments[path*=wide-insets].lastBuilds: added by hand in the LastBuild shape; the capture predates the field"
   ]
 }
