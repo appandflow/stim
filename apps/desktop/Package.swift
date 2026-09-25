@@ -7,13 +7,18 @@ let package = Package(
   products: [
     .executable(name: "StimDesktop", targets: ["StimDesktop"])
   ],
+  dependencies: [
+    .package(url: "https://github.com/airbnb/lottie-spm.git", exact: "4.6.1")
+  ],
   targets: [
     .target(name: "StimKit"),
     .target(name: "SimulatorFrames", dependencies: ["StimKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
     .target(name: "EmulatorFrames", dependencies: ["StimKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
     .executableTarget(
       name: "StimDesktop",
-      dependencies: ["StimKit", "SimulatorFrames", "EmulatorFrames"],
+      dependencies: [
+        "StimKit", "SimulatorFrames", "EmulatorFrames", .product(name: "Lottie", package: "lottie-spm"),
+      ],
       swiftSettings: [.swiftLanguageMode(.v5)]
     ),
     .testTarget(

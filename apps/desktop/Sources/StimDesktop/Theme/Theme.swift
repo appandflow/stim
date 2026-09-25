@@ -85,7 +85,9 @@ enum BrandAssets {
     }
   }
 
-  static func hero(_ scheme: ColorScheme) -> NSImage? { scheme == .dark ? darkHero : lightHero }
+  static func jar(_ scheme: ColorScheme) -> URL? {
+    url(scheme == .dark ? "stim-jar-dark.json" : "stim-jar-light.json", websitePath: "static/img/branding")
+  }
 
   /// The wordmark's path art as a template image, so callers tint it with `Theme.primary`.
   static let wordmark: NSImage? = {
@@ -93,9 +95,6 @@ enum BrandAssets {
     art?.isTemplate = true
     return art
   }()
-
-  private static let darkHero = image("hero-dark.svg")
-  private static let lightHero = image("hero.svg")
 
   private static func image(_ name: String) -> NSImage? {
     url(name, websitePath: "static/img/branding").flatMap(NSImage.init(contentsOf:))
