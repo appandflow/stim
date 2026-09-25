@@ -30,6 +30,15 @@ final class Notifier: ObservableObject {
   static let pressureCategory = "diskPressure"
   static let doItAction = "doIt"
 
+  static func removeDeliveredPressure() {
+    guard isAvailable else { return }
+    let center = UNUserNotificationCenter.current()
+    center.getDeliveredNotifications { delivered in
+      center.removeDeliveredNotifications(
+        withIdentifiers: delivered.map(\.request.identifier).filter { $0.hasPrefix("pressure") })
+    }
+  }
+
   /// Posts a disk pressure notification. With `offersPlan`, it carries a Do it button that runs the plan.
   static func postPressure(id: String, title: String, body: String, offersPlan: Bool) {
     guard isAvailable, UserDefaults.standard.bool(forKey: AppPreferences.Key.notifiesDiskPressure) else { return }

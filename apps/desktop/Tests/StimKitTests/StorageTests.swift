@@ -178,6 +178,15 @@ import Testing
 }
 
 @Suite struct GcDeleteScopeTests {
+  @Test func offersToEmptyACacheOnlyWhenItsNameSelectsItAlone() {
+    let gradle = GcReport.Cache(name: "Gradle build cache", dir: "/g", bytes: nil, note: nil, willEmpty: nil)
+    let build = GcReport.Cache(name: "Build cache", dir: "/b", bytes: nil, note: nil, willEmpty: nil)
+    let cas = GcReport.Cache(name: "Xcode CAS", dir: "/x", bytes: nil, note: nil, willEmpty: nil)
+    #expect(gradle.selectedAlone(among: [gradle, build, cas]))
+    #expect(!build.selectedAlone(among: [gradle, build, cas]))
+    #expect(cas.selectedAlone(among: [gradle, build, cas]))
+  }
+
   @Test func aScopedPreviewDeletesOnlyThatScope() {
     #expect(GcPreview.deleteArguments(after: ["gc", "--json"]) == ["gc", "--delete"])
     #expect(

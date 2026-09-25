@@ -100,8 +100,12 @@ status under **Autopilot activity**.
   that long. It waits while a device the CLI counts as idle has a screen the app
   saw change more recently, because `gc --idle` would shut that device down too.
 - **Clean up every night** runs `stim gc --delete` at the chosen hour (3:00 by
-  default), or at the next check when the Mac slept through it. The first launch
-  only records the time, so installing the app never starts a cleanup.
+  default), or at the next check when the Mac slept through it. That clears the
+  build outputs of every workspace not in use, so its next build installs from
+  the shared build cache, removes merged worktrees, and deletes parked and
+  unused owned devices, which empties the parked device pool. The first launch,
+  turning the option on and changing the hour only record the time, so none of
+  them starts a cleanup.
 - **Reclaim space when free disk is under the Stim budget** compares the free
   space on the volumes Stim writes to, without purgeable space, with
   `budget.minFreeDiskGb` and `budget.hardFloorDiskGb` from `stim settings --json`.
@@ -111,7 +115,10 @@ status under **Autopilot activity**.
 While free disk is under the budget, the Storage view shows the plan, such as
 "Clear the build outputs of 3 idle workspaces and remove 1 merged worktree to
 free about 300 MB", with a **Do it** button that runs `stim gc --delete`, and
-the sidebar marks Storage. With autopilot reclaiming, the app posts a
+the sidebar marks Storage. **Do it** in a notification runs only while disk
+is still under the budget, and otherwise opens Storage; the app removes its
+delivered pressure notifications once free disk is back above the budget. With
+autopilot reclaiming, the app posts a
 notification after each run. Without it, the app posts the plan once per
 episode with a **Do it** button. The **Free disk falls under the Stim budget**
 notification is on by default and needs the bundled app.

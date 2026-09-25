@@ -19,12 +19,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     MainActor.assumeIsolated { OpenRequests.shared.simulatorUdid = udid }
   }
 
+  func applicationWillFinishLaunching(_ notification: Notification) {
+    MainActor.assumeIsolated { NotificationResponder.shared.install() }
+  }
+
   func applicationDidFinishLaunching(_ notification: Notification) {
     // `swift run` starts a bare executable as a background process with no Dock icon or focus.
     NSApp.setActivationPolicy(.regular)
     NSApp.activate(ignoringOtherApps: true)
     MainActor.assumeIsolated {
-      NotificationResponder.shared.install()
       Theme.apply(Appearance(rawValue: UserDefaults.standard.string(forKey: AppPreferences.Key.appearance) ?? "") ?? .auto)
     }
   }
@@ -58,17 +61,19 @@ struct StimDesktopApp: App {
     _notifier = StateObject(wrappedValue: Notifier(store: store))
     let actions = ActionCenter(cli: cli)
     _actions = StateObject(wrappedValue: actions)
-    _autopilot = StateObject(wrappedValue: AutopilotRunner(status: store, actions: actions, cli: cli))
+    let autopilot = AutopilotRunner(status: store, actions: actions, cli: cli)
+    _autopilot = StateObject(wrappedValue: autopilot)
+    DispatchQueue.main.async {
+      store.start()
+      autopilot.start()
+    }
   }
 
   var body: some Scene {
     WindowGroup("Stim", id: "main") {
       RootView(cli: cli, store: store, actions: actions, autopilot: autopilot)
         .frame(minWidth: 1100, minHeight: 720)
-        .onAppear {
-          notifier.start()
-          autopilot.start()
-        }
+        .onAppear { notifier.start() }
     }
     .windowToolbarStyle(.unified(showsTitle: false))
     .handlesExternalEvents(matching: [])

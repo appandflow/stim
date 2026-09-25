@@ -248,6 +248,14 @@ public struct GcReport: Decodable, Sendable {
     public var bytes: Int64?
     public var note: String?
     public var willEmpty: Bool?
+
+    /// Whether `stim gc --cache <name>` selects this cache alone. The CLI matches the argument as a
+    /// case-insensitive substring of every cache's name and directory, and reserves `all` and `workspaces`.
+    public func selectedAlone(among caches: [Cache]) -> Bool {
+      let wanted = name.trimmingCharacters(in: .whitespaces).lowercased()
+      guard !wanted.isEmpty, wanted != "all", wanted != "workspaces" else { return false }
+      return caches.filter { $0.name.lowercased().contains(wanted) || $0.dir.lowercased().contains(wanted) }.count == 1
+    }
   }
 
   public struct Sections: Decodable, Sendable {

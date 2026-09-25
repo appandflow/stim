@@ -9,6 +9,7 @@ struct StorageView: View {
   @ObservedObject var autopilot: AutopilotRunner
   @EnvironmentObject private var actions: ActionCenter
   @State private var confirmingMerged = false
+  @State private var awaitingMerged = false
   @State private var removing: WorkspaceStorage?
 
   private static let sizeWidth: CGFloat = 92
@@ -32,6 +33,11 @@ struct StorageView: View {
     .onAppear {
       storage.refresh()
       if metrics.gcReport == nil { metrics.refreshGc() }
+    }
+    .onChange(of: metrics.gcRunning) { _, running in
+      guard !running, awaitingMerged else { return }
+      awaitingMerged = false
+      confirmingMerged = !(metrics.gcReport?.mergedWorktrees.isEmpty ?? true)
     }
   }
 
@@ -89,7 +95,9 @@ struct StorageView: View {
     let workspaceBytes = report.workspaces.reduce(Int64(0)) { $0 + $1.total }
     let cacheBytes = report.caches.compactMap(\.bytes).reduce(0, +)
     return HStack(spacing: 14) {
-      tile("Free", lowest.map { formatDisk($0.availableBytes) } ?? "\u{2014}", detail: lowest?.name)
+      tile(
+        "Free", lowest.map { formatDisk($0.unpurgeableFreeBytes ?? $0.availableBytes) } ?? "\u{2014}",
+        detail: lowest.map { "\($0.name), without purgeable space" })
       tile("Workspaces", formatDisk(workspaceBytes), detail: "\(report.workspaces.count) environments")
       tile("Stim caches", formatDisk(cacheBytes), detail: "\(report.caches.count) shared caches")
       VStack(alignment: .leading, spacing: 8) {
@@ -129,8 +137,11 @@ struct StorageView: View {
           Text("Install the GitHub CLI (gh) to show open pull requests.").font(Theme.body(11.5))
             .foregroundStyle(Theme.tertiary)
         }
-        Button("Remove merged worktrees (\(merged.count))\u{2026}") { confirmingMerged = true }
-          .disabled(merged.isEmpty || actions.active(for: ActionCenter.machineKey) != nil)
+        Button("Remove merged worktrees (\(merged.count))\u{2026}") {
+          awaitingMerged = true
+          metrics.refreshGc()
+        }
+          .disabled(merged.isEmpty || awaitingMerged || actions.active(for: ActionCenter.machineKey) != nil)
           .help("stim worktree remove on each worktree stim gc reports as merged")
           .confirmationDialog(
             "Remove \(merged.count == 1 ? "1 merged worktree" : "\(merged.count) merged worktrees")?",
@@ -140,7 +151,7 @@ struct StorageView: View {
           } message: {
             Text(
               merged.map { PathNames(path: $0.path).title }.joined(separator: ", ")
-                + ". Each branch is merged into the default branch. stim worktree remove checks each one again and keeps any with uncommitted or unpushed work."
+                + ". stim gc reports each branch as merged into the default branch. stim worktree remove refuses a worktree with uncommitted or unpushed work."
             )
           }
       }
@@ -168,7 +179,7 @@ struct StorageView: View {
       }
     } message: { workspace in
       Text(
-        "Stim reclaims its build outputs, owned devices and Metro port, then removes the checkout\(workspace.branch.map { " of \($0)" } ?? ""). It refuses when the worktree has uncommitted or unpushed work."
+        "Stim reclaims its build outputs, owned devices and Metro port, then removes a linked worktree's checkout\(workspace.branch.map { " of \($0)" } ?? ""); a source checkout keeps its tree. It refuses when the worktree has uncommitted or unpushed work."
       )
     }
   }
@@ -288,12 +299,13 @@ struct StorageView: View {
               icon: "shippingbox"
             ) {
               previewButton("Empty\u{2026}", ["gc", "--json", "--cache", cache.name])
+                .disabled(!cache.selectedAlone(among: report.caches))
             }
           }
           if let devices = report.reclaimableDevices {
             Rectangle().fill(Theme.border).frame(height: 1)
             locationRow(devices, icon: "iphone") {
-              previewButton("Reclaim\u{2026}", ["gc", "--json"])
+              previewButton("Reclaim everything safe\u{2026}", ["gc", "--json"])
             }
           }
         }

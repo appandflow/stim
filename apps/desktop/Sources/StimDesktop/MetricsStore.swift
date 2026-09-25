@@ -95,7 +95,6 @@ final class MetricsStore: ObservableObject {
     }
   }
 
-  /// Runs the `stim gc --json` dry run again unless one is running.
   func refreshGc() {
     guard !gcRunning else { return }
     gcRunning = true
@@ -111,7 +110,6 @@ final class MetricsStore: ObservableObject {
   }
 }
 
-/// The volumes Stim writes to: the repositories, `$STIM_HOME`, and the CoreSimulator device set.
 @MainActor
 func stimDiskLocations(_ workspaces: [Workspace], status: StatusStore) -> [(label: String, path: String)] {
   let home = NSHomeDirectory()

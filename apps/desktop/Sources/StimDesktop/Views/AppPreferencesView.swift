@@ -75,7 +75,7 @@ struct AppPreferencesView: View {
         Text("Autopilot")
       } footer: {
         Text(
-          "Idle shutdown runs stim gc --idle, which shuts owned simulators and emulators down and never deletes them. A device whose screen changed in this app is left running. Nightly cleanup and disk pressure run stim gc --delete, which removes only what stim gc reports as safe: build outputs of workspaces not in use, merged worktrees, and unused owned devices. The budget is budget.minFreeDiskGb. A nightly run the Mac slept through runs at the next check."
+          "Idle shutdown runs stim gc --idle, which shuts owned simulators and emulators down and never deletes them. A device whose screen changed in this app is left running. Nightly cleanup and disk pressure run stim gc --delete: it clears the build outputs of every workspace not in use, so their next build installs from the shared cache, removes merged worktrees, and deletes parked and unused owned devices. The budget is budget.minFreeDiskGb. A nightly run the Mac slept through runs at the next check."
         )
         .multilineTextAlignment(.leading)
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -31,6 +31,7 @@ final class AutopilotRunner: ObservableObject {
   private var report: GcReport?
   private var reportAt: Date?
   private var notifiedEpisode = false
+  private var nightlyHour: Int?
 
   init(status: StatusStore, actions: ActionCenter, cli: Task<StimCLI, Never>) {
     self.status = status
@@ -46,10 +47,7 @@ final class AutopilotRunner: ObservableObject {
     if defaults.object(forKey: AppPreferences.Key.autopilotLastNightly) == nil {
       defaults.set(Date(), forKey: AppPreferences.Key.autopilotLastNightly)
     }
-    NotificationResponder.shared.runPlan = { [weak self] in
-      NSApp.activate(ignoringOtherApps: true)
-      self?.runPressurePlan(trigger: .manual, present: true)
-    }
+    NotificationResponder.shared.runPlan = { [weak self] in self?.runPlanFromNotification() }
     if defaults.bool(forKey: AppPreferences.Key.notifiesDiskPressure) { Notifier.requestAuthorization() }
     timer = Timer.scheduledTimer(withTimeInterval: Self.tick, repeats: true) { [weak self] _ in
       MainActor.assumeIsolated { self?.check() }
@@ -64,14 +62,24 @@ final class AutopilotRunner: ObservableObject {
     defaults.removeObject(forKey: AppPreferences.Key.autopilotLog)
   }
 
-  /// Runs `stim gc --delete`, which is what the pressure plan proposes.
+  /// The Do it of a pressure notification, which can be clicked long after it was posted: it runs the plan
+  /// only while disk is still under the budget, and otherwise opens Storage.
+  func runPlanFromNotification() {
+    NSApp.activate(ignoringOtherApps: true)
+    guard let plan = pressure, !plan.isEmpty else {
+      OpenRequests.shared.showsStorage = true
+      return
+    }
+    runPressurePlan(trigger: .manual, present: true)
+  }
+
   func runPressurePlan(trigger: AutopilotLogEntry.Trigger, present: Bool) {
     lastPressureRun = Date()
-    run(trigger, "Reclaim disk space", PressurePlan.arguments, present: present) { [weak self] run in
-      guard trigger == .pressure, let self, let plan = self.pressure else { return }
+    run(trigger, "Reclaim disk space", PressurePlan.arguments, present: present) { run in
+      guard trigger == .pressure else { return }
       Notifier.postPressure(
-        id: "pressure-ran-\(run.id)", title: "Stim Desktop ran stim gc --delete",
-        body: "\(plan.headline). \(run.exitStatus == 0 ? "It finished" : "It exited with an error"); see the autopilot log.",
+        id: "pressure-ran-\(run.id)", title: "Free disk is under the Stim budget",
+        body: "Stim Desktop ran stim gc --delete. \(run.exitStatus == 0 ? "It finished" : "It exited with an error"); see the autopilot log.",
         offersPlan: false)
     }
   }
@@ -79,12 +87,17 @@ final class AutopilotRunner: ObservableObject {
   private func check() {
     let now = Date()
     let idle = actions.active(for: ActionCenter.machineKey) == nil
+    let hour = defaults.integer(forKey: AppPreferences.Key.autopilotNightlyHour)
+    if !defaults.bool(forKey: AppPreferences.Key.autopilotNightly) || (nightlyHour != nil && nightlyHour != hour) {
+      defaults.set(now, forKey: AppPreferences.Key.autopilotLastNightly)
+    }
+    nightlyHour = hour
     if idle, defaults.bool(forKey: AppPreferences.Key.autopilotNightly),
       let last = defaults.object(forKey: AppPreferences.Key.autopilotLastNightly) as? Date,
-      AutopilotSchedule.nightlyDue(
-        now: now, hour: defaults.integer(forKey: AppPreferences.Key.autopilotNightlyHour), lastRun: last)
+      AutopilotSchedule.nightlyDue(now: now, hour: hour, lastRun: last)
     {
       defaults.set(now, forKey: AppPreferences.Key.autopilotLastNightly)
+      lastPressureRun = now
       run(.nightly, "Nightly cleanup", ["gc", "--delete"], present: false)
       return
     }
@@ -100,8 +113,12 @@ final class AutopilotRunner: ObservableObject {
     checkPressure()
   }
 
+  /// Booted devices with no build running for them, which `gc --idle` also skips.
   private var bootedDevices: [AutopilotSchedule.Device] {
-    (status.payload?.environments ?? []).flatMap(\.devices).filter(\.isRunning).map {
+    (status.payload?.environments ?? []).flatMap { env in
+      env.devices.filter { $0.isRunning && env.runningBuild(for: $0) == nil }
+    }
+    .map {
       AutopilotSchedule.Device(activity: $0.activity, screenChangedAt: $0.activityKey.flatMap(ScreenActivity.shared.lastChange))
     }
   }
@@ -132,7 +149,8 @@ final class AutopilotRunner: ObservableObject {
       }
       var fresh = report
       if plan != nil, fresh == nil { fresh = try? cli.gcReport() }
-      if let free, let limits, plan != nil {
+      let known = free != nil && limits != nil && (plan == nil || fresh != nil)
+      if let free, let limits, plan != nil, fresh != nil {
         plan = PressurePlan.make(freeBytes: free, minimumFreeGb: limits.minFree, hardFloorGb: limits.hardFloor, report: fresh)
       }
       let result = plan
@@ -148,6 +166,7 @@ final class AutopilotRunner: ObservableObject {
           self.report = checkedReport
           self.reportAt = now
         }
+        guard known else { return }
         self.pressure = result
         self.react(to: result)
       }
@@ -156,6 +175,7 @@ final class AutopilotRunner: ObservableObject {
 
   private func react(to plan: PressurePlan?) {
     guard let plan else {
+      if notifiedEpisode { Notifier.removeDeliveredPressure() }
       notifiedEpisode = false
       return
     }
