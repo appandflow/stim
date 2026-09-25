@@ -81,8 +81,29 @@ Events are `{ "event", "subscription", ... }`.
   full payload as `stim status --watch --json` prints it. All subscribers share
   one `stim status --watch --json` child, which stops with the last
   subscriber.
+- `logs.query` returns `{ "records" }`, and `logs.subscribe` sends `logs`
+  events: first the last `tail` matching records, then new ones in batches.
+  Both take the Stim Desktop log viewer's filters: `workspace` (required),
+  `sources` (`metro`, `client`, `device`, `build`), `slot`, `level` (the
+  minimum), `grep` (a regular expression), `errors`, and `tail` (1 to 5000,
+  5000 by default). Without `sources`, `errors` keeps the CLI's default error
+  scope. They run `stim logs --json` and `stim logs --json --follow` in the
+  workspace. Subscribers with the same workspace and filters share one
+  `--follow` child, which stops with the last of them.
+- `stats.get` and `settings.get` return the payload of `stim stats --json` and
+  `stim settings --json`, which masks sensitive values. Without `workspace`,
+  they run in the home directory and cover the machine only.
 - `unsubscribe` ends a subscription.
-- An `error` event ends a subscription whose source failed; subscribe again.
+- An `error` event ends a subscription whose source failed, or whose client
+  fell behind (`slow-client`); subscribe again.
+
+`workspace` is an environment `path` from a status payload. Any other path is
+refused with `unknown-workspace` and runs nothing. A connection holds at most
+32 subscriptions and runs at most 4 `logs.query`, `stats.get` and
+`settings.get` requests at a time. Those requests fail after 60 seconds, and
+closing the connection stops them. A log subscriber whose socket has more than
+4 MiB unsent gets no more batches until it catches up; past 20,000
+waiting records the server ends that subscription with `slow-client`.
 
 The error codes `unauthorized`, `pairing-expired`, and `protocol-unsupported`
 refuse the client until it pairs again or updates; clients retry the others.

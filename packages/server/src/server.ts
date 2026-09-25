@@ -1,12 +1,16 @@
 import { mkdirSync, watch, type FSWatcher } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { isIP, type AddressInfo, type Socket } from 'node:net';
+import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { isJsonObject } from '@stim-cli/core/state';
+import { isJsonObject, loadConfig, type StatusPayload } from '@stim-cli/core/state';
+import { FeedPool, type JsonObject } from './feed.ts';
+import { LogBatcher, logArgs, parseLogFilter, type LogLimits } from './logs.ts';
 import {
   PROTOCOL_VERSION,
   type ErrorCode,
   type HelloResult,
+  type Methods,
   type ProtocolError,
   type RequestId,
   type ServerMessage,
@@ -20,7 +24,7 @@ import {
   type PairedDevice,
   type PeerIdentity,
 } from './registry.ts';
-import { StatusFeed } from './status-feed.ts';
+import { runStim, type CommandLimits } from './stim-command.ts';
 import { whois } from './tailscale.ts';
 
 export interface ServerOptions {
@@ -35,6 +39,8 @@ export interface ServerOptions {
   authTimeoutMs?: number;
   maxAuthFailures?: number;
   failureWindowMs?: number;
+  logLimits?: Partial<LogLimits>;
+  commandLimits?: Partial<CommandLimits>;
 }
 
 export interface RunningServer {
@@ -46,6 +52,10 @@ const CLOSE_UNAUTHORIZED = 4401;
 const CLOSE_BAD_REQUEST = 4400;
 const CLOSE_AUTH_TIMEOUT = 4408;
 const MAX_PAYLOAD = 64 * 1024;
+const MAX_SUBSCRIPTIONS = 32;
+const MAX_COMMANDS = 4;
+const LOG_LIMITS: LogLimits = { maxBufferedBytes: 4 * 1024 * 1024, maxPendingRecords: 20_000 };
+const COMMAND_LIMITS: CommandLimits = { timeoutMs: 60_000, maxOutputBytes: 32 * 1024 * 1024 };
 
 const AUTH_REFUSALS: Record<Exclude<AuthOutcome, { ok: true }>['reason'], ProtocolError> = {
   'pairing-unknown': {
@@ -110,7 +120,9 @@ function requestId(value: unknown): RequestId | null {
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
   const limiter = new FailureLimiter(options.maxAuthFailures ?? 5, options.failureWindowMs ?? 60_000);
   const authTimeoutMs = options.authTimeoutMs ?? 5000;
-  const feed = new StatusFeed(options.stimCli, options.env);
+  const feeds = new FeedPool(options.stimCli, options.env);
+  const logLimits: LogLimits = { ...LOG_LIMITS, ...options.logLimits };
+  const commandLimits: CommandLimits = { ...COMMAND_LIMITS, ...options.commandLimits };
   const sessions = new Map<WebSocket, PairedDevice>();
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
 
@@ -129,6 +141,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   function connection(socket: WebSocket, peer: string | null): void {
     const limitKey = peer ?? 'local';
     const subscriptions = new Map<string, () => void>();
+    const commands = new Set<() => void>();
     let nextSubscription = 1;
     let device: PairedDevice | null = null;
     let queue = Promise.resolve();
@@ -193,17 +206,146 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       send(socket, { id, result });
     }
 
-    function subscribeStatus(id: RequestId): void {
+    function error(id: RequestId, code: ErrorCode, message: string): void {
+      send(socket, { id, error: { code, message } });
+    }
+
+    /** The registered workspace to run `stim` in, or the home directory when it is optional and absent. */
+    function workspaceDir(id: RequestId, workspace: unknown, required: boolean): string | null {
+      if (workspace === undefined && !required) return homedir();
+      if (typeof workspace !== 'string') {
+        error(id, 'bad-request', 'params.workspace must be an environment path from a status payload.');
+        return null;
+      }
+      let registered: boolean;
+      try {
+        registered = Object.hasOwn(loadConfig()?.projects ?? {}, workspace);
+      } catch (cause) {
+        error(id, 'stim-failed', (cause as Error).message);
+        return null;
+      }
+      if (!registered) error(id, 'unknown-workspace', `${workspace} is not a Stim workspace on this Mac.`);
+      return registered ? workspace : null;
+    }
+
+    function openSubscription(id: RequestId): string | null {
+      if (subscriptions.size >= MAX_SUBSCRIPTIONS) {
+        error(id, 'limit-exceeded', `A connection can hold ${MAX_SUBSCRIPTIONS} subscriptions.`);
+        return null;
+      }
       const subscription = `s${nextSubscription++}`;
       send(socket, { id, result: { subscription } });
-      const unsubscribe = feed.subscribe({
-        payload: (payload) => send(socket, { event: 'status', subscription, payload }),
-        failed: (message) => {
-          subscriptions.delete(subscription);
-          send(socket, { event: 'error', subscription, error: { code: 'status-failed', message } });
+      return subscription;
+    }
+
+    function subscribeStatus(id: RequestId): void {
+      const subscription = openSubscription(id);
+      if (!subscription) return;
+      const unsubscribe = feeds.subscribe(
+        { args: ['status', '--watch', '--json'], cwd: homedir(), keep: 1, label: 'stim status --watch' },
+        {
+          item: (payload) =>
+            send(socket, { event: 'status', subscription, payload: payload as unknown as StatusPayload }),
+          failed: (message) => {
+            subscriptions.delete(subscription);
+            send(socket, { event: 'error', subscription, error: { code: 'status-failed', message } });
+          },
         },
-      });
+      );
       subscriptions.set(subscription, unsubscribe);
+    }
+
+    function subscribeLogs(id: RequestId, params: unknown): void {
+      const parsed = parseLogFilter(params);
+      if ('error' in parsed) return error(id, 'bad-request', parsed.error);
+      const cwd = workspaceDir(id, parsed.filter.workspace, true);
+      if (!cwd) return;
+      const subscription = openSubscription(id);
+      if (!subscription) return;
+      const end = () => {
+        subscriptions.get(subscription)?.();
+        subscriptions.delete(subscription);
+      };
+      const batcher = new LogBatcher(
+        {
+          send: (records) => send(socket, { event: 'logs', subscription, records }),
+          bufferedBytes: () => socket.bufferedAmount,
+          overflow: () => {
+            end();
+            send(socket, {
+              event: 'error',
+              subscription,
+              error: { code: 'slow-client', message: 'This client fell behind the log stream. Subscribe again.' },
+            });
+          },
+        },
+        logLimits,
+      );
+      const unsubscribe = feeds.subscribe(
+        { args: logArgs(parsed.filter, true), cwd, keep: parsed.filter.tail!, label: 'stim logs --follow' },
+        {
+          item: (record) => batcher.push(record),
+          failed: (message) => {
+            batcher.flush(true);
+            batcher.stop();
+            subscriptions.delete(subscription);
+            send(socket, { event: 'error', subscription, error: { code: 'logs-failed', message } });
+          },
+        },
+      );
+      subscriptions.set(subscription, () => {
+        batcher.stop();
+        unsubscribe();
+      });
+    }
+
+    function command<M extends 'logs.query' | 'stats.get' | 'settings.get'>(
+      id: RequestId,
+      args: string[],
+      cwd: string,
+      result: (stdout: string) => Methods[M]['result'],
+    ): void {
+      if (commands.size >= MAX_COMMANDS) {
+        return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+      }
+      const run = runStim(options.stimCli, options.env, args, cwd, commandLimits);
+      commands.add(run.cancel);
+      void (async () => {
+        const outcome = await run.outcome;
+        commands.delete(run.cancel);
+        if (!outcome.ok) return error(id, 'stim-failed', outcome.message);
+        let value: Methods[M]['result'];
+        try {
+          value = result(outcome.stdout);
+        } catch {
+          return error(id, 'stim-failed', `stim ${args[0]} printed output that is not JSON.`);
+        }
+        send(socket, { id, result: value });
+      })();
+    }
+
+    function queryLogs(id: RequestId, params: unknown): void {
+      const parsed = parseLogFilter(params);
+      if ('error' in parsed) return error(id, 'bad-request', parsed.error);
+      const cwd = workspaceDir(id, parsed.filter.workspace, true);
+      if (!cwd) return;
+      command<'logs.query'>(id, logArgs(parsed.filter, false), cwd, (stdout) => ({
+        records: stdout
+          .split('\n')
+          .filter((line) => line.trim())
+          .map((line) => JSON.parse(line) as JsonObject),
+      }));
+    }
+
+    function workspaceCommand(id: RequestId, method: 'stats.get' | 'settings.get', params: unknown): void {
+      if (params !== undefined && !isJsonObject(params)) return error(id, 'bad-request', 'params must be an object.');
+      const cwd = workspaceDir(id, params?.workspace, false);
+      if (!cwd) return;
+      command<typeof method>(id, [method === 'stats.get' ? 'stats' : 'settings', '--json'], cwd, (stdout) => {
+        const value: unknown = JSON.parse(stdout);
+        if (!isJsonObject(value)) throw new Error('not an object');
+        return value;
+      });
     }
 
     async function handle(raw: string): Promise<void> {
@@ -223,6 +365,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (message.method === 'hello') return hello(id, message.params);
       if (!device) return refuse(id, 'unauthorized', 'Send hello first.', CLOSE_UNAUTHORIZED);
       if (message.method === 'status.subscribe') return subscribeStatus(id);
+      if (message.method === 'logs.subscribe') return subscribeLogs(id, message.params);
+      if (message.method === 'logs.query') return queryLogs(id, message.params);
+      if (message.method === 'stats.get' || message.method === 'settings.get') {
+        return workspaceCommand(id, message.method, message.params);
+      }
       if (message.method === 'unsubscribe') {
         const name = isJsonObject(message.params) ? message.params.subscription : undefined;
         const unsubscribe = typeof name === 'string' ? subscriptions.get(name) : undefined;
@@ -248,6 +395,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       sessions.delete(socket);
       for (const unsubscribe of subscriptions.values()) unsubscribe();
       subscriptions.clear();
+      for (const cancel of commands) cancel();
+      commands.clear();
     });
   }
 
@@ -265,7 +414,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const close = async () => {
     watcher.close();
     if (revocationCheck) clearTimeout(revocationCheck);
-    feed.close();
+    feeds.close();
     for (const client of wss.clients) client.terminate();
     wss.close();
     await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));
