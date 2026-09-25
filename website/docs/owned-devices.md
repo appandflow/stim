@@ -238,9 +238,9 @@ Workspaces can hold EAS sessions at the same time, but only one session starts
 at a time on a machine. A `--remote eas` run that finishes its build while
 another workspace is starting a session waits for that start. It prints a
 `lock  waiting for EAS remote start (pid …, in <workspace>, running for …)`
-line right away and repeats it every 30 seconds. If that start runs longer
-than any EAS session start can take, the run refuses with `STIM_LOCK_TIMEOUT`,
-names the process, and installs nothing.
+line right away and a `still waiting` line every 30 seconds. If one holder
+keeps the lock longer than the slowest EAS session start (39 minutes), the run
+refuses with `STIM_LOCK_TIMEOUT`, names that process, and installs nothing.
 
 ### From Windows or Linux
 

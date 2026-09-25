@@ -630,8 +630,11 @@ export function withRemoteSessionLock<T>(
   });
 }
 
-const REMOTE_START_LOCK_WAIT_MS =
-  3 * EAS_OPERATION_TIMEOUT_MS + EAS_SESSION_CREATE_TIMEOUT_MS + DAEMON_WAIT_MS + 2 * AGENT_DEVICE_TIMEOUT_MS;
+const EAS_START_HOLD_MS =
+  4 * EAS_OPERATION_TIMEOUT_MS +
+  3 * AGENT_DEVICE_TIMEOUT_MS +
+  EAS_SESSION_CREATE_TIMEOUT_MS +
+  Math.ceil(DAEMON_WAIT_MS / DAEMON_POLL_MS) * (EAS_OPERATION_TIMEOUT_MS + DAEMON_POLL_MS);
 
 export async function ensureRemoteBootOwned<T extends BootResult>({
   root,
@@ -669,7 +672,8 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
   now?: () => number;
 }): Promise<T | BootResult> {
   const waitNotice = nativeRunWaitNotice({ write: notice, now, describe: describeEasProjectLockHolder });
-  let lastHolder: ClaimHolder | null = null;
+  let stuck: { holder: ClaimHolder; heldMs: number } | null = null;
+  let seen: { claimId: string; at: number } | null = null;
   let projectLocked = false;
   try {
     return await withProjectLock(
@@ -734,27 +738,36 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
       {
         ownerPurpose: 'EAS remote start',
         machineRoot: ledgerRoot,
-        waitMs: REMOTE_START_LOCK_WAIT_MS,
+        waitMs: Number.POSITIVE_INFINITY,
         details: { workspace: root, platform },
         now,
         onHeld: (holder) => {
-          lastHolder = holder;
+          const at = now();
+          if (seen?.claimId !== holder.claimId) seen = { claimId: holder.claimId, at };
+          const claimedAt = Date.parse(holder.startedAt);
+          const heldMs = at - (Number.isFinite(claimedAt) ? Math.min(claimedAt, seen.at) : seen.at);
+          if (heldMs > EAS_START_HOLD_MS) {
+            stuck = { holder, heldMs };
+            const error = new Error(`The eas-project lock was held past ${formatElapsed(EAS_START_HOLD_MS)}.`);
+            (error as Error & { code?: string }).code = 'STIM_LOCK_TIMEOUT';
+            throw error;
+          }
           waitNotice(
             holder,
-            `waiting for ${describeEasProjectLockHolder(holder, now())} to release the EAS project lock; one EAS session starts at a time on this machine`,
+            `waiting for ${describeEasProjectLockHolder(holder, at)} to release the EAS project lock; one EAS session starts at a time on this machine`,
           );
         },
       },
     );
   } catch (err) {
     const code = (err as Error & { code?: string }).code ?? REMOTE_SESSION_ERROR;
-    if (code === 'STIM_LOCK_TIMEOUT' && lastHolder && !projectLocked) {
-      const holder: ClaimHolder = lastHolder;
+    if (stuck && !projectLocked) {
+      const { holder, heldMs }: { holder: ClaimHolder; heldMs: number } = stuck;
       return {
         failed: true,
         code,
-        reason: `Waited ${formatElapsed(REMOTE_START_LOCK_WAIT_MS)} for ${describeEasProjectLockHolder(holder, now())} to release the EAS project lock, longer than any EAS session start takes. ${describe(err)}`,
-        remedy: `Check pid ${holder.owner.pid}; stop it if it is stuck, then run the remote command again.`,
+        reason: `${describeEasProjectLockHolder(holder, now())} has held the EAS project lock for ${formatElapsed(heldMs)}; an EAS session start holds it for at most ${formatElapsed(EAS_START_HOLD_MS)}.`,
+        remedy: `If pid ${holder.owner.pid} is stuck, stop it, then run the remote command again.`,
       };
     }
     return {

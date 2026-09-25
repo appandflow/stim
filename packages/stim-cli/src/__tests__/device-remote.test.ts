@@ -488,7 +488,10 @@ process.stdout.write(JSON.stringify(result));
       first.stdout?.on('data', (chunk) => (firstOutput += String(chunk)));
       const firstExited = new Promise<number | null>((resolve) => first.once('exit', resolve));
       try {
-        while (!existsSync(easLog)) await new Promise<void>((resolve) => setTimeout(resolve, 20));
+        while (!existsSync(easLog) && first.exitCode === null) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 20));
+        }
+        expect(existsSync(easLog)).toBe(true);
 
         const resolved = await resolveRemoteContext({
           root: secondRoot,
@@ -531,7 +534,7 @@ process.stdout.write(JSON.stringify(result));
     },
   );
 
-  test('a start that outlasts every EAS step refuses by naming the holder, and never boots', async () => {
+  test('a holder past the longest EAS session start is refused by name, and the waiter never boots', async () => {
     const ledgerRoot = join(root, 'machine-eas');
     let releaseFirst!: () => void;
     const held = new Promise<void>((resolve) => {
@@ -581,9 +584,11 @@ process.stdout.write(JSON.stringify(result));
       expect(second).toMatchObject({
         failed: true,
         code: 'STIM_LOCK_TIMEOUT',
-        remedy: `Check pid ${process.pid}; stop it if it is stuck, then run the remote command again.`,
+        remedy: `If pid ${process.pid} is stuck, stop it, then run the remote command again.`,
       });
-      expect((second as { reason: string }).reason).toContain(`EAS remote start (pid ${process.pid}, in ${root}`);
+      expect((second as { reason: string }).reason).toContain(
+        `EAS remote start (pid ${process.pid}, in ${root}, running for 60m`,
+      );
     } finally {
       releaseFirst();
       await first;

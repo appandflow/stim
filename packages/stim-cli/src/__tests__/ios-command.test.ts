@@ -3203,8 +3203,9 @@ describe('--remote', () => {
       return {
         failed: true,
         code: 'STIM_LOCK_TIMEOUT',
-        reason: 'Waited 18m30s for EAS remote start (pid 4242) to release the EAS project lock.',
-        remedy: 'Check pid 4242; stop it if it is stuck, then run the remote command again.',
+        reason:
+          'EAS remote start (pid 4242) has held the EAS project lock for 40m00s; an EAS session start holds it for at most 39m00s.',
+        remedy: 'If pid 4242 is stuck, stop it, then run the remote command again.',
       };
     };
     const { logs, stderr, exitCode } = await run(
@@ -3214,7 +3215,7 @@ describe('--remote', () => {
     expect(exitCode).toBe(1);
     expect(parseFirst(logs)).toMatchObject({
       code: 'STIM_LOCK_TIMEOUT',
-      remedy: 'Check pid 4242; stop it if it is stuck, then run the remote command again.',
+      remedy: 'If pid 4242 is stuck, stop it, then run the remote command again.',
     });
     expect(stderr).toContain('waiting for EAS remote start (pid 4242) to release the EAS project lock');
     expect(remote.hits).not.toContain('installIosApp');
