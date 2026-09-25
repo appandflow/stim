@@ -211,10 +211,19 @@ devices revoke <id>` after a confirmation.
 
 When the server reports that Tailscale is not running, the tab shows the
 steps: `tailscale up`, restart the server (a button when the app started it),
-then `tailscale serve --bg http://127.0.0.1:7787` once. The server reports the
+then run the `tailscale serve` command the tab shows next. The server reports the
 Tailscale state it started with, so the steps stay until it restarts. Until then, the pairing
 endpoint is `ws://127.0.0.1:7787` and works only on this Mac, for example from
 an iOS Simulator.
+
+While Tailscale runs, the tab shows the route the server's health reports from
+`tailscale serve status`, re-read every 5 seconds. A tailnet-only route shows the
+endpoint phones connect to, such as `wss://<mac>.<tailnet>.ts.net:7443`.
+Without a route, the tab shows the command that serves the server on a
+dedicated tailnet-only port, `tailscale serve --bg --https=7443
+http://127.0.0.1:7787`, or the next free port when 7443 is taken. When a route
+to the server is on a port with Funnel on, the tab says the server is public
+and pairing fails with the same explanation; it never suggests a Funnel port.
 
 ## Settings
 

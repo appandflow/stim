@@ -112,10 +112,14 @@ final class ServerController: ObservableObject {
   }
 
   func refresh() {
-    if case .running(_, owned: false) = state {
+    if case .running(_, let owned) = state {
       let current = generation
       Task {
-        if await StimServerCLI.health(port: port) == nil, current == generation {
+        let health = await StimServerCLI.health(port: port)
+        guard current == generation, isRunning else { return }
+        if let health {
+          state = .running(health, owned: owned)
+        } else if !owned {
           state = .off
           if UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) { start() }
         }

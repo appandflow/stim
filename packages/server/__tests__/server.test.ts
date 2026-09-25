@@ -78,6 +78,10 @@ if (command === 'status') {
   console.log(JSON.stringify({ BackendState: 'Stopped' }));
   process.exit(0);
 }
+if (command === 'serve') {
+  console.log(require('node:fs').readFileSync(process.env.FAKE_SERVE_STATUS, 'utf8'));
+  process.exit(0);
+}
 const peer = JSON.parse(process.env.FAKE_TAILSCALE_PEERS)[ip];
 if (command !== 'whois' || !peer) {
   console.error('peer not found');
@@ -130,6 +134,7 @@ async function start(
     env?: Record<string, string>;
     logLimits?: ServerOptions['logLimits'];
     commandLimits?: ServerOptions['commandLimits'];
+    tailscaleState?: ServerOptions['tailscaleState'];
   } = {},
 ): Promise<number> {
   const stimCli = join(root, 'fake-stim.mjs');
@@ -145,7 +150,7 @@ async function start(
     stimVersion: '9.9.9',
     serverVersion: '1.2.3',
     tailscale,
-    tailscaleState: { state: 'not-running', backendState: 'Stopped' },
+    tailscaleState: overrides.tailscaleState ?? { state: 'not-running', backendState: 'Stopped' },
     env: {
       ...process.env,
       FAKE_STIM_PIDS: pids,
@@ -402,6 +407,26 @@ describe('health', () => {
       }).on('error', reject);
     });
     expect(rebound).toBe(426);
+  });
+
+  test.skipIf(!fakeTailscale)('reports the current tailscale serve route to the server', async () => {
+    const serveStatus = join(root, 'serve.json');
+    writeFileSync(serveStatus, '{}');
+    const port = await start({
+      tailscaleState: { state: 'running', ips: [], dnsName: 'mac.tail1.ts.net', hostName: 'mac' },
+      env: { FAKE_SERVE_STATUS: serveStatus },
+    });
+    const route = async () =>
+      ((await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as { route: unknown }).route;
+    expect(await route()).toEqual({ state: 'missing', port: 7443 });
+    writeFileSync(
+      serveStatus,
+      JSON.stringify({
+        TCP: { '7443': { HTTPS: true } },
+        Web: { 'mac.tail1.ts.net:7443': { Handlers: { '/': { Proxy: `http://127.0.0.1:${port}` } } } },
+      }),
+    );
+    expect(await route()).toEqual({ state: 'routed', port: 7443 });
   });
 });
 

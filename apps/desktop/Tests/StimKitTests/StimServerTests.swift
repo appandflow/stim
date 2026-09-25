@@ -13,10 +13,22 @@ import Testing
     #expect(stopped.protocolVersion == 1 && stopped.stimHome == "/Users/me/.stim")
     #expect(!stopped.tailscale.isRunning)
     #expect(stopped.tailscale.summary == "Tailscale is not running (Stopped).")
+    #expect(stopped.route == nil)
     let running = try StimServerCLI.decoder.decode(
       TailscaleState.self,
       from: Data(#"{"state":"running","dnsName":"mac.tail1.ts.net"}"#.utf8))
     #expect(running.isRunning && running.dnsName == "mac.tail1.ts.net")
+  }
+
+  @Test func namesTheEndpointAndSetupCommandOfEachRoute() throws {
+    func route(_ json: String) throws -> ServeRoute {
+      try StimServerCLI.decoder.decode(ServeRoute.self, from: Data(json.utf8))
+    }
+    #expect(try route(#"{"state":"routed","port":443}"#).endpoint(dnsName: "mac.ts.net") == "wss://mac.ts.net")
+    #expect(try route(#"{"state":"routed","port":7443}"#).endpoint(dnsName: "mac.ts.net") == "wss://mac.ts.net:7443")
+    let funneled = try route(#"{"state":"funneled","ports":[443],"port":7443}"#)
+    #expect(funneled.ports == [443])
+    #expect(funneled.setupCommand(serverPort: 7787) == "tailscale serve --bg --https=7443 http://127.0.0.1:7787")
   }
 
   @Test func encodesTheQRPayloadThePhoneParses() throws {
