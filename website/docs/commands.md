@@ -361,6 +361,14 @@ external server on the reserved port is left running, the port stays reserved
 while that server runs from this project, and a process whose ownership cannot
 be verified is not signalled.
 
+`stop` verifies that a device actually shut down instead of trusting the
+shutdown command: it waits for a simulator to report `Shutdown` and for an
+emulator's process to exit. A device that does not get there is reported as
+`failed`, not shut down, with a remedy naming the manual command to run and
+`stim gc --delete` as the fallback; `--json` carries the same outcome in
+`device.<platform>.status` plus a `remedy` field. `stop` still never deletes
+the device.
+
 With `--slot <name>`, stops only that slot's owned devices and collectors and
 releases its leases. Metro, the reserved port, and sibling slots keep running.
 
