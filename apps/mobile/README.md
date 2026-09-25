@@ -12,7 +12,10 @@ reload and stop a workspace:
   free space of the volumes that hold Stim's workspaces, Stim home and the
   simulators. **+**
   pairs another machine. Below, one list of every workspace on every machine,
-  building and live ones first, with the machine's name, project, branch, Metro, devices and
+  building and live ones first, with the machine's name, project, branch and its
+  git state (a dot with the count of uncommitted files, arrows for commits ahead
+  of and behind the upstream, and **merged** once gc would call the branch
+  merged), Metro, devices and
   their activity (driven by a tool, or idle), build progress, error and warning
   counts, and remote EAS sessions.
 - **Devices**: the Workspaces / Devices toggle under the machine chips switches
@@ -44,7 +47,7 @@ reload and stop a workspace:
   the server issues is kept in the phone's secure storage (Keychain on iOS,
   Keystore on Android) and never shown.
 - **Workspace**: a status card with the branch and the app's folder inside
-  its checkout, Metro's port and health, memory, and the error count, which
+  its checkout, Metro's port and health, the git state as chips, memory, and the error count, which
   opens the errors; build progress with its cache outcome ("Cache hit" or
   "Cold build", "Likely ..." before the run reaches a phase that decides it);
   each platform's last build (local cache, remote cache, compiled, or failed,

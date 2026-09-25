@@ -11,6 +11,7 @@ import { Chip } from '@/components/chip';
 import { ConnectionBanner } from '@/components/connection-banner';
 import { DeviceTile } from '@/components/device-tile';
 import { EmptyState } from '@/components/empty-state';
+import { GitIndicator } from '@/components/git-indicator';
 import { RemoteTile } from '@/components/remote-tile';
 import { useAction, useMacConnection, useStatus } from '@/hooks/mac-connection';
 import { useRecents } from '@/hooks/recents';
@@ -207,6 +208,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
                   {`Metro :${env.metro.port} \u00B7 ${env.metro.running ? (metroHealthy ? 'healthy' : 'unhealthy') : 'stopped'}`}
                 </Chip>
               ) : null}
+              <GitIndicator git={env.worktree?.git} chips />
               {env.memoryMb > 0 ? <Chip>{`${(env.memoryMb / 1024).toFixed(1)} GB`}</Chip> : null}
               {env.logs ? (
                 <Pressable onPress={() => openLogs(true)} accessibilityRole="button" hitSlop={6}>

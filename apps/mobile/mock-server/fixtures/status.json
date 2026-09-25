@@ -257,7 +257,19 @@
           "healthy": false
         },
         "logs": null,
-        "worktree": null,
+        "worktree": {
+          "path": "/Users/dev/Developer/tlon-apps/.worktrees/ios27-uiscene",
+          "branch": "janic/ios27-uiscene",
+          "repository": "/Users/dev/Developer/tlon-apps",
+          "git": {
+            "changed": 0,
+            "untracked": 0,
+            "upstream": "origin/janic/ios27-uiscene",
+            "ahead": null,
+            "behind": null,
+            "mergedInto": "origin/develop"
+          }
+        },
         "remoteDevices": [],
         "build": null
       },
@@ -335,7 +347,19 @@
           "dir": "/Users/dev/.stim/workspaces/tlon-mobile--e35f208f0380e733/logs",
           "errorsSinceMarker": 0
         },
-        "worktree": null,
+        "worktree": {
+          "path": "/Users/dev/Developer/tlon-apps/.worktrees/wide-insets",
+          "branch": "janic/wide-insets",
+          "repository": "/Users/dev/Developer/tlon-apps",
+          "git": {
+            "changed": 3,
+            "untracked": 1,
+            "upstream": "origin/janic/wide-insets",
+            "ahead": 2,
+            "behind": 0,
+            "mergedInto": null
+          }
+        },
         "remoteDevices": [],
         "build": {
           "platform": "ios",
@@ -486,7 +510,19 @@
           "dir": "/Users/dev/.stim/workspaces/tlon-mobile--f9d8a39711c4d1a2/logs",
           "errorsSinceMarker": 1
         },
-        "worktree": null,
+        "worktree": {
+          "path": "/Users/dev/Developer/tlon-apps/.worktrees/wide-split-layout",
+          "branch": "janic/wide-split-layout",
+          "repository": "/Users/dev/Developer/tlon-apps",
+          "git": {
+            "changed": 0,
+            "untracked": 0,
+            "upstream": "origin/janic/wide-split-layout",
+            "ahead": 0,
+            "behind": 4,
+            "mergedInto": null
+          }
+        },
         "remoteDevices": [],
         "build": null
       },
@@ -545,7 +581,19 @@
           "dir": "/Users/dev/.stim/workspaces/tlon-mobile--5a8941f796bf6533/logs",
           "errorsSinceMarker": 0
         },
-        "worktree": null,
+        "worktree": {
+          "path": "/Users/dev/Developer/tlon-apps/.worktrees/chat-perf-demo",
+          "branch": "vince/polish-chatting-experience",
+          "repository": "/Users/dev/Developer/tlon-apps",
+          "git": {
+            "changed": 10,
+            "untracked": 0,
+            "upstream": "origin/vince/polish-chatting-experience",
+            "ahead": 0,
+            "behind": 0,
+            "mergedInto": null
+          }
+        },
         "remoteDevices": [],
         "build": null
       },
@@ -593,7 +641,19 @@
           "dir": "/Users/dev/.stim/workspaces/mobile--68f0bcea1bc9d8bd/logs",
           "errorsSinceMarker": 0
         },
-        "worktree": null,
+        "worktree": {
+          "path": "/Users/dev/Developer/stim/.claude/worktrees/1123-mobile-app",
+          "branch": "feat/1123-mobile-app",
+          "repository": "/Users/dev/Developer/stim",
+          "git": {
+            "changed": 1,
+            "untracked": 0,
+            "upstream": "origin/feat/1123-mobile-app",
+            "ahead": null,
+            "behind": null,
+            "mergedInto": "origin/main"
+          }
+        },
         "remoteDevices": [
           {
             "platform": "android",
@@ -671,6 +731,7 @@
   "edits": [
     "environments[path*=1123-mobile-app].remoteDevices: added by hand in the RemoteDeviceState shape; the capture machine had no EAS session",
     "environments[path*=chat-perf-demo].android: added by hand, so one workspace runs both platforms and reload needs a platform",
-    "environments[path*=react-native-reserved-regions].lastBuilds and environments[path*=wide-insets].lastBuilds: added by hand in the LastBuild shape; the capture predates the field; the reserved-regions Android missReason follows the shape of a real miss recorded by stim ios after adding expo-clipboard"
+    "environments[path*=react-native-reserved-regions].lastBuilds and environments[path*=wide-insets].lastBuilds: added by hand in the LastBuild shape; the capture predates the field; the reserved-regions Android missReason follows the shape of a real miss recorded by stim ios after adding expo-clipboard",
+    "environments[path*=wide-insets|wide-split-layout|chat-perf-demo|ios27-uiscene|1123-mobile-app].worktree: added by hand with a WorktreeGit git field; the capture predates nested worktree matching and the field"
   ]
 }

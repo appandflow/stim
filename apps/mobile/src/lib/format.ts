@@ -1,4 +1,4 @@
-import type { BuildPlan, BuildReport, DeviceActivity, LastBuild } from '@/protocol/types';
+import type { BuildPlan, BuildReport, DeviceActivity, LastBuild, WorktreeGit } from '@/protocol/types';
 
 const ACTIVE_WINDOW_MS = 10 * 60 * 1000;
 
@@ -98,4 +98,31 @@ export function planExpectation(plan: BuildPlan): string | null {
   if (plan.refusal || !plan.outcome) return null;
   if (plan.expectedMs === null) return `No ${plan.outcome} run of this project recorded yet`;
   return `~${clockDuration(plan.expectedMs)}, median of ${plan.basis} ${plan.outcome} run${plan.basis === 1 ? '' : 's'}`;
+}
+
+export interface GitBadges {
+  uncommitted: number;
+  arrows: string | null;
+  merged: boolean;
+  label: string;
+}
+
+/** What a workspace's git indicator shows, or null for a clean branch level with its upstream. */
+export function gitBadges(git: WorktreeGit | null | undefined): GitBadges | null {
+  if (!git) return null;
+  const uncommitted = git.changed + git.untracked;
+  const ahead = git.ahead ?? 0;
+  const behind = git.behind ?? 0;
+  const merged = git.mergedInto !== null;
+  if (!uncommitted && !ahead && !behind && !merged) return null;
+  const arrows = [ahead ? `\u2191${ahead}` : '', behind ? `\u2193${behind}` : ''].filter(Boolean).join(' ');
+  const label = [
+    uncommitted ? `${uncommitted} uncommitted ${uncommitted === 1 ? 'change' : 'changes'}` : '',
+    ahead ? `${ahead} ahead` : '',
+    behind ? `${behind} behind` : '',
+    merged ? `merged into ${git.mergedInto}` : '',
+  ]
+    .filter(Boolean)
+    .join(', ');
+  return { uncommitted, arrows: arrows || null, merged, label };
 }
