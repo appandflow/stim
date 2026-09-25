@@ -31,11 +31,18 @@ re-point `latest` or `next` backwards onto it -- confirm with
 npm can take several minutes to serve a new version's metadata and longer for
 its tarball; for 1.9.0 they appeared about 5 and 8 minutes after the publish,
 and `npx stim@1.9.0` failed with E404 until then. The `smoke` job waits up to
-15 minutes per package. If it still fails while every publish step succeeded,
-the packages are published: wait, then use "Re-run failed jobs" on the run, or
-run RELEASE.md section 4 step 8 by hand. The re-run needs no release approval
-because the `smoke` job has no environment. Do not republish or bump the
-version.
+15 minutes for each check. Read which check failed:
+
+- A version or tarball that is still not visible, or an `npx` E404: the
+  packages are published and npm is slow. Wait, then use "Re-run failed jobs"
+  on the run, or run RELEASE.md section 4 step 8 by hand. The re-run needs no
+  release approval because the `smoke` job has no environment. Do not
+  republish or bump the version.
+- A dist-tag that points elsewhere: see the section above and
+  [Stale or wrong dist-tags](#stale-or-wrong-dist-tags).
+- `npx stim@X.Y.Z --version` that installs but fails or prints another
+  version: the published package is broken. A published version cannot be
+  replaced, so fix it and release a new version.
 
 ## Manual publish fallback
 

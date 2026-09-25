@@ -8,7 +8,7 @@
 # real version. npm would upload the range verbatim, so npm only publishes the
 # already-packed tarball.
 #
-# Third-party actions are pinned by commit SHA and the job is deliberately
+# Third-party actions are pinned by commit SHA and the publish job is deliberately
 # minimal -- nothing here may run code that could tamper with the tarballs.
 name: Release
 
@@ -159,11 +159,11 @@ jobs:
             npm publish "$RUNNER_TEMP/tarballs/stim-cli.tgz" --provenance --access public --tag "$DIST_TAG"
           fi
 
-  # The registry can take several minutes to serve a new version's metadata and
-  # longer for its tarball (v1.9.0: ~5 and ~8 minutes). A separate job without
-  # id-token lets `npx` run the published CLI and its freshly resolved
-  # dependencies with no publish credential, and lets a slow registry be retried
-  # with "Re-run failed jobs" without another release approval.
+  # npm can take several minutes to serve a new version's metadata and longer
+  # for its tarball. A separate job without id-token lets `npx` run the
+  # published CLI and its freshly resolved dependencies with no publish
+  # credential, and lets a slow registry be retried with "Re-run failed jobs"
+  # without another release approval.
   smoke:
     needs: publish
     runs-on: ubuntu-latest
@@ -176,6 +176,8 @@ jobs:
       npm_config_prefer_online: 'true'
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
@@ -208,7 +210,7 @@ jobs:
 
           tarball_served() {
             local url
-            url=$(npm view "$1@$version" dist.tarball 2>/dev/null) && [ -n "$url" ] && curl -fsSL -o /dev/null "$url"
+            url=$(npm view "$1@$version" dist.tarball 2>/dev/null) && [ -n "$url" ] && curl -fsSL --max-time 60 -o /dev/null "$url"
           }
 
           dist_tag_set() {
