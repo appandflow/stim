@@ -45,8 +45,8 @@ import Testing
       {"platform":"ios","fingerprint":"1b62","cacheKey":"k","cacheHit":"remote","provider":"eas","cacheSkipped":false,
        "prebuild":null,"outcome":"hit","expectedMs":2656,"basis":1}
       """)
-    #expect(hit.summary == "Remote cache hit (eas)")
-    #expect(hit.expectation == "~0m 2s, median of 1 hit run")
+    #expect(hit.nextBuild == "cache hit (remote), ~0m 2s")
+    #expect(hit.detail == "From eas. Median of 1 hit run")
 
     let miss = try decode(
       BuildPlan.self,
@@ -54,8 +54,8 @@ import Testing
       {"platform":"android","fingerprint":"f","cacheKey":"k","cacheHit":false,"provider":null,"cacheSkipped":false,
        "prebuild":"regenerate","outcome":"cold","expectedMs":null,"basis":0}
       """)
-    #expect(miss.summary == "Cache miss: compiles, regenerates the native dir")
-    #expect(miss.expectation == "No cold run of this project recorded yet")
+    #expect(miss.nextBuild == "cold build, regenerates the native dir")
+    #expect(miss.detail == "No cold run of this project recorded yet")
 
     let refused = try decode(
       BuildPlan.self,
@@ -64,8 +64,8 @@ import Testing
        "prebuild":null,"outcome":null,"expectedMs":null,"basis":0,
        "refusal":{"code":"STIM_EAS_BUILD_MISSING","message":"No compatible EAS ios build.","remedy":"Run eas build."}}
       """)
-    #expect(refused.summary == "Would refuse: STIM_EAS_BUILD_MISSING")
-    #expect(refused.expectation == nil)
+    #expect(refused.nextBuild == "would refuse (STIM_EAS_BUILD_MISSING)")
+    #expect(refused.detail == nil)
   }
 
   @Test func marksTheRunningOutcomeLikelyUntilTheRunReachesACacheDecidingPhase() throws {
@@ -85,7 +85,7 @@ import Testing
     #expect(build.outcomeLabel == nil)
   }
 
-  @Test func returnsTheCLIRefusalWhenAPlanCannotBeComputed() throws {
+  @Test func returnsTheCLIRefusalWhenAPlanCannotBeComputed() async throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -98,11 +98,115 @@ import Testing
       """
     FileManager.default.createFile(atPath: stim, contents: Data(script.utf8), attributes: [.posixPermissions: 0o755])
 
-    let result = try StimCLI(environment: ["PATH": "/usr/bin:/bin"], override: stim)
+    let result = try await StimCLI(environment: ["PATH": "/usr/bin:/bin"], override: stim)
       .plan(platform: "android", workspace: dir.path)
 
     #expect(result == .refused(CommandRefusal(code: "STIM_NO_DEVICE", message: "No system image is installed.", remedy: "Install one.")))
     let args = try String(contentsOf: dir.appendingPathComponent("args"), encoding: .utf8)
     #expect(args == "android --plan --json\n")
+  }
+
+  @Test func terminatesThePlanProcessWhenTheCheckIsCancelled() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let stim = dir.appendingPathComponent("stim").path
+    let pidFile = dir.appendingPathComponent("pid").path
+    let script = """
+      #!/bin/sh
+      echo $$ > "\(pidFile)"
+      exec sleep 30
+      """
+    FileManager.default.createFile(atPath: stim, contents: Data(script.utf8), attributes: [.posixPermissions: 0o755])
+    let cli = StimCLI(environment: ["PATH": "/usr/bin:/bin"], override: stim)
+
+    let task = Task { try await cli.plan(platform: "ios", workspace: dir.path) }
+    while !FileManager.default.fileExists(atPath: pidFile) { try await Task.sleep(for: .milliseconds(20)) }
+    let pid = try #require(Int32(String(contentsOfFile: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+    task.cancel()
+
+    await #expect(throws: CancellationError.self) { try await task.value }
+    #expect(kill(pid, 0) != 0)
+  }
+}
+
+@MainActor
+@Suite struct BuildPlanChecksTests {
+  private final class Planner: @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls: [String] = []
+    private var active = 0
+    private(set) var mostActive = 0
+    var delay: Duration = .milliseconds(20)
+
+    var recorded: [String] { lock.withLock { calls } }
+
+    func plan(_ platform: String, _ workspace: String) async throws -> BuildPlanOutcome {
+      lock.withLock {
+        calls.append("\(workspace) \(platform)")
+        active += 1
+        mostActive = max(mostActive, active)
+      }
+      defer { lock.withLock { active -= 1 } }
+      try await Task.sleep(for: delay)
+      return .refused(CommandRefusal(code: "STIM_TEST", message: platform, remedy: nil))
+    }
+  }
+
+  private func settled(_ checks: BuildPlanChecks, _ workspace: String, _ platforms: [String]) async throws {
+    for _ in 0..<200 {
+      if platforms.allSatisfy({ checks.entry(workspace: workspace, platform: $0)?.state != .checking }) { return }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    Issue.record("checks did not settle")
+  }
+
+  @Test func runsOnePlanPerBuildAndReusesAFreshResult() async throws {
+    let planner = Planner()
+    var now = Date(timeIntervalSince1970: 0)
+    let checks = BuildPlanChecks(planner: planner.plan, now: { now })
+
+    checks.check(workspace: "/w", builds: ["ios": "a", "android": "b"])
+    checks.check(workspace: "/w", builds: ["ios": "a", "android": "b"])
+    try await settled(checks, "/w", ["ios", "android"])
+    #expect(planner.recorded == ["/w android", "/w ios"])
+    #expect(planner.mostActive == 1)
+
+    now += 59
+    checks.check(workspace: "/w", builds: ["ios": "a", "android": "b"])
+    #expect(planner.recorded.count == 2)
+
+    checks.check(workspace: "/w", builds: ["ios": "a2", "android": "b"])
+    try await settled(checks, "/w", ["ios"])
+    #expect(planner.recorded == ["/w android", "/w ios", "/w ios"])
+
+    now += 61
+    checks.check(workspace: "/w", builds: ["android": "b"])
+    checks.check(workspace: "/w", builds: ["ios": "a2"], force: true)
+    try await settled(checks, "/w", ["ios", "android"])
+    #expect(planner.recorded.count == 5)
+    #expect(planner.mostActive == 1)
+  }
+
+  @Test func cancellingForgetsUnfinishedChecksAndLetsTheNextOneRun() async throws {
+    let planner = Planner()
+    let checks = BuildPlanChecks(planner: planner.plan)
+    checks.check(workspace: "/w", builds: ["android": "b"])
+    try await settled(checks, "/w", ["android"])
+
+    planner.delay = .seconds(30)
+    checks.check(workspace: "/w", builds: ["ios": "a", "android": "b2"])
+    checks.cancel(workspace: "/w")
+    #expect(checks.entry(workspace: "/w", platform: "ios") == nil)
+    #expect(checks.entry(workspace: "/w", platform: "android") == nil)
+
+    planner.delay = .milliseconds(20)
+    checks.check(workspace: "/w", builds: ["ios": "a"])
+    try await settled(checks, "/w", ["ios"])
+    guard case .done = checks.entry(workspace: "/w", platform: "ios")?.state else {
+      Issue.record("the check after cancelling did not finish")
+      return
+    }
+    #expect(planner.mostActive == 1)
   }
 }

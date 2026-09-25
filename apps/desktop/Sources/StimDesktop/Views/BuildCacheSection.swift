@@ -1,23 +1,27 @@
 import StimKit
 import SwiftUI
 
-/// Each platform's last build and, on request, what `stim <platform> --plan` predicts for the next one.
+/// Each platform's last build and what `stim <platform> --plan` predicts for the next one. Opening the
+/// section checks every platform with a last build or a device, unless a build is running.
 struct BuildCacheSection: View {
-  var cli: Task<StimCLI, Never>
   var env: Workspace
-  @State private var checks: [String: Check] = [:]
+  @EnvironmentObject private var checks: BuildPlanChecks
 
-  private enum Check {
-    case running
-    case done(BuildPlanOutcome)
-    case failed(String)
+  private var used: Set<String> {
+    Set(env.devices.map(\.platform)).union(["ios", "android"].filter { env.lastBuilds?.build(for: $0) != nil })
   }
 
   private var platforms: [String] {
-    let used = Set(env.devices.map(\.platform)).union(
-      ["ios", "android"].filter { env.lastBuilds?.build(for: $0) != nil })
     let shown = ["ios", "android"].filter(used.contains)
     return shown.isEmpty ? ["ios", "android"] : shown
+  }
+
+  private var running: Build? { env.build.flatMap { $0.isRunning ? $0 : nil } }
+
+  private func buildKey(_ platform: String) -> String { env.lastBuilds?.build(for: platform)?.planKey ?? "" }
+
+  private var trigger: [String] {
+    [running == nil ? "idle" : "building"] + ["ios", "android"].filter(used.contains).map(buildKey)
   }
 
   var body: some View {
@@ -27,27 +31,29 @@ struct BuildCacheSection: View {
         card(platform)
       }
     }
+    .onAppear(perform: checkUsed)
+    .onChange(of: trigger) { checkUsed() }
+    .onDisappear { checks.cancel(workspace: env.path) }
+  }
+
+  private func checkUsed() {
+    if running != nil { return checks.cancel(workspace: env.path) }
+    checks.check(workspace: env.path, builds: Dictionary(uniqueKeysWithValues: used.map { ($0, buildKey($0)) }))
   }
 
   private func card(_ platform: String) -> some View {
-    VStack(alignment: .leading, spacing: 6) {
+    let entry = checks.entry(workspace: env.path, platform: platform)
+    return VStack(alignment: .leading, spacing: 6) {
       HStack {
         Text(platform == "ios" ? "iOS" : "Android").font(Theme.body(12, weight: .semibold))
         Spacer()
         Button {
-          check(platform)
+          checks.check(workspace: env.path, builds: [platform: buildKey(platform)], force: true)
         } label: {
-          HStack(spacing: 5) {
-            if isRunning(platform) {
-              ProgressView().controlSize(.mini)
-            } else {
-              Image(systemName: "sparkle.magnifyingglass")
-            }
-            Text("Check next build")
-          }
+          Image(systemName: "arrow.clockwise").accessibilityLabel("Check the next build again")
         }
         .buttonStyle(.stim())
-        .disabled(isRunning(platform))
+        .disabled(running != nil || entry?.state == .checking)
         .help("stim \(platform) --plan: fingerprint and look up the caches without building")
       }
       if let last = env.lastBuilds?.build(for: platform) {
@@ -64,34 +70,14 @@ struct BuildCacheSection: View {
       } else {
         Text("No build recorded").foregroundStyle(Theme.tertiary)
       }
-      switch checks[platform] {
-      case .running:
-        HStack(spacing: 6) {
-          ProgressView().controlSize(.mini)
-          Text("Checking\u{2026}").foregroundStyle(Theme.secondary)
+      if let running {
+        if running.platform == platform {
+          BuildProgressBar(build: running, compact: true)
+        } else {
+          Text("Next build: checked after the running build").foregroundStyle(Theme.tertiary)
         }
-      case .done(.plan(let plan)):
-        VStack(alignment: .leading, spacing: 2) {
-          Text("Next: \(plan.summary)")
-            .foregroundStyle(plan.refusal != nil ? Theme.warn : plan.cacheHit == .none ? Theme.warn : Theme.live)
-          if let expectation = plan.expectation {
-            Text(expectation).foregroundStyle(Theme.secondary)
-          }
-          if let refusal = plan.refusal {
-            Text([refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " "))
-              .foregroundStyle(Theme.secondary)
-              .textSelection(.enabled)
-          }
-        }
-      case .done(.refused(let refusal)):
-        Text("Cannot plan: \([refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " "))")
-          .foregroundStyle(Theme.warn)
-          .textSelection(.enabled)
-          .help(refusal.code)
-      case .failed(let message):
-        Text(message).foregroundStyle(Theme.error)
-      case nil:
-        EmptyView()
+      } else {
+        nextBuild(entry?.state)
       }
     }
     .padding(12)
@@ -99,24 +85,34 @@ struct BuildCacheSection: View {
     .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
   }
 
-  private func isRunning(_ platform: String) -> Bool {
-    if case .running = checks[platform] { return true }
-    return false
-  }
-
-  private func check(_ platform: String) {
-    let path = env.path
-    checks[platform] = .running
-    Task {
-      let cli = await cli.value
-      let result = await Task.detached { () -> Check in
-        do {
-          return .done(try cli.plan(platform: platform, workspace: path))
-        } catch {
-          return .failed(error.localizedDescription)
+  @ViewBuilder
+  private func nextBuild(_ state: BuildPlanChecks.State?) -> some View {
+    switch state {
+    case .checking:
+      HStack(spacing: 6) {
+        ProgressView().controlSize(.mini)
+        Text("Checking next build\u{2026}").foregroundStyle(Theme.tertiary)
+      }
+    case .done(.plan(let plan)):
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Next build: \(plan.nextBuild)")
+          .foregroundStyle(plan.refusal != nil || plan.cacheHit == .none ? Theme.warn : Theme.live)
+          .help(plan.detail ?? "")
+        if let refusal = plan.refusal {
+          Text([refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " "))
+            .foregroundStyle(Theme.secondary)
+            .textSelection(.enabled)
         }
-      }.value
-      checks[platform] = result
+      }
+    case .done(.refused(let refusal)):
+      Text("Cannot plan: \([refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " "))")
+        .foregroundStyle(Theme.warn)
+        .textSelection(.enabled)
+        .help(refusal.code)
+    case .failed(let message):
+      Text(message).foregroundStyle(Theme.error)
+    case nil:
+      EmptyView()
     }
   }
 }

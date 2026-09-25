@@ -16,6 +16,7 @@ struct RootView: View {
   @ObservedObject private var actions: ActionCenter
   @ObservedObject private var autopilot: AutopilotRunner
   @StateObject private var storage: StorageStore
+  @StateObject private var planChecks: BuildPlanChecks
   @State private var selection: SidebarItem? = .wall
   @State private var restoredProject = false
   @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.allDevices
@@ -42,6 +43,10 @@ struct RootView: View {
     self.autopilot = autopilot
     _metrics = StateObject(wrappedValue: MetricsStore(status: store, cli: cli))
     _storage = StateObject(wrappedValue: StorageStore(status: store, cli: cli))
+    _planChecks = StateObject(
+      wrappedValue: BuildPlanChecks { platform, workspace in
+        try await cli.value.plan(platform: platform, workspace: workspace)
+      })
   }
 
   var body: some View {
@@ -76,6 +81,7 @@ struct RootView: View {
     .font(Theme.body())
     .foregroundStyle(Theme.text)
     .environmentObject(actions)
+    .environmentObject(planChecks)
     .sheet(item: $actions.presented) { run in
       ActivitySheet(run: run).environmentObject(actions)
     }
