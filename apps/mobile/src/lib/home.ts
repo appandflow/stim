@@ -145,6 +145,31 @@ export interface DeviceTileItem {
 }
 
 /**
+ * The devices grid's rows, in order: two portrait tiles side by side, and a tile whose last frame was wider than
+ * tall (a landscape tablet, an unfolded iPhone Duo) alone across the row. `aspects` holds each tile's last frame
+ * width over height; a tile with no frame yet counts as portrait.
+ */
+export function gridRows(tiles: DeviceTileItem[], aspects: ReadonlyMap<string, number>): DeviceTileItem[][] {
+  const rows: DeviceTileItem[][] = [];
+  let pair: DeviceTileItem[] = [];
+  for (const tile of tiles) {
+    if ((aspects.get(tile.key) ?? 0) > 1) {
+      if (pair.length) rows.push(pair);
+      pair = [];
+      rows.push([tile]);
+    } else {
+      pair.push(tile);
+      if (pair.length === 2) {
+        rows.push(pair);
+        pair = [];
+      }
+    }
+  }
+  if (pair.length) rows.push(pair);
+  return rows;
+}
+
+/**
  * Every running device of the workspaces the machine and project filters keep, whatever their activity,
  * errors or remote sessions, in the list's order.
  */

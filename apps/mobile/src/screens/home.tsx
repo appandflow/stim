@@ -27,6 +27,7 @@ import { useMacs } from '@/hooks/mac-connection';
 import {
   filtersActive,
   filterWorkspaces,
+  gridRows,
   mergeWorkspaces,
   projectNames,
   runningDevices,
@@ -50,6 +51,12 @@ export function Home() {
   const { macs, connections } = useMacs();
   const { filters, update, view, setView } = useHomeFilters();
   const [visible, setVisible] = useState<Set<string>>(new Set());
+  const [aspects, setAspects] = useState<ReadonlyMap<string, number>>(new Map());
+  const onAspect = useCallback(
+    (key: string, aspect: number) =>
+      setAspects((current) => (current.get(key) === aspect ? current : new Map(current).set(key, aspect))),
+    [],
+  );
   const [focused, setFocused] = useState(true);
   useFocusEffect(
     useCallback(() => {
@@ -58,8 +65,8 @@ export function Home() {
     }, []),
   );
   const onViewable = useCallback(
-    ({ viewableItems }: { viewableItems: ViewToken<DeviceTileItem>[] }) =>
-      setVisible(new Set(viewableItems.map((token) => token.key))),
+    ({ viewableItems }: { viewableItems: ViewToken<DeviceTileItem[]>[] }) =>
+      setVisible(new Set(viewableItems.flatMap((token) => token.item.map((tile) => tile.key)))),
     [],
   );
 
@@ -79,6 +86,7 @@ export function Home() {
     ].filter((s) => s.data.length > 0);
   }, [shown]);
   const tiles = useMemo(() => runningDevices(items, filters, macIds), [items, filters, macIds]);
+  const rows = useMemo(() => gridRows(tiles, aspects), [tiles, aspects]);
   const noFilterSet = useMemo(() => !filtersActive(filters, macIds, projectNames(items)), [filters, macIds, items]);
   const loading =
     macs === null ||
@@ -172,22 +180,27 @@ export function Home() {
       <View style={[styles.screen, { backgroundColor: colors.background }]}>
         {header}
         <FlatList
-          data={tiles}
-          keyExtractor={(tile) => tile.key}
-          numColumns={2}
+          data={rows}
+          keyExtractor={(row) => row.map((tile) => tile.key).join('\n\n')}
           contentInsetAdjustmentBehavior="automatic"
           contentContainerStyle={styles.list}
-          columnWrapperStyle={styles.gridRow}
           ListHeaderComponent={listHeader}
           onViewableItemsChanged={onViewable}
           viewabilityConfig={VIEWABILITY}
-          renderItem={({ item: tile }) => (
-            <DeviceGridTile
-              tile={tile}
-              connection={byMac.get(tile.item.macId)?.connection ?? null}
-              visible={focused && visible.has(tile.key)}
-              onPress={() => openWorkspace(tile.item, false)}
-            />
+          renderItem={({ item: row }) => (
+            <View style={styles.gridRow}>
+              {row.map((tile) => (
+                <DeviceGridTile
+                  key={tile.key}
+                  tile={tile}
+                  wide={(aspects.get(tile.key) ?? 0) > 1}
+                  connection={byMac.get(tile.item.macId)?.connection ?? null}
+                  visible={focused && visible.has(tile.key)}
+                  onAspect={onAspect}
+                  onPress={() => openWorkspace(tile.item, false)}
+                />
+              ))}
+            </View>
           )}
           ListEmptyComponent={
             loading ? (
@@ -289,7 +302,7 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 15, fontWeight: '500' },
   chips: { gap: 10, paddingHorizontal: 20, paddingBottom: 4 },
   views: { flexDirection: 'row', gap: 8, paddingHorizontal: 20, paddingTop: 16 },
-  gridRow: { gap: 12, paddingHorizontal: 16, paddingTop: 12 },
+  gridRow: { flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingTop: 12 },
   loading: { marginTop: 48 },
   empty: { alignItems: 'center', padding: 32, gap: 8 },
   illustration: { width: 160, height: 160, marginBottom: 8 },
