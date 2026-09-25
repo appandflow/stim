@@ -1,3 +1,4 @@
+import { Image } from 'expo-image';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import {
@@ -9,6 +10,7 @@ import {
   SectionList,
   StyleSheet,
   Text,
+  useColorScheme,
   View,
   type ViewToken,
 } from 'react-native';
@@ -35,10 +37,13 @@ import { radius, useColors } from '@/theme';
 
 const MENU_ICON = require('@/assets/icons/menu.png');
 const FUNNEL_ICON = require('@/assets/icons/funnel.png');
+const ILLUSTRATION_LIGHT = require('@/assets/images/empty-illustration.png');
+const ILLUSTRATION_DARK = require('@/assets/images/empty-illustration-dark.png');
 const VIEWABILITY = { itemVisiblePercentThreshold: 10 };
 
 export function Home() {
   const colors = useColors();
+  const illustration = useColorScheme() === 'dark' ? ILLUSTRATION_DARK : ILLUSTRATION_LIGHT;
   const router = useRouter();
   const { macs, connections } = useMacs();
   const { filters, update, view, setView } = useHomeFilters();
@@ -72,6 +77,7 @@ export function Home() {
     ].filter((s) => s.data.length > 0);
   }, [shown]);
   const tiles = useMemo(() => runningDevices(items, filters, macIds), [items, filters, macIds]);
+  const noFilterSet = useMemo(() => !filtersActive(filters, macIds, projectNames(items)), [filters, macIds, items]);
   const loading =
     macs === null ||
     (items.length === 0 &&
@@ -186,6 +192,7 @@ export function Home() {
               <ActivityIndicator style={styles.loading} color={colors.primary} />
             ) : (
               <View style={styles.empty}>
+                <Image source={illustration} style={styles.illustration} contentFit="contain" />
                 <Text style={[styles.emptyTitle, { color: colors.text }]}>No device running</Text>
                 <Text style={[styles.emptyMessage, { color: colors.secondary }]}>
                   Simulators and emulators appear here while they run, on every paired machine the filters keep.
@@ -229,16 +236,21 @@ export function Home() {
             <ActivityIndicator style={styles.loading} color={colors.primary} />
           ) : (
             <View style={styles.empty}>
+              <Image source={illustration} style={styles.illustration} contentFit="contain" />
               <Text style={[styles.emptyTitle, { color: colors.text }]}>
                 {items.length
-                  ? 'Nothing matches the filters'
+                  ? noFilterSet
+                    ? 'No live workspaces'
+                    : 'Nothing matches the filters'
                   : connections.some((c) => c.state.kind === 'open')
                     ? 'Nothing running'
                     : 'No machine connected'}
               </Text>
               <Text style={[styles.emptyMessage, { color: colors.secondary }]}>
                 {items.length
-                  ? 'Change the filters to see more workspaces.'
+                  ? noFilterSet
+                    ? 'Start one with `stim ios` or `stim android` in a worktree.'
+                    : 'Change the filters to see more workspaces.'
                   : !connections.some((c) => c.state.kind === 'open')
                     ? 'The chips above show why each machine is offline.'
                     : 'Workspaces appear here when an agent runs stim start, stim ios or stim android on a paired machine.'}
@@ -278,6 +290,7 @@ const styles = StyleSheet.create({
   gridRow: { gap: 12, paddingHorizontal: 16, paddingTop: 12 },
   loading: { marginTop: 48 },
   empty: { alignItems: 'center', padding: 32, gap: 8 },
+  illustration: { width: 160, height: 160, marginBottom: 8 },
   emptyTitle: { fontSize: 17, fontWeight: '600' },
   emptyMessage: { fontSize: 14, lineHeight: 20, textAlign: 'center' },
   footer: { paddingHorizontal: 20, paddingVertical: 16 },
