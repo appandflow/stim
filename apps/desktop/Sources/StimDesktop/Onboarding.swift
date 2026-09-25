@@ -16,9 +16,18 @@ final class Onboarding: ObservableObject {
     var viewerKeys: [String]
   }
 
+  enum PopupKind {
+    case stim
+    case relaunch
+    case server
+    case viewer
+  }
+
   static let actionKey = "onboarding"
 
   @Published private(set) var report: Report?
+  /// Dismissed for this launch only; a relaunch clears it, so a persisting problem returns.
+  @Published private(set) var dismissedPopups: Set<PopupKind> = []
   private let environment: Task<[String: String], Never>
   private let cli: Task<StimCLI, Never>
   private let actions: ActionCenter
@@ -102,6 +111,14 @@ final class Onboarding: ObservableObject {
   func dismissViewerOffer() {
     UserDefaults.standard.set(true, forKey: AppPreferences.Key.viewerOfferDismissed)
     report?.viewerKeys = []
+  }
+
+  func dismissPopup(_ kind: PopupKind) {
+    if kind == .viewer {
+      dismissViewerOffer()
+    } else {
+      dismissedPopups.insert(kind)
+    }
   }
 
   var canRelaunch: Bool { Bundle.main.bundleURL.pathExtension == "app" }

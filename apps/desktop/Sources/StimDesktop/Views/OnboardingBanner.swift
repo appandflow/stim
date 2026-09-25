@@ -1,54 +1,70 @@
 import StimKit
 import SwiftUI
 
+/// A floating toast anchored to the bottom of the main content column: one problem at a time,
+/// most important first, so it never resizes content or covers the toolbar or inspector.
 struct OnboardingBanner: View {
   @ObservedObject var onboarding: Onboarding
   @EnvironmentObject private var actions: ActionCenter
   @AppStorage(AppPreferences.Key.servesPhones) private var servesPhones = false
+  @State private var showsCommand = false
 
   var body: some View {
-    VStack(spacing: 10) {
-      if let report = onboarding.report {
-        if !report.stim.isCompatible {
-          stimCard(report)
-        } else if report.needsRelaunch {
-          relaunchCard(report)
-        }
-        if let server = report.server, !server.isCompatible {
-          serverCard(server, path: report.serverPath)
-        }
-        if report.stim.isCompatible, !report.needsRelaunch, !report.viewerKeys.isEmpty {
-          viewerCard(report.viewerKeys)
-        }
+    Group {
+      if let report = onboarding.report, let kind = currentKind(report) {
+        popup(kind, report)
+          .transition(.move(edge: .bottom).combined(with: .opacity))
       }
     }
-    .padding(.horizontal, 20)
-    .padding(.top, onboarding.report.map(\.isEmpty) == false ? 12 : 0)
+    .frame(maxWidth: .infinity)
+    .animation(.easeOut(duration: 0.2), value: onboarding.report.flatMap(currentKind))
     .onChange(of: servesPhones) { onboarding.check() }
   }
 
-  private func stimCard(_ report: Onboarding.Report) -> some View {
+  private func currentKind(_ report: Onboarding.Report) -> Onboarding.PopupKind? {
+    if !report.stim.isCompatible, !onboarding.dismissedPopups.contains(.stim) { return .stim }
+    if report.needsRelaunch, !onboarding.dismissedPopups.contains(.relaunch) { return .relaunch }
+    if let server = report.server, !server.isCompatible, !onboarding.dismissedPopups.contains(.server) {
+      return .server
+    }
+    if report.stim.isCompatible, !report.needsRelaunch, !report.viewerKeys.isEmpty,
+      !onboarding.dismissedPopups.contains(.viewer)
+    {
+      return .viewer
+    }
+    return nil
+  }
+
+  @ViewBuilder
+  private func popup(_ kind: Onboarding.PopupKind, _ report: Onboarding.Report) -> some View {
+    switch kind {
+    case .stim: stimPopup(report)
+    case .relaunch: relaunchPopup(report)
+    case .server: serverPopup(report)
+    case .viewer: viewerPopup(report.viewerKeys)
+    }
+  }
+
+  private func stimPopup(_ report: Onboarding.Report) -> some View {
     let missing = report.stim == .missing
     let minimum = StimCLI.minimumVersion.description
-    return card(icon: missing ? "shippingbox" : "arrow.up.circle", tint: Theme.lavender) {
-      Text(missing ? "Install stim to get started" : "Update stim to use Stim Desktop").font(Theme.heading(15))
-      Text(
-        "Stim gives each React Native or Expo workspace its own Metro port and its own simulator or emulator, caches native builds, and keeps structured logs. Stim Desktop shows and drives what the stim command-line tool manages, so it needs stim \(minimum) or later."
-      )
-      .foregroundStyle(Theme.secondary)
-      Text(detail(report.stim, name: "stim", path: report.stimPath))
-        .font(Theme.body(11.5)).foregroundStyle(Theme.tertiary)
+    return popupCard(kind: .stim, icon: missing ? "shippingbox" : "arrow.up.circle", tint: Theme.lavender) {
+      Text(missing ? "Install stim to get started" : "Update stim to use Stim Desktop").font(Theme.heading(14))
+      Text("Stim Desktop needs stim \(minimum) or later to show and drive your workspaces.")
+        .foregroundStyle(Theme.secondary)
+      disclosure { Text(detail(report.stim, name: "stim", path: report.stimPath)) }
     } buttons: {
-      runButton(missing ? "Install stim" : "Update stim", action: onboarding.installStim)
+      runButton(missing ? "Install stim" : "Update stim", variant: .primary, key: .stim, action: onboarding.installStim)
       Button("Choose stim executable\u{2026}", action: onboarding.chooseStim).buttonStyle(.stim())
     }
   }
 
-  private func relaunchCard(_ report: Onboarding.Report) -> some View {
-    card(icon: "arrow.clockwise", tint: Theme.lavender) {
-      Text("Restart Stim Desktop to use the new stim").font(Theme.heading(15))
-      Text("Stim Desktop resolves stim once at launch. It now finds \(abbreviatingHome(report.stimPath ?? "stim")).")
+  private func relaunchPopup(_ report: Onboarding.Report) -> some View {
+    popupCard(kind: .relaunch, icon: "arrow.clockwise", tint: Theme.lavender) {
+      Text("Restart Stim Desktop to use the new stim").font(Theme.heading(14))
+      Text("Stim Desktop resolves stim once at launch, and it now finds a different one.")
         .foregroundStyle(Theme.secondary)
+      disclosure { Text(abbreviatingHome(report.stimPath ?? "stim")) }
     } buttons: {
       if onboarding.canRelaunch {
         Button("Restart Stim Desktop", action: onboarding.relaunch).buttonStyle(.stim(.primary))
@@ -56,41 +72,42 @@ struct OnboardingBanner: View {
     }
   }
 
-  private func serverCard(_ server: CLICompatibility, path: String?) -> some View {
+  private func serverPopup(_ report: Onboarding.Report) -> some View {
+    guard let server = report.server else { return AnyView(EmptyView()) }
     let missing = server == .missing
-    return card(icon: "iphone.gen3.radiowaves.left.and.right", tint: Theme.warn) {
-      Text(missing ? "Install stim-server to serve phones" : "Update stim-server to serve phones")
-        .font(Theme.heading(15))
-      Text(
-        "Serving phones is on. stim-server shares Stim's status with the phones you pair over Tailscale, and Stim Desktop needs version \(StimServerCLI.minimumVersion.description) or later."
-      )
-      .foregroundStyle(Theme.secondary)
-      Text(detail(server, name: "stim-server", path: path)).font(Theme.body(11.5)).foregroundStyle(Theme.tertiary)
-    } buttons: {
-      runButton(missing ? "Install stim-server" : "Update stim-server", action: onboarding.installServer)
-      Button("Choose stim-server executable\u{2026}", action: onboarding.chooseServer).buttonStyle(.stim())
-    }
+    return AnyView(
+      popupCard(kind: .server, icon: "iphone.gen3.radiowaves.left.and.right", tint: Theme.warn) {
+        Text(missing ? "Install stim-server to serve phones" : "Update stim-server to serve phones")
+          .font(Theme.heading(14))
+        Text("stim-server shares Stim's status with paired phones, and Stim Desktop needs \(StimServerCLI.minimumVersion.description) or later.")
+          .foregroundStyle(Theme.secondary)
+        disclosure { Text(detail(server, name: "stim-server", path: report.serverPath)) }
+      } buttons: {
+        runButton(
+          missing ? "Install stim-server" : "Update stim-server", variant: .primary, key: .server,
+          action: onboarding.installServer)
+        Button("Choose stim-server executable\u{2026}", action: onboarding.chooseServer).buttonStyle(.stim())
+      })
   }
 
-  private func viewerCard(_ keys: [String]) -> some View {
-    card(icon: "macwindow", tint: Theme.lavender) {
-      Text("Show Stim's devices in Stim Desktop").font(Theme.heading(15))
+  private func viewerPopup(_ keys: [String]) -> some View {
+    popupCard(kind: .viewer, icon: "macwindow", tint: Theme.lavender) {
+      Text("Show Stim's devices in Stim Desktop").font(Theme.heading(14))
       Text("Stim can open the simulators and emulators it boots here instead of in their own windows.")
         .foregroundStyle(Theme.secondary)
-      ForEach(keys, id: \.self) { key in
-        VStack(alignment: .leading, spacing: 2) {
-          Text("stim settings set \(key) stim-desktop --scope machine").font(Theme.mono())
-          Text(Self.viewerExplanation[key] ?? "").font(Theme.body(11.5)).foregroundStyle(Theme.secondary)
+      disclosure {
+        VStack(alignment: .leading, spacing: 6) {
+          ForEach(keys, id: \.self) { key in
+            VStack(alignment: .leading, spacing: 2) {
+              Text("stim settings set \(key) stim-desktop --scope machine").font(Theme.mono())
+              Text(Self.viewerExplanation[key] ?? "").font(Theme.body(11)).foregroundStyle(Theme.secondary)
+            }
+          }
         }
       }
-      Text(
-        keys.count == 1
-          ? "It is a machine setting; change it back any time in Settings > Machine."
-          : "Both are machine settings; change them back any time in Settings > Machine.")
-        .font(Theme.body(11.5)).foregroundStyle(Theme.tertiary)
     } buttons: {
-      runButton("Use Stim Desktop", variant: .primary, action: onboarding.useDesktopViewer)
-      Button("Not now", action: onboarding.dismissViewerOffer).buttonStyle(.stim())
+      runButton("Use Stim Desktop", variant: .primary, key: .viewer, action: onboarding.useDesktopViewer)
+      Button("Not now") { onboarding.dismissPopup(.viewer) }.buttonStyle(.stim())
     }
   }
 
@@ -115,8 +132,16 @@ struct OnboardingBanner: View {
   }
 
   @ViewBuilder
+  private func disclosure<Content: View>(@ViewBuilder content: @escaping () -> Content) -> some View {
+    DisclosureGroup("Show command", isExpanded: $showsCommand) {
+      content().font(Theme.body(11.5)).foregroundStyle(Theme.tertiary).padding(.top, 4)
+    }
+    .font(Theme.body(11.5)).foregroundStyle(Theme.secondary)
+  }
+
+  @ViewBuilder
   private func runButton(
-    _ title: String, variant: StimButtonVariant = .secondary, action: @escaping () -> Void
+    _ title: String, variant: StimButtonVariant = .secondary, key: Onboarding.PopupKind, action: @escaping () -> Void
   ) -> some View {
     if let active = actions.active(for: Onboarding.actionKey) {
       Button {
@@ -133,25 +158,27 @@ struct OnboardingBanner: View {
     }
   }
 
-  private func card<Body: View, Buttons: View>(
-    icon: String, tint: Color, @ViewBuilder text: () -> Body, @ViewBuilder buttons: () -> Buttons
+  private func popupCard<Body: View, Buttons: View>(
+    kind: Onboarding.PopupKind, icon: String, tint: Color, @ViewBuilder text: () -> Body,
+    @ViewBuilder buttons: () -> Buttons
   ) -> some View {
-    Card {
-      HStack(alignment: .top, spacing: 14) {
-        Image(systemName: icon).font(.system(size: 20)).foregroundStyle(tint).frame(width: 24)
-        VStack(alignment: .leading, spacing: 6) {
-          text()
-          HStack(spacing: 8) { buttons() }.padding(.top, 4)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    HStack(alignment: .top, spacing: 12) {
+      Image(systemName: icon).font(.system(size: 18)).foregroundStyle(tint).frame(width: 22)
+      VStack(alignment: .leading, spacing: 6) {
+        text()
+        HStack(spacing: 8) { buttons() }.padding(.top, 2)
       }
-      .padding(16)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      Button { onboarding.dismissPopup(kind) } label: {
+        Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.tertiary)
+      }
+      .buttonStyle(.plain)
     }
-  }
-}
-
-extension Onboarding.Report {
-  var isEmpty: Bool {
-    stim.isCompatible && !needsRelaunch && (server?.isCompatible ?? true) && viewerKeys.isEmpty
+    .padding(14)
+    .frame(minWidth: 420, maxWidth: 520)
+    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+    .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.border))
+    .shadow(color: .black.opacity(0.28), radius: 20, y: 6)
+    .padding(.bottom, 20)
   }
 }

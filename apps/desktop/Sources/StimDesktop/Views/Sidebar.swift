@@ -69,6 +69,7 @@ struct Sidebar: View {
             .padding(.vertical, 1)
             .background(Capsule().fill(Theme.warn.opacity(0.18)))
             .foregroundStyle(Theme.warn)
+            .fixedSize()
         }
       }
       PinnedRow(item: .storage, selection: $selection) {
@@ -131,7 +132,7 @@ struct SidebarLabel: View {
 
   var body: some View {
     Label {
-      Text(title)
+      Text(title).lineLimit(1)
     } icon: {
       Image(systemName: icon).foregroundStyle(selected ? Theme.primary : Theme.secondary)
     }
