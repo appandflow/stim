@@ -5,6 +5,7 @@ struct Sidebar: View {
   @ObservedObject var store: StatusStore
   @ObservedObject var autopilot: AutopilotRunner
   @Binding var selection: SidebarItem?
+  var openLogs: (String) -> Void
   @AppStorage(AppPreferences.Key.expandedProjects) private var expandedProjects = Data()
   @Environment(\.colorScheme) private var colorScheme
   let prefs = SidebarPreferences()
@@ -19,10 +20,12 @@ struct Sidebar: View {
           ForEach(trees, id: \.summary.project) { tree in
             DisclosureGroup(isExpanded: isExpanded(tree.summary)) {
               ForEach(tree.entries) { entry in
-                EntryRow(entry: entry, subtitle: nil, showsGit: options.showsGitStatus, selection: selection)
+                EntryRow(
+                  entry: entry, subtitle: nil, showsGit: options.showsGitStatus, selection: selection,
+                  openLogs: openLogs)
               }
             } label: {
-              ProjectRow(summary: tree.summary, selected: selection == .project(tree.summary.project))
+              ProjectRow(store: store, summary: tree.summary, selected: selection == .project(tree.summary.project))
                 .sidebarTag(.project(tree.summary.project), selection: selection)
             }
           }
@@ -32,7 +35,7 @@ struct Sidebar: View {
           ForEach(entries) { entry in
             EntryRow(
               entry: entry, subtitle: store.project(ofPath: entry.path).name, showsGit: options.showsGitStatus,
-              selection: selection)
+              selection: selection, openLogs: openLogs)
           }
           if entries.isEmpty { emptyText(options) }
         }
@@ -163,8 +166,11 @@ private struct PinnedRow<Content: View>: View {
 }
 
 struct ProjectRow: View {
+  @ObservedObject var store: StatusStore
   var summary: ProjectSummary
   var selected: Bool
+  @EnvironmentObject private var actions: ActionCenter
+  @State private var confirmingStopAll = false
 
   var body: some View {
     HStack(spacing: 10) {
@@ -178,6 +184,24 @@ struct ProjectRow: View {
         Text("\(summary.total)").font(Theme.body(11)).foregroundStyle(Theme.tertiary).fixedSize()
       }
     }
+    .contextMenu {
+      WorkspaceActionsMenu(
+        kind: .project, path: summary.project.root, busy: false, removalAllowed: true,
+        onStopAllLiveWorkspaces: { confirmingStopAll = true })
+    }
+    .confirmationDialog(
+      "Stop every live workspace in \(summary.project.name)?", isPresented: $confirmingStopAll,
+      titleVisibility: .visible
+    ) {
+      Button("Run stim stop", role: .destructive) {
+        let live = store.environments(in: summary.project).filter(\.live)
+        actions.run(
+          "Stop \(summary.project.name)", steps: live.map { StimCommand(["stop"], cwd: $0.path) },
+          key: "project:\(summary.project.root)")
+      }
+    } message: {
+      Text("This also ends any billable EAS Simulator sessions those workspaces hold.")
+    }
   }
 }
 
@@ -186,10 +210,12 @@ struct EntryRow: View {
   var subtitle: String?
   var showsGit: Bool
   var selection: SidebarItem?
+  var openLogs: (String) -> Void
 
   var body: some View {
     switch entry {
-    case .workspace(let env): WorkspaceRow(env: env, subtitle: subtitle, showsGit: showsGit, selection: selection)
+    case .workspace(let env):
+      WorkspaceRow(env: env, subtitle: subtitle, showsGit: showsGit, selection: selection, openLogs: openLogs)
     case .worktree(let worktree):
       NoEnvironmentRow(worktree: worktree, subtitle: subtitle, showsGit: showsGit, selection: selection)
     }
@@ -201,6 +227,10 @@ struct WorkspaceRow: View {
   var subtitle: String?
   var showsGit: Bool
   var selection: SidebarItem?
+  var openLogs: (String) -> Void
+  @EnvironmentObject private var actions: ActionCenter
+  @State private var confirmingStop = false
+  @State private var removal: WorktreeRemoval?
 
   var body: some View {
     HStack(spacing: 10) {
@@ -219,6 +249,44 @@ struct WorkspaceRow: View {
       }
     }
     .sidebarTag(.environment(env.path), selection: selection)
+    .contextMenu {
+      WorkspaceActionsMenu(
+        kind: .workspace(metroRunning: env.metro?.running == true),
+        path: env.path,
+        busy: actions.active(for: env.path) != nil,
+        removalAllowed: worktreeRemovalAllowed(git: env.worktree?.git),
+        onShowLastOutput: actions.latest(for: env.path).map { last in { actions.presented = last } },
+        onReload: { actions.run("Reload \(env.names.title)", StimCommand(["reload"], cwd: env.path)) },
+        onStartDevServer: { actions.run("Start \(env.names.title)", StimCommand(["start"], cwd: env.path)) },
+        onStopDevServer: {
+          if env.remoteDevices?.isEmpty == false {
+            confirmingStop = true
+          } else {
+            actions.run("Stop \(env.names.title)", StimCommand(["stop"], cwd: env.path))
+          }
+        },
+        onShowLogs: { openLogs(env.path) },
+        onRemoveWorktree: { resolveRemovalBranch(at: env.path) { removal = WorktreeRemoval(branch: $0) } })
+    }
+    .confirmationDialog("Stop this workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
+      Button("Run stim stop", role: .destructive) {
+        actions.run("Stop \(env.names.title)", StimCommand(["stop"], cwd: env.path))
+      }
+    } message: {
+      Text("This also ends the workspace's billable EAS Simulator session.")
+    }
+    .confirmationDialog(
+      "Remove this worktree?",
+      isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
+      titleVisibility: .visible,
+      presenting: removal
+    ) { _ in
+      Button("Run stim worktree remove", role: .destructive) {
+        actions.run("Remove \(env.names.title)", StimCommand(["worktree", "remove"], cwd: env.path))
+      }
+    } message: { removal in
+      Text(worktreeRemovalMessage(path: env.path, branch: removal.branch))
+    }
   }
 }
 
@@ -227,6 +295,8 @@ struct NoEnvironmentRow: View {
   var subtitle: String?
   var showsGit: Bool
   var selection: SidebarItem?
+  @EnvironmentObject private var actions: ActionCenter
+  @State private var removal: WorktreeRemoval?
 
   var body: some View {
     let names = PathNames(path: worktree.path)
@@ -245,6 +315,29 @@ struct NoEnvironmentRow: View {
       }
     }
     .sidebarTag(.worktree(worktree.path), selection: selection)
+    .contextMenu {
+      WorkspaceActionsMenu(
+        kind: .worktree,
+        path: worktree.path,
+        busy: actions.active(for: worktree.path) != nil,
+        removalAllowed: worktreeRemovalAllowed(git: worktree.git),
+        onWarmWorktree: {
+          actions.run("Warm \(names.title)", StimCommand(["worktree", "warm"], cwd: worktree.path))
+        },
+        onRemoveWorktree: { resolveRemovalBranch(at: worktree.path) { removal = WorktreeRemoval(branch: $0) } })
+    }
+    .confirmationDialog(
+      "Remove this worktree?",
+      isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
+      titleVisibility: .visible,
+      presenting: removal
+    ) { _ in
+      Button("Run stim worktree remove", role: .destructive) {
+        actions.run("Remove \(names.title)", StimCommand(["worktree", "remove"], cwd: worktree.path))
+      }
+    } message: { removal in
+      Text(worktreeRemovalMessage(path: worktree.path, branch: removal.branch))
+    }
   }
 }
 

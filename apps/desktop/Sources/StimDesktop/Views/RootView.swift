@@ -45,7 +45,7 @@ struct RootView: View {
 
   var body: some View {
     NavigationSplitView(columnVisibility: $columnVisibility) {
-      Sidebar(store: store, autopilot: autopilot, selection: $selection)
+      Sidebar(store: store, autopilot: autopilot, selection: $selection, openLogs: showLogs)
         .navigationSplitViewColumnWidth(min: 220, ideal: 272, max: 360)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { sidebarWidth = $0 }
     } detail: {
@@ -165,6 +165,11 @@ struct RootView: View {
     selection = .environment(path)
     detailTab = .logs
     logQuery.errorsOnly = true
+  }
+
+  private func showLogs(_ path: String) {
+    selection = .environment(path)
+    detailTab = .logs
   }
 
   @ViewBuilder private var detail: some View {
