@@ -135,6 +135,7 @@ async function start(
     logLimits?: ServerOptions['logLimits'];
     commandLimits?: ServerOptions['commandLimits'];
     tailscaleState?: ServerOptions['tailscaleState'];
+    frameLimits?: ServerOptions['frameLimits'];
   } = {},
 ): Promise<number> {
   const stimCli = join(root, 'fake-stim.mjs');
@@ -166,6 +167,7 @@ async function start(
     maxAuthFailures: overrides.maxAuthFailures,
     logLimits: overrides.logLimits,
     commandLimits: overrides.commandLimits,
+    frameLimits: overrides.frameLimits,
   });
   return server.addresses[0]!.port;
 }
@@ -740,6 +742,14 @@ const { basename } = require('node:path');
 const env = process.env;
 const args = process.argv.slice(2);
 appendFileSync(env.FAKE_TOOL_CALLS, JSON.stringify({ tool: basename(process.argv[1]), args }) + '\\n');
+if (env.FAKE_XCRUN_DELAYS && basename(process.argv[1]) === 'xcrun') {
+  const delays = JSON.parse(env.FAKE_XCRUN_DELAYS);
+  const counterFile = env.FAKE_XCRUN_DELAY_COUNTER;
+  const seen = existsSync(counterFile) ? Number(readFileSync(counterFile, 'utf8')) : 0;
+  writeFileSync(counterFile, String(seen + 1));
+  const ms = delays[Math.min(seen, delays.length - 1)];
+  if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
 if (basename(process.argv[1]) === 'sips') {
   writeFileSync(args[args.indexOf('--out') + 1], Buffer.from(env.FAKE_SIPS_JPEG, 'base64'));
   process.exit(0);
@@ -777,7 +787,10 @@ const OWNED_SIM = { name: 'stim-app (iPhone 17 27.0)', udid: 'SIM-1', owned: tru
 describe('frames.subscribe', () => {
   let toolCalls: string;
 
-  async function startWithTools(env: Record<string, string>): Promise<number> {
+  async function startWithTools(
+    env: Record<string, string>,
+    frameLimits?: ServerOptions['frameLimits'],
+  ): Promise<number> {
     const bin = join(root, 'bin');
     mkdirSync(bin);
     for (const tool of ['xcrun', 'sips']) {
@@ -792,6 +805,7 @@ describe('frames.subscribe', () => {
         FAKE_FRAME_COUNTER: join(root, 'frame-counter'),
         ...env,
       },
+      frameLimits,
     });
   }
 
@@ -939,6 +953,58 @@ describe('frames.subscribe', () => {
       error: { code: 'frames-failed', message: expect.stringContaining('simctl failed on purpose') },
     });
   });
+
+  test.skipIf(!fakeTailscale)(
+    'treats a slow or timed-out capture as delayed, keeps the last frame, and recovers',
+    async () => {
+      const a = jpeg(10, 20, 'A');
+      const b = jpeg(10, 20, 'B');
+      const port = await startWithTools(
+        {
+          FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }),
+          FAKE_FRAMES: JSON.stringify([a, b].map((bytes) => bytes.toString('base64'))),
+          FAKE_XCRUN_DELAYS: JSON.stringify([200, 600, 20]),
+          FAKE_XCRUN_DELAY_COUNTER: join(root, 'xcrun-delay-counter'),
+        },
+        { toolTimeoutMs: 400, slowCaptureMs: 150, failureBackoffMs: 100, maxConsecutiveFailures: 3 },
+      );
+      const client = await authed(port);
+      await client.request('frames.subscribe', { workspace, platform: 'ios' });
+      // The first capture is slow (200 ms, over slowCaptureMs) but succeeds.
+      expect(await client.next()).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: true });
+      expect(await client.next()).toMatchObject({ event: 'frame', data: a.toString('base64') });
+      // The second capture times out (600 ms, over toolTimeoutMs) and is retried instead of failing.
+      // The third capture is fast (20 ms) and recovers.
+      expect(await client.next()).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: false });
+      expect(await client.next()).toMatchObject({ event: 'frame', data: b.toString('base64') });
+      expect(toolRuns().filter((run) => run.tool === 'xcrun')).toHaveLength(3);
+    },
+    10_000,
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'ends the subscription after captures keep timing out for a sustained period',
+    async () => {
+      const port = await startWithTools(
+        {
+          FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }),
+          FAKE_FRAMES: '[]',
+          FAKE_XCRUN_DELAYS: JSON.stringify([300, 300]),
+          FAKE_XCRUN_DELAY_COUNTER: join(root, 'xcrun-delay-counter'),
+        },
+        { toolTimeoutMs: 100, slowCaptureMs: 50, failureBackoffMs: 20, maxConsecutiveFailures: 2 },
+      );
+      const client = await authed(port);
+      await client.request('frames.subscribe', { workspace, platform: 'ios' });
+      expect(await client.next()).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: true });
+      expect(await client.next()).toEqual({
+        event: 'error',
+        subscription: 's1',
+        error: { code: 'frames-failed', message: expect.stringContaining('did not finish within') },
+      });
+    },
+    10_000,
+  );
 
   test.skipIf(!fakeTailscale)(
     'reads an emulator screenshot over gRPC with the discovery token and converts it to JPEG',

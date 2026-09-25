@@ -19,13 +19,33 @@ export interface Frame {
 
 export interface FrameListener {
   frame: (frame: Frame) => void;
+  /** A capture is taking longer than usual, or a timed-out capture is being retried; the last frame stays valid. */
+  delayed: (delayed: boolean) => void;
   failed: (message: string) => void;
 }
+
+/** Tunables for capture timing; a busy Mac makes `xcrun simctl` and the emulator's gRPC call slow, not broken. */
+export interface FrameLimits {
+  /** Per-capture timeout for `simctl`, `sips`, and the emulator's gRPC call. */
+  toolTimeoutMs: number;
+  /** A capture slower than this is reported as delayed, even when it succeeds. */
+  slowCaptureMs: number;
+  /** Wait before retrying after a timed-out capture. */
+  failureBackoffMs: number;
+  /** Consecutive timed-out captures before the subscription ends with `frames-failed`. */
+  maxConsecutiveFailures: number;
+}
+
+export const DEFAULT_FRAME_LIMITS: FrameLimits = {
+  toolTimeoutMs: 30_000,
+  slowCaptureMs: 3_000,
+  failureBackoffMs: 3_000,
+  maxConsecutiveFailures: 3,
+};
 
 const MIN_INTERVAL_MS = 200;
 const MAX_INTERVAL_MS = 1000;
 const MAX_CAPTURES = 2;
-const TOOL_TIMEOUT_MS = 10_000;
 const MAX_EDGE = 1280;
 const JPEG_QUALITY = 70;
 
@@ -80,7 +100,22 @@ function jpegSize(bytes: Buffer): { width: number; height: number } | null {
   return null;
 }
 
-function runTool(file: string, args: string[], env: NodeJS.ProcessEnv, running: Set<ChildProcess>): Promise<Buffer> {
+/** A rejection with `transient: true` is a timeout on a machine that is merely busy, not a broken capturer. */
+function timeoutError(message: string): Error {
+  return Object.assign(new Error(message), { transient: true });
+}
+
+function isTransient(error: unknown): boolean {
+  return error instanceof Error && (error as { transient?: boolean }).transient === true;
+}
+
+function runTool(
+  file: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  running: Set<ChildProcess>,
+  timeoutMs: number,
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const child = spawn(file, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
     running.add(child);
@@ -89,8 +124,8 @@ function runTool(file: string, args: string[], env: NodeJS.ProcessEnv, running: 
     let stderr = '';
     const timer = setTimeout(() => {
       void terminate(child);
-      reject(new Error(`${file} ${args[0]} did not finish within ${TOOL_TIMEOUT_MS / 1000} s.`));
-    }, TOOL_TIMEOUT_MS);
+      reject(timeoutError(`${file} ${args[0]} did not finish within ${timeoutMs / 1000} s.`));
+    }, timeoutMs);
     child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => {
@@ -131,13 +166,19 @@ async function stopTools(running: Set<ChildProcess>, tmp: string | null): Promis
  * can be the unlit one and comes back black; `primary` is the panel CoreDevice reports as primary. A simctl
  * that rejects `primary` gets the default display instead.
  */
-function simulatorCapturer(udid: string, env: NodeJS.ProcessEnv): Capturer {
+function simulatorCapturer(udid: string, env: NodeJS.ProcessEnv, limits: FrameLimits): Capturer {
   let tmp: string | null = null;
   let display: string[] = ['--display=primary'];
   let closed = false;
   const running = new Set<ChildProcess>();
   const screenshot = (output: string) =>
-    runTool('xcrun', ['simctl', 'io', udid, 'screenshot', '--type=jpeg', ...display, output], env, running);
+    runTool(
+      'xcrun',
+      ['simctl', 'io', udid, 'screenshot', '--type=jpeg', ...display, output],
+      env,
+      running,
+      limits.toolTimeoutMs,
+    );
   return {
     capture: async () => {
       tmp ??= mkdtempSync(join(serverDir(), 'frames-'));
@@ -265,7 +306,7 @@ function screenshotImage(body: Buffer): Buffer {
   throw new Error('getScreenshot returned no image.');
 }
 
-function emulatorCapturer(serial: string, env: NodeJS.ProcessEnv): Capturer {
+function emulatorCapturer(serial: string, env: NodeJS.ProcessEnv, limits: FrameLimits): Capturer {
   let session: ClientHttp2Session | null = null;
   let tmp: string | null = null;
   const running = new Set<ChildProcess>();
@@ -285,18 +326,26 @@ function emulatorCapturer(serial: string, env: NodeJS.ProcessEnv): Capturer {
       const chunks: Buffer[] = [];
       let status: string | undefined;
       let message: string | undefined;
+      let timedOut = false;
       const record = (headers: Record<string, unknown>) => {
         if (headers['grpc-status'] !== undefined) status = String(headers['grpc-status']);
         if (headers['grpc-message'] !== undefined) message = String(headers['grpc-message']);
       };
-      request.setTimeout(TOOL_TIMEOUT_MS, () => request.close());
+      request.setTimeout(limits.toolTimeoutMs, () => {
+        timedOut = true;
+        request.close();
+      });
       request.on('response', record);
       request.on('trailers', record);
       request.on('data', (chunk: Buffer) => chunks.push(chunk));
-      request.on('error', (error) => reject(new Error(`getScreenshot failed on ${serial}: ${error.message}`)));
+      request.on('error', (error) => {
+        const text = `getScreenshot failed on ${serial}: ${error.message}`;
+        reject(timedOut ? timeoutError(text) : new Error(text));
+      });
       request.on('close', () => {
         if (status === '0') return resolve(Buffer.concat(chunks));
-        reject(new Error(`getScreenshot failed on ${serial}: ${message ?? `status ${status ?? 'missing'}`}`));
+        const text = `getScreenshot failed on ${serial}: ${message ?? `status ${status ?? 'missing'}`}`;
+        reject(timedOut ? timeoutError(text) : new Error(text));
       });
       request.end(screenshotRequest());
     });
@@ -315,7 +364,7 @@ function emulatorCapturer(serial: string, env: NodeJS.ProcessEnv): Capturer {
           const output = join(tmp, 'frame.jpg');
           writeFileSync(input, png);
           const format = ['-s', 'format', 'jpeg', '-s', 'formatOptions', String(JPEG_QUALITY)];
-          await runTool('sips', [...format, input, '--out', output], env, running);
+          await runTool('sips', [...format, input, '--out', output], env, running, limits.toolTimeoutMs);
           return readFileSync(output);
         },
       };
@@ -356,14 +405,18 @@ class FrameSource {
   private interval = MIN_INTERVAL_MS;
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
+  private delayed = false;
+  private consecutiveFailures = 0;
 
   private readonly capturer: Capturer;
   private readonly limiter: Limiter;
+  private readonly limits: FrameLimits;
   private readonly ended: () => void;
 
-  constructor(capturer: Capturer, limiter: Limiter, ended: () => void) {
+  constructor(capturer: Capturer, limiter: Limiter, limits: FrameLimits, ended: () => void) {
     this.capturer = capturer;
     this.limiter = limiter;
+    this.limits = limits;
     this.ended = ended;
     void this.tick();
   }
@@ -371,6 +424,7 @@ class FrameSource {
   add(listener: FrameListener): () => void {
     this.listeners.add(listener);
     if (this.last) listener.frame(this.last);
+    if (this.delayed) listener.delayed(true);
     return () => {
       if (this.listeners.delete(listener) && this.listeners.size === 0) void this.stop();
     };
@@ -383,6 +437,12 @@ class FrameSource {
     this.listeners.clear();
     this.ended();
     return this.capturer.close();
+  }
+
+  private setDelayed(delayed: boolean): void {
+    if (this.delayed === delayed) return;
+    this.delayed = delayed;
+    for (const listener of this.listeners) listener.delayed(delayed);
   }
 
   private async tick(): Promise<void> {
@@ -405,11 +465,19 @@ class FrameSource {
         return true;
       });
       if (this.stopped) return;
+      this.consecutiveFailures = 0;
+      this.setDelayed(took > this.limits.slowCaptureMs);
       if (changed) for (const listener of this.listeners) listener.frame(this.last!);
       this.interval = changed ? MIN_INTERVAL_MS : Math.min(this.interval * 2, MAX_INTERVAL_MS);
       this.timer = setTimeout(() => void this.tick(), Math.max(this.interval - took, took));
     } catch (error) {
       if (this.stopped) return;
+      if (isTransient(error) && this.consecutiveFailures + 1 < this.limits.maxConsecutiveFailures) {
+        this.consecutiveFailures++;
+        this.setDelayed(true);
+        this.timer = setTimeout(() => void this.tick(), this.limits.failureBackoffMs);
+        return;
+      }
       const listeners = [...this.listeners];
       void this.stop();
       for (const listener of listeners) listener.failed((error as Error).message);
@@ -427,9 +495,11 @@ export class FramePool {
   private readonly sources = new Map<string, FrameSource>();
   private readonly limiter = new Limiter(MAX_CAPTURES);
   private readonly env: NodeJS.ProcessEnv;
+  private readonly limits: FrameLimits;
 
-  constructor(env: NodeJS.ProcessEnv) {
+  constructor(env: NodeJS.ProcessEnv, limits: FrameLimits = DEFAULT_FRAME_LIMITS) {
     this.env = env;
+    this.limits = limits;
   }
 
   subscribe(device: Device, listener: FrameListener): () => void {
@@ -438,9 +508,9 @@ export class FramePool {
     if (!source) {
       const capturer =
         device.platform === 'ios'
-          ? simulatorCapturer(device.udid, this.env)
-          : emulatorCapturer(device.serial, this.env);
-      const created: FrameSource = new FrameSource(capturer, this.limiter, () => {
+          ? simulatorCapturer(device.udid, this.env, this.limits)
+          : emulatorCapturer(device.serial, this.env, this.limits);
+      const created: FrameSource = new FrameSource(capturer, this.limiter, this.limits, () => {
         if (this.sources.get(key) === created) this.sources.delete(key);
       });
       this.sources.set(key, created);
