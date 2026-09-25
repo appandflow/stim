@@ -86,6 +86,16 @@ function iosExecutor({ sims = [], occupied = '', throwOn = null }: IosExecutorOp
   };
 }
 
+function fakeClock() {
+  let now = 0;
+  return {
+    now: () => now,
+    sleep: (ms: number) => {
+      now += ms;
+    },
+  };
+}
+
 const OWNED = { udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true };
 
 test('teardownOwnedIosSim shuts down and deletes an owned, unoccupied sim', () => {
@@ -493,18 +503,88 @@ test('teardownOwnedIosSim does not park a simulator that remains booted', () => 
         calls.push([file, ...args].join(' '));
         return '';
       },
-      runQuiet: () => '',
+      runQuiet(cmd) {
+        calls.push(cmd);
+        return '';
+      },
       spawn: () => null,
     });
 
-    const result = teardownOwnedIosSim('U1', { del: true, park: { projectPath, max: 1 } });
+    const result = teardownOwnedIosSim('U1', {
+      del: true,
+      park: { projectPath, max: 1 },
+      shutdownClock: fakeClock(),
+    });
 
     expect(result.status).toBe('torn-down');
-    expect(result.parkFallback).toMatch(/still Booted/);
+    expect(result.parkFallback).toMatch(/still Booted after 2 shutdown attempts/);
+    expect(calls.filter((call) => call === 'xcrun simctl shutdown U1')).toHaveLength(2);
     expect(calls.some((call) => call.includes('simctl erase'))).toBe(false);
     expect(calls.some((call) => call.includes('simctl rename'))).toBe(false);
     expect(calls).toContain('xcrun simctl delete U1');
     expect(readParked('ios')).toEqual([]);
+  } finally {
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('teardownOwnedIosSim waits for a lagging shutdown before erasing and parks the simulator', () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
+  process.env.STIM_HOME = home;
+  seedCreatedDevices();
+  try {
+    const projectPath = '/tmp/pool-project';
+    upsertProject(projectPath, {
+      platforms: { ios: { deviceUdid: 'U1', deviceName: 'stim-app', owned: true } },
+    });
+    const calls: string[] = [];
+    let bootedReportsLeft = 0;
+    setExecutor({
+      run(cmd) {
+        if (cmd.includes('list devicetypes')) {
+          return JSON.stringify({ devicetypes: [{ identifier: 'iphone-17', name: 'iPhone 17' }] });
+        }
+        if (cmd.includes('list devices')) {
+          const state = bootedReportsLeft > 0 ? 'Booted' : 'Shutdown';
+          if (bootedReportsLeft > 0) bootedReportsLeft--;
+          return JSON.stringify({
+            devices: {
+              'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+                { udid: 'U1', name: 'stim-app', state, isAvailable: true, deviceTypeIdentifier: 'iphone-17' },
+              ],
+            },
+          });
+        }
+        return '';
+      },
+      runFile(file, args = []) {
+        if (file === 'xcrun' && args[1] === 'list') return this.run!([file, ...args].join(' '));
+        calls.push([file, ...args].join(' '));
+        if (args[1] === 'erase' && bootedReportsLeft > 0) {
+          throw new Error('Unable to erase contents and settings in current state: Booted');
+        }
+        return '';
+      },
+      runQuiet(cmd) {
+        calls.push(cmd);
+        if (cmd === 'xcrun simctl shutdown U1') bootedReportsLeft = 3;
+        return '';
+      },
+      spawn: () => null,
+    });
+
+    const result = teardownOwnedIosSim('U1', {
+      del: true,
+      park: { projectPath, max: 1 },
+      shutdownClock: fakeClock(),
+    });
+
+    expect(result.parkFallback).toBeUndefined();
+    expect(result).toMatchObject({ status: 'torn-down', parked: { udid: 'U1' } });
+    expect(calls).toContain('xcrun simctl erase U1');
+    expect(calls).not.toContain('xcrun simctl delete U1');
+    expect(readParked('ios')).toMatchObject([{ udid: 'U1' }]);
   } finally {
     delete process.env.STIM_HOME;
     rmSync(home, { recursive: true, force: true });

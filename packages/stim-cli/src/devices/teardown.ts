@@ -16,6 +16,7 @@ import {
   resolveOwnedIosSim,
   shutdownIosSim,
   type IosSimRecord,
+  type ResolvedIosSim,
 } from './ios.ts';
 import {
   assertOwnedAvdStopped,
@@ -31,6 +32,7 @@ import {
   isStimOwnedAvdName,
   ownedAvdMatchesConfiguration,
   ownedAvdSystemImage,
+  sleepSync,
   wipeAvdUserData,
 } from './android.ts';
 import { parkSim, readParked, removeParkedAfter, type ParkedSim } from './sim-pool.ts';
@@ -94,12 +96,46 @@ export function teardownParkedIosSim(
   }
 }
 
-function parkOwnedIosSim(udid: string, park: ParkRequest): { record: ParkedSim; evicted: ParkedSim[] } {
-  const resolved = resolveOwnedIosSim(udid);
+const IOS_SHUTDOWN_SETTLE_MS = 15_000;
+const IOS_SHUTDOWN_POLL_MS = 250;
+const IOS_SHUTDOWN_ATTEMPTS = 2;
+
+interface ShutdownSettleClock {
+  now?: () => number;
+  sleep?: (ms: number) => void;
+}
+
+function settleIosSimShutdown(
+  udid: string,
+  { now = Date.now, sleep = sleepSync }: ShutdownSettleClock,
+): ResolvedIosSim {
+  let resolved = resolveOwnedIosSim(udid);
+  for (let attempt = 1; ; attempt++) {
+    const deadline = now() + IOS_SHUTDOWN_SETTLE_MS;
+    while (resolved.sim && resolved.sim.state !== 'Shutdown' && now() < deadline) {
+      sleep(IOS_SHUTDOWN_POLL_MS);
+      resolved = resolveOwnedIosSim(udid);
+    }
+    if (!resolved.sim || resolved.sim.state === 'Shutdown' || attempt === IOS_SHUTDOWN_ATTEMPTS) return resolved;
+    shutdownIosSim(udid);
+    resolved = resolveOwnedIosSim(udid);
+  }
+}
+
+function parkOwnedIosSim(
+  udid: string,
+  park: ParkRequest,
+  clock: ShutdownSettleClock,
+): { record: ParkedSim; evicted: ParkedSim[] } {
+  const resolved = settleIosSimShutdown(udid, clock);
   if (resolved.missing) throw new Error(`simulator ${udid} disappeared after shutdown`);
   if (resolved.notOwned) throw new Error(`simulator ${udid} is now named ${JSON.stringify(resolved.notOwned)}`);
   const sim = resolved.sim as IosSimRecord;
-  if (sim.state !== 'Shutdown') throw new Error(`simulator ${udid} is still ${sim.state} after shutdown`);
+  if (sim.state !== 'Shutdown') {
+    throw new Error(
+      `simulator ${udid} is still ${sim.state} after ${IOS_SHUTDOWN_ATTEMPTS} shutdown attempts and ${(IOS_SHUTDOWN_ATTEMPTS * IOS_SHUTDOWN_SETTLE_MS) / 1000}s of waiting`,
+    );
+  }
   const model = listIosDeviceTypes().find((d) => d.identifier === sim.deviceTypeIdentifier)?.name ?? null;
   const runtime = parseRuntimeVersion(sim.runtime);
   eraseIosSim(sim.udid);
@@ -119,7 +155,12 @@ function parkOwnedIosSim(udid: string, park: ParkRequest): { record: ParkedSim; 
 
 export function teardownOwnedIosSim(
   udid: string,
-  { del = false, label, park }: { del?: boolean; label?: string; park?: ParkRequest } = {},
+  {
+    del = false,
+    label,
+    park,
+    shutdownClock = {},
+  }: { del?: boolean; label?: string; park?: ParkRequest; shutdownClock?: ShutdownSettleClock } = {},
 ): TeardownOutcome {
   let parkFallback: string | undefined;
   try {
@@ -141,7 +182,7 @@ export function teardownOwnedIosSim(
     const sim = resolved.sim as IosSimRecord;
     if (del && park && park.max > 0) {
       try {
-        const { record, evicted } = parkOwnedIosSim(udid, park);
+        const { record, evicted } = parkOwnedIosSim(udid, park, shutdownClock);
         const removed: ParkedDevice[] = [];
         const failures: string[] = [];
         for (const entry of evicted) {
