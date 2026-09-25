@@ -73,11 +73,16 @@ function gitTracksNativeDir(root: string, platform: string): boolean {
   try {
     return (
       getExecutor()
-        .runFile('git', ['-C', root, 'ls-files', '--', nativeDirName(platform)])
+        .runFile('git', ['-C', root, 'ls-files', '--', nativeDirName(platform)], {
+          env: { LC_ALL: 'C', LANGUAGE: 'C' },
+        })
         .trim() !== ''
     );
   } catch (error) {
-    return !/not a git repository \(or any of the parent directories\)/.test(String((error as Error)?.message));
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return false;
+    return !/not a git repository \(or any (of the parent directories|parent up to mount point)/.test(
+      String((error as Error)?.message),
+    );
   }
 }
 
