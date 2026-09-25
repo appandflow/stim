@@ -162,6 +162,22 @@ importers:
         specifier: '*'
         version: 0.87.0(supports-color@8.1.1)
 
+  packages/server:
+    dependencies:
+      '@stim-cli/core':
+        specifier: workspace:^
+        version: link:../core
+      stim:
+        specifier: workspace:*
+        version: link:../stim-cli
+      ws:
+        specifier: ^8.21.3
+        version: 8.21.3
+    devDependencies:
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
+
   packages/stim-cli:
     dependencies:
       '@expo/fingerprint':

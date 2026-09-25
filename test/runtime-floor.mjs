@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 
 const repositoryRoot = join(import.meta.dirname, '..');
 const require = createRequire(join(repositoryRoot, 'packages', 'stim-cli', 'package.json'));
-const packageDirs = ['stim-cli', 'core', 'cache', 'metro', 'expo-build-cache'];
+const packageDirs = ['stim-cli', 'core', 'cache', 'metro', 'expo-build-cache', 'server'];
 
 for (const directory of packageDirs) {
   const root = join(repositoryRoot, 'packages', directory);

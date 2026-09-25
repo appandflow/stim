@@ -71,6 +71,9 @@ export const pathRules = [
   { path: 'packages/cache', rows: ['caches', 'remote-provider'] },
   { path: 'packages/metro', rows: ['caches', 'logs'] },
   { path: 'packages/expo-build-cache', rows: ['caches'] },
+  { path: 'packages/server', rows: ['loop'] },
+  { path: 'packages/server/README.md', exempt: 'documentation' },
+  { path: 'packages/server/__tests__', exempt: 'unit tests, run by the section 2 preflight' },
 
   { path: 'packages/stim-cli', rows: ['loop'] },
   { path: 'packages/stim-cli/bin', rows: ['loop'] },
