@@ -112,6 +112,7 @@ public final class SimulatorDisplayNSView: NSView {
       DispatchQueue.main.async { self?.showSurface() }
     }
     display.registerDamageCallback(callbackID) { [weak self] _ in
+      ScreenActivity.shared.record(udid)
       DispatchQueue.main.async { self?.scheduleRedraw() }
     }
     display.registerPropertiesCallback(callbackID) { [weak self] _ in

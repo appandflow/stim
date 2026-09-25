@@ -27,6 +27,14 @@ struct DeviceTile: View {
           Text(device.slot).font(Theme.body(12, weight: .semibold)).lineLimit(1)
           Text(device.model).font(Theme.body(12)).foregroundStyle(Theme.secondary).lineLimit(1)
           Spacer(minLength: 8)
+          TimelineView(.periodic(from: .now, by: 30)) { context in
+            if let badge = ActivityBadge(
+              device.activity, screenChangedAt: device.activityKey.flatMap(ScreenActivity.shared.lastChange),
+              now: context.date)
+            {
+              activityChip(badge)
+            }
+          }
           Text(source).font(Theme.body(10.5)).foregroundStyle(Theme.tertiary).lineLimit(1)
           if case .remote = device { remoteControls }
           if interactive, device.formFactor == .dual, screenIDs.count > 1, SimulatorFold.isAvailable,
@@ -77,6 +85,18 @@ struct DeviceTile: View {
           )
         }
     }
+  }
+
+  private func activityChip(_ badge: ActivityBadge) -> some View {
+    let tint: Color
+    switch badge {
+    case .driven: tint = Theme.lavender
+    case .idle: tint = Theme.tertiary
+    case .unknown: tint = Theme.warn
+    }
+    return Chip(tint: tint) { Text(badge.text) }
+      .fixedSize()
+      .help(device.activity.map { "stim status activity: \($0.basis.joined(separator: ", "))" } ?? "")
   }
 
   private func foldButton(udid: String) -> some View {

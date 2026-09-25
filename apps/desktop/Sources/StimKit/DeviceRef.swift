@@ -36,6 +36,23 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     }
   }
 
+  public var activity: DeviceActivity? {
+    switch self {
+    case .ios(_, let d): return d.activity
+    case .android(_, let d): return d.activity
+    case .remote: return nil
+    }
+  }
+
+  /// The key `ScreenActivity` records screen changes under: the simulator UDID or the emulator serial.
+  public var activityKey: String? {
+    switch self {
+    case .ios(_, let d): return d.udid
+    case .android(_, let d): return d.serial
+    case .remote: return nil
+    }
+  }
+
   /// `Booted` comes from simctl; `detected` is Stim's Android runtime state for an AVD adb can see.
   /// A recorded remote session counts as running: `stim status` does not ask the backend.
   public var isRunning: Bool {

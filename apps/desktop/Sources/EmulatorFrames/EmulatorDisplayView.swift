@@ -107,9 +107,12 @@ public final class EmulatorDisplayNSView: NSView {
     report(.connecting)
     generation += 1
     let current = generation
+    var framesSeen = 0
     let stream = ScreenshotStream(
       endpoint: endpoint, width: Self.maxPixels, height: Self.maxPixels,
       onFrame: { [weak self, pending] frame in
+        framesSeen += 1
+        if framesSeen > 1 { ScreenActivity.shared.record(serial) }
         guard pending.store(frame) else { return }
         DispatchQueue.main.async { self?.frameArrived(current) }
       },
