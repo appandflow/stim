@@ -50,8 +50,10 @@ describe('cpuUsageFraction', () => {
     expect(cpuUsageFraction(sample, { idle: 90, total: 900 })).toBeNull();
   });
 
-  it('clamps to 0..1', () => {
-    expect(cpuUsageFraction({ idle: 0, total: 0 }, { idle: 50, total: 100 })).toBe(0.5);
-    expect(cpuUsageFraction({ idle: 100, total: 100 }, { idle: 100, total: 200 })).toBe(1);
+  it('clamps to 0..1 when idle moves the other way from total', () => {
+    // idle fell while total rose: the raw fraction is above 1.
+    expect(cpuUsageFraction({ idle: 200, total: 1000 }, { idle: 100, total: 1100 })).toBe(1);
+    // idle grew far more than total: the raw fraction is below 0.
+    expect(cpuUsageFraction({ idle: 0, total: 100 }, { idle: 200, total: 150 })).toBe(0);
   });
 });
