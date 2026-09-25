@@ -295,9 +295,10 @@ public struct GcReport: Decodable, Sendable {
   }
 
   public var reclaimable: Reclaimable {
-    let removed =
-      (sections.orphanedWorkspaces ?? []).map(\.bytes) + deletableDevices.map(\.bytes)
-      + clearableOutputs.map(\.bytes) + (sections.caches ?? []).filter { $0.willEmpty == true }.map(\.bytes)
+    var removed: [Int64?] = (sections.orphanedWorkspaces ?? []).map(\.bytes)
+    removed += deletableDevices.map(\.bytes)
+    removed += clearableOutputs.map(\.bytes)
+    removed += (sections.caches ?? []).filter { $0.willEmpty == true }.map(\.bytes)
     return Reclaimable(
       bytes: removed.reduce(0) { $0 + ($1 ?? 0) },
       entries: removed.count,
