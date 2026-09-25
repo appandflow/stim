@@ -3,12 +3,25 @@ set -eu
 cd "$(dirname "$0")/.."
 website=../../website
 
-swift build -c release
 app=build/Stim.app
+if [ "${1:-}" = --universal ]; then
+  # A multi-arch `swift build` uses the PIF backend, which rejects .swiftLanguageMode(.v5):
+  # https://github.com/swiftlang/swift-package-manager/issues/7958
+  swift build -c release --arch arm64 --scratch-path .build/arm64
+  swift build -c release --arch x86_64 --scratch-path .build/x86_64
+  bin=$(swift build -c release --arch arm64 --scratch-path .build/arm64 --show-bin-path)
+  x86_bin=$(swift build -c release --arch x86_64 --scratch-path .build/x86_64 --show-bin-path)
+else
+  swift build -c release
+  bin=$(swift build -c release --show-bin-path)
+fi
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks"
-bin=$(swift build -c release --show-bin-path)
-cp "$bin/StimDesktop" "$app/Contents/MacOS/StimDesktop"
+if [ -n "${x86_bin:-}" ]; then
+  lipo -create "$bin/StimDesktop" "$x86_bin/StimDesktop" -output "$app/Contents/MacOS/StimDesktop"
+else
+  cp "$bin/StimDesktop" "$app/Contents/MacOS/StimDesktop"
+fi
 install_name_tool -add_rpath @executable_path/../Frameworks "$app/Contents/MacOS/StimDesktop"
 ditto "$bin/Lottie.framework" "$app/Contents/Frameworks/Lottie.framework"
 codesign --force --sign - "$app/Contents/Frameworks/Lottie.framework"

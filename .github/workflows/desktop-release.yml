@@ -1,0 +1,282 @@
+name: Desktop release
+
+on:
+  push:
+    tags: ['desktop-v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to build. A dispatched run is a dry run and publishes nothing.
+        required: true
+        default: 0.0.0
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    environment: release
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      SPARKLE_VERSION: 2.10.0
+      SPARKLE_SHA256: c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c
+      SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
+      APPCAST_URL: https://github.com/${{ github.repository }}/releases/download/desktop-latest/appcast.xml
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve the version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            version="${GITHUB_REF_NAME#desktop-v}"
+          else
+            version="$INPUT_VERSION"
+          fi
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::The version is not a semver version such as 1.2.3 or 1.2.3-rc.1"
+            exit 1
+          fi
+          prerelease=false
+          case "$version" in *-*) prerelease=true ;; esac
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "PRERELEASE=$prerelease" >> "$GITHUB_ENV"
+          echo "version=$version prerelease=$prerelease event=$GITHUB_EVENT_NAME"
+
+      - name: The tag is on main
+        if: github.event_name == 'push'
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "::error::$GITHUB_REF_NAME is not on main. Tag a commit from main."
+            exit 1
+          fi
+
+      - name: Show the toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Build before any secret is loaded
+        working-directory: apps/desktop
+        run: scripts/bundle.sh --universal
+
+      - name: Import the Developer ID certificate
+        env:
+          CERT_P12_BASE64: ${{ secrets.DESKTOP_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.DESKTOP_CERT_PASSWORD }}
+        run: |
+          if [ -z "$CERT_P12_BASE64" ] && [ -z "$CERT_PASSWORD" ]; then
+            echo "::notice::DESKTOP_CERT_P12_BASE64 and DESKTOP_CERT_PASSWORD are not set; the app is signed ad hoc."
+            exit 0
+          fi
+          if [ -z "$CERT_P12_BASE64" ] || [ -z "$CERT_PASSWORD" ]; then
+            echo "::error::Set both DESKTOP_CERT_P12_BASE64 and DESKTOP_CERT_PASSWORD, or neither."
+            exit 1
+          fi
+          keychain="$RUNNER_TEMP/desktop-signing.keychain-db"
+          keychain_password=$(openssl rand -base64 32)
+          security create-keychain -p "$keychain_password" "$keychain"
+          echo "DESKTOP_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          printf '%s' "$CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/desktop-cert.p12"
+          security import "$RUNNER_TEMP/desktop-cert.p12" -k "$keychain" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/desktop-cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity=$(security find-identity -v -p codesigning "$keychain" | awk '/"Developer ID Application: / { print $2; exit }')
+          if [ -z "$identity" ]; then
+            echo "::error::DESKTOP_CERT_P12_BASE64 holds no valid Developer ID Application identity."
+            exit 1
+          fi
+          echo "DESKTOP_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+
+      - name: Write the App Store Connect API key
+        env:
+          KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          if [ -z "$KEY_P8_BASE64" ] && [ -z "$KEY_ID" ] && [ -z "$ISSUER_ID" ]; then
+            echo "::notice::ASC_KEY_P8_BASE64, ASC_KEY_ID and ASC_ISSUER_ID are not set; the app is not notarized."
+            exit 0
+          fi
+          if [ -z "$KEY_P8_BASE64" ] || [ -z "$KEY_ID" ] || [ -z "$ISSUER_ID" ]; then
+            echo "::error::Set all of ASC_KEY_P8_BASE64, ASC_KEY_ID and ASC_ISSUER_ID, or none."
+            exit 1
+          fi
+          dir="$RUNNER_TEMP/asc"
+          mkdir -p "$dir"
+          chmod 700 "$dir"
+          printf '%s' "$KEY_P8_BASE64" | base64 --decode > "$dir/AuthKey_$KEY_ID.p8"
+          chmod 600 "$dir/AuthKey_$KEY_ID.p8"
+          {
+            echo "ASC_KEY_PATH=$dir/AuthKey_$KEY_ID.p8"
+            echo "ASC_KEY_ID=$KEY_ID"
+            echo "ASC_ISSUER_ID=$ISSUER_ID"
+          } >> "$GITHUB_ENV"
+
+      - name: Build, sign and notarize
+        working-directory: apps/desktop
+        run: scripts/release.sh "$VERSION"
+
+      - name: Sign the update for Sparkle
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SPARKLE_ED_PRIVATE_KEY" ] && [ -z "$SPARKLE_PUBLIC_ED_KEY" ]; then
+            echo "::notice::SPARKLE_ED_PRIVATE_KEY and SPARKLE_PUBLIC_ED_KEY are not set; the app does not check for updates and no appcast is generated."
+            exit 0
+          fi
+          if [ -z "$SPARKLE_ED_PRIVATE_KEY" ] || [ -z "$SPARKLE_PUBLIC_ED_KEY" ]; then
+            echo "::error::Set both the SPARKLE_ED_PRIVATE_KEY secret and the SPARKLE_PUBLIC_ED_KEY variable, or neither."
+            exit 1
+          fi
+          archive="$RUNNER_TEMP/Sparkle-$SPARKLE_VERSION.tar.xz"
+          curl -fsSL --retry 3 -o "$archive" \
+            "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz"
+          echo "$SPARKLE_SHA256  $archive" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/sparkle"
+          tar -xJf "$archive" -C "$RUNNER_TEMP/sparkle"
+          out=apps/desktop/build/release
+          zip="$out/Stim-$VERSION.zip"
+          plist=apps/desktop/build/Stim.app/Contents/Info.plist
+          signature=$(printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | "$RUNNER_TEMP/sparkle/bin/sign_update" --ed-key-file - -p "$zip")
+          length=$(stat -f %z "$zip")
+          build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")
+          minimum=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$plist")
+          base="https://github.com/$GITHUB_REPOSITORY/releases"
+          cat > "$out/appcast.xml" <<EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+            <channel>
+              <title>Stim Desktop</title>
+              <link>$APPCAST_URL</link>
+              <item>
+                <title>$VERSION</title>
+                <pubDate>$(date -u '+%a, %d %b %Y %H:%M:%S +0000')</pubDate>
+                <link>$base/tag/desktop-v$VERSION</link>
+                <sparkle:version>$build</sparkle:version>
+                <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
+                <sparkle:minimumSystemVersion>$minimum</sparkle:minimumSystemVersion>
+                <enclosure url="$base/download/desktop-v$VERSION/Stim-$VERSION.zip" length="$length" type="application/octet-stream" sparkle:edSignature="$signature"/>
+              </item>
+            </channel>
+          </rss>
+          EOF
+          cat "$out/appcast.xml"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stim-desktop-${{ env.VERSION }}
+          path: |
+            apps/desktop/build/release/Stim-*.dmg
+            apps/desktop/build/release/Stim-*.zip
+            apps/desktop/build/release/SHA256SUMS
+            apps/desktop/build/release/appcast.xml
+          if-no-files-found: error
+
+      - name: Refuse to publish a build that is not notarized
+        if: github.event_name == 'push'
+        run: |
+          if [ -z "${DESKTOP_SIGNING_IDENTITY:-}" ] || [ -z "${ASC_KEY_PATH:-}" ]; then
+            echo "::error::A desktop-v tag publishes only a Developer ID signed, notarized build. Set the signing and App Store Connect secrets, then re-run this job."
+            exit 1
+          fi
+
+      - name: Create the GitHub release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          out=apps/desktop/build/release
+          if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            flags="--latest=false"
+            if [ "$PRERELEASE" = true ]; then flags="$flags --prerelease"; fi
+            gh release create "$GITHUB_REF_NAME" --verify-tag $flags --title "Stim Desktop $VERSION" \
+              --notes "Download \`Stim-$VERSION.dmg\`, open it and drag Stim to Applications. \`SHA256SUMS\` lists the checksums."
+          fi
+          gh release upload "$GITHUB_REF_NAME" --clobber "$out/Stim-$VERSION.dmg" "$out/Stim-$VERSION.zip" "$out/SHA256SUMS"
+
+      - name: Check that this is the newest stable release
+        if: github.event_name == 'push' && env.PRERELEASE == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' apps/desktop/build/Stim.app/Contents/Info.plist)
+          current=
+          if gh release view desktop-latest --json assets --jq '.assets[].name' 2>/dev/null | grep -qx appcast.xml; then
+            appcast=$(curl -fsSL --retry 3 "$APPCAST_URL")
+            current=$(printf '%s\n' "$appcast" | sed -n 's|.*<sparkle:version>\([0-9]*\)</sparkle:version>.*|\1|p' | head -1)
+          fi
+          if [ -n "$current" ] && [ "$current" -gt "$build" ]; then
+            echo "::notice::desktop-latest serves the newer build $current, so it and the cask stay on that release."
+            echo "NEWEST=false" >> "$GITHUB_ENV"
+          else
+            echo "NEWEST=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Update the desktop-latest release
+        if: github.event_name == 'push' && env.NEWEST == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          out=apps/desktop/build/release
+          cp "$out/Stim-$VERSION.dmg" "$RUNNER_TEMP/Stim.dmg"
+          notes="Stable links to the newest Stim Desktop release, desktop-v$VERSION. Stim.dmg is a copy of Stim-$VERSION.dmg and appcast.xml is the Sparkle update feed."
+          if gh release view desktop-latest > /dev/null 2>&1; then
+            gh release edit desktop-latest --notes "$notes"
+          else
+            gh release create desktop-latest --latest=false --target "$GITHUB_SHA" --title "Stim Desktop (latest)" --notes "$notes"
+          fi
+          gh release upload desktop-latest --clobber "$RUNNER_TEMP/Stim.dmg"
+          if [ -f "$out/appcast.xml" ]; then
+            gh release upload desktop-latest --clobber "$out/appcast.xml"
+          else
+            echo "::notice::No appcast was generated, so desktop-latest keeps its previous appcast.xml."
+          fi
+
+      - name: Bump the Homebrew cask
+        if: github.event_name == 'push' && env.NEWEST == 'true'
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "::notice::HOMEBREW_TAP_TOKEN is not set; the appandflow/homebrew-tap cask is not bumped."
+            exit 0
+          fi
+          tap="$RUNNER_TEMP/homebrew-tap"
+          basic=$(printf 'x-access-token:%s' "$HOMEBREW_TAP_TOKEN" | base64)
+          echo "::add-mask::$basic"
+          auth="AUTHORIZATION: basic $basic"
+          git -c http.extraheader="$auth" clone --depth 1 https://github.com/appandflow/homebrew-tap.git "$tap"
+          mkdir -p "$tap/Casks"
+          apps/desktop/packaging/bump-cask.sh "$VERSION" "$tap/Casks/stim.rb"
+          cd "$tap"
+          git add Casks/stim.rb
+          if git diff --cached --quiet; then
+            echo "The cask already names $VERSION."
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m "stim $VERSION"
+          git -c http.extraheader="$auth" push origin HEAD
+
+      - name: Remove the signing keychain and API key
+        if: always()
+        run: |
+          if [ -n "${DESKTOP_KEYCHAIN:-}" ]; then security delete-keychain "$DESKTOP_KEYCHAIN" || true; fi
+          rm -rf "$RUNNER_TEMP/asc" "$RUNNER_TEMP/desktop-cert.p12"

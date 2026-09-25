@@ -5,6 +5,7 @@ const sidebars: SidebarsConfig = {
     'why',
     'requirements',
     'getting-started',
+    'desktop',
     {
       type: 'category',
       label: 'Understand Stim',
