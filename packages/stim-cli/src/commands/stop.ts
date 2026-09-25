@@ -914,6 +914,15 @@ class StopBlocked extends Error {
 
 class LeaveBuildRunning extends Error {}
 
+function ownerGoneRefusal(holder: ClaimHolder, at: number): StopBlocked {
+  const child = holder.child ? ` (pid ${holder.child.pid})` : '';
+  return new StopBlocked({
+    code: 'STIM_STOP_BLOCKED',
+    message: `${describeNativeRunHolder(holder, at)} holds this workspace's native-run claim at ${holder.path}, but pid ${holder.owner.pid} is no longer that run; the build tool it started${child} still holds the claim. Stim signals only a claim owner whose identity it can prove.`,
+    remedy: `Wait for the build tool${child} to exit, or end it yourself, then run \`stim stop\` again.`,
+  });
+}
+
 function workspaceDeviceSlots(root: string): string[] {
   const slots = projectDeviceSlots(getProject(root))
     .filter(({ platforms }) => Object.values(platforms).some(Boolean))
@@ -977,6 +986,7 @@ export async function stopWorkspaceNow({
     const at = now();
     if (seen?.claimId === holder.claimId) {
       if (seen.action === 'interrupt' && at >= seen.deadline) {
+        if (inspectIdentity(holder.owner) !== 'same') throw ownerGoneRefusal(holder, at);
         throw new StopBlocked({
           code: 'STIM_STOP_BLOCKED',
           message: `${describeNativeRunHolder(holder, at)} did not exit within ${Math.round(interruptWaitMs / 1000)}s of SIGINT; it still holds this workspace's native-run claim at ${holder.path}.`,
@@ -994,23 +1004,18 @@ export async function stopWorkspaceNow({
       ownerIdentity: inspectIdentity(holder.owner),
       deviceSlots: deviceSlots(root),
     });
-    seen = { claimId: holder.claimId, action, deadline: at + interruptWaitMs };
+    seen = { claimId: holder.claimId, action, deadline: Number.POSITIVE_INFINITY };
     const who = describeNativeRunHolder(holder, at);
     if (action === 'proceed') {
       notice(holder, `leaving ${who} running: slot ${target.slot} stays, so slot ${slot} stops without the build lock`);
       throw new LeaveBuildRunning();
     }
-    if (action === 'refuse') {
-      const child = holder.child ? ` (pid ${holder.child.pid})` : '';
-      throw new StopBlocked({
-        code: 'STIM_STOP_BLOCKED',
-        message: `${who} holds this workspace's native-run claim at ${holder.path}, but pid ${holder.owner.pid} is no longer that run; the build tool it started${child} still holds the claim. Stim signals only a claim owner whose identity it can prove.`,
-        remedy: `Wait for the build tool${child} to exit, or end it yourself, then run \`stim stop\` again.`,
-      });
-    }
+    if (action === 'refuse') throw ownerGoneRefusal(holder, at);
     if (action === 'interrupt') {
       requestNativeRunCancel(root, holder.claimId);
       interrupted.push(holder.claimId);
+      seen = { claimId: holder.claimId, action, deadline: now() + interruptWaitMs };
+      if (inspectIdentity(holder.owner) !== 'same') return;
       try {
         interrupt(holder.owner.pid);
       } catch (error) {

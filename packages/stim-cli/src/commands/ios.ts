@@ -215,6 +215,17 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     });
 }
 
+function unlessCancelled(
+  result: Awaited<ReturnType<typeof acquireIosArtifact>>,
+): Awaited<ReturnType<typeof acquireIosArtifact>> {
+  if (!result.ok || !runCancellation()) return result;
+  return {
+    ok: false,
+    failure: { code: 'STIM_CANCELLED', message: 'before install' },
+    compilationCache: result.artifact.cache.compilation,
+  };
+}
+
 function explicitSchemeRefusal(root: string, scheme: string | undefined, isExpo: boolean, d: IosDeps): FailArgs | null {
   if (scheme === undefined) return null;
   if (!scheme.trim()) {
@@ -774,32 +785,38 @@ async function runIos(
     // restarts it on an EAS host (https://github.com/appandflow/stim/issues/1212).
     const localBoot = remoteDevice ? null : startBoot();
     udid = (device.deviceUdid as string | undefined) ?? (await localBoot) ?? '';
-    const acquiredArtifact = await acquireIosArtifact(
-      {
-        root,
-        logFile,
-        udid,
-        configuration,
-        buildScheme,
-        buildProfile,
-        isExpo,
-        remoteDestination: Boolean(remoteDevice),
-        device: physical
-          ? {
-              lanAddress,
-              metroPort,
-              signingName: iosSigningIdentitySetting(settings),
-              signingSha1: iosSigningIdentitySha1Setting(settings),
-            }
-          : null,
-        optimizations: optimizations.ios,
-        cache: { policy: cachePolicy, providerConfig: cacheProviderConfig, disabledByFlag: opts.buildCache === false },
-        easBuild,
-        easProfile: opts.easProfile,
-        maxBuilds: limits.maxBuilds,
-        progress: { phase, note, logWriter, estimates, stats, step: progress.step },
-      },
-      d,
+    const acquiredArtifact = unlessCancelled(
+      await acquireIosArtifact(
+        {
+          root,
+          logFile,
+          udid,
+          configuration,
+          buildScheme,
+          buildProfile,
+          isExpo,
+          remoteDestination: Boolean(remoteDevice),
+          device: physical
+            ? {
+                lanAddress,
+                metroPort,
+                signingName: iosSigningIdentitySetting(settings),
+                signingSha1: iosSigningIdentitySha1Setting(settings),
+              }
+            : null,
+          optimizations: optimizations.ios,
+          cache: {
+            policy: cachePolicy,
+            providerConfig: cacheProviderConfig,
+            disabledByFlag: opts.buildCache === false,
+          },
+          easBuild,
+          easProfile: opts.easProfile,
+          maxBuilds: limits.maxBuilds,
+          progress: { phase, note, logWriter, estimates, stats, step: progress.step },
+        },
+        d,
+      ),
     );
     if (!acquiredArtifact.ok) {
       compilationCache = acquiredArtifact.compilationCache;

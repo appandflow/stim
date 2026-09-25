@@ -95,7 +95,9 @@ export function decideStopAction({
 }): StopHolderAction {
   if (holder.command !== 'ios' && holder.command !== 'android') return { action: 'wait' };
   const leavesNothing =
-    stopSlot === undefined || holder.slot === stopSlot || deviceSlots.every((slot) => slot === stopSlot);
+    stopSlot === undefined ||
+    holder.slot === stopSlot ||
+    (deviceSlots.includes(stopSlot) && deviceSlots.every((slot) => slot === stopSlot));
   if (!leavesNothing) return { action: 'proceed' };
   return ownerIdentity === 'same' ? { action: 'interrupt' } : { action: 'refuse' };
 }
@@ -165,7 +167,7 @@ function cancelOnInterrupt({
       signalled > 0
         ? `${cancelled}; stopping the running build tool`
         : request
-          ? `${cancelled}; finishing the current step without starting another build tool`
+          ? `${cancelled}; stopping before the next build tool or install`
           : cancelled,
     );
     if (signalled === 0 && !request) exit(130);

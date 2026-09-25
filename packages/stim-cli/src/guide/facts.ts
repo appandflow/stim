@@ -361,7 +361,9 @@ ON FAILURE
   before failing, including a STIM_LOW_DISK refusal.
 
   An \`ios\` or \`android\` run that \`stim stop\` or Ctrl-C interrupted
-  reports STIM_CANCELLED and exits 130.
+  reports STIM_CANCELLED and exits 130. A
+  run that exits on the interrupt at once (a second SIGINT, a physical-device
+  lease, Ctrl-C with no build tool running) exits 130 with no payload.
 
   \`stop --json\` prints { root, ok, supervisor, collectors, metro, device,
   port, metroTunnel, releasedLeases }. When it cannot end the \`ios\` or

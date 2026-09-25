@@ -1089,6 +1089,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     ccacheActivity = artifact.ccache;
     androidPackage = artifact.androidPackage;
     record.appPath = apkPath;
+    if (runCancellation()) return fail('STIM_CANCELLED', 'before install');
 
     if (startRemoteBoot) {
       progress.step('install');

@@ -1226,8 +1226,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
 
   All slots share this workspace's Metro server and build cache. Native CLI
   runs serialize workspace mutations; a waiting run can wait up to 30 minutes
-  and prints what it waits for. \`stop --slot\` interrupts only a build for
-  its own slot (see STOP DURING A BUILD).
+  and prints what it waits for. \`stop --slot\` interrupts a build only for
+  its own slot or when it stops the workspace's only device (see STOP DURING
+  A BUILD).
   Named slots support local devices; remote sessions use the default slot.
   Names use 1-64 letters, digits, underscores or hyphens, starting with a letter
   or digit. Reserved object-property names are refused.
