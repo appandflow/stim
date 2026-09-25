@@ -162,6 +162,16 @@ Events are `{ "event", "subscription", ... }`.
   which sends a new subscriber the latest frame and stops with the last
   subscriber, and at most two captures run at once. A client whose socket has
   more than 1 MiB unsent skips frames and gets the newest once it catches up.
+- `build.plan` takes `workspace`, `platform` (`ios` or `android`) and `slot`
+  (`default` when absent), and returns the payload of
+  `stim <platform> --plan --json` run in the workspace: the fingerprint, the
+  cache result the next build would get (`local`, `remote` or `false`), the
+  prebuild decision, and `expectedMs` with its `basis`. It builds, boots and
+  installs nothing and writes no Stim state; a remote cache check can
+  download the artifact into a temporary directory, so it gets 150 seconds
+  instead of 60. A plan predicting that the build would refuse is a result
+  whose `refusal` holds the code, message and remedy. A plan that cannot be
+  computed is a `stim-failed` error.
 - `unsubscribe` ends a subscription.
 - `action` runs an [action](#actions) and returns
   `{ "action", "workspace", "output" }`.
@@ -170,9 +180,12 @@ Events are `{ "event", "subscription", ... }`.
 
 `workspace` is an environment `path` from a status payload. Any other path is
 refused with `unknown-workspace` and runs nothing. A connection holds at most
-32 subscriptions and runs at most 4 `logs.query`, `stats.get` and
-`settings.get` requests at a time. Those requests fail after 60 seconds or
-32 MiB of output, and closing the connection stops them. A `stim` child that
+32 subscriptions and runs at most 4 `logs.query`, `stats.get`,
+`settings.get` and `build.plan` requests at a time. Those requests fail after
+60 seconds, `build.plan` after 150, or at 32 MiB of output, and closing the
+connection stops them. When the command refuses with Stim's error contract on
+stdout, the `stim-failed` message is its code, message and remedy; otherwise
+it is the exit status and the end of stderr. A `stim` child that
 ignores SIGTERM gets SIGKILL a second later. A log subscriber whose socket has more than
 4 MiB unsent gets no more batches until it catches up; past 20,000
 waiting records the server ends that subscription with `slow-client`.

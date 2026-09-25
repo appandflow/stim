@@ -55,6 +55,30 @@ export interface BuildReport {
   basis: number;
 }
 
+export type BuildCacheHit = 'local' | 'remote' | false;
+
+/** `stim ios|android --plan --json`: what the next build would find, without building. */
+export interface BuildPlan {
+  platform: Platform;
+  slot?: string;
+  fingerprint: string;
+  cacheKey: string | null;
+  cacheHit: BuildCacheHit;
+  provider: string | null;
+  cacheSkipped: boolean;
+  prebuild: 'none' | 'generate' | 'regenerate' | 'refuse' | null;
+  outcome: 'hit' | 'cold' | null;
+  expectedMs: number | null;
+  basis: number;
+  refusal?: { code: string; message: string; remedy: string };
+}
+
+export interface BuildPlanParams {
+  workspace: string;
+  platform: Platform;
+  slot?: string;
+}
+
 export interface RemoteDeviceState {
   platform: Platform | null;
   backend: 'eas';
@@ -183,6 +207,7 @@ export interface Methods {
   'stats.get': { params: { workspace?: string }; result: Record<string, unknown> };
   'settings.get': { params: { workspace?: string }; result: Record<string, unknown> };
   'frames.subscribe': { params: FrameTarget; result: { subscription: string } };
+  'build.plan': { params: BuildPlanParams; result: BuildPlan };
   unsubscribe: { params: { subscription: string }; result: Record<string, never> };
   action: { params: ActionParams; result: ActionResult };
 }
