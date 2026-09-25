@@ -28,6 +28,7 @@ const entrypoints = [
   ['@stim-cli/core', 'configDir'],
   ['@stim-cli/core/process-identity', 'captureProcessIdentity'],
   ['@stim-cli/core/ownership-claim', 'tryAcquireClaim'],
+  ['@stim-cli/core/state', 'loadConfig'],
   ['@stim-cli/cache', 'loadCacheProvider'],
   ['@stim-cli/expo-build-cache', 'cacheRoot'],
   ['@stim-cli/metro', 'sharedCacheStores'],
@@ -44,6 +45,7 @@ const core = require('@stim-cli/core');
 const importedCore = await import(pathToFileURL(require.resolve('@stim-cli/core')).href);
 const identity = require('@stim-cli/core/process-identity');
 const claims = await import(pathToFileURL(require.resolve('@stim-cli/core/ownership-claim')).href);
+const state = require('@stim-cli/core/state');
 const previousHome = process.env.STIM_HOME;
 const home = mkdtempSync(join(tmpdir(), 'stim-runtime-lock-'));
 process.env.STIM_HOME = home;
@@ -60,6 +62,10 @@ try {
     'nested',
   );
   assert.equal(existsSync(lock), false);
+  assert.equal(
+    state.withConfigLock(() => core.withDirLock(join(home, 'config.lock'), () => 'shared', { waitMs: 0 })),
+    'shared',
+  );
 } finally {
   if (previousHome === undefined) delete process.env.STIM_HOME;
   else process.env.STIM_HOME = previousHome;
