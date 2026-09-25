@@ -1,3 +1,4 @@
+import { isStimOwnedSim } from '../../devices/device-ownership.ts';
 import { deviceSlotPlatforms, projectDeviceSlots } from '../../devices/device-slots.ts';
 import { existsSync } from 'fs';
 import { isAbsolute } from 'path';
@@ -7,7 +8,7 @@ import { plural } from '../../command-output.ts';
 import { directorySize } from '../../fs-util.ts';
 import { leaseIsExpired, listLeaseFiles, type LeaseFileEntry } from '../../engine/device-lease.ts';
 import { listAllIosSims, listIosDeviceTypes, parseRuntimeVersion, type IosSimRecord } from '../../devices/ios.ts';
-import { listAvds, ownedAvdDirectory, type OrphanedAvdDirectory } from '../../devices/android.ts';
+import { isStimOwnedAvdName, listAvds, ownedAvdDirectory, type OrphanedAvdDirectory } from '../../devices/android.ts';
 import { dropParked, readParked, type ParkedSim } from '../../devices/sim-pool.ts';
 import {
   teardownOwnedIosSim,
@@ -91,13 +92,15 @@ export function findOrphanedDevices({
   config,
   isMounted,
   deadProjects = [],
+  isOwned = isStimCreated,
 }: {
   sims?: IosSimRecord[];
   avds?: string[];
   config: Config | null;
   isMounted?: (path: string) => boolean;
   deadProjects?: string[];
-}): { orphaned: OrphanedDevice[]; kept: KeptDevice[] } {
+  isOwned?: (device: UnverifiedDevice) => boolean;
+}): { orphaned: OrphanedDevice[]; kept: KeptDevice[]; unverified: UnverifiedDevice[] } {
   const dead = new Set(deadProjects);
   const referenced = new Map<string, { path: string; mounted: boolean }>();
 
@@ -124,12 +127,16 @@ export function findOrphanedDevices({
 
   const orphaned: OrphanedDevice[] = [];
   const kept: KeptDevice[] = [];
+  const unverified: UnverifiedDevice[] = [];
 
   for (const sim of sims) {
     if (!sim?.name?.startsWith('stim-')) continue;
     const ref = referenced.get(sim.udid);
-    if (!ref) {
-      orphaned.push({ kind: 'ios', id: sim.udid, name: sim.name });
+    const device = { kind: 'ios' as const, id: sim.udid, name: sim.name };
+    if (!ref && !isOwned(device)) {
+      unverified.push(device);
+    } else if (!ref) {
+      orphaned.push(device);
     } else {
       kept.push({ kind: 'ios', id: sim.udid, name: sim.name, reason: describeKept(ref) });
     }
@@ -138,14 +145,33 @@ export function findOrphanedDevices({
   for (const avdName of avds) {
     if (!avdName?.startsWith('stim-')) continue;
     const ref = referenced.get(avdName);
-    if (!ref) {
-      orphaned.push({ kind: 'android', id: avdName, name: avdName });
+    const device = { kind: 'android' as const, id: avdName, name: avdName };
+    if (!ref && !isOwned(device)) {
+      unverified.push(device);
+    } else if (!ref) {
+      orphaned.push(device);
     } else {
       kept.push({ kind: 'android', id: avdName, name: avdName, reason: describeKept(ref) });
     }
   }
 
-  return { orphaned, kept };
+  return { orphaned, kept, unverified };
+}
+
+export interface UnverifiedDevice {
+  kind: 'ios' | 'android';
+  id: string;
+  name: string;
+}
+
+function isStimCreated(device: UnverifiedDevice): boolean {
+  return device.kind === 'ios' ? isStimOwnedSim({ udid: device.id, name: device.name }) : isStimOwnedAvdName(device.id);
+}
+
+export function unverifiedDeviceCommand(device: UnverifiedDevice): string {
+  return device.kind === 'ios'
+    ? `xcrun simctl delete ${device.id}`
+    : `avdmanager delete avd -n ${JSON.stringify(device.id)}`;
 }
 
 export function findStaleProjectDevices({

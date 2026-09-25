@@ -18,6 +18,7 @@ import { dirname, join } from 'node:path';
 import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
 import { Command } from 'commander';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { getProject, saveConfig, loadConfig, upsertProject } from '../workspace/config.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { ensureRemoteBootOwned, withRemoteSessionLock } from '../engine/device-remote.ts';
@@ -343,6 +344,40 @@ test('findOrphanedDevices proposes only Stim devices absent from config', () => 
     isMounted: () => true,
   });
   expect(result.orphaned.map((o) => o.id).toSorted()).toEqual(['U1', 'stim-old']);
+});
+
+test('gc deletes only unreferenced devices Stim recorded or named exactly, and lists other stim-* devices', () => {
+  recordCreatedDevice('ios', 'RECORDED');
+  const avdRoot = join(tmpHome, 'avd');
+  const avd = (name: string, config: string) => {
+    mkdirSync(join(avdRoot, `${name}.avd`), { recursive: true });
+    writeFileSync(join(avdRoot, `${name}.avd`, 'config.ini'), config);
+    writeFileSync(join(avdRoot, `${name}.ini`), `path=${join(avdRoot, `${name}.avd`)}\n`);
+  };
+  const saved = process.env.ANDROID_AVD_HOME;
+  process.env.ANDROID_AVD_HOME = avdRoot;
+  try {
+    avd('stim-legacy', 'disk.dataPartition.size=8589934592\n');
+    avd('stim-studio', 'disk.dataPartition.size=6G\n');
+    const result = findOrphanedDevices({
+      sims: [
+        makeIosSim({ udid: 'RECORDED', name: 'stim-app' }),
+        makeIosSim({ udid: 'LEGACY', name: 'stim-app (iPhone 17 Pro 26.5) 1a2b3c-1' }),
+        makeIosSim({ udid: 'HANDMADE', name: 'stim-desktop-duo-test' }),
+      ],
+      avds: ['stim-legacy', 'stim-studio'],
+      config: makeConfig(),
+      isMounted: () => true,
+    });
+    expect(result.orphaned.map((o) => o.id).toSorted()).toEqual(['LEGACY', 'RECORDED', 'stim-legacy']);
+    expect(result.unverified).toEqual([
+      { kind: 'ios', id: 'HANDMADE', name: 'stim-desktop-duo-test' },
+      { kind: 'android', id: 'stim-studio', name: 'stim-studio' },
+    ]);
+  } finally {
+    if (saved === undefined) delete process.env.ANDROID_AVD_HOME;
+    else process.env.ANDROID_AVD_HOME = saved;
+  }
 });
 
 test('a simulator in the parked pool is referenced rather than orphaned', () => {
@@ -872,6 +907,79 @@ function claimEasSessions(
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
+  for (const udid of [
+    'A1F3-0000',
+    'DEFAULT',
+    'GONE',
+    'HERE',
+    'P1',
+    'PHONE',
+    'TABLET',
+    'U-STALE',
+    'U1',
+    'U2',
+    'U3',
+    'UDID-1',
+    'UDID-2',
+    'UDID-9',
+    'UDID-DEAD',
+    'UDID-ELSEWHERE',
+    'UDID-HERE',
+    'UDID-LIVE',
+    'UDID-REAL-1',
+    'UDID-REAL-2',
+    'UDID-STALE',
+    'UDID-VANISHED',
+    'drs_new',
+  ])
+    recordCreatedDevice('ios', udid);
+  for (const name of [
+    'stim-abandoned',
+    'stim-adopter',
+    'stim-alpha',
+    'stim-b',
+    'stim-bad',
+    'stim-beta',
+    'stim-claimed',
+    'stim-creating',
+    'stim-dead',
+    'stim-dead-owner',
+    'stim-different',
+    'stim-ext',
+    'stim-extra',
+    'stim-first',
+    'stim-gone',
+    'stim-here',
+    'stim-hidden',
+    'stim-home-b',
+    'stim-kept',
+    'stim-live',
+    'stim-new',
+    'stim-old',
+    'stim-one',
+    'stim-orphan',
+    'stim-orphan-1',
+    'stim-orphan-2',
+    'stim-race',
+    'stim-real-env-1',
+    'stim-real-env-2',
+    'stim-registering',
+    'stim-report-orphan',
+    'stim-resolved',
+    'stim-second',
+    'stim-someones-live-env',
+    'stim-source',
+    'stim-stale',
+    'stim-stale-avd',
+    'stim-stale-record',
+    'stim-target',
+    'stim-three',
+    'stim-too-late',
+    'stim-two',
+    'stim-unclaimed',
+    'stim-unreadable',
+  ])
+    recordCreatedDevice('android', name);
 
   fakeHome = mkdtempSync(join(tmpdir(), 'stim-fakehome-'));
   originalHomeRoots = Object.fromEntries(HOME_ENV_KEYS.map((key) => [key, process.env[key]]));
@@ -2884,6 +2992,7 @@ describe('gc --json', () => {
       'parkedSimulators',
       'parkedEmulators',
       'orphanedDevices',
+      'unverifiedDevices',
       'staleDevices',
       'staleDeviceRecords',
       'idleDevices',

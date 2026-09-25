@@ -48,6 +48,7 @@ import { asProcessExit, makeChildProcess, makeError, makeExecutor, makeMetroReso
 import { ensureBooted } from '../engine/device.ts';
 import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { COMPILATION_CACHE_UNAVAILABLE, type BuildIosResult } from '../engine/xcode.ts';
 import { RELEASE_VERIFY_WAIT_MS } from '../engine/launch-verify.ts';
 import {
@@ -117,6 +118,7 @@ let root: string;
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
+  recordCreatedDevice('ios', UDID);
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
   writeFileSync(
     join(root, 'package.json'),

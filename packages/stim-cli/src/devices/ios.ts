@@ -1,4 +1,6 @@
 import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { forgetCreatedDevice, recordCreatedDevice } from './created-devices.ts';
+import { isStimOwnedSim } from './device-ownership.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
@@ -468,6 +470,7 @@ export function createOwnedIosSim(
       killSignal: 'SIGKILL',
     })
     .trim();
+  recordCreatedDevice('ios', udid);
   return { udid, name, deviceType: choice.deviceType, runtime: choice.runtime };
 }
 
@@ -564,7 +567,7 @@ export function clearAppDataContainer(container: string): void {
 export function resolveOwnedIosSim(udid: string): ResolvedIosSim {
   const sim = listAllIosSims().find((s) => s.udid === udid);
   if (!sim) return { missing: true };
-  if (!sim.name?.startsWith('stim-')) return { notOwned: sim.name };
+  if (!isStimOwnedSim(sim)) return { notOwned: sim.name };
   return { sim };
 }
 
@@ -573,10 +576,11 @@ export function deleteIosSim(udid: string): void {
   if (result.missing) return;
   if (result.notOwned) {
     throw new Error(
-      `Refusing to delete simulator "${result.notOwned}" (${udid}): not a Stim-owned sim (name must start with "stim-").`,
+      `Refusing to delete simulator "${result.notOwned}" (${udid}): not a Stim-owned sim; Stim has no record of creating it.`,
     );
   }
   getExecutor().run(`xcrun simctl delete ${udid}`, SIMCTL_OPTIONS);
+  forgetCreatedDevice('ios', udid);
 }
 
 const PARKED_DELETE_TIMEOUT_MS = 30000;
@@ -586,10 +590,11 @@ export function deleteParkedIosSim(udid: string): void {
     (entry) => entry.udid === udid,
   );
   if (!sim) return;
-  if (!sim.name.startsWith('stim-')) {
+  if (!isStimOwnedSim(sim)) {
     throw new Error(`Simulator ${udid} is now named "${sim.name}" and is not Stim-owned; refusing to delete it.`);
   }
   getExecutor().runFile('xcrun', ['simctl', 'delete', udid], { timeoutMs: PARKED_DELETE_TIMEOUT_MS });
+  forgetCreatedDevice('ios', udid);
 }
 
 export function listIosRuntimes(): IosRuntime[] {

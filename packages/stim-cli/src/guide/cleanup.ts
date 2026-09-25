@@ -17,8 +17,9 @@ WHAT RECLAIMS AN OWNED DEVICE
   stim worktree remove    parks eligible owned simulators and emulators
                             (\`guide lifecycle pool\`); deletes them when
                             parking is disabled or their setup cannot be verified
-  stim gc --delete        sweeps stim-* devices no project references, and
-                            clears verified parked simulators and emulators
+  stim gc --delete        sweeps devices Stim created that no project
+                            references (\`guide cleanup gc\`), and clears
+                            verified parked simulators and emulators
   stim gc --delete --older-than <days>
                             also reaps the device of a workspace no Stim
                             command has used in that long, even though the
@@ -155,6 +156,19 @@ simulator used by a UI-test runner. It never shuts down an unowned simulator.
 If a delete fails, the device's config record is KEPT and the command reports
 it. A record is what makes the device findable again, so it outlives a failed
 teardown rather than turning it into an orphan.
+
+WHICH stim-* DEVICES gc DELETES
+  A \`stim-\` prefix alone is not proof that Stim made a device. gc deletes an
+  unreferenced device only when Stim created it: the device is listed in
+  $STIM_HOME/created-devices.json, where Stim records every simulator and AVD
+  it creates, or it predates that ledger and matches Stim's own format
+  exactly -- an iOS name \`stim-<label> (<model> <runtime>)\`, or an AVD
+  named \`stim-<label>\` whose config.ini holds the byte-valued
+  disk.dataPartition.size Stim writes. gc lists any other stim-* device under
+  "Unrecognized stim-* devices" with the command that deletes it
+  (\`xcrun simctl delete <udid>\` or \`avdmanager delete avd -n <name>\`), and
+  never runs it. Boot, shutdown and teardown re-check ownership by the same
+  rule, so a device that stops matching is left alone.
 
 ANDROID DATA WITHOUT A REGISTRATION
   \`gc\` also reports stim-*.avd directories whose .ini registration is

@@ -13,6 +13,7 @@ import {
 import { homedir, tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
 import {
   MAX_EMULATOR_FAILURE_LINES,
   androidDeviceAbi,
@@ -59,6 +60,17 @@ let savedSdkRoot: string | undefined;
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
+  for (const name of [
+    'stim-app',
+    'stim-gone',
+    'stim-linked',
+    'stim-mine',
+    'stim-moved',
+    'stim-my-project',
+    'stim-relative',
+    'stim-stopped',
+  ])
+    recordCreatedDevice('android', name);
   savedAndroidHome = process.env.ANDROID_HOME;
   savedSdkRoot = process.env.ANDROID_SDK_ROOT;
   process.env.ANDROID_HOME = join(tmpHome, 'no-sdk-here');

@@ -450,6 +450,9 @@ RULES
                               listed }
     parkedEmulators         { name, systemImage, parkedAt, bytes, listed }
     orphanedDevices         { kind, id, name, bytes, directory }
+    unverifiedDevices       { kind, id, name, command }  stim-* devices Stim
+                              has no record of creating; never deleted, run
+                              command yourself
     staleDevices            { kind, id, name, project, slot, idleDays,
                               bytes }  only with --older-than
     staleDeviceRecords      { kind, id, project, slot }  --delete clears

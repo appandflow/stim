@@ -26,6 +26,7 @@ import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/
 import { registerStart } from '../commands/start.ts';
 import { asProcessExit } from './_factories.ts';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { upsertProject, getProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
@@ -330,6 +331,19 @@ function writeRemoteSession(root: string, sessionId: string): void {
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-home-'));
   process.env.STIM_HOME = tmpHome;
+  for (const udid of ['U1', 'U3', 'U4', 'U5', 'U6', 'U7', 'U8', 'U9', 'UDID-1']) recordCreatedDevice('ios', udid);
+  for (const name of [
+    'stim-a',
+    'stim-b',
+    'stim-c',
+    'stim-d',
+    'stim-held',
+    'stim-main',
+    'stim-missing',
+    'stim-plain',
+    'stim-x',
+  ])
+    recordCreatedDevice('android', name);
   mainDir = canon(mkdtempSync(join(tmpdir(), 'stim-test-main-')));
   wtDir = canon(mkdtempSync(join(tmpdir(), 'stim-test-wt-')));
   liveProcesses = [];

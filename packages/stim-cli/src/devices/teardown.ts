@@ -29,6 +29,7 @@ import {
   shutdownAndroidEmulator,
   waitForAndroidEmulatorShutdown,
   deleteAvd,
+  isStimOwnedAvdName,
   ownedAvdMatchesConfiguration,
   ownedAvdSystemImage,
 } from './android.ts';
@@ -135,7 +136,7 @@ export function teardownOwnedIosSim(
       return {
         status: 'skipped',
         kind: 'not-owned',
-        reason: `sim is now named "${resolved.notOwned}", not Stim-owned by name`,
+        reason: `sim "${resolved.notOwned}" is not Stim-owned: Stim has no record of creating it`,
       };
     }
     if (resolved.missing) return { status: 'missing' };
@@ -290,11 +291,15 @@ interface AvdTeardownOptions {
 }
 
 export function teardownOwnedAvd(avdName: string, options: AvdTeardownOptions = {}): TeardownOutcome {
-  if (!/^stim-[A-Za-z0-9._-]+$/.test(avdName)) {
-    return { status: 'skipped', kind: 'not-owned', reason: `AVD ${avdName} is not Stim-owned by name` };
-  }
   let claim: ClaimHandle | undefined;
   try {
+    if (!isStimOwnedAvdName(avdName, options.orphanedDirectory ? options.orphanedDirectory.directory : undefined)) {
+      return {
+        status: 'skipped',
+        kind: 'not-owned',
+        reason: `AVD ${avdName} is not Stim-owned: Stim has no record of creating it`,
+      };
+    }
     claim = acquireAvdClaim(avdName);
     const result = teardownClaimedAvd(avdName, claim, options);
     if (result.status === 'torn-down' || result.status === 'missing') options.onRemoved?.();
@@ -325,7 +330,11 @@ function teardownClaimedAvd(
     if (del) withConfigLock(() => assertAvdReferences(avdName, owner));
     const resolved = resolveAvd(avdName);
     if (resolved.notOwned) {
-      return { status: 'skipped', kind: 'not-owned', reason: `AVD ${avdName} is not Stim-owned by name` };
+      return {
+        status: 'skipped',
+        kind: 'not-owned',
+        reason: `AVD ${avdName} is not Stim-owned: Stim has no record of creating it`,
+      };
     }
     if (resolved.missing) return teardownUnregisteredAvd(avdName, del, owner, orphanedDirectory);
     if (onlyIfMissing) return { status: 'skipped', reason: 'AVD registration appeared; its record was kept.' };
@@ -352,7 +361,11 @@ function teardownClaimedAvd(
     if (del) {
       const current = resolveAvd(avdName);
       if (current.notOwned) {
-        return { status: 'skipped', kind: 'not-owned', reason: `AVD ${avdName} is not Stim-owned by name` };
+        return {
+          status: 'skipped',
+          kind: 'not-owned',
+          reason: `AVD ${avdName} is not Stim-owned: Stim has no record of creating it`,
+        };
       }
       if (current.missing) return teardownUnregisteredAvd(avdName, del, owner);
       if (current.serial) throw new Error(`Owned AVD ${avdName} started again before deletion.`);

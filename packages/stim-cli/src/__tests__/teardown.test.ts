@@ -5,6 +5,12 @@ import { ensureConfig, getProject, upsertProject } from '../workspace/config.ts'
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
+
+function seedCreatedDevices(): void {
+  for (const udid of ['U0', 'U1']) recordCreatedDevice('ios', udid);
+  for (const name of ['stim-app', 'stim-gone']) recordCreatedDevice('android', name);
+}
 
 let savedAndroidHome: string | undefined;
 let savedSdkRoot: string | undefined;
@@ -21,6 +27,7 @@ beforeEach(() => {
   process.env.HOME = avdHome;
   process.env.STIM_HOME = join(avdHome, 'stim');
   ensureConfig();
+  seedCreatedDevices();
   process.env.ANDROID_AVD_HOME = join(avdHome, 'avd');
   process.env.ANDROID_SDK_HOME = avdHome;
   process.env.ANDROID_USER_HOME = join(avdHome, '.android');
@@ -178,6 +185,7 @@ test('teardownOwnedIosSim contains a throw instead of propagating it', () => {
 test('teardownOwnedIosSim parks an owned simulator and clears its project claim', () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
   process.env.STIM_HOME = home;
+  seedCreatedDevices();
   try {
     const projectPath = '/tmp/pool-project';
     upsertProject(projectPath, {
@@ -233,6 +241,7 @@ test('teardownOwnedIosSim parks an owned simulator and clears its project claim'
 test('a failed overflow eviction retains its parked ownership record', () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
   process.env.STIM_HOME = home;
+  seedCreatedDevices();
   try {
     const projectPath = '/tmp/pool-project';
     upsertProject('/tmp/old-project', {
@@ -314,6 +323,7 @@ test('a failed overflow eviction retains its parked ownership record', () => {
 test('teardownOwnedIosSim falls back to deletion when parking fails', () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
   process.env.STIM_HOME = home;
+  seedCreatedDevices();
   try {
     const projectPath = '/tmp/pool-project';
     upsertProject(projectPath, {
@@ -361,6 +371,7 @@ test('teardownOwnedIosSim falls back to deletion when parking fails', () => {
 test('teardownOwnedIosSim deletes instead of parking when app data cannot be proven cleared', () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
   process.env.STIM_HOME = home;
+  seedCreatedDevices();
   try {
     const projectPath = '/tmp/pool-project';
     const dataPath = join(home, 'device-data');
@@ -421,6 +432,7 @@ test('teardownOwnedIosSim deletes instead of parking when app data cannot be pro
 test('teardownOwnedIosSim deletes instead of parking when app cleanup has no simulator data path', () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
   process.env.STIM_HOME = home;
+  seedCreatedDevices();
   try {
     const projectPath = '/tmp/pool-project';
     upsertProject(projectPath, {
@@ -447,6 +459,7 @@ test('teardownOwnedIosSim deletes instead of parking when app cleanup has no sim
 test('parking fallback re-resolves ownership immediately before deletion', () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
   process.env.STIM_HOME = home;
+  seedCreatedDevices();
   try {
     const projectPath = '/tmp/pool-project';
     upsertProject(projectPath, {
@@ -499,6 +512,7 @@ test('parking fallback re-resolves ownership immediately before deletion', () =>
 test('teardownOwnedIosSim does not park a simulator that remains booted', () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
   process.env.STIM_HOME = home;
+  seedCreatedDevices();
   try {
     const projectPath = '/tmp/pool-project';
     upsertProject(projectPath, {
