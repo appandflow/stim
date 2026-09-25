@@ -70,12 +70,20 @@ final class SimulatorHID {
     send = unsafeBitCast(class_getMethodImplementation(cls, Self.sendSelector), to: SendFn.self)
   }
 
+  // The simulator's SimulatorHID addresses a display's digitizer by its screen
+  // ID with bit 30 set, and backboardd aborts on a target it has no service
+  // for. The main display keeps its legacy target.
+  static func digitizerTarget(screenID: UInt32) -> UInt32 {
+    screenID == 1 ? mainScreenTarget : 0x4000_0000 | screenID
+  }
+
   /// `point` is a fraction of the screen, origin top-left.
-  func touch(_ phase: TouchPhase, at point: CGPoint) {
+  func touch(_ phase: TouchPhase, at point: CGPoint, screenID: UInt32 = 1) {
+    let target = Self.digitizerTarget(screenID: screenID)
     var point = point
     // The builder returns nil for a drag that arrives within 16 ms of the previous message.
     guard let message = SimulatorKit.mouseMessage?(
-      &point, nil, Self.mainScreenTarget, UInt(phase.eventType.rawValue), CGSize(width: 1, height: 1), 0)
+      &point, nil, target, UInt(phase.eventType.rawValue), CGSize(width: 1, height: 1), 0)
     else { return }
     deliver(message)
   }

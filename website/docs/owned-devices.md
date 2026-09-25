@@ -47,6 +47,12 @@ one launch. Stim Desktop selects the workspace that owns the simulator and
 focuses that device. It only displays the simulator; it never boots or shuts
 it down.
 
+An iPhone Duo simulator shows both of its screens side by side, and the
+unlit one stays black. While **Take over** is on, its tile has a **Fold /
+Unfold** button that sweeps the simulated hinge to the other posture. The
+button needs the bundled app, and because it uses private iOS interfaces, a
+new iOS runtime can break it.
+
 ## Multiple devices with slots
 
 Use `--slot <name>` to keep multiple targets in one workspace: phone and tablet

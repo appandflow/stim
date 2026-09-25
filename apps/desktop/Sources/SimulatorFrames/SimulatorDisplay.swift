@@ -30,9 +30,13 @@ import ObjectiveC
 }
 
 // uiOrientation is a UIInterfaceOrientation; the framebuffer stays in the
-// display's native portrait orientation when the device rotates.
+// display's native portrait orientation when the device rotates. screenType 0
+// is a built-in display with a digitizer; TV out, CarPlay and resizable
+// displays have other types.
 @objc protocol SimScreenProperties {
   var uiOrientation: UInt32 { get }
+  var screenID: UInt32 { get }
+  var screenType: UInt { get }
 }
 
 typealias SimDisplay = SimDisplayIOSurfaceRenderable & SimDisplayRenderable & SimScreen
@@ -83,21 +87,30 @@ public enum CoreSimulator {
     return devices.first { ($0.value(forKey: "UDID") as? NSUUID)?.uuidString == udid }
   }
 
-  static func mainDisplay(udid: String) -> SimDisplay? {
+  /// The screen IDs of the device's built-in displays that have a
+  /// framebuffer, main display first. An iPhone Duo has two; it is empty until
+  /// the device boots.
+  public static func screenIDs(udid: String) -> [UInt32] {
+    displays(udid: udid).compactMap { display in
+      display.screenProperties.flatMap { $0.screenType == 0 ? $0.screenID : nil }
+    }
+  }
+
+  static func displays(udid: String) -> [SimDisplay] {
     guard let device = device(udid: udid),
       let io = device.perform(NSSelectorFromString("io"))?.takeUnretainedValue() as? NSObject,
       let ports = io.perform(NSSelectorFromString("ioPorts"))?.takeUnretainedValue() as? [NSObject],
       let surfaceRenderable = objc_getProtocol("SimDisplayIOSurfaceRenderable"),
       let renderable = objc_getProtocol("SimDisplayRenderable"),
       let screen = objc_getProtocol("SimScreen")
-    else { return nil }
-    for port in ports {
+    else { return [] }
+    let displays = ports.compactMap { port -> SimDisplay? in
       guard let descriptor = port.perform(NSSelectorFromString("descriptor"))?.takeUnretainedValue() as? NSObject,
         descriptor.conforms(to: surfaceRenderable), descriptor.conforms(to: renderable), descriptor.conforms(to: screen)
-      else { continue }
+      else { return nil }
       let display = unsafeBitCast(descriptor, to: SimDisplay.self)
-      if display.framebufferSurface != nil { return display }
+      return display.framebufferSurface == nil ? nil : display
     }
-    return nil
+    return displays.sorted { ($0.screenProperties?.screenID ?? .max) < ($1.screenProperties?.screenID ?? .max) }
   }
 }

@@ -15,5 +15,9 @@ cp "$website/src/css/fonts/InterVariable.woff2" "$website/src/css/fonts/JetBrain
   "$website/static/img/branding/logo-dark.svg" "$website/static/img/branding/hero-dark.svg" \
   "$website/static/img/branding/logo.svg" "$website/static/img/branding/hero.svg" \
   "$app/Contents/Resources/"
+xcrun -sdk iphonesimulator clang -fobjc-arc -arch arm64 -arch x86_64 -mios-simulator-version-min=18.0 \
+  -framework Foundation Support/SimFold/main.m -o "$app/Contents/Resources/sim-fold" \
+  -Wl,-sectcreate,__TEXT,__entitlements,Support/SimFold/entitlements.plist
+codesign --force --sign - "$app/Contents/Resources/sim-fold"
 codesign --force --sign - "$app"
 echo "$PWD/$app"
