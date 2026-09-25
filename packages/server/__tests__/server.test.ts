@@ -1196,6 +1196,13 @@ describe('frames.subscribe', () => {
       '--display=primary-1',
       '--display=primary-1',
     ]);
+    client.socket.close();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const before = toolRuns().length;
+    const again = await authed(port);
+    await again.request('frames.subscribe', { workspace, platform: 'ios' });
+    expect(await again.next()).toMatchObject({ event: 'frame', posture: 'unfolded' });
+    expect(toolRuns()[before]?.args).toContain('--display=primary-1');
   });
 
   test.skipIf(!fakeTailscale)('captures the default display when simctl rejects primary', async () => {

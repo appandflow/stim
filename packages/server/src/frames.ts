@@ -209,12 +209,18 @@ function simulatorCapturer(
     );
     return bmpIsBlack(readFileSync(output));
   };
+  const open = () => {
+    if (closed) throw new Error('The capture was stopped.');
+  };
   const captureDuo = async (): Promise<Capture> => {
     const lit = litPanels.get(device.udid) ?? 'primary';
     const jpeg = await screenshot([`--display=${lit}`]);
+    open();
     if (!(await isBlack(jpeg))) return { raw: jpeg, jpeg: async () => jpeg, posture: POSTURES[lit] };
     const other: DuoPanel = lit === 'primary' ? 'primary-1' : 'primary';
+    open();
     const otherJpeg = await screenshot([`--display=${other}`]);
+    open();
     if (await isBlack(otherJpeg)) return { raw: jpeg, jpeg: async () => jpeg };
     litPanels.set(device.udid, other);
     return { raw: otherJpeg, jpeg: async () => otherJpeg, posture: POSTURES[other] };
