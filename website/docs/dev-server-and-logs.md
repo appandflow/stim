@@ -263,12 +263,14 @@ and, in a monorepo, names the nearest registered descendant app with logs.
 
 When an agent drives an owned simulator or emulator with agent-device, `stim logs
 --source agent` shows each action as an `info` record with source `agent`: taps
-with their coordinates, typed text, app opens, and screenshots. A failed
+with their coordinates, typing (agent-device redacts the text), app opens, and
+screenshots. A failed
 agent-device command is an `error` record. Stim reads agent-device's own session
 records under `~/.agent-device` (or `AGENT_DEVICE_STATE_DIR`) and never writes
 there. An iOS session is matched to a simulator through its runner log, including
 a session that moved between simulators. An Android session is matched only
-while agent-device holds its claim on the emulator. Records from a newer
+while agent-device holds its claim on the emulator, so its actions drop out of
+later queries once agent-device releases the claim. Records from a newer
 agent-device format that Stim does not recognize are replaced by one `warn`
 record saying the session's actions are not shown.
 

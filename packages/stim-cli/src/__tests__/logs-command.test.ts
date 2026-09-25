@@ -1,5 +1,14 @@
 import assert from 'node:assert';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
@@ -611,9 +620,13 @@ describe('logs command', () => {
   });
 
   test('merges agent-device actions on owned devices, and --errors takes them only when selected', async () => {
-    const fixture = join(import.meta.dirname, 'fixtures', 'agent-device');
-    process.env.AGENT_DEVICE_STATE_DIR = fixture;
-    process.env.AGENT_DEVICE_CLAIMS_DIR = join(fixture, 'device-claims');
+    const agentHome = mkdtempSync(join(tmpdir(), 'stim-logscmd-agent-'));
+    cpSync(join(import.meta.dirname, 'fixtures', 'agent-device'), join(agentHome, '.agent-device'), {
+      recursive: true,
+    });
+    vi.stubEnv('HOME', agentHome);
+    for (const name of ['AGENT_DEVICE_STATE_DIR', 'AGENT_DEVICE_CLAIMS_DIR', 'AGENT_DEVICE_IOS_RUNNER_LEASE_DIR'])
+      vi.stubEnv(name, '');
     try {
       upsertProject(project, {
         platforms: { ios: { owned: true, deviceUdid: 'AD45387C-599D-4EDB-A62B-18176FF3A2A7' } },
@@ -635,8 +648,8 @@ describe('logs command', () => {
       await run({ errors: true, source: ['all'], json: true });
       expect(parsedMsgs(out)).toEqual(['metro error', 'Failed press: COMMAND_FAILED']);
     } finally {
-      delete process.env.AGENT_DEVICE_STATE_DIR;
-      delete process.env.AGENT_DEVICE_CLAIMS_DIR;
+      vi.unstubAllEnvs();
+      rmSync(agentHome, { recursive: true, force: true });
     }
   });
 

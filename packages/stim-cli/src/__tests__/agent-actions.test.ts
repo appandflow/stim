@@ -1,14 +1,9 @@
-import { appendFileSync, cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ProjectRecord } from '@stim-cli/core/state';
 import type { ProcessStart } from '../process-identity.ts';
-import {
-  createAgentActionReader,
-  parseRunnerSpans,
-  workspaceAgentTargets,
-  type AgentTarget,
-} from '../devices/agent-actions.ts';
+import { createAgentActionReader, workspaceAgentTargets, type AgentTarget } from '../devices/agent-actions.ts';
 
 const FIXTURE = join(import.meta.dirname, 'fixtures', 'agent-device');
 const IOS_SESSION = join('sessions', 'cwd_b764dacffe51e890_default');
@@ -24,26 +19,21 @@ let home: string;
 let root: string;
 
 beforeEach(() => {
+  for (const name of ['AGENT_DEVICE_STATE_DIR', 'AGENT_DEVICE_CLAIMS_DIR', 'AGENT_DEVICE_IOS_RUNNER_LEASE_DIR'])
+    vi.stubEnv(name, '');
   home = mkdtempSync(join(tmpdir(), 'stim-agent-actions-'));
   root = join(home, '.agent-device');
   cpSync(FIXTURE, root, { recursive: true });
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   rmSync(home, { recursive: true, force: true });
 });
 
 function read(targets: AgentTarget[], options: { sinceTs?: number; startOf?: typeof live } = {}) {
   return createAgentActionReader({ targets, home, startOf: options.startOf ?? live, ...options })();
 }
-
-test('a runner log that moves to another simulator yields one span per simulator', () => {
-  const spans = parseRunnerSpans(readFileSync(join(root, IOS_SESSION, 'runner.log'), 'utf8'));
-  expect(spans).toEqual([
-    { deviceId: FIRST_SIM, from: -Infinity },
-    { deviceId: SECOND_SIM, from: Date.parse('2026-09-25T12:16:01.015Z') },
-  ]);
-});
 
 test('an iOS session is split between simulators at the close before the runner moved', () => {
   const second = read([{ platform: 'ios', id: SECOND_SIM, slot: 'phone' }]);
@@ -81,13 +71,14 @@ test('actions older than the workspace timeline are not merged', () => {
 });
 
 test('an Android session is attributed only while agent-device holds a live claim on the emulator', () => {
-  const emulator: AgentTarget = { platform: 'android', id: 'emulator-5560', slot: 'default' };
+  const emulator: AgentTarget = { platform: 'android', id: 'emulator-5560', slot: 'default', name: 'stim-app' };
   expect(read([emulator]).map((record) => [record.level, record.msg])).toEqual([
     ['error', 'Failed open: DEVICE_NOT_FOUND'],
     ['info', 'Opened io.tlon.groups'],
     ['info', 'Tapped (541, 2265)'],
   ]);
   expect(read([emulator], { startOf: gone })).toEqual([]);
+  expect(read([{ ...emulator, name: 'stim-other' }])).toEqual([]);
 });
 
 test('later calls return only complete lines appended since the previous call', () => {
@@ -133,6 +124,6 @@ test('targets are the workspace-owned simulators and emulators of every slot', (
     } as ProjectRecord),
   ).toEqual([
     { platform: 'ios', id: FIRST_SIM, slot: 'default' },
-    { platform: 'android', id: 'emulator-5560', slot: 'default' },
+    { platform: 'android', id: 'emulator-5560', slot: 'default', name: 'stim-app' },
   ]);
 });

@@ -284,7 +284,8 @@ WHAT WRITES WHAT
                        --errors only with --source agent or all. iOS sessions
                        match a simulator through their runner.log, Android
                        sessions only while agent-device's claim on the
-                       emulator is live. A session in an unrecognized format
+                       emulator is live (released claims drop their
+                       actions from later queries). A session in an unrecognized format
                        yields one warn record (agent_format_unknown) instead
                        of its actions.
   build-ios.ndjson     the xcodebuild / gradle transcript at level debug, the

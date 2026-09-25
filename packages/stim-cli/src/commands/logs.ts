@@ -255,11 +255,12 @@ export default function logsCommand(program: Command): void {
       const captured = captureWorkspaceCrashes(root, dir);
       const offsets = opts.follow ? fileSizes(dir) : null;
       const workspaceTimeline = opts.follow ? readLogRecords(dir) : captured;
+      const agentSince = workspaceTimeline[0]?.ts ?? (opts.follow ? Date.now() : undefined);
       const readAgent =
-        (sources ? sources.includes('agent') : !opts.errors) && workspaceTimeline.length
+        (sources ? sources.includes('agent') : !opts.errors) && agentSince !== undefined
           ? createAgentActionReader({
               targets: workspaceAgentTargets(loadConfig()?.projects?.[root]),
-              sinceTs: workspaceTimeline[0]!.ts,
+              sinceTs: agentSince,
             })
           : null;
       const timeline = readAgent ? sortByTs([...workspaceTimeline, ...readAgent()]) : workspaceTimeline;

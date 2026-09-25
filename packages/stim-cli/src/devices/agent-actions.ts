@@ -10,6 +10,7 @@ export interface AgentTarget {
   platform: 'ios' | 'android';
   id: string;
   slot: string;
+  name?: string;
 }
 
 interface AgentEvent {
@@ -63,7 +64,7 @@ function parseAgentEvents(lines: readonly string[]): ParsedAgentEvents {
   return { events, session, unknownVersion };
 }
 
-export interface RunnerSpan {
+interface RunnerSpan {
   deviceId: string;
   from: number;
 }
@@ -81,7 +82,7 @@ function logTime(line: string): number | null {
   return Number.isFinite(at) ? at : null;
 }
 
-export function parseRunnerSpans(text: string): RunnerSpan[] {
+function parseRunnerSpans(text: string): RunnerSpan[] {
   const spans: RunnerSpan[] = [];
   let pending: string | null = null;
   for (const line of text.split('\n')) {
@@ -92,7 +93,6 @@ export function parseRunnerSpans(text: string): RunnerSpan[] {
     }
     if (pending === null) continue;
     const at = logTime(line);
-    // An invocation with no timestamped output yet opens no span, so its events keep the previous device.
     if (at === null) continue;
     if (spans.at(-1)?.deviceId !== pending) spans.push({ deviceId: pending, from: spans.length ? at : -Infinity });
     pending = null;
@@ -159,8 +159,8 @@ export function workspaceAgentTargets(project: ProjectRecord | null | undefined)
   for (const { slot, platforms } of slots) {
     const { ios, android } = platforms;
     if (ios?.owned && typeof ios.deviceUdid === 'string') targets.push({ platform: 'ios', id: ios.deviceUdid, slot });
-    if (android?.owned && typeof android.consolePort === 'number')
-      targets.push({ platform: 'android', id: `emulator-${android.consolePort}`, slot });
+    if (android?.owned && typeof android.consolePort === 'number' && typeof android.avdName === 'string')
+      targets.push({ platform: 'android', id: `emulator-${android.consolePort}`, slot, name: android.avdName });
   }
   return targets;
 }
@@ -170,15 +170,16 @@ function envDir(name: string): string | null {
   return value ? resolve(value) : null;
 }
 
-function readFrom(path: string, start: number): { text: string; size: number } | null {
+function readCompleteLines(path: string, start: number): { text: string; next: number; size: number } | null {
   let fd: number | undefined;
   try {
     fd = openSync(path, 'r');
     const size = fstatSync(fd).size;
-    if (size <= start) return { text: '', size };
+    if (size <= start) return { text: '', next: start, size };
     const buffer = Buffer.alloc(size - start);
     const read = readSync(fd, buffer, 0, buffer.length, start);
-    return { text: buffer.subarray(0, read).toString('utf8'), size: start + read };
+    const end = buffer.subarray(0, read).lastIndexOf(0x0a);
+    return { text: end < 0 ? '' : buffer.toString('utf8', 0, end + 1), next: start + end + 1, size };
   } catch {
     return null;
   } finally {
@@ -189,6 +190,7 @@ function readFrom(path: string, start: number): { text: string; size: number } |
 interface SessionCursor {
   offset: number;
   closes: number[];
+  runner: { size: number; spans: RunnerSpan[] } | null;
   session: string | null;
   unknownReported: boolean;
 }
@@ -230,6 +232,10 @@ export function createAgentActionReader({
       (claimed ??= new Map(
         readAgentDeviceRecords(home)
           .filter((record) => record.kind === 'claim' && record.session && record.deviceId)
+          .filter((record) => {
+            const target = byId.get(record.deviceId!);
+            return target?.name === undefined || target.name === record.deviceName;
+          })
           .filter((record) => agentDeviceLiveness(record, startOf) === 'live')
           .map((record) => [record.session!, record.deviceId!]),
       )).get(session) ?? null;
@@ -246,7 +252,7 @@ export function createAgentActionReader({
         } catch {
           continue;
         }
-        cursor = { offset: 0, closes: [], session: null, unknownReported: false };
+        cursor = { offset: 0, closes: [], runner: null, session: null, unknownReported: false };
         cursors.set(name, cursor);
         try {
           lines.push(...readFileSync(`${eventsPath}.1`, 'utf8').split('\n'));
@@ -254,27 +260,32 @@ export function createAgentActionReader({
       }
       // agent-device rotates events.ndjson to events.ndjson.1 at AGENT_DEVICE_EVENT_LOG_MAX_BYTES (5 MiB by
       // default). A rotation between two reads restarts at the new file; the unread tail of .1 is skipped.
-      let chunk = readFrom(eventsPath, cursor.offset);
-      if (chunk && chunk.size < cursor.offset) chunk = readFrom(eventsPath, 0);
+      let chunk = readCompleteLines(eventsPath, cursor.offset);
+      if (chunk && chunk.size < cursor.offset) chunk = readCompleteLines(eventsPath, 0);
       if (!chunk) continue;
-      const complete = chunk.text.slice(0, chunk.text.lastIndexOf('\n') + 1);
-      cursor.offset = chunk.size - Buffer.byteLength(chunk.text.slice(complete.length));
-      lines.push(...complete.split('\n'));
+      cursor.offset = chunk.next;
+      lines.push(...chunk.text.split('\n'));
       const parsed = parseAgentEvents(lines);
       cursor.session ??= parsed.session;
       const session = cursor.session;
       if (!parsed.events.length && !parsed.unknownVersion) continue;
 
-      let runner: string | null = null;
+      const runnerPath = join(dir, 'runner.log');
+      let runnerSize = -1;
       try {
-        runner = readFileSync(join(dir, 'runner.log'), 'utf8');
+        runnerSize = statSync(runnerPath).size;
       } catch {}
+      if (cursor.runner?.size !== runnerSize) {
+        let text = '';
+        try {
+          text = readFileSync(runnerPath, 'utf8');
+        } catch {}
+        cursor.runner = { size: runnerSize, spans: parseRunnerSpans(text) };
+      }
       for (const event of parsed.events) if (event.command === 'close' && !event.failed) cursor.closes.push(event.ts);
       // agent-device starts an iOS runner lazily, on the first command that needs it, so the runner log dates a
       // device change late. A session that closes and reopens on another simulator changes device at the close.
-      const spans = runner === null ? [] : sessionSpans(parseRunnerSpans(runner), cursor.closes);
-      // Without runner spans (every Android session), only a live claim attributes a session, and it
-      // attributes the whole session to the claimed device: agent-device records no earlier device for it.
+      const spans = sessionSpans(cursor.runner.spans, cursor.closes);
       const deviceAt = (ts: number) => (spans.length ? spanDevice(spans, ts) : session && claimedDevice(session));
 
       if (parsed.unknownVersion && !cursor.unknownReported) {
