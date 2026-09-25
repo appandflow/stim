@@ -40,7 +40,7 @@ import type { OwnedDeviceRecord } from '../../engine/device.ts';
 import type { EasBuildResult } from '../../engine/eas-build.ts';
 import { formatDiagnostic } from '../../engine/errors-gradle.ts';
 import type { buildAndroid } from '../../engine/gradle.ts';
-import type { needsPrebuild, runPrebuild } from '../../engine/prebuild.ts';
+import { recordPrebuild, staleNativeDirRefusal, type planPrebuild, type runPrebuild } from '../../engine/prebuild.ts';
 import {
   easAuthNote,
   isEasAuthFailureText,
@@ -108,7 +108,7 @@ interface AndroidArtifactDeps {
   loadCacheProviderModule: typeof loadCacheProvider;
   acquireSlot: typeof acquireBuildSlot;
   releaseSlot: typeof releaseBuildSlot;
-  needsPrebuildFor: typeof needsPrebuild;
+  planPrebuildFor: typeof planPrebuild;
   prebuild: typeof runPrebuild;
   build: typeof buildAndroid;
   ccacheFor: typeof resolveCcache;
@@ -187,7 +187,7 @@ export async function acquireAndroidArtifact(
     loadCacheProviderModule,
     acquireSlot,
     releaseSlot,
-    needsPrebuildFor,
+    planPrebuildFor,
     prebuild,
     build,
     ccacheFor,
@@ -523,9 +523,23 @@ export async function acquireAndroidArtifact(
           }
         }
 
-        if (needsPrebuildFor(root, PLATFORM, isExpo)) {
+        const prebuildPlan = planPrebuildFor(root, PLATFORM, {
+          isExpo,
+          fingerprint: hash,
+          sources: fingerprintSources,
+        });
+        if (prebuildPlan === 'refuse') {
+          const refusal = staleNativeDirRefusal(PLATFORM);
+          phaseFailure = fail(refusal.code, refusal.message, refusal.remedy, { lastBuildStatus: true });
+          return false;
+        }
+        if (prebuildPlan === 'generate' || prebuildPlan === 'regenerate') {
           step('prebuild');
-          const pre: PrebuildResultLike = await prebuild(root, PLATFORM, writer, { isExpo });
+          recordPrebuild(root, PLATFORM, null);
+          const pre: PrebuildResultLike = await prebuild(root, PLATFORM, writer, {
+            isExpo,
+            clean: prebuildPlan === 'regenerate',
+          });
           if (pre.failed) {
             phaseFailure = fail(pre.code!, pre.reason, pre.remedy, {
               lastBuildStatus: true,
@@ -534,7 +548,11 @@ export async function acquireAndroidArtifact(
             });
             return false;
           }
-          phase('prebuild', `android/ generated (${formatDuration(pre.durationMs)})`);
+          const outcome =
+            prebuildPlan === 'generate'
+              ? 'android/ generated'
+              : 'android/ not generated from this fingerprint -> regenerated with --clean';
+          phase('prebuild', `${outcome} (${formatDuration(pre.durationMs)})`);
           androidPackage = androidPackage || detectAndroidPackage(root);
           record.bundleId = androidPackage;
 
@@ -544,6 +562,7 @@ export async function acquireAndroidArtifact(
             previousHash: hash,
             fingerprint,
           });
+          if (after) recordPrebuild(root, PLATFORM, after.hash);
           if (after?.moved) {
             storeHash = after.hash;
             storeSources = after.sources;

@@ -876,6 +876,25 @@ THE BUILD CACHE HAS THREE LEVELS
   of compiling beside it. No second line means nothing was found there and the
   run compiles.
 
+  A GITIGNORED (CNG) ios/ OR android/ IS NOT IN THE KEY: @expo/fingerprint
+  hashes the app config instead, so the directory must come from that config.
+  Stim records the fingerprint each of its prebuilds produced in the
+  workspace state. On a miss, an existing CNG directory with no matching
+  record -- the app config, a config plugin or a dependency changed since, or
+  someone else generated it -- is regenerated with \`expo prebuild --clean\`
+  before pods and the compile, so a stale directory is never built and stored
+  under the new key:
+
+    prebuild    ios/ not generated from this fingerprint -> regenerated with --clean (9s)
+
+  Regeneration discards hand edits under a gitignored ios/ or android/ (for
+  example a signing team set in Xcode); put them in the app config, such as
+  ios.appleTeamId, or a config plugin. A committed native directory is hashed
+  into the key and never regenerated. The record only covers prebuilds Stim
+  ran: after a manual \`expo prebuild\` with a different config, run
+  \`expo prebuild --clean\` yourself or delete the directory so the next build
+  regenerates it.
+
   If the iOS fingerprint after prebuild or pod install is unavailable, Stim
   installs the build but skips local storage and remote uploads. fingerprint
   and cacheKey are null in the result and lastBuild; the old key is not reused.

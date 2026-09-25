@@ -309,6 +309,7 @@ function harness(overrides: LooseDeps = {}) {
       return { uploaded: true };
     },
     needsPrebuild: () => false,
+    planPrebuild: () => 'none',
     runPrebuild: async (...args) => {
       record('runPrebuild', args);
       return { ok: true, durationMs: 42000 };
@@ -1185,7 +1186,7 @@ describe('the cache', () => {
       { json: true },
       {
         resolveBuild: () => cachedApp,
-        needsPrebuild: () => true,
+        planPrebuild: () => 'generate',
         readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
       },
     );
@@ -1219,7 +1220,7 @@ describe('the cache', () => {
       {},
       {
         detectIsExpo: () => true,
-        needsPrebuild: () => true,
+        planPrebuild: () => 'generate',
         readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
       },
     );
@@ -1746,7 +1747,7 @@ describe('single-flight builds', () => {
       {
         acquireBuildLock: () => heldBy(41233, '/w/app-999'),
         waitForBuild: async () => ({ hit: waited, waitedMs: 761000 }),
-        needsPrebuild: () => true,
+        planPrebuild: () => 'generate',
         readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
       },
     );
@@ -1947,7 +1948,7 @@ describe('single-flight builds', () => {
       {},
       {
         detectIsExpo: () => true,
-        needsPrebuild: () => true,
+        planPrebuild: () => 'generate',
         runPrebuild: async () => ({ failed: true, code: 'STIM_PREBUILD_FAILED', reason: 'no' }),
       },
     );
@@ -3738,7 +3739,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       { json: true },
       {
         detectIsExpo: () => true,
-        needsPrebuild: () => mutation === 'prebuild',
+        planPrebuild: () => (mutation === 'prebuild' ? 'generate' : 'none'),
         readPodState: () =>
           mutation === 'pod install'
             ? { hasPodfile: true, lockText: 'A', manifestText: 'B' }
@@ -3791,6 +3792,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
         {
           detectIsExpo: () => true,
           needsPrebuild: () => true,
+          planPrebuild: () => 'generate',
           readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
           fingerprintProject: shifting(),
           resolveBuild: (_platform, key) => {
@@ -3816,13 +3818,50 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
     },
   );
 
+  test('a CNG ios/ generated from another fingerprint is regenerated with --clean before the build is stored', async () => {
+    reserve();
+    let planned: unknown[] = [];
+    const { exitCode, errs, calls } = await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        planPrebuild: (...args) => {
+          planned = args;
+          return 'regenerate';
+        },
+        readPodState: () => ({ hasPodfile: true, lockText: null, manifestText: null }),
+        fingerprintProject: shifting(),
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(planned).toEqual([
+      root,
+      'ios',
+      { isExpo: true, fingerprint: COLD, sources: [{ type: 'dir', filePath: 'ios' }] },
+    ]);
+    expect((calls.args.runPrebuild as unknown[])[3]).toEqual({ clean: true });
+    expect(errs.join('\n')).toMatch(/prebuild +ios\/ not generated from this fingerprint -> regenerated with --clean/);
+    expect((readWorkspaceState(root) as WorkspaceState).prebuild).toEqual({ ios: WARM });
+    expect(String(calls.args.storeBuild.key)).toMatch(new RegExp(`^${WARM}`));
+  });
+
+  test('a native dir the fingerprint leaves out but git tracks is refused before anything compiles or stores', async () => {
+    reserve();
+    const { exitCode, errs, calls } = await run({}, { detectIsExpo: () => true, planPrebuild: () => 'refuse' });
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/STIM_PREBUILD_FAILED/);
+    for (const call of ['runPrebuild', 'runPodInstall', 'buildIos', 'storeBuild']) {
+      expect(calls.order.includes(call)).toBe(false);
+    }
+  });
+
   test('the shift is one dim line naming both short hashes, and the payload reports what was stored', async () => {
     reserve();
     const { logs, errs, calls } = await run(
       { json: true },
       {
         detectIsExpo: () => true,
-        needsPrebuild: () => true,
+        planPrebuild: () => 'generate',
         readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
         fingerprintProject: shifting(),
       },
@@ -3849,7 +3888,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       { json: true },
       {
         detectIsExpo: () => true,
-        needsPrebuild: () => true,
+        planPrebuild: () => 'generate',
         fingerprintProject: shifting(),
         resolveBuild: (_platform, key) => (key.startsWith(WARM) ? cachedApp : null),
         ...(waited
@@ -3889,7 +3928,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       { configuration: 'Release' },
       {
         detectIsExpo: () => true,
-        needsPrebuild: () => true,
+        planPrebuild: () => 'generate',
         fingerprintProject: shifting(),
         resolveBuild: (_platform, key) => (key.startsWith(WARM) ? cachedApp : null),
       },
@@ -3906,7 +3945,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       { configuration: 'Release' },
       {
         detectIsExpo: () => true,
-        needsPrebuild: () => true,
+        planPrebuild: () => 'generate',
         fingerprintProject: shifting(),
         resolveBuild: (_platform, key) => (key.startsWith(WARM) ? cachedApp : null),
         swapJsBundle: async () => ({ ok: false, step: 'bundle', reason: 'hermesc not found' }),
@@ -3923,7 +3962,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       {},
       {
         detectIsExpo: () => true,
-        needsPrebuild: () => true,
+        planPrebuild: () => 'generate',
         fingerprintProject: shifting(),
         resolveBuild: (_platform, key) => {
           lookedUp.push(key);
@@ -3943,7 +3982,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       {},
       {
         detectIsExpo: () => true,
-        needsPrebuild: () => true,
+        planPrebuild: () => 'generate',
         readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
       },
     );
