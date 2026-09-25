@@ -24,6 +24,70 @@ struct Chip<Content: View>: View {
       .padding(.horizontal, 9)
       .padding(.vertical, 4)
       .background(RoundedRectangle(cornerRadius: 7).fill(tint?.opacity(0.16) ?? Theme.surface))
+      .fixedSize()
+  }
+}
+
+/// Lays out subviews left to right, wrapping to a new line when a subview would not fit
+/// in the remaining width of the proposed size.
+struct FlowLayout: Layout {
+  var spacing: CGFloat = 6
+  var lineSpacing: CGFloat = 6
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    let width = proposal.width ?? .infinity
+    let rows = rowsFor(subviews: subviews, width: width)
+    let height = rows.reduce(0) { $0 + $1.height } + lineSpacing * CGFloat(max(0, rows.count - 1))
+    let rowWidth = rows.map(\.width).max() ?? 0
+    return CGSize(width: proposal.width ?? rowWidth, height: height)
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    let rows = rowsFor(subviews: subviews, width: bounds.width)
+    var y = bounds.minY
+    for row in rows {
+      var x = bounds.minX
+      for item in row.items {
+        item.subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(item.size))
+        x += item.size.width + spacing
+      }
+      y += row.height + lineSpacing
+    }
+  }
+
+  private struct Item {
+    var subview: LayoutSubview
+    var size: CGSize
+  }
+
+  private struct Row {
+    var items: [Item]
+    var width: CGFloat
+    var height: CGFloat
+  }
+
+  private func rowsFor(subviews: Subviews, width: CGFloat) -> [Row] {
+    var rows: [Row] = []
+    var current: [Item] = []
+    var currentWidth: CGFloat = 0
+    var currentHeight: CGFloat = 0
+    for subview in subviews {
+      let size = subview.sizeThatFits(.unspecified)
+      if !current.isEmpty, currentWidth + spacing + size.width > width {
+        rows.append(Row(items: current, width: currentWidth, height: currentHeight))
+        current = []
+        currentWidth = 0
+        currentHeight = 0
+      }
+      if !current.isEmpty { currentWidth += spacing }
+      current.append(Item(subview: subview, size: size))
+      currentWidth += size.width
+      currentHeight = max(currentHeight, size.height)
+    }
+    if !current.isEmpty {
+      rows.append(Row(items: current, width: currentWidth, height: currentHeight))
+    }
+    return rows
   }
 }
 
