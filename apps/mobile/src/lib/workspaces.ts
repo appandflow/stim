@@ -73,42 +73,17 @@ export function projectOf(env: Pick<EnvironmentState, 'path' | 'worktree'>, root
   return { key: root, name: basename(root) };
 }
 
-export interface ProjectGroup {
-  key: string;
-  name: string;
-  liveCount: number;
-  workspaces: EnvironmentState[];
-}
-
-/** Projects with live workspaces first, then by name; live workspaces first inside each. */
-export function groupByProject(payload: StatusPayload): ProjectGroup[] {
-  const groups = new Map<string, ProjectGroup>();
-  const roots = repositoryRoots(payload);
-  for (const env of payload.environments) {
-    const project = projectOf(env, roots);
-    let group = groups.get(project.key);
-    if (!group) {
-      group = { key: project.key, name: project.name, liveCount: 0, workspaces: [] };
-      groups.set(project.key, group);
+/** Where the workspace sits inside its checkout, such as `apps/tlon-mobile`; null at the checkout root. */
+export function pathInCheckout(env: Pick<EnvironmentState, 'path' | 'worktree'>, roots: string[]): string | null {
+  const parts = env.path.split('/');
+  let checkout: string | null = null;
+  for (let i = parts.length - 2; i > 0 && checkout === null; i--) {
+    if (parts[i] === '.worktrees' || (parts[i] === 'worktrees' && parts[i - 1] === '.claude')) {
+      checkout = parts.slice(0, i + 2).join('/');
     }
-    group.workspaces.push(env);
-    if (isActive(env)) group.liveCount += 1;
   }
-  const byName = (a: string, b: string) => a.localeCompare(b);
-  const named = new Map<string, number>();
-  for (const group of groups.values()) named.set(group.name, (named.get(group.name) ?? 0) + 1);
-  for (const group of groups.values()) {
-    if ((named.get(group.name) ?? 0) > 1) group.name = group.key.split('/').filter(Boolean).slice(-2).join('/');
-  }
-  for (const group of groups.values()) {
-    group.workspaces.sort(
-      (a, b) =>
-        Number(isActive(b)) - Number(isActive(a)) || byName(workspaceNames(a.path).title, workspaceNames(b.path).title),
-    );
-  }
-  return [...groups.values()].sort(
-    (a, b) => Number(b.liveCount > 0) - Number(a.liveCount > 0) || byName(a.name, b.name),
-  );
+  checkout ??= env.worktree?.path ?? projectOf(env, roots).key;
+  return env.path.startsWith(`${checkout}/`) ? env.path.slice(checkout.length + 1) : null;
 }
 
 export function isActive(env: EnvironmentState): boolean {
@@ -195,7 +170,7 @@ export function deviceWarnings(
   const general: string[] = [];
   for (const warning of warnings) {
     const device = devices
-      .filter((d) => warning.includes(d.name))
+      .filter((d) => d.name && warning.includes(d.name))
       .reduce<DeviceRef | null>((best, d) => (best === null || d.name.length > best.name.length ? d : best), null);
     if (device) byDevice.set(device, [...(byDevice.get(device) ?? []), warning]);
     else general.push(warning);

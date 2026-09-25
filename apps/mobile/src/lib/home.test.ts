@@ -90,8 +90,13 @@ describe('filterWorkspaces', () => {
 
   it('ignores a selected Mac that is no longer paired', () => {
     expect(titles({ macs: ['gone'] })).toEqual(['building', 'live-one', 'other']);
-    expect(filtersActive({ ...DEFAULT_FILTERS, macs: ['gone'] }, ids)).toBe(false);
-    expect(filtersActive({ ...DEFAULT_FILTERS, macs: ['a'] }, ids)).toBe(true);
+    expect(filtersActive({ ...DEFAULT_FILTERS, macs: ['gone'] }, ids, [])).toBe(false);
+    expect(filtersActive({ ...DEFAULT_FILTERS, macs: ['a'] }, ids, [])).toBe(true);
+  });
+
+  it('ignores a selected project that no machine lists any more', () => {
+    expect(titles({ projects: ['removed'] })).toEqual(['building', 'live-one', 'other']);
+    expect(filtersActive({ ...DEFAULT_FILTERS, projects: ['removed'] }, ids, projectNames(items))).toBe(false);
   });
 });
 

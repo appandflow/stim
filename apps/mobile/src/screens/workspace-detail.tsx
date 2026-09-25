@@ -15,6 +15,7 @@ import {
   deviceWarnings,
   devicesOf,
   orderDevices,
+  pathInCheckout,
   projectOf,
   repositoryRoots,
   runningBuild,
@@ -100,31 +101,30 @@ export function WorkspaceDetail({ path }: { path: string }) {
   const devices = orderDevices(devicesOf(env));
   const { byDevice, general } = deviceWarnings(env.warnings, devices);
   const errors = env.logs?.errorsSinceMarker ?? 0;
+  const inCheckout = pathInCheckout(env, repositoryRoots(status));
+  const metroHealthy = Boolean(env.metro?.running) && env.supervisor?.healthy !== false;
   return (
     <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.container}>
       {header}
       <ConnectionBanner state={state} />
       <Card>
         <View style={styles.card}>
-          <View style={styles.section}>
-            {project ? <Text style={[styles.project, { color: colors.primary }]}>{project}</Text> : null}
-            {env.worktree?.branch ? (
-              <Text style={[styles.branch, { color: colors.text }]}>{env.worktree.branch}</Text>
-            ) : null}
-            <Text style={[styles.path, { color: colors.tertiary }]}>{tildeHome(env.path, home)}</Text>
-          </View>
+          {env.worktree?.branch || inCheckout ? (
+            <Text style={[styles.where, { color: colors.secondary }]} numberOfLines={1}>
+              {env.worktree?.branch ? (
+                <Text style={[styles.branch, { color: colors.text }]}>{env.worktree.branch}</Text>
+              ) : null}
+              {env.worktree?.branch && inCheckout ? '  ' : ''}
+              {inCheckout ?? ''}
+            </Text>
+          ) : null}
           <View style={styles.chips}>
             {env.metro ? (
-              <Chip tint={env.metro.running ? colors.live : colors.tertiary} mono={`:${env.metro.port}`}>
-                {env.metro.running ? 'Metro ' : 'Metro stopped '}
+              <Chip tint={metroHealthy ? colors.live : colors.error}>
+                {`Metro :${env.metro.port} \u00B7 ${env.metro.running ? (metroHealthy ? 'healthy' : 'unhealthy') : 'stopped'}`}
               </Chip>
             ) : null}
-            {env.supervisor ? (
-              <Chip tint={env.supervisor.healthy ? undefined : colors.warn}>
-                {`${env.supervisor.mode ?? 'supervisor'} \u00B7 ${env.supervisor.healthy ? 'healthy' : 'unhealthy'}`}
-              </Chip>
-            ) : null}
-            {env.memoryMb > 0 ? <Chip>{`${(env.memoryMb / 1024).toFixed(1)} GB committed`}</Chip> : null}
+            {env.memoryMb > 0 ? <Chip>{`${(env.memoryMb / 1024).toFixed(1)} GB`}</Chip> : null}
             {env.logs ? (
               <Pressable onPress={() => openLogs(true)} accessibilityRole="button" hitSlop={6}>
                 <Chip tint={errors > 0 ? colors.error : undefined}>
@@ -188,11 +188,9 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 12, marginTop: 1 },
   loading: { marginTop: 48 },
   container: { padding: 16, gap: 14, paddingBottom: 40 },
-  card: { padding: 14, gap: 12 },
-  section: { gap: 4 },
-  project: { fontSize: 13, fontWeight: '600' },
-  branch: { fontSize: 15, fontFamily: mono },
-  path: { fontSize: 12, fontFamily: mono },
+  card: { padding: 12, gap: 8 },
+  where: { fontSize: 12, fontFamily: mono },
+  branch: { fontSize: 13, fontWeight: '600' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   warning: { fontSize: 13, lineHeight: 18, padding: 10, borderRadius: 8, overflow: 'hidden' },
   none: { fontSize: 14, textAlign: 'center', paddingVertical: 24 },

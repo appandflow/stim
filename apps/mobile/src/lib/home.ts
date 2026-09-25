@@ -1,4 +1,4 @@
-import { isActive, projectOf, repositoryRoots, workspaceNames } from '@/lib/workspaces';
+import { isActive, pathInCheckout, projectOf, repositoryRoots, workspaceNames } from '@/lib/workspaces';
 import type { EnvironmentState, MachineUsage, StatusPayload } from '@/protocol/types';
 
 export interface MacSnapshot {
@@ -13,6 +13,7 @@ export interface HomeItem {
   macName: string;
   project: string;
   title: string;
+  inCheckout: string | null;
   env: EnvironmentState;
 }
 
@@ -31,6 +32,7 @@ export function mergeWorkspaces(macs: MacSnapshot[]): HomeItem[] {
         macName: mac.name,
         project: projectOf(env, roots).name,
         title: workspaceNames(env.path).title,
+        inCheckout: pathInCheckout(env, roots),
         env,
       });
     }
@@ -87,10 +89,10 @@ export function parseFilters(raw: string | null): HomeFilters {
 }
 
 /** Whether any filter differs from the defaults, for the dot on the filter button. */
-export function filtersActive(filters: HomeFilters, macIds: string[]): boolean {
+export function filtersActive(filters: HomeFilters, macIds: string[], projects: string[]): boolean {
   return (
     filters.macs.some((id) => macIds.includes(id)) ||
-    filters.projects.length > 0 ||
+    filters.projects.some((name) => projects.includes(name)) ||
     filters.activity !== DEFAULT_FILTERS.activity ||
     filters.errorsOnly ||
     filters.remoteOnly
@@ -101,8 +103,8 @@ const hasErrors = (env: EnvironmentState) => (env.logs?.errorsSinceMarker ?? 0) 
 const hasRemote = (env: EnvironmentState) => (env.remoteDevices?.length ?? 0) > 0;
 
 /**
- * The items the filters keep, and how many more the activity filter alone hides. A Mac id that is no longer
- * paired is ignored, so forgetting the only selected Mac shows every Mac again.
+ * The items the filters keep, and how many more the activity filter alone hides. A selected machine that is no
+ * longer paired, or a selected project no machine lists any more, is ignored, so it cannot hide everything.
  */
 export function filterWorkspaces(
   items: HomeItem[],
@@ -110,11 +112,12 @@ export function filterWorkspaces(
   macIds: string[],
 ): { shown: HomeItem[]; hiddenByActivity: number } {
   const macs = filters.macs.filter((id) => macIds.includes(id));
+  const projects = filters.projects.filter((name) => items.some((item) => item.project === name));
   const shown: HomeItem[] = [];
   let hiddenByActivity = 0;
   for (const item of items) {
     if (macs.length && !macs.includes(item.macId)) continue;
-    if (filters.projects.length && !filters.projects.includes(item.project)) continue;
+    if (projects.length && !projects.includes(item.project)) continue;
     if (filters.errorsOnly && !hasErrors(item.env)) continue;
     if (filters.remoteOnly && !hasRemote(item.env)) continue;
     const active = isActive(item.env);
@@ -131,7 +134,6 @@ export function projectNames(items: HomeItem[]): string[] {
   return [...new Set(items.map((item) => item.project))].sort((a, b) => a.localeCompare(b));
 }
 
-/** Stim Desktop warns below 20 GB free. */
 export const LOW_DISK_BYTES = 20e9;
 
 /** Decimal units, like the Finder and Stim Desktop's disk figures. */

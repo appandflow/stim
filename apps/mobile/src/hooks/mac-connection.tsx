@@ -57,9 +57,8 @@ interface Pool {
 
 const Context = createContext<Pool>({ macs: null, live: {}, reload: () => {} });
 
-type Update = (id: string, patch: Partial<Live>) => void;
+type Update = (id: string, patch: Partial<Live> | null) => void;
 
-/** One connection to one paired Mac, with its status subscription and machine usage polling. */
 function MacLink({ mac, update }: { mac: PairedMac; update: Update }) {
   const [connection, setConnection] = useState<StimConnection | null>(null);
   const [open, setOpen] = useState(false);
@@ -92,6 +91,7 @@ function MacLink({ mac, update }: { mac: PairedMac; update: Update }) {
     return () => {
       cancelled = true;
       created?.close();
+      update(mac.id, null);
     };
   }, [mac.id, mac.endpoint, update]);
 
@@ -112,25 +112,25 @@ function MacLink({ mac, update }: { mac: PairedMac; update: Update }) {
 
   useEffect(() => {
     if (!connection || !open) return;
-    let timer: ReturnType<typeof setInterval> | null = null;
+    let cancelled = false;
     const poll = () =>
       connection.request('machine.get', {}).then(
-        (usage) => update(mac.id, { usage }),
+        (usage) => !cancelled && update(mac.id, { usage }),
         (error: Error) => {
-          if (error instanceof RequestError && error.error.code === 'unknown-method' && timer) clearInterval(timer);
+          if (error instanceof RequestError && error.error.code === 'unknown-method') clearInterval(timer);
         },
       );
-    timer = setInterval(poll, USAGE_INTERVAL_MS);
+    const timer = setInterval(poll, USAGE_INTERVAL_MS);
     void poll();
     return () => {
-      if (timer) clearInterval(timer);
+      cancelled = true;
+      clearInterval(timer);
     };
   }, [connection, open, mac.id, update]);
 
   return null;
 }
 
-/** Keeps a connection to every paired Mac for as long as the app runs; `reload` rereads the paired list. */
 export function MacsProvider({ children }: { children: ReactNode }) {
   const [macs, setMacs] = useState<PairedMac[] | null>(null);
   const [live, setLive] = useState<Record<string, Live>>({});
@@ -141,7 +141,11 @@ export function MacsProvider({ children }: { children: ReactNode }) {
   useEffect(reload, [reload]);
 
   const update = useCallback<Update>((id, patch) => {
-    setLive((all) => ({ ...all, [id]: { ...(all[id] ?? IDLE), ...patch } }));
+    setLive((all) => {
+      if (patch) return { ...all, [id]: { ...(all[id] ?? IDLE), ...patch } };
+      const { [id]: _removed, ...rest } = all;
+      return rest;
+    });
   }, []);
 
   const value = useMemo(() => ({ macs, live, reload }), [macs, live, reload]);

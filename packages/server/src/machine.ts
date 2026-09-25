@@ -11,7 +11,6 @@ interface DiskLocation {
   path: string;
 }
 
-/** The locations Stim Desktop's storage view measures: workspaces, Stim home, and the simulators. */
 function stimDiskLocations(): DiskLocation[] {
   let workspaces: string[] = [];
   try {

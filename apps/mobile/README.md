@@ -26,8 +26,9 @@ and shows what Stim Desktop shows, without any actions:
   in; the token field is masked, with a button that shows it. The device token
   the server issues is kept in the phone's secure storage (Keychain on iOS,
   Keystore on Android) and never shown.
-- **Workspace**: a card with the project, branch, path, Metro, supervisor,
-  memory and errors; build progress; warnings, remote sessions, and each
+- **Workspace**: a status card with the branch and the app's folder inside
+  its checkout, Metro's port and health, memory, and the error count, which
+  opens the errors; build progress; warnings, remote sessions, and each
   device: a running device with the latest frame the server sends for it, a
   stopped one as a single row. The **...** menu opens the logs, copies the
   full path, shows errors, or opens the machine's status.

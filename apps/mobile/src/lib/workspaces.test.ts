@@ -3,12 +3,11 @@ import fixture from '../../mock-server/fixtures/status.json';
 import {
   deviceWarnings,
   devicesOf,
-  groupByProject,
   orderDevices,
+  pathInCheckout,
   projectOf,
   repositoryRoots,
   runningBuild,
-  workspaceNames,
 } from '@/lib/workspaces';
 import type { EnvironmentState, StatusPayload } from '@/protocol/types';
 
@@ -36,26 +35,14 @@ describe('projectOf', () => {
   });
 });
 
-describe('groupByProject', () => {
-  it('groups the captured status by repository with live projects and workspaces first', () => {
-    const groups = groupByProject(payload);
-    expect(groups.map((g) => g.name)).toEqual(['stim', 'tlon-apps', 'example', 'helloworld', 'react-native-hinges']);
-    const tlon = groups.find((g) => g.name === 'tlon-apps');
-    expect(tlon?.liveCount).toBe(3);
-    expect(tlon?.workspaces.map((w) => workspaceNames(w.path).title).slice(0, 3)).toEqual([
-      'chat-perf-demo',
-      'wide-insets',
-      'wide-split-layout',
-    ]);
-    const firstIdle = groups.findIndex((g) => g.liveCount === 0);
-    expect(groups.slice(firstIdle).every((g) => g.liveCount === 0)).toBe(true);
-  });
-});
-
-describe('groupByProject names', () => {
-  it('tells apart projects whose folders share a name', () => {
-    const groups = groupByProject({ ...payload, environments: [env('/u/a/example'), env('/u/b/example')] });
-    expect(groups.map((g) => g.name)).toEqual(['a/example', 'b/example']);
+describe('pathInCheckout', () => {
+  it('names the app folder inside its worktree or repository, and nothing at the checkout root', () => {
+    const roots = ['/u/tlon-apps', '/u/stim'];
+    expect(pathInCheckout(env('/u/tlon-apps/.worktrees/chat/apps/tlon-mobile'), roots)).toBe('apps/tlon-mobile');
+    expect(pathInCheckout(env('/u/stim/.claude/worktrees/1123/apps/mobile'), roots)).toBe('apps/mobile');
+    expect(pathInCheckout(env('/u/tlon-apps/apps/tlon-mobile'), roots)).toBe('apps/tlon-mobile');
+    expect(pathInCheckout(env('/u/tlon-apps/.worktrees/chat'), roots)).toBeNull();
+    expect(pathInCheckout(env('/u/stim'), roots)).toBeNull();
   });
 });
 

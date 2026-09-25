@@ -6,19 +6,16 @@ import { BuildProgressBar } from '@/components/build-progress';
 import { Chip } from '@/components/chip';
 import { Icon } from '@/components/icon';
 import type { HomeItem } from '@/lib/home';
-import { tildeHome } from '@/lib/paths';
 import { devicesOf, isActive, runningBuild } from '@/lib/workspaces';
 import { useColors } from '@/theme';
 
 export function WorkspaceRow({
   item,
-  home,
   macOnline,
   onPress,
   onErrors,
 }: {
   item: HomeItem;
-  home: string | null;
   macOnline: boolean;
   onPress: () => void;
   onErrors: () => void;
@@ -29,7 +26,7 @@ export function WorkspaceRow({
   const active = isActive(env);
   const running = devicesOf(env).filter((d) => d.running);
   const errors = env.logs?.errorsSinceMarker ?? 0;
-  const where = env.worktree?.branch ?? tildeHome(env.path, home);
+  const where = [item.project, env.worktree?.branch ?? item.inCheckout].filter(Boolean).join(' \u00B7 ');
   const tint = build ? colors.accent : active ? colors.live : colors.tertiary;
   return (
     <Pressable
@@ -47,7 +44,7 @@ export function WorkspaceRow({
         </Text>
         <View style={styles.meta}>
           <Text style={[styles.metaText, { color: colors.tertiary }]} numberOfLines={1} ellipsizeMode="middle">
-            {`${item.project} \u00B7 ${where}`}
+            {where}
           </Text>
           <View style={styles.macIcon}>
             <Icon name="laptopcomputer" size={14} color={macOnline ? colors.live : colors.tertiary} />

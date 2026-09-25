@@ -8,7 +8,7 @@ import { MacChip } from '@/components/mac-chip';
 import { WorkspaceRow } from '@/components/workspace-row';
 import { useHomeFilters } from '@/hooks/home-filters';
 import { useMacs } from '@/hooks/mac-connection';
-import { filtersActive, filterWorkspaces, mergeWorkspaces, type HomeItem } from '@/lib/home';
+import { filtersActive, filterWorkspaces, mergeWorkspaces, projectNames, type HomeItem } from '@/lib/home';
 import { isActive } from '@/lib/workspaces';
 import { radius, useColors } from '@/theme';
 
@@ -36,7 +36,10 @@ export function Home() {
       { title: 'Idle', data: idle },
     ].filter((s) => s.data.length > 0);
   }, [shown]);
-  const loading = connections.some((c) => c.state.kind !== 'refused' && !c.missing && !c.status);
+  const loading =
+    macs === null ||
+    (items.length === 0 &&
+      connections.some((c) => !c.status && !c.missing && (c.state.kind === 'connecting' || c.state.kind === 'open')));
 
   const header = (
     <>
@@ -57,13 +60,15 @@ export function Home() {
           accessibilityLabel="Filter"
           onPress={() => router.push('/filters')}
         >
-          {filtersActive(filters, macIds) ? <Stack.Toolbar.Badge style={{ backgroundColor: colors.primary }} /> : null}
+          {filtersActive(filters, macIds, projectNames(items)) ? (
+            <Stack.Toolbar.Badge style={{ backgroundColor: colors.primary }} />
+          ) : null}
         </Stack.Toolbar.Button>
       </Stack.Toolbar>
     </>
   );
 
-  if (macs && macs.length === 0) {
+  if (macs?.length === 0) {
     return (
       <View style={[styles.screen, { backgroundColor: colors.background }]}>
         {header}
@@ -132,7 +137,6 @@ export function Home() {
           return (
             <WorkspaceRow
               item={item}
-              home={mac?.home ?? null}
               macOnline={mac?.state.kind === 'open'}
               onPress={() => openWorkspace(item, false)}
               onErrors={() => openWorkspace(item, true)}
