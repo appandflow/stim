@@ -880,7 +880,11 @@ export default function stopCommand(program: Command): void {
     .description(
       "The inverse of `start`: halt this workspace's supervisor, shut the owned device down (never deleted), and free the reserved port. Non-destructive -- the device stays assigned, so coming back costs a boot. Acts on the current workspace.",
     )
-    .option('--slot <name>', 'Stop only this device slot, keeping the shared server running', parseDeviceSlotOption)
+    .option(
+      '--slot <name>',
+      "Stop only this device slot, keeping the shared server running. Use 'default' for the workspace's default device.",
+      parseDeviceSlotOption,
+    )
     .option('--json', 'print the per-step outcomes as JSON')
     .action(async (opts: StopOptions) => {
       const root = findProjectRoot(process.cwd());

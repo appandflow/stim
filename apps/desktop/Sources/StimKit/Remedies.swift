@@ -42,6 +42,17 @@ public func environmentCommands(worktree: String) -> [StimCommand] {
   [["start"], ["ios"], ["android"]].map { StimCommand($0, cwd: worktree) }
 }
 
+/// The `stim stop` command that stops one device. A remote session has no per-slot
+/// teardown, so it runs plain `stop`, which ends the whole workspace including the session.
+public func stopCommand(for device: DeviceRef, cwd: String) -> StimCommand {
+  switch device {
+  case .ios(let slot, _), .android(let slot, _):
+    return StimCommand(["stop", "--slot", slot], cwd: cwd)
+  case .remote:
+    return StimCommand(["stop"], cwd: cwd)
+  }
+}
+
 public func shellQuote(_ s: String) -> String {
   "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
 }

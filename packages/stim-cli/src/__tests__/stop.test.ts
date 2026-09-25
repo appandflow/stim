@@ -1410,3 +1410,48 @@ test('stopping a slot preserves sibling collectors, leases and the shared server
   expect(listLeaseFiles().map((entry) => entry.id)).toEqual(['TABLET-HW']);
   expect(result.outcomes.port).toMatchObject({ status: 'kept', port: 8083 });
 });
+
+test('stop --slot default stops only the default device, keeping named slots and the shared server', async () => {
+  const defaultCollector = { pid: 111, processToken: 'default' };
+  const tablet = { pid: 222, processToken: 'tablet' };
+  writeFileSync(
+    workspaceStateFile(tmpRoot),
+    JSON.stringify({
+      collectors: { ios: defaultCollector, 'ios:tablet': tablet },
+      supervisor: { pid: 333, processToken: 'metro' },
+    }),
+  );
+  takeLease({ root: tmpRoot, platform: 'ios', slot: 'default', id: 'DEFAULT-HW', kind: 'declared', durationMs: 60000 });
+  takeLease({ root: tmpRoot, platform: 'ios', slot: 'tablet', id: 'TABLET-HW', kind: 'declared', durationMs: 60000 });
+  let remoteTeardownCalled = false;
+  const { calls, opts } = seams({
+    root: tmpRoot,
+    project: {
+      metroPort: 8083,
+      platforms: { ios: { deviceUdid: 'DEFAULT', owned: true } },
+      deviceSlots: {
+        tablet: { ios: { deviceUdid: 'TABLET', owned: true } },
+      },
+    },
+    collectors: undefined,
+    isAlive: () => true,
+    remoteDevice: { platform: 'ios', sessionId: 'drs_9' },
+    teardownRemoteSession: () => {
+      remoteTeardownCalled = true;
+      return { status: 'torn-down' as const };
+    },
+  });
+  const result = await runStop({ ...opts, slot: 'default' });
+  expect(result.ok).toBe(true);
+  expect(calls.collectorSignals).toEqual([111]);
+  expect(calls.teardowns.map((call) => ('udid' in call ? call.udid : call.avd))).toEqual(['DEFAULT']);
+  expect(calls.signals).toEqual([]);
+  expect(calls.freed).toEqual([]);
+  expect(readCollectorState(tmpRoot)).toEqual({ 'ios:tablet': tablet });
+  expect(readSupervisorState(tmpRoot)?.pid).toBe(333);
+  expect(listLeaseFiles().map((entry) => entry.id)).toEqual(['TABLET-HW']);
+  expect(result.outcomes.port).toMatchObject({ status: 'kept', port: 8083 });
+  // stop --slot, including --slot default, never touches the remote session.
+  expect(remoteTeardownCalled).toBe(false);
+  expect(result.outcomes.device.remote).toBeUndefined();
+});

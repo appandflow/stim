@@ -1200,7 +1200,11 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   or digit. Reserved object-property names are refused.
 
   stop --slot shuts down that slot's owned devices and releases its leases,
-  retaining Metro and sibling slots. Plain stop handles the whole workspace.
+  retaining Metro and sibling slots. stop --slot default targets only the
+  workspace's default device, the same one ios/android address with no
+  --slot and status reports with no [slot] label; it never touches a remote
+  session even though remote sessions use the default slot. Plain stop
+  handles the whole workspace.
   status reports named devices under slots and counts their memory. Device
   caps count every slot. Recycling uses the same model/runtime-matched pool
   for every slot, with one shared cap per platform and oldest-first eviction.

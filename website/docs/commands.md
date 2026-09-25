@@ -438,6 +438,10 @@ the device.
 
 With `--slot <name>`, stops only that slot's owned devices and collectors and
 releases its leases. Metro, the reserved port, and sibling slots keep running.
+Use `--slot default` to stop only the workspace's default device -- the one
+`ios`/`android` address with no `--slot` and `status` reports with no `[slot]`
+label -- while a named slot stays up. `--slot` never ends an owned remote
+session, even `--slot default`; use plain `stop` for that.
 
 On a physical iPhone, stopping the log collector closes the running app.
 `stop` also releases this workspace's device leases. It never uninstalls the

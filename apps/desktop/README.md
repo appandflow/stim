@@ -14,7 +14,10 @@ in the workspace directory:
   confirmation; `stim stop` or `stim android` for a status warning. Each row can
   also copy its command.
 - Workspace inspector: `stim stop`, and `stim worktree remove` after a
-  confirmation that names the worktree and its branch.
+  confirmation that names the worktree and its branch. Each running device,
+  in the device tile and the inspector's device list, has its own **Stop**
+  button, running `stim stop --slot <name>` (`default` for the workspace's
+  default device) so the shared server and other slots keep running.
 - Idle devices: when the `stim gc --json` preview lists idle devices, the
   sheet offers **Shut down idle** with a duration (30 minutes to 1 day), then
   runs `stim gc --idle <duration>` after a confirmation. That shuts the devices
@@ -194,9 +197,11 @@ emulator without a gRPC endpoint cannot be taken over.
 A workspace with a recorded EAS Simulator session from `stim ios --remote eas`
 or `stim android --remote eas` shows a tile with a blue ring. The tile loads the
 session's `webPreviewUrl` from `stim status --json` in a web view and marks the
-session as billable. Its **Stop** button runs `stim stop` in the workspace after
-a confirmation, which ends the session. A session with no recorded preview URL
-shows a message instead of the page.
+session as billable. Its **Stop** button, in the tile and the inspector's device
+list, runs `stim stop` in the workspace after a confirmation, which ends the
+session -- a remote session has no per-slot teardown, so its Stop always
+targets the whole workspace, unlike a local device's `stim stop --slot <name>`.
+A session with no recorded preview URL shows a message instead of the page.
 
 ## Phones
 

@@ -97,6 +97,7 @@ struct Inspector: View {
   @EnvironmentObject private var actions: ActionCenter
   @State private var removal: Removal?
   @State private var confirmingStop = false
+  @State private var confirmingStopDevice: DeviceRef?
   @AppStorage(AppPreferences.Key.editorBundleID) private var editorID = ""
   @AppStorage(AppPreferences.Key.terminalBundleID) private var terminalID = ""
 
@@ -141,6 +142,9 @@ struct Inspector: View {
               Text(device.model).foregroundStyle(Theme.secondary).lineLimit(1)
               Spacer()
               Text(device.state).foregroundStyle(Theme.tertiary)
+              if device.isRunning {
+                deviceStopButton(device)
+              }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
@@ -172,6 +176,39 @@ struct Inspector: View {
       .font(Theme.body(12))
       .padding(20)
     }
+    .confirmationDialog(
+      "Stop this remote session?",
+      isPresented: Binding(get: { confirmingStopDevice != nil }, set: { if !$0 { confirmingStopDevice = nil } }),
+      titleVisibility: .visible,
+      presenting: confirmingStopDevice
+    ) { device in
+      Button("Run stim stop", role: .destructive) {
+        actions.run("Stop \(device.slot)", stopCommand(for: device, cwd: env.path))
+      }
+    } message: { _ in
+      Text(
+        "stim stop ends the billable remote session and halts the workspace's dev server and devices. The session cannot be resumed."
+      )
+    }
+  }
+
+  @ViewBuilder
+  private func deviceStopButton(_ device: DeviceRef) -> some View {
+    let isRemote = { if case .remote = device { return true } else { return false } }()
+    Button("Stop") {
+      if isRemote {
+        confirmingStopDevice = device
+      } else {
+        actions.run("Stop \(device.slot)", stopCommand(for: device, cwd: env.path))
+      }
+    }
+    .controlSize(.small)
+    .disabled(actions.active(for: env.path) != nil)
+    .help(
+      isRemote
+        ? "stim stop: ends the billable remote session with the rest of the workspace"
+        : "stim stop --slot \(device.slot): stops this device, keeping the shared server and other slots running"
+    )
   }
 
   private var statusCard: some View {
