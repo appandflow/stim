@@ -16,6 +16,7 @@ final class ServerController: ObservableObject {
   @Published private(set) var state = State.off
   @Published private(set) var devices: [PairedDevice] = []
   @Published private(set) var devicesError: String?
+  @Published private(set) var revokeError: String?
 
   private var environment: Task<[String: String], Never>?
   private var process: Process?
@@ -141,8 +142,10 @@ final class ServerController: ObservableObject {
     Task {
       let cli = await cli()
       switch await Task.detached(operation: { Result { try cli.revoke(device.id) } }).value {
-      case .success: reloadDevices()
-      case .failure(let error): devicesError = error.localizedDescription
+      case .success:
+        revokeError = nil
+        reloadDevices()
+      case .failure(let error): revokeError = error.localizedDescription
       }
     }
   }

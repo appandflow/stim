@@ -189,7 +189,9 @@ shows a message instead of the page.
 checks `http://127.0.0.1:7787/health` at launch. When a server answers, the app
 uses it and never starts a second one. Otherwise it runs `stim-server --port
 7787` and stops it with SIGTERM when the app quits, or when you turn the
-preference off, followed by SIGKILL if it has not exited after 3 seconds. A server the app did not start keeps running after the app
+preference off, followed by SIGKILL if it has not exited after 3 seconds. A
+killed server leaves its `stim status --watch` child running until that child's
+next write fails. A server the app did not start keeps running after the app
 quits. `stim-server` is found on the login shell's `PATH`, or at the path you
 choose in the same tab. While a server runs, the tab re-checks it every 5
 seconds, and the pairing and device commands use the `STIM_HOME` its health

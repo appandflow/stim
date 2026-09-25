@@ -33,7 +33,7 @@ struct PhonesView: View {
       }
 
       Section {
-        if let error = server.devicesError {
+        ForEach([server.devicesError, server.revokeError].compactMap { $0 }, id: \.self) { error in
           Text(error).foregroundStyle(Theme.error)
         }
         if server.devices.isEmpty {
