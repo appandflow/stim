@@ -322,26 +322,38 @@ export function useFrameSnapshot(
 
 export type PlanState = { kind: 'checking' } | { kind: 'done'; plan: BuildPlan } | { kind: 'failed'; message: string };
 
-/** `build.plan`: what the next build of `workspace` would find. It builds nothing, so a read-only pairing may ask. */
-export function useBuildPlan(workspace: string): {
-  plans: Partial<Record<Platform, PlanState>>;
-  check: (platform: Platform) => void;
-} {
+type Plans = Partial<Record<Platform, PlanState>>;
+
+/**
+ * `build.plan`: what the next build of `workspace` would find. It builds nothing, so a read-only pairing may ask.
+ * Results belong to `key`; a new workspace, connection or key drops them, and late answers for an old one are ignored.
+ */
+export function useBuildPlan(workspace: string, key: string): { plans: Plans; check: (platform: Platform) => void } {
   const { connection } = useMacConnection();
-  const [plans, setPlans] = useState<Partial<Record<Platform, PlanState>>>({});
+  const [state, setState] = useState<{ owner: unknown; plans: Plans } | null>(null);
+  const owner = useMemo(() => ({ connection, workspace, key }), [connection, workspace, key]);
   const check = useCallback(
     (platform: Platform) => {
-      if (!connection) {
-        setPlans((prev) => ({ ...prev, [platform]: { kind: 'failed', message: 'Not connected.' } }));
+      const set = (plan: PlanState) =>
+        setState((prev) => {
+          const plans = prev && prev.owner === owner ? prev.plans : {};
+          return { owner, plans: { ...plans, [platform]: plan } };
+        });
+      const settle = (plan: PlanState) =>
+        setState((prev) =>
+          prev && prev.owner === owner ? { owner, plans: { ...prev.plans, [platform]: plan } } : prev,
+        );
+      if (!owner.connection) {
+        set({ kind: 'failed', message: 'Not connected.' });
         return;
       }
-      setPlans((prev) => ({ ...prev, [platform]: { kind: 'checking' } }));
-      connection.request('build.plan', { workspace, platform }).then(
-        (plan) => setPlans((prev) => ({ ...prev, [platform]: { kind: 'done', plan } })),
-        (cause: Error) => setPlans((prev) => ({ ...prev, [platform]: { kind: 'failed', message: cause.message } })),
+      set({ kind: 'checking' });
+      owner.connection.request('build.plan', { workspace: owner.workspace, platform }).then(
+        (plan) => settle({ kind: 'done', plan }),
+        (cause: Error) => settle({ kind: 'failed', message: cause.message }),
       );
     },
-    [connection, workspace],
+    [owner],
   );
-  return { plans, check };
+  return { plans: state && state.owner === owner ? state.plans : {}, check };
 }

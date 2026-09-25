@@ -60,14 +60,16 @@ struct BuildCacheSection: View {
             Text(expectation).foregroundStyle(Theme.secondary)
           }
           if let refusal = plan.refusal {
-            Text(refusal.message).foregroundStyle(Theme.secondary).textSelection(.enabled)
+            Text([refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " "))
+              .foregroundStyle(Theme.secondary)
+              .textSelection(.enabled)
           }
         }
       case .done(.refused(let refusal)):
-        Text("Cannot plan: \(refusal.message)")
+        Text("Cannot plan: \([refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " "))")
           .foregroundStyle(Theme.warn)
           .textSelection(.enabled)
-          .help(refusal.remedy ?? refusal.code)
+          .help(refusal.code)
       case .failed(let message):
         Text(message).foregroundStyle(Theme.error)
       case nil:

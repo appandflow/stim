@@ -153,7 +153,8 @@ struct Inspector: View {
           }
         }
 
-        BuildCacheSection(cli: cli, env: env).id(env.path)
+        BuildCacheSection(cli: cli, env: env)
+          .id([env.path, env.lastBuilds?.ios?.startedAt ?? "", env.lastBuilds?.android?.startedAt ?? ""])
 
         if let project = stats?.project, project.ios != nil || project.android != nil {
           VStack(alignment: .leading, spacing: 8) {

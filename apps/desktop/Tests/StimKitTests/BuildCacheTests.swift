@@ -69,4 +69,25 @@ import Testing
     build.outcome = nil
     #expect(build.outcomeLabel == nil)
   }
+
+  @Test func returnsTheCLIRefusalWhenAPlanCannotBeComputed() throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let stim = dir.appendingPathComponent("stim").path
+    let script = """
+      #!/bin/sh
+      echo "$*" > "\(dir.path)/args"
+      echo '{"code":"STIM_NO_DEVICE","message":"No system image is installed.","remedy":"Install one."}'
+      exit 1
+      """
+    FileManager.default.createFile(atPath: stim, contents: Data(script.utf8), attributes: [.posixPermissions: 0o755])
+
+    let result = try StimCLI(environment: ["PATH": "/usr/bin:/bin"], override: stim)
+      .plan(platform: "android", workspace: dir.path)
+
+    #expect(result == .refused(CommandRefusal(code: "STIM_NO_DEVICE", message: "No system image is installed.", remedy: "Install one.")))
+    let args = try String(contentsOf: dir.appendingPathComponent("args"), encoding: .utf8)
+    #expect(args == "android --plan --json\n")
+  }
 }

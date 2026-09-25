@@ -20,7 +20,10 @@ function platformsOf(env: EnvironmentState): Platform[] {
 }
 
 export function BuildCacheCard({ env }: { env: EnvironmentState }) {
-  const { plans, check } = useBuildPlan(env.path);
+  const { plans, check } = useBuildPlan(
+    env.path,
+    PLATFORMS.map((platform) => env.lastBuilds?.[platform]?.startedAt ?? '').join('\n'),
+  );
   return (
     <Card>
       <View style={styles.card}>
@@ -86,7 +89,7 @@ function PlatformBuilds({
           ) : null}
           {plan.plan.refusal ? (
             <Text style={[styles.line, { color: colors.secondary }]} selectable>
-              {plan.plan.refusal.message}
+              {`${plan.plan.refusal.message} ${plan.plan.refusal.remedy}`}
             </Text>
           ) : null}
         </>
