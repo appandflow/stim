@@ -8,10 +8,12 @@ struct ActivitySheet: View {
   @State private var confirmingDelete = false
   @State private var idleDuration: String?
 
-  private var isGcPreview: Bool { run.command.arguments == ["gc", "--json"] }
+  private var deleteArguments: [String]? {
+    run.steps.count == 1 ? GcPreview.deleteArguments(after: run.command.arguments) : nil
+  }
 
   private var report: Result<GcPreview, Error>? {
-    guard isGcPreview, run.exitStatus != nil else { return nil }
+    guard deleteArguments != nil, run.exitStatus != nil else { return nil }
     return Result { try GcPreview(json: run.stdout) }
   }
 
@@ -22,7 +24,7 @@ struct ActivitySheet: View {
         Spacer()
         status
       }
-      CommandText(command: run.command.shellLine)
+      CommandText(command: run.steps.map(\.shellLine).joined(separator: "\n"))
 
       if case .success(let report) = report {
         GcPreviewView(report: report)
@@ -39,17 +41,17 @@ struct ActivitySheet: View {
           Text("Closing this keeps the command running.").foregroundStyle(Theme.tertiary)
         }
         Spacer()
-        if case .success(let report) = report, !report.idleDevices.isEmpty {
+        if case .success(let report) = report, run.command.arguments == ["gc", "--json"], !report.idleDevices.isEmpty {
           idleMenu(report)
         }
-        if case .success(let report) = report {
+        if case .success(let report) = report, let deleteArguments {
           Button("Delete\u{2026}", role: .destructive) { confirmingDelete = true }
             .disabled(!report.actionable)
             .confirmationDialog(
               "Delete what stim gc reported?", isPresented: $confirmingDelete, titleVisibility: .visible
             ) {
-              Button("Run stim gc --delete", role: .destructive) {
-                actions.run("Clean up", StimCommand(["gc", "--delete"], cwd: run.command.cwd), key: ActionCenter.machineKey)
+              Button("Run stim \(deleteArguments.joined(separator: " "))", role: .destructive) {
+                actions.run("Clean up", StimCommand(deleteArguments, cwd: run.command.cwd), key: ActionCenter.machineKey)
               }
             } message: {
               Text(deleteMessage(report))

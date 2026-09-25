@@ -7,12 +7,15 @@ enum SidebarItem: Hashable {
   case environment(String)
   case worktree(String)
   case attention
+  case storage
 }
 
 struct RootView: View {
   @ObservedObject private var store: StatusStore
   @StateObject private var metrics: MetricsStore
-  @StateObject private var actions: ActionCenter
+  @ObservedObject private var actions: ActionCenter
+  @ObservedObject private var autopilot: AutopilotRunner
+  @StateObject private var storage: StorageStore
   @State private var selection: SidebarItem? = .wall
   @State private var restoredProject = false
   @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.allDevices
@@ -25,16 +28,18 @@ struct RootView: View {
 
   private let cli: Task<StimCLI, Never>
 
-  init(cli: Task<StimCLI, Never>, store: StatusStore) {
+  init(cli: Task<StimCLI, Never>, store: StatusStore, actions: ActionCenter, autopilot: AutopilotRunner) {
     self.cli = cli
     self.store = store
+    self.actions = actions
+    self.autopilot = autopilot
     _metrics = StateObject(wrappedValue: MetricsStore(status: store, cli: cli))
-    _actions = StateObject(wrappedValue: ActionCenter(cli: cli))
+    _storage = StateObject(wrappedValue: StorageStore(status: store, cli: cli))
   }
 
   var body: some View {
     NavigationSplitView {
-      Sidebar(store: store, selection: $selection, projectFilter: projectFilter)
+      Sidebar(store: store, autopilot: autopilot, selection: $selection, projectFilter: projectFilter)
         .navigationSplitViewColumnWidth(min: 240, ideal: 272)
     } detail: {
       detail
@@ -53,7 +58,10 @@ struct RootView: View {
       ActivitySheet(run: run).environmentObject(actions)
     }
     .onAppear {
-      actions.onFinish = store.refresh
+      actions.onFinish = { [store, metrics] in
+        store.refresh()
+        metrics.refreshGc()
+      }
       store.start()
       metrics.start()
     }
@@ -66,6 +74,11 @@ struct RootView: View {
       restoreLastProject()
     }
     .onReceive(store.$projects) { _ in restoreLastProject() }
+    .onReceive(openRequests.$showsStorage) { shows in
+      guard shows else { return }
+      openRequests.showsStorage = false
+      selection = .storage
+    }
     .onReceive(openRequests.$workspacePath) { path in
       guard let path else { return }
       openRequests.workspacePath = nil
@@ -130,6 +143,8 @@ struct RootView: View {
       }
     case .attention:
       AttentionView(store: store)
+    case .storage:
+      StorageView(status: store, metrics: metrics, storage: storage, autopilot: autopilot)
     default:
       WallView(store: store, metrics: metrics, project: projectFilter, selection: $selection, openLogs: openErrors)
     }

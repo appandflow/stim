@@ -3,6 +3,7 @@ import SwiftUI
 
 struct Sidebar: View {
   @ObservedObject var store: StatusStore
+  @ObservedObject var autopilot: AutopilotRunner
   @Binding var selection: SidebarItem?
   var projectFilter: Project?
   @AppStorage(AppPreferences.Key.showsIdleWorkspaces) private var showsIdle = true
@@ -58,6 +59,15 @@ struct Sidebar: View {
           }
         }
         .sidebarTag(.attention, selection: selection)
+        HStack {
+          Label("Storage", systemImage: "internaldrive")
+          Spacer()
+          if autopilot.pressure != nil {
+            Image(systemName: "exclamationmark.circle.fill").font(.system(size: 11)).foregroundStyle(Theme.warn)
+              .help("Free disk is under the Stim budget")
+          }
+        }
+        .sidebarTag(.storage, selection: selection)
       }
     }
     .scrollContentBackground(.hidden)

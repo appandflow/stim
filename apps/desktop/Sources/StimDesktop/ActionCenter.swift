@@ -1,19 +1,23 @@
 import Foundation
 import StimKit
 
+/// One or more Stim commands run one after another. The exit status is the first non-zero status, and a
+/// failed step does not stop the ones after it.
 @MainActor
 final class ActionRun: ObservableObject, Identifiable {
   let id = UUID()
   let title: String
-  let command: StimCommand
+  let steps: [StimCommand]
   @Published private(set) var lines: [OutputLine] = []
   @Published private(set) var exitStatus: Int32?
   @Published private(set) var launchError: String?
 
-  init(title: String, command: StimCommand) {
+  init(title: String, steps: [StimCommand]) {
     self.title = title
-    self.command = command
+    self.steps = steps
   }
+
+  var command: StimCommand { steps[0] }
 
   var isRunning: Bool { exitStatus == nil && launchError == nil }
 
@@ -21,7 +25,18 @@ final class ActionRun: ObservableObject, Identifiable {
     Data(lines.filter { $0.channel == .stdout }.map(\.text).joined(separator: "\n").utf8)
   }
 
+  /// The last line the command printed, for the autopilot log.
+  var summary: String? {
+    launchError ?? lines.last { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty && !$0.text.hasPrefix("$ ") }?.text
+  }
+
   fileprivate func start(cli: StimCLI, onFinish: @escaping @MainActor () -> Void) {
+    start(step: 0, cli: cli, worst: 0, onFinish: onFinish)
+  }
+
+  private func start(step: Int, cli: StimCLI, worst: Int32, onFinish: @escaping @MainActor () -> Void) {
+    let command = steps[step]
+    if steps.count > 1 { lines.append(OutputLine(.stderr, "$ stim \(command.arguments.joined(separator: " "))")) }
     // ProcessStream calls back on background queues in order; the main queue
     // keeps that order, where unstructured Tasks would not.
     do {
@@ -33,8 +48,13 @@ final class ActionRun: ObservableObject, Identifiable {
         onExit: { status in
           DispatchQueue.main.async {
             MainActor.assumeIsolated {
-              self.exitStatus = status
-              onFinish()
+              let worst = worst != 0 ? worst : status
+              if step + 1 < self.steps.count {
+                self.start(step: step + 1, cli: cli, worst: worst, onFinish: onFinish)
+              } else {
+                self.exitStatus = worst
+                onFinish()
+              }
             }
           }
         })
@@ -66,20 +86,32 @@ final class ActionCenter: ObservableObject {
   func latest(for key: String) -> ActionRun? { runs[key] }
 
   func run(_ title: String, _ command: StimCommand, key: String? = nil) {
-    let key = key ?? command.cwd
+    run(title, steps: [command], key: key)
+  }
+
+  /// Starts `steps` unless a run already holds `key`. With `present`, the activity sheet shows the new
+  /// run, or the one already running. Returns the new run, or nil when one was already running.
+  @discardableResult
+  func run(
+    _ title: String, steps: [StimCommand], key: String? = nil, present: Bool = true,
+    completion: ((ActionRun) -> Void)? = nil
+  ) -> ActionRun? {
+    let key = key ?? steps[0].cwd
     if let active = active(for: key) {
-      presented = active
-      return
+      if present { presented = active }
+      return nil
     }
-    let run = ActionRun(title: title, command: command)
+    let run = ActionRun(title: title, steps: steps)
     runs[key] = run
-    presented = run
+    if present { presented = run }
     let cli = cli
     Task { [weak self] in
       run.start(cli: await cli.value) { [weak self] in
         self?.objectWillChange.send()
         self?.onFinish?()
+        completion?(run)
       }
     }
+    return run
   }
 }

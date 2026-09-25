@@ -27,6 +27,27 @@ final class Notifier: ObservableObject {
     UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
   }
 
+  static let pressureCategory = "diskPressure"
+  static let doItAction = "doIt"
+
+  static func removeDeliveredPressure() {
+    guard isAvailable else { return }
+    UNUserNotificationCenter.current().getDeliveredNotifications { delivered in
+      UNUserNotificationCenter.current().removeDeliveredNotifications(
+        withIdentifiers: delivered.map(\.request.identifier).filter { $0.hasPrefix("pressure") })
+    }
+  }
+
+  /// Posts a disk pressure notification. With `offersPlan`, it carries a Do it button that runs the plan.
+  static func postPressure(id: String, title: String, body: String, offersPlan: Bool) {
+    guard isAvailable, UserDefaults.standard.bool(forKey: AppPreferences.Key.notifiesDiskPressure) else { return }
+    let content = UNMutableNotificationContent()
+    content.title = title
+    content.body = body
+    content.categoryIdentifier = offersPlan ? pressureCategory : ""
+    UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
+  }
+
   func start() {
     guard subscription == nil else { return }
     subscription = store.$payload.compactMap { $0 }.sink { [weak self] payload in
@@ -49,5 +70,50 @@ final class Notifier: ObservableObject {
       content.body = event.body
       UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: event.id, content: content, trigger: nil))
     }
+  }
+}
+
+/// Handles the Do it button of a disk pressure notification, and opens the Storage view when one is clicked.
+final class NotificationResponder: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
+  static let shared = NotificationResponder()
+
+  @MainActor var runPlan: (() -> Void)?
+
+  @MainActor func install() {
+    guard Notifier.isAvailable else { return }
+    let center = UNUserNotificationCenter.current()
+    center.setNotificationCategories([
+      UNNotificationCategory(
+        identifier: Notifier.pressureCategory,
+        actions: [UNNotificationAction(identifier: Notifier.doItAction, title: "Do it", options: [.foreground])],
+        intentIdentifiers: [])
+    ])
+    center.delegate = self
+  }
+
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping () -> Void
+  ) {
+    let action = response.actionIdentifier
+    let id = response.notification.request.identifier
+    DispatchQueue.main.async {
+      MainActor.assumeIsolated {
+        if action == Notifier.doItAction {
+          self.runPlan?()
+        } else if id.hasPrefix("pressure") {
+          OpenRequests.shared.showsStorage = true
+        }
+      }
+      completionHandler()
+    }
+  }
+
+  /// Without a delegate macOS shows no banner while the app is active; only pressure notifications change that.
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    completionHandler(notification.request.identifier.hasPrefix("pressure") ? [.banner, .sound] : [])
   }
 }

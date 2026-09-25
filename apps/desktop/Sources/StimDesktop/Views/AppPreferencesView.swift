@@ -15,6 +15,13 @@ struct AppPreferencesView: View {
   @AppStorage(AppPreferences.Key.showsMenuBarExtra) private var showsMenuBarExtra = false
   @AppStorage(AppPreferences.Key.stimExecutable) private var stimExecutable = ""
   @AppStorage(AppPreferences.Key.remoteSessionMinutes) private var remoteMinutes = 30
+  @AppStorage(AppPreferences.Key.autopilotIdleShutdown) private var idleShutdown = true
+  @AppStorage(AppPreferences.Key.autopilotIdleMinutes) private var idleMinutes = 60
+  @AppStorage(AppPreferences.Key.autopilotNightly) private var nightly = true
+  @AppStorage(AppPreferences.Key.autopilotNightlyHour) private var nightlyHour = 3
+  @AppStorage(AppPreferences.Key.autopilotPressure) private var actsOnPressure = true
+  @AppStorage(AppPreferences.Key.notifiesDiskPressure) private var notifiesPressure = true
+  @EnvironmentObject private var autopilot: AutopilotRunner
   @State private var launchesAtLogin = SMAppService.mainApp.status == .enabled
   @State private var loginError: String?
 
@@ -50,6 +57,47 @@ struct AppPreferencesView: View {
         appPicker("Open in Terminal", selection: $terminal, apps: ExternalApp.terminals)
       }
 
+      Section {
+        Toggle("Shut down idle devices", isOn: $idleShutdown)
+        Picker("After", selection: $idleMinutes) {
+          ForEach(AppPreferences.idleMinuteChoices, id: \.self) { minutes in
+            Text(minutes < 60 ? "\(minutes) min" : "\(minutes / 60) h").tag(minutes)
+          }
+        }
+        .disabled(!idleShutdown)
+        Toggle("Clean up every night", isOn: $nightly)
+        Picker("At", selection: $nightlyHour) {
+          ForEach(0..<24, id: \.self) { hour in Text(String(format: "%02d:00", hour)).tag(hour) }
+        }
+        .disabled(!nightly)
+        Toggle("Reclaim space when free disk is under the Stim budget", isOn: $actsOnPressure)
+      } header: {
+        Text("Autopilot")
+      } footer: {
+        Text(
+          "Idle shutdown runs stim gc --idle, which shuts owned simulators and emulators down and never deletes them. A device whose screen changed in this app is left running. Nightly cleanup and disk pressure run stim gc --delete: it clears the build outputs of every workspace not in use, so their next build installs from the shared cache, removes merged worktrees, and deletes parked and unused owned devices. The budget is budget.minFreeDiskGb. A nightly run the Mac slept through runs at the next check."
+        )
+        .multilineTextAlignment(.leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .foregroundStyle(Theme.tertiary)
+      }
+
+      Section {
+        if autopilot.log.isEmpty {
+          Text("No runs yet.").foregroundStyle(Theme.tertiary)
+        } else {
+          ForEach(autopilot.log.prefix(50)) { entry in AutopilotLogRow(entry: entry) }
+        }
+      } header: {
+        HStack {
+          Text("Autopilot activity")
+          Spacer()
+          if !autopilot.log.isEmpty {
+            Button("Clear") { autopilot.clearLog() }.controlSize(.small)
+          }
+        }
+      }
+
       Section("Notifications") {
         if !Notifier.isAvailable {
           Text("Notifications need the bundled app; `swift run` cannot post them.")
@@ -58,6 +106,9 @@ struct AppPreferencesView: View {
         ForEach(StatusEvent.Kind.allCases, id: \.self) { kind in
           NotificationToggle(kind: kind)
         }
+        Toggle("Free disk falls under the Stim budget", isOn: $notifiesPressure)
+          .disabled(!Notifier.isAvailable)
+          .onChange(of: notifiesPressure) { _, on in if on { Notifier.requestAuthorization() } }
         Stepper("Remote session reminder after \(remoteMinutes) min", value: $remoteMinutes, in: 5...240, step: 5)
       }
 
@@ -128,5 +179,28 @@ private struct NotificationToggle: View {
     Toggle(kind.title, isOn: $enabled)
       .disabled(!Notifier.isAvailable)
       .onChange(of: enabled) { _, on in if on { Notifier.requestAuthorization() } }
+  }
+}
+
+private struct AutopilotLogRow: View {
+  var entry: AutopilotLogEntry
+
+  var body: some View {
+    HStack(alignment: .firstTextBaseline, spacing: 10) {
+      Image(systemName: entry.exitStatus == 0 ? "checkmark.circle.fill" : "xmark.octagon.fill")
+        .foregroundStyle(entry.exitStatus == 0 ? Theme.live : Theme.error)
+      VStack(alignment: .leading, spacing: 2) {
+        HStack {
+          Text(entry.trigger.title)
+          Spacer()
+          Text(entry.date.formatted(date: .abbreviated, time: .shortened)).foregroundStyle(Theme.tertiary)
+        }
+        Text(entry.command).font(Theme.mono()).foregroundStyle(Theme.secondary)
+        if let note = entry.note {
+          Text(note).font(Theme.body(11.5)).foregroundStyle(Theme.tertiary).lineLimit(2)
+        }
+      }
+    }
+    .textSelection(.enabled)
   }
 }
