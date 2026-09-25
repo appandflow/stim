@@ -8,6 +8,7 @@ import type { FrameTarget } from './protocol.ts';
 import { serverDir } from './registry.ts';
 import { DEFAULT_FRAME_HINT, HelperSource, type FrameHint } from './frame-helper.ts';
 import { terminate } from './stim-command.ts';
+import type { AccessUnit } from './video.ts';
 
 /** `foldable` marks an iPhone Duo, whose posture lights one of two panels. */
 export type Device = { platform: 'ios'; udid: string; foldable: boolean } | { platform: 'android'; serial: string };
@@ -24,6 +25,11 @@ export interface Frame {
 
 export interface FrameListener {
   frame: (frame: Frame) => void;
+  /**
+   * With `video`, a device the helper streams sends H.264 access units here instead of JPEG frames; a device on
+   * screenshots still sends `frame`.
+   */
+  video?: (unit: AccessUnit) => void;
   /** A capture is taking longer than usual, or a timed-out capture is being retried; the last frame stays valid. */
   delayed: (delayed: boolean) => void;
   failed: (message: string) => void;
@@ -584,12 +590,21 @@ export class FramePool {
     }
     let streamed = false;
     let cancelled = false;
+    const { video } = listener;
     let detach = this.stream(helper, device).add(
       {
         frame: (frame) => {
           streamed = true;
           listener.frame(frame);
         },
+        ...(video
+          ? {
+              video: (unit: AccessUnit) => {
+                streamed = true;
+                video(unit);
+              },
+            }
+          : {}),
         delayed: listener.delayed,
         failed: (message) => {
           if (streamed || cancelled) return listener.failed(message);
@@ -603,6 +618,21 @@ export class FramePool {
       cancelled = true;
       detach();
     };
+  }
+
+  /** Makes the next video frame of `device` a keyframe, for a subscriber whose decoder lost its state. */
+  keyframe(device: Device): void {
+    this.helperSource(device)?.keyframe();
+  }
+
+  /** A subscriber of `device` fell behind: lower the shared bitrate and send a keyframe to resume from. */
+  congested(device: Device): void {
+    this.helperSource(device)?.congested();
+  }
+
+  private helperSource(device: Device): HelperSource | null {
+    const source = this.sources.get(`helper:${deviceKey(device)}`);
+    return source instanceof HelperSource ? source : null;
   }
 
   private stream(helper: string, device: Device): HelperSource {

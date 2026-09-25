@@ -230,6 +230,15 @@ the app cannot connect in v1.
     more than two frames unsent.
   - The screenshot path remains as the fallback when the helper cannot be
     built or fails before its first frame, and for the iPhone Duo.
+- H.264 (#1243, added 2026-09-25): the helper also encodes H.264 with
+  VideoToolbox for clients that ask for it with `video: ["h264"]`, sent as
+  binary messages on the same WebSocket, not over WebRTC. The authenticated
+  `wss://` connection over Tailscale already exists, and WebRTC would add
+  ICE, DTLS and SRTP for a UDP path that Tailscale often relays anyway. The
+  cost is TCP head-of-line blocking on a lossy link, which the server bounds
+  by dropping a slow subscriber's frames until the next keyframe and
+  halving the shared bitrate. JPEG `frame` events stay the fallback and
+  serve the grid tiles.
 - Only devices `stim status` lists as owned are served.
 
 ## Stim Desktop

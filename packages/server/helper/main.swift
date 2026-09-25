@@ -1,4 +1,5 @@
 import CoreImage
+import CoreVideo
 import Foundation
 import ImageIO
 import IOSurface
@@ -8,21 +9,32 @@ import IOSurface
 //   stim-frames ios <udid>
 //   stim-frames android <serial>
 //
-// stdin takes one JSON object per line: {"fps": n, "maxEdge": px, "quality": 0-1}.
+// stdin takes one JSON object per line: {"fps": n, "maxEdge": px, "quality": 0-1,
+// "jpeg": bool, "video": bool, "bitrate": bits per second}, or {"keyframe": true}
+// to make the next video frame a keyframe.
 // stdout carries messages framed as a 4-byte big-endian length, then a kind byte:
 // 1 is a frame (2-byte width, 2-byte height, JPEG bytes), 2 is a JSON notice
-// ({"error": message} before a failed exit). The helper exits when stdin closes.
+// ({"error": message} before a failed exit), 3 is an H.264 access unit (1-byte
+// flags with bit 0 set on a keyframe, 8-byte big-endian float capture time in
+// milliseconds since the epoch, 2-byte width, 2-byte height, Annex-B bytes).
+// The helper exits when stdin closes.
 
 struct Config: Equatable {
   var fps = 5.0
   var maxEdge = 1280
   var quality = 0.7
+  var jpeg = true
+  var video = false
+  var bitrate = 3_000_000
 }
 
 enum Output {
   private static let writer = DispatchQueue(label: "stim.frames.output")
   private static let lock = NSLock()
   private static var writing = false
+  private static var pendingVideo = 0
+  private static var videoNeedsKeyframe = false
+  private static let maxPendingVideo = 30
 
   static func frame(jpeg: Data, width: Int, height: Int) {
     lock.lock()
@@ -37,6 +49,31 @@ enum Output {
       writing = false
       lock.unlock()
     }
+  }
+
+  /// Every access unit is written, in order, since a decoder cannot skip one; a reader that falls
+  /// `maxPendingVideo` behind loses frames up to the next keyframe. Returns false for a dropped unit.
+  static func video(_ unit: AccessUnit) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    if videoNeedsKeyframe && !unit.keyframe { return false }
+    guard pendingVideo < maxPendingVideo else {
+      videoNeedsKeyframe = true
+      return false
+    }
+    videoNeedsKeyframe = false
+    pendingVideo += 1
+    var body = Data([3, unit.keyframe ? 1 : 0])
+    withUnsafeBytes(of: unit.capturedAt.bitPattern.bigEndian) { body.append(contentsOf: $0) }
+    body += Data([UInt8(unit.width >> 8), UInt8(unit.width & 0xff), UInt8(unit.height >> 8), UInt8(unit.height & 0xff)])
+    body += unit.data
+    writer.async {
+      write(body)
+      lock.lock()
+      pendingVideo -= 1
+      lock.unlock()
+    }
+    return true
   }
 
   static func notice(_ object: [String: String]) {
@@ -107,11 +144,22 @@ final class Pacer {
   }
 }
 
+func videoEncoder() -> VideoEncoder {
+  var encoder: VideoEncoder!
+  encoder = VideoEncoder(maxEdge: Config().maxEdge, fps: Int(Config().fps), bitrate: Config().bitrate) { unit in
+    if !Output.video(unit) { encoder.requestKeyframe() }
+  }
+  return encoder
+}
+
+func now() -> Double { Date().timeIntervalSince1970 * 1000 }
+
 final class SimulatorSource {
   private let udid: String
   private let pacer: Pacer
   private var display: SimDisplay?
   private let callbackID = NSUUID()
+  private let video = videoEncoder()
 
   init(udid: String) {
     self.udid = udid
@@ -136,10 +184,16 @@ final class SimulatorSource {
   }
 
   func configure(_ config: Config) {
+    video.configure(maxEdge: config.maxEdge, fps: Int(config.fps), bitrate: config.bitrate)
     queue.async {
       self.pacer.config = config
       self.pacer.changed()
     }
+  }
+
+  func keyframe() {
+    video.requestKeyframe()
+    pacer.changed()
   }
 
   // uiOrientation is a UIInterfaceOrientation; the framebuffer stays in the
@@ -147,13 +201,23 @@ final class SimulatorSource {
   private func render(_ config: Config) {
     guard let surface = display?.framebufferSurface else { return }
     let orientation: CGImagePropertyOrientation
+    let quarterTurns: Int
     switch display?.screenProperties?.uiOrientation ?? 1 {
-    case 2: orientation = .down
-    case 3: orientation = .right
-    case 4: orientation = .left
-    default: orientation = .up
+    case 2: (orientation, quarterTurns) = (.down, 2)
+    case 3: (orientation, quarterTurns) = (.right, 3)
+    case 4: (orientation, quarterTurns) = (.left, 1)
+    default: (orientation, quarterTurns) = (.up, 0)
     }
-    let image = CIImage(ioSurface: unsafeBitCast(surface, to: IOSurfaceRef.self)).oriented(orientation)
+    let ioSurface = unsafeBitCast(surface, to: IOSurfaceRef.self)
+    if config.video {
+      var buffer: Unmanaged<CVPixelBuffer>?
+      CVPixelBufferCreateWithIOSurface(nil, ioSurface, nil, &buffer)
+      if let pixels = buffer?.takeRetainedValue() {
+        video.encode(pixels, quarterTurns: quarterTurns, capturedAt: now())
+      }
+    }
+    guard config.jpeg else { return }
+    let image = CIImage(ioSurface: ioSurface).oriented(orientation)
     guard let (data, width, height) = jpeg(image, config: config) else { return }
     Output.frame(jpeg: data, width: width, height: height)
   }
@@ -167,6 +231,7 @@ final class EmulatorSource {
   private var config = Config()
   private var latest: EmulatorFrame?
   private var pacer: Pacer!
+  private let video = videoEncoder()
 
   init(serial: String) {
     self.serial = serial
@@ -181,6 +246,7 @@ final class EmulatorSource {
   }
 
   func configure(_ config: Config) {
+    video.configure(maxEdge: config.maxEdge, fps: Int(config.fps), bitrate: config.bitrate)
     queue.async {
       let resized = config.maxEdge != self.config.maxEdge
       self.config = config
@@ -191,6 +257,11 @@ final class EmulatorSource {
         self.connect()
       }
     }
+  }
+
+  func keyframe() {
+    video.requestKeyframe()
+    pacer.changed()
   }
 
   private func connect() {
@@ -217,7 +288,8 @@ final class EmulatorSource {
   }
 
   private func render(_ frame: EmulatorFrame, config: Config) {
-    guard let provider = CGDataProvider(data: frame.rgba as CFData),
+    if config.video { video.encode(rgba: frame.rgba, width: frame.width, height: frame.height, capturedAt: now()) }
+    guard config.jpeg, let provider = CGDataProvider(data: frame.rgba as CFData),
       let image = CGImage(
         width: frame.width, height: frame.height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: frame.width * 4,
         space: colorSpace, bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
@@ -234,10 +306,13 @@ func parseConfig(_ line: Substring, base: Config) -> Config? {
   if let fps = object["fps"] as? Double, fps > 0 { config.fps = min(fps, 60) }
   if let edge = object["maxEdge"] as? Int, edge > 0 { config.maxEdge = min(edge, 4096) }
   if let quality = object["quality"] as? Double, quality > 0, quality <= 1 { config.quality = quality }
+  if let jpeg = object["jpeg"] as? Bool { config.jpeg = jpeg }
+  if let video = object["video"] as? Bool { config.video = video }
+  if let bitrate = object["bitrate"] as? Int, bitrate > 0 { config.bitrate = bitrate }
   return config
 }
 
-func readCommands(_ apply: @escaping (Config) -> Void) {
+func readCommands(_ apply: @escaping (Config) -> Void, keyframe: @escaping () -> Void) {
   Thread.detachNewThread {
     var buffer = Data()
     var config = Config()
@@ -248,7 +323,11 @@ func readCommands(_ apply: @escaping (Config) -> Void) {
       while let newline = buffer.firstIndex(of: 0x0a) {
         let line = String(decoding: buffer[buffer.startIndex..<newline], as: UTF8.self)
         buffer.removeSubrange(buffer.startIndex...newline)
-        if let parsed = parseConfig(Substring(line), base: config) {
+        if line.contains("\"keyframe\"") {
+          if (try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])?["keyframe"] as? Bool == true {
+            keyframe()
+          }
+        } else if let parsed = parseConfig(Substring(line), base: config) {
           config = parsed
           apply(config)
         }
@@ -266,11 +345,11 @@ case "ios":
   CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
   guard CoreSimulator.deviceSet != nil else { fail("CoreSimulator could not be loaded from \(CoreSimulator.developerDir).") }
   let source = SimulatorSource(udid: arguments[2])
-  readCommands { source.configure($0) }
+  readCommands({ source.configure($0) }, keyframe: source.keyframe)
   source.queue.async { source.start() }
 case "android":
   let source = EmulatorSource(serial: arguments[2])
-  readCommands { source.configure($0) }
+  readCommands({ source.configure($0) }, keyframe: source.keyframe)
   source.start()
 default:
   fail("usage: stim-frames ios <udid> | android <serial>")

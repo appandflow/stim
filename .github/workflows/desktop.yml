@@ -29,4 +29,4 @@ jobs:
         run: |
           sed 's|^|Sources/|' ../../packages/server/helper/desktop-sources.txt \
             | xargs xcrun swiftc -O -swift-version 5 -module-name StimFrames -o "$RUNNER_TEMP/stim-frames" \
-              ../../packages/server/helper/main.swift
+              ../../packages/server/helper/main.swift ../../packages/server/helper/VideoEncoder.swift

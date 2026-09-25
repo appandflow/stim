@@ -171,6 +171,28 @@ Events are `{ "event", "subscription", ... }`.
   share one helper, which sends a new subscriber the latest frame and exits
   with the last subscriber or when the server's end of its stdin closes.
 
+  A client that decodes H.264 adds `video: ["h264"]`. When the helper is
+  built, the result carries `video: "h264"`, `fps` may go up to 60, and
+  frames arrive as binary WebSocket messages instead of `frame` events: a
+  big-endian header (u8 version 1, u8 flags with bit 0 set on a keyframe,
+  u16 header length, u32 sequence number, f64 capture time in milliseconds
+  since the epoch on the Mac's clock, u16 width, u16 height, u8 subscription
+  id length and the ASCII id), then one Annex-B access unit. Every keyframe
+  carries its SPS and PPS, and the stream has no B-frames, so each access
+  unit is shown as it arrives. The helper encodes with VideoToolbox in real
+  time: Main profile, a keyframe at least every 2 seconds, straight from the
+  simulator's IOSurface or from the emulator's RGBA frames, only when the
+  screen changed. A subscriber starts at a keyframe, and `frames.keyframe
+{ subscription }` asks for another one, such as after its decoder lost
+  state. A subscriber whose socket holds more than 256 KB unsent drops
+  frames until the next keyframe, and the device's bitrate halves, from
+  3 Mbps down to 0.25 Mbps; it climbs back by a quarter every 2 seconds
+  without congestion, up to 8 Mbps. All video subscribers of a device share
+  one encoder and its bitrate. Watching video needs only `read`. Without the
+  helper, the result has no `video` and `frame` events arrive as before; an
+  iPhone Duo and a helper that fails before its first frame also fall back
+  to `frame` events within a video subscription.
+
   Without the helper (the compiler is missing or fails, which the server
   retries every 5 minutes, or the helper fails before its first frame), for a
   subscription made while it is still being built, and for an iPhone Duo,
