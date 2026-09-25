@@ -339,7 +339,7 @@ apps/desktop/scripts/bundle.sh
 open apps/desktop/build/Stim.app
 ```
 
-The bundle copies Inter, JetBrains Mono, and the brand artwork from `website/`.
+The bundle copies Inter, JetBrains Mono, and the brand artwork, including the animated jar's Lottie files, from `website/`, and embeds `Lottie.framework` from the `lottie-spm` package in `Contents/Frameworks`.
 
 ## Layout
 

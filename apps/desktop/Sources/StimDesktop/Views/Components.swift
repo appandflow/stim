@@ -1,3 +1,4 @@
+import Lottie
 import StimKit
 import SwiftUI
 
@@ -156,15 +157,16 @@ struct EmptyState: View {
   var message: String
   var showsHero = false
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
     VStack(spacing: 14) {
-      if showsHero, let hero = BrandAssets.hero(colorScheme) {
-        Image(nsImage: hero)
+      if showsHero, let jar = BrandAssets.jar(colorScheme) {
+        LottieView(animation: .filepath(jar.path))
+          .playbackMode(reduceMotion ? .paused(at: .frame(0)) : .playing(.fromProgress(0, toProgress: 1, loopMode: .loop)))
           .resizable()
-          .scaledToFit()
-          .frame(width: 220, height: 220)
-          .clipShape(RoundedRectangle(cornerRadius: 24))
+          .frame(width: 111, height: 180)
+          .id(jar)
       }
       Text(title).font(Theme.heading(17))
       Text(message).foregroundStyle(Theme.secondary).multilineTextAlignment(.center)
