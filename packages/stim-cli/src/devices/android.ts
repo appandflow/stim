@@ -726,6 +726,22 @@ export function ownedAvdDirectory(
   return null;
 }
 
+// The Android Emulator writes these on boot and recreates them from the
+// initial userdata.img when absent; an AVD fresh from avdmanager has none.
+const AVD_USER_DATA = [
+  'userdata-qemu.img',
+  'userdata-qemu.img.qcow2',
+  'encryptionkey.img',
+  'encryptionkey.img.qcow2',
+  'cache.img',
+  'cache.img.qcow2',
+  'snapshots',
+];
+
+export function wipeAvdUserData(directory: string): void {
+  for (const name of AVD_USER_DATA) rmSync(join(directory, name), { recursive: true, force: true });
+}
+
 export function withAvdDataPartitionSize(contents: string, sizeBytes: number): string {
   return withAvdConfigOverrides(contents, { 'disk.dataPartition.size': String(sizeBytes) });
 }

@@ -184,29 +184,10 @@ export function describeDereferenced(project: ProjectRecord | null): string[] {
   return devices;
 }
 
-export function parkedIosCacheKey(lastBuild: unknown): string | null {
-  if (lastBuild === null || typeof lastBuild !== 'object' || Array.isArray(lastBuild)) return null;
-  const build = lastBuild as Record<string, unknown>;
-  return build.platform === 'ios' && typeof build.cacheKey === 'string' ? build.cacheKey : null;
-}
-
-function parkRequest(
-  project: ProjectRecord | null,
-  projectPath: string,
-  slot: string,
-  simslimManaged: boolean,
-): ParkRequest | undefined {
+function parkRequest(projectPath: string, slot: string, simslimManaged: boolean): ParkRequest | undefined {
   const { max, error } = parkedMaxSetting('ios');
   if (error || max <= 0) return undefined;
-  const cacheKey = parkedIosCacheKey(readWorkspaceState(projectPath)?.lastBuild);
-  return {
-    projectPath,
-    max,
-    bundleId: typeof project?.bundleId === 'string' ? project.bundleId : null,
-    cacheKey,
-    simslimManaged,
-    slot,
-  };
+  return { projectPath, max, simslimManaged, slot };
 }
 
 function reclaimOwnedDevices(
@@ -236,7 +217,7 @@ function reclaimOwnedDevices(
       const r = teardownOwnedIosSim(udid, {
         del: true,
         label,
-        ...(park ? { park: parkRequest(project, projectPath, slot, Boolean(ios.simslimManaged)) } : {}),
+        ...(park ? { park: parkRequest(projectPath, slot, Boolean(ios.simslimManaged)) } : {}),
       });
       if (r.parkFallback) poolNotes.push(`could not park ${label}: ${r.parkFallback} -- deleted it instead`);
       for (const failure of r.evictionFailures ?? []) poolNotes.push(failure);

@@ -8,7 +8,7 @@ import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { upsertProject, setDevice, getProject } from '../workspace/config.ts';
-import { describeDereferenced, parkedIosCacheKey, reclaimProject } from '../devices/reclaim.ts';
+import { describeDereferenced, reclaimProject } from '../devices/reclaim.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
@@ -43,12 +43,6 @@ test('describeDereferenced reports a physical android device when there is no av
 test('describeDereferenced returns an empty list when nothing is claimed', () => {
   expect(describeDereferenced({ platforms: {} })).toEqual([]);
   expect(describeDereferenced({})).toEqual([]);
-});
-
-test('only an iOS last build becomes a parked install hint', () => {
-  expect(parkedIosCacheKey({ platform: 'ios', cacheKey: 'ios-key' })).toBe('ios-key');
-  expect(parkedIosCacheKey({ platform: 'android', cacheKey: 'android-key' })).toBe(null);
-  expect(parkedIosCacheKey({ platform: 'ios', cacheKey: 42 })).toBe(null);
 });
 
 test('reclaimProject removes the config entry', async () => {

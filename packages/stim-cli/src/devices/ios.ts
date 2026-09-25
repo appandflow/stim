@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { forgetCreatedDevice, recordCreatedDevice } from './created-devices.ts';
 import { isStimOwnedSim } from './device-ownership.ts';
 import { tmpdir } from 'node:os';
@@ -478,6 +478,10 @@ export function renameIosSim(udid: string, name: string): void {
   getExecutor().runFile('xcrun', ['simctl', 'rename', udid, name], SIMCTL_OPTIONS);
 }
 
+export function eraseIosSim(udid: string): void {
+  getExecutor().runFile('xcrun', ['simctl', 'erase', udid], SIMCTL_OPTIONS);
+}
+
 export function resetIosPrivacy(udid: string): void {
   getExecutor().runFile('xcrun', ['simctl', 'privacy', udid, 'reset', 'all'], SIMCTL_OPTIONS);
 }
@@ -520,47 +524,6 @@ export function listUserApps(udid: string): string[] {
     return parseUserApps(exec.runFile('plutil', ['-convert', 'json', '-o', '-', plist]));
   } finally {
     rmSync(dir, { recursive: true, force: true });
-  }
-}
-
-const CONTAINER_METADATA = '.com.apple.mobile_container_manager.metadata.plist';
-const CLEARED_CONTAINER_DIRS = ['Documents', 'Library', 'tmp', 'SystemData'];
-const PLUTIL_TIMEOUT_MS = 10000;
-
-export function findAppDataContainer(dataPath: string, bundleId: string): string | null {
-  const root = join(dataPath, 'Containers', 'Data', 'Application');
-  let entries: string[];
-  try {
-    entries = readdirSync(root);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
-    throw error;
-  }
-  const exec = getExecutor();
-  for (const entry of entries) {
-    const dir = join(root, entry);
-    const identifier = exec.runFile(
-      'plutil',
-      ['-extract', 'MCMMetadataIdentifier', 'raw', join(dir, CONTAINER_METADATA)],
-      { timeoutMs: PLUTIL_TIMEOUT_MS },
-    );
-    if (identifier.trim() === bundleId) return dir;
-  }
-  return null;
-}
-
-export function clearAppDataContainer(container: string): void {
-  for (const name of CLEARED_CONTAINER_DIRS) {
-    const dir = join(container, name);
-    let children: string[];
-    try {
-      if (!statSync(dir).isDirectory()) throw new Error(`Expected app data path ${dir} to be a directory.`);
-      children = readdirSync(dir);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') continue;
-      throw error;
-    }
-    for (const child of children) rmSync(join(dir, child), { recursive: true, force: true });
   }
 }
 
