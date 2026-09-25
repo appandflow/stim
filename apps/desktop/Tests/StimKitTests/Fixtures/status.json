@@ -73,6 +73,12 @@
   ],
   "capacity": { "liveCount": 1, "committedMb": 3700, "totalMemoryMb": 49152, "overCapacity": false },
   "deviceLeases": [],
-  "unprovisionedWorktrees": [{ "path": "/Users/dev/app-wt", "branch": "feat/x" }],
+  "unprovisionedWorktrees": [
+    {
+      "path": "/Users/dev/app-wt",
+      "branch": "feat/x",
+      "git": { "changed": 2, "untracked": 1, "upstream": "origin/feat/x", "ahead": 3, "behind": 1, "mergedInto": null }
+    }
+  ],
   "simctlAvailable": true
 }

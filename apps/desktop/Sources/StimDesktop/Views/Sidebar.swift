@@ -150,6 +150,7 @@ struct WorkspaceRow: View {
         Text(env.names.subtitle).font(Theme.body(11)).foregroundStyle(Theme.secondary).lineLimit(1)
       }
       Spacer()
+      GitIndicator(git: env.worktree?.git)
       if !env.warnings.isEmpty {
         Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundStyle(Theme.warn)
       }
@@ -174,7 +175,11 @@ struct NoEnvironmentRow: View {
         Text(worktree.branch ?? names.subtitle).font(Theme.body(11)).foregroundStyle(Theme.secondary).lineLimit(1)
       }
       Spacer()
-      Text("no environment").font(Theme.body(10.5)).foregroundStyle(Theme.tertiary).fixedSize()
+      if worktree.git?.isNotable == true {
+        GitIndicator(git: worktree.git)
+      } else {
+        Text("no environment").font(Theme.body(10.5)).foregroundStyle(Theme.tertiary).fixedSize()
+      }
     }
     .sidebarTag(.worktree(worktree.path), selection: selection)
   }

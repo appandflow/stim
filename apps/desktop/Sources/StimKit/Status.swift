@@ -19,6 +19,7 @@ public struct UnprovisionedWorktree: Decodable, Hashable, Sendable {
   public var branch: String?
   /// The repository's main checkout, or its git directory when it is bare.
   public var repository: String?
+  public var git: WorktreeGit?
 }
 
 public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
@@ -81,6 +82,52 @@ public struct WorktreeInfo: Decodable, Hashable, Sendable {
   public var path: String
   public var branch: String?
   public var repository: String?
+  public var git: WorktreeGit?
+}
+
+/// A worktree's `git status`, as `stim status --json` reports it. `ahead` and `behind` are nil without an upstream.
+public struct WorktreeGit: Decodable, Hashable, Sendable {
+  public var changed: Int
+  public var untracked: Int
+  public var upstream: String?
+  public var ahead: Int?
+  public var behind: Int?
+  public var mergedInto: String?
+
+  public init(
+    changed: Int, untracked: Int, upstream: String? = nil, ahead: Int? = nil, behind: Int? = nil,
+    mergedInto: String? = nil
+  ) {
+    self.changed = changed
+    self.untracked = untracked
+    self.upstream = upstream
+    self.ahead = ahead
+    self.behind = behind
+    self.mergedInto = mergedInto
+  }
+
+  /// Changed and untracked files together: what a commit would still have to pick up.
+  public var uncommitted: Int { changed + untracked }
+
+  /// `\u{2191}2 \u{2193}1` for commits ahead of and behind the upstream, or nil when level with it.
+  public var arrows: String? {
+    let parts = [(ahead ?? 0) > 0 ? "\u{2191}\(ahead!)" : nil, (behind ?? 0) > 0 ? "\u{2193}\(behind!)" : nil]
+      .compactMap { $0 }
+    return parts.isEmpty ? nil : parts.joined(separator: " ")
+  }
+
+  /// Whether the indicator shows anything: a clean branch level with its upstream shows nothing.
+  public var isNotable: Bool { uncommitted > 0 || arrows != nil || mergedInto != nil }
+
+  /// A sentence for help text and accessibility.
+  public var summary: String {
+    var parts: [String] = []
+    if uncommitted > 0 { parts.append("\(uncommitted) uncommitted \(uncommitted == 1 ? "change" : "changes")") }
+    if let ahead, ahead > 0 { parts.append("\(ahead) ahead of \(upstream ?? "upstream")") }
+    if let behind, behind > 0 { parts.append("\(behind) behind") }
+    if let mergedInto { parts.append("merged into \(mergedInto)") }
+    return parts.isEmpty ? "Clean" : parts.joined(separator: ", ")
+  }
 }
 
 public struct Slot: Decodable, Hashable, Sendable {

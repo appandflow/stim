@@ -40,6 +40,23 @@ import Testing
     #expect(device.state == "missing")
   }
 
+  @Test func decodesAWorktreeGitSummary() throws {
+    let url = Bundle.module.url(forResource: "status", withExtension: "json", subdirectory: "Fixtures")!
+    let payload = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url))
+    let git = try #require(payload.unprovisionedWorktrees?.first?.git)
+    #expect(git.uncommitted == 3)
+    #expect(git.arrows == "\u{2191}3 \u{2193}1")
+    #expect(git.summary == "3 uncommitted changes, 3 ahead of origin/feat/x, 1 behind")
+    #expect(workspace.worktree?.git == nil)
+  }
+
+  @Test func showsNothingForACleanBranchAndFlagsAMergedOne() {
+    #expect(!WorktreeGit(changed: 0, untracked: 0, upstream: "origin/x", ahead: 0, behind: 0).isNotable)
+    #expect(!WorktreeGit(changed: 0, untracked: 0).isNotable)
+    let merged = WorktreeGit(changed: 0, untracked: 0, upstream: "origin/x", mergedInto: "origin/main")
+    #expect(merged.isNotable && merged.arrows == nil && merged.summary == "merged into origin/main")
+  }
+
   @Test func keepsNestedParenthesesInTheModel() {
     #expect(workspace.devices[2].model == "iPad Pro 11-inch (M5) 27.0")
     #expect(workspace.devices[2].formFactor == .tablet)
