@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import {
   easMachineStateRoot,
   easSessionLedgerFile,
@@ -9,12 +9,21 @@ import {
   type EasSessionClaim,
 } from '@stim-cli/core/state';
 import { withDirLock } from '../dir-lock.ts';
+import { EAS_TEST_GUARD_ROOT_ENV } from './eas-machine-root-guard-env.ts';
 
 export { easMachineStateRoot, readEasSessionLedger, type EasSessionClaim } from '@stim-cli/core/state';
 
 interface EasSessionLedger {
   version: 1;
   claims: Record<string, EasSessionClaim>;
+}
+
+export function assertEasMachineRootWritable(root: string): void {
+  const guardedRoot = process.env[EAS_TEST_GUARD_ROOT_ENV];
+  if (!guardedRoot || resolve(root) !== resolve(guardedRoot)) return;
+  throw new Error(
+    `Refusing to write the real EAS machine root ${root} from a test process. Pass a temporary ledgerRoot, machineRoot, or easLedgerRoot, or point HOME (and USERPROFILE on Windows) at a temporary directory.`,
+  );
 }
 
 function writeLedger(root: string, ledger: EasSessionLedger): void {
@@ -31,6 +40,7 @@ function writeLedger(root: string, ledger: EasSessionLedger): void {
 }
 
 export function recordEasSessionClaim(claim: EasSessionClaim, root: string = easMachineStateRoot()): void {
+  assertEasMachineRootWritable(root);
   const normalized = validEasSessionClaim(claim.sessionId, claim);
   if (!normalized) throw new Error(`Invalid EAS session claim for ${claim.sessionId}.`);
   withDirLock(
@@ -48,6 +58,7 @@ export function recordEasSessionClaim(claim: EasSessionClaim, root: string = eas
 export function removeEasSessionClaim(sessionId: string, root: string = easMachineStateRoot()): boolean {
   const file = easSessionLedgerFile(root);
   if (!existsSync(file)) return false;
+  assertEasMachineRootWritable(root);
   return withDirLock(easSessionLedgerLock(root), () => {
     const current = readEasSessionLedger(root);
     if (!current.safe) return false;
