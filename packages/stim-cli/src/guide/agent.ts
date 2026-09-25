@@ -84,6 +84,10 @@ presence of eas.json does not select EAS or authorize building.
 Physical --device targets are supported. Follow EAS device-registration and
 rebuild remedies only when the session authorizes those account changes.
 
+To learn whether the next build is a cache hit and how long it should take,
+without building, run stim ios --plan (or stim android --plan); see stim guide
+lifecycle builds.
+
 Read stim guide lifecycle concurrency when a build waits on another workspace
 or a build call times out. A native build can outlive a shell timeout; if the
 tool call timed out, retry the same command and follow its printed remedy if

@@ -679,6 +679,39 @@ result as proof instead of requiring an unrelated screenshot.`,
 
   Follow the normal ownership and consent rules in guide agent.
 
+PREDICTING THE NEXT BUILD (--plan)
+  \`stim ios --plan\` and \`stim android --plan\` answer "will the next run
+  be a cache hit, and how long will it take?" without building, booting,
+  installing, or starting Metro. They take no workspace lock and write no
+  Stim state, cache entry or statistic, so they run beside a build.
+
+    stim ios --plan
+      plan        ios 1b625d.. -> local cache hit
+      expect      ~2.7s (median of 1 hit run)
+
+  A plan resolves the fingerprint and cache key the way the run would, with
+  the same --slot, --scheme, --configuration, --variant, --device-type,
+  --runtime, --system-image, --eas-profile and --no-build-cache, then looks
+  in the build's order: the local cache, the cache.provider setting's
+  provider, then the app config's build cache provider. A provider has no
+  lookup that skips the download, so a remote check downloads the artifact
+  into a temporary directory the plan removes. On a miss it adds the prebuild
+  decision the run would make (generate, regenerate, none, or refuse with
+  STIM_PREBUILD_FAILED). With --eas-profile it asks EAS for a matching
+  build (config, fingerprint:generate, build:list) and downloads nothing.
+  expectedMs is the median of this project's recorded runs with that outcome;
+  the payload is in \`guide facts plan\`.
+
+  A plan is a prediction for the moment it runs. Three things can still
+  change the run: another workspace can store the key first; a prebuild or
+  pod install can move the fingerprint, and the run then looks up the new
+  key once; and a Release hit that fails its JS swap builds fresh.
+  An Android plan reads the ABI from the emulator the slot records, or from
+  the system image a new one would use. It refuses --device, --remote,
+  --wait, --no-wait, --no-metro-check and --simulator-app, the
+  android.remote setting, and the experimental compiler CAS, with
+  STIM_BAD_ARG; and STIM_NO_DEVICE when no system image is installed.
+
 IOS SCHEME SELECTION
   Pass \`stim ios --scheme "App Staging"\` to select an exact shared Xcode
   app scheme. Unknown names refuse with the available choices. This is the
@@ -1128,8 +1161,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
         'every flag per command, Android variants and flavors, the per-run simulator model, runtime and system image',
       body: () => `THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote --reset-cache
-  ios             --slot <name> --json --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --simulator-app <xcode|siniulator|stim-desktop> --device [udid] --wait <seconds> --no-wait --remote <proxy|eas>
-  android         --slot <name> --json --no-metro-check --no-build-cache --variant <name> --system-image <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
+  ios             --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --simulator-app <xcode|siniulator|stim-desktop> --device [udid] --wait <seconds> --no-wait --remote <proxy|eas>
+  android         --slot <name> --json --plan --no-metro-check --no-build-cache --variant <name> --system-image <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
   reload          [ios|android] --json
   device          lock <ios|android> [id] --slot <name> --for <duration> --wait <seconds> --json;
                   unlock [ios|android] --slot <name> --json

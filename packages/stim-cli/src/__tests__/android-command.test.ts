@@ -2729,6 +2729,7 @@ describe('Contract 4: state.json.lastBuild', () => {
     expect(state.supervisor).toEqual({ pid: 41233, port: 8082, mode: 'bare-inproc', startedAt: 'then' });
     expect(state.collectors).toEqual({ ios: { pid: 777, startedAt: 'then' } });
     expect(state.lastBuild.status).toBe('ok');
+    expect(state.lastAndroidBuild).toEqual(state.lastBuild);
   });
 
   test('a state file that cannot be written is a warning, not a failed run', async () => {

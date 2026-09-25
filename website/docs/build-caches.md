@@ -35,6 +35,10 @@ build configuration or variant.
 installs the saved `.app` or `.apk`. A miss runs the native build and stores the
 result. Two matching misses use one build through a single-flight lock.
 
+To find out before a run whether it will hit, and how long it should take, run
+`stim ios --plan` or `stim android --plan`. See
+[Predict the next build](./commands.md#predict-the-next-build).
+
 In an Expo project that gitignores `ios/` or `android/` (Continuous Native
 Generation), the fingerprint hashes the app config instead of the native
 directory. Stim records the fingerprint of each prebuild it runs. When a native

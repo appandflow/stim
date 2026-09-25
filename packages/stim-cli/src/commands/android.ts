@@ -122,6 +122,7 @@ import { acquireAndroidArtifact } from './android/artifact.ts';
 import { persistLastBuild } from './android/result.ts';
 import { finishAndroidRun } from './android/launch.ts';
 import { resolveAndroidRunPlan } from './android/plan.ts';
+import { planAndroid } from './android/next-build.ts';
 
 export { androidFacts, lastBuildRecord } from './android/result.ts';
 
@@ -158,6 +159,7 @@ interface AndroidCommandOptions {
   remote?: RemoteDeviceBackend;
   device?: string | boolean;
   wait?: string | boolean;
+  plan?: boolean;
 }
 
 export default function androidCommand(program: Command): void {
@@ -177,6 +179,11 @@ export function registerAndroid(program: Command): void {
     )
     .option('--slot <name>', 'Reusable device slot within this workspace (default: default)', parseDeviceSlotOption)
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
+    .option(
+      '--plan',
+      'Predict the next build without building, booting or installing: resolve the fingerprint, check the local ' +
+        'then remote cache, and print the expected cache result and duration. Writes no Stim state.',
+    )
     .option(
       '--no-metro-check',
       'Skip the reserved-port Metro health check and do not start it (the app will load no bundle unless something else serves it)',
@@ -217,6 +224,7 @@ export function registerAndroid(program: Command): void {
       "Install on a device another workspace leases instead of waiting: this run takes no lease and, when both workspaces build the same app id, the install terminates the holder's running app. Only with --device.",
     )
     .action(async (opts: AndroidCommandOptions) => {
+      if (opts.plan) return planAndroid(opts);
       const root = findProjectRoot(process.cwd());
       if (!root) {
         refuseNoProject({ json: Boolean(opts.json) });

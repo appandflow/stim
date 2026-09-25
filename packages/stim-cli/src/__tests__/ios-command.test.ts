@@ -5,7 +5,17 @@ import { captureProcessToken } from '../process-identity.ts';
 import { ClaimUnavailableError, readClaimSet } from '../ownership-claim.ts';
 import { once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
@@ -54,7 +64,8 @@ import {
   WIRELESS_INSTALL_TIMEOUT_MS,
   WIRELESS_LAUNCH_PROBE_TIMEOUT_MS,
 } from '../engine/ios-device.ts';
-import type { RecordStatsResult, StatsRun } from '../engine/stats.ts';
+import { recordRunStats, type RecordStatsResult, type StatsRun } from '../engine/stats.ts';
+import { buildCacheKey, entryDir } from '../cache/build-cache.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
 const RUNTIMES = [
@@ -2586,6 +2597,7 @@ describe('Contract 4: the state file', () => {
     expect(state.supervisor).toEqual({ pid: 4242, port: 8082, mode: 'bare-inproc' });
     expect(state.collectors).toEqual({ android: { pid: 111 } });
     expect(state.lastBuild.status).toBe('ok');
+    expect(state.lastIosBuild).toEqual(state.lastBuild);
     expect(state.lastBuild.cacheKey).toBe(`${FINGERPRINT}-debug-sim`);
     expect(state.lastBuild.bundleId).toBe('com.example.app');
     expect(!('errorCode' in state.lastBuild)).toBeTruthy();
@@ -6351,4 +6363,140 @@ test('a named iOS run scopes allocation, launch verification, collector and buil
   const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-ios.tablet.ndjson'), 'utf8'));
   expect(records.length).toBeGreaterThan(0);
   expect(records.every((record) => record.slot === 'tablet')).toBe(true);
+});
+
+describe('--plan', () => {
+  const debugKey = buildCacheKey('ios', FINGERPRINT, { isSimulator: true });
+
+  function storeEntry(key: string): string {
+    const entry = entryDir('ios', key);
+    mkdirSync(join(entry, 'Fixture.app'), { recursive: true });
+    return entry;
+  }
+
+  function recordRuns(outcome: 'hit' | 'cold', durations: number[]) {
+    for (const durationMs of durations) {
+      recordRunStats(
+        {
+          platform: 'ios',
+          projectKey: root,
+          failed: false,
+          cacheHit: outcome === 'hit' ? 'local' : false,
+          waitedForBuild: false,
+          durationMs,
+          phases: {},
+        },
+        Date.now(),
+      );
+    }
+  }
+
+  const RUN_ONLY = [
+    'ensureOwnedDevice',
+    'ensureBooted',
+    'buildIos',
+    'storeBuild',
+    'resolveBuild',
+    'installIosApp',
+    'runPrebuild',
+    'runPodInstall',
+    'acquireBuildLock',
+    'ensureWorkspaceStorage',
+  ];
+
+  test('a miss predicts a cold build from the cold history and touches no device, build or workspace state', async () => {
+    reserve();
+    recordRuns('cold', [300_000, 420_000, 400_000]);
+    recordRuns('hit', [30_000]);
+    const { logs, exitCode, calls } = await run({ plan: true, json: true });
+
+    expect(exitCode).toBeNull();
+    expect(logs).toHaveLength(1);
+    expect(parseFirst(logs)).toEqual({
+      platform: 'ios',
+      fingerprint: FINGERPRINT,
+      cacheKey: debugKey,
+      cacheHit: false,
+      provider: null,
+      cacheSkipped: false,
+      prebuild: 'none',
+      outcome: 'cold',
+      expectedMs: 400_000,
+      basis: 3,
+    });
+    expect(calls.order.filter((name) => RUN_ONLY.includes(name))).toEqual([]);
+    expect(existsSync(workspaceStateFile(root))).toBe(false);
+  });
+
+  test('a local entry under the configuration key is a hit, and planning leaves its LRU time alone', async () => {
+    const releaseKey = buildCacheKey('ios', FINGERPRINT, { configuration: 'Release', isSimulator: true });
+    const entry = storeEntry(releaseKey);
+    const old = new Date('2026-01-01T00:00:00Z');
+    utimesSync(entry, old, old);
+    recordRuns('hit', [20_000, 40_000]);
+
+    const debug = await run({ plan: true, json: true });
+    expect(parseFirst(debug.logs)).toMatchObject({ cacheHit: false, outcome: 'cold', expectedMs: null, basis: 0 });
+
+    const release = await run({ plan: true, json: true, configuration: 'Release' });
+    expect(parseFirst(release.logs)).toMatchObject({
+      cacheKey: releaseKey,
+      cacheHit: 'local',
+      prebuild: null,
+      outcome: 'hit',
+      expectedMs: 30_000,
+      basis: 2,
+    });
+    expect(statSync(entry).mtimeMs).toBe(old.getTime());
+  });
+
+  test('a remote provider hit is reported without storing the artifact locally', async () => {
+    const asked: unknown[] = [];
+    const { logs } = await run(
+      { plan: true, json: true },
+      {
+        loadProjectProvider: async () => ({ name: 'probe', provider: { plugin: {}, options: {} } }),
+        resolveRemote: async (args) => {
+          asked.push(args);
+          return { appPath: join(root, 'remote', 'Fixture.app') };
+        },
+      },
+    );
+    expect(parseFirst(logs)).toMatchObject({ cacheHit: 'remote', provider: 'probe', outcome: 'hit', prebuild: null });
+    expect(asked).toEqual([expect.objectContaining({ fingerprintHash: FINGERPRINT, runOptions: null })]);
+    expect(existsSync(entryDir('ios', debugKey))).toBe(false);
+  });
+
+  test('a miss reports a regeneration the run would make', async () => {
+    const { logs } = await run({ plan: true, json: true }, { planPrebuild: () => 'regenerate' });
+    const payload = parseFirst(logs);
+    expect(payload).toMatchObject({ prebuild: 'regenerate', outcome: 'cold' });
+    expect(payload.refusal).toBeUndefined();
+  });
+
+  test('a miss the run would refuse at prebuild is predicted as that refusal, not as a cold build', async () => {
+    const { logs, exitCode } = await run({ plan: true, json: true }, { planPrebuild: () => 'refuse' });
+    expect(exitCode).toBeNull();
+    const payload = parseFirst(logs);
+    expect(payload).toMatchObject({ prebuild: 'refuse', outcome: null, expectedMs: null });
+    expect(payload.refusal.code).toBe('STIM_PREBUILD_FAILED');
+  });
+
+  test.each([
+    [{ device: true }, '--device'],
+    [{ remote: 'proxy' }, '--remote'],
+    [{ simulatorApp: 'xcode' }, '--simulator-app'],
+  ])('%o refuses because it does not apply to a plan', async (flags, flag) => {
+    const { logs, exitCode, calls } = await run({ plan: true, json: true, ...flags });
+    expect(exitCode).toBe(1);
+    expect(logs).toHaveLength(1);
+    expect(parseFirst(logs)).toMatchObject({ code: 'STIM_BAD_ARG', message: expect.stringContaining(flag) });
+    expect(calls.order).toEqual([]);
+  });
+
+  test('an unknown --device-type refuses like the build does', async () => {
+    const { logs, exitCode } = await run({ plan: true, json: true, deviceType: 'iPhone 1' });
+    expect(exitCode).toBe(1);
+    expect(parseFirst(logs).code).toBe('STIM_BAD_ARG');
+  });
 });

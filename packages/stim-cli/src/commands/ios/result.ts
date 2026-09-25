@@ -12,6 +12,7 @@ import { COMPILATION_CACHE_NOT_RUN, compilationCacheActivityLine } from '../../e
 import type { CompilationCacheActivity, DevServerStart, IosFacts, CacheHitLevel } from '../../engine/build-facts.ts';
 import type { WaitedForBuild, RemoteUploadLike, DeviceLike } from './types.ts';
 import { writeWorkspaceState } from '../../workspace/workspace-state.ts';
+import { LAST_BUILD_KEYS } from '@stim-cli/core/state';
 import { formatDuration, phaseLine } from '../../command-output.ts';
 import type { RunRecorder } from '../../engine/stats.ts';
 import type { ReclaimedStep } from '../../budget.ts';
@@ -139,7 +140,7 @@ export function writeLastBuild(
   { write = writeWorkspaceState }: { write?: typeof writeWorkspaceState } = {},
 ): Record<string, unknown> {
   try {
-    write(root, { lastBuild: record });
+    write(root, { lastBuild: record, [LAST_BUILD_KEYS[PLATFORM]]: record });
   } catch {}
   return record;
 }

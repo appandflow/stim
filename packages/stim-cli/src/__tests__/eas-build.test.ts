@@ -2,7 +2,12 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
-import { easOptionRefusal, resolveEasDevelopmentBuild, selectEasBuild } from '../engine/eas-build.ts';
+import {
+  easOptionRefusal,
+  planEasDevelopmentBuild,
+  resolveEasDevelopmentBuild,
+  selectEasBuild,
+} from '../engine/eas-build.ts';
 import * as locks from '../engine/build-lock.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { ClaimUnavailableError } from '../ownership-claim.ts';
@@ -298,3 +303,39 @@ test.each([{ isExpo: false }, { buildSelector: 'Release' }, { buildCache: false 
     });
   },
 );
+
+function planFixture(builds: unknown[]) {
+  const { calls } = fixture({ builds });
+  const plan = planEasDevelopmentBuild({
+    root,
+    platform: 'ios',
+    profile,
+    note: () => {},
+    readEasCliVersion: () => 'eas-cli/24.8.0 darwin-arm64 node-v22.22.2',
+  });
+  return { calls, plan };
+}
+
+test('a plan finds the EAS build without downloading it or taking a claim', async () => {
+  const { calls, plan } = planFixture([build]);
+  expect(await plan).toEqual({
+    ok: true,
+    fingerprint,
+    buildId: 'build-1',
+    cacheKey: expect.stringMatching(/^eas-[a-f0-9]{64}-debug-sim$/),
+    missing: null,
+  });
+  expect(calls.map((args) => args[0])).toEqual(['config', 'fingerprint:generate', 'build:list']);
+  expect(locks.acquireBuildLock).not.toHaveBeenCalled();
+});
+
+test('a plan reports an EAS miss as the refusal the run would print', async () => {
+  const { plan } = planFixture([]);
+  expect(await plan).toEqual({
+    ok: true,
+    fingerprint,
+    buildId: null,
+    cacheKey: null,
+    missing: expect.objectContaining({ code: 'STIM_EAS_BUILD_MISSING' }),
+  });
+});

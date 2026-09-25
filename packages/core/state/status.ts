@@ -31,6 +31,38 @@ export interface BuildReport {
   basis: number;
 }
 
+/** Where a build's app came from: a cache tier, or `false` when it compiled or failed before one was found. */
+export type BuildCacheHit = 'local' | 'remote' | false;
+
+/** A platform's most recent `ios` or `android` run in one workspace. */
+export interface LastBuildReport {
+  platform: StatsPlatform;
+  status: 'ok' | 'failed';
+  cacheHit: BuildCacheHit;
+  cacheSkipped: boolean;
+  durationMs: number | null;
+  fingerprint: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  errorCode?: string;
+}
+
+/** The payload `stim ios --plan --json` and `stim android --plan --json` print. */
+export interface BuildPlanPayload {
+  platform: StatsPlatform;
+  slot?: string;
+  fingerprint: string;
+  cacheKey: string | null;
+  cacheHit: BuildCacheHit;
+  provider: string | null;
+  cacheSkipped: boolean;
+  prebuild: 'none' | 'generate' | 'regenerate' | 'refuse' | null;
+  outcome: RunOutcomeKind | null;
+  expectedMs: number | null;
+  basis: number;
+  refusal?: { code: string; message: string; remedy: string };
+}
+
 type ActivityState = 'driven' | 'active' | 'idle' | 'unknown';
 
 export interface ActivityDriver {
@@ -88,6 +120,7 @@ export interface EnvironmentState {
   worktree?: WorktreeFacts | null;
   remoteDevices?: RemoteDeviceState[];
   build?: BuildReport | null;
+  lastBuilds?: Partial<Record<StatsPlatform, LastBuildReport>>;
 }
 
 export interface StatusCapacity {

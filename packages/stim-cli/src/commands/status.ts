@@ -21,7 +21,7 @@ import { listAllIosSimsAsync } from '../devices/ios.ts';
 import { ownedAvdSerialResolver, type ResolvedAvdSerial } from '../devices/android.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { gitCommonDir, gitCommonDirOnDisk, linkedWorktreesOnDisk, repoRoot } from '../workspace/worktree.ts';
-import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, type WorkspaceState } from '../workspace/workspace-state.ts';
 import { readStats, statsProjectKey, type RunHistory } from '../engine/stats.ts';
 import {
   ACTIVE_BUILD_KEY,
@@ -32,10 +32,11 @@ import {
   type BuildReport,
 } from '../engine/build-progress.ts';
 import { volumeRootFor } from '../fs-util.ts';
+import { formatDuration } from '../command-output.ts';
 import { listLeaseFiles } from '../engine/device-lease.ts';
 import { readEasSessionLedger } from '../engine/eas-session-ledger.ts';
 import { readRemoteSession } from '../supervisor/state.ts';
-import { readIdleStop } from '@stim-cli/core/state';
+import { readIdleStop, readLastBuilds, type LastBuildReport, type StatusPayload } from '@stim-cli/core/state';
 import { createActivityReader, type ActivityTarget, type DeviceActivity } from '../devices/activity.ts';
 import {
   activityLabel,
@@ -53,7 +54,6 @@ import {
 } from '../status.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../devices/sim-pool.ts';
 import type { AndroidRuntimeFacts, EnvironmentState, VolumeInfo, WorktreeFacts } from '../status.ts';
-import type { StatusPayload } from '@stim-cli/core/state';
 
 type SupervisorRecordExt = SupervisorRecord & { mode?: string | null };
 
@@ -132,6 +132,7 @@ async function statusLines(json: boolean): Promise<string[]> {
   const easLedger = readEasSessionLedger();
   for (const [i, [path, proj]] of projects.entries()) {
     const { metro, supervisor } = running[i]!;
+    const saved = readWorkspaceState(path);
     states.push(
       environmentState(
         { ...proj, __path: path },
@@ -144,12 +145,12 @@ async function statusLines(json: boolean): Promise<string[]> {
           supervisor,
           logs: logs[i],
           remote: remoteDeviceState(readRemoteSession(path), easLedger, path),
-          idleStop: readIdleStop(readWorkspaceState(path)),
+          idleStop: readIdleStop(saved),
         },
       ),
     );
     const state = states[states.length - 1];
-    if (state) state.build = workspaceBuild(path, history);
+    if (state) Object.assign(state, workspaceBuilds(path, saved, history));
     labelOnlyRoots.push(
       Boolean(proj.worktreeRoot && !proj.bundleId && !state?.metro && !state?.ios && !state?.android),
     );
@@ -241,6 +242,7 @@ async function statusLines(json: boolean): Promise<string[]> {
       const line = `  ${buildStatusLine(state.build, Date.now())}`;
       out.push(state.build.state === 'running' ? line : chalk.yellow(line));
     }
+    out.push(...lastBuildsLines(state.lastBuilds));
     if (state.logs) {
       const n = state.logs.errorsSinceMarker;
       const errs = n > 0 ? chalk.yellow(` (${n} error${n === 1 ? '' : 's'} since the last marker)`) : '';
@@ -351,6 +353,17 @@ async function watchStatus(json: boolean): Promise<void> {
   await new Promise<never>(() => {});
 }
 
+function lastBuildsLines(reports: EnvironmentState['lastBuilds']): string[] {
+  const texts = Object.values(reports ?? {}).map(lastBuildText);
+  return texts.length ? [chalk.dim(`  last build: ${texts.join(', ')}`)] : [];
+}
+
+function lastBuildText(report: LastBuildReport): string {
+  const source = report.cacheHit ? `${report.cacheHit} cache` : report.status === 'ok' ? 'compiled' : 'no cache hit';
+  const took = report.durationMs === null ? '' : ` in ${formatDuration(report.durationMs)}`;
+  return `${report.platform} ${report.status === 'ok' ? source : `failed (${report.errorCode ?? 'error'}), ${source}`}${took}`;
+}
+
 function activitySuffix(activity: DeviceActivity | undefined): string {
   const label = activityLabel(activity, Date.now());
   return label ? ` -- ${activity?.state === 'driven' ? chalk.magenta(label) : chalk.dim(label)}` : '';
@@ -364,8 +377,24 @@ function linkedWorktrees(paths: string[]): WorktreeFacts[] {
   });
 }
 
-function workspaceBuild(path: string, history: Record<string, RunHistory> | undefined): BuildReport | null {
-  const record = parseActiveBuild(readWorkspaceState(path)?.[ACTIVE_BUILD_KEY]);
+function workspaceBuilds(
+  path: string,
+  saved: WorkspaceState | null,
+  history: Record<string, RunHistory> | undefined,
+): Pick<EnvironmentState, 'build' | 'lastBuilds'> {
+  const lastBuilds = readLastBuilds(saved);
+  return {
+    build: workspaceBuild(path, saved, history),
+    ...(lastBuilds.ios || lastBuilds.android ? { lastBuilds } : {}),
+  };
+}
+
+function workspaceBuild(
+  path: string,
+  saved: WorkspaceState | null,
+  history: Record<string, RunHistory> | undefined,
+): BuildReport | null {
+  const record = parseActiveBuild(saved?.[ACTIVE_BUILD_KEY]);
   if (!record) return null;
   const projectKey = statsProjectKey({ root: path, commonDir: gitCommonDir(path), repoRoot: repoRoot(path) });
   return buildReport(record, { state: activeBuildState(record.claim), history: history?.[projectKey] });

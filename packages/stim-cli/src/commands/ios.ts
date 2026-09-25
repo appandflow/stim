@@ -70,6 +70,7 @@ import {
 } from './ios/support.ts';
 import { lastBuildRecord, writeLastBuild } from './ios/result.ts';
 import { finishIosRun, type IosRunCompletion } from './ios/launch.ts';
+import { planIos } from './ios/next-build.ts';
 
 export { lastBuildRecord, iosFacts, writeLastBuild, cacheDescription } from './ios/result.ts';
 
@@ -118,6 +119,11 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     )
     .option('--slot <name>', 'Reusable device slot within this workspace (default: default)', parseDeviceSlotOption)
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
+    .option(
+      '--plan',
+      'Predict the next build without building, booting or installing: resolve the fingerprint, check the local ' +
+        'then remote cache, and print the expected cache result and duration. Writes no Stim state.',
+    )
     .option(
       '--scheme <name>',
       'Shared Xcode app scheme to build; overrides automatic scheme selection, not the app URL scheme',
@@ -174,6 +180,11 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
       "Install on a phone another workspace leases instead of waiting: this run takes no lease and, when both workspaces build the same app id, the install terminates the holder's running app. Only with --device.",
     )
     .action(async (opts: IosCommandOptions) => {
+      if (opts.plan) {
+        const d = { ...DEFAULT_DEPS, ...deps };
+        await planIos(opts, d, (root, scheme, isExpo) => explicitSchemeRefusal(root, scheme, isExpo, d));
+        return;
+      }
       const root = (deps.findProjectRoot ?? DEFAULT_DEPS.findProjectRoot)(process.cwd());
       const run = (progress?: BuildProgress) =>
         runIos({ ...opts, waitConflict: waitFlagConflict(process.argv) }, deps, progress);
