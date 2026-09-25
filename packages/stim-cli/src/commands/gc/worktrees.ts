@@ -1,8 +1,16 @@
-import { existsSync } from 'fs';
-import { isAbsolute } from 'path';
+import { existsSync, readdirSync, statSync } from 'fs';
+import { isAbsolute, join } from 'path';
 import chalk from 'chalk';
-import { plural } from '../../command-output.ts';
-import { loadConfig } from '../../workspace/config.ts';
+import { machineNumber } from '../../budget.ts';
+import { formatLongDuration, plural } from '../../command-output.ts';
+import { ownedAvdSerialResolver } from '../../devices/android.ts';
+import { projectDeviceSlots } from '../../devices/device-slots.ts';
+import { listAllIosSims, type IosSimRecord } from '../../devices/ios.ts';
+import { leaseIsExpired, listLeaseFiles } from '../../engine/device-lease.ts';
+import { getExecutor } from '../../exec.ts';
+import { settingDefinition } from '@stim-cli/core/state';
+import { getProject, loadConfig } from '../../workspace/config.ts';
+import { workspaceLogsDir, workspaceStateFile } from '../../workspace/paths.ts';
 import { workspaceInUse } from '../../workspace/in-use.ts';
 import { workspaceLastUsed } from '../../workspace/workspace-state.ts';
 import { fetchDefaultBranch, mergeState, type MergeState } from '../../workspace/merge-state.ts';
@@ -16,11 +24,25 @@ import {
   unpushedCommits,
 } from '../../workspace/worktree.ts';
 import { excludePodChurn, matchWorktreeEntry, reclaimKeys, removeWorktreeTarget } from '../worktree.ts';
+import { DEVICE_LIST_TIMEOUT_MS } from './devices.ts';
+import { canonicalPath } from './paths.ts';
 import { listWorkspaceDirs } from './workspaces.ts';
 
 const DEFAULT_WORKTREE_IDLE_DAYS = 7;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
+const GRACE_SETTING = 'gc.worktreeGraceMinutes';
+
+interface WorktreeActivity {
+  at: number;
+  basis: string;
+}
+
+export interface WorktreeGrace {
+  ms: number;
+  now: number;
+}
 
 export interface WorktreeFacts {
   source: 'source' | 'linked' | { refusal: string };
@@ -32,6 +54,7 @@ export interface WorktreeFacts {
   inUse: string[];
   idleDays: number | null;
   merge: MergeState | null;
+  activity: WorktreeActivity | null;
 }
 
 export type WorktreeSkipCode =
@@ -49,11 +72,14 @@ export type WorktreeSkipCode =
   | 'not-merged'
   | 'merge-unknown'
   | 'last-use-unknown'
-  | 'recently-used';
+  | 'recently-used'
+  | 'activity-unknown'
+  | 'recent-activity';
 
 interface WorktreeSkip {
   code: WorktreeSkipCode;
   text: string;
+  eligibleAt?: number;
 }
 
 interface WorktreeCandidate {
@@ -63,10 +89,12 @@ interface WorktreeCandidate {
   merge: MergeState | null;
   skipCode: WorktreeSkipCode | null;
   skipped: string | null;
+  eligibleAt: number | null;
 }
 
 export interface WorktreeSweep {
   idle: { olderThan: number; defaulted: boolean } | null;
+  graceMs: number;
   worktrees: WorktreeCandidate[];
 }
 
@@ -81,7 +109,37 @@ function skip(code: WorktreeSkipCode, text: string): WorktreeSkip {
   return { code, text };
 }
 
-export function worktreeSkipReason(facts: WorktreeFacts, olderThan: number | null): WorktreeSkip | null {
+/**
+ * Why gc keeps a worktree, or null when it removes it. A worktree that would be removed is still kept while its last
+ * activity, or its merge into the default branch, is less than `grace.ms` old, and kept when that activity is unknown.
+ */
+export function worktreeSkipReason(
+  facts: WorktreeFacts,
+  olderThan: number | null,
+  grace: WorktreeGrace = { ms: 0, now: 0 },
+): WorktreeSkip | null {
+  return removalBlocker(facts, olderThan) ?? graceBlocker(facts, grace);
+}
+
+function graceBlocker(facts: Pick<WorktreeFacts, 'merge' | 'activity'>, grace: WorktreeGrace): WorktreeSkip | null {
+  if (grace.ms <= 0) return null;
+  if (!facts.activity) return skip('activity-unknown', 'its last activity could not be read');
+  const merged = facts.merge?.merged ? facts.merge : null;
+  const latest =
+    merged && merged.mergedAt > facts.activity.at
+      ? { at: merged.mergedAt, basis: `merged into ${merged.into}` }
+      : facts.activity;
+  const eligibleAt = latest.at + grace.ms;
+  if (grace.now >= eligibleAt) return null;
+  const ago = formatLongDuration(Math.max(0, grace.now - latest.at));
+  return {
+    code: 'recent-activity',
+    text: `recent activity: ${latest.basis} ${ago} ago; removable after ${new Date(eligibleAt).toISOString()}`,
+    eligibleAt,
+  };
+}
+
+function removalBlocker(facts: WorktreeFacts, olderThan: number | null): WorktreeSkip | null {
   if (facts.bare) return skip('bare-repository', 'bare repository');
   if (typeof facts.source === 'object') {
     return skip('source-checkout-unknown', `source checkout unknown: ${facts.source.refusal}`);
@@ -126,7 +184,107 @@ function idleDaysOf(keys: readonly string[], now: number): number | null {
 }
 
 function inUseOf(keys: readonly string[], checks: { managedLocks: boolean }): string[] {
-  return [...new Set(keys.flatMap((key) => workspaceInUse(key, checks)))];
+  return [...new Set([...keys.flatMap((key) => workspaceInUse(key, checks)), ...deviceUseOf(keys)])];
+}
+
+function deviceUseOf(keys: readonly string[]): string[] {
+  const reasons: string[] = [];
+  let sims: IosSimRecord[] | null | undefined;
+  let avdSerial: ReturnType<typeof ownedAvdSerialResolver> | undefined;
+  for (const key of keys) {
+    let slots: ReturnType<typeof projectDeviceSlots>;
+    try {
+      slots = projectDeviceSlots(getProject(key));
+    } catch (error) {
+      reasons.push(`its device records cannot be read: ${(error as Error).message}`);
+      continue;
+    }
+    for (const { platforms } of slots) {
+      const ios = platforms.ios;
+      if (ios?.owned && ios.deviceUdid) {
+        if (sims === undefined) {
+          try {
+            sims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+          } catch {
+            sims = null;
+          }
+        }
+        const sim = sims?.find((entry) => entry.udid === ios.deviceUdid);
+        if (sims === null) reasons.push(`the state of its owned simulator ${ios.deviceUdid} cannot be read`);
+        else if (sim && sim.state !== 'Shutdown') reasons.push(`its owned simulator ${sim.name} is ${sim.state}`);
+      }
+      const android = platforms.android;
+      if (android?.owned && android.avdName) {
+        avdSerial ??= ownedAvdSerialResolver({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+        try {
+          if (avdSerial(android.avdName).serial) reasons.push(`its owned emulator ${android.avdName} is running`);
+        } catch {
+          reasons.push(`the state of its owned emulator ${android.avdName} cannot be read`);
+        }
+      }
+    }
+  }
+  const holders = new Set(keys.map(canonicalPath));
+  const now = Date.now();
+  for (const { lease } of listLeaseFiles()) {
+    if (lease && !leaseIsExpired(lease, now) && holders.has(canonicalPath(lease.holder))) {
+      reasons.push(`it holds the ${lease.platform} device lease on ${lease.deviceName ?? lease.id}`);
+    }
+  }
+  return reasons;
+}
+
+function newestMtime(paths: readonly { path: string; basis: string }[]): WorktreeActivity | null | 'unreadable' {
+  let newest: WorktreeActivity | null = null;
+  for (const { path, basis } of paths) {
+    let mtime: number;
+    try {
+      mtime = statSync(path).mtimeMs;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      return 'unreadable';
+    }
+    if (!newest || mtime > newest.at) newest = { at: mtime, basis };
+  }
+  return newest;
+}
+
+function logFiles(key: string): { path: string; basis: string }[] | null {
+  const dir = workspaceLogsDir(key);
+  try {
+    return readdirSync(dir).map((name) => ({ path: join(dir, name), basis: 'a Stim log write' }));
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? [] : null;
+  }
+}
+
+function worktreeActivityOf(path: string, keys: readonly string[]): WorktreeActivity | null {
+  const gitDir = getExecutor()
+    .runFileQuiet('git', ['--no-optional-locks', '-C', path, 'rev-parse', '--path-format=absolute', '--git-dir'])
+    ?.trim();
+  if (!gitDir) return null;
+  const paths = [
+    { path: join(gitDir, 'index'), basis: 'a git index write' },
+    { path: join(gitDir, 'HEAD'), basis: 'a git HEAD change' },
+    { path: join(gitDir, 'logs', 'HEAD'), basis: 'a git reflog entry' },
+  ];
+  for (const key of keys) {
+    const logs = logFiles(key);
+    if (logs === null) return null;
+    paths.push({ path: workspaceStateFile(key), basis: 'a Stim workspace state write' }, ...logs);
+  }
+  const newest = newestMtime(paths);
+  return newest === 'unreadable' ? null : newest;
+}
+
+function graceMsSetting(): number {
+  const { value, error } = machineNumber(GRACE_SETTING, loadConfig(), process.env);
+  if (error) {
+    const fallback = Number(settingDefinition(GRACE_SETTING)?.default);
+    console.error(chalk.yellow(`${error} gc uses the default of ${fallback} minutes.`));
+    return fallback * MINUTE_MS;
+  }
+  return (value ?? 0) * MINUTE_MS;
 }
 
 function porcelainOf(path: string, gitAnswered: boolean | null): string[] | null {
@@ -148,18 +306,23 @@ interface PendingMerge {
   repo: string;
 }
 
-function checkMergeStates(pending: PendingMerge[], idle: number | null, now: number): void {
+function checkMergeStates(pending: PendingMerge[], idle: number | null, grace: WorktreeGrace): void {
   const repos = new Map<string, PendingMerge[]>();
   for (const entry of pending) repos.set(entry.repo, [...(repos.get(entry.repo) ?? []), entry]);
   for (const [repo, entries] of repos) {
-    const target = fetchDefaultBranch(repo, now);
+    const target = fetchDefaultBranch(repo, grace.now);
     for (const { candidate, facts } of entries) {
       const merge: MergeState =
         'error' in target
           ? { merged: false, unknown: true, detail: `merge state unknown: ${target.error}` }
           : mergeState(candidate.path, target);
-      const verdict = worktreeSkipReason({ ...facts, merge }, idle);
-      Object.assign(candidate, { merge, skipCode: verdict?.code ?? null, skipped: verdict?.text ?? null });
+      const verdict = worktreeSkipReason({ ...facts, merge }, idle, grace);
+      Object.assign(candidate, {
+        merge,
+        skipCode: verdict?.code ?? null,
+        skipped: verdict?.text ?? null,
+        eligibleAt: verdict?.eligibleAt ?? null,
+      });
     }
   }
 }
@@ -178,6 +341,7 @@ export function collectWorktreeSweep({
   now: number;
 }): WorktreeSweep {
   const days = idle ? (olderThan ?? DEFAULT_WORKTREE_IDLE_DAYS) : null;
+  const grace: WorktreeGrace = { ms: graceMsSetting(), now };
   const groups = new Map<string, string[]>();
   const outside: WorktreeCandidate[] = [];
   for (const root of candidateRoots()) {
@@ -190,6 +354,7 @@ export function collectWorktreeSweep({
         merge: null,
         skipCode: 'not-a-worktree',
         skipped: 'not inside a git worktree',
+        eligibleAt: null,
       });
       continue;
     }
@@ -204,6 +369,7 @@ export function collectWorktreeSweep({
     const keys = [...new Set([...roots, ...reclaimKeys(path)])];
     const idleDays = idleDaysOf(keys, now);
     const linked = !('refusal' in source) && entry !== null && source.path !== entry.path;
+    const activity = linked && grace.ms > 0 ? worktreeActivityOf(path, keys) : null;
     const gitAnswered = linked ? hasUncommittedWork(path) : null;
     const facts: WorktreeFacts = {
       source: 'refusal' in source ? source : linked ? 'linked' : 'source',
@@ -215,8 +381,9 @@ export function collectWorktreeSweep({
       inUse: linked ? inUseOf(keys, { managedLocks: true }) : [],
       idleDays,
       merge: null,
+      activity,
     };
-    const verdict = worktreeSkipReason(facts, days);
+    const verdict = worktreeSkipReason(facts, days, grace);
     const candidate: WorktreeCandidate = {
       path,
       keys,
@@ -224,17 +391,22 @@ export function collectWorktreeSweep({
       merge: null,
       skipCode: verdict?.code ?? null,
       skipped: verdict?.text ?? null,
+      eligibleAt: verdict?.eligibleAt ?? null,
     };
     if (verdict && MERGE_DECIDES.has(verdict.code) && !('refusal' in source)) {
       pending.push({ candidate, facts, repo: source.path });
     }
     worktrees.push(candidate);
   }
-  checkMergeStates(pending, days, now);
+  checkMergeStates(pending, days, grace);
   const listed = [...worktrees, ...outside].filter(
     (w) => idle || (w.skipCode !== 'not-a-worktree' && w.skipCode !== 'source-checkout'),
   );
-  return { idle: days === null ? null : { olderThan: days, defaulted: olderThan === null }, worktrees: listed };
+  return {
+    idle: days === null ? null : { olderThan: days, defaulted: olderThan === null },
+    graceMs: grace.ms,
+    worktrees: listed,
+  };
 }
 
 export async function removeWorktrees(
@@ -261,6 +433,13 @@ export async function removeWorktrees(
         if (idleDays === null || !sweep.idle || idleDays < sweep.idle.olderThan) {
           reasons.push(`used ${idleDays === null ? 'at an unknown time' : `${idleDays}d ago`} since gc checked it`);
         }
+      }
+      if (sweep.graceMs > 0) {
+        const recent = graceBlocker(
+          { merge: candidate.merge, activity: worktreeActivityOf(candidate.path, keys) },
+          { ms: sweep.graceMs, now: Date.now() },
+        );
+        if (recent) reasons.push(recent.text);
       }
       kept = reasons;
       return reasons;

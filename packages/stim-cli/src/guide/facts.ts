@@ -520,12 +520,14 @@ RULES
     orphanedWorkspaces      { dir, projectRoot, bytes }  --delete removes the
                               whole workspace directory
     linkedWorktrees         { path, idleDays, mergedInto, willRemove,
-                              reason, detail }  mergedInto is the default
-                              branch HEAD is merged into ("origin/main"),
-                              or null; detail says why it is removed
-                              ("merged into origin/main", "idle 9d") or kept.
-                              Without --worktrees, the source checkout and
-                              roots outside git are left out
+                              reason, detail, eligibleAt }  mergedInto is
+                              the default branch HEAD is merged into
+                              ("origin/main"), or null; detail says why it
+                              is removed ("merged into origin/main", "idle
+                              9d") or kept. eligibleAt is the ISO time a
+                              recent-activity worktree becomes removable,
+                              else null. Without --worktrees, the source
+                              checkout and roots outside git are left out
     parkedSimulators        { udid, name, model, runtime, parkedAt, bytes,
                               listed }  with --older-than, only those parked
                               at least that long
@@ -579,7 +581,8 @@ RULES
                             locked | in-use | status-unreadable | dirty |
                             unpushed-unchecked | unpushed | submodules |
                             not-merged | merge-unknown | last-use-unknown |
-                            recently-used
+                            recently-used | activity-unknown |
+                            recent-activity
 
   These print the error contract instead and exit 1:
 

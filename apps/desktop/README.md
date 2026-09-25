@@ -170,7 +170,9 @@ status under **Autopilot activity**.
   0 turns the check off, as in the CLI. Under it, the app previews `stim gc
 --json` and runs `stim gc --delete` at most once an hour. This run has no age
   limit: it clears the build outputs of every workspace not in use and empties
-  the parked device pool.
+  the parked device pool. It still keeps a merged worktree in use or active
+  within the CLI's `gc.worktreeGraceMinutes`, 2 hours by default, so an agent
+  that just merged can finish `stim stop` and `stim worktree remove`.
 
 While free disk is under the budget, the Storage view shows the plan, such as
 "Clear the build outputs of 3 idle workspaces and remove 1 merged worktree to

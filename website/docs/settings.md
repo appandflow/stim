@@ -242,6 +242,12 @@ workspace to adopt. Absent means 3; `0` turns parking and adoption off. When
 `pool.androidParkedMax` and `STIM_POOL_ANDROID_PARKED_MAX` apply the same rules
 to Android emulators. See [owned devices](/docs/owned-devices) for adoption cleanup.
 
+`gc.worktreeGraceMinutes` is how long `stim gc --delete` waits before it
+removes a merged or idle linked worktree, counted from the worktree's latest
+git or Stim activity or the merge of its branch. Absent means 120; `0` removes
+a finished worktree at once. `STIM_GC_WORKTREE_GRACE_MINUTES` overrides it. See
+[removing finished worktrees in bulk](./worktrees.md#remove-finished-worktrees-in-bulk).
+
 `budget` keeps parallel agents from filling the disk or memory. It is on by
 default. Before `stim start`, `stim ios`, or `stim android` builds or boots
 anything, Stim checks free disk on the volumes that hold the app and
@@ -310,6 +316,7 @@ control build optimizations on this machine without changing project files.
 | `STIM_BUDGET_MAX_LIVE_WORKSPACES`     | Live workspaces before idle ones are reclaimed                                                              |
 | `STIM_POOL_ANDROID_PARKED_MAX`        | Maximum parked Android emulators; 0 disables parking and adoption                                           |
 | `STIM_POOL_IOS_PARKED_MAX`            | Maximum parked simulators                                                                                   |
+| `STIM_GC_WORKTREE_GRACE_MINUTES`      | Minutes `gc --delete` waits after a worktree's last activity or merge; overrides `gc.worktreeGraceMinutes`  |
 | `STIM_METRO_PUBLIC_URL`               | Public Metro URL for remote use                                                                             |
 | `STIM_ANDROID_CAS_TOOLCHAIN`          | Absolute path to the [Android CAS toolchain manifest](./build-optimizations.md#experimental-android-cas)    |
 | `STIM_NO_UPDATE_CHECK`                | Set to disable the daily check for a newer Stim release in `stim guide`                                     |

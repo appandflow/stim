@@ -26,6 +26,7 @@ import { workspaceInUse } from '../workspace/in-use.ts';
 import { withManagedTunnelLock } from '../engine/tunnel.ts';
 import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { claimRemoveCommand, exclusiveClaimDir } from '../ownership-claim.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
 
 let tmpHome: string;
@@ -34,6 +35,7 @@ let projects: string;
 beforeEach(() => {
   tmpHome = realpathSync(mkdtempSync(join(tmpdir(), 'stim-test-')));
   process.env.STIM_HOME = tmpHome;
+  process.env.STIM_GC_WORKTREE_GRACE_MINUTES = '0';
   projects = realpathSync(mkdtempSync(join(tmpdir(), 'stim-projects-')));
   const real = getExecutor();
   setExecutor({
@@ -54,6 +56,7 @@ afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   rmSync(projects, { recursive: true, force: true });
   delete process.env.STIM_HOME;
+  delete process.env.STIM_GC_WORKTREE_GRACE_MINUTES;
   process.exitCode = 0;
 });
 
@@ -459,13 +462,15 @@ describe('linked worktree sweep classification', () => {
     inUse: [],
     idleDays: 10,
     merge: null,
+    activity: null,
     ...overrides,
   });
-  const merged = (coversUnpushed = false): MergeState => ({
+  const merged = (coversUnpushed = false, mergedAt = 0): MergeState => ({
     merged: true,
     into: 'origin/main',
     head: 'abc',
     coversUnpushed,
+    mergedAt,
   });
 
   test('a clean, pushed, idle linked worktree is removable', () => {
@@ -531,6 +536,51 @@ describe('linked worktree sweep classification', () => {
     const skip = worktreeSkipReason(facts, 7);
     expect(skip?.code).toBe(code);
     expect(skip?.text).toMatch(text);
+  });
+
+  describe('the grace period', () => {
+    const now = Date.parse('2026-09-25T12:00:00Z');
+    const grace = { ms: 120 * 60_000, now };
+    const ago = (minutes: number) => now - minutes * 60_000;
+    const activity = (minutes: number) => ({ at: ago(minutes), basis: 'a git index write' });
+
+    test('keeps a merged worktree whose newest activity is inside the grace period, until it ends', () => {
+      const skip = worktreeSkipReason(linked({ merge: merged(false, ago(600)), activity: activity(30) }), null, grace);
+      expect(skip).toEqual({
+        code: 'recent-activity',
+        text: 'recent activity: a git index write 30m ago; removable after 2026-09-25T13:30:00.000Z',
+        eligibleAt: Date.parse('2026-09-25T13:30:00Z'),
+      });
+    });
+
+    test('keeps a worktree whose branch merged inside the grace period even when nothing else changed', () => {
+      const skip = worktreeSkipReason(linked({ merge: merged(false, ago(10)), activity: activity(600) }), null, grace);
+      expect(skip?.code).toBe('recent-activity');
+      expect(skip?.text).toMatch(/^recent activity: merged into origin\/main 10m ago/);
+      expect(skip?.eligibleAt).toBe(ago(10) + grace.ms);
+    });
+
+    test('removes a merged worktree once both its activity and its merge are older than the grace period', () => {
+      expect(worktreeSkipReason(linked({ merge: merged(false, ago(121)), activity: activity(180) }), null, grace)).toBe(
+        null,
+      );
+    });
+
+    test('applies to an idle worktree too', () => {
+      expect(worktreeSkipReason(linked({ activity: activity(5) }), 7, grace)?.code).toBe('recent-activity');
+      expect(worktreeSkipReason(linked({ activity: activity(500) }), 7, grace)).toBe(null);
+    });
+
+    test('keeps a worktree whose activity cannot be read', () => {
+      expect(worktreeSkipReason(linked({ merge: merged(false, ago(600)) }), null, grace)?.code).toBe(
+        'activity-unknown',
+      );
+    });
+
+    test('never overrides a stronger reason, and 0 turns it off', () => {
+      expect(worktreeSkipReason(linked({ porcelain: ['?? x'], activity: activity(1) }), 7, grace)?.code).toBe('dirty');
+      expect(worktreeSkipReason(linked({ merge: merged(false, ago(1)) }), null, { ms: 0, now })).toBe(null);
+    });
   });
 });
 
@@ -624,6 +674,7 @@ test('gc --worktrees --json reports each worktree verdict with its idle threshol
     willRemove: true,
     reason: null,
     detail: 'idle 10d',
+    eligibleAt: null,
   });
   expect(byPath[realpathSync.native(worktrees.fresh!)]).toMatchObject({
     willRemove: false,
@@ -876,6 +927,124 @@ test('gc keeps a merged worktree when the fetch fails, and when its HEAD moves a
   expect(existsSync(worktrees.merged!)).toBe(true);
   expect(lines.join('\n')).toContain(`Kept the worktree ${worktrees.merged}: its HEAD moved since gc checked it`);
   expect(existsSync(worktrees.squashed!)).toBe(false);
+}, 120_000);
+
+test('gc --delete keeps a just-merged worktree for the grace period, then removes it and tears down its device', async () => {
+  process.env.STIM_GC_WORKTREE_GRACE_MINUTES = '120';
+  const repo = join(projects, 'grace-repo');
+  const remote = join(projects, 'grace.git');
+  const upstream = join(projects, 'grace-upstream');
+  const git = (args: string, cwd = repo, env: NodeJS.ProcessEnv = {}) =>
+    execSync(`git ${args}`, {
+      cwd,
+      encoding: 'utf-8',
+      timeout: 30_000,
+      stdio: 'pipe',
+      env: { ...process.env, ...env },
+    }).trim();
+  const identity = (cwd: string) => {
+    git('config user.email test@example.com', cwd);
+    git('config user.name test', cwd);
+  };
+  git(`init -q --bare -b main "${remote}"`, projects);
+  mkdirSync(repo);
+  git('init -q -b main');
+  identity(repo);
+  git(`remote add origin "${remote}"`);
+  writeFileSync(join(repo, 'package.json'), '{}');
+  git('add package.json');
+  git('commit -q -m init');
+  git('push -q -u origin main');
+  git('remote set-head origin main');
+  git(`clone -q "${remote}" "${upstream}"`, projects);
+  identity(upstream);
+  const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60_000);
+  const worktrees: Record<string, string> = {};
+  for (const name of ['fresh', 'landed', 'old', 'booted']) {
+    const path = join(projects, name);
+    git(`worktree add -q "${path}" -b ${name}`);
+    writeFileSync(join(path, `${name}.txt`), name);
+    git(`add ${name}.txt`, path);
+    git(`commit -q -m ${name}`, path);
+    git(`push -q -u origin ${name}`, path);
+    worktrees[name] = realpathSync.native(path);
+    git(`fetch -q origin ${name}`, upstream);
+    git(`merge -q --squash origin/${name}`, upstream);
+    const date = name === 'fresh' || name === 'landed' ? {} : { GIT_COMMITTER_DATE: threeHoursAgo.toISOString() };
+    git(`commit -q -m squash-${name}`, upstream, date);
+    upsertProject(worktrees[name]!, { metroPort: null });
+    recordWorkspaceUse(worktrees[name]!);
+  }
+  git('push -q origin main', upstream);
+  upsertProject(worktrees.old!, { platforms: { ios: { deviceUdid: 'U-OLD', owned: true, deviceName: 'stim-old' } } });
+  upsertProject(worktrees.booted!, {
+    platforms: { ios: { deviceUdid: 'U-BOOTED', owned: true, deviceName: 'stim-booted' } },
+  });
+  recordCreatedDevice('ios', 'U-OLD');
+  recordCreatedDevice('ios', 'U-BOOTED');
+  for (const name of ['landed', 'old', 'booted']) {
+    const path = worktrees[name]!;
+    const gitDir = git('rev-parse --path-format=absolute --git-dir', path);
+    for (const file of [join(gitDir, 'index'), join(gitDir, 'HEAD'), join(gitDir, 'logs', 'HEAD')]) {
+      utimesSync(file, threeHoursAgo, threeHoursAgo);
+    }
+    const state = join(workspaceDir(path), 'state.json');
+    utimesSync(state, threeHoursAgo, threeHoursAgo);
+  }
+
+  const real = getExecutor();
+  const iphone = 'com.apple.CoreSimulator.SimDeviceType.iPhone-15';
+  const simctl = JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-17-0': [
+        { udid: 'U-OLD', name: 'stim-old', state: 'Shutdown', isAvailable: true, deviceTypeIdentifier: iphone },
+        { udid: 'U-BOOTED', name: 'stim-booted', state: 'Booted', isAvailable: true, deviceTypeIdentifier: iphone },
+      ],
+    },
+  });
+  const simctlCalls: string[] = [];
+  const fake = (command: string) => {
+    if (/simctl/.test(command)) simctlCalls.push(command);
+    return /simctl list/.test(command) ? simctl : '';
+  };
+  setExecutor({
+    ...real,
+    run: fake,
+    runQuiet: fake,
+    runFile: (file, args = [], opts) =>
+      file === 'git' ? real.runFile(file, args, opts) : fake([file, ...args].join(' ')),
+    runFileQuiet: (file, args = [], opts) =>
+      file === 'git' ? real.runFileQuiet(file, args, opts) : fake([file, ...args].join(' ')),
+    spawn: () => {
+      throw new Error('unexpected spawn');
+    },
+    findExecutable: () => null,
+  });
+
+  const { payload } = await gcJson({ delete: true });
+  const byPath = Object.fromEntries(payload.sections.linkedWorktrees.map((w: { path: string }) => [w.path, w]));
+  expect(byPath[worktrees.fresh!]).toMatchObject({
+    mergedInto: 'origin/main',
+    willRemove: false,
+    reason: 'recent-activity',
+    eligibleAt: expect.any(String),
+  });
+  expect(Date.parse(byPath[worktrees.fresh!].eligibleAt) - Date.now()).toBeGreaterThan(119 * 60_000);
+  expect(byPath[worktrees.landed!]).toMatchObject({ willRemove: false, reason: 'recent-activity' });
+  expect(byPath[worktrees.landed!].detail).toMatch(
+    /^recent activity: merged into origin\/main \S+ ago; removable after /,
+  );
+  expect(byPath[worktrees.booted!]).toMatchObject({ willRemove: false, reason: 'in-use' });
+  expect(byPath[worktrees.booted!].detail).toContain('its owned simulator stim-booted is Booted');
+  expect(byPath[worktrees.old!]).toMatchObject({ willRemove: true, reason: null, eligibleAt: null });
+
+  for (const name of ['fresh', 'landed', 'booted']) expect(existsSync(worktrees[name]!)).toBe(true);
+  expect(existsSync(worktrees.old!)).toBe(false);
+  expect(getProject(worktrees.old!)).toBe(null);
+  expect(simctlCalls).toContain('xcrun simctl shutdown U-OLD');
+  expect(simctlCalls).toContain('xcrun simctl delete U-OLD');
+  expect(simctlCalls.some((call) => /(shutdown|delete) U-BOOTED/.test(call))).toBe(false);
+  expect(getProject(worktrees.booted!)?.platforms?.ios).toMatchObject({ deviceUdid: 'U-BOOTED', owned: true });
 }, 120_000);
 
 test('a worktree registered under a symlinked path still matches the path git reports', () => {

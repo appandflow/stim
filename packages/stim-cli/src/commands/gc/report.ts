@@ -436,6 +436,7 @@ export interface GcJsonSections {
     willRemove: boolean;
     reason: WorktreeSkipCode | null;
     detail: string;
+    eligibleAt: string | null;
   }[];
   parkedSimulators: ParkedSimReport[];
   parkedEmulators: ParkedAvdReport[];
@@ -539,6 +540,7 @@ export function gcReportSections({
       willRemove: w.skipCode === null,
       reason: w.skipCode,
       detail: w.skipped ?? worktreeRemovalReason(w),
+      eligibleAt: w.eligibleAt === null ? null : new Date(w.eligibleAt).toISOString(),
     })),
     parkedSimulators: parkedSims.map(({ udid, name, model, runtime, parkedAt, bytes, listed }) => ({
       udid,

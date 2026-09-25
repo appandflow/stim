@@ -12,7 +12,7 @@ export interface DefaultBranch {
 }
 
 export type MergeState =
-  | { merged: true; into: string; head: string; coversUnpushed: boolean }
+  | { merged: true; into: string; head: string; coversUnpushed: boolean; mergedAt: number }
   | { merged: false; unknown: boolean; detail: string; timedOut?: true };
 
 function failure(error: unknown): string {
@@ -101,7 +101,9 @@ function committedOn(path: string, branch: string | null, head: string): boolean
 }
 
 /**
- * Whether the worktree's HEAD is merged into `target`. The signals, all local git:
+ * Whether the worktree's HEAD is merged into `target`, and when: `mergedAt` is the committer date, in epoch
+ * milliseconds, of the commit on `target` that brought the work in, the latest one for a rebase merge.
+ * The signals, all local git:
  * - HEAD is an ancestor of the default branch, off its first-parent line, and the branch's reflog shows a commit made
  *   on it that HEAD contains, so a merge commit brought the branch's own work in. A branch with no commit of its own
  *   is not merged.
@@ -121,12 +123,27 @@ export function mergeState(
     getExecutor().runFile('git', ['--literal-pathspecs', '-C', path, ...args], { timeoutMs, input });
   const patch = (args: string[]): string =>
     getExecutor().runFile('git', ['--literal-pathspecs', '-C', path, ...args], { timeoutMs, untrimmed: true });
-  const patchIds = (text: string): string[] =>
-    text
-      ? git(['patch-id', '--verbatim'], text)
+  const patchIdCommits = (text: string): Map<string, string> =>
+    new Map(
+      text
+        ? git(['patch-id', '--verbatim'], text)
+            .split('\n')
+            .flatMap((line) => {
+              const [id, commit] = line.split(' ');
+              return id && commit ? [[id, commit] as const] : [];
+            })
+        : [],
+    );
+  const patchIds = (text: string): string[] => [...patchIdCommits(text).keys()];
+  const committedAt = (commits: string[]): number => {
+    const times = commits.length
+      ? git(['show', '-s', '--format=%ct', ...commits])
           .split('\n')
-          .flatMap((line) => line.split(' ')[0] || [])
+          .map(Number)
       : [];
+    if (!times.length || !times.every(Number.isFinite)) throw new Error(`no committer date for ${commits.join(' ')}`);
+    return Math.max(...times) * 1000;
+  };
   const diffOptions = ['--no-color', '--no-ext-diff'];
   const noOwnCommits = notMerged(`no commits of its own beyond ${name}`);
   try {
@@ -140,24 +157,26 @@ export function mergeState(
           .split('\n')
           .some((line) => line.split(' ')[1] === head);
       if (mainline || !committedOn(path, branch, head)) return noOwnCommits;
-      return { merged: true, into: name, head, coversUnpushed: false };
+      const landed = git(['rev-list', '--first-parent', '--ancestry-path', `${head}..${ref}`]).split('\n');
+      return { merged: true, into: name, head, coversUnpushed: false, mergedAt: committedAt(landed.slice(-1)) };
     }
     const files = git(['diff', '--name-only', '--no-renames', '-z', base, head]).split('\0').filter(Boolean);
     if (!files.length) return notMerged(`no net change beyond ${name}`);
     const log = (range: string, pathspec: string[] = []) =>
       patch(['log', '-p', '--no-merges', ...diffOptions, '--format=commit %H', range, '--', ...pathspec]);
-    const upstream = new Set(patchIds(log(`${base}..${ref}`, files)));
-    const patchEquivalent = (): MergeState => ({
+    const upstream = patchIdCommits(log(`${base}..${ref}`, files));
+    const patchEquivalent = (ids: string[]): MergeState => ({
       merged: true,
       into: name,
       head,
       coversUnpushed: upstreamGone(path, branch),
+      mergedAt: committedAt(ids.map((id) => upstream.get(id)!)),
     });
     const squash = patchIds(patch(['diff', ...diffOptions, base, head]));
-    if (squash.length === 1 && upstream.has(squash[0]!)) return patchEquivalent();
+    if (squash.length === 1 && upstream.has(squash[0]!)) return patchEquivalent(squash);
     if (!git(['rev-list', '--merges', `${base}..${head}`])) {
       const own = patchIds(log(`${base}..${head}`));
-      if (own.length && own.every((id) => upstream.has(id))) return patchEquivalent();
+      if (own.length && own.every((id) => upstream.has(id))) return patchEquivalent(own);
     }
     return notMerged(`not merged into ${name}`);
   } catch (error) {

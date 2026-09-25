@@ -473,13 +473,13 @@ export function dirtyFingerprintFiles(root: string): string[] {
 }
 
 export function hasUncommittedWork(dir: string): boolean | null {
-  const out = getExecutor().runFileQuiet('git', ['-C', dir, 'status', '--porcelain']);
+  const out = getExecutor().runFileQuiet('git', ['--no-optional-locks', '-C', dir, 'status', '--porcelain']);
   if (out === null) return null;
   return out.trim().length > 0;
 }
 
 export function dirtyPaths(dir: string, { limit = 10 }: { limit?: number } = {}): string[] {
-  const out = getExecutor().runFileQuiet('git', ['-C', dir, 'status', '--porcelain']);
+  const out = getExecutor().runFileQuiet('git', ['--no-optional-locks', '-C', dir, 'status', '--porcelain']);
   if (out === null) return [];
   const lines = out
     .split('\n')
