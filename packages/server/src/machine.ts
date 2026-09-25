@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { existsSync, statfsSync, statSync } from 'node:fs';
-import { availableParallelism, homedir, loadavg, totalmem } from 'node:os';
+import { availableParallelism, cpus, homedir, loadavg, totalmem } from 'node:os';
 import { dirname, join } from 'node:path';
 import { configDir } from '@stim-cli/core';
 import { loadConfig } from '@stim-cli/core/state';
@@ -97,6 +97,40 @@ function readMemoryUsed(): Promise<number | null> {
   });
 }
 
+export interface CpuTicks {
+  idle: number;
+  total: number;
+}
+
+function cpuTicks(list: ReturnType<typeof cpus>): CpuTicks {
+  let idle = 0;
+  let total = 0;
+  for (const cpu of list) {
+    idle += cpu.times.idle;
+    total += cpu.times.user + cpu.times.nice + cpu.times.sys + cpu.times.irq + cpu.times.idle;
+  }
+  return { idle, total };
+}
+
+/** The busy fraction (0..1) between two `os.cpus()` tick totals. Null when the totals did not advance. */
+export function cpuUsageFraction(previous: CpuTicks, current: CpuTicks): number | null {
+  const totalDelta = current.total - previous.total;
+  if (totalDelta <= 0) return null;
+  const idleDelta = current.idle - previous.idle;
+  return Math.min(1, Math.max(0, 1 - idleDelta / totalDelta));
+}
+
+// Kept across calls so `machine.get` can report the delta since the previous request instead of blocking on a
+// fresh sample window each time. The first call of a server process has no previous sample, so it reports null.
+let previousCpuTicks: CpuTicks | null = null;
+
+function readCpuUsage(): { usage: number | null; cores: number } {
+  const current = cpuTicks(cpus());
+  const usage = previousCpuTicks ? cpuUsageFraction(previousCpuTicks, current) : null;
+  previousCpuTicks = current;
+  return { usage, cores: availableParallelism() };
+}
+
 export async function readMachineUsage(): Promise<MachineUsage> {
   const [avg1 = 0, avg5 = 0, avg15 = 0] = loadavg();
   const [pressure, usedBytes] = await Promise.all([readMemoryPressure(), readMemoryUsed()]);
@@ -104,6 +138,7 @@ export async function readMachineUsage(): Promise<MachineUsage> {
     volumes: readVolumes(stimDiskLocations()),
     memory: { totalBytes: totalmem(), usedBytes, pressure },
     load: { avg1, avg5, avg15, cpus: availableParallelism() },
+    cpu: readCpuUsage(),
     sampledAt: new Date().toISOString(),
   };
 }

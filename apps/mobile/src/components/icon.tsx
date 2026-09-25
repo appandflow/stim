@@ -12,6 +12,9 @@ const ANDROID_GLYPHS = {
   'rectangle.stack': '\u2261',
   'square.grid.2x2': '\u25A6',
   'arrow.triangle.branch': '\u2442',
+  cpu: '\u25A3',
+  memorychip: '\u25A4',
+  internaldrive: '\u25CF',
 } as const;
 
 export type IconName = keyof typeof ANDROID_GLYPHS;

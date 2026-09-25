@@ -1,4 +1,4 @@
-import { parseVmStatUsedBytes } from '../src/machine.ts';
+import { cpuUsageFraction, parseVmStatUsedBytes } from '../src/machine.ts';
 
 const VM_STAT = `
 Mach Virtual Memory Statistics: (page size of 16384 bytes)
@@ -34,5 +34,24 @@ describe('parseVmStatUsedBytes', () => {
   it('returns null when a count it needs is missing', () => {
     expect(parseVmStatUsedBytes(VM_STAT.replace(/^Anonymous pages:.*$/m, ''))).toBeNull();
     expect(parseVmStatUsedBytes(VM_STAT.replace(/page size of \d+ bytes/, ''))).toBeNull();
+  });
+});
+
+describe('cpuUsageFraction', () => {
+  it('is the busy share of the tick delta between two samples', () => {
+    const previous = { idle: 100, total: 1000 };
+    const current = { idle: 130, total: 1100 };
+    expect(cpuUsageFraction(previous, current)).toBeCloseTo(1 - 30 / 100);
+  });
+
+  it('returns null when the tick total did not advance', () => {
+    const sample = { idle: 100, total: 1000 };
+    expect(cpuUsageFraction(sample, sample)).toBeNull();
+    expect(cpuUsageFraction(sample, { idle: 90, total: 900 })).toBeNull();
+  });
+
+  it('clamps to 0..1', () => {
+    expect(cpuUsageFraction({ idle: 0, total: 0 }, { idle: 50, total: 100 })).toBe(0.5);
+    expect(cpuUsageFraction({ idle: 100, total: 100 }, { idle: 100, total: 200 })).toBe(1);
   });
 });
