@@ -10,7 +10,10 @@ struct DeviceTile: View {
   var interactive = false
   var workspace: String?
   var build: Build?
-  @State private var pixelSize: CGSize?
+  @State private var pixelSizes: [UInt32: CGSize] = [:]
+  @State private var screenIDs: [UInt32] = [1]
+  @State private var folding = false
+  @State private var foldError: String?
   @State private var confirmingStop = false
   @EnvironmentObject private var actions: ActionCenter
 
@@ -26,6 +29,9 @@ struct DeviceTile: View {
           Spacer(minLength: 8)
           Text(source).font(Theme.body(10.5)).foregroundStyle(Theme.tertiary).lineLimit(1)
           if case .remote = device { remoteControls }
+          if interactive, screenIDs.count > 1, SimulatorFold.isAvailable, case .ios(_, let sim) = device {
+            foldButton(udid: sim.udid)
+          }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
@@ -71,10 +77,29 @@ struct DeviceTile: View {
     }
   }
 
+  private func foldButton(udid: String) -> some View {
+    Button(folding ? "Folding" : "Fold / Unfold") {
+      folding = true
+      Task {
+        foldError = await SimulatorFold.toggle(udid: udid)
+        folding = false
+      }
+    }
+    .controlSize(.small)
+    .fixedSize()
+    .disabled(folding)
+    .help(foldError ?? "Sweeps the hinge to the other posture, which lights the other screen.")
+  }
+
+  private func screenWidth(_ screenID: UInt32) -> CGFloat? {
+    guard let size = pixelSizes[screenID], size.height > 0 else { return nil }
+    return (screenHeight - screenPadding * 2) * size.width / size.height
+  }
+
   private var width: CGFloat {
-    if let pixelSize, pixelSize.height > 0 {
-      let inner = screenHeight - screenPadding * 2
-      return max(240, inner * pixelSize.width / pixelSize.height + screenPadding * 2)
+    let widths = screenIDs.compactMap(screenWidth)
+    if widths.count == screenIDs.count {
+      return max(240, widths.reduce(0, +) + screenPadding * CGFloat(screenIDs.count + 1))
     }
     if case .remote = device { return max(360, screenHeight * 0.6) }
     switch device.formFactor {
@@ -95,7 +120,25 @@ struct DeviceTile: View {
   @ViewBuilder private var screen: some View {
     switch device {
     case .ios(_, let sim) where device.isRunning:
-      SimulatorDisplayView(udid: sim.udid, interactive: interactive) { pixelSize = $0 }.padding(screenPadding)
+      HStack(spacing: screenPadding) {
+        ForEach(screenIDs, id: \.self) { screenID in
+          SimulatorDisplayView(udid: sim.udid, screenID: screenID, interactive: interactive) {
+            pixelSizes[screenID] = $0
+          }
+          .frame(width: screenWidth(screenID))
+        }
+      }
+      .padding(screenPadding)
+      .task(id: sim.udid) {
+        while !Task.isCancelled {
+          let ids = CoreSimulator.screenIDs(udid: sim.udid)
+          if !ids.isEmpty {
+            screenIDs = ids
+            return
+          }
+          try? await Task.sleep(for: .seconds(2))
+        }
+      }
     case .android(_, let avd) where device.isRunning && avd.owned && !avd.physical:
       if let serial = avd.serial {
         EmulatorScreen(serial: serial, interactive: interactive).padding(screenPadding)

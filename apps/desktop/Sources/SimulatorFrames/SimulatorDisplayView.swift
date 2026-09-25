@@ -3,17 +3,23 @@ import QuartzCore
 import StimKit
 import SwiftUI
 
-/// Live frames of a booted iOS simulator's main display, turned upright for
-/// the device's orientation. When `interactive` is true, clicks, drags,
-/// trackpad scrolls and keys go to the simulator. `onPixelSizeChange`
-/// receives the frame's pixel size as displayed, after rotation.
+/// Live frames of one display of a booted iOS simulator, the main display
+/// unless `screenID` names another, turned upright for the device's
+/// orientation. When `interactive` is true, clicks, drags, trackpad scrolls
+/// and keys go to the simulator. `onPixelSizeChange` receives the frame's
+/// pixel size as displayed, after rotation.
 public struct SimulatorDisplayView: NSViewRepresentable {
   public var udid: String
+  public var screenID: UInt32
   public var interactive: Bool
   public var onPixelSizeChange: (CGSize) -> Void
 
-  public init(udid: String, interactive: Bool = false, onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }) {
+  public init(
+    udid: String, screenID: UInt32 = 1, interactive: Bool = false,
+    onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }
+  ) {
     self.udid = udid
+    self.screenID = screenID
     self.interactive = interactive
     self.onPixelSizeChange = onPixelSizeChange
   }
@@ -21,14 +27,14 @@ public struct SimulatorDisplayView: NSViewRepresentable {
   public func makeNSView(context: Context) -> SimulatorDisplayNSView {
     let view = SimulatorDisplayNSView()
     view.onPixelSizeChange = onPixelSizeChange
-    view.attach(udid: udid)
+    view.attach(udid: udid, screenID: screenID)
     view.setInteractive(interactive)
     return view
   }
 
   public func updateNSView(_ view: SimulatorDisplayNSView, context: Context) {
     view.onPixelSizeChange = onPixelSizeChange
-    view.attach(udid: udid)
+    view.attach(udid: udid, screenID: screenID)
     view.setInteractive(interactive)
   }
 
@@ -40,6 +46,7 @@ public struct SimulatorDisplayView: NSViewRepresentable {
 public final class SimulatorDisplayNSView: NSView {
   var onPixelSizeChange: (CGSize) -> Void = { _ in }
   private var udid: String?
+  private var screenID: UInt32 = 1
   private var display: SimDisplay?
   private let callbackID = NSUUID()
   private var redrawPending = false
@@ -62,10 +69,11 @@ public final class SimulatorDisplayNSView: NSView {
 
   required init?(coder: NSCoder) { nil }
 
-  func attach(udid: String) {
-    guard udid != self.udid else { return }
+  func attach(udid: String, screenID: UInt32) {
+    guard udid != self.udid || screenID != self.screenID else { return }
     disconnect()
     self.udid = udid
+    self.screenID = screenID
     connect()
   }
 
@@ -90,7 +98,8 @@ public final class SimulatorDisplayNSView: NSView {
 
   private func connect() {
     guard let udid, display == nil, retryTimer == nil else { return }
-    guard let display = CoreSimulator.mainDisplay(udid: udid) else {
+    guard let display = CoreSimulator.displays(udid: udid).first(where: { $0.screenProperties?.screenID == screenID })
+    else {
       retryTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
         self?.retryTimer = nil
         self?.connect()
@@ -184,7 +193,9 @@ public final class SimulatorDisplayNSView: NSView {
   }
 
   private func releaseInput() {
-    if let touchPoint { hid?.touch(.up, at: nativeScreenPoint(touchPoint, orientation: orientation)) }
+    if let touchPoint {
+      hid?.touch(.up, at: nativeScreenPoint(touchPoint, orientation: orientation), screenID: screenID)
+    }
     touchPoint = nil
     hid = nil
   }
@@ -203,7 +214,7 @@ public final class SimulatorDisplayNSView: NSView {
 
   private func touch(_ phase: TouchPhase, at point: CGPoint) {
     guard let hid = inputClient() else { return }
-    hid.touch(phase, at: nativeScreenPoint(point, orientation: orientation))
+    hid.touch(phase, at: nativeScreenPoint(point, orientation: orientation), screenID: screenID)
     touchPoint = phase == .up ? nil : point
   }
 

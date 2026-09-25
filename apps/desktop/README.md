@@ -72,6 +72,14 @@ trackpad scrolls as one-finger drags, and your keys. Turn it off before an agent
 drives the device again. Command-key shortcuts stay with the app's menus, and a
 mouse wheel without precise deltas does not scroll.
 
+A simulator with more than one display, such as the iPhone Duo, shows every
+display side by side, and touches go to the display you click. Only the
+display the posture lights shows content; the other stays black. While Take
+over is on, **Fold / Unfold** sweeps the simulated hinge to the other posture.
+It runs the bundled `sim-fold` helper inside the simulator with `xcrun simctl
+spawn`. The helper calls SpringBoard's private display tool service, so the
+button appears only in the bundled app, and an iOS release can break it.
+
 Android input goes through the emulator's gRPC `sendMouse` and `sendKey` calls.
 Printable ASCII is sent as text; other keys, such as Delete, Return, Tab and the
 arrows, are sent as key presses. Control shortcuts are not sent, and an
@@ -142,5 +150,6 @@ The bundle copies Inter, JetBrains Mono, and the brand artwork from `website/`.
 
 - `Sources/StimKit`: models for the CLI's JSON, the login shell environment, the CLI client, project grouping, warning remedies, the streaming runner, `stim logs` records and the follow runner, and process, disk and gc usage. Unit-tested.
 - `Sources/SimulatorFrames`: live simulator frames through CoreSimulator and input through SimulatorKit, both private Apple frameworks. Expect Xcode releases to break it.
+- `Support/SimFold`: the `sim-fold` helper, an iOS Simulator executable that `scripts/bundle.sh` builds into the app's resources.
 - `Sources/EmulatorFrames`: live emulator frames through the emulator's localhost gRPC `streamScreenshot` call, found through its discovery file, and input through the same endpoint. Emulators Stim booted before it passed `-grpc` show no frames until their next boot.
 - `Sources/StimDesktop`: the SwiftUI app and its brand theme.
