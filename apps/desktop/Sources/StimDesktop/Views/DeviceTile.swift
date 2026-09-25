@@ -36,7 +36,11 @@ struct DeviceTile: View {
             }
           }
           Text(source).font(Theme.body(10.5)).foregroundStyle(Theme.tertiary).lineLimit(1)
-          if case .remote = device { remoteControls }
+          if case .remote = device {
+            remoteControls
+          } else if device.isRunning, let workspace {
+            stopButton(workspace: workspace)
+          }
           if interactive, device.formFactor == .dual, screenIDs.count > 1, SimulatorFold.isAvailable,
             case .ios(_, let sim) = device
           {
@@ -62,6 +66,16 @@ struct DeviceTile: View {
       }
     }
     .frame(width: width)
+  }
+
+  private func stopButton(workspace: String) -> some View {
+    Button("Stop") {
+      actions.run("Stop \(device.slot)", stopCommand(for: device, cwd: workspace))
+    }
+    .controlSize(.small)
+    .fixedSize()
+    .disabled(actions.active(for: workspace) != nil)
+    .help("stim stop --slot \(device.slot): stops every device in this slot, keeping the shared server and other slots running")
   }
 
   @ViewBuilder private var remoteControls: some View {

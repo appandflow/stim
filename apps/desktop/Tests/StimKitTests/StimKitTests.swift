@@ -181,6 +181,24 @@ import Testing
     #expect(StimCommand(["gc"], cwd: "/Users/jan").displayLine(home: "/Users/jan") == "cd ~ && stim gc")
     #expect(StimCommand(["gc"], cwd: "/Users/janic").displayLine(home: "/Users/jan") == "cd '/Users/janic' && stim gc")
   }
+
+  @Test func stopsOneDeviceByItsSlot() {
+    let ios = IosDevice(name: "stim-a (iPhone 17.0)", udid: "IOS-UDID", owned: true, state: "Booted")
+    #expect(
+      stopCommand(for: .ios(slot: "default", ios), cwd: "/w") == StimCommand(["stop", "--slot", "default"], cwd: "/w"))
+    #expect(
+      stopCommand(for: .ios(slot: "tablet", ios), cwd: "/w") == StimCommand(["stop", "--slot", "tablet"], cwd: "/w"))
+
+    let android = AndroidDevice(name: "stim-b", owned: true, physical: false, serial: "emulator-5554", state: "detected")
+    #expect(
+      stopCommand(for: .android(slot: "phone", android), cwd: "/w")
+        == StimCommand(["stop", "--slot", "phone"], cwd: "/w"))
+  }
+
+  @Test func stopsTheWholeWorkspaceForARemoteSession() {
+    let remote = RemoteDevice(platform: "ios", backend: "eas", sessionId: "drs_9", state: "running")
+    #expect(stopCommand(for: .remote(remote), cwd: "/w") == StimCommand(["stop"], cwd: "/w"))
+  }
 }
 
 @Suite struct LineBufferTests {

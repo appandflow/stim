@@ -119,6 +119,8 @@ need a workspace-wide query. `status` lists the named assignments and leases.
 `stop --slot tablet` stops that slot's owned devices and collectors and releases
 its leases, while keeping Metro and sibling slots running. The assignment stays
 available for another run. Plain `stim stop` handles every slot in the workspace.
+`stop --slot default` stops only the workspace's default device the same way,
+leaving named slots and Metro up.
 
 Physical-device leases are separate per slot, but two slots cannot hold the
 same physical device at once. `device lock --slot hardware` can retain a lease
