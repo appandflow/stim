@@ -1,7 +1,7 @@
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
 import { configuredAndroidEmulatorApp } from '../devices/android-emulator-viewer.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
-import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { cancelledFailure, runCancellation, withNativeBuildRun } from '../engine/native-run.ts';
 import { NO_BUILD_PROGRESS, startBuildProgress, type BuildProgress } from '../engine/build-progress.ts';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
@@ -116,7 +116,7 @@ import {
   pooledAndroidDevice,
 } from './android/support.ts';
 import { getExecutor } from '../exec.ts';
-import { emulatorLogFile, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
+import { emulatorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from './android/types.ts';
@@ -239,9 +239,9 @@ export function registerAndroid(program: Command): void {
         refuseNoProject({ json: Boolean(opts.json) });
         return;
       }
-      const result = await withWorkspaceProcessLock(
-        workspaceDir(root),
-        'native-run',
+      const result = await withNativeBuildRun(
+        root,
+        { command: 'android', platform: PLATFORM, slot: opts.slot ?? 'default' },
         async (claim) => {
           recordWorkspaceUse(root);
           const progress = startBuildProgress({
@@ -272,9 +272,9 @@ export function registerAndroid(program: Command): void {
             progress.clear();
           }
         },
-        { external: true, waitMs: 30 * 60_000, declareSpawns: true },
+        { write: (line) => console.error(chalk.dim(phaseLine('lock', line))) },
       );
-      if (!result.ok) process.exit(1);
+      if (!result.ok) process.exit(runCancellation() ? 130 : 1);
     });
 }
 
@@ -723,6 +723,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     remedy?: string | null,
     { lastBuildStatus = false, diagnostics = [], lines = [], logPath = null, lease }: FailExtra = {},
   ): RunAndroidResult => {
+    const cancellation = cancelledFailure(PLATFORM, { code, message });
+    if (cancellation) ({ code, message, remedy, lines } = cancellation);
     if (lastBuildStatus) {
       persistLastBuild({
         writeState,
@@ -1087,6 +1089,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     ccacheActivity = artifact.ccache;
     androidPackage = artifact.androidPackage;
     record.appPath = apkPath;
+    if (runCancellation()) return fail('STIM_CANCELLED', 'before install');
 
     if (startRemoteBoot) {
       progress.step('install');

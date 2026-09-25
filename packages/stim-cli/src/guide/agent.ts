@@ -224,7 +224,9 @@ Ask the user before these actions:
 - stop when the workspace owns an EAS session, because it irreversibly ends
   that remote session. For a local device, stop shuts it down but does not
   delete it. An explicit stop shuts down a Stim-owned simulator even when
-  another process uses it. It never shuts down an unowned simulator.
+  another process uses it. It never shuts down an unowned simulator. It also
+  cancels an ios or android run still building for the device it stops
+  (guide lifecycle).
 
 LEAVE THE MACHINE CLEAN
 
