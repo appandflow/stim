@@ -39,6 +39,7 @@ import { radius, useColors } from '@/theme';
 
 const MENU_ICON = require('@/assets/icons/menu.png');
 const FUNNEL_ICON = require('@/assets/icons/funnel.png');
+const WORDMARK = require('@/assets/images/wordmark.png');
 const ILLUSTRATION_LIGHT = require('@/assets/images/empty-illustration.png');
 const ILLUSTRATION_DARK = require('@/assets/images/empty-illustration-dark.png');
 const VIEWABILITY = { itemVisiblePercentThreshold: 10 };
@@ -95,7 +96,19 @@ export function Home() {
 
   const header = (
     <>
-      <Stack.Screen options={{ title: 'Stim' }} />
+      <Stack.Screen
+        options={{
+          headerTitle: () => (
+            <Image
+              source={WORDMARK}
+              tintColor={colors.primary}
+              style={styles.wordmark}
+              contentFit="contain"
+              accessibilityLabel="Stim"
+            />
+          ),
+        }}
+      />
       <Stack.Toolbar placement="left">
         <Stack.Toolbar.Button
           icon={Platform.OS === 'ios' ? 'line.3.horizontal' : MENU_ICON}
@@ -290,6 +303,7 @@ export function Home() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
+  wordmark: { width: 50, height: 24 },
   list: { paddingBottom: 32 },
   sectionHeader: {
     flexDirection: 'row',

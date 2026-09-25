@@ -85,11 +85,15 @@ enum BrandAssets {
     }
   }
 
-  static func logo(_ scheme: ColorScheme) -> NSImage? { scheme == .dark ? darkLogo : lightLogo }
   static func hero(_ scheme: ColorScheme) -> NSImage? { scheme == .dark ? darkHero : lightHero }
 
-  private static let darkLogo = image("logo-dark.svg")
-  private static let lightLogo = image("logo.svg")
+  /// The wordmark's path art as a template image, so callers tint it with `Theme.primary`.
+  static let wordmark: NSImage? = {
+    let art = image("wordmark.svg")
+    art?.isTemplate = true
+    return art
+  }()
+
   private static let darkHero = image("hero-dark.svg")
   private static let lightHero = image("hero.svg")
 
