@@ -100,21 +100,27 @@ export function useStatus(): StatusPayload | null {
   return useContext(Context).status;
 }
 
-export function useLogs(filter: LogFilter | null, append: (records: LogRecord[], reset: boolean) => void): void {
+export type LogsChange =
+  | { kind: 'reset' }
+  | { kind: 'records'; records: LogRecord[] }
+  | { kind: 'error'; message: string };
+
+export function useLogs(filter: LogFilter | null, onChange: (change: LogsChange) => void): void {
   const { connection } = useMacConnection();
   const key = filter ? JSON.stringify(filter) : null;
   useEffect(() => {
     if (!connection || !key) return;
-    append([], true);
+    onChange({ kind: 'reset' });
     return connection.subscribe(
       'logs.subscribe',
       JSON.parse(key) as LogFilter,
       (event) => {
-        if (event.event === 'logs') append(event.records, false);
+        if (event.event === 'logs') onChange({ kind: 'records', records: event.records });
+        if (event.event === 'error') onChange({ kind: 'error', message: event.error.message });
       },
-      () => append([], true),
+      () => onChange({ kind: 'reset' }),
     );
-  }, [connection, key, append]);
+  }, [connection, key, onChange]);
 }
 
 export function useFrame(

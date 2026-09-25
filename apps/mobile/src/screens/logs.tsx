@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 
 import { ConnectionBanner } from '@/components/connection-banner';
-import { useMacConnection, useLogs, useStatus } from '@/hooks/mac-connection';
+import { useMacConnection, useLogs, useStatus, type LogsChange } from '@/hooks/mac-connection';
 import {
   appendRecords,
   DEFAULT_FILTER,
@@ -43,20 +43,36 @@ export function Logs({ path, errorsOnly }: { path: string; errorsOnly: boolean }
   const [following, setFollowing] = useState(true);
   const list = useRef<FlatList<LogRecord>>(null);
 
-  const append = useCallback((incoming: LogRecord[], reset: boolean) => {
-    setRecords((existing) => (reset ? [] : appendRecords(existing, incoming)));
-    if (reset) setExpanded(new Set());
+  const [problem, setProblem] = useState<string | null>(null);
+  const onLogs = useCallback((change: LogsChange) => {
+    if (change.kind === 'records') return setRecords((existing) => appendRecords(existing, change.records));
+    if (change.kind === 'error') return setProblem(change.message);
+    setRecords([]);
+    setExpanded(new Set());
+    setProblem(null);
   }, []);
   const active = env && filter.slot !== null && !slots.includes(filter.slot) ? { ...filter, slot: null } : filter;
-  useLogs(logFilter(path, active), append);
+  useLogs(logFilter(path, active), onLogs);
 
   const update = (patch: Partial<LogFilterState>) => setFilter((f) => ({ ...f, ...patch }));
-  const toggleSource = (source: LogFilterState['sources'][number]) =>
+  const toggleSource = (source: LogFilterState['sources'][number]) => {
+    if (filter.sources.length === 1 && filter.sources[0] === source) return;
     update({
       sources: filter.sources.includes(source)
         ? filter.sources.filter((s) => s !== source)
         : [...filter.sources, source],
     });
+  };
+
+  const applyGrep = () => {
+    try {
+      new RegExp(grepDraft);
+    } catch (e) {
+      return setProblem(`Invalid search: ${(e as Error).message}`);
+    }
+    setProblem(null);
+    update({ grep: grepDraft });
+  };
 
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
@@ -114,8 +130,8 @@ export function Logs({ path, errorsOnly }: { path: string; errorsOnly: boolean }
         <TextInput
           value={grepDraft}
           onChangeText={setGrepDraft}
-          onSubmitEditing={() => update({ grep: grepDraft })}
-          onBlur={() => update({ grep: grepDraft })}
+          onSubmitEditing={applyGrep}
+          onBlur={applyGrep}
           placeholder="Search (regular expression)"
           placeholderTextColor={colors.tertiary}
           autoCapitalize="none"
@@ -124,6 +140,7 @@ export function Logs({ path, errorsOnly }: { path: string; errorsOnly: boolean }
           accessibilityLabel="Search logs"
           style={[styles.search, { color: colors.text, backgroundColor: colors.surface, borderColor: colors.border }]}
         />
+        {problem ? <Text style={[styles.problem, { color: colors.error }]}>{problem}</Text> : null}
       </View>
       <FlatList
         ref={list}
@@ -242,6 +259,7 @@ const styles = StyleSheet.create({
   toggle: { paddingHorizontal: 11, paddingVertical: 5, borderRadius: radius.chip, borderWidth: 1 },
   toggleText: { fontSize: 13, fontWeight: '500' },
   search: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, fontSize: 14 },
+  problem: { fontSize: 13 },
   empty: { textAlign: 'center', padding: 32, fontSize: 14 },
   logRow: { flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth },
   levelBar: { width: 3 },
