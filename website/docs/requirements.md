@@ -75,7 +75,7 @@ gems and runs `bundle exec pod install`. Run `stim doctor` to check the setup.
 
 ## EAS development builds
 
-`--eas-profile` needs EAS CLI, an authenticated Expo account, and a linked Expo
+`--eas-profile` needs EAS CLI 18.9.0 or later, an authenticated Expo account, and a linked Expo
 project with an internal development profile. It downloads an existing build
 and skips local native compilation, so CocoaPods and Gradle compilation setup
 are not needed for this path. Keep the host tools needed to run the selected

@@ -41,7 +41,7 @@ variant. New cloud builds still require your authorization.
 
 ## Choose a profile
 
-Install EAS CLI and authenticate with `eas login` or `EXPO_TOKEN`. Your Expo
+Install EAS CLI 18.9.0 or later and authenticate with `eas login` or `EXPO_TOKEN`. Your Expo
 project needs installed JavaScript dependencies, `expo-dev-client`, and a link
 to the intended EAS project in `extra.eas.projectId`. See Expo's
 [development build setup](https://docs.expo.dev/develop/development-builds/introduction/?buildenv=build-with-eas)

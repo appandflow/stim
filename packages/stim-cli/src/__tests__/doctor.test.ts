@@ -27,6 +27,7 @@ import {
   checkMetroCache,
   detectFingerprintParity,
   detectLinkedLibraryGitMetadata,
+  checkEasBuildDownload,
   checkRemoteDevice,
   checkSimSlim,
   checkMainCheckout,
@@ -1588,6 +1589,39 @@ test('a fully configured remote says what it will do, including the log gap', ()
   assert(f);
   expect(f.level).toBe('note');
   expect(f.detail).toContain('Native device logs are not captured');
+});
+
+const easBuildDownload = (
+  change: { easJson?: boolean; remoteEas?: boolean; easCliResolvable?: boolean },
+  version: string | null,
+) =>
+  checkEasBuildDownload({
+    easJson: true,
+    remoteEas: false,
+    easCliResolvable: true,
+    readEasCliVersion: () => version,
+    ...change,
+  });
+
+test.each([
+  [{ easJson: false }, 'eas-cli/18.0.3 darwin-arm64 node-v22.22.2'],
+  [{ remoteEas: true }, 'eas-cli/18.0.3 darwin-arm64 node-v22.22.2'],
+  [{ easCliResolvable: false }, 'eas-cli/18.0.3 darwin-arm64 node-v22.22.2'],
+  [{}, 'eas-cli/18.9.0 darwin-arm64 node-v22.22.2'],
+])('--eas-profile needs no eas-cli finding for %j with %s', (change, version) => {
+  expect(easBuildDownload(change, version)).toBeNull();
+});
+
+test.each([
+  ['eas-cli/18.0.3 darwin-arm64 node-v22.22.2', 'eas-cli 18.0.3 cannot download EAS builds'],
+  [null, 'The eas-cli version could not be read'],
+])('an EAS project reports an eas-cli too old for --eas-profile (%s)', (version, title) => {
+  const f = easBuildDownload({}, version);
+  assert(f);
+  expect(f.level).toBe('cost');
+  expect(f.title).toContain(title);
+  expect(f.detail).toContain('STIM_EAS_UNAVAILABLE');
+  expect(f.fix).toContain('18.9.0');
 });
 
 test('the eas backend reports an eas-cli without the simulator commands', () => {

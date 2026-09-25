@@ -21,8 +21,9 @@ Branch on the code, never on the message.`,
     STIM_EAS_UNAVAILABLE: {
       summary: 'EAS lookup/download failed, or another run holds the artifact claim',
       body: () => `STIM_EAS_UNAVAILABLE
-  EAS CLI is unavailable, a profile/fingerprint/list/download operation failed,
-  the response could not be validated, or another run holds the artifact claim.
+  EAS CLI is unavailable or older than 18.9.0, a profile/fingerprint/list/download
+  operation failed, the response could not be validated, or another run holds
+  the artifact claim.
   Follow the printed remedy: inspect the named EAS command or retry once the
   holder finishes. This is not proof that a build is missing. No native build
   is started. See stim guide lifecycle eas.`,

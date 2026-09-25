@@ -48,11 +48,8 @@ import {
   settingShapeErrors,
 } from '../workspace/settings.ts';
 import { readInstalledEasCliVersion, type RemoteDeviceBackend } from '../engine/device-remote.ts';
-import {
-  EAS_CLI_UPGRADE_REMEDY,
-  easCliSimulatorSupport,
-  MIN_EAS_CLI_SIMULATOR_VERSION,
-} from '../engine/eas-simulator.ts';
+import { easCliSupport, easCliUpgradeRemedy, MIN_EAS_CLI_SIMULATOR_VERSION } from '../engine/eas-simulator.ts';
+import { MIN_EAS_CLI_BUILD_DOWNLOAD_VERSION } from '../engine/eas-build.ts';
 import { readAndroidCasToolchain, resolveAndroidCompilerCache } from '../engine/android-cas.ts';
 import { androidPathRoom, androidPathRoomMessage, androidPathRoomRemedy } from '../engine/android-path-limit.ts';
 import { readCxxLauncherStates, type CxxLauncherState } from './doctor-cxx.ts';
@@ -650,7 +647,7 @@ export function checkRemoteDevice({
     );
   }
 
-  const easCli = easCliSimulatorSupport(readEasCliVersion());
+  const easCli = easCliSupport(readEasCliVersion(), MIN_EAS_CLI_SIMULATOR_VERSION);
   if (!easCli.supported) {
     return finding(
       'cost',
@@ -658,7 +655,7 @@ export function checkRemoteDevice({
         ? `A remote device is configured, but eas-cli ${easCli.version} has no EAS Simulator commands`
         : 'A remote device is configured, but the eas-cli version could not be read',
       `The eas backend runs \`eas simulator:*\` commands, which need eas-cli ${MIN_EAS_CLI_SIMULATOR_VERSION} or later. \`stim ios --remote eas\` and \`stim android --remote eas\` refuse with STIM_REMOTE_EAS_UNAVAILABLE before device work.`,
-      `${EAS_CLI_UPGRADE_REMEDY}.`,
+      `${easCliUpgradeRemedy(MIN_EAS_CLI_SIMULATOR_VERSION)}.`,
     );
   }
 
@@ -668,6 +665,44 @@ export function checkRemoteDevice({
     '`ios --remote eas` / `android --remote eas` create an EAS Simulator session named stim-<label> and end it on `stop` and `worktree remove`. The build still runs on this machine; only the device is elsewhere. Native device logs are not captured on a remote device -- the Metro half of the timeline is unaffected.',
     null,
   );
+}
+
+export function checkEasBuildDownload({
+  easJson = false,
+  remoteEas = false,
+  easCliResolvable = false,
+  readEasCliVersion = () => null,
+}: {
+  easJson?: boolean;
+  remoteEas?: boolean;
+  easCliResolvable?: boolean;
+  readEasCliVersion?: () => string | null;
+} = {}): Finding | null {
+  if (!easJson || remoteEas || !easCliResolvable) return null;
+  const easCli = easCliSupport(readEasCliVersion(), MIN_EAS_CLI_BUILD_DOWNLOAD_VERSION);
+  if (easCli.supported) return null;
+  return finding(
+    'cost',
+    easCli.version
+      ? `eas-cli ${easCli.version} cannot download EAS builds for --eas-profile`
+      : 'The eas-cli version could not be read',
+    `\`stim ios --eas-profile\` and \`stim android --eas-profile\` download a finished EAS development build with \`eas build:download --build-id\`, which needs eas-cli ${MIN_EAS_CLI_BUILD_DOWNLOAD_VERSION} or later. Older versions refuse with STIM_EAS_UNAVAILABLE before any download.`,
+    `${easCliUpgradeRemedy(MIN_EAS_CLI_BUILD_DOWNLOAD_VERSION)}.`,
+  );
+}
+
+function projectEasBuildDownloadFinding(
+  projectRoot: string,
+  remoteBackends: readonly RemoteDeviceBackend[],
+  lookupEasCli: (() => boolean) | null,
+): Finding | null {
+  const easJson = existsSync(join(projectRoot, 'eas.json'));
+  return checkEasBuildDownload({
+    easJson,
+    remoteEas: remoteBackends.includes('eas'),
+    easCliResolvable: easJson && (lookupEasCli ? lookupEasCli() : Boolean(resolveEasCliBin(projectRoot))),
+    readEasCliVersion: () => readProjectEasCliVersion(projectRoot),
+  });
 }
 
 export function checkSimSlim({
@@ -907,6 +942,7 @@ export function runDoctor(
       }),
     )
     .filter((remoteFinding): remoteFinding is Finding => remoteFinding !== null);
+  const easBuildDownloadFinding = projectEasBuildDownloadFinding(projectRoot, remoteBackends, lookupEasCli);
 
   const memoryAdvice =
     localIos && !remoteIosSetting(projectSettings) ? hostMemoryPressureAdvice(memoryPressure()) : null;
@@ -927,6 +963,7 @@ export function runDoctor(
     checkAndroidPathRoom(projectRoot, platform, host),
     remoteBuildCache ? checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig) : null,
     easFinding,
+    easBuildDownloadFinding,
     concurrencyFinding,
     memoryAdvice
       ? finding(
