@@ -93,6 +93,7 @@ struct Inspector: View {
   var openLogs: () -> Void
   @EnvironmentObject private var actions: ActionCenter
   @State private var removal: Removal?
+  @State private var confirmingStop = false
   @AppStorage(AppPreferences.Key.editorBundleID) private var editorID = ""
   @AppStorage(AppPreferences.Key.terminalBundleID) private var terminalID = ""
 
@@ -225,8 +226,14 @@ struct Inspector: View {
         }
       } else {
         HStack {
-          Button("Stop") { actions.run("Stop \(env.names.title)", StimCommand(["stop"], cwd: env.path)) }
-            .help("stim stop: halt the dev server and shut the owned devices down")
+          Button("Stop") {
+            if env.remoteDevices?.isEmpty == false {
+              confirmingStop = true
+            } else {
+              stop()
+            }
+          }
+          .help("stim stop: halt the dev server and shut the owned devices down")
           Button("Remove worktree\u{2026}", role: .destructive) {
             let path = env.path
             Task {
@@ -243,6 +250,11 @@ struct Inspector: View {
       }
     }
     .controlSize(.small)
+    .confirmationDialog("Stop this workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
+      Button("Run stim stop", role: .destructive) { stop() }
+    } message: {
+      Text("This also ends the workspace's billable EAS Simulator session.")
+    }
     .confirmationDialog(
       "Remove this worktree?",
       isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
@@ -255,6 +267,10 @@ struct Inspector: View {
     } message: { removal in
       Text(removalMessage(branch: removal.branch))
     }
+  }
+
+  private func stop() {
+    actions.run("Stop \(env.names.title)", StimCommand(["stop"], cwd: env.path))
   }
 
   private func removalMessage(branch: String?) -> String {
