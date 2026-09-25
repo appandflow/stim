@@ -933,7 +933,7 @@ test('machine config opens the owned simulator in Siniulator', async () => {
 test.each([
   ['xcode', 'siniulator', 'open -a Siniulator siniulator://open?udid=UDID-A'],
   ['siniulator', 'xcode', 'open -a Simulator'],
-  ['xcode', 'stim-desktop', 'open -a Stim stim-desktop://open?udid=UDID-A'],
+  ['xcode', 'stim-desktop', 'open -g -a Stim stim-desktop://open?udid=UDID-A'],
   ['unknown', 'xcode', 'open -a Simulator'],
 ] as const)(
   'a %s machine preference is overridden by %s without saving it',
