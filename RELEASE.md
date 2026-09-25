@@ -388,12 +388,20 @@ repeat the affected gate rather than waiving it.
    Approve and deploy). The workflow packs the five tarballs with pnpm, checks
    that no `workspace:` range survived the pack, skips an exact package version
    that already exists, computes the dist-tag (section 1) and publishes every
-   package to it, then verifies all five registry versions and that dist-tag.
+   package to it. Its `smoke` job then waits up to 15 minutes per package for
+   the registry to serve each version, its tarball and the dist-tag, and runs
+   `npx stim@X.Y.Z --version` from a scratch directory.
    A NEW package, a failed publish, or
    a provenance rejection: see
    [docs/release-recovery.md](./docs/release-recovery.md).
 
-8. **Smoke-test the published versions** from a scratch directory:
+8. **Smoke-test the published versions** from a scratch directory. npm can
+   take several minutes to serve a new version: for 1.9.0 the metadata
+   appeared about 5 minutes after the publish and the tarballs about 8, and
+   until then `npx` fails with E404. A red `smoke` job after a green
+   `publish` job means the registry is slow, not that the publish failed:
+   wait, then re-run the failed job (or these commands). Do not republish or
+   bump the version.
    ```bash
    version=X.Y.Z
    cd /tmp && npx "stim@$version" --version
