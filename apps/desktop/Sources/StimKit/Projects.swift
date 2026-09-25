@@ -85,3 +85,31 @@ public func projectSummaries(
     ($0.live > 0 ? 0 : 1, $0.project.name.lowercased()) < ($1.live > 0 ? 0 : 1, $1.project.name.lowercased())
   }
 }
+
+/// A project in the sidebar tree and the rows under it, live workspaces first.
+/// `summary` counts every workspace, including the ones a filter hides.
+public struct ProjectTree: Hashable, Sendable {
+  public var summary: ProjectSummary
+  public var environments: [Workspace]
+  public var worktrees: [UnprovisionedWorktree]
+}
+
+/// Groups workspaces and worktrees with no environment into a tree in the order of `projectSummaries`.
+/// `liveOnly` keeps live workspaces only; `hidesUnprovisioned` drops worktrees with no environment.
+/// A project left with no rows is omitted.
+public func projectTrees(
+  environments: [Workspace], unprovisioned: [UnprovisionedWorktree], project: (String) -> Project,
+  liveOnly: Bool = false, hidesUnprovisioned: Bool = false
+) -> [ProjectTree] {
+  let envs = Dictionary(grouping: environments) { project($0.path) }
+  let worktrees = Dictionary(grouping: unprovisioned) { project($0.path) }
+  return projectSummaries(environments: environments, unprovisioned: unprovisioned, project: project).compactMap {
+    summary in
+    let all = envs[summary.project] ?? []
+    let shown = liveOnly ? all.filter(\.live) : all.filter(\.live) + all.filter { !$0.live }
+    let tree = ProjectTree(
+      summary: summary, environments: shown,
+      worktrees: liveOnly || hidesUnprovisioned ? [] : worktrees[summary.project] ?? [])
+    return tree.environments.isEmpty && tree.worktrees.isEmpty ? nil : tree
+  }
+}

@@ -27,8 +27,15 @@ in the workspace directory:
   unrecognized `stim-*` devices as kept, because `stim gc --delete` never
   touches them.
 
+The sidebar lists projects as a tree. Each project expands to its workspaces,
+live ones first, and selecting the project row shows all of its workspaces and
+devices. Projects with a live workspace start expanded, and the app remembers
+each project you expand or collapse. The filter button next to the logo offers
+**Live only**, which hides idle workspaces and projects with nothing live, and
+**Hide no-environment worktrees**; its icon is filled while either is on.
+
 A linked worktree Stim has not registered yet, listed in `unprovisionedWorktrees`
-of `stim status --json`, appears under Idle in the sidebar with its project and
+of `stim status --json`, appears in the sidebar under its project and
 is marked "no environment". The project comes from the entry's `repository`,
 so the app does not run git in a worktree that may sit in a macOS-protected
 folder. It has no action. Selecting it shows its path and
@@ -274,7 +281,8 @@ under the field. `android.keystorePassword` is never shown. Keys Stim does not
 read are listed read-only.
 
 The **App** tab holds preferences kept in `UserDefaults`, never in Stim's
-config: appearance (Auto, Light, Dark), showing idle workspaces, opening to all
+config: appearance (Auto, Light, Dark), showing idle workspaces (the sidebar's
+Live only filter), opening to all
 devices or the last project, device tile size, a live frame rate cap, pausing
 frames while the window is hidden, the editor and terminal the workspace
 inspector opens, notifications, a menu bar extra with the live workspace count
