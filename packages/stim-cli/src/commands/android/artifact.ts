@@ -10,10 +10,8 @@ import {
 import type { FingerprintSource } from '@expo/fingerprint';
 import {
   buildCacheKey,
-  describeFingerprintMiss,
   filesystemBuildCapability,
   fingerprintDiffRecord,
-  fingerprintDiffSuffix,
   prepareProviderDownloadDir,
   providerDownloadPath,
   refingerprintAfterMutation,
@@ -24,6 +22,7 @@ import {
   type storedAssetManifest,
   type untrackedNativeFiles,
 } from '../../cache/build-cache.ts';
+import { explainBuildMiss, fingerprintErrorMissReason, skippedMissReason } from '../../cache/miss-reason.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
 import {
   waitForSharedBuild,
@@ -285,18 +284,25 @@ export async function acquireAndroidArtifact(
       hash = computed?.hash ?? '';
       fingerprintSources = computed?.sources ?? [];
     } catch (err) {
+      const message = String((err as Error)?.message || err);
+      record.cacheSkipped = !useBuildCache;
+      record.missReason = fingerprintErrorMissReason(message);
       phaseFailure = fail(
         NO_FINGERPRINT,
-        `@expo/fingerprint could not fingerprint ${root}: ${(err as Error)?.message || err}`,
+        `@expo/fingerprint could not fingerprint ${root}: ${message}`,
         'Fix the @expo/fingerprint error above, then retry.',
+        { lastBuildStatus: true },
       );
       return false;
     }
     if (!hash) {
+      record.cacheSkipped = !useBuildCache;
+      record.missReason = fingerprintErrorMissReason('no hash');
       phaseFailure = fail(
         NO_FINGERPRINT,
         `@expo/fingerprint returned no hash for ${root}, so the build cache cannot be addressed.`,
         'Check the project native inputs and the @expo/fingerprint error above, then retry.',
+        { lastBuildStatus: true },
       );
       return false;
     }
@@ -320,27 +326,10 @@ export async function acquireAndroidArtifact(
     const cached = found?.tier === 'local' ? found.path : null;
     record.cacheHit = cached ? 'local' : false;
     record.cacheSkipped = !useBuildCache;
-    let missDiff = '';
-    let missUntracked: string | null = null;
-    if (!cached) {
-      const lastBuild = (readState(root)?.lastBuild ?? null) as Record<string, unknown> | null;
-      const miss = describeFingerprintMiss({
-        platform: PLATFORM,
-        current: { hash, sources: fingerprintSources },
-        lastBuild,
-      });
-      if (miss) {
-        missDiff = fingerprintDiffSuffix(miss.changed);
-        writer.write(fingerprintDiffRecord({ changed: miss.changed, previousHash: miss.previousHash, hash }));
-      } else if (useBuildCache) {
-        missUntracked = untrackedMissLine(untracked({ projectRoot: root }));
-      }
-    }
     phase(
       'fingerprint',
-      `${shortHash(hash)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : !requestedBuildCache ? ' (--no-build-cache)' : ' (cache reuse off in config)'} ${fingerprintTimer()}${missDiff}`,
+      `${shortHash(hash)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : !requestedBuildCache ? ' (--no-build-cache)' : ' (cache reuse off in config)'} ${fingerprintTimer()}`,
     );
-    if (missUntracked) phase('fingerprint', chalk.dim(missUntracked));
     if (found?.tier === 'provider') {
       record.cacheHit = 'remote';
       providerName = found.providerName ?? null;
@@ -504,6 +493,40 @@ export async function acquireAndroidArtifact(
     }
   }
 
+  function explainMiss(rekeyedBy: string[]): void {
+    if (swapFellBack) {
+      record.missReason = skippedMissReason('the cached APK could not be reused, so this run built it fresh');
+    } else if (!useBuildCache) {
+      record.missReason = skippedMissReason(
+        requestedBuildCache ? 'cache reuse off in config' : 'cache reuse turned off by --no-build-cache',
+      );
+    } else {
+      const current = { hash: storeHash, sources: storeSources };
+      const explained = explainBuildMiss({
+        root,
+        platform: PLATFORM,
+        current,
+        rekeyedBy,
+        baselineDeps: { readState },
+      });
+      record.missReason = explained.reason;
+      if (explained.previousHash && explained.changedNames.length) {
+        writer.write(
+          fingerprintDiffRecord({
+            changed: explained.changedNames,
+            previousHash: explained.previousHash,
+            hash: current.hash,
+          }),
+        );
+      }
+    }
+    phase('cache', `miss: ${record.missReason.summary}`);
+    if (record.missReason.kind === 'no-baseline') {
+      const line = untrackedMissLine(untracked({ projectRoot: root }));
+      if (line) phase('fingerprint', chalk.dim(line));
+    }
+  }
+
   async function buildArtifact(): Promise<boolean> {
     if (!apkPath) {
       try {
@@ -523,6 +546,7 @@ export async function acquireAndroidArtifact(
           }
         }
 
+        const rekeyedBy: string[] = [];
         const prebuildPlan = planPrebuildFor(root, PLATFORM, {
           isExpo,
           fingerprint: hash,
@@ -564,6 +588,7 @@ export async function acquireAndroidArtifact(
           });
           if (after) recordPrebuild(root, PLATFORM, after.hash);
           if (after?.moved) {
+            rekeyedBy.push('prebuild');
             storeHash = after.hash;
             storeSources = after.sources;
             storeKey = buildCacheKey(PLATFORM, after.hash, buildRunOptions);
@@ -591,6 +616,7 @@ export async function acquireAndroidArtifact(
         }
 
         if (!apkPath) {
+          explainMiss(rekeyedBy);
           step('compile');
           phase('build', `compiling ${variant || 'debug'} with Gradle`);
           const built = await build(

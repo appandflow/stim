@@ -2,7 +2,7 @@ import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { readJsonObject } from './json-file.ts';
 import { workspaceLogsDir, workspaceStateFile } from './paths.ts';
-import type { LastBuildReport, StatsPlatform } from './status.ts';
+import type { BuildMissChange, BuildMissReason, LastBuildReport, StatsPlatform } from './status.ts';
 
 export interface WorkspaceState {
   supervisor?: Record<string, unknown>;
@@ -37,6 +37,71 @@ export const LAST_BUILD_KEYS: Readonly<Record<StatsPlatform, string>> = {
   android: 'lastAndroidBuild',
 };
 
+const MISS_KINDS: ReadonlySet<string> = new Set([
+  'changed',
+  'no-baseline',
+  'same-sources',
+  'cache-skipped',
+  'fingerprint-error',
+]);
+const MISS_CATEGORIES: ReadonlySet<string> = new Set([
+  'native-dependency',
+  'config-plugin',
+  'app-config',
+  'app-asset',
+  'package',
+  'native-dir',
+  'autolinking',
+  'package-scripts',
+  'file',
+  'other',
+]);
+const MISS_CHANGE_CAP = 20;
+
+function missChange(value: unknown): BuildMissChange | null {
+  if (!value || typeof value !== 'object') return null;
+  const { source, change, category } = value as Record<string, unknown>;
+  if (typeof source !== 'string' || (change !== 'added' && change !== 'removed' && change !== 'changed')) return null;
+  return {
+    source,
+    change,
+    category:
+      typeof category === 'string' && MISS_CATEGORIES.has(category)
+        ? (category as BuildMissChange['category'])
+        : 'other',
+  };
+}
+
+function missReason(value: unknown): BuildMissReason | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.kind !== 'string' || !MISS_KINDS.has(record.kind) || typeof record.summary !== 'string')
+    return null;
+  const changes = (Array.isArray(record.changes) ? record.changes : [])
+    .map(missChange)
+    .filter((change): change is BuildMissChange => change !== null)
+    .slice(0, MISS_CHANGE_CAP);
+  const baseline = record.baseline as Record<string, unknown> | null | undefined;
+  return {
+    kind: record.kind as BuildMissReason['kind'],
+    summary: record.summary,
+    changes,
+    changeCount:
+      typeof record.changeCount === 'number' && record.changeCount >= changes.length
+        ? record.changeCount
+        : changes.length,
+    baseline:
+      baseline &&
+      typeof baseline.fingerprint === 'string' &&
+      (baseline.from === 'workspace' || baseline.from === 'project')
+        ? { fingerprint: baseline.fingerprint, from: baseline.from }
+        : null,
+    rekeyedBy: Array.isArray(record.rekeyedBy)
+      ? record.rekeyedBy.filter((step): step is string => typeof step === 'string')
+      : [],
+  };
+}
+
 function lastBuildReport(platform: StatsPlatform, value: unknown): LastBuildReport | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
@@ -44,6 +109,7 @@ function lastBuildReport(platform: StatsPlatform, value: unknown): LastBuildRepo
   if (typeof record.startedAt !== 'string') return null;
   const durationMs = typeof record.durationMs === 'number' && record.durationMs >= 0 ? record.durationMs : null;
   const finished = new Date(Date.parse(record.startedAt) + (durationMs ?? Number.NaN));
+  const reason = record.cacheHit === 'local' || record.cacheHit === 'remote' ? null : missReason(record.missReason);
   return {
     platform,
     status: record.status,
@@ -54,6 +120,7 @@ function lastBuildReport(platform: StatsPlatform, value: unknown): LastBuildRepo
     startedAt: record.startedAt,
     finishedAt: Number.isNaN(finished.getTime()) ? null : finished.toISOString(),
     ...(typeof record.errorCode === 'string' ? { errorCode: record.errorCode } : {}),
+    ...(reason ? { missReason: reason } : {}),
   };
 }
 

@@ -114,7 +114,7 @@ export function storeBuild(
     writeMetadata: (staging) => {
       if (Array.isArray(options.sources)) {
         try {
-          writeFileSync(join(staging, SOURCES_FILE), JSON.stringify(options.sources));
+          writeFileSync(join(staging, SOURCES_FILE), JSON.stringify(options.sources.map(withoutContents)));
         } catch {}
       }
       if (options.assetManifest) {
@@ -197,6 +197,10 @@ export function providerUploadOutcome(
 
 const SOURCES_FILE = 'fingerprint-sources.json';
 
+function withoutContents(source: FingerprintSource): FingerprintSource {
+  return source.type === 'contents' ? { ...source, contents: '' } : source;
+}
+
 export function storedSources(platform: string, key: string, root: string = cacheRoot()): FingerprintSource[] | null {
   try {
     const parsed: unknown = JSON.parse(readFileSync(join(entryDir(platform, key, root), SOURCES_FILE), 'utf-8'));
@@ -221,34 +225,55 @@ function sourceName(source: unknown): string | null {
   return null;
 }
 
-function diffItemName(item: unknown): string | null {
-  const o = item as Record<string, unknown> | null | undefined;
-  for (const candidate of [o, o?.addedSource, o?.removedSource, o?.afterSource, o?.beforeSource]) {
-    const name = sourceName(candidate);
-    if (name) return name;
-  }
-  return null;
+function sourceReasons(source: unknown): string[] {
+  const reasons = (source as Record<string, unknown> | null | undefined)?.reasons;
+  return Array.isArray(reasons) ? reasons.filter((reason): reason is string => typeof reason === 'string') : [];
 }
 
-export function compareSourceLists(previous: unknown[], current: unknown[]): string[] {
-  const previousByName = new Map<string, string | null>();
+export interface SourceChange {
+  name: string;
+  change: 'added' | 'removed' | 'changed';
+  reasons: string[];
+}
+
+function diffItemChange(item: unknown): SourceChange | null {
+  const o = item as Record<string, unknown> | null | undefined;
+  const [change, source] =
+    o?.op === 'added'
+      ? (['added', o.addedSource] as const)
+      : o?.op === 'removed'
+        ? (['removed', o.removedSource] as const)
+        : (['changed', o?.afterSource ?? o?.beforeSource] as const);
+  const name = sourceName(source);
+  return name === null ? null : { name, change, reasons: sourceReasons(source) };
+}
+
+export function compareSourceLists(previous: unknown[], current: unknown[]): SourceChange[] {
+  const previousByName = new Map<string, { hash: string | null; reasons: string[] }>();
   for (const source of previous) {
     const name = sourceName(source);
-    if (name !== null) previousByName.set(name, ((source as Record<string, unknown>).hash as string | null) ?? null);
+    if (name !== null) {
+      previousByName.set(name, {
+        hash: ((source as Record<string, unknown>).hash as string | null) ?? null,
+        reasons: sourceReasons(source),
+      });
+    }
   }
-  const changed: string[] = [];
+  const changes: SourceChange[] = [];
   const seen = new Set<string>();
   for (const source of current) {
     const name = sourceName(source);
     if (name === null || seen.has(name)) continue;
     seen.add(name);
-    const hash = (source as Record<string, unknown>).hash;
-    if (!previousByName.has(name) || previousByName.get(name) !== (hash ?? null)) changed.push(name);
+    const hash = (source as Record<string, unknown>).hash ?? null;
+    const before = previousByName.get(name);
+    if (!before) changes.push({ name, change: 'added', reasons: sourceReasons(source) });
+    else if (before.hash !== hash) changes.push({ name, change: 'changed', reasons: sourceReasons(source) });
   }
-  for (const [name] of previousByName) {
-    if (!seen.has(name)) changed.push(name);
+  for (const [name, before] of previousByName) {
+    if (!seen.has(name)) changes.push({ name, change: 'removed', reasons: before.reasons });
   }
-  return changed;
+  return changes;
 }
 
 export function diffFingerprintSources({
@@ -261,7 +286,7 @@ export function diffFingerprintSources({
   previousHash?: string | null;
   current: ProjectFingerprint;
   differ?: typeof expoFingerprint.diffFingerprints | null;
-}): string[] {
+}): SourceChange[] {
   if (typeof differ === 'function') {
     try {
       const items = differ(
@@ -269,49 +294,20 @@ export function diffFingerprintSources({
         { sources: current.sources, hash: current.hash },
       );
       if (Array.isArray(items)) {
-        const names: string[] = [];
+        const changes: SourceChange[] = [];
         const seen = new Set<string>();
         for (const item of items) {
-          const name = diffItemName(item);
-          if (name !== null && !seen.has(name)) {
-            seen.add(name);
-            names.push(name);
+          const change = diffItemChange(item);
+          if (change !== null && !seen.has(change.name)) {
+            seen.add(change.name);
+            changes.push(change);
           }
         }
-        return names;
+        return changes;
       }
     } catch {}
   }
   return compareSourceLists(previous, current.sources);
-}
-
-export function fingerprintDiffSuffix(changed: string[]): string {
-  if (!changed.length) return '';
-  const shown = changed.slice(0, 3).join(', ');
-  return ` -- ${changed.length} source${changed.length === 1 ? '' : 's'} changed: ${shown}`;
-}
-
-export function describeFingerprintMiss({
-  platform,
-  current,
-  lastBuild,
-  root = cacheRoot(),
-  differ = expoFingerprint.diffFingerprints,
-}: {
-  platform: string;
-  current: ProjectFingerprint;
-  lastBuild: Record<string, unknown> | null | undefined;
-  root?: string;
-  differ?: typeof expoFingerprint.diffFingerprints | null;
-}): { changed: string[]; previousHash: string } | null {
-  if (!lastBuild || lastBuild.platform !== platform) return null;
-  const previousHash = typeof lastBuild.fingerprint === 'string' ? lastBuild.fingerprint : null;
-  const previousKey = typeof lastBuild.cacheKey === 'string' ? lastBuild.cacheKey : null;
-  if (!previousHash || !previousKey || previousHash === current.hash) return null;
-  const previous = storedSources(platform, previousKey, root);
-  if (!previous) return null;
-  const changed = diffFingerprintSources({ previous, previousHash, current, differ });
-  return changed.length ? { changed, previousHash } : null;
 }
 
 export async function refingerprintAfterMutation({

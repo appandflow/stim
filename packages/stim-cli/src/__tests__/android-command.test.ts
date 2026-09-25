@@ -2206,6 +2206,7 @@ describe('the remote cache', () => {
     expect(h.calls.resolveRemoteBuild.length).toBe(0);
     expect(h.calls.uploadRemoteBuild.length).toBe(0);
     expect(labelled(h.stderr, 'cache')).toEqual([
+      phaseLine('cache', 'miss: no earlier build of this project in the cache to compare with'),
       phaseLine('cache', 'compilation cache 176 hits / 204 misses (46.3%)'),
     ]);
   });

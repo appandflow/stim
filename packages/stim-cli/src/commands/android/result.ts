@@ -15,7 +15,7 @@ import type { RemoteUploadLike, LaunchResultLike, AndroidRecord, AndroidWriter }
 import type { RunRecorder } from '../../engine/stats.ts';
 import type { ReclaimedStep } from '../../budget.ts';
 import { writeWorkspaceState } from '../../workspace/workspace-state.ts';
-import { LAST_BUILD_KEYS } from '@stim-cli/core/state';
+import { LAST_BUILD_KEYS, type BuildMissReason } from '@stim-cli/core/state';
 
 export function androidFacts({
   slot,
@@ -110,7 +110,9 @@ export function lastBuildRecord({
   errorCode = null,
   avdName = null,
   deviceName = null,
+  missReason = null,
 }: {
+  missReason?: BuildMissReason | null;
   fingerprint?: string | null;
   cacheKey?: string | null;
   cacheHit?: boolean | string;
@@ -139,6 +141,7 @@ export function lastBuildRecord({
     status,
   };
   if (errorCode) record.errorCode = errorCode;
+  if (missReason && !cacheLevel(cacheHit)) record.missReason = missReason;
   return record;
 }
 

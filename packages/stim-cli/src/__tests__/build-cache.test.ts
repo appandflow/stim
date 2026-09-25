@@ -22,11 +22,9 @@ import {
   buildCacheKey,
   filesystemBuildCapability,
   compareSourceLists,
-  describeFingerprintMiss,
   diffFingerprintSources,
   entryDir,
   fingerprintDiffRecord,
-  fingerprintDiffSuffix,
   DEFAULT_FINGERPRINT_IGNORES,
   fingerprintProject,
   prepareProviderDownloadDir,
@@ -360,6 +358,23 @@ test('storeBuild writes fingerprint-sources.json beside the artifact, and stored
   expect(artifactIn(entryDir('ios', 'k1', root))).toBe(join(entryDir('ios', 'k1', root), 'MyApp.app'));
 });
 
+test('storeBuild keeps the hash of a contents source but not its contents, so an entry stays small', () => {
+  resetExecutor();
+  const build = join(root, 'build', 'MyApp.app');
+  mkdirSync(build, { recursive: true });
+  writeFileSync(join(build, 'bin'), 'x');
+  const config: FingerprintSource = {
+    type: 'contents',
+    id: 'expoAutolinkingConfig:ios',
+    contents: 'x'.repeat(10_000),
+    reasons: ['expoAutolinkingIos'],
+    hash: 'cc',
+  };
+  storeBuild('ios', 'k3', build, { root, sources: [config, fpFile('ios/Podfile.lock', 'aa')] });
+
+  expect(storedSources('ios', 'k3', root)).toEqual([{ ...config, contents: '' }, fpFile('ios/Podfile.lock', 'aa')]);
+});
+
 test('storedSources is null for an entry stored without sources, or with unreadable JSON', () => {
   resetExecutor();
   const build = join(root, 'build', 'MyApp.app');
@@ -445,7 +460,11 @@ test('compareSourceLists reports changed, added and removed names, current order
     { type: 'contents', id: 'expoConfig', hash: 'bb' },
     { type: 'file', filePath: 'ios/New.swift', hash: 'dd' },
   ];
-  expect(compareSourceLists(previous, current)).toEqual(['ios/Podfile.lock', 'ios/New.swift', 'ios/App']);
+  expect(compareSourceLists(previous, current)).toEqual([
+    { name: 'ios/Podfile.lock', change: 'changed', reasons: [] },
+    { name: 'ios/New.swift', change: 'added', reasons: [] },
+    { name: 'ios/App', change: 'removed', reasons: [] },
+  ]);
 });
 
 test('compareSourceLists is empty when nothing moved, and ignores unnamed sources', () => {
@@ -462,20 +481,39 @@ test('diffFingerprintSources prefers the project differ and falls back when it t
     seen.push([fp1, fp2]);
     return [{ op: 'changed', beforeSource: fpFile('a', '1'), afterSource: fpFile('a', '2') }];
   };
-  expect(diffFingerprintSources({ previous, previousHash: 'h1', current, differ })).toEqual(['a']);
+  const changedA = [{ name: 'a', change: 'changed', reasons: [] }];
+  expect(diffFingerprintSources({ previous, previousHash: 'h1', current, differ })).toEqual(changedA);
   expect(seen.length).toBe(1);
 
   const throwing = () => {
     throw new Error('old @expo/fingerprint');
   };
-  expect(diffFingerprintSources({ previous, previousHash: 'h1', current, differ: throwing })).toEqual(['a']);
-  expect(diffFingerprintSources({ previous, previousHash: 'h1', current, differ: null })).toEqual(['a']);
+  expect(diffFingerprintSources({ previous, previousHash: 'h1', current, differ: throwing })).toEqual(changedA);
+  expect(diffFingerprintSources({ previous, previousHash: 'h1', current, differ: null })).toEqual(changedA);
 });
 
-test('fingerprintDiffSuffix caps the line at three names and counts the rest', () => {
-  expect(fingerprintDiffSuffix([])).toBe('');
-  expect(fingerprintDiffSuffix(['a'])).toBe(' -- 1 source changed: a');
-  expect(fingerprintDiffSuffix(['a', 'b', 'c', 'd', 'e'])).toBe(' -- 5 sources changed: a, b, c');
+test('the real @expo/fingerprint differ reports additions and removals with their reasons', () => {
+  const kept = fpDir('node_modules/expo-camera/ios', 'k1');
+  const added: FingerprintSource = {
+    type: 'dir',
+    filePath: 'node_modules/expo-clipboard/ios',
+    reasons: ['expoAutolinkingIos'],
+    hash: 'c1',
+  };
+  const removed = fpFile('patches/react-native+0.80.0.patch', 'p1');
+  const changes = diffFingerprintSources({
+    previous: [removed, kept],
+    previousHash: 'h1',
+    current: { hash: 'h2', sources: [kept, added] },
+    differ: expoFingerprint.diffFingerprints,
+  });
+  expect(changes).toEqual(
+    expect.arrayContaining([
+      { name: 'node_modules/expo-clipboard/ios', change: 'added', reasons: ['expoAutolinkingIos'] },
+      { name: 'patches/react-native+0.80.0.patch', change: 'removed', reasons: [] },
+    ]),
+  );
+  expect(changes).toHaveLength(2);
 });
 
 test('fingerprintDiffRecord caps the logged list at 20 names and carries the total count', () => {
@@ -489,47 +527,6 @@ test('fingerprintDiffRecord caps the logged list at 20 names and carries the tot
   expect(record.msg).toMatch(/25 sources changed/);
   expect(record.msg).toMatch(/and 5 more/);
   expect(String(record.msg)).not.toContain('src/file-20');
-});
-
-test('describeFingerprintMiss only speaks for the same platform, a different hash, and a stored entry', () => {
-  resetExecutor();
-  const build = join(root, 'build', 'MyApp.app');
-  mkdirSync(build, { recursive: true });
-  writeFileSync(join(build, 'bin'), 'x');
-  storeBuild('ios', 'old-key', build, {
-    root,
-    sources: [fpFile('ios/Podfile.lock', 'aa')],
-  });
-
-  const current = { hash: 'new-hash', sources: [fpFile('ios/Podfile.lock', 'a2')] };
-  const lastBuild = { platform: 'ios', fingerprint: 'old-hash', cacheKey: 'old-key' };
-  const differ = null;
-
-  const miss = describeFingerprintMiss({ platform: 'ios', current, lastBuild, root, differ });
-  assert(miss);
-  expect(miss.previousHash).toBe('old-hash');
-  expect(miss.changed).toEqual(['ios/Podfile.lock']);
-
-  expect(describeFingerprintMiss({ platform: 'android', current, lastBuild, root, differ })).toBe(null);
-  expect(
-    describeFingerprintMiss({
-      platform: 'ios',
-      current: { ...current, hash: 'old-hash' },
-      lastBuild,
-      root,
-      differ,
-    }),
-  ).toBe(null);
-  expect(describeFingerprintMiss({ platform: 'ios', current, lastBuild: null, root, differ })).toBe(null);
-  expect(
-    describeFingerprintMiss({
-      platform: 'ios',
-      current,
-      lastBuild: { ...lastBuild, cacheKey: 'never-stored' },
-      root,
-      differ,
-    }),
-  ).toBe(null);
 });
 
 describe('refingerprintAfterMutation', () => {

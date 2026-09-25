@@ -10,16 +10,15 @@ import {
 import type { FingerprintSource } from '@expo/fingerprint';
 import {
   buildCacheKey,
-  describeFingerprintMiss,
   filesystemBuildCapability,
   fingerprintDiffRecord,
-  fingerprintDiffSuffix,
   prepareProviderDownloadDir,
   providerDownloadPath,
   providerUploadOutcome,
   refingerprintAfterMutation,
   untrackedMissLine,
 } from '../../cache/build-cache.ts';
+import { explainBuildMiss, fingerprintErrorMissReason, skippedMissReason } from '../../cache/miss-reason.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
 import { waitForSharedBuild, type BuildLockHandle } from '../../engine/build-lock.ts';
 import type { BuildSlotHandle } from '../../engine/build-slots.ts';
@@ -40,6 +39,7 @@ import { artifactCachePolicy, type Optimizations } from '../../optimizations.ts'
 import { claimFailure } from '../../ownership-claim.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import type { CacheHitLevel, CompilationCacheActivity } from '../../engine/build-facts.ts';
+import type { BuildMissReason } from '@stim-cli/core/state';
 import type { IosDeps } from './dependencies.ts';
 import { finishIosUpload } from './result.ts';
 import { PLATFORM, isReleaseConfiguration, podAction, printDiagnostics, xcodeFailureReport } from './support.ts';
@@ -126,6 +126,7 @@ export interface PreparedIosArtifact {
     hit: CacheHitLevel;
     providerName: string | null;
     readEnabled: boolean;
+    missReason: BuildMissReason | null;
     waitedForBuild: WaitedForBuild | null;
     compilation: CompilationCacheActivity;
   };
@@ -241,6 +242,7 @@ export async function acquireIosArtifact(
   let releasedWait: { facts: WaitedForBuild; who: string } | null = null;
   let swapFellBack = false;
   let buildFailure: BuildFailureFields = {};
+  let missReason: BuildMissReason | null = null;
 
   async function resolveInitialFingerprint(): Promise<void> {
     if (easBuild?.ok) {
@@ -269,19 +271,22 @@ export async function acquireIosArtifact(
     step('cache-lookup');
     const fingerprintTimer = stepTimer(d.now);
     let computedFingerprint: string | null;
+    let fingerprintError = 'no hash';
     try {
       const computed = await d.fingerprintProject(root, { platform: PLATFORM });
       computedFingerprint = computed?.hash ?? null;
       fingerprintSources = computed?.sources ?? [];
     } catch (e) {
       computedFingerprint = null;
-      note(chalk.dim(`Fingerprinting failed: ${(e as Error)?.message || e}`));
+      fingerprintError = String((e as Error)?.message || e);
+      note(chalk.dim(`Fingerprinting failed: ${fingerprintError}`));
     }
     if (!computedFingerprint) {
       fail({
         code: 'STIM_NO_FINGERPRINT',
         message: `Could not fingerprint ${root}: @expo/fingerprint produced no hash for it.`,
         remedy: 'Check the project native inputs and the @expo/fingerprint error above, then retry.',
+        build: { cacheSkipped: !useBuildCache, missReason: fingerprintErrorMissReason(fingerprintError) },
       });
     }
     fingerprint = computedFingerprint;
@@ -307,29 +312,10 @@ export async function acquireIosArtifact(
     });
     const cached = found?.tier === 'local' ? found.path : null;
     cacheHit = cached ? 'local' : false;
-    let missDiff = '';
-    let missUntracked: string | null = null;
-    if (!cached) {
-      const lastBuild = (d.readWorkspaceState(root)?.lastBuild ?? null) as Record<string, unknown> | null;
-      const miss = describeFingerprintMiss({
-        platform: PLATFORM,
-        current: { hash: fingerprint, sources: fingerprintSources },
-        lastBuild,
-      });
-      if (miss) {
-        missDiff = fingerprintDiffSuffix(miss.changed);
-        logWriter().write(
-          fingerprintDiffRecord({ changed: miss.changed, previousHash: miss.previousHash, hash: fingerprint }),
-        );
-      } else if (useBuildCache) {
-        missUntracked = untrackedMissLine(d.untrackedNativeFiles({ projectRoot: root }));
-      }
-    }
     phase(
       'fingerprint',
-      `${shortHash(fingerprint)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : cache.disabledByFlag ? ' (--no-build-cache)' : ' (cache reuse off in config)'} ${fingerprintTimer()}${missDiff}`,
+      `${shortHash(fingerprint)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : cache.disabledByFlag ? ' (--no-build-cache)' : ' (cache reuse off in config)'} ${fingerprintTimer()}`,
     );
-    if (missUntracked) note(chalk.dim(phaseLine('fingerprint', missUntracked)));
     if (found?.tier === 'provider') {
       cacheHit = 'remote';
       providerName = found.providerName ?? null;
@@ -544,6 +530,41 @@ export async function acquireIosArtifact(
     }
   }
 
+  function explainMiss(rekeyedBy: string[]): void {
+    if (swapFellBack) {
+      missReason = skippedMissReason('the cached app could not be reused, so this run built it fresh');
+    } else if (!useBuildCache) {
+      missReason = skippedMissReason(
+        cache.disabledByFlag ? 'cache reuse turned off by --no-build-cache' : 'cache reuse off in config',
+      );
+    } else {
+      const current = { hash: storeHash ?? fingerprint, sources: storeSources };
+      const explained = explainBuildMiss({
+        root,
+        platform: PLATFORM,
+        current,
+        rekeyedBy,
+        baselineDeps: { readState: d.readWorkspaceState },
+      });
+      missReason = explained.reason;
+      if (explained.previousHash && explained.changedNames.length) {
+        logWriter().write(
+          fingerprintDiffRecord({
+            changed: explained.changedNames,
+            previousHash: explained.previousHash,
+            hash: current.hash,
+          }),
+        );
+      }
+    }
+    buildFailure = { ...buildFailure, missReason };
+    phase('cache', `miss: ${missReason.summary}`);
+    if (missReason.kind === 'no-baseline') {
+      const untracked = untrackedMissLine(d.untrackedNativeFiles({ projectRoot: root }));
+      if (untracked) note(chalk.dim(phaseLine('fingerprint', untracked)));
+    }
+  }
+
   async function buildArtifact(): Promise<void> {
     buildFailure = { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache };
     if (!appPath) {
@@ -564,6 +585,7 @@ export async function acquireIosArtifact(
       }
 
       const mutatingSteps: string[] = [];
+      const rekeyedBy: string[] = [];
 
       const prebuild = d.planPrebuild(root, PLATFORM, { isExpo, fingerprint, sources: fingerprintSources });
       if (prebuild === 'refuse') {
@@ -646,6 +668,7 @@ export async function acquireIosArtifact(
             ),
           );
         } else if (after.moved) {
+          rekeyedBy.push(...mutatingSteps);
           storeHash = after.hash;
           storeSources = after.sources;
           storeKey = buildCacheKey(PLATFORM, after.hash, {
@@ -683,6 +706,7 @@ export async function acquireIosArtifact(
       }
 
       if (!appPath) {
+        explainMiss(rekeyedBy);
         step('compile');
         phase('build', `compiling ${configuration || 'Debug'} with xcodebuild`);
         const result = await d.buildIos({
@@ -774,6 +798,7 @@ export async function acquireIosArtifact(
         hit: cacheHit,
         providerName: remote?.name ?? providerName,
         readEnabled: useBuildCache,
+        missReason: cacheHit ? null : missReason,
         waitedForBuild,
         compilation: compilationCache,
       },

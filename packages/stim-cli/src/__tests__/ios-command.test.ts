@@ -1364,6 +1364,7 @@ describe('the remote cache', () => {
     expect(!calls.order.includes('resolveRemote')).toBeTruthy();
     expect(!calls.order.includes('uploadRemote')).toBeTruthy();
     expect(errs.filter((line) => line.startsWith(phaseLine('cache', '')))).toEqual([
+      phaseLine('cache', 'miss: no earlier build of this project in the cache to compare with'),
       phaseLine('cache', 'compilation cache unavailable; Xcode did not report reliable statistics'),
     ]);
   });
@@ -3372,10 +3373,11 @@ describe('--remote', () => {
   });
 });
 
-test('a miss with a prior stored entry appends the changed-sources suffix and logs fingerprint_diff', async () => {
+test('a miss against a stored entry says what changed, logs fingerprint_diff and records missReason', async () => {
   reserve();
   writeWorkspaceState(root, {
-    lastBuild: { platform: 'ios', fingerprint: 'oldhash', cacheKey: 'old-key' },
+    lastBuild: { platform: 'android', fingerprint: 'androidhash', cacheKey: 'android-key' },
+    lastIosBuild: { platform: 'ios', fingerprint: 'oldhash', cacheKey: 'old-key' },
   });
   const entry = join(tmpHome, 'build-cache', 'ios', 'old-key');
   mkdirSync(entry, { recursive: true });
@@ -3400,10 +3402,16 @@ test('a miss with a prior stored entry appends the changed-sources suffix and lo
     },
   );
 
-  const line = errs.find((e) => e.startsWith('  fingerprint'));
-  assert(line);
-  expect(line).toMatch(/miss/);
-  expect(line).toMatch(/ -- 1 source changed: ios\/Podfile\.lock$/);
+  expect(errs).toContain(phaseLine('cache', 'miss: ios/Podfile.lock changed'));
+  const state = readWorkspaceState(root) as { lastIosBuild?: { missReason?: unknown } } | null;
+  expect(state?.lastIosBuild?.missReason).toEqual({
+    kind: 'changed',
+    summary: 'ios/Podfile.lock changed',
+    changes: [{ source: 'ios/Podfile.lock', change: 'changed', category: 'file' }],
+    changeCount: 1,
+    baseline: { fingerprint: 'oldhash', from: 'workspace' },
+    rekeyedBy: [],
+  });
 
   const record = buildRecords().find((r) => r.event === 'fingerprint_diff');
   assert(record, 'expected a fingerprint_diff record in the build log');
@@ -3414,12 +3422,10 @@ test('a miss with a prior stored entry appends the changed-sources suffix and lo
   expect(record.msg).toMatch(/oldhash -> a3f9b1c2d3e4f5/);
 });
 
-test('a miss with no prior entry (or a first build) prints the plain miss line, no suffix', async () => {
+test('a miss with no prior entry says there was nothing to compare with', async () => {
   reserve();
   const { errs } = await run();
-  const line = errs.find((e) => e.startsWith('  fingerprint'));
-  assert(line);
-  expect(line).toMatch(/miss \(\d+ms\)$/);
+  expect(errs).toContain(phaseLine('cache', 'miss: no earlier build of this project in the cache to compare with'));
   expect(buildRecords().some((r) => r.event === 'fingerprint_diff')).toBe(false);
 });
 
