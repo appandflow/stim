@@ -1,4 +1,4 @@
-import { parseDeviceSlotOption, projectDeviceSlots } from '../devices/device-slots.ts';
+import { deviceSlotKey, parseDeviceSlotOption, projectDeviceSlots } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { clockTime } from '../command-output.ts';
@@ -57,7 +57,7 @@ export interface DeviceDeps {
 const DEFAULT_DEPS: DeviceDeps = {
   findProjectRoot,
   getProject,
-  avdNameOf: (serial) => getAvdNameForSerial(serial),
+  avdNameOf: getAvdNameForSerial,
   listIosDevices,
   listAdbDevices,
   physicalDeviceModel,
@@ -145,21 +145,17 @@ function resolveDevice(
   return { id: resolved.serial, deviceName: d.physicalDeviceModel(resolved.serial) ?? resolved.serial };
 }
 
-export interface OwnedVirtualDevice extends ResolvedDevice {
+interface OwnedVirtualDevice extends ResolvedDevice {
   slot: string;
 }
 
-/**
- * The simulator or emulator named by `id` that this workspace's registry records as Stim-owned, in any slot.
- * An emulator matches when the AVD running on serial `id` is the slot's owned AVD.
- */
-export function findOwnedVirtualDevice(
+function findOwnedVirtualDevice(
   project: ProjectRecord | null,
   platform: LeasePlatform,
   id: string,
   avdNameOf: (serial: string) => string | null,
 ): OwnedVirtualDevice | null {
-  let running: string | null | undefined;
+  let running: { name: string | null } | undefined;
   for (const { slot, platforms } of projectDeviceSlots(project)) {
     if (platform === 'ios') {
       const sim = platforms.ios;
@@ -170,8 +166,8 @@ export function findOwnedVirtualDevice(
     }
     const emulator = platforms.android;
     if (!emulator?.owned || !emulator.avdName || !/^emulator-\d+$/.test(id)) continue;
-    running ??= avdNameOf(id);
-    if (running === emulator.avdName) return { id, deviceName: emulator.deviceName ?? emulator.avdName, slot };
+    running ??= { name: avdNameOf(id) };
+    if (running.name === emulator.avdName) return { id, deviceName: emulator.deviceName ?? emulator.avdName, slot };
   }
   return null;
 }
@@ -297,6 +293,14 @@ export async function runLock(
       code: 'STIM_BAD_ARG',
       message: `${owned.id} is this workspace's ${platform} device in slot ${owned.slot}, not ${opts.slot}.`,
       remedy: `Run \`stim device lock ${platform} ${owned.id}\` without --slot, or with --slot ${owned.slot}.`,
+    });
+  }
+  const held = owned ? d.io.readHolder(root)[deviceSlotKey(platform, owned.slot)] : undefined;
+  if (owned && held && held.id !== owned.id) {
+    return report({
+      code: 'STIM_DEVICE_BUSY',
+      message: `This workspace already leases ${held.id} for ${platform} in slot ${owned.slot}, and a workspace holds one lease per platform and slot.`,
+      remedy: `Release it with \`stim device unlock ${platform}${owned.slot === 'default' ? '' : ` --slot ${owned.slot}`}\` once nothing depends on it, then lock ${owned.id}.`,
     });
   }
   const slot = owned ? (owned.slot === 'default' ? undefined : owned.slot) : opts.slot;

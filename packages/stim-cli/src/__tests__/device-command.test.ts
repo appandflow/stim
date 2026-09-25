@@ -4,15 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import androidCommand from '../commands/android.ts';
-import {
-  findOwnedVirtualDevice,
-  grantLine,
-  registerDevice,
-  releasedLine,
-  runLock,
-  runUnlock,
-  type DeviceDeps,
-} from '../commands/device.ts';
+import { grantLine, registerDevice, releasedLine, runLock, runUnlock, type DeviceDeps } from '../commands/device.ts';
 import iosCommand from '../commands/ios.ts';
 import logsCommand from '../commands/logs.ts';
 import stopCommand from '../commands/stop.ts';
@@ -109,31 +101,6 @@ const OWNED_PROJECT = {
   },
 };
 
-describe('findOwnedVirtualDevice', () => {
-  test("finds the workspace's owned simulator in any slot, and nothing it does not own", () => {
-    const none = () => null;
-    expect(findOwnedVirtualDevice(OWNED_PROJECT, 'ios', SIM.toLowerCase(), none)).toEqual({
-      id: SIM,
-      deviceName: 'stim-app (iPhone 18 Pro 27.0)',
-      slot: 'default',
-    });
-    expect(findOwnedVirtualDevice(OWNED_PROJECT, 'ios', 'TABLET-UDID', none)?.slot).toBe('tablet');
-    expect(findOwnedVirtualDevice(OWNED_PROJECT, 'ios', 'USER-UDID', none)).toBeNull();
-    expect(findOwnedVirtualDevice(OWNED_PROJECT, 'ios', PHONE, none)).toBeNull();
-    expect(findOwnedVirtualDevice(null, 'ios', SIM, none)).toBeNull();
-  });
-
-  test('finds an emulator only when the serial runs the owned AVD', () => {
-    expect(findOwnedVirtualDevice(OWNED_PROJECT, 'android', 'emulator-5728', () => 'stim-app')).toEqual({
-      id: 'emulator-5728',
-      deviceName: 'stim-app',
-      slot: 'default',
-    });
-    expect(findOwnedVirtualDevice(OWNED_PROJECT, 'android', 'emulator-5554', () => 'Pixel_9_user')).toBeNull();
-    expect(findOwnedVirtualDevice(OWNED_PROJECT, 'android', SERIAL, () => 'stim-app')).toBeNull();
-  });
-});
-
 describe('stim device lock', () => {
   test("leases the workspace's own simulator by UDID, in its slot, without asking devicectl", async () => {
     const h = harness({
@@ -142,13 +109,28 @@ describe('stim device lock', () => {
         throw new Error('devicectl must not be asked about an owned simulator');
       },
     });
-    const facts = await runLock('ios', 'TABLET-UDID', { json: true, for: '2m', wait: '0' }, h.deps);
+    const facts = await runLock('ios', 'tablet-udid', { json: true, for: '2m', wait: '0' }, h.deps);
     assert(!('code' in facts));
     expect(facts).toMatchObject({ slot: 'tablet', id: 'TABLET-UDID', holder: root, leaseSeconds: 120 });
     expect(readWorkspaceState(root)?.deviceLeases).toEqual({
       'ios:tablet': { id: 'TABLET-UDID', token: expect.any(String), kind: 'declared' },
     });
     expect(await runUnlock('ios', {}, h.deps)).toEqual([expect.objectContaining({ id: 'TABLET-UDID' })]);
+  });
+
+  test('refuses ids the workspace does not own as simulators or emulators', async () => {
+    const h = harness({ getProject: () => OWNED_PROJECT, avdNameOf: () => 'Pixel_9_user', listIosDevices: () => [] });
+    expect(await runLock('ios', 'USER-UDID', { wait: '0' }, h.deps)).toMatchObject({ code: 'STIM_NO_DEVICE' });
+    expect(await runLock('android', 'emulator-5554', { wait: '0' }, h.deps)).toMatchObject({ code: 'STIM_NO_DEVICE' });
+    expect(listLeaseFiles()).toEqual([]);
+  });
+
+  test('refuses to replace the lease this workspace holds on another device in the same slot', async () => {
+    const h = harness({ getProject: () => OWNED_PROJECT });
+    assert(!('code' in (await runLock('ios', PHONE, {}, h.deps))));
+    expect(await runLock('ios', SIM.toLowerCase(), {}, h.deps)).toMatchObject({ code: 'STIM_DEVICE_BUSY' });
+    expect(h.lease()?.holder).toBe(root);
+    expect(h.lease('ios', SIM)).toBeNull();
   });
 
   test("leases the workspace's own emulator by serial, and refuses a --slot it is not in", async () => {

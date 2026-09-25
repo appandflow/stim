@@ -469,8 +469,9 @@ free one in id order. The same rule serves `ios --device` and
 An id can also name this workspace's own Stim-owned simulator (its UDID) or
 running emulator (its `emulator-NNNN` serial), in any slot. The lease then
 tells agents and `stim status` that the device is being driven, reported as
-`driven by stim device lock`; Stim Server holds one while a paired phone
-controls the device. `--slot`, when given, must be the slot the device is in.
+`driven by stim device lock`. `--slot`, when given, must be the slot the device
+is in. A workspace holds one lease per platform and slot, so this refuses with
+`STIM_DEVICE_BUSY` while that slot already leases a phone.
 With no id, `lock` still picks only physical devices.
 
 `unlock` releases every lease this workspace holds, or only the platform
