@@ -20,6 +20,7 @@
     "expo-build-properties": "~57.0.22",
     "expo-camera": "~57.0.5",
     "expo-constants": "~57.0.19",
+    "expo-dev-client": "~57.0.19",
     "expo-image": "~57.0.5",
     "expo-linking": "~57.0.11",
     "expo-router": "~57.0.23",

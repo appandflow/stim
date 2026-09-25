@@ -9,7 +9,11 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "bundleIdentifier": "com.appandflow.stim",
-      "supportsTablet": true
+      "icon": "./assets/images/icon-ios.png",
+      "supportsTablet": true,
+      "config": {
+        "usesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "com.appandflow.stim",
