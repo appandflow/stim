@@ -234,7 +234,11 @@ Run stim stop when you pause or finish a task, and stim worktree remove once
 it is merged or abandoned. Never create a simulator or emulator by hand;
 every device comes from Stim. Before starting a new workspace, check stim
 status for an idle workspace to reuse and confirm capacity headroom instead of
-adding another.
+adding another. Never quit Device Hub or Simulator.app: on Xcode 27
+(confirmed on 27A266a), quitting Device Hub shuts down every booted
+simulator on the machine, including ones it never opened a window for and
+ones other workspaces or agents are using. Use stim stop on workspaces you
+own instead.
 
 SANDBOXES
 

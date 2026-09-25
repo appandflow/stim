@@ -38,6 +38,10 @@ After boot, Stim opens its owned iOS simulator in Device Hub on Xcode 27, or
 Simulator on older Xcode. Stim passes the workspace's simulator ID to Device Hub
 so it can open that device's window.
 Opening the window is best effort; a window failure does not undo a successful boot.
+On Xcode 27 (confirmed on 27A266a), quitting Device Hub shuts down every
+booted simulator on the machine, including ones it never opened a window for
+and ones other workspaces or agents are using. Never quit Device Hub to free
+memory or clean up; use `stim stop` on workspaces you own instead.
 To display owned simulators in Siniulator, set `"iosSimulatorApp": "siniulator"`
 at the top level of `~/.stim/config.json` after installing it. For one launch,
 use `stim ios --simulator-app siniulator` (or `--simulator-app xcode` to use
@@ -45,8 +49,9 @@ Apple's viewer). This also opens an already running owned simulator without
 rebooting it or saving the override. Siniulator
 shuts down a simulator when its window closes by default. In Siniulator Settings,
 enable **Leave simulator running after window is closed** to keep Stim's device
-running. If Device Hub also opens, quitting it can shut down
-simulators it started; [Siniulator's setup notes](https://github.com/kmagiera/Siniulator#working-with-device-hub)
+running. If Device Hub also opens, quitting it shuts down every booted
+simulator, not just the ones it started;
+[Siniulator's setup notes](https://github.com/kmagiera/Siniulator#working-with-device-hub)
 describe the macOS preference that keeps them running.
 
 To show owned simulators in Stim Desktop instead of a simulator window, set
