@@ -1,13 +1,14 @@
 import Constants from 'expo-constants';
 import { Image } from 'expo-image';
-import { useRouter, type Href } from 'expo-router';
+import { usePathname, useRouter, type Href } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon, type IconName } from '@/components/icon';
-import { describeState } from '@/components/mac-chip';
+import { useHomeFilters, type HomeView } from '@/hooks/home-filters';
 import { useMacs } from '@/hooks/mac-connection';
-import { PROTOCOL_VERSION } from '@/protocol/types';
+import { useRecents } from '@/hooks/recents';
+import { isActive, workspaceNames } from '@/lib/workspaces';
 import { useColors } from '@/theme';
 
 const WORDMARK = require('@/assets/images/wordmark.png');
@@ -15,91 +16,146 @@ const WORDMARK = require('@/assets/images/wordmark.png');
 export function Menu({ onClose }: { onClose: () => void }) {
   const colors = useColors();
   const router = useRouter();
+  const pathname = usePathname();
   const insets = useSafeAreaInsets();
   const { connections } = useMacs();
+  const { view, setView } = useHomeFilters();
+  const { recents } = useRecents();
   const go = (href: Href) => {
     onClose();
     router.push(href);
   };
+  const show = (next: HomeView) => {
+    setView(next);
+    onClose();
+  };
+  const recentRows = recents.flatMap((recent) => {
+    const connection = connections.find((c) => c.mac.id === recent.macId);
+    if (!connection) return [];
+    const env = connection.status?.environments.find((e) => e.path === recent.path);
+    return [{ ...recent, title: workspaceNames(recent.path).title, live: env ? isActive(env) : false }];
+  });
 
   return (
-    <ScrollView
-      contentContainerStyle={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 20 }]}
-      style={{ backgroundColor: colors.background }}
-    >
-      <Image
-        source={WORDMARK}
-        tintColor={colors.primary}
-        style={styles.wordmark}
-        contentFit="contain"
-        accessibilityLabel="Stim"
-      />
-      <View style={[styles.group, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-        <Row
-          icon="laptopcomputer"
-          title="Machines"
-          detail="Rename, forget, and see each machine's status"
-          onPress={() => go('/macs')}
+    <View style={[styles.screen, { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 8 }]}>
+      <ScrollView contentContainerStyle={styles.content}>
+        <Image
+          source={WORDMARK}
+          tintColor={colors.text}
+          style={styles.wordmark}
+          contentFit="contain"
+          accessibilityLabel="Stim"
         />
-        <View style={[styles.separator, { backgroundColor: colors.border }]} />
-        <Row
-          icon="plus"
-          title="Pair a machine"
-          detail="Scan the QR code Stim Desktop shows"
-          onPress={() => go('/pair')}
+        <NavRow
+          icon="rectangle.stack"
+          title="Workspaces"
+          selected={pathname === '/' && view === 'workspaces'}
+          onPress={() => show('workspaces')}
         />
-      </View>
-      <Text style={[styles.groupTitle, { color: colors.tertiary }]}>About</Text>
-      <View style={[styles.group, styles.about, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-        <Text style={[styles.aboutLine, { color: colors.text }]}>
-          {`Stim for phones ${Constants.expoConfig?.version ?? ''} \u00B7 protocol ${PROTOCOL_VERSION}`}
-        </Text>
-        <Text style={[styles.aboutNote, { color: colors.secondary }]}>
-          Read-only: this app watches workspaces, devices and logs on your machines and changes nothing.
-        </Text>
-        {connections.map((c) => (
-          <Text key={c.mac.id} style={[styles.aboutNote, { color: colors.secondary }]}>
-            {c.state.kind === 'open'
-              ? `${c.mac.name}: stim ${c.state.server.stim} \u00B7 server ${c.state.server.version}`
-              : `${c.mac.name}: ${describeState(c.state, c.missing)}`}
+        <NavRow
+          icon="square.grid.2x2"
+          title="Devices"
+          selected={pathname === '/' && view === 'devices'}
+          onPress={() => show('devices')}
+        />
+        <NavRow icon="laptopcomputer" title="Machines" selected={pathname === '/macs'} onPress={() => go('/macs')} />
+        <NavRow icon="plus" title="Pair a machine" selected={false} onPress={() => go('/pair')} />
+        {recentRows.length > 0 ? (
+          <>
+            <Text style={[styles.sectionTitle, { color: colors.secondary }]}>Recent workspaces</Text>
+            {recentRows.map((recent) => (
+              <Pressable
+                key={`${recent.macId}\n${recent.path}`}
+                onPress={() => go({ pathname: '/mac/[id]/workspace', params: { id: recent.macId, path: recent.path } })}
+                accessibilityRole="button"
+                accessibilityLabel={recent.live ? `${recent.title}, live` : recent.title}
+                style={({ pressed }) => [styles.recent, pressed && { backgroundColor: colors.border }]}
+              >
+                <Icon name="arrow.triangle.branch" size={15} color={recent.live ? colors.live : colors.tertiary} />
+                <Text numberOfLines={1} style={[styles.recentTitle, { color: colors.text }]}>
+                  {recent.title}
+                </Text>
+              </Pressable>
+            ))}
+          </>
+        ) : null}
+      </ScrollView>
+      <Pressable
+        onPress={() => go('/about')}
+        accessibilityRole="button"
+        accessibilityLabel="About"
+        style={({ pressed }) => [styles.footer, pressed && { opacity: 0.6 }]}
+      >
+        <View style={[styles.badge, { backgroundColor: colors.text }]}>
+          <Text style={[styles.badgeText, { color: colors.sidebar }]}>{connections.length}</Text>
+        </View>
+        <View>
+          <Text style={[styles.footerTitle, { color: colors.text }]}>
+            {connections.length === 1 ? '1 machine' : `${connections.length} machines`}
           </Text>
-        ))}
-      </View>
-    </ScrollView>
+          <Text style={[styles.footerDetail, { color: colors.secondary }]}>
+            {`Stim for phones ${Constants.expoConfig?.version ?? ''}`}
+          </Text>
+        </View>
+      </Pressable>
+    </View>
   );
 }
 
-function Row({ icon, title, detail, onPress }: { icon: IconName; title: string; detail: string; onPress: () => void }) {
+function NavRow({
+  icon,
+  title,
+  selected,
+  onPress,
+}: {
+  icon: IconName;
+  title: string;
+  selected: boolean;
+  onPress: () => void;
+}) {
   const colors = useColors();
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={title}
-      accessibilityHint={detail}
-      style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.raised }]}
+      accessibilityState={{ selected }}
+      style={({ pressed }) => [styles.row, (selected || pressed) && { backgroundColor: colors.border }]}
     >
-      <Icon name={icon} size={20} color={colors.primary} />
-      <View style={styles.rowText}>
-        <Text style={[styles.rowTitle, { color: colors.text }]}>{title}</Text>
-        <Text style={[styles.rowDetail, { color: colors.secondary }]}>{detail}</Text>
-      </View>
-      <Icon name="chevron.right" size={14} color={colors.tertiary} />
+      <Icon name={icon} size={20} color={colors.text} />
+      <Text style={[styles.rowTitle, { color: colors.text }]}>{title}</Text>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { paddingHorizontal: 20, gap: 12 },
-  wordmark: { width: 59, height: 28, marginBottom: 12 },
-  group: { borderRadius: 14, borderCurve: 'continuous', borderWidth: 1, overflow: 'hidden' },
-  separator: { height: StyleSheet.hairlineWidth, marginLeft: 50 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 13 },
-  rowText: { flex: 1, gap: 2 },
-  rowTitle: { fontSize: 16, fontWeight: '500' },
-  rowDetail: { fontSize: 13 },
-  groupTitle: { fontSize: 13, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.4, marginTop: 8 },
-  about: { padding: 16, gap: 6 },
-  aboutLine: { fontSize: 15, fontWeight: '500' },
-  aboutNote: { fontSize: 13, lineHeight: 18 },
+  screen: { flex: 1 },
+  content: { paddingHorizontal: 12, paddingBottom: 16 },
+  wordmark: { width: 88, height: 42, marginLeft: 12, marginTop: 8, marginBottom: 24 },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    borderRadius: 12,
+    borderCurve: 'continuous',
+  },
+  rowTitle: { fontSize: 17, fontWeight: '500' },
+  sectionTitle: { fontSize: 14, fontWeight: '500', marginTop: 28, marginBottom: 6, marginLeft: 12 },
+  recent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 12,
+    borderCurve: 'continuous',
+  },
+  recentTitle: { flex: 1, fontSize: 16 },
+  footer: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 24, paddingTop: 12 },
+  badge: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  badgeText: { fontSize: 16, fontWeight: '600' },
+  footerTitle: { fontSize: 16, fontWeight: '500' },
+  footerDetail: { fontSize: 13 },
 });

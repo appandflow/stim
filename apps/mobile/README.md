@@ -32,10 +32,13 @@ reload and stop a workspace:
   share of memory (what live workspaces commit), load average, memory used and
   pressure, free disk per volume, Stim budgets, running devices and
   device leases, warnings, and its server and `stim` versions.
-- **Menu**: the menu button, or a swipe from the left edge of home, opens a
-  drawer with **Machines** (rename and forget), **Pair a machine**, and the app
-  and server versions. A tap outside, a swipe back, or Android's back button
-  closes it. Pairing scans the QR code Stim Desktop
+- **Menu**: the menu button, or a swipe from the left edge of home, slides
+  home right and shows the menu behind it: **Workspaces** and **Devices**
+  (the same switch as home's toggle), **Machines** (rename and forget),
+  **Pair a machine**, and **Recent workspaces**, the workspaces most recently
+  live or opened on this phone. The button at the bottom shows the number of
+  paired machines and opens **About**, with the app and server versions. A tap
+  on home, a swipe left, or Android's back button closes it. Pairing scans the QR code Stim Desktop
   shows under **Pair a phone**, or takes the endpoint and pairing token typed
   in; the token field is masked, with a button that shows it. The device token
   the server issues is kept in the phone's secure storage (Keychain on iOS,

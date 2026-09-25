@@ -1,6 +1,6 @@
 import * as Clipboard from 'expo-clipboard';
 import { Stack, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ActionToast, type Toast } from '@/components/action-toast';
@@ -13,6 +13,7 @@ import { DeviceTile } from '@/components/device-tile';
 import { EmptyState } from '@/components/empty-state';
 import { RemoteTile } from '@/components/remote-tile';
 import { useAction, useMacConnection, useStatus } from '@/hooks/mac-connection';
+import { useRecents } from '@/hooks/recents';
 import { tildeHome } from '@/lib/paths';
 import {
   deviceWarnings,
@@ -44,6 +45,10 @@ export function WorkspaceDetail({ path }: { path: string }) {
   const actions = useAction(path);
   const [toast, setToast] = useState<Toast | null>(null);
   const dismissToast = useCallback(() => setToast(null), []);
+  const { touch } = useRecents();
+  useEffect(() => {
+    if (macId) touch({ macId, path });
+  }, [macId, path, touch]);
 
   const perform = async (action: ActionName, platform?: DevicePlatform) => {
     const app = platform ? ` the ${PLATFORM_NAMES[platform]} app` : '';
