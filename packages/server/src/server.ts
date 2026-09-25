@@ -570,7 +570,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
       const cancel = async () => {
         dropped = true;
-        await run?.cancel();
+        if (!run) return void (turn ?? Promise.resolve()).then(release);
+        await run.cancel();
         release();
       };
       const start = async () => {

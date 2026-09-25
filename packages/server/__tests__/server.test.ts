@@ -853,6 +853,27 @@ describe('build.plan', () => {
     await until(() => childPids().length === 0);
   });
 
+  it('keeps later plans waiting when a queued plan ahead of them is dropped', async () => {
+    const gate = join(root, 'plan-gate');
+    const port = await start({ env: { FAKE_STIM_PLAN_GATE: gate } });
+    const staying = await authed(port);
+    const closing = await authed(port);
+    const ios = staying.request('build.plan', { workspace, platform: 'ios' });
+    await until(() => childPids().length === 1);
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 100));
+    void closing.request('build.plan', { workspace, platform: 'ios', slot: 'tablet' });
+    await settle();
+    const android = staying.request('build.plan', { workspace, platform: 'android' });
+    await settle();
+    closing.socket.close();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(stimCalls().map((call) => call.args)).toEqual(['ios --plan --json']);
+    writeFileSync(gate, '');
+    expect(await ios).toMatchObject({ result: { platform: 'ios' } });
+    expect(await android).toMatchObject({ result: { platform: 'android' } });
+    expect(stimCalls().map((call) => call.args)).toEqual(['ios --plan --json', 'android --plan --json']);
+  });
+
   it("reports the CLI's refusal code, message and remedy instead of its exit status", async () => {
     const port = await start({ env: { FAKE_STIM_REFUSE: '1' } });
     const client = await authed(port);
