@@ -32,6 +32,9 @@ locally. A phone can do neither.
 - The mobile app is read-only for now: no actions, no device input.
 - Pairing is by QR code, and must work across networks, not only on the same
   Wi-Fi.
+- The mobile app is Expo / React Native in `apps/mobile`, built and tested with
+  Stim itself, and distributed through TestFlight with EAS under the App&Flow
+  Apple team and Expo account.
 
 ## Scope
 
@@ -250,8 +253,5 @@ Each step is its own issue and pull request:
 
 - Whether the server configures `tailscale serve` itself or documents the
   one-time command, and how it behaves when Tailscale is not running.
-- Where the mobile app lives (`apps/mobile`) and how it is distributed to the
-  maintainer's devices (TestFlight is outside Stim's own feature set but fine
-  for Stim's own app).
 - Whether the phase-2 status move belongs in core or a separate
   `@stim-cli/status` package.
