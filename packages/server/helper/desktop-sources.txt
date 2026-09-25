@@ -1,0 +1,8 @@
+SimulatorFrames/SimulatorDisplay.swift
+SimulatorFrames/SimulatorHID.swift
+EmulatorFrames/EmulatorDiscovery.swift
+EmulatorFrames/GrpcFraming.swift
+EmulatorFrames/ScreenshotMessages.swift
+EmulatorFrames/ScreenshotStream.swift
+EmulatorFrames/InputMessages.swift
+EmulatorFrames/EmulatorInput.swift

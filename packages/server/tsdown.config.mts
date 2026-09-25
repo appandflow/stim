@@ -1,4 +1,5 @@
-import { writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { basename } from 'node:path';
 import { defineConfig } from 'tsdown';
 import { PROTOCOL_SCHEMA_FILE, protocolJsonSchema } from './src/protocol.ts';
 
@@ -17,6 +18,12 @@ export default defineConfig({
   hooks: {
     'build:done': () => {
       writeFileSync(`dist/${PROTOCOL_SCHEMA_FILE}`, `${JSON.stringify(protocolJsonSchema(), null, 2)}\n`);
+      rmSync('dist/stim-frames', { recursive: true, force: true });
+      mkdirSync('dist/stim-frames');
+      const desktop = readFileSync('helper/desktop-sources.txt', 'utf8').split('\n').filter(Boolean);
+      for (const source of ['helper/main.swift', ...desktop.map((path) => `../../apps/desktop/Sources/${path}`)]) {
+        copyFileSync(source, `dist/stim-frames/${basename(source)}`);
+      }
     },
   },
 });

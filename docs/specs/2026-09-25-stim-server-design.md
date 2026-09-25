@@ -210,10 +210,26 @@ the app cannot connect in v1.
   the emulator gRPC `getScreenshot` (#1064), at a low frame rate (about 1 to 5
   per second, adaptive), JPEG-encoded and sent as `frame` events. This needs no
   native code, so it works on a headless Mac with only `stim-server`.
-- v2: a native helper, `stim-frames`, shipped inside Stim.app. It encodes
-  simulator IOSurface frames with VideoToolbox (H.264) and streams them over
-  WebRTC, with DTLS fingerprints exchanged over the authenticated WebSocket. The
-  server discovers the helper and falls back to screenshots without it.
+- v2 (#1236, added 2026-09-25): a native helper, `stim-frames`, streams
+  JPEG frames over the same WebSocket and `frame` event, not H.264 over
+  WebRTC. The helper is a small Swift CLI that the server compiles on first
+  use with `xcrun swiftc` from sources shipped in the npm package. Those
+  sources are its own `main.swift` and the non-view `SimulatorFrames` and
+  `EmulatorFrames` files of Stim Desktop, compiled in place, not copied. The
+  helper is cached under `$STIM_HOME/server/helpers/` by a hash of the
+  sources and the compiler version. Xcode is already a precondition for
+  simulators, so no binary ships in the tarball and no macOS publish job is
+  needed. Desktop CI compiles the helper with the same command.
+  - iOS: the helper renders the simulator's IOSurface framebuffer on display
+    damage.
+  - Android: the helper keeps one emulator `streamScreenshot` call open.
+  - `frames.subscribe` takes `fps` (1 to 30) and `maxEdge` (240 to 2048
+    pixels). The defaults, 5 and 1280, keep old clients unchanged.
+  - One helper runs per device, at the highest rate and size its subscribers
+    asked for. Each subscriber is paced and drops frames while its socket has
+    more than two frames unsent.
+  - The screenshot path remains as the fallback when the helper cannot be
+    built or fails before its first frame, and for the iPhone Duo.
 - Only devices `stim status` lists as owned are served.
 
 ## Stim Desktop
@@ -306,7 +322,7 @@ Each step is its own issue and pull request:
 5. Desktop: start or connect to the server, pairing sheet, device list.
 6. The mobile app, v1.
 7. Release: the sixth package in the release tooling; full-lane release.
-8. Later: v2 frames with `stim-frames` and WebRTC; status computed in process;
+8. Later: v2 frames with `stim-frames` (#1236); status computed in process;
    the transport alternatives above; the `control` capability.
 
 ## Open questions

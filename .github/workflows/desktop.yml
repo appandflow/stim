@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['apps/desktop/**', '.github/workflows/desktop.yml']
+    paths: ['apps/desktop/**', 'packages/server/helper/**', '.github/workflows/desktop.yml']
   pull_request:
-    paths: ['apps/desktop/**', '.github/workflows/desktop.yml']
+    paths: ['apps/desktop/**', 'packages/server/helper/**', '.github/workflows/desktop.yml']
 
 concurrency:
   group: desktop-${{ github.ref }}
@@ -25,3 +25,8 @@ jobs:
       - uses: actions/checkout@v4
       - run: swift build
       - run: swift test
+      - name: Compile the stim-server frames helper
+        run: |
+          sed 's|^|Sources/|' ../../packages/server/helper/desktop-sources.txt \
+            | xargs xcrun swiftc -O -swift-version 5 -module-name StimFrames -o "$RUNNER_TEMP/stim-frames" \
+              ../../packages/server/helper/main.swift

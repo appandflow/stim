@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import type { StatusPayload } from '@stim-cli/core/state';
 import type { FrameTarget } from './protocol.ts';
 import { serverDir } from './registry.ts';
+import { DEFAULT_FRAME_HINT, HelperSource, type FrameHint } from './frame-helper.ts';
 import { terminate } from './stim-command.ts';
 
 /** `foldable` marks an iPhone Duo, whose posture lights one of two panels. */
@@ -551,41 +552,102 @@ class FrameSource {
 }
 
 /**
- * One capture loop per device, shared by its subscribers and stopped with the last of them. A loop sends a
- * frame only when the screen changed; it captures up to 5 times a second while the screen changes and backs
- * off to once a second while it does not, and spends at most half of its time capturing. At most two
- * captures run at once across all devices.
+ * One capture per device, shared by its subscribers and stopped with the last of them. With the `stim-frames`
+ * helper, a device streams frames as its screen changes, at the rate its subscribers ask for. Without it, and
+ * for an iPhone Duo, a screenshot loop sends a frame only when the screen changed: up to 5 times a second
+ * while it changes, backing off to once a second while it does not, spending at most half of its time
+ * capturing, with at most two captures at once across all devices. A helper that fails before its first frame
+ * gives way to the screenshot loop.
  */
 export class FramePool {
-  private readonly sources = new Map<string, FrameSource>();
+  private readonly sources = new Map<string, FrameSource | HelperSource>();
   private readonly limiter = new Limiter(MAX_CAPTURES);
   private readonly litPanels = new Map<string, DuoPanel>();
   private readonly env: NodeJS.ProcessEnv;
   private readonly limits: FrameLimits;
+  private readonly helper: () => Promise<string | null>;
+  private closed = false;
 
-  constructor(env: NodeJS.ProcessEnv, limits: FrameLimits = DEFAULT_FRAME_LIMITS) {
+  constructor(
+    env: NodeJS.ProcessEnv,
+    limits: FrameLimits = DEFAULT_FRAME_LIMITS,
+    helper: () => Promise<string | null> = () => Promise.resolve(null),
+  ) {
     this.env = env;
     this.limits = limits;
+    this.helper = helper;
   }
 
-  subscribe(device: Device, listener: FrameListener): () => void {
+  subscribe(device: Device, listener: FrameListener, hint: FrameHint = DEFAULT_FRAME_HINT): () => void {
+    let detach: (() => void) | null = null;
+    let cancelled = false;
+    let waited = false;
+    const slow = setTimeout(() => {
+      waited = true;
+      listener.delayed(true);
+    }, this.limits.slowCaptureMs);
+    void (async () => {
+      const helper = await this.helper();
+      clearTimeout(slow);
+      if (cancelled || this.closed) return;
+      if (waited) listener.delayed(false);
+      const useHelper = helper !== null && !(device.platform === 'ios' && device.foldable);
+      if (!useHelper) {
+        detach = this.screenshots(device).add(listener);
+        return;
+      }
+      let streamed = false;
+      detach = this.stream(helper, device).add(
+        {
+          frame: (frame) => {
+            streamed = true;
+            listener.frame(frame);
+          },
+          delayed: listener.delayed,
+          failed: (message) => {
+            if (streamed || cancelled) return listener.failed(message);
+            console.error(`stim-server: ${message} Falling back to screenshots.`);
+            detach = this.screenshots(device).add(listener);
+          },
+        },
+        hint,
+      );
+    })();
+    return () => {
+      cancelled = true;
+      clearTimeout(slow);
+      detach?.();
+    };
+  }
+
+  private stream(helper: string, device: Device): HelperSource {
+    const key = `helper:${deviceKey(device)}`;
+    const existing = this.sources.get(key);
+    if (existing instanceof HelperSource) return existing;
+    const created: HelperSource = new HelperSource(helper, device, this.env, () => {
+      if (this.sources.get(key) === created) this.sources.delete(key);
+    });
+    this.sources.set(key, created);
+    return created;
+  }
+
+  private screenshots(device: Device): FrameSource {
     const key = deviceKey(device);
-    let source = this.sources.get(key);
-    if (!source) {
-      const capturer =
-        device.platform === 'ios'
-          ? simulatorCapturer(device, this.env, this.limits, this.litPanels)
-          : emulatorCapturer(device.serial, this.env, this.limits);
-      const created: FrameSource = new FrameSource(capturer, this.limiter, this.limits, () => {
-        if (this.sources.get(key) === created) this.sources.delete(key);
-      });
-      this.sources.set(key, created);
-      source = created;
-    }
-    return source.add(listener);
+    const existing = this.sources.get(key);
+    if (existing instanceof FrameSource) return existing;
+    const capturer =
+      device.platform === 'ios'
+        ? simulatorCapturer(device, this.env, this.limits, this.litPanels)
+        : emulatorCapturer(device.serial, this.env, this.limits);
+    const created: FrameSource = new FrameSource(capturer, this.limiter, this.limits, () => {
+      if (this.sources.get(key) === created) this.sources.delete(key);
+    });
+    this.sources.set(key, created);
+    return created;
   }
 
   async close(): Promise<void> {
+    this.closed = true;
     await Promise.all([...this.sources.values()].map((source) => source.stop()));
   }
 }

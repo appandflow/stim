@@ -7,11 +7,14 @@ import { configDir } from '@stim-cli/core';
 import { isJsonObject, loadConfig, type StatusPayload } from '@stim-cli/core/state';
 import { actionArgs, actionOutcome, appendAudit, parseAction, type AuditRecord } from './actions.ts';
 import { FeedPool, type JsonObject } from './feed.ts';
+import { buildFrameHelper, type FrameHint } from './frame-helper.ts';
 import { DEFAULT_FRAME_LIMITS, deviceKey, FramePool, ownedDevice, type Frame, type FrameLimits } from './frames.ts';
 import { LogBatcher, logArgs, parseLogFilter, type LogLimits } from './logs.ts';
 import { readMachineUsage } from './machine.ts';
 import {
   ACTIONS,
+  FRAME_EDGE,
+  FRAME_FPS,
   PROTOCOL_VERSION,
   type BuildPlanResult,
   type ErrorCode,
@@ -51,6 +54,8 @@ export interface ServerOptions {
   commandLimits?: Partial<CommandLimits>;
   actionLimits?: Partial<CommandLimits>;
   frameLimits?: Partial<FrameLimits>;
+  /** The `stim-frames` helper to stream frames with, or null for screenshots only. Without it, the server builds one. */
+  frameHelper?: string | null;
 }
 
 interface ServerHealth {
@@ -93,8 +98,8 @@ const MAX_PAYLOAD = 64 * 1024;
 const MAX_SUBSCRIPTIONS = 32;
 const MAX_COMMANDS = 4;
 const LOG_LIMITS: LogLimits = { maxBufferedBytes: 4 * 1024 * 1024, maxPendingRecords: 20_000 };
-const FRAME_BUFFER_BYTES = 1024 * 1024;
-const FRAME_RETRY_MS = 100;
+const FRAME_BUFFER_FRAMES = 2;
+const FRAME_RETRY_MS = 50;
 const STATUS_FEED = { args: ['status', '--watch', '--json'], cwd: homedir(), keep: 1, label: 'stim status --watch' };
 const HEALTH_ROUTE_TIMEOUT_MS = 1000;
 const COMMAND_LIMITS: CommandLimits = { timeoutMs: 60_000, maxOutputBytes: 32 * 1024 * 1024 };
@@ -189,7 +194,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const authTimeoutMs = options.authTimeoutMs ?? 5000;
   const feeds = new FeedPool(options.stimCli, options.env);
   const frameLimits: FrameLimits = { ...DEFAULT_FRAME_LIMITS, ...options.frameLimits };
-  const frames = new FramePool(options.env, frameLimits);
+  let helperBuild: Promise<string | null> | null = null;
+  const frameHelper = () => {
+    if (options.frameHelper !== undefined) return Promise.resolve(options.frameHelper);
+    helperBuild ??= buildFrameHelper(options.env).catch((cause: unknown) => {
+      console.error(`stim-server: frames come from screenshots: ${(cause as Error).message}`);
+      return null;
+    });
+    return helperBuild;
+  };
+  const frames = new FramePool(options.env, frameLimits, frameHelper);
   const running = new Set<() => Promise<void>>();
   const logLimits: LogLimits = { ...LOG_LIMITS, ...options.logLimits };
   const commandLimits: CommandLimits = { ...COMMAND_LIMITS, ...options.commandLimits };
@@ -363,7 +377,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
     function subscribeFrames(id: RequestId, params: unknown): void {
       const target = isJsonObject(params) ? params : {};
-      const { workspace, platform, slot } = target;
+      const { workspace, platform, slot, fps, maxEdge } = target;
       if (typeof workspace !== 'string' || (platform !== 'ios' && platform !== 'android')) {
         return error(
           id,
@@ -374,6 +388,23 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (slot !== undefined && (typeof slot !== 'string' || slot === '')) {
         return error(id, 'bad-request', 'slot must be a slot name.');
       }
+      if (fps !== undefined && (!Number.isInteger(fps) || (fps as number) < 1 || (fps as number) > FRAME_FPS.max)) {
+        return error(id, 'bad-request', `fps must be a whole number from 1 to ${FRAME_FPS.max}.`);
+      }
+      if (
+        maxEdge !== undefined &&
+        (!Number.isInteger(maxEdge) || (maxEdge as number) < FRAME_EDGE.min || (maxEdge as number) > FRAME_EDGE.max)
+      ) {
+        return error(
+          id,
+          'bad-request',
+          `maxEdge must be a whole number of pixels from ${FRAME_EDGE.min} to ${FRAME_EDGE.max}.`,
+        );
+      }
+      const hint: FrameHint = {
+        fps: (fps as number | undefined) ?? FRAME_FPS.default,
+        maxEdge: (maxEdge as number | undefined) ?? FRAME_EDGE.default,
+      };
       if (!workspaceDir(id, workspace, true)) return;
       const subscription = openSubscription(id);
       if (!subscription) return;
@@ -383,15 +414,22 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       let pending: Frame | null = null;
       let retry: NodeJS.Timeout | null = null;
       let ended = false;
+      let sentAt = 0;
       const flush = () => {
         retry = null;
         if (!pending || ended) return;
-        if (socket.bufferedAmount > FRAME_BUFFER_BYTES) {
+        const wait = sentAt + 1000 / hint.fps - Date.now();
+        if (wait > 0) {
+          retry = setTimeout(flush, wait);
+          return;
+        }
+        if (socket.bufferedAmount > FRAME_BUFFER_FRAMES * pending.data.length) {
           retry = setTimeout(flush, FRAME_RETRY_MS);
           return;
         }
         const frame = pending;
         pending = null;
+        sentAt = Date.now();
         send(socket, {
           event: 'frame',
           subscription,
@@ -433,7 +471,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           if (deviceKey(resolved) === attached) return;
           detach?.();
           attached = deviceKey(resolved);
-          detach = frames.subscribe(resolved, listener);
+          detach = frames.subscribe(resolved, listener, hint);
         },
         failed: (message) => queueMicrotask(() => end(message)),
       });
