@@ -4,7 +4,8 @@ export const PROTOCOL_VERSION = 1;
 
 export const PROTOCOL_SCHEMA_FILE = 'protocol.schema.json';
 
-export const CAPABILITIES = ['read'] as const;
+/** `read` serves state. `control` also runs {@link ACTIONS}; only the Mac grants it. */
+export const CAPABILITIES = ['read', 'control'] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
 
@@ -17,6 +18,7 @@ export const METHODS = [
   'settings.get',
   'frames.subscribe',
   'unsubscribe',
+  'action',
 ] as const;
 
 export type Method = (typeof METHODS)[number];
@@ -41,6 +43,10 @@ export const ERROR_CODES = [
   'logs-failed',
   'stim-failed',
   'frames-failed',
+  'forbidden',
+  'unknown-action',
+  'action-busy',
+  'action-failed',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -69,6 +75,8 @@ export interface HelloResult {
   /** The Mac's name, this package's version, and the version of the `stim` it runs. */
   server: { name: string; version: string; stim: string };
   capabilities: Capability[];
+  /** The actions this device may run: every one of {@link ACTIONS} with `control`, none without. */
+  actions: ActionName[];
   /** The paired device this connection authenticated as, as `stim-server devices` lists it. */
   device: { id: string; name: string };
   /** Present only when the hello spent a pairing token. The server keeps only its hash. */
@@ -138,6 +146,26 @@ export interface FrameTarget {
   slot?: string;
 }
 
+/** Each action runs one fixed `stim` command in the workspace. */
+export const ACTIONS = ['reload', 'stop'] as const;
+
+export type ActionName = (typeof ACTIONS)[number];
+
+/**
+ * `reload` runs `stim reload --json`, with `platform` when both platforms are live; `stop` runs
+ * `stim stop --json`. `workspace` is an environment `path` from a status payload. Needs `control`.
+ */
+export type ActionParams =
+  | { action: 'reload'; workspace: string; platform?: Platform }
+  | { action: 'stop'; workspace: string };
+
+/** `output` is the JSON the command printed. */
+export interface ActionResult {
+  action: ActionName;
+  workspace: string;
+  output: Record<string, unknown>;
+}
+
 export interface Methods {
   hello: { params: HelloParams; result: HelloResult };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
@@ -147,6 +175,7 @@ export interface Methods {
   'settings.get': { params?: WorkspaceParams; result: SettingsResult };
   'frames.subscribe': { params: FrameTarget; result: SubscribeResult };
   unsubscribe: { params: UnsubscribeParams; result: Record<string, never> };
+  action: { params: ActionParams; result: ActionResult };
 }
 
 export type ClientRequest = {
@@ -283,7 +312,7 @@ export function protocolJsonSchema(): JsonSchema {
       },
       HelloResult: {
         type: 'object',
-        required: ['protocol', 'server', 'capabilities', 'device'],
+        required: ['protocol', 'server', 'capabilities', 'actions', 'device'],
         additionalProperties: false,
         properties: {
           protocol: { type: 'integer' },
@@ -294,6 +323,7 @@ export function protocolJsonSchema(): JsonSchema {
             properties: { name: { type: 'string' }, version: { type: 'string' }, stim: { type: 'string' } },
           },
           capabilities: { type: 'array', items: { enum: [...CAPABILITIES] } },
+          actions: { type: 'array', items: { enum: [...ACTIONS] } },
           device: {
             type: 'object',
             required: ['id', 'name'],
@@ -337,6 +367,39 @@ export function protocolJsonSchema(): JsonSchema {
           slot: { type: 'string', minLength: 1, default: 'default' },
         },
       },
+      ActionParams: {
+        oneOf: [
+          {
+            type: 'object',
+            required: ['action', 'workspace'],
+            additionalProperties: false,
+            properties: {
+              action: { const: 'reload' },
+              workspace: { type: 'string', description: 'An environment path from a status payload.' },
+              platform: { enum: ['ios', 'android'] },
+            },
+          },
+          {
+            type: 'object',
+            required: ['action', 'workspace'],
+            additionalProperties: false,
+            properties: {
+              action: { const: 'stop' },
+              workspace: { type: 'string', description: 'An environment path from a status payload.' },
+            },
+          },
+        ],
+      },
+      ActionResult: {
+        type: 'object',
+        required: ['action', 'workspace', 'output'],
+        additionalProperties: false,
+        properties: {
+          action: { enum: [...ACTIONS] },
+          workspace: { type: 'string' },
+          output: { type: 'object', description: 'The JSON the command printed.' },
+        },
+      },
       WorkspaceParams: {
         type: 'object',
         additionalProperties: false,
@@ -357,6 +420,7 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: { subscription: { type: 'string' } },
           }),
+          request('action', { $ref: '#/$defs/ActionParams' }),
         ],
       },
       ServerResponse: {
@@ -370,6 +434,7 @@ export function protocolJsonSchema(): JsonSchema {
               result: {
                 anyOf: [
                   { $ref: '#/$defs/HelloResult' },
+                  { $ref: '#/$defs/ActionResult' },
                   {
                     type: 'object',
                     required: ['subscription'],

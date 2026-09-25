@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 
-export type CommandOutcome = { ok: true; stdout: string } | { ok: false; message: string };
+export type CommandOutcome = { ok: true; stdout: string } | { ok: false; message: string; stdout?: string };
 
 export interface CommandLimits {
   timeoutMs: number;
@@ -66,7 +66,11 @@ export function runStim(
       if (failure) return settle({ ok: false, message: failure });
       if (code === 0) return settle({ ok: true, stdout: Buffer.concat(chunks).toString('utf8') });
       const detail = stderr.trim();
-      settle({ ok: false, message: `${label} exited (${signal ?? `code ${code}`})${detail ? `: ${detail}` : ''}` });
+      settle({
+        ok: false,
+        message: `${label} exited (${signal ?? `code ${code}`})${detail ? `: ${detail}` : ''}`,
+        stdout: Buffer.concat(chunks).toString('utf8'),
+      });
     });
   });
   return {

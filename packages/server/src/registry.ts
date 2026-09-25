@@ -22,6 +22,7 @@ export interface PairedDevice {
 interface PairingRecord {
   tokenHash: string;
   expiresAt: string;
+  capabilities: Capability[];
 }
 
 export type AuthOutcome =
@@ -62,15 +63,20 @@ function parseIdentity(value: unknown): PeerIdentity | null {
   return null;
 }
 
+function parseCapabilities(value: unknown): Capability[] {
+  return Array.isArray(value) ? CAPABILITIES.filter((capability) => value.includes(capability)) : [];
+}
+
+export function capabilitiesFor(control: boolean): Capability[] {
+  return control ? ['read', 'control'] : ['read'];
+}
+
 function parseDevice(value: unknown): PairedDevice | null {
   if (!isJsonObject(value)) return null;
   const { id, name, tokenHash, pairedAt, lastSeenAt } = value;
   const identity = parseIdentity(value.identity);
   if (typeof id !== 'string' || typeof name !== 'string' || typeof tokenHash !== 'string' || !identity) return null;
   if (typeof pairedAt !== 'string') return null;
-  const capabilities = Array.isArray(value.capabilities)
-    ? CAPABILITIES.filter((capability) => (value.capabilities as unknown[]).includes(capability))
-    : [];
   return {
     id,
     name,
@@ -78,7 +84,7 @@ function parseDevice(value: unknown): PairedDevice | null {
     identity,
     pairedAt,
     lastSeenAt: typeof lastSeenAt === 'string' ? lastSeenAt : null,
-    capabilities,
+    capabilities: parseCapabilities(value.capabilities),
   };
 }
 
@@ -92,7 +98,13 @@ function readPairings(): PairingRecord[] {
   if (!Array.isArray(tokens)) return [];
   return tokens.flatMap((entry) =>
     isJsonObject(entry) && typeof entry.tokenHash === 'string' && typeof entry.expiresAt === 'string'
-      ? [{ tokenHash: entry.tokenHash, expiresAt: entry.expiresAt }]
+      ? [
+          {
+            tokenHash: entry.tokenHash,
+            expiresAt: entry.expiresAt,
+            capabilities: 'capabilities' in entry ? parseCapabilities(entry.capabilities) : capabilitiesFor(false),
+          },
+        ]
       : [],
   );
 }
@@ -118,12 +130,19 @@ function unexpired(record: PairingRecord, now: number): boolean {
   return Date.parse(record.expiresAt) > now;
 }
 
-export function createPairingToken(now: number = Date.now()): { token: string; expiresAt: string } {
+/** The device that spends the token gets `capabilities`. */
+export function createPairingToken(
+  now: number = Date.now(),
+  capabilities: Capability[] = capabilitiesFor(false),
+): { token: string; expiresAt: string } {
   const token = newToken();
   const expiresAt = new Date(now + PAIRING_TTL_MS).toISOString();
   transaction(() => {
     const pending = readPairings().filter((record) => unexpired(record, now));
-    writeJson(pairingFile(), { version: 1, tokens: [...pending, { tokenHash: hashToken(token), expiresAt }] });
+    writeJson(pairingFile(), {
+      version: 1,
+      tokens: [...pending, { tokenHash: hashToken(token), expiresAt, capabilities }],
+    });
   });
   return { token, expiresAt };
 }
@@ -156,7 +175,7 @@ export function spendPairingToken(
       identity,
       pairedAt: at,
       lastSeenAt: at,
-      capabilities: ['read'],
+      capabilities: match.capabilities,
     };
     writeJson(devicesFile(), { version: 1, devices: [...readDevices(), device] });
     return { ok: true, device, deviceToken };
@@ -173,6 +192,17 @@ export function authenticateDevice(token: string, identity: PeerIdentity, now: n
     device.lastSeenAt = new Date(now).toISOString();
     writeJson(devicesFile(), { version: 1, devices });
     return { ok: true, device };
+  });
+}
+
+export function grantDevice(id: string, capabilities: Capability[]): boolean {
+  return transaction(() => {
+    const devices = readDevices();
+    const device = devices.find((entry) => entry.id === id);
+    if (!device) return false;
+    device.capabilities = capabilities;
+    writeJson(devicesFile(), { version: 1, devices });
+    return true;
   });
 }
 

@@ -3,8 +3,16 @@ import { readFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { parseArgs } from 'node:util';
 import { bundledStim, loginShellEnvironment } from '../src/environment.ts';
+import { readAudit } from '../src/actions.ts';
 import { PROTOCOL_VERSION } from '../src/protocol.ts';
-import { createPairingToken, readDevices, revokeDevice, type PairedDevice } from '../src/registry.ts';
+import {
+  capabilitiesFor,
+  createPairingToken,
+  grantDevice,
+  readDevices,
+  revokeDevice,
+  type PairedDevice,
+} from '../src/registry.ts';
 import { startServer } from '../src/server.ts';
 import {
   findTailscale,
@@ -20,11 +28,15 @@ const DEFAULT_PORT = 7787;
 
 const USAGE = `Usage:
   stim-server [--port <n>]          serve paired clients (default port ${DEFAULT_PORT})
-  stim-server pair [--port <n>] [--json]
-                                    print a single-use pairing payload for the QR code
+  stim-server pair [--port <n>] [--control] [--json]
+                                    print a single-use pairing payload for the QR code;
+                                    --control lets the paired device run actions
   stim-server devices [list] [--json]
                                     list paired devices
-  stim-server devices revoke <id>   revoke a paired device`;
+  stim-server devices grant <id> --control|--read
+                                    let a paired device run actions, or only read
+  stim-server devices revoke <id>   revoke a paired device
+  stim-server log [--json]          list the actions paired devices ran`;
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
 
@@ -108,7 +120,7 @@ async function serve(port: number): Promise<void> {
   process.on('SIGHUP', shutdown);
 }
 
-async function pair(port: number, json: boolean): Promise<void> {
+async function pair(port: number, json: boolean, control: boolean): Promise<void> {
   const binary = findTailscale(process.env);
   const tailscale = tailscaleStatus(binary, process.env);
   let endpoint = `ws://127.0.0.1:${port}`;
@@ -120,11 +132,13 @@ async function pair(port: number, json: boolean): Promise<void> {
     endpoint = tailnetEndpoint(tailscale.dnsName, route.port);
     note = routeNote(route, port);
   }
-  const { token, expiresAt } = createPairingToken();
+  const { token, expiresAt } = createPairingToken(Date.now(), capabilitiesFor(control));
   const payload = { v: 1, name: macName(tailscale), endpoint, pairingToken: token };
   if (json) return void console.log(JSON.stringify({ qr: payload, expiresAt }));
   console.log(JSON.stringify(payload));
-  console.error(`The pairing token is single use and expires at ${expiresAt}.`);
+  console.error(
+    `The pairing token is single use and expires at ${expiresAt}. The device it pairs can ${control ? 'run actions' : 'only read'}.`,
+  );
   if (note) console.error(note);
 }
 
@@ -133,7 +147,8 @@ function describe(device: PairedDevice): string {
     device.identity.kind === 'local'
       ? 'this Mac'
       : `${device.identity.nodeName || device.identity.nodeId}${device.identity.user ? ` (${device.identity.user})` : ''}`;
-  return `${device.id}  ${device.name}  from ${from}  paired ${device.pairedAt}  last seen ${device.lastSeenAt ?? 'never'}`;
+  const scope = device.capabilities.includes('control') ? 'control' : 'read';
+  return `${device.id}  ${device.name}  ${scope}  from ${from}  paired ${device.pairedAt}  last seen ${device.lastSeenAt ?? 'never'}`;
 }
 
 async function main(): Promise<void> {
@@ -142,6 +157,8 @@ async function main(): Promise<void> {
     options: {
       port: { type: 'string' },
       json: { type: 'boolean' },
+      control: { type: 'boolean' },
+      read: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'V' },
     },
@@ -152,7 +169,31 @@ async function main(): Promise<void> {
   if (!Number.isInteger(port) || port < 0 || port > 65535) fail(`--port must be a port number, got ${values.port}.`);
   const [command, sub, arg, ...rest] = positionals;
   if (command === undefined) return serve(port);
-  if (command === 'pair' && sub === undefined) return pair(port, values.json === true);
+  const grant = command === 'devices' && sub === 'grant';
+  if (values.read && !grant) fail(`--read applies only to \`devices grant\`.\n${USAGE}`);
+  if (values.control && !grant && command !== 'pair') {
+    fail(`--control applies only to \`pair\` and \`devices grant\`.\n${USAGE}`);
+  }
+  if (command === 'pair' && sub === undefined) return pair(port, values.json === true, values.control === true);
+  if (grant && arg !== undefined && rest.length === 0) {
+    if (values.control === values.read) fail('devices grant takes exactly one of --control or --read.');
+    if (!grantDevice(arg, capabilitiesFor(values.control === true))) {
+      fail(`no paired device ${arg}. Run \`stim-server devices\` to list them.`);
+    }
+    console.log(`${arg} can now ${values.control ? 'run actions' : 'only read'}.`);
+    return;
+  }
+  if (command === 'log' && sub === undefined) {
+    const records = readAudit();
+    if (values.json) return void console.log(JSON.stringify({ actions: records }));
+    if (!records.length) console.log('No actions.');
+    for (const record of records) {
+      const outcome = record.ok ? 'ok' : `${record.error?.code ?? 'failed'}: ${record.error?.message ?? ''}`;
+      const line = `${record.at}  ${record.device.id} (${record.device.name})  ${record.action}  ${record.workspace}  ${outcome}`;
+      console.log(Array.from(line, (char) => (/\p{Cc}/u.test(char) ? '?' : char)).join(''));
+    }
+    return;
+  }
   if (command === 'devices' && (sub === undefined || sub === 'list') && arg === undefined) {
     const devices = readDevices();
     if (values.json) {

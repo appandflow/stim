@@ -5,10 +5,12 @@ import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { configDir } from '@stim-cli/core';
 import { isJsonObject, loadConfig, type StatusPayload } from '@stim-cli/core/state';
+import { actionArgs, actionOutcome, appendAudit, parseAction, type AuditRecord } from './actions.ts';
 import { FeedPool, type JsonObject } from './feed.ts';
 import { DEFAULT_FRAME_LIMITS, deviceKey, FramePool, ownedDevice, type Frame, type FrameLimits } from './frames.ts';
 import { LogBatcher, logArgs, parseLogFilter, type LogLimits } from './logs.ts';
 import {
+  ACTIONS,
   PROTOCOL_VERSION,
   type ErrorCode,
   type FrameTarget,
@@ -45,6 +47,7 @@ export interface ServerOptions {
   failureWindowMs?: number;
   logLimits?: Partial<LogLimits>;
   commandLimits?: Partial<CommandLimits>;
+  actionLimits?: Partial<CommandLimits>;
   frameLimits?: Partial<FrameLimits>;
 }
 
@@ -93,6 +96,8 @@ const FRAME_RETRY_MS = 100;
 const STATUS_FEED = { args: ['status', '--watch', '--json'], cwd: homedir(), keep: 1, label: 'stim status --watch' };
 const HEALTH_ROUTE_TIMEOUT_MS = 1000;
 const COMMAND_LIMITS: CommandLimits = { timeoutMs: 60_000, maxOutputBytes: 32 * 1024 * 1024 };
+const AUDIT_FIELD_CHARS = 256;
+const ACTION_LIMITS: CommandLimits = { timeoutMs: 120_000, maxOutputBytes: 1024 * 1024 };
 
 const AUTH_REFUSALS: Record<Exclude<AuthOutcome, { ok: true }>['reason'], ProtocolError> = {
   'pairing-unknown': {
@@ -154,6 +159,27 @@ function requestId(value: unknown): RequestId | null {
   return typeof value === 'number' || typeof value === 'string' ? value : null;
 }
 
+type ResolvedWorkspace = { dir: string } | { code: ErrorCode; message: string };
+
+function registeredWorkspace(workspace: unknown): ResolvedWorkspace {
+  if (typeof workspace !== 'string') {
+    return { code: 'bad-request', message: 'params.workspace must be an environment path from a status payload.' };
+  }
+  let projects: Record<string, unknown>;
+  try {
+    projects = loadConfig()?.projects ?? {};
+  } catch (cause) {
+    return { code: 'stim-failed', message: (cause as Error).message };
+  }
+  const dir = Object.keys(projects).find((path) => path === workspace);
+  if (dir === undefined)
+    return { code: 'unknown-workspace', message: `${workspace} is not a Stim workspace on this Mac.` };
+  if (!existsSync(dir)) {
+    return { code: 'unknown-workspace', message: `${dir} is registered but no longer exists on this Mac.` };
+  }
+  return { dir };
+}
+
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
   const limiter = new FailureLimiter(options.maxAuthFailures ?? 5, options.failureWindowMs ?? 60_000);
   const authTimeoutMs = options.authTimeoutMs ?? 5000;
@@ -163,6 +189,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const running = new Set<() => Promise<void>>();
   const logLimits: LogLimits = { ...LOG_LIMITS, ...options.logLimits };
   const commandLimits: CommandLimits = { ...COMMAND_LIMITS, ...options.commandLimits };
+  const actionLimits: CommandLimits = { ...ACTION_LIMITS, ...options.actionLimits };
+  const busyWorkspaces = new Set<string>();
   const sessions = new Map<WebSocket, PairedDevice>();
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
 
@@ -240,6 +268,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         protocol: PROTOCOL_VERSION,
         server: { name: options.name, version: options.serverVersion, stim: options.stimVersion },
         capabilities: device.capabilities,
+        actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
         device: { id: device.id, name: device.name },
         ...(outcome.deviceToken ? { deviceToken: outcome.deviceToken } : {}),
       };
@@ -252,26 +281,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
     function workspaceDir(id: RequestId, workspace: unknown, required: boolean): string | null {
       if (workspace === undefined && !required) return homedir();
-      if (typeof workspace !== 'string') {
-        error(id, 'bad-request', 'params.workspace must be an environment path from a status payload.');
+      const resolved = registeredWorkspace(workspace);
+      if ('code' in resolved) {
+        error(id, resolved.code, resolved.message);
         return null;
       }
-      let registered: boolean;
-      try {
-        registered = Object.hasOwn(loadConfig()?.projects ?? {}, workspace);
-      } catch (cause) {
-        error(id, 'stim-failed', (cause as Error).message);
-        return null;
-      }
-      if (!registered) {
-        error(id, 'unknown-workspace', `${workspace} is not a Stim workspace on this Mac.`);
-        return null;
-      }
-      if (!existsSync(workspace)) {
-        error(id, 'unknown-workspace', `${workspace} is registered but no longer exists on this Mac.`);
-        return null;
-      }
-      return workspace;
+      return resolved.dir;
     }
 
     function openSubscription(id: RequestId): string | null {
@@ -472,6 +487,77 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
     }
 
+    function runAction(id: RequestId, params: unknown, session: PairedDevice): void {
+      const startedAt = Date.now();
+      const raw = isJsonObject(params) ? params : {};
+      const clip = (value: unknown) => (typeof value === 'string' ? value.slice(0, AUDIT_FIELD_CHARS) : null);
+      const record: AuditRecord = {
+        at: new Date(startedAt).toISOString(),
+        device: { id: session.id, name: session.name },
+        action: clip(raw.action),
+        workspace: clip(raw.workspace),
+        ...(typeof raw.platform === 'string' ? { platform: clip(raw.platform)! } : {}),
+        ok: false,
+      };
+      const audit = (outcome: Pick<AuditRecord, 'ok' | 'error' | 'durationMs'>) => {
+        const logged = outcome.error ? { ...outcome.error, message: clip(outcome.error.message)! } : undefined;
+        try {
+          appendAudit({ ...record, ...outcome, ...(logged ? { error: logged } : {}) });
+        } catch (cause) {
+          console.error(`stim-server: could not append to the action log: ${(cause as Error).message}`);
+        }
+      };
+      const refuseAction = (code: ErrorCode, message: string) => {
+        audit({ ok: false, error: { code, message } });
+        error(id, code, message);
+      };
+      const current = readDevices().find((entry) => entry.id === session.id);
+      if (!current?.capabilities.includes('control')) {
+        return refuseAction(
+          'forbidden',
+          `This device can only read. On the Mac, run \`stim-server devices grant ${session.id} --control\` to let it run actions.`,
+        );
+      }
+      const parsed = parseAction(params);
+      if ('code' in parsed) return refuseAction(parsed.code, parsed.message);
+      const { action } = parsed;
+      const resolved = registeredWorkspace(action.workspace);
+      if ('code' in resolved) return refuseAction(resolved.code, resolved.message);
+      if (busyWorkspaces.has(resolved.dir)) {
+        return refuseAction(
+          'action-busy',
+          `An action is already running in ${resolved.dir}. Try again when it finishes.`,
+        );
+      }
+      let run: ReturnType<typeof runStim>;
+      try {
+        run = runStim(options.stimCli, options.env, actionArgs(action), resolved.dir, actionLimits);
+      } catch (cause) {
+        return refuseAction('action-failed', `stim ${action.action} could not start (${(cause as Error).message}).`);
+      }
+      busyWorkspaces.add(resolved.dir);
+      let finished = false;
+      const finish = (outcome: ReturnType<typeof actionOutcome>) => {
+        if (finished) return;
+        finished = true;
+        running.delete(cancel);
+        busyWorkspaces.delete(resolved.dir);
+        audit({ ok: outcome.ok, ...(outcome.ok ? {} : { error: outcome.error }), durationMs: Date.now() - startedAt });
+        if (outcome.ok)
+          send(socket, { id, result: { action: action.action, workspace: resolved.dir, output: outcome.output } });
+        else send(socket, { id, error: outcome.error });
+      };
+      const cancel = async () => {
+        finish({
+          ok: false,
+          error: { code: 'action-failed', message: 'stim-server stopped before the action finished.' },
+        });
+        await run.cancel();
+      };
+      running.add(cancel);
+      void run.outcome.then((outcome) => finish(actionOutcome(outcome)));
+    }
+
     async function handle(raw: string): Promise<void> {
       if (socket.readyState !== socket.OPEN) return;
       let message: unknown;
@@ -495,6 +581,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (message.method === 'stats.get' || message.method === 'settings.get') {
         return workspaceCommand(id, message.method, message.params);
       }
+      if (message.method === 'action') return runAction(id, message.params, device);
       if (message.method === 'unsubscribe') {
         const name = isJsonObject(message.params) ? message.params.subscription : undefined;
         const unsubscribe = typeof name === 'string' ? subscriptions.get(name) : undefined;

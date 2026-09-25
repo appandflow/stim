@@ -148,6 +148,20 @@ export interface FrameTarget {
   slot?: string;
 }
 
+export type ActionName = 'reload' | 'stop';
+
+/** Runs one fixed `stim` command in the workspace; the server refuses it unless the device has `control`. */
+export type ActionParams =
+  | { action: 'reload'; workspace: string; platform?: Platform }
+  | { action: 'stop'; workspace: string };
+
+export interface ActionResult {
+  action: ActionName;
+  workspace: string;
+  /** The JSON the command printed. */
+  output: Record<string, unknown>;
+}
+
 export type ClientAuth = { deviceToken: string } | { pairingToken: string; deviceName: string };
 
 export interface Methods {
@@ -157,6 +171,8 @@ export interface Methods {
       protocol: number;
       server: { name: string; version: string; stim: string };
       capabilities: string[];
+      /** The actions this device may run; absent from servers that predate actions. */
+      actions?: ActionName[];
       /** Returned once, when `auth` spent a pairing token. */
       deviceToken?: string;
     };
@@ -168,6 +184,7 @@ export interface Methods {
   'settings.get': { params: { workspace?: string }; result: Record<string, unknown> };
   'frames.subscribe': { params: FrameTarget; result: { subscription: string } };
   unsubscribe: { params: { subscription: string }; result: Record<string, never> };
+  action: { params: ActionParams; result: ActionResult };
 }
 
 export type Method = keyof Methods;

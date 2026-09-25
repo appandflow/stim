@@ -1,10 +1,18 @@
 import Constants from 'expo-constants';
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { AppState } from 'react-native';
 
 import { StimConnection, type ConnectionState } from '@/lib/connection';
 import { listMacs, macToken, type PairedMac } from '@/lib/macs';
-import type { FrameEvent, LogFilter, LogRecord, StatusPayload } from '@/protocol/types';
+import type {
+  ActionName,
+  ActionParams,
+  FrameEvent,
+  LogFilter,
+  LogRecord,
+  Platform,
+  StatusPayload,
+} from '@/protocol/types';
 
 export const CLIENT = { name: 'stim-mobile', version: Constants.expoConfig?.version ?? '0.0.0' };
 
@@ -154,4 +162,46 @@ export function useFrame(
     });
   }, [connection, key, workspace, platform, slot]);
   return latest && latest.key === key ? latest : EMPTY_FRAME_STATE;
+}
+
+const NO_ACTIONS: ActionName[] = [];
+
+export interface WorkspaceActions {
+  /** The actions this Mac lets this phone run; empty for a read-only pairing. */
+  available: ActionName[];
+  pending: ActionName | null;
+  error: string | null;
+  /** Resolves true when the action succeeded; a failure sets `error`. */
+  run: (action: ActionName, options?: { platform?: Platform }) => Promise<boolean>;
+}
+
+export function useAction(workspace: string): WorkspaceActions {
+  const { connection, state } = useMacConnection();
+  const [pending, setPending] = useState<ActionName | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const run = useCallback(
+    async (action: ActionName, options: { platform?: Platform } = {}) => {
+      if (!connection) {
+        setError('Not connected.');
+        return false;
+      }
+      const params: ActionParams =
+        action === 'reload'
+          ? { action, workspace, ...(options.platform ? { platform: options.platform } : {}) }
+          : { action, workspace };
+      setPending(action);
+      setError(null);
+      try {
+        await connection.request('action', params);
+        return true;
+      } catch (cause) {
+        setError((cause as Error).message);
+        return false;
+      } finally {
+        setPending(null);
+      }
+    },
+    [connection, workspace],
+  );
+  return { available: state.kind === 'open' ? state.actions : NO_ACTIONS, pending, error, run };
 }
