@@ -285,9 +285,9 @@ WHAT WRITES WHAT
                        match a simulator through their runner.log, Android
                        sessions only while agent-device's claim on the
                        emulator is live (released claims drop their
-                       actions from later queries). A session in an unrecognized format
-                       yields one warn record (agent_format_unknown) instead
-                       of its actions.
+                       actions from later queries). A session in an
+                       unrecognized format yields one warn record
+                       (agent_format_unknown) instead of its actions.
   build-ios.ndjson     the xcodebuild / gradle transcript at level debug, the
   build-android.ndjson extracted diagnostics at level error, and the launch as
                        a marker record. One RUN's worth: each build starts the

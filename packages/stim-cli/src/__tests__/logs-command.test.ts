@@ -625,6 +625,7 @@ describe('logs command', () => {
       recursive: true,
     });
     vi.stubEnv('HOME', agentHome);
+    vi.stubEnv('USERPROFILE', agentHome);
     for (const name of ['AGENT_DEVICE_STATE_DIR', 'AGENT_DEVICE_CLAIMS_DIR', 'AGENT_DEVICE_IOS_RUNNER_LEASE_DIR'])
       vi.stubEnv(name, '');
     try {
