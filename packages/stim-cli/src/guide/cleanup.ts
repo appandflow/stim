@@ -18,21 +18,24 @@ WHAT RECLAIMS AN OWNED DEVICE
                             (\`guide lifecycle pool\`); deletes them when
                             parking is disabled or their setup cannot be verified
   stim gc --delete        sweeps devices Stim created that no project
-                            references (\`guide cleanup gc\`), and clears
-                            verified parked simulators and emulators
+                            references (\`guide cleanup gc\`), clears
+                            verified parked simulators and emulators, and
+                            runs \`stim worktree remove\` on every clean,
+                            Stim-managed linked worktree whose branch is merged
   stim gc --delete --older-than <days>
                             also reaps the device of a workspace no Stim
                             command has used in that long, even though the
                             project is still on disk
   stim gc --delete --worktrees
-                            runs \`stim worktree remove\` on every clean, idle,
-                            Stim-managed linked worktree (\`guide cleanup gc\`)
+                            also runs \`stim worktree remove\` on every clean,
+                            idle, Stim-managed linked worktree
+                            (\`guide cleanup gc\`)
   stim gc --idle <duration>
                             shuts DOWN (never deletes) owned devices with no
                             driver, claim or activity for that long
 
 \`worktree remove\` and \`gc --delete\` are the only two commands that delete;
-\`gc --delete --worktrees\` deletes only through \`worktree remove\`. \`gc
+\`gc --delete\` deletes worktrees only through \`worktree remove\`. \`gc
 --delete\` also clears workspace build outputs (\`guide cleanup disk\`) and
 orphaned workspace directories, never a checkout. \`stim stop\` shuts a device
 DOWN and leaves it assigned, which is what makes returning to a branch cost a
@@ -86,23 +89,46 @@ IN USE
   existence cannot be read (a permission error) is never treated as deleted.
 
 SWEEPING FINISHED WORKTREES
-  \`gc --worktrees\` is opt-in; no cache or age flag implies it. It looks at
-  every registered project root and every workspace.json root, grouped by
-  git worktree, and reports each worktree with the reason it is kept:
-  source checkout, bare, locked, in use, dirty (untracked files count; pod
-  install churn alone does not), unpushed (commits no remote-tracking ref or
-  other local branch reaches), initialized submodules, or recently used.
-  Idle means no recorded use for --older-than days, 7 without it; a worktree
-  whose last use is unknown is kept. --cache with --worktrees is refused with
-  STIM_BAD_ARG; run them separately.
-    stim gc --worktrees --older-than 3            # report only
-    stim gc --delete --worktrees --older-than 3   # remove the clean idle ones
+  Every \`gc\` without --cache looks at every registered project root and
+  every workspace.json root, grouped by git worktree, and reports each linked
+  worktree with the reason it is removed or kept. A worktree is finished when
+  its branch is merged into the default branch. \`--worktrees\` also removes
+  one that is idle: no recorded use for --older-than days, 7 without it; a
+  worktree whose last use is unknown is kept. Both need the same clean state;
+  a worktree is kept when it is the source checkout, bare, locked, in use,
+  dirty (untracked files count; pod install churn alone does not), unpushed
+  (commits no remote-tracking ref or other local branch reaches), or has
+  initialized submodules. Without --worktrees, the report leaves out the
+  source checkout and roots outside git.
+
+  MERGED means, after one \`git fetch origin <default>\` per repository
+  (30s timeout, no credential prompt), with the default branch taken from
+  origin/HEAD:
+  - HEAD is reachable from origin/<default> through a merge. A HEAD on the
+    default branch's first-parent line has no commits of its own and is not
+    merged.
+  - every commit since the merge base has a patch-equivalent commit on the
+    default branch (a rebase merge), or the whole change since the merge base
+    is patch-equivalent to one commit there (a squash merge).
+  Merge state comes from git alone, not from a hosting service. A squash
+  merge whose content changed during the merge (a conflict resolution, a
+  suggested edit) does not match and is kept. When origin/HEAD is not set,
+  the fetch fails, or git cannot answer, the state is unknown and the
+  worktree is kept (reason merge-unknown, with the remedy). A squash-merged
+  branch whose upstream was deleted after the merge has commits only it
+  reaches; they do not block removal, because their content is on the
+  default branch, and the branch is kept.
+    stim gc                                        # report merged worktrees
+    stim gc --delete                               # remove them
+    stim gc --delete --worktrees --older-than 3    # also the clean idle ones
+  --cache with --worktrees is refused with STIM_BAD_ARG; run them separately.
   With --delete it runs the \`stim worktree remove\` pipeline, never --force,
   on each removable worktree. That pipeline re-inspects the worktree and
-  re-checks use and idleness under the removal locks, then parks devices and
-  handles the branch exactly as a manual \`stim worktree remove\`. A worktree
-  that became busy or recently used since the report is kept with the reason.
-  A worktree that fails is reported, gc exits 1, and the sweep continues.
+  re-checks use under the removal locks, and idleness for an idle worktree
+  or an unchanged HEAD for a merged one, then parks devices and handles the
+  branch exactly as a manual \`stim worktree remove\`. A worktree that
+  changed since the report is kept with the reason. A worktree that fails is
+  reported, gc exits 1, and the sweep continues.
 
 IDLE DEVICES
   Plain \`gc\` lists booted owned simulators and emulators whose \`status\`

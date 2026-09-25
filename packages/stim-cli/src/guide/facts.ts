@@ -459,7 +459,8 @@ RULES
   olderThan       the --older-than days, or null
   worktreeSweep   null without --worktrees; otherwise { olderThan, defaulted }:
                   the idle days a linked worktree needs, and whether that is
-                  the default 7 because --older-than was not given
+                  the default 7 because --older-than was not given. Merged
+                  worktrees are swept either way
   actionable      true when --delete with the same flags reclaims something
   failures        null on a dry run without --idle; otherwise the entries it
                   could not delete or shut down
@@ -470,8 +471,12 @@ RULES
     orphanedPorts           { project, label, port }
     orphanedWorkspaces      { dir, projectRoot, bytes }  --delete removes the
                               whole workspace directory
-    linkedWorktrees         { path, idleDays, willRemove, reason, detail }
-                              only with --worktrees
+    linkedWorktrees         { path, idleDays, mergedInto, willRemove,
+                              reason, detail }  mergedInto is the default
+                              branch HEAD is merged into ("origin/main"),
+                              or null; detail says why it is removed
+                              ("merged into origin/main", "idle 9d") or kept.
+                              Without --worktrees, only linked worktrees
     parkedSimulators        { udid, name, model, runtime, parkedAt, bytes,
                               listed }
     parkedEmulators         { name, systemImage, parkedAt, bytes, listed }
@@ -515,13 +520,15 @@ RULES
 
   reason is null for an entry --delete acts on, and otherwise a stable code
   to branch on; detail is the text line, for the user. Never parse detail.
+  A linked worktree's detail is never null.
     workspaceBuildOutputs   unresolved | in-use | last-use-unknown |
                             recently-used
     linkedWorktrees         not-a-worktree | bare-repository |
                             source-checkout-unknown | source-checkout |
                             locked | in-use | status-unreadable | dirty |
                             unpushed-unchecked | unpushed | submodules |
-                            last-use-unknown | recently-used
+                            not-merged | merge-unknown | last-use-unknown |
+                            recently-used
 
   These print the error contract instead and exit 1:
 

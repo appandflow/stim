@@ -613,9 +613,12 @@ worktree locked with `git worktree lock` is refused until you unlock it.
 stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces>] [--worktrees] [--idle <duration>] [--json]
 ```
 
-Reports stale workspace entries, orphaned workspace directories, orphaned
-owned devices and remote sessions, stale locks, and shared cache sizes. It does
-not change anything without `--delete`.
+Reports stale workspace entries, orphaned workspace directories, clean linked
+worktrees whose branch is merged, orphaned owned devices and remote sessions,
+stale locks, and shared cache sizes. It does not change anything without
+`--delete`. See
+[removing finished worktrees in bulk](./worktrees.md#remove-finished-worktrees-in-bulk)
+for how gc decides that a branch is merged.
 
 An orphaned device is one Stim created that no workspace references. Other
 devices whose names start with `stim-` appear under "Unrecognized stim-\*
@@ -642,10 +645,10 @@ workspace keeps its state, logs, devices and ports. See
   outputs with `all`. `workspaces` clears only the workspace build outputs.
   Devices and project entries are not inspected, so a scoped run empties caches
   and reaps nothing.
-- `--worktrees` also reports every clean, idle linked worktree that has a Stim
-  workspace, and why each other one is kept. With `--delete` it runs
-  `stim worktree remove` without `--force` on each of them. Idle means unused
-  for `--older-than` days, or 7 days without that option. It cannot be
+- `--worktrees` also selects every clean, idle linked worktree that has a Stim
+  workspace, not only the merged ones plain `gc` selects. With `--delete` gc
+  runs `stim worktree remove` without `--force` on each of them. Idle means
+  unused for `--older-than` days, or 7 days without that option. It cannot be
   combined with `--cache`. See
   [removing finished worktrees in bulk](./worktrees.md#remove-finished-worktrees-in-bulk).
 - `--idle <duration>` shuts down owned simulators and emulators whose
@@ -678,10 +681,26 @@ prints, for example:
     "deadProjects": [{ "path": "/path/to/removed-app" }],
     "orphanedWorkspaces": [{ "dir": "~/.stim/workspaces/old--1a2b", "projectRoot": "/path/to/old", "bytes": 52428800 }],
     "linkedWorktrees": [
-      { "path": "/path/to/feature", "idleDays": 12, "willRemove": true, "reason": null, "detail": null },
+      {
+        "path": "/path/to/feature",
+        "idleDays": 12,
+        "mergedInto": null,
+        "willRemove": true,
+        "reason": null,
+        "detail": "idle 12d"
+      },
+      {
+        "path": "/path/to/shipped",
+        "idleDays": 0,
+        "mergedInto": "origin/main",
+        "willRemove": true,
+        "reason": null,
+        "detail": "merged into origin/main"
+      },
       {
         "path": "/path/to/wip",
         "idleDays": 20,
+        "mergedInto": null,
         "willRemove": false,
         "reason": "dirty",
         "detail": "dirty: uncommitted changes or untracked files"
@@ -706,7 +725,7 @@ prints, for example:
 The example omits the empty sections. `reason` is `null` for an entry `--delete`
 acts on and otherwise a stable code; `detail` is the text the report prints.
 `bytes` is `null` when the size is unknown. `worktreeSweep` is `null` without
-`--worktrees`. With `--delete`, `mode` is `"delete"`, the sections list what
+`--worktrees`, which still reports merged worktrees. With `--delete`, `mode` is `"delete"`, the sections list what
 the run acted on, and `failures` counts the entries it could not delete. A
 nonzero count exits with status 1. Run `stim gc --json` again to see what is
 left. `idle` is the `--idle` duration in milliseconds or `null`, and with

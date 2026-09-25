@@ -13,7 +13,7 @@ import {
   type WorkspaceOutputsReport,
 } from './workspaces.ts';
 import type { GcCache } from './caches.ts';
-import type { WorktreeSkipCode, WorktreeSweep } from './worktrees.ts';
+import { worktreeRemovalReason, type WorktreeSkipCode, type WorktreeSweep } from './worktrees.ts';
 import type {
   DeviceLeaseGarbage,
   ParkedAvdReport,
@@ -384,24 +384,28 @@ function cacheLines(caches: readonly GcCache[], workspaceOutputs: WorkspaceOutpu
 }
 
 function worktreeSweepLines(sweep: WorktreeSweep | null): string[] {
-  if (!sweep) return [];
+  if (!sweep || (!sweep.idle && !sweep.worktrees.length)) return [];
   const removable = sweep.worktrees.filter((w) => !w.skipped);
-  const idle = sweep.defaulted
-    ? `idle ${sweep.olderThan}d or more (the default without --older-than)`
-    : `idle ${sweep.olderThan}d or more`;
+  const idle = !sweep.idle
+    ? ''
+    : sweep.idle.defaulted
+      ? ` or idle ${sweep.idle.olderThan}d or more (the default without --older-than)`
+      : ` or idle ${sweep.idle.olderThan}d or more`;
   const lines = [
-    `Linked worktrees (${removable.length} removable, ${sweep.worktrees.length - removable.length} kept) - clean, pushed, ${idle}:`,
+    `Linked worktrees (${removable.length} removable, ${sweep.worktrees.length - removable.length} kept) - clean, pushed, merged into the default branch${idle}:`,
   ];
   for (const w of sweep.worktrees) {
     const age = w.idleDays === null ? '' : ` (idle ${w.idleDays}d)`;
     lines.push(`  ${w.path}${age}`);
     lines.push(
-      w.skipped ? `              kept: ${w.skipped}` : '              would be REMOVED by `stim worktree remove`',
+      w.skipped
+        ? `              kept: ${w.skipped}`
+        : `              would be REMOVED by \`stim worktree remove\`: ${worktreeRemovalReason(w)}`,
     );
   }
   if (removable.length) {
     lines.push(
-      '              --delete runs it without --force; use and idleness are re-checked under its removal locks.',
+      '              --delete runs it without --force; use, idleness and HEAD are re-checked under its removal locks.',
     );
   }
   return lines;
@@ -428,9 +432,10 @@ export interface GcJsonSections {
   linkedWorktrees: {
     path: string;
     idleDays: number | null;
+    mergedInto: string | null;
     willRemove: boolean;
     reason: WorktreeSkipCode | null;
-    detail: string | null;
+    detail: string;
   }[];
   parkedSimulators: ParkedSimReport[];
   parkedEmulators: ParkedAvdReport[];
@@ -530,9 +535,10 @@ export function gcReportSections({
     linkedWorktrees: (worktreeSweep?.worktrees ?? []).map((w) => ({
       path: w.path,
       idleDays: w.idleDays,
+      mergedInto: w.merge?.merged ? w.merge.into : null,
       willRemove: w.skipCode === null,
       reason: w.skipCode,
-      detail: w.skipped,
+      detail: w.skipped ?? worktreeRemovalReason(w),
     })),
     parkedSimulators: parkedSims.map(({ udid, name, model, runtime, parkedAt, bytes, listed }) => ({
       udid,
