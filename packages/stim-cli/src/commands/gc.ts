@@ -52,6 +52,7 @@ import {
   isInsideWorkspaces,
 } from './gc/workspaces.ts';
 import { collectWorktreeSweep, removeWorktrees } from './gc/worktrees.ts';
+import { collectIdleDevices, parseIdleDuration, shutDownIdleDevices, type IdleDevice } from './gc/idle.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
 
@@ -76,6 +77,7 @@ interface CollectGcReportOptions {
 }
 
 interface RunGcOptions {
+  idle?: number;
   olderThan?: number;
   cache?: string;
   delete?: boolean;
@@ -92,6 +94,7 @@ interface GcRefusal {
 type GcPayload =
   | {
       mode: 'dry-run' | 'delete';
+      idle: number | null;
       cacheScope: string | null;
       olderThan: number | null;
       worktreeSweep: { olderThan: number; defaulted: boolean } | null;
@@ -138,6 +141,7 @@ export async function collectGcReport(
       buildLocks: { stale: [], live: [], unresolved: [] },
       buildSlots: { stale: [], live: [], unresolved: [] },
       deviceLeases: { expired: [], kept: [] },
+      idleDevices: [],
       deviceSweepNotices: [],
       easSessionSweep: { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
       parkedSims: [],
@@ -201,6 +205,7 @@ export async function collectGcReport(
   let orphanedDevices: OrphanedDevice[] = [];
   let staleDevices: StaleProjectDevice[] = [];
   let staleDeviceRecords: StaleDeviceRecord[] = [];
+  let idleDevices: IdleDevice[] = [];
 
   const unsweepableReason =
     cfg === null
@@ -265,6 +270,7 @@ export async function collectGcReport(
         size: deps.directorySize ?? directorySize,
       },
     );
+    idleDevices = collectIdleDevices(cfg, sims, deadProjects, now);
     staleDeviceRecords = findStaleDeviceRecords({
       config: cfg,
       sims,
@@ -320,6 +326,7 @@ export async function collectGcReport(
       unresolved: slots.filter((s) => s.unresolved),
     },
     deviceLeases,
+    idleDevices,
     deviceSweepNotices,
     easSessionSweep,
     caches,
@@ -352,16 +359,17 @@ export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}):
 }
 
 async function sweep(opts: RunGcOptions, deps: GcDependencies): Promise<GcPayload> {
-  if (opts.cache && opts.worktrees) {
-    console.error(chalk.red('--cache acts only on the named caches, and --worktrees sweeps linked worktrees.'));
-    console.error(chalk.dim('Run `stim gc --worktrees` and `stim gc --cache <name>` separately.'));
+  if (opts.cache && (opts.worktrees || opts.idle !== undefined)) {
+    const flag = opts.worktrees ? '--worktrees' : '--idle';
+    const message = opts.worktrees
+      ? '--cache acts only on the named caches, and --worktrees sweeps linked worktrees.'
+      : '--cache acts only on the named caches, and --idle shuts down idle owned devices.';
+    const remedy = `Run \`stim gc ${flag}${opts.worktrees ? '' : ' <duration>'}\` and \`stim gc --cache <name>\` separately.`;
+    console.error(chalk.red(message));
+    console.error(chalk.dim(remedy));
     console.error(chalk.red('failed: STIM_BAD_ARG'));
     process.exitCode = 1;
-    return {
-      code: 'STIM_BAD_ARG',
-      message: '--cache acts only on the named caches, and --worktrees sweeps linked worktrees.',
-      remedy: 'Run `stim gc --worktrees` and `stim gc --cache <name>` separately.',
-    };
+    return { code: 'STIM_BAD_ARG', message, remedy };
   }
   const poolError = parkedMaxSetting('ios').error || parkedMaxSetting('android').error;
   if (poolError) {
@@ -494,8 +502,17 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     deviceLeases.expired.length > 0 ||
     easSessionSweep.orphaned.length > 0 ||
     ((olderThan !== null || all) && caches.length > 0);
+  const idle = opts.idle ?? null;
+  const idleFailures =
+    idle === null
+      ? 0
+      : shutDownIdleDevices(report.idleDevices, idle, () =>
+          collectIdleDevices(loadConfig(), listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS }), report.deadProjects),
+        );
+  if (idleFailures) process.exitCode = 1;
   const payload = (failures: number | null): GcPayload => ({
     mode: opts.delete ? 'delete' : 'dry-run',
+    idle,
     cacheScope: report.cacheScope,
     olderThan,
     worktreeSweep: report.worktreeSweep
@@ -516,12 +533,11 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
         ),
       );
     }
-    return payload(null);
+    return payload(idle === null ? null : idleFailures);
   }
 
-  let deleteFailures = report.workspaceOutputs
-    ? await clearWorkspaceOutputs(report.workspaceOutputs, { olderThan })
-    : 0;
+  let deleteFailures = idleFailures;
+  deleteFailures += report.workspaceOutputs ? await clearWorkspaceOutputs(report.workspaceOutputs, { olderThan }) : 0;
   deleteFailures += deleteParkedSims(report.parkedSims, deps) + deleteParkedAvds(report.parkedAvds);
 
   removeInvalidProjectEntries(invalidProjects);
@@ -672,6 +688,16 @@ export default function gcCommand(program: Command): void {
       (v: string) => {
         if (!v.trim()) throw new InvalidArgumentError('must name a cache, e.g. --cache "compilation cache"');
         return v;
+      },
+    )
+    .option(
+      '--idle <duration>',
+      'shut down (never delete) owned simulators and emulators that have had no driver, claim, or activity for at least <duration>, such as 30m, 2h, or 1d; acts without --delete',
+      (v: string) => {
+        const ms = parseIdleDuration(v);
+        if (ms === null)
+          throw new InvalidArgumentError('must be a whole number of minutes, hours, or days, e.g. --idle 2h');
+        return ms;
       },
     )
     .option('--json', 'print the report as JSON on stdout; every other line goes to stderr')

@@ -417,7 +417,7 @@ RULES
     gc: {
       summary: 'the gc report payload: mode, sections, reasons, failures, and the gc refusals',
       body: () => `  stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces>]
-          [--worktrees] --json
+          [--worktrees] [--idle <duration>] --json
 
   The report the text prints, as one payload. Show the user its sections
   before you run \`gc --delete\`. Under --delete it is the report that run
@@ -426,6 +426,7 @@ RULES
   \`stim gc --json\` again to see what is left.
 
   mode            "dry-run" | "delete"
+  idle            the --idle duration in milliseconds, or null
   cacheScope      the --cache name, or null. When set, devices, project
                   entries and locks were not inspected and their sections
                   are empty
@@ -434,8 +435,8 @@ RULES
                   the idle days a linked worktree needs, and whether that is
                   the default 7 because --older-than was not given
   actionable      true when --delete with the same flags reclaims something
-  failures        null on a dry run; under --delete, the entries it could
-                  not delete
+  failures        null on a dry run without --idle; otherwise the entries it
+                  could not delete or shut down
   sections        one array per report section, in the text order. Every key
                   is present, empty when there is nothing to report:
     deadProjects            { path }
@@ -453,6 +454,11 @@ RULES
                               bytes }  only with --older-than
     staleDeviceRecords      { kind, id, project, slot }  --delete clears
                               the record only
+    idleDevices             { kind, id, name, project, slot, lastActivityAt,
+                              idleForMs, buildInProgress }  booted owned
+                              devices whose status activity is "idle";
+                              --idle shuts down those idle long enough,
+                              --delete never touches them
     orphanedEasSessions     { id, name, platform, status, projectScope }
     staleBuildLocks         { path, platform, key, pid, projectRoot }
     staleBuildSlots         { path, index, pid, projectRoot }
@@ -494,13 +500,46 @@ RULES
 
   - a --cache name that no shared cache carries; the remedy names the
     caches on this machine
-  - --cache together with --worktrees`,
+  - --cache together with --worktrees or --idle`,
     },
     status: {
-      summary: "the status payload's build field: a running ios or android build, its phase, and its estimate",
+      summary:
+        "the status payload's build and device activity fields: a running build, its estimate, and who drives each device",
       body: () => `  stim status --json
 
-  Each entry of environments carries build: null, or the ios or android
+  Each booted simulator and detected emulator in environments (and in
+  slots) carries activity; a shut-down or physical device has none:
+
+  activity  { state, driver?, lastActivityAt?, basis }
+
+  state            "driven"   a live claim or driver holds the device now
+                   "active"   no driver, but activity in the last 10 minutes
+                   "idle"     no driver and no activity for 10 minutes or more
+                   "unknown"  a claim or driver check could not be read;
+                              never treated as idle
+  driver           { tool, pid, since } for "driven": agent-device, stim device
+                   lock, xcodebuild, idb, maestro, appium, simctl,
+                   uiautomator or instrumentation; pid and since are null when
+                   the claim does not record them
+  lastActivityAt   the newest of this device's app log records, this
+                   platform's Metro bundle requests and the workspace's last
+                   Stim run; absent when none is recorded
+  basis            the evidence behind state, strongest first:
+                   agent-device-claim, agent-device-lease  agent-device state,
+                     read only; live only when every recorded process is alive
+                     with its recorded start time, so a reused pid is dead
+                   device-lock          an unexpired \`stim device lock\` lease
+                   driver-process       a host process naming the UDID or serial
+                   instrumentation      an on-device uiautomator or androidx.test
+                                        process (one adb shell ps per emulator)
+                   device-log, metro-bundle, workspace-use   recency
+
+  Plain \`stim status\` appends it to each device line: "driven by
+  agent-device for 12m", "active", "idle 3h", or "activity unknown (...)".
+  \`gc --idle <duration>\` shuts down owned devices idle that long
+  (\`guide cleanup gc\`).
+
+  Each entry of environments also carries build: null, or the ios or android
   run that holds this workspace's native-run.lock:
 
   build   { platform, slot, state, phase, startedAt, phaseStartedAt,
