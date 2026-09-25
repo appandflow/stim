@@ -10,3 +10,5 @@ dist/
 packages/*/index.d.ts
 packages/*/bin/*.d.ts
 packages/stim-cli/src/**/*.d.ts
+
+.claude/worktrees/
