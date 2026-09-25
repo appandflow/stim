@@ -9,10 +9,13 @@ enum SidebarItem: Hashable {
 }
 
 struct RootView: View {
-  @StateObject private var store: StatusStore
+  @ObservedObject private var store: StatusStore
   @StateObject private var metrics: MetricsStore
   @StateObject private var actions: ActionCenter
   @State private var selection: SidebarItem? = .wall
+  @State private var restoredProject = false
+  @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.allDevices
+  @AppStorage(AppPreferences.Key.lastProjectPath) private var lastProjectPath = ""
   @State private var projectFilter: Project?
   @State private var focusedDeviceID: String?
   @State private var detailTab = DetailTab.device
@@ -21,10 +24,9 @@ struct RootView: View {
 
   private let cli: Task<StimCLI, Never>
 
-  init(cli: Task<StimCLI, Never>) {
+  init(cli: Task<StimCLI, Never>, store: StatusStore) {
     self.cli = cli
-    let store = StatusStore(cli: cli)
-    _store = StateObject(wrappedValue: store)
+    self.store = store
     _metrics = StateObject(wrappedValue: MetricsStore(status: store, cli: cli))
     _actions = StateObject(wrappedValue: ActionCenter(cli: cli))
   }
@@ -45,7 +47,6 @@ struct RootView: View {
     .tint(Theme.purple)
     .font(Theme.body())
     .foregroundStyle(Theme.text)
-    .preferredColorScheme(.dark)
     .environmentObject(actions)
     .sheet(item: $actions.presented) { run in
       ActivitySheet(run: run).environmentObject(actions)
@@ -56,14 +57,38 @@ struct RootView: View {
       metrics.start()
     }
     .onReceive(openRequests.$simulatorUdid) { udid in showSimulator(udid, in: store.payload) }
-    .onReceive(store.$payload) { payload in showSimulator(openRequests.simulatorUdid, in: payload) }
+    .onReceive(store.$payload) { payload in
+      showSimulator(openRequests.simulatorUdid, in: payload)
+      restoreLastProject()
+    }
+    .onReceive(store.$projects) { _ in restoreLastProject() }
+    .onReceive(openRequests.$workspacePath) { path in
+      guard let path else { return }
+      openRequests.workspacePath = nil
+      selection = .environment(path)
+    }
     .onChange(of: selection) { _, item in
+      restoredProject = true
       switch item {
-      case .wall: projectFilter = nil
-      case .project(let project): projectFilter = project
+      case .wall:
+        projectFilter = nil
+        openRequests.selectedWorkspace = nil
+      case .project(let project):
+        projectFilter = project
+        lastProjectPath = project.root
+        openRequests.selectedWorkspace = store.environments(in: project).first?.path
+      case .environment(let path):
+        openRequests.selectedWorkspace = path
       default: break
       }
     }
+  }
+
+  private func restoreLastProject() {
+    guard !restoredProject, defaultView == .lastProject, !lastProjectPath.isEmpty, selection == .wall else { return }
+    guard let entry = store.projectList.first(where: { $0.project.root == lastProjectPath }) else { return }
+    restoredProject = true
+    selection = .project(entry.project)
   }
 
   /// `@Published` emits before the property changes, so both values arrive as arguments.

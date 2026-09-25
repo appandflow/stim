@@ -86,6 +86,7 @@ public struct RemoteDevice: Decodable, Hashable, Sendable {
   public var backend: String
   public var sessionId: String
   public var state: String
+  public var startedAt: String?
   public var webPreviewUrl: String?
 }
 

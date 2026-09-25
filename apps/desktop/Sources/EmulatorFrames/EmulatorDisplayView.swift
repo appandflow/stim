@@ -59,6 +59,7 @@ public final class EmulatorDisplayNSView: NSView {
   private var displaySize: CGSize?
   private var touchPoint: CGPoint?
   private var keysDown: Set<UInt16> = []
+  private var lastShown: CFTimeInterval = 0
 
   override init(frame: NSRect) {
     super.init(frame: frame)
@@ -87,6 +88,7 @@ public final class EmulatorDisplayNSView: NSView {
     retryTimer = nil
     stream?.cancel()
     stream = nil
+    _ = pending.take()
     layer?.contents = nil
     releaseInput()
     shown = nil
@@ -94,7 +96,7 @@ public final class EmulatorDisplayNSView: NSView {
   }
 
   private func connect() {
-    guard let serial, window != nil, stream == nil, retryTimer == nil else { return }
+    guard let serial, window != nil, !framesPaused, stream == nil, retryTimer == nil else { return }
     guard let endpoint = EmulatorDiscovery.endpoint(serial: serial) else {
       report(.noEndpoint)
       retry()
@@ -109,7 +111,7 @@ public final class EmulatorDisplayNSView: NSView {
       endpoint: endpoint, width: Self.maxPixels, height: Self.maxPixels,
       onFrame: { [weak self, pending] frame in
         guard pending.store(frame) else { return }
-        DispatchQueue.main.async { self?.show(pending.take()) }
+        DispatchQueue.main.async { self?.frameArrived(current) }
       },
       onEnd: { [weak self] in
         DispatchQueue.main.async {
@@ -130,8 +132,25 @@ public final class EmulatorDisplayNSView: NSView {
     }
   }
 
+  private func frameArrived(_ generation: Int) {
+    let wait = lastShown + 1 / AppPreferences.maxFramesPerSecond - CACurrentMediaTime()
+    guard wait > 0 else {
+      show(pending.take())
+      return
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+      guard let self, self.generation == generation else { return }
+      self.show(self.pending.take())
+    }
+  }
+
+  private var framesPaused: Bool {
+    AppPreferences.pausesHiddenFrames && window?.occlusionState.contains(.visible) == false
+  }
+
   private func show(_ frame: EmulatorFrame?) {
     guard stream != nil, let frame, let image = Self.image(frame) else { return }
+    lastShown = CACurrentMediaTime()
     layer?.contents = image
     self.shown = (CGSize(width: frame.width, height: frame.height), frame.rotation)
     _ = inputClient()
@@ -155,7 +174,22 @@ public final class EmulatorDisplayNSView: NSView {
 
   public override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
-    if window == nil { disconnect() } else { connect() }
+    NotificationCenter.default.removeObserver(self, name: NSWindow.didChangeOcclusionStateNotification, object: nil)
+    if let window {
+      NotificationCenter.default.addObserver(
+        self, selector: #selector(occlusionChanged), name: NSWindow.didChangeOcclusionStateNotification, object: window)
+      connect()
+    } else {
+      disconnect()
+    }
+  }
+
+  @objc private func occlusionChanged() {
+    if framesPaused {
+      disconnect()
+    } else {
+      connect()
+    }
   }
 
   func setInteractive(_ interactive: Bool) {

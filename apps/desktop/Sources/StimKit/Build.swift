@@ -36,9 +36,3 @@ public struct BuildProgress: Equatable, Sendable {
   public var fraction: Double?
   public var remaining: String?
 }
-
-private func parseTimestamp(_ text: String) -> Date? {
-  let formatter = ISO8601DateFormatter()
-  formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-  return formatter.date(from: text) ?? ISO8601DateFormatter().date(from: text)
-}

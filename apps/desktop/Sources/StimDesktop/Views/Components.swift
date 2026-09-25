@@ -53,10 +53,11 @@ struct EmptyState: View {
   var title: String
   var message: String
   var showsHero = false
+  @Environment(\.colorScheme) private var colorScheme
 
   var body: some View {
     VStack(spacing: 14) {
-      if showsHero, let hero = BrandAssets.hero {
+      if showsHero, let hero = BrandAssets.hero(colorScheme) {
         Image(nsImage: hero)
           .resizable()
           .scaledToFit()

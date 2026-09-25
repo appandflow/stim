@@ -6,7 +6,7 @@ stats, live frames from its iOS simulators and Android emulators, and its CPU
 and resident memory.
 
 It reads Stim state only through `stim status --watch --json`, `stim status --json`, `stim stats --json`,
-`stim logs --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`. Its
+`stim logs --json`, `stim settings --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`. Its
 actions run the `stim` executable with an argument list, never a shell string,
 in the workspace directory:
 
@@ -86,10 +86,36 @@ session as billable. Its **Stop** button runs `stim stop` in the workspace after
 a confirmation, which ends the session. A session with no recorded preview URL
 shows a message instead of the page.
 
+## Settings
+
+**Stim > Settings** (Command-comma) edits Stim settings and the app's own
+preferences.
+
+The **Machine**, **Repository**, **Workspace** and **.stim.json** tabs are
+generated from `settings.schema.json`, which the `stim` package ships beside
+`dist/cli.mjs`; the app reads the one next to the resolved `stim` executable,
+or `packages/stim-cli/dist` under `swift run`. Choices are pickers, booleans
+toggles, numbers steppers, paths file pickers, string lists token fields, and
+objects JSON fields. Values come from `stim settings --json` run in the chosen
+workspace: each row shows the effective value and its layer, the lower layer a
+value there overrides, an environment override when one is set, and a
+**Reset** that unsets the layer. Edits run
+`stim settings set|unset <key> --scope <layer> --json`, and a refusal shows
+under the field. `android.keystorePassword` is never shown. Keys Stim does not
+read are listed read-only.
+
+The **App** tab holds preferences kept in `UserDefaults`, never in Stim's
+config: appearance (Auto, Light, Dark), showing idle workspaces, opening to all
+devices or the last project, device tile size, a live frame rate cap, pausing
+frames while the window is hidden, the editor and terminal the workspace
+inspector opens, notifications, a menu bar extra with the live workspace count
+and quick open, launch at login, and a `stim` executable override that applies
+at the next launch. Notifications and launch at login need the bundled app.
+
 ## Requirements
 
 - macOS 14 or later and Xcode 27, selected with `xcode-select` or `DEVELOPER_DIR`. Stim Desktop falls back to `/Applications/Xcode.app` when the selected developer directory has no simulator support.
-- `stim` on the login shell's `PATH`, or `STIM_BIN` set to its path. The cleanup
+- `stim` on the login shell's `PATH`, `STIM_BIN` set to its path, or the override in Settings. The cleanup
   preview needs a `stim` with `gc --json`. At launch the app reads the
   environment of `zsh -lic` once and runs every `stim` command with it, so
   commands see the same `PATH` and variables such as `ANDROID_HOME` as a

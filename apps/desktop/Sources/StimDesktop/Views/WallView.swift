@@ -7,6 +7,7 @@ struct WallView: View {
   var project: Project?
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
+  @AppStorage(AppPreferences.Key.tileSize) private var tileSize = TileSize.medium
 
   var body: some View {
     let live = store.environments(in: project).filter { $0.live || $0.build?.isRunning == true }
@@ -39,7 +40,7 @@ struct WallView: View {
                   ForEach(env.devices.filter { $0.isRunning || env.runningBuild(for: $0) != nil }) { device in
                     Button { selection = .environment(env.path) } label: {
                       DeviceTile(
-                        device: device, screenHeight: 400, workspace: env.path, build: env.runningBuild(for: device))
+                        device: device, screenHeight: tileSize.screenHeight, workspace: env.path, build: env.runningBuild(for: device))
                     }
                     .buttonStyle(.plain)
                   }

@@ -93,6 +93,18 @@ struct Inspector: View {
   var openLogs: () -> Void
   @EnvironmentObject private var actions: ActionCenter
   @State private var removal: Removal?
+  @AppStorage(AppPreferences.Key.editorBundleID) private var editorID = ""
+  @AppStorage(AppPreferences.Key.terminalBundleID) private var terminalID = ""
+
+  private func chosen(_ preferred: String, from apps: [ExternalApp]) -> ExternalApp? {
+    ExternalApp.choose(preferred, from: apps) { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) != nil }
+  }
+
+  private func open(_ path: String, in app: ExternalApp) {
+    guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app.bundleID) else { return }
+    NSWorkspace.shared.open(
+      [URL(fileURLWithPath: path)], withApplicationAt: url, configuration: NSWorkspace.OpenConfiguration())
+  }
 
   private struct Removal {
     var branch: String?
@@ -111,11 +123,11 @@ struct Inspector: View {
             Button("Reveal in Finder") {
               NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: env.path)])
             }
-            Button("Open in Terminal") {
-              NSWorkspace.shared.open(
-                [URL(fileURLWithPath: env.path)],
-                withApplicationAt: URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"),
-                configuration: NSWorkspace.OpenConfiguration())
+            if let editor = chosen(editorID, from: ExternalApp.editors) {
+              Button("Open in \(editor.name)") { open(env.path, in: editor) }
+            }
+            if let terminal = chosen(terminalID, from: ExternalApp.terminals) {
+              Button("Open in \(terminal.name)") { open(env.path, in: terminal) }
             }
           }
           .controlSize(.small)
