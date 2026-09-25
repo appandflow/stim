@@ -49,7 +49,9 @@ it down.
 
 An iPhone Duo simulator shows both of its screens side by side, and the
 unlit one stays black. While **Take over** is on, its tile has a **Fold /
-Unfold** button that sweeps the simulated hinge to the other posture.
+Unfold** button that sweeps the simulated hinge to the other posture. The
+button needs the bundled app, and because it uses private iOS interfaces, a
+new iOS runtime can break it.
 
 ## Multiple devices with slots
 

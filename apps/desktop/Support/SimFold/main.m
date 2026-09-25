@@ -37,7 +37,8 @@ int main(void) {
     dispatch_semaphore_signal(done);
   });
   long timedOut = dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC));
-  ((void (*)(id, SEL))objc_msgSend)(service, NSSelectorFromString(@"invalidate"));
+  SEL invalidate = NSSelectorFromString(@"invalidate");
+  if ([service respondsToSelector:invalidate]) ((void (*)(id, SEL))objc_msgSend)(service, invalidate);
   if (timedOut) {
     fprintf(stderr, "SpringBoard did not finish the fold within 20 seconds\n");
     return 1;

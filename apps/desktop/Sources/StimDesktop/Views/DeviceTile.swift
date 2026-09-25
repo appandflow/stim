@@ -29,7 +29,9 @@ struct DeviceTile: View {
           Spacer(minLength: 8)
           Text(source).font(Theme.body(10.5)).foregroundStyle(Theme.tertiary).lineLimit(1)
           if case .remote = device { remoteControls }
-          if interactive, screenIDs.count > 1, SimulatorFold.isAvailable, case .ios(_, let sim) = device {
+          if interactive, device.formFactor == .dual, screenIDs.count > 1, SimulatorFold.isAvailable,
+            case .ios(_, let sim) = device
+          {
             foldButton(udid: sim.udid)
           }
         }
@@ -78,7 +80,7 @@ struct DeviceTile: View {
   }
 
   private func foldButton(udid: String) -> some View {
-    Button(folding ? "Folding" : "Fold / Unfold") {
+    Button(folding ? "Folding" : foldError == nil ? "Fold / Unfold" : "Fold failed, retry") {
       folding = true
       Task {
         foldError = await SimulatorFold.toggle(udid: udid)
@@ -132,10 +134,8 @@ struct DeviceTile: View {
       .task(id: sim.udid) {
         while !Task.isCancelled {
           let ids = CoreSimulator.screenIDs(udid: sim.udid)
-          if !ids.isEmpty {
-            screenIDs = ids
-            return
-          }
+          if !ids.isEmpty { screenIDs = device.formFactor == .dual ? ids : [ids[0]] }
+          if !ids.isEmpty, device.formFactor != .dual || ids.count > 1 { return }
           try? await Task.sleep(for: .seconds(2))
         }
       }

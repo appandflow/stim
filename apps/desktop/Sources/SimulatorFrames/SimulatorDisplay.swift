@@ -30,10 +30,13 @@ import ObjectiveC
 }
 
 // uiOrientation is a UIInterfaceOrientation; the framebuffer stays in the
-// display's native portrait orientation when the device rotates.
+// display's native portrait orientation when the device rotates. screenType 0
+// is a built-in display with a digitizer; TV out, CarPlay and resizable
+// displays have other types.
 @objc protocol SimScreenProperties {
   var uiOrientation: UInt32 { get }
   var screenID: UInt32 { get }
+  var screenType: UInt { get }
 }
 
 typealias SimDisplay = SimDisplayIOSurfaceRenderable & SimDisplayRenderable & SimScreen
@@ -84,10 +87,13 @@ public enum CoreSimulator {
     return devices.first { ($0.value(forKey: "UDID") as? NSUUID)?.uuidString == udid }
   }
 
-  /// The screen IDs of the device's displays that have a framebuffer, main
-  /// display first. An iPhone Duo has two; it is empty until the device boots.
+  /// The screen IDs of the device's built-in displays that have a
+  /// framebuffer, main display first. An iPhone Duo has two; it is empty until
+  /// the device boots.
   public static func screenIDs(udid: String) -> [UInt32] {
-    displays(udid: udid).compactMap { $0.screenProperties?.screenID }
+    displays(udid: udid).compactMap { display in
+      display.screenProperties.flatMap { $0.screenType == 0 ? $0.screenID : nil }
+    }
   }
 
   static func displays(udid: String) -> [SimDisplay] {
