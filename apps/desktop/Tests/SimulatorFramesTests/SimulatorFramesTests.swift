@@ -35,7 +35,8 @@ import Testing
 }
 
 @Suite struct KeyUsageTests {
-  @Test func mapsEditingAndNavigationKeysToTheirHIDUsages() throws {
+  @Test(.enabled(if: SimulatorKit.usageForKeyCode != nil, "needs an Xcode whose SimulatorKit exports hidUsageForCGKeyCode"))
+  func mapsEditingAndNavigationKeysToTheirHIDUsages() throws {
     let usage = try #require(SimulatorKit.usageForKeyCode)
     let expected: [(keyCode: UInt32, usage: UInt32)] = [
       (0, 0x04), (36, 0x28), (53, 0x29), (51, 0x2A), (48, 0x2B), (49, 0x2C),
