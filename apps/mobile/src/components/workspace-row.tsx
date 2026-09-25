@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { ActivityChip } from '@/components/activity-chip';
 import { BuildProgressBar } from '@/components/build-progress';
 import { Chip } from '@/components/chip';
+import { GitIndicator } from '@/components/git-indicator';
 import { Icon } from '@/components/icon';
 import type { HomeItem } from '@/lib/home';
 import { devicesOf, isActive, runningBuild } from '@/lib/workspaces';
@@ -46,6 +47,7 @@ export function WorkspaceRow({
           <Text style={[styles.metaText, { color: colors.tertiary }]} numberOfLines={1} ellipsizeMode="middle">
             {where}
           </Text>
+          <GitIndicator git={env.worktree?.git} />
           <View style={styles.macIcon}>
             <Icon name="laptopcomputer" size={14} color={macOnline ? colors.live : colors.tertiary} />
           </View>

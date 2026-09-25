@@ -1,6 +1,7 @@
 import {
   activityBadge,
   buildProgress,
+  gitBadges,
   lastBuildSummary,
   outcomeLabel,
   planExpectation,
@@ -112,5 +113,33 @@ describe('build cache outcome', () => {
       refusal: { code: 'STIM_EAS_BUILD_MISSING', message: 'No build.', remedy: 'Build one.' },
     };
     expect([planSummary(refused), planExpectation(refused)]).toEqual(['Would refuse: STIM_EAS_BUILD_MISSING', null]);
+  });
+});
+
+describe('gitBadges', () => {
+  const git = { changed: 0, untracked: 0, upstream: 'origin/x', ahead: 0, behind: 0, mergedInto: null };
+
+  it('shows nothing for a clean branch level with its upstream, or when git is unknown', () => {
+    expect(gitBadges(git)).toBeNull();
+    expect(gitBadges(null)).toBeNull();
+    expect(gitBadges({ ...git, upstream: null, ahead: null, behind: null })).toBeNull();
+  });
+
+  it('counts changed and untracked files together and shows ahead and behind as arrows', () => {
+    expect(gitBadges({ ...git, changed: 2, untracked: 1, ahead: 3, behind: 1 })).toEqual({
+      uncommitted: 3,
+      arrows: '↑3 ↓1',
+      merged: false,
+      label: '3 uncommitted changes, 3 ahead, 1 behind',
+    });
+  });
+
+  it('flags a merged branch', () => {
+    expect(gitBadges({ ...git, ahead: null, behind: null, mergedInto: 'origin/main' })).toEqual({
+      uncommitted: 0,
+      arrows: null,
+      merged: true,
+      label: 'merged into origin/main',
+    });
   });
 });
