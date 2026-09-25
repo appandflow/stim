@@ -1,4 +1,5 @@
 import AppKit
+import IOSurface
 import QuartzCore
 import StimKit
 import SwiftUI
@@ -7,26 +8,31 @@ import SwiftUI
 /// unless `screenID` names another, turned upright for the device's
 /// orientation. When `interactive` is true, clicks, drags, trackpad scrolls
 /// and keys go to the simulator. `onPixelSizeChange` receives the frame's
-/// pixel size as displayed, after rotation.
+/// pixel size as displayed, after rotation. `onLitChange`, when set, receives
+/// whether the display shows anything; the panel of an iPhone Duo that the
+/// posture turned off is all black.
 public struct SimulatorDisplayView: NSViewRepresentable {
   public var udid: String
   public var screenID: UInt32
   public var interactive: Bool
   public var onPixelSizeChange: (CGSize) -> Void
+  public var onLitChange: ((Bool) -> Void)?
 
   public init(
     udid: String, screenID: UInt32 = 1, interactive: Bool = false,
-    onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }
+    onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }, onLitChange: ((Bool) -> Void)? = nil
   ) {
     self.udid = udid
     self.screenID = screenID
     self.interactive = interactive
     self.onPixelSizeChange = onPixelSizeChange
+    self.onLitChange = onLitChange
   }
 
   public func makeNSView(context: Context) -> SimulatorDisplayNSView {
     let view = SimulatorDisplayNSView()
     view.onPixelSizeChange = onPixelSizeChange
+    view.onLitChange = onLitChange
     view.attach(udid: udid, screenID: screenID)
     view.setInteractive(interactive)
     return view
@@ -34,6 +40,7 @@ public struct SimulatorDisplayView: NSViewRepresentable {
 
   public func updateNSView(_ view: SimulatorDisplayNSView, context: Context) {
     view.onPixelSizeChange = onPixelSizeChange
+    view.onLitChange = onLitChange
     view.attach(udid: udid, screenID: screenID)
     view.setInteractive(interactive)
   }
@@ -45,6 +52,11 @@ public struct SimulatorDisplayView: NSViewRepresentable {
 
 public final class SimulatorDisplayNSView: NSView {
   var onPixelSizeChange: (CGSize) -> Void = { _ in }
+  var onLitChange: ((Bool) -> Void)? {
+    didSet { watchLit() }
+  }
+  private var reportedLit: Bool?
+  private var litTimer: Timer?
   private var udid: String?
   private var screenID: UInt32 = 1
   private var display: SimDisplay?
@@ -93,6 +105,9 @@ public final class SimulatorDisplayNSView: NSView {
     display = nil
     surfaceLayer.contents = nil
     reportedSize = nil
+    reportedLit = nil
+    litTimer?.invalidate()
+    litTimer = nil
     releaseInput()
   }
 
@@ -118,6 +133,7 @@ public final class SimulatorDisplayNSView: NSView {
     display.registerPropertiesCallback(callbackID) { [weak self] _ in
       DispatchQueue.main.async { self?.showSurface() }
     }
+    watchLit()
   }
 
   private func showSurface() {
@@ -126,6 +142,7 @@ public final class SimulatorDisplayNSView: NSView {
     surfaceLayer.contents = surface
     orientation = display.screenProperties?.uiOrientation ?? 1
     needsLayout = true
+    reportLit()
     guard let displayed = displayedScreenSize, displayed != reportedSize else { return }
     reportedSize = displayed
     // SwiftUI state must not change while it is updating this view.
@@ -181,6 +198,21 @@ public final class SimulatorDisplayNSView: NSView {
     // CALayer keeps drawing its cached copy of an IOSurface until told the
     // contents changed; the method is QuartzCore SPI, not public API.
     _ = surfaceLayer.perform(NSSelectorFromString("setContentsChanged"))
+    reportLit()
+  }
+
+  // CoreSimulator sends no damage for a panel the posture turns off, so the lit check also runs on a timer.
+  private func watchLit() {
+    guard onLitChange != nil, display != nil, litTimer == nil else { return }
+    litTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.reportLit() }
+  }
+
+  private func reportLit() {
+    guard onLitChange != nil, let surface = display?.framebufferSurface else { return }
+    let lit = !isBlack(surface)
+    guard lit != reportedLit else { return }
+    reportedLit = lit
+    DispatchQueue.main.async { [weak self] in self?.onLitChange?(lit) }
   }
 
   func setInteractive(_ interactive: Bool) {
@@ -316,4 +348,21 @@ func nativeScreenPoint(_ point: CGPoint, orientation: UInt32) -> CGPoint {
   case 4: return CGPoint(x: 1 - point.y, y: point.x)
   default: return point
   }
+}
+
+/// Whether a grid of samples across a BGRA framebuffer is all black. A lit
+/// screen shows at least a status bar, so a dark app still has non-black pixels.
+func isBlack(_ surface: IOSurface) -> Bool {
+  surface.lock(options: .readOnly, seed: nil)
+  defer { surface.unlock(options: .readOnly, seed: nil) }
+  let bytes = surface.baseAddress.assumingMemoryBound(to: UInt8.self)
+  let rowStep = max(surface.height / 64, 1)
+  let columnStep = max(surface.width / 48, 1)
+  for y in stride(from: 0, to: surface.height, by: rowStep) {
+    for x in stride(from: 0, to: surface.width, by: columnStep) {
+      let offset = y * surface.bytesPerRow + x * 4
+      if bytes[offset] | bytes[offset + 1] | bytes[offset + 2] != 0 { return false }
+    }
+  }
+  return true
 }
