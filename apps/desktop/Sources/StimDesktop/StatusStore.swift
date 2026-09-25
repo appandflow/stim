@@ -154,7 +154,7 @@ final class StatusStore: ObservableObject {
     project(ofPath: env.path)
   }
 
-  private func project(ofPath path: String) -> Project {
+  func project(ofPath path: String) -> Project {
     projects[path] ?? Project(fallbackFor: path)
   }
 
@@ -170,10 +170,16 @@ final class StatusStore: ObservableObject {
       project: project(ofPath:))
   }
 
-  func projectTree(liveOnly: Bool, hidesUnprovisioned: Bool) -> [ProjectTree] {
-    projectTrees(
+  func sidebarTrees(_ options: SidebarOptions) -> [ProjectTree] {
+    StimKit.sidebarTrees(
       environments: payload?.environments ?? [], unprovisioned: payload?.unprovisionedWorktrees ?? [],
-      project: project(ofPath:), liveOnly: liveOnly, hidesUnprovisioned: hidesUnprovisioned)
+      project: project(ofPath:), options: options)
+  }
+
+  func sidebarList(_ options: SidebarOptions) -> [SidebarEntry] {
+    StimKit.sidebarList(
+      environments: payload?.environments ?? [], unprovisioned: payload?.unprovisionedWorktrees ?? [],
+      project: project(ofPath:), options: options)
   }
 
   var warningCount: Int {

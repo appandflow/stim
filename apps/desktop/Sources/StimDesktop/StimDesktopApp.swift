@@ -65,6 +65,7 @@ struct StimDesktopApp: App {
   init() {
     BrandAssets.registerFonts()
     UserDefaults.standard.register(defaults: AppPreferences.defaults)
+    AppPreferences.migrate(.standard)
     CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
     let override = UserDefaults.standard.string(forKey: AppPreferences.Key.stimExecutable)
     let environment = Task.detached { await LoginShell.environment() ?? ProcessInfo.processInfo.environment }
