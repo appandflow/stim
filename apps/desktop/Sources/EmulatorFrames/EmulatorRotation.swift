@@ -10,17 +10,11 @@ public enum EmulatorRotation {
     guard let endpoint = EmulatorDiscovery.endpoint(serial: serial) else { return false }
     let input = EmulatorInput(endpoint: endpoint)
     defer { input.close() }
-    guard let current = await call(input, "getPhysicalModel", RotationMessages.rotationTarget) else { return false }
+    guard let current = await input.call("getPhysicalModel", RotationMessages.rotationTarget) else { return false }
     let angles = RotationMessages.angles(fromPhysicalModel: current)
     let turned = RotationMessages.quarterTurn(z: angles.z, clockwise: clockwise)
     let message = RotationMessages.rotation(x: angles.x, y: angles.y, z: turned)
-    return await call(input, "setPhysicalModel", message) != nil
-  }
-
-  private static func call(_ input: EmulatorInput, _ method: String, _ message: Data) async -> Data? {
-    await withCheckedContinuation { continuation in
-      input.call(method, message) { continuation.resume(returning: $0) }
-    }
+    return await input.call("setPhysicalModel", message) != nil
   }
 }
 

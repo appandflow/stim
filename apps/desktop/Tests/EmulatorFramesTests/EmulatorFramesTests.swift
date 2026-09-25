@@ -30,13 +30,16 @@ import Testing
 }
 
 @Suite struct ScreenshotMessageTests {
-  private func image(format: UInt64, width: Int, height: Int, pixels: [UInt8], rotation: UInt8? = nil) -> Data {
+  private func image(
+    format: UInt64, width: Int, height: Int, pixels: [UInt8], rotation: UInt8? = nil, folded: Data? = nil
+  ) -> Data {
     var nested = Data()
     for (field, value) in [(1, format), (3, UInt64(width)), (4, UInt64(height))] {
       ScreenshotMessages.appendVarint(UInt64(field << 3), to: &nested)
       ScreenshotMessages.appendVarint(value, to: &nested)
     }
     if let rotation { nested += Data([0x12, 0x0b, 0x08, rotation, 0x21]) + Data(repeating: 0, count: 8) }
+    if let folded { nested += Data([0x3a, UInt8(folded.count)]) + folded }
     var out = Data([0x0a, UInt8(nested.count)]) + nested
     out += Data([0x22, UInt8(pixels.count)]) + Data(pixels)
     out += Data([0x28, 0x07, 0x30, 0x96, 0x01])
@@ -56,6 +59,15 @@ import Testing
     let frame = ScreenshotMessages.frame(
       fromImage: image(format: 1, width: 1, height: 1, pixels: [0, 0, 0, 0], rotation: 3))
     #expect(frame?.rotation == 3)
+  }
+
+  @Test func readsTheFoldedDisplaySize() {
+    let frame = ScreenshotMessages.frame(
+      fromImage: image(
+        format: 1, width: 1, height: 1, pixels: [0, 0, 0, 0], folded: Data([0x08, 0xb8, 0x08, 0x10, 0xac, 0x10])))
+    #expect(frame?.folded?.width == 1080)
+    #expect(frame?.folded?.height == 2092)
+    #expect(ScreenshotMessages.frame(fromImage: image(format: 1, width: 1, height: 1, pixels: [0, 0, 0, 0]))?.folded == nil)
   }
 
   @Test func rejectsAnImageWhoseBytesDoNotMatchItsSize() {
@@ -155,5 +167,30 @@ import Testing
     let angles = RotationMessages.angles(fromPhysicalModel: RotationMessages.rotation(x: 1, y: -2, z: 90))
     #expect(angles.x == 1 && angles.y == -2 && angles.z == 90)
     #expect(RotationMessages.angles(fromPhysicalModel: RotationMessages.rotationTarget).z == 0)
+  }
+}
+
+@Suite struct PostureMessagesTests {
+  private func physicalModel(_ value: Float, status: UInt8? = nil) -> Data {
+    var floats = Data()
+    withUnsafeBytes(of: value.bitPattern.littleEndian) { floats += $0 }
+    let parameter = Data([0x0a, UInt8(floats.count)]) + floats
+    return PostureMessages.postureTarget + (status.map { Data([0x10, $0]) } ?? Data())
+      + Data([0x1a, UInt8(parameter.count)]) + parameter
+  }
+
+  @Test func readsThePostureFromItsPhysicalModel() {
+    #expect(PostureMessages.posture(fromPhysicalModel: physicalModel(3)) == .opened)
+    #expect(PostureMessages.posture(fromPhysicalModel: physicalModel(1)) == .closed)
+  }
+
+  @Test func reportsNoPostureWithoutAHinge() {
+    #expect(PostureMessages.posture(fromPhysicalModel: PostureMessages.postureTarget) == nil)
+    #expect(PostureMessages.posture(fromPhysicalModel: physicalModel(0)) == nil)
+    #expect(PostureMessages.posture(fromPhysicalModel: physicalModel(3, status: 2)) == nil)
+  }
+
+  @Test func encodesSetPostureAsThePostureValue() {
+    #expect([UInt8](PostureMessages.setPosture(.halfOpened)) == [0x18, 0x02])
   }
 }

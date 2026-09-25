@@ -63,7 +63,7 @@ public final class EmulatorDisplayNSView: NSView {
   private var generation = 0
   private let pending = PendingFrame()
   private var endpoint: EmulatorEndpoint?
-  private var shown: (size: CGSize, rotation: Int)?
+  private var shown: (size: CGSize, rotation: Int, folded: CGSize?)?
   private var interactive = false
   private var input: EmulatorInput?
   private var displaySize: CGSize?
@@ -167,7 +167,7 @@ public final class EmulatorDisplayNSView: NSView {
     layer?.contents = image
     let size = CGSize(width: frame.width, height: frame.height)
     if size != shown?.size { onPixelSizeChange(size) }
-    self.shown = (size, frame.rotation)
+    self.shown = (size, frame.rotation, frame.folded.map { CGSize(width: $0.width, height: $0.height) })
     _ = inputClient()
     report(.streaming)
   }
@@ -219,7 +219,7 @@ public final class EmulatorDisplayNSView: NSView {
 
   private func releaseInput() {
     if let touchPoint, let input, let displaySize, let shown {
-      let native = displayPixel(touchPoint, rotation: shown.rotation, displaySize: displaySize)
+      let native = displayPixel(touchPoint, rotation: shown.rotation, displaySize: shown.folded ?? displaySize)
       input.call("sendMouse", InputMessages.mouse(x: native.x, y: native.y, pressed: false))
     }
     for code in keysDown { input?.call("sendKey", InputMessages.key(macKeyCode: code, down: false)) }
@@ -253,7 +253,7 @@ public final class EmulatorDisplayNSView: NSView {
 
   private func mouse(at point: CGPoint, pressed: Bool) {
     guard let input = inputClient(), let displaySize, let shown else { return }
-    let native = displayPixel(point, rotation: shown.rotation, displaySize: displaySize)
+    let native = displayPixel(point, rotation: shown.rotation, displaySize: shown.folded ?? displaySize)
     input.call("sendMouse", InputMessages.mouse(x: native.x, y: native.y, pressed: pressed))
     touchPoint = pressed ? point : nil
   }

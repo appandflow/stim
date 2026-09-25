@@ -241,6 +241,13 @@ It runs the bundled `sim-fold` helper inside the simulator with `xcrun simctl
 spawn`. The helper calls SpringBoard's private display tool service, so the
 button appears only in the bundled app, and an iOS release can break it.
 
+An Android emulator with a hinge, such as one Stim created with
+`--device-profile pixel_fold`, shows its posture as a chip: **Folded**,
+**Half open** or **Unfolded**, read from the emulator's gRPC POSTURE physical
+model. While Take over is on, the **Posture** menu moves the hinge with the
+gRPC `setPosture` call. Folded, the emulator streams only the outer display,
+so the tile takes that display's shape and touches address its pixels.
+
 Android input goes through the emulator's gRPC `sendMouse` and `sendKey` calls.
 Printable ASCII is sent as text; other keys, such as Delete, Return, Tab and the
 arrows, are sent as key presses. Control shortcuts are not sent, and an
