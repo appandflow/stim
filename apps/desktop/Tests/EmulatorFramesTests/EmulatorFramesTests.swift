@@ -142,3 +142,18 @@ import Testing
     #expect(inbox.isEmpty)
   }
 }
+
+@Suite struct RotationMessagesTests {
+  @Test func turnsAQuarterAndWrapsWithinAHalfCircle() {
+    #expect(RotationMessages.quarterTurn(z: 0, clockwise: false) == 90)
+    #expect(RotationMessages.quarterTurn(z: 0, clockwise: true) == -90)
+    #expect(RotationMessages.quarterTurn(z: 180, clockwise: false) == -90)
+    #expect(RotationMessages.quarterTurn(z: -90, clockwise: true) == 180)
+  }
+
+  @Test func readsBackTheAnglesItWrites() {
+    let angles = RotationMessages.angles(fromPhysicalModel: RotationMessages.rotation(x: 1, y: -2, z: 90))
+    #expect(angles.x == 1 && angles.y == -2 && angles.z == 90)
+    #expect(RotationMessages.angles(fromPhysicalModel: RotationMessages.rotationTarget).z == 0)
+  }
+}
