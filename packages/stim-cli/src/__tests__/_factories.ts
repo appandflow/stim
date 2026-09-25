@@ -136,6 +136,7 @@ export function makeExecutor(overrides: Partial<Executor> = {}): Executor {
   const base: Executor = {
     run: () => '',
     runFile: () => '',
+    runFileAsync: async () => '',
     runQuiet: () => null,
     runFileQuiet: () => null,
     spawn: () => makeChildProcess(),

@@ -13,6 +13,8 @@ interface ExecOptions {
 export interface Executor {
   run(cmd: string, opts?: ExecOptions): string;
   runFile(file: string, args?: string[], opts?: ExecOptions): string;
+  /** `runFile` without blocking the event loop; rejects where `runFile` throws. */
+  runFileAsync(file: string, args?: string[], opts?: ExecOptions): Promise<string>;
   runQuiet(cmd: string, opts?: ExecOptions): string | null;
   runFileQuiet(file: string, args?: string[], opts?: ExecOptions): string | null;
   spawn(cmd: string, args?: readonly string[], opts?: SpawnOptions): ChildProcess;
@@ -71,6 +73,47 @@ const defaultExecutor: Executor = {
       throw Object.assign(new Error(message), result);
     }
     return String(result.stdout).trim();
+  },
+  runFileAsync(file, args = [], { timeoutMs, killSignal, cwd, env, omitEnv } = {}) {
+    const command = [file, ...args].join(' ');
+    return new Promise((resolve, reject) => {
+      const opts: SpawnOptions = { stdio: ['ignore', 'pipe', 'pipe'] };
+      if (cwd) opts.cwd = cwd;
+      if (env || omitEnv?.length) {
+        const childEnv = { ...process.env, ...env };
+        for (const key of omitEnv ?? []) delete childEnv[key];
+        opts.env = childEnv;
+      }
+      const child = spawn(file, args, opts);
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      let timedOut = false;
+      const timer = timeoutMs
+        ? setTimeout(() => {
+            timedOut = true;
+            child.kill(killSignal ?? 'SIGTERM');
+          }, timeoutMs)
+        : undefined;
+      child.stdout?.on('data', (chunk: Buffer) => stdout.push(chunk));
+      child.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk));
+      child.on('error', (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+      child.on('close', (status, signal) => {
+        clearTimeout(timer);
+        const out = Buffer.concat(stdout).toString('utf-8');
+        const err = Buffer.concat(stderr).toString('utf-8');
+        const result = { status, signal, stdout: out, stderr: err };
+        if (timedOut) {
+          reject(nameTimeout(Object.assign(new Error(command), result, { code: 'ETIMEDOUT' }), command, timeoutMs));
+        } else if (status !== 0) {
+          reject(Object.assign(new Error(`Command failed: ${command}${err ? `\n${err}` : ''}`), result));
+        } else {
+          resolve(out.trim());
+        }
+      });
+    });
   },
   runQuiet(cmd, opts) {
     try {

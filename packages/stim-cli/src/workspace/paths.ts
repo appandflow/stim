@@ -60,6 +60,10 @@ export function workspaceLogsDir(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'logs');
 }
 
+export function workspaceLogErrorIndex(projectRoot: string): string {
+  return join(workspaceDir(projectRoot), 'log-error-index.json');
+}
+
 export function workspaceDerivedData(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'derived-data');
 }

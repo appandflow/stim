@@ -108,15 +108,19 @@ const SIMCTL_CREATE_TIMEOUT_MS = 180_000;
 const SIMCTL_TIMEOUT_MS = 60_000;
 const SIMCTL_OPTIONS = { timeoutMs: SIMCTL_TIMEOUT_MS, killSignal: 'SIGKILL' } as const;
 
+const SIMCTL_LIST_ARGS = ['simctl', 'list', 'devices', '--json'];
+
 export function listAllIosSims({
   timeoutMs = 30000,
   includeUnavailable = false,
 }: { timeoutMs?: number; includeUnavailable?: boolean } = {}): IosSimRecord[] {
-  const out = getExecutor().runFile('xcrun', ['simctl', 'list', 'devices', '--json'], {
-    timeoutMs,
-    killSignal: 'SIGKILL',
-  });
+  const out = getExecutor().runFile('xcrun', SIMCTL_LIST_ARGS, { timeoutMs, killSignal: 'SIGKILL' });
   return parseSimctlList(out, { includeUnavailable });
+}
+
+export async function listAllIosSimsAsync({ timeoutMs = 30000 }: { timeoutMs?: number } = {}): Promise<IosSimRecord[]> {
+  const out = await getExecutor().runFileAsync('xcrun', SIMCTL_LIST_ARGS, { timeoutMs, killSignal: 'SIGKILL' });
+  return parseSimctlList(out);
 }
 
 export function listBootedIosSims(): IosSimRecord[] {

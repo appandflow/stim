@@ -4,7 +4,11 @@ import {
   parseLsofPids,
   parseNetstatPids,
   listeningPids,
+  listeningPidsByPort,
   parseLsofCwd,
+  parseLsofCwds,
+  parseLsofListeners,
+  processCwds,
   isInsideProject,
   processCwd,
   resolveProjectMetro,
@@ -45,6 +49,29 @@ test('parseLsofCwd extracts the cwd path from -Fn field output', () => {
   expect(parseLsofCwd(out)).toBe('/Volumes/SSD/Developer/member-app');
   expect(parseLsofCwd('')).toBe(null);
   expect(parseLsofCwd('p59914\nfcwd\n')).toBe(null);
+});
+
+test('parseLsofListeners maps each requested port to its listening pids from -Fpn output', () => {
+  const out =
+    'p33394\nf39\nn*:8091\np43702\nf37\nn*:8093\nf38\nn[::1]:8093\np81445\nf39\nn127.0.0.1:8094\np81446\nf4\nn*:8094\n';
+  expect(parseLsofListeners(out)).toEqual(
+    new Map([
+      [8091, [33394]],
+      [8093, [43702]],
+      [8094, [81445, 81446]],
+    ]),
+  );
+  expect(parseLsofListeners('')).toEqual(new Map());
+});
+
+test('parseLsofCwds reads one cwd per process from -Fn output', () => {
+  const out = 'p33394\nfcwd\nn/work/a\np43702\nfcwd\nn/work/b with space\np81445\nfcwd\n';
+  expect(parseLsofCwds(out)).toEqual(
+    new Map([
+      [33394, '/work/a'],
+      [43702, '/work/b with space'],
+    ]),
+  );
 });
 
 test('isInsideProject accepts the root and descendants, rejects siblings', () => {
@@ -264,6 +291,9 @@ test.skipIf(!CAN_READ_CWD)(
       const ours = await resolveProjectMetro(port, dir);
       expect(ours.metro, `expected identification, got ${JSON.stringify(ours)}`).toBeTruthy();
       expect(typeof ours.metro!.pid).toBe('number');
+      expect((await listeningPidsByPort([port])).get(port) ?? []).toEqual(listeningPids(port));
+      const cwds = await processCwds([ours.metro!.pid, 99_999]);
+      expect(cwds.get(ours.metro!.pid)).toBe(processCwd(ours.metro!.pid));
 
       const foreign = await resolveProjectMetro(port, join(tmpdir(), 'some-other-project'));
       expect(foreign.notOurs, 'a process outside the project must not be claimed').toBeTruthy();
