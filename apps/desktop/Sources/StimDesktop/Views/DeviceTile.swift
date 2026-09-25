@@ -206,7 +206,9 @@ struct DeviceTile: View {
       }
     case .android(_, let avd) where device.isRunning && avd.owned && !avd.physical:
       if let serial = avd.serial {
-        EmulatorScreen(serial: serial, interactive: interactive).padding(screenPadding)
+        EmulatorScreen(serial: serial, interactive: interactive) { pixelSizes[1] = $0 }
+          .frame(width: screenWidth(1))
+          .padding(screenPadding)
       } else {
         placeholder(device.state)
       }
@@ -257,12 +259,14 @@ private struct RemotePreview: NSViewRepresentable {
 private struct EmulatorScreen: View {
   var serial: String
   var interactive: Bool
+  var onPixelSizeChange: (CGSize) -> Void
   @State private var status = EmulatorStreamStatus.connecting
 
   var body: some View {
-    EmulatorDisplayView(serial: serial, interactive: interactive) { status in
-      DispatchQueue.main.async { self.status = status }
-    }
+    EmulatorDisplayView(
+      serial: serial, interactive: interactive,
+      onStatus: { status in DispatchQueue.main.async { self.status = status } },
+      onPixelSizeChange: { size in DispatchQueue.main.async { onPixelSizeChange(size) } })
     .overlay {
       switch status {
       case .connecting: ScreenMessage(text: "Connecting to the emulator")
