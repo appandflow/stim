@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { ActivityChip } from '@/components/activity-chip';
@@ -11,6 +12,7 @@ import type { DeviceRef } from '@/lib/workspaces';
 import { useColors } from '@/theme';
 
 const SCREEN_HEIGHT = 420;
+const SCREEN_PADDING = 12;
 
 export function DeviceTile({
   workspace,
@@ -23,6 +25,7 @@ export function DeviceTile({
 }) {
   const colors = useColors();
   const home = useMacConnection().home;
+  const [screenWidth, setScreenWidth] = useState(0);
   const streams = device.running && device.owned && !device.physical;
   const { frame, error, delayed } = useFrame(workspace, device.platform, device.slot, streams);
   const notes = warnings.map((warning) => (
@@ -47,6 +50,7 @@ export function DeviceTile({
     );
   }
   const aspect = frame && frame.height > 0 ? frame.width / frame.height : device.platform === 'ios' ? 0.46 : 0.45;
+  const imageHeight = Math.min(SCREEN_HEIGHT - SCREEN_PADDING * 2, (screenWidth - SCREEN_PADDING * 2) / aspect);
   return (
     <Card>
       <View style={styles.header}>
@@ -64,20 +68,23 @@ export function DeviceTile({
       </View>
       <View style={styles.badges}>
         <ActivityChip activity={device.activity} />
+        {streams && frame?.posture ? <Chip>{frame.posture === 'folded' ? 'Folded' : 'Unfolded'}</Chip> : null}
         {streams && delayed ? <Chip tint={colors.warn}>Screen updates delayed</Chip> : null}
       </View>
       {notes.length ? <View style={styles.notes}>{notes}</View> : null}
       <View
+        onLayout={(event) => setScreenWidth(event.nativeEvent.layout.width)}
         style={[
           styles.screen,
           { backgroundColor: colors.screen, borderTopColor: colors.border },
+          streams && frame && screenWidth > 0 && { height: imageHeight + SCREEN_PADDING * 2 },
           !streams && styles.screenOff,
         ]}
       >
         {streams && frame ? (
           <Image
             source={{ uri: `data:${frame.mime};base64,${frame.data}` }}
-            style={{ height: SCREEN_HEIGHT - 24, aspectRatio: aspect, borderRadius: 6 }}
+            style={{ height: Math.max(imageHeight, 0), aspectRatio: aspect, borderRadius: 6 }}
             contentFit="contain"
             transition={0}
             accessibilityLabel={`Latest frame of ${device.name}`}
@@ -113,7 +120,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderTopWidth: StyleSheet.hairlineWidth,
-    padding: 12,
+    padding: SCREEN_PADDING,
   },
   screenOff: { height: 64 },
   placeholder: { fontSize: 13, textAlign: 'center' },

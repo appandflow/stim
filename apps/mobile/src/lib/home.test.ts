@@ -5,11 +5,13 @@ import {
   DEFAULT_FILTERS,
   filterWorkspaces,
   filtersActive,
+  gridRows,
   macUsageSummary,
   mergeWorkspaces,
   parseFilters,
   projectNames,
   runningDevices,
+  type DeviceTileItem,
 } from '@/lib/home';
 import type { EnvironmentState, MachineUsage, StatusPayload } from '@/protocol/types';
 
@@ -124,6 +126,20 @@ describe('runningDevices', () => {
     expect(keys({})).toEqual(['other/ios', 'idle-with-sim/ios']);
     expect(keys({ macs: ['a'], errorsOnly: true })).toEqual(['idle-with-sim/ios']);
     expect(keys({ projects: ['other'] })).toEqual(['other/ios']);
+  });
+});
+
+describe('gridRows', () => {
+  it('pairs portrait tiles in order and gives a landscape tile its own row', () => {
+    const tiles = ['a', 'b', 'c', 'ipad', 'd', 'e'].map((key) => ({ key }) as DeviceTileItem);
+    const rows = gridRows(
+      tiles,
+      new Map([
+        ['ipad', 1.45],
+        ['b', 0.46],
+      ]),
+    );
+    expect(rows.map((row) => row.map((tile) => tile.key))).toEqual([['a', 'b'], ['c'], ['ipad'], ['d', 'e']]);
   });
 });
 

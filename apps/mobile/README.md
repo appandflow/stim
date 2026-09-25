@@ -21,6 +21,8 @@ reload and stop a workspace:
 - **Devices**: the Workspaces / Devices toggle under the machine chips switches
   the list to a grid of every running simulator and emulator on every paired
   machine, with its latest frame, model, workspace, branch and machine.
+  Phones sit two to a row; a device whose frame is wider than tall, such as a
+  landscape iPad or an unfolded iPhone Duo, takes a whole row.
   Tapping a tile opens its workspace. The grid follows the machine and
   project filters. Each tile on screen asks for one frame, unsubscribes when
   it arrives, and asks again 2 seconds later, backing off after errors. Tiles
@@ -55,8 +57,9 @@ reload and stop a workspace:
   which opens a sheet listing the changed fingerprint sources, and a **Check next build** button that asks the server's read-only
   `build.plan` what the next build would find and how long it should take;
   warnings, remote sessions, and each
-  device: a running device with the latest frame the server sends for it, a
-  stopped one as a single row. Under a running simulator or emulator that
+  device: a running device with the latest frame the server sends for it,
+  fitted to the screen's width, and **Folded** or **Unfolded** for an iPhone
+  Duo, a stopped one as a single row. Under a running simulator or emulator that
   Stim owns, **Agent actions** lists the latest agent-device actions on it
   (taps, typing, app opens, screenshots, failed commands), from
   `logs.subscribe` with `sources: ["agent"]`. The **...** menu opens the logs, copies the

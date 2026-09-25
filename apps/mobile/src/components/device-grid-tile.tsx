@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import { useEffect } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ActivityChip } from '@/components/activity-chip';
@@ -14,13 +15,17 @@ const REFRESH_MS = 2000;
 
 export function DeviceGridTile({
   tile,
+  wide,
   connection,
   visible,
+  onAspect,
   onPress,
 }: {
   tile: DeviceTileItem;
+  wide: boolean;
   connection: StimConnection | null;
   visible: boolean;
+  onAspect: (key: string, aspect: number) => void;
   onPress: () => void;
 }) {
   const colors = useColors();
@@ -35,13 +40,16 @@ export function DeviceGridTile({
     REFRESH_MS,
   );
   const aspect = frame && frame.height > 0 ? frame.width / frame.height : 0.46;
+  useEffect(() => {
+    if (frame) onAspect(tile.key, aspect);
+  }, [frame, aspect, tile.key, onAspect]);
   const where = [item.title, item.env.worktree?.branch].filter(Boolean).join(' \u00B7 ');
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={`${device.model}, ${where}, on ${item.macName}`}
-      style={({ pressed }) => [styles.tile, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.tile, wide && styles.wide, pressed && styles.pressed]}
     >
       <Card style={styles.card}>
         <View style={[styles.screen, { backgroundColor: colors.screen }]}>
@@ -87,6 +95,7 @@ export function DeviceGridTile({
 
 const styles = StyleSheet.create({
   tile: { flex: 1, maxWidth: '50%' },
+  wide: { maxWidth: '100%' },
   card: { flex: 1 },
   pressed: { opacity: 0.7 },
   screen: { height: SCREEN_HEIGHT, alignItems: 'center', justifyContent: 'center', padding: 8 },
