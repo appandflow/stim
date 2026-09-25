@@ -668,7 +668,7 @@ export async function acquireIosArtifact(
             ),
           );
         } else if (after.moved) {
-          rekeyedBy.push(...mutatingSteps.map((step) => (step === 'prebuild' ? step : 'pod install')));
+          rekeyedBy.push(...mutatingSteps.map((mutation) => (mutation === 'prebuild' ? mutation : 'pod install')));
           storeHash = after.hash;
           storeSources = after.sources;
           storeKey = buildCacheKey(PLATFORM, after.hash, {
