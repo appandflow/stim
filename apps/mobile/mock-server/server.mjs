@@ -179,8 +179,15 @@ server.on('connection', (socket) => {
       const platformOk =
         params.platform === undefined || (params.action === 'reload' && ['ios', 'android'].includes(params.platform));
       if (!platformOk) return { error: ['bad-request', 'platform must be ios or android, and only for reload.'] };
-      if (!fixtures.status.environments.some((env) => env.path === params.workspace)) {
-        return { error: ['unknown-workspace', `${params.workspace} is not a Stim workspace on this Mac.`] };
+      const env = fixtures.status.environments.find((candidate) => candidate.path === params.workspace);
+      if (!env) return { error: ['unknown-workspace', `${params.workspace} is not a Stim workspace on this Mac.`] };
+      if (params.action === 'reload' && params.platform === undefined && runsBothPlatforms(env)) {
+        return {
+          error: [
+            'action-failed',
+            'STIM_RELOAD_AMBIGUOUS: Both the iOS and Android apps are running. Choose one with `stim reload ios` or `stim reload android`.',
+          ],
+        };
       }
       if (busy.has(params.workspace)) {
         return { error: ['action-busy', `An action is already running in ${params.workspace}.`] };
@@ -230,6 +237,11 @@ server.on('connection', (socket) => {
     for (const subscription of timers.keys()) stop(subscription);
   });
 });
+
+function runsBothPlatforms(env) {
+  const slots = [env, ...(env.slots ?? [])];
+  return slots.some((slot) => slot.ios?.state === 'Booted') && slots.some((slot) => slot.android?.state === 'detected');
+}
 
 function hello() {
   return {

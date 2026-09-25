@@ -123,6 +123,25 @@ describe('StimConnection', () => {
     expect(states.at(-1)).toMatchObject({ kind: 'open', actions: [] });
   });
 
+  it('reconnects at once on request, so a grant made on the Mac shows without waiting for a drop', async () => {
+    const { connection, sockets, timers, states } = setup();
+    connection.subscribe('status.subscribe', {}, () => {});
+    connection.start();
+    sockets[0].onopen?.();
+    sockets[0].reply('hello', hello);
+    await flush();
+    expect(states.at(-1)).toMatchObject({ kind: 'open', actions: [] });
+
+    connection.reconnect();
+    expect(sockets[0].closed).toBe(true);
+    expect(timers).toHaveLength(0);
+    sockets[1].onopen?.();
+    sockets[1].reply('hello', { ...hello, capabilities: ['read', 'control'], actions: ['reload', 'stop'] });
+    await flush();
+    expect(states.at(-1)).toMatchObject({ kind: 'open', actions: ['reload', 'stop'] });
+    expect(sockets[1].sent.map((m) => m.method)).toEqual(['hello', 'status.subscribe']);
+  });
+
   it('reports each resubscribe so a log list can drop the history it already shows', async () => {
     const { connection, sockets, timers } = setup();
     let subscribed = 0;

@@ -247,8 +247,8 @@ export interface WorkspaceActions {
   available: ActionName[];
   pending: ActionName | null;
   error: string | null;
-  /** Resolves true when the action succeeded; a failure sets `error`. */
-  run: (action: ActionName, options?: { platform?: Platform }) => Promise<boolean>;
+  /** Resolves null when the action succeeded, and the error message, also set in `error`, when it failed. */
+  run: (action: ActionName, options?: { platform?: Platform }) => Promise<string | null>;
 }
 
 export function useAction(workspace: string): WorkspaceActions {
@@ -259,7 +259,7 @@ export function useAction(workspace: string): WorkspaceActions {
     async (action: ActionName, options: { platform?: Platform } = {}) => {
       if (!connection) {
         setError('Not connected.');
-        return false;
+        return 'Not connected.';
       }
       const params: ActionParams =
         action === 'reload'
@@ -269,10 +269,11 @@ export function useAction(workspace: string): WorkspaceActions {
       setError(null);
       try {
         await connection.request('action', params);
-        return true;
+        return null;
       } catch (cause) {
-        setError((cause as Error).message);
-        return false;
+        const message = (cause as Error).message;
+        setError(message);
+        return message;
       } finally {
         setPending(null);
       }

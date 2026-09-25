@@ -145,6 +145,16 @@ export function devicesOf(env: EnvironmentState): DeviceRef[] {
   return out;
 }
 
+export function livePlatforms(env: EnvironmentState): Platform[] {
+  return [
+    ...new Set(
+      devicesOf(env)
+        .filter((d) => d.running)
+        .map((d) => d.platform),
+    ),
+  ];
+}
+
 export function runningBuild(env: EnvironmentState, device?: Pick<DeviceRef, 'platform' | 'slot'>): BuildReport | null {
   const build = env.build;
   if (!build || build.state !== 'running') return null;

@@ -1,8 +1,9 @@
 # Stim Mobile
 
-A read-only Expo app for watching Stim workspaces from a phone. It pairs with
+An Expo app for watching Stim workspaces from a phone. It pairs with
 the Stim server on a Mac (`stim-server`, from the `@stim-cli/server` package)
-and shows what Stim Desktop shows, without any actions:
+and shows what Stim Desktop shows. A phone the Mac grants control can also
+reload and stop a workspace:
 
 - **Home**: one screen for every paired machine; the app keeps a connection
   to each. The **Machines** row has a chip per machine with its connection dot and basic
@@ -47,7 +48,8 @@ and shows what Stim Desktop shows, without any actions:
   Stim owns, **Agent actions** lists the latest agent-device actions on it
   (taps, typing, app opens, screenshots, failed commands), from
   `logs.subscribe` with `sources: ["agent"]`. The **...** menu opens the logs, copies the
-  full path, shows errors, or opens the machine's status.
+  full path, shows errors, or opens the machine's status. With control, it
+  also runs **Reload** and **Stop** (see [Actions](#actions)).
 - **Logs**: the same filters as the Desktop log viewer: the Metro, App, Native,
   Build and Agent sources, a slot, a minimum level, errors only, and a regular
   expression search. The list follows new records until you scroll up, keeps
@@ -56,17 +58,31 @@ and shows what Stim Desktop shows, without any actions:
 Paths under the Mac's home folder show as `~/...`; the server reports the home
 folder in `hello`. Copy path copies the full path.
 
-The app has no action buttons yet. `useAction(workspace)` in
-`src/hooks/mac-connection.tsx` runs the server's `reload` and `stop` actions
-and reports which ones the Mac lets this phone run (`available`), the one in
-flight (`pending`), and the last failure (`error`). A phone paired without
-control gets an empty `available` list.
-
 The design and protocol are in
 [docs/specs/2026-09-25-stim-server-design.md](../../docs/specs/2026-09-25-stim-server-design.md).
 The phone reaches the Mac over Tailscale with `wss://`; plain `ws://` is
 accepted only for a loopback endpoint, which is what the simulator uses with
 the mock server.
+
+## Actions
+
+`hello` tells the app which actions the Mac lets this phone run. With control,
+the workspace **...** menu shows **Reload** and **Stop**:
+
+- **Reload** runs `stim reload` at once. When the workspace has both a running
+  iOS device and a running Android device, it asks which app to reload, because
+  `stim reload` without a platform refuses to choose.
+- **Stop** asks for confirmation, then runs `stim stop`.
+
+A toast shows the action while it runs, then its result or the server's error
+message. The workspace updates through the status stream.
+
+A read-only pairing shows one **Reload and Stop** entry instead, which
+explains the grant: on the Mac, `stim-server devices grant <id> --control`,
+with the id `stim-server devices` lists. A connection learns its actions only
+from `hello`, so its **Reconnect** button opens a new connection to pick up the
+grant. When control is taken away while connected, the server refuses the
+action and the toast shows why.
 
 ## Protocol types
 
@@ -117,7 +133,10 @@ the build carries a remote EAS session added by hand (listed under `edits` in
 Device tokens the mock server issues survive its restarts in a file in the
 system temporary directory. The mock server grants every phone control and
 answers `reload` and `stop` for the fixture workspaces after 0.8 seconds, one
-at a time per workspace, without changing the fixtures. Start it with
+at a time per workspace, without changing the fixtures. The `chat-perf-demo`
+workspace runs an iOS simulator and an Android emulator, so reload there asks
+for a platform, and the mock server refuses a reload without one, like
+`stim reload`. Start it with
 `npm run mock-server -- --read` to see a read-only pairing, which gets no
 actions.
 

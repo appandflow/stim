@@ -93,6 +93,17 @@ export class StimConnection {
     this.connect();
   }
 
+  /** Replaces the connection now, so a new `hello` reports capabilities the Mac changed since. */
+  reconnect(): void {
+    if (this.stopped) return;
+    if (this.timer !== null) this.clearTimer(this.timer);
+    this.timer = null;
+    const socket = this.socket;
+    this.detach('Reconnecting.');
+    socket?.close();
+    this.connect();
+  }
+
   close(): void {
     this.stopped = true;
     if (this.timer !== null) this.clearTimer(this.timer);
@@ -168,15 +179,19 @@ export class StimConnection {
     };
     socket.onclose = () => {
       if (socket !== this.socket) return;
-      this.socket = null;
-      this.open = false;
-      for (const sub of this.subscriptions) {
-        sub.serverId = null;
-        this.cancelRetry(sub);
-      }
-      this.failPending('Connection lost.');
+      this.detach('Connection lost.');
       if (!this.stopped) this.scheduleRetry('Connection lost.');
     };
+  }
+
+  private detach(reason: string): void {
+    this.socket = null;
+    this.open = false;
+    for (const sub of this.subscriptions) {
+      sub.serverId = null;
+      this.cancelRetry(sub);
+    }
+    this.failPending(reason);
   }
 
   private scheduleRetry(reason: string): void {
