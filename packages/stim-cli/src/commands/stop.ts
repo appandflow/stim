@@ -181,6 +181,7 @@ interface DeviceOutcomeEntry {
   label?: string;
   reason?: string;
   kind?: string | null;
+  remedy?: string;
 }
 
 interface DeviceOutcome {
@@ -759,7 +760,7 @@ function shutDownDevices(
         };
         report(chalk.dim(phaseLine('device', `${iosUdid} is not Stim-owned, leaving it running`)));
       } else {
-        device[iosKey] = reportDevice(iosUdid, teardownIos(iosUdid, { del: false, label: iosName }), report);
+        device[iosKey] = reportDevice(iosUdid, teardownIos(iosUdid, { del: false, label: iosName }), report, 'ios');
       }
     }
 
@@ -774,14 +775,30 @@ function shutDownDevices(
         };
         report(chalk.dim(phaseLine('device', `${android.avdName} is not Stim-owned, leaving it running`)));
       } else {
-        device[androidKey] = reportDevice(android.avdName, teardownAvd(android.avdName, { del: false }), report);
+        device[androidKey] = reportDevice(
+          android.avdName,
+          teardownAvd(android.avdName, { del: false }),
+          report,
+          'android',
+        );
       }
     }
   }
   return device;
 }
 
-function reportDevice(label: string, r: TeardownResult, report: (line: string) => void): DeviceOutcomeEntry {
+function deviceShutdownRemedy(kind: 'ios' | 'android', label: string): string {
+  return kind === 'ios'
+    ? `check it with \`xcrun simctl list devices\`, then \`xcrun simctl shutdown ${label}\` yourself -- if it will not respond, \`stim gc --delete\` reclaims it`
+    : `check it with \`adb devices\`, then \`adb -s <serial> emu kill\` yourself -- if it will not respond, \`stim gc --delete\` reclaims it`;
+}
+
+function reportDevice(
+  label: string,
+  r: TeardownResult,
+  report: (line: string) => void,
+  kind: 'ios' | 'android',
+): DeviceOutcomeEntry {
   if (r.status === 'torn-down') {
     report(chalk.green(phaseLine('device', `shut down ${r.label ?? label}`)));
     return { status: 'shut-down', label: r.label ?? label };
@@ -795,8 +812,10 @@ function reportDevice(label: string, r: TeardownResult, report: (line: string) =
     report(chalk.yellow(phaseLine('device', `skipped ${label}: ${reason}`)));
     return { status: 'skipped', kind: r.kind ?? null, label, reason };
   }
-  report(chalk.red(phaseLine('device', `failed to shut down ${label}: ${r.reason}`)));
-  return { status: 'failed', label, reason: r.reason };
+  const remedy = deviceShutdownRemedy(kind, r.label ?? label);
+  report(chalk.red(phaseLine('device', `failed to shut down ${r.label ?? label}: ${r.reason}`)));
+  report(chalk.dim(phaseLine('', remedy)));
+  return { status: 'failed', label: r.label ?? label, reason: r.reason, remedy };
 }
 
 function summarize(root: string, outcomes: StopOutcomes, ok: boolean): string {

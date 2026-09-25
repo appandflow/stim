@@ -122,19 +122,20 @@ function settleIosSimShutdown(
   }
 }
 
+function iosShutdownFailureReason(udid: string, state: string): string {
+  return `simulator ${udid} is still ${state} after ${IOS_SHUTDOWN_ATTEMPTS} shutdown attempts and ${(IOS_SHUTDOWN_ATTEMPTS * IOS_SHUTDOWN_SETTLE_MS) / 1000}s of waiting`;
+}
+
 function parkOwnedIosSim(
+  settled: ResolvedIosSim,
   udid: string,
   park: ParkRequest,
-  clock: ShutdownSettleClock,
 ): { record: ParkedSim; evicted: ParkedSim[] } {
-  const resolved = settleIosSimShutdown(udid, clock);
-  if (resolved.missing) throw new Error(`simulator ${udid} disappeared after shutdown`);
-  if (resolved.notOwned) throw new Error(`simulator ${udid} is now named ${JSON.stringify(resolved.notOwned)}`);
-  const sim = resolved.sim as IosSimRecord;
+  if (settled.missing) throw new Error(`simulator ${udid} disappeared after shutdown`);
+  if (settled.notOwned) throw new Error(`simulator ${udid} is now named ${JSON.stringify(settled.notOwned)}`);
+  const sim = settled.sim as IosSimRecord;
   if (sim.state !== 'Shutdown') {
-    throw new Error(
-      `simulator ${udid} is still ${sim.state} after ${IOS_SHUTDOWN_ATTEMPTS} shutdown attempts and ${(IOS_SHUTDOWN_ATTEMPTS * IOS_SHUTDOWN_SETTLE_MS) / 1000}s of waiting`,
-    );
+    throw new Error(iosShutdownFailureReason(udid, sim.state));
   }
   const model = listIosDeviceTypes().find((d) => d.identifier === sim.deviceTypeIdentifier)?.name ?? null;
   const runtime = parseRuntimeVersion(sim.runtime);
@@ -182,7 +183,8 @@ export function teardownOwnedIosSim(
     const sim = resolved.sim as IosSimRecord;
     if (del && park && park.max > 0) {
       try {
-        const { record, evicted } = parkOwnedIosSim(udid, park, shutdownClock);
+        const settled = settleIosSimShutdown(udid, shutdownClock);
+        const { record, evicted } = parkOwnedIosSim(settled, udid, park);
         const removed: ParkedDevice[] = [];
         const failures: string[] = [];
         for (const entry of evicted) {
@@ -204,8 +206,19 @@ export function teardownOwnedIosSim(
         parkFallback = String((e as Error)?.message || e);
       }
     }
-    if (del) deleteIosSim(udid);
-    return { status: 'torn-down', label: label ?? sim.name ?? udid, ...(parkFallback ? { parkFallback } : {}) };
+    if (del) {
+      deleteIosSim(udid);
+      return { status: 'torn-down', label: label ?? sim.name ?? udid, ...(parkFallback ? { parkFallback } : {}) };
+    }
+    const settled = settleIosSimShutdown(udid, shutdownClock);
+    if (settled.sim && settled.sim.state !== 'Shutdown') {
+      return {
+        status: 'failed',
+        label: label ?? sim.name ?? udid,
+        reason: iosShutdownFailureReason(udid, settled.sim.state),
+      };
+    }
+    return { status: 'torn-down', label: label ?? sim.name ?? udid };
   } catch (e) {
     return {
       status: 'failed',

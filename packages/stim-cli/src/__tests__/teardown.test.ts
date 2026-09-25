@@ -55,22 +55,31 @@ interface IosExecutorOptions {
   sims?: unknown[];
   occupied?: string;
   throwOn?: string | null;
+  /** Whether `simctl shutdown <udid>` actually moves the matching sim to Shutdown. Default true. */
+  shutdownSettles?: boolean;
 }
 
-function iosExecutor({ sims = [], occupied = '', throwOn = null }: IosExecutorOptions = {}) {
+function iosExecutor({ sims = [], occupied = '', throwOn = null, shutdownSettles = true }: IosExecutorOptions = {}) {
   const calls: string[] = [];
-  const listJson = JSON.stringify({
-    devices: {
-      'com.apple.CoreSimulator.SimRuntime.iOS-26-5': sims.map((sim) => ({
-        deviceTypeIdentifier: 'iphone-17',
-        ...(sim as object),
-      })),
-    },
-  });
+  const state = sims.map((sim) => ({ ...(sim as Record<string, unknown>) }));
+  const listJson = () =>
+    JSON.stringify({
+      devices: {
+        'com.apple.CoreSimulator.SimRuntime.iOS-26-5': state.map((sim) => ({
+          deviceTypeIdentifier: 'iphone-17',
+          ...sim,
+        })),
+      },
+    });
   const answer = (cmd: string) => {
     calls.push(cmd);
     if (throwOn && cmd.includes(throwOn)) throw new Error('boom');
-    if (cmd.includes('simctl list devices --json')) return listJson;
+    const shutdown = /simctl shutdown (\S+)/.exec(cmd);
+    if (shutdown && shutdownSettles) {
+      const sim = state.find((s) => s.udid === shutdown[1]);
+      if (sim) sim.state = 'Shutdown';
+    }
+    if (cmd.includes('simctl list devices --json')) return listJson();
     if (cmd.includes('simctl list devicetypes --json')) {
       return JSON.stringify({ devicetypes: [{ identifier: 'iphone-17', name: 'iPhone 17' }] });
     }
@@ -111,10 +120,21 @@ test('teardownOwnedIosSim shuts down and deletes an owned, unoccupied sim', () =
 test('teardownOwnedIosSim shuts down WITHOUT deleting when del is false', () => {
   const exec = iosExecutor({ sims: [OWNED] });
   setExecutor(exec);
-  const r = teardownOwnedIosSim('U1', { del: false });
+  const r = teardownOwnedIosSim('U1', { del: false, shutdownClock: fakeClock() });
   expect(r.status).toBe('torn-down');
   expect(exec.calls.some((c) => /simctl shutdown U1/.test(c))).toBeTruthy();
   expect(!exec.calls.some((c) => /simctl delete/.test(c))).toBeTruthy();
+});
+
+test('teardownOwnedIosSim reports failed, not torn-down, when the simulator never reaches Shutdown', () => {
+  const exec = iosExecutor({ sims: [OWNED], shutdownSettles: false });
+  setExecutor(exec);
+  const r = teardownOwnedIosSim('U1', { del: false, shutdownClock: fakeClock() });
+  expect(r.status).toBe('failed');
+  expect(r.label).toBe('stim-app');
+  expect(r.reason).toMatch(/still Booted after 2 shutdown attempts/);
+  expect(exec.calls.filter((c) => /simctl shutdown U1/.test(c))).toHaveLength(2);
+  expect(exec.calls.some((c) => /simctl delete/.test(c))).toBe(false);
 });
 
 test('teardownOwnedIosSim refuses a sim renamed away from Stim ownership', () => {
@@ -137,7 +157,7 @@ test('teardownOwnedIosSim shuts down an owned sim without checking occupancy', (
     occupied: '\t123\t0\tUIKitApplication:com.example.thing.xctrunner[0x1][rb-legacy]\n',
   });
   setExecutor(exec);
-  const r = teardownOwnedIosSim('U1', { del: false });
+  const r = teardownOwnedIosSim('U1', { del: false, shutdownClock: fakeClock() });
   expect(r.status).toBe('torn-down');
   expect(exec.calls.some((c) => /simctl shutdown U1/.test(c))).toBeTruthy();
   expect(exec.calls.some((c) => /launchctl list/.test(c))).toBe(false);
@@ -692,6 +712,27 @@ test('teardownOwnedAvd does not delete an AVD when emulator shutdown times out',
   expect(r.reason).toMatch(/shutdown timed out/);
   expect(exec.calls.some((c) => /emu kill/.test(c))).toBeTruthy();
   expect(exec.calls.some((c) => /delete avd -n/.test(c))).toBeFalsy();
+});
+
+test('teardownOwnedAvd (stop, del false) reports failed instead of torn-down when adb cannot shut the emulator down', () => {
+  const exec = androidExecutor({
+    avds: ['stim-app'],
+    adb: 'List of devices attached\nemulator-5554\tdevice\n',
+    avdName: 'stim-app',
+  });
+  setExecutor(exec);
+
+  const r = teardownOwnedAvd('stim-app', {
+    del: false,
+    waitForShutdown: (_avdName, shutdown) => {
+      shutdown(60_000);
+      throw new Error('Owned AVD stim-app did not finish shutting down within 60s.');
+    },
+  });
+
+  expect(r.status).toBe('failed');
+  expect(r.reason).toMatch(/did not finish shutting down/);
+  expect(exec.calls.some((c) => /emu kill/.test(c))).toBeTruthy();
 });
 
 test('teardownOwnedAvd refuses an AVD with a live process that adb cannot resolve', () => {

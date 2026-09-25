@@ -471,16 +471,41 @@ test('an occupied sim is reported as skipped and does not fail the run', async (
   expect(ios.kind).toBe('occupied');
 });
 
-test('a failed device teardown fails the run and says why', async () => {
+test('a failed device teardown fails the run and says why, with a remedy', async () => {
   const { opts } = seams({
     project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
-    teardownIos: () => ({ status: 'failed', reason: 'simctl exploded' }),
+    teardownIos: () => ({
+      status: 'failed',
+      label: 'U1',
+      reason: 'simulator U1 is still Booted after 2 shutdown attempts and 30s of waiting',
+    }),
   });
   const r = await runStop(opts);
   expect(r.ok).toBe(false);
   const ios = r.outcomes.device.ios;
   assert(ios);
-  expect(ios.reason).toMatch(/simctl exploded/);
+  expect(ios.status).toBe('failed');
+  expect(ios.reason).toMatch(/still Booted/);
+  expect(ios.remedy).toMatch(/xcrun simctl shutdown U1/);
+  expect(ios.remedy).toMatch(/stim gc --delete/);
+});
+
+test('a failed Android device teardown reports an adb-flavored remedy', async () => {
+  const { opts } = seams({
+    project: { metroPort: 8083, platforms: { android: { avdName: 'stim-app', owned: true } } },
+    teardownAvd: () => ({
+      status: 'failed',
+      label: 'stim-app',
+      reason: 'Owned AVD stim-app did not finish shutting down within 60s.',
+    }),
+  });
+  const r = await runStop(opts);
+  expect(r.ok).toBe(false);
+  const android = r.outcomes.device.android;
+  assert(android);
+  expect(android.status).toBe('failed');
+  expect(android.remedy).toMatch(/adb devices/);
+  expect(android.remedy).toMatch(/stim gc --delete/);
 });
 
 test('a project with no reserved port has nothing to free', async () => {

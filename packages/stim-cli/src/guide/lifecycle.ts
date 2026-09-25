@@ -477,6 +477,23 @@ result as proof instead of requiring an unrelated screenshot.`,
     device      shut down stim-e2e-2
     port        released 8084
 
+  \`stop\` verifies the outcome instead of trusting that the shutdown command
+  ran: for a simulator it waits for the Shutdown state the same way park does
+  (\`guide lifecycle pool\`), and for an emulator it waits for the AVD's
+  process lock to clear. A device that never gets there is reported as
+  FAILED, not shut down, and the run's exit code reflects it; \`--json\`
+  carries the same outcome in \`device.<platform>.status\` ("failed") plus a
+  \`remedy\` field naming the manual command and \`stim gc --delete\` as the
+  fallback:
+
+    device      failed to shut down stim-e2e-2: simulator 9C1F.. is still
+                Booted after 2 shutdown attempts and 30s of waiting
+                check it with \`xcrun simctl list devices\`, then \`xcrun
+                simctl shutdown 9C1F..\` yourself -- if it will not respond,
+                \`stim gc --delete\` reclaims it
+
+  \`stop\` still never deletes the device itself, even on this failure path.
+
   \`worktree remove\` reports itself the same way: the branch decision, the
   owned device, any released device lease, and this workspace's own state
   directory, each on its own line. Nothing prints on stdout; even the removed
