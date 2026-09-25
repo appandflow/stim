@@ -235,7 +235,7 @@ public final class SimulatorDisplayNSView: NSView {
 
   private func inputClient() -> SimulatorHID? {
     guard interactive, let udid, display != nil else { return nil }
-    if hid == nil { hid = SimulatorHID(udid: udid) }
+    if hid?.isConnected != true { hid = SimulatorHID(udid: udid) }
     return hid
   }
 
@@ -295,19 +295,19 @@ public final class SimulatorDisplayNSView: NSView {
 
   public override func keyDown(with event: NSEvent) {
     guard let hid = inputClient() else { return super.keyDown(with: event) }
-    if !event.isARepeat { hid.key(code: event.keyCode, down: true) }
+    if !event.isARepeat { hid.hardwareKey(code: event.keyCode, down: true) }
   }
 
   public override func keyUp(with event: NSEvent) {
     guard let hid = inputClient() else { return super.keyUp(with: event) }
-    hid.key(code: event.keyCode, down: false)
+    hid.hardwareKey(code: event.keyCode, down: false)
   }
 
   public override func flagsChanged(with event: NSEvent) {
     guard let hid = inputClient(), let flag = modifierFlag(keyCode: event.keyCode) else {
       return super.flagsChanged(with: event)
     }
-    hid.key(code: event.keyCode, down: event.modifierFlags.contains(flag))
+    hid.hardwareKey(code: event.keyCode, down: event.modifierFlags.contains(flag))
   }
 
   public override func viewDidMoveToWindow() {
