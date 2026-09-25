@@ -751,6 +751,13 @@ function repoWithMergedBranches() {
     if (commits) git(`push -q -u origin ${name}`, path);
     worktrees[name] = realpathSync.native(path);
   }
+  const spaced = join(projects, 'spaced');
+  git(`worktree add -q "${spaced}" -b spaced`);
+  writeFileSync(join(spaced, 'value.txt'), 'a b\n');
+  git('add value.txt', spaced);
+  git('commit -q -m spaced', spaced);
+  git('push -q -u origin spaced', spaced);
+  worktrees.spaced = realpathSync.native(spaced);
   const followup = join(projects, 'followup');
   git(`worktree add -q "${followup}" -b followup merged`);
   worktrees.followup = realpathSync.native(followup);
@@ -763,11 +770,14 @@ function repoWithMergedBranches() {
   git('commit -q -m squash-squashed', upstream);
   git('cherry-pick origin/rebased', upstream);
   git('cherry-pick origin/evil', upstream);
+  writeFileSync(join(upstream, 'value.txt'), 'ab\n');
+  git('add value.txt', upstream);
+  git('commit -q -m value-without-the-space', upstream);
   git('push -q origin main', upstream);
   git('fetch -q origin main', worktrees.evil);
   git('merge -q --no-ff --no-commit origin/main', worktrees.evil);
   commit(worktrees.evil!, 'not-on-main.txt');
-  for (const gone of ['squashed', 'rebased', 'evil']) {
+  for (const gone of ['squashed', 'rebased', 'evil', 'spaced']) {
     git(`push -q origin --delete ${gone}`, upstream);
     git(`update-ref -d refs/remotes/origin/${gone}`);
   }
@@ -803,7 +813,9 @@ test('plain gc --delete removes merged worktrees, squash merges included, after 
       detail: 'no commits of its own beyond origin/main',
     });
   }
-  expect(byPath[worktrees.evil!]).toMatchObject({ willRemove: false, reason: 'unpushed', mergedInto: null });
+  for (const name of ['evil', 'spaced']) {
+    expect(byPath[worktrees[name]!]).toMatchObject({ willRemove: false, reason: 'unpushed', mergedInto: null });
+  }
   expect(byPath[worktrees.open!]).toMatchObject({ willRemove: false, reason: 'not-merged' });
   expect(byPath[worktrees.dirty!]).toMatchObject({ willRemove: false, reason: 'dirty' });
 
@@ -811,7 +823,9 @@ test('plain gc --delete removes merged worktrees, squash merges included, after 
   expect(output).toContain(`Removed the worktree ${worktrees.merged} (merged into origin/main)`);
   expect(output).toContain(`Removed the worktree ${worktrees.squashed} (merged into origin/main)`);
   for (const name of ['merged', 'squashed', 'rebased']) expect(existsSync(worktrees[name]!)).toBe(false);
-  for (const name of ['fresh', 'followup', 'evil', 'open', 'dirty']) expect(existsSync(worktrees[name]!)).toBe(true);
+  for (const name of ['fresh', 'followup', 'evil', 'spaced', 'open', 'dirty']) {
+    expect(existsSync(worktrees[name]!)).toBe(true);
+  }
   expect(existsSync(join(repo, 'package.json'))).toBe(true);
   expect(git('branch --list squashed')).toContain('squashed');
   expect(process.exitCode).not.toBe(1);

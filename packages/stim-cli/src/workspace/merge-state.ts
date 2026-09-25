@@ -6,18 +6,6 @@ const FETCH_FRESH_MS = 10 * 60_000;
 const GIT_TIMEOUT_MS = 60_000;
 const REMOTE_PREFIX = 'refs/remotes/origin/';
 
-// `git commit-tree` needs an identity and a date; fixed values keep the
-// synthetic squash commit identical across runs, so repeated checks add no
-// new objects.
-const SQUASH_IDENTITY = {
-  GIT_AUTHOR_NAME: 'stim',
-  GIT_AUTHOR_EMAIL: 'stim@localhost',
-  GIT_AUTHOR_DATE: '1000000000 +0000',
-  GIT_COMMITTER_NAME: 'stim',
-  GIT_COMMITTER_EMAIL: 'stim@localhost',
-  GIT_COMMITTER_DATE: '1000000000 +0000',
-};
-
 export interface DefaultBranch {
   ref: string;
   name: string;
@@ -109,17 +97,23 @@ function committedOn(path: string, branch: string | null): boolean {
  * Whether the worktree's HEAD is merged into `target`. The signals, all local git:
  * - HEAD is an ancestor of the default branch, off its first-parent line, and the branch's reflog shows a commit made
  *   on it, so a merge commit brought the branch's own work in. A branch with no commit of its own is not merged.
- * - The branch changes the tree, has no merge commits, and every commit since the merge base has a patch-equivalent
- *   commit on the default branch (a rebase merge).
- * - The branch changes the tree and its whole change since the merge base is patch-equivalent to one commit on the
- *   default branch (a squash merge).
- * Patch equivalence is git's patch-id, which ignores whitespace. Anything git cannot answer is unknown, never merged.
- * `coversUnpushed` is true for a patch-equivalent HEAD whose upstream branch was deleted: its commits exist only
- * locally, but their change is on the default branch.
+ * - The branch changes the tree, has no merge commits, and every commit since the merge base has the same
+ *   `git patch-id --verbatim` as a commit on the default branch (a rebase merge).
+ * - The branch changes the tree and its whole diff since the merge base has the same verbatim patch id as a commit on
+ *   the default branch, limited to the files the branch changes (a squash merge).
+ * Anything git cannot answer is unknown, never merged. `coversUnpushed` is true for a patch-equivalent HEAD whose
+ * upstream branch was deleted: its commits exist only locally, but their change is on the default branch.
  */
 export function mergeState(path: string, { ref, name }: DefaultBranch): MergeState {
-  const git = (args: string[], env?: Record<string, string>): string =>
-    getExecutor().runFile('git', ['-C', path, ...args], { timeoutMs: GIT_TIMEOUT_MS, env });
+  const git = (args: string[], input?: string): string =>
+    getExecutor().runFile('git', ['--literal-pathspecs', '-C', path, ...args], { timeoutMs: GIT_TIMEOUT_MS, input });
+  const patchIds = (patch: string): string[] =>
+    patch
+      ? git(['patch-id', '--verbatim'], patch)
+          .split('\n')
+          .flatMap((line) => line.split(' ')[0] || [])
+      : [];
+  const diffOptions = ['--no-color', '--no-ext-diff'];
   const noOwnCommits = notMerged(`no commits of its own beyond ${name}`);
   try {
     const head = git(['rev-parse', '--verify', 'HEAD^{commit}']);
@@ -134,24 +128,23 @@ export function mergeState(path: string, { ref, name }: DefaultBranch): MergeSta
       if (mainline || !committedOn(path, branch)) return noOwnCommits;
       return { merged: true, into: name, head, coversUnpushed: false };
     }
-    const tree = git(['rev-parse', `${head}^{tree}`]);
-    if (tree === git(['rev-parse', `${base}^{tree}`])) return notMerged(`no net change beyond ${name}`);
-    const equivalent = (tip: string): boolean => {
-      const lines = git(['cherry', ref, tip, base]).split('\n').filter(Boolean);
-      return lines.length > 0 && lines.every((line) => line.startsWith('- '));
-    };
-    const patchEquivalent = () => ({
-      merged: true as const,
+    const files = git(['diff', '--name-only', '-z', base, head]).split('\0').filter(Boolean);
+    if (!files.length) return notMerged(`no net change beyond ${name}`);
+    const log = (range: string, pathspec: string[] = []) =>
+      git(['log', '-p', '--no-merges', ...diffOptions, '--format=commit %H', range, '--', ...pathspec]);
+    const upstream = new Set(patchIds(log(`${base}..${ref}`, files)));
+    const patchEquivalent = (): MergeState => ({
+      merged: true,
       into: name,
       head,
       coversUnpushed: upstreamGone(path, branch),
     });
-    if (!git(['rev-list', '--merges', `${base}..${head}`]) && equivalent(head)) return patchEquivalent();
-    const squashed = git(
-      ['commit-tree', '--no-gpg-sign', tree, '-p', base, '-m', 'stim gc squash-merge check'],
-      SQUASH_IDENTITY,
-    );
-    if (equivalent(squashed)) return patchEquivalent();
+    const squash = patchIds(git(['diff', ...diffOptions, base, head]));
+    if (squash.length === 1 && upstream.has(squash[0]!)) return patchEquivalent();
+    if (!git(['rev-list', '--merges', `${base}..${head}`])) {
+      const own = patchIds(log(`${base}..${head}`));
+      if (own.length && own.every((id) => upstream.has(id))) return patchEquivalent();
+    }
     return notMerged(`not merged into ${name}`);
   } catch (error) {
     return { merged: false, unknown: true, detail: `merge state unknown: ${failure(error)}` };

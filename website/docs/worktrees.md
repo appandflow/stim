@@ -243,17 +243,18 @@ minutes. The branch counts as merged when:
 - a merge commit brought its HEAD into the default branch, and the branch's
   reflog shows a commit made on it. A branch with no commits of its own, such
   as one just created or cut from another branch, is not merged.
-- it has no merge commits and each of its commits has a patch-equivalent
-  commit on the default branch, as after a rebase merge.
-- its whole change is patch-equivalent to one commit on the default branch, as
-  after a squash merge.
+- it has no merge commits and each of its commits has the same
+  `git patch-id --verbatim` as a commit on the default branch, as after a
+  rebase merge.
+- its whole diff has the same verbatim patch id as a commit on the default
+  branch, compared on the files the branch changes, as after a squash merge.
 
-gc asks git only, not GitHub. Patch equivalence is git's patch-id, which
-ignores whitespace. A squash merge whose content changed while merging, such
-as a conflict resolution, does not match, and gc keeps that worktree; so does
-a branch that was fast-forwarded into the default branch. When `origin/HEAD` is
-not set, the fetch fails, or git cannot answer, gc keeps the worktree and
-reports why. After a squash or rebase merge that deleted the remote branch, the
+gc asks git only, not GitHub. A squash merge whose content changed while
+merging, such as a conflict resolution or even a whitespace edit, does not
+match, and gc keeps that worktree; so does a branch that was fast-forwarded
+into the default branch. When `origin/HEAD` is not set, the fetch fails, or git
+cannot answer, gc does not treat the branch as merged and reports why. After a
+squash or rebase merge whose remote branch was deleted and pruned locally, the
 branch's commits exist only locally; gc still removes the worktree, because
 their change is on the default branch, and keeps the branch.
 

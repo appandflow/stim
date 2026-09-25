@@ -8,6 +8,8 @@ interface ExecOptions {
   cwd?: string;
   env?: Record<string, string>;
   omitEnv?: readonly string[];
+  /** Text written to the child's stdin; `runFile` only. */
+  input?: string;
 }
 
 export interface Executor {
@@ -51,7 +53,7 @@ const defaultExecutor: Executor = {
   // refuses .cmd/.bat files and shebang scripts without a shell, and every
   // package bin (eas, agent-device) is one of those. The throw matches
   // execFileSync's, so callers keep reading status, stdout and stderr off it.
-  runFile(file, args = [], { timeoutMs, killSignal, cwd, env, omitEnv } = {}) {
+  runFile(file, args = [], { timeoutMs, killSignal, cwd, env, omitEnv, input } = {}) {
     const opts: Parameters<typeof spawn.sync>[2] = {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -60,6 +62,7 @@ const defaultExecutor: Executor = {
     if (timeoutMs) opts.timeout = timeoutMs;
     if (killSignal) opts.killSignal = killSignal;
     if (cwd) opts.cwd = cwd;
+    if (input !== undefined) opts.input = input;
     if (env || omitEnv?.length) {
       const childEnv = { ...process.env, ...env };
       for (const key of omitEnv ?? []) delete childEnv[key];

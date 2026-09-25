@@ -108,18 +108,20 @@ SWEEPING FINISHED WORKTREES
     branch's reflog shows a commit made on it. A branch with no commit of
     its own -- fresh, or cut from another branch -- is not merged.
   - the branch changes the tree, and either it has no merge commits and every
-    commit since the merge base has a patch-equivalent commit on the default
-    branch (a rebase merge), or its whole change since the merge base is
-    patch-equivalent to one commit there (a squash merge).
-  Merge state comes from git alone, not from a hosting service. Patch
-  equivalence is git's patch-id, which ignores whitespace. A squash merge
-  whose content changed during the merge (a conflict resolution, a suggested
-  edit) does not match and is kept, and so is a fast-forwarded branch. When
-  origin/HEAD is not set, the fetch fails, or git cannot answer, the state is
-  unknown and the worktree is kept (reason merge-unknown, with the remedy). A
-  squash- or rebase-merged branch whose upstream was deleted after the merge
-  has commits only it reaches; they do not block removal, because their
-  change is on the default branch, and the branch is kept.
+    commit since the merge base has the same \`git patch-id --verbatim\` as a
+    commit on the default branch (a rebase merge), or its whole diff since the
+    merge base has the same verbatim patch id as a commit there, compared on
+    the files the branch changes (a squash merge).
+  Merge state comes from git alone, not from a hosting service. A squash
+  merge whose content changed during the merge (a conflict resolution, a
+  suggested edit, even whitespace) does not match and is kept, and so is a
+  fast-forwarded branch. When origin/HEAD is not set, the fetch fails, or git
+  cannot answer, the state is unknown and never counts as merged (reason
+  merge-unknown, with the remedy); with --worktrees an idle worktree is still
+  removed. A squash- or rebase-merged branch whose upstream is gone (deleted
+  after the merge and pruned locally) has commits only it reaches; they do
+  not block removal, because their change is on the default branch, and the
+  branch is kept.
     stim gc                                        # report merged worktrees
     stim gc --delete                               # remove them
     stim gc --delete --worktrees --older-than 3    # also the clean idle ones
@@ -128,7 +130,8 @@ SWEEPING FINISHED WORKTREES
   on each removable worktree. That pipeline re-inspects the worktree and
   re-checks use under the removal locks, and idleness for an idle worktree
   or an unchanged HEAD for a merged one, then parks devices and handles the
-  branch exactly as a manual \`stim worktree remove\`. A worktree that
+  branch exactly as a manual \`stim worktree remove\`, which keeps the
+  checkout when its HEAD moves while devices are reclaimed. A worktree that
   changed since the report is kept with the reason. A worktree that fails is
   reported, gc exits 1, and the sweep continues.
 

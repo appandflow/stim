@@ -861,9 +861,17 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
         printRemovalRefusal(path, current);
         return;
       }
+      const inspectedHead = resolveFullRef(path, 'HEAD');
       const result = await reclaimAll(path, lockedKeys, { preserveRootProject: true });
       if (result.keptEntries.length) {
         reportRetainedResources(path, result);
+        return;
+      }
+      if (!opts.force && resolveFullRef(path, 'HEAD') !== inspectedHead) {
+        console.error(chalk.red(`Refusing to remove ${path}: its HEAD moved while its environment was reclaimed.`));
+        console.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
+        printRemovalCleanup(result, true);
+        process.exitCode = 1;
         return;
       }
       restorePodChurn(path, current.podChurn);

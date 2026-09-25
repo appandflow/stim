@@ -389,10 +389,10 @@ function worktreeSweepLines(sweep: WorktreeSweep | null): string[] {
   const idle = !sweep.idle
     ? ''
     : sweep.idle.defaulted
-      ? ` or idle ${sweep.idle.olderThan}d or more (the default without --older-than)`
-      : ` or idle ${sweep.idle.olderThan}d or more`;
+      ? `, or clean, pushed and idle ${sweep.idle.olderThan}d or more (the default without --older-than)`
+      : `, or clean, pushed and idle ${sweep.idle.olderThan}d or more`;
   const lines = [
-    `Linked worktrees (${removable.length} removable, ${sweep.worktrees.length - removable.length} kept) - clean, pushed, merged into the default branch${idle}:`,
+    `Linked worktrees (${removable.length} removable, ${sweep.worktrees.length - removable.length} kept) - clean and merged into the default branch${idle}:`,
   ];
   for (const w of sweep.worktrees) {
     const age = w.idleDays === null ? '' : ` (idle ${w.idleDays}d)`;
