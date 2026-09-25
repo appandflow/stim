@@ -216,24 +216,54 @@ alone. See [named server ports](./dev-server-and-logs.md#named-server-ports).
 ## Remove finished worktrees in bulk
 
 <StimTabs
-code={`stim gc --worktrees --older-than 3
+code={`stim gc
+stim gc --delete
 stim gc --delete --worktrees --older-than 3`}
 />
 
-`gc --worktrees` lists every linked worktree that has a Stim workspace and says
-why each one is kept: source checkout, bare, locked, in use, dirty (untracked
-files count), unpushed, initialized submodules, or recently used. A worktree is
-idle when no Stim command has used it for `--older-than` days, or 7 days
-without that option. With `--delete`, gc runs `stim worktree remove` without
-`--force` on each removable worktree. That command checks the worktree again
-before removing it and handles devices and branches as it does when you run it
-yourself. A worktree that fails is reported and the others still run. A
-worktree removed with `git worktree remove` or `rm -rf` leaves its Stim
-workspace directory behind; plain `gc --delete` removes those.
+`gc` lists every linked worktree that has a Stim workspace and says why each
+one is removed or kept. A worktree is finished when its branch is merged into
+the default branch, and plain `gc --delete` removes it. `--worktrees` also
+removes a worktree that is idle: no Stim command has used it for
+`--older-than` days, or 7 days without that option. Either way, gc keeps a
+worktree that is the source checkout, bare, locked, in use, dirty (untracked
+files count), unpushed, or has initialized submodules. With `--delete`, gc
+runs `stim worktree remove` without `--force` on each removable worktree. That
+command checks the worktree again before removing it and handles devices and
+branches as it does when you run it yourself. A worktree that fails is
+reported and the others still run. A worktree removed with
+`git worktree remove` or `rm -rf` leaves its Stim workspace directory behind;
+plain `gc --delete` removes those.
+
+To decide that a branch is merged, gc takes the default branch from
+`origin/HEAD` and runs `git fetch origin <default>` once per repository, with a
+30-second timeout. It skips the fetch when that checkout fetched in the last 10
+minutes. The branch counts as merged when:
+
+- a merge commit brought its HEAD into the default branch, and the branch's
+  reflog shows a commit made on it that HEAD contains. A branch with no commits
+  of its own, such as one just created, cut from another branch, or reset onto
+  one, is not merged.
+  The next two apply only to a branch that changes the tree:
+
+- it has no merge commits and each of its commits has the same
+  `git patch-id --verbatim` as a commit on the default branch, as after a
+  rebase merge.
+- its whole diff has the same verbatim patch id as a commit on the default
+  branch, compared on the files the branch changes, as after a squash merge.
+
+gc asks git only, not GitHub. A squash merge whose content changed while
+merging, such as a conflict resolution or even a whitespace edit, does not
+match, and gc keeps that worktree; so does a branch that was fast-forwarded
+into the default branch. When `origin/HEAD` is not set, the fetch fails, or git
+cannot answer, gc does not treat the branch as merged and reports why. After a
+squash or rebase merge whose remote branch was deleted and pruned locally, the
+branch's commits exist only locally; gc still removes the worktree, because
+their change is on the default branch, and keeps the branch.
 
 Ask your agent:
 
 ```text
-Run `stim gc --worktrees --older-than 3` and show me which worktrees it would
-remove and why it keeps the others. Do not pass --delete until I confirm.
+Run `stim gc --json` and show me which merged worktrees it would remove and
+why it keeps the others. Do not pass --delete until I confirm.
 ```

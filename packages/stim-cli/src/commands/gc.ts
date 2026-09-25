@@ -357,7 +357,7 @@ export async function collectGcReport(
       now,
       exclude: [...workspaceDirs.orphaned.map((entry) => entry.dir), ...deadProjects.map(workspaceDir)],
     }),
-    worktreeSweep: worktrees ? collectWorktreeSweep({ olderThan, now }) : null,
+    worktreeSweep: collectWorktreeSweep({ idle: worktrees, olderThan, now }),
     cacheScope: null,
     olderThan,
     all,
@@ -537,9 +537,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     idle,
     cacheScope: report.cacheScope,
     olderThan,
-    worktreeSweep: report.worktreeSweep
-      ? { olderThan: report.worktreeSweep.olderThan, defaulted: report.worktreeSweep.defaulted }
-      : null,
+    worktreeSweep: report.worktreeSweep?.idle ?? null,
     actionable,
     failures,
     sections: gcReportSections(report),
@@ -685,11 +683,11 @@ export default function gcCommand(program: Command): void {
   program
     .command('gc')
     .description(
-      'Report what Stim has left behind: dead project entries, orphaned workspace directories, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, expired physical-device leases, the shared build caches, and the build outputs of each workspace. Reports by default; pass --delete to act.',
+      'Report what Stim has left behind: dead project entries, orphaned workspace directories, clean Stim-managed linked worktrees whose branch is merged, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, expired physical-device leases, the shared build caches, and the build outputs of each workspace. Reports by default; pass --delete to act.',
     )
     .option(
       '--worktrees',
-      'also report every clean, idle, Stim-managed linked worktree, and with --delete run `stim worktree remove` (never --force) on each; idle means unused for --older-than days, 7 without it',
+      'also remove clean, idle Stim-managed linked worktrees, not only merged ones: with --delete run `stim worktree remove` (never --force) on each; idle means unused for --older-than days, 7 without it',
     )
     .option(
       '--delete',

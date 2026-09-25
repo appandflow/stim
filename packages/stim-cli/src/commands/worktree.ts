@@ -599,6 +599,8 @@ interface RemoveOptions {
   force?: boolean;
   linkedOnly?: boolean;
   guard?: (lockedKeys: readonly string[]) => string[];
+  /** A HEAD whose change gc proved is on the default branch; its local-only commits do not block removal. */
+  mergedHead?: string;
 }
 
 interface RemovalInspection {
@@ -628,13 +630,14 @@ function canonicalExistingPath(target: string): string {
   return resolve(realpathSync(existing), ...missing);
 }
 
-function inspectRemoval(path: string): RemovalInspection {
+function inspectRemoval(path: string, mergedHead?: string): RemovalInspection {
   const gitAnswered = hasUncommittedWork(path);
   const allDirty = gitAnswered ? dirtyPaths(path, { limit: Infinity }) : [];
   const { lines: dirtyLines, restore: podChurn } = excludePodChurn(allDirty);
   const dirty = gitAnswered === null ? null : dirtyLines.length > 0;
   const unpushed = unpushedCommits(path);
-  const blockers = removalBlockers({ dirty, unpushed });
+  const merged = Boolean(mergedHead) && resolveFullRef(path, 'HEAD') === mergedHead;
+  const blockers = removalBlockers({ dirty, unpushed: merged && unpushed ? [] : unpushed });
   if (hasPopulatedSubmodules(path)) blockers.push('initialized submodules, which git removes only with --force');
   return { dirtyLines, podChurn, unpushed, blockers };
 }
@@ -832,7 +835,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
   const branch = entry.branch;
   const ownsBranch = Boolean(branch && project?.worktreeBranchOwned === true && project.worktreeBranch === branch);
   const approvedBranchSha = ownsBranch ? resolveFullRef(path, 'HEAD') : null;
-  const inspection = inspectRemoval(path);
+  const inspection = inspectRemoval(path, opts.mergedHead);
   if (inspection.blockers.length && !opts.force) {
     printRemovalRefusal(path, inspection);
     return;
@@ -853,7 +856,8 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
   await withManagedRemoteWorktreeRemovalLock(path, () =>
     withReclaimLocks(path, async (lockedKeys) => {
       if (opts.guard?.(lockedKeys).length) return;
-      const current = inspectRemoval(path);
+      const inspectedHead = resolveFullRef(path, 'HEAD');
+      const current = inspectRemoval(path, opts.mergedHead);
       if (current.blockers.length && !opts.force) {
         printRemovalRefusal(path, current);
         return;
@@ -861,6 +865,13 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
       const result = await reclaimAll(path, lockedKeys, { preserveRootProject: true });
       if (result.keptEntries.length) {
         reportRetainedResources(path, result);
+        return;
+      }
+      if (!opts.force && resolveFullRef(path, 'HEAD') !== inspectedHead) {
+        console.error(chalk.red(`Refusing to remove ${path}: its HEAD moved while its environment was reclaimed.`));
+        console.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
+        printRemovalCleanup(result, true);
+        process.exitCode = 1;
         return;
       }
       restorePodChurn(path, current.podChurn);

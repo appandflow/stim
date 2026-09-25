@@ -18,6 +18,7 @@ import { runGc } from '../commands/gc.ts';
 import { matchWorktreeEntry, removeWorktreeTarget } from '../commands/worktree.ts';
 import { classifyWorkspaceDirs, listWorkspaceDirs, planWorkspaceOutputs } from '../commands/gc/workspaces.ts';
 import { worktreeSkipReason, type WorktreeFacts } from '../commands/gc/worktrees.ts';
+import type { MergeState } from '../workspace/merge-state.ts';
 import { getProject, saveConfig, upsertProject } from '../workspace/config.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
@@ -457,11 +458,47 @@ describe('linked worktree sweep classification', () => {
     submodules: false,
     inUse: [],
     idleDays: 10,
+    merge: null,
     ...overrides,
+  });
+  const merged = (coversUnpushed = false): MergeState => ({
+    merged: true,
+    into: 'origin/main',
+    head: 'abc',
+    coversUnpushed,
   });
 
   test('a clean, pushed, idle linked worktree is removable', () => {
     expect(worktreeSkipReason(linked(), 7)).toBe(null);
+  });
+
+  test('a merged worktree is removable without the idle rule, even when used today', () => {
+    expect(worktreeSkipReason(linked({ idleDays: 0, merge: merged() }), null)).toBe(null);
+  });
+
+  test('local-only commits block a merged worktree unless its upstream was deleted after the merge', () => {
+    expect(worktreeSkipReason(linked({ unpushed: ['abc wip'], merge: merged() }), null)?.code).toBe('unpushed');
+    expect(worktreeSkipReason(linked({ unpushed: ['abc wip'], merge: merged(true) }), null)).toBe(null);
+  });
+
+  test.each([
+    ['dirty', linked({ porcelain: ['?? notes.txt'], merge: merged() }), 'dirty'],
+    ['in use', linked({ inUse: ['its dev server supervisor (pid 1) is running'], merge: merged() }), 'in-use'],
+    ['locked', linked({ locked: true, merge: merged() }), 'locked'],
+    ['the source checkout', linked({ source: 'source', merge: merged() }), 'source-checkout'],
+    ['with submodules', linked({ submodules: true, merge: merged(true) }), 'submodules'],
+    [
+      'not merged',
+      linked({ merge: { merged: false, unknown: false, detail: 'not merged into origin/main' } }),
+      'not-merged',
+    ],
+    [
+      'of unknown merge state',
+      linked({ merge: { merged: false, unknown: true, detail: 'merge state unknown: fetch failed' } }),
+      'merge-unknown',
+    ],
+  ])('without --worktrees, a worktree %s is kept', (_name, facts, code) => {
+    expect(worktreeSkipReason(facts, null)?.code).toBe(code);
   });
 
   test('pod install churn alone does not keep a worktree', () => {
@@ -583,14 +620,15 @@ test('gc --worktrees --json reports each worktree verdict with its idle threshol
   expect(byPath[realpathSync.native(worktrees.idle!)]).toEqual({
     path: expect.any(String),
     idleDays: 10,
+    mergedInto: null,
     willRemove: true,
     reason: null,
-    detail: null,
+    detail: 'idle 10d',
   });
   expect(byPath[realpathSync.native(worktrees.fresh!)]).toMatchObject({
     willRemove: false,
     reason: 'recently-used',
-    detail: 'recently used 1d ago',
+    detail: expect.stringMatching(/^recently used 1d ago; merge state unknown: origin\/HEAD is not set/),
   });
   expect(byPath[realpathSync.native(repo)]).toMatchObject({ willRemove: false, reason: 'source-checkout' });
   expect(existsSync(worktrees.idle!)).toBe(true);
@@ -674,6 +712,171 @@ test('worktree removal re-checks for new work under its removal locks', async ()
   expect(existsSync(join(late, 'written-after-the-first-check.txt'))).toBe(true);
   expect(errors.join('\n')).toMatch(/uncommitted changes or untracked files/);
 }, 30_000);
+
+function repoWithMergedBranches() {
+  const repo = join(projects, 'origin-repo');
+  const remote = join(projects, 'origin.git');
+  const upstream = join(projects, 'upstream');
+  const git = (args: string, cwd = repo) => execSync(`git ${args}`, { cwd, encoding: 'utf-8', timeout: 30_000 });
+  const identity = (cwd: string) => {
+    git('config user.email test@example.com', cwd);
+    git('config user.name test', cwd);
+  };
+  const commit = (cwd: string, file: string) => {
+    writeFileSync(join(cwd, file), file);
+    git(`add ${file}`, cwd);
+    git(`commit -q -m ${file}`, cwd);
+  };
+  git(`init -q --bare -b main "${remote}"`, projects);
+  mkdirSync(repo);
+  git('init -q -b main');
+  identity(repo);
+  git(`remote add origin "${remote}"`);
+  commit(repo, 'package.json');
+  git('push -q -u origin main');
+  git('remote set-head origin main');
+  const worktrees: Record<string, string> = {};
+  for (const [name, commits] of [
+    ['merged', 1],
+    ['squashed', 2],
+    ['rebased', 1],
+    ['evil', 1],
+    ['fresh', 0],
+    ['open', 1],
+    ['dirty', 1],
+  ] as const) {
+    const path = join(projects, name);
+    git(`worktree add -q "${path}" -b ${name}`);
+    for (let i = 0; i < commits; i++) commit(path, `${name}-${i}.txt`);
+    if (commits) git(`push -q -u origin ${name}`, path);
+    worktrees[name] = realpathSync.native(path);
+  }
+  const spaced = join(projects, 'spaced');
+  git(`worktree add -q "${spaced}" -b spaced`);
+  writeFileSync(join(spaced, 'value.txt'), 'ab  \n');
+  git('add value.txt', spaced);
+  git('commit -q -m spaced', spaced);
+  git('push -q -u origin spaced', spaced);
+  worktrees.spaced = realpathSync.native(spaced);
+  const followup = join(projects, 'followup');
+  git(`worktree add -q "${followup}" -b followup merged`);
+  worktrees.followup = realpathSync.native(followup);
+  const reused = join(projects, 'reused');
+  git(`worktree add -q "${reused}" -b reused`);
+  commit(reused, 'reused-earlier-life.txt');
+  git(`worktree remove "${reused}"`);
+  git(`worktree add -q -B reused "${reused}" merged`);
+  worktrees.reused = realpathSync.native(reused);
+  git(`clone -q "${remote}" "${upstream}"`, projects);
+  identity(upstream);
+  commit(upstream, 'main-moved-on.txt');
+  git('push -q origin main', upstream);
+  git('fetch -q origin main', worktrees.evil);
+  git('merge -q --no-ff --no-commit origin/main', worktrees.evil);
+  commit(worktrees.evil!, 'not-on-main.txt');
+  git('merge -q --no-ff origin/merged -m merge-merged', upstream);
+  git('merge -q --no-ff origin/dirty -m merge-dirty', upstream);
+  git('merge -q --squash origin/squashed', upstream);
+  git('commit -q -m squash-squashed', upstream);
+  git('cherry-pick origin/rebased', upstream);
+  git('cherry-pick origin/evil', upstream);
+  writeFileSync(join(upstream, 'value.txt'), 'ab\n');
+  git('add value.txt', upstream);
+  git('commit -q -m value-without-the-trailing-spaces', upstream);
+  git('push -q origin main', upstream);
+  for (const gone of ['squashed', 'rebased', 'evil', 'spaced']) {
+    git(`push -q origin --delete ${gone}`, upstream);
+    git(`update-ref -d refs/remotes/origin/${gone}`);
+  }
+  writeFileSync(join(worktrees.dirty!, 'notes.txt'), 'wip');
+  for (const path of Object.values(worktrees)) {
+    upsertProject(path, { metroPort: null });
+    recordWorkspaceUse(path);
+  }
+  return { repo, remote, worktrees, git };
+}
+
+test('plain gc --delete removes merged worktrees, squash merges included, after fetching the default branch', async () => {
+  const { repo, worktrees, git } = repoWithMergedBranches();
+
+  const { payload } = await gcJson({});
+  expect(payload.worktreeSweep).toBe(null);
+  const byPath = Object.fromEntries(
+    payload.sections.linkedWorktrees.map((w: { path: string }) => [realpathSync.native(w.path), w]),
+  );
+  expect(Object.keys(byPath).toSorted()).toEqual(Object.values(worktrees).toSorted());
+  expect(byPath[worktrees.merged!]).toMatchObject({
+    mergedInto: 'origin/main',
+    willRemove: true,
+    reason: null,
+    detail: 'merged into origin/main',
+  });
+  expect(byPath[worktrees.squashed!]).toMatchObject({ willRemove: true, detail: 'merged into origin/main' });
+  expect(byPath[worktrees.rebased!]).toMatchObject({ willRemove: true, detail: 'merged into origin/main' });
+  for (const name of ['fresh', 'followup', 'reused']) {
+    expect(byPath[worktrees[name]!]).toMatchObject({
+      willRemove: false,
+      reason: 'not-merged',
+      detail: 'no commits of its own beyond origin/main',
+    });
+  }
+  for (const name of ['evil', 'spaced']) {
+    expect(byPath[worktrees[name]!]).toMatchObject({ willRemove: false, reason: 'unpushed', mergedInto: null });
+  }
+  expect(byPath[worktrees.open!]).toMatchObject({ willRemove: false, reason: 'not-merged' });
+  expect(byPath[worktrees.dirty!]).toMatchObject({ willRemove: false, reason: 'dirty' });
+
+  const output = await captureLog(() => runGc({ delete: true }));
+  expect(output).toContain(`Removed the worktree ${worktrees.merged} (merged into origin/main)`);
+  expect(output).toContain(`Removed the worktree ${worktrees.squashed} (merged into origin/main)`);
+  for (const name of ['merged', 'squashed', 'rebased']) expect(existsSync(worktrees[name]!)).toBe(false);
+  for (const name of ['fresh', 'followup', 'reused', 'evil', 'spaced', 'open', 'dirty']) {
+    expect(existsSync(worktrees[name]!)).toBe(true);
+  }
+  expect(existsSync(join(repo, 'package.json'))).toBe(true);
+  expect(git('branch --list squashed')).toContain('squashed');
+  expect(process.exitCode).not.toBe(1);
+}, 120_000);
+
+test('gc keeps a merged worktree when the fetch fails, and when its HEAD moves after the report', async () => {
+  const { repo, remote, worktrees, git } = repoWithMergedBranches();
+  git('fetch -q origin');
+  const stale = new Date(Date.now() - 11 * 60_000);
+  utimesSync(join(repo, '.git', 'FETCH_HEAD'), stale, stale);
+  renameSync(remote, `${remote}.moved`);
+
+  const { payload } = await gcJson({ delete: true });
+  const merged = payload.sections.linkedWorktrees.find(
+    (w: { path: string }) => realpathSync.native(w.path) === worktrees.merged,
+  );
+  expect(merged).toMatchObject({ willRemove: false, reason: 'merge-unknown' });
+  expect(merged.detail).toMatch(/^merge state unknown: git fetch origin main failed/);
+  expect(existsSync(worktrees.merged!)).toBe(true);
+
+  renameSync(`${remote}.moved`, remote);
+  const lines: string[] = [];
+  const original = console.log;
+  const originalError = console.error;
+  console.error = () => {};
+  console.log = (...args) => {
+    lines.push(args.join(' '));
+    if (String(args[0]).startsWith('Linked worktrees')) {
+      writeFileSync(join(worktrees.merged!, 'late.txt'), 'x');
+      git('add late.txt', worktrees.merged);
+      git('commit -q -m late', worktrees.merged);
+      git('push -q', worktrees.merged);
+    }
+  };
+  try {
+    await runGc({ delete: true });
+  } finally {
+    console.log = original;
+    console.error = originalError;
+  }
+  expect(existsSync(worktrees.merged!)).toBe(true);
+  expect(lines.join('\n')).toContain(`Kept the worktree ${worktrees.merged}: its HEAD moved since gc checked it`);
+  expect(existsSync(worktrees.squashed!)).toBe(false);
+}, 120_000);
 
 test('a worktree registered under a symlinked path still matches the path git reports', () => {
   const real = join(projects, 'real-worktree');

@@ -5,11 +5,13 @@ import { plural } from '../../command-output.ts';
 import { loadConfig } from '../../workspace/config.ts';
 import { workspaceInUse } from '../../workspace/in-use.ts';
 import { workspaceLastUsed } from '../../workspace/workspace-state.ts';
+import { fetchDefaultBranch, mergeState, type MergeState } from '../../workspace/merge-state.ts';
 import {
   dirtyPaths,
   hasPopulatedSubmodules,
   hasUncommittedWork,
   listWorktrees,
+  resolveFullRef,
   sourceCheckoutOf,
   unpushedCommits,
 } from '../../workspace/worktree.ts';
@@ -29,6 +31,7 @@ export interface WorktreeFacts {
   submodules: boolean;
   inUse: string[];
   idleDays: number | null;
+  merge: MergeState | null;
 }
 
 export type WorktreeSkipCode =
@@ -43,6 +46,8 @@ export type WorktreeSkipCode =
   | 'unpushed-unchecked'
   | 'unpushed'
   | 'submodules'
+  | 'not-merged'
+  | 'merge-unknown'
   | 'last-use-unknown'
   | 'recently-used';
 
@@ -55,21 +60,28 @@ interface WorktreeCandidate {
   path: string;
   keys: string[];
   idleDays: number | null;
+  merge: MergeState | null;
   skipCode: WorktreeSkipCode | null;
   skipped: string | null;
 }
 
 export interface WorktreeSweep {
-  olderThan: number;
-  defaulted: boolean;
+  idle: { olderThan: number; defaulted: boolean } | null;
   worktrees: WorktreeCandidate[];
 }
+
+const MERGE_DECIDES: ReadonlySet<WorktreeSkipCode> = new Set([
+  'unpushed',
+  'not-merged',
+  'last-use-unknown',
+  'recently-used',
+]);
 
 function skip(code: WorktreeSkipCode, text: string): WorktreeSkip {
   return { code, text };
 }
 
-export function worktreeSkipReason(facts: WorktreeFacts, olderThan: number): WorktreeSkip | null {
+export function worktreeSkipReason(facts: WorktreeFacts, olderThan: number | null): WorktreeSkip | null {
   if (facts.bare) return skip('bare-repository', 'bare repository');
   if (typeof facts.source === 'object') {
     return skip('source-checkout-unknown', `source checkout unknown: ${facts.source.refusal}`);
@@ -82,13 +94,25 @@ export function worktreeSkipReason(facts: WorktreeFacts, olderThan: number): Wor
     return skip('dirty', 'dirty: uncommitted changes or untracked files');
   }
   if (facts.unpushed === null) return skip('unpushed-unchecked', 'unpushed commits could not be checked');
-  if (facts.unpushed.length) {
+  const merged = facts.merge?.merged ? facts.merge : null;
+  if (facts.unpushed.length && !merged?.coversUnpushed) {
     return skip('unpushed', `unpushed: ${plural(facts.unpushed.length, 'commit')} on no remote or other branch`);
   }
   if (facts.submodules) return skip('submodules', 'initialized submodules');
-  if (facts.idleDays === null) return skip('last-use-unknown', 'recently used: its last use is unknown');
-  if (facts.idleDays < olderThan) return skip('recently-used', `recently used ${facts.idleDays}d ago`);
+  if (merged) return null;
+  const notMerged = facts.merge && !facts.merge.merged ? facts.merge : null;
+  if (olderThan === null) {
+    return skip(notMerged?.unknown ? 'merge-unknown' : 'not-merged', notMerged?.detail ?? 'not merged');
+  }
+  const also = notMerged ? `; ${notMerged.detail}` : '';
+  if (facts.idleDays === null) return skip('last-use-unknown', `recently used: its last use is unknown${also}`);
+  if (facts.idleDays < olderThan) return skip('recently-used', `recently used ${facts.idleDays}d ago${also}`);
   return null;
+}
+
+/** Why gc removes a worktree it did not skip: `merged into origin/main` or `idle 9d`. */
+export function worktreeRemovalReason(candidate: Pick<WorktreeCandidate, 'merge' | 'idleDays'>): string {
+  return candidate.merge?.merged ? `merged into ${candidate.merge.into}` : `idle ${candidate.idleDays ?? 0}d`;
 }
 
 function lastUsedOf(keys: readonly string[]): number {
@@ -118,8 +142,42 @@ function candidateRoots(): string[] {
   return [...new Set([...registered, ...recorded])].filter((root) => existsSync(root)).toSorted();
 }
 
-export function collectWorktreeSweep({ olderThan, now }: { olderThan: number | null; now: number }): WorktreeSweep {
-  const days = olderThan ?? DEFAULT_WORKTREE_IDLE_DAYS;
+interface PendingMerge {
+  candidate: WorktreeCandidate;
+  facts: WorktreeFacts;
+  repo: string;
+}
+
+function checkMergeStates(pending: PendingMerge[], idle: number | null, now: number): void {
+  const repos = new Map<string, PendingMerge[]>();
+  for (const entry of pending) repos.set(entry.repo, [...(repos.get(entry.repo) ?? []), entry]);
+  for (const [repo, entries] of repos) {
+    const target = fetchDefaultBranch(repo, now);
+    for (const { candidate, facts } of entries) {
+      const merge: MergeState =
+        'error' in target
+          ? { merged: false, unknown: true, detail: `merge state unknown: ${target.error}` }
+          : mergeState(candidate.path, target);
+      const verdict = worktreeSkipReason({ ...facts, merge }, idle);
+      Object.assign(candidate, { merge, skipCode: verdict?.code ?? null, skipped: verdict?.text ?? null });
+    }
+  }
+}
+
+/**
+ * Classifies each Stim-managed linked worktree. A merged one is removable; with `idle`, so is one unused for
+ * `olderThan` days. Merge state is checked only where it decides the verdict, after one fetch per repository.
+ */
+export function collectWorktreeSweep({
+  idle,
+  olderThan,
+  now,
+}: {
+  idle: boolean;
+  olderThan: number | null;
+  now: number;
+}): WorktreeSweep {
+  const days = idle ? (olderThan ?? DEFAULT_WORKTREE_IDLE_DAYS) : null;
   const groups = new Map<string, string[]>();
   const outside: WorktreeCandidate[] = [];
   for (const root of candidateRoots()) {
@@ -129,6 +187,7 @@ export function collectWorktreeSweep({ olderThan, now }: { olderThan: number | n
         path: root,
         keys: [root],
         idleDays: null,
+        merge: null,
         skipCode: 'not-a-worktree',
         skipped: 'not inside a git worktree',
       });
@@ -137,6 +196,7 @@ export function collectWorktreeSweep({ olderThan, now }: { olderThan: number | n
     groups.set(entry.path, [...(groups.get(entry.path) ?? []), root]);
   }
   const worktrees: WorktreeCandidate[] = [];
+  const pending: PendingMerge[] = [];
   for (const [path, roots] of groups) {
     const entries = listWorktrees(path);
     const entry = matchWorktreeEntry(entries, path);
@@ -154,11 +214,27 @@ export function collectWorktreeSweep({ olderThan, now }: { olderThan: number | n
       submodules: linked && hasPopulatedSubmodules(path),
       inUse: linked ? inUseOf(keys, { managedLocks: true }) : [],
       idleDays,
+      merge: null,
     };
     const verdict = worktreeSkipReason(facts, days);
-    worktrees.push({ path, keys, idleDays, skipCode: verdict?.code ?? null, skipped: verdict?.text ?? null });
+    const candidate: WorktreeCandidate = {
+      path,
+      keys,
+      idleDays,
+      merge: null,
+      skipCode: verdict?.code ?? null,
+      skipped: verdict?.text ?? null,
+    };
+    if (verdict && MERGE_DECIDES.has(verdict.code) && !('refusal' in source)) {
+      pending.push({ candidate, facts, repo: source.path });
+    }
+    worktrees.push(candidate);
   }
-  return { olderThan: days, defaulted: olderThan === null, worktrees: [...worktrees, ...outside] };
+  checkMergeStates(pending, days, now);
+  const listed = [...worktrees, ...outside].filter(
+    (w) => idle || (w.skipCode !== 'not-a-worktree' && w.skipCode !== 'source-checkout'),
+  );
+  return { idle: days === null ? null : { olderThan: days, defaulted: olderThan === null }, worktrees: listed };
 }
 
 export async function removeWorktrees(
@@ -176,21 +252,28 @@ export async function removeWorktrees(
         ...inUseOf(lockedKeys, { managedLocks: false }),
         ...inUseOf(unlocked, { managedLocks: true }),
       ].map((r) => `in use: ${r}`);
-      const idleDays = idleDaysOf(keys, now);
-      if (idleDays === null || idleDays < sweep.olderThan) {
-        reasons.push(`used ${idleDays === null ? 'at an unknown time' : `${idleDays}d ago`} since gc checked it`);
+      if (candidate.merge?.merged) {
+        if (resolveFullRef(candidate.path, 'HEAD') !== candidate.merge.head) {
+          reasons.push('its HEAD moved since gc checked it');
+        }
+      } else {
+        const idleDays = idleDaysOf(keys, now);
+        if (idleDays === null || !sweep.idle || idleDays < sweep.idle.olderThan) {
+          reasons.push(`used ${idleDays === null ? 'at an unknown time' : `${idleDays}d ago`} since gc checked it`);
+        }
       }
       kept = reasons;
       return reasons;
     };
     let removed = false;
     try {
-      removed = await removeWorktreeTarget(candidate.path, { linkedOnly: true, guard });
+      const mergedHead = candidate.merge?.merged && candidate.merge.coversUnpushed ? candidate.merge.head : undefined;
+      removed = await removeWorktreeTarget(candidate.path, { linkedOnly: true, guard, mergedHead });
     } catch (error) {
       console.error(chalk.red(`Could not remove ${candidate.path}: ${(error as Error)?.message || String(error)}`));
     }
     if (removed) {
-      console.log(chalk.green(`Removed the worktree ${candidate.path}`));
+      console.log(chalk.green(`Removed the worktree ${candidate.path} (${worktreeRemovalReason(candidate)})`));
     } else if (kept.length) {
       console.log(chalk.yellow(`Kept the worktree ${candidate.path}: ${kept.join('; ')}`));
     } else {
