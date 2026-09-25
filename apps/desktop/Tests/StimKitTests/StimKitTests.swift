@@ -547,6 +547,9 @@ import Testing
     #expect(
       deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://open?serial=emulator-5554")!)
         == .emulator(serial: "emulator-5554"))
+    #expect(
+      deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://open?udid=U1&serial=emulator-5554")!)
+        == .simulator(udid: "U1"))
     #expect(deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://close?udid=U1")!) == nil)
     #expect(deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://close?serial=emulator-5554")!) == nil)
     #expect(deviceOpenRequest(fromOpenURL: URL(string: "siniulator://open?udid=U1")!) == nil)
