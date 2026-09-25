@@ -105,8 +105,9 @@ SWEEPING FINISHED WORKTREES
   \`git fetch origin <default>\` per repository (30s timeout, no credential
   prompt; skipped when that checkout fetched in the last 10 minutes):
   - HEAD is reachable from origin/<default> through a merge commit, and the
-    branch's reflog shows a commit made on it. A branch with no commit of
-    its own -- fresh, or cut from another branch -- is not merged.
+    branch's reflog shows a commit made on it that HEAD contains. A branch
+    with no commit of its own -- fresh, cut from another branch, or reset
+    onto one -- is not merged.
   - the branch changes the tree, and either it has no merge commits and every
     commit since the merge base has the same \`git patch-id --verbatim\` as a
     commit on the default branch (a rebase merge), or its whole diff since the

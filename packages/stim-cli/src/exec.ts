@@ -10,6 +10,8 @@ interface ExecOptions {
   omitEnv?: readonly string[];
   /** Text written to the child's stdin; `runFile` only. */
   input?: string;
+  /** `runFile` only: return stdout as written, without trimming surrounding whitespace. */
+  untrimmed?: boolean;
 }
 
 export interface Executor {
@@ -53,7 +55,7 @@ const defaultExecutor: Executor = {
   // refuses .cmd/.bat files and shebang scripts without a shell, and every
   // package bin (eas, agent-device) is one of those. The throw matches
   // execFileSync's, so callers keep reading status, stdout and stderr off it.
-  runFile(file, args = [], { timeoutMs, killSignal, cwd, env, omitEnv, input } = {}) {
+  runFile(file, args = [], { timeoutMs, killSignal, cwd, env, omitEnv, input, untrimmed } = {}) {
     const opts: Parameters<typeof spawn.sync>[2] = {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -75,7 +77,7 @@ const defaultExecutor: Executor = {
       const message = `Command failed: ${[file, ...args].join(' ')}${stderr ? `\n${stderr}` : ''}`;
       throw Object.assign(new Error(message), result);
     }
-    return String(result.stdout).trim();
+    return untrimmed ? String(result.stdout) : String(result.stdout).trim();
   },
   runFileAsync(file, args = [], { timeoutMs, killSignal, cwd, env, omitEnv } = {}) {
     const command = [file, ...args].join(' ');

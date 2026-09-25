@@ -241,8 +241,11 @@ To decide that a branch is merged, gc takes the default branch from
 minutes. The branch counts as merged when:
 
 - a merge commit brought its HEAD into the default branch, and the branch's
-  reflog shows a commit made on it. A branch with no commits of its own, such
-  as one just created or cut from another branch, is not merged.
+  reflog shows a commit made on it that HEAD contains. A branch with no commits
+  of its own, such as one just created, cut from another branch, or reset onto
+  one, is not merged.
+  The next two apply only to a branch that changes the tree:
+
 - it has no merge commits and each of its commits has the same
   `git patch-id --verbatim` as a commit on the default branch, as after a
   rebase merge.

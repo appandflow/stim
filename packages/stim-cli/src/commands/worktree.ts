@@ -856,12 +856,12 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
   await withManagedRemoteWorktreeRemovalLock(path, () =>
     withReclaimLocks(path, async (lockedKeys) => {
       if (opts.guard?.(lockedKeys).length) return;
+      const inspectedHead = resolveFullRef(path, 'HEAD');
       const current = inspectRemoval(path, opts.mergedHead);
       if (current.blockers.length && !opts.force) {
         printRemovalRefusal(path, current);
         return;
       }
-      const inspectedHead = resolveFullRef(path, 'HEAD');
       const result = await reclaimAll(path, lockedKeys, { preserveRootProject: true });
       if (result.keptEntries.length) {
         reportRetainedResources(path, result);

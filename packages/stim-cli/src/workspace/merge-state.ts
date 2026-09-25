@@ -87,16 +87,24 @@ function upstreamGone(path: string, branch: string | null): boolean {
   return Boolean(upstream) && state === '[gone]';
 }
 
-function committedOn(path: string, branch: string | null): boolean {
+function committedOn(path: string, branch: string | null, head: string): boolean {
   if (!branch) return false;
-  const subjects = getExecutor().runFileQuiet('git', ['-C', path, 'reflog', 'show', '--format=%gs', branch]) ?? '';
-  return subjects.split('\n').some((subject) => /^(commit|cherry-pick|rebase|revert)\b/.test(subject));
+  const exec = getExecutor();
+  const entries = exec.runFileQuiet('git', ['-C', path, 'reflog', 'show', '--format=%H %gs', branch]) ?? '';
+  return entries.split('\n').some((entry) => {
+    const [sha = '', ...subject] = entry.split(' ');
+    return (
+      /^(commit|cherry-pick|rebase|revert)\b/.test(subject.join(' ')) &&
+      exec.runFileQuiet('git', ['-C', path, 'merge-base', '--is-ancestor', sha, head]) !== null
+    );
+  });
 }
 
 /**
  * Whether the worktree's HEAD is merged into `target`. The signals, all local git:
  * - HEAD is an ancestor of the default branch, off its first-parent line, and the branch's reflog shows a commit made
- *   on it, so a merge commit brought the branch's own work in. A branch with no commit of its own is not merged.
+ *   on it that HEAD contains, so a merge commit brought the branch's own work in. A branch with no commit of its own
+ *   is not merged.
  * - The branch changes the tree, has no merge commits, and every commit since the merge base has the same
  *   `git patch-id --verbatim` as a commit on the default branch (a rebase merge).
  * - The branch changes the tree and its whole diff since the merge base has the same verbatim patch id as a commit on
@@ -107,9 +115,14 @@ function committedOn(path: string, branch: string | null): boolean {
 export function mergeState(path: string, { ref, name }: DefaultBranch): MergeState {
   const git = (args: string[], input?: string): string =>
     getExecutor().runFile('git', ['--literal-pathspecs', '-C', path, ...args], { timeoutMs: GIT_TIMEOUT_MS, input });
-  const patchIds = (patch: string): string[] =>
-    patch
-      ? git(['patch-id', '--verbatim'], patch)
+  const patch = (args: string[]): string =>
+    getExecutor().runFile('git', ['--literal-pathspecs', '-C', path, ...args], {
+      timeoutMs: GIT_TIMEOUT_MS,
+      untrimmed: true,
+    });
+  const patchIds = (text: string): string[] =>
+    text
+      ? git(['patch-id', '--verbatim'], text)
           .split('\n')
           .flatMap((line) => line.split(' ')[0] || [])
       : [];
@@ -125,13 +138,13 @@ export function mergeState(path: string, { ref, name }: DefaultBranch): MergeSta
         git(['rev-list', '--first-parent', '--parents', `${head}..${ref}`])
           .split('\n')
           .some((line) => line.split(' ')[1] === head);
-      if (mainline || !committedOn(path, branch)) return noOwnCommits;
+      if (mainline || !committedOn(path, branch, head)) return noOwnCommits;
       return { merged: true, into: name, head, coversUnpushed: false };
     }
-    const files = git(['diff', '--name-only', '-z', base, head]).split('\0').filter(Boolean);
+    const files = git(['diff', '--name-only', '--no-renames', '-z', base, head]).split('\0').filter(Boolean);
     if (!files.length) return notMerged(`no net change beyond ${name}`);
     const log = (range: string, pathspec: string[] = []) =>
-      git(['log', '-p', '--no-merges', ...diffOptions, '--format=commit %H', range, '--', ...pathspec]);
+      patch(['log', '-p', '--no-merges', ...diffOptions, '--format=commit %H', range, '--', ...pathspec]);
     const upstream = new Set(patchIds(log(`${base}..${ref}`, files)));
     const patchEquivalent = (): MergeState => ({
       merged: true,
@@ -139,7 +152,7 @@ export function mergeState(path: string, { ref, name }: DefaultBranch): MergeSta
       head,
       coversUnpushed: upstreamGone(path, branch),
     });
-    const squash = patchIds(git(['diff', ...diffOptions, base, head]));
+    const squash = patchIds(patch(['diff', ...diffOptions, base, head]));
     if (squash.length === 1 && upstream.has(squash[0]!)) return patchEquivalent();
     if (!git(['rev-list', '--merges', `${base}..${head}`])) {
       const own = patchIds(log(`${base}..${head}`));

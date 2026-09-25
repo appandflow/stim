@@ -753,7 +753,7 @@ function repoWithMergedBranches() {
   }
   const spaced = join(projects, 'spaced');
   git(`worktree add -q "${spaced}" -b spaced`);
-  writeFileSync(join(spaced, 'value.txt'), 'a b\n');
+  writeFileSync(join(spaced, 'value.txt'), 'ab  \n');
   git('add value.txt', spaced);
   git('commit -q -m spaced', spaced);
   git('push -q -u origin spaced', spaced);
@@ -761,9 +761,19 @@ function repoWithMergedBranches() {
   const followup = join(projects, 'followup');
   git(`worktree add -q "${followup}" -b followup merged`);
   worktrees.followup = realpathSync.native(followup);
+  const reused = join(projects, 'reused');
+  git(`worktree add -q "${reused}" -b reused`);
+  commit(reused, 'reused-earlier-life.txt');
+  git(`worktree remove "${reused}"`);
+  git(`worktree add -q -B reused "${reused}" merged`);
+  worktrees.reused = realpathSync.native(reused);
   git(`clone -q "${remote}" "${upstream}"`, projects);
   identity(upstream);
   commit(upstream, 'main-moved-on.txt');
+  git('push -q origin main', upstream);
+  git('fetch -q origin main', worktrees.evil);
+  git('merge -q --no-ff --no-commit origin/main', worktrees.evil);
+  commit(worktrees.evil!, 'not-on-main.txt');
   git('merge -q --no-ff origin/merged -m merge-merged', upstream);
   git('merge -q --no-ff origin/dirty -m merge-dirty', upstream);
   git('merge -q --squash origin/squashed', upstream);
@@ -772,11 +782,8 @@ function repoWithMergedBranches() {
   git('cherry-pick origin/evil', upstream);
   writeFileSync(join(upstream, 'value.txt'), 'ab\n');
   git('add value.txt', upstream);
-  git('commit -q -m value-without-the-space', upstream);
+  git('commit -q -m value-without-the-trailing-spaces', upstream);
   git('push -q origin main', upstream);
-  git('fetch -q origin main', worktrees.evil);
-  git('merge -q --no-ff --no-commit origin/main', worktrees.evil);
-  commit(worktrees.evil!, 'not-on-main.txt');
   for (const gone of ['squashed', 'rebased', 'evil', 'spaced']) {
     git(`push -q origin --delete ${gone}`, upstream);
     git(`update-ref -d refs/remotes/origin/${gone}`);
@@ -806,7 +813,7 @@ test('plain gc --delete removes merged worktrees, squash merges included, after 
   });
   expect(byPath[worktrees.squashed!]).toMatchObject({ willRemove: true, detail: 'merged into origin/main' });
   expect(byPath[worktrees.rebased!]).toMatchObject({ willRemove: true, detail: 'merged into origin/main' });
-  for (const name of ['fresh', 'followup']) {
+  for (const name of ['fresh', 'followup', 'reused']) {
     expect(byPath[worktrees[name]!]).toMatchObject({
       willRemove: false,
       reason: 'not-merged',
@@ -823,7 +830,7 @@ test('plain gc --delete removes merged worktrees, squash merges included, after 
   expect(output).toContain(`Removed the worktree ${worktrees.merged} (merged into origin/main)`);
   expect(output).toContain(`Removed the worktree ${worktrees.squashed} (merged into origin/main)`);
   for (const name of ['merged', 'squashed', 'rebased']) expect(existsSync(worktrees[name]!)).toBe(false);
-  for (const name of ['fresh', 'followup', 'evil', 'spaced', 'open', 'dirty']) {
+  for (const name of ['fresh', 'followup', 'reused', 'evil', 'spaced', 'open', 'dirty']) {
     expect(existsSync(worktrees[name]!)).toBe(true);
   }
   expect(existsSync(join(repo, 'package.json'))).toBe(true);
