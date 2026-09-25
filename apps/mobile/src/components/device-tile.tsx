@@ -5,7 +5,8 @@ import { ActivityChip } from '@/components/activity-chip';
 import { BuildProgressBar } from '@/components/build-progress';
 import { Card } from '@/components/card';
 import { Chip, StatusDot } from '@/components/chip';
-import { useFrame } from '@/hooks/mac-connection';
+import { useFrame, useMacConnection } from '@/hooks/mac-connection';
+import { tildeHome } from '@/lib/paths';
 import type { DeviceRef } from '@/lib/workspaces';
 import type { BuildReport } from '@/protocol/types';
 import { useColors } from '@/theme';
@@ -16,14 +17,39 @@ export function DeviceTile({
   workspace,
   device,
   build,
+  warnings,
 }: {
   workspace: string;
   device: DeviceRef;
   build: BuildReport | null;
+  warnings: string[];
 }) {
   const colors = useColors();
+  const home = useMacConnection().home;
   const streams = device.running && device.owned && !device.physical;
   const { frame, error, delayed } = useFrame(workspace, device.platform, device.slot, streams);
+  const notes = warnings.map((warning) => (
+    <Text key={warning} style={[styles.note, { color: colors.warn }]}>
+      {tildeHome(warning, home)}
+    </Text>
+  ));
+  if (!device.running) {
+    return (
+      <Card>
+        <View style={styles.compact}>
+          <View style={styles.header}>
+            <StatusDot color={colors.tertiary} filled={false} />
+            <Text style={[styles.line, { color: colors.secondary }]} numberOfLines={1}>
+              <Text style={[styles.slot, { color: colors.text }]}>{device.slot}</Text>
+              {` \u00B7 ${device.model} \u00B7 ${device.state}`}
+            </Text>
+          </View>
+          {build ? <BuildProgressBar build={build} compact /> : null}
+          {notes}
+        </View>
+      </Card>
+    );
+  }
   const aspect = frame && frame.height > 0 ? frame.width / frame.height : device.platform === 'ios' ? 0.46 : 0.45;
   return (
     <Card>
@@ -36,7 +62,7 @@ export function DeviceTile({
           {device.model}
         </Text>
         <View style={styles.spacer} />
-        <Text style={[styles.source, { color: colors.tertiary }]}>
+        <Text style={[styles.source, { color: colors.tertiary }]} numberOfLines={1}>
           {device.platform === 'ios' ? 'iOS Simulator' : device.physical ? 'Android device' : 'Android Emulator'}
         </Text>
       </View>
@@ -44,6 +70,7 @@ export function DeviceTile({
         <ActivityChip activity={device.activity} />
         {streams && delayed ? <Chip tint={colors.warn}>Screen updates delayed</Chip> : null}
       </View>
+      {notes.length ? <View style={styles.notes}>{notes}</View> : null}
       {build ? (
         <View style={styles.build}>
           <BuildProgressBar build={build} compact />
@@ -80,10 +107,14 @@ export function DeviceTile({
 
 const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingTop: 10 },
-  slot: { fontSize: 13, fontWeight: '600' },
+  compact: { paddingBottom: 10, gap: 6 },
+  line: { fontSize: 13, flexShrink: 1 },
+  note: { fontSize: 12, lineHeight: 16, paddingHorizontal: 12 },
+  notes: { gap: 4, paddingBottom: 10 },
+  slot: { fontSize: 13, fontWeight: '600', flexShrink: 1 },
   model: { fontSize: 13, flexShrink: 1 },
   spacer: { flex: 1 },
-  source: { fontSize: 11 },
+  source: { fontSize: 11, flexShrink: 1 },
   badges: { flexDirection: 'row', gap: 6, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 10 },
   build: { paddingHorizontal: 12, paddingBottom: 10 },
   screen: {

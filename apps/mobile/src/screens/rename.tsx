@@ -2,12 +2,14 @@ import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { useMacs } from '@/hooks/mac-connection';
 import { listMacs, renameMac } from '@/lib/macs';
 import { radius, useColors } from '@/theme';
 
 export function Rename({ id }: { id: string }) {
   const colors = useColors();
   const router = useRouter();
+  const { reload } = useMacs();
   const [name, setName] = useState('');
 
   useEffect(() => {
@@ -16,6 +18,7 @@ export function Rename({ id }: { id: string }) {
 
   const save = async () => {
     if (name.trim()) await renameMac(id, name.trim());
+    reload();
     router.back();
   };
 
@@ -25,7 +28,7 @@ export function Rename({ id }: { id: string }) {
         value={name}
         onChangeText={setName}
         autoFocus
-        accessibilityLabel="Mac name"
+        accessibilityLabel="Machine name"
         onSubmitEditing={save}
         returnKeyType="done"
         style={[styles.input, { color: colors.text, backgroundColor: colors.surface, borderColor: colors.border }]}

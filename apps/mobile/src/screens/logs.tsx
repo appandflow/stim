@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 
 import { ConnectionBanner } from '@/components/connection-banner';
+import { Toggle } from '@/components/toggle';
 import { useMacConnection, useLogs, useStatus, type LogsChange } from '@/hooks/mac-connection';
 import {
   appendRecords,
@@ -26,7 +27,7 @@ import {
 } from '@/lib/logs';
 import { workspaceNames } from '@/lib/workspaces';
 import type { LogLevel, LogRecord } from '@/protocol/types';
-import { mono, radius, useColors, type Colors } from '@/theme';
+import { mono, useColors, type Colors } from '@/theme';
 
 const SOURCE_LABEL = Object.fromEntries(SOURCES.map((s) => [s.source, s.label]));
 
@@ -185,25 +186,6 @@ export function Logs({ path, errorsOnly }: { path: string; errorsOnly: boolean }
   );
 }
 
-function Toggle({ colors, label, on, onPress }: { colors: Colors; label: string; on: boolean; onPress: () => void }) {
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="switch"
-      accessibilityState={{ checked: on }}
-      style={[
-        styles.toggle,
-        {
-          backgroundColor: on ? `${colors.primary}29` : 'transparent',
-          borderColor: on ? colors.primary : colors.border,
-        },
-      ]}
-    >
-      <Text style={[styles.toggleText, { color: on ? colors.primary : colors.secondary }]}>{label}</Text>
-    </Pressable>
-  );
-}
-
 function levelColor(colors: Colors, level: string): string {
   if (level === 'error' || level === 'fatal') return colors.error;
   if (level === 'warn') return colors.warn;
@@ -256,8 +238,6 @@ const styles = StyleSheet.create({
   filters: { padding: 12, gap: 10, borderBottomWidth: StyleSheet.hairlineWidth },
   row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 },
   spacer: { flex: 1 },
-  toggle: { paddingHorizontal: 11, paddingVertical: 5, borderRadius: radius.chip, borderWidth: 1 },
-  toggleText: { fontSize: 13, fontWeight: '500' },
   search: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, fontSize: 14 },
   problem: { fontSize: 13 },
   empty: { textAlign: 'center', padding: 32, fontSize: 14 },

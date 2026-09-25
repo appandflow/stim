@@ -4,20 +4,41 @@ A read-only Expo app for watching Stim workspaces from a phone. It pairs with
 the Stim server on a Mac (`stim-server`, from the `@stim-cli/server` package)
 and shows what Stim Desktop shows, without any actions:
 
-- **Macs**: the paired Macs, with rename and forget. Pairing scans the QR code
-  Stim Desktop shows under **Pair a phone**, or takes the endpoint and pairing
-  token typed in. The device token the server issues is kept in the phone's
-  secure storage (Keychain on iOS, Keystore on Android).
-- **Workspaces**: every workspace on the Mac grouped by project, live ones
-  first, with Metro, supervisor health, running devices and their activity
-  (driven by a tool, or idle), build progress, error and warning counts, and
-  remote EAS sessions. **Show idle** lists the workspaces with nothing running.
-- **Workspace**: the branch and path, warnings, remote sessions, and each
-  device with the latest frame the server sends for it.
+- **Home**: one screen for every paired machine; the app keeps a connection
+  to each. The **Machines** row has a chip per machine with its connection dot and basic
+  usage: live workspaces, memory committed of total, and the lowest free space
+  of the volumes that hold Stim's workspaces, Stim home and the simulators. **+**
+  pairs another machine. Below, one list of every workspace on every machine,
+  building and live ones first, with the machine's name, project, branch, Metro, devices and
+  their activity (driven by a tool, or idle), build progress, error and warning
+  counts, and remote EAS sessions.
+- **Filters**: the funnel button filters the list by machine, by project, by live
+  or idle, and to workspaces with errors or with remote sessions. The filters
+  are saved on the phone; a dot on the button shows that some are on. Live only
+  is the default.
+- **Machine status**: tapping a chip shows that machine's capacity, load average,
+  memory pressure, free disk per volume, Stim budgets, running devices and
+  device leases, warnings, and its server and `stim` versions.
+- **Menu**: the menu button lists **Machines** (rename and forget), **Pair a
+  machine**,
+  and the app and server versions. Pairing scans the QR code Stim Desktop
+  shows under **Pair a phone**, or takes the endpoint and pairing token typed
+  in; the token field is masked, with a button that shows it. The device token
+  the server issues is kept in the phone's secure storage (Keychain on iOS,
+  Keystore on Android) and never shown.
+- **Workspace**: a status card with the branch and the app's folder inside
+  its checkout, Metro's port and health, memory, and the error count, which
+  opens the errors; build progress; warnings, remote sessions, and each
+  device: a running device with the latest frame the server sends for it, a
+  stopped one as a single row. The **...** menu opens the logs, copies the
+  full path, shows errors, or opens the machine's status.
 - **Logs**: the same filters as the Desktop log viewer: the Metro, App, Native
   and Build sources, a slot, a minimum level, errors only, and a regular
   expression search. The list follows new records until you scroll up, keeps
   the newest 5,000, and a tap on a record shows its whole message and stack.
+
+Paths under the Mac's home folder show as `~/...`; the server reports the home
+folder in `hello`. Copy path copies the full path.
 
 The app has no action buttons yet. `useAction(workspace)` in
 `src/hooks/mac-connection.tsx` runs the server's `reload` and `stop` actions
@@ -84,6 +105,15 @@ at a time per workspace, without changing the fixtures. Start it with
 `npm run mock-server -- --read` to see a read-only pairing, which gets no
 actions.
 
+To try the home screen with two Macs, run two mock servers on different ports.
+`--workspaces <regex>` keeps only the workspaces whose path matches, and
+`--free-gb <n>` sets the free disk `machine.get` reports:
+
+```bash
+node mock-server/server.mjs --port 7797 --name "MacBook Pro" --workspaces tlon-apps
+node mock-server/server.mjs --port 7798 --name "Mac mini" --workspaces 'Developer/stim|hinges' --free-gb 14
+```
+
 ## Driving the app
 
 Development builds can start already paired, so a person or an agent driving
@@ -106,7 +136,7 @@ EXPO_PUBLIC_STIM_DEV_DEVICE_TOKEN=...
 ```
 
 On launch, a development build stores that Mac, named from the server's
-`hello`, and opens its workspaces. Release builds ignore both variables.
+`hello`, and shows it on the home screen. Release builds ignore both variables.
 `.env.local` is gitignored; never commit a device token. Metro picks up a
 rewritten `.env.local`; reload the app after `dev:pair`.
 

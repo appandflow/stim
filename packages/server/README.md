@@ -127,7 +127,9 @@ Events are `{ "event", "subscription", ... }`.
   `{ "deviceToken" }`. The result carries the server name and versions, the
   device's `capabilities` (see [Scopes](#scopes)), the `actions` it may run
   (none without `control`), the paired device, and the new `deviceToken` when
-  the hello paired.
+  the hello paired. `server.home` is the home folder
+  of the user the server runs as, so clients can show paths under it as
+  `~/...`.
 - `status.subscribe` returns a subscription id. Each `status` event carries a
   full payload as `stim status --watch --json` prints it. All subscribers share
   one `stim status --watch --json` child, which stops with the last
@@ -172,6 +174,13 @@ Events are `{ "event", "subscription", ... }`.
   instead of 60. A plan predicting that the build would refuse is a result
   whose `refusal` holds the code, message and remedy. A plan that cannot be
   computed is a `stim-failed` error.
+- `machine.get` returns cheap machine usage, read in the server process
+  without running `stim`: `volumes`, one per volume that holds a Stim
+  workspace, Stim home, or the simulators, with `mount`, `holds`, `freeBytes`
+  (free space without purgeable space, which Stim's disk budget measures) and
+  `totalBytes`; `memory` with `totalBytes` and the macOS `pressure` level
+  (`normal`, `warning`, `critical`, or null); `load` with the 1, 5 and 15
+  minute load averages and `cpus`; and `sampledAt`.
 - `unsubscribe` ends a subscription.
 - `action` runs an [action](#actions) and returns
   `{ "action", "workspace", "output" }`.

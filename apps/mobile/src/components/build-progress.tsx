@@ -10,22 +10,15 @@ export function BuildProgressBar({ build, compact = false }: { build: BuildRepor
   const now = useNow(1000);
   const progress = buildProgress(build, now);
   const elapsed = clockDuration(progress.elapsedMs);
-  const timing = compact
-    ? (progress.remaining ?? elapsed)
-    : build.expectedMs && progress.remaining
-      ? `${elapsed} / ~${clockDuration(build.expectedMs)} \u00B7 ${progress.remaining}`
-      : elapsed;
+  const timing = build.expectedMs && progress.remaining ? `${elapsed} / ~${clockDuration(build.expectedMs)}` : elapsed;
+  const platform = build.platform === 'ios' ? 'iOS' : 'Android';
   return (
     <View style={styles.container}>
       <View style={styles.row}>
-        {compact ? null : (
-          <Text style={[styles.label, { color: colors.text }]}>
-            Building {build.platform}
-            {build.slot === 'default' ? '' : ` \u00B7 ${build.slot}`}
-          </Text>
-        )}
-        <Text style={[styles.phase, { color: colors.primary }]}>{build.phase}</Text>
-        <View style={styles.spacer} />
+        <Text style={[styles.label, { color: colors.text }]} numberOfLines={1}>
+          {compact ? '' : `Building ${platform}${build.slot === 'default' ? '' : ` \u00B7 ${build.slot}`}  `}
+          <Text style={[styles.phase, { color: colors.primary }]}>{build.phase}</Text>
+        </Text>
         <Text style={[styles.timing, { color: colors.secondary }]} numberOfLines={1}>
           {timing}
         </Text>
@@ -39,18 +32,23 @@ export function BuildProgressBar({ build, compact = false }: { build: BuildRepor
           ]}
         />
       </View>
+      {progress.remaining ? (
+        <Text style={[styles.remaining, { color: colors.tertiary }]} numberOfLines={1}>
+          {progress.remaining}
+        </Text>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { gap: 6 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  label: { fontSize: 13 },
+  row: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+  label: { fontSize: 13, flex: 1, flexShrink: 1 },
   phase: { fontSize: 12, fontFamily: mono },
-  spacer: { flex: 1 },
-  timing: { fontSize: 12, fontFamily: mono },
+  timing: { fontSize: 12, fontFamily: mono, flexShrink: 0 },
   track: { height: 4, borderRadius: 2, overflow: 'hidden' },
   fill: { height: 4, borderRadius: 2 },
   indeterminate: { opacity: 0.6 },
+  remaining: { fontSize: 11, marginTop: -2 },
 });

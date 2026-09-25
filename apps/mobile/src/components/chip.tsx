@@ -28,8 +28,9 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: radius.chip,
     borderCurve: 'continuous',
+    maxWidth: '100%',
   },
-  text: { fontSize: 12, fontWeight: '500' },
+  text: { fontSize: 12, fontWeight: '500', flexShrink: 1 },
   mono: { fontVariant: ['tabular-nums'] },
   dot: { width: 7, height: 7, borderRadius: 4, borderWidth: 1 },
 });

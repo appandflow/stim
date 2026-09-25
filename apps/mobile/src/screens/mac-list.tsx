@@ -1,21 +1,18 @@
-import { Link, Stack, useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { Link, Stack, useRouter } from 'expo-router';
 import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Card } from '@/components/card';
+import { StatusDot } from '@/components/chip';
 import { EmptyState } from '@/components/empty-state';
-import { forgetMac, listMacs, type PairedMac } from '@/lib/macs';
+import { connectionColor, describeState } from '@/components/mac-chip';
+import { useMacs } from '@/hooks/mac-connection';
+import { forgetMac, type PairedMac } from '@/lib/macs';
 import { mono, radius, useColors } from '@/theme';
 
 export function MacList() {
   const colors = useColors();
   const router = useRouter();
-  const [macs, setMacs] = useState<PairedMac[] | null>(null);
-
-  const reload = useCallback(() => {
-    listMacs().then(setMacs, () => setMacs([]));
-  }, []);
-  useFocusEffect(reload);
+  const { macs, reload, connections } = useMacs();
 
   const forget = (mac: PairedMac) =>
     Alert.alert(`Forget ${mac.name}?`, 'This phone stops connecting to it. Pair again from Stim Desktop to undo.', [
@@ -36,30 +33,34 @@ export function MacList() {
       />
       {macs && macs.length === 0 ? (
         <EmptyState
-          title="No Mac paired"
-          message="In Stim Desktop, open Pair a phone and scan its QR code. This phone and the Mac both need Tailscale."
+          title="No machine paired"
+          message="In Stim Desktop, open Pair a phone and scan its QR code. This phone and the machine both need Tailscale."
         >
           <Pressable
             onPress={() => router.push('/pair')}
             style={[styles.primaryButton, { backgroundColor: colors.primary }]}
             accessibilityRole="button"
           >
-            <Text style={[styles.primaryButtonText, { color: colors.onPrimary }]}>Pair a Mac</Text>
+            <Text style={[styles.primaryButtonText, { color: colors.onPrimary }]}>Pair a machine</Text>
           </Pressable>
         </EmptyState>
       ) : (
         <FlatList
-          data={macs ?? []}
-          keyExtractor={(mac) => mac.id}
+          data={connections}
+          keyExtractor={({ mac }) => mac.id}
           contentInsetAdjustmentBehavior="automatic"
           contentContainerStyle={styles.list}
-          renderItem={({ item }) => (
+          renderItem={({ item: { mac: item, state, missing } }) => (
             <Link href={{ pathname: '/mac/[id]', params: { id: item.id } }} asChild>
               <Pressable accessibilityRole="button">
                 <Card>
                   <View style={styles.row}>
+                    <StatusDot color={connectionColor(state, missing, colors)} />
                     <View style={styles.rowText}>
                       <Text style={[styles.name, { color: colors.text }]}>{item.name}</Text>
+                      <Text style={[styles.state, { color: colors.secondary }]} numberOfLines={1}>
+                        {describeState(state, missing)}
+                      </Text>
                       <Text style={[styles.endpoint, { color: colors.secondary }]} numberOfLines={1}>
                         {item.endpoint}
                       </Text>
@@ -94,6 +95,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 14 },
   rowText: { flex: 1, gap: 4 },
   name: { fontSize: 17, fontWeight: '600' },
+  state: { fontSize: 13 },
   endpoint: { fontSize: 12, fontFamily: mono },
   rowAction: { fontSize: 14, fontWeight: '500' },
   primaryButton: { paddingHorizontal: 20, paddingVertical: 12, borderRadius: radius.card, marginTop: 8 },

@@ -126,7 +126,8 @@ One request/response shape and one event shape:
 
 Methods in v1: `hello` (versions and capabilities), `status.subscribe`,
 `logs.query`, `logs.subscribe`, `stats.get`, `settings.get`, `frames.subscribe`,
-`unsubscribe`. Events: `status` (a full payload, as `status --watch` prints it),
+`unsubscribe`, and `machine.get` (free disk per Stim volume, memory, load
+average). Events: `status` (a full payload, as `status --watch` prints it),
 `logs`, `frame`, `error`. A client that reconnects resubscribes; the server
 keeps no per-client history.
 
@@ -228,8 +229,10 @@ the app cannot connect in v1.
 An Expo app, built and run with Stim itself:
 
 - Pairing: scan the QR code, name the Mac, list and forget paired Macs.
-- Workspaces grouped by project, with Metro, supervisor, device activity (#1092),
-  build progress (#1069), errors, and remote EAS sessions (#1068).
+- One home screen for every paired machine: a chip per machine with its
+  usage, and one workspace list with Metro, supervisor, device activity
+  (#1092), build progress (#1069), errors, and remote EAS sessions (#1068),
+  filtered by machine, project, activity, errors, and remote sessions.
 - Device view: the latest frames of each owned device.
 - Logs: the same filters as the Desktop log viewer, following new lines.
 - Push notifications (build finished, new errors) are out of scope for v1; they

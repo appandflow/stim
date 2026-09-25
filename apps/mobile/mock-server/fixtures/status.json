@@ -1,6 +1,7 @@
 {
   "capturedAt": "2026-09-25T04:23:09.012Z",
   "stimVersion": "1.9.0",
+  "home": "/Users/dev",
   "command": "stim status --json",
   "payload": {
     "environments": [

@@ -14,7 +14,8 @@ import {
   type TextInputProps,
 } from 'react-native';
 
-import { CLIENT } from '@/hooks/mac-connection';
+import { Icon } from '@/components/icon';
+import { CLIENT, useMacs } from '@/hooks/mac-connection';
 import { pair } from '@/lib/connection';
 import { renameMac, saveMac } from '@/lib/macs';
 import { manualPairing, parsePairingCode } from '@/lib/pairing';
@@ -30,6 +31,7 @@ type Step =
 export function Pair() {
   const colors = useColors();
   const router = useRouter();
+  const { reload } = useMacs();
   const [step, setStep] = useState<Step>({ kind: 'scan' });
   const [error, setError] = useState<string | null>(null);
   const [endpoint, setEndpoint] = useState('');
@@ -47,6 +49,7 @@ export function Pair() {
       const paired = await pair(payload.endpoint, payload.pairingToken, deviceName, CLIENT);
       const suggested = payload.name || paired.serverName;
       const mac = await saveMac({ name: suggested, endpoint: payload.endpoint }, paired.deviceToken);
+      reload();
       setName(suggested);
       setStep({ kind: 'name', id: mac.id, name: suggested });
     } catch (e) {
@@ -67,14 +70,17 @@ export function Pair() {
   const onManual = () => {
     const parsed = manualPairing(endpoint, token);
     if (!parsed.ok) return setError(parsed.error);
-    void start(parsed.payload, 'manual');
+    // iOS offers to save a password when a secure text field leaves the screen with text in it, so the
+    // field is emptied, and that change reaches the native view, before the form is replaced.
+    setToken('');
+    requestAnimationFrame(() => void start(parsed.payload, 'manual'));
   };
 
   const onSave = async () => {
     if (step.kind !== 'name') return;
     if (name.trim() && name.trim() !== step.name) await renameMac(step.id, name.trim());
-    router.dismiss();
-    router.push({ pathname: '/mac/[id]', params: { id: step.id } });
+    reload();
+    router.dismissTo('/');
   };
 
   return (
@@ -98,6 +104,7 @@ export function Pair() {
             <Field
               colors={colors}
               mono
+              secret
               label="Pairing token"
               value={token}
               onChangeText={setToken}
@@ -118,7 +125,13 @@ export function Pair() {
         {step.kind === 'name' ? (
           <View style={styles.form}>
             <Text style={[styles.title, { color: colors.text }]}>Paired</Text>
-            <Field colors={colors} label="Name this Mac" value={name} onChangeText={setName} placeholder={step.name} />
+            <Field
+              colors={colors}
+              label="Name this machine"
+              value={name}
+              onChangeText={setName}
+              placeholder={step.name}
+            />
             <Button colors={colors} title="Save" onPress={onSave} />
           </View>
         ) : null}
@@ -173,11 +186,13 @@ function Field({
   colors,
   label,
   mono: monospaced = false,
+  secret = false,
   ...input
 }: {
   colors: Colors;
   label: string;
   mono?: boolean;
+  secret?: boolean;
   value: string;
   onChangeText: (text: string) => void;
   placeholder: string;
@@ -185,21 +200,33 @@ function Field({
   autoComplete?: TextInputProps['autoComplete'];
   importantForAutofill?: TextInputProps['importantForAutofill'];
 }) {
+  const [revealed, setRevealed] = useState(false);
   return (
     <View style={styles.field}>
       <Text style={[styles.label, { color: colors.secondary }]}>{label}</Text>
-      <TextInput
-        {...input}
-        accessibilityLabel={label}
-        autoCapitalize="none"
-        autoCorrect={false}
-        placeholderTextColor={colors.tertiary}
-        style={[
-          styles.input,
-          { color: colors.text, backgroundColor: colors.surface, borderColor: colors.border },
-          monospaced && { fontFamily: mono },
-        ]}
-      />
+      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <TextInput
+          {...input}
+          accessibilityLabel={label}
+          autoCapitalize="none"
+          autoCorrect={false}
+          spellCheck={false}
+          secureTextEntry={secret && !revealed}
+          placeholderTextColor={colors.tertiary}
+          style={[styles.input, { color: colors.text }, monospaced && { fontFamily: mono }]}
+        />
+        {secret ? (
+          <Pressable
+            onPress={() => setRevealed((r) => !r)}
+            accessibilityRole="button"
+            accessibilityLabel={revealed ? 'Hide token' : 'Show token'}
+            hitSlop={8}
+            style={styles.reveal}
+          >
+            <Icon name={revealed ? 'eye.slash' : 'eye'} size={20} color={colors.secondary} />
+          </Pressable>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -207,7 +234,7 @@ function Field({
 function CloseButton({ colors, onPress }: { colors: Colors; onPress: () => void }) {
   return (
     <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel="Close" hitSlop={8}>
-      <Text style={[styles.close, { color: colors.primary }]}>✕</Text>
+      <Text style={[styles.close, { color: colors.primary }]}>{'\u2715'}</Text>
     </Pressable>
   );
 }
@@ -231,7 +258,9 @@ const styles = StyleSheet.create({
   form: { gap: 14 },
   field: { gap: 6 },
   label: { fontSize: 13, fontWeight: '500' },
-  input: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11, fontSize: 15 },
+  inputRow: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 10 },
+  input: { flex: 1, paddingHorizontal: 12, paddingVertical: 11, fontSize: 15 },
+  reveal: { paddingHorizontal: 12 },
   button: { alignItems: 'center', paddingVertical: 13, paddingHorizontal: 20, borderRadius: radius.card },
   close: { fontSize: 17, fontWeight: '600' },
   buttonText: { fontSize: 16, fontWeight: '600' },
