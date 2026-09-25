@@ -391,10 +391,6 @@ test('depsOutOfSync falls back to comparing lockfiles when node_modules records 
   }
 });
 
-// Each fixture is a real install of the same package.json, including
-// platform-specific optional packages (esbuild) and a peer-dependent package
-// (use-sync-external-store): the lockfile and the state the package manager
-// wrote into node_modules, plus the lockfile after is-odd moved to 3.0.0.
 describe.each([
   { pm: 'npm', lockfile: 'package-lock.json', state: 'node_modules/.package-lock.json' },
   { pm: 'pnpm', lockfile: 'pnpm-lock.yaml', state: 'node_modules/.pnpm/lock.yaml' },
@@ -427,6 +423,29 @@ describe.each([
     writeFileSync(join(target, lockfile), fixture('lockfile.txt').replaceAll('\r\n', '\n').replaceAll('\n', '\r\n'));
     expect(depsOutOfSync(root, target, ['node_modules'])).toEqual([]);
   });
+});
+
+test('depsOutOfSync reads Yarn Berry state for a Berry lockfile even when Yarn Classic left .yarn-integrity behind', () => {
+  const fixture = (pm: string, name: string) =>
+    readFileSync(join(import.meta.dirname, 'fixtures', 'installed-deps', pm, name), 'utf-8');
+  const base = mkdtempSync(join(tmpdir(), 'stim-test-deps-'));
+  const root = join(base, 'src');
+  const target = join(base, 'wt');
+  try {
+    mkdirSync(root, { recursive: true });
+    mkdirSync(join(target, 'node_modules'), { recursive: true });
+    writeFileSync(join(target, 'node_modules/.yarn-integrity'), fixture('yarn-classic', 'installed.txt'));
+    writeFileSync(join(target, 'node_modules/.yarn-state.yml'), fixture('yarn-berry', 'installed.txt'));
+    writeFileSync(join(root, 'yarn.lock'), fixture('yarn-berry', 'lockfile.txt'));
+    writeFileSync(join(target, 'yarn.lock'), fixture('yarn-berry', 'lockfile.txt'));
+    expect(depsOutOfSync(root, target, ['node_modules'])).toEqual([]);
+    writeFileSync(join(target, 'yarn.lock'), fixture('yarn-berry', 'lockfile.next.txt'));
+    expect(depsOutOfSync(root, target, ['node_modules'])).toEqual([
+      { dir: '.', lockfile: 'yarn.lock', reason: 'installed' },
+    ]);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 });
 
 test('carried Pods matching their Podfile.lock produce no warning', () => {

@@ -331,7 +331,7 @@ export function podsOutOfSync(
   return problems;
 }
 
-const LOCKFILE_NAMES = ['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lock', 'bun.lockb'];
+const LOCKFILE_NAMES = ['pnpm-lock.yaml', 'yarn.lock', 'bun.lock', 'bun.lockb', 'package-lock.json'];
 
 interface NpmLockfile {
   packages?: Record<string, { version?: string; link?: boolean; optional?: boolean; devOptional?: boolean }>;
@@ -357,24 +357,28 @@ function yarnClassicInstallMatches(
   integrity: { lockfileEntries?: Record<string, string> },
 ): boolean | null {
   if (!integrity.lockfileEntries) return null;
-  const wanted = new Set([...lockfile.matchAll(/^ {2}resolved "([^"]+)"$/gm)].flatMap((m) => m[1] ?? []));
-  const installed = new Set(Object.values(integrity.lockfileEntries).filter(Boolean));
-  return wanted.size === installed.size && [...wanted].every((url) => installed.has(url));
+  const wanted = [...lockfile.matchAll(/^ {2}resolved "([^"]+)"$/gm)].flatMap((m) => m[1] ?? []);
+  if (wanted.length === 0) return null;
+  const installed = new Set(Object.values(integrity.lockfileEntries));
+  return wanted.every((url) => installed.has(url));
 }
 
 // Yarn Berry's node-modules linker records peer-dependent packages under
 // virtual locators ("name@virtual:<hash>#npm:1.0.0") and omits packages whose
 // yarn.lock `conditions` exclude this platform.
-function yarnBerryInstallMatches(lockfile: string, state: string): boolean {
+function yarnBerryInstallMatches(lockfile: string, state: string): boolean | null {
   const installed = new Set(
     [...state.matchAll(/^"?([^\s"#][^"]*?)"?:$/gm)].flatMap((m) => m[1]?.replace(/@virtual:[^#]+#/, '@') ?? []),
   );
+  let entries = 0;
   for (const entry of lockfile.split(/\n(?=\S)/)) {
     const resolution = /^ {2}resolution: "([^"]+)"$/m.exec(entry)?.[1];
-    if (!resolution || installed.has(resolution) || /^ {2}conditions: /m.test(entry)) continue;
+    if (!resolution) continue;
+    entries += 1;
+    if (installed.has(resolution) || /^ {2}conditions: /m.test(entry)) continue;
     return false;
   }
-  return true;
+  return entries === 0 ? null : true;
 }
 
 function installedMatchesLockfile(
@@ -397,14 +401,18 @@ function installedMatchesLockfile(
       return installed === null ? null : npmInstallMatches(JSON.parse(wanted), JSON.parse(installed));
     }
     if (lockfile === 'pnpm-lock.yaml') {
+      // pnpm writes node_modules/.pnpm/lock.yaml for what it installed, so a
+      // --filter or --prod install records part of the lockfile and reads as a mismatch.
       const installed = text('node_modules/.pnpm/lock.yaml');
       return installed === null ? null : lastYamlDocument(wanted) === lastYamlDocument(installed);
     }
     if (lockfile === 'yarn.lock') {
+      if (/^__metadata:$/m.test(wanted)) {
+        const berry = text('node_modules/.yarn-state.yml');
+        return berry === null ? null : yarnBerryInstallMatches(wanted, berry);
+      }
       const classic = text('node_modules/.yarn-integrity');
-      if (classic !== null) return yarnClassicInstallMatches(wanted, JSON.parse(classic));
-      const berry = text('node_modules/.yarn-state.yml');
-      return berry === null ? null : yarnBerryInstallMatches(wanted, berry);
+      return classic === null ? null : yarnClassicInstallMatches(wanted, JSON.parse(classic));
     }
   } catch {}
   return null;

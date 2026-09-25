@@ -91,9 +91,11 @@ the named failure before retrying, because a partially copied directory is
 kept on retry. A completed copy does not prove dependencies are installed or
 match the current branch. When the carried `node_modules` records the lockfile
 it was installed from (npm `node_modules/.package-lock.json`, pnpm
-`node_modules/.pnpm/lock.yaml`, Yarn `.yarn-integrity` or `.yarn-state.yml`),
-warm compares it with this worktree's lockfile and prints the install command
-when they differ. Otherwise it compares the source checkout's lockfile with
+`node_modules/.pnpm/lock.yaml`, Yarn `node_modules/.yarn-integrity` or
+`node_modules/.yarn-state.yml`), warm compares it with this worktree's lockfile
+and prints the install command when they differ. A pnpm install run with
+`--filter` or `--prod` records only part of the lockfile and also reads as a
+difference. Otherwise it compares the source checkout's lockfile with
 this one. Warm never installs. Install missing dependencies with the project's
 package manager when the source checkout has none to copy.
 
