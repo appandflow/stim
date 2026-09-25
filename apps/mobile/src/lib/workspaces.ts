@@ -93,6 +93,7 @@ export function isActive(env: EnvironmentState): boolean {
 export interface DeviceRef {
   platform: Platform;
   slot: string;
+  id: string | null;
   name: string;
   model: string;
   state: string;
@@ -107,6 +108,7 @@ function iosDevice(slot: string, sim: SimState): DeviceRef {
   return {
     platform: 'ios',
     slot,
+    id: sim.udid,
     name: sim.name ?? sim.udid,
     model,
     state: sim.state,
@@ -121,6 +123,7 @@ function androidDevice(slot: string, avd: AndroidState): DeviceRef {
   return {
     platform: 'android',
     slot,
+    id: avd.serial ?? null,
     name: avd.name ?? avd.serial ?? 'Android device',
     model: avd.physical ? 'Android device' : 'Android Emulator',
     state: avd.state ?? 'unknown',

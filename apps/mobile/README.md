@@ -39,10 +39,13 @@ and shows what Stim Desktop shows, without any actions:
   its checkout, Metro's port and health, memory, and the error count, which
   opens the errors; build progress; warnings, remote sessions, and each
   device: a running device with the latest frame the server sends for it, a
-  stopped one as a single row. The **...** menu opens the logs, copies the
+  stopped one as a single row. Under a running simulator or emulator that
+  Stim owns, **Agent actions** lists the latest agent-device actions on it
+  (taps, typing, app opens, screenshots, failed commands), from
+  `logs.subscribe` with `sources: ["agent"]`. The **...** menu opens the logs, copies the
   full path, shows errors, or opens the machine's status.
-- **Logs**: the same filters as the Desktop log viewer: the Metro, App, Native
-  and Build sources, a slot, a minimum level, errors only, and a regular
+- **Logs**: the same filters as the Desktop log viewer: the Metro, App, Native,
+  Build and Agent sources, a slot, a minimum level, errors only, and a regular
   expression search. The list follows new records until you scroll up, keeps
   the newest 5,000, and a tap on a record shows its whole message and stack.
 
