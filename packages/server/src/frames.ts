@@ -625,7 +625,7 @@ export class FramePool {
     this.helperSource(device)?.keyframe();
   }
 
-  /** A subscriber of `device` fell behind: lower the shared bitrate and send a keyframe to resume from. */
+  /** A subscriber of `device` is behind; called until its socket drains, it lowers the shared bitrate. */
   congested(device: Device): void {
     this.helperSource(device)?.congested();
   }

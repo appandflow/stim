@@ -423,8 +423,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (video !== undefined && (!Array.isArray(video) || !video.every((codec) => typeof codec === 'string'))) {
         return error(id, 'bad-request', 'video must be a list of codec names.');
       }
-      const offersVideo = (video as string[] | undefined)?.includes('h264') === true && frameHelper() !== null;
-      const maxFps = offersVideo ? FRAME_FPS.video : FRAME_FPS.max;
+      const wantsVideo = (video as string[] | undefined)?.includes('h264') === true;
+      const offersVideo = wantsVideo && frameHelper() !== null;
+      const maxFps = wantsVideo ? FRAME_FPS.video : FRAME_FPS.max;
       if (fps !== undefined && (!Number.isInteger(fps) || (fps as number) < 1 || (fps as number) > maxFps)) {
         return error(id, 'bad-request', `fps must be a whole number from 1 to ${maxFps}.`);
       }
@@ -439,7 +440,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         );
       }
       const hint: FrameHint = {
-        fps: (fps as number | undefined) ?? FRAME_FPS.default,
+        fps: Math.min((fps as number | undefined) ?? FRAME_FPS.default, offersVideo ? FRAME_FPS.video : FRAME_FPS.max),
         maxEdge: (maxEdge as number | undefined) ?? FRAME_EDGE.default,
       };
       if (!workspaceDir(id, workspace, true)) return;
@@ -449,6 +450,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const gate = new VideoGate(DEFAULT_VIDEO_LIMITS.congestedBytes);
       let sequence = 0;
       let streamed: Device | null = null;
+      let draining: NodeJS.Timeout | null = null;
+      const drain = () => {
+        draining = null;
+        if (ended || !streamed) return;
+        if (socket.bufferedAmount <= DEFAULT_VIDEO_LIMITS.congestedBytes) return frames.keyframe(streamed);
+        frames.congested(streamed);
+        draining = setTimeout(drain, FRAME_RETRY_MS);
+      };
       let attached: string | null = null;
       let detach: (() => void) | null = null;
       let pending: Frame | null = null;
@@ -483,6 +492,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         ended = true;
         keyframes.delete(subscription);
         if (retry) clearTimeout(retry);
+        if (draining) clearTimeout(draining);
         detach?.();
         detach = null;
         unsubscribeStatus?.();
@@ -508,7 +518,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 if (ended || socket.readyState !== socket.OPEN) return;
                 const verdict = gate.admit(unit, socket.bufferedAmount);
                 if (verdict === 'send') socket.send(videoPacket(subscription, sequence++, unit));
-                else if (verdict === 'congested' && streamed) frames.congested(streamed);
+                else if (verdict === 'congested' && !draining) drain();
               },
             }
           : {}),

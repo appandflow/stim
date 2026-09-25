@@ -49,8 +49,7 @@ export const DEFAULT_VIDEO_LIMITS: VideoLimits = {
 /**
  * Decides, for one subscriber, whether each access unit goes out. A subscriber starts waiting for a keyframe.
  * When its socket backs up it drops everything until the next keyframe, because a P-frame is useless without
- * the frames before it; `congested` is reported once per episode so the encoder can cut its bitrate and send
- * a keyframe.
+ * the frames before it; `congested` is reported once per episode.
  */
 export class VideoGate {
   private waiting = true;
@@ -77,10 +76,14 @@ export class VideoGate {
   }
 }
 
-/** One encoder's bitrate, shared by all subscribers of a device: halved on congestion, raised by a quarter after a calm period. */
+/**
+ * One encoder's bitrate, shared by all subscribers of a device: halved on congestion at most once per `recoverMs`,
+ * and raised by a quarter after `recoverMs` without congestion.
+ */
 export class Bitrate {
   private value: number;
   private calmSince: number;
+  private cutAt = -Infinity;
   private readonly limits: VideoLimits;
 
   constructor(limits: VideoLimits, now: number) {
@@ -93,11 +96,12 @@ export class Bitrate {
     return this.value;
   }
 
-  /** Returns the new bitrate when it changed. */
+  /** Called while any subscriber is congested. Returns the new bitrate when it changed. */
   congested(now: number): number | null {
     this.calmSince = now;
-    const next = Math.max(this.limits.minBitrate, Math.round(this.value / 2));
-    return this.set(next);
+    if (now - this.cutAt < this.limits.recoverMs) return null;
+    this.cutAt = now;
+    return this.set(Math.max(this.limits.minBitrate, Math.round(this.value / 2)));
   }
 
   /** Returns the new bitrate when it changed. */

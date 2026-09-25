@@ -54,11 +54,13 @@ describe('VideoGate', () => {
 describe('Bitrate', () => {
   const limits = { ...DEFAULT_VIDEO_LIMITS, startBitrate: 1_000_000, minBitrate: 300_000, maxBitrate: 1_500_000 };
 
-  it('halves on congestion down to the minimum', () => {
+  it('halves once per recovery period while congestion lasts, down to the minimum', () => {
     const bitrate = new Bitrate(limits, 0);
     expect(bitrate.congested(10)).toBe(500_000);
-    expect(bitrate.congested(20)).toBe(300_000);
-    expect(bitrate.congested(30)).toBeNull();
+    expect(bitrate.congested(20)).toBeNull();
+    expect(bitrate.tick(10 + limits.recoverMs - 1)).toBeNull();
+    expect(bitrate.congested(10 + limits.recoverMs)).toBe(300_000);
+    expect(bitrate.congested(10 + 2 * limits.recoverMs)).toBeNull();
   });
 
   it('rises by a quarter only after a calm period, up to the maximum', () => {

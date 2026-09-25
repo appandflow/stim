@@ -48,8 +48,16 @@ final class VideoEncoder {
     if let session { VTCompressionSessionInvalidate(session) }
   }
 
-  func configure(maxEdge: Int, fps: Int, bitrate: Int) {
+  /// A disabled encoder drops its session and pools; the next frame after enabling starts with a keyframe.
+  func configure(enabled: Bool, maxEdge: Int, fps: Int, bitrate: Int) {
     queue.async {
+      if !enabled {
+        self.invalidate()
+        self.transfer = nil
+        self.rotation = nil
+        self.rotated = nil
+        self.bgra = nil
+      }
       self.maxEdge = maxEdge
       if self.fps != fps, let session = self.session {
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: fps as CFNumber)
@@ -128,8 +136,11 @@ final class VideoEncoder {
     VTCompressionSessionEncodeFrame(
       session, imageBuffer: buffer, presentationTimeStamp: timestamp, duration: .invalid,
       frameProperties: properties, infoFlagsOut: nil
-    ) { [output] status, _, sample in
-      guard status == noErr, let sample, let unit = Self.annexB(sample) else { return }
+    ) { [output, weak self] status, _, sample in
+      guard status == noErr, let sample, let unit = Self.annexB(sample) else {
+        self?.requestKeyframe()
+        return
+      }
       output(
         AccessUnit(
           data: unit.data, keyframe: unit.keyframe, capturedAt: capturedAt, width: target.width, height: target.height))
@@ -144,8 +155,7 @@ final class VideoEncoder {
 
   private func session(for target: (width: Int, height: Int)) -> VTCompressionSession? {
     if let session, size == target { return session }
-    if let session { VTCompressionSessionInvalidate(session) }
-    session = nil
+    invalidate()
     size = target
     forceKeyframe = true
     let specification: [CFString: Any] = [
@@ -176,6 +186,15 @@ final class VideoEncoder {
     VTCompressionSessionPrepareToEncodeFrames(created)
     session = created
     return created
+  }
+
+  private func invalidate() {
+    guard let session else { return }
+    VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
+    VTCompressionSessionInvalidate(session)
+    self.session = nil
+    size = (0, 0)
+    forceKeyframe = true
   }
 
   private static func applyBitrate(_ session: VTCompressionSession, _ bitrate: Int) {
@@ -243,6 +262,7 @@ final class VideoEncoder {
       }
     }
     let total = CMBlockBufferGetDataLength(block)
+    guard total > 0 else { return nil }
     var bytes = Data(count: total)
     let copied = bytes.withUnsafeMutableBytes {
       CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: total, destination: $0.baseAddress!)

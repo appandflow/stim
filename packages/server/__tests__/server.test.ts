@@ -1387,9 +1387,9 @@ describe('frames.subscribe', () => {
       expect(run!.args).toEqual(['ios', 'SIM-1']);
       const jpegOnly = { jpeg: true, video: false, bitrate: 3_000_000 };
       expect(run!.configs).toEqual([
-        { fps: 2, maxEdge: 480, ...jpegOnly },
-        { fps: 20, maxEdge: 960, ...jpegOnly },
-        { fps: 2, maxEdge: 480, ...jpegOnly },
+        { fps: 2, maxEdge: 480, jpegFps: 2, ...jpegOnly },
+        { fps: 20, maxEdge: 960, jpegFps: 20, ...jpegOnly },
+        { fps: 2, maxEdge: 480, jpegFps: 2, ...jpegOnly },
       ]);
       await until(() => !alive(run!.pid));
       expect(toolRuns().filter((entry) => entry.tool === 'xcrun')).toEqual([]);
@@ -1441,7 +1441,10 @@ describe('frames.subscribe', () => {
       FAKE_FRAMES: JSON.stringify([jpeg(10, 20, 'A').toString('base64')]),
     });
     const client = await authed(port);
-    const reply = await client.request('frames.subscribe', { workspace, platform: 'ios', video: ['h264'] });
+    expect(
+      await client.request('frames.subscribe', { workspace, platform: 'ios', fps: 61, video: ['h264'] }),
+    ).toMatchObject({ error: { code: 'bad-request' } });
+    const reply = await client.request('frames.subscribe', { workspace, platform: 'ios', fps: 60, video: ['h264'] });
     expect(reply).toMatchObject({ result: { subscription: 's1' } });
     expect(reply).not.toHaveProperty('result.video');
     expect(await client.next()).toMatchObject({ event: 'frame', width: 10, height: 20 });

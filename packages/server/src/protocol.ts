@@ -186,7 +186,7 @@ export const VIDEO_KEYFRAME = 1;
 
 /**
  * The layout of a binary video message, big-endian: u8 version ({@link VIDEO_HEADER_VERSION}), u8 flags
- * ({@link VIDEO_KEYFRAME}), u16 header length, u32 sequence number, f64 capture time in milliseconds since the
+ * ({@link VIDEO_KEYFRAME}), u16 header length, u32 sequence number of the messages sent on this subscription, f64 capture time in milliseconds since the
  * epoch on the Mac's clock, u16 width, u16 height, u8 subscription id length N, N bytes of ASCII subscription
  * id. After the header comes one Annex-B H.264 access unit; a keyframe carries its SPS and PPS. The stream has
  * no B-frames, so each access unit is shown as it arrives.

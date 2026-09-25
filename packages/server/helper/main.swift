@@ -10,8 +10,8 @@ import IOSurface
 //   stim-frames android <serial>
 //
 // stdin takes one JSON object per line: {"fps": n, "maxEdge": px, "quality": 0-1,
-// "jpeg": bool, "video": bool, "bitrate": bits per second}, or {"keyframe": true}
-// to make the next video frame a keyframe.
+// "jpeg": bool, "jpegFps": n, "video": bool, "bitrate": bits per second}, or
+// {"keyframe": true} to make the next video frame a keyframe.
 // stdout carries messages framed as a 4-byte big-endian length, then a kind byte:
 // 1 is a frame (2-byte width, 2-byte height, JPEG bytes), 2 is a JSON notice
 // ({"error": message} before a failed exit), 3 is an H.264 access unit (1-byte
@@ -24,6 +24,7 @@ struct Config: Equatable {
   var maxEdge = 1280
   var quality = 0.7
   var jpeg = true
+  var jpegFps: Double?
   var video = false
   var bitrate = 3_000_000
 }
@@ -34,7 +35,9 @@ enum Output {
   private static var writing = false
   private static var pendingVideo = 0
   private static var videoNeedsKeyframe = false
+  private static var keyframeRequested = false
   private static let maxPendingVideo = 30
+  static var requestKeyframe: () -> Void = {}
 
   static func frame(jpeg: Data, width: Int, height: Int) {
     lock.lock()
@@ -51,17 +54,16 @@ enum Output {
     }
   }
 
-  /// Every access unit is written, in order, since a decoder cannot skip one; a reader that falls
-  /// `maxPendingVideo` behind loses frames up to the next keyframe. Returns false for a dropped unit.
-  static func video(_ unit: AccessUnit) -> Bool {
+  static func video(_ unit: AccessUnit) {
     lock.lock()
     defer { lock.unlock() }
-    if videoNeedsKeyframe && !unit.keyframe { return false }
+    if videoNeedsKeyframe && !unit.keyframe { return }
     guard pendingVideo < maxPendingVideo else {
       videoNeedsKeyframe = true
-      return false
+      return
     }
     videoNeedsKeyframe = false
+    keyframeRequested = false
     pendingVideo += 1
     var body = Data([3, unit.keyframe ? 1 : 0])
     withUnsafeBytes(of: unit.capturedAt.bitPattern.bigEndian) { body.append(contentsOf: $0) }
@@ -71,9 +73,11 @@ enum Output {
       write(body)
       lock.lock()
       pendingVideo -= 1
+      let ask = videoNeedsKeyframe && !keyframeRequested
+      if ask { keyframeRequested = true }
       lock.unlock()
+      if ask { requestKeyframe() }
     }
-    return true
   }
 
   static func notice(_ object: [String: String]) {
@@ -145,11 +149,31 @@ final class Pacer {
 }
 
 func videoEncoder() -> VideoEncoder {
-  var encoder: VideoEncoder!
-  encoder = VideoEncoder(maxEdge: Config().maxEdge, fps: Int(Config().fps), bitrate: Config().bitrate) { unit in
-    if !Output.video(unit) { encoder.requestKeyframe() }
+  VideoEncoder(maxEdge: Config().maxEdge, fps: Int(Config().fps), bitrate: Config().bitrate, output: Output.video)
+}
+
+/// Keeps JPEG at `jpegFps` while video renders faster. A frame it skips is rendered again once the
+/// interval passes, so the last frame of a burst still reaches JPEG subscribers. Used on the pacer queue.
+final class JpegGate {
+  private var last = 0.0
+  private var retrying = false
+
+  func admit(_ config: Config, pacer: Pacer) -> Bool {
+    let now = CFAbsoluteTimeGetCurrent()
+    let wait = last + 1 / max(config.jpegFps ?? config.fps, 0.1) - now
+    if wait <= 0 {
+      last = now
+      return true
+    }
+    if !retrying {
+      retrying = true
+      pacer.queue.asyncAfter(deadline: .now() + wait) {
+        self.retrying = false
+        pacer.changed()
+      }
+    }
+    return false
   }
-  return encoder
 }
 
 func now() -> Double { Date().timeIntervalSince1970 * 1000 }
@@ -160,6 +184,7 @@ final class SimulatorSource {
   private var display: SimDisplay?
   private let callbackID = NSUUID()
   private let video = videoEncoder()
+  private let jpegGate = JpegGate()
 
   init(udid: String) {
     self.udid = udid
@@ -184,7 +209,7 @@ final class SimulatorSource {
   }
 
   func configure(_ config: Config) {
-    video.configure(maxEdge: config.maxEdge, fps: Int(config.fps), bitrate: config.bitrate)
+    video.configure(enabled: config.video, maxEdge: config.maxEdge, fps: Int(config.fps), bitrate: config.bitrate)
     queue.async {
       self.pacer.config = config
       self.pacer.changed()
@@ -216,7 +241,7 @@ final class SimulatorSource {
         video.encode(pixels, quarterTurns: quarterTurns, capturedAt: now())
       }
     }
-    guard config.jpeg else { return }
+    guard config.jpeg, jpegGate.admit(config, pacer: pacer) else { return }
     let image = CIImage(ioSurface: ioSurface).oriented(orientation)
     guard let (data, width, height) = jpeg(image, config: config) else { return }
     Output.frame(jpeg: data, width: width, height: height)
@@ -232,6 +257,7 @@ final class EmulatorSource {
   private var latest: EmulatorFrame?
   private var pacer: Pacer!
   private let video = videoEncoder()
+  private let jpegGate = JpegGate()
 
   init(serial: String) {
     self.serial = serial
@@ -246,11 +272,14 @@ final class EmulatorSource {
   }
 
   func configure(_ config: Config) {
-    video.configure(maxEdge: config.maxEdge, fps: Int(config.fps), bitrate: config.bitrate)
+    video.configure(enabled: config.video, maxEdge: config.maxEdge, fps: Int(config.fps), bitrate: config.bitrate)
     queue.async {
       let resized = config.maxEdge != self.config.maxEdge
       self.config = config
-      self.pacer.queue.async { self.pacer.config = config }
+      self.pacer.queue.async {
+        self.pacer.config = config
+        self.pacer.changed()
+      }
       if resized, let stream = self.stream {
         self.stream = nil
         stream.cancel()
@@ -289,7 +318,7 @@ final class EmulatorSource {
 
   private func render(_ frame: EmulatorFrame, config: Config) {
     if config.video { video.encode(rgba: frame.rgba, width: frame.width, height: frame.height, capturedAt: now()) }
-    guard config.jpeg, let provider = CGDataProvider(data: frame.rgba as CFData),
+    guard config.jpeg, jpegGate.admit(config, pacer: pacer), let provider = CGDataProvider(data: frame.rgba as CFData),
       let image = CGImage(
         width: frame.width, height: frame.height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: frame.width * 4,
         space: colorSpace, bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
@@ -307,6 +336,7 @@ func parseConfig(_ line: Substring, base: Config) -> Config? {
   if let edge = object["maxEdge"] as? Int, edge > 0 { config.maxEdge = min(edge, 4096) }
   if let quality = object["quality"] as? Double, quality > 0, quality <= 1 { config.quality = quality }
   if let jpeg = object["jpeg"] as? Bool { config.jpeg = jpeg }
+  if let jpegFps = object["jpegFps"] as? Double, jpegFps > 0 { config.jpegFps = min(jpegFps, 60) }
   if let video = object["video"] as? Bool { config.video = video }
   if let bitrate = object["bitrate"] as? Int, bitrate > 0 { config.bitrate = bitrate }
   return config
@@ -345,10 +375,12 @@ case "ios":
   CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
   guard CoreSimulator.deviceSet != nil else { fail("CoreSimulator could not be loaded from \(CoreSimulator.developerDir).") }
   let source = SimulatorSource(udid: arguments[2])
+  Output.requestKeyframe = source.keyframe
   readCommands({ source.configure($0) }, keyframe: source.keyframe)
   source.queue.async { source.start() }
 case "android":
   let source = EmulatorSource(serial: arguments[2])
+  Output.requestKeyframe = source.keyframe
   readCommands({ source.configure($0) }, keyframe: source.keyframe)
   source.start()
 default:
