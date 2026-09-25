@@ -530,7 +530,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
       ? 0
       : shutDownIdleDevices(report.idleDevices, idle, () =>
           collectIdleDevices(loadConfig(), listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS }), report.deadProjects),
-        );
+        ).failures;
   if (idleFailures) process.exitCode = 1;
   const payload = (failures: number | null): GcPayload => ({
     mode: opts.delete ? 'delete' : 'dry-run',
@@ -559,7 +559,9 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
   }
 
   let deleteFailures = idleFailures;
-  deleteFailures += report.workspaceOutputs ? await clearWorkspaceOutputs(report.workspaceOutputs, { olderThan }) : 0;
+  deleteFailures += report.workspaceOutputs
+    ? (await clearWorkspaceOutputs(report.workspaceOutputs, { olderThan })).failures
+    : 0;
   deleteFailures += deleteParkedSims(report.parkedSims, deps) + deleteParkedAvds(report.parkedAvds);
 
   removeInvalidProjectEntries(invalidProjects);

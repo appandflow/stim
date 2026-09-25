@@ -22,6 +22,7 @@ import type { DoctorPlatform, Finding } from '../diagnostics/doctor.ts';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { compareStimVersions, inspectStimVersions, type StimVersionReport } from '../diagnostics/stim-installations.ts';
 import { repairCxxLauncherState } from '../diagnostics/doctor-cxx.ts';
+import { budgetLine, inspectBudget, type BudgetReport } from '../budget.ts';
 
 interface DoctorOptions {
   json?: boolean;
@@ -54,12 +55,21 @@ function stimVersionLines(report: StimVersionReport): string[] {
   ];
 }
 
-export function doctorSuccessLines(platform: DoctorPlatform | undefined, stim: StimVersionReport): string[] {
+function budgetLines(budget: BudgetReport | null): string[] {
+  return budget ? [phaseLine('budget', budgetLine(budget))] : [];
+}
+
+export function doctorSuccessLines(
+  platform: DoctorPlatform | undefined,
+  stim: StimVersionReport,
+  budget: BudgetReport | null = null,
+): string[] {
   const lines = [
     `Doctor (${doctorTarget(platform)})`,
     phaseLine('result', 'PASS'),
     phaseLine('findings', '0'),
     ...stimVersionLines(stim),
+    ...budgetLines(budget),
     '',
     'Project',
     phaseLine('project', 'source checkout, dependencies, local upstream'),
@@ -224,14 +234,19 @@ export default function doctorCommand(
       const shadowed = shadowedStimFinding(stim);
       if (shadowed) findings.push(shadowed);
 
+      const budget = await inspectBudget(root);
+      findings.push(...budget.findings);
+
       if (opts.json) {
-        console.log(JSON.stringify({ project: root, platform: opts.platform ?? null, stim, findings }));
+        console.log(
+          JSON.stringify({ project: root, platform: opts.platform ?? null, stim, budget: budget.report, findings }),
+        );
         recordDoctorRun(root, opts.platform, version);
         return;
       }
 
       if (findings.length === 0) {
-        const lines = doctorSuccessLines(opts.platform, stim);
+        const lines = doctorSuccessLines(opts.platform, stim, budget.report);
         for (const [index, line] of lines.entries()) {
           if (index === 1) console.log(chalk.green(line));
           else if (line && !line.startsWith('  ')) console.log(chalk.bold(line));
@@ -243,7 +258,7 @@ export default function doctorCommand(
 
       const ordered = findings.toSorted((a, b) => (a.level === b.level ? 0 : a.level === 'cost' ? -1 : 1));
       console.log(chalk.bold(`Doctor (${doctorTarget(opts.platform)})`));
-      for (const line of stimVersionLines(stim)) console.log(chalk.dim(line));
+      for (const line of [...stimVersionLines(stim), ...budgetLines(budget.report)]) console.log(chalk.dim(line));
       for (const f of ordered) {
         const tag = f.level === 'cost' ? chalk.yellow('costs time') : chalk.dim('note');
         console.log(`\n${tag}  ${chalk.bold(f.title)}`);

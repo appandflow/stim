@@ -13,6 +13,7 @@ import { PLATFORM } from './support.ts';
 import { formatDuration, phaseLine } from '../../command-output.ts';
 import type { RemoteUploadLike, LaunchResultLike, AndroidRecord, AndroidWriter } from './types.ts';
 import type { RunRecorder } from '../../engine/stats.ts';
+import type { ReclaimedStep } from '../../budget.ts';
 import { writeWorkspaceState } from '../../workspace/workspace-state.ts';
 
 export function androidFacts({
@@ -188,6 +189,7 @@ export interface ReportAndroidResultArgs {
   writer: AndroidWriter;
   emit: (line: string) => void;
   recordRun: RunRecorder['record'];
+  reclaimed?: ReclaimedStep[];
 }
 
 export function reportAndroidResult({
@@ -216,6 +218,7 @@ export function reportAndroidResult({
   emit,
   lease,
   recordRun,
+  reclaimed = [],
 }: ReportAndroidResultArgs): AndroidFacts {
   recordRun({ failed: false, cacheHit: cacheLevel(record.cacheHit), waited: waitedForBuild, durationMs });
   const facts = androidFacts({
@@ -246,7 +249,7 @@ export function reportAndroidResult({
   writer.close();
 
   if (json) {
-    emit(JSON.stringify(facts));
+    emit(JSON.stringify(reclaimed.length ? { ...facts, reclaimed } : facts));
   } else {
     const summary =
       `${launchWarning ? 'WARNING' : 'OK'}: ${androidPackage} launched on ${serial}, ` +

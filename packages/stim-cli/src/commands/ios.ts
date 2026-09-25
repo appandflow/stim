@@ -52,6 +52,7 @@ import { ownedSessionName } from '../engine/eas-simulator.ts';
 import { createRunRecorder, statsProjectKey, type RunEstimates } from '../engine/stats.ts';
 import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
+import type { ReclaimedStep } from '../budget.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { appProjectProblem, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
@@ -329,6 +330,7 @@ async function runIos(
   const recordRun = stats.record;
 
   let compilationCache: CompilationCacheActivity = COMPILATION_CACHE_NOT_RUN;
+  let reclaimed: ReclaimedStep[] = [];
 
   const fail = ({ code, message, remedy = null, lines = [], logPath = null, build = null, lease }: FailArgs): null => {
     releaseLease();
@@ -352,6 +354,7 @@ async function runIos(
           remedy: remedy ?? null,
           ...(compilationCache.status === 'not-run' ? {} : { compilationCache }),
           ...(lease === undefined ? {} : { lease }),
+          ...(reclaimed.length ? { reclaimed } : {}),
         }),
       );
     }
@@ -483,6 +486,9 @@ async function runIos(
     listRuntimes: d.listIosRuntimes,
   });
   if (modelRefusal) return fail(modelRefusal);
+  const budget = await d.budgetGate({ root, note });
+  reclaimed = budget.reclaimed;
+  if (budget.refusal) return fail(budget.refusal);
   let remoteDevice: ReturnType<typeof d.remoteIosDeps> | null = null;
   if (remoteBackend) {
     const resolved = await d.resolveRemoteContext({
@@ -865,6 +871,7 @@ async function runIos(
         lease: leaseHandle,
         releaseLease,
         recordRun,
+        reclaimed,
         enterPhase: progress.step,
       });
     } finally {

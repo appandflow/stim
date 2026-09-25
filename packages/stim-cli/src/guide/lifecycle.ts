@@ -394,8 +394,8 @@ result as proof instead of requiring an unrelated screenshot.`,
   The labels are a closed set, and nothing else is ever printed in that
   column:
 
-    branch      build       cache       caches      carry       checkout
-    deps        device
+    branch      budget      build       cache       caches      carry
+    checkout    deps        device
     devices     error       failed      findings    fingerprint gems
     install     installs    ip.txt      lan         launch      lease
     lock        log
@@ -1011,6 +1011,63 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   reports stale build locks, and \`gc --delete\` clears them. Set the caps
   with \`stim settings set concurrency.maxBuilds 2\`, by editing
   ~/.stim/config.json, or via the two env vars (see \`guide settings\`).`,
+    },
+    budget: {
+      summary: 'disk and memory budgets: what start, ios and android reclaim first, and STIM_LOW_DISK',
+      body: () => `DISK AND MEMORY BUDGETS (ON BY DEFAULT)
+  Before \`start\`, \`ios\` and \`android\` build or boot anything, they
+  compare the machine against four MACHINE-level settings:
+
+    budget.minFreeDiskGb         free disk on the volumes holding the app and
+                                 $STIM_HOME. Default 20. Below it, Stim reclaims.
+    budget.hardFloorDiskGb       default 5. Still below it after reclaiming,
+                                 the run refuses with STIM_LOW_DISK.
+    budget.maxCommittedMemoryGb  the rough memory of live environments, the
+                                 figure \`stim status\` prints (a booted
+                                 simulator 1.5 GB, an emulator 2.5 GB, a dev
+                                 server 0.7 GB). Default 60% of physical memory.
+    budget.maxLiveWorkspaces     workspaces with a booted device or running dev
+                                 server. Unset by default.
+
+  0 turns a check off; with budget.minFreeDiskGb at 0, Stim still reclaims
+  below the hard floor before refusing. A \`start\` whose dev server already
+  answers checks nothing; \`start --reset-cache\` checks before it stops the
+  server.
+
+  Over budget, Stim reclaims in this order and stops as soon as it is back
+  under budget. Each step prints a \`budget\` line on stderr, and the \`--json\`
+  payload lists the steps that acted under \`reclaimed\`:
+
+    1. shut down idle owned devices in other workspaces: booted, no driver,
+       no Stim or agent-device lock, no activity for 10 minutes, and no build
+       in progress (\`gc --idle\` semantics; shut down, never deleted)
+    2. stop idle dev servers in other workspaces: a Stim supervisor with no
+       bundle request, device log, Stim command or supervisor start for 10
+       minutes, no build in progress, and no device in that workspace that is
+       driven, active, or of unknown activity. Stim rechecks under that
+       workspace's native-run and metro-start locks before it stops the
+       server, and skips the step when simulators cannot be listed. The next
+       \`start\`, \`ios\` or \`android\` there brings it back
+    3. clear the build outputs of workspaces not in use and idle for 10
+       minutes, least recently used first, re-measuring after each
+       (\`gc --delete\` semantics; the next build installs from the shared
+       cache). A workspace whose last use is unknown is kept
+    4. trim shared cache entries nothing has used for 14 days
+       (\`gc --delete --older-than 14\` for the caches)
+
+  Steps 3 and 4 run only for disk. Memory and workspace limits never refuse;
+  a run still over them prints one \`budget\` warning and continues. The
+  current workspace is never reclaimed.
+
+  With STIM_HOME set, the budget is off unless its environment variable is
+  set (STIM_BUDGET_MIN_FREE_DISK_GB, STIM_BUDGET_HARD_FLOOR_DISK_GB,
+  STIM_BUDGET_MAX_COMMITTED_MEMORY_GB, STIM_BUDGET_MAX_LIVE_WORKSPACES), and
+  step 1 never runs because devices are machine-global.
+
+  \`stim doctor\` prints a \`budget\` line with the free disk and committed
+  memory against the budget, and a finding with the reclaim plan when over it.
+  Change a limit with \`stim settings set budget.minFreeDiskGb 30\`.
+  See \`guide errors STIM_LOW_DISK\`.`,
     },
     options: {
       summary:

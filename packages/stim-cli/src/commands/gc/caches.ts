@@ -120,8 +120,9 @@ function reportFailures(cache: CacheDescriptor, failed: number | undefined): voi
   process.exitCode = 1;
 }
 
-export function trimCaches(caches: GcCache[], olderThan: number): void {
+export function trimCaches(caches: GcCache[], olderThan: number): GcCache[] {
   let cacheBytes = 0;
+  const trimmed: GcCache[] = [];
   for (const c of caches) {
     if (c.machineGlobal) {
       console.log(chalk.yellow(`Left ${c.name} alone: ${c.machineGlobal}`));
@@ -132,6 +133,7 @@ export function trimCaches(caches: GcCache[], olderThan: number): void {
       console.log(chalk.yellow(`Left ${c.name} alone: ${r.skipped}`));
     } else if (r.removed) {
       cacheBytes += r.bytes;
+      trimmed.push(c);
       console.log(
         chalk.green(`Trimmed ${c.name}: ${r.removed} entr${r.removed === 1 ? 'y' : 'ies'} (${formatBytes(r.bytes)})`),
       );
@@ -148,6 +150,7 @@ export function trimCaches(caches: GcCache[], olderThan: number): void {
       ),
     );
   }
+  return trimmed;
 }
 
 export function emptyCaches(caches: GcCache[]): void {

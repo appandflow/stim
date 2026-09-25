@@ -193,8 +193,7 @@ interface LogRecordTarget {
 
 function latestDeviceLogAt(lines: readonly string[], target: LogRecordTarget): number | null {
   return latestRecordAt(lines, (record) => {
-    if (record.src !== 'device' || record.platform !== target.platform) return false;
-    if (typeof record.event === 'string' && record.event.startsWith('collector_')) return false;
+    if (record.src !== 'device' || record.platform !== target.platform || !isDeviceRecord(record)) return false;
     if (target.slot === 'default') return record.slot === undefined;
     return record.slot === target.slot && (record.deviceId === undefined || record.deviceId === target.id);
   });
@@ -213,6 +212,10 @@ function latestRecordAt(
     if (record && typeof record.ts === 'number' && matches(record)) return record.ts;
   }
   return null;
+}
+
+function isDeviceRecord(record: Record<string, unknown>): boolean {
+  return !(typeof record.event === 'string' && record.event.startsWith('collector_'));
 }
 
 function tailLines(path: string): string[] | null {
@@ -367,4 +370,28 @@ export function createActivityReader({
 
     return classifyActivity(evidence, now);
   };
+}
+
+export function workspaceActivity(workspace: string, now: number = Date.now()): DeviceActivity {
+  const dir = workspaceLogsDir(workspace);
+  const state = readWorkspaceState(workspace);
+  const recency: ActivityEvidence['recency'] = [];
+  const deviceAt = latestRecordAt(
+    tailLines(join(dir, 'device.ndjson')) ?? [],
+    (record) => record.src === 'device' && isDeviceRecord(record),
+  );
+  if (deviceAt !== null) recency.push({ basis: 'device-log', at: deviceAt });
+  const bundleAt = latestRecordAt(
+    tailLines(join(dir, 'metro.ndjson')) ?? [],
+    (record) => record.event === 'bundle_response_started',
+  );
+  if (bundleAt !== null) recency.push({ basis: 'metro-bundle', at: bundleAt });
+  for (const [basis, value] of [
+    ['workspace-use', state?.lastUsedAt],
+    ['supervisor-start', state?.supervisor?.startedAt],
+  ] as const) {
+    const at = Date.parse(String(value ?? ''));
+    if (Number.isFinite(at)) recency.push({ basis, at });
+  }
+  return classifyActivity({ drivers: [], unknown: [], recency }, now);
 }

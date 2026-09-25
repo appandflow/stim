@@ -14,6 +14,7 @@ import type { WaitedForBuild, RemoteUploadLike, DeviceLike } from './types.ts';
 import { writeWorkspaceState } from '../../workspace/workspace-state.ts';
 import { formatDuration, phaseLine } from '../../command-output.ts';
 import type { RunRecorder } from '../../engine/stats.ts';
+import type { ReclaimedStep } from '../../budget.ts';
 import type { IosDeps } from './dependencies.ts';
 
 export function lastBuildRecord({
@@ -201,6 +202,7 @@ export interface ReportIosResultArgs {
   webPreviewUrl: string | null;
   lease?: { kind: string; expiresAt: string } | null;
   recordRun: RunRecorder['record'];
+  reclaimed?: ReclaimedStep[];
 }
 
 export function reportIosResult({
@@ -234,6 +236,7 @@ export function reportIosResult({
   webPreviewUrl,
   lease,
   recordRun,
+  reclaimed = [],
 }: ReportIosResultArgs): IosFacts {
   const durationMs = elapsed();
   recordRun({ failed: false, cacheHit, waited: waitedForBuild, durationMs });
@@ -279,7 +282,7 @@ export function reportIosResult({
     lease,
   });
   if (json) {
-    console.log(JSON.stringify(facts));
+    console.log(JSON.stringify(reclaimed.length ? { ...facts, reclaimed } : facts));
   } else {
     const summary =
       `${launchWarning ? 'WARNING' : 'OK'}: ${bundleId} on ${deviceLabel(device, udid)}, ` +

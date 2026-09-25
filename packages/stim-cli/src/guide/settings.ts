@@ -321,6 +321,19 @@ Unset, 0, or any non-positive value means NO enforcement -- the default, where
 Stim limits nothing. See \`guide lifecycle concurrency\` for what each cap
 does.
 
+DISK AND MEMORY BUDGETS ARE MACHINE-LEVEL AND ON BY DEFAULT
+Top-level \`budget\` in ~/.stim/config.json, or the environment, which
+overrides the file:
+
+  budget.minFreeDiskGb          STIM_BUDGET_MIN_FREE_DISK_GB         default 20
+  budget.hardFloorDiskGb        STIM_BUDGET_HARD_FLOOR_DISK_GB       default 5
+  budget.maxCommittedMemoryGb   STIM_BUDGET_MAX_COMMITTED_MEMORY_GB  60% of RAM
+  budget.maxLiveWorkspaces      STIM_BUDGET_MAX_LIVE_WORKSPACES      unset
+
+0 turns a check off. With STIM_HOME set and no environment variable, the
+budget is off. A value of the wrong shape refuses start, ios and android with
+STIM_BAD_ARG. See \`guide lifecycle budget\` for what each limit reclaims.
+
 THE IOS SIMULATOR APP IS MACHINE-LEVEL
 Top-level \`iosSimulatorApp\` in ~/.stim/config.json selects the macOS app that
 displays Stim's owned local iOS simulator after boot. It is not a project

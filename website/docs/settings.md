@@ -183,6 +183,7 @@ Run `stim guide settings` for the complete key and value list.
 ```json
 {
   "concurrency": { "maxBuilds": 2, "maxDevices": 3 },
+  "budget": { "minFreeDiskGb": 20, "hardFloorDiskGb": 5 },
   "iosSimulatorApp": "xcode",
   "tempDir": "/Volumes/SSD/stim-tmp",
   "pool": { "iosParkedMax": 3, "androidParkedMax": 3 },
@@ -214,6 +215,43 @@ workspace to adopt. Absent means 3; `0` turns parking and adoption off. When
 `pool.androidParkedMax` and `STIM_POOL_ANDROID_PARKED_MAX` apply the same rules
 to Android emulators. See [owned devices](/docs/owned-devices) for adoption cleanup.
 
+`budget` keeps parallel agents from filling the disk or memory. It is on by
+default. Before `stim start`, `stim ios`, or `stim android` builds or boots
+anything, Stim checks free disk on the volumes that hold the app and
+`$STIM_HOME`, and the estimated memory of live environments:
+
+| Key                           | Default                | Effect                                                                                   |
+| ----------------------------- | ---------------------- | ---------------------------------------------------------------------------------------- |
+| `budget.minFreeDiskGb`        | 20                     | Below this much free disk, Stim reclaims before it starts.                               |
+| `budget.hardFloorDiskGb`      | 5                      | Still below this after reclaiming, the command refuses with `STIM_LOW_DISK`.             |
+| `budget.maxCommittedMemoryGb` | 60% of physical memory | Above this estimate, Stim shuts down idle devices and stops idle dev servers first.      |
+| `budget.maxLiveWorkspaces`    | unset                  | Above this many workspaces with a booted device or running dev server, the same applies. |
+
+Stim reclaims in order and stops once it is back under budget: it shuts down
+idle owned devices in other workspaces, stops idle dev servers in other
+workspaces, clears the build outputs of workspaces idle for 10 minutes (least
+recently used first), and
+trims shared cache entries unused for 14 days. The last two steps run only for
+disk. Each step prints a `budget` line on stderr, and `--json` output lists them
+under `reclaimed`. The current workspace, a device someone is driving or has
+locked, and a workspace with a build in progress are never reclaimed. A memory
+or workspace limit never refuses a command. `0` turns a check off. When
+`STIM_HOME` is set, the budget is off unless its environment variable is set.
+`stim doctor` reports the free disk and committed memory against the budget,
+and what the next command would reclaim.
+
+```bash
+stim settings set budget.minFreeDiskGb 40
+```
+
+Try it with an agent:
+
+```text
+Run `stim doctor` and tell me how much free disk and committed memory this
+machine has against its Stim budget, and what the next `stim ios` would
+reclaim first.
+```
+
 `caches.buildCache` and `caches.metroCache` move the shared build cache and the
 Metro transform cache to other absolute paths. `caches` is a machine-file key
 only: a `caches` key in `.stim.json` is not read and produces the unknown-key
@@ -231,19 +269,23 @@ control build optimizations on this machine without changing project files.
 
 ## Environment variables
 
-| Variable                       | Purpose                                                                                                  |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `STIM_HOME`                    | Runtime state root. Default: `~/.stim`                                                                   |
-| `STIM_BUILD_CACHE`             | Native artifact cache root                                                                               |
-| `STIM_METRO_CACHE`             | Metro transform cache root                                                                               |
-| `STIM_TMPDIR`                  | Directory for large temporary copies; overrides the machine `tempDir`                                    |
-| `STIM_MAX_BUILDS`              | Maximum concurrent native builds                                                                         |
-| `STIM_MAX_DEVICES`             | Maximum booted owned devices                                                                             |
-| `STIM_POOL_ANDROID_PARKED_MAX` | Maximum parked Android emulators; 0 disables parking and adoption                                        |
-| `STIM_POOL_IOS_PARKED_MAX`     | Maximum parked simulators                                                                                |
-| `STIM_METRO_PUBLIC_URL`        | Public Metro URL for remote use                                                                          |
-| `STIM_ANDROID_CAS_TOOLCHAIN`   | Absolute path to the [Android CAS toolchain manifest](./build-optimizations.md#experimental-android-cas) |
-| `STIM_NO_UPDATE_CHECK`         | Set to disable the daily check for a newer Stim release in `stim guide`                                  |
+| Variable                              | Purpose                                                                                                     |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `STIM_HOME`                           | Runtime state root. Default: `~/.stim`                                                                      |
+| `STIM_BUILD_CACHE`                    | Native artifact cache root                                                                                  |
+| `STIM_METRO_CACHE`                    | Metro transform cache root                                                                                  |
+| `STIM_TMPDIR`                         | Directory for large temporary copies; overrides the machine `tempDir`                                       |
+| `STIM_MAX_BUILDS`                     | Maximum concurrent native builds                                                                            |
+| `STIM_MAX_DEVICES`                    | Maximum booted owned devices                                                                                |
+| `STIM_BUDGET_MIN_FREE_DISK_GB`        | Free disk, in GB, below which `start`, `ios`, and `android` reclaim first; overrides `budget.minFreeDiskGb` |
+| `STIM_BUDGET_HARD_FLOOR_DISK_GB`      | Free disk, in GB, below which they refuse with `STIM_LOW_DISK`; overrides `budget.hardFloorDiskGb`          |
+| `STIM_BUDGET_MAX_COMMITTED_MEMORY_GB` | Estimated memory of live environments, in GB, before idle ones are reclaimed                                |
+| `STIM_BUDGET_MAX_LIVE_WORKSPACES`     | Live workspaces before idle ones are reclaimed                                                              |
+| `STIM_POOL_ANDROID_PARKED_MAX`        | Maximum parked Android emulators; 0 disables parking and adoption                                           |
+| `STIM_POOL_IOS_PARKED_MAX`            | Maximum parked simulators                                                                                   |
+| `STIM_METRO_PUBLIC_URL`               | Public Metro URL for remote use                                                                             |
+| `STIM_ANDROID_CAS_TOOLCHAIN`          | Absolute path to the [Android CAS toolchain manifest](./build-optimizations.md#experimental-android-cas)    |
+| `STIM_NO_UPDATE_CHECK`                | Set to disable the daily check for a newer Stim release in `stim guide`                                     |
 
 `STIM_HOME`, `STIM_BUILD_CACHE`, and `STIM_METRO_CACHE` must be absolute paths.
 A relative value would resolve against each process's working directory, so

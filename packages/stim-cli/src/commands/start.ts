@@ -57,6 +57,7 @@ import {
   type TunnelRecord,
 } from '../engine/tunnel.ts';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
+import { budgetGate, type ReclaimedStep } from '../budget.ts';
 
 const DEFAULT_WAIT_SECONDS = 60;
 const POLL_MS = 500;
@@ -216,6 +217,7 @@ interface StartCommandDeps {
   withWorktreeLock: typeof withManagedRemoteWorktreeLock;
   withTunnelLock: typeof withManagedTunnelLock;
   clearTunnelRecord(root: string, record: TunnelRecord): void;
+  budgetGate: typeof budgetGate;
   platform: NodeJS.Platform;
 }
 
@@ -266,6 +268,7 @@ const DEFAULT_START_DEPS: StartCommandDeps = {
   withWorktreeLock: withManagedRemoteWorktreeLock,
   withTunnelLock: withManagedTunnelLock,
   clearTunnelRecord: clearManagedMetroTunnel,
+  budgetGate,
   platform: process.platform,
 };
 
@@ -306,6 +309,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         else console.log(line);
       };
       const note = writeNote;
+      let reclaimed: ReclaimedStep[] = [];
       const fail = ({
         code,
         message,
@@ -321,7 +325,11 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         for (const line of lines) note(chalk.dim(`  ${line}`));
         if (remedy) note(chalk.dim(remedy));
         note(chalk.red(`failed: ${code}`));
-        if (json) console.log(JSON.stringify(startError({ code, message, remedy })));
+        if (json) {
+          console.log(
+            JSON.stringify({ ...startError({ code, message, remedy }), ...(reclaimed.length ? { reclaimed } : {}) }),
+          );
+        }
         process.exit(1);
       };
 
@@ -411,7 +419,13 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           isExpo,
         });
 
+        const gateBudget = async () => {
+          const budget = await d.budgetGate({ root, note });
+          reclaimed = budget.reclaimed;
+          if (budget.refusal) return fail(budget.refusal);
+        };
         if (opts.resetCache) {
+          await gateBudget();
           try {
             await stopOwnedMetroForReset(root);
           } catch (error) {
@@ -444,6 +458,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
               'Stop it with the tool that started it, then retry `stim start`. Stim leaves unverified processes alone.',
           });
         }
+        if (!opts.resetCache && !resolution.metro && !supervisor) await gateBudget();
         let managedTunnel: ManagedTunnelTracking | null = null;
         let spawnedChild: SupervisorProcess | null = null;
         let spawnedTs: number | null = null;
@@ -958,7 +973,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           mode: null,
           startedAt: null,
         };
-        report({ json, out, port, supervisor, logsDir, alreadyRunning: false, waited: waitTimer() });
+        report({ json, out, port, supervisor, logsDir, alreadyRunning: false, waited: waitTimer(), reclaimed });
       };
 
       const startLocked = async () => {
@@ -1102,6 +1117,7 @@ function report({
   logsDir,
   alreadyRunning,
   waited,
+  reclaimed = [],
 }: {
   json: boolean;
   out: (line: string) => void;
@@ -1110,6 +1126,7 @@ function report({
   logsDir: string;
   alreadyRunning: boolean;
   waited: string;
+  reclaimed?: ReclaimedStep[];
 }): StartFacts {
   const facts = startFacts({
     port,
@@ -1118,7 +1135,7 @@ function report({
     alreadyRunning,
   });
   if (json) {
-    console.log(JSON.stringify(facts));
+    console.log(JSON.stringify(reclaimed.length ? { ...facts, reclaimed } : facts));
     return facts;
   }
   const who = facts.supervisorPid
