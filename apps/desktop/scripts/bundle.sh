@@ -3,11 +3,13 @@ set -eu
 cd "$(dirname "$0")/.."
 website=../../website
 
-swift build -c release
+archs=
+if [ "${1:-}" = --universal ]; then archs="--arch arm64 --arch x86_64"; fi
+swift build -c release $archs
 app=build/Stim.app
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks"
-bin=$(swift build -c release --show-bin-path)
+bin=$(swift build -c release $archs --show-bin-path)
 cp "$bin/StimDesktop" "$app/Contents/MacOS/StimDesktop"
 install_name_tool -add_rpath @executable_path/../Frameworks "$app/Contents/MacOS/StimDesktop"
 ditto "$bin/Lottie.framework" "$app/Contents/Frameworks/Lottie.framework"

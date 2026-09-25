@@ -362,6 +362,8 @@ The bundle copies Inter, JetBrains Mono, and the brand artwork, including the an
 
 Stim Desktop checks for updates with Sparkle 2 against the appcast at `SUFeedURL` in `Support/Info.plist`, `https://github.com/appandflow/stim/releases/download/desktop-latest/appcast.xml`. **Check for Updates…** in the app menu checks now, and Sparkle checks in the background once the user accepts its prompt on the second launch; **Settings > App > Updates** turns the background checks on or off. `scripts/bundle.sh` writes `SPARKLE_PUBLIC_ED_KEY` from its environment into `SUPublicEDKey`. A build without that key, which includes `swift run` and every dev or test copy, never starts the updater: the menu item stays disabled and the toggle is off.
 
+`scripts/release.sh <version>` builds the signed, notarized universal DMG and zip; see [RELEASING.md](./RELEASING.md).
+
 ## Layout
 
 - `Sources/StimKit`: models for the CLI's JSON, the login shell environment, the CLI and `stim-server` clients, project grouping, warning remedies, the streaming runner, `stim logs` records and the follow runner, process, disk and gc usage, the Storage report and worktree lifecycle, and the autopilot schedule, pressure plan and log. Unit-tested.

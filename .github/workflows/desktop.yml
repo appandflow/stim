@@ -4,9 +4,17 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['apps/desktop/**', 'packages/server/helper/**', '.github/workflows/desktop.yml']
+    paths:
+      - 'apps/desktop/**'
+      - 'packages/server/helper/**'
+      - '.github/workflows/desktop.yml'
+      - '.github/workflows/desktop-release.yml'
   pull_request:
-    paths: ['apps/desktop/**', 'packages/server/helper/**', '.github/workflows/desktop.yml']
+    paths:
+      - 'apps/desktop/**'
+      - 'packages/server/helper/**'
+      - '.github/workflows/desktop.yml'
+      - '.github/workflows/desktop-release.yml'
 
 concurrency:
   group: desktop-${{ github.ref }}
@@ -30,3 +38,5 @@ jobs:
           sed 's|^|Sources/|' ../../packages/server/helper/desktop-sources.txt \
             | xargs xcrun swiftc -O -swift-version 5 -module-name StimFrames -o "$RUNNER_TEMP/stim-frames" \
               ../../packages/server/helper/main.swift ../../packages/server/helper/VideoEncoder.swift
+      - name: Package an ad-hoc release build
+        run: scripts/release.sh 0.0.0

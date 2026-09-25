@@ -4,6 +4,9 @@ How to cut a new version of `stim` to npm and GitHub. Keep this in sync with
 what we actually do — when something changes, update both this file and the
 real workflow at the same time.
 
+Stim Desktop has its own tags and workflow; see
+[apps/desktop/RELEASING.md](./apps/desktop/RELEASING.md).
+
 ## 0. The six packages
 
 ```
