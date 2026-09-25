@@ -39,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     source.resume()
     terminationSource = source
     MainActor.assumeIsolated {
+      _ = AppUpdater.shared
       Theme.apply(Appearance(rawValue: UserDefaults.standard.string(forKey: AppPreferences.Key.appearance) ?? "") ?? .auto)
     }
   }
@@ -94,6 +95,7 @@ struct StimDesktopApp: App {
     .windowToolbarStyle(.unified(showsTitle: false))
     .handlesExternalEvents(matching: [])
     .commands {
+      UpdateCommands()
       SidebarCommands()
       InspectorCommands()
     }
@@ -108,6 +110,17 @@ struct StimDesktopApp: App {
       let live = store.payload?.environments.filter(\.live).count ?? 0
       Label("\(live)", systemImage: "iphone.gen3")
         .labelStyle(.titleAndIcon)
+    }
+  }
+}
+
+struct UpdateCommands: Commands {
+  @ObservedObject private var updater = AppUpdater.shared
+
+  var body: some Commands {
+    CommandGroup(after: .appInfo) {
+      Button("Check for Updates\u{2026}") { updater.checkForUpdates() }
+        .disabled(!updater.canCheckForUpdates)
     }
   }
 }

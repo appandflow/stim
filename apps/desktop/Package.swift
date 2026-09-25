@@ -8,7 +8,8 @@ let package = Package(
     .executable(name: "StimDesktop", targets: ["StimDesktop"])
   ],
   dependencies: [
-    .package(url: "https://github.com/airbnb/lottie-spm.git", exact: "4.6.1")
+    .package(url: "https://github.com/airbnb/lottie-spm.git", exact: "4.6.1"),
+    .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0"),
   ],
   targets: [
     .target(name: "StimKit"),
@@ -18,6 +19,7 @@ let package = Package(
       name: "StimDesktop",
       dependencies: [
         "StimKit", "SimulatorFrames", "EmulatorFrames", .product(name: "Lottie", package: "lottie-spm"),
+        .product(name: "Sparkle", package: "Sparkle"),
       ],
       swiftSettings: [.swiftLanguageMode(.v5)]
     ),

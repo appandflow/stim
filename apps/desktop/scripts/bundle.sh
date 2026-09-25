@@ -12,7 +12,9 @@ cp "$bin/StimDesktop" "$app/Contents/MacOS/StimDesktop"
 install_name_tool -add_rpath @executable_path/../Frameworks "$app/Contents/MacOS/StimDesktop"
 ditto "$bin/Lottie.framework" "$app/Contents/Frameworks/Lottie.framework"
 codesign --force --sign - "$app/Contents/Frameworks/Lottie.framework"
+ditto "$bin/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
 cp Support/Info.plist "$app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :SUPublicEDKey ${SPARKLE_PUBLIC_ED_KEY:-}" "$app/Contents/Info.plist"
 cp Support/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 cp "$website/src/css/fonts/InterVariable.woff2" "$website/src/css/fonts/JetBrainsMono-Regular.woff2" \
   "$website/src/css/fonts/Inter-LICENSE.txt" "$website/src/css/fonts/JetBrainsMono-OFL.txt" \

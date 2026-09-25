@@ -35,5 +35,9 @@
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>SUFeedURL</key>
+  <string>https://github.com/appandflow/stim/releases/download/desktop-latest/appcast.xml</string>
+  <key>SUPublicEDKey</key>
+  <string></string>
 </dict>
 </plist>
