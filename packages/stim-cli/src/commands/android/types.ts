@@ -40,6 +40,7 @@ export interface LaunchResultLike {
   component?: string;
   devClientNote?: string | null;
   devClientUrl?: string;
+  jsLocation?: string;
   reversed?: string[];
   debugHttpHost?: string | null;
   debugHttpHostNote?: string | null;
