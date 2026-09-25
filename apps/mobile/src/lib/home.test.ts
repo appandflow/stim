@@ -142,24 +142,29 @@ describe('parseFilters', () => {
 });
 
 describe('macUsageSummary', () => {
-  const usage = (...free: number[]): MachineUsage => ({
+  const usage = (memory: Partial<MachineUsage['memory']>, ...free: number[]): MachineUsage => ({
     volumes: free.map((freeBytes, i) => ({ mount: `/v${i}`, holds: [], freeBytes, totalBytes: 1e12 })),
-    memory: { totalBytes: 48 * 2 ** 30, pressure: 'normal' },
+    memory: { totalBytes: 48 * 2 ** 30, usedBytes: 23.4 * 2 ** 30, pressure: 'normal', ...memory },
     load: { avg1: 1, avg5: 1, avg15: 1, cpus: 8 },
     sampledAt: '2026-09-25T00:00:00.000Z',
   });
+  const capacity = { liveCount: 0, committedMb: 0, totalMemoryMb: 49152, overCapacity: false };
 
-  it('reads live workspaces, committed memory and the lowest free space, and warns below 20 GB', () => {
-    const capacity = { liveCount: 3, committedMb: 8090, totalMemoryMb: 49152, overCapacity: false };
-    expect(macUsageSummary({ ...payload, capacity }, usage(212e9, 500e9))).toEqual({
-      parts: ['3 live', '7.9/48 GB', '212 GB free'],
-      warn: false,
+  it("reads live workspaces, the Mac's memory used and the lowest free space, and warns below 20 GB", () => {
+    expect(macUsageSummary({ ...payload, capacity }, usage({}, 212e9, 500e9))).toEqual({
+      parts: ['0 live', '23.4/48 GB', '212 GB free'],
+      tone: 'normal',
     });
-    expect(macUsageSummary({ ...payload, capacity }, usage(14e9)).warn).toBe(true);
-    expect(macUsageSummary({ ...payload, capacity: { ...capacity, overCapacity: true } }, null)).toEqual({
-      parts: ['3 live', '7.9/48 GB'],
-      warn: true,
-    });
+    expect(macUsageSummary({ ...payload, capacity }, usage({}, 14e9)).tone).toBe('warn');
+    expect(macUsageSummary({ ...payload, capacity }, null)).toEqual({ parts: ['0 live'], tone: 'normal' });
+  });
+
+  it('colors by memory pressure, and leaves memory out when the server does not report it', () => {
+    expect(macUsageSummary(null, usage({ pressure: 'warning' }, 212e9)).tone).toBe('warn');
+    expect(macUsageSummary(null, usage({ pressure: 'critical' }, 14e9)).tone).toBe('critical');
+    const older = usage({}, 212e9);
+    delete (older.memory as Partial<MachineUsage['memory']>).usedBytes;
+    expect(macUsageSummary(null, older).parts).toEqual(['212 GB free']);
   });
 });
 

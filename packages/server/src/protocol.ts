@@ -196,8 +196,12 @@ export interface MachineVolume {
 /** Cheap machine usage, read in the server process without running `stim`. */
 export interface MachineUsage {
   volumes: MachineVolume[];
-  /** `pressure` is the macOS memory pressure level; null on other systems or when it cannot be read. */
-  memory: { totalBytes: number; pressure: MemoryPressure | null };
+  /**
+   * `usedBytes` is the Mac's memory in use, as Activity Monitor's "Memory Used" counts it: app memory, wired and
+   * compressed. `pressure` is the macOS memory pressure level. Both are null on other systems or when they cannot
+   * be read.
+   */
+  memory: { totalBytes: number; usedBytes: number | null; pressure: MemoryPressure | null };
   load: { avg1: number; avg5: number; avg15: number; cpus: number };
   sampledAt: string;
 }
@@ -479,10 +483,11 @@ export function protocolJsonSchema(): JsonSchema {
           },
           memory: {
             type: 'object',
-            required: ['totalBytes', 'pressure'],
+            required: ['totalBytes', 'usedBytes', 'pressure'],
             additionalProperties: false,
             properties: {
               totalBytes: { type: 'number' },
+              usedBytes: { type: ['number', 'null'] },
               pressure: { enum: ['normal', 'warning', 'critical', null] },
             },
           },

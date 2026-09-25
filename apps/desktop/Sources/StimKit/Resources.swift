@@ -212,6 +212,46 @@ public enum DiskUsage {
   }
 }
 
+/// The Mac's memory in use, counted as Activity Monitor's "Memory Used": app memory, wired and compressed.
+public struct MachineMemory: Equatable, Sendable {
+  public enum Pressure: Sendable { case normal, warning, critical }
+
+  public var usedBytes: Int64
+  public var totalBytes: Int64
+  public var pressure: Pressure?
+
+  public static func read() -> MachineMemory? {
+    var stats = vm_statistics64()
+    var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size)
+    let result = withUnsafeMutablePointer(to: &stats) {
+      $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+        host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+      }
+    }
+    guard result == KERN_SUCCESS else { return nil }
+    let app = Int64(stats.internal_page_count) - Int64(stats.purgeable_count)
+    let pages = max(0, app) + Int64(stats.wire_count) + Int64(stats.compressor_page_count)
+    return MachineMemory(
+      usedBytes: pages * Int64(getpagesize()),
+      totalBytes: Int64(ProcessInfo.processInfo.physicalMemory),
+      pressure: readPressure())
+  }
+
+  // XNU exposes dispatch flags here, not its internal pressure enum:
+  // https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_memorystatus_notify.c
+  private static func readPressure() -> Pressure? {
+    var level: Int32 = 0
+    var size = MemoryLayout<Int32>.size
+    guard sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &size, nil, 0) == 0 else { return nil }
+    switch level {
+    case 1: return .normal
+    case 2: return .warning
+    case 4: return .critical
+    default: return nil
+    }
+  }
+}
+
 /// The parts of the `stim gc --json` dry run that size what Stim can reclaim.
 public struct GcReport: Decodable, Sendable {
   public struct Sized: Decodable, Hashable, Sendable {

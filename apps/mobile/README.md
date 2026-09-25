@@ -6,8 +6,10 @@ and shows what Stim Desktop shows, without any actions:
 
 - **Home**: one screen for every paired machine; the app keeps a connection
   to each. The **Machines** row has a chip per machine with its connection dot and basic
-  usage: live workspaces, memory committed of total, and the lowest free space
-  of the volumes that hold Stim's workspaces, Stim home and the simulators. **+**
+  usage: live workspaces, the machine's memory used of total (as Activity
+  Monitor's "Memory Used" counts it, colored by memory pressure), and the lowest
+  free space of the volumes that hold Stim's workspaces, Stim home and the
+  simulators. **+**
   pairs another machine. Below, one list of every workspace on every machine,
   building and live ones first, with the machine's name, project, branch, Metro, devices and
   their activity (driven by a tool, or idle), build progress, error and warning
@@ -25,8 +27,9 @@ and shows what Stim Desktop shows, without any actions:
   or idle, and to workspaces with errors or with remote sessions. The filters
   are saved on the phone; a dot on the button shows that some are on. Live only
   is the default.
-- **Machine status**: tapping a chip shows that machine's capacity, load average,
-  memory pressure, free disk per volume, Stim budgets, running devices and
+- **Machine status**: tapping a chip shows that machine's capacity, with Stim's
+  share of memory (what live workspaces commit), load average, memory used and
+  pressure, free disk per volume, Stim budgets, running devices and
   device leases, warnings, and its server and `stim` versions.
 - **Menu**: the menu button, or a swipe from the left edge of home, opens a
   drawer with **Machines** (rename and forget), **Pair a machine**, and the app

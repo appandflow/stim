@@ -198,7 +198,7 @@ export interface MachineVolume {
 
 export interface MachineUsage {
   volumes: MachineVolume[];
-  memory: { totalBytes: number; pressure: MemoryPressure | null };
+  memory: { totalBytes: number; usedBytes: number | null; pressure: MemoryPressure | null };
   load: { avg1: number; avg5: number; avg15: number; cpus: number };
   sampledAt: string;
 }

@@ -5,7 +5,7 @@ import { ConnectionBanner } from '@/components/connection-banner';
 import { Icon } from '@/components/icon';
 import { connectionColor, describeState } from '@/components/mac-chip';
 import { useMacById } from '@/hooks/mac-connection';
-import { budgetRows, formatBytes, LOW_DISK_BYTES, type BudgetRow } from '@/lib/home';
+import { budgetRows, formatBytes, LOW_DISK_BYTES, memoryGb, type BudgetRow } from '@/lib/home';
 import { tildeHome } from '@/lib/paths';
 import { devicesOf, workspaceNames } from '@/lib/workspaces';
 import { mono, useColors } from '@/theme';
@@ -37,6 +37,8 @@ export function MacStatus({ id }: { id: string }) {
   }
 
   const capacity = status?.capacity;
+  const usedBytes = typeof usage?.memory.usedBytes === 'number' ? usage.memory.usedBytes : null;
+  const memoryPressed = !!usage?.memory.pressure && usage.memory.pressure !== 'normal';
   const running = (status?.environments ?? []).flatMap((env) =>
     devicesOf(env)
       .filter((d) => d.running)
@@ -76,7 +78,7 @@ export function MacStatus({ id }: { id: string }) {
         <Section title="Capacity">
           <Line label="Live workspaces" value={String(capacity.liveCount)} />
           <Line
-            label="Memory committed"
+            label="Stim's share of memory"
             value={`${(capacity.committedMb / 1024).toFixed(1)} of ${Math.round(capacity.totalMemoryMb / 1024)} GB`}
             warn={capacity.overCapacity}
           />
@@ -98,10 +100,13 @@ export function MacStatus({ id }: { id: string }) {
               warn={usage.load.avg5 > usage.load.cpus}
             />
             <Line
-              label="Memory"
-              value={`${Math.round(usage.memory.totalBytes / 2 ** 30)} GB${usage.memory.pressure ? ` \u00B7 ${usage.memory.pressure} pressure` : ''}`}
-              warn={usage.memory.pressure !== null && usage.memory.pressure !== 'normal'}
+              label={usedBytes === null ? 'Memory' : 'Memory used'}
+              value={`${usedBytes === null ? '' : `${memoryGb(usedBytes).toFixed(1)} of `}${Math.round(memoryGb(usage.memory.totalBytes))} GB${usage.memory.pressure ? ` \u00B7 ${usage.memory.pressure} pressure` : ''}`}
+              warn={memoryPressed}
             />
+            {usedBytes === null ? null : (
+              <Bar fraction={usedBytes / Math.max(1, usage.memory.totalBytes)} warn={memoryPressed} />
+            )}
           </Section>
           <Section title="Disk">
             {usage.volumes.map((volume) => {
