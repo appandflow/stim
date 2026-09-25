@@ -3,6 +3,7 @@ import fixture from '../../mock-server/fixtures/status.json';
 import {
   deviceWarnings,
   devicesOf,
+  livePlatforms,
   orderDevices,
   pathInCheckout,
   projectOf,
@@ -64,6 +65,31 @@ describe('devicesOf', () => {
       ['default', 'iPhone 18 Pro 27.0', true],
       ['ipad', 'iPad Pro 11-inch (M5) 27.0', false],
     ]);
+  });
+});
+
+describe('livePlatforms', () => {
+  it('names each platform with a running owned simulator or emulator once, across slots', () => {
+    const booted = (udid: string) => ({
+      name: `stim-w-${udid} (iPhone 18 Pro 27.0)`,
+      udid,
+      owned: true,
+      state: 'Booted',
+    });
+    const iosOnly = env('/w', {
+      ios: booted('A'),
+      android: { name: 'stim-w', owned: true, physical: false, state: 'not-detected' },
+      slots: [
+        { slot: 'duo', ios: booted('B'), android: null },
+        { slot: 'pixel', android: { name: 'Pixel 9', serial: 'P9', owned: false, physical: true, state: 'detected' } },
+      ],
+    });
+    expect(livePlatforms(iosOnly)).toEqual(['ios']);
+    const both = env('/w', {
+      ios: booted('A'),
+      slots: [{ slot: 'pixel', android: { name: 'stim-w-pixel', owned: true, physical: false, state: 'detected' } }],
+    });
+    expect(livePlatforms(both)).toEqual(['ios', 'android']);
   });
 });
 

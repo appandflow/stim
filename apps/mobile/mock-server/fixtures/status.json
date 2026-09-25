@@ -466,7 +466,13 @@
             "basis": ["device-log", "workspace-use"]
           }
         },
-        "android": null,
+        "android": {
+          "name": "stim-chat-perf-demo-tlon-mobile",
+          "owned": true,
+          "physical": false,
+          "serial": "emulator-5554",
+          "state": "detected"
+        },
         "metro": {
           "port": 8095,
           "running": true,
@@ -606,6 +612,7 @@
     "simctlAvailable": true
   },
   "edits": [
-    "environments[path*=1123-mobile-app].remoteDevices: added by hand in the RemoteDeviceState shape; the capture machine had no EAS session"
+    "environments[path*=1123-mobile-app].remoteDevices: added by hand in the RemoteDeviceState shape; the capture machine had no EAS session",
+    "environments[path*=chat-perf-demo].android: added by hand, so one workspace runs both platforms and reload needs a platform"
   ]
 }

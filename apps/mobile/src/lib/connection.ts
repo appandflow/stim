@@ -11,7 +11,7 @@ import {
 
 export type ConnectionState =
   | { kind: 'connecting' }
-  | { kind: 'open'; server: Methods['hello']['result']['server']; actions: ActionName[] }
+  | { kind: 'open'; server: Methods['hello']['result']['server']; actions: ActionName[] | null }
   | { kind: 'waiting'; retryInMs: number; reason: string }
   | { kind: 'refused'; code: string; reason: string }
   | { kind: 'closed' };
@@ -93,6 +93,17 @@ export class StimConnection {
     this.connect();
   }
 
+  /** Replaces the connection now, so a new `hello` reports capabilities the Mac changed since. */
+  reconnect(): void {
+    if (this.stopped) return;
+    if (this.timer !== null) this.clearTimer(this.timer);
+    this.timer = null;
+    const socket = this.socket;
+    this.detach('Reconnecting.');
+    socket?.close();
+    this.connect();
+  }
+
   close(): void {
     this.stopped = true;
     if (this.timer !== null) this.clearTimer(this.timer);
@@ -150,7 +161,7 @@ export class StimConnection {
           if (socket !== this.socket) return;
           this.open = true;
           this.retryMs = MIN_RETRY_MS;
-          this.options.onState?.({ kind: 'open', server: hello.server, actions: hello.actions ?? [] });
+          this.options.onState?.({ kind: 'open', server: hello.server, actions: hello.actions ?? null });
           for (const sub of this.subscriptions) this.sendSubscribe(socket, sub);
         },
         (error: Error) => {
@@ -168,15 +179,19 @@ export class StimConnection {
     };
     socket.onclose = () => {
       if (socket !== this.socket) return;
-      this.socket = null;
-      this.open = false;
-      for (const sub of this.subscriptions) {
-        sub.serverId = null;
-        this.cancelRetry(sub);
-      }
-      this.failPending('Connection lost.');
+      this.detach('Connection lost.');
       if (!this.stopped) this.scheduleRetry('Connection lost.');
     };
+  }
+
+  private detach(reason: string): void {
+    this.socket = null;
+    this.open = false;
+    for (const sub of this.subscriptions) {
+      sub.serverId = null;
+      this.cancelRetry(sub);
+    }
+    this.failPending(reason);
   }
 
   private scheduleRetry(reason: string): void {
