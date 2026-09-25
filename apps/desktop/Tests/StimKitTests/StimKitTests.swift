@@ -26,6 +26,13 @@ import Testing
     #expect(workspace.devices.last?.id == "remote:drs_9")
   }
 
+  @Test func decodesDeviceActivityAndIgnoresUnknownFields() {
+    #expect(workspace.devices[2].activity?.driver?.tool == "agent-device")
+    #expect(workspace.devices[1].activity?.state == "idle")
+    #expect(workspace.devices[1].activityKey == "emulator-5554")
+    #expect(workspace.devices[0].activity == nil)
+  }
+
   @Test func keepsNestedParenthesesInTheModel() {
     #expect(workspace.devices[2].model == "iPad Pro 11-inch (M5) 27.0")
     #expect(workspace.devices[2].formFactor == .tablet)
@@ -196,7 +203,55 @@ import Testing
   }
 }
 
+@Suite struct ActivityBadgeTests {
+  let now = ISO8601DateFormatter().date(from: "2026-09-25T02:00:00Z")!
+
+  func activity(_ state: String, last: String? = nil, since: String? = nil) -> DeviceActivity {
+    DeviceActivity(
+      state: state, driver: since.map { DeviceActivity.Driver(tool: "maestro", pid: 1, since: $0) },
+      lastActivityAt: last, basis: [])
+  }
+
+  @Test func drivenNamesTheToolAndHowLong() {
+    let badge = ActivityBadge(activity("driven", since: "2026-09-25T01:48:00.000Z"), now: now)
+    #expect(badge?.text == "Driven by maestro \u{00B7} 12m")
+  }
+
+  @Test func idleCountsFromTheLatestActivity() {
+    #expect(ActivityBadge(activity("idle", last: "2026-09-24T22:30:00.000Z"), now: now)?.text == "Idle 3h30m")
+    #expect(ActivityBadge(activity("idle"), now: now)?.text == "Idle")
+  }
+
+  @Test func aRecentScreenChangeOverridesTheCLIsIdle() {
+    let idle = activity("idle", last: "2026-09-24T20:00:00.000Z")
+    #expect(ActivityBadge(idle, screenChangedAt: now.addingTimeInterval(-120), now: now) == nil)
+    #expect(ActivityBadge(idle, screenChangedAt: now.addingTimeInterval(-3600), now: now)?.text == "Idle 1h")
+  }
+
+  @Test func activeShowsNothingAndUnknownNeverReadsAsIdle() {
+    #expect(ActivityBadge(activity("active"), now: now) == nil)
+    #expect(ActivityBadge(activity("unknown"), now: now) == .unknown)
+  }
+}
+
 @Suite struct GcPreviewTests {
+  @Test func idleAndUnrecognizedDevicesAreNeverCountedAsDeletable() throws {
+    let json = """
+      {"mode":"dry-run","idle":null,"actionable":false,"failures":null,"sections":{
+        "idleDevices":[
+          {"kind":"ios","id":"U1","name":"stim-a (iPhone 17 27.0)","project":"/p","slot":"default","lastActivityAt":null,"idleForMs":7200000,"buildInProgress":false},
+          {"kind":"android","id":"stim-b","name":"stim-b","project":"/p","slot":"default","lastActivityAt":null,"idleForMs":90000000,"buildInProgress":true}],
+        "unverifiedDevices":[{"kind":"ios","id":"U9","name":"stim-desktop-duo-test","command":"xcrun simctl delete U9"}]
+      }}
+      """
+    let report = try GcPreview(json: Data(json.utf8))
+    #expect(report.deletableCount == 0)
+    #expect(report.sections.flatMap(\.entries).allSatisfy { $0.kept != nil })
+    #expect(report.idleShutdownCount(atLeast: GcPreview.idleSeconds("1h")!) == 1)
+    #expect(report.idleShutdownCount(atLeast: GcPreview.idleSeconds("4h")!) == 0)
+  }
+
+
   @Test func marksWhatDeleteLeavesAlone() throws {
     let json = """
       {"mode":"dry-run","actionable":true,"failures":null,"sections":{

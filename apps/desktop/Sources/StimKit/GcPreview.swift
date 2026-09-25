@@ -37,6 +37,30 @@ public struct GcPreview: Sendable {
     sections.flatMap(\.entries).filter { $0.kept == nil }.compactMap(\.bytes).reduce(0, +)
   }
 
+  /// Booted owned devices the report found idle, which `stim gc --idle <duration>` shuts down.
+  public var idleDevices: [IdleDevice] = []
+
+  public struct IdleDevice: Hashable, Sendable {
+    public var name: String
+    public var idleFor: TimeInterval?
+    public var buildInProgress: Bool
+  }
+
+  /// How many idle devices `stim gc --idle` with this many seconds would shut down.
+  public func idleShutdownCount(atLeast seconds: TimeInterval) -> Int {
+    idleDevices.filter { !$0.buildInProgress && ($0.idleFor ?? -1) >= seconds }.count
+  }
+
+  public static func idleSeconds(_ duration: String) -> TimeInterval? {
+    guard let unit = duration.last, let count = Double(duration.dropLast()), count > 0 else { return nil }
+    switch unit {
+    case "m": return count * 60
+    case "h": return count * 3600
+    case "d": return count * 86400
+    default: return nil
+    }
+  }
+
   public var deletableCount: Int {
     sections.flatMap(\.entries).filter { $0.kept == nil }.count
   }
@@ -51,8 +75,10 @@ public struct GcPreview: Sendable {
     ("parkedSimulators", "Parked simulators"),
     ("parkedEmulators", "Parked emulators"),
     ("orphanedDevices", "Orphaned devices"),
+    ("unverifiedDevices", "Unrecognized stim-* devices"),
     ("staleDevices", "Stale devices"),
     ("staleDeviceRecords", "Stale device records"),
+    ("idleDevices", "Idle devices"),
     ("orphanedEasSessions", "Orphaned EAS sessions"),
     ("staleBuildLocks", "Stale build locks"),
     ("staleBuildSlots", "Stale build slots"),
@@ -70,8 +96,11 @@ public struct GcPreview: Sendable {
   /// Sections `stim guide facts gc` documents as never deleted.
   static let reportOnly: Set<String> = [
     "unresolvedBuildClaims", "buildsInProgress", "keptDeviceLeases", "deviceSweepNotices",
-    "easSessionSweepNotices", "skipped",
+    "easSessionSweepNotices", "skipped", "idleDevices", "unverifiedDevices",
   ]
+
+  /// Durations offered for `stim gc --idle`.
+  public static let idleDurations = ["30m", "1h", "2h", "4h", "1d"]
 
   public init(json: Data) throws {
     guard let object = try? JSONSerialization.jsonObject(with: json) as? [String: Any] else {
@@ -82,21 +111,33 @@ public struct GcPreview: Sendable {
     }
     guard let sections = object["sections"] as? [String: Any] else { throw Failure.unreadable }
     actionable = object["actionable"] as? Bool ?? false
+    idleDevices = ((sections["idleDevices"] as? [[String: Any]]) ?? []).map {
+      IdleDevice(
+        name: $0["name"] as? String ?? "?",
+        idleFor: ($0["idleForMs"] as? NSNumber).map { $0.doubleValue / 1000 },
+        buildInProgress: $0["buildInProgress"] as? Bool ?? false)
+    }
     let known = Set(Self.order.map(\.key))
     let keys = Self.order + sections.keys.filter { !known.contains($0) }.sorted().map { ($0, $0) }
     self.sections = keys.compactMap { key, title in
       guard let items = sections[key] as? [[String: Any]], !items.isEmpty else { return nil }
-      let entries = items.map { Self.entry($0, reportOnly: Self.reportOnly.contains(key)) }
+      let entries = items.map { Self.entry($0, key: key) }
       return Section(key: key, title: title, entries: entries)
     }
   }
 
-  private static func entry(_ item: [String: Any], reportOnly: Bool) -> Entry {
+  private static func entry(_ item: [String: Any], key: String) -> Entry {
+    let reportOnly = Self.reportOnly.contains(key)
     let label = ["name", "dir", "path", "project", "id", "message"].lazy.compactMap { item[$0] as? String }.first ?? "?"
     let bytes = (item["bytes"] as? NSNumber)?.int64Value
     let acted = ["willRemove", "willClear", "willEmpty"].compactMap { item[$0] as? Bool }.first
     let kept: String?
-    if reportOnly {
+    if key == "idleDevices" {
+      let idle = (item["idleForMs"] as? NSNumber).map { "idle \(ActivityBadge.duration($0.doubleValue / 1000))" }
+      kept = [idle ?? "idle", "stim gc --idle shuts it down"].joined(separator: "; ")
+    } else if key == "unverifiedDevices" {
+      kept = "Stim has no record of creating it; to delete it, run: \(item["command"] as? String ?? "?")"
+    } else if reportOnly {
       kept = item["detail"] as? String ?? "reported only"
     } else if acted == false {
       kept = item["detail"] as? String ?? item["emptySkipped"] as? String ?? item["note"] as? String ?? "kept"

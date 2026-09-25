@@ -15,6 +15,12 @@ in the workspace directory:
   also copy its command.
 - Workspace inspector: `stim stop`, and `stim worktree remove` after a
   confirmation that names the worktree and its branch.
+- Idle devices: when the `stim gc --json` preview lists idle devices, the
+  sheet offers **Shut down idle** with a duration (30 minutes to 1 day), then
+  runs `stim gc --idle <duration>` after a confirmation. That shuts the devices
+  down like `stim stop` and never deletes them. The preview marks idle and
+  unrecognized `stim-*` devices as kept, because `stim gc --delete` never
+  touches them.
 
 A linked worktree Stim has not registered yet, listed in `unprovisionedWorktrees`
 of `stim status --json`, appears under Idle in the sidebar with its project and
@@ -30,6 +36,15 @@ which prints a payload each time the state changes, and the toolbar shows
 `live` while it runs. If it exits, the app restarts it after a delay that
 doubles from 1 to 30 seconds. A `stim` without `--watch` makes the app run
 `stim status --json` every 10 seconds instead.
+
+Each device tile shows the `activity` that `stim status` reports: "Driven by
+<tool> · 12m" while agent-device, a Stim device lock, or a test runner drives
+it, "Idle 3h" when nothing has used it for 10 minutes or more, and "Activity
+unknown" when Stim could not read a claim. The app adds one signal the CLI
+cannot see: a simulator's screen damage or an emulator's new frame. A screen
+that changed in the last 10 minutes clears the idle badge, and an older change
+counts toward the idle time. The app sees screen changes only while the tile's
+frames are streaming.
 
 Resource usage is measured with `ps` every 3 seconds while the app is active
 and its window is on screen: each workspace's

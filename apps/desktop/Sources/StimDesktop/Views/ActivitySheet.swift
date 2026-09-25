@@ -6,6 +6,7 @@ struct ActivitySheet: View {
   @EnvironmentObject private var actions: ActionCenter
   @Environment(\.dismiss) private var dismiss
   @State private var confirmingDelete = false
+  @State private var idleDuration: String?
 
   private var isGcPreview: Bool { run.command.arguments == ["gc", "--json"] }
 
@@ -38,6 +39,9 @@ struct ActivitySheet: View {
           Text("Closing this keeps the command running.").foregroundStyle(Theme.tertiary)
         }
         Spacer()
+        if case .success(let report) = report, !report.idleDevices.isEmpty {
+          idleMenu(report)
+        }
         if case .success(let report) = report {
           Button("Delete\u{2026}", role: .destructive) { confirmingDelete = true }
             .disabled(!report.actionable)
@@ -58,6 +62,35 @@ struct ActivitySheet: View {
     .padding(22)
     .frame(width: 720, height: 540)
     .background(Theme.background)
+  }
+
+  private func idleMenu(_ report: GcPreview) -> some View {
+    Menu("Shut down idle\u{2026}") {
+      ForEach(GcPreview.idleDurations, id: \.self) { duration in
+        let count = GcPreview.idleSeconds(duration).map { report.idleShutdownCount(atLeast: $0) } ?? 0
+        Button("Idle \(duration) or more (\(count))") { idleDuration = duration }
+          .disabled(count == 0)
+      }
+    }
+    .fixedSize()
+    .help("stim gc --idle <duration> shuts down owned devices with no driver or activity for that long. It never deletes them.")
+    .confirmationDialog(
+      "Shut down devices idle \(idleDuration ?? "") or more?",
+      isPresented: Binding(get: { idleDuration != nil }, set: { if !$0 { idleDuration = nil } }),
+      titleVisibility: .visible
+    ) {
+      if let duration = idleDuration {
+        Button("Run stim gc --idle \(duration)") {
+          actions.run(
+            "Shut down idle devices", StimCommand(["gc", "--idle", duration], cwd: run.command.cwd),
+            key: ActionCenter.machineKey)
+        }
+      }
+    } message: {
+      Text(
+        "Stim shuts down owned simulators and emulators idle that long, like stim stop: they stay assigned and boot again on the next run. It checks each device again first and keeps any that became busy."
+      )
+    }
   }
 
   private func deleteMessage(_ report: GcPreview) -> String {

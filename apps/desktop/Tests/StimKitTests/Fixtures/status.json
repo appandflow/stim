@@ -9,7 +9,14 @@
             "name": "stim-wide-insets-mobile-ipad (iPad Pro 11-inch (M5) 27.0)",
             "udid": "D39CAF14-F4A4-4C0A-B8A4-3A30B2D268F0",
             "owned": true,
-            "state": "Booted"
+            "state": "Booted",
+            "activity": {
+              "state": "driven",
+              "driver": { "tool": "agent-device", "pid": 4163, "since": "2026-09-25T02:06:08.796Z" },
+              "lastActivityAt": "2026-09-25T02:09:01.052Z",
+              "basis": ["agent-device-claim"],
+              "futureField": true
+            }
           },
           "android": null
         }
@@ -28,7 +35,8 @@
         "owned": true,
         "physical": false,
         "serial": "emulator-5554",
-        "state": "detected"
+        "state": "detected",
+        "activity": { "state": "idle", "lastActivityAt": "2026-09-24T23:00:00.000Z", "basis": ["device-log"] }
       },
       "metro": { "port": 8091, "running": true, "pid": 33394 },
       "supervisor": {

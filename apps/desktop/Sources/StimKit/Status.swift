@@ -70,6 +70,7 @@ public struct IosDevice: Decodable, Hashable, Sendable {
   public var udid: String
   public var owned: Bool
   public var state: String
+  public var activity: DeviceActivity?
 }
 
 public struct AndroidDevice: Decodable, Hashable, Sendable {
@@ -78,6 +79,7 @@ public struct AndroidDevice: Decodable, Hashable, Sendable {
   public var physical: Bool
   public var serial: String?
   public var state: String
+  public var activity: DeviceActivity?
 }
 
 /// A billable remote session recorded for the workspace, such as an EAS Simulator.
