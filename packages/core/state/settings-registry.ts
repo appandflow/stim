@@ -159,6 +159,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   { key: 'android.systemImage', type: STRING, scopes: PROJECT, description: 'SDK system image for owned AVDs' },
   {
+    key: 'android.deviceProfile',
+    type: STRING,
+    scopes: EVERY,
+    default: 'pixel_6',
+    description: 'avdmanager hardware profile id for new owned AVDs',
+  },
+  {
     key: 'android.dataPartitionSizeGb',
     type: { kind: 'number', integer: true, minimum: 6, maximum: 16 * 1024 },
     scopes: PROJECT,

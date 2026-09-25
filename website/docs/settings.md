@@ -60,8 +60,8 @@ Stim reads the first value found in this order:
 2. Repository settings in the same machine file, keyed by the git common dir
    (`--scope repo`).
 3. Committed `.stim.json` beside the app's `package.json` (`--scope committed`).
-4. Machine defaults under top-level `optimizations` in `~/.stim/config.json` (for
-   optimization settings only, `--scope machine`).
+4. Machine defaults in `~/.stim/config.json` (`--scope machine`), for the
+   top-level `optimizations` settings and `android.deviceProfile` only.
 5. The Stim default.
 
 An environment variable that overrides a setting wins over every layer.
@@ -101,6 +101,7 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `ios.signingIdentitySha1`     | SHA-1 of that identity, when two share a name                        |
 | `ios.lanHost`                 | Address a phone uses to reach this workspace's Metro                 |
 | `android.systemImage`         | Android SDK system image                                             |
+| `android.deviceProfile`       | AVD hardware profile, such as `pixel_tablet` or `pixel_fold`         |
 | `android.dataPartitionSizeGb` | AVD data partition size                                              |
 | `android.avdConfigFile`       | Additional AVD config file                                           |
 | `android.avdConfig`           | Validated AVD config values                                          |
@@ -160,9 +161,22 @@ The setting only changes the prefetch, not the app. Setting
 
 ### Android AVD overrides
 
-New owned AVDs use the Pixel 6 hardware profile (1080 × 2400 pixels at 420 dpi).
-Existing AVDs keep their display settings. Parked AVDs created with the old generic
-profile are not adopted by new workspaces.
+New owned AVDs use the Pixel 6 hardware profile (1080 × 2400 pixels at 420 dpi)
+unless `android.deviceProfile` names another one, spelled as
+`avdmanager list device -c` prints it. Use `pixel_tablet` for a tablet or
+`pixel_fold` for a foldable; avdmanager writes the foldable's hinge and posture
+keys from the profile. The machine layer can set a default for every workspace:
+
+```sh
+stim settings set android.deviceProfile pixel_tablet --scope machine
+```
+
+A set profile counts as a request, so a workspace that already owns an AVD of
+another profile refuses until that AVD is removed, and each run checks the id
+with avdmanager. An id that avdmanager does not offer refuses with
+`STIM_BAD_ARG` and lists the offered ids. A parked AVD is adopted only by a workspace that requests the same
+profile. Existing AVDs keep their display settings. Parked AVDs created with the
+old generic profile are not adopted by new workspaces.
 
 `android.avdConfigFile` reads an Android `config.ini` file. `android.avdConfig`
 provides the same safe keys as JSON. Stim applies these values only when it

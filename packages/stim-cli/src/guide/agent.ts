@@ -295,7 +295,7 @@ FULL TOPIC LIST
   stim guide lifecycle builds     # build optimizations, optional cache warm-up, fingerprints
   stim guide lifecycle concurrency # shared builds, wait timeouts, capacity limits
   stim guide lifecycle budget     # disk and memory budgets, automatic reclaim
-  stim guide lifecycle options    # every flag, Android variants, --device-type, --system-image
+  stim guide lifecycle options    # every flag, Android variants, --device-type, --system-image, --device-profile
   stim guide lifecycle devices    # ios --device and android --device on a physical phone
   stim guide lifecycle release    # Release configurations and ...Release variants
   stim guide facts                # the --json payloads

@@ -660,7 +660,7 @@ result as proof instead of requiring an unrelated screenshot.`,
   The wipe resets apps, accounts, device settings and the shared storage
   inside the data partition; the AVD's creation settings and any separate
   SD card image remain. Status lists parked Android emulators; GC
-  reports their system image, age and disk size.
+  reports their system image, hardware profile, age and disk size.
 `,
     },
     builds: {
@@ -691,7 +691,8 @@ PREDICTING THE NEXT BUILD (--plan)
 
   A plan resolves the fingerprint and cache key the way the run would, with
   the same --slot, --scheme, --configuration, --variant, --device-type,
-  --runtime, --system-image, --eas-profile and --no-build-cache, then looks
+  --runtime, --system-image, --device-profile, --eas-profile and
+  --no-build-cache, then looks
   in the build's order: the local cache, the cache.provider setting's
   provider, then the app config's build cache provider. A provider has no
   lookup that skips the download, so a remote check downloads the artifact:
@@ -1172,7 +1173,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
       body: () => `THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote --reset-cache
   ios             --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --simulator-app <xcode|siniulator|stim-desktop> --device [udid] --wait <seconds> --no-wait --remote <proxy|eas>
-  android         --slot <name> --json --plan --no-metro-check --no-build-cache --variant <name> --system-image <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
+  android         --slot <name> --json --plan --no-metro-check --no-build-cache --variant <name> --system-image <id> --device-profile <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
   reload          [ios|android] --json
   device          lock <ios|android> [id] --slot <name> --for <duration> --wait <seconds> --json;
                   unlock [ios|android] --slot <name> --json
@@ -1373,8 +1374,11 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   says "happens on iPad on iOS 26.5" gets reproduced without writing a
   \`.stim.json\`. \`android --system-image <id>\` is the Android half, taking
   the sdkmanager package id
-  ("system-images;android-36;google_apis;arm64-v8a"). Each overrides its
-  setting (ios.deviceType, ios.runtime, android.systemImage) for that one
+  ("system-images;android-36;google_apis;arm64-v8a"), and
+  \`android --device-profile <id>\` picks the Android hardware profile, as
+  \`avdmanager list device -c\` spells it: "pixel_tablet" for a tablet,
+  "pixel_fold" for a foldable. Each overrides its setting (ios.deviceType,
+  ios.runtime, android.systemImage, android.deviceProfile) for that one
   invocation, exactly as \`--configuration\` overrides ios.configuration.
 
   A name that is not INSTALLED on this machine refuses with STIM_BAD_ARG
@@ -1396,11 +1400,13 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   ALREADY owns a simulator and \`--device-type\` names a different model,
   Stim refuses rather than silently booting the wrong one: reap the current
   sim with \`stim worktree remove\` (or \`stim gc --delete\`), then run
-  \`stim ios\` again to create the requested one. \`--runtime\` and
-  \`--system-image\` apply at creation only, so an existing device keeps the
-  version it was made with. The --json payload reports what was actually
-  used: \`deviceType\` and \`runtime\` on iOS, \`systemImage\` on Android,
-  read from the device itself, so a settings-driven run reports them too.`,
+  \`stim ios\` again to create the requested one. \`--device-profile\` does
+  the same for an AVD of another profile. To keep both devices, give the new
+  one its own \`--slot\`. \`--runtime\` and \`--system-image\` apply at
+  creation only, so an existing device keeps the version it was made with.
+  The --json payload reports what was actually used: \`deviceType\` and
+  \`runtime\` on iOS, \`systemImage\` and \`deviceProfile\` on Android, read
+  from the device itself, so a settings-driven run reports them too.`,
     },
     devices: {
       summary:

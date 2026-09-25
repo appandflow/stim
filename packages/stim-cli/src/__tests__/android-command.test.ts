@@ -1258,6 +1258,7 @@ describe('a cache hit', () => {
       avdName: 'stim-app-412',
       deviceName: 'stim-app-412',
       systemImage: null,
+      deviceProfile: null,
       fingerprint: FINGERPRINT,
       cacheKey: CACHE_KEY,
       variant: null,
@@ -2997,6 +2998,7 @@ describe('the pure parts', () => {
       avdName: null,
       deviceName: null,
       systemImage: null,
+      deviceProfile: null,
       fingerprint: null,
       cacheKey: null,
       variant: null,
@@ -5320,6 +5322,32 @@ describe('--device with no serial: the pool', () => {
     const result = await h.run();
     expect(result.ok).toBe(false);
     expect(result.error?.message).toMatch(/is not connected\. adb reports these physical devices/);
+  });
+});
+
+describe('the emulator device-profile flag', () => {
+  test('the flag overrides the setting at the engine, and the payload reports the profile the AVD has', async () => {
+    const settings = { android: { deviceProfile: 'pixel_tablet' } };
+    const h = harness({
+      json: true,
+      resolveSettingsFor: () => settings,
+      deviceProfile: 'pixel_fold',
+      listDeviceProfiles: () => ['pixel_6', 'pixel_fold', 'pixel_tablet'],
+      ensureDevice: async (args: unknown) => {
+        h.calls.ensureDevice.push(args);
+        return { avdName: 'stim-app-412', consolePort: 5584, owned: true, deviceProfile: 'pixel_fold' };
+      },
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.ensureDevice[0]).toMatchObject({ flags: { deviceProfile: 'pixel_fold' } });
+    expect(JSON.parse(h.stdout[0] ?? '{}').deviceProfile).toBe('pixel_fold');
+  });
+
+  test('a plain run with neither flag nor setting never runs avdmanager to list profiles', async () => {
+    const h = harness({ listDeviceProfiles: never('the avdmanager profile listing') });
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.ensureDevice[0]).toMatchObject({ flags: { deviceProfile: null } });
   });
 });
 

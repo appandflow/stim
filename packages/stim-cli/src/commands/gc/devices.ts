@@ -373,9 +373,22 @@ export function collectParkedSims(deps: GcDeviceDependencies, age: ParkedAge = {
 export interface ParkedAvdReport {
   name: string;
   systemImage: string;
+  deviceProfile: string | null;
   parkedAt: string;
   bytes: number | null;
   listed: boolean | null;
+}
+
+function poolConfigurationDeviceProfile(configuration: string): string | null {
+  try {
+    const entries: unknown = JSON.parse(configuration);
+    const entry = Array.isArray(entries)
+      ? entries.find((pair) => Array.isArray(pair) && pair[0] === 'hw.device.name')
+      : undefined;
+    return typeof entry?.[1] === 'string' ? entry[1] : null;
+  } catch {
+    return null;
+  }
 }
 
 export function collectParkedAvds(deps: GcDeviceDependencies, age: ParkedAge = {}): ParkedAvdReport[] {
@@ -394,6 +407,7 @@ export function collectParkedAvds(deps: GcDeviceDependencies, age: ParkedAge = {
     return {
       name: record.name,
       systemImage: record.systemImage,
+      deviceProfile: poolConfigurationDeviceProfile(record.configuration),
       parkedAt: record.parkedAt,
       bytes,
       listed: avds === null ? null : avds.includes(record.name),

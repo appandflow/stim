@@ -23,6 +23,7 @@ export interface OwnedDeviceRecord {
   deviceType?: string | null;
   runtime?: string | null;
   systemImage?: string | null;
+  deviceProfile?: string | null;
   adopted?: boolean;
   adoptionPending?: boolean;
   parkedCacheKey?: string;
@@ -40,6 +41,7 @@ export interface DeviceSettings {
   ios?: { deviceType?: string; runtime?: string; simslimProfile?: string };
   android?: {
     systemImage?: string;
+    deviceProfile?: string;
     dataPartitionSizeGb?: number;
     avdConfigFile?: string;
     avdConfig?: Record<string, unknown>;
@@ -51,6 +53,7 @@ export interface DeviceFlags {
   deviceType?: string | null;
   runtime?: string | null;
   systemImage?: string | null;
+  deviceProfile?: string | null;
 }
 
 export type Notify = (msg: string) => void;

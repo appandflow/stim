@@ -393,6 +393,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'ios.signingIdentitySha1': { valid: 'A'.repeat(40), invalid: 42, expected: 'a string' },
   'ios.lanHost': { valid: '192.168.1.42', invalid: {}, expected: 'a string' },
   'android.systemImage': { valid: 'system-images;android-36;google_apis;arm64-v8a', invalid: {}, expected: 'a string' },
+  'android.deviceProfile': { valid: 'pixel_fold', invalid: 7, expected: 'a string' },
   'android.dataPartitionSizeGb': { valid: 8, invalid: '8', expected: 'a number' },
   'android.avdConfigFile': { valid: 'avd/config.ini', invalid: {}, expected: 'a string path' },
   'android.avdConfig': { valid: { 'hw.ramSize': 4096 }, invalid: 'hw.ramSize=4096', expected: 'an object' },
@@ -820,6 +821,18 @@ test('machine optimization defaults merge with committed, repository and project
   expect(options.ios).toEqual({ compilationCache: false, swiftCompilationCache: null, prefixMapping: false });
   expect(resolveOptimizations(resolveSettings({ repoRoot: tmpHome }), {}).android.pch).toBe('off');
   expect(resolveOptimizations(resolveSettings({}), {}).android.pch).toBe('on');
+});
+
+test('a machine android.deviceProfile applies under every project layer, and only that android key does', () => {
+  saveConfig({
+    version: 2,
+    projects: {},
+    repos: {},
+    android: { deviceProfile: 'pixel_tablet', systemImage: 'system-images;android-36;google_apis;arm64-v8a' },
+  });
+  expect(resolveSettings({})).toEqual({ android: { deviceProfile: 'pixel_tablet' } });
+  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ android: { deviceProfile: 'pixel_fold' } }));
+  expect(resolveSettings({ repoRoot: tmpHome }).android).toEqual({ deviceProfile: 'pixel_fold' });
 });
 
 test('a repository can enable Metro optimizations over a machine opt-out', () => {

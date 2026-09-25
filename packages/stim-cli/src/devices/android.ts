@@ -18,6 +18,7 @@ import { dirname, isAbsolute, join, resolve } from 'path';
 import { type Executor, getExecutor } from '../exec.ts';
 import { pidExists, signalProcessTree } from '../metro.ts';
 import { androidDataPartitionSizeBytes } from '../workspace/settings.ts';
+import { settingDefinition } from '@stim-cli/core/state';
 
 export interface SystemImage {
   api: number;
@@ -27,7 +28,7 @@ export interface SystemImage {
 }
 
 const ANDROID_ABIS = new Set(['armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64']);
-const DEFAULT_AVD_DEVICE = 'pixel_6';
+export const DEFAULT_AVD_DEVICE_PROFILE: string = String(settingDefinition('android.deviceProfile')?.default);
 
 interface AdbEmulatorEntry {
   serial: string;
@@ -233,9 +234,10 @@ export async function createOwnedAvd(
   label: string,
   {
     systemImage,
+    deviceProfile = DEFAULT_AVD_DEVICE_PROFILE,
     spawn = (...args) => getExecutor().spawn(...args),
-  }: { systemImage?: string; spawn?: Executor['spawn'] } = {},
-): Promise<{ avdName: string; systemImage: string }> {
+  }: { systemImage?: string; deviceProfile?: string; spawn?: Executor['spawn'] } = {},
+): Promise<{ avdName: string; systemImage: string; deviceProfile: string }> {
   const pick = pickDefaultSystemImage(listInstalledSystemImages(), { systemImage });
   if (!pick) {
     const arch = hostSystemImageArch();
@@ -246,7 +248,7 @@ export async function createOwnedAvd(
   const avdName = ownedAvdName(label);
   recordCreatedDevice('android', avdName);
   const tool = androidToolPath('avdmanager');
-  const args = ['create', 'avd', '-n', avdName, '-k', pick.pkg, '--device', DEFAULT_AVD_DEVICE];
+  const args = ['create', 'avd', '-n', avdName, '-k', pick.pkg, '--device', deviceProfile];
   const child = spawn(tool, args, { detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
   let stderr = '';
   child.stdout?.on('data', () => {});
@@ -263,22 +265,27 @@ export async function createOwnedAvd(
   if (result.code !== 0) {
     throw new Error(`Command failed: ${tool} ${args.join(' ')} (${result.signal ?? result.code})\n${stderr.trim()}`);
   }
-  return { avdName, systemImage: pick.pkg };
+  return { avdName, systemImage: pick.pkg, deviceProfile };
 }
 
 // avdmanager joins image.sysdir.1 with File.separator, so an AVD created on
 // Windows stores backslashes.
 export function parseAvdSystemImage(configIni: string): string | null {
+  const dir = avdIniValue(configIni, 'image.sysdir.1')?.replace(/[\\/]+$/, '');
+  if (!dir) return null;
+  return dir.split(/[\\/]/).join(';');
+}
+
+function parseAvdDeviceProfile(configIni: string): string | null {
+  return avdIniValue(configIni, 'hw.device.name') || null;
+}
+
+function avdIniValue(configIni: string, key: string): string | null {
   for (const line of String(configIni).split(/\r?\n/)) {
     const separator = line.indexOf('=');
     if (separator < 0) continue;
-    if (line.slice(0, separator).trim() !== 'image.sysdir.1') continue;
-    const dir = line
-      .slice(separator + 1)
-      .trim()
-      .replace(/[\\/]+$/, '');
-    if (!dir) return null;
-    return dir.split(/[\\/]/).join(';');
+    if (line.slice(0, separator).trim() !== key) continue;
+    return line.slice(separator + 1).trim();
   }
   return null;
 }
@@ -297,6 +304,21 @@ export function ownedAvdSystemImage(
   } catch {
     return null;
   }
+}
+
+export function ownedAvdDeviceProfile(avdName: string): string | null {
+  const configIni = avdConfigIni(avdName);
+  return configIni === null ? null : parseAvdDeviceProfile(configIni);
+}
+
+const AVDMANAGER_LIST_TIMEOUT_MS = 60_000;
+
+export function listAvdDeviceProfiles(): string[] {
+  return parseAvdList(
+    getExecutor().runFile(androidToolPath('avdmanager'), ['list', 'device', '-c'], {
+      timeoutMs: AVDMANAGER_LIST_TIMEOUT_MS,
+    }),
+  );
 }
 
 function sanitizeAvdLabel(label: string): string {
@@ -815,11 +837,15 @@ export function configureNewOwnedAvd(
   return configPath;
 }
 
-export function avdPoolConfiguration(dataPartitionSizeGb: number, avdConfig: Record<string, string>): string {
+export function avdPoolConfiguration(
+  dataPartitionSizeGb: number,
+  avdConfig: Record<string, string>,
+  deviceProfile: string = DEFAULT_AVD_DEVICE_PROFILE,
+): string {
   return JSON.stringify(
     Object.entries({
       ...avdConfig,
-      'hw.device.name': DEFAULT_AVD_DEVICE,
+      'hw.device.name': deviceProfile,
       'disk.dataPartition.size': String(androidDataPartitionSizeBytes(dataPartitionSizeGb)),
     }).toSorted(([a], [b]) => a.localeCompare(b)),
   );

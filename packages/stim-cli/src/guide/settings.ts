@@ -42,7 +42,8 @@ Resolution order, first match wins:
   1. workspace       ~/.stim/config.json, under this project's entry
   2. repo            ~/.stim/config.json, under this repo's git common dir
   3. committed       .stim.json beside the app's package.json
-  4. machine         ~/.stim/config.json, top-level optimizations only
+  4. machine         ~/.stim/config.json, top-level optimizations and
+                     android.deviceProfile only
   5. Stim default
 An environment override, where a setting has one, wins over every layer.
 
@@ -135,9 +136,27 @@ KEYS STIM READS
                         from. The \`--system-image\` flag overrides this per
                         invocation, and an id this SDK has not installed is
                         STIM_BAD_ARG with the installed ids printed.
-                        New AVDs use the Pixel 6 hardware profile (1080x2400,
-                        420 dpi). Existing AVDs keep their display settings;
-                        parked AVDs from the old generic profile are not adopted.
+  android.deviceProfile e.g. "pixel_fold" -- the avdmanager hardware profile a
+                        new owned AVD is created with, spelled exactly as
+                        \`avdmanager list device -c\` prints it. Defaults to
+                        pixel_6 (1080x2400, 420 dpi); "pixel_tablet" and
+                        "pixel_fold" give a tablet and a foldable, and
+                        avdmanager writes the foldable's hinge and posture
+                        keys from its profile. Readable from the machine
+                        layer too, so one machine can default every workspace
+                        to a tablet. A set profile counts as a request: each
+                        run then checks it with avdmanager (about 2s), and a
+                        workspace that already owns an AVD of another profile
+                        refuses until that AVD is reaped. The \`--device-profile\` flag overrides it
+                        per invocation, and an id avdmanager does not offer is
+                        STIM_BAD_ARG with the offered ids printed; that check
+                        runs avdmanager only when a profile is given. A
+                        parked AVD is adopted only by a request for its own
+                        profile. When this workspace already owns an AVD of
+                        another profile, a requested profile refuses rather
+                        than booting it; reap the AVD to create the new one.
+                        Existing AVDs keep their display settings; parked AVDs
+                        from the old generic profile are not adopted.
   android.dataPartitionSizeGb
                         whole GiB for a newly created owned AVD's data
                         partition. Defaults to 8; accepts 6 through 16384.

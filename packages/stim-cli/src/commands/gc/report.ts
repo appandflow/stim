@@ -89,7 +89,7 @@ function formatParkedAvdReport(parkedAvds: readonly ParkedAvdReport[], now: numb
     const listed =
       avd.listed === false ? ' - not on this machine' : avd.listed === null ? ' - listing unavailable; kept' : '';
     lines.push(
-      `  android ${avd.name} ${avd.systemImage} ${parkedAge(avd.parkedAt, now)}${avd.bytes === null ? '' : ` ${formatBytes(avd.bytes)}`}${listed}`,
+      `  android ${avd.name} ${avd.systemImage}${avd.deviceProfile ? ` ${avd.deviceProfile}` : ''} ${parkedAge(avd.parkedAt, now)}${avd.bytes === null ? '' : ` ${formatBytes(avd.bytes)}`}${listed}`,
     );
   }
   lines.push('              --delete attempts verified deletions and keeps failures.');
@@ -549,9 +549,10 @@ export function gcReportSections({
       bytes,
       listed,
     })),
-    parkedEmulators: parkedAvds.map(({ name, systemImage, parkedAt, bytes, listed }) => ({
+    parkedEmulators: parkedAvds.map(({ name, systemImage, deviceProfile, parkedAt, bytes, listed }) => ({
       name,
       systemImage,
+      deviceProfile,
       parkedAt,
       bytes,
       listed,

@@ -443,6 +443,15 @@ export function readCommittedSettings(directory?: string | null): SettingsObject
   }
 }
 
+function machineLayerSettings(machine: unknown): SettingsObject | null {
+  const settings: SettingsObject = {};
+  const optimizations = settingValueAt(machine, 'optimizations');
+  if (optimizations !== undefined) settings.optimizations = optimizations;
+  const deviceProfile = settingValueAt(machine, 'android.deviceProfile');
+  if (deviceProfile !== undefined) settings.android = { deviceProfile };
+  return Object.keys(settings).length > 0 ? settings : null;
+}
+
 export interface SettingsLayer {
   file: string;
   settings: SettingsObject;
@@ -460,6 +469,7 @@ export function settingsLayers({
   const machine = loadConfig();
   const machineFile = getConfigPath();
   const committedDir = projectPath ?? repoRoot;
+  const machineSettings = machineLayerSettings(machine);
   return [
     projectPath
       ? { file: `${machineFile} (projects["${projectPath}"].settings)`, settings: getProjectSettings(projectPath) }
@@ -468,9 +478,7 @@ export function settingsLayers({
       ? { file: `${machineFile} (repos["${gitCommonDir}"].settings)`, settings: getRepoSettings(gitCommonDir) }
       : null,
     committedDir ? { file: join(committedDir, '.stim.json'), settings: readCommittedSettings(committedDir) } : null,
-    machine?.optimizations === undefined
-      ? null
-      : { file: machineFile, settings: { optimizations: machine.optimizations } },
+    machineSettings ? { file: machineFile, settings: machineSettings } : null,
   ].filter((layer): layer is SettingsLayer => layer !== null);
 }
 

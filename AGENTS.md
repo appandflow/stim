@@ -295,10 +295,11 @@ Preserve Stim device ownership, Metro and launch semantics.
 
 The supported build selectors are `ios --scheme <name>`, `ios --configuration <name>`, and
 `android --variant <name>`. `ios --device-type <name>`, `ios --runtime
-<version>`, and `android --system-image <id>` select the model and version of
-the owned simulator or emulator for one invocation, overriding
-`ios.deviceType`, `ios.runtime`, and `android.systemImage`; a name that is not
-installed refuses with `STIM_BAD_ARG` and prints the installed names.
+<version>`, `android --system-image <id>`, and `android --device-profile <id>`
+select the model and version of the owned simulator or emulator for one
+invocation, overriding `ios.deviceType`, `ios.runtime`, `android.systemImage`,
+and `android.deviceProfile`; a name that is not installed refuses with
+`STIM_BAD_ARG` and prints the installed names.
 `android --device [serial]` and
 `ios --device [udid]` select a connected physical device, and take
 `--wait <seconds>` or `--no-wait` for the lease on it. Non-Debug iOS

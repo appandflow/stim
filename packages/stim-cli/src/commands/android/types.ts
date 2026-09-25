@@ -72,6 +72,7 @@ export interface AndroidRecord {
   avdName?: string | null;
   deviceName?: string | null;
   systemImage?: string | null;
+  deviceProfile?: string | null;
 }
 
 export interface RunAndroidResult {

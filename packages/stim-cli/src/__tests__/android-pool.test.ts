@@ -171,6 +171,35 @@ test.each([
   expect(readParked('android').map((record) => record.name)).toEqual(['stim-source']);
 });
 
+test('a parked AVD of another hardware profile is not adopted, and creation passes the requested profile', async () => {
+  park('stim-source');
+  upsertProject('/adopter', {});
+  const result = await ensureOwnedDevice({
+    platform: 'android',
+    projectPath: '/adopter',
+    label: 'tablet',
+    settings: { android: { deviceProfile: 'pixel_tablet' } },
+  });
+  expect(result.created).toBe(true);
+  expect(result.avdName).not.toBe('stim-source');
+  expect(readParked('android').map((record) => record.name)).toEqual(['stim-source']);
+  expect(calls.find((call) => call.includes('create avd'))).toMatch(/ --device pixel_tablet$/);
+});
+
+test('an owned AVD of another hardware profile refuses instead of booting, and a plain run reports its profile', async () => {
+  makeAvd('stim-source');
+  upsertProject('/adopter', { platforms: { android: { avdName: 'stim-source', owned: true } } });
+  const options = { platform: 'android', projectPath: '/adopter', label: 'adopter', settings: {} };
+  await expect(
+    ensureOwnedDevice({ ...options, project: getProject('/adopter'), flags: { deviceProfile: 'pixel_fold' } }),
+  ).rejects.toThrow(/uses device profile pixel_6, but pixel_fold was requested/);
+  expect(running).toBeNull();
+  expect(calls.some((call) => call.includes('create avd'))).toBe(false);
+
+  const result = await ensureOwnedDevice({ ...options, project: getProject('/adopter') });
+  expect(result).toMatchObject({ avdName: 'stim-source', deviceProfile: 'pixel_6' });
+});
+
 test.each([false, true])(
   'a missing parked AVD reclaims remaining data (%s) before dropping its pool record',
   async (dataRemains) => {
@@ -375,7 +404,7 @@ test('GC protects parked emulators from the orphan sweep and keeps an unverifiab
     },
     directorySize: () => 1024,
   });
-  expect(report[0]?.listed).toBeNull();
+  expect(report[0]).toMatchObject({ listed: null, deviceProfile: 'pixel_6' });
   expect(deleteParkedAvds(report)).toBe(1);
   expect(readParked('android')).toHaveLength(1);
 });

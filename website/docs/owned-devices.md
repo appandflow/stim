@@ -93,7 +93,8 @@ Repeat the same slot and device selectors to reuse an assignment. Choose an
 installed model reported by `xcrun simctl list devicetypes`;
 replace the iPad model above when needed. Use `--device <udid>` when selecting
 among connected iPhones. Android supports the same pattern with
-`stim android --slot phone` or `stim android --slot hardware --device <serial>`.
+`stim android --slot phone`, `stim android --slot fold --device-profile pixel_fold`
+or `stim android --slot hardware --device <serial>`.
 Slot names are case-sensitive, 1–64 letters, digits, underscores or hyphens,
 and must begin with a letter or digit; prototype-related reserved names are
 rejected. A name is scoped to its platform within the workspace.
@@ -141,8 +142,10 @@ default. It falls back to a special model (no generation number, such as
 "iPhone Duo") only when no installed runtime offers a numbered one. `stim
 android` selects the newest installed system image matching the host
 architecture: `arm64-v8a` on ARM64 or `x86_64` on x64. Set `.stim.json`
-defaults or use `ios --device-type`, `ios --runtime`, and
-`android --system-image` for a specific target.
+defaults or use `ios --device-type`, `ios --runtime`, `android --system-image`,
+and `android --device-profile` for a specific target. Android AVDs use the
+`pixel_6` hardware profile unless `android.deviceProfile` or
+`--device-profile` names another one, such as `pixel_tablet` or `pixel_fold`.
 
 `stim stop` shuts down an owned local device but does not delete it. The command
 assumes that the caller finished all device automation for that Stim session.
