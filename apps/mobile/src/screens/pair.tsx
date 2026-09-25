@@ -1,6 +1,6 @@
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
 import Constants from 'expo-constants';
-import { useRouter } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -11,6 +11,7 @@ import {
   Text,
   TextInput,
   View,
+  type TextInputProps,
 } from 'react-native';
 
 import { CLIENT } from '@/hooks/mac-connection';
@@ -78,6 +79,7 @@ export function Pair() {
 
   return (
     <KeyboardAvoidingView behavior="padding" style={{ flex: 1, backgroundColor: colors.background }}>
+      <Stack.Screen options={{ headerLeft: () => <CloseButton colors={colors} onPress={() => router.dismiss()} /> }} />
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         {step.kind === 'scan' ? <Scanner colors={colors} onScanned={onScanned} /> : null}
         {step.kind === 'manual' ? (
@@ -89,6 +91,9 @@ export function Pair() {
               value={endpoint}
               onChangeText={setEndpoint}
               placeholder="wss://my-mac.tail1234.ts.net:7443"
+              textContentType="none"
+              autoComplete="off"
+              importantForAutofill="no"
             />
             <Field
               colors={colors}
@@ -97,6 +102,9 @@ export function Pair() {
               value={token}
               onChangeText={setToken}
               placeholder="From Pair a phone in Stim Desktop"
+              textContentType="oneTimeCode"
+              autoComplete="off"
+              importantForAutofill="no"
             />
             <Button colors={colors} title="Pair" onPress={onManual} />
           </View>
@@ -173,6 +181,9 @@ function Field({
   value: string;
   onChangeText: (text: string) => void;
   placeholder: string;
+  textContentType?: TextInputProps['textContentType'];
+  autoComplete?: TextInputProps['autoComplete'];
+  importantForAutofill?: TextInputProps['importantForAutofill'];
 }) {
   return (
     <View style={styles.field}>
@@ -190,6 +201,14 @@ function Field({
         ]}
       />
     </View>
+  );
+}
+
+function CloseButton({ colors, onPress }: { colors: Colors; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel="Close" hitSlop={8}>
+      <Text style={[styles.close, { color: colors.primary }]}>✕</Text>
+    </Pressable>
   );
 }
 
@@ -214,6 +233,7 @@ const styles = StyleSheet.create({
   label: { fontSize: 13, fontWeight: '500' },
   input: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11, fontSize: 15 },
   button: { alignItems: 'center', paddingVertical: 13, paddingHorizontal: 20, borderRadius: radius.card },
+  close: { fontSize: 17, fontWeight: '600' },
   buttonText: { fontSize: 16, fontWeight: '600' },
   connecting: { alignItems: 'center', gap: 12, paddingVertical: 40 },
   title: { fontSize: 22, fontWeight: '600' },
