@@ -141,8 +141,8 @@ describe('stim status --watch --json', () => {
     }
   }
 
-  test('prints one line per change, suppresses identical payloads, and stops adb on SIGTERM', async () => {
-    const { proc, lines, exited, adbPid } = startWatch();
+  test('prints one line per change and suppresses identical payloads', async () => {
+    const { lines } = startWatch();
     await until(() => lines.length === 1);
     expect(JSON.parse(lines[0]!).environments).toEqual([]);
 
@@ -154,20 +154,27 @@ describe('stim status --watch --json', () => {
     saveConfig(config);
     await new Promise((resolve) => setTimeout(resolve, 1500));
     expect(lines).toHaveLength(2);
-
-    await until(() => {
-      try {
-        return readFileSync(adbPid, 'utf-8').trim() !== '';
-      } catch {
-        return false;
-      }
-    });
-    const tracker = Number(readFileSync(adbPid, 'utf-8'));
-    expect(alive(tracker)).toBe(true);
-    proc.kill('SIGTERM');
-    expect(await exited).toBe(0);
-    await until(() => !alive(tracker), 5000);
   }, 30_000);
+
+  test.skipIf(process.platform === 'win32')(
+    'stops adb on SIGTERM; skipped on win32, which cannot run the sh adb shim or deliver SIGTERM to a handler',
+    async () => {
+      const { proc, exited, adbPid } = startWatch();
+      await until(() => {
+        try {
+          return readFileSync(adbPid, 'utf-8').trim() !== '';
+        } catch {
+          return false;
+        }
+      });
+      const tracker = Number(readFileSync(adbPid, 'utf-8'));
+      expect(alive(tracker)).toBe(true);
+      proc.kill('SIGTERM');
+      expect(await exited).toBe(0);
+      await until(() => !alive(tracker), 5000);
+    },
+    30_000,
+  );
 
   test('exits when stdout closes', async () => {
     const { proc, lines, exited } = startWatch();

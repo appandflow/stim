@@ -36,12 +36,13 @@ interface SettingsFailure {
 }
 
 class Refusal extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly remedy: string | null,
-  ) {
+  readonly code: string;
+  readonly remedy: string | null;
+
+  constructor(code: string, message: string, remedy: string | null) {
     super(message);
+    this.code = code;
+    this.remedy = remedy;
   }
 }
 

@@ -15,7 +15,7 @@ let app: string;
 let cwd: string;
 
 beforeEach(() => {
-  base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-settings-')));
+  base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-settings-')));
   home = join(base, 'home');
   repo = join(base, 'repo');
   app = join(repo, 'apps', 'mobile');
