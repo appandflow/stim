@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { get } from 'node:http';
+import { createServer as createHttp2Server, type ServerHttp2Stream } from 'node:http2';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
@@ -696,4 +697,305 @@ describe('stats.get and settings.get', () => {
     });
     expect(childPids()).toEqual([]);
   });
+});
+
+function jpeg(width: number, height: number, tag: string): Buffer {
+  const comment = Buffer.from(tag);
+  const commentLength = Buffer.alloc(2);
+  commentLength.writeUInt16BE(comment.length + 2);
+  const sof = Buffer.from([0xff, 0xc0, 0x00, 0x11, 0x08, 0, 0, 0, 0, 0x03, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1]);
+  sof.writeUInt16BE(height, 5);
+  sof.writeUInt16BE(width, 7);
+  return Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xfe]), commentLength, comment, sof, Buffer.from([0xff, 0xd9])]);
+}
+
+const FAKE_TOOL = `#!/usr/bin/env node
+const { appendFileSync, existsSync, readFileSync, writeFileSync } = require('node:fs');
+const { basename } = require('node:path');
+const env = process.env;
+const args = process.argv.slice(2);
+appendFileSync(env.FAKE_TOOL_CALLS, JSON.stringify({ tool: basename(process.argv[1]), args }) + '\\n');
+if (basename(process.argv[1]) === 'sips') {
+  writeFileSync(args[args.indexOf('--out') + 1], Buffer.from(env.FAKE_SIPS_JPEG, 'base64'));
+  process.exit(0);
+}
+if (env.FAKE_XCRUN_NO_PRIMARY && args.includes('--display=primary')) {
+  process.stderr.write("Device does not have a 'primary' display port");
+  process.exit(22);
+}
+if (env.FAKE_XCRUN_FAIL) {
+  process.stderr.write('simctl failed on purpose');
+  process.exit(2);
+}
+const frames = JSON.parse(env.FAKE_FRAMES);
+const count = existsSync(env.FAKE_FRAME_COUNTER) ? Number(readFileSync(env.FAKE_FRAME_COUNTER, 'utf8')) : 0;
+writeFileSync(env.FAKE_FRAME_COUNTER, String(count + 1));
+writeFileSync(args.at(-1), Buffer.from(frames[Math.min(count, frames.length - 1)], 'base64'));
+`;
+
+function statusPayload(devices: Record<string, unknown>): unknown {
+  return {
+    environments: [{ path: workspace, live: true, memoryMb: 0, warnings: [], ...devices }],
+    capacity: { liveCount: 1, committedMb: 0, totalMemoryMb: 1, overCapacity: false },
+    deviceLeases: [],
+    unprovisionedWorktrees: [],
+    simctlAvailable: true,
+  };
+}
+
+function statusWith(devices: Record<string, unknown>): string {
+  return JSON.stringify([statusPayload(devices)]);
+}
+
+const OWNED_SIM = { name: 'stim-app (iPhone 17 27.0)', udid: 'SIM-1', owned: true, state: 'Booted' };
+
+describe('frames.subscribe', () => {
+  let toolCalls: string;
+
+  async function startWithTools(env: Record<string, string>): Promise<number> {
+    const bin = join(root, 'bin');
+    mkdirSync(bin);
+    for (const tool of ['xcrun', 'sips']) {
+      writeFileSync(join(bin, tool), FAKE_TOOL);
+      chmodSync(join(bin, tool), 0o755);
+    }
+    toolCalls = join(root, 'tools.ndjson');
+    return start({
+      env: {
+        PATH: `${bin}:${process.env.PATH}`,
+        FAKE_TOOL_CALLS: toolCalls,
+        FAKE_FRAME_COUNTER: join(root, 'frame-counter'),
+        ...env,
+      },
+    });
+  }
+
+  function toolRuns(): { tool: string; args: string[] }[] {
+    if (!existsSync(toolCalls)) return [];
+    return readFileSync(toolCalls, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { tool: string; args: string[] });
+  }
+
+  test.skipIf(!fakeTailscale)(
+    'sends a simulator screenshot when the screen changes and stops capturing with the last subscriber',
+    async () => {
+      const a = jpeg(390, 844, 'A');
+      const b = jpeg(390, 844, 'B');
+      const port = await startWithTools({
+        FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }),
+        FAKE_FRAMES: JSON.stringify([a, a, b].map((bytes) => bytes.toString('base64'))),
+      });
+      const first = await authed(port);
+      expect(await first.request('frames.subscribe', { workspace, platform: 'ios', slot: 'default' })).toEqual({
+        id: 2,
+        result: { subscription: 's1' },
+      });
+      expect(await first.next()).toEqual({
+        event: 'frame',
+        subscription: 's1',
+        platform: 'ios',
+        slot: 'default',
+        mime: 'image/jpeg',
+        width: 390,
+        height: 844,
+        capturedAt: expect.any(String),
+        data: a.toString('base64'),
+      });
+      const second = await authed(port);
+      await second.request('frames.subscribe', { workspace, platform: 'ios' });
+      expect(await second.next()).toMatchObject({ event: 'frame', data: a.toString('base64') });
+      expect(await first.next()).toMatchObject({ event: 'frame', data: b.toString('base64') });
+      expect(await second.next()).toMatchObject({ event: 'frame', data: b.toString('base64') });
+      expect(toolRuns()[0]).toEqual({
+        tool: 'xcrun',
+        args: [
+          'simctl',
+          'io',
+          'SIM-1',
+          'screenshot',
+          '--type=jpeg',
+          '--display=primary',
+          expect.stringMatching(/frame\.jpg$/),
+        ],
+      });
+
+      first.socket.close();
+      second.socket.close();
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      const settled = toolRuns().length;
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      expect(toolRuns()).toHaveLength(settled);
+    },
+    10_000,
+  );
+
+  test.skipIf(!fakeTailscale)('refuses devices Stim does not own or that are not running', async () => {
+    const port = await startWithTools({
+      FAKE_STIM_PAYLOADS: statusWith({
+        ios: { ...OWNED_SIM, state: 'Shutdown' },
+        android: { name: 'Pixel', owned: false, physical: false, serial: 'emulator-5556', state: 'detected' },
+        slots: [{ slot: 'tablet', ios: { ...OWNED_SIM, owned: false }, android: null }],
+      }),
+      FAKE_FRAMES: '[]',
+    });
+    const client = await authed(port);
+    const refusals = [
+      [{ platform: 'ios' }, 'is Shutdown, not booted'],
+      [{ platform: 'ios', slot: 'tablet' }, 'No simulator Stim owns'],
+      [{ platform: 'android' }, 'No emulator Stim owns'],
+    ] as const;
+    for (const [target, message] of refusals) {
+      const reply = await client.request('frames.subscribe', { workspace, ...target });
+      if (!('result' in reply)) throw new Error(JSON.stringify(reply));
+      const { subscription } = reply.result as { subscription: string };
+      expect(await client.next()).toEqual({
+        event: 'error',
+        subscription,
+        error: { code: 'frames-failed', message: expect.stringContaining(message) },
+      });
+    }
+    expect(await client.request('frames.subscribe', { workspace, platform: 'web' })).toMatchObject({
+      error: { code: 'bad-request' },
+    });
+    expect(await client.request('frames.subscribe', { workspace: join(root, 'other'), platform: 'ios' })).toMatchObject(
+      { error: { code: 'unknown-workspace' } },
+    );
+    expect(toolRuns()).toEqual([]);
+  });
+
+  test.skipIf(!fakeTailscale)('ends the subscription when the simulator stops, and stops capturing', async () => {
+    const booted = statusPayload({ ios: OWNED_SIM });
+    const port = await startWithTools({
+      FAKE_STIM_PAYLOADS: JSON.stringify([
+        ...Array.from({ length: 25 }, () => booted),
+        statusPayload({ ios: { ...OWNED_SIM, state: 'Shutdown' } }),
+      ]),
+      FAKE_FRAMES: JSON.stringify([jpeg(10, 20, 'A').toString('base64')]),
+    });
+    const client = await authed(port);
+    await client.request('frames.subscribe', { workspace, platform: 'ios' });
+    expect(await client.next()).toMatchObject({ event: 'frame', width: 10, height: 20 });
+    expect(await client.next()).toEqual({
+      event: 'error',
+      subscription: 's1',
+      error: { code: 'frames-failed', message: expect.stringContaining('is Shutdown, not booted') },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const settled = toolRuns().length;
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    expect(toolRuns()).toHaveLength(settled);
+  });
+
+  test.skipIf(!fakeTailscale)('captures the default display when simctl rejects primary', async () => {
+    const port = await startWithTools({
+      FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }),
+      FAKE_FRAMES: JSON.stringify([jpeg(10, 20, 'A').toString('base64')]),
+      FAKE_XCRUN_NO_PRIMARY: '1',
+    });
+    const client = await authed(port);
+    await client.request('frames.subscribe', { workspace, platform: 'ios' });
+    expect(await client.next()).toMatchObject({ event: 'frame', width: 10, height: 20 });
+    expect(toolRuns()[1]?.args).not.toContain('--display=primary');
+  });
+
+  test.skipIf(!fakeTailscale)('ends the subscription when a capture fails', async () => {
+    const port = await startWithTools({
+      FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }),
+      FAKE_FRAMES: '[]',
+      FAKE_XCRUN_FAIL: '1',
+    });
+    const client = await authed(port);
+    await client.request('frames.subscribe', { workspace, platform: 'ios' });
+    expect(await client.next()).toEqual({
+      event: 'error',
+      subscription: 's1',
+      error: { code: 'frames-failed', message: expect.stringContaining('simctl failed on purpose') },
+    });
+  });
+
+  test.skipIf(!fakeTailscale)(
+    'reads an emulator screenshot over gRPC with the discovery token and converts it to JPEG',
+    async () => {
+      const png = Buffer.from('not really a png');
+      const requests: { path: string; authorization: string | undefined; body: Buffer }[] = [];
+      const grpc = createHttp2Server();
+      grpc.on('stream', (stream: ServerHttp2Stream, headers) => {
+        const chunks: Buffer[] = [];
+        stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+        stream.on('end', () => {
+          requests.push({
+            path: String(headers[':path']),
+            authorization: headers.authorization,
+            body: Buffer.concat(chunks),
+          });
+          const format = Buffer.from([0x18, 0xa0, 0x02, 0x20, 0xc0, 0x04]);
+          const message = Buffer.concat([
+            Buffer.from([0x0a, format.length]),
+            format,
+            Buffer.from([0x22, png.length]),
+            png,
+          ]);
+          const frameHeader = Buffer.alloc(5);
+          frameHeader.writeUInt32BE(message.length, 1);
+          stream.respond({ ':status': 200, 'content-type': 'application/grpc' }, { waitForTrailers: true });
+          stream.on('wantTrailers', () => stream.sendTrailers({ 'grpc-status': '0' }));
+          stream.end(Buffer.concat([frameHeader, message]));
+        });
+      });
+      await new Promise<void>((resolve) => grpc.listen(0, '127.0.0.1', resolve));
+      const grpcPort = (grpc.address() as { port: number }).port;
+      const home = join(root, 'fake-home');
+      const running = join(home, 'Library/Caches/TemporaryItems/avd/running');
+      mkdirSync(running, { recursive: true });
+      writeFileSync(
+        join(running, `pid_${process.pid}.ini`),
+        `port.serial=5554\ngrpc.port=${grpcPort}\ngrpc.token=secret-token\n`,
+      );
+      const converted = jpeg(288, 640, 'android');
+      try {
+        const port = await startWithTools({
+          HOME: home,
+          FAKE_STIM_PAYLOADS: JSON.stringify([
+            statusPayload({
+              android: { name: 'stim-app', owned: true, physical: false, serial: 'emulator-5554', state: 'detected' },
+            }),
+            statusPayload({
+              android: { name: 'stim-app', owned: true, physical: false, serial: null, state: 'unknown' },
+            }),
+          ]),
+          FAKE_FRAMES: '[]',
+          FAKE_SIPS_JPEG: converted.toString('base64'),
+        });
+        const client = await authed(port);
+        await client.request('frames.subscribe', { workspace, platform: 'android' });
+        expect(await client.next()).toMatchObject({
+          event: 'frame',
+          platform: 'android',
+          slot: 'default',
+          mime: 'image/jpeg',
+          width: 288,
+          height: 640,
+          data: converted.toString('base64'),
+        });
+        expect(requests[0]).toMatchObject({
+          path: '/android.emulation.control.EmulatorController/getScreenshot',
+          authorization: 'Bearer secret-token',
+        });
+        expect([...requests[0]!.body]).toEqual([0, 0, 0, 0, 6, 0x18, 0x80, 0x0a, 0x20, 0x80, 0x0a]);
+        const seen = requests.length;
+        await until(() => requests.length > seen + 1);
+        expect(client.socket.readyState).toBe(WebSocket.OPEN);
+        const [sips] = toolRuns();
+        expect(sips?.tool).toBe('sips');
+        expect(sips?.args.slice(0, 4)).toEqual(['-s', 'format', 'jpeg', '-s']);
+        expect(readFileSync(sips!.args.at(-3)!)).toEqual(png);
+      } finally {
+        await server?.close();
+        server = null;
+        await new Promise((resolve) => grpc.close(resolve));
+      }
+    },
+  );
 });

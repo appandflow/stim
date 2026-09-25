@@ -15,6 +15,7 @@ export const METHODS = [
   'logs.subscribe',
   'stats.get',
   'settings.get',
+  'frames.subscribe',
   'unsubscribe',
 ] as const;
 
@@ -39,6 +40,7 @@ export const ERROR_CODES = [
   'status-failed',
   'logs-failed',
   'stim-failed',
+  'frames-failed',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -124,6 +126,18 @@ export type StatsResult = Record<string, unknown>;
 /** `stim settings --json`; the CLI masks sensitive values. */
 export type SettingsResult = Record<string, unknown>;
 
+export type Platform = 'ios' | 'android';
+
+/**
+ * A device `stim status` lists as owned by `workspace`, in `slot` (`default` when absent). Frames come only
+ * from a booted simulator or a running emulator Stim created.
+ */
+export interface FrameTarget {
+  workspace: string;
+  platform: Platform;
+  slot?: string;
+}
+
 export interface Methods {
   hello: { params: HelloParams; result: HelloResult };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
@@ -131,6 +145,7 @@ export interface Methods {
   'logs.subscribe': { params: LogFilter; result: SubscribeResult };
   'stats.get': { params?: WorkspaceParams; result: StatsResult };
   'settings.get': { params?: WorkspaceParams; result: SettingsResult };
+  'frames.subscribe': { params: FrameTarget; result: SubscribeResult };
   unsubscribe: { params: UnsubscribeParams; result: Record<string, never> };
 }
 
@@ -171,7 +186,21 @@ export interface ErrorEvent {
   error: ProtocolError;
 }
 
-export type ServerEvent = StatusEvent | LogsEvent | ErrorEvent;
+/** A screenshot of the device, sent when the screen changed, at most 5 times a second. */
+export interface FrameEvent {
+  event: 'frame';
+  subscription: string;
+  platform: Platform;
+  slot: string;
+  mime: 'image/jpeg';
+  width: number;
+  height: number;
+  capturedAt: string;
+  /** Base64-encoded image bytes. */
+  data: string;
+}
+
+export type ServerEvent = StatusEvent | LogsEvent | FrameEvent | ErrorEvent;
 
 export type ServerMessage = ServerResponse | ServerEvent;
 
@@ -288,6 +317,16 @@ export function protocolJsonSchema(): JsonSchema {
           tail: { type: 'integer', minimum: 1, maximum: MAX_LOG_TAIL, default: MAX_LOG_TAIL },
         },
       },
+      FrameTarget: {
+        type: 'object',
+        required: ['workspace', 'platform'],
+        additionalProperties: false,
+        properties: {
+          workspace: { type: 'string', description: 'An environment path from a status payload.' },
+          platform: { enum: ['ios', 'android'] },
+          slot: { type: 'string', minLength: 1, default: 'default' },
+        },
+      },
       WorkspaceParams: {
         type: 'object',
         additionalProperties: false,
@@ -299,6 +338,7 @@ export function protocolJsonSchema(): JsonSchema {
           request('status.subscribe'),
           request('logs.query', { $ref: '#/$defs/LogFilter' }),
           request('logs.subscribe', { $ref: '#/$defs/LogFilter' }),
+          request('frames.subscribe', { $ref: '#/$defs/FrameTarget' }),
           optionalParams('stats.get', { $ref: '#/$defs/WorkspaceParams' }),
           optionalParams('settings.get', { $ref: '#/$defs/WorkspaceParams' }),
           request('unsubscribe', {
@@ -368,6 +408,22 @@ export function protocolJsonSchema(): JsonSchema {
               event: { const: 'logs' },
               subscription: { type: 'string' },
               records: { type: 'array', items: { $ref: '#/$defs/LogRecord' } },
+            },
+          },
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'platform', 'slot', 'mime', 'width', 'height', 'capturedAt', 'data'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'frame' },
+              subscription: { type: 'string' },
+              platform: { enum: ['ios', 'android'] },
+              slot: { type: 'string' },
+              mime: { const: 'image/jpeg' },
+              width: { type: 'integer' },
+              height: { type: 'integer' },
+              capturedAt: { type: 'string', format: 'date-time' },
+              data: { type: 'string', contentEncoding: 'base64' },
             },
           },
           {

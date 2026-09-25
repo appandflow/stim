@@ -18,6 +18,7 @@ type ResultsTheAppMisreads = {
 describe('the mobile app protocol copy', () => {
   it('knows every server method and sends params the server accepts', () => {
     expectTypeOf<Exclude<keyof Server.Methods, keyof Mobile.Methods>>().toBeNever();
+    expectTypeOf<Exclude<keyof Mobile.Methods, keyof Server.Methods>>().toBeNever();
     expectTypeOf<ParamsTheServerRefuses>().toBeNever();
     expectTypeOf<typeof Mobile.PROTOCOL_VERSION>().toEqualTypeOf<typeof Server.PROTOCOL_VERSION>();
   });
@@ -26,6 +27,7 @@ describe('the mobile app protocol copy', () => {
     expectTypeOf<ResultsTheAppMisreads>().toBeNever();
     expectTypeOf<Server.StatusEvent>().toExtend<Mobile.StatusEvent>();
     expectTypeOf<Server.ErrorEvent>().toExtend<Mobile.ErrorEvent>();
+    expectTypeOf<Server.FrameEvent>().toExtend<Mobile.FrameEvent>();
     expectTypeOf<WithoutRecords<Server.LogsEvent>>().toExtend<WithoutRecords<Mobile.LogsEvent>>();
     expectTypeOf<Mobile.LogRecord>().toExtend<Server.LogRecord>();
   });
