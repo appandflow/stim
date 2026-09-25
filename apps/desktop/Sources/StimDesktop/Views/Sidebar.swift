@@ -5,6 +5,8 @@ struct Sidebar: View {
   @ObservedObject var store: StatusStore
   @Binding var selection: SidebarItem?
   var projectFilter: Project?
+  @AppStorage(AppPreferences.Key.showsIdleWorkspaces) private var showsIdle = true
+  @Environment(\.colorScheme) private var colorScheme
 
   var body: some View {
     let envs = store.environments(in: projectFilter)
@@ -32,8 +34,10 @@ struct Sidebar: View {
       Section(projectFilter.map { "Live in \($0.name)" } ?? "Live") {
         ForEach(envs.filter(\.live)) { env in WorkspaceRow(env: env, selection: selection) }
       }
-      Section("Idle") {
-        ForEach(envs.filter { !$0.live }) { env in WorkspaceRow(env: env, selection: selection) }
+      if showsIdle {
+        Section("Idle") {
+          ForEach(envs.filter { !$0.live }) { env in WorkspaceRow(env: env, selection: selection) }
+        }
       }
 
       Section("Machine") {
@@ -60,7 +64,7 @@ struct Sidebar: View {
 
   private var brand: some View {
     HStack(spacing: 10) {
-      if let logo = BrandAssets.logo {
+      if let logo = BrandAssets.logo(colorScheme) {
         Image(nsImage: logo).resizable().frame(width: 28, height: 28)
       }
       Text("Stim").font(Theme.heading(16))

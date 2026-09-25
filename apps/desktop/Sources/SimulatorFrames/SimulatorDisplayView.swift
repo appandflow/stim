@@ -153,16 +153,24 @@ public final class SimulatorDisplayNSView: NSView {
     CATransaction.commit()
   }
 
+  private var framesPaused: Bool {
+    AppPreferences.pausesHiddenFrames && window?.occlusionState.contains(.visible) == false
+  }
+
   private func scheduleRedraw() {
-    guard !redrawPending else { return }
+    guard !redrawPending, !framesPaused else { return }
     redrawPending = true
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 60) { [weak self] in
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / AppPreferences.maxFramesPerSecond) { [weak self] in
       guard let self else { return }
       self.redrawPending = false
-      // CALayer keeps drawing its cached copy of an IOSurface until told the
-      // contents changed; the method is QuartzCore SPI, not public API.
-      _ = self.surfaceLayer.perform(NSSelectorFromString("setContentsChanged"))
+      self.redraw()
     }
+  }
+
+  private func redraw() {
+    // CALayer keeps drawing its cached copy of an IOSurface until told the
+    // contents changed; the method is QuartzCore SPI, not public API.
+    _ = surfaceLayer.perform(NSSelectorFromString("setContentsChanged"))
   }
 
   func setInteractive(_ interactive: Bool) {
@@ -260,7 +268,18 @@ public final class SimulatorDisplayNSView: NSView {
 
   public override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
-    if window == nil { disconnect() } else { connect() }
+    NotificationCenter.default.removeObserver(self, name: NSWindow.didChangeOcclusionStateNotification, object: nil)
+    if let window {
+      NotificationCenter.default.addObserver(
+        self, selector: #selector(occlusionChanged), name: NSWindow.didChangeOcclusionStateNotification, object: window)
+      connect()
+    } else {
+      disconnect()
+    }
+  }
+
+  @objc private func occlusionChanged() {
+    if !framesPaused { redraw() }
   }
 }
 

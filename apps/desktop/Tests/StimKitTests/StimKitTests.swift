@@ -349,6 +349,35 @@ import Testing
     #expect(explicit.environment["PATH"] == "/opt/node/bin:\(dir.path)")
 
     #expect(StimCLI(environment: ["PATH": "/nonexistent"]).executable == nil)
+
+    let overridden = StimCLI(environment: ["PATH": dir.path, "STIM_BIN": "/opt/node/bin/stim"], override: "/custom/stim")
+    #expect(overridden.executable == "/custom/stim")
+    #expect(StimCLI(environment: ["PATH": dir.path], override: "").executable == stim)
+  }
+
+  @Test func returnsASettingsRefusalFromAFailedCommand() throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let stim = dir.appendingPathComponent("stim").path
+    let script = """
+      #!/bin/sh
+      echo "$*" > "\(dir.path)/args"
+      echo '{"code":"STIM_BAD_ARG","message":"Invalid metro.tunnel value","remedy":"For example"}'
+      exit 1
+      """
+    FileManager.default.createFile(atPath: stim, contents: Data(script.utf8), attributes: [.posixPermissions: 0o755])
+
+    let result = try StimCLI(environment: ["PATH": "/usr/bin:/bin"], override: stim)
+      .writeSetting("metro.tunnel", value: "wormhole", scope: .workspace, cwd: dir.path)
+
+    guard case .refused(let refusal) = result else {
+      Issue.record("expected a refusal")
+      return
+    }
+    #expect(refusal.code == "STIM_BAD_ARG" && refusal.remedy == "For example")
+    let args = try String(contentsOf: dir.appendingPathComponent("args"), encoding: .utf8)
+    #expect(args == "settings set metro.tunnel wormhole --scope workspace --json\n")
   }
 }
 

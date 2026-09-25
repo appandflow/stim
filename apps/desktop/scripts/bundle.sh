@@ -13,6 +13,7 @@ cp Support/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 cp "$website/src/css/fonts/InterVariable.woff2" "$website/src/css/fonts/JetBrainsMono-Regular.woff2" \
   "$website/src/css/fonts/Inter-LICENSE.txt" "$website/src/css/fonts/JetBrainsMono-OFL.txt" \
   "$website/static/img/branding/logo-dark.svg" "$website/static/img/branding/hero-dark.svg" \
+  "$website/static/img/branding/logo.svg" "$website/static/img/branding/hero.svg" \
   "$app/Contents/Resources/"
 codesign --force --sign - "$app"
 echo "$PWD/$app"

@@ -10,21 +10,23 @@ public struct StimCLI: Sendable {
 
     public var errorDescription: String? {
       switch self {
-      case .notFound: return "Could not find the stim executable. Install it globally or set STIM_BIN."
+      case .notFound:
+        return "Could not find the stim executable. Install it globally, set STIM_BIN, or choose it in Settings."
       case .exited(let code): return "stim exited with status \(code)."
       }
     }
   }
 
-  /// `STIM_BIN`, or the first `stim` on the environment's `PATH`.
+  /// The override, `STIM_BIN`, or the first `stim` on the environment's `PATH`.
   public let executable: String?
   /// The environment every `stim` process runs with.
   public let environment: [String: String]
 
-  public init(environment: [String: String]) {
+  public init(environment: [String: String], override: String? = nil) {
     var environment = environment
     let executable =
-      environment["STIM_BIN"]
+      override.flatMap { $0.isEmpty ? nil : $0 }
+      ?? environment["STIM_BIN"]
       ?? (environment["PATH"] ?? "").split(separator: ":").lazy
       .map { "\($0)/stim" }
       .first { FileManager.default.isExecutableFile(atPath: $0) }
@@ -51,7 +53,33 @@ public struct StimCLI: Sendable {
     try JSONDecoder().decode(GcReport.self, from: run(["gc", "--json"]))
   }
 
+  /// `stim settings --json` in `cwd`: every setting with its origin and layers.
+  public func settings(cwd: String) throws -> SettingsPayload {
+    try JSONDecoder().decode(SettingsPayload.self, from: run(["settings", "--json"], cwd: cwd))
+  }
+
+  /// `stim settings set` or, with a nil value, `stim settings unset`, in `cwd`.
+  /// A refusal is returned rather than thrown, with the CLI's code and message.
+  public func writeSetting(_ key: String, value: String?, scope: SettingScope, cwd: String) throws
+    -> SettingsWriteResult
+  {
+    let args =
+      value.map { ["settings", "set", key, $0] } ?? ["settings", "unset", key]
+    let (status, data) = try execute(args + ["--scope", scope.rawValue, "--json"], cwd: cwd)
+    if status == 0 { return .written(try JSONDecoder().decode(SettingsWritePayload.self, from: data).setting) }
+    guard let refusal = try? JSONDecoder().decode(SettingsRefusal.self, from: data) else {
+      throw Failure.exited(status)
+    }
+    return .refused(refusal)
+  }
+
   func run(_ args: [String], cwd: String? = nil) throws -> Data {
+    let (status, data) = try execute(args, cwd: cwd)
+    guard status == 0 else { throw Failure.exited(status) }
+    return data
+  }
+
+  private func execute(_ args: [String], cwd: String?) throws -> (Int32, Data) {
     guard let executable else { throw Failure.notFound }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: executable)
@@ -64,8 +92,7 @@ public struct StimCLI: Sendable {
     try process.run()
     let data = out.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
-    guard process.terminationStatus == 0 else { throw Failure.exited(process.terminationStatus) }
-    return data
+    return (process.terminationStatus, data)
   }
 
   /// Runs `stim <args>` in `cwd`, reporting output lines as they arrive and
