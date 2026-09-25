@@ -2,6 +2,7 @@ import { Image } from 'expo-image';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { ActivityChip } from '@/components/activity-chip';
+import { AgentFeed } from '@/components/agent-feed';
 import { BuildProgressBar } from '@/components/build-progress';
 import { Card } from '@/components/card';
 import { Chip, StatusDot } from '@/components/chip';
@@ -101,6 +102,7 @@ export function DeviceTile({
           </Text>
         )}
       </View>
+      {streams && device.id ? <AgentFeed workspace={workspace} slot={device.slot} deviceId={device.id} /> : null}
     </Card>
   );
 }

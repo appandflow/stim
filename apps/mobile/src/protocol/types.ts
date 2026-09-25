@@ -134,7 +134,7 @@ export interface StatusPayload {
   simctlAvailable: boolean;
 }
 
-export type LogSource = 'metro' | 'client' | 'device' | 'build';
+export type LogSource = 'metro' | 'client' | 'device' | 'build' | 'agent';
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'fatal';
 
 export interface StackFrame {
@@ -153,6 +153,7 @@ export interface LogRecord {
   slot?: string;
   event?: string;
   stack?: StackFrame[];
+  deviceId?: string;
   [key: string]: unknown;
 }
 

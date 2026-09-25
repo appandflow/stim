@@ -5,6 +5,7 @@ export const SOURCES: { source: LogSource; label: string }[] = [
   { source: 'client', label: 'App' },
   { source: 'device', label: 'Native' },
   { source: 'build', label: 'Build' },
+  { source: 'agent', label: 'Agent' },
 ];
 
 export const LEVELS: LogLevel[] = ['debug', 'info', 'warn', 'error'];
@@ -65,4 +66,16 @@ export function stackLines(stack: unknown): string[] {
     if (frame.fn) return [`at ${frame.fn}`];
     return where ? [`at ${where}`] : [];
   });
+}
+
+export const AGENT_FEED_SIZE = 5;
+
+export function agentFeedFilter(workspace: string, slot: string): LogFilter {
+  return { workspace, sources: ['agent'], slot, tail: 200 };
+}
+
+export function agentActions(existing: LogRecord[], incoming: LogRecord[], deviceId: string): LogRecord[] {
+  const mine = incoming.filter((record) => record.src === 'agent' && record.deviceId === deviceId).reverse();
+  if (mine.length === 0) return existing;
+  return mine.concat(existing).slice(0, AGENT_FEED_SIZE);
 }

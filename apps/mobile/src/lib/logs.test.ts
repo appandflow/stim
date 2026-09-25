@@ -1,4 +1,4 @@
-import { appendRecords, DEFAULT_FILTER, logFilter, stackLines } from '@/lib/logs';
+import { agentActions, appendRecords, DEFAULT_FILTER, logFilter, stackLines } from '@/lib/logs';
 import type { LogRecord } from '@/protocol/types';
 
 describe('logFilter', () => {
@@ -33,5 +33,27 @@ describe('stackLines', () => {
     expect(
       stackLines([{ fn: 'render', file: 'App.tsx', line: 4, column: 2 }, { fn: '_dispatch_client_callout' }, {}]),
     ).toEqual(['at render (App.tsx:4:2)', 'at _dispatch_client_callout']);
+  });
+});
+
+describe('agentActions', () => {
+  const action = (ts: number, deviceId: string): LogRecord => ({
+    ts,
+    src: 'agent',
+    level: 'info',
+    msg: `Tapped ${ts}`,
+    deviceId,
+  });
+
+  it('keeps only the device own actions, newest first, up to five', () => {
+    const sim = '2FA9C340-A259-4420-A617-316DC159FF84';
+    const first = agentActions([], [action(1, sim), action(2, 'emulator-5554'), action(3, sim)], sim);
+    expect(first.map((r) => r.ts)).toEqual([3, 1]);
+    const next = agentActions(
+      first,
+      [4, 5, 6, 7].map((ts) => action(ts, sim)),
+      sim,
+    );
+    expect(next.map((r) => r.ts)).toEqual([7, 6, 5, 4, 3]);
   });
 });
