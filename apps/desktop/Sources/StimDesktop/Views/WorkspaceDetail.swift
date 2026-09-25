@@ -76,6 +76,9 @@ struct WorkspaceDetail: View {
           device: focused, screenHeight: 640,
           interactive: focused.isRunning && takenOver.contains(focused.id), workspace: env.path,
           build: env.runningBuild(for: focused))
+        AgentFeed(cli: cli, workspace: env.path, device: focused)
+          .id(focused.id)
+          .frame(maxWidth: 520)
       } else {
         EmptyState(title: "No devices", message: "This workspace has no recorded simulator or emulator.")
       }

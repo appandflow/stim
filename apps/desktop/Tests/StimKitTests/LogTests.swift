@@ -54,6 +54,15 @@ import Testing
     #expect(record.level == .info)
   }
 
+  @Test func decodesTheDeviceOfAnAgentAction() throws {
+    let record = try #require(
+      LogRecord.parse(
+        #"{"ts":1790340231708,"src":"agent","level":"info","msg":"Tapped @e7","event":"agent_action","command":"press","session":"e2e1175","platform":"ios","deviceId":"2FA9C340-A259-4420-A617-316DC159FF84","details":{"command":"press","ref":"e7","x":193,"y":393}}"#
+      ))
+    #expect(record.source == .agent)
+    #expect(record.deviceId == "2FA9C340-A259-4420-A617-316DC159FF84")
+  }
+
   @Test func skipsLinesThatAreNotRecords() {
     #expect(LogRecord.parse("") == nil)
     #expect(LogRecord.parse("Debugger listening on ws://127.0.0.1") == nil)

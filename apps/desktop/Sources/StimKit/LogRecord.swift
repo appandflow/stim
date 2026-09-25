@@ -1,7 +1,7 @@
 import Foundation
 
 public enum LogSource: String, CaseIterable, Sendable {
-  case metro, client, device, build
+  case metro, client, device, build, agent
 }
 
 public enum LogLevel: String, CaseIterable, Comparable, Sendable {
@@ -26,12 +26,14 @@ public struct LogRecord: Decodable, Sendable {
   public var proc: String?
   public var marker: Bool?
   public var stack: [StackFrame]?
+  /// The simulator UDID or emulator serial an `agent` record's action ran on.
+  public var deviceId: String?
 
   public var source: LogSource? { LogSource(rawValue: src) }
   public var date: Date { Date(timeIntervalSince1970: ts / 1000) }
 
   enum CodingKeys: String, CodingKey {
-    case ts, src, level, msg, slot, event, platform, proc, marker, stack
+    case ts, src, level, msg, slot, event, platform, proc, marker, stack, deviceId
   }
 
   public init(from decoder: Decoder) throws {
@@ -46,6 +48,7 @@ public struct LogRecord: Decodable, Sendable {
     proc = try? c.decodeIfPresent(String.self, forKey: .proc)
     marker = try? c.decodeIfPresent(Bool.self, forKey: .marker)
     stack = try? c.decodeIfPresent([StackFrame].self, forKey: .stack)
+    deviceId = try? c.decodeIfPresent(String.self, forKey: .deviceId)
   }
 
   /// Decodes one NDJSON line, or nil for a line that is not a record.
