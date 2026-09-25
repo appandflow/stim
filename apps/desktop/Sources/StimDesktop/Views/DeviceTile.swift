@@ -299,13 +299,48 @@ extension DeviceRef {
 private struct RemotePreview: NSViewRepresentable {
   var url: URL
 
-  final class Coordinator {
+  /// Hides the page's own scrollbars and gives it a background matching the
+  /// tile, so macOS's legacy always-visible scrollbar track (shown with a
+  /// mouse connected, or "Show scroll bars: Always") never shows through as
+  /// a white bar next to the dark preview.
+  static let hideScrollbarsScript = """
+    (function () {
+      var style = document.createElement('style');
+      style.textContent = [
+        '::-webkit-scrollbar { display: none; }',
+        'html, body { overflow: hidden; scrollbar-width: none; background: #0c0a11; }',
+      ].join('\\n');
+      document.head.appendChild(style);
+    })();
+    """
+
+  final class Coordinator: NSObject, WKNavigationDelegate {
     var loaded: URL?
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+      webView.evaluateJavaScript("document.documentElement.scrollHeight") { result, _ in
+        guard let pageHeight = result as? CGFloat, pageHeight > webView.bounds.height else { return }
+        webView.pageZoom = webView.bounds.height / pageHeight
+      }
+    }
   }
 
   func makeCoordinator() -> Coordinator { Coordinator() }
 
-  func makeNSView(context: Context) -> WKWebView { WKWebView() }
+  func makeNSView(context: Context) -> WKWebView {
+    let userContentController = WKUserContentController()
+    userContentController.addUserScript(
+      WKUserScript(
+        source: Self.hideScrollbarsScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+    let configuration = WKWebViewConfiguration()
+    configuration.userContentController = userContentController
+
+    let view = WKWebView(frame: .zero, configuration: configuration)
+    view.navigationDelegate = context.coordinator
+    view.setValue(false, forKey: "drawsBackground")
+    view.underPageBackgroundColor = NSColor(hex: 0x0C0A11)
+    return view
+  }
 
   func updateNSView(_ view: WKWebView, context: Context) {
     guard context.coordinator.loaded != url else { return }
