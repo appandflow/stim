@@ -96,6 +96,7 @@ build profiles:
 
 `development` and `preview` builds install only on devices registered with
 `eas device:create`.
+
 - `production`: an App Store build. EAS owns the build number
   (`appVersionSource: "remote"`) and increments it on every build. The
   marketing version is `version` in `app.json`.
