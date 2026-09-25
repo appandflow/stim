@@ -17,6 +17,8 @@ public struct Capacity: Decodable, Sendable {
 public struct UnprovisionedWorktree: Decodable, Hashable, Sendable {
   public var path: String
   public var branch: String?
+  /// The repository's main checkout, or its git directory when it is bare.
+  public var repository: String?
 }
 
 public struct Workspace: Decodable, Identifiable, Hashable, Sendable {

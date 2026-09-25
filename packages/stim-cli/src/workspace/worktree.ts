@@ -1,4 +1,14 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, utimesSync } from 'fs';
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+  utimesSync,
+} from 'fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { getExecutor } from '../exec.ts';
 import { removeTemporaryEntry } from '../temporary.ts';
@@ -522,6 +532,65 @@ export function hasPopulatedSubmodules(worktree: string): boolean {
 export function listWorktrees(cwd: string): WorktreeEntry[] {
   const out = getExecutor().runFileQuiet('git', ['-C', cwd, 'worktree', 'list', '--porcelain']);
   return out ? parseWorktrees(out) : [];
+}
+
+function branchOf(head: string): string | undefined {
+  return head.startsWith('ref: refs/heads/') ? head.slice('ref: refs/heads/'.length) : undefined;
+}
+
+/**
+ * The linked worktrees recorded under a git common dir, read from `worktrees/<id>/gitdir` and `HEAD` without running
+ * git or touching the worktree directories, sorted by path. The worktree with the branch the common dir's own `HEAD`
+ * names (the main checkout's branch, or a bare repository's source checkout) is left out.
+ */
+export function linkedWorktreesOnDisk(commonDir: string): WorktreeEntry[] {
+  const admin = join(commonDir, 'worktrees');
+  let ids: string[];
+  let sourceBranch: string | undefined;
+  try {
+    ids = readdirSync(admin);
+    sourceBranch = branchOf(readFileSync(join(commonDir, 'HEAD'), 'utf-8').trim());
+  } catch {
+    return [];
+  }
+  return ids
+    .flatMap((id) => {
+      try {
+        const gitdir = readFileSync(join(admin, id, 'gitdir'), 'utf-8').trim();
+        const branch = branchOf(readFileSync(join(admin, id, 'HEAD'), 'utf-8').trim());
+        if (branch && branch === sourceBranch) return [];
+        const path = dirname(resolve(admin, id, nativePath(gitdir)));
+        return [branch ? { path, branch } : { path }];
+      } catch {
+        return [];
+      }
+    })
+    .toSorted((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
+/**
+ * The git common dir of the repository containing `start`, read from `.git` and `commondir` files without running
+ * git. Returns null when `start` is missing, unreadable, or not inside a repository.
+ */
+export function gitCommonDirOnDisk(start: string): string | null {
+  try {
+    for (let dir = realpathSync.native(start); ; dir = dirname(dir)) {
+      const dotGit = join(dir, '.git');
+      if (existsSync(dotGit)) {
+        if (statSync(dotGit).isDirectory()) return realpathSync.native(dotGit);
+        const gitdir = /^gitdir: (.+)$/m.exec(readFileSync(dotGit, 'utf-8'))?.[1]?.trim();
+        if (!gitdir) return null;
+        const linked = resolve(dir, gitdir);
+        const commondir = join(linked, 'commondir');
+        return realpathSync.native(
+          existsSync(commondir) ? resolve(linked, readFileSync(commondir, 'utf-8').trim()) : linked,
+        );
+      }
+      if (dirname(dir) === dir) return null;
+    }
+  } catch {
+    return null;
+  }
 }
 
 export type SourceCheckout = { path: string } | { refusal: string };

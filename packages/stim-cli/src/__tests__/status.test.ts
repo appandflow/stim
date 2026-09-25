@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
+import { execFileSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { createServer } from 'http';
 import { Command } from 'commander';
-import { setExecutor, resetExecutor } from '../exec.ts';
+import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { saveConfig, loadConfig } from '../workspace/config.ts';
 import type { AddressInfo } from 'node:net';
@@ -18,12 +19,17 @@ import { findProjectRoot } from '../workspace/project.ts';
 import { recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
 
 let tmpHome: string;
+const realExecutor = getExecutor();
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
   for (const udid of ['PARKED-1', 'UDID-ABC', 'UDID-DEF', 'UDID-GONE', 'stim-parked']) recordCreatedDevice('ios', udid);
   for (const name of ['stim-agent-1', 'stim-app', 'stim-parked', 'stim-projA']) recordCreatedDevice('android', name);
+  const cwd = join(tmpHome, 'cwd-project');
+  mkdirSync(cwd);
+  writeFileSync(join(cwd, 'package.json'), '{}');
+  vi.spyOn(process, 'cwd').mockReturnValue(cwd);
 
   const listJson = JSON.stringify({
     devices: {
@@ -60,6 +66,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   resetExecutor();
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.STIM_HOME;
@@ -712,3 +719,61 @@ test.each(['moved', 'absent', 'missing', 'unavailable'] as const)(
     expect(commands.some((cmd) => /reverse|emu kill|\bboot\b/.test(cmd))).toBe(false);
   },
 );
+
+test('status lists worktrees with no environment for every registered repository, from outside any repository', async () => {
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-test-repos-')));
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8' });
+  const repo = (name: string) => {
+    const root = join(base, name);
+    mkdirSync(join(root, 'apps', 'mobile'), { recursive: true });
+    git(root, 'init', '-q', '-b', 'main');
+    git(root, 'config', 'user.name', 'test');
+    git(root, 'config', 'user.email', 'test@example.com');
+    git(root, 'config', 'commit.gpgsign', 'false');
+    writeFileSync(join(root, 'apps', 'mobile', 'package.json'), '{}');
+    git(root, 'add', '.');
+    git(root, 'commit', '-qm', 'init');
+    return root;
+  };
+  try {
+    const first = repo('first');
+    const second = repo('second');
+    const worktree = (root: string, name: string) => {
+      const path = join(base, `${name}-wt`);
+      git(root, 'worktree', 'add', '-q', '-b', name, path);
+      return path;
+    };
+    const nested = worktree(first, 'nested');
+    const loose = worktree(first, 'loose');
+    const other = worktree(second, 'other');
+    saveConfig(
+      makeConfig({
+        version: 2,
+        projects: {
+          [first]: { label: 'first', platforms: {} },
+          [join(nested, 'apps', 'mobile')]: { label: 'nested', platforms: {} },
+          [join(base, 'gone')]: { label: 'gone', platforms: {} },
+          [join(second, 'apps', 'mobile')]: { label: 'second', platforms: {} },
+        },
+      }),
+    );
+    setExecutor({
+      runFileAsync: (file: string, args: string[], opts: object) =>
+        file === 'git' ? realExecutor.runFileAsync(file, args, opts) : Promise.resolve(''),
+      runFile: () => '',
+      runQuiet: () => null,
+      runFileQuiet: () => null,
+      spawn() {
+        throw new Error('spawn should not be called from status');
+      },
+    });
+
+    const payload = await runStatusJson();
+    expect(payload.unprovisionedWorktrees).toEqual([
+      { path: loose, branch: 'loose', repository: first },
+      { path: other, branch: 'other', repository: second },
+    ]);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});

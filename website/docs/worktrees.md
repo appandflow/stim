@@ -156,10 +156,19 @@ device when Stim starts and runs the app. Build and Metro caches remain shared.
 Several agents can work in parallel without sharing live resources.
 
 `stim status` shows linked worktrees with their environment state, including
-those with no Stim environment yet. `stim status --json` lists those under
-`unprovisionedWorktrees`. `worktree warm` copies dependencies but does not
-create an environment, so a warmed worktree stays in that list until `start`,
-`ios`, `android`, or `doctor` registers it.
+those with no Stim environment yet. It covers every repository with a
+registered environment, plus the repository you run it from. A worktree whose
+app lives in a subdirectory, such as `apps/mobile`, counts as having an
+environment once that app is registered.
+`stim status --json` lists the others under `unprovisionedWorktrees`, each
+with its `path`, `branch`, and `repository`. `worktree warm` copies
+dependencies but does not create an environment, so a warmed worktree stays in
+that list until `start`, `ios`, `android`, or `doctor` registers it.
+
+Status reads the worktree list from git's records in the repository and does
+not open the worktree directories. A worktree under a macOS-protected folder
+such as `~/Documents` or `~/Desktop` is listed without triggering a privacy
+prompt.
 
 ## Remove a worktree
 

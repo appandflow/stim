@@ -131,11 +131,15 @@ final class StatusStore: ObservableObject {
       return
     }
     let known = projects
+    let reported = Dictionary(
+      (payload.unprovisionedWorktrees ?? []).compactMap { w in w.repository.map { (w.path, Project(root: $0)) } },
+      uniquingKeysWith: { first, _ in first })
     let paths = payload.environments.map(\.path) + (payload.unprovisionedWorktrees ?? []).map(\.path)
-    let missing = paths.filter { known[$0] == nil }
+    let missing = paths.filter { known[$0] == nil && reported[$0] == nil }
     Task.detached {
       let resolved = Dictionary(missing.map { ($0, Project.resolve(workspace: $0)) }, uniquingKeysWith: { first, _ in first })
       await MainActor.run {
+        self.projects.merge(reported) { old, _ in old }
         self.projects.merge(resolved) { old, _ in old }
         guard sequence > self.shown else { return }
         self.shown = sequence

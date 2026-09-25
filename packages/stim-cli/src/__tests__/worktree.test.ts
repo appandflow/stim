@@ -21,6 +21,8 @@ import {
   removeWorktree,
   repoRoot,
   gitCommonDir,
+  gitCommonDirOnDisk,
+  linkedWorktreesOnDisk,
   selectSourceCheckout,
   branchExists,
   hasRemote,
@@ -833,4 +835,46 @@ test('selectSourceCheckout refuses when the bare HEAD branch is checked out more
   expect(selectSourceCheckout(entries, 'main')).toMatchObject({
     refusal: expect.stringMatching(/\/repo\/a.*\/repo\/b/),
   });
+});
+
+test('the on-disk readers agree with git for a checkout, linked worktrees, a nested package and a bare repository', () => {
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-test-commondir-')));
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8' });
+  try {
+    const root = join(base, 'repo');
+    const linked = join(base, 'linked');
+    const detached = join(base, 'detached');
+    const bare = join(base, 'bare.git');
+    const source = join(base, 'bare-source');
+    const feature = join(base, 'bare-feature');
+    mkdirSync(join(root, 'apps', 'mobile'), { recursive: true });
+    git(root, 'init', '-q', '-b', 'main');
+    git(root, 'config', 'user.name', 'test');
+    git(root, 'config', 'user.email', 'test@example.com');
+    git(root, 'config', 'commit.gpgsign', 'false');
+    writeFileSync(join(root, 'apps', 'mobile', 'package.json'), '{}');
+    git(root, 'add', '.');
+    git(root, 'commit', '-qm', 'init');
+    git(root, 'worktree', 'add', '-q', '-b', 'linked', linked);
+    git(root, 'worktree', 'add', '-q', '--detach', detached);
+    git(base, 'clone', '-q', '--bare', root, bare);
+    git(bare, 'worktree', 'add', '-q', source, 'main');
+    git(bare, 'worktree', 'add', '-q', '-b', 'feature', feature);
+
+    for (const dir of [root, join(root, 'apps', 'mobile'), linked, join(linked, 'apps', 'mobile'), source]) {
+      expect(gitCommonDirOnDisk(dir)).toBe(gitCommonDir(dir));
+    }
+    expect(gitCommonDirOnDisk(join(base, 'missing'))).toBe(null);
+    expect(gitCommonDirOnDisk(base)).toBe(null);
+
+    const fromGit = (dir: string) =>
+      listWorktrees(dir)
+        .slice(1)
+        .map(({ path, branch }) => (branch ? { path, branch } : { path }));
+    expect(linkedWorktreesOnDisk(join(root, '.git'))).toEqual(fromGit(root));
+    expect(linkedWorktreesOnDisk(bare)).toEqual([{ path: feature, branch: 'feature' }]);
+    expect(linkedWorktreesOnDisk(join(base, 'missing'))).toEqual([]);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 });

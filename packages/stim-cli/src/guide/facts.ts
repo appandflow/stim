@@ -17,8 +17,15 @@ stdout for \`--json\`. Every other line goes to stderr, so it is always safe
 to pipe. \`logs --json\` is the one exception: it is NDJSON, one record per
 line by design (see \`guide logs\`), not this single-payload contract.
 
-status's unprovisionedWorktrees lists this repository's linked worktrees with
-no Stim environment. \`worktree warm\` does not create one; \`start\`, \`ios\`,
+status's unprovisionedWorktrees lists the linked worktrees with no Stim
+environment in every repository with a registered environment, plus the
+repository status runs from. A worktree counts as having an
+environment when one is registered at it or inside it. Each entry is
+{ path, branch, repository }; repository is the main checkout, or the git
+directory of a bare repository. status reads git's own worktree records and
+never opens the worktree directories, so a worktree under a macOS-protected
+folder such as ~/Documents is listed without a privacy prompt.
+\`worktree warm\` does not create an environment; \`start\`, \`ios\`,
 \`android\` and \`doctor\` register it.
 
 status's remoteDevices lists each environment's recorded EAS Simulator
