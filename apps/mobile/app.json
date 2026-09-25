@@ -13,7 +13,8 @@
       "supportsTablet": true,
       "config": {
         "usesNonExemptEncryption": false
-      }
+      },
+      "appleTeamId": "R7E8P23K3N"
     },
     "android": {
       "package": "com.appandflow.stim",
