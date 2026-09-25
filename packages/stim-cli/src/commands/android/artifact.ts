@@ -535,6 +535,7 @@ export async function acquireAndroidArtifact(
         }
         if (prebuildPlan === 'generate' || prebuildPlan === 'regenerate') {
           step('prebuild');
+          recordPrebuild(root, PLATFORM, null);
           const pre: PrebuildResultLike = await prebuild(root, PLATFORM, writer, {
             isExpo,
             clean: prebuildPlan === 'regenerate',

@@ -569,6 +569,7 @@ export async function acquireIosArtifact(
       }
       if (prebuild === 'generate' || prebuild === 'regenerate') {
         step('prebuild');
+        recordPrebuild(root, PLATFORM, null);
         const result = await d.runPrebuild(root, PLATFORM, logWriter(), { clean: prebuild === 'regenerate' });
         if (result?.failed) {
           phase('prebuild', 'FAILED');

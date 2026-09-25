@@ -94,7 +94,7 @@ describe('the decision', () => {
     ).toBe(false);
   });
 
-  test('planPrebuild compares the recorded prebuild fingerprint and refuses a git-tracked native dir', () => {
+  test('planPrebuild compares the recorded prebuild fingerprint and refuses a git-tracked or unreadable checkout', () => {
     process.env.STIM_HOME = join(root, 'stim-home');
     try {
       mkdirSync(join(root, 'ios'), { recursive: true });
@@ -110,6 +110,10 @@ describe('the decision', () => {
       recordPrebuild(root, 'android', 'def');
       expect(plan('abc')).toBe('none');
       expect(plan('abd')).toBe('regenerate');
+
+      writeFileSync(join(root, '.git'), 'gitdir: /nonexistent/stim-broken-worktree\n');
+      expect(plan('abd')).toBe('refuse');
+      rmSync(join(root, '.git'));
 
       execFileSync('git', ['init', '-q', root]);
       execFileSync('git', ['-C', root, 'add', 'ios/Podfile']);

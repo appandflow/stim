@@ -76,8 +76,8 @@ function gitTracksNativeDir(root: string, platform: string): boolean {
         .runFile('git', ['-C', root, 'ls-files', '--', nativeDirName(platform)])
         .trim() !== ''
     );
-  } catch {
-    return false;
+  } catch (error) {
+    return !/not a git repository \(or any of the parent directories\)/.test(String((error as Error)?.message));
   }
 }
 
@@ -99,7 +99,7 @@ export function planPrebuild(
   });
 }
 
-export function recordPrebuild(root: string, platform: string, fingerprint: string): void {
+export function recordPrebuild(root: string, platform: string, fingerprint: string | null): void {
   updateWorkspaceState(root, (state) => ({
     ...state,
     prebuild: { ...prebuildRecord(state), [platform]: fingerprint },
@@ -112,7 +112,8 @@ export function staleNativeDirRefusal(platform: string): { code: string; message
     code: PREBUILD_ERROR,
     message:
       `The fingerprint leaves ${dir}/ out of the cache key, and Stim cannot show that ${dir}/ was generated ` +
-      `from the current app config. Its files are tracked by git, so Stim will not regenerate it with \`expo prebuild --clean\`.`,
+      `from the current app config. Git tracks files in it, or could not say whether it does, so Stim will not ` +
+      `regenerate it with \`expo prebuild --clean\`.`,
     remedy:
       `Stop excluding ${dir}/ from the fingerprint (check .fingerprintignore) so the cache key covers its files, ` +
       `or add ${dir}/ to .gitignore and untrack it so Stim regenerates it from the app config.`,

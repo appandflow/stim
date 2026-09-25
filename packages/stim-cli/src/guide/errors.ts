@@ -77,10 +77,12 @@ Branch on the code, never on the message.`,
   regenerate a stale one. The extracted output is above the code; the
   transcript is in the global workspace logs/build-<platform>.ndjson file.
   The same code refuses a native directory that the fingerprint leaves out of
-  the cache key while git tracks its files: Stim cannot show those files came
-  from the current app config, and will not delete tracked files with
-  \`expo prebuild --clean\`. Stop excluding the directory from the fingerprint
-  (.fingerprintignore), or gitignore and untrack it so Stim regenerates it.`,
+  the cache key while git tracks its files, or when git cannot answer: Stim
+  cannot show those files came from the current app config, and will not
+  delete tracked files with \`expo prebuild --clean\`. Stop excluding the
+  directory from the fingerprint (.fingerprintignore), or gitignore and
+  untrack it so Stim regenerates it. When git itself is failing, fix the
+  checkout first.`,
     },
     STIM_DEPS_FAILED: {
       summary: 'pod install or gradle sync failed; the bundler ladder and BUNDLE_FROZEN',

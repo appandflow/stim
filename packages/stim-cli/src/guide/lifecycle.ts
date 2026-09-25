@@ -887,7 +887,13 @@ THE BUILD CACHE HAS THREE LEVELS
 
     prebuild    ios/ not generated from this fingerprint -> regenerated with --clean (9s)
 
-  A committed native directory is hashed into the key and never regenerated.
+  Regeneration discards hand edits under a gitignored ios/ or android/ (for
+  example a signing team set in Xcode); put them in the app config, such as
+  ios.appleTeamId, or a config plugin. A committed native directory is hashed
+  into the key and never regenerated. The record only covers prebuilds Stim
+  ran: after a manual \`expo prebuild\` with a different config, run
+  \`expo prebuild --clean\` yourself or delete the directory so the next build
+  regenerates it.
 
   If the iOS fingerprint after prebuild or pod install is unavailable, Stim
   installs the build but skips local storage and remote uploads. fingerprint

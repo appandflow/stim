@@ -40,8 +40,14 @@ Generation), the fingerprint hashes the app config instead of the native
 directory. Stim records the fingerprint of each prebuild it runs. When a native
 build is needed and the existing directory was not generated from the current
 fingerprint, for example after a config plugin change, Stim regenerates it with
-`expo prebuild --clean` before building. A committed native directory is part
-of the key and is never regenerated.
+`expo prebuild --clean` before building. This discards hand edits in the
+gitignored directory, so keep native settings such as the signing team in the
+app config or a config plugin. A committed native directory is part of the key
+and is never regenerated.
+
+Stim only knows about prebuilds it ran. If you run `expo prebuild` yourself with
+a different config, delete the native directory or run
+`expo prebuild --clean` before the next `stim ios` or `stim android`.
 
 Release configurations use separate keys. On a cache hit for an iOS simulator
 or Android target, Stim regenerates the current workspace's JavaScript and
