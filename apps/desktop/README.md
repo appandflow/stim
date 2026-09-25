@@ -133,8 +133,8 @@ notification is on by default and needs the bundled app.
 A workspace's detail view has a **Logs** tab next to its device, and the error
 count on the device wall and in the inspector opens it with **Errors only** on.
 The tab runs `stim logs --json --follow --tail 5000` in the workspace and adds
-the filters you pick: the Metro, App (`client`), Native (`device`) and Build
-sources, a slot, a minimum level, a regular expression search (`--grep`), and
+the filters you pick: the Metro, App (`client`), Native (`device`), Build and
+Agent (`agent`, what agent-device did on the workspace's devices) sources, a slot, a minimum level, a regular expression search (`--grep`), and
 `--errors`. With every source selected no `--source` is passed, so **Errors
 only** keeps the CLI's default scope, which leaves general device logs out.
 Changing a filter or the workspace restarts the command; leaving the tab or
@@ -146,6 +146,13 @@ row shows a record's first line; select one to read its whole message and
 stack. Command-C or **Copy** copies the selected records, or every loaded
 record when none is selected. **Reveal log folder** opens the workspace's log
 directory from `stim status`.
+
+Under the device on the **Device** tab, **Agent actions** lists the latest
+agent-device actions on that simulator or emulator, newest first: taps, typing,
+app opens, screenshots, and failed commands in red. It runs `stim logs --json
+--follow --source agent --slot <slot>` in the workspace and keeps the records
+whose `deviceId` is the device's UDID or serial. It stays hidden until the
+device has an action, and switching devices or tabs terminates the command.
 
 ## Build progress
 

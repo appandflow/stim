@@ -178,6 +178,7 @@ enum LogRowText {
     case .client: return "app"
     case .device: return "native"
     case .build: return "build"
+    case .agent: return "agent"
     case nil: return src
     }
   }

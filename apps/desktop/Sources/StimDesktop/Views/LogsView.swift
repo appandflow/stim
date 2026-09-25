@@ -183,6 +183,7 @@ struct LogsView: View {
     case .client: return "App"
     case .device: return "Native"
     case .build: return "Build"
+    case .agent: return "Agent"
     }
   }
 
@@ -192,6 +193,7 @@ struct LogsView: View {
     case .client: return "client: in-app console logs and redboxes (bare React Native)"
     case .device: return "device: simulator, emulator or device logs of the app process"
     case .build: return "build: native builds, installs and launches"
+    case .agent: return "agent: what agent-device did on this workspace's simulators and emulators"
     }
   }
 }
