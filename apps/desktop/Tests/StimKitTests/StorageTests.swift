@@ -50,18 +50,20 @@ import Testing
       environments: [try workspace()], gc: try gc(), sizes: DiskSizes.parse(du), paths: paths)
 
     let row = try #require(report.workspaces.first)
-    #expect(row.buildOutputs == 8192)
+    #expect(row.buildOutputs == Int64(8192))
     #expect(row.buildOutputsKept == "in use: dev server running")
-    #expect(row.nodeModules == 4096)
+    #expect(row.nodeModules == Int64(4096))
     #expect(row.devices == Int64((10 + 5) * 1024))
     #expect(row.deviceCount == 2)
     #expect(row.worktree?.mergedInto == "origin/main")
 
-    #expect(report.reclaimableDevices?.bytes == 3072)
-    let unmanaged = Dictionary(report.unmanaged.map { ($0.title, $0.bytes) }, uniquingKeysWith: { a, _ in a })
-    #expect(unmanaged["Simulators Stim does not own"] == 7 * 1024)
-    #expect(unmanaged["Gradle caches"] == 6 * 1024 - 2048)
-    #expect(unmanaged["~/Library/Caches"] == 1024)
+    #expect(report.reclaimableDevices?.bytes == Int64(3072))
+    let unmanaged: [String: Int64] = Dictionary(
+      report.unmanaged.compactMap { location in location.bytes.map { (location.title, $0) } },
+      uniquingKeysWith: { a, _ in a })
+    #expect(unmanaged["Simulators Stim does not own"] == Int64(7 * 1024))
+    #expect(unmanaged["Gradle caches"] == Int64(6 * 1024 - 2048))
+    #expect(unmanaged["~/Library/Caches"] == Int64(1024))
     #expect(unmanaged["Xcode DerivedData"] == nil)
   }
 
