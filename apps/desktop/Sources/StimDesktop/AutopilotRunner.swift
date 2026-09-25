@@ -98,7 +98,6 @@ final class AutopilotRunner: ObservableObject {
       AutopilotSchedule.nightlyDue(now: now, hour: hour, lastRun: last)
     {
       defaults.set(now, forKey: AppPreferences.Key.autopilotLastNightly)
-      lastPressureRun = now
       let days = defaults.integer(forKey: AppPreferences.Key.autopilotNightlyOlderThanDays)
       run(.nightly, "Nightly cleanup", AutopilotSchedule.nightlyArguments(olderThanDays: days), present: false)
       return
