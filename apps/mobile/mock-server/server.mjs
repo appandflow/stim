@@ -25,14 +25,28 @@ try {
   tokenHashes = new Set(JSON.parse(readFileSync(TOKENS_FILE, 'utf8')));
 } catch {}
 
-const pairing = { token: randomBytes(18).toString('base64url'), expiresAt: Date.now() + PAIRING_TTL_MS, used: false };
 const endpoint = `ws://127.0.0.1:${values.port}`;
+const PAIRING_FILE = join(tmpdir(), `stim-mobile-mock-server-pairing-${values.port}.json`);
+
+function newPairing() {
+  const next = { token: randomBytes(18).toString('base64url'), expiresAt: Date.now() + PAIRING_TTL_MS };
+  const code = JSON.stringify({ v: 1, name: values.name, endpoint, pairingToken: next.token });
+  writeFileSync(PAIRING_FILE, code);
+  return { ...next, code };
+}
+
+let pairing = newPairing();
+setInterval(() => {
+  pairing = newPairing();
+  console.log('Pairing code:');
+  console.log(pairing.code);
+}, PAIRING_TTL_MS);
 
 const server = new WebSocketServer({ host: '127.0.0.1', port: Number(values.port) });
 server.on('listening', () => {
   console.log(`Mock Stim server on ${endpoint}, replaying fixtures captured at ${fixtures.capturedAt}`);
   console.log('Pairing code (valid 5 minutes, single use):');
-  console.log(JSON.stringify({ v: 1, name: values.name, endpoint, pairingToken: pairing.token }));
+  console.log(pairing.code);
 });
 
 const startedAt = Date.now();
@@ -68,14 +82,15 @@ server.on('connection', (socket) => {
         authed = true;
         return { result: hello() };
       }
-      if (auth.pairingToken !== pairing.token || pairing.used || Date.now() > pairing.expiresAt) {
+      if (auth.pairingToken !== pairing.token || Date.now() > pairing.expiresAt) {
         return { error: ['pairing-expired', 'This pairing code was used or expired. Show a new one in Stim Desktop.'] };
       }
-      pairing.used = true;
+      pairing = newPairing();
       const deviceToken = randomBytes(32).toString('base64url');
       tokenHashes.add(hash(deviceToken));
       writeFileSync(TOKENS_FILE, JSON.stringify([...tokenHashes]));
-      console.log(`Paired ${auth.deviceName ?? 'a phone'}`);
+      console.log(`Paired ${auth.deviceName ?? 'a phone'}. Next pairing code:`);
+      console.log(pairing.code);
       authed = true;
       return { result: { ...hello(), deviceToken } };
     },

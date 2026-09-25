@@ -2,6 +2,7 @@ import { DarkTheme, DefaultTheme, Stack, ThemeProvider, useGlobalSearchParams, u
 import { StatusBar } from 'expo-status-bar';
 import { useColorScheme } from 'react-native';
 
+import { useDevPairing } from '@/hooks/dev-pairing';
 import { MacConnectionProvider } from '@/hooks/mac-connection';
 import { useColors } from '@/theme';
 
@@ -10,6 +11,7 @@ export default function RootLayout() {
   const colors = useColors();
   const { id } = useGlobalSearchParams<{ id?: string }>();
   const onMac = usePathname().startsWith('/mac/');
+  useDevPairing();
   const base = scheme === 'dark' ? DarkTheme : DefaultTheme;
   const theme = {
     ...base,

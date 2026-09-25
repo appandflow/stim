@@ -74,6 +74,50 @@ the build carries a remote EAS session added by hand (listed under `edits` in
 Device tokens the mock server issues survive its restarts in a file in the
 system temporary directory.
 
+## Driving the app
+
+Development builds can start already paired, so a person or an agent driving
+the app with agent-device skips the pairing screen:
+
+```bash
+cd apps/mobile
+npm run dev:pair  # or: npm run dev:pair -- --mock, with npm run mock-server running
+stim start
+stim ios
+```
+
+`npm run dev:pair` runs `stim-server pair --json` against the server running on
+this Mac, spends the pairing token the way the app does, and writes the
+endpoint and the device token it gets to `.env.local`:
+
+```bash
+EXPO_PUBLIC_STIM_DEV_ENDPOINT=ws://127.0.0.1:7787
+EXPO_PUBLIC_STIM_DEV_DEVICE_TOKEN=...
+```
+
+On launch, a development build stores that Mac, named from the server's
+`hello`, and opens its workspaces. Release builds ignore both variables.
+`.env.local` is gitignored; never commit a device token. Metro picks up a
+rewritten `.env.local`; reload the app after `dev:pair`.
+
+- `--mock` pairs with `npm run mock-server` instead of `stim-server`. The mock
+  server writes its current pairing code to a file in the system temporary
+  directory, and issues and prints a new code after each pairing and every 5
+  minutes.
+- `--port <n>` targets a server on another port than 7787, such as a
+  `stim-server --port <n>` running with a scratch `STIM_HOME`.
+- `--endpoint <url>` sets the endpoint the app connects to, such as the
+  tailnet endpoint `stim-server` prints. The default, `ws://127.0.0.1:<port>`,
+  reaches the Mac from the iOS Simulator but not from an Android emulator.
+  The server binds a device token to the machine that paired it, so a token
+  from `dev:pair` works only in a simulator or emulator on this Mac.
+
+`dev:pair` prints the id of the device it paired. Revoke it when you are done:
+
+```bash
+stim-server devices revoke <id>
+```
+
 ## Checks
 
 ```bash
