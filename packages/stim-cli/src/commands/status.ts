@@ -35,7 +35,9 @@ import { volumeRootFor } from '../fs-util.ts';
 import { listLeaseFiles } from '../engine/device-lease.ts';
 import { readEasSessionLedger } from '../engine/eas-session-ledger.ts';
 import { readRemoteSession } from '../supervisor/state.ts';
+import { createActivityReader, type ActivityTarget, type DeviceActivity } from '../devices/activity.ts';
 import {
+  activityLabel,
   capacity,
   deviceLeaseLines,
   deviceLeaseStates,
@@ -153,6 +155,19 @@ async function statusLines(json: boolean): Promise<string[]> {
     );
   }
 
+  const readActivity = createActivityReader();
+  for (const state of states) {
+    for (const device of [{ slot: 'default', ios: state.ios, android: state.android }, ...(state.slots ?? [])]) {
+      const base: Omit<ActivityTarget, 'platform' | 'id'> = { slot: device.slot, workspace: state.path };
+      if (device.ios?.state === 'Booted') {
+        device.ios.activity = readActivity({ ...base, platform: 'ios', id: device.ios.udid });
+      }
+      if (device.android && !device.android.physical && device.android.serial) {
+        device.android.activity = readActivity({ ...base, platform: 'android', id: device.android.serial });
+      }
+    }
+  }
+
   const leaseNow = Date.now();
   const leases = deviceLeaseStates(listLeaseFiles(), { root: cwdRoot, now: leaseNow });
 
@@ -231,7 +246,9 @@ async function statusLines(json: boolean): Promise<string[]> {
         const booted =
           deviceState.ios.state === 'Booted' ? chalk.green('booted') : chalk.dim(deviceState.ios.state.toLowerCase());
         const owned = deviceState.ios.owned ? chalk.dim(' (owned)') : '';
-        out.push(`  ios${slotLabel}: ${chalk.cyan(deviceState.ios.name ?? deviceState.ios.udid)} ${booted}${owned}`);
+        out.push(
+          `  ios${slotLabel}: ${chalk.cyan(deviceState.ios.name ?? deviceState.ios.udid)} ${booted}${owned}${activitySuffix(deviceState.ios.activity)}`,
+        );
       }
       if (deviceState.android) {
         const kind = deviceState.android.physical ? chalk.dim('(physical)') : chalk.dim('(emulator)');
@@ -239,7 +256,7 @@ async function statusLines(json: boolean): Promise<string[]> {
           ? ` ${deviceState.android.state}${deviceState.android.serial ? ` (${deviceState.android.serial})` : ''}`
           : '';
         out.push(
-          `  android${slotLabel}: ${chalk.cyan(deviceState.android.name)} ${kind}${observed}${deviceState.android.owned ? chalk.dim(' (owned)') : ''}`,
+          `  android${slotLabel}: ${chalk.cyan(deviceState.android.name)} ${kind}${observed}${deviceState.android.owned ? chalk.dim(' (owned)') : ''}${activitySuffix(deviceState.android.activity)}`,
         );
       }
     }
@@ -326,6 +343,11 @@ async function watchStatus(json: boolean): Promise<void> {
   sources = watchStatusSources({ home: getConfigDir(), onChange: () => scheduler.trigger() });
   scheduler.trigger(0);
   await new Promise<never>(() => {});
+}
+
+function activitySuffix(activity: DeviceActivity | undefined): string {
+  const label = activityLabel(activity, Date.now());
+  return label ? ` -- ${activity?.state === 'driven' ? chalk.magenta(label) : chalk.dim(label)}` : '';
 }
 
 function workspaceBuild(path: string, history: Record<string, RunHistory> | undefined): BuildReport | null {

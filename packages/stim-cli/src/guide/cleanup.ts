@@ -26,6 +26,9 @@ WHAT RECLAIMS AN OWNED DEVICE
   stim gc --delete --worktrees
                             runs \`stim worktree remove\` on every clean, idle,
                             Stim-managed linked worktree (\`guide cleanup gc\`)
+  stim gc --idle <duration>
+                            shuts DOWN (never deletes) owned devices with no
+                            driver, claim or activity for that long
 
 \`worktree remove\` and \`gc --delete\` are the only two commands that delete;
 \`gc --delete --worktrees\` deletes only through \`worktree remove\`. \`gc
@@ -99,6 +102,21 @@ SWEEPING FINISHED WORKTREES
   handles the branch exactly as a manual \`stim worktree remove\`. A worktree
   that became busy or recently used since the report is kept with the reason.
   A worktree that fails is reported, gc exits 1, and the sweep continues.
+
+IDLE DEVICES
+  Plain \`gc\` lists booted owned simulators and emulators whose \`status\`
+  activity is idle (\`guide facts status\`), with how long. \`gc --idle
+  <duration>\` (30m, 2h, 1d) shuts down each one idle at least that long
+  through the same teardown as \`stim stop\`: ownership is re-checked, the
+  device and its record stay, and the next \`ios\` or \`android\` run boots
+  it again. It acts without --delete and never deletes. It skips a device
+  that is driven (agent-device, a device lock, a test runner), whose
+  activity is unknown, whose idle time is unknown, or whose workspace has a
+  build in progress, and re-checks each device just before shutting it down.
+  Physical and remote devices are out of scope. --cache with --idle is
+  refused with STIM_BAD_ARG.
+    stim gc                 # lists idle devices
+    stim gc --idle 2h       # shuts down those idle 2 hours or more
 
 ORPHANED WORKSPACE DIRECTORIES
   A worktree deleted with \`git worktree remove\`, \`rm -rf\` or a /tmp wipe

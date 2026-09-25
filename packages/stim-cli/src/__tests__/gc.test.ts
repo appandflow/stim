@@ -2864,6 +2864,7 @@ describe('gc --json', () => {
     const payload = JSON.parse(stdout[0] ?? '');
     expect(payload).toMatchObject({
       mode: 'dry-run',
+      idle: null,
       cacheScope: null,
       olderThan: null,
       actionable: true,
@@ -2885,6 +2886,7 @@ describe('gc --json', () => {
       'orphanedDevices',
       'staleDevices',
       'staleDeviceRecords',
+      'idleDevices',
       'orphanedEasSessions',
       'staleBuildLocks',
       'staleBuildSlots',

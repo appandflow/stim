@@ -1,5 +1,6 @@
 import assert from 'node:assert';
 import {
+  activityLabel,
   capacity,
   deviceLeaseLines,
   deviceLeaseStates,
@@ -335,4 +336,24 @@ describe('remote device state', () => {
       'remote android: EAS session drs_7 billable (unclaimed) -- watch: https://preview.example/7',
     );
   });
+});
+
+test('device activity labels name the driver and its duration, and an unknown state never reads as idle', () => {
+  const now = Date.parse('2026-09-24T12:00:00Z');
+  expect(
+    activityLabel(
+      {
+        state: 'driven',
+        driver: { tool: 'agent-device', pid: 1, since: '2026-09-24T11:48:00Z' },
+        basis: ['agent-device-lease'],
+      },
+      now,
+    ),
+  ).toBe('driven by agent-device for 12m');
+  expect(activityLabel({ state: 'idle', lastActivityAt: '2026-09-24T09:00:00Z', basis: ['device-log'] }, now)).toBe(
+    'idle 3h',
+  );
+  expect(activityLabel({ state: 'unknown', basis: ['agent-device-lease'] }, now)).toBe(
+    'activity unknown (agent-device-lease)',
+  );
 });

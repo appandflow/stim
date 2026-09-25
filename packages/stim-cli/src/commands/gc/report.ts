@@ -22,6 +22,7 @@ import type {
   StaleProjectDevice,
 } from './devices.ts';
 import type { EasSessionSweep } from './eas-sessions.ts';
+import { idleDeviceLines, type IdleDevice } from './idle.ts';
 
 export interface GcReport {
   skipped: GcSkip[];
@@ -37,6 +38,7 @@ export interface GcReport {
   buildLocks: { stale: BuildLockInfo[]; live: BuildLockInfo[]; unresolved?: BuildLockInfo[] };
   buildSlots: { stale: BuildSlotInfo[]; live: BuildSlotInfo[]; unresolved?: BuildSlotInfo[] };
   deviceLeases: DeviceLeaseGarbage;
+  idleDevices: IdleDevice[];
   deviceSweepNotices: string[];
   easSessionSweep: EasSessionSweep;
   caches: GcCache[];
@@ -123,6 +125,7 @@ export function formatGcReport(
     buildLocks = { stale: [], live: [], unresolved: [] },
     buildSlots = { stale: [], live: [], unresolved: [] },
     deviceLeases = { expired: [], kept: [] },
+    idleDevices = [],
     deviceSweepNotices = [],
     easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
     caches = [],
@@ -203,6 +206,8 @@ export function formatGcReport(
       lines.push(`              ${d.project} (idle ${d.idleDays}d)`);
     }
   }
+
+  lines.push(...idleDeviceLines(idleDevices));
 
   if (staleDeviceRecords.length) {
     lines.push(`Stale device records (${staleDeviceRecords.length}) - the device is gone, the project is not:`);
@@ -431,6 +436,7 @@ export interface GcJsonSections {
     bytes: number | null;
   }[];
   staleDeviceRecords: { kind: 'ios' | 'android'; id: string; project: string; slot: string | null }[];
+  idleDevices: IdleDevice[];
   orphanedEasSessions: {
     id: string;
     name: string;
@@ -489,6 +495,7 @@ export function gcReportSections({
   buildLocks = { stale: [], live: [], unresolved: [] },
   buildSlots = { stale: [], live: [], unresolved: [] },
   deviceLeases = { expired: [], kept: [] },
+  idleDevices = [],
   deviceSweepNotices = [],
   easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
   workspaceOutputs = null,
@@ -547,6 +554,16 @@ export function gcReportSections({
       id: r.id,
       project: r.project,
       slot: r.slot ?? null,
+    })),
+    idleDevices: idleDevices.map(({ kind, id, name, project, slot, lastActivityAt, idleForMs, buildInProgress }) => ({
+      kind,
+      id,
+      name,
+      project,
+      slot,
+      lastActivityAt,
+      idleForMs,
+      buildInProgress,
     })),
     orphanedEasSessions: easSessionSweep.orphaned.map((s) => ({
       id: s.id,

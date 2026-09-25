@@ -1,9 +1,10 @@
 import type { BuildReport } from './engine/build-progress.ts';
 import { projectDeviceSlots } from './devices/device-slots.ts';
-import { clockTime, formatElapsed, plural } from './command-output.ts';
+import { clockTime, formatElapsed, formatLongDuration, plural } from './command-output.ts';
 import type { ProjectRecord } from './workspace/config.ts';
 import type { LeaseFileEntry } from './engine/device-lease.ts';
 import type { RemoteSessionRecord } from './supervisor/state.ts';
+import type { DeviceActivity } from './devices/activity.ts';
 
 const IOS_SIM_MB = 1500;
 const ANDROID_EMULATOR_MB = 2500;
@@ -77,13 +78,14 @@ export interface EnvironmentState {
   live: boolean;
   memoryMb: number;
   warnings: string[];
-  ios?: { name: string | null; udid: string; owned: boolean; state: string } | null;
+  ios?: { name: string | null; udid: string; owned: boolean; state: string; activity?: DeviceActivity } | null;
   android?: {
     name: string | undefined;
     owned: boolean;
     physical: boolean;
     serial?: string | null;
     state?: AndroidRuntimeFacts['state'];
+    activity?: DeviceActivity;
   } | null;
   metro?: { port: number; running: boolean; pid: number | null } | null;
   supervisor?: { pid: number | null; mode: string | null; startedAt: string | null; healthy: boolean } | null;
@@ -226,6 +228,19 @@ export function environmentState(
     worktree: worktrees.find((w) => w.path === project.__path) ?? null,
     remoteDevices: remote ? [remote] : [],
   };
+}
+
+export function activityLabel(activity: DeviceActivity | undefined, now: number): string | null {
+  if (!activity) return null;
+  if (activity.state === 'driven') {
+    const since = Date.parse(activity.driver?.since ?? '');
+    const duration = Number.isFinite(since) ? ` for ${formatLongDuration(Math.max(0, now - since))}` : '';
+    return `driven by ${activity.driver?.tool ?? 'an unknown tool'}${duration}`;
+  }
+  if (activity.state === 'unknown') return `activity unknown (${activity.basis.join(', ')})`;
+  if (activity.state === 'active') return 'active';
+  const last = Date.parse(activity.lastActivityAt ?? '');
+  return Number.isFinite(last) ? `idle ${formatLongDuration(Math.max(0, now - last))}` : 'idle (no recorded activity)';
 }
 
 export function remoteDeviceLine(remote: RemoteDeviceState): string {

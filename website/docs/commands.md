@@ -489,6 +489,27 @@ successful runs with that outcome, and `basis` counts them. Both are `null`
 until the project has such a run. Stim does not report a completion
 percentage.
 
+Each booted simulator and detected emulator also shows who is using it:
+
+```text
+  ios [duo]: stim-app-duo (iPhone Duo 27.1) booted (owned) -- driven by agent-device for 12m
+  android: stim-app (emulator) detected (emulator-5554) (owned) -- idle 3h
+```
+
+In `--json`, those devices carry
+`activity: { state, driver?, lastActivityAt?, basis }`. `state` is `driven`
+when a tool holds the device now, `active` when it had activity in the last 10
+minutes, `idle` otherwise, and `unknown` when a claim or driver check could not
+be read. Stim counts as drivers a live agent-device session (its recorded
+processes must still be alive with their recorded start times, so a stale or
+reused pid does not count), an unexpired `stim device lock`, a host process
+that names the device (xcodebuild test runners, idb, Maestro, Appium,
+`simctl io|spawn`), and on Android a `uiautomator` or `androidx.test` process.
+`lastActivityAt` is the newest of the device's app log records, the platform's
+Metro bundle requests, and the workspace's last Stim run. Stim reads
+agent-device state without changing it. `stim guide facts status` lists every
+field.
+
 Try it with an agent:
 
 ```text
@@ -582,7 +603,7 @@ worktree locked with `git worktree lock` is refused until you unlock it.
 ## `gc`
 
 ```text
-stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces>] [--worktrees] [--json]
+stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces>] [--worktrees] [--idle <duration>] [--json]
 ```
 
 Reports stale workspace entries, orphaned workspace directories, orphaned
@@ -615,6 +636,15 @@ workspace keeps its state, logs, devices and ports. See
   for `--older-than` days, or 7 days without that option. It cannot be
   combined with `--cache`. See
   [removing finished worktrees in bulk](./worktrees.md#remove-finished-worktrees-in-bulk).
+- `--idle <duration>` shuts down owned simulators and emulators whose
+  [`status` activity](#status) has been idle for at least `<duration>`, such
+  as `30m`, `2h` or `1d`. It acts without `--delete`, never deletes, and
+  leaves each device assigned to its workspace, like `stim stop`. It skips a
+  device that is driven, whose activity is unknown, or whose workspace has a
+  build in progress, and re-checks each device before shutting it down.
+  Without `--idle`, `gc` lists idle devices and how long they have been idle.
+  Physical and remote devices are out of scope. It cannot be combined with
+  `--cache`.
 - `--json` prints the report as one object on stdout and every other line on
   stderr. Agents use it to show you what `gc --delete` would remove before they
   ask to run it.
@@ -626,6 +656,7 @@ prints, for example:
 ```json
 {
   "mode": "dry-run",
+  "idle": null,
   "cacheScope": null,
   "olderThan": null,
   "worktreeSweep": { "olderThan": 7, "defaulted": true },
@@ -666,10 +697,19 @@ acts on and otherwise a stable code; `detail` is the text the report prints.
 `--worktrees`. With `--delete`, `mode` is `"delete"`, the sections list what
 the run acted on, and `failures` counts the entries it could not delete. A
 nonzero count exits with status 1. Run `stim gc --json` again to see what is
-left. A `--cache` name that no cache carries, or `--cache` together with
-`--worktrees`, exits with status 1 and prints
+left. `idle` is the `--idle` duration in milliseconds or `null`, and with
+`--idle` `failures` also counts devices it could not shut down. A `--cache`
+name that no cache carries, or `--cache` together with `--worktrees` or
+`--idle`, exits with status 1 and prints
 `{ "code": "STIM_BAD_ARG", "message": "...", "remedy": "..." }`.
 `stim guide facts gc` lists every section, field and reason code.
+
+Try it with an agent:
+
+```text
+Run `stim gc` and show me which owned simulators and emulators are idle and for
+how long. Then run `stim gc --idle 2h` to shut down the ones idle that long.
+```
 
 ## `guide`
 
