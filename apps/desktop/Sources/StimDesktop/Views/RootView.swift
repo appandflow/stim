@@ -15,6 +15,7 @@ struct RootView: View {
   @StateObject private var metrics: MetricsStore
   @ObservedObject private var actions: ActionCenter
   @ObservedObject private var autopilot: AutopilotRunner
+  private let onboarding: Onboarding
   @StateObject private var storage: StorageStore
   @StateObject private var planChecks: BuildPlanChecks
   @State private var selection: SidebarItem? = .wall
@@ -36,8 +37,12 @@ struct RootView: View {
 
   private let cli: Task<StimCLI, Never>
 
-  init(cli: Task<StimCLI, Never>, store: StatusStore, actions: ActionCenter, autopilot: AutopilotRunner) {
+  init(
+    cli: Task<StimCLI, Never>, store: StatusStore, actions: ActionCenter, autopilot: AutopilotRunner,
+    onboarding: Onboarding
+  ) {
     self.cli = cli
+    self.onboarding = onboarding
     self.store = store
     self.actions = actions
     self.autopilot = autopilot
@@ -56,6 +61,7 @@ struct RootView: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { sidebarWidth = $0 }
     } detail: {
       detail
+        .safeAreaInset(edge: .top, spacing: 0) { OnboardingBanner(onboarding: onboarding) }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.background)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }

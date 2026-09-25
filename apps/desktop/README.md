@@ -328,6 +328,19 @@ at the next launch. Notifications and launch at login need the bundled app.
   commands see the same `PATH` and variables such as `ANDROID_HOME` as a
   terminal.
 
+At launch the app runs `stim --version` and needs 1.11.0 or later. When
+`stim` is missing, too old, or reports no version, a banner explains Stim and
+offers **Install stim** or **Update stim**, which runs `npm install --global
+stim@latest` in the activity sheet, and **Choose stim executable…**. `npm` is
+the one next to the resolved `stim` when there is one, otherwise the first on
+the login shell's `PATH`. A newly found `stim` at another path asks for a
+restart, because the app resolves `stim` once at launch. While phones are
+served, `stim-server --version` gets the same check, installing
+`@stim-cli/server@latest`. Once `stim` is recent enough, the banner offers once
+to set `iosSimulatorApp` and `androidEmulatorApp` to `stim-desktop` with
+`stim settings set … --scope machine`. It skips a key that is already set or
+that the installed `stim` does not list. **Not now** hides the offer for good.
+
 ## Develop
 
 ```bash

@@ -4,15 +4,18 @@ import Foundation
 public struct StimCommand: Hashable, Sendable {
   public var arguments: [String]
   public var cwd: String
+  /// The program the command runs: `stim`, or another tool found on the `stim` environment's `PATH`.
+  public var program: String
 
-  public init(_ arguments: [String], cwd: String) {
+  public init(_ arguments: [String], cwd: String, program: String = "stim") {
     self.arguments = arguments
     self.cwd = cwd
+    self.program = program
   }
 
   /// The same command as one line for a shell, for copying.
   public var shellLine: String {
-    (["cd", shellQuote(cwd), "&&", "stim"] + arguments).joined(separator: " ")
+    (["cd", shellQuote(cwd), "&&", program] + arguments).joined(separator: " ")
   }
 
   /// `shellLine` with paths under `home` written from `~`, still valid for a shell.
@@ -22,7 +25,7 @@ public struct StimCommand: Hashable, Sendable {
     }
     let dir = relative(cwd).map { $0.isEmpty ? "~" : "~/" + shellQuote($0) } ?? shellQuote(cwd)
     let arguments = arguments.map { argument in relative(argument).map { $0.isEmpty ? "~" : "~/" + $0 } ?? argument }
-    return (["cd", dir, "&&", "stim"] + arguments).joined(separator: " ")
+    return (["cd", dir, "&&", program] + arguments).joined(separator: " ")
   }
 }
 
