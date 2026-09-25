@@ -8,13 +8,16 @@ final class ActionRun: ObservableObject, Identifiable {
   let id = UUID()
   let title: String
   let steps: [StimCommand]
+  let key: String
+  let startedAt = Date()
   @Published private(set) var lines: [OutputLine] = []
   @Published private(set) var exitStatus: Int32?
   @Published private(set) var launchError: String?
 
-  init(title: String, steps: [StimCommand]) {
+  init(title: String, steps: [StimCommand], key: String) {
     self.title = title
     self.steps = steps
+    self.key = key
   }
 
   var command: StimCommand { steps[0] }
@@ -85,6 +88,9 @@ final class ActionCenter: ObservableObject {
 
   func latest(for key: String) -> ActionRun? { runs[key] }
 
+  /// Runs still in flight, for the toolbar's background-activity indicator.
+  var activeRuns: [ActionRun] { runs.values.filter(\.isRunning).sorted { $0.startedAt < $1.startedAt } }
+
   func run(_ title: String, _ command: StimCommand, key: String? = nil) {
     run(title, steps: [command], key: key)
   }
@@ -101,7 +107,7 @@ final class ActionCenter: ObservableObject {
       if present { presented = active }
       return nil
     }
-    let run = ActionRun(title: title, steps: steps)
+    let run = ActionRun(title: title, steps: steps, key: key)
     runs[key] = run
     if present { presented = run }
     let cli = cli
