@@ -22,8 +22,8 @@ export function AgentFeed({ workspace, slot, deviceId }: { workspace: string; sl
   return (
     <View style={[styles.feed, { borderTopColor: colors.border }]} accessibilityLabel="Agent actions">
       <Text style={[styles.title, { color: colors.secondary }]}>Agent actions</Text>
-      {actions.map((record, i) => (
-        <View key={`${record.ts}-${i}`} style={styles.row}>
+      {actions.map((record) => (
+        <View key={`${record.ts}-${record.msg}`} style={styles.row}>
           <Text style={[styles.time, { color: colors.tertiary }]}>
             {new Date(record.ts).toTimeString().slice(0, 8)}
           </Text>
