@@ -23,7 +23,7 @@ export function DeviceTile({
 }) {
   const colors = useColors();
   const streams = device.running && device.owned && !device.physical;
-  const frame = useFrame(workspace, device.platform, device.slot, streams);
+  const { frame, error } = useFrame(workspace, device.platform, device.slot, streams);
   const aspect = frame && frame.height > 0 ? frame.width / frame.height : device.platform === 'ios' ? 0.46 : 0.45;
   return (
     <Card>
@@ -55,7 +55,7 @@ export function DeviceTile({
           !streams && styles.screenOff,
         ]}
       >
-        {frame ? (
+        {streams && frame ? (
           <Image
             source={{ uri: `data:${frame.mime};base64,${frame.data}` }}
             style={{ height: SCREEN_HEIGHT - 24, aspectRatio: aspect, borderRadius: 6 }}
@@ -66,7 +66,7 @@ export function DeviceTile({
         ) : (
           <Text style={[styles.placeholder, { color: colors.tertiary }]}>
             {streams
-              ? 'Waiting for frames'
+              ? (error ?? 'Waiting for frames')
               : device.running
                 ? 'Frames are only served for devices Stim owns.'
                 : device.state}

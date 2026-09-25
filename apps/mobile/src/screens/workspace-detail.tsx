@@ -8,7 +8,7 @@ import { DeviceTile } from '@/components/device-tile';
 import { EmptyState } from '@/components/empty-state';
 import { RemoteTile } from '@/components/remote-tile';
 import { useMacConnection, useStatus } from '@/hooks/mac-connection';
-import { devicesOf, projectOf, runningBuild, workspaceNames } from '@/lib/workspaces';
+import { devicesOf, projectOf, repositoryRoots, runningBuild, workspaceNames } from '@/lib/workspaces';
 import { mono, useColors } from '@/theme';
 
 export function WorkspaceDetail({ path }: { path: string }) {
@@ -63,7 +63,9 @@ export function WorkspaceDetail({ path }: { path: string }) {
       <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.container}>
         <ConnectionBanner state={state} />
         <View style={styles.section}>
-          <Text style={[styles.project, { color: colors.primary }]}>{projectOf(env).name}</Text>
+          <Text style={[styles.project, { color: colors.primary }]}>
+            {projectOf(env, repositoryRoots(status)).name}
+          </Text>
           {env.worktree?.branch ? (
             <Text style={[styles.branch, { color: colors.text }]}>{env.worktree.branch}</Text>
           ) : null}

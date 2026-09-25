@@ -15,7 +15,7 @@ import {
 
 import { CLIENT } from '@/hooks/mac-connection';
 import { pair } from '@/lib/connection';
-import { saveMac } from '@/lib/macs';
+import { renameMac, saveMac } from '@/lib/macs';
 import { manualPairing, parsePairingCode } from '@/lib/pairing';
 import type { PairingPayload } from '@/protocol/types';
 import { mono, radius, useColors, type Colors } from '@/theme';
@@ -24,7 +24,7 @@ type Step =
   | { kind: 'scan' }
   | { kind: 'manual' }
   | { kind: 'connecting'; endpoint: string }
-  | { kind: 'name'; endpoint: string; deviceToken: string; name: string };
+  | { kind: 'name'; id: string; name: string };
 
 export function Pair() {
   const colors = useColors();
@@ -45,8 +45,9 @@ export function Pair() {
       const deviceName = Constants.deviceName ?? 'Phone';
       const paired = await pair(payload.endpoint, payload.pairingToken, deviceName, CLIENT);
       const suggested = payload.name || paired.serverName;
+      const mac = await saveMac({ name: suggested, endpoint: payload.endpoint }, paired.deviceToken);
       setName(suggested);
-      setStep({ kind: 'name', endpoint: payload.endpoint, deviceToken: paired.deviceToken, name: suggested });
+      setStep({ kind: 'name', id: mac.id, name: suggested });
     } catch (e) {
       setError((e as Error).message);
       setStep({ kind: from });
@@ -70,9 +71,9 @@ export function Pair() {
 
   const onSave = async () => {
     if (step.kind !== 'name') return;
-    const mac = await saveMac({ name: name.trim() || step.name, endpoint: step.endpoint }, step.deviceToken);
+    if (name.trim() && name.trim() !== step.name) await renameMac(step.id, name.trim());
     router.dismiss();
-    router.push({ pathname: '/mac/[id]', params: { id: mac.id } });
+    router.push({ pathname: '/mac/[id]', params: { id: step.id } });
   };
 
   return (

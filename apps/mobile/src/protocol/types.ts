@@ -1,10 +1,7 @@
 /**
- * Stim server protocol v1, as specified in
- * docs/specs/2026-09-25-stim-server-design.md ("Protocol", "Pairing").
- *
+ * Stim server protocol v1: docs/specs/2026-09-25-stim-server-design.md ("Protocol", "Pairing").
  * The status and log shapes mirror `stim status --json` and `stim logs --json`.
- * #1118 and #1119 move these types into `@stim-cli/core`; this file is then
- * replaced by imports from there.
+ * Replaced by `@stim-cli/core` imports once #1118 and #1119 land.
  */
 
 export const PROTOCOL_VERSION = 1;

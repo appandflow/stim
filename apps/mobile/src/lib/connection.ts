@@ -12,7 +12,7 @@ export type ConnectionState =
   | { kind: 'connecting' }
   | { kind: 'open'; server: Methods['hello']['result']['server'] }
   | { kind: 'waiting'; retryInMs: number; reason: string }
-  | { kind: 'refused'; reason: string }
+  | { kind: 'refused'; code: string; reason: string }
   | { kind: 'closed' };
 
 type SubscribeMethod = 'status.subscribe' | 'logs.subscribe' | 'frames.subscribe';
@@ -21,6 +21,7 @@ interface Subscription {
   method: SubscribeMethod;
   params: Methods[SubscribeMethod]['params'];
   onEvent: (event: ServerEvent) => void;
+  onSubscribed?: () => void;
   serverId: string | null;
 }
 
@@ -79,6 +80,14 @@ export class StimConnection {
     this.connect();
   }
 
+  /** Skips the remaining retry delay, for when the app returns to the foreground. */
+  retryNow(): void {
+    if (this.stopped || this.timer === null) return;
+    this.clearTimer(this.timer);
+    this.timer = null;
+    this.connect();
+  }
+
   close(): void {
     this.stopped = true;
     if (this.timer !== null) this.clearTimer(this.timer);
@@ -94,12 +103,14 @@ export class StimConnection {
     return this.send(this.socket, method, params);
   }
 
+  /** `onSubscribed` runs each time the server accepts the subscription, before the events it then sends. */
   subscribe<M extends SubscribeMethod>(
     method: M,
     params: Methods[M]['params'],
     onEvent: (event: ServerEvent) => void,
+    onSubscribed?: () => void,
   ): () => void {
-    const sub: Subscription = { method, params, onEvent, serverId: null };
+    const sub: Subscription = { method, params, onEvent, onSubscribed, serverId: null };
     this.subscriptions.add(sub);
     if (this.open && this.socket) this.sendSubscribe(this.socket, sub);
     return () => {
@@ -131,7 +142,7 @@ export class StimConnection {
           if (socket !== this.socket) return;
           if (error instanceof RequestError && REFUSAL_CODES.has(error.error.code)) {
             this.stopped = true;
-            this.options.onState?.({ kind: 'refused', reason: error.message });
+            this.options.onState?.({ kind: 'refused', code: error.error.code, reason: error.message });
           }
           socket.close();
         },
@@ -168,6 +179,7 @@ export class StimConnection {
           return;
         }
         sub.serverId = result.subscription;
+        sub.onSubscribed?.();
       },
       (error: Error) => {
         sub.onEvent({ event: 'error', error: { code: 'subscribe-failed', message: error.message } });
@@ -209,6 +221,8 @@ export class StimConnection {
   }
 }
 
+const PAIRING_TIMEOUT_MS = 15_000;
+
 /** Spends a pairing token and returns the device token the server issues. */
 export function pair(
   endpoint: string,
@@ -220,9 +234,12 @@ export function pair(
   return new Promise((resolve, reject) => {
     const socket = createSocket(endpoint);
     let done = false;
+    const unreachable = () => new Error(`Cannot reach ${endpoint}. Check that Tailscale is connected on this phone.`);
+    const timeout = setTimeout(() => finish(() => reject(unreachable())), PAIRING_TIMEOUT_MS);
     const finish = (settle: () => void) => {
       if (done) return;
       done = true;
+      clearTimeout(timeout);
       socket.close();
       settle();
     };
@@ -247,7 +264,6 @@ export function pair(
         resolve({ deviceToken: result.deviceToken, serverName: result.server.name });
       });
     };
-    socket.onclose = () =>
-      finish(() => reject(new Error(`Cannot reach ${endpoint}. Check that Tailscale is connected on this phone.`)));
+    socket.onclose = () => finish(() => reject(unreachable()));
   });
 }

@@ -47,7 +47,8 @@ export function Logs({ path, errorsOnly }: { path: string; errorsOnly: boolean }
     setRecords((existing) => (reset ? [] : appendRecords(existing, incoming)));
     if (reset) setExpanded(new Set());
   }, []);
-  useLogs(logFilter(path, filter), append);
+  const active = env && filter.slot !== null && !slots.includes(filter.slot) ? { ...filter, slot: null } : filter;
+  useLogs(logFilter(path, active), append);
 
   const update = (patch: Partial<LogFilterState>) => setFilter((f) => ({ ...f, ...patch }));
   const toggleSource = (source: LogFilterState['sources'][number]) =>
@@ -83,7 +84,7 @@ export function Logs({ path, errorsOnly }: { path: string; errorsOnly: boolean }
             <Toggle
               colors={colors}
               label="All slots"
-              on={filter.slot === null}
+              on={active.slot === null}
               onPress={() => update({ slot: null })}
             />
             {slots.map((slot) => (
@@ -91,7 +92,7 @@ export function Logs({ path, errorsOnly }: { path: string; errorsOnly: boolean }
                 key={slot}
                 colors={colors}
                 label={slot}
-                on={filter.slot === slot}
+                on={active.slot === slot}
                 onPress={() => update({ slot })}
               />
             ))}

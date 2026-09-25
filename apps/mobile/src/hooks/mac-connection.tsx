@@ -1,5 +1,6 @@
 import Constants from 'expo-constants';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { AppState } from 'react-native';
 
 import { StimConnection, type ConnectionState } from '@/lib/connection';
 import { listMacs, macToken, type PairedMac } from '@/lib/macs';
@@ -68,6 +69,14 @@ export function MacConnectionProvider({ id, children }: { id: string | null; chi
   const connection = current?.connection ?? null;
   useEffect(() => {
     if (!connection) return;
+    const listener = AppState.addEventListener('change', (state) => {
+      if (state === 'active') connection.retryNow();
+    });
+    return () => listener.remove();
+  }, [connection]);
+
+  useEffect(() => {
+    if (!connection) return;
     return connection.subscribe('status.subscribe', {}, (event) => {
       if (event.event === 'status') setStatus({ connection, payload: event.payload });
     });
@@ -97,20 +106,32 @@ export function useLogs(filter: LogFilter | null, append: (records: LogRecord[],
   useEffect(() => {
     if (!connection || !key) return;
     append([], true);
-    return connection.subscribe('logs.subscribe', JSON.parse(key) as LogFilter, (event) => {
-      if (event.event === 'logs') append(event.records, false);
-    });
+    return connection.subscribe(
+      'logs.subscribe',
+      JSON.parse(key) as LogFilter,
+      (event) => {
+        if (event.event === 'logs') append(event.records, false);
+      },
+      () => append([], true),
+    );
   }, [connection, key, append]);
 }
 
-export function useFrame(workspace: string, platform: 'ios' | 'android', slot: string, enabled: boolean) {
+export function useFrame(
+  workspace: string,
+  platform: 'ios' | 'android',
+  slot: string,
+  enabled: boolean,
+): { frame: FrameEvent | null; error: string | null } {
   const { connection } = useMacConnection();
-  const [frame, setFrame] = useState<FrameEvent | null>(null);
+  const [latest, setLatest] = useState<{ key: string; frame: FrameEvent | null; error: string | null } | null>(null);
+  const key = connection && enabled ? `${workspace}\n${platform}\n${slot}` : null;
   useEffect(() => {
-    if (!connection || !enabled) return;
+    if (!connection || key === null) return;
     return connection.subscribe('frames.subscribe', { workspace, platform, slot }, (event) => {
-      if (event.event === 'frame') setFrame(event);
+      if (event.event === 'frame') setLatest({ key, frame: event, error: null });
+      if (event.event === 'error') setLatest({ key, frame: null, error: event.error.message });
     });
-  }, [connection, workspace, platform, slot, enabled]);
-  return frame;
+  }, [connection, key, workspace, platform, slot]);
+  return latest && latest.key === key ? latest : { frame: null, error: null };
 }

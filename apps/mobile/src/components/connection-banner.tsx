@@ -12,7 +12,9 @@ export function ConnectionBanner({ state }: { state: ConnectionState }) {
       : state.kind === 'waiting'
         ? `${state.reason} Retrying in ${Math.round(state.retryInMs / 1000)}s.`
         : state.kind === 'refused'
-          ? `${state.reason} Forget this Mac and pair it again from Stim Desktop.`
+          ? state.code === 'protocol-unsupported'
+            ? `${state.reason} Update this app or the Stim server on the Mac.`
+            : `${state.reason} Pair this Mac again from Stim Desktop.`
           : 'Disconnected';
   const tint = state.kind === 'refused' ? colors.error : state.kind === 'connecting' ? colors.secondary : colors.warn;
   return (

@@ -105,7 +105,29 @@ describe('StimConnection', () => {
     sockets[0].fail('hello', 'unauthorized');
     await flush();
     expect(timers).toHaveLength(0);
-    expect(states.at(-1)).toEqual({ kind: 'refused', reason: 'unauthorized' });
+    expect(states.at(-1)).toEqual({ kind: 'refused', code: 'unauthorized', reason: 'unauthorized' });
+  });
+
+  it('reports each resubscribe so a log list can drop the history it already shows', async () => {
+    const { connection, sockets, timers } = setup();
+    let subscribed = 0;
+    connection.subscribe(
+      'logs.subscribe',
+      { workspace: '/w' },
+      () => {},
+      () => subscribed++,
+    );
+    connection.start();
+    for (const [i, id] of ['s1', 's2'].entries()) {
+      sockets[i].onopen?.();
+      sockets[i].reply('hello', hello);
+      await flush();
+      sockets[i].reply('logs.subscribe', { subscription: id });
+      await flush();
+      sockets[i].close();
+      timers[i].fn();
+    }
+    expect(subscribed).toBe(2);
   });
 
   it('unsubscribes on the server when a screen stops listening', async () => {

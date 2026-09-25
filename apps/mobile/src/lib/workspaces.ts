@@ -28,26 +28,49 @@ export function workspaceNames(path: string): WorkspaceNames {
 }
 
 export interface ProjectRef {
-  /** The main checkout path of this app: a worktree maps to its repository root plus the same subdirectory. */
+  /** The repository root, like apps/desktop, which asks git for the common directory. */
   key: string;
   name: string;
 }
 
 const basename = (path: string) => path.split('/').filter(Boolean).pop() ?? path;
 
-export function projectOf(env: Pick<EnvironmentState, 'path' | 'worktree'>): ProjectRef {
-  const parts = env.path.split('/');
+/** The repository a `.worktrees/<name>` or `.claude/worktrees/<name>` checkout belongs to. */
+function worktreeRoot(path: string): string | null {
+  const parts = path.split('/');
   for (let i = parts.length - 2; i > 0; i--) {
-    const worktreeDir = parts[i] === '.worktrees' || (parts[i] === 'worktrees' && parts[i - 1] === '.claude');
-    if (!worktreeDir) continue;
-    const rootEnd = parts[i] === '.worktrees' ? i : i - 1;
-    const root = parts.slice(0, rootEnd).join('/');
-    const subdir = parts.slice(i + 2);
-    return { key: [root, ...subdir].join('/'), name: basename(root) };
+    if (parts[i] === '.worktrees') return parts.slice(0, i).join('/');
+    if (parts[i] === 'worktrees' && parts[i - 1] === '.claude') return parts.slice(0, i - 1).join('/');
   }
-  const repository = env.worktree?.repository;
-  if (repository && env.path.startsWith(`${repository}/`)) return { key: env.path, name: basename(repository) };
-  return { key: env.path, name: basename(env.path) };
+  return null;
+}
+
+/** The parents of the payload's worktrees, and every other checkout, which can hold a nested app. */
+export function repositoryRoots(payload: Pick<StatusPayload, 'environments' | 'unprovisionedWorktrees'>): string[] {
+  const roots = new Set<string>();
+  for (const { path, worktree } of payload.environments) {
+    roots.add(worktreeRoot(path) ?? worktree?.repository ?? path);
+  }
+  for (const { path } of payload.unprovisionedWorktrees) {
+    const root = worktreeRoot(path);
+    if (root) roots.add(root);
+  }
+  return [...roots];
+}
+
+/**
+ * The phone cannot run git, so a checkout joins the outermost known root that contains it, and is its
+ * own project otherwise.
+ */
+export function projectOf(env: Pick<EnvironmentState, 'path' | 'worktree'>, roots: string[]): ProjectRef {
+  const own = worktreeRoot(env.path) ?? env.worktree?.repository;
+  const root =
+    own ??
+    roots
+      .filter((r) => env.path === r || env.path.startsWith(`${r}/`))
+      .reduce<string | null>((best, r) => (best === null || r.length < best.length ? r : best), null) ??
+    env.path;
+  return { key: root, name: basename(root) };
 }
 
 export interface ProjectGroup {
@@ -60,18 +83,23 @@ export interface ProjectGroup {
 /** Projects with live workspaces first, then by name; live workspaces first inside each. */
 export function groupByProject(payload: StatusPayload): ProjectGroup[] {
   const groups = new Map<string, ProjectGroup>();
+  const roots = repositoryRoots(payload);
   for (const env of payload.environments) {
-    const project = projectOf(env);
+    const project = projectOf(env, roots);
     let group = groups.get(project.key);
     if (!group) {
       group = { key: project.key, name: project.name, liveCount: 0, workspaces: [] };
       groups.set(project.key, group);
     }
-    if (project.name !== basename(project.key)) group.name = project.name;
     group.workspaces.push(env);
     if (isActive(env)) group.liveCount += 1;
   }
   const byName = (a: string, b: string) => a.localeCompare(b);
+  const named = new Map<string, number>();
+  for (const group of groups.values()) named.set(group.name, (named.get(group.name) ?? 0) + 1);
+  for (const group of groups.values()) {
+    if ((named.get(group.name) ?? 0) > 1) group.name = group.key.split('/').filter(Boolean).slice(-2).join('/');
+  }
   for (const group of groups.values()) {
     group.workspaces.sort(
       (a, b) =>

@@ -1,6 +1,6 @@
 import fixture from '../../mock-server/fixtures/status.json';
 
-import { devicesOf, groupByProject, projectOf, runningBuild, workspaceNames } from '@/lib/workspaces';
+import { devicesOf, groupByProject, projectOf, repositoryRoots, runningBuild, workspaceNames } from '@/lib/workspaces';
 import type { EnvironmentState, StatusPayload } from '@/protocol/types';
 
 const payload = fixture.payload as StatusPayload;
@@ -13,21 +13,24 @@ const env = (path: string, extra: Partial<EnvironmentState> = {}): EnvironmentSt
 });
 
 describe('projectOf', () => {
-  it('maps a worktree to the main checkout of the same app', () => {
-    expect(projectOf(env('/u/tlon-apps/.worktrees/chat-perf/apps/tlon-mobile'))).toEqual({
-      key: '/u/tlon-apps/apps/tlon-mobile',
-      name: 'tlon-apps',
+  it('maps worktrees and checkouts inside a known repository to that repository', () => {
+    const roots = repositoryRoots({
+      environments: [env('/u/tlon-apps/.worktrees/chat-perf/apps/tlon-mobile')],
+      unprovisionedWorktrees: [{ path: '/u/stim/.claude/worktrees/1123-mobile-app' }],
     });
-    expect(projectOf(env('/u/stim/.claude/worktrees/1123-mobile-app/apps/mobile'))).toEqual({
-      key: '/u/stim/apps/mobile',
-      name: 'stim',
-    });
+    expect(roots).toEqual(['/u/tlon-apps', '/u/stim']);
+    expect(projectOf(env('/u/hinges/example'), ['/u/hinges', '/u/hinges/example']).key).toBe('/u/hinges');
+    expect(projectOf(env('/u/tlon-apps/.worktrees/chat-perf/apps/tlon-mobile'), roots).key).toBe('/u/tlon-apps');
+    expect(projectOf(env('/u/tlon-apps/apps/tlon-mobile'), roots)).toEqual({ key: '/u/tlon-apps', name: 'tlon-apps' });
+    expect(projectOf(env('/u/stim/apps/mobile'), roots).name).toBe('stim');
+    expect(projectOf(env('/u/tlon-apps-2'), roots)).toEqual({ key: '/u/tlon-apps-2', name: 'tlon-apps-2' });
   });
 });
 
 describe('groupByProject', () => {
-  it('groups the captured status by project with live projects and workspaces first', () => {
+  it('groups the captured status by repository with live projects and workspaces first', () => {
     const groups = groupByProject(payload);
+    expect(groups.map((g) => g.name)).toEqual(['stim', 'tlon-apps', 'example', 'helloworld', 'react-native-hinges']);
     const tlon = groups.find((g) => g.name === 'tlon-apps');
     expect(tlon?.liveCount).toBe(3);
     expect(tlon?.workspaces.map((w) => workspaceNames(w.path).title).slice(0, 3)).toEqual([
@@ -38,14 +41,12 @@ describe('groupByProject', () => {
     const firstIdle = groups.findIndex((g) => g.liveCount === 0);
     expect(groups.slice(firstIdle).every((g) => g.liveCount === 0)).toBe(true);
   });
+});
 
-  it('keeps the main checkout in the group its worktrees join', () => {
-    const groups = groupByProject({
-      ...payload,
-      environments: [env('/u/tlon-apps/apps/tlon-mobile'), env('/u/tlon-apps/.worktrees/a/apps/tlon-mobile')],
-    });
-    expect(groups).toHaveLength(1);
-    expect(groups[0].name).toBe('tlon-apps');
+describe('groupByProject names', () => {
+  it('tells apart projects whose folders share a name', () => {
+    const groups = groupByProject({ ...payload, environments: [env('/u/a/example'), env('/u/b/example')] });
+    expect(groups.map((g) => g.name)).toEqual(['a/example', 'b/example']);
   });
 });
 
