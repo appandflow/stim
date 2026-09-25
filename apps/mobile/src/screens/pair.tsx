@@ -93,7 +93,6 @@ export function Pair() {
             <Field
               colors={colors}
               mono
-              url
               label="Endpoint"
               value={endpoint}
               onChangeText={setEndpoint}
@@ -188,14 +187,12 @@ function Field({
   label,
   mono: monospaced = false,
   secret = false,
-  url = false,
   ...input
 }: {
   colors: Colors;
   label: string;
   mono?: boolean;
   secret?: boolean;
-  url?: boolean;
   value: string;
   onChangeText: (text: string) => void;
   placeholder: string;
@@ -214,12 +211,7 @@ function Field({
           autoCapitalize="none"
           autoCorrect={false}
           spellCheck={false}
-          {...(secret
-            ? { secureTextEntry: !revealed, textContentType: 'oneTimeCode' as const, autoComplete: 'off' as const }
-            : {})}
-          {...(url
-            ? { keyboardType: 'url' as const, textContentType: 'URL' as const, autoComplete: 'url' as const }
-            : {})}
+          secureTextEntry={secret && !revealed}
           placeholderTextColor={colors.tertiary}
           style={[styles.input, { color: colors.text }, monospaced && { fontFamily: mono }]}
         />
