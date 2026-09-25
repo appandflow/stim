@@ -216,11 +216,12 @@ final class SimulatorSource {
   }
 
   // A simulator that shuts down and boots again gets new display objects, and
-  // the old ones stop reporting damage; so does its HID client.
+  // the old ones stop reporting damage; so does its HID client. CoreSimulator
+  // returns a new proxy for the same display on every lookup, so the watch
+  // follows the device state instead, where 3 is SimDeviceStateBooted.
   private func watch(_ display: SimDisplay) {
     queue.asyncAfter(deadline: .now() + 2) {
-      let current = CoreSimulator.displays(udid: self.udid).first
-      guard current.map({ ObjectIdentifier($0 as AnyObject) }) != ObjectIdentifier(display as AnyObject) else {
+      guard CoreSimulator.device(udid: self.udid)?.value(forKey: "state") as? Int != 3 else {
         return self.watch(display)
       }
       display.unregisterDamageCallback(self.callbackID)
@@ -456,8 +457,8 @@ extension SimulatorSource: Source {
   }
 
   private func apply(_ command: Command) {
-    hid = hid ?? SimulatorHID(udid: udid)
-    guard let hid else { return Output.notice(["inputError": "SimulatorKit could not open \(udid) for input."]) }
+    if hid?.isConnected != true { hid = SimulatorHID(udid: udid) }
+    guard let hid else { return Output.notice(["inputError": "\(udid) could not be opened for input."]) }
     switch command {
     case .touch(let phase, let point, let index):
       let displays = CoreSimulator.displays(udid: udid)

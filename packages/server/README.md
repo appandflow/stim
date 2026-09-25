@@ -341,13 +341,14 @@ lists as owned by a workspace. Nothing it sends reaches any other device.
 Input goes through the device's `stim-frames` helper, the process that
 streams its frames:
 
-- Simulators take touches, keys and buttons through SimulatorKit's HID
-  client, addressed to the main screen. Text is typed key by key on a US
-  layout. `lock` is the side button. On Xcode 27 (27A266a), a simulator
-  that a viewer app had opened (Xcode's Device Hub, which `stim ios` opens by
-  default, or Siniulator) ignored this input in testing, even after the
-  viewer quit, until the simulator booted again without one; a simulator
-  booted with `xcrun simctl boot` took it.
+- Simulators take touches, keys and buttons through the simulator's
+  CoreDevice HID service (`dtuhidd`), the one Xcode's Device Hub uses, so
+  input keeps working while Device Hub or Siniulator shows the simulator.
+  With an Xcode whose simulators have no such service, input goes through
+  SimulatorKit's legacy HID client instead. The first input starts that service, as Device
+  Hub does, and from then until the simulator reboots it ignores tools that
+  still use SimulatorKit's legacy HID client. Text is typed key by key on a US
+  layout. `lock` is the side button.
 - Emulators take touches through the emulator's gRPC `sendTouch`. Text and
   buttons go through `adb -s <serial> shell input`, because Stim's AVDs have
   no hardware keyboard and the emulator drops gRPC key events.
