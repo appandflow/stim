@@ -14,6 +14,7 @@ import {
 import { findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { readCommittedSettings, unknownSettingKeys, type SettingsObject } from '../workspace/settings.ts';
 import {
+  coerceSettingText,
   isJsonObject,
   isSensitiveReference,
   SETTING_SCOPES,
@@ -128,7 +129,7 @@ function settingEntry(context: SettingsContext, setting: SettingDefinition): Set
   let value: unknown = null;
   let origin: SettingEntry['origin'] = null;
   if (env) {
-    value = env.value;
+    value = masked(setting, envSettingValue(setting, envValue!));
     origin = 'env';
   } else if (scopedHome) {
     value = setting.scopedHomeValue;
@@ -268,17 +269,23 @@ function parseSettingValue(setting: SettingDefinition, raw: string): unknown {
       `Invalid ${setting.key} value ${JSON.stringify(raw)}. Expected ${expected}.`,
       `For example: stim settings set ${setting.key} ${example(setting)}${setting.scopes.length > 1 ? ` --scope ${setting.scopes[0]}` : ''}`,
     );
-  let value: unknown = raw;
   const kind = setting.type.kind;
-  if (kind === 'boolean' || kind === 'number' || kind === 'strings' || kind === 'object') {
-    try {
-      value = JSON.parse(raw);
-    } catch {
-      value = raw;
-    }
-  }
+  const value = coerceSettingText(setting, raw);
   const error = settingValueError(setting, value);
   if (error) throw invalid(kind === 'strings' || kind === 'object' ? `${error}, written as JSON` : error);
+  return value;
+}
+
+function envSettingValue(setting: SettingDefinition, raw: string): unknown {
+  const value = coerceSettingText(setting, raw);
+  const error = settingValueError(setting, value);
+  if (error) {
+    throw new Refusal(
+      'STIM_BAD_ARG',
+      `Invalid ${setting.env} value ${JSON.stringify(raw)}. Expected ${error}.`,
+      `Fix the environment variable, or unset it and run \`stim settings set ${setting.key} ${example(setting)}\`.`,
+    );
+  }
   return value;
 }
 

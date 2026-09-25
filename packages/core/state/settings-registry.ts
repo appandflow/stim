@@ -447,3 +447,20 @@ const SENSITIVE_REFERENCE = /^(env|file):\S/;
 export function isSensitiveReference(value: unknown): boolean {
   return typeof value === 'string' && SENSITIVE_REFERENCE.test(value);
 }
+
+const JSON_ENCODED_KINDS: readonly SettingType['kind'][] = ['boolean', 'number', 'strings', 'object'];
+
+/**
+ * Coerces raw text (a CLI argument or an environment variable) through a setting's
+ * registry type, the same way for both sources. Types whose values are not written
+ * as bare text (boolean, number, strings, object) are read as JSON; a value that
+ * fails to parse is left as the original string so `settingValueError` reports it.
+ */
+export function coerceSettingText(setting: SettingDefinition, raw: string): unknown {
+  if (!JSON_ENCODED_KINDS.includes(setting.type.kind)) return raw;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
