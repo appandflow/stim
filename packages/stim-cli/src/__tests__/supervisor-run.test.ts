@@ -12,7 +12,7 @@ import {
 } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join, resolve as absolute } from 'node:path';
+import { dirname, join, resolve as absolute } from 'node:path';
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { supervisorPidFile, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
@@ -24,6 +24,8 @@ import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { startBuildProgress } from '../engine/build-progress.ts';
 import { takeLease } from '../engine/device-lease.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
+import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import {
   MODE_BARE,
@@ -643,7 +645,11 @@ describe('idle stop', () => {
     vi.useRealTimers();
   });
 
-  async function startIdleSupervisor({ probe, minutes = 60 }: { probe?: IdleProbe; minutes?: number } = {}) {
+  async function startIdleSupervisor({
+    probe,
+    minutes = 60,
+    close = () => {},
+  }: { probe?: IdleProbe; minutes?: number; close?: () => Promise<void> | void } = {}) {
     const seen = { closed: 0, exits: [] as number[], writer: null as NdjsonWriter | null };
     const running = await runSupervisor({
       root,
@@ -658,12 +664,13 @@ describe('idle stop', () => {
         return {
           close() {
             seen.closed += 1;
+            return close();
           },
         };
       },
     });
     assert(running);
-    return seen;
+    return Object.assign(seen, { running });
   }
 
   const quiet: IdleProbe = { lastActivityAt: () => NaN, blocker: () => null };
@@ -716,6 +723,39 @@ describe('idle stop', () => {
     expect(readIdleStop(readWorkspaceState(root))?.idleMinutes).toBe(181);
   });
 
+  test('a stop that is already closing the server is not recorded as an idle stop', async () => {
+    let finishClose = () => {};
+    const seen = await startIdleSupervisor({
+      probe: quiet,
+      close: () => new Promise<void>((resolve) => (finishClose = resolve)),
+    });
+    await vi.advanceTimersByTimeAsync(59 * MINUTE);
+    const stopped = seen.running.shutdown(0, 'supervisor_stopped', 'received SIGTERM');
+    await vi.advanceTimersByTimeAsync(5 * MINUTE);
+    finishClose();
+    await stopped;
+    expect(seen.closed).toBe(1);
+    expect(readIdleStop(readWorkspaceState(root))).toBe(null);
+  });
+
+  test('a stim start holding the metro-start lock defers the idle stop until it releases', async () => {
+    const seen = await startIdleSupervisor({ probe: quiet });
+    let release = () => {};
+    const held = withWorkspaceProcessLock(
+      dirname(workspaceLogsDir(root)),
+      'metro-start',
+      () => new Promise<void>((resolve) => (release = resolve)),
+      { external: true },
+    );
+    await vi.advanceTimersByTimeAsync(90 * MINUTE);
+    expect(seen.closed).toBe(0);
+
+    release();
+    await held;
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(seen.closed).toBe(1);
+  });
+
   test('a probe that throws keeps the dev server running', async () => {
     const seen = await startIdleSupervisor({
       probe: {
@@ -736,6 +776,20 @@ describe('idle stop', () => {
   });
 
   test('the workspace probe blocks during a build and while a workspace device is driven', () => {
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      runFileQuiet: (file, args, opts) => (file === 'ps' ? '' : real.runFileQuiet(file, args, opts)),
+    });
+    const home = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    process.env.HOME = process.env.USERPROFILE = tmpHome;
+    onTestFinished(() => {
+      resetExecutor();
+      for (const [key, value] of Object.entries(home)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    });
     const probe = workspaceIdleProbe(root);
     expect(probe.blocker()).toBe(null);
 

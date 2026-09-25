@@ -12,16 +12,13 @@ import { describeError } from './errors.ts';
 const IDLE_CHECK_MS = 60_000;
 const MINUTE_MS = 60_000;
 
-/** A dev server log record that shows a client using it: a bundle request, or an Expo client log line. */
 export function isDevServerActivity(record: unknown): boolean {
   const event = (record as { event?: unknown } | null)?.event;
   return event === 'bundle_response_started' || event === 'expo_stdout';
 }
 
 export interface IdleProbe {
-  /** The newest Stim command use or bare client log write, in ms, or NaN when there is none. */
   lastActivityAt(): number;
-  /** Why the dev server must keep running although it is idle, or null. */
   blocker(): string | null;
 }
 
@@ -65,10 +62,6 @@ export function workspaceIdleProbe(root: string): IdleProbe {
   };
 }
 
-/**
- * Calls `onIdle` once, with the idle minutes, when neither the server nor the probe has seen activity for
- * `idleStopMs` and the probe names no blocker. A probe that throws blocks. Returns a function that stops watching.
- */
 export function watchIdleDevServer({
   idleStopMs,
   now,
@@ -81,11 +74,13 @@ export function watchIdleDevServer({
   now: () => number;
   serverActivityAt: () => number;
   probe: IdleProbe;
-  onIdle: (idleMinutes: number) => void;
+  onIdle: (idleMinutes: number) => Promise<void>;
   checkMs?: number;
 }): () => void {
+  let deciding = false;
   const timer = setInterval(
     () => {
+      if (deciding) return;
       const last = Math.max(serverActivityAt(), ...[probe.lastActivityAt()].filter(Number.isFinite));
       if (now() - last < idleStopMs) return;
       let blocker: string | null;
@@ -95,8 +90,10 @@ export function watchIdleDevServer({
         blocker = describeError(error);
       }
       if (blocker) return;
-      clearInterval(timer);
-      onIdle(Math.floor((now() - last) / MINUTE_MS));
+      deciding = true;
+      void onIdle(Math.floor((now() - last) / MINUTE_MS)).finally(() => {
+        deciding = false;
+      });
     },
     Math.min(checkMs, idleStopMs),
   );

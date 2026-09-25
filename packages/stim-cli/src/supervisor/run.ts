@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from 'node:fs';
-import { isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { clearSupervisor, setSupervisor } from '../workspace/config.ts';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
@@ -17,6 +17,7 @@ import {
   withWorkspaceStateLock,
 } from '../workspace/workspace-state.ts';
 import { IDLE_STOP_KEY } from '@stim-cli/core/state';
+import { withWorkspaceProcessLock, workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
 import { isDevServerActivity, watchIdleDevServer, workspaceIdleProbe, type IdleProbe } from './idle-stop.ts';
 
 export {
@@ -201,6 +202,7 @@ export async function runSupervisor({
   const shutdown = async (code: number, event: string, msg: string) => {
     if (stopping || !server) return;
     stopping = true;
+    stopWatchingIdle?.();
     try {
       await server.close();
     } catch (err) {
@@ -301,23 +303,32 @@ export async function runSupervisor({
       now,
       serverActivityAt: () => serverActivityAt,
       probe: idleProbe ?? workspaceIdleProbe(root),
-      onIdle: (idleMinutes) => {
+      onIdle: async (idleMinutes) => {
         try {
-          withWorkspaceStateLock(root, () => {
-            if (readWorkspaceState(root)?.supervisor?.processToken === processToken) {
-              writeWorkspaceState(root, {
-                [IDLE_STOP_KEY]: { reason: 'idle', at: new Date(now()).toISOString(), idleMinutes },
+          await withWorkspaceProcessLock(
+            dirname(logsDir),
+            'metro-start',
+            async () => {
+              if (stopping) return;
+              withWorkspaceStateLock(root, () => {
+                if (readWorkspaceState(root)?.supervisor?.processToken === processToken) {
+                  writeWorkspaceState(root, {
+                    [IDLE_STOP_KEY]: { reason: 'idle', at: new Date(now()).toISOString(), idleMinutes },
+                  });
+                }
               });
-            }
-          });
+              await shutdown(
+                0,
+                'supervisor_idle_stopped',
+                `no bundle request, client log or Stim command for ${idleMinutes} minutes (metro.idleStopMinutes is ${idleStopMinutes}); stopped the ${mode} dev server`,
+              );
+            },
+            { external: true, waitMs: 0, ownerPurpose: 'idle stop' },
+          );
         } catch (err) {
-          stderr(`Stim supervisor: could not record the idle stop: ${describeError(err)}`);
+          if (workspaceProcessLockError(err)) return;
+          stderr(`Stim supervisor: could not stop the idle dev server: ${describeError(err)}`);
         }
-        void shutdown(
-          0,
-          'supervisor_idle_stopped',
-          `no bundle request, client log or Stim command for ${idleMinutes} minutes (metro.idleStopMinutes is ${idleStopMinutes}); stopped the ${mode} dev server`,
-        );
       },
     });
   }
