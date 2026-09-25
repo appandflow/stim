@@ -595,11 +595,12 @@ describe('action: already running', { timeout: 30_000 }, () => {
     });
   });
 
-  test('a healthy dev server the agent started itself is reported, not fought', async () => {
+  test('a healthy dev server the agent started itself is reported, not fought, and clears an idle stop', async () => {
     const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
     setExecutor(exec);
     upsertProject(root, { metroPort: port });
+    writeWorkspaceState(root, { devServerStop: { reason: 'idle', at: new Date().toISOString(), idleMinutes: 60 } });
 
     let result;
     try {
@@ -614,6 +615,7 @@ describe('action: already running', { timeout: 30_000 }, () => {
     expect(result.exitCode).toBe(null);
     expect(exec.calls.spawn).toEqual([]);
     expect(result.errs.join('\n')).toMatch(/started outside Stim/);
+    expect(readWorkspaceState(root)?.devServerStop).toBeUndefined();
   });
 
   test('start --remote refuses an external Expo server that has no public URL', async () => {

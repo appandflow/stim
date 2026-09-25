@@ -28,10 +28,17 @@ A dev server holds about 450 MB. The supervisor stops it after
 default, with no bundle request, no client log record and no Stim command
 (`start`, `ios`, `android`, `reload` or `worktree warm`) in the workspace. For
 Expo, every line the Expo CLI prints on stdout counts as a client log. The
-supervisor never stops the server while a build in the workspace runs, while
-one of the workspace's devices is driven, for example by agent-device or
-`stim device lock`, or its activity cannot be read, or while `stim start` is
-running. Set the value to `0` to keep the server running.
+supervisor never stops the server while a bundle is still being served, while
+a build or another `stim ios`, `stim android` or `stim stop` runs in the
+workspace, while the workspace holds a device lock from `stim device lock` or
+a `--device` run, physical devices included, while one of the workspace's
+devices is driven, for example by agent-device, or its activity cannot be
+read, or while `stim start` is running. It checks all of this again just
+before it stops the server. On Windows, which has no `ps`, Stim does not look
+for host processes driving an Android device; the on-device check for UI
+Automator and instrumentation still applies. Set the value to `0` to keep the
+server running. A value that is not a whole number of 0 or more is refused, as
+`stim settings set` refuses it.
 
 A Fast Refresh update is not a bundle request, and an app that is only
 connected does not count either. An app you edit with Fast Refresh for an hour
@@ -40,7 +47,8 @@ without reloading and without console output therefore counts as idle. Raise
 
 The stop is recorded in the timeline as `supervisor_idle_stopped`, and
 `stim status` shows the port as `stopped (idle)` instead of a crash. The devices
-stay booted. The next `stim start` starts the server again. Until then,
+stay booted. The next `stim start` starts the server again, or reuses one that
+another process started, and clears that state. Until then,
 `stim ios` and `stim android` refuse with `STIM_NO_METRO`, and `stim start` is
 the fix, as it is for any missing dev server. The setting is read when
 `stim start` launches the supervisor.

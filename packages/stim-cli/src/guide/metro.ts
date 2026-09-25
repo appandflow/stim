@@ -108,17 +108,25 @@ WHAT THE SUPERVISOR IS
   (default 60; 0 never stops) with no bundle request, no client log record
   (in-app console logs; for Expo, any stdout line of the Expo CLI) and no Stim
   command in the workspace (start, ios, android, reload, worktree warm). It
-  checks once a minute. It keeps running while a build in the workspace is in
-  progress, while one of the workspace's devices is driven or its activity is
-  unknown (\`guide facts status\`), and while a \`stim start\` holds the
-  workspace's metro-start lock. A Fast Refresh update is not a bundle request:
+  checks once a minute. It keeps running while a bundle response is in
+  flight, while a build in the workspace is in progress, while a stim ios,
+  android or stop run holds the workspace's native-run lock, while the
+  workspace holds an unexpired device lease (\`stim device lock\` or a
+  --device run, physical devices included), while one of the workspace's
+  devices is driven or its activity is unknown (\`guide facts status\`; on
+  Windows, which has no ps, the host driver-process probe is skipped), and
+  while a \`stim start\` holds the workspace's metro-start lock. It checks
+  all of this again under the native-run and metro-start locks before it
+  stops the server. A Fast Refresh update is not a bundle request:
   an open app that only hot-reloads and logs nothing counts as idle, and a
   connected app alone does not keep the server. It records a
   supervisor_idle_stopped line in metro.ndjson and devServerStop in
   state.json, so \`status\` shows "stopped (idle)" rather than a crash.
-  Devices stay booted. The next \`stim start\` starts it again; \`ios\` and
-  \`android\` refuse with STIM_NO_METRO until then. The setting is read when
-  \`start\` spawns the supervisor.
+  Devices stay booted. The next \`stim start\` starts it again and clears the
+  record, also when it reuses a dev server that another process started;
+  \`ios\` and \`android\` refuse with STIM_NO_METRO until then. The setting
+  is read when \`start\` spawns the supervisor; a value that is not a whole
+  number of 0 or more is refused, as \`stim settings set\` refuses it.
 
   ENVIRONMENT: the supervisor -- and through it the dev server, including a
   metro.config.js evaluated inside the expo child -- inherits the environment

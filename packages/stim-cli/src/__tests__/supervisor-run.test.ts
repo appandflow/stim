@@ -20,11 +20,11 @@ import { describeError, supervisorError } from '../supervisor/errors.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { readIdleStop } from '@stim-cli/core/state';
 import { workspaceIdleProbe, type IdleProbe } from '../supervisor/idle-stop.ts';
-import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
 import { startBuildProgress } from '../engine/build-progress.ts';
 import { takeLease } from '../engine/device-lease.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
-import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { withWorkspaceProcessLock, workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import {
@@ -675,6 +675,26 @@ describe('idle stop', () => {
 
   const quiet: IdleProbe = { lastActivityAt: () => NaN, blocker: () => null };
 
+  function useProbeHost({ ps, adb = '' }: { ps: string | null; adb?: string | null }) {
+    const outputs = { output: adb };
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      runFileQuiet: (file, args, opts) =>
+        file === 'ps' ? ps : file === 'adb' ? outputs.output : real.runFileQuiet(file, args, opts),
+    });
+    const home = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    process.env.HOME = process.env.USERPROFILE = tmpHome;
+    onTestFinished(() => {
+      resetExecutor();
+      for (const [key, value] of Object.entries(home)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    });
+    return outputs;
+  }
+
   test('stops the dev server after metro.idleStopMinutes with no activity and records why', async () => {
     const seen = await startIdleSupervisor({ probe: quiet });
     await vi.advanceTimersByTimeAsync(59 * MINUTE);
@@ -694,6 +714,7 @@ describe('idle stop', () => {
     const seen = await startIdleSupervisor();
     await vi.advanceTimersByTimeAsync(50 * MINUTE);
     seen.writer?.write({ src: 'metro', event: 'bundle_response_started', platform: 'ios', requestId: 'r1' });
+    seen.writer?.write({ src: 'metro', event: 'bundle_response_finished', platform: 'ios', requestId: 'r1' });
     await vi.advanceTimersByTimeAsync(50 * MINUTE);
     seen.writer?.write({ src: 'metro', event: 'expo_stdout', msg: ' LOG  hello', raw: true });
     await vi.advanceTimersByTimeAsync(50 * MINUTE);
@@ -776,20 +797,7 @@ describe('idle stop', () => {
   });
 
   test('the workspace probe blocks during a build and while a workspace device is driven', () => {
-    const real = getExecutor();
-    setExecutor({
-      ...real,
-      runFileQuiet: (file, args, opts) => (file === 'ps' ? '' : real.runFileQuiet(file, args, opts)),
-    });
-    const home = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
-    process.env.HOME = process.env.USERPROFILE = tmpHome;
-    onTestFinished(() => {
-      resetExecutor();
-      for (const [key, value] of Object.entries(home)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
-    });
+    useProbeHost({ ps: '' });
     const probe = workspaceIdleProbe(root);
     expect(probe.blocker()).toBe(null);
 
@@ -807,7 +815,95 @@ describe('idle stop', () => {
     upsertProject(root, { platforms: { ios: { deviceUdid: 'STIM-IDLE-TEST-UDID', owned: true } } });
     expect(probe.blocker()).toBe(null);
     takeLease({ root, platform: 'ios', id: 'STIM-IDLE-TEST-UDID', kind: 'declared' });
-    expect(probe.blocker()).toBe('ios device STIM-IDLE-TEST-UDID is driven by stim device lock');
+    expect(probe.blocker()).toMatch(/^ios device STIM-IDLE-TEST-UDID is leased by stim device lock until /);
+  });
+
+  test('a physical device this workspace locks blocks the stop until the lease expires', () => {
+    useProbeHost({ ps: '' });
+    const probe = workspaceIdleProbe(root);
+    takeLease({ root, platform: 'android', id: 'PHYSICAL-SERIAL', kind: 'declared', durationMs: 30 * MINUTE });
+    expect(probe.blocker()).toMatch(/^android device PHYSICAL-SERIAL is leased by stim device lock until /);
+
+    vi.setSystemTime(Date.now() + 30 * MINUTE);
+    expect(probe.blocker()).toBe(null);
+  });
+
+  test('on Windows, where ps does not exist, only the missing host driver probe is ignored', () => {
+    upsertProject(root, { platforms: { android: { serial: 'emulator-5554', owned: true } } });
+    const adb = useProbeHost({ ps: null, adb: '  PID ARGS\n  1 init\n' });
+    expect(workspaceIdleProbe(root, { platform: 'darwin' }).blocker()).toBe(
+      'android device emulator-5554 has unknown activity (driver-process)',
+    );
+    expect(workspaceIdleProbe(root, { platform: 'win32' }).blocker()).toBe(null);
+
+    adb.output = null;
+    expect(workspaceIdleProbe(root, { platform: 'win32' }).blocker()).toBe(
+      'android device emulator-5554 has unknown activity (instrumentation)',
+    );
+  });
+
+  test('a Stim command recorded while the idle check runs keeps the dev server', async () => {
+    const workspace = workspaceIdleProbe(root);
+    let checks = 0;
+    const seen = await startIdleSupervisor({
+      probe: {
+        lastActivityAt: () => workspace.lastActivityAt(),
+        blocker: () => {
+          if (++checks === 1) recordWorkspaceUse(root);
+          return null;
+        },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(60 * MINUTE);
+    expect(checks).toBeGreaterThan(0);
+    expect(seen.closed).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(60 * MINUTE);
+    expect(seen.closed).toBe(1);
+  });
+
+  test('a stim ios or android run that takes native-run while the idle check runs keeps the dev server', async () => {
+    let run: ClaimHandle | null = null;
+    const seen = await startIdleSupervisor({
+      probe: {
+        lastActivityAt: () => NaN,
+        blocker: () => {
+          if (!run) {
+            const attempt = tryAcquireClaim({
+              root: workspaceProcessLockPath(dirname(workspaceLogsDir(root)), 'native-run', true),
+              mode: 'exclusive',
+              label: 'native-run lock',
+            });
+            assert(attempt.acquired);
+            run = attempt.acquired;
+          }
+          return null;
+        },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(90 * MINUTE);
+    expect(run).not.toBe(null);
+    expect(seen.closed).toBe(0);
+
+    releaseClaim(run!);
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(seen.closed).toBe(1);
+  });
+
+  test('a bundle response in flight keeps the dev server until it finishes or fails', async () => {
+    const seen = await startIdleSupervisor({ probe: quiet });
+    seen.writer?.write({ src: 'metro', event: 'bundle_response_started', platform: 'ios', requestId: 'r1' });
+    seen.writer?.write({ src: 'metro', event: 'bundle_response_started', platform: 'android', requestId: 'r2' });
+    await vi.advanceTimersByTimeAsync(90 * MINUTE);
+    seen.writer?.write({ src: 'metro', event: 'bundle_response_finished', platform: 'ios', requestId: 'r1' });
+    await vi.advanceTimersByTimeAsync(90 * MINUTE);
+    expect(seen.closed).toBe(0);
+
+    seen.writer?.write({ src: 'metro', event: 'bundle_response_failed', platform: 'android', requestId: 'r2' });
+    await vi.advanceTimersByTimeAsync(59 * MINUTE);
+    expect(seen.closed).toBe(0);
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(seen.closed).toBe(1);
   });
 
   test('a new supervisor clears the previous idle stop', async () => {

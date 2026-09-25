@@ -17,8 +17,9 @@ import {
   withWorkspaceStateLock,
 } from '../workspace/workspace-state.ts';
 import { IDLE_STOP_KEY } from '@stim-cli/core/state';
-import { withWorkspaceProcessLock, workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
-import { isDevServerActivity, watchIdleDevServer, workspaceIdleProbe, type IdleProbe } from './idle-stop.ts';
+import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { trackDevServerActivity, watchIdleDevServer, workspaceIdleProbe, type IdleProbe } from './idle-stop.ts';
+import { withIdleWorkspace } from '../workspace/in-use.ts';
 
 export {
   MODE_BARE,
@@ -232,10 +233,10 @@ export async function runSupervisor({
     }
   }
 
-  let serverActivityAt = now();
+  const serverActivity = trackDevServerActivity(now);
   const serverWriter: NdjsonWriter = Object.assign(Object.create(writer) as NdjsonWriter, {
     write(entry: unknown) {
-      if (isDevServerActivity(entry)) serverActivityAt = now();
+      serverActivity.record(entry);
       return writer.write(entry);
     },
   });
@@ -301,32 +302,37 @@ export async function runSupervisor({
     stopWatchingIdle = watchIdleDevServer({
       idleStopMs: idleStopMinutes * 60_000,
       now,
-      serverActivityAt: () => serverActivityAt,
+      serverActivityAt: serverActivity.lastActivityAt,
       probe: idleProbe ?? workspaceIdleProbe(root),
-      onIdle: async (idleMinutes) => {
-        try {
-          await withWorkspaceProcessLock(
-            dirname(logsDir),
-            'metro-start',
-            async () => {
-              if (stopping) return;
-              withWorkspaceStateLock(root, () => {
-                if (readWorkspaceState(root)?.supervisor?.processToken === processToken) {
-                  writeWorkspaceState(root, {
-                    [IDLE_STOP_KEY]: { reason: 'idle', at: new Date(now()).toISOString(), idleMinutes },
-                  });
-                }
+      onIdle: async (idleMinutesNow) => {
+        const stopIfStillIdle = async () => {
+          const idleMinutes = idleMinutesNow();
+          if (stopping || idleMinutes === null) return;
+          withWorkspaceStateLock(root, () => {
+            if (readWorkspaceState(root)?.supervisor?.processToken === processToken) {
+              writeWorkspaceState(root, {
+                [IDLE_STOP_KEY]: { reason: 'idle', at: new Date(now()).toISOString(), idleMinutes },
               });
-              await shutdown(
-                0,
-                'supervisor_idle_stopped',
-                `no bundle request, client log or Stim command for ${idleMinutes} minutes (metro.idleStopMinutes is ${idleStopMinutes}); stopped the ${mode} dev server`,
-              );
-            },
-            { external: true, waitMs: 0, ownerPurpose: 'idle stop' },
+            }
+          });
+          await shutdown(
+            0,
+            'supervisor_idle_stopped',
+            `no bundle request, client log or Stim command for ${idleMinutes} minutes (metro.idleStopMinutes is ${idleStopMinutes}); stopped the ${mode} dev server`,
+          );
+        };
+        try {
+          await withIdleWorkspace(
+            root,
+            () =>
+              withWorkspaceProcessLock(dirname(logsDir), 'metro-start', stopIfStillIdle, {
+                external: true,
+                waitMs: 0,
+                ownerPurpose: 'idle stop',
+              }),
+            { purpose: 'idle stop', supervisor: false, managedLocks: false },
           );
         } catch (err) {
-          if (workspaceProcessLockError(err)) return;
           stderr(`Stim supervisor: could not stop the idle dev server: ${describeError(err)}`);
         }
       },

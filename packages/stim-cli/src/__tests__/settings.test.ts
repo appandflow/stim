@@ -401,7 +401,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'android.keystorePassword': { valid: 'env:MY_KS_PASS', invalid: 1234, expected: 'a string' },
   'android.remote': { valid: 'eas', invalid: 'cloud', expected: 'one of: proxy, eas' },
   'metro.tunnel': { valid: 'ngrok', invalid: 'bogus', expected: 'one of: auto, off, expo, cloudflared, ngrok' },
-  'metro.idleStopMinutes': { valid: 30, invalid: '30', expected: 'a number' },
+  'metro.idleStopMinutes': { valid: 30, invalid: '30', expected: 'a whole number, 0 or more' },
   'metro.ngrokUrl': { valid: 'https://a.ngrok.app', invalid: {}, expected: 'a string' },
   'metro.publicUrl': { valid: 'https://metro.example', invalid: false, expected: 'a string' },
   'metro.warmupUrl': { valid: {}, invalid: '/index.bundle', expected: 'an object' },
@@ -521,6 +521,15 @@ test('metro.idleStopMinutes reads a whole number of minutes, 0 included, and def
   expect(metroIdleStopMinutesSetting({ metro: { idleStopMinutes: 15 } })).toBe(15);
   expect(metroIdleStopMinutesSetting({ metro: { idleStopMinutes: -1 } })).toBe(60);
 });
+
+test.each([-1, 1.5, 2 ** 53])(
+  'settingShapeErrors refuses metro.idleStopMinutes %p as stim settings set does',
+  (value) => {
+    expect(settingShapeErrors({ metro: { idleStopMinutes: value } })).toEqual([
+      `Invalid metro.idleStopMinutes setting ${JSON.stringify(value)}. Expected a whole number, 0 or more.`,
+    ]);
+  },
+);
 
 describe('tunnelModeSetting', () => {
   test('reads one of the known modes', () => {

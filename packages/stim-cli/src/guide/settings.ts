@@ -239,7 +239,9 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
   metro.idleStopMinutes minutes without a bundle request, client log record or
                         Stim command before the supervisor stops the dev
                         server (default 60). 0 never stops it. Never during a
-                        build or while a workspace device is driven. Read
+                        build or bundle response, while the workspace holds
+                        a device lock, or while a workspace device is
+                        driven. Read
                         when \`start\` spawns the supervisor; see
                         \`guide metro\`.
   worktree.exclude      ignored-path skip list for worktree warm. Settings
