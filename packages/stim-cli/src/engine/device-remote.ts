@@ -24,9 +24,12 @@ import { devClientDeepLink, INSTALL_ERROR, LAUNCH_ERROR } from './app-install.ts
 import { isBundleProof, readMetroRecords } from './launch-verify.ts';
 import {
   createSessionArgs,
+  EAS_CLI_UPGRADE_REMEDY,
+  easCliSimulatorSupport,
   getSessionArgs,
   inspectSessionForTeardown,
   isDefinitiveMissingSessionError,
+  MIN_EAS_CLI_SIMULATOR_VERSION,
   ownedSessionName,
   parseCreatedSession,
   remoteDaemonFrom,
@@ -431,6 +434,7 @@ export async function resolveRemoteContext({
   easBin,
   env = process.env,
   lookupAgentDevice = defaultLookupAgentDevice,
+  readEasCliVersion = readInstalledEasCliVersion,
   maxDurationMinutes = null,
 }: {
   root: string;
@@ -444,6 +448,7 @@ export async function resolveRemoteContext({
   available?: readonly ManagedProvider[];
   env?: NodeJS.ProcessEnv;
   lookupAgentDevice?: () => string | null;
+  readEasCliVersion?: (easBin: string, root: string) => string | null;
   maxDurationMinutes?: number | null;
 }): Promise<{ ctx: RemoteContext } | { failed: string; remedy: string; code?: string }> {
   const agentDeviceBin = lookupAgentDevice();
@@ -487,6 +492,17 @@ export async function resolveRemoteContext({
       remedy: 'Install eas-cli, then run the device command with `--remote eas` again.',
       code: 'STIM_REMOTE_EAS_UNAVAILABLE',
     };
+  } else {
+    const { supported, version } = easCliSimulatorSupport(readEasCliVersion(easBin, root));
+    if (!supported) {
+      return {
+        failed: version
+          ? `eas-cli ${version} (${easBin}) has no EAS Simulator commands; the eas backend needs eas-cli ${MIN_EAS_CLI_SIMULATOR_VERSION} or later.`
+          : `Could not read an eas-cli version from \`${easBin} --version\`; the eas backend needs eas-cli ${MIN_EAS_CLI_SIMULATOR_VERSION} or later.`,
+        remedy: `${EAS_CLI_UPGRADE_REMEDY}, then run the device command with \`--remote eas\` again.`,
+        code: 'STIM_REMOTE_EAS_UNAVAILABLE',
+      };
+    }
   }
 
   return {
@@ -503,6 +519,14 @@ export async function resolveRemoteContext({
       existingDaemon,
     },
   };
+}
+
+export function readInstalledEasCliVersion(easBin: string, root: string): string | null {
+  try {
+    return getExecutor().runFile(easBin, ['--version'], easBoundedExecOptions(root));
+  } catch {
+    return null;
+  }
 }
 
 export function binOnPath(bin: string): boolean {

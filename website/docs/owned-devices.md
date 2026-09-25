@@ -199,7 +199,7 @@ independently of the build source.
 
 `--remote eas` is the supported way to run iOS from a host without Xcode.
 `stim doctor --platform ios` on such a host points at it instead of at
-CocoaPods and simulators. Install `eas-cli` and `agent-device`, plus `ngrok` or
+CocoaPods and simulators. Install `eas-cli` 21.6.0 or later and `agent-device`, plus `ngrok` or
 `cloudflared` for the Metro tunnel, then:
 
 ```bash

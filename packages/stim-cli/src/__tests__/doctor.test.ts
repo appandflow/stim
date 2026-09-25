@@ -1579,10 +1579,29 @@ test('the eas backend requires eas-cli even when daemon variables exist', () => 
 });
 
 test('a fully configured remote says what it will do, including the log gap', () => {
-  const f = checkRemoteDevice({ configured: 'eas', agentDeviceOnPath: true, easCliResolvable: true });
+  const f = checkRemoteDevice({
+    configured: 'eas',
+    agentDeviceOnPath: true,
+    easCliResolvable: true,
+    readEasCliVersion: () => 'eas-cli/24.8.0 darwin-arm64 node-v22.22.2',
+  });
   assert(f);
   expect(f.level).toBe('note');
   expect(f.detail).toContain('Native device logs are not captured');
+});
+
+test('the eas backend reports an eas-cli without the simulator commands', () => {
+  const f = checkRemoteDevice({
+    configured: 'eas',
+    agentDeviceOnPath: true,
+    easCliResolvable: true,
+    readEasCliVersion: () => 'eas-cli/19.0.1 darwin-arm64 node-v22.22.2',
+  });
+  assert(f);
+  expect(f.level).toBe('cost');
+  expect(f.title).toContain('eas-cli 19.0.1');
+  expect(f.detail).toContain('STIM_REMOTE_EAS_UNAVAILABLE');
+  expect(f.fix).toContain('21.6.0');
 });
 
 test.each([

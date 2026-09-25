@@ -60,10 +60,10 @@ REMOTE DEVICE BACKENDS
   requires AGENT_DEVICE_DAEMON_BASE_URL and
   AGENT_DEVICE_DAEMON_AUTH_TOKEN. Stim creates no remote session for it.
 
-  The EAS backend needs eas-cli and an account with EAS Simulator access. An
-  EAS session is billable. EAS does not inherit the proxy credentials. Always
-  tear the session down: \`stop\`, \`worktree remove\`, and \`gc --delete\`
-  can end sessions that Stim proves it owns. \`stim status\` lists each
+  The EAS backend needs eas-cli 21.6.0 or later and an account with EAS
+  Simulator access. An EAS session is billable. EAS does not inherit the proxy
+  credentials. Always tear the session down: \`stop\`, \`worktree remove\`,
+  and \`gc --delete\` can end sessions that Stim proves it owns. \`stim status\` lists each
   recorded session with its preview URL (see \`guide facts\`).
 
 IDEMPOTENT

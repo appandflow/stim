@@ -47,7 +47,12 @@ import {
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
 } from '../workspace/settings.ts';
-import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
+import { readInstalledEasCliVersion, type RemoteDeviceBackend } from '../engine/device-remote.ts';
+import {
+  EAS_CLI_UPGRADE_REMEDY,
+  easCliSimulatorSupport,
+  MIN_EAS_CLI_SIMULATOR_VERSION,
+} from '../engine/eas-simulator.ts';
 import { readAndroidCasToolchain, resolveAndroidCompilerCache } from '../engine/android-cas.ts';
 import { androidPathRoom, androidPathRoomMessage, androidPathRoomRemedy } from '../engine/android-path-limit.ts';
 import { readCxxLauncherStates, type CxxLauncherState } from './doctor-cxx.ts';
@@ -590,16 +595,23 @@ export function checkConcurrency({
   );
 }
 
+function readProjectEasCliVersion(projectRoot: string): string | null {
+  const bin = resolveEasCliBin(projectRoot);
+  return bin ? readInstalledEasCliVersion(bin.file, projectRoot) : null;
+}
+
 export function checkRemoteDevice({
   configured = null,
   daemonInEnv = false,
   agentDeviceOnPath = false,
   easCliResolvable = false,
+  readEasCliVersion = () => null,
 }: {
   configured?: RemoteDeviceBackend | null;
   daemonInEnv?: boolean;
   agentDeviceOnPath?: boolean;
   easCliResolvable?: boolean;
+  readEasCliVersion?: () => string | null;
 } = {}): Finding | null {
   if (!configured) return null;
 
@@ -635,6 +647,18 @@ export function checkRemoteDevice({
       'A remote device is configured, but there is no eas-cli to create a session with',
       'The eas backend creates an EAS Simulator session. It needs eas-cli and an account with EAS Simulator access. Neither a project copy nor one on PATH was found.',
       'Install eas-cli.',
+    );
+  }
+
+  const easCli = easCliSimulatorSupport(readEasCliVersion());
+  if (!easCli.supported) {
+    return finding(
+      'cost',
+      easCli.version
+        ? `A remote device is configured, but eas-cli ${easCli.version} has no EAS Simulator commands`
+        : 'A remote device is configured, but the eas-cli version could not be read',
+      `The eas backend runs \`eas simulator:*\` commands, which need eas-cli ${MIN_EAS_CLI_SIMULATOR_VERSION} or later. \`stim ios --remote eas\` and \`stim android --remote eas\` refuse with STIM_REMOTE_EAS_UNAVAILABLE before device work.`,
+      `${EAS_CLI_UPGRADE_REMEDY}.`,
     );
   }
 
@@ -879,6 +903,7 @@ export function runDoctor(
         daemonInEnv,
         agentDeviceOnPath,
         easCliResolvable,
+        readEasCliVersion: () => readProjectEasCliVersion(projectRoot),
       }),
     )
     .filter((remoteFinding): remoteFinding is Finding => remoteFinding !== null);
