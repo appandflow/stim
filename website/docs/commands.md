@@ -652,7 +652,8 @@ workspace keeps its state, logs, devices and ports. See
 
 - `--older-than <days>` also selects devices and workspace build outputs of
   workspaces no Stim command has used for that many days, and unused cache
-  entries.
+  entries. It limits the parked simulators and emulators `--delete` clears to
+  those parked at least that many days.
 - `--cache <name|all|workspaces>` with `--delete` empties the caches whose name
   or directory carries `<name>` whole, or every cache and the workspace build
   outputs with `all`. `workspaces` clears only the workspace build outputs.

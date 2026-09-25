@@ -479,8 +479,10 @@ RULES
                               Without --worktrees, the source checkout and
                               roots outside git are left out
     parkedSimulators        { udid, name, model, runtime, parkedAt, bytes,
-                              listed }
+                              listed }  with --older-than, only those parked
+                              at least that long
     parkedEmulators         { name, systemImage, parkedAt, bytes, listed }
+                              likewise
     orphanedDevices         { kind, id, name, bytes, directory }
     unverifiedDevices       { kind, id, name, command }  stim-* devices Stim
                               has no record of creating; never deleted, run

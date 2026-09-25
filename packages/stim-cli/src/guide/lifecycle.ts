@@ -595,6 +595,9 @@ result as proof instead of requiring an unrelated screenshot.`,
       ios stim-parked (iPhone 17 26.5) 9c1f (9C1F..) iPhone 17 26.5 parked 3d ago 18 MB
                   --delete attempts every parked simulator and keeps failures.
 
+  \`gc --older-than <days>\` reports and deletes only the devices parked at
+  least that long; one parked at an unknown time stays.
+
   If simulator listing or deletion fails, \`gc --delete\` reports the failure
   and keeps that entry. It never turns an unverified absence into a dropped
   ownership record.

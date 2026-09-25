@@ -173,8 +173,8 @@ export async function collectGcReport(
       };
     }
   }
-  const parkedSims = collectParkedSims(deps);
-  const parkedAvds = collectParkedAvds(deps);
+  const parkedSims = collectParkedSims(deps, { olderThanDays: olderThan, now });
+  const parkedAvds = collectParkedAvds(deps, { olderThanDays: olderThan, now });
   const deadProjects: string[] = [];
   const invalidProjects: string[] = [];
   const skipped: GcSkip[] = [];
@@ -695,7 +695,7 @@ export default function gcCommand(program: Command): void {
     )
     .option(
       '--older-than <days>',
-      'also reap owned devices whose workspace has not been used this long, trim shared cache entries nothing has used in that time, and clear workspace build outputs only for workspaces idle this long',
+      'also reap owned devices whose workspace has not been used this long, trim shared cache entries nothing has used in that time, and clear workspace build outputs only for workspaces idle this long and parked devices only once parked this long',
       (v: string) => {
         const n = parseInt(v, 10);
         if (!Number.isFinite(n) || String(n) !== String(v).trim()) {
