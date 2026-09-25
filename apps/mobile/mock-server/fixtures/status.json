@@ -1,0 +1,610 @@
+{
+  "capturedAt": "2026-09-25T04:23:09.012Z",
+  "stimVersion": "1.9.0",
+  "command": "stim status --json",
+  "payload": {
+    "environments": [
+      {
+        "path": "/Users/dev/Developer/stim",
+        "live": false,
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": null,
+        "android": null,
+        "metro": null,
+        "supervisor": null,
+        "logs": null,
+        "worktree": null,
+        "remoteDevices": [],
+        "build": null
+      },
+      {
+        "path": "/Users/dev/Developer/react-native/private/helloworld",
+        "live": false,
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": null,
+        "android": null,
+        "metro": null,
+        "supervisor": null,
+        "logs": null,
+        "worktree": null,
+        "remoteDevices": [],
+        "build": null
+      },
+      {
+        "path": "/Users/dev/Developer/tlon-apps/.worktrees/web-login",
+        "live": false,
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": null,
+        "android": null,
+        "metro": null,
+        "supervisor": null,
+        "logs": null,
+        "worktree": null,
+        "remoteDevices": [],
+        "build": null
+      },
+      {
+        "path": "/Users/dev/Developer/tlon-apps",
+        "live": false,
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": null,
+        "android": null,
+        "metro": null,
+        "supervisor": null,
+        "logs": null,
+        "worktree": null,
+        "remoteDevices": [],
+        "build": null
+      },
+      {
+        "path": "/Users/dev/Developer/tlon-apps/apps/tlon-mobile",
+        "live": false,
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": null,
+        "android": null,
+        "metro": null,
+        "supervisor": null,
+        "logs": null,
+        "worktree": null,
+        "remoteDevices": [],
+        "build": null
+      },
+      {
+        "path": "/Users/dev/Developer/react-native-reserved-regions/example",
+        "live": false,
+        "memoryMb": 0,
+        "warnings": [
+          "owned AVD stim-react-native-reserved-regions-example-f44c281f is not detected by adb; rerun your `stim android` command in this workspace to reconnect"
+        ],
+        "ios": {
+          "name": "stim-react-native-reserved-regions-example (iPhone Duo 27.1)",
+          "udid": "5D1CA82B-C157-4C68-90D1-E9F821B3B2EA",
+          "owned": true,
+          "state": "Shutdown"
+        },
+        "android": {
+          "name": "stim-react-native-reserved-regions-example-f44c281f",
+          "owned": true,
+          "physical": false,
+          "serial": null,
+          "state": "not-detected"
+        },
+        "metro": {
+          "port": 8090,
+          "running": false,
+          "pid": null
+        },
+        "supervisor": null,
+        "logs": null,
+        "worktree": null,
+        "remoteDevices": [],
+        "build": null
+      },
+      {
+        "path": "/Users/dev/Developer/react-native-hinges/example",
+        "slots": [
+          {
+            "slot": "fold3-camera",
+            "ios": null,
+            "android": {
+              "name": "stim-react-native-hinges-example-fold3-camera",
+              "owned": true,
+              "physical": false,
+              "serial": null,
+              "state": "not-detected"
+            }
+          }
+        ],
+        "live": false,
+        "memoryMb": 0,
+        "warnings": [
+          "owned AVD stim-react-native-hinges-example is not detected by adb; rerun your `stim android` command in this workspace to reconnect",
+          "fold3-camera: owned AVD stim-react-native-hinges-example-fold3-camera is not detected by adb; rerun your `stim android` command in this workspace to reconnect"
+        ],
+        "ios": {
+          "name": "stim-react-native-hinges-example (iPhone Duo 27.1)",
+          "udid": "EC33DE7B-AFC0-43F4-AEC1-A16960820B4C",
+          "owned": true,
+          "state": "Shutdown"
+        },
+        "android": {
+          "name": "stim-react-native-hinges-example",
+          "owned": true,
+          "physical": false,
+          "serial": null,
+          "state": "not-detected"
+        },
+        "metro": {
+          "port": 8089,
+          "running": false,
+          "pid": null
+        },
+        "supervisor": null,
+        "logs": null,
+        "worktree": null,
+        "remoteDevices": [],
+        "build": null
+      },
+      {
+        "path": "/Users/dev/Developer/react-native-hinges",
+        "slots": [
+          {
+            "slot": "fold3-camera",
+            "ios": null,
+            "android": {
+              "name": "stim-react-native-hinges-fold3-camera",
+              "owned": true,
+              "physical": false,
+              "serial": null,
+              "state": "not-detected"
+            }
+          }
+        ],
+        "live": false,
+        "memoryMb": 0,
+        "warnings": [
+          "fold3-camera: owned AVD stim-react-native-hinges-fold3-camera is not detected by adb; rerun your `stim android` command in this workspace to reconnect"
+        ],
+        "ios": null,
+        "android": null,
+        "metro": null,
+        "supervisor": null,
+        "logs": null,
+        "worktree": null,
+        "remoteDevices": [],
+        "build": null
+      },
+      {
+        "path": "/Users/dev/Developer/tlon-apps/.worktrees/ios27-uiscene/apps/tlon-mobile",
+        "live": false,
+        "memoryMb": 0,
+        "warnings": [
+          "owned AVD stim-ios27-uiscene-tlon-mobile is not detected by adb; rerun your `stim android` command in this workspace to reconnect",
+          "stale supervisor record for /Users/dev/Developer/tlon-apps/.worktrees/ios27-uiscene/apps/tlon-mobile"
+        ],
+        "ios": {
+          "name": "stim-ios27-uiscene-tlon-mobile (iPhone 18 Pro 27.0)",
+          "udid": "BFB4109D-5BA5-446E-8333-B97F47BA444C",
+          "owned": true,
+          "state": "Shutdown"
+        },
+        "android": {
+          "name": "stim-ios27-uiscene-tlon-mobile",
+          "owned": true,
+          "physical": false,
+          "serial": null,
+          "state": "not-detected"
+        },
+        "metro": {
+          "port": 8092,
+          "running": false,
+          "pid": null
+        },
+        "supervisor": {
+          "pid": 20053,
+          "mode": null,
+          "startedAt": "2026-09-24T02:16:13.040Z",
+          "healthy": false
+        },
+        "logs": null,
+        "worktree": null,
+        "remoteDevices": [],
+        "build": null
+      },
+      {
+        "path": "/Users/dev/Developer/tlon-apps/.worktrees/chat-perf/apps/tlon-mobile",
+        "live": false,
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": null,
+        "android": null,
+        "metro": null,
+        "supervisor": null,
+        "logs": {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--fd4ef269199822eb/logs",
+          "errorsSinceMarker": 0
+        },
+        "worktree": null,
+        "remoteDevices": [],
+        "build": null
+      },
+      {
+        "path": "/Users/dev/Developer/tlon-apps/.worktrees/wide-insets/apps/tlon-mobile",
+        "slots": [
+          {
+            "slot": "duo",
+            "ios": {
+              "name": "stim-wide-insets-tlon-mobile-duo (iPhone Duo 27.1)",
+              "udid": "7466D06C-1AE4-4EDB-8A93-6B8A43A7A47A",
+              "owned": true,
+              "state": "Booted",
+              "activity": {
+                "state": "idle",
+                "lastActivityAt": "2026-09-25T03:58:55.127Z",
+                "basis": ["device-log", "workspace-use"]
+              }
+            },
+            "android": null
+          },
+          {
+            "slot": "iphone",
+            "ios": {
+              "name": "stim-wide-insets-tlon-mobile-iphone (iPhone 18 Pro 27.0)",
+              "udid": "A370BA4E-3511-4A47-97C9-B916F6190C90",
+              "owned": true,
+              "state": "Shutdown"
+            },
+            "android": null
+          }
+        ],
+        "live": true,
+        "memoryMb": 2200,
+        "warnings": [
+          "owned AVD stim-wide-insets-tlon-mobile is not detected by adb; rerun your `stim android` command in this workspace to reconnect"
+        ],
+        "ios": null,
+        "android": {
+          "name": "stim-wide-insets-tlon-mobile",
+          "owned": true,
+          "physical": false,
+          "serial": null,
+          "state": "not-detected"
+        },
+        "metro": {
+          "port": 8091,
+          "running": true,
+          "pid": 33381
+        },
+        "supervisor": {
+          "pid": 33217,
+          "mode": "expo-child",
+          "startedAt": "2026-09-25T03:58:31.226Z",
+          "healthy": true
+        },
+        "logs": {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--e35f208f0380e733/logs",
+          "errorsSinceMarker": 0
+        },
+        "worktree": null,
+        "remoteDevices": [],
+        "build": {
+          "platform": "ios",
+          "slot": "duo",
+          "state": "running",
+          "phase": "compile",
+          "startedAt": "2026-09-25T03:58:55.133Z",
+          "phaseStartedAt": "2026-09-25T04:00:16.566Z",
+          "outcome": "cold",
+          "expectedMs": null,
+          "expectedPhaseMs": null,
+          "basis": 0
+        }
+      },
+      {
+        "path": "/Users/dev/Developer/tlon-apps/.worktrees/ipad-support/apps/tlon-mobile",
+        "slots": [
+          {
+            "slot": "ipad",
+            "ios": {
+              "name": "stim-ipad-support-tlon-mobile-i (iPad Pro 11-inch (M5) 27.0)",
+              "udid": "D39CAF14-F4A4-4C0A-B8A4-3A30B2D268F0",
+              "owned": true,
+              "state": "Shutdown"
+            },
+            "android": null
+          }
+        ],
+        "live": false,
+        "memoryMb": 0,
+        "warnings": [
+          "owned AVD stim-ipad-support-tlon-mobile is not detected by adb; rerun your `stim android` command in this workspace to reconnect"
+        ],
+        "ios": {
+          "name": "stim-ipad-support-tlon-mobile (iPhone 18 Pro 27.0)",
+          "udid": "75D112AC-A6A1-486E-B22F-16EC31E35990",
+          "owned": true,
+          "state": "Shutdown"
+        },
+        "android": {
+          "name": "stim-ipad-support-tlon-mobile",
+          "owned": true,
+          "physical": false,
+          "serial": null,
+          "state": "not-detected"
+        },
+        "metro": {
+          "port": 8093,
+          "running": false,
+          "pid": null
+        },
+        "supervisor": null,
+        "logs": {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--2fd4f2a164594f65/logs",
+          "errorsSinceMarker": 2
+        },
+        "worktree": null,
+        "remoteDevices": [],
+        "build": null
+      },
+      {
+        "path": "/Users/dev/Developer/tlon-apps/.worktrees/wide-split-layout/apps/tlon-mobile",
+        "slots": [
+          {
+            "slot": "ipad",
+            "ios": {
+              "name": "stim-wide-split-layout-tlon-mob (iPad Pro 11-inch (M5) 27.0)",
+              "udid": "C8C0C196-2F11-4D47-A1B2-EFE67BE9817F",
+              "owned": true,
+              "state": "Shutdown"
+            },
+            "android": null
+          },
+          {
+            "slot": "duo",
+            "ios": {
+              "name": "stim-wide-split-layout-tlon-mobile-duo (iPhone Duo 27.1)",
+              "udid": "C32A8423-131B-4242-A57E-73EF00884207",
+              "owned": true,
+              "state": "Booted",
+              "activity": {
+                "state": "driven",
+                "driver": {
+                  "tool": "agent-device",
+                  "pid": 4163,
+                  "since": "2026-09-25T04:08:36.047Z"
+                },
+                "lastActivityAt": "2026-09-25T04:22:52.637Z",
+                "basis": ["agent-device-claim"]
+              }
+            },
+            "android": null
+          },
+          {
+            "slot": "mini",
+            "ios": {
+              "name": "stim-wide-split-layout-tlon-mobil (iPad mini (A17 Pro) 27.0)",
+              "udid": "8B0D2C13-29B8-410C-869D-5BEFE0C58D35",
+              "owned": true,
+              "state": "Shutdown"
+            },
+            "android": null
+          }
+        ],
+        "live": true,
+        "memoryMb": 2200,
+        "warnings": [
+          "owned AVD stim-wide-split-layout-tlon-mobile is not detected by adb; rerun your `stim android` command in this workspace to reconnect"
+        ],
+        "ios": {
+          "name": "stim-wide-split-layout-tlon-mobile (iPhone 18 Pro 27.0)",
+          "udid": "AC99FE46-446F-4D14-B1F9-FF271CE1A2A8",
+          "owned": true,
+          "state": "Shutdown"
+        },
+        "android": {
+          "name": "stim-wide-split-layout-tlon-mobile",
+          "owned": true,
+          "physical": false,
+          "serial": null,
+          "state": "not-detected"
+        },
+        "metro": {
+          "port": 8094,
+          "running": true,
+          "pid": 61270
+        },
+        "supervisor": {
+          "pid": 61259,
+          "mode": "expo-child",
+          "startedAt": "2026-09-25T03:44:19.383Z",
+          "healthy": true
+        },
+        "logs": {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--f9d8a39711c4d1a2/logs",
+          "errorsSinceMarker": 1
+        },
+        "worktree": null,
+        "remoteDevices": [],
+        "build": null
+      },
+      {
+        "path": "/Users/dev/Developer/tlon-apps/.worktrees/chat-perf-demo/apps/tlon-mobile",
+        "slots": [
+          {
+            "slot": "ios18",
+            "ios": {
+              "name": "stim-chat-perf-demo-tlon-mobile-ios18 (iPhone 16 Pro 18.6)",
+              "udid": "9C75FB3C-BC64-4883-AD00-C124A5839A37",
+              "owned": true,
+              "state": "Booted",
+              "activity": {
+                "state": "idle",
+                "lastActivityAt": "2026-09-25T03:32:36.952Z",
+                "basis": ["workspace-use"]
+              }
+            },
+            "android": null
+          }
+        ],
+        "live": true,
+        "memoryMb": 3700,
+        "warnings": [],
+        "ios": {
+          "name": "stim-chat-perf-demo-tlon-mobile (iPhone 17 Pro 27.0)",
+          "udid": "18BB5300-FD48-4149-A511-CF4160594B86",
+          "owned": true,
+          "state": "Booted",
+          "activity": {
+            "state": "active",
+            "lastActivityAt": "2026-09-25T04:14:50.629Z",
+            "basis": ["device-log", "workspace-use"]
+          }
+        },
+        "android": null,
+        "metro": {
+          "port": 8095,
+          "running": true,
+          "pid": 22614
+        },
+        "supervisor": {
+          "pid": 22599,
+          "mode": "expo-child",
+          "startedAt": "2026-09-25T02:36:55.511Z",
+          "healthy": true
+        },
+        "logs": {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--5a8941f796bf6533/logs",
+          "errorsSinceMarker": 0
+        },
+        "worktree": null,
+        "remoteDevices": [],
+        "build": null
+      },
+      {
+        "path": "/Users/dev/Developer/stim/.claude/worktrees/1123-mobile-app/apps/mobile",
+        "slots": [
+          {
+            "slot": "phone",
+            "ios": {
+              "name": "stim-1123-mobile-app-mobile-phone (iPhone 18 Pro 27.0)",
+              "udid": "F977AD0C-F769-47C0-B00B-698B20244E41",
+              "owned": true,
+              "state": "Booted",
+              "activity": {
+                "state": "active",
+                "lastActivityAt": "2026-09-25T04:22:48.543Z",
+                "basis": ["workspace-use"]
+              }
+            },
+            "android": null
+          }
+        ],
+        "live": true,
+        "memoryMb": 2200,
+        "warnings": [],
+        "ios": {
+          "name": "stim-1123-mobile-app-mobile (iPhone Duo 27.1)",
+          "udid": "10D04457-8533-422E-9062-EA62FA64396F",
+          "owned": true,
+          "state": "Shutdown"
+        },
+        "android": null,
+        "metro": {
+          "port": 8097,
+          "running": true,
+          "pid": 54134
+        },
+        "supervisor": {
+          "pid": 53971,
+          "mode": "expo-child",
+          "startedAt": "2026-09-25T04:16:52.514Z",
+          "healthy": true
+        },
+        "logs": {
+          "dir": "/Users/dev/.stim/workspaces/mobile--68f0bcea1bc9d8bd/logs",
+          "errorsSinceMarker": 0
+        },
+        "worktree": null,
+        "remoteDevices": [
+          {
+            "platform": "android",
+            "backend": "eas",
+            "sessionId": "0f6c2a91-6d1e-4c5b-9f7e-2b8d3c4a5e61",
+            "state": "claimed",
+            "startedAt": "2026-09-25T04:14:02.000Z",
+            "webPreviewUrl": null
+          }
+        ],
+        "build": {
+          "platform": "ios",
+          "slot": "phone",
+          "state": "running",
+          "phase": "install",
+          "startedAt": "2026-09-25T04:22:48.545Z",
+          "phaseStartedAt": "2026-09-25T04:22:56.560Z",
+          "outcome": "hit",
+          "expectedMs": null,
+          "expectedPhaseMs": null,
+          "basis": 0
+        }
+      }
+    ],
+    "capacity": {
+      "liveCount": 4,
+      "committedMb": 10300,
+      "totalMemoryMb": 49152,
+      "overCapacity": false
+    },
+    "deviceLeases": [],
+    "unprovisionedWorktrees": [
+      {
+        "path": "/Users/dev/Developer/stim/.claude/worktrees/1123-mobile-app",
+        "branch": "feat/1123-mobile-app"
+      },
+      {
+        "path": "/Users/dev/Developer/stim/.claude/worktrees/agent-a2812627ae0f6660e",
+        "branch": "feat/1018-gc-workspace-reclaim"
+      },
+      {
+        "path": "/Users/dev/Developer/stim/.claude/worktrees/issue-1097",
+        "branch": "@janic/issue-1097-warm-stale-node-modules"
+      },
+      {
+        "path": "/Users/dev/Developer/stim/.claude/worktrees/issue-1112",
+        "branch": "@janic/issue-1112-budgets"
+      },
+      {
+        "path": "/Users/dev/Developer/stim/.claude/worktrees/issue-1118",
+        "branch": "@janic/issue-1118-core-state"
+      },
+      {
+        "path": "/Users/dev/Developer/stim/.claude/worktrees/issue-1118-baseline"
+      },
+      {
+        "path": "/Users/dev/Developer/stim/.claude/worktrees/profile-decode",
+        "branch": "fix/profile-decode-keychain"
+      },
+      {
+        "path": "/Users/dev/Developer/stim/.claude/worktrees/wt-1087",
+        "branch": "fix/1087-eas-cli-build-download-version"
+      },
+      {
+        "path": "/Users/dev/Developer/stim/.claude/worktrees/wt-1088",
+        "branch": "fix/1088-remote-android-metro-line"
+      },
+      {
+        "path": "/Users/dev/Developer/stim/.claude/worktrees/wt-1096",
+        "branch": "fix/1096-ios-remote-lease-platform"
+      }
+    ],
+    "simctlAvailable": true
+  },
+  "edits": [
+    "environments[path*=1123-mobile-app].remoteDevices: added by hand in the RemoteDeviceState shape; the capture machine had no EAS session"
+  ]
+}

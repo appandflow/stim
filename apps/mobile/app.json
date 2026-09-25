@@ -1,0 +1,59 @@
+{
+  "expo": {
+    "name": "Stim",
+    "slug": "stim-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "stim",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "com.appandflow.stim",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.appandflow.stim",
+      "adaptiveIcon": {
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/images/icon.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#FFFFFF",
+          "image": "./assets/images/icon.png",
+          "imageWidth": 120,
+          "dark": {
+            "backgroundColor": "#15121D",
+            "image": "./assets/images/icon.png"
+          }
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Stim uses the camera to scan the pairing QR code that Stim Desktop shows.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ],
+      "expo-secure-store",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "enableSceneSupport": true
+          }
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}

@@ -2,5 +2,12 @@
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
   "singleQuote": true,
   "printWidth": 120,
-  "ignorePatterns": ["**/dist/**", "**/node_modules/**", "website/build/**", "website/.docusaurus/**", ".claude/**"]
+  "ignorePatterns": [
+    "**/dist/**",
+    "**/node_modules/**",
+    "website/build/**",
+    "website/.docusaurus/**",
+    ".claude/**",
+    "apps/mobile/**"
+  ]
 }

@@ -55,7 +55,7 @@ name: Native E2E
 on:
   push:
     branches: [main]
-    paths-ignore: ['apps/desktop/**', '.github/workflows/desktop.yml']
+    paths-ignore: ['apps/desktop/**', '.github/workflows/desktop.yml', 'apps/mobile/**', '.github/workflows/mobile.yml']
   schedule:
     # 07:00 UTC nightly. Cron has no notion of "against main" -- schedule always
     # runs on the default branch, which is what we want.
@@ -72,7 +72,7 @@ on:
     # push to an already-labeled PR re-run. The `plan` job is the actual gate
     # -- these types only decide when to EVALUATE it.
     types: [labeled, opened, synchronize, reopened]
-    paths-ignore: ['apps/desktop/**', '.github/workflows/desktop.yml']
+    paths-ignore: ['apps/desktop/**', '.github/workflows/desktop.yml', 'apps/mobile/**', '.github/workflows/mobile.yml']
 
 concurrency:
   # The event name keeps a push to main from cancelling the nightly loop, which
