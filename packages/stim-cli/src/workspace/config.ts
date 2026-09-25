@@ -369,6 +369,47 @@ export function unsetRepoSetting(gitCommonDir: string, dottedKey: string): boole
   });
 }
 
+export type ConfigSettingsTarget =
+  | { scope: 'machine' }
+  | { scope: 'workspace'; projectPath: string }
+  | { scope: 'repo'; gitCommonDir: string };
+
+function targetSettings(cfg: Config, target: ConfigSettingsTarget, create: boolean): Record<string, unknown> | null {
+  if (target.scope === 'machine') return cfg;
+  if (target.scope === 'workspace') {
+    if (!cfg.projects[target.projectPath]) {
+      if (!create) return null;
+      cfg.projects[target.projectPath] = { metroPort: null, platforms: {} };
+    }
+    const project = cfg.projects[target.projectPath]!;
+    if (!project.settings && create) project.settings = {};
+    return project.settings ?? null;
+  }
+  if (!cfg.repos[target.gitCommonDir]) {
+    if (!create) return null;
+    cfg.repos[target.gitCommonDir] = {};
+  }
+  const repo = cfg.repos[target.gitCommonDir]!;
+  if (!repo.settings && create) repo.settings = {};
+  return repo.settings ?? null;
+}
+
+export function writeConfigSetting(target: ConfigSettingsTarget, dottedKey: string, value: unknown): boolean {
+  if (target.scope === 'workspace') requireAbsoluteProjectPath(target.projectPath);
+  return withConfigLock(() => {
+    const cfg = value === undefined ? loadConfig() : ensureConfig();
+    const settings = cfg ? targetSettings(cfg, target, value !== undefined) : null;
+    if (!cfg || !settings) return false;
+    if (value === undefined) {
+      if (!deleteNested(settings, dottedKey)) return false;
+    } else {
+      writeNested(settings, dottedKey, value);
+    }
+    saveConfig(cfg);
+    return true;
+  });
+}
+
 function readNested(obj: unknown, dottedKey: string): unknown {
   if (!obj) return undefined;
   const keys = dottedKey.split('.');

@@ -250,6 +250,7 @@ Read the matching guide before acting in these situations:
 | Doctor finding: seed checkout or cross-volume copy    | stim guide lifecycle options     |
 | Doctor finding: iOS Debug archs, .cxx, fingerprints   | stim guide lifecycle builds      |
 | Temporary storage placement                           | stim guide settings              |
+| Read or change a setting (stim settings)              | stim guide settings              |
 | Parallel iOS, simulator stall, or memory pressure     | stim guide lifecycle simslim     |
 | Android boot timeout                                  | stim guide errors STIM_NO_DEVICE |
 | gc or orphaned resources                              | stim guide cleanup gc            |

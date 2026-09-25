@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { OPTIMIZATION_SHAPES } from '../optimizations.ts';
+import { SETTINGS } from '../workspace/settings-registry.ts';
 import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'node:url';
@@ -207,6 +207,7 @@ test('the errors topic documents every code the build commands and the iOS signi
   const commandFiles = [
     'ios.ts',
     'android.ts',
+    'settings.ts',
     'start.ts',
     'native-runtime.ts',
     'dev-client.ts',
@@ -367,18 +368,11 @@ test('the viewer override is discoverable beside the machine preference and boot
   }
 });
 
-test('the settings topic documents every supported setting key', () => {
+test('the settings topic documents every registered setting and its environment override', () => {
   const body = renderTopic('settings');
   assert(body);
-  const src = readFileSync(new URL('../workspace/settings.ts', import.meta.url), 'utf-8');
-  const table = src.slice(src.indexOf('const SETTING_SHAPES'), src.indexOf('};', src.indexOf('const SETTING_SHAPES')));
-  const known = [...table.matchAll(/^\s*'?([A-Za-z0-9.]+)'?: '[a-z-]+',$/gm)]
-    .map((match) => match[1])
-    .filter((key): key is string => key !== undefined);
-  expect(known.length).toBeGreaterThan(0);
-  for (const key of known) {
-    expect(body.includes(key)).toBeTruthy();
-  }
+  const names = SETTINGS.flatMap((setting) => (setting.env ? [setting.key, setting.env] : [setting.key]));
+  expect(names.filter((name) => !body.includes(name))).toEqual([]);
 });
 
 test('the static skill is only the agent guide router', () => {
@@ -556,13 +550,6 @@ test('temporary storage guidance names the override and Git visibility boundary'
 
 test('build guidance names the experimental Android compiler opt-in', () => {
   expect(renderSection('lifecycle', 'builds')).toContain('STIM_ANDROID_CAS_TOOLCHAIN');
-});
-
-test('the settings guide documents every configurable optimization', () => {
-  const body = renderTopic('settings');
-  for (const key of Object.keys(OPTIMIZATION_SHAPES)) {
-    expect(body).toContain(key);
-  }
 });
 
 test('EAS guidance requires profile clarification when needed and authorization for paid builds', () => {

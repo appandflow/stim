@@ -1005,9 +1005,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
 
   \`stim doctor\` prints one note echoing the caps and the current live count,
   but ONLY when a cap is set. \`stim gc\` reports stale build slots the way it
-  reports stale build locks, and \`gc --delete\` clears them. There is no
-  \`stim config\` command: set these by editing ~/.stim/config.json or via
-  the two env vars (see \`guide settings\`).`,
+  reports stale build locks, and \`gc --delete\` clears them. Set the caps
+  with \`stim settings set concurrency.maxBuilds 2\`, by editing
+  ~/.stim/config.json, or via the two env vars (see \`guide settings\`).`,
     },
     options: {
       summary:
@@ -1023,6 +1023,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   stop            --slot <name> --json
   status          --json --watch  (already machine-wide)
   stats           --json          (this project and machine-wide)
+  settings        --json; get <key> --scope <layer> --json;
+                  set <key> <value> --scope <layer> --json; unset <key> --scope <layer> --json
   doctor          --json --fix --platform <ios|android>
                                   (--platform keeps shared checks and filters native findings)
   gc              --delete --older-than <days> --cache <name|all|workspaces> --worktrees --json

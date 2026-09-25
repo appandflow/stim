@@ -13,6 +13,7 @@ import {
   type SettingsLayer,
 } from '../workspace/settings.ts';
 import type { SettingsObject } from '../workspace/settings-types.ts';
+import { settingDefinition } from '../workspace/settings-registry.ts';
 
 export interface MachineSettings {
   settings: SettingsObject;
@@ -42,10 +43,6 @@ export function readMachineSettings(context: {
     };
   }
 }
-
-const PATH_SETTING_ENVIRONMENT: Readonly<Record<string, string>> = {
-  'optimizations.android.casToolchain': 'STIM_ANDROID_CAS_TOOLCHAIN',
-};
 
 const PATH_SETTINGS_TRIMMED_BY_THEIR_CONSUMER: ReadonlySet<string> = new Set(['android.keystore']);
 
@@ -77,7 +74,7 @@ export function checkMachineSettings({
   if (!optimizations) for (const key of SETTINGS_WITH_RESOLVE_TIME_FALLBACK) skip.add(key);
 
   for (const key of PATH_SETTINGS) {
-    const variable = PATH_SETTING_ENVIRONMENT[key];
+    const variable = settingDefinition(key)?.env;
     if (skip.has(key) || (variable && skip.has(variable))) continue;
     const override = variable ? env[variable] : undefined;
     if (variable && override) {

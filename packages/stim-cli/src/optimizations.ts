@@ -5,25 +5,6 @@ import type { SettingsObject } from './workspace/settings-types.ts';
 export const ANDROID_COMPILER_CACHE_CHOICES = ['auto', 'ccache', 'cas', 'none'] as const;
 export const ANDROID_PCH_CHOICES = ['auto', 'on', 'off'] as const;
 
-export const OPTIMIZATION_SHAPES = {
-  optimizations: 'object',
-  'optimizations.buildCache': 'boolean',
-  'optimizations.remoteBuildCache': 'boolean',
-  'optimizations.releaseBundleSwap': 'boolean',
-  'optimizations.metroSharedCache': 'boolean',
-  'optimizations.metroWarmup': 'boolean',
-  'optimizations.ios': 'object',
-  'optimizations.ios.compilationCache': 'boolean',
-  'optimizations.ios.swiftCompilationCache': 'boolean',
-  'optimizations.ios.prefixMapping': 'boolean',
-  'optimizations.android': 'object',
-  'optimizations.android.compilerCache': 'android-compiler-cache',
-  'optimizations.android.casToolchain': 'path',
-  'optimizations.android.pch': 'android-pch',
-  'optimizations.android.gradleBuildCache': 'boolean',
-  'optimizations.android.targetAbiOnly': 'boolean',
-} as const;
-
 export interface Optimizations {
   buildCache: boolean;
   remoteBuildCache: boolean;

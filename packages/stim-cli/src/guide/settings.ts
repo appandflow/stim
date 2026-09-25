@@ -1,18 +1,50 @@
 import { ANDROID_AVD_CONFIG_HELP } from '../workspace/settings.ts';
+import { SETTINGS_SCHEMA_URL } from '../workspace/settings-schema.ts';
 
 export default {
   summary: 'Settings Stim reads, and where they can live',
   body: () => `SETTINGS
 
-There is no \`stim config\` command. Settings are JSON files, edited by
-hand or committed; command-line selectors override their matching settings.
+Settings are JSON: machine layers in ~/.stim/config.json and a committed
+.stim.json. Command-line selectors override their matching settings.
+
+  stim settings --json            every setting: effective value, origin
+                                  (workspace, repo, committed, machine, env,
+                                  default), and each layer's value
+  stim settings get <key> [--scope <layer>] [--json]
+  stim settings set <key> <value> --scope <layer> [--json]
+  stim settings unset <key> --scope <layer> [--json]
+
+<layer> is machine, workspace (this project's entry), repo (this repository's
+git common dir), or committed (.stim.json). Each key accepts only the layers
+Stim reads it from; --scope may be omitted when a key has one layer. Strings
+and choices are passed as-is; booleans, numbers, arrays, and objects as JSON
+(\`'["node_modules"]'\`). A value of the wrong shape, a layer the key is not
+read from, or an unknown key refuses with STIM_BAD_ARG naming the expected
+shape, before anything is written. Writes to the machine file take its lock
+and replace it atomically; a committed write keeps the file's other keys and
+indentation. Run \`stim settings\` from the app directory: workspace and
+committed resolve from the nearest package.json, repo from its Git
+repository. worktree.exclude and worktree.defaultBranch are read only from
+the repo layer and the repository root's .stim.json.
+
+android.keystorePassword is sensitive: its value prints as ******** in every
+output, and a committed .stim.json takes only an \`env:\` or \`file:\`
+reference, never the password itself.
+
+The JSON Schema for .stim.json ships in the stim package as
+dist/settings.schema.json. Point an editor at it with a top-level
+"$schema": "${SETTINGS_SCHEMA_URL}"; Stim ignores
+that key. $defs.machine describes the machine settings, and every setting
+carries its dotted key, layers, and environment override under "x-stim".
 
 Resolution order, first match wins:
-  1. project layer   ~/.stim/config.json, under this project's entry
-  2. repo layer      ~/.stim/config.json, under this repo's git common dir
+  1. workspace       ~/.stim/config.json, under this project's entry
+  2. repo            ~/.stim/config.json, under this repo's git common dir
   3. committed       .stim.json beside the app's package.json
-  4. machine defaults  ~/.stim/config.json, top-level optimizations only
+  4. machine         ~/.stim/config.json, top-level optimizations only
   5. Stim default
+An environment override, where a setting has one, wins over every layer.
 
 The committed file is plain JSON and travels with the app. Each monorepo app
 reads its own file, never an ancestor's runtime settings. A single-app repository
@@ -273,11 +305,13 @@ CONCURRENCY LIMITS ARE MACHINE-LEVEL, NOT A PER-PROJECT SETTING
 The caps above are not in the layered settings -- they are not per-project,
 because the resource they share (cores, RAM, booted simulators) is the whole
 machine's. They live under a top-level \`concurrency\` key in
-~/.stim/config.json, edited by hand:
+~/.stim/config.json, set with \`stim settings set\` or by hand:
 
   {
     "concurrency": { "maxBuilds": 2, "maxDevices": 3 }
   }
+
+The keys are concurrency.maxBuilds and concurrency.maxDevices.
 
 or via the environment, which overrides the file:
 
@@ -532,14 +566,16 @@ cp -c can silently fall back to copying and exit successfully.
 CACHE LOCATIONS ARE MACHINE-LEVEL TOO
 The shared build cache and Metro transform cache default to living under
 ~/.stim. To relocate them (say, to an external disk), set a top-level
-\`caches\` key in ~/.stim/config.json, edited by hand -- absolute paths:
+\`caches\` key in ~/.stim/config.json (\`stim settings set caches.buildCache
+<path>\`, or by hand) -- absolute paths:
 
   {
     "caches": { "buildCache": "/Volumes/SSD/stim/build-cache",
                 "metroCache": "/Volumes/SSD/stim/metro-cache" }
   }
 
-STIM_BUILD_CACHE / STIM_METRO_CACHE in the environment override the file.
+caches.buildCache and caches.metroCache are the keys; STIM_BUILD_CACHE /
+STIM_METRO_CACHE in the environment override the file.
 The CLI and both cache packages resolve these identically, so every process
 finds the same store regardless of shell profile. A relative path in the file
 is ignored. A relative STIM_HOME, STIM_BUILD_CACHE or STIM_METRO_CACHE makes
