@@ -27,7 +27,7 @@ import {
 import { startServer, type RunningServer, type ServerOptions } from '../src/server.ts';
 
 const FAKE_STIM = `
-import { appendFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 const args = process.argv.slice(2);
 const env = process.env;
@@ -71,8 +71,12 @@ if (command === 'status') {
   print({ code: 'STIM_NO_DEVICE', message: 'No system image is installed.', remedy: 'Install one.' });
   exit(1);
 } else if (args.includes('--plan')) {
-  print({ platform: command, args: args.join(' '), cwd: process.cwd(), cacheHit: 'local' });
-  exit(0);
+  const answer = () => {
+    print({ platform: command, args: args.join(' '), cwd: process.cwd(), cacheHit: 'local' });
+    exit(0);
+  };
+  if (!env.FAKE_STIM_PLAN_GATE) answer();
+  else setInterval(() => existsSync(env.FAKE_STIM_PLAN_GATE) && answer(), 10);
 } else if (env.FAKE_STIM_HANG || env.FAKE_STIM_STUBBORN) {
   setInterval(() => {}, 1000);
 } else if (env.FAKE_STIM_JSON_FAIL) {
@@ -814,6 +818,39 @@ describe('build.plan', () => {
       error: { code: 'unknown-workspace' },
     });
     expect(stimCalls()).toEqual([]);
+  });
+
+  it('runs one plan at a time per workspace, across connections', async () => {
+    const gate = join(root, 'plan-gate');
+    const port = await start({ env: { FAKE_STIM_PLAN_GATE: gate } });
+    const first = await authed(port);
+    const second = await authed(port);
+    const ios = first.request('build.plan', { workspace, platform: 'ios' });
+    await until(() => childPids().length === 1);
+    const android = second.request('build.plan', { workspace, platform: 'android' });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(stimCalls().map((call) => call.args)).toEqual(['ios --plan --json']);
+    writeFileSync(gate, '');
+    expect(await ios).toMatchObject({ result: { platform: 'ios' } });
+    expect(await android).toMatchObject({ result: { platform: 'android' } });
+    expect(stimCalls().map((call) => call.args)).toEqual(['ios --plan --json', 'android --plan --json']);
+  });
+
+  it('drops the queued plans of a closed connection and lets the next one run', async () => {
+    const gate = join(root, 'plan-gate');
+    const port = await start({ env: { FAKE_STIM_PLAN_GATE: gate } });
+    const closing = await authed(port);
+    const staying = await authed(port);
+    void closing.request('build.plan', { workspace, platform: 'ios' });
+    void closing.request('build.plan', { workspace, platform: 'android' });
+    await until(() => childPids().length === 1);
+    const plan = staying.request('build.plan', { workspace, platform: 'ios', slot: 'tablet' });
+    closing.socket.close();
+    await until(() => stimCalls().length === 2);
+    writeFileSync(gate, '');
+    expect(await plan).toMatchObject({ result: { platform: 'ios' } });
+    expect(stimCalls().map((call) => call.args)).toEqual(['ios --plan --json', 'ios --plan --json --slot=tablet']);
+    await until(() => childPids().length === 0);
   });
 
   it("reports the CLI's refusal code, message and remedy instead of its exit status", async () => {

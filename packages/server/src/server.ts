@@ -240,6 +240,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const commandLimits: CommandLimits = { ...COMMAND_LIMITS, ...options.commandLimits };
   const actionLimits: CommandLimits = { ...ACTION_LIMITS, ...options.actionLimits };
   const busyWorkspaces = new Set<string>();
+  const planQueues = new Map<string, Promise<void>>();
   const sessions = new Map<WebSocket, PairedDevice>();
   const sampler = new UsageSampler();
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
@@ -555,29 +556,50 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       cwd: string,
       result: (stdout: string) => Methods[M]['result'],
       limits: CommandLimits = commandLimits,
-    ): void {
+      turn: Promise<void> | null = null,
+    ): Promise<void> | null {
       if (commands.size >= MAX_COMMANDS) {
-        return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+        error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+        return null;
       }
-      const run = runStim(options.stimCli, options.env, args, cwd, limits);
-      commands.add(run.cancel);
-      running.add(run.cancel);
-      void (async () => {
+      let run: ReturnType<typeof runStim> | null = null;
+      let dropped = false;
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const cancel = async () => {
+        dropped = true;
+        await run?.cancel();
+        release();
+      };
+      const start = async () => {
+        if (dropped) return;
+        run = runStim(options.stimCli, options.env, args, cwd, limits);
         const outcome = await run.outcome;
-        commands.delete(run.cancel);
-        running.delete(run.cancel);
-        if (!outcome.ok) {
-          const printed = actionOutcome(outcome);
-          return error(id, 'stim-failed', printed.ok ? outcome.message : printed.error.message);
-        }
-        let value: Methods[M]['result'];
+        commands.delete(cancel);
+        running.delete(cancel);
         try {
-          value = result(outcome.stdout);
-        } catch {
-          return error(id, 'stim-failed', `stim ${args[0]} printed output that is not JSON.`);
+          if (!outcome.ok) {
+            const printed = actionOutcome(outcome);
+            return error(id, 'stim-failed', printed.ok ? outcome.message : printed.error.message);
+          }
+          let value: Methods[M]['result'];
+          try {
+            value = result(outcome.stdout);
+          } catch {
+            return error(id, 'stim-failed', `stim ${args[0]} printed output that is not JSON.`);
+          }
+          send(socket, { id, result: value });
+        } finally {
+          release();
         }
-        send(socket, { id, result: value });
-      })();
+      };
+      commands.add(cancel);
+      running.add(cancel);
+      if (turn) void turn.then(start);
+      else void start();
+      return released;
     }
 
     function queryLogs(id: RequestId, params: unknown): void {
@@ -687,7 +709,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const cwd = workspaceDir(id, params.workspace, true);
       if (!cwd) return;
       const args = [platform, '--plan', '--json', ...(slot === undefined ? [] : [`--slot=${slot}`])];
-      command<'build.plan'>(
+      const finished = command<'build.plan'>(
         id,
         args,
         cwd,
@@ -697,7 +719,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           return value as unknown as BuildPlanResult;
         },
         { ...commandLimits, timeoutMs: options.commandLimits?.timeoutMs ?? PLAN_TIMEOUT_MS },
+        planQueues.get(cwd) ?? null,
       );
+      if (!finished) return;
+      planQueues.set(cwd, finished);
+      void finished.finally(() => {
+        if (planQueues.get(cwd) === finished) planQueues.delete(cwd);
+      });
     }
 
     async function handle(raw: string): Promise<void> {

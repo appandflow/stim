@@ -226,7 +226,9 @@ Events are `{ "event", "subscription", ... }`.
   download the artifact into a temporary directory, so it gets 150 seconds
   instead of 60. A plan predicting that the build would refuse is a result
   whose `refusal` holds the code, message and remedy. A plan that cannot be
-  computed is a `stim-failed` error.
+  computed is a `stim-failed` error. One plan runs per workspace at a time,
+  across all connections; later requests wait their turn, and the 150
+  seconds start when the plan starts.
 - `machine.get` returns cheap machine usage, read in the server process
   without running `stim`: `volumes`, one per volume that holds a Stim
   workspace, Stim home, or the simulators, with `mount`, `holds`, `freeBytes`
