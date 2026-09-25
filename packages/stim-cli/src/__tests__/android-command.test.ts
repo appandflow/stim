@@ -676,6 +676,28 @@ describe('explicit remote backend behavior', () => {
     expect(result.error?.remedy).not.toMatch(/~\/\.android\/avd|several GB/);
   });
 
+  test.each(['install', 'launch'] as const)('a remote %s failure names the running session', async (step) => {
+    const failing = () => ({ failed: true, code: 'STIM_INSTALL_FAILED', reason: `agent-device ${step} failed` });
+    const { h } = remoteHarness('eas', {
+      remoteDeviceDeps: () => ({
+        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        checkCapacity: () => null,
+        ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
+        ensureDeviceBooted: async () => ({ ok: true, serial: 'drs_42' }),
+        install: step === 'install' ? failing : (args: InstallArgs = {}) => ({ ok: true, apkPath: args.apkPath ?? '' }),
+        launch: step === 'launch' ? failing : () => ({ ok: true, mode: 'remote' }),
+        createdSessionId: () => null,
+        webPreviewUrl: () => null,
+        failureRemedy: () => 'EAS Simulator session drs_42 is still running; run `stim stop` to end it.',
+      }),
+    });
+
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.remedy).toContain('`stim stop`');
+    expect(result.error?.remedy).not.toContain('adb');
+  });
+
   test('android.remote selects the same explicit backend as the CLI', async () => {
     const selected: unknown[] = [];
     const h = harness({

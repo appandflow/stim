@@ -964,6 +964,16 @@ describe('install and launch match their local counterparts', () => {
     const result = deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/a.app' });
     expect(result.failed).toBe(true);
     expect(result.code).toBe('STIM_INSTALL_FAILED');
+    expect(deps.failureRemedy()).toContain('EAS Simulator session drs_42 is still running and billed');
+    expect(deps.failureRemedy()).toContain('`stim stop`');
+  });
+
+  test('a failure on a proxy daemon names no billable session', async () => {
+    mockExec({ fail: 'install' });
+    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK }));
+    await deps.ensureBooted({});
+    expect(deps.installIosApp({ udid: 'x', appPath: '/tmp/a.app' }).failed).toBe(true);
+    expect(deps.failureRemedy()).not.toContain('billed');
   });
 });
 

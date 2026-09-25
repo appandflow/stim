@@ -424,6 +424,11 @@ function remoteDeviceDeps(ctx: RemoteContext) {
     },
 
     webPreviewUrl: (): string | null => session?.daemon.webPreviewUrl ?? null,
+
+    failureRemedy: (): string =>
+      ctx.backend === 'eas' && session?.id
+        ? `EAS Simulator session ${session.id} is still running and billed until it reaches its time limit or \`stim stop\` ends it. Fix the error above and run this command again to reuse the session, or run \`stim stop\` to end it.`
+        : 'Check that the remote daemon is reachable and still has the device, then run this command again.',
   };
 }
 
@@ -790,6 +795,7 @@ export function remoteIosDeps(ctx: RemoteContext): {
   createdSessionId: () => string | null;
   abandonCreatedSession: () => AbandonCreatedSessionResult;
   webPreviewUrl: () => string | null;
+  failureRemedy: () => string;
 } {
   const shared: RemoteContext = { ...ctx, platform: 'ios' };
   const core = remoteDeviceDeps(shared);
@@ -804,6 +810,7 @@ export function remoteIosDeps(ctx: RemoteContext): {
     createdSessionId: core.createdSessionId,
     abandonCreatedSession: core.abandonCreatedSession,
     webPreviewUrl: core.webPreviewUrl,
+    failureRemedy: core.failureRemedy,
   };
 }
 
@@ -830,6 +837,7 @@ export function remoteAndroidDeps(ctx: RemoteContext): {
   createdSessionId: () => string | null;
   abandonCreatedSession: () => AbandonCreatedSessionResult;
   webPreviewUrl: () => string | null;
+  failureRemedy: () => string;
 } {
   const shared: RemoteContext = { ...ctx, platform: 'android' };
   const core = remoteDeviceDeps(shared);
@@ -847,6 +855,7 @@ export function remoteAndroidDeps(ctx: RemoteContext): {
     createdSessionId: core.createdSessionId,
     abandonCreatedSession: core.abandonCreatedSession,
     webPreviewUrl: core.webPreviewUrl,
+    failureRemedy: core.failureRemedy,
   };
 }
 

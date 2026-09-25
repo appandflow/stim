@@ -3064,6 +3064,7 @@ describe('--remote', () => {
           },
           createdSessionId: () => createdSessionId,
           webPreviewUrl: () => null,
+          failureRemedy: () => 'EAS Simulator session drs_42 is still running; run `stim stop` to end it.',
         }),
       },
     };
@@ -3099,9 +3100,21 @@ describe('--remote', () => {
     expect(failure.code).toBe('STIM_LAUNCH_FAILED');
     expect(failure.remedy.includes('host memory pressure')).toBe(!isRemote);
     expect(failure.remedy.includes('stim doctor --platform ios')).toBe(!isRemote);
-    expect(failure.remedy).toContain(
-      `xcrun simctl launch --terminate-running-process --console ${isRemote ? 'drs_42' : UDID} com.example.app`,
-    );
+    expect(failure.remedy.includes('xcrun simctl')).toBe(!isRemote);
+    expect(failure.remedy.includes('`stim stop`')).toBe(isRemote);
+  });
+
+  test('a remote install failure names the running session and how to end it', async () => {
+    reserve();
+    const remote = remoteStub();
+    const installIosApp = () => ({ failed: true, code: 'STIM_INSTALL_FAILED', reason: 'agent-device install failed' });
+    const deps = { ...remote.deps, remoteIosDeps: () => ({ ...remote.deps.remoteIosDeps(), installIosApp }) };
+    const { logs, exitCode } = await run({ json: true, remote: 'eas' }, deps);
+    expect(exitCode).toBe(1);
+    const failure = parseFirst(logs);
+    expect(failure.code).toBe('STIM_INSTALL_FAILED');
+    expect(failure.remedy).toContain('drs_42');
+    expect(failure.remedy).toContain('`stim stop`');
   });
 
   test('the build still happens locally -- only the device moved', async () => {

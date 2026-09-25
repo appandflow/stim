@@ -230,6 +230,9 @@ never starts one. `stim status` lists the running session with its browser
 preview URL, and Stim Desktop shows that page as a device tile. `stim stop`
 ends the session and the tunnel.
 
+An install or launch failure leaves the session running and billed. The remedy
+names the session: rerun the command to reuse it, or run `stim stop` to end it.
+
 ## Cleanup behavior
 
 - `stim stop` releases the live environment and device leases. It ends an owned

@@ -467,11 +467,21 @@ function recordIosReloadTarget({
   }
 }
 
-function simulatorLaunchFailureRemedy(remote: boolean, udid: string, bundleId: string, logFile: string): string {
-  const prefix = remote
-    ? 'Run'
-    : 'If the simulator timed out, run `stim doctor --platform ios` and resolve any reported host memory pressure before retrying. Otherwise run';
-  return `${prefix} \`xcrun simctl launch --terminate-running-process --console ${udid} ${bundleId}\` to see what the app reports, and check ${logFile}.`;
+function installFailureRemedy(remoteDevice: { failureRemedy: () => string } | null): string {
+  return (
+    remoteDevice?.failureRemedy() ??
+    'Check that the simulator is booted and that the app was built for the simulator SDK.'
+  );
+}
+
+function launchFailureRemedy(
+  remoteDevice: { failureRemedy: () => string } | null,
+  udid: string,
+  bundleId: string,
+  logFile: string,
+): string {
+  if (remoteDevice) return remoteDevice.failureRemedy();
+  return `If the simulator timed out, run \`stim doctor --platform ios\` and resolve any reported host memory pressure before retrying. Otherwise run \`xcrun simctl launch --terminate-running-process --console ${udid} ${bundleId}\` to see what the app reports, and check ${logFile}.`;
 }
 
 export async function finishIosRun({
@@ -688,7 +698,7 @@ export async function finishIosRun({
       return fail({
         code: installed.code || 'STIM_INSTALL_FAILED',
         message: installed.reason,
-        remedy: 'Check that the simulator is booted and that the app was built for the simulator SDK.',
+        remedy: installFailureRemedy(remoteDevice),
         build: { ...buildFailure, appPath, bundleId },
       });
     }
@@ -748,7 +758,7 @@ export async function finishIosRun({
       return fail({
         code: launched.code || 'STIM_LAUNCH_FAILED',
         message: launched.reason,
-        remedy: simulatorLaunchFailureRemedy(Boolean(remoteDevice), udid, bundleId!, logFile),
+        remedy: launchFailureRemedy(remoteDevice, udid, bundleId!, logFile),
         build: { ...buildFailure, appPath, bundleId },
       });
     }
