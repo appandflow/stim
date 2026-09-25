@@ -184,6 +184,7 @@ func now() -> Double { Date().timeIntervalSince1970 * 1000 }
 
 final class SimulatorSource {
   let udid: String
+  let inputQueue = DispatchQueue(label: "stim.frames.input")
   var hid: SimulatorHID?
   private let pacer: Pacer
   private var display: SimDisplay?
@@ -433,7 +434,7 @@ let keyCodes: [Character: (code: UInt16, shift: Bool)] = {
 
 extension SimulatorSource: Source {
   func input(_ command: Command) {
-    queue.async { self.apply(command) }
+    inputQueue.async { self.apply(command) }
   }
 
   private func apply(_ command: Command) {

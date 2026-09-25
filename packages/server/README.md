@@ -315,14 +315,20 @@ lists as owned by a workspace. Nothing it sends reaches any other device.
   `grantedAt`, the `since` of that driver, so a client can tell its own lease
   from an agent's. The server releases the lease with `stim device unlock`
   when the session ends, unless the lease was already held before the session
-  began, as when it took the device over from an agent in the same workspace.
+  began, as when it took the device over from an agent in the same workspace;
+  it renews only a lease it took. Leases belong to the workspace, not to the
+  session: an agent in the same workspace that runs `stim device lock` on the
+  device during a session shares the lease, and the session's end releases
+  it.
 - `input.touch` takes `session`, `phase` (`down`, `move`, `up`), `x` and `y`
   as fractions of the upright screen, and `display` (0, the main display).
   `input.text` takes up to 256 printable ASCII characters, where `\n` presses
   Return, `\t` Tab and `\b` Delete. `input.button` takes `home` or `lock`,
   and on Android also `back` or `app-switch`. Each answers `{}` once the input
-  is sent. A connection may send 120 inputs a second; more fail with
-  `limit-exceeded`.
+  is handed to the device: for a simulator, and for an emulator touch, that
+  is when the helper receives it, so a failure there shows only in the
+  server's log. A connection may send 120 inputs a second and type 40
+  characters a second, with a burst of 256; more fail with `limit-exceeded`.
 - `control.end` ends a session. The server also ends it with a
   `control-ended` event `{ "session", "reason", "message" }` after 5 minutes
   without input (`idle`), when another client takes the device over

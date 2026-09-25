@@ -134,10 +134,10 @@ const ANDROID_KEYS: Record<InputButton | '\n' | '\t' | '\b', string> = {
 function adbInputArgs(command: Extract<InputCommand, { input: 'text' | 'button' }>): string[][] {
   if (command.input === 'button') return [['shell', 'input', 'keyevent', ANDROID_KEYS[command.button]]];
   const calls: string[][] = [];
-  for (const part of command.text.split(/([\n\t\b])/)) {
+  for (const part of command.text.split(/([\n\t\b]+)/)) {
     if (!part) continue;
-    if (part === '\n' || part === '\t' || part === '\b') {
-      calls.push(['shell', 'input', 'keyevent', ANDROID_KEYS[part]]);
+    if (/^[\n\t\b]+$/.test(part)) {
+      calls.push(['shell', 'input', 'keyevent', ...Array.from(part, (key) => ANDROID_KEYS[key as '\n' | '\t' | '\b'])]);
       continue;
     }
     calls.push(['shell', 'input', 'text', `'${part.replaceAll(' ', '%s').replaceAll("'", "'\\''")}'`]);
@@ -180,7 +180,6 @@ function activityOf(payload: StatusPayload, target: ControlBeginParams): DeviceA
   return target.platform === 'ios' ? devices?.ios?.activity : devices?.android?.activity;
 }
 
-/** Who drives the device, unless it is only this server's own lease. */
 function otherDriver(activity: DeviceActivity | undefined, ownLeases: ReadonlySet<string>): string | null {
   if (activity?.state !== 'driven' || !activity.driver) return null;
   const { tool, since } = activity.driver;
@@ -207,6 +206,7 @@ interface Session {
   idle: NodeJS.Timeout;
   renew: NodeJS.Timeout;
   unwatch: () => void;
+  renewing: Promise<void>;
   adb: Promise<void>;
   ended: boolean;
 }
@@ -242,6 +242,8 @@ export class ControlHub {
   private readonly sessions = new Map<string, Session>();
   private readonly byDevice = new Map<string, Session>();
   private readonly ownLeases = new Set<string>();
+  private readonly starting = new Set<string>();
+  private closing = false;
   private next = 1;
 
   constructor(options: ControlOptions) {
@@ -253,31 +255,64 @@ export class ControlHub {
     return found && found.owner === owner && !found.ended ? found.target.platform : null;
   }
 
-  async begin(owner: Controller, target: ControlBeginParams, cwd: string): Promise<ControlBeginResult | Refusal> {
+  /**
+   * `stillAllowed` is checked again after the status read and the lock, which can take seconds: the client may
+   * have disconnected or lost `control` meanwhile.
+   */
+  async begin(
+    owner: Controller,
+    target: ControlBeginParams,
+    cwd: string,
+    stillAllowed: () => boolean,
+  ): Promise<ControlBeginResult | Refusal> {
     const beganAt = Date.now();
+    if (this.closing) return { code: 'action-failed', message: 'stim-server is stopping.' };
     const status = await this.status();
     if ('code' in status) return status;
     const device = ownedDevice(status, target, null);
     if (typeof device === 'string') return { code: 'action-failed', message: device };
     const key = deviceKey(device);
-    const current = this.byDevice.get(key);
-    const driver = current
-      ? `${current.owner.device.name} through stim-server`
+    if (this.starting.has(key)) {
+      return { code: 'device-busy', message: 'Another client is starting to control this device. Try again.' };
+    }
+    const earlier = this.byDevice.get(key);
+    const driver = earlier
+      ? `${earlier.owner.device.name} through stim-server`
       : otherDriver(activityOf(status, target), this.ownLeases);
     if (driver && !target.takeOver) {
       return { code: 'device-busy', message: `This device is driven by ${driver}. Take over to control it anyway.` };
     }
-    const lease = await this.lock(device, target, cwd, beganAt);
-    if ('code' in lease && !target.takeOver) return lease;
+    this.starting.add(key);
+    let lease: Lease | Refusal;
+    try {
+      lease = await this.lock(device, target, cwd, beganAt);
+    } finally {
+      this.starting.delete(key);
+    }
+    const granted = 'code' in lease ? null : lease;
+    if (!granted && !target.takeOver) return lease as Refusal;
+    const current = this.byDevice.get(key);
+    const refuse = (refusal: Refusal): Refusal => {
+      if (granted?.mine && !current?.lease?.mine) void this.unlock(target, cwd);
+      return refusal;
+    };
+    if (this.closing || !stillAllowed()) {
+      return refuse({ code: 'forbidden', message: 'This device can no longer control devices.' });
+    }
+    if (current && current !== earlier && !target.takeOver) {
+      return refuse({ code: 'device-busy', message: `${current.owner.device.name} started controlling this device.` });
+    }
     let session: Session;
     const input = this.options.frames.control(device, (message) =>
       queueMicrotask(() => void this.end(session, 'failed', message)),
     );
     if (!input) {
-      if (!('code' in lease) && lease?.mine) void this.unlock(target, cwd);
-      return { code: 'action-failed', message: 'Input needs the stim-frames helper, which this Mac has not built.' };
+      return refuse({
+        code: 'action-failed',
+        message: 'Input needs the stim-frames helper, which this Mac has not built.',
+      });
     }
-    const inherited = !('code' in lease) && current?.lease?.mine === true;
+    const inherited = granted !== null && current?.lease?.mine === true;
     if (current) void this.end(current, 'taken-over', `${owner.device.name} took over this device.`, !inherited);
     const id = `c${this.next++}`;
     session = {
@@ -287,11 +322,12 @@ export class ControlHub {
       key,
       target,
       cwd,
-      lease: 'code' in lease ? null : { ...lease, mine: lease.mine || inherited },
+      lease: granted ? { ...granted, mine: granted.mine || inherited } : null,
       input,
       startedAt: Date.now(),
       idle: setTimeout(() => void this.end(session, 'idle', 'No input for 5 minutes.'), this.options.idleMs),
-      renew: setInterval(() => void this.lock(device, target, cwd, beganAt), this.options.renewMs),
+      renew: setInterval(() => this.renew(session, beganAt), this.options.renewMs),
+      renewing: Promise.resolve(),
       unwatch: () => {},
       adb: Promise.resolve(),
       ended: false,
@@ -308,15 +344,24 @@ export class ControlHub {
       },
       failed: () => {},
     });
-    this.audit(owner, target, driver ? 'control.take-over' : 'control.begin', {
+    this.audit(owner, target, driver || current ? 'control.take-over' : 'control.begin', {
       ok: true,
-      ...(driver ? { reason: `took over from ${driver}` } : {}),
+      ...(driver || current ? { reason: `took over from ${driver ?? current!.owner.device.name}` } : {}),
     });
     return {
       session: id,
       platform: target.platform,
       lease: session.lease ? { grantedAt: session.lease.grantedAt, expiresAt: session.lease.expiresAt } : null,
     };
+  }
+
+  private renew(session: Session, beganAt: number): void {
+    if (session.ended || !session.lease?.mine) return;
+    session.renewing = (async () => {
+      const renewed = await this.lock(session.device, session.target, session.cwd, beganAt);
+      if ('code' in renewed) console.error(`stim-server: could not renew the device lease: ${renewed.message}`);
+      else if (session.lease) session.lease.expiresAt = renewed.expiresAt;
+    })();
   }
 
   input(owner: Controller, id: string, command: InputCommand): Promise<Refusal | null> {
@@ -334,7 +379,10 @@ export class ControlHub {
     const run = (async (): Promise<Refusal | null> => {
       await previous;
       try {
-        for (const args of adbInputArgs(command)) await runAdb(this.options.env, serial, args);
+        for (const args of adbInputArgs(command)) {
+          if (session.ended) return null;
+          await runAdb(this.options.env, serial, args);
+        }
         return null;
       } catch (cause) {
         return { code: 'action-failed', message: (cause as Error).message };
@@ -358,6 +406,7 @@ export class ControlHub {
   }
 
   async close(): Promise<void> {
+    this.closing = true;
     const releases = [...this.sessions.values()].map((session) => this.end(session, null, 'stim-server stopped.'));
     await Promise.all(releases);
   }
@@ -382,7 +431,8 @@ export class ControlHub {
       durationMs: Date.now() - session.startedAt,
       reason: `${reason ?? 'ended'}: ${message}`,
     });
-    return release && session.lease?.mine ? this.unlock(session.target, session.cwd) : Promise.resolve();
+    if (!release || !session.lease?.mine) return Promise.resolve();
+    return session.renewing.then(() => this.unlock(session.target, session.cwd));
   }
 
   private status(): Promise<StatusPayload | Refusal> {

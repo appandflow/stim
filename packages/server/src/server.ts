@@ -22,6 +22,7 @@ import { LogBatcher, logArgs, parseLogFilter, type LogLimits } from './logs.ts';
 import { readMachineUsage, UsageSampler } from './machine.ts';
 import {
   ACTIONS,
+  MAX_INPUT_TEXT,
   FRAME_EDGE,
   FRAME_FPS,
   PROTOCOL_VERSION,
@@ -73,12 +74,12 @@ export interface ServerOptions {
   controlLimits?: Partial<ControlLimits>;
 }
 
-/** Timing and rate limits for control sessions. */
 interface ControlLimits {
   idleMs: number;
   renewMs: number;
   leaseFor: string;
   inputPerSecond: number;
+  textCharsPerSecond: number;
 }
 
 interface ServerHealth {
@@ -124,7 +125,13 @@ const LOG_LIMITS: LogLimits = { maxBufferedBytes: 4 * 1024 * 1024, maxPendingRec
 const FRAME_BUFFER_FRAMES = 2;
 const FRAME_RETRY_MS = 50;
 const HELPER_RETRY_MS = 5 * 60_000;
-const CONTROL_LIMITS: ControlLimits = { idleMs: 5 * 60_000, renewMs: 60_000, leaseFor: '2m', inputPerSecond: 120 };
+const CONTROL_LIMITS: ControlLimits = {
+  idleMs: 5 * 60_000,
+  renewMs: 60_000,
+  leaseFor: '2m',
+  inputPerSecond: 120,
+  textCharsPerSecond: 40,
+};
 const LOCK_LIMITS: CommandLimits = { timeoutMs: 30_000, maxOutputBytes: 64 * 1024 };
 const STATUS_FEED = { args: ['status', '--watch', '--json'], cwd: homedir(), keep: 1, label: 'stim status --watch' };
 const HEALTH_ROUTE_TIMEOUT_MS = 1000;
@@ -192,6 +199,15 @@ function auditSafely(record: AuditRecord): void {
   } catch (cause) {
     console.error(`stim-server: could not append to the action log: ${(cause as Error).message}`);
   }
+}
+
+function take(bucket: { tokens: number; at: number }, cost: number, perSecond: number, capacity: number): boolean {
+  const now = Date.now();
+  bucket.tokens = Math.min(capacity, bucket.tokens + ((now - bucket.at) / 1000) * perSecond);
+  bucket.at = now;
+  if (bucket.tokens < cost) return false;
+  bucket.tokens -= cost;
+  return true;
 }
 
 function send(socket: WebSocket, message: ServerMessage): void {
@@ -371,19 +387,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       send(socket, { id, error: { code, message } });
     }
 
-    let tokens = controlLimits.inputPerSecond;
-    let refilledAt = Date.now();
-    function takeInputToken(): boolean {
-      const now = Date.now();
-      tokens = Math.min(
-        controlLimits.inputPerSecond,
-        tokens + ((now - refilledAt) / 1000) * controlLimits.inputPerSecond,
-      );
-      refilledAt = now;
-      if (tokens < 1) return false;
-      tokens -= 1;
-      return true;
-    }
+    const inputs = { tokens: controlLimits.inputPerSecond, at: Date.now() };
+    const characters = { tokens: MAX_INPUT_TEXT, at: Date.now() };
 
     function controller(session: PairedDevice): Controller {
       let found = controllers.get(socket);
@@ -420,16 +425,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if ('code' in parsed) return refuseControl(parsed.code, parsed.message);
       const resolved = registeredWorkspace(parsed.value.workspace);
       if ('code' in resolved) return refuseControl(resolved.code, resolved.message);
+      const owner = controller(session);
       const outcome = await control.begin(
-        controller(session),
+        owner,
         { ...parsed.value, workspace: resolved.dir },
         resolved.dir,
+        () =>
+          socket.readyState === socket.OPEN &&
+          controllers.get(socket) === owner &&
+          readDevices().some((entry) => entry.id === session.id && entry.capabilities.includes('control')),
       );
       if ('code' in outcome) return refuseControl(outcome.code, outcome.message);
-      if (socket.readyState !== socket.OPEN) {
-        control.endById(controller(session), outcome.session);
-        return;
-      }
       send(socket, { id, result: outcome });
     }
 
@@ -442,8 +448,19 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const owner = controller(session);
       const parsed = parseInput(method, params, (name) => control.platformOf(owner, name));
       if ('code' in parsed) return error(id, parsed.code, parsed.message);
-      if (!takeInputToken()) {
+      if (!take(inputs, 1, controlLimits.inputPerSecond, controlLimits.inputPerSecond)) {
         return error(id, 'limit-exceeded', `A connection can send ${controlLimits.inputPerSecond} inputs a second.`);
+      }
+      const { command: sent } = parsed.value;
+      if (
+        sent.input === 'text' &&
+        !take(characters, sent.text.length, controlLimits.textCharsPerSecond, MAX_INPUT_TEXT)
+      ) {
+        return error(
+          id,
+          'limit-exceeded',
+          `A connection can type ${controlLimits.textCharsPerSecond} characters a second. Send the rest shortly.`,
+        );
       }
       const refused = await control.input(owner, parsed.value.session, parsed.value.command);
       if (refused) return error(id, refused.code, refused.message);

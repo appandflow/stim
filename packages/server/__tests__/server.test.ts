@@ -1681,8 +1681,8 @@ describe('frames.subscribe', () => {
     10_000,
   );
 
-  test.skipIf(!fakeTailscale)('ends an idle session, and caps the input rate', async () => {
-    const port = await startControl({}, { idleMs: 400, inputPerSecond: 3 });
+  test.skipIf(!fakeTailscale)('ends an idle session, and caps the input and typing rates', async () => {
+    const port = await startControl({}, { idleMs: 700, inputPerSecond: 3, textCharsPerSecond: 1 });
     const client = await authed(port, true);
     const begun = await client.request('control.begin', { workspace, platform: 'ios' });
     const { session } = (begun as { result: { session: string } }).result;
@@ -1693,6 +1693,11 @@ describe('frames.subscribe', () => {
       expect.objectContaining({ error: expect.objectContaining({ code: 'limit-exceeded' }) }),
       expect.objectContaining({ error: expect.objectContaining({ code: 'limit-exceeded' }) }),
     ]);
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(await client.request('input.text', { session, text: 'x'.repeat(200) })).toMatchObject({ result: {} });
+    expect(await client.request('input.text', { session, text: 'x'.repeat(100) })).toMatchObject({
+      error: { code: 'limit-exceeded' },
+    });
     expect(await client.next()).toMatchObject({ event: 'control-ended', session, reason: 'idle' });
     await until(() => lockCalls().includes('device unlock ios --json'));
   });
