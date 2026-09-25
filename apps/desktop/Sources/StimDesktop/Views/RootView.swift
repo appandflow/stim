@@ -155,7 +155,12 @@ struct MachineSummary: View {
           DiskPopover(volumes: metrics.volumes, reclaimable: metrics.reclaimable)
         }
       }
-      if let at = store.updatedAt {
+      if store.watching {
+        Text("live")
+          .font(Theme.mono())
+          .foregroundStyle(Theme.tertiary)
+          .help("stim status --watch reports each change as it happens")
+      } else if let at = store.updatedAt {
         TimelineView(.periodic(from: .now, by: 1)) { context in
           Text("\(max(0, Int(context.date.timeIntervalSince(at))))s ago")
             .font(Theme.mono())
