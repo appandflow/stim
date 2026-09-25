@@ -182,6 +182,30 @@ session as billable. Its **Stop** button runs `stim stop` in the workspace after
 a confirmation, which ends the session. A session with no recorded preview URL
 shows a message instead of the page.
 
+## Phones
+
+**Stim > Settings > Phones** serves Stim to the read-only phone app through
+`stim-server` from `@stim-cli/server`. With **Serve to phones** on, the app
+checks `http://127.0.0.1:7787/health` at launch. When a server answers, the app
+uses it and never starts a second one. Otherwise it runs `stim-server --port
+7787` and stops it with SIGTERM when the app quits, or when you turn the
+preference off. A server the app did not start keeps running after the app
+quits. `stim-server` is found on the login shell's `PATH`, or at the path you
+choose in the same tab.
+
+**Pair a Phone** runs `stim-server pair --json` and shows its single-use code as
+a QR code with the time left before it expires, plus the endpoint and token for
+manual entry. The sheet shows the phone once it pairs. The paired phones list
+comes from `stim-server devices --json`: each phone's name, the tailnet node it
+paired from, when it was last seen, and **Revoke**, which runs `stim-server
+devices revoke <id>` after a confirmation.
+
+When the server reports that Tailscale is not running, the tab shows the
+steps: `tailscale up`, restart the server (a button when the app started it),
+then `tailscale serve --bg http://127.0.0.1:7787` once. Until then, the pairing
+endpoint is `ws://127.0.0.1:7787` and works only on this Mac, for example from
+an iOS Simulator.
+
 ## Settings
 
 **Stim > Settings** (Command-comma) edits Stim settings and the app's own
@@ -236,7 +260,7 @@ The bundle copies Inter, JetBrains Mono, and the brand artwork from `website/`.
 
 ## Layout
 
-- `Sources/StimKit`: models for the CLI's JSON, the login shell environment, the CLI client, project grouping, warning remedies, the streaming runner, `stim logs` records and the follow runner, process, disk and gc usage, the Storage report and worktree lifecycle, and the autopilot schedule, pressure plan and log. Unit-tested.
+- `Sources/StimKit`: models for the CLI's JSON, the login shell environment, the CLI and `stim-server` clients, project grouping, warning remedies, the streaming runner, `stim logs` records and the follow runner, process, disk and gc usage, the Storage report and worktree lifecycle, and the autopilot schedule, pressure plan and log. Unit-tested.
 - `Sources/SimulatorFrames`: live simulator frames through CoreSimulator and input through SimulatorKit, both private Apple frameworks. Expect Xcode releases to break it.
 - `Support/SimFold`: the `sim-fold` helper, an iOS Simulator executable that `scripts/bundle.sh` builds into the app's resources.
 - `Sources/EmulatorFrames`: live emulator frames through the emulator's localhost gRPC `streamScreenshot` call, found through its discovery file, and input through the same endpoint. Emulators Stim booted before it passed `-grpc` show no frames until their next boot.

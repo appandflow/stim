@@ -23,6 +23,8 @@ public enum AppPreferences {
     public static let autopilotLastNightly = "autopilot.lastNightly"
     public static let autopilotLog = "autopilot.log"
     public static let notifiesDiskPressure = "notify.diskPressure"
+    public static let servesPhones = "servesPhones"
+    public static let stimServerExecutable = "stimServerExecutable"
 
     public static func notifies(_ kind: StatusEvent.Kind) -> String { "notify.\(kind.rawValue)" }
   }

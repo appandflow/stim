@@ -25,7 +25,7 @@ import {
   type PeerIdentity,
 } from './registry.ts';
 import { runStim, type CommandLimits } from './stim-command.ts';
-import { whois } from './tailscale.ts';
+import { whois, type TailscaleState } from './tailscale.ts';
 
 export interface ServerOptions {
   name: string;
@@ -36,11 +36,21 @@ export interface ServerOptions {
   serverVersion: string;
   env: NodeJS.ProcessEnv;
   tailscale: string | null;
+  tailscaleState: TailscaleState;
   authTimeoutMs?: number;
   maxAuthFailures?: number;
   failureWindowMs?: number;
   logLimits?: Partial<LogLimits>;
   commandLimits?: Partial<CommandLimits>;
+}
+
+interface ServerHealth {
+  server: 'stim-server';
+  name: string;
+  version: string;
+  stim: string;
+  protocol: number;
+  tailscale: TailscaleState;
 }
 
 export interface RunningServer {
@@ -421,6 +431,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     wss.handleUpgrade(request, socket, head, (ws) => connection(ws, peer));
   }
 
+  const health: ServerHealth = {
+    server: 'stim-server',
+    name: options.name,
+    version: options.serverVersion,
+    stim: options.stimVersion,
+    protocol: PROTOCOL_VERSION,
+    tailscale: options.tailscaleState,
+  };
   const servers: Server[] = [];
   const addresses: RunningServer['addresses'] = [];
   const close = async () => {
@@ -433,7 +451,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   try {
     for (const host of options.hosts) {
-      const server = createServer((_request, response) => {
+      const server = createServer((request, response) => {
+        if (request.method === 'GET' && request.url === '/health' && peerAddress(request) === null) {
+          response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(health));
+          return;
+        }
         response.writeHead(426, { 'content-type': 'text/plain' }).end('stim-server speaks WebSocket only.\n');
       });
       server.on('upgrade', upgrade);

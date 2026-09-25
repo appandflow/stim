@@ -24,19 +24,9 @@ public struct StimCLI: Sendable {
 
   public init(environment: [String: String], override: String? = nil) {
     var environment = environment
-    let executable =
-      override.flatMap { $0.isEmpty ? nil : $0 }
-      ?? environment["STIM_BIN"]
-      ?? (environment["PATH"] ?? "").split(separator: ":").lazy
-      .map { "\($0)/stim" }
-      .first { FileManager.default.isExecutableFile(atPath: $0) }
-    if let executable {
-      // stim is a node script whose shebang resolves `node` from PATH; with
-      // STIM_BIN set, node can sit next to it outside PATH, as nvm installs it.
-      let binDir = (executable as NSString).deletingLastPathComponent
-      environment["PATH"] = "\(binDir):\(environment["PATH"] ?? "/usr/bin:/bin")"
-    }
-    self.executable = executable
+    self.executable = resolveExecutable(
+      "stim", override: override.flatMap { $0.isEmpty ? nil : $0 } ?? environment["STIM_BIN"],
+      environment: &environment)
     self.environment = environment
   }
 
@@ -109,4 +99,20 @@ public struct StimCLI: Sendable {
       executable: executable, arguments: args, cwd: cwd, environment: environment,
       onLine: onLine, onExit: onExit)
   }
+}
+
+/// The override, or the first `name` on the environment's `PATH`.
+func resolveExecutable(_ name: String, override: String?, environment: inout [String: String]) -> String? {
+  let executable =
+    override.flatMap { $0.isEmpty ? nil : $0 }
+    ?? (environment["PATH"] ?? "").split(separator: ":").lazy
+    .map { "\($0)/\(name)" }
+    .first { FileManager.default.isExecutableFile(atPath: $0) }
+  if let executable {
+    // stim and stim-server are node scripts whose shebang resolves `node` from PATH; with an
+    // override, node can sit next to the script outside PATH, as nvm installs it.
+    let binDir = (executable as NSString).deletingLastPathComponent
+    environment["PATH"] = "\(binDir):\(environment["PATH"] ?? "/usr/bin:/bin")"
+  }
+  return executable
 }

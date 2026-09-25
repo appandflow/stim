@@ -143,6 +143,7 @@ async function start(
     stimVersion: '9.9.9',
     serverVersion: '1.2.3',
     tailscale,
+    tailscaleState: { state: 'not-running', backendState: 'Stopped' },
     env: {
       ...process.env,
       FAKE_STIM_PIDS: pids,
@@ -373,6 +374,24 @@ describe('pairing', () => {
       error: { code: 'unauthorized', message: expect.stringContaining('does not recognize') },
     });
     expect(revokeDevice(id)).toBe(false);
+  });
+});
+
+describe('health', () => {
+  it('answers only requests from this Mac', async () => {
+    const port = await start();
+    const local = await fetch(`http://127.0.0.1:${port}/health`);
+    expect(local.status).toBe(200);
+    expect(await local.json()).toEqual({
+      server: 'stim-server',
+      name: 'Test Mac',
+      version: '1.2.3',
+      stim: '9.9.9',
+      protocol: 1,
+      tailscale: { state: 'not-running', backendState: 'Stopped' },
+    });
+    const forwarded = await fetch(`http://127.0.0.1:${port}/health`, { headers: { 'x-forwarded-for': '100.64.0.2' } });
+    expect(forwarded.status).toBe(426);
   });
 });
 

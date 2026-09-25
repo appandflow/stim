@@ -16,6 +16,15 @@ stim-server devices [list]        # list paired devices
 stim-server devices revoke <id>   # revoke a paired device
 ```
 
+`pair --json` prints `{ "qr": <payload>, "expiresAt": "<ISO time>" }`, and
+`devices --json` prints `{ "devices": [...] }` with each device's `id`, `name`,
+`identity`, `pairedAt`, `lastSeenAt` and `capabilities`, never its token hash.
+
+`GET http://127.0.0.1:7787/health` answers requests from this Mac with the
+server's name, versions, protocol and the Tailscale state it started with.
+Stim Desktop uses it to find a running server. A request through `tailscale
+serve` gets HTTP 426, like any other plain HTTP request.
+
 `stim-server` runs the `stim` version this package was released with, not the
 one on your PATH. It reads the login shell's environment once at start, so
 `PATH`, `ANDROID_HOME`, and `STIM_*` variables match your terminal even when

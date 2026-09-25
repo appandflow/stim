@@ -12,8 +12,10 @@ const DEFAULT_PORT = 7787;
 
 const USAGE = `Usage:
   stim-server [--port <n>]          serve paired clients (default port ${DEFAULT_PORT})
-  stim-server pair [--port <n>]     print a single-use pairing payload for the QR code
-  stim-server devices [list]        list paired devices
+  stim-server pair [--port <n>] [--json]
+                                    print a single-use pairing payload for the QR code
+  stim-server devices [list] [--json]
+                                    list paired devices
   stim-server devices revoke <id>   revoke a paired device`;
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
@@ -56,6 +58,7 @@ async function serve(port: number): Promise<void> {
       serverVersion: pkg.version,
       env,
       tailscale: tailscaleBinary,
+      tailscaleState: tailscale,
     });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') {
@@ -78,7 +81,7 @@ async function serve(port: number): Promise<void> {
   process.on('SIGHUP', shutdown);
 }
 
-function pair(port: number): void {
+function pair(port: number, json: boolean): void {
   const tailscale = tailscaleStatus(findTailscale(process.env), process.env);
   const { token, expiresAt } = createPairingToken();
   const running = tailscale.state === 'running';
@@ -88,6 +91,7 @@ function pair(port: number): void {
     endpoint: running && tailscale.dnsName ? `wss://${tailscale.dnsName}` : `ws://127.0.0.1:${port}`,
     pairingToken: token,
   };
+  if (json) return void console.log(JSON.stringify({ qr: payload, expiresAt }));
   console.log(JSON.stringify(payload));
   console.error(`The pairing token is single use and expires at ${expiresAt}.`);
   const note = tailscaleNote(tailscale, port);
@@ -107,6 +111,7 @@ async function main(): Promise<void> {
     allowPositionals: true,
     options: {
       port: { type: 'string' },
+      json: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'V' },
     },
@@ -117,9 +122,20 @@ async function main(): Promise<void> {
   if (!Number.isInteger(port) || port < 0 || port > 65535) fail(`--port must be a port number, got ${values.port}.`);
   const [command, sub, arg, ...rest] = positionals;
   if (command === undefined) return serve(port);
-  if (command === 'pair' && sub === undefined) return pair(port);
+  if (command === 'pair' && sub === undefined) return pair(port, values.json === true);
   if (command === 'devices' && (sub === undefined || sub === 'list') && arg === undefined) {
     const devices = readDevices();
+    if (values.json) {
+      const listed = devices.map(({ id, name, identity, pairedAt, lastSeenAt, capabilities }) => ({
+        id,
+        name,
+        identity,
+        pairedAt,
+        lastSeenAt,
+        capabilities,
+      }));
+      return void console.log(JSON.stringify({ devices: listed }));
+    }
     if (!devices.length) console.log('No paired devices.');
     for (const device of devices) console.log(describe(device));
     return;

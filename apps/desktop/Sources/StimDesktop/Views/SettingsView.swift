@@ -20,6 +20,9 @@ struct SettingsView: View {
       AppPreferencesView()
         .tabItem { Label("App", systemImage: "macwindow") }
         .tag("app")
+      PhonesView(server: ServerController.shared)
+        .tabItem { Label("Phones", systemImage: "iphone.gen3.radiowaves.left.and.right") }
+        .tag("phones")
       scopeTab(.machine, title: "Machine", icon: "desktopcomputer")
       scopeTab(.repo, title: "Repository", icon: "folder")
       scopeTab(.workspace, title: "Workspace", icon: "square.stack.3d.up")
