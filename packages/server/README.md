@@ -342,8 +342,10 @@ streams its frames:
 - Simulators take touches, keys and buttons through SimulatorKit's HID
   client, addressed to the main screen. Text is typed key by key on a US
   layout. `lock` is the side button. On Xcode 27 (27A266a), a simulator
-  shown in Xcode's Device Hub ignored this input in testing, while the same
-  simulator booted without a Device Hub window took it.
+  that a viewer app had opened (Xcode's Device Hub, which `stim ios` opens by
+  default, or Siniulator) ignored this input in testing, even after the
+  viewer quit, until the simulator booted again without one; a simulator
+  booted with `xcrun simctl boot` took it.
 - Emulators take touches through the emulator's gRPC `sendTouch`. Text and
   buttons go through `adb -s <serial> shell input`, because Stim's AVDs have
   no hardware keyboard and the emulator drops gRPC key events.
