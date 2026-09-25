@@ -1,25 +1,60 @@
-import { Stack, useRouter } from 'expo-router';
-import { useMemo } from 'react';
-import { ActivityIndicator, Platform, Pressable, ScrollView, SectionList, StyleSheet, Text, View } from 'react-native';
+import { Stack, useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  FlatList,
+  Platform,
+  Pressable,
+  ScrollView,
+  SectionList,
+  StyleSheet,
+  Text,
+  View,
+  type ViewToken,
+} from 'react-native';
 
+import { DeviceGridTile } from '@/components/device-grid-tile';
 import { EmptyState } from '@/components/empty-state';
 import { Icon } from '@/components/icon';
 import { MacChip } from '@/components/mac-chip';
+import { Toggle } from '@/components/toggle';
 import { WorkspaceRow } from '@/components/workspace-row';
 import { useHomeFilters } from '@/hooks/home-filters';
 import { useMacs } from '@/hooks/mac-connection';
-import { filtersActive, filterWorkspaces, mergeWorkspaces, projectNames, type HomeItem } from '@/lib/home';
+import {
+  filtersActive,
+  filterWorkspaces,
+  mergeWorkspaces,
+  projectNames,
+  runningDevices,
+  type DeviceTileItem,
+  type HomeItem,
+} from '@/lib/home';
 import { isActive } from '@/lib/workspaces';
 import { radius, useColors } from '@/theme';
 
 const MENU_ICON = require('@/assets/icons/menu.png');
 const FUNNEL_ICON = require('@/assets/icons/funnel.png');
+const VIEWABILITY = { itemVisiblePercentThreshold: 10 };
 
 export function Home() {
   const colors = useColors();
   const router = useRouter();
   const { macs, connections } = useMacs();
-  const { filters, update } = useHomeFilters();
+  const { filters, update, view, setView } = useHomeFilters();
+  const [visible, setVisible] = useState<Set<string>>(new Set());
+  const [focused, setFocused] = useState(true);
+  useFocusEffect(
+    useCallback(() => {
+      setFocused(true);
+      return () => setFocused(false);
+    }, []),
+  );
+  const onViewable = useCallback(
+    ({ viewableItems }: { viewableItems: ViewToken<DeviceTileItem>[] }) =>
+      setVisible(new Set(viewableItems.map((token) => token.key))),
+    [],
+  );
 
   const macIds = useMemo(() => connections.map((c) => c.mac.id), [connections]);
   const byMac = useMemo(() => new Map(connections.map((c) => [c.mac.id, c])), [connections]);
@@ -36,6 +71,7 @@ export function Home() {
       { title: 'Idle', data: idle },
     ].filter((s) => s.data.length > 0);
   }, [shown]);
+  const tiles = useMemo(() => runningDevices(items, filters, macIds), [items, filters, macIds]);
   const loading =
     macs === null ||
     (items.length === 0 &&
@@ -94,6 +130,74 @@ export function Home() {
       params: { id: item.macId, path: item.env.path, ...(errors ? { errors: '1' } : {}) },
     });
 
+  const listHeader = (
+    <View>
+      <View style={styles.sectionHeader}>
+        <Text style={[styles.sectionTitle, { color: colors.tertiary }]}>Machines</Text>
+        <Pressable
+          onPress={() => router.push('/pair')}
+          accessibilityRole="button"
+          accessibilityLabel="Pair a machine"
+          hitSlop={10}
+        >
+          <Icon name="plus" size={22} color={colors.text} />
+        </Pressable>
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
+        {connections.map((c) => (
+          <MacChip
+            key={c.mac.id}
+            mac={c}
+            onPress={() => router.push({ pathname: '/mac/[id]', params: { id: c.mac.id } })}
+          />
+        ))}
+      </ScrollView>
+      <View style={styles.views}>
+        <Toggle colors={colors} label="Workspaces" on={view === 'workspaces'} onPress={() => setView('workspaces')} />
+        <Toggle colors={colors} label="Devices" on={view === 'devices'} onPress={() => setView('devices')} />
+      </View>
+    </View>
+  );
+
+  if (view === 'devices') {
+    return (
+      <View style={[styles.screen, { backgroundColor: colors.background }]}>
+        {header}
+        <FlatList
+          data={tiles}
+          keyExtractor={(tile) => tile.key}
+          numColumns={2}
+          contentInsetAdjustmentBehavior="automatic"
+          contentContainerStyle={styles.list}
+          columnWrapperStyle={styles.gridRow}
+          ListHeaderComponent={listHeader}
+          onViewableItemsChanged={onViewable}
+          viewabilityConfig={VIEWABILITY}
+          renderItem={({ item: tile }) => (
+            <DeviceGridTile
+              tile={tile}
+              connection={byMac.get(tile.item.macId)?.connection ?? null}
+              visible={focused && visible.has(tile.key)}
+              onPress={() => openWorkspace(tile.item, false)}
+            />
+          )}
+          ListEmptyComponent={
+            loading ? (
+              <ActivityIndicator style={styles.loading} color={colors.primary} />
+            ) : (
+              <View style={styles.empty}>
+                <Text style={[styles.emptyTitle, { color: colors.text }]}>No device running</Text>
+                <Text style={[styles.emptyMessage, { color: colors.secondary }]}>
+                  Simulators and emulators appear here while they run, on every paired machine the filters keep.
+                </Text>
+              </View>
+            )
+          }
+        />
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
       {header}
@@ -103,30 +207,7 @@ export function Home() {
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={styles.list}
         stickySectionHeadersEnabled={false}
-        ListHeaderComponent={
-          <View>
-            <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionTitle, { color: colors.tertiary }]}>Machines</Text>
-              <Pressable
-                onPress={() => router.push('/pair')}
-                accessibilityRole="button"
-                accessibilityLabel="Pair a machine"
-                hitSlop={10}
-              >
-                <Icon name="plus" size={22} color={colors.text} />
-              </Pressable>
-            </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
-              {connections.map((c) => (
-                <MacChip
-                  key={c.mac.id}
-                  mac={c}
-                  onPress={() => router.push({ pathname: '/mac/[id]', params: { id: c.mac.id } })}
-                />
-              ))}
-            </ScrollView>
-          </View>
-        }
+        ListHeaderComponent={listHeader}
         renderSectionHeader={({ section }) => (
           <View style={styles.sectionHeader}>
             <Text style={[styles.sectionTitle, { color: colors.tertiary }]}>{section.title}</Text>
@@ -193,6 +274,8 @@ const styles = StyleSheet.create({
   },
   sectionTitle: { fontSize: 15, fontWeight: '500' },
   chips: { gap: 10, paddingHorizontal: 20, paddingBottom: 4 },
+  views: { flexDirection: 'row', gap: 8, paddingHorizontal: 20, paddingTop: 16 },
+  gridRow: { gap: 12, paddingHorizontal: 16, paddingTop: 12 },
   loading: { marginTop: 48 },
   empty: { alignItems: 'center', padding: 32, gap: 8 },
   emptyTitle: { fontSize: 17, fontWeight: '600' },
