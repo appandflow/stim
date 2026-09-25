@@ -86,9 +86,9 @@ struct RootView: View {
       store.start()
       metrics.start()
     }
-    .onReceive(openRequests.$simulatorUdid) { udid in showSimulator(udid, in: store.payload) }
+    .onReceive(openRequests.$device) { request in showDevice(request, in: store.payload) }
     .onReceive(store.$payload) { payload in
-      showSimulator(openRequests.simulatorUdid, in: payload)
+      showDevice(openRequests.device, in: payload)
       if case .worktree(let path) = selection, payload?.environments.contains(where: { $0.path == path }) == true {
         selection = .environment(path)
       }
@@ -157,9 +157,9 @@ struct RootView: View {
   }
 
   /// `@Published` emits before the property changes, so both values arrive as arguments.
-  private func showSimulator(_ udid: String?, in payload: StatusPayload?) {
-    guard let udid, let owner = payload?.owner(ofSimulator: udid) else { return }
-    openRequests.simulatorUdid = nil
+  private func showDevice(_ request: DeviceOpenRequest?, in payload: StatusPayload?) {
+    guard let request, let owner = payload?.owner(of: request) else { return }
+    openRequests.device = nil
     selection = .environment(owner.workspace.path)
     focusedDeviceID = owner.device.id
     detailTab = .device
