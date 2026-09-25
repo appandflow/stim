@@ -342,6 +342,19 @@ test('warm reports carried dependency and Pods lockfile mismatches against the l
   expect(readFileSync(join(target, 'ios/Podfile.lock'), 'utf-8')).toBe('branch pods\n');
 }, 30_000);
 
+test('warm reports carried node_modules installed from an older lockfile that both checkouts have moved past', async () => {
+  const fixture = (name: string) =>
+    readFileSync(join(import.meta.dirname, 'fixtures', 'installed-deps', 'npm', name), 'utf-8');
+  write(root, 'package-lock.json', fixture('lockfile.next.txt'));
+  write(target, 'package-lock.json', fixture('lockfile.next.txt'));
+  write(root, 'node_modules/.package-lock.json', fixture('installed.txt'));
+  const result = await runWarm(target);
+  expect(result.code).toBe(0);
+  expect(result.stdout).toEqual([]);
+  expect(result.stderr).toMatch(/carried node_modules was installed from a different package-lock.json.*npm ci/);
+  expect(result.stderr).not.toMatch(/carried dependencies may be stale/);
+}, 30_000);
+
 test('warm copies literal ignored filenames and skips Finder, IDE, and derived data', () => {
   write(root, '.gitignore', readFileSync(join(root, '.gitignore'), 'utf-8') + '.DS_Store\n.idea/\n');
   write(root, 'tracked-app/.idea/codeStyles.xml', 'shared IDE settings');

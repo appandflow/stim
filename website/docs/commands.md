@@ -583,7 +583,8 @@ and another warm invocation.
 stdout stays empty. stderr reports copied, kept, and failed entries. Failures
 exit 1; inspect failed paths before retrying, since partially copied
 entries remain and existing directories are skipped. Warm does not install
-dependencies or build.
+dependencies or build. It prints the install command when carried
+`node_modules` or `Pods` do not match this worktree's lockfiles.
 
 ## `worktree remove`
 

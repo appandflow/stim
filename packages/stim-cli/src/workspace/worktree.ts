@@ -331,29 +331,123 @@ export function podsOutOfSync(
   return problems;
 }
 
-const LOCKFILE_NAMES = ['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lock', 'bun.lockb'];
+const LOCKFILE_NAMES = ['pnpm-lock.yaml', 'yarn.lock', 'bun.lock', 'bun.lockb', 'package-lock.json'];
+
+interface NpmLockfile {
+  packages?: Record<string, { version?: string; link?: boolean; optional?: boolean; devOptional?: boolean }>;
+}
+
+function npmInstallMatches(wanted: NpmLockfile, installed: NpmLockfile): boolean | null {
+  if (!wanted.packages || !installed.packages) return null;
+  for (const [key, entry] of Object.entries(wanted.packages)) {
+    if (!key.includes('node_modules/') || entry.link) continue;
+    const present = installed.packages[key];
+    if (!present && (entry.optional || entry.devOptional)) continue;
+    if (present?.version !== entry.version) return false;
+  }
+  return true;
+}
+
+function lastYamlDocument(text: string): string {
+  return (text.split(/^---$/m).at(-1) ?? '').trim();
+}
+
+function yarnClassicInstallMatches(
+  lockfile: string,
+  integrity: { lockfileEntries?: Record<string, string> },
+): boolean | null {
+  if (!integrity.lockfileEntries) return null;
+  const wanted = [...lockfile.matchAll(/^ {2}resolved "([^"]+)"$/gm)].flatMap((m) => m[1] ?? []);
+  if (wanted.length === 0) return null;
+  const installed = new Set(Object.values(integrity.lockfileEntries));
+  return wanted.every((url) => installed.has(url));
+}
+
+// Yarn Berry's node-modules linker records peer-dependent packages under
+// virtual locators ("name@virtual:<hash>#npm:1.0.0") and omits packages whose
+// yarn.lock `conditions` exclude this platform.
+function yarnBerryInstallMatches(lockfile: string, state: string): boolean | null {
+  const installed = new Set(
+    [...state.matchAll(/^"?([^\s"#][^"]*?)"?:$/gm)].flatMap((m) => m[1]?.replace(/@virtual:[^#]+#/, '@') ?? []),
+  );
+  let entries = 0;
+  for (const entry of lockfile.split(/\n(?=\S)/)) {
+    const resolution = /^ {2}resolution: "([^"]+)"$/m.exec(entry)?.[1];
+    if (!resolution) continue;
+    entries += 1;
+    if (installed.has(resolution) || /^ {2}conditions: /m.test(entry)) continue;
+    return false;
+  }
+  return entries === 0 ? null : true;
+}
+
+function installedMatchesLockfile(
+  dir: string,
+  lockfile: string,
+  { read = readFileSync }: { read?: typeof readFileSync } = {},
+): boolean | null {
+  const text = (rel: string): string | null => {
+    try {
+      return read(join(dir, rel), 'utf-8').replaceAll('\r\n', '\n');
+    } catch {
+      return null;
+    }
+  };
+  const wanted = text(lockfile);
+  if (wanted === null) return null;
+  try {
+    if (lockfile === 'package-lock.json') {
+      const installed = text('node_modules/.package-lock.json');
+      return installed === null ? null : npmInstallMatches(JSON.parse(wanted), JSON.parse(installed));
+    }
+    if (lockfile === 'pnpm-lock.yaml') {
+      // pnpm writes node_modules/.pnpm/lock.yaml for what it installed, so a
+      // --filter or --prod install records part of the lockfile and reads as a mismatch.
+      const installed = text('node_modules/.pnpm/lock.yaml');
+      return installed === null ? null : lastYamlDocument(wanted) === lastYamlDocument(installed);
+    }
+    if (lockfile === 'yarn.lock') {
+      if (/^__metadata:$/m.test(wanted)) {
+        const berry = text('node_modules/.yarn-state.yml');
+        return berry === null ? null : yarnBerryInstallMatches(wanted, berry);
+      }
+      const classic = text('node_modules/.yarn-integrity');
+      return classic === null ? null : yarnClassicInstallMatches(wanted, JSON.parse(classic));
+    }
+  } catch {}
+  return null;
+}
+
+export interface StaleDependencies {
+  dir: string;
+  lockfile: string;
+  reason: 'installed' | 'lockfile';
+}
 
 export function depsOutOfSync(
   root: string,
   target: string,
   copiedEntries: string[] | null | undefined,
   { read = readFileSync }: { read?: typeof readFileSync } = {},
-): { dir: string; lockfile: string }[] {
-  const problems: { dir: string; lockfile: string }[] = [];
+): StaleDependencies[] {
+  const problems: StaleDependencies[] = [];
   for (const rel of copiedEntries || []) {
     if (rel !== 'node_modules' && !rel.endsWith('/node_modules')) continue;
     const dir = rel === 'node_modules' ? '' : rel.slice(0, -'/node_modules'.length);
-    for (const name of LOCKFILE_NAMES) {
-      const source = join(root, dir, name);
-      const branch = join(target, dir, name);
-      if (!existsSync(source) || !existsSync(branch)) continue;
-      try {
-        if (read(source, 'utf-8') !== read(branch, 'utf-8')) {
-          problems.push({ dir: dir || '.', lockfile: name });
-        }
-      } catch {}
-      break;
+    const name = LOCKFILE_NAMES.find((candidate) => existsSync(join(target, dir, candidate)));
+    if (!name) continue;
+    const installed = installedMatchesLockfile(join(target, dir), name, { read });
+    if (installed === false) {
+      problems.push({ dir: dir || '.', lockfile: name, reason: 'installed' });
+      continue;
     }
+    const source = join(root, dir, name);
+    if (installed === true || !existsSync(source)) continue;
+    try {
+      if (read(source, 'utf-8') !== read(join(target, dir, name), 'utf-8')) {
+        problems.push({ dir: dir || '.', lockfile: name, reason: 'lockfile' });
+      }
+    } catch {}
   }
   return problems;
 }

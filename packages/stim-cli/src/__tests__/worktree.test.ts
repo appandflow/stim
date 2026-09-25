@@ -370,20 +370,79 @@ function podsFixture({
   return root;
 }
 
-test('depsOutOfSync flags a carried node_modules whose source lockfile differs from the branch checkout', () => {
+test('depsOutOfSync falls back to comparing lockfiles when node_modules records no install state', () => {
   const base = mkdtempSync(join(tmpdir(), 'stim-test-deps-'));
   const root = join(base, 'src');
   const target = join(base, 'wt');
   try {
     mkdirSync(root, { recursive: true });
-    mkdirSync(target, { recursive: true });
+    mkdirSync(join(target, 'node_modules'), { recursive: true });
     writeFileSync(join(root, 'pnpm-lock.yaml'), 'lock-v1');
     writeFileSync(join(target, 'pnpm-lock.yaml'), 'lock-v2');
-    expect(depsOutOfSync(root, target, ['node_modules'])).toEqual([{ dir: '.', lockfile: 'pnpm-lock.yaml' }]);
+    expect(depsOutOfSync(root, target, ['node_modules'])).toEqual([
+      { dir: '.', lockfile: 'pnpm-lock.yaml', reason: 'lockfile' },
+    ]);
     writeFileSync(join(target, 'pnpm-lock.yaml'), 'lock-v1');
     expect(depsOutOfSync(root, target, ['node_modules'])).toEqual([]);
     expect(depsOutOfSync(root, target, ['assets'])).toEqual([]);
     expect(depsOutOfSync(root, target, null)).toEqual([]);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+describe.each([
+  { pm: 'npm', lockfile: 'package-lock.json', state: 'node_modules/.package-lock.json' },
+  { pm: 'pnpm', lockfile: 'pnpm-lock.yaml', state: 'node_modules/.pnpm/lock.yaml' },
+  { pm: 'yarn-classic', lockfile: 'yarn.lock', state: 'node_modules/.yarn-integrity' },
+  { pm: 'yarn-berry', lockfile: 'yarn.lock', state: 'node_modules/.yarn-state.yml' },
+])('depsOutOfSync with $pm install state', ({ pm, lockfile, state }) => {
+  const fixture = (name: string) =>
+    readFileSync(join(import.meta.dirname, 'fixtures', 'installed-deps', pm, name), 'utf-8');
+  let base: string;
+  let root: string;
+  let target: string;
+  beforeEach(() => {
+    base = mkdtempSync(join(tmpdir(), 'stim-test-deps-'));
+    root = join(base, 'src');
+    target = join(base, 'wt');
+    mkdirSync(join(target, state, '..'), { recursive: true });
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(target, state), fixture('installed.txt'));
+  });
+  afterEach(() => rmSync(base, { recursive: true, force: true }));
+
+  test('flags node_modules installed from an older lockfile even when both checkouts share the new one', () => {
+    writeFileSync(join(root, lockfile), fixture('lockfile.next.txt'));
+    writeFileSync(join(target, lockfile), fixture('lockfile.next.txt'));
+    expect(depsOutOfSync(root, target, ['node_modules'])).toEqual([{ dir: '.', lockfile, reason: 'installed' }]);
+  });
+
+  test('accepts node_modules installed from this lockfile, checked out with CRLF, even when the source lockfile has moved on', () => {
+    writeFileSync(join(root, lockfile), fixture('lockfile.next.txt'));
+    writeFileSync(join(target, lockfile), fixture('lockfile.txt').replaceAll('\r\n', '\n').replaceAll('\n', '\r\n'));
+    expect(depsOutOfSync(root, target, ['node_modules'])).toEqual([]);
+  });
+});
+
+test('depsOutOfSync reads Yarn Berry state for a Berry lockfile even when Yarn Classic left .yarn-integrity behind', () => {
+  const fixture = (pm: string, name: string) =>
+    readFileSync(join(import.meta.dirname, 'fixtures', 'installed-deps', pm, name), 'utf-8');
+  const base = mkdtempSync(join(tmpdir(), 'stim-test-deps-'));
+  const root = join(base, 'src');
+  const target = join(base, 'wt');
+  try {
+    mkdirSync(root, { recursive: true });
+    mkdirSync(join(target, 'node_modules'), { recursive: true });
+    writeFileSync(join(target, 'node_modules/.yarn-integrity'), fixture('yarn-classic', 'installed.txt'));
+    writeFileSync(join(target, 'node_modules/.yarn-state.yml'), fixture('yarn-berry', 'installed.txt'));
+    writeFileSync(join(root, 'yarn.lock'), fixture('yarn-berry', 'lockfile.txt'));
+    writeFileSync(join(target, 'yarn.lock'), fixture('yarn-berry', 'lockfile.txt'));
+    expect(depsOutOfSync(root, target, ['node_modules'])).toEqual([]);
+    writeFileSync(join(target, 'yarn.lock'), fixture('yarn-berry', 'lockfile.next.txt'));
+    expect(depsOutOfSync(root, target, ['node_modules'])).toEqual([
+      { dir: '.', lockfile: 'yarn.lock', reason: 'installed' },
+    ]);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
