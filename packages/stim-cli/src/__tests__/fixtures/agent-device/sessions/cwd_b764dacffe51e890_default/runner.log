@@ -1,0 +1,13 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild test-without-building -only-testing AgentDeviceRunnerUITests/RunnerTests/testCommand -parallel-testing-enabled NO -test-timeouts-enabled NO -collect-test-diagnostics never -maximum-concurrent-test-simulator-destinations 1 -destination-timeout 20 -xctestrun /Users/dev/.agent-device/apple-runner/derived/ios-simulator/cache-54ec312d5fba03bd/Build/Products/AgentDeviceRunner.env.session-1F11A62B-F7CF-435D-BD1B-0FA926895E93-owner-15315-8dd15fe2-61880.xctestrun -derivedDataPath /Users/dev/.agent-device/apple-runner/derived/ios-simulator/cache-54ec312d5fba03bd -destination "platform=iOS Simulator,id=1F11A62B-F7CF-435D-BD1B-0FA926895E93"
+
+2026-09-25 08:12:25.156 xcodebuild[854:27094843] [MT] IDESchemeActionDeviceRecord: versionAndBuild = 27.1 (24A94401), error = invalidDigitCount(94401).
+2026-09-25 08:12:28.493368-0400 AgentDeviceRunnerUITests-Runner[1645:27096041] [Default] Running tests...
+    t =     0.01s Set Up
+** TEST EXECUTE FAILED **
+
+Testing started
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild test-without-building -only-testing AgentDeviceRunnerUITests/RunnerTests/testCommand -parallel-testing-enabled NO -test-timeouts-enabled NO -collect-test-diagnostics never -maximum-concurrent-test-simulator-destinations 1 -destination-timeout 20 -xctestrun /Users/dev/.agent-device/apple-runner/derived/ios-simulator/cache-54ec312d5fba03bd/Build/Products/AgentDeviceRunner.env.session-AD45387C-599D-4EDB-A62B-18176FF3A2A7-owner-15315-8dd15fe2-49945.xctestrun -derivedDataPath /Users/dev/.agent-device/apple-runner/derived/ios-simulator/cache-54ec312d5fba03bd -destination "platform=iOS Simulator,id=AD45387C-599D-4EDB-A62B-18176FF3A2A7"
+
+2026-09-25 08:16:01.015218-0400 AgentDeviceRunnerUITests-Runner[87904:27217434] [Default] Running tests...
