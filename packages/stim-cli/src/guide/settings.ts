@@ -372,10 +372,10 @@ Top-level \`iosSimulatorApp\` in ~/.stim/config.json selects the macOS app that
 displays Stim's owned local iOS simulator after boot. It is not a project
 setting. Unset or \`"xcode"\` opens the selected Xcode's Device Hub on Xcode 27,
 or Simulator on older Xcode. On Xcode 27 (confirmed on 27A266a), quitting
-Device Hub shuts down every booted simulator on the machine, including ones
-it never opened a window for and ones other workspaces or agents are using;
-never quit it to free memory or clean up. To use an installed Siniulator
-instead:
+Device Hub by default shuts down every booted simulator on the machine,
+including ones it never opened a window for and ones other workspaces or
+agents are using; never quit it to free memory or clean up. To use an
+installed Siniulator instead:
 
   { "iosSimulatorApp": "siniulator" }
 

@@ -1812,9 +1812,9 @@ HOST MEMORY PRESSURE AND STALLED SIMULATORS
   If pressure is elevated, free host memory before retrying. Use \`stim stop\`
   only in workspaces you own and have finished using; ask before closing other
   agents' simulators or heavy apps. Never quit Device Hub or Simulator.app to
-  free memory: on Xcode 27 (confirmed on 27A266a), quitting Device Hub shuts
-  down every booted simulator on the machine, including ones it never opened
-  a window for and ones other workspaces or agents are using.
+  free memory: on Xcode 27 (confirmed on 27A266a), quitting Device Hub by
+  default shuts down every booted simulator on the machine, including ones it
+  never opened a window for and ones other workspaces or agents are using.
   Rebooting a simulator under the same pressure
   can repeat the stall. Consider fewer concurrent builds/devices (guide lifecycle
   concurrency) and a reviewed SimSlim profile for future runs.`,
