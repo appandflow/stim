@@ -84,6 +84,26 @@ import Testing
         == "kept: '~/a' and /Users/janic/b, ~/c")
   }
 
+  @Test func namesTheFolderInsideItsCheckout() {
+    #expect(pathInCheckout("/u/tlon/.worktrees/chat/apps/tlon-mobile", worktree: nil) == "apps/tlon-mobile")
+    #expect(pathInCheckout("/u/stim/.claude/worktrees/1123/apps/mobile", worktree: nil) == "apps/mobile")
+    #expect(pathInCheckout("/u/tlon/apps/tlon-mobile", worktree: "/u/tlon") == "apps/tlon-mobile")
+    #expect(pathInCheckout("/u/tlon/.worktrees/chat", worktree: "/u/tlon/.worktrees/chat") == nil)
+    #expect(pathInCheckout("/u/tlonx/app", worktree: "/u/tlon") == nil)
+  }
+
+  @Test func ordersDrivenThenRunningThenStoppedDevices() throws {
+    let json = """
+      {"path":"/w","live":true,"warnings":[],
+       "ios":{"name":"stim-w (iPhone 18 Pro 27.0)","udid":"A","owned":true,"state":"Shutdown"},
+       "android":{"name":"stim-w","owned":true,"physical":false,"state":"detected"},
+       "slots":[{"slot":"duo","ios":{"name":"stim-w-duo (iPhone Duo 27.1)","udid":"B","owned":true,"state":"Booted",
+         "activity":{"state":"driven","basis":[]}}}]}
+      """
+    let env = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
+    #expect(env.orderedDevices.map { "\($0.slot)/\($0.platform)" } == ["duo/ios", "default/android", "default/ios"])
+  }
+
   @Test func projectFromGitCommonDir() {
     #expect(Project(gitCommonDir: "/Users/dev/app/.git").root == "/Users/dev/app")
     #expect(Project(gitCommonDir: "/srv/app.git").root == "/srv/app.git")

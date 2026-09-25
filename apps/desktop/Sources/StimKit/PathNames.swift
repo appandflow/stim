@@ -33,3 +33,20 @@ public func abbreviatingHome(_ text: String, home: String = NSHomeDirectory()) -
   return regex.stringByReplacingMatches(
     in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "~")
 }
+
+/// Where `path` sits inside its checkout, such as `apps/tlon-mobile`, or nil at the checkout root. The
+/// checkout is the `.worktrees/<name>` or `.claude/worktrees/<name>` folder holding the path, else the git
+/// worktree `stim status` reports.
+public func pathInCheckout(_ path: String, worktree: String?) -> String? {
+  let parts = path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+  var checkout: String?
+  var i = parts.count - 2
+  while i > 0, checkout == nil {
+    if parts[i] == ".worktrees" || (parts[i] == "worktrees" && parts[i - 1] == ".claude") {
+      checkout = parts[...(i + 1)].joined(separator: "/")
+    }
+    i -= 1
+  }
+  guard let base = checkout ?? worktree, path.hasPrefix(base + "/") else { return nil }
+  return String(path.dropFirst(base.count + 1))
+}
