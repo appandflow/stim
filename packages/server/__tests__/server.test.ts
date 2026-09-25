@@ -957,9 +957,14 @@ describe('frames.subscribe', () => {
       try {
         const port = await startWithTools({
           HOME: home,
-          FAKE_STIM_PAYLOADS: statusWith({
-            android: { name: 'stim-app', owned: true, physical: false, serial: 'emulator-5554', state: 'detected' },
-          }),
+          FAKE_STIM_PAYLOADS: JSON.stringify([
+            statusPayload({
+              android: { name: 'stim-app', owned: true, physical: false, serial: 'emulator-5554', state: 'detected' },
+            }),
+            statusPayload({
+              android: { name: 'stim-app', owned: true, physical: false, serial: null, state: 'unknown' },
+            }),
+          ]),
           FAKE_FRAMES: '[]',
           FAKE_SIPS_JPEG: converted.toString('base64'),
         });
@@ -979,6 +984,9 @@ describe('frames.subscribe', () => {
           authorization: 'Bearer secret-token',
         });
         expect([...requests[0]!.body]).toEqual([0, 0, 0, 0, 6, 0x18, 0x80, 0x0a, 0x20, 0x80, 0x0a]);
+        const seen = requests.length;
+        await until(() => requests.length > seen + 1);
+        expect(client.socket.readyState).toBe(WebSocket.OPEN);
         const [sips] = toolRuns();
         expect(sips?.tool).toBe('sips');
         expect(sips?.args.slice(0, 4)).toEqual(['-s', 'format', 'jpeg', '-s']);

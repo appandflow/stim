@@ -51,11 +51,11 @@ export function ownedDevice(payload: StatusPayload, target: FrameTarget, attache
   }
   const emulator = devices?.android;
   if (!emulator?.owned || emulator.physical) return `No emulator Stim owns runs ${where}.`;
-  if (!emulator.serial) return `The emulator for ${where} is not running.`;
-  const device: Device = { platform: 'android', serial: emulator.serial };
-  const stillAttached = emulator.state === 'unknown' && attached === deviceKey(device);
-  if (emulator.state !== 'detected' && !stillAttached) return `The emulator for ${where} is not running.`;
-  return device;
+  if (emulator.state === 'unknown' && attached?.startsWith('android:')) {
+    return { platform: 'android', serial: attached.slice('android:'.length) };
+  }
+  if (emulator.state !== 'detected' || !emulator.serial) return `The emulator for ${where} is not running.`;
+  return { platform: 'android', serial: emulator.serial };
 }
 
 function jpegSize(bytes: Buffer): { width: number; height: number } | null {
@@ -134,6 +134,7 @@ async function stopTools(running: Set<ChildProcess>, tmp: string | null): Promis
 function simulatorCapturer(udid: string, env: NodeJS.ProcessEnv): Capturer {
   let tmp: string | null = null;
   let display: string[] = ['--display=primary'];
+  let closed = false;
   const running = new Set<ChildProcess>();
   const screenshot = (output: string) =>
     runTool('xcrun', ['simctl', 'io', udid, 'screenshot', '--type=jpeg', ...display, output], env, running);
@@ -144,14 +145,17 @@ function simulatorCapturer(udid: string, env: NodeJS.ProcessEnv): Capturer {
       try {
         await screenshot(output);
       } catch (error) {
-        if (!display.length || !/display/i.test((error as { stderr?: string }).stderr ?? '')) throw error;
+        if (closed || !display.length || !/display/i.test((error as { stderr?: string }).stderr ?? '')) throw error;
         display = [];
         await screenshot(output);
       }
       const jpeg = readFileSync(output);
       return { raw: jpeg, jpeg: async () => jpeg };
     },
-    close: () => stopTools(running, tmp),
+    close: () => {
+      closed = true;
+      return stopTools(running, tmp);
+    },
   };
 }
 
