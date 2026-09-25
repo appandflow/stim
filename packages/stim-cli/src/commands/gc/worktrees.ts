@@ -8,7 +8,6 @@ import { workspaceLastUsed } from '../../workspace/workspace-state.ts';
 import { fetchDefaultBranch, mergeState, type MergeState } from '../../workspace/merge-state.ts';
 import {
   dirtyPaths,
-  gitCommonDir,
   hasPopulatedSubmodules,
   hasUncommittedWork,
   listWorktrees,
@@ -143,14 +142,17 @@ function candidateRoots(): string[] {
   return [...new Set([...registered, ...recorded])].filter((root) => existsSync(root)).toSorted();
 }
 
-function checkMergeStates(pending: { candidate: WorktreeCandidate; facts: WorktreeFacts }[], idle: number | null) {
-  const repos = new Map<string, typeof pending>();
-  for (const entry of pending) {
-    const common = gitCommonDir(entry.candidate.path) ?? entry.candidate.path;
-    repos.set(common, [...(repos.get(common) ?? []), entry]);
-  }
-  for (const entries of repos.values()) {
-    const target = fetchDefaultBranch(entries[0]!.candidate.path);
+interface PendingMerge {
+  candidate: WorktreeCandidate;
+  facts: WorktreeFacts;
+  repo: string;
+}
+
+function checkMergeStates(pending: PendingMerge[], idle: number | null, now: number): void {
+  const repos = new Map<string, PendingMerge[]>();
+  for (const entry of pending) repos.set(entry.repo, [...(repos.get(entry.repo) ?? []), entry]);
+  for (const [repo, entries] of repos) {
+    const target = fetchDefaultBranch(repo, now);
     for (const { candidate, facts } of entries) {
       const merge: MergeState =
         'error' in target
@@ -194,7 +196,7 @@ export function collectWorktreeSweep({
     groups.set(entry.path, [...(groups.get(entry.path) ?? []), root]);
   }
   const worktrees: WorktreeCandidate[] = [];
-  const pending: { candidate: WorktreeCandidate; facts: WorktreeFacts }[] = [];
+  const pending: PendingMerge[] = [];
   for (const [path, roots] of groups) {
     const entries = listWorktrees(path);
     const entry = matchWorktreeEntry(entries, path);
@@ -223,10 +225,12 @@ export function collectWorktreeSweep({
       skipCode: verdict?.code ?? null,
       skipped: verdict?.text ?? null,
     };
-    if (verdict && MERGE_DECIDES.has(verdict.code)) pending.push({ candidate, facts });
+    if (verdict && MERGE_DECIDES.has(verdict.code) && !('refusal' in source)) {
+      pending.push({ candidate, facts, repo: source.path });
+    }
     worktrees.push(candidate);
   }
-  checkMergeStates(pending, days);
+  checkMergeStates(pending, days, now);
   const listed = [...worktrees, ...outside].filter(
     (w) => idle || (w.skipCode !== 'not-a-worktree' && w.skipCode !== 'source-checkout'),
   );

@@ -235,24 +235,27 @@ reported and the others still run. A worktree removed with
 `git worktree remove` or `rm -rf` leaves its Stim workspace directory behind;
 plain `gc --delete` removes those.
 
-To decide that a branch is merged, gc runs one `git fetch origin <default>` per
-repository, with a 30-second timeout, and takes the default branch from
-`origin/HEAD`. The branch counts as merged when:
+To decide that a branch is merged, gc takes the default branch from
+`origin/HEAD` and runs `git fetch origin <default>` once per repository, with a
+30-second timeout. It skips the fetch when that checkout fetched in the last 10
+minutes. The branch counts as merged when:
 
-- a merge brought its HEAD into the default branch. A branch with no commits
-  of its own is not merged.
-- each of its commits has a patch-equivalent commit on the default branch, as
-  after a rebase merge.
+- a merge commit brought its HEAD into the default branch, and the branch's
+  reflog shows a commit made on it. A branch with no commits of its own, such
+  as one just created or cut from another branch, is not merged.
+- it has no merge commits and each of its commits has a patch-equivalent
+  commit on the default branch, as after a rebase merge.
 - its whole change is patch-equivalent to one commit on the default branch, as
   after a squash merge.
 
-gc asks git only, not GitHub. A squash merge whose content changed while
-merging, such as a conflict resolution, does not match, and gc keeps that
-worktree. When `origin/HEAD` is not set, the fetch fails, or git cannot answer,
-gc keeps the worktree and reports why. After a squash merge that deleted the
-remote branch, the branch's commits exist only locally; gc still removes the
-worktree, because their content is on the default branch, and keeps the
-branch.
+gc asks git only, not GitHub. Patch equivalence is git's patch-id, which
+ignores whitespace. A squash merge whose content changed while merging, such
+as a conflict resolution, does not match, and gc keeps that worktree; so does
+a branch that was fast-forwarded into the default branch. When `origin/HEAD` is
+not set, the fetch fails, or git cannot answer, gc keeps the worktree and
+reports why. After a squash or rebase merge that deleted the remote branch, the
+branch's commits exist only locally; gc still removes the worktree, because
+their change is on the default branch, and keeps the branch.
 
 Ask your agent:
 

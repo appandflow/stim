@@ -101,23 +101,25 @@ SWEEPING FINISHED WORKTREES
   initialized submodules. Without --worktrees, the report leaves out the
   source checkout and roots outside git.
 
-  MERGED means, after one \`git fetch origin <default>\` per repository
-  (30s timeout, no credential prompt), with the default branch taken from
-  origin/HEAD:
-  - HEAD is reachable from origin/<default> through a merge. A HEAD on the
-    default branch's first-parent line has no commits of its own and is not
-    merged.
-  - every commit since the merge base has a patch-equivalent commit on the
-    default branch (a rebase merge), or the whole change since the merge base
-    is patch-equivalent to one commit there (a squash merge).
-  Merge state comes from git alone, not from a hosting service. A squash
-  merge whose content changed during the merge (a conflict resolution, a
-  suggested edit) does not match and is kept. When origin/HEAD is not set,
-  the fetch fails, or git cannot answer, the state is unknown and the
-  worktree is kept (reason merge-unknown, with the remedy). A squash-merged
-  branch whose upstream was deleted after the merge has commits only it
-  reaches; they do not block removal, because their content is on the
-  default branch, and the branch is kept.
+  MERGED means, with the default branch taken from origin/HEAD, after a
+  \`git fetch origin <default>\` per repository (30s timeout, no credential
+  prompt; skipped when that checkout fetched in the last 10 minutes):
+  - HEAD is reachable from origin/<default> through a merge commit, and the
+    branch's reflog shows a commit made on it. A branch with no commit of
+    its own -- fresh, or cut from another branch -- is not merged.
+  - the branch changes the tree, and either it has no merge commits and every
+    commit since the merge base has a patch-equivalent commit on the default
+    branch (a rebase merge), or its whole change since the merge base is
+    patch-equivalent to one commit there (a squash merge).
+  Merge state comes from git alone, not from a hosting service. Patch
+  equivalence is git's patch-id, which ignores whitespace. A squash merge
+  whose content changed during the merge (a conflict resolution, a suggested
+  edit) does not match and is kept, and so is a fast-forwarded branch. When
+  origin/HEAD is not set, the fetch fails, or git cannot answer, the state is
+  unknown and the worktree is kept (reason merge-unknown, with the remedy). A
+  squash- or rebase-merged branch whose upstream was deleted after the merge
+  has commits only it reaches; they do not block removal, because their
+  change is on the default branch, and the branch is kept.
     stim gc                                        # report merged worktrees
     stim gc --delete                               # remove them
     stim gc --delete --worktrees --older-than 3    # also the clean idle ones

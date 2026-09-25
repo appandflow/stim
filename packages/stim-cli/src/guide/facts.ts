@@ -476,7 +476,8 @@ RULES
                               branch HEAD is merged into ("origin/main"),
                               or null; detail says why it is removed
                               ("merged into origin/main", "idle 9d") or kept.
-                              Without --worktrees, only linked worktrees
+                              Without --worktrees, the source checkout and
+                              roots outside git are left out
     parkedSimulators        { udid, name, model, runtime, parkedAt, bytes,
                               listed }
     parkedEmulators         { name, systemImage, parkedAt, bytes, listed }

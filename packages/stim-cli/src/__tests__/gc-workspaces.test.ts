@@ -739,6 +739,8 @@ function repoWithMergedBranches() {
   for (const [name, commits] of [
     ['merged', 1],
     ['squashed', 2],
+    ['rebased', 1],
+    ['evil', 1],
     ['fresh', 0],
     ['open', 1],
     ['dirty', 1],
@@ -749,6 +751,9 @@ function repoWithMergedBranches() {
     if (commits) git(`push -q -u origin ${name}`, path);
     worktrees[name] = realpathSync.native(path);
   }
+  const followup = join(projects, 'followup');
+  git(`worktree add -q "${followup}" -b followup merged`);
+  worktrees.followup = realpathSync.native(followup);
   git(`clone -q "${remote}" "${upstream}"`, projects);
   identity(upstream);
   commit(upstream, 'main-moved-on.txt');
@@ -756,9 +761,16 @@ function repoWithMergedBranches() {
   git('merge -q --no-ff origin/dirty -m merge-dirty', upstream);
   git('merge -q --squash origin/squashed', upstream);
   git('commit -q -m squash-squashed', upstream);
+  git('cherry-pick origin/rebased', upstream);
+  git('cherry-pick origin/evil', upstream);
   git('push -q origin main', upstream);
-  git('push -q origin --delete squashed', upstream);
-  git('update-ref -d refs/remotes/origin/squashed');
+  git('fetch -q origin main', worktrees.evil);
+  git('merge -q --no-ff --no-commit origin/main', worktrees.evil);
+  commit(worktrees.evil!, 'not-on-main.txt');
+  for (const gone of ['squashed', 'rebased', 'evil']) {
+    git(`push -q origin --delete ${gone}`, upstream);
+    git(`update-ref -d refs/remotes/origin/${gone}`);
+  }
   writeFileSync(join(worktrees.dirty!, 'notes.txt'), 'wip');
   for (const path of Object.values(worktrees)) {
     upsertProject(path, { metroPort: null });
@@ -783,28 +795,33 @@ test('plain gc --delete removes merged worktrees, squash merges included, after 
     detail: 'merged into origin/main',
   });
   expect(byPath[worktrees.squashed!]).toMatchObject({ willRemove: true, detail: 'merged into origin/main' });
-  expect(byPath[worktrees.fresh!]).toMatchObject({
-    willRemove: false,
-    reason: 'not-merged',
-    detail: 'no commits of its own beyond origin/main',
-  });
+  expect(byPath[worktrees.rebased!]).toMatchObject({ willRemove: true, detail: 'merged into origin/main' });
+  for (const name of ['fresh', 'followup']) {
+    expect(byPath[worktrees[name]!]).toMatchObject({
+      willRemove: false,
+      reason: 'not-merged',
+      detail: 'no commits of its own beyond origin/main',
+    });
+  }
+  expect(byPath[worktrees.evil!]).toMatchObject({ willRemove: false, reason: 'unpushed', mergedInto: null });
   expect(byPath[worktrees.open!]).toMatchObject({ willRemove: false, reason: 'not-merged' });
   expect(byPath[worktrees.dirty!]).toMatchObject({ willRemove: false, reason: 'dirty' });
 
   const output = await captureLog(() => runGc({ delete: true }));
   expect(output).toContain(`Removed the worktree ${worktrees.merged} (merged into origin/main)`);
   expect(output).toContain(`Removed the worktree ${worktrees.squashed} (merged into origin/main)`);
-  expect(existsSync(worktrees.merged!)).toBe(false);
-  expect(existsSync(worktrees.squashed!)).toBe(false);
-  for (const name of ['fresh', 'open', 'dirty']) expect(existsSync(worktrees[name]!)).toBe(true);
+  for (const name of ['merged', 'squashed', 'rebased']) expect(existsSync(worktrees[name]!)).toBe(false);
+  for (const name of ['fresh', 'followup', 'evil', 'open', 'dirty']) expect(existsSync(worktrees[name]!)).toBe(true);
   expect(existsSync(join(repo, 'package.json'))).toBe(true);
   expect(git('branch --list squashed')).toContain('squashed');
   expect(process.exitCode).not.toBe(1);
 }, 120_000);
 
 test('gc keeps a merged worktree when the fetch fails, and when its HEAD moves after the report', async () => {
-  const { remote, worktrees, git } = repoWithMergedBranches();
+  const { repo, remote, worktrees, git } = repoWithMergedBranches();
   git('fetch -q origin');
+  const stale = new Date(Date.now() - 11 * 60_000);
+  utimesSync(join(repo, '.git', 'FETCH_HEAD'), stale, stale);
   renameSync(remote, `${remote}.moved`);
 
   const { payload } = await gcJson({ delete: true });
