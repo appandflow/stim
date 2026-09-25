@@ -388,12 +388,19 @@ repeat the affected gate rather than waiving it.
    Approve and deploy). The workflow packs the five tarballs with pnpm, checks
    that no `workspace:` range survived the pack, skips an exact package version
    that already exists, computes the dist-tag (section 1) and publishes every
-   package to it, then verifies all five registry versions and that dist-tag.
+   package to it. Its `smoke` job then waits, up to 15 minutes per check, for
+   the registry to serve each version, its tarball and the dist-tag, and runs
+   `npx stim@X.Y.Z --version` from a scratch directory.
    A NEW package, a failed publish, or
    a provenance rejection: see
    [docs/release-recovery.md](./docs/release-recovery.md).
 
-8. **Smoke-test the published versions** from a scratch directory:
+8. **Smoke-test the published versions** from a scratch directory. npm can
+   take several minutes to serve a new version, and until then `npx` fails
+   with E404. When the `smoke` job fails after a green `publish` job, read
+   the failing check before acting: a version, tarball or E404 that is still
+   missing means wait and re-run the failed job (or these commands), never
+   republish ([docs/release-recovery.md](./docs/release-recovery.md)).
    ```bash
    version=X.Y.Z
    cd /tmp && npx "stim@$version" --version

@@ -20,11 +20,29 @@ fallback below) rather than incrementing past it.
 Do NOT bump the version to retry -- re-run only the failed publish at the
 same version. The tagged workflow already skips exact versions that exist,
 so re-running the whole workflow is also safe. That safety flips once a
-newer release has since shipped: the smoke-test step's dist-tag check now
+newer release has since shipped: the smoke job's dist-tag check now
 fails the run red, because the freshly computed `DIST_TAG` no longer matches
 what actually got published, and a backfill publish for the old version can
 re-point `latest` or `next` backwards onto it -- confirm with
 `npm dist-tag ls <package>` afterward if you do this.
+
+## Smoke job failed after the publish job passed
+
+npm can take several minutes to serve a new version's metadata and longer for
+its tarball; for 1.9.0 they appeared about 5 and 8 minutes after the publish,
+and `npx stim@1.9.0` failed with E404 until then. The `smoke` job waits up to
+15 minutes for each check. Read which check failed:
+
+- A version or tarball that is still not visible, or an `npx` E404: the
+  packages are published and npm is slow. Wait, then use "Re-run failed jobs"
+  on the run, or run RELEASE.md section 4 step 8 by hand. The re-run needs no
+  release approval because the `smoke` job has no environment. Do not
+  republish or bump the version.
+- A dist-tag that points elsewhere: see the section above and
+  [Stale or wrong dist-tags](#stale-or-wrong-dist-tags).
+- `npx stim@X.Y.Z --version` that installs but fails or prints another
+  version: the published package is broken. A published version cannot be
+  replaced, so fix it and release a new version.
 
 ## Manual publish fallback
 
