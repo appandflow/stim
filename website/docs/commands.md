@@ -587,9 +587,30 @@ Each workspace also shows its last build per platform:
 
 In `--json`, an environment with a recorded run carries
 `lastBuilds: { ios?, android? }`, each
-`{ platform, status, cacheHit, cacheSkipped, durationMs, fingerprint, startedAt, finishedAt, errorCode? }`.
+`{ platform, status, cacheHit, cacheSkipped, durationMs, fingerprint, startedAt, finishedAt, errorCode?, missReason? }`.
 `status` is `ok` or `failed`, and `cacheHit` is `local`, `remote`, or `false`
-when the run compiled or failed before finding an app. To predict the next
+when the run compiled or failed before finding an app.
+
+A run that compiled carries `missReason`: why the cache had no app for it.
+
+```json
+{
+  "kind": "changed",
+  "summary": "native dependency added: expo-clipboard",
+  "changes": [{ "source": "node_modules/expo-clipboard", "change": "added", "category": "native-dependency" }],
+  "changeCount": 3,
+  "baseline": { "fingerprint": "5f9c79...", "from": "workspace" },
+  "rekeyedBy": []
+}
+```
+
+`kind` is `changed`, `no-baseline`, `same-sources`, `cache-skipped`, or
+`fingerprint-error`. `changes` lists at most 20 of the `changeCount` changed
+fingerprint sources. `baseline` is the cached build Stim compared with: this
+workspace's last build of the platform, or else the newest build of the same
+project in another worktree. `rekeyedBy` names `prebuild` or `pod install`
+when those steps moved the cache key. The build prints the same summary on
+stderr as `cache miss: <summary>`. To predict the next
 build instead, use [`--plan`](#predict-the-next-build).
 
 Each booted simulator and detected emulator also shows who is using it:

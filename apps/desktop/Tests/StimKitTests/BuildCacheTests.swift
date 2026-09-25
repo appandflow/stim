@@ -19,8 +19,23 @@ import Testing
                    "startedAt":"2026-09-25T12:00:00.000Z","finishedAt":null,"errorCode":"STIM_BUILD_FAILED"}}}
       """)
     let ios = try #require(workspace.lastBuilds?.build(for: "ios"))
-    #expect(ios.cacheHit == .none && ios.summary == "Compiled in 1m 23s")
+    #expect(ios.cacheHit == .none && ios.summary == "Cache miss, compiled in 1m 23s")
     #expect(workspace.lastBuilds?.build(for: "android")?.summary == "Failed (STIM_BUILD_FAILED) in 0m 4s")
+  }
+
+  @Test func readsAMissReasonAndNamesItsBaseline() throws {
+    let last = try decode(
+      LastBuild.self,
+      """
+      {"platform":"ios","status":"ok","cacheHit":false,"cacheSkipped":false,"durationMs":1000,
+       "startedAt":"2026-09-25T12:00:00.000Z","finishedAt":"2026-09-25T12:00:01.000Z",
+       "missReason":{"kind":"changed","summary":"native dependency added: expo-clipboard",
+         "changes":[{"source":"node_modules/expo-clipboard","change":"added","category":"native-dependency"}],
+         "changeCount":3,"baseline":{"fingerprint":"0123456789abcdef","from":"project"},"rekeyedBy":[]}}
+      """)
+    let reason = try #require(last.missReason)
+    #expect(reason.changes.first?.category == "native-dependency" && reason.changeCount == 3)
+    #expect(reason.baselineLine == "Compared with 01234567, the last build of this project in another worktree.")
   }
 
   @Test func describesAPlannedHitMissAndRefusal() throws {

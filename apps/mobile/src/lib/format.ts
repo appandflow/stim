@@ -74,12 +74,15 @@ export function outcomeLabel(build: Pick<BuildReport, 'outcome' | 'phase'>): str
   return settled ? 'Cold build' : 'Likely cold';
 }
 
-export function lastBuildSummary(last: LastBuild): string {
-  const took = last.durationMs === null ? '' : ` in ${clockDuration(last.durationMs)}`;
+export function lastBuildSummary(last: LastBuild, now: number): string {
+  const ended = Date.parse(last.finishedAt ?? last.startedAt);
+  const took = `${last.durationMs === null ? '' : ` in ${clockDuration(last.durationMs)}`}${
+    Number.isNaN(ended) ? '' : ` \u00B7 ${shortDuration(now - ended)} ago`
+  }`;
   if (last.status !== 'ok') return `Failed (${last.errorCode ?? 'error'})${took}`;
   if (last.cacheHit === 'local') return `Local cache${took}`;
   if (last.cacheHit === 'remote') return `Remote cache${took}`;
-  return `Compiled${took}`;
+  return `${last.cacheSkipped ? 'Compiled' : 'Cache miss, compiled'}${took}`;
 }
 
 export function planSummary(plan: BuildPlan): string {

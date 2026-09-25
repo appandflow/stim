@@ -60,6 +60,18 @@ physical-device Release runs always build fresh.
 
 ### Generated dependency output and cache misses
 
+A build that misses the cache says why before it compiles:
+
+```text
+  cache       miss: native dependency added: expo-clipboard (+2 more)
+```
+
+Stim compares the build's fingerprint sources with the last build of the same
+platform in this workspace, or else with the newest build of the same project
+in another worktree. `stim status --json` keeps the reason under
+`lastBuilds.<platform>.missReason`, and Stim Desktop and the phone app show it
+on the workspace's build row.
+
 If identical worktrees build instead of reusing an artifact, compare their
 fingerprint sources before adding exclusions. A project-level
 `.fingerprintignore` can exclude generated output that does not affect native

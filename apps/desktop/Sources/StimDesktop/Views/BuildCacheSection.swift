@@ -40,9 +40,12 @@ struct BuildCacheSection: View {
           .help("stim \(platform) --plan: fingerprint and look up the caches without building")
       }
       if let last = env.lastBuilds?.build(for: platform) {
-        Text("Last: \(last.summary)")
+        Text("Last: \(last.summary)\(last.endedAt.map { " \u{00B7} \(formatAgo(Date().timeIntervalSince($0)))" } ?? "")")
           .foregroundStyle(last.status == "ok" ? Theme.secondary : Theme.error)
           .help(last.fingerprint.map { "Fingerprint \($0)" } ?? "")
+        if let reason = last.missReason {
+          MissReasonButton(reason: reason)
+        }
       } else {
         Text("No build recorded").foregroundStyle(Theme.tertiary)
       }
@@ -99,6 +102,52 @@ struct BuildCacheSection: View {
         }
       }.value
       checks[platform] = result
+    }
+  }
+}
+
+private struct MissReasonButton: View {
+  var reason: BuildMissReason
+  @State private var shown = false
+
+  var body: some View {
+    Button {
+      shown.toggle()
+    } label: {
+      HStack(spacing: 4) {
+        Text("Why: \(reason.summary)").lineLimit(1).truncationMode(.tail)
+        Image(systemName: "info.circle")
+      }
+      .foregroundStyle(Theme.warn)
+    }
+    .buttonStyle(.plain)
+    .help("Why this build missed the cache")
+    .popover(isPresented: $shown, arrowEdge: .bottom) {
+      VStack(alignment: .leading, spacing: 8) {
+        Text(reason.summary).font(Theme.body(13, weight: .semibold)).textSelection(.enabled)
+        if let line = reason.baselineLine {
+          Text(line).foregroundStyle(Theme.secondary)
+        }
+        if !reason.changes.isEmpty {
+          VStack(alignment: .leading, spacing: 3) {
+            ForEach(reason.changes, id: \.self) { change in
+              HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(change.change == "added" ? "+" : change.change == "removed" ? "\u{2212}" : "~")
+                  .foregroundStyle(
+                    change.change == "added" ? Theme.live : change.change == "removed" ? Theme.error : Theme.warn)
+                Text(change.source).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+              }
+            }
+          }
+        }
+        if reason.changeCount > reason.changes.count {
+          let hidden = reason.changeCount - reason.changes.count
+          Text(hidden == 1 ? "1 more source changed." : "\(hidden) more sources changed.")
+            .foregroundStyle(Theme.tertiary)
+        }
+      }
+      .padding(14)
+      .frame(width: 380, alignment: .leading)
     }
   }
 }
