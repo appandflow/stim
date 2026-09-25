@@ -31,7 +31,7 @@ const realEasMachineBefore = realEasMachineSnapshot();
 afterAll(() => {
   if (realEasMachineSnapshot() !== realEasMachineBefore) {
     throw new Error(
-      `${realEasMachineRoot} changed while this file ran. The EAS ledger and project lock ignore STIM_HOME, so a test must pass a temporary ledgerRoot, machineRoot, or easLedgerRoot. A real stim run on this machine at the same time also trips this check.`,
+      `${realEasMachineRoot} changed while this file ran. The EAS ledger and project lock ignore STIM_HOME, so a test must pass a temporary ledgerRoot, machineRoot, or easLedgerRoot. A leak in another test file running at the same time, or a real stim run on this machine, also trips this check.`,
     );
   }
 });

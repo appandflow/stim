@@ -317,13 +317,15 @@ can continue. `stop` shuts down devices; it never deletes them.
 
 Set `STIM_HOME` to a temporary directory in every test that reads or writes
 global state. Delete the directory and environment variable after each test.
-The EAS session ledger and project lock under `~/.stim/machine/eas` ignore
-`STIM_HOME` so every Stim home finds billable sessions; a test that reaches
-them passes a temporary `ledgerRoot`, `machineRoot`, or `easLedgerRoot`.
-`vitest.setup.ts` fails a test file that changes the real directory.
 This redirects Stim state, not machine-global simulators or emulators. Never
 bypass the scoped GC guard for real-tool validation. Clean up only exact devices
 created by that validation, using centralized teardown and retained fixture records.
+
+The EAS session ledger and project lock under `~/.stim/machine/eas` ignore
+`STIM_HOME` so every Stim home finds billable sessions. A test that reaches
+them passes a temporary `ledgerRoot`, `machineRoot`, or `easLedgerRoot`, or
+points `HOME` (and `USERPROFILE` on Windows) at a temporary directory.
+`vitest.setup.ts` fails a test file that changes the real directory.
 
 ### 6. Compare canonical paths
 
