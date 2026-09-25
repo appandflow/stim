@@ -69,17 +69,17 @@ class Feed {
     this.listeners.add(listener);
     for (const value of this.kept) listener.item(value);
     return () => {
-      if (this.listeners.delete(listener) && this.listeners.size === 0) this.stop();
+      if (this.listeners.delete(listener) && this.listeners.size === 0) void this.stop();
     };
   }
 
-  stop(): void {
+  stop(): Promise<void> {
     const child = this.child;
-    if (!child) return;
+    if (!child) return Promise.resolve();
     this.child = null;
     this.listeners.clear();
     this.ended();
-    terminate(child);
+    return terminate(child);
   }
 }
 
@@ -106,7 +106,7 @@ export class FeedPool {
     return feed.add(listener);
   }
 
-  close(): void {
-    for (const feed of this.feeds.values()) feed.stop();
+  async close(): Promise<void> {
+    await Promise.all([...this.feeds.values()].map((feed) => feed.stop()));
   }
 }

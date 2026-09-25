@@ -57,7 +57,7 @@ if (command === 'status') {
   } else {
     setInterval(() => {}, 1000);
   }
-} else if (env.FAKE_STIM_HANG) {
+} else if (env.FAKE_STIM_HANG || env.FAKE_STIM_STUBBORN) {
   setInterval(() => {}, 1000);
 } else if (env.FAKE_STIM_FAIL) {
   process.stderr.write(command + ' failed on purpose');
@@ -573,7 +573,7 @@ describe('logs.subscribe', () => {
     });
   });
 
-  it('kills a follow child that ignores SIGTERM once its last subscriber leaves', async () => {
+  it('kills a follow child that ignores SIGTERM when its last subscriber leaves or the server closes', async () => {
     const port = await start({ env: { FAKE_STIM_STUBBORN: '1' } });
     const client = await authed(port);
     await client.request('logs.subscribe', { workspace });
@@ -583,6 +583,17 @@ describe('logs.subscribe', () => {
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(alive(pid!)).toBe(true);
     await until(() => !alive(pid!));
+
+    const again = await authed(port);
+    await again.request('logs.subscribe', { workspace });
+    await records(again, 3);
+    const next = childPids().find((other) => other !== pid);
+    again.socket.send(JSON.stringify({ id: 9, method: 'stats.get' }));
+    await until(() => childPids().filter((other) => alive(other)).length === 2);
+    const command = childPids().find((other) => other !== pid && other !== next);
+    await server!.close();
+    server = null;
+    expect([alive(next!), alive(command!)]).toEqual([false, false]);
   });
 
   it('drops a client that stops reading and stops the child it no longer needs', async () => {

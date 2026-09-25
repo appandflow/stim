@@ -10,12 +10,16 @@ export interface CommandLimits {
 const STDERR_TAIL = 2000;
 const KILL_GRACE_MS = 1000;
 
-export function terminate(child: ChildProcess): void {
+export function terminate(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
   child.kill('SIGTERM');
-  if (child.exitCode !== null || child.signalCode !== null) return;
   const timer = setTimeout(() => child.kill('SIGKILL'), KILL_GRACE_MS);
-  timer.unref();
-  child.once('exit', () => clearTimeout(timer));
+  return new Promise((resolve) =>
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve();
+    }),
+  );
 }
 
 export function runStim(
@@ -24,7 +28,7 @@ export function runStim(
   args: string[],
   cwd: string,
   limits: CommandLimits,
-): { outcome: Promise<CommandOutcome>; cancel: () => void } {
+): { outcome: Promise<CommandOutcome>; cancel: () => Promise<void> } {
   const child = spawn(process.execPath, [stimCli, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
   const label = `stim ${args[0]}`;
   let cancelled = false;
@@ -33,8 +37,9 @@ export function runStim(
   let size = 0;
   let stderr = '';
   const fail = (message: string) => {
-    failure ??= message;
-    terminate(child);
+    if (failure) return;
+    failure = message;
+    void terminate(child);
   };
   const timer = setTimeout(
     () => fail(`${label} did not finish within ${limits.timeoutMs / 1000} s.`),
@@ -67,7 +72,7 @@ export function runStim(
     cancel: () => {
       cancelled = true;
       clearTimeout(timer);
-      terminate(child);
+      return terminate(child);
     },
   };
 }

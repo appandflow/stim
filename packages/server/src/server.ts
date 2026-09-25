@@ -121,6 +121,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const limiter = new FailureLimiter(options.maxAuthFailures ?? 5, options.failureWindowMs ?? 60_000);
   const authTimeoutMs = options.authTimeoutMs ?? 5000;
   const feeds = new FeedPool(options.stimCli, options.env);
+  const running = new Set<() => Promise<void>>();
   const logLimits: LogLimits = { ...LOG_LIMITS, ...options.logLimits };
   const commandLimits: CommandLimits = { ...COMMAND_LIMITS, ...options.commandLimits };
   const sessions = new Map<WebSocket, PairedDevice>();
@@ -141,7 +142,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   function connection(socket: WebSocket, peer: string | null): void {
     const limitKey = peer ?? 'local';
     const subscriptions = new Map<string, () => void>();
-    const commands = new Set<() => void>();
+    const commands = new Set<() => Promise<void>>();
     let nextSubscription = 1;
     let device: PairedDevice | null = null;
     let queue = Promise.resolve();
@@ -316,9 +317,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const run = runStim(options.stimCli, options.env, args, cwd, commandLimits);
       commands.add(run.cancel);
+      running.add(run.cancel);
       void (async () => {
         const outcome = await run.outcome;
         commands.delete(run.cancel);
+        running.delete(run.cancel);
         if (!outcome.ok) return error(id, 'stim-failed', outcome.message);
         let value: Methods[M]['result'];
         try {
@@ -401,7 +404,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       sessions.delete(socket);
       for (const unsubscribe of subscriptions.values()) unsubscribe();
       subscriptions.clear();
-      for (const cancel of commands) cancel();
+      for (const cancel of commands) {
+        running.delete(cancel);
+        void cancel();
+      }
       commands.clear();
     });
   }
@@ -420,8 +426,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const close = async () => {
     watcher.close();
     if (revocationCheck) clearTimeout(revocationCheck);
-    feeds.close();
     for (const client of wss.clients) client.terminate();
+    await Promise.all([feeds.close(), ...[...running].map((cancel) => cancel())]);
     wss.close();
     await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));
   };
