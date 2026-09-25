@@ -2,8 +2,9 @@ import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { loadConfig } from '../workspace/config.ts';
+import { IOS_SIMULATOR_APPS } from '../workspace/settings-registry.ts';
 
-export type IosSimulatorApp = 'xcode' | 'siniulator' | 'stim-desktop';
+export type IosSimulatorApp = (typeof IOS_SIMULATOR_APPS)[number];
 
 interface IosSimulatorViewer {
   open(udid: string): void;
@@ -12,8 +13,8 @@ interface IosSimulatorViewer {
 const OPEN_OPTIONS = { timeoutMs: 5000, killSignal: 'SIGKILL' } as const;
 
 export function parseIosSimulatorApp(value: unknown, source = 'iosSimulatorApp in machine config'): IosSimulatorApp {
-  if (value === undefined || value === 'xcode') return 'xcode';
-  if (value === 'siniulator' || value === 'stim-desktop') return value;
+  if (value === undefined) return 'xcode';
+  if ((IOS_SIMULATOR_APPS as readonly unknown[]).includes(value)) return value as IosSimulatorApp;
   const error = new Error(`Invalid ${source}. Use "xcode", "siniulator", or "stim-desktop".`);
   Object.assign(error, { code: 'STIM_BAD_ARG' });
   throw error;

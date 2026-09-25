@@ -388,6 +388,62 @@ its own for the length of the run, so `lock` is for holding a device across
 runs, such as a device-tool session. `stim status` lists every lease on the
 machine.
 
+## `settings`
+
+```text
+stim settings [--json]
+stim settings get <key> [--scope <layer>] [--json]
+stim settings set <key> <value> --scope <layer> [--json]
+stim settings unset <key> --scope <layer> [--json]
+```
+
+Lists every setting with its effective value and the layer it comes from, or
+changes one layer. `<layer>` is `machine`, `workspace`, `repo`, or `committed`.
+`workspace` is this project's entry in `~/.stim/config.json`, `repo` is this
+repository's entry, and `committed` is the app's `.stim.json` (the repository
+root's for `worktree.*`). A key accepts only the layers Stim reads it from;
+`--scope` can be omitted when there is one. Run it from the app directory.
+
+Strings and choices are passed as-is. Booleans, numbers, arrays, and objects
+are JSON:
+
+```bash
+stim settings set ios.deviceType "iPhone 17 Pro" --scope workspace
+stim settings set worktree.exclude '["node_modules","ios/Pods"]' --scope committed
+stim settings set concurrency.maxBuilds 2
+stim settings unset ios.deviceType --scope workspace
+```
+
+An unknown key, a layer the key is not read from, or a value of the wrong
+shape refuses with `STIM_BAD_ARG`, names the expected shape, and writes
+nothing. Machine-file writes take the config lock and replace the file
+atomically. A committed write keeps the file's other keys and indentation.
+
+`--json` on the list prints one object:
+
+```json
+{
+  "project": "/path/to/app",
+  "files": { "machine": "...", "workspace": "...", "repo": "...", "committed": "..." },
+  "settings": [
+    {
+      "key": "ios.runtime",
+      "value": "26.2",
+      "origin": "repo",
+      "layers": { "repo": "26.2", "committed": "26.0" }
+    }
+  ],
+  "unknown": [{ "key": "bogus", "scope": "committed", "file": "...", "value": true }]
+}
+```
+
+`origin` is the winning layer, `env` when an environment variable overrides
+the file (`env` then names it), `default`, or `null` when unset. `unknown`
+lists keys Stim does not read. `android.keystorePassword` is sensitive: it
+prints as `********`, and `committed` accepts only an `env:` or `file:`
+reference for it. `set` and `unset --json` print the layer written, its file,
+and the setting's entry after the write.
+
 ## `status`
 
 ```text

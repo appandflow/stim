@@ -1,4 +1,6 @@
+import { writeFileSync } from 'node:fs';
 import { defineConfig } from 'tsdown';
+import { SETTINGS_SCHEMA_FILE, settingsJsonSchema } from './src/workspace/settings-schema.ts';
 
 export default defineConfig({
   entry: {
@@ -15,4 +17,9 @@ export default defineConfig({
   platform: 'node',
   tsconfig: 'tsconfig.json',
   fixedExtension: true,
+  hooks: {
+    'build:done': () => {
+      writeFileSync(`dist/${SETTINGS_SCHEMA_FILE}`, `${JSON.stringify(settingsJsonSchema(), null, 2)}\n`);
+    },
+  },
 });

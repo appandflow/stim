@@ -2,19 +2,20 @@ import { existsSync, readFileSync, realpathSync, statSync } from 'fs';
 import { isAbsolute, join, relative, resolve, sep } from 'path';
 import type { CacheProviderConfig } from '@stim-cli/cache';
 import { getConfigPath, getProjectSettings, getRepoSettings, loadConfig } from './config.ts';
-import {
-  ANDROID_COMPILER_CACHE_CHOICES,
-  ANDROID_PCH_CHOICES,
-  OPTIMIZATION_SHAPES,
-  resolveOptimizations,
-  resolveMetroSharedCache,
-  type Optimizations,
-} from '../optimizations.ts';
+import { resolveOptimizations, resolveMetroSharedCache, type Optimizations } from '../optimizations.ts';
 import { gitCommonDir as projectGitCommonDir, repoRoot as projectRepoRoot } from './worktree.ts';
 import { TUNNEL_MODES, type TunnelMode } from '../engine/metro-reach.ts';
 import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
-import type { Settings, SettingsObject } from './settings-types.ts';
-export type { Settings, SettingsObject };
+import type { SettingsObject } from './settings-types.ts';
+import {
+  acceptsShape,
+  expectedShape,
+  isLayeredSetting,
+  REMOTE_DEVICE_BACKENDS,
+  SETTING_GROUPS,
+  SETTINGS,
+} from './settings-registry.ts';
+export type { SettingsObject };
 
 function isPlainObject(v: unknown): v is SettingsObject {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -35,99 +36,16 @@ export function mergeSettingsLayers(layers: Array<SettingsObject | null | undefi
   return out;
 }
 
-type SettingShape =
-  | 'string'
-  | 'path'
-  | 'strings'
-  | 'number'
-  | 'object'
-  | 'boolean'
-  | 'bundle-url'
-  | 'android-compiler-cache'
-  | 'android-pch'
-  | 'remote-backend'
-  | 'tunnel-mode';
+export { REMOTE_DEVICE_BACKENDS };
 
-interface SettingShapeRule {
-  expected: string;
-  accepts: (value: unknown, key: string) => boolean;
-}
+const LAYERED_SETTINGS = SETTINGS.filter(isLayeredSetting);
 
-export const REMOTE_DEVICE_BACKENDS: readonly RemoteDeviceBackend[] = ['proxy', 'eas'] as const;
-
-function choiceRule(choices: readonly string[]): SettingShapeRule {
-  return {
-    expected: `one of: ${choices.join(', ')}`,
-    accepts: (value) => typeof value === 'string' && choices.includes(value),
-  };
-}
-
-const SETTING_SHAPE_RULES: Record<SettingShape, SettingShapeRule> = {
-  boolean: { expected: 'true or false', accepts: (value) => typeof value === 'boolean' },
-  string: { expected: 'a string', accepts: (value) => typeof value === 'string' },
-  path: { expected: 'a string path', accepts: (value) => typeof value === 'string' },
-  strings: {
-    expected: 'an array of strings',
-    accepts: (value) => Array.isArray(value) && value.every((entry) => typeof entry === 'string'),
-  },
-  number: { expected: 'a number', accepts: (value) => typeof value === 'number' },
-  'android-compiler-cache': choiceRule(ANDROID_COMPILER_CACHE_CHOICES),
-  'android-pch': choiceRule(ANDROID_PCH_CHOICES),
-  'remote-backend': choiceRule(REMOTE_DEVICE_BACKENDS),
-  'tunnel-mode': choiceRule(TUNNEL_MODES),
-  object: { expected: 'an object', accepts: isPlainObject },
-  'bundle-url': {
-    expected: 'an HTTP(S) URL or /path ending in .bundle with a matching platform query and no fragment',
-    accepts: (value, key) => {
-      if (typeof value !== 'string' || !/^(https?:\/\/|\/(?!\/))/.test(value) || /[\s\\#]/.test(value)) return false;
-      try {
-        const url = new URL(value, 'http://localhost');
-        return /\.bundle\/*$/.test(url.pathname) && url.searchParams.get('platform') === key.split('.').at(-1);
-      } catch {
-        return false;
-      }
-    },
-  },
-};
-
-const SETTING_SHAPES: Record<string, SettingShape> = {
-  ...OPTIMIZATION_SHAPES,
-  'ios.deviceType': 'string',
-  'ios.runtime': 'string',
-  'ios.configuration': 'string',
-  'ios.remote': 'remote-backend',
-  'ios.simslimProfile': 'path',
-  'ios.signingIdentity': 'string',
-  'ios.signingIdentitySha1': 'string',
-  'ios.lanHost': 'string',
-  'android.systemImage': 'string',
-  'android.dataPartitionSizeGb': 'number',
-  'android.avdConfigFile': 'path',
-  'android.avdConfig': 'object',
-  'android.variant': 'string',
-  'android.keystore': 'path',
-  'android.keystorePassword': 'string',
-  'android.remote': 'remote-backend',
-  'metro.tunnel': 'tunnel-mode',
-  'metro.ngrokUrl': 'string',
-  'metro.publicUrl': 'string',
-  'metro.warmupUrl': 'object',
-  'metro.warmupUrl.ios': 'bundle-url',
-  'metro.warmupUrl.android': 'bundle-url',
-  'worktree.exclude': 'strings',
-  'worktree.defaultBranch': 'string',
-  'cache.provider': 'string',
-  'cache.options': 'object',
-};
-
-const KNOWN_SETTINGS = new Set(Object.keys(SETTING_SHAPES));
+const KNOWN_SETTINGS = new Set([...LAYERED_SETTINGS.map((setting) => setting.key), ...SETTING_GROUPS]);
 
 export const SETTINGS_WITH_RESOLVE_TIME_FALLBACK: ReadonlySet<string> = new Set(['optimizations.android.casToolchain']);
 
 export const PATH_SETTINGS: readonly string[] = Object.freeze(
-  Object.entries(SETTING_SHAPES)
-    .filter(([, shape]) => shape === 'path')
-    .map(([path]) => path),
+  LAYERED_SETTINGS.filter((setting) => setting.type.kind === 'path').map((setting) => setting.key),
 );
 
 function settingValueAt(settings: unknown, path: string): unknown {
@@ -141,22 +59,25 @@ function settingValueAt(settings: unknown, path: string): unknown {
 
 export function settingShapeErrors(settings: unknown): string[] {
   const errors: string[] = [];
-  for (const [path, shape] of Object.entries(SETTING_SHAPES)) {
-    if (SETTINGS_WITH_RESOLVE_TIME_FALLBACK.has(path)) continue;
-    const value = settingValueAt(settings, path);
-    if (value === undefined) continue;
-    const rule = SETTING_SHAPE_RULES[shape];
-    if (rule.accepts(value, path)) continue;
-    errors.push(`Invalid ${path} setting ${JSON.stringify(value)}. Expected ${rule.expected}.`);
+  for (const group of SETTING_GROUPS) {
+    const value = settingValueAt(settings, group);
+    if (value === undefined || isPlainObject(value)) continue;
+    errors.push(`Invalid ${group} setting ${JSON.stringify(value)}. Expected an object.`);
+  }
+  for (const setting of LAYERED_SETTINGS) {
+    if (SETTINGS_WITH_RESOLVE_TIME_FALLBACK.has(setting.key)) continue;
+    const value = settingValueAt(settings, setting.key);
+    if (value === undefined || acceptsShape(setting, value)) continue;
+    errors.push(`Invalid ${setting.key} setting ${JSON.stringify(value)}. Expected ${expectedShape(setting.type)}.`);
   }
   return errors;
 }
 
 export const SETTING_SHAPE_REMEDY = 'Run `stim guide settings` for the shape each setting takes.';
 
-export const MIN_ANDROID_DATA_PARTITION_SIZE_GB: number = 6;
-export const DEFAULT_ANDROID_DATA_PARTITION_SIZE_GB: number = 8;
-export const MAX_ANDROID_DATA_PARTITION_SIZE_GB: number = 16 * 1024;
+const MIN_ANDROID_DATA_PARTITION_SIZE_GB: number = 6;
+const DEFAULT_ANDROID_DATA_PARTITION_SIZE_GB: number = 8;
+const MAX_ANDROID_DATA_PARTITION_SIZE_GB: number = 16 * 1024;
 
 function validateAndroidDataPartitionSizeGb(raw: unknown): number {
   if (
@@ -282,9 +203,7 @@ for (const key of [
   ANDROID_AVD_CONFIG_RULES[key] = YES_NO_AVD_RULE;
 }
 
-export const ANDROID_AVD_CONFIG_KEYS: readonly string[] = Object.freeze(
-  Object.keys(ANDROID_AVD_CONFIG_RULES).toSorted(),
-);
+const ANDROID_AVD_CONFIG_KEYS: readonly string[] = Object.freeze(Object.keys(ANDROID_AVD_CONFIG_RULES).toSorted());
 
 export const ANDROID_AVD_CONFIG_HELP: readonly string[] = Object.freeze(
   ANDROID_AVD_CONFIG_KEYS.map((key) => `${key}: ${ANDROID_AVD_CONFIG_RULES[key]!.help}`),
@@ -487,6 +406,7 @@ export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
   const unknown: string[] = [];
   for (const [key, value] of Object.entries(settings)) {
     const path = prefix ? `${prefix}.${key}` : key;
+    if (path === '$schema') continue;
     if (
       KNOWN_SETTINGS.has(path) &&
       (!isPlainObject(value) || ![...KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`)))

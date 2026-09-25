@@ -17,8 +17,8 @@ git worktree add -> cd -> worktree warm -> start -> ios|android -> logs --errors
 ```
 
 The command surface is `doctor`, `worktree warm|remove`, `start`, `stop`,
-`ios`, `android`, `reload`, `ports [get|stop|release]`, `device lock|unlock`, `logs`, `status`, `stats`, `gc`, and
-`guide`. Do not add commands or flags without an explicit product decision.
+`ios`, `android`, `reload`, `ports [get|stop|release]`, `device lock|unlock`, `logs`, `settings [get|set|unset]`,
+`status`, `stats`, `gc`, and `guide`. Do not add commands or flags without an explicit product decision.
 Projects can wrap Stim when they need custom behavior.
 
 Runtime state belongs under `$STIM_HOME/workspaces/`, not in the project
@@ -171,7 +171,12 @@ changes, and wait for the new checks.
 - **Source format.** Keep files under `src/`, `bin/`, and `test/` ASCII-only.
   Markdown can use Unicode.
 - **Concurrency limits.** Build and device caps are opt-in through config or
-  environment variables. Do not add a config command.
+  environment variables.
+- **Settings registry.** `src/workspace/settings-registry.ts` defines every
+  project and machine setting: type, layers, default, environment override,
+  and sensitivity. Validation, doctor, `stim settings`, the shipped JSON
+  Schema, and the guide contract tests derive from it; add a setting there
+  first.
 
 ## Comment policy
 

@@ -16,6 +16,7 @@ const commands = new Map<string, () => Promise<CommandModule>>([
   ['reload', () => import('../src/commands/reload.ts')],
   ['device', () => import('../src/commands/device.ts')],
   ['logs', () => import('../src/commands/logs.ts')],
+  ['settings', () => import('../src/commands/settings.ts')],
   ['status', () => import('../src/commands/status.ts')],
   ['stats', () => import('../src/commands/stats.ts')],
   ['gc', () => import('../src/commands/gc.ts')],

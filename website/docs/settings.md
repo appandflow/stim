@@ -14,16 +14,57 @@ Commands use `stim`. If it is not installed globally, replace `stim` with
 Most projects need no settings. Use `stim guide settings` for descriptions that
 match the installed version.
 
+## Read and change settings
+
+`stim settings` lists every setting with its effective value and the layer it
+comes from. `get`, `set`, and `unset` read or change one layer. The
+[command reference](./commands.md#settings) has the full syntax and JSON
+output.
+
+```bash
+stim settings
+stim settings set ios.deviceType "iPhone 17 Pro" --scope workspace
+stim settings set optimizations.android.targetAbiOnly false --scope machine
+```
+
+A copyable prompt for an agent:
+
+```text
+Run `stim settings --json` in this app and tell me which settings are not at
+their defaults and which layer sets each one. Then set this workspace's iOS
+simulator to an iPhone 17 Pro with
+`stim settings set ios.deviceType "iPhone 17 Pro" --scope workspace`.
+```
+
+The JSON Schema for every setting ships in the `stim` package as
+`dist/settings.schema.json`. Add it to `.stim.json` for editor completion and
+validation; Stim ignores the `$schema` key:
+
+```json
+{
+  "$schema": "https://unpkg.com/stim/dist/settings.schema.json",
+  "ios": { "deviceType": "iPhone 17 Pro" }
+}
+```
+
+The schema's root describes `.stim.json`. `$defs.machine` describes the
+machine settings. Each setting carries its dotted key, the layers it can be
+written to, and its environment override under `x-stim`.
+
 ## Settings layers
 
 Stim reads the first value found in this order:
 
-1. Project settings in `~/.stim/config.json`, keyed by absolute path.
-2. Repository settings in the same machine file, keyed by the git common dir.
-3. Committed `.stim.json` beside the app's `package.json`.
+1. Workspace settings in `~/.stim/config.json`, keyed by the app's absolute path
+   (`--scope workspace`).
+2. Repository settings in the same machine file, keyed by the git common dir
+   (`--scope repo`).
+3. Committed `.stim.json` beside the app's `package.json` (`--scope committed`).
 4. Machine defaults under top-level `optimizations` in `~/.stim/config.json` (for
-   optimization settings only).
+   optimization settings only, `--scope machine`).
 5. The Stim default.
+
+An environment variable that overrides a setting wins over every layer.
 
 Nested objects merge by key. Arrays replace lower-precedence arrays. Unknown
 keys produce a warning. Every key below takes one type: a string, an array of
@@ -87,7 +128,9 @@ another branch; unset, it uses the branch `origin/HEAD` names. A nonempty
 `worktree.exclude` setting; an empty or absent file uses the setting.
 
 Do not put secrets in a committed `.stim.json`. Keep secrets in ignored files
-and carry those files into a worktree.
+and carry those files into a worktree. `stim settings` never prints
+`android.keystorePassword` and writes it to `.stim.json` only as an `env:` or
+`file:` reference.
 
 `cache.provider` names a module that Stim executes in every worktree of the
 app. Review a committed value the way you review a build script, and

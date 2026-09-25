@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -33,6 +33,7 @@ import {
 import { resolveOptimizations, resolveMetroSharedCache } from '../optimizations.ts';
 import { saveConfig, setProjectSetting, setRepoSetting, upsertProject } from '../workspace/config.ts';
 import { findProjectRoot } from '../workspace/project.ts';
+import { SETTINGS } from '../workspace/settings-registry.ts';
 
 type SettingsView = {
   worktree?: { exclude?: string[] };
@@ -419,12 +420,12 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
 };
 
 test('every known setting has a shape, and a wrong-typed value is one refusal naming the key and the shape', () => {
-  const src = readFileSync(new URL('../workspace/settings.ts', import.meta.url), 'utf-8');
-  const table = src.slice(src.indexOf('const SETTING_SHAPES'), src.indexOf('};', src.indexOf('const SETTING_SHAPES')));
-  const known = [...table.matchAll(/^\s*'?([A-Za-z0-9.]+)'?: '[a-z-]+',$/gm)]
-    .map((match) => match[1])
-    .filter((key): key is string => key !== undefined);
-  expect(known.length).toBeGreaterThan(0);
+  const known = [
+    ...SETTINGS.filter(
+      (setting) => setting.scopes.includes('committed') && !setting.key.startsWith('optimizations.'),
+    ).map((setting) => setting.key),
+    'metro.warmupUrl',
+  ];
   expect(Object.keys(SHAPE_CASES).toSorted()).toEqual(known.toSorted());
 
   for (const key of known) {
