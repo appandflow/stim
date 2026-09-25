@@ -6,6 +6,12 @@ public enum AppPreferences {
     public static let appearance = "appearance"
     public static let showsIdleWorkspaces = "showsIdleWorkspaces"
     public static let hidesUnprovisionedWorktrees = "hidesUnprovisionedWorktrees"
+    public static let sidebarStatus = "sidebar.status"
+    public static let hiddenProjects = "sidebar.hiddenProjects"
+    public static let sidebarGrouping = "sidebar.grouping"
+    public static let sidebarSort = "sidebar.sort"
+    public static let showsGitStatus = "sidebar.showsGitStatus"
+    public static let showsEmptyProjects = "sidebar.showsEmptyProjects"
     public static let expandedProjects = "sidebar.expandedProjects"
     public static let defaultView = "defaultView"
     public static let lastProjectPath = "lastProjectPath"
@@ -46,6 +52,15 @@ public enum AppPreferences {
       Key.autopilotPressure: true,
       Key.notifiesDiskPressure: true,
     ]
+  }
+
+  /// Carries the retired "Show idle workspaces" switch over to the sidebar's Status option.
+  public static func migrate(_ defaults: UserDefaults) {
+    guard let showsIdle = defaults.object(forKey: Key.showsIdleWorkspaces) as? Bool else { return }
+    if !showsIdle, defaults.string(forKey: Key.sidebarStatus) == nil {
+      defaults.set(StatusFilter.live.rawValue, forKey: Key.sidebarStatus)
+    }
+    defaults.removeObject(forKey: Key.showsIdleWorkspaces)
   }
 
   public static let idleMinuteChoices = [30, 60, 120, 240]

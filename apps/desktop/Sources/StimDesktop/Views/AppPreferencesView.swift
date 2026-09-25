@@ -5,7 +5,7 @@ import SwiftUI
 
 struct AppPreferencesView: View {
   @AppStorage(AppPreferences.Key.appearance) private var appearance = Appearance.auto
-  @AppStorage(AppPreferences.Key.showsIdleWorkspaces) private var showsIdle = true
+  @AppStorage(AppPreferences.Key.sidebarStatus) private var status = StatusFilter.all
   @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.allDevices
   @AppStorage(AppPreferences.Key.tileSize) private var tileSize = TileSize.medium
   @AppStorage(AppPreferences.Key.maxFramesPerSecond) private var framesPerSecond = 60.0
@@ -37,7 +37,9 @@ struct AppPreferencesView: View {
       }
 
       Section("Workspace list") {
-        Toggle("Show idle workspaces", isOn: $showsIdle)
+        Picker("Status", selection: $status) {
+          ForEach(StatusFilter.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
         Picker("Open to", selection: $defaultView) {
           ForEach(DefaultView.allCases, id: \.self) { Text($0.title).tag($0) }
         }

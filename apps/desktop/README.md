@@ -27,12 +27,31 @@ in the workspace directory:
   unrecognized `stim-*` devices as kept, because `stim gc --delete` never
   touches them.
 
-The sidebar lists projects as a tree. Each project expands to its workspaces,
-live ones first, and selecting the project row shows all of its workspaces and
-devices. Projects with a live workspace start expanded, and the app remembers
-each project you expand or collapse. The filter button next to the logo offers
-**Live only**, which hides idle workspaces and projects with nothing live, and
-**Hide no-environment worktrees**; its icon is filled while either is on.
+**All devices**, **Needs attention** and **Storage** stay pinned at the top of
+the sidebar; only the list below them scrolls. The sidebar lists projects as a
+tree. Each project expands to its workspaces,
+and selecting the project row shows all of its workspaces and devices. Projects
+with a live workspace start expanded, and the app remembers each project you
+expand or collapse. The view options button next to the logo opens a menu:
+
+- **Status**: All, Live or Idle workspaces.
+- **Projects**: which projects the sidebar lists.
+- **Group by**: Project (the tree) or None (one list, each row subtitled with
+  its project).
+- **Sort by**: Last activity, Name or Memory. Last activity is the newest time
+  `stim status --json` records for the workspace: device activity, a driver
+  attaching, Metro's supervisor or a remote session starting, or a build
+  starting, changing phase or ending. Projects sort by their newest workspace
+  or their total memory.
+- **Show no-environment worktrees**, **Show git status** and **Show empty
+  projects** (projects the other options leave with no rows).
+
+The app remembers every choice. The button turns purple with a dot while any
+option differs from its default, and the menu then ends with **Reset**. When
+the options hide every row, the list says so and offers **Show all** or
+**Reset**. Arrow
+keys move through the menu, Return picks, and Right and Left open and close a
+submenu.
 
 Each workspace row shows its worktree's git state from `stim status --json`: a
 dot with the number of uncommitted files, arrows for commits ahead of and
@@ -92,7 +111,7 @@ version with `gc --json`.
 
 ## Storage
 
-**Storage** under Machine in the sidebar shows what uses disk space. It never
+**Storage** at the top of the sidebar shows what uses disk space. It never
 blocks on a measurement: sizes load in the background at low priority, are kept
 for 15 minutes, and **Refresh** measures again.
 
@@ -289,8 +308,7 @@ under the field. `android.keystorePassword` is never shown. Keys Stim does not
 read are listed read-only.
 
 The **App** tab holds preferences kept in `UserDefaults`, never in Stim's
-config: appearance (Auto, Light, Dark), showing idle workspaces (the sidebar's
-Live only filter), opening to all
+config: appearance (Auto, Light, Dark), the sidebar's Status option, opening to all
 devices or the last project, device tile size, a live frame rate cap, pausing
 frames while the window is hidden, the editor and terminal the workspace
 inspector opens, notifications, a menu bar extra with the live workspace count

@@ -167,10 +167,13 @@ import Testing
       ])
   }
 
-  @Test func buildsAProjectTreeWithLiveWorkspacesFirstAndFilters() throws {
+  @Test func laysOutTheSidebarFromItsViewOptions() throws {
     let json = #"""
-      [{"path":"/r/app/.worktrees/idle","live":false,"warnings":[]},
-       {"path":"/r/app/.worktrees/live","live":true,"warnings":[]},
+      [{"path":"/r/app/.worktrees/idle","live":false,"warnings":[],"memoryMb":900,
+        "lastBuilds":{"ios":{"platform":"ios","status":"ok","cacheHit":"local","startedAt":"2026-09-25T10:00:00Z",
+          "finishedAt":"2026-09-25T10:05:00Z"}}},
+       {"path":"/r/app/.worktrees/live","live":true,"warnings":[],"memoryMb":2000,
+        "supervisor":{"startedAt":"2026-09-25T09:00:00Z"}},
        {"path":"/r/zed","live":false,"warnings":[]}]
       """#
     let envs = try JSONDecoder().decode([Workspace].self, from: Data(json.utf8))
@@ -178,25 +181,73 @@ import Testing
       UnprovisionedWorktree(path: "/r/app/.worktrees/b", branch: "feat/b"),
       UnprovisionedWorktree(path: "/r/new/.worktrees/c", branch: nil),
     ]
-    func tree(liveOnly: Bool = false, hidesUnprovisioned: Bool = false) -> [String] {
-      projectTrees(
-        environments: envs, unprovisioned: worktrees, project: Project.init(fallbackFor:), liveOnly: liveOnly,
-        hidesUnprovisioned: hidesUnprovisioned
+    func tree(_ change: (inout SidebarOptions) -> Void = { _ in }) -> [String] {
+      var options = SidebarOptions()
+      change(&options)
+      return sidebarTrees(
+        environments: envs, unprovisioned: worktrees, project: Project.init(fallbackFor:), options: options
       ).map { node in
         "\(node.summary.project.name) \(node.summary.live)/\(node.summary.total): "
-          + (node.environments.map(\.path) + node.worktrees.map(\.path)).joined(separator: ",")
+          + node.entries.map(\.path).joined(separator: ",")
       }
+    }
+    func list(_ change: (inout SidebarOptions) -> Void) -> [String] {
+      var options = SidebarOptions()
+      change(&options)
+      return sidebarList(
+        environments: envs, unprovisioned: worktrees, project: Project.init(fallbackFor:), options: options
+      ).map(\.path)
     }
     #expect(
       tree() == [
-        "app 1/3: /r/app/.worktrees/live,/r/app/.worktrees/idle,/r/app/.worktrees/b",
+        "app 1/3: /r/app/.worktrees/idle,/r/app/.worktrees/live,/r/app/.worktrees/b",
         "new 0/1: /r/new/.worktrees/c", "zed 0/1: /r/zed",
       ])
-    #expect(tree(liveOnly: true) == ["app 1/3: /r/app/.worktrees/live"])
+    #expect(tree { $0.status = .live } == ["app 1/3: /r/app/.worktrees/live"])
     #expect(
-      tree(hidesUnprovisioned: true) == [
-        "app 1/3: /r/app/.worktrees/live,/r/app/.worktrees/idle", "zed 0/1: /r/zed",
+      tree { $0.status = .idle } == [
+        "app 1/3: /r/app/.worktrees/idle,/r/app/.worktrees/b", "new 0/1: /r/new/.worktrees/c", "zed 0/1: /r/zed",
       ])
+    #expect(
+      tree {
+        $0.status = .live
+        $0.showsEmptyProjects = true
+        $0.hiddenProjects = ["/r/zed"]
+      } == ["app 1/3: /r/app/.worktrees/live", "new 0/1: "])
+    #expect(
+      tree {
+        $0.showsNoEnvironment = false
+        $0.sort = .name
+      } == ["app 1/3: /r/app/.worktrees/idle,/r/app/.worktrees/live", "zed 0/1: /r/zed"])
+    #expect(
+      list { $0.sort = .memory } == [
+        "/r/app/.worktrees/live", "/r/app/.worktrees/idle", "/r/app/.worktrees/b", "/r/new/.worktrees/c", "/r/zed",
+      ])
+    #expect(list { $0.hiddenProjects = ["/r/app"] } == ["/r/new/.worktrees/c", "/r/zed"])
+  }
+
+  @Test func countsOnlyExistingHiddenProjectsAsAChangedOption() {
+    var options = SidebarOptions()
+    options.hiddenProjects = ["/r/gone"]
+    #expect(!options.differsFromDefaults(projects: [Project(root: "/r/app")]))
+    options.hiddenProjects.insert("/r/app")
+    #expect(options.differsFromDefaults(projects: [Project(root: "/r/app")]))
+    #expect(SidebarOptions.decode(hiddenProjects: SidebarOptions.encode(hiddenProjects: options.hiddenProjects))
+      == options.hiddenProjects)
+  }
+
+  @Test func migratesTheIdleWorkspacesSwitchToTheStatusOption() throws {
+    let name = "stim.tests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: name))
+    defer { defaults.removePersistentDomain(forName: name) }
+    defaults.set(false, forKey: AppPreferences.Key.showsIdleWorkspaces)
+    AppPreferences.migrate(defaults)
+    #expect(defaults.string(forKey: AppPreferences.Key.sidebarStatus) == "live")
+    #expect(defaults.object(forKey: AppPreferences.Key.showsIdleWorkspaces) == nil)
+    defaults.set("idle", forKey: AppPreferences.Key.sidebarStatus)
+    defaults.set(true, forKey: AppPreferences.Key.showsIdleWorkspaces)
+    AppPreferences.migrate(defaults)
+    #expect(defaults.string(forKey: AppPreferences.Key.sidebarStatus) == "idle")
   }
 
   private func git(_ args: [String]) throws {
