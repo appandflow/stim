@@ -70,6 +70,10 @@ export function createdDevicesFile(): string {
   return join(configDir(), 'created-devices.json');
 }
 
+export function gitMergeCacheDir(): string {
+  return join(configDir(), 'git-merge');
+}
+
 export function createdDevicesLock(): string {
   return join(configDir(), 'created-devices.lock');
 }

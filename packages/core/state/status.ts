@@ -78,10 +78,28 @@ export interface DeviceActivity {
   basis: string[];
 }
 
+/**
+ * A linked worktree's `git status`. `changed` counts tracked paths with staged or unstaged changes, including
+ * conflicts; `untracked` counts untracked entries as `git status` lists them, so an untracked directory counts once.
+ * `ahead` and `behind` compare HEAD with `upstream`, and are null when there is no upstream or it no longer exists.
+ * `mergedInto` names the default branch (`origin/main`) when `gc` would consider the branch merged into it, judged
+ * from local refs without fetching.
+ */
+export interface WorktreeGit {
+  changed: number;
+  untracked: number;
+  upstream: string | null;
+  ahead: number | null;
+  behind: number | null;
+  mergedInto: string | null;
+}
+
 export interface WorktreeFacts {
   path: string;
   branch?: string;
   repository?: string;
+  /** Null when git could not be read in time, or the worktree is in a folder status does not open. */
+  git?: WorktreeGit | null;
 }
 
 export interface AndroidRuntimeFacts {

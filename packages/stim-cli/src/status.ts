@@ -13,6 +13,7 @@ import type {
   RemoteDeviceState,
   StatusCapacity,
   WorktreeFacts,
+  WorktreeGit,
 } from '@stim-cli/core/state';
 
 export type {
@@ -206,7 +207,7 @@ export function environmentState(
         }
       : null,
     logs: logs ? { dir: logs.dir, errorsSinceMarker: logs.errorsSinceMarker ?? 0 } : null,
-    worktree: worktrees.find((w) => w.path === project.__path) ?? null,
+    worktree: enclosingWorktree(worktrees, project.__path),
     remoteDevices: remote ? [remote] : [],
   };
 }
@@ -283,11 +284,28 @@ export function tightVolumes(volumes: VolumeInfo[] | null | undefined): VolumeIn
   return (volumes || []).filter((v) => v && diskIsTight(v.disk));
 }
 
+function contains(dir: string, path: string): boolean {
+  return path === dir || path.startsWith(dir.endsWith(sep) ? dir : dir + sep);
+}
+
+function enclosingWorktree(worktrees: WorktreeFacts[], path: string): WorktreeFacts | null {
+  return worktrees.filter((w) => contains(w.path, path)).toSorted((a, b) => b.path.length - a.path.length)[0] ?? null;
+}
+
+/** One line for a worktree's git summary, such as `2 changed, 1 untracked, ahead 3, merged into origin/main`. */
+export function gitSummaryText(git: WorktreeGit): string {
+  const parts = [
+    git.changed ? `${git.changed} changed` : '',
+    git.untracked ? `${git.untracked} untracked` : '',
+    git.ahead ? `ahead ${git.ahead}` : '',
+    git.behind ? `behind ${git.behind}` : '',
+    git.mergedInto ? `merged into ${git.mergedInto}` : '',
+  ].filter(Boolean);
+  return parts.length ? parts.join(', ') : 'clean';
+}
+
 export function unprovisionedWorktrees(worktrees: WorktreeFacts[], projectPaths: string[]): WorktreeFacts[] {
-  return worktrees.filter((w) => {
-    const inside = w.path.endsWith(sep) ? w.path : w.path + sep;
-    return !projectPaths.some((p) => p === w.path || p.startsWith(inside));
-  });
+  return worktrees.filter((w) => !projectPaths.some((p) => contains(w.path, p)));
 }
 
 export function deviceLeaseStates(

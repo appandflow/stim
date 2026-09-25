@@ -537,6 +537,11 @@ stim status [--json] [--watch]
 
 Shows every Stim environment on the machine. The output includes worktrees,
 ports, devices, supervisors, builds, logs, capacity, and free disk space.
+Each linked worktree shows its uncommitted changes, commits ahead of and
+behind its upstream, and whether its branch is merged, as a
+`git: 2 changed, 1 untracked, ahead 3` line. See
+[Parallel environments](./worktrees.md#parallel-environments) for the JSON
+fields.
 
 A workspace with a recorded EAS Simulator session prints a
 `remote <platform>: EAS session <id> billable` line with the session's preview

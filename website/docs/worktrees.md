@@ -172,10 +172,19 @@ with its `path`, `branch`, and `repository`. `worktree warm` copies
 dependencies but does not create an environment, so a warmed worktree stays in
 that list until `start`, `ios`, `android`, or `doctor` registers it.
 
-Status reads the worktree list from git's records in the repository and does
-not open the worktree directories. A worktree under a macOS-protected folder
-such as `~/Documents` or `~/Desktop` is listed without triggering a privacy
-prompt.
+Each worktree also reports its git state: the number of changed and untracked
+files, its upstream with commits ahead and behind, and whether its branch is
+merged into the default branch. In `--json` that is the `git` object on each
+`unprovisionedWorktrees` entry and on each environment's `worktree`, with
+`changed`, `untracked`, `upstream`, `ahead`, `behind`, and `mergedInto`. The
+merge check is the one `stim gc` uses, applied to the refs already fetched;
+status never fetches. Stim Desktop and the phone app show the same state on
+each workspace. `git` is `null` when git does not answer within 3 seconds.
+
+Status reads the worktree list from git's records in the repository. It runs
+`git status` only in worktrees outside macOS-protected folders, or in ones with
+a registered environment, so a worktree under `~/Documents` or `~/Desktop` is
+listed without triggering a privacy prompt, with `git` set to `null`.
 
 ## Remove a worktree
 

@@ -88,10 +88,20 @@ export interface RemoteDeviceState {
   webPreviewUrl: string | null;
 }
 
+export interface WorktreeGit {
+  changed: number;
+  untracked: number;
+  upstream: string | null;
+  ahead: number | null;
+  behind: number | null;
+  mergedInto: string | null;
+}
+
 export interface WorktreeFacts {
   path: string;
   branch?: string;
   repository?: string;
+  git?: WorktreeGit | null;
 }
 
 export interface EnvironmentState {

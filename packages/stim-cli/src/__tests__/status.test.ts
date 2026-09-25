@@ -720,9 +720,14 @@ test.each(['moved', 'absent', 'missing', 'unavailable'] as const)(
   },
 );
 
-test('status lists worktrees with no environment for every registered repository, from outside any repository', async () => {
+test('status lists worktrees with no environment for every registered repository, from outside any repository, with their git state once every merge verdict is cached', async () => {
   const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-test-repos-')));
   const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8' });
+  const commit = (cwd: string, file: string, message: string) => {
+    writeFileSync(join(cwd, file), `${message}\n`);
+    git(cwd, 'add', file);
+    git(cwd, 'commit', '-qm', message);
+  };
   const repo = (name: string) => {
     const root = join(base, name);
     mkdirSync(join(root, 'apps', 'mobile'), { recursive: true });
@@ -738,6 +743,10 @@ test('status lists worktrees with no environment for every registered repository
   try {
     const first = repo('first');
     const second = repo('second');
+    execFileSync('git', ['init', '-q', '--bare', '-b', 'main', join(base, 'first.git')]);
+    git(first, 'remote', 'add', 'origin', join(base, 'first.git'));
+    git(first, 'push', '-q', '-u', 'origin', 'main');
+    git(first, 'remote', 'set-head', 'origin', 'main');
     const worktree = (root: string, name: string) => {
       const path = join(base, `${name}-wt`);
       git(root, 'worktree', 'add', '-q', '-b', name, path);
@@ -746,6 +755,24 @@ test('status lists worktrees with no environment for every registered repository
     const nested = worktree(first, 'nested');
     const loose = worktree(first, 'loose');
     const other = worktree(second, 'other');
+    const deleted = worktree(second, 'deleted');
+    rmSync(deleted, { recursive: true, force: true });
+
+    commit(nested, 'feature.txt', 'feature');
+    git(first, 'merge', '-q', '--no-ff', '-m', 'merge nested', 'nested');
+    git(first, 'push', '-q', 'origin', 'main');
+
+    commit(loose, 'pushed.txt', 'pushed');
+    git(loose, 'push', '-q', '-u', 'origin', 'loose');
+    commit(loose, 'local.txt', 'local');
+    writeFileSync(join(loose, 'pushed.txt'), 'edited\n');
+    writeFileSync(join(loose, 'local.txt'), 'staged\n');
+    git(loose, 'add', 'local.txt');
+    mkdirSync(join(loose, 'scratch'));
+    writeFileSync(join(loose, 'scratch', 'a.txt'), 'a');
+    writeFileSync(join(loose, 'scratch', 'b.txt'), 'b');
+    writeFileSync(join(loose, 'notes.txt'), 'notes');
+
     saveConfig(
       makeConfig({
         version: 2,
@@ -757,22 +784,44 @@ test('status lists worktrees with no environment for every registered repository
         },
       }),
     );
+    const real = (fallback: unknown) => (file: string, args: string[], opts: object) =>
+      file === 'git' ? realExecutor.runFile(file, args, opts) : fallback;
     setExecutor({
       runFileAsync: (file: string, args: string[], opts: object) =>
         file === 'git' ? realExecutor.runFileAsync(file, args, opts) : Promise.resolve(''),
-      runFile: () => '',
+      runFile: real(''),
       runQuiet: () => null,
-      runFileQuiet: () => null,
+      runFileQuiet: (file: string, args: string[], opts: object) =>
+        file === 'git' ? realExecutor.runFileQuiet(file, args, opts) : null,
       spawn() {
         throw new Error('spawn should not be called from status');
       },
     });
 
+    await runStatusJson();
     const payload = await runStatusJson();
     expect(payload.unprovisionedWorktrees).toEqual([
-      { path: loose, branch: 'loose', repository: first },
-      { path: other, branch: 'other', repository: second },
+      {
+        path: loose,
+        branch: 'loose',
+        repository: first,
+        git: { changed: 2, untracked: 2, upstream: 'origin/loose', ahead: 1, behind: 0, mergedInto: null },
+      },
+      { path: deleted, branch: 'deleted', repository: second, git: null },
+      {
+        path: other,
+        branch: 'other',
+        repository: second,
+        git: { changed: 0, untracked: 0, upstream: null, ahead: null, behind: null, mergedInto: null },
+      },
     ]);
+    const env = payload.environments.find((e: { path: string }) => e.path === join(nested, 'apps', 'mobile'));
+    expect(env.worktree).toEqual({
+      path: nested,
+      branch: 'nested',
+      repository: first,
+      git: { changed: 0, untracked: 0, upstream: null, ahead: null, behind: null, mergedInto: 'origin/main' },
+    });
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
