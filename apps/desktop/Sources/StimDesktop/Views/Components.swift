@@ -13,6 +13,43 @@ struct StatusDot: View {
   }
 }
 
+/// A worktree's git state: a dot with the uncommitted count, arrows for commits ahead and behind, and "merged".
+/// Compact for sidebar rows; `chips` for the workspace header. Shows nothing for a clean branch level with its upstream.
+struct GitIndicator: View {
+  var git: WorktreeGit?
+  var chips = false
+
+  var body: some View {
+    if let git, git.isNotable {
+      if chips {
+        if git.uncommitted > 0 { Chip(tint: Theme.warn) { Text("\(git.uncommitted) uncommitted") } }
+        if let arrows = git.arrows { Chip { Text(arrows).monospacedDigit() } }
+        if git.mergedInto != nil { Chip(tint: Theme.primary) { Text("merged") } }
+      } else {
+        HStack(spacing: 4) {
+          if git.uncommitted > 0 {
+            StatusDot(color: Theme.warn)
+            Text("\(git.uncommitted)").foregroundStyle(Theme.warn)
+          }
+          if let arrows = git.arrows { Text(arrows).foregroundStyle(Theme.secondary) }
+          if git.mergedInto != nil {
+            Text("merged")
+              .foregroundStyle(Theme.primary)
+              .padding(.horizontal, 4)
+              .background(RoundedRectangle(cornerRadius: 4).fill(Theme.primary.opacity(0.14)))
+          }
+        }
+        .font(Theme.body(10.5, weight: .semibold))
+        .monospacedDigit()
+        .fixedSize()
+        .help(git.summary)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(git.summary)
+      }
+    }
+  }
+}
+
 struct Chip<Content: View>: View {
   var tint: Color?
   @ViewBuilder var content: Content

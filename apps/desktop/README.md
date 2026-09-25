@@ -34,9 +34,15 @@ each project you expand or collapse. The filter button next to the logo offers
 **Live only**, which hides idle workspaces and projects with nothing live, and
 **Hide no-environment worktrees**; its icon is filled while either is on.
 
+Each workspace row shows its worktree's git state from `stim status --json`: a
+dot with the number of uncommitted files, arrows for commits ahead of and
+behind the upstream, and **merged** when `gc` would call the branch merged. A
+clean branch level with its upstream shows nothing. The workspace header shows
+the same as chips, and hovering the row indicator spells it out.
+
 A linked worktree Stim has not registered yet, listed in `unprovisionedWorktrees`
 of `stim status --json`, appears in the sidebar under its project and
-is marked "no environment". The project comes from the entry's `repository`,
+is marked "no environment", or with its git state when it has one. The project comes from the entry's `repository`,
 so the app does not run git in a worktree that may sit in a macOS-protected
 folder. It has no action. Selecting it shows its path and
 branch and the `stim start`, `stim ios` and `stim android` commands that create
