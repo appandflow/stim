@@ -64,7 +64,7 @@ struct LogsView: View {
   }
 
   private var filterBar: some View {
-    HStack(spacing: 8) {
+    FlowLayout(spacing: 8) {
       ForEach(LogSource.allCases, id: \.self) { source in
         let on = query.sources.contains(source)
         Button {
@@ -108,9 +108,8 @@ struct LogsView: View {
       TextField("Search (regular expression)", text: $search)
         .textFieldStyle(.roundedBorder)
         .font(Theme.mono(11.5))
-        .frame(minWidth: 140, maxWidth: 280)
+        .frame(width: 220)
         .onSubmit { query.search = search }
-      Spacer(minLength: 0)
     }
     .controlSize(.small)
     .padding(.horizontal, 14)

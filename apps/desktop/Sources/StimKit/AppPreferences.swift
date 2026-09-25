@@ -34,6 +34,7 @@ public enum AppPreferences {
     public static let notifiesDiskPressure = "notify.diskPressure"
     public static let servesPhones = "servesPhones"
     public static let stimServerExecutable = "stimServerExecutable"
+    public static let showsInspector = "showsInspector"
 
     public static func notifies(_ kind: StatusEvent.Kind) -> String { "notify.\(kind.rawValue)" }
   }
@@ -51,6 +52,7 @@ public enum AppPreferences {
       Key.autopilotNightlyOlderThanDays: 7,
       Key.autopilotPressure: true,
       Key.notifiesDiskPressure: true,
+      Key.showsInspector: true,
     ]
   }
 
