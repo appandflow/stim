@@ -9,15 +9,15 @@ import { getConfigDir, loadConfig } from '../workspace/config.ts';
 import type { ProjectRecord, SupervisorRecord } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { isMetroRunning } from '../ports.ts';
-import { resolveProjectMetro } from '../metro.ts';
+import { listeningPids, listeningPidsByPort, processCwd, processCwds, resolveProjectMetro } from '../metro.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import type { MetroResolution } from '../metro.ts';
-import { queryLogs } from '../diagnostics/logs-query.ts';
-import { workspaceLogsDir } from '../workspace/paths.ts';
+import { countErrorsSinceMarker } from '../diagnostics/error-index.ts';
+import { workspaceLogErrorIndex, workspaceLogsDir } from '../workspace/paths.ts';
 import { readSupervisorState } from './stop.ts';
 import { findProjectRoot, projectShortcut } from '../workspace/project.ts';
-import { listAllIosSims } from '../devices/ios.ts';
-import { resolveOwnedAvdSerial } from '../devices/android.ts';
+import { listAllIosSimsAsync } from '../devices/ios.ts';
+import { ownedAvdSerialResolver, type ResolvedAvdSerial } from '../devices/android.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { gitCommonDir, repoRoot, resolveSourceCheckout } from '../workspace/worktree.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
@@ -82,30 +82,55 @@ async function statusLines(json: boolean): Promise<string[]> {
   const projects = Object.entries(cfg?.projects || {});
   const cwdRoot = findProjectRoot(process.cwd());
 
-  const simsByUdid: Record<string, IosSimRecord> = {};
-  let simsAvailable = true;
-  let simctlError: string | null = null;
-  try {
-    for (const sim of listAllIosSims()) simsByUdid[sim.udid] = sim;
-  } catch (e) {
-    simsAvailable = false;
-    simctlError = String((e as Error)?.message || e).split('\n')[0] ?? '';
-  }
+  const simsRead = listAllIosSimsAsync();
+  simsRead.catch(() => {});
+  const ports = await portLookup(projects.flatMap(([, proj]) => (proj.metroPort ? [proj.metroPort] : [])));
+  const processes = Promise.all(
+    projects.map(async ([path, proj]) => {
+      const metro = proj.metroPort ? await resolveOnPort(proj.metroPort, path, ports) : null;
+      return { metro, supervisor: await supervisorFacts(path, proj, metro, ports) };
+    }),
+  );
+  processes.catch(() => {});
 
   const source = resolveSourceCheckout(process.cwd());
   const sourcePath = 'path' in source ? source.path : null;
   const worktrees: WorktreeEntry[] = source.entries.filter((entry) => !entry.bare && entry.path !== sourcePath);
 
+  const androidRuntimeOf = androidRuntimeReader();
+  const devices = projects.map(([, proj]) => ({
+    androidRuntimes: Object.fromEntries(
+      projectDeviceSlots(proj)
+        .slice(1)
+        .map(({ slot, platforms }) => [
+          slot,
+          platforms.android?.owned && platforms.android.avdName ? androidRuntimeOf(platforms.android.avdName) : null,
+        ]),
+    ),
+    androidRuntime:
+      proj.platforms?.android?.owned && proj.platforms.android.avdName
+        ? androidRuntimeOf(proj.platforms.android.avdName)
+        : null,
+  }));
+  const logs = projects.map(([path]) => logFacts(path));
+
+  const simsByUdid: Record<string, IosSimRecord> = {};
+  let simsAvailable = true;
+  let simctlError: string | null = null;
+  try {
+    for (const sim of await simsRead) simsByUdid[sim.udid] = sim;
+  } catch (e) {
+    simsAvailable = false;
+    simctlError = String((e as Error)?.message || e).split('\n')[0] ?? '';
+  }
+  const running = await processes;
+
   const history = readStats().record?.history;
   const states: EnvironmentState[] = [];
   const labelOnlyRoots: boolean[] = [];
   const easLedger = readEasSessionLedger();
-  for (const [path, proj] of projects) {
-    let metro: MetroResolution | null = null;
-    if (proj.metroPort) {
-      metro = await resolveOnPort(proj.metroPort, path);
-    }
-    const supervisor = await supervisorFacts(path, proj, metro);
+  for (const [i, [path, proj]] of projects.entries()) {
+    const { metro, supervisor } = running[i]!;
     states.push(
       environmentState(
         { ...proj, __path: path },
@@ -114,22 +139,9 @@ async function statusLines(json: boolean): Promise<string[]> {
           metro,
           worktrees,
           simsAvailable,
-          androidRuntimes: Object.fromEntries(
-            projectDeviceSlots(proj)
-              .slice(1)
-              .map(({ slot, platforms }) => [
-                slot,
-                platforms.android?.owned && platforms.android.avdName
-                  ? readAndroidRuntime(platforms.android.avdName)
-                  : null,
-              ]),
-          ),
-          androidRuntime:
-            proj.platforms?.android?.owned && proj.platforms.android.avdName
-              ? readAndroidRuntime(proj.platforms.android.avdName)
-              : null,
+          ...devices[i],
           supervisor,
-          logs: logFacts(path),
+          logs: logs[i],
           remote: remoteDeviceState(readRemoteSession(path), easLedger, path),
         },
       ),
@@ -323,9 +335,14 @@ function workspaceBuild(path: string, history: Record<string, RunHistory> | unde
   return buildReport(record, { state: activeBuildState(record.claim), history: history?.[projectKey] });
 }
 
-function readAndroidRuntime(avdName: string): AndroidRuntimeFacts {
+function androidRuntimeReader(): (avdName: string) => AndroidRuntimeFacts {
+  const resolve = ownedAvdSerialResolver({ timeoutMs: 5000 });
+  return (avdName) => readAndroidRuntime(() => resolve(avdName));
+}
+
+function readAndroidRuntime(resolveSerial: () => ResolvedAvdSerial): AndroidRuntimeFacts {
   try {
-    const resolved = resolveOwnedAvdSerial(avdName, { timeoutMs: 5000 });
+    const resolved = resolveSerial();
     return {
       serial: resolved.serial ?? null,
       state: resolved.serial
@@ -352,8 +369,30 @@ export function readVolumes(projectPath: string): VolumeInfo[] {
   return volumes;
 }
 
-async function resolveOnPort(port: number, path: string): Promise<MetroResolution> {
-  return (await isMetroRunning(port)) ? resolveProjectMetro(port, path) : { missing: true };
+interface PortLookup {
+  answering: Map<number, boolean>;
+  pidsOf: (port: number) => Promise<number[]>;
+  cwdOf: (pid: number) => Promise<string | null>;
+}
+
+async function portLookup(metroPorts: number[]): Promise<PortLookup> {
+  const ports = [...new Set(metroPorts)];
+  const answering = new Map(await Promise.all(ports.map(async (port) => [port, await isMetroRunning(port)] as const)));
+  const listeners = listeningPidsByPort(ports.filter((port) => answering.get(port)));
+  const cwds = listeners.then((byPort) => processCwds([...byPort.values()].flatMap((pids) => pids.slice(0, 1))));
+  return {
+    answering,
+    pidsOf: async (port) => (await listeners).get(port) ?? listeningPids(port),
+    cwdOf: async (pid) => {
+      const known = await cwds;
+      return known.has(pid) ? (known.get(pid) ?? null) : processCwd(pid);
+    },
+  };
+}
+
+async function resolveOnPort(port: number, path: string, lookup: PortLookup): Promise<MetroResolution> {
+  const running = lookup.answering.get(port) ?? (await isMetroRunning(port));
+  return running ? resolveProjectMetro(port, path, lookup) : { missing: true };
 }
 
 interface SupervisorFacts {
@@ -368,6 +407,7 @@ async function supervisorFacts(
   path: string,
   proj: ProjectRecord | undefined,
   metroResolution: MetroResolution | null,
+  lookup: PortLookup,
 ): Promise<SupervisorFacts | null> {
   const state = readSupervisorState(path);
   const record: SupervisorRecordExt | null = proj?.supervisor ?? null;
@@ -377,7 +417,8 @@ async function supervisorFacts(
   const alive = resolveSupervisorTarget({ state, record, reservedPort: proj?.metroPort }).status === 'ours';
   let healthy = false;
   if (alive && port) {
-    const resolution = port === proj?.metroPort && metroResolution ? metroResolution : await resolveOnPort(port, path);
+    const resolution =
+      port === proj?.metroPort && metroResolution ? metroResolution : await resolveOnPort(port, path, lookup);
     healthy = Boolean(resolution?.metro);
   }
   return {
@@ -393,7 +434,7 @@ function logFacts(path: string): { dir: string; errorsSinceMarker: number } | nu
   const dir = workspaceLogsDir(path);
   if (!existsSync(dir)) return null;
   try {
-    return { dir, errorsSinceMarker: queryLogs({ dir, errorsOnly: true }).length };
+    return { dir, errorsSinceMarker: countErrorsSinceMarker(dir, workspaceLogErrorIndex(path)) };
   } catch {
     return { dir, errorsSinceMarker: 0 };
   }

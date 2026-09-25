@@ -64,6 +64,80 @@ export function parseLsofCwd(out: unknown): string | null {
   return nLine ? nLine.slice(1) : null;
 }
 
+function lsofOutput(args: string[]): Promise<string | null> {
+  return getExecutor()
+    .runFileAsync('lsof', args)
+    .catch((error: { stdout?: unknown }) => (typeof error?.stdout === 'string' ? error.stdout : null));
+}
+
+export function parseLsofListeners(out: unknown): Map<number, number[]> {
+  const byPort = new Map<number, number[]>();
+  let pid: number | null = null;
+  for (const line of String(out ?? '').split('\n')) {
+    if (line.startsWith('p')) pid = parseInt(line.slice(1), 10);
+    else if (line.startsWith('n') && pid !== null && Number.isFinite(pid)) {
+      const port = addressPort(line.slice(1));
+      const pids = byPort.get(port) ?? [];
+      if (!pids.includes(pid)) pids.push(pid);
+      byPort.set(port, pids);
+    }
+  }
+  return byPort;
+}
+
+/**
+ * `listeningPids` for several ports with one lsof call. A port lsof could not be asked about is
+ * missing from the map.
+ */
+export async function listeningPidsByPort(ports: number[]): Promise<Map<number, number[]>> {
+  const result = new Map<number, number[]>();
+  if (ports.length === 0) return result;
+  const out = await lsofOutput(['-nP', `-iTCP:${ports.join(',')}`, '-sTCP:LISTEN', '-Fpn']);
+  if (out === null) return result;
+  const found = parseLsofListeners(out);
+  for (const port of ports) result.set(port, found.get(port) ?? []);
+  return result;
+}
+
+export function parseLsofCwds(out: unknown): Map<number, string> {
+  const cwds = new Map<number, string>();
+  let pid: number | null = null;
+  let inCwd = false;
+  for (const line of String(out ?? '').split('\n')) {
+    if (line.startsWith('p')) {
+      pid = parseInt(line.slice(1), 10);
+      inCwd = false;
+    } else if (line.startsWith('f')) {
+      inCwd = line === 'fcwd';
+    } else if (inCwd && line.startsWith('n') && pid !== null && !cwds.has(pid)) {
+      cwds.set(pid, line.slice(1));
+    }
+  }
+  return cwds;
+}
+
+/** `processCwd` for several pids with at most one lsof call. A pid lsof could not be asked about is missing from the map. */
+export async function processCwds(pids: number[]): Promise<Map<number, string | null>> {
+  const cwds = new Map<number, string | null>();
+  const viaLsof: number[] = [];
+  for (const pid of new Set(pids)) {
+    let cwd: string | null = null;
+    if (process.platform === 'linux') {
+      try {
+        cwd = readlinkSync(`/proc/${pid}/cwd`);
+      } catch {}
+    }
+    if (cwd) cwds.set(pid, cwd);
+    else viaLsof.push(pid);
+  }
+  if (viaLsof.length === 0) return cwds;
+  const out = await lsofOutput(['-a', '-p', viaLsof.join(','), '-d', 'cwd', '-Fn']);
+  if (out === null) return cwds;
+  const found = parseLsofCwds(out);
+  for (const pid of viaLsof) cwds.set(pid, found.get(pid) ?? null);
+  return cwds;
+}
+
 export function processCwd(pid: number): string | null {
   if (process.platform === 'linux') {
     try {
@@ -111,17 +185,22 @@ export async function resolveProjectMetro(
   projectPath: string,
   {
     probe = isMetroRunning,
+    pidsOf = listeningPids,
     cwdOf = processCwd,
-  }: { probe?: (port: number) => Promise<boolean> | boolean; cwdOf?: (pid: number) => string | null } = {},
+  }: {
+    probe?: (port: number) => Promise<boolean> | boolean;
+    pidsOf?: (port: number) => Promise<number[]> | number[];
+    cwdOf?: (pid: number) => Promise<string | null> | string | null;
+  } = {},
 ): Promise<MetroResolution> {
-  const pids = listeningPids(port);
+  const pids = await pidsOf(port);
   const pid = pids[0];
   if (pid === undefined) return { missing: true };
 
   if (!(await probe(port))) {
     return { notOurs: `pid ${pid} on port ${port} does not answer Metro's /status`, kind: NOT_OURS_UNRESPONSIVE, pid };
   }
-  const cwd = cwdOf(pid);
+  const cwd = await cwdOf(pid);
   if (!cwd) {
     const owner = ownedSupervisor(projectPath, port);
     if (owner && (pid === owner.pid || pid === owner.serverPid)) {

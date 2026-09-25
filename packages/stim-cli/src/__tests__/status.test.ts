@@ -41,6 +41,10 @@ beforeEach(() => {
       if (cmd.includes('simctl list devices --json')) return listJson;
       return '';
     },
+    async runFileAsync(_file, args = []) {
+      if (args.join(' ').includes('simctl list devices --json')) return listJson;
+      return '';
+    },
     runQuiet(cmd) {
       if (cmd.includes('simctl list devices --json')) return listJson;
       return null;
@@ -126,6 +130,10 @@ test('status reports simctl as unreadable instead of warning that every sim is g
     runFile(_file, args = []) {
       const cmd = args.join(' ');
       if (cmd.includes('simctl list devices --json')) throw new Error('xcrun: simctl not found');
+      return '';
+    },
+    async runFileAsync(_file, args = []) {
+      if (args.join(' ').includes('simctl list devices --json')) throw new Error('xcrun: simctl not found');
       return '';
     },
     runQuiet() {
@@ -249,12 +257,13 @@ test('status reports a supervisor whose port answers as this project as healthy'
     const listenerPid = 999999901;
     setExecutor({
       run: () => '',
-      runQuiet(cmd) {
-        if (cmd.includes(`-iTCP:${port}`)) return String(listenerPid);
-        if (cmd.includes('-d cwd -Fn')) return `p${listenerPid}\nfcwd\nn${root}`;
-        if (cmd.startsWith('ps -o pgid=')) return String(listenerPid);
-        return null;
+      async runFileAsync(file, args = []) {
+        const cmd = [file, ...args].join(' ');
+        if (cmd.includes(`-iTCP:${port} `)) return `p${listenerPid}\nf12\nn127.0.0.1:${port}`;
+        if (cmd.includes(`-p ${listenerPid} -d cwd -Fn`)) return `p${listenerPid}\nfcwd\nn${root}`;
+        throw new Error(`unexpected ${cmd}`);
       },
+      runQuiet: () => null,
       runFileQuiet: () => null,
       spawn() {
         throw new Error('spawn should not be called from status');

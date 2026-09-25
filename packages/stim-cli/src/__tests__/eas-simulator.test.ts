@@ -44,6 +44,9 @@ function recordingExec(outputs: Record<string, string> = {}): Executor & { calls
     runFileQuiet() {
       throw new Error('eas-simulator must use runFile, not runFileQuiet');
     },
+    runFileAsync() {
+      throw new Error('eas-simulator must use runFile, not runFileAsync');
+    },
     spawn() {
       throw new Error('eas-simulator does not spawn');
     },

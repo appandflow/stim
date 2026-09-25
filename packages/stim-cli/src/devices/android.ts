@@ -1257,19 +1257,53 @@ export function getAvdNameForSerial(
   return out.split('\n')[0]?.trim() || null;
 }
 
-export function resolveOwnedAvdSerial(avdName: string, { timeoutMs }: { timeoutMs?: number } = {}): ResolvedAvdSerial {
+export function resolveOwnedAvdSerial(avdName: string, opts: { timeoutMs?: number } = {}): ResolvedAvdSerial {
+  return ownedAvdSerialResolver(opts)(avdName);
+}
+
+function once<T>(read: () => T): () => T {
+  let result: { value: T } | { error: unknown } | undefined;
+  return () => {
+    if (!result) {
+      try {
+        result = { value: read() };
+      } catch (error) {
+        result = { error };
+      }
+    }
+    if ('error' in result) throw result.error;
+    return result.value;
+  };
+}
+
+/**
+ * `resolveOwnedAvdSerial` for several AVDs against one reading of the AVD list, `adb devices`, and
+ * each emulator's AVD name. The timeout budget starts when the resolver is created.
+ */
+export function ownedAvdSerialResolver({ timeoutMs }: { timeoutMs?: number } = {}): (
+  avdName: string,
+) => ResolvedAvdSerial {
   const started = Date.now();
   const remaining = () => ({
     timeoutMs: timeoutMs === undefined ? undefined : Math.max(1, timeoutMs - (Date.now() - started)),
   });
-  if (!listAvds(remaining()).includes(avdName)) return { missing: true };
-  if (!avdName?.startsWith('stim-')) return { notOwned: true };
-  const adb = listAdbDevices(remaining());
-  const candidates = [
-    ...adb.emulators,
-    ...adb.unhealthy.filter((entry) => entry.kind === 'emulator' && entry.consolePort !== undefined),
-  ];
-  const match = candidates.find((e) => getAvdNameForSerial(e.serial, remaining()) === avdName);
-  if (match) return { serial: match.serial };
-  return { notRunning: true };
+  const avds = once(() => listAvds(remaining()));
+  const adb = once(() => listAdbDevices(remaining()));
+  const names = new Map<string, string | null>();
+  const avdNameOf = (serial: string) => {
+    if (!names.has(serial)) names.set(serial, getAvdNameForSerial(serial, remaining()));
+    return names.get(serial);
+  };
+  return (avdName) => {
+    if (!avds().includes(avdName)) return { missing: true };
+    if (!avdName?.startsWith('stim-')) return { notOwned: true };
+    const devices = adb();
+    const candidates = [
+      ...devices.emulators,
+      ...devices.unhealthy.filter((entry) => entry.kind === 'emulator' && entry.consolePort !== undefined),
+    ];
+    const match = candidates.find((e) => avdNameOf(e.serial) === avdName);
+    if (match) return { serial: match.serial };
+    return { notRunning: true };
+  };
 }
