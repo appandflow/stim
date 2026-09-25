@@ -813,8 +813,8 @@ describe('explicit remote backend behavior', () => {
 
     expect((await h.run()).ok).toBe(true);
     expect(order.slice(0, 7)).toEqual([
-      'localMetro',
       'resolveBackend',
+      'localMetro',
       'publicMetro',
       'ensureDevice',
       'ensureDeviceBooted',
@@ -867,6 +867,26 @@ describe('explicit remote backend behavior', () => {
     expect(result.error?.code).toBe('STIM_REMOTE_METRO_UNREACHABLE');
     expect(remoteCalls).toEqual([]);
     expect(existsSync(workspaceStateFile(root)) ? readState().remoteDevice : undefined).toBeUndefined();
+  });
+
+  test('an unusable remote setup refuses before the EAS build is resolved', async () => {
+    const resolveEasDevelopmentBuild = vi.fn<
+      NonNullable<NonNullable<Parameters<typeof runAndroid>[0]>['resolveEasDevelopmentBuild']>
+    >(async () => null);
+    const h = harness({
+      remoteDevice: 'eas',
+      easProfile: 'development',
+      resolveEasDevelopmentBuild,
+      resolveRemoteDeviceContext: async () => ({
+        failed: 'eas-cli 21.5.0 has no EAS Simulator commands.',
+        remedy: 'Upgrade eas-cli.',
+        code: 'STIM_REMOTE_EAS_UNAVAILABLE',
+      }),
+    });
+
+    const result = await h.run();
+    expect(result).toMatchObject({ ok: false, error: { code: 'STIM_REMOTE_EAS_UNAVAILABLE' } });
+    expect(resolveEasDevelopmentBuild).not.toHaveBeenCalled();
   });
 
   test('an EAS session is recorded after boot and survives a later build failure', async () => {

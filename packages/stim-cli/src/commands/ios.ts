@@ -483,21 +483,6 @@ async function runIos(
     listRuntimes: d.listIosRuntimes,
   });
   if (modelRefusal) return fail(modelRefusal);
-  const easBuild = await d.resolveEasDevelopmentBuild({
-    root,
-    platform: PLATFORM,
-    profile: opts.easProfile,
-    note,
-    isExpo,
-    physical,
-    selectors: [opts.scheme, opts.configuration],
-    buildCache: opts.buildCache,
-  });
-  if (isEasBuildFailure(easBuild)) return fail(easBuild);
-  const registerProject = () => d.upsertProject(root, { bundleId: d.detectBundleId(root) ?? undefined, isExpo });
-  if (remoteBackend !== 'eas') registerProject();
-  const proj = d.getProject(root);
-
   let remoteDevice: ReturnType<typeof d.remoteIosDeps> | null = null;
   if (remoteBackend) {
     const resolved = await d.resolveRemoteContext({
@@ -518,6 +503,21 @@ async function runIos(
       launchIosApp: remoteDevice.launchIosApp,
     };
   }
+
+  const easBuild = await d.resolveEasDevelopmentBuild({
+    root,
+    platform: PLATFORM,
+    profile: opts.easProfile,
+    note,
+    isExpo,
+    physical,
+    selectors: [opts.scheme, opts.configuration],
+    buildCache: opts.buildCache,
+  });
+  if (isEasBuildFailure(easBuild)) return fail(easBuild);
+  const registerProject = () => d.upsertProject(root, { bundleId: d.detectBundleId(root) ?? undefined, isExpo });
+  if (remoteBackend !== 'eas') registerProject();
+  const proj = d.getProject(root);
 
   const limits = d.getConcurrencyLimits();
 

@@ -63,8 +63,9 @@ REMOTE DEVICE BACKENDS
   The EAS backend needs eas-cli 21.6.0 or later and an account with EAS
   Simulator access. An EAS session is billable. EAS does not inherit the proxy
   credentials. Always tear the session down: \`stop\`, \`worktree remove\`,
-  and \`gc --delete\` can end sessions that Stim proves it owns. \`stim status\` lists each
-  recorded session with its preview URL (see \`guide facts\`).
+  and \`gc --delete\` can end sessions that Stim proves it owns.
+  \`stim status\` lists each recorded session with its preview URL (see
+  \`guide facts\`).
 
 IDEMPOTENT
   A healthy dev server on the reserved port is a no-op: \`start\` prints the

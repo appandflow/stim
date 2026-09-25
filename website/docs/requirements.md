@@ -70,8 +70,8 @@ gems and runs `bundle exec pod install`. Run `stim doctor` to check the setup.
 ## Optional remote devices
 
 - The `proxy` backend needs an Agent Device daemon URL and token.
-- The `eas` backend needs the EAS CLI, an authenticated Expo account, and a
-  configured EAS project. EAS simulator use can be billable.
+- The `eas` backend needs EAS CLI 21.6.0 or later, an authenticated Expo
+  account, and a configured EAS project. EAS simulator use can be billable.
 
 ## EAS development builds
 

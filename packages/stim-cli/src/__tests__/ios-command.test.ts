@@ -3152,14 +3152,18 @@ describe('--remote', () => {
   });
 
   test('an unusable remote setup refuses before any build work', async () => {
+    const resolveEasDevelopmentBuild = vi.fn<NonNullable<IosDeps['resolveEasDevelopmentBuild']>>(async () => null);
     const { exitCode, calls, stderr } = await run(
-      { remote: 'eas' },
+      { remote: 'eas', easProfile: 'ios-simulator' },
       {
+        detectIsExpo: () => true,
+        resolveEasDevelopmentBuild,
         resolveRemoteContext: () => ({ failed: 'agent-device is not on PATH.', remedy: 'Install it.' }),
       },
     );
     expect(exitCode).toBe(1);
     expect(stderr).toContain('agent-device is not on PATH.');
+    expect(resolveEasDevelopmentBuild).not.toHaveBeenCalled();
     expect(calls.order.includes('fingerprintProject')).toBeFalsy();
   });
 
