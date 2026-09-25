@@ -124,22 +124,32 @@ struct BuildProgressBar: View {
       let progress = build.progress(at: context.date)
       VStack(alignment: .leading, spacing: 5) {
         HStack(spacing: 8) {
-          if !compact {
-            Text("Building \(build.platform)\(build.slot == "default" ? "" : " \u{00B7} \(build.slot)")")
-              .foregroundStyle(Theme.text)
+          Group {
+            if compact {
+              Text(build.phase).font(Theme.mono()).foregroundStyle(Theme.primary)
+            } else {
+              Text("Building \(build.platform)\(build.slot == "default" ? "" : " \u{00B7} \(build.slot)")  ")
+                .foregroundStyle(Theme.text)
+                + Text(build.phase).font(Theme.mono()).foregroundStyle(Theme.primary)
+            }
           }
-          Text(build.phase).font(Theme.mono()).foregroundStyle(Theme.primary)
-          Spacer()
-          Text(compact ? (progress.remaining ?? formatDuration(ms: progress.elapsedMs)) : timing(progress))
+          .lineLimit(1)
+          .truncationMode(.tail)
+          Spacer(minLength: 4)
+          Text(timing(progress))
             .font(Theme.mono())
             .foregroundStyle(Theme.secondary)
             .lineLimit(1)
+            .fixedSize()
         }
         .font(Theme.body(11.5))
         if let fraction = progress.fraction {
           ProgressView(value: fraction).tint(Theme.lavender)
         } else {
           ProgressView().progressViewStyle(.linear).tint(Theme.lavender)
+        }
+        if let remaining = progress.remaining {
+          Text(remaining).font(Theme.body(10.5)).foregroundStyle(Theme.tertiary).lineLimit(1)
         }
       }
       .help(help)
@@ -148,8 +158,8 @@ struct BuildProgressBar: View {
 
   private func timing(_ progress: BuildProgress) -> String {
     let elapsed = formatDuration(ms: progress.elapsedMs)
-    guard let expected = build.expectedMs, let remaining = progress.remaining else { return elapsed }
-    return "\(elapsed) / ~\(formatDuration(ms: expected)) \u{00B7} \(remaining)"
+    guard let expected = build.expectedMs, progress.remaining != nil else { return elapsed }
+    return "\(elapsed) / ~\(formatDuration(ms: expected))"
   }
 
   private var help: String {

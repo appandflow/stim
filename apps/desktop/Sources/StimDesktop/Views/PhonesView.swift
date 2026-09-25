@@ -38,7 +38,7 @@ struct PhonesView: View {
 
       Section {
         ForEach([server.devicesError, server.revokeError].compactMap { $0 }, id: \.self) { error in
-          Text(error).foregroundStyle(Theme.error)
+          Text(abbreviatingHome(error)).foregroundStyle(Theme.error)
         }
         if server.devices.isEmpty {
           Text("No paired phones.").foregroundStyle(Theme.secondary)
@@ -108,7 +108,7 @@ struct PhonesView: View {
       }
     case .failed(let message):
       VStack(alignment: .leading, spacing: 8) {
-        Text(message).foregroundStyle(Theme.error).textSelection(.enabled)
+        Text(abbreviatingHome(message)).foregroundStyle(Theme.error).textSelection(.enabled)
         Button("Try Again") { server.start() }
       }
     }
@@ -250,6 +250,7 @@ struct PairSheet: View {
   @State private var error: String?
   @State private var paired: PairedDevice?
   @State private var openedAt = Date()
+  @State private var showsToken = false
 
   var body: some View {
     VStack(spacing: 18) {
@@ -259,7 +260,7 @@ struct PairSheet: View {
         Text("Paired \(paired.name)").font(Theme.body(15, weight: .semibold))
         Text(paired.node).font(Theme.mono()).foregroundStyle(Theme.secondary)
       } else if let error {
-        Text(error).foregroundStyle(Theme.error).textSelection(.enabled)
+        Text(abbreviatingHome(error)).foregroundStyle(Theme.error).textSelection(.enabled)
         Button("Try Again", action: load)
       } else if let code {
         codeView(code)
@@ -307,7 +308,7 @@ struct PairSheet: View {
           .foregroundStyle(remaining > 30 ? Theme.secondary : Theme.warn)
         VStack(alignment: .leading, spacing: 6) {
           detail("Endpoint", code.qr.endpoint)
-          detail("Token", code.qr.pairingToken)
+          detail("Token", code.qr.pairingToken, secret: true)
         }
         if case .running(let health, _) = server.state, let route = health.route, route.state != "routed" {
           Label(
@@ -335,11 +336,21 @@ struct PairSheet: View {
     }
   }
 
-  private func detail(_ title: String, _ value: String) -> some View {
+  private func detail(_ title: String, _ value: String, secret: Bool = false) -> some View {
     HStack {
       Text(title).foregroundStyle(Theme.tertiary).frame(width: 64, alignment: .leading)
-      Text(value).font(Theme.mono()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+      if secret && !showsToken {
+        Text(String(repeating: "\u{2022}", count: 16)).font(Theme.mono()).lineLimit(1)
+      } else {
+        Text(value).font(Theme.mono()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+      }
       Spacer()
+      if secret {
+        Button { showsToken.toggle() } label: { Image(systemName: showsToken ? "eye.slash" : "eye") }
+          .buttonStyle(.borderless)
+          .accessibilityLabel(showsToken ? "Hide token" : "Show token")
+          .help(showsToken ? "Hide token" : "Show token")
+      }
       Button("Copy") { copy(value) }.controlSize(.small)
     }
     .font(Theme.body(12))
@@ -348,6 +359,7 @@ struct PairSheet: View {
   private func load() {
     error = nil
     code = nil
+    showsToken = false
     let port = server.port
     Task {
       let cli = await server.cli()

@@ -70,7 +70,7 @@ struct AttentionView: View {
       }
     } else {
       Button(title) { actions.run(runTitle ?? title, command, key: key) }
-        .help(command.shellLine)
+        .help(command.displayLine())
     }
   }
 
@@ -78,7 +78,7 @@ struct AttentionView: View {
     HStack(spacing: 14) {
       Image(systemName: "exclamationmark.triangle").foregroundStyle(Theme.warn)
       VStack(alignment: .leading, spacing: 3) {
-        Text(title).lineLimit(2)
+        Text(abbreviatingHome(title)).lineLimit(2)
         Text(detail).font(Theme.body(11.5)).foregroundStyle(Theme.secondary)
       }
       Spacer()
@@ -87,7 +87,7 @@ struct AttentionView: View {
           NSPasteboard.general.clearContents()
           NSPasteboard.general.setString(command.shellLine, forType: .string)
         }
-        .help(command.shellLine)
+        .help(command.displayLine())
         runButton("Run stim \(command.arguments.joined(separator: " "))", command, runTitle: runTitle)
       }
     }

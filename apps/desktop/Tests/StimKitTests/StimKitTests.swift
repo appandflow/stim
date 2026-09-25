@@ -74,6 +74,36 @@ import Testing
     #expect(names.subtitle == "app")
   }
 
+  @Test func abbreviatesOnlyPathsThatStartAtHome() {
+    #expect(abbreviatingHome("/Users/jan", home: "/Users/jan") == "~")
+    #expect(abbreviatingHome("/Users/jan/app/.worktrees/x", home: "/Users/jan") == "~/app/.worktrees/x")
+    #expect(abbreviatingHome("/Users/janic/x", home: "/Users/jan") == "/Users/janic/x")
+    #expect(abbreviatingHome("/private/Users/jan/x", home: "/Users/jan") == "/private/Users/jan/x")
+    #expect(
+      abbreviatingHome("kept: '/Users/jan/a' and /Users/janic/b, /Users/jan/c", home: "/Users/jan")
+        == "kept: '~/a' and /Users/janic/b, ~/c")
+  }
+
+  @Test func namesTheFolderInsideItsCheckout() {
+    #expect(pathInCheckout("/u/tlon/.worktrees/chat/apps/tlon-mobile", worktree: nil) == "apps/tlon-mobile")
+    #expect(pathInCheckout("/u/stim/.claude/worktrees/1123/apps/mobile", worktree: nil) == "apps/mobile")
+    #expect(pathInCheckout("/u/tlon/apps/tlon-mobile", worktree: "/u/tlon") == "apps/tlon-mobile")
+    #expect(pathInCheckout("/u/tlon/.worktrees/chat", worktree: "/u/tlon/.worktrees/chat") == nil)
+    #expect(pathInCheckout("/u/tlonx/app", worktree: "/u/tlon") == nil)
+  }
+
+  @Test func ordersDrivenThenRunningThenStoppedDevices() throws {
+    let json = """
+      {"path":"/w","live":true,"warnings":[],
+       "ios":{"name":"stim-w (iPhone 18 Pro 27.0)","udid":"A","owned":true,"state":"Shutdown"},
+       "android":{"name":"stim-w","owned":true,"physical":false,"state":"detected"},
+       "slots":[{"slot":"duo","ios":{"name":"stim-w-duo (iPhone Duo 27.1)","udid":"B","owned":true,"state":"Booted",
+         "activity":{"state":"driven","basis":[]}}}]}
+      """
+    let env = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
+    #expect(env.orderedDevices.map { "\($0.slot)/\($0.platform)" } == ["duo/ios", "default/android", "default/ios"])
+  }
+
   @Test func projectFromGitCommonDir() {
     #expect(Project(gitCommonDir: "/Users/dev/app/.git").root == "/Users/dev/app")
     #expect(Project(gitCommonDir: "/srv/app.git").root == "/srv/app.git")
@@ -142,6 +172,14 @@ import Testing
         "cd '/Users/dev/it'\\''s here' && stim ios",
         "cd '/Users/dev/it'\\''s here' && stim android",
       ])
+  }
+
+  @Test func displaysHomePathsFromTildeAndStaysAShellLine() {
+    #expect(
+      StimCommand(["worktree", "remove", "/Users/jan/app/.worktrees/x"], cwd: "/Users/jan/it's here").displayLine(
+        home: "/Users/jan") == "cd ~/'it'\\''s here' && stim worktree remove ~/app/.worktrees/x")
+    #expect(StimCommand(["gc"], cwd: "/Users/jan").displayLine(home: "/Users/jan") == "cd ~ && stim gc")
+    #expect(StimCommand(["gc"], cwd: "/Users/janic").displayLine(home: "/Users/jan") == "cd '/Users/janic' && stim gc")
   }
 }
 

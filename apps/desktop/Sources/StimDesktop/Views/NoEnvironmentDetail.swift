@@ -14,7 +14,7 @@ struct NoEnvironmentDetail: View {
             Text(names.title).font(Theme.heading(22))
             Chip(tint: nil) { Text("no environment") }
           }
-          Text(worktree.path).font(Theme.mono()).foregroundStyle(Theme.secondary).textSelection(.enabled)
+          Text(abbreviatingHome(worktree.path)).font(Theme.mono()).foregroundStyle(Theme.secondary).textSelection(.enabled)
           if let branch = worktree.branch {
             Label(branch, systemImage: "arrow.triangle.branch").foregroundStyle(Theme.secondary)
           }
@@ -25,7 +25,7 @@ struct NoEnvironmentDetail: View {
             .foregroundStyle(Theme.secondary)
           ForEach(environmentCommands(worktree: worktree.path), id: \.self) { command in
             HStack(spacing: 10) {
-              CommandText(command: command.shellLine)
+              CommandText(command: command.displayLine())
               Button("Copy") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(command.shellLine, forType: .string)

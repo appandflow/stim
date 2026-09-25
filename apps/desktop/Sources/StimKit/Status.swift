@@ -51,6 +51,19 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
     return out
   }
 
+  /// `devices` with driven devices first, then other running ones, then stopped ones, by slot inside each group.
+  public var orderedDevices: [DeviceRef] {
+    func rank(_ device: DeviceRef) -> Int {
+      device.isRunning ? (device.activity?.state == "driven" ? 0 : 1) : 2
+    }
+    return devices.enumerated().sorted { a, b in
+      let (ra, rb) = (rank(a.element), rank(b.element))
+      if ra != rb { return ra < rb }
+      if a.element.slot != b.element.slot { return a.element.slot < b.element.slot }
+      return a.offset < b.offset
+    }.map(\.element)
+  }
+
   /// The running build that targets this local device's platform and slot. The status record does not say
   /// whether a run targets a remote session, so remote devices get none.
   public func runningBuild(for device: DeviceRef) -> Build? {

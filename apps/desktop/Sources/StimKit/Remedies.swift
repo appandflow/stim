@@ -1,3 +1,5 @@
+import Foundation
+
 /// A `stim` invocation: its arguments and the directory it runs in.
 public struct StimCommand: Hashable, Sendable {
   public var arguments: [String]
@@ -11,6 +13,16 @@ public struct StimCommand: Hashable, Sendable {
   /// The same command as one line for a shell, for copying.
   public var shellLine: String {
     (["cd", shellQuote(cwd), "&&", "stim"] + arguments).joined(separator: " ")
+  }
+
+  /// `shellLine` with paths under `home` written from `~`, still valid for a shell.
+  public func displayLine(home: String = NSHomeDirectory()) -> String {
+    func relative(_ path: String) -> String? {
+      path == home ? "" : path.hasPrefix(home + "/") ? String(path.dropFirst(home.count + 1)) : nil
+    }
+    let dir = relative(cwd).map { $0.isEmpty ? "~" : "~/" + shellQuote($0) } ?? shellQuote(cwd)
+    let arguments = arguments.map { argument in relative(argument).map { $0.isEmpty ? "~" : "~/" + $0 } ?? argument }
+    return (["cd", dir, "&&", "stim"] + arguments).joined(separator: " ")
   }
 }
 

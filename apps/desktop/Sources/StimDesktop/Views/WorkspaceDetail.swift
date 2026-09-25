@@ -19,8 +19,8 @@ struct WorkspaceDetail: View {
   @State private var takenOver: Set<String> = []
 
   var body: some View {
-    let devices = env.devices
-    let focused = devices.first { $0.id == focusedID } ?? devices.first
+    let devices = env.orderedDevices
+    let focused = devices.first { $0.id == focusedID } ?? env.devices.first
     HStack(spacing: 0) {
       VStack(spacing: 0) {
         Picker("View", selection: $tab) {
@@ -117,36 +117,7 @@ struct Inspector: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 24) {
-        VStack(alignment: .leading, spacing: 8) {
-          SectionLabel(title: "Workspace")
-          Text(env.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
-            .font(Theme.mono())
-            .foregroundStyle(Theme.secondary)
-            .textSelection(.enabled)
-          HStack {
-            Button("Reveal in Finder") {
-              NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: env.path)])
-            }
-            if let editor = chosen(editorID, from: ExternalApp.editors) {
-              Button("Open in \(editor.name)") { open(env.path, in: editor) }
-            }
-            if let terminal = chosen(terminalID, from: ExternalApp.terminals) {
-              Button("Open in \(terminal.name)") { open(env.path, in: terminal) }
-            }
-          }
-          .controlSize(.small)
-        }
-
-        actionSection
-
-        VStack(alignment: .leading, spacing: 8) {
-          SectionLabel(title: "Dev server")
-          row("Metro", env.metro.map { metro in
-            ":\(metro.port) \(metro.running ? "running" : "stopped")" + (metro.pid.map { " \u{00B7} pid \($0)" } ?? "")
-          } ?? "none")
-          row("Supervisor", env.supervisor.map { "\($0.mode ?? "unknown") \u{00B7} \($0.healthy == true ? "healthy" : "unhealthy")" } ?? "none")
-          if let mb = env.memoryMb, mb > 0 { row("Committed", formatGigabytes(mb: mb)) }
-        }
+        statusCard
 
         if let usage {
           VStack(alignment: .leading, spacing: 8) {
@@ -163,7 +134,7 @@ struct Inspector: View {
 
         VStack(alignment: .leading, spacing: 8) {
           SectionLabel(title: "Devices")
-          ForEach(env.devices) { device in
+          ForEach(env.orderedDevices) { device in
             HStack(spacing: 8) {
               StatusDot(color: device.isRunning ? Theme.live : Theme.tertiary, filled: device.isRunning)
               Text(device.slot).font(Theme.body(12, weight: .semibold))
@@ -191,24 +162,10 @@ struct Inspector: View {
           VStack(alignment: .leading, spacing: 8) {
             SectionLabel(title: "Warnings")
             ForEach(env.warnings, id: \.self) { warning in
-              Label(warning, systemImage: "exclamationmark.triangle.fill")
+              Label(abbreviatingHome(warning), systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(Theme.warn)
                 .textSelection(.enabled)
             }
-          }
-        }
-
-        VStack(alignment: .leading, spacing: 8) {
-          SectionLabel(title: "Errors")
-          let errors = env.logs?.errorsSinceMarker ?? 0
-          Label(
-            errors == 0 ? "No errors since the last marker" : "\(errors) errors since the last marker",
-            systemImage: errors == 0 ? "checkmark.circle.fill" : "xmark.octagon.fill"
-          )
-          .foregroundStyle(errors == 0 ? Theme.live : Theme.error)
-          HStack {
-            CommandText(command: "stim logs --errors")
-            Button("Open logs", action: openLogs).controlSize(.small)
           }
         }
       }
@@ -217,9 +174,38 @@ struct Inspector: View {
     }
   }
 
-  private var actionSection: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      SectionLabel(title: "Actions")
+  private var statusCard: some View {
+    let errors = env.logs?.errorsSinceMarker ?? 0
+    let metroHealthy = env.metro?.running == true && env.supervisor?.healthy != false
+    return VStack(alignment: .leading, spacing: 10) {
+      HStack(spacing: 8) {
+        if let branch = env.worktree?.branch {
+          Text(branch).font(Theme.body(12, weight: .semibold)).lineLimit(1)
+        }
+        if let folder = pathInCheckout(env.path, worktree: env.worktree?.path) {
+          Text(folder).font(Theme.mono()).foregroundStyle(Theme.secondary).lineLimit(1).truncationMode(.middle)
+        }
+        Spacer(minLength: 0)
+        actionsMenu
+      }
+      HStack(spacing: 6) {
+        if let metro = env.metro {
+          Chip(tint: metroHealthy ? Theme.live : Theme.error) {
+            Text("Metro :\(String(metro.port)) \u{00B7} \(metro.running ? (metroHealthy ? "healthy" : "unhealthy") : "stopped")")
+          }
+          .help(env.supervisor.map { "\($0.mode ?? "supervisor") \u{00B7} \($0.healthy == true ? "healthy" : "unhealthy")" } ?? "")
+        }
+        if let mb = env.memoryMb, mb > 0 {
+          Chip { Text(formatGigabytes(mb: mb)) }.help("Committed memory estimate from stim status")
+        }
+        if env.logs != nil {
+          Button(action: openLogs) {
+            Chip(tint: errors > 0 ? Theme.error : nil) { Text(errors == 1 ? "1 error" : "\(errors) errors") }
+          }
+          .buttonStyle(.plain)
+          .help("Open the logs filtered to errors")
+        }
+      }
       if let active = actions.active(for: env.path) {
         HStack(spacing: 8) {
           ProgressView().controlSize(.small)
@@ -227,32 +213,59 @@ struct Inspector: View {
           Spacer()
           Button("Show output") { actions.presented = active }
         }
-      } else {
-        HStack {
-          Button("Stop") {
-            if env.remoteDevices?.isEmpty == false {
-              confirmingStop = true
-            } else {
-              stop()
-            }
-          }
-          .help("stim stop: halt the dev server and shut the owned devices down")
-          Button("Remove worktree\u{2026}", role: .destructive) {
-            let path = env.path
-            Task {
-              let branch = await Task.detached { currentBranch(at: path) }.value
-              removal = Removal(branch: branch)
-            }
-          }
-          .help("stim worktree remove")
-          if let last = actions.latest(for: env.path) {
-            Spacer()
-            Button("Last output") { actions.presented = last }
-          }
-        }
       }
     }
+    .padding(12)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
+    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.border))
     .controlSize(.small)
+  }
+
+  private var actionsMenu: some View {
+    Menu {
+      Button("Open logs", systemImage: "text.alignleft", action: openLogs)
+      Button("Copy path", systemImage: "doc.on.doc") {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(env.path, forType: .string)
+      }
+      Button("Reveal in Finder", systemImage: "folder") {
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: env.path)])
+      }
+      if let editor = chosen(editorID, from: ExternalApp.editors) {
+        Button("Open in \(editor.name)", systemImage: "chevron.left.forwardslash.chevron.right") { open(env.path, in: editor) }
+      }
+      if let terminal = chosen(terminalID, from: ExternalApp.terminals) {
+        Button("Open in \(terminal.name)", systemImage: "terminal") { open(env.path, in: terminal) }
+      }
+      if let last = actions.latest(for: env.path) {
+        Button("Last output", systemImage: "doc.plaintext") { actions.presented = last }
+      }
+      Divider()
+      Button("Stop", systemImage: "stop.circle") {
+        if env.remoteDevices?.isEmpty == false {
+          confirmingStop = true
+        } else {
+          stop()
+        }
+      }
+      .disabled(actions.active(for: env.path) != nil)
+      Button("Remove worktree\u{2026}", systemImage: "trash", role: .destructive) {
+        let path = env.path
+        Task {
+          let branch = await Task.detached { currentBranch(at: path) }.value
+          removal = Removal(branch: branch)
+        }
+      }
+      .disabled(actions.active(for: env.path) != nil)
+    } label: {
+      Image(systemName: "ellipsis")
+    }
+    .menuStyle(.button)
+    .menuIndicator(.hidden)
+    .buttonStyle(.borderless)
+    .fixedSize()
+    .help("Workspace actions")
     .confirmationDialog("Stop this workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
       Button("Run stim stop", role: .destructive) { stop() }
     } message: {
@@ -277,7 +290,7 @@ struct Inspector: View {
   }
 
   private func removalMessage(branch: String?) -> String {
-    let path = env.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+    let path = abbreviatingHome(env.path)
     return """
       Worktree: \(path)
       Branch: \(branch ?? "none (detached HEAD)")
@@ -287,13 +300,6 @@ struct Inspector: View {
       uncommitted or unpushed work. On the source checkout it reclaims the environment only \
       and leaves the tree in place.
       """
-  }
-
-  private func row(_ label: String, _ value: String) -> some View {
-    HStack(alignment: .top) {
-      Text(label).foregroundStyle(Theme.tertiary).frame(width: 84, alignment: .leading)
-      Text(value)
-    }
   }
 
   private func usageCard(_ title: String, _ value: String, values: [Double], minimumPeak: Double) -> some View {

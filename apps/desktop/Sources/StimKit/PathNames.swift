@@ -1,3 +1,5 @@
+import Foundation
+
 /// Short display names for a workspace path.
 ///
 /// A worktree under `.worktrees/<name>` or `worktrees/<name>` is titled by its
@@ -21,4 +23,30 @@ public struct PathNames: Hashable, Sendable {
     title = parts.last ?? path
     subtitle = parts.count > 1 ? parts[parts.count - 2] : ""
   }
+}
+
+/// `text` with the home directory written as `~` wherever a path starts with it.
+public func abbreviatingHome(_ text: String, home: String = NSHomeDirectory()) -> String {
+  guard home.count > 1, text.contains(home) else { return text }
+  let pattern = "(?<![\\w./-])" + NSRegularExpression.escapedPattern(for: home) + "(?![\\w.-])"
+  guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
+  return regex.stringByReplacingMatches(
+    in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "~")
+}
+
+/// Where `path` sits inside its checkout, such as `apps/tlon-mobile`, or nil at the checkout root. The
+/// checkout is the `.worktrees/<name>` or `.claude/worktrees/<name>` folder holding the path, else the git
+/// worktree `stim status` reports.
+public func pathInCheckout(_ path: String, worktree: String?) -> String? {
+  let parts = path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+  var checkout: String?
+  var i = parts.count - 2
+  while i > 0, checkout == nil {
+    if parts[i] == ".worktrees" || (parts[i] == "worktrees" && parts[i - 1] == ".claude") {
+      checkout = parts[...(i + 1)].joined(separator: "/")
+    }
+    i -= 1
+  }
+  guard let base = checkout ?? worktree, path.hasPrefix(base + "/") else { return nil }
+  return String(path.dropFirst(base.count + 1))
 }
