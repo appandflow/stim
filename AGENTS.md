@@ -321,6 +321,12 @@ This redirects Stim state, not machine-global simulators or emulators. Never
 bypass the scoped GC guard for real-tool validation. Clean up only exact devices
 created by that validation, using centralized teardown and retained fixture records.
 
+The EAS session ledger and project lock under `~/.stim/machine/eas` ignore
+`STIM_HOME` so every Stim home finds billable sessions. A test that reaches
+them passes a temporary `ledgerRoot`, `machineRoot`, or `easLedgerRoot`, or
+points `HOME` (and `USERPROFILE` on Windows) at a temporary directory.
+`vitest.setup.ts` fails a test file that changes the real directory.
+
 ### 6. Compare canonical paths
 
 Use `realpath` when project identity or containment depends on a path. A

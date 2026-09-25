@@ -398,8 +398,9 @@ test('the printed lines name the supervisor and the error count', async () => {
 
 test('status reports a recorded EAS session with its preview URL', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-proj-'));
-  const previousHome = process.env.HOME;
-  process.env.HOME = tmpHome;
+  const homeKeys = process.platform === 'win32' ? ['HOME', 'USERPROFILE'] : ['HOME'];
+  const previousHome = homeKeys.map((key) => [key, process.env[key]] as const);
+  for (const key of homeKeys) process.env[key] = tmpHome;
   try {
     ensureWorkspaceStorage(root);
     writeFileSync(
@@ -438,7 +439,10 @@ test('status reports a recorded EAS session with its preview URL', async () => {
     const logs = await runStatus();
     expect(logs).toContain('  remote ios: EAS session drs_9 billable -- watch: https://preview.example/9');
   } finally {
-    process.env.HOME = previousHome;
+    for (const [key, value] of previousHome) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     rmSync(root, { recursive: true, force: true });
   }
 });
