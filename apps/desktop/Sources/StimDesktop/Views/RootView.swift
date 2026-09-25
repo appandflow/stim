@@ -57,13 +57,14 @@ struct RootView: View {
   var body: some View {
     NavigationSplitView(columnVisibility: $columnVisibility) {
       Sidebar(store: store, autopilot: autopilot, selection: $selection, openLogs: showLogs)
+        .frame(minWidth: 220, idealWidth: 272, maxWidth: 360)
         .navigationSplitViewColumnWidth(min: 220, ideal: 272, max: 360)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { sidebarWidth = $0 }
     } detail: {
       detail
-        .safeAreaInset(edge: .top, spacing: 0) { OnboardingBanner(onboarding: onboarding) }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.background)
+        .overlay(alignment: .bottom) { onboardingPopup }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
         .navigationSplitViewColumnWidth(min: 440, ideal: 900)
         .toolbar {
@@ -153,6 +154,18 @@ struct RootView: View {
 
   private func toggleInspector() {
     if inspectorFits { showsInspector.toggle() } else { showsInspectorOverlay.toggle() }
+  }
+
+  /// Leaves room for the inspector, column or floating, so the popup never sits under it.
+  @ViewBuilder private var onboardingPopup: some View {
+    HStack(spacing: 0) {
+      OnboardingBanner(onboarding: onboarding).frame(maxWidth: .infinity)
+      if showsWorkspace, inspector == .column {
+        Color.clear.frame(width: WorkspaceDetail.clampedInspectorWidth(inspectorWidth, detailWidth: detailWidth) + 1)
+      } else if showsWorkspace, inspector == .overlay {
+        Color.clear.frame(width: WorkspaceDetail.inspectorWidth)
+      }
+    }
   }
 
   /// macOS moves the traffic lights and the sidebar toggle into the detail's toolbar when the sidebar is hidden.
