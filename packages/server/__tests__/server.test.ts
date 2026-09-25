@@ -29,7 +29,7 @@ const exit = (code) => {
   rmSync(pidFile, { force: true });
   process.exit(code);
 };
-process.on('SIGTERM', () => exit(0));
+process.on('SIGTERM', () => env.FAKE_STIM_STUBBORN || exit(0));
 const print = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
 const [command] = args;
 if (command === 'status') {
@@ -571,6 +571,18 @@ describe('logs.subscribe', () => {
       subscription: 's1',
       error: { code: 'logs-failed', message: 'stim logs --follow exited (code 3): logs failed on purpose' },
     });
+  });
+
+  it('kills a follow child that ignores SIGTERM once its last subscriber leaves', async () => {
+    const port = await start({ env: { FAKE_STIM_STUBBORN: '1' } });
+    const client = await authed(port);
+    await client.request('logs.subscribe', { workspace });
+    await records(client, 3);
+    const [pid] = childPids();
+    client.socket.close();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(alive(pid!)).toBe(true);
+    await until(() => !alive(pid!));
   });
 
   it('drops a client that stops reading and stops the child it no longer needs', async () => {

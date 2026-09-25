@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 
 export type CommandOutcome = { ok: true; stdout: string } | { ok: false; message: string };
 
@@ -8,8 +8,16 @@ export interface CommandLimits {
 }
 
 const STDERR_TAIL = 2000;
+const KILL_GRACE_MS = 1000;
 
-/** Runs one `stim` command to completion. `cancel` kills it, and the outcome then never settles. */
+export function terminate(child: ChildProcess): void {
+  child.kill('SIGTERM');
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const timer = setTimeout(() => child.kill('SIGKILL'), KILL_GRACE_MS);
+  timer.unref();
+  child.once('exit', () => clearTimeout(timer));
+}
+
 export function runStim(
   stimCli: string,
   env: NodeJS.ProcessEnv,
@@ -26,7 +34,7 @@ export function runStim(
   let stderr = '';
   const fail = (message: string) => {
     failure ??= message;
-    child.kill('SIGTERM');
+    terminate(child);
   };
   const timer = setTimeout(
     () => fail(`${label} did not finish within ${limits.timeoutMs / 1000} s.`),
@@ -59,7 +67,7 @@ export function runStim(
     cancel: () => {
       cancelled = true;
       clearTimeout(timer);
-      child.kill('SIGTERM');
+      terminate(child);
     },
   };
 }

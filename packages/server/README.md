@@ -100,8 +100,9 @@ Events are `{ "event", "subscription", ... }`.
 `workspace` is an environment `path` from a status payload. Any other path is
 refused with `unknown-workspace` and runs nothing. A connection holds at most
 32 subscriptions and runs at most 4 `logs.query`, `stats.get` and
-`settings.get` requests at a time. Those requests fail after 60 seconds, and
-closing the connection stops them. A log subscriber whose socket has more than
+`settings.get` requests at a time. Those requests fail after 60 seconds or
+32 MiB of output, and closing the connection stops them. A `stim` child that
+ignores SIGTERM gets SIGKILL a second later. A log subscriber whose socket has more than
 4 MiB unsent gets no more batches until it catches up; past 20,000
 waiting records the server ends that subscription with `slow-client`.
 

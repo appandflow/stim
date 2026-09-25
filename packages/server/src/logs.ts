@@ -28,7 +28,7 @@ export function parseLogFilter(params: unknown): { filter: LogFilter } | { error
     filter: {
       workspace: params.workspace,
       ...(sources ? { sources: sources as LogSource[] } : {}),
-      ...(level ? { level: level as LogLevel } : {}),
+      ...(level && level !== 'debug' ? { level: level as LogLevel } : {}),
       ...(slot ? { slot } : {}),
       ...(grep ? { grep } : {}),
       ...(errors ? { errors } : {}),
@@ -37,7 +37,6 @@ export function parseLogFilter(params: unknown): { filter: LogFilter } | { error
   };
 }
 
-/** The `stim logs` arguments Stim Desktop's log viewer builds for the same filters. */
 export function logArgs(filter: LogFilter, follow: boolean): string[] {
   const args = ['logs', '--json', ...(follow ? ['--follow'] : []), `--tail=${filter.tail ?? MAX_LOG_TAIL}`];
   if (filter.sources) args.push('--source', ...LOG_SOURCES.filter((source) => filter.sources!.includes(source)));
@@ -62,10 +61,6 @@ export interface LogLimits {
 const BATCH_MS = 100;
 const MAX_BATCH = 500;
 
-/**
- * Batches records for one subscriber. While the socket holds more than `maxBufferedBytes` unsent, records
- * wait here; past `maxPendingRecords` waiting, the subscriber is dropped instead of buffering without end.
- */
 export class LogBatcher {
   private pending: JsonObject[] = [];
   private timer: NodeJS.Timeout | null = null;
@@ -90,7 +85,6 @@ export class LogBatcher {
     this.timer ??= setTimeout(() => this.flush(false), BATCH_MS);
   }
 
-  /** Sends what is waiting; `force` ignores the socket's unsent bytes, for the last records before an end. */
   flush(force: boolean): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;

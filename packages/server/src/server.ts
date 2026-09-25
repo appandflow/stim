@@ -1,4 +1,4 @@
-import { mkdirSync, watch, type FSWatcher } from 'node:fs';
+import { existsSync, mkdirSync, watch, type FSWatcher } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { isIP, type AddressInfo, type Socket } from 'node:net';
 import { homedir } from 'node:os';
@@ -210,7 +210,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       send(socket, { id, error: { code, message } });
     }
 
-    /** The registered workspace to run `stim` in, or the home directory when it is optional and absent. */
     function workspaceDir(id: RequestId, workspace: unknown, required: boolean): string | null {
       if (workspace === undefined && !required) return homedir();
       if (typeof workspace !== 'string') {
@@ -224,8 +223,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         error(id, 'stim-failed', (cause as Error).message);
         return null;
       }
-      if (!registered) error(id, 'unknown-workspace', `${workspace} is not a Stim workspace on this Mac.`);
-      return registered ? workspace : null;
+      if (!registered) {
+        error(id, 'unknown-workspace', `${workspace} is not a Stim workspace on this Mac.`);
+        return null;
+      }
+      if (!existsSync(workspace)) {
+        error(id, 'unknown-workspace', `${workspace} is registered but no longer exists on this Mac.`);
+        return null;
+      }
+      return workspace;
     }
 
     function openSubscription(id: RequestId): string | null {

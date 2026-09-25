@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { isJsonObject } from '@stim-cli/core/state';
+import { terminate } from './stim-command.ts';
 
 export type JsonObject = Record<string, unknown>;
 
@@ -12,9 +13,7 @@ export interface FeedListener {
 export interface FeedSpec {
   args: string[];
   cwd: string;
-  /** How many of the latest items a listener that joins a running child receives first. */
   keep: number;
-  /** Names the command in the message listeners get when the child ends. */
   label: string;
 }
 
@@ -80,14 +79,10 @@ class Feed {
     this.child = null;
     this.listeners.clear();
     this.ended();
-    child.kill('SIGTERM');
+    terminate(child);
   }
 }
 
-/**
- * Long-running `stim` children shared by every listener with the same arguments and working directory.
- * A child starts with its first listener and gets SIGTERM when its last listener leaves.
- */
 export class FeedPool {
   private readonly feeds = new Map<string, Feed>();
   private readonly stimCli: string;
