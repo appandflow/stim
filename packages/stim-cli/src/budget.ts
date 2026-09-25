@@ -23,11 +23,12 @@ import { workspaceActivity } from './devices/activity.ts';
 import { ownedAvdSerialResolver } from './devices/android.ts';
 import { projectDeviceSlots } from './devices/device-slots.ts';
 import { listAllIosSims, type IosSimRecord } from './devices/ios.ts';
-import { stopOwnedMetro } from './supervisor/cache-reset.ts';
+import { stopOwnedMetro, type OwnedMetroStop } from './supervisor/cache-reset.ts';
+import { withWorkspaceProcessLock, workspaceProcessLockError } from './engine/workspace-process-lock.ts';
 import { resolveSupervisorTarget } from './supervisor/ownership.ts';
 import { getConfigDir, loadConfig, type Config, type ProjectRecord } from './workspace/config.ts';
 import { withIdleWorkspace } from './workspace/in-use.ts';
-import { sharedBuildCache } from './workspace/paths.ts';
+import { sharedBuildCache, workspaceDir } from './workspace/paths.ts';
 import { settingDefinition, settingValueError } from './workspace/settings-registry.ts';
 import { readWorkspaceState } from './workspace/workspace-state.ts';
 
@@ -263,6 +264,7 @@ interface StepContext {
   dryRun: boolean;
   note: (line: string) => void;
   now: number;
+  diskRecovered: () => boolean;
 }
 
 type StepResult = Omit<ReclaimedStep, 'step' | 'freedMb'>;
@@ -293,36 +295,63 @@ function reclaimIdleDevices({ root, dryRun, note, now }: StepContext): StepResul
   return { targets: shutDown.map(deviceLabel), failures };
 }
 
+function idleSince(path: string, now: number): number | null {
+  const activity = workspaceActivity(path, now);
+  const at = Date.parse(activity.lastActivityAt ?? '');
+  return activity.state === 'idle' && Number.isFinite(at) ? at : null;
+}
+
 async function reclaimIdleDevServers({ root, dryRun, note, now }: StepContext): Promise<StepResult> {
   const config = loadConfig();
   const other = isOtherWorkspace(root);
-  const serving = Object.entries(config?.projects ?? {})
-    .filter(
-      ([path, project]) =>
-        other(path) &&
-        runningSupervisorPid(path, project) !== null &&
-        !workspaceBuildInProgress(path) &&
-        workspaceActivity(path, now).state === 'idle',
-    )
-    .map(([path]) => path);
+  const serving = Object.entries(config?.projects ?? {}).flatMap(([path, project]) => {
+    const pid = other(path) ? runningSupervisorPid(path, project) : null;
+    return pid !== null && !workspaceBuildInProgress(path) && idleSince(path, now) !== null ? [{ path, pid }] : [];
+  });
+  if (serving.length === 0) return { targets: [], failures: 0 };
+  const sims = listSims();
+  if (sims === null) {
+    note(chalk.dim(phaseLine('budget', 'dev servers left alone: simulators could not be listed to prove them idle')));
+    return { targets: [], failures: 0 };
+  }
   const busy = new Set(
-    serving.length
-      ? collectOwnedDeviceActivity(config, listSims() ?? [], now)
-          .filter((device) => device.activity.state !== 'idle')
-          .map((device) => device.project)
-      : [],
+    collectOwnedDeviceActivity(config, sims, now)
+      .filter((device) => device.activity.state !== 'idle')
+      .map((device) => device.project),
   );
-  const idle = serving.filter((path) => !busy.has(path));
-  if (dryRun) return { targets: idle, failures: 0 };
+  const idle = serving.filter(({ path }) => !busy.has(path));
+  if (dryRun) return { targets: idle.map(({ path }) => path), failures: 0 };
   const targets: string[] = [];
   let failures = 0;
-  for (const path of idle) {
+  const stillIdle = (path: string, pid: number) => {
+    const project = loadConfig()?.projects?.[path];
+    return Boolean(
+      project &&
+      runningSupervisorPid(path, project) === pid &&
+      !workspaceBuildInProgress(path) &&
+      idleSince(path, Date.now()) !== null,
+    );
+  };
+  for (const { path, pid } of idle) {
     let run;
     try {
-      run = await withIdleWorkspace(path, () => stopOwnedMetro(path), {
-        purpose: 'budget reclaim',
-        supervisor: false,
-      });
+      run = await withIdleWorkspace(
+        path,
+        async (): Promise<OwnedMetroStop | 'busy' | 'starting'> => {
+          try {
+            return await withWorkspaceProcessLock(
+              workspaceDir(path),
+              'metro-start',
+              async () => (stillIdle(path, pid) ? stopOwnedMetro(path) : 'busy'),
+              { external: true, waitMs: 0, ownerPurpose: 'budget reclaim' },
+            );
+          } catch (error) {
+            if (workspaceProcessLockError(error)) return 'starting';
+            throw error;
+          }
+        },
+        { purpose: 'budget reclaim', supervisor: false },
+      );
     } catch (error) {
       failures++;
       note(chalk.red(`Could not stop the dev server of ${path}: ${(error as Error)?.message || error}`));
@@ -333,7 +362,10 @@ async function reclaimIdleDevServers({ root, dryRun, note, now }: StepContext): 
       continue;
     }
     const stopped = run.value;
-    if (stopped.status === 'stopped') {
+    if (stopped === 'busy' || stopped === 'starting') {
+      const why = stopped === 'busy' ? 'it is no longer idle' : 'a stim start holds its metro-start lock';
+      note(chalk.dim(`Kept the dev server of ${path}: ${why}`));
+    } else if (stopped.status === 'stopped') {
       targets.push(path);
       note(chalk.green(`Stopped the idle dev server of ${path}`));
     } else if ('reason' in stopped) {
@@ -344,20 +376,27 @@ async function reclaimIdleDevServers({ root, dryRun, note, now }: StepContext): 
   return { targets, failures };
 }
 
-async function reclaimWorkspaceOutputs({ root, dryRun, now }: StepContext): Promise<StepResult> {
+async function reclaimWorkspaceOutputs({ root, dryRun, now, diskRecovered }: StepContext): Promise<StepResult> {
   const other = isOtherWorkspace(root);
   const report = collectWorkspaceOutputs({ olderThan: null, now, measure: false });
-  const clearable = report.workspaces.filter(
-    (entry) => entry.willClear && entry.projectRoot !== null && other(entry.projectRoot),
-  );
-  if (dryRun || clearable.length === 0) {
-    return { targets: clearable.map((entry) => entry.projectRoot!), failures: 0 };
+  const clearable = report.workspaces
+    .flatMap((entry) => {
+      const project = entry.projectRoot;
+      const since = project !== null && entry.willClear && other(project) ? idleSince(project, now) : null;
+      return since === null ? [] : [{ entry, since }];
+    })
+    .toSorted((a, b) => a.since - b.since)
+    .map(({ entry }) => entry);
+  if (dryRun) return { targets: clearable.map((entry) => entry.projectRoot!), failures: 0 };
+  const targets: string[] = [];
+  let failures = 0;
+  for (const entry of clearable) {
+    const result = await clearWorkspaceOutputs({ ...report, workspaces: [entry] }, { olderThan: null, now });
+    failures += result.failures;
+    targets.push(...result.cleared);
+    if (diskRecovered()) break;
   }
-  const { failures, cleared } = await clearWorkspaceOutputs(
-    { ...report, workspaces: clearable },
-    { olderThan: null, now },
-  );
-  return { targets: cleared, failures };
+  return { targets, failures };
 }
 
 function cacheLabel(cache: { name: string; dir: string }): string {
@@ -393,6 +432,9 @@ async function runStep(step: ReclaimStepName, context: StepContext): Promise<Ste
   try {
     const result = await STEPS[step](context);
     return process.exitCode === exitCode ? result : { ...result, failures: result.failures + 1 };
+  } catch (error) {
+    context.note(chalk.red(phaseLine('budget', `${STEP_ACTIONS[step]} failed: ${(error as Error)?.message || error}`)));
+    return { targets: [], failures: 1 };
   } finally {
     console.log = log;
     process.exitCode = exitCode;
@@ -511,7 +553,13 @@ export async function enforceBudget(
   for (const step of plan) {
     if (!dryRun && (!overBudget(short) || (DISK_ONLY.includes(step) && short.disk.length === 0))) break;
     const freeBefore = measure.volumes.reduce((sum, v) => sum + v.freeMb, 0);
-    const result = await deps.step(step, { root, dryRun, note, now: deps.now() });
+    const result = await deps.step(step, {
+      root,
+      dryRun,
+      note,
+      now: deps.now(),
+      diskRecovered: () => budgetShortfalls(budget, { volumes: deps.volumes(paths), memory: null }).disk.length === 0,
+    });
     if (!dryRun) {
       measure = measureNow();
       short = budgetShortfalls(budget, measure);
@@ -642,7 +690,7 @@ export async function inspectBudget(
 export function budgetLine(report: BudgetReport): string {
   const { budget } = report;
   const disk = report.volumes.length
-    ? `${report.volumes.map((v) => `${v.freeGb} GB free on ${v.volume}`).join(', ')} (reclaims below ${budget.minFreeDiskGb} GB, ${budget.hardFloorDiskGb ? `refuses below ${budget.hardFloorDiskGb} GB` : 'never refuses'})`
+    ? `${report.volumes.map((v) => `${v.freeGb} GB free on ${v.volume}`).join(', ')} (reclaims below ${Math.max(budget.minFreeDiskGb, budget.hardFloorDiskGb)} GB, ${budget.hardFloorDiskGb ? `refuses below ${budget.hardFloorDiskGb} GB` : 'never refuses'})`
     : 'disk budget off';
   const memory = report.memory
     ? `roughly ${report.memory.committedGb} GB of a ${budget.maxCommittedMemoryGb} GB memory budget committed`

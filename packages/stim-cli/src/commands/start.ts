@@ -419,7 +419,13 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           isExpo,
         });
 
+        const gateBudget = async () => {
+          const budget = await d.budgetGate({ root, note });
+          reclaimed = budget.reclaimed;
+          if (budget.refusal) return fail(budget.refusal);
+        };
         if (opts.resetCache) {
+          await gateBudget();
           try {
             await stopOwnedMetroForReset(root);
           } catch (error) {
@@ -452,11 +458,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
               'Stop it with the tool that started it, then retry `stim start`. Stim leaves unverified processes alone.',
           });
         }
-        if (!resolution.metro && !supervisor) {
-          const budget = await d.budgetGate({ root, note });
-          reclaimed = budget.reclaimed;
-          if (budget.refusal) return fail(budget.refusal);
-        }
+        if (!opts.resetCache && !resolution.metro && !supervisor) await gateBudget();
         let managedTunnel: ManagedTunnelTracking | null = null;
         let spawnedChild: SupervisorProcess | null = null;
         let spawnedTs: number | null = null;

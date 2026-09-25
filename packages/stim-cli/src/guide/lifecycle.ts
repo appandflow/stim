@@ -1029,8 +1029,10 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
     budget.maxLiveWorkspaces     workspaces with a booted device or running dev
                                  server. Unset by default.
 
-  0 turns a check off. A \`start\` whose dev server already answers checks
-  nothing.
+  0 turns a check off; with budget.minFreeDiskGb at 0, Stim still reclaims
+  below the hard floor before refusing. A \`start\` whose dev server already
+  answers checks nothing; \`start --reset-cache\` checks before it stops the
+  server.
 
   Over budget, Stim reclaims in this order and stops as soon as it is back
   under budget. Each step prints a \`budget\` line on stderr, and the \`--json\`
@@ -1040,12 +1042,16 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
        no Stim or agent-device lock, no activity for 10 minutes, and no build
        in progress (\`gc --idle\` semantics; shut down, never deleted)
     2. stop idle dev servers in other workspaces: a Stim supervisor with no
-       bundle request, device log or Stim command for 10 minutes, no build
-       in progress, and no device in that workspace that is driven, active,
-       or of unknown activity. The next \`start\`, \`ios\` or \`android\`
-       there brings it back
-    3. clear the build outputs of workspaces not in use (\`gc --delete\`
-       semantics; the next build installs from the shared cache)
+       bundle request, device log, Stim command or supervisor start for 10
+       minutes, no build in progress, and no device in that workspace that is
+       driven, active, or of unknown activity. Stim rechecks under that
+       workspace's native-run and metro-start locks before it stops the
+       server, and skips the step when simulators cannot be listed. The next
+       \`start\`, \`ios\` or \`android\` there brings it back
+    3. clear the build outputs of workspaces not in use and idle for 10
+       minutes, least recently used first, re-measuring after each
+       (\`gc --delete\` semantics; the next build installs from the shared
+       cache). A workspace whose last use is unknown is kept
     4. trim shared cache entries nothing has used for 14 days
        (\`gc --delete --older-than 14\` for the caches)
 

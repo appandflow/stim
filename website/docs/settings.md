@@ -229,7 +229,8 @@ anything, Stim checks free disk on the volumes that hold the app and
 
 Stim reclaims in order and stops once it is back under budget: it shuts down
 idle owned devices in other workspaces, stops idle dev servers in other
-workspaces, clears the build outputs of workspaces that are not in use, and
+workspaces, clears the build outputs of workspaces idle for 10 minutes (least
+recently used first), and
 trims shared cache entries unused for 14 days. The last two steps run only for
 disk. Each step prints a `budget` line on stderr, and `--json` output lists them
 under `reclaimed`. The current workspace, a device someone is driving or has

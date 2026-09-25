@@ -11,6 +11,7 @@ import {
 } from '../budget.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
+import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 
 const GB = 1024;
 const BUDGET_ENV = [
@@ -153,18 +154,20 @@ describe('enforceBudget', () => {
 });
 
 describe('reclaiming in a scratch STIM_HOME with a floor above the free disk', () => {
-  function workspaceWithOutputs(name: string): string {
+  function workspaceWithOutputs(name: string, usedMinutesAgo = 60): string {
     const root = join(apps, name);
     mkdirSync(root);
     upsertProject(root, { isExpo: false });
     mkdirSync(join(ensureWorkspaceStorage(root), 'derived-data', 'Build'), { recursive: true });
+    recordWorkspaceUse(root, new Date(Date.now() - usedMinutesAgo * 60_000));
     return root;
   }
 
-  test('the dry run plans the idle workspace outputs of other workspaces and deletes nothing', async () => {
+  test('the dry run plans only the outputs of other workspaces idle 10 minutes and deletes nothing', async () => {
     process.env.STIM_BUDGET_MIN_FREE_DISK_GB = '1000000000';
     const current = workspaceWithOutputs('current');
     const other = workspaceWithOutputs('other');
+    workspaceWithOutputs('recent', 2);
     const outcome = await enforceBudget({ root: current, note: () => {}, dryRun: true });
     expect(outcome.status).toBe('ok');
     if (outcome.status !== 'ok') return;

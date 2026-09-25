@@ -231,7 +231,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 20,
     env: 'STIM_BUDGET_MIN_FREE_DISK_GB',
     scopedHomeValue: 0,
-    description: 'Free disk, in GB, ios, android and start reclaim toward; 0 turns reclaiming off',
+    description: 'Free disk, in GB, ios, android and start reclaim toward; 0 reclaims only below the hard floor',
   },
   {
     key: 'budget.hardFloorDiskGb',
@@ -256,6 +256,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: CAPACITY,
     scopes: MACHINE,
     env: 'STIM_BUDGET_MAX_LIVE_WORKSPACES',
+    scopedHomeValue: 0,
     description: 'Live workspaces before idle ones are reclaimed; unset or 0 means no limit',
   },
   {
