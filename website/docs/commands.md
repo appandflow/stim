@@ -178,9 +178,9 @@ app, opens it, and checks launch logs. Native builds run locally by default;
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote simulator. It needs eas-cli 21.6.0 or later.
 - `--eas-profile <name>` selects a compatible [EAS development build](./eas-builds.md),
-  including with `--device`. A miss stops and prints an EAS build command;
-  cloud builds require authorization. Cannot be combined with `--scheme`,
-  `--configuration`, or `--no-build-cache`.
+  including with `--device`. It needs eas-cli 18.9.0 or later. A miss stops
+  and prints an EAS build command; cloud builds require authorization. Cannot
+  be combined with `--scheme`, `--configuration`, or `--no-build-cache`.
 - `--no-metro-check` skips the Debug dev-server gate.
 - `--no-build-cache` ignores cached artifacts and replaces the matching entry.
 - `--json` prints one stable result object on stdout.
@@ -256,9 +256,9 @@ the app, opens it, and checks launch logs.
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote emulator. It needs eas-cli 21.6.0 or later.
 - `--eas-profile <name>` selects a compatible [EAS development build](./eas-builds.md),
-  including with `--device`. A miss stops and prints an EAS build command;
-  cloud builds require authorization. Cannot be combined with `--variant` or
-  `--no-build-cache`.
+  including with `--device`. It needs eas-cli 18.9.0 or later. A miss stops
+  and prints an EAS build command; cloud builds require authorization. Cannot
+  be combined with `--variant` or `--no-build-cache`.
 - `--no-metro-check` skips the Debug dev-server gate.
 - `--no-build-cache` ignores cached artifacts and replaces the matching entry.
 - `--json` prints one stable result object on stdout.

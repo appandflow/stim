@@ -8,9 +8,9 @@ import { readInstalledEasCliVersion } from './device-remote.ts';
 import { easCliSupport, easCliUpgradeRemedy } from './eas-simulator.ts';
 
 type Platform = 'ios' | 'android';
+type JsonObject = Record<string, unknown>;
 
 export const MIN_EAS_CLI_BUILD_DOWNLOAD_VERSION: string = '18.9.0';
-type JsonObject = Record<string, unknown>;
 
 interface Refusal {
   code: string;

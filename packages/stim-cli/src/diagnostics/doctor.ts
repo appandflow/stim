@@ -685,7 +685,7 @@ export function checkEasBuildDownload({
     'cost',
     easCli.version
       ? `eas-cli ${easCli.version} cannot download EAS builds for --eas-profile`
-      : 'The eas-cli version could not be read',
+      : 'The eas-cli version could not be read for --eas-profile',
     `\`stim ios --eas-profile\` and \`stim android --eas-profile\` download a finished EAS development build with \`eas build:download --build-id\`, which needs eas-cli ${MIN_EAS_CLI_BUILD_DOWNLOAD_VERSION} or later. Older versions refuse with STIM_EAS_UNAVAILABLE before any download.`,
     `${easCliUpgradeRemedy(MIN_EAS_CLI_BUILD_DOWNLOAD_VERSION)}.`,
   );
