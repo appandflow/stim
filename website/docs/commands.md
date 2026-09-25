@@ -391,7 +391,7 @@ machine.
 ## `status`
 
 ```text
-stim status [--json]
+stim status [--json] [--watch]
 ```
 
 Shows every Stim environment on the machine. The output includes worktrees,
@@ -403,6 +403,15 @@ URL. In `--json`, each environment's `remoteDevices` array holds
 `platform`, `backend`, `sessionId`, `state`, `startedAt`, and `webPreviewUrl`.
 `status` reads Stim's local records and does not query EAS; `stim stop` in that
 workspace ends the session.
+
+`--watch` keeps running and prints the status again each time it changes.
+With `--json` it prints one complete payload per line: one immediately, then
+one per change, never two identical payloads in a row. It reacts to changes in
+`$STIM_HOME` state and the EAS session ledger, adb device arrivals and
+departures, and simulator state, and recomputes every 30 seconds as a
+fallback. It exits with status 0 on Ctrl+C, SIGTERM, or when its stdout
+closes. Use it to wait for a device, a build, or a dev server instead of
+polling `stim status --json`.
 
 ## `stats`
 
