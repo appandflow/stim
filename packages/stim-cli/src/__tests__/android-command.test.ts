@@ -981,9 +981,24 @@ describe('explicit remote backend behavior', () => {
     expect(readState().remoteDevice).toMatchObject({ platform: 'android', sessionId: 'drs_42' });
   });
 
-  test('a failed build starts no EAS session', async () => {
+  test.each(['proxy', 'eas'] as const)('a failed build boots no %s device', async (backend) => {
+    const { h, remoteCalls } = remoteHarness(backend, {
+      build: async () =>
+        makeAndroidBuildFailure({ code: BUILD_ERROR, reason: 'Gradle failed.', durationMs: 1, lastLines: [] }),
+    });
+
+    expect((await h.run()).error?.code).toBe(BUILD_ERROR);
+    expect(remoteCalls).toEqual(['ensureDevice']);
+    expect(readState().remoteDevice).toBeUndefined();
+  });
+
+  test('a new EAS session starts in the install phase and records when it was created', async () => {
+    const log: string[] = [];
+    let clock = Date.parse('2026-09-25T14:51:27.000Z');
     const h = harness({
       remoteDevice: 'eas',
+      progress: { step: (phase: string) => log.push(phase), durations: () => ({}), clear: () => {} },
+      now: () => clock,
       resolveRemoteDeviceContext: async () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
       }),
@@ -992,19 +1007,26 @@ describe('explicit remote backend behavior', () => {
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
         checkCapacity: () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
-        ensureDeviceBooted: never('ensureDeviceBooted'),
-        install: never('install'),
-        launch: never('launch'),
+        ensureDeviceBooted: async () => {
+          log.push('boot');
+          return { ok: true, serial: 'drs_42' };
+        },
+        install: (args: InstallArgs = {}) => ({ ok: true, apkPath: args.apkPath ?? '' }),
+        launch: () => ({ ok: true, mode: 'remote' }),
         createdSessionId: () => 'drs_42',
         webPreviewUrl: () => null,
       }),
       resolveEasBin: () => ({ file: '/bin/eas', args: [] }),
-      build: async () =>
-        makeAndroidBuildFailure({ code: BUILD_ERROR, reason: 'Gradle failed.', durationMs: 1, lastLines: [] }),
+      writeState: (projectRoot: string, patch: Record<string, unknown>) => writeWorkspaceState(projectRoot, patch),
+      fingerprint: async () => {
+        clock = Date.parse('2026-09-25T14:59:27.000Z');
+        return { hash: FINGERPRINT, sources: [] };
+      },
     });
 
-    expect((await h.run()).error?.code).toBe(BUILD_ERROR);
-    expect(readState().remoteDevice).toBeUndefined();
+    expect((await h.run()).ok).toBe(true);
+    expect(log[log.indexOf('boot') - 1]).toBe('install');
+    expect(readState().remoteDevice).toMatchObject({ sessionId: 'drs_42', startedAt: '2026-09-25T14:59:27.000Z' });
   });
 
   test('a state write failure stops only the EAS session created by this run', async () => {

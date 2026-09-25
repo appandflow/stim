@@ -752,7 +752,7 @@ async function runIos(
               root,
               platform: PLATFORM,
               sessionName: ownedSessionName(remoteDevice.ctx.label),
-              startedAt,
+              startedAt: new Date(d.now()).toISOString(),
               boot,
               createdSessionId: remoteDevice.createdSessionId,
               abandonCreatedSession: remoteDevice.abandonCreatedSession,
@@ -805,7 +805,10 @@ async function runIos(
     }
     artifact = acquiredArtifact.artifact;
     compilationCache = artifact.cache.compilation;
-    if (!localBoot) udid = await startBoot();
+    if (!localBoot) {
+      progress.step('install');
+      udid = await startBoot();
+    }
 
     if (physicalDevice) {
       const acquired = await d.acquireRunLease({

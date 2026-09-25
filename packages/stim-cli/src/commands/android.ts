@@ -962,7 +962,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
               root,
               platform: PLATFORM,
               sessionName: ownedSessionName(remoteDevice.ctx.label),
-              startedAt,
+              startedAt: new Date(now()).toISOString(),
               boot,
               createdSessionId: remoteDevice.createdSessionId,
               abandonCreatedSession: remoteDevice.abandonCreatedSession,
@@ -1053,6 +1053,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     record.appPath = apkPath;
 
     if (startRemoteBoot) {
+      progress.step('install');
       bootPromise = startRemoteBoot();
       const booted = await bootPromise;
       if (booted.failed) {
