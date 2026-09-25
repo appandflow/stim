@@ -4,7 +4,7 @@ How to cut a new version of `stim` to npm and GitHub. Keep this in sync with
 what we actually do — when something changes, update both this file and the
 real workflow at the same time.
 
-## 0. The five packages
+## 0. The six packages
 
 ```
 packages/core                @stim-cli/core                shared primitives (cache roots, cache key, registration)
@@ -12,11 +12,14 @@ packages/stim-cli            stim                          the CLI
 packages/cache               @stim-cli/cache               cache provider contract and tier coordination
 packages/expo-build-cache    @stim-cli/expo-build-cache    Expo build cache provider
 packages/metro               @stim-cli/metro               shared Metro transform cache + log reporter
+packages/server              @stim-cli/server              stim-server, read-only status for paired clients
 ```
 
 **Every package carries the same version and is published together** -- the
-caches and the CLI are one product, and a shared version beats a compatibility
-matrix. A release with no changes to a package still publishes it.
+caches, the CLI, and the server are one product, and a shared version beats a
+compatibility matrix. A release with no changes to a package still publishes
+it. `@stim-cli/server` depends on `@stim-cli/core` and on `stim`, so it
+publishes last.
 
 Run every command from the repo root unless a step says otherwise. Each
 package ships its own README in its own tarball; the root README is a landing
@@ -68,11 +71,19 @@ fi
 An npm `E404` means a first release for that package name: complete the
 first-publication bootstrap in
 [docs/release-recovery.md](./docs/release-recovery.md) before pushing the tag.
+Every package name must already exist on npm, because trusted publishing can
+only be configured for an existing package:
+
+```bash
+for p in @stim-cli/core @stim-cli/cache @stim-cli/metro @stim-cli/expo-build-cache stim @stim-cli/server; do
+  npm view "$p" name >/dev/null || echo "$p: first publication required"
+done
+```
 
 Use `X.Y.Z-rc.N` for a release candidate. The workflow computes the publish
 dist-tag itself from the tag and the registry: it reads `npm view
 @stim-cli/core version` -- the first package every run publishes, not
-`stim`, the last -- as its stable-or-not signal, and a candidate
+`@stim-cli/server`, the last -- as its stable-or-not signal, and a candidate
 publishes to `next` instead of `latest` only when that signal is already a
 stable version, so a plain `npm install` never regresses to a candidate.
 Every other publish -- a stable version, or a candidate published while no
@@ -111,7 +122,7 @@ Start from `main`, fully up to date with `origin/main`. Before candidate
 preparation, `git status --short` may show only the draft
 `docs/releases/X.Y.Z.md`.
 
-1. **Bump the version in lockstep.** All five `package.json` files carry the
+1. **Bump the version in lockstep.** All six `package.json` files carry the
    same number, and `dist/cli.mjs` reads it from its own `package.json`:
 
    ```bash
@@ -119,21 +130,21 @@ preparation, `git status --short` may show only the draft
    ```
 
    The script refuses a malformed version, one that does not come after the
-   version the five packages already carry, and a tree whose versions already
-   disagree. It rewrites the five `version` fields together, refreshes the
-   lockfile, then re-reads the manifests to confirm all five landed on the new
+   version the six packages already carry, and a tree whose versions already
+   disagree. It rewrites the six `version` fields together, refreshes the
+   lockfile, then re-reads the manifests to confirm all six landed on the new
    version and that the lockfile still matches them, and leaves the candidate
-   uncommitted and untagged. If any of that fails it puts the five manifests
+   uncommitted and untagged. If any of that fails it puts the six manifests
    back at the version they had, so a failed run is never half-bumped.
 
    Nothing else moves. The packages depend on each other through pnpm's
    `workspace:` protocol, so there is no dependency range to bump: pnpm
    substitutes the real version when it packs (verified in step 3).
-   `pnpm run release:prep --check` audits that shape -- five versions in
+   `pnpm run release:prep --check` audits that shape -- six versions in
    lockstep, every internal range a bare `workspace:` range -- without changing
    anything.
 
-   Confirm all five moved:
+   Confirm all six moved:
 
    ```bash
    grep -H '"version"' packages/*/package.json
@@ -164,30 +175,31 @@ preparation, `git status --short` may show only the draft
    ```
 
 3. **Verify each npm tarball** ships only what should ship, that each one
-   carries its own README, and that every `@stim-cli/*` line names a real
-   version. Pack with `pnpm`, never `npm`: the release workflow publishes
+   carries its own README, and that every `@stim-cli/*` and `stim` dependency
+   names a real version. Pack with `pnpm`, never `npm`: the release workflow publishes
    pnpm-packed tarballs, and `npm pack` prints the unsubstituted `workspace:`
    ranges rather than what actually publishes.
 
    ```bash
    out=$(mktemp -d)
-   for p in core cache metro expo-build-cache stim-cli; do
+   for p in core cache metro expo-build-cache stim-cli server; do
      tgz=$(cd "packages/$p" && pnpm pack --pack-destination "$out" | tail -1)
      echo "== $p ($(tar -tzf "$tgz" | wc -l | tr -d ' ') files)"
      tar -tzf "$tgz" | grep -E 'README|LICENSE'
-     tar -xzOf "$tgz" package/package.json | grep -E '"version"|"@stim-cli/'
+     tar -xzOf "$tgz" package/package.json | grep -E '"version"|"@stim-cli/|"stim":'
    done
    rm -rf "$out"
    ```
 
    Keep the `files` whitelists tight (`dist`, `shim`, `skill`, `LICENSE`,
    `README.md` for the CLI; `dist`, `README.md`, `LICENSE` for the other
-   packages). Every published JavaScript entry lives under `dist/`. A
+   packages). Every published JavaScript entry lives under `dist/`, including
+   the server's `stim-server` bin. A
    `workspace:` range in that output means the tarball was not packed by pnpm;
    stop and fix the packing before publishing.
 
 4. **Inspect the candidate diff.** `git status --short` should contain only the
-   five package manifests and the draft release notes. `pnpm-lock.yaml` no
+   six package manifests and the draft release notes. `pnpm-lock.yaml` no
    longer moves with a version bump -- it records the internal edges as
    `workspace:` specifiers and `link:` targets, neither of which carries a
    version. Resolve anything else before QA.
@@ -343,7 +355,7 @@ repeat the affected gate rather than waiving it.
    ```
 
    One tag for the repo, not one per package: the packages share a version, so
-   a per-package tag would only say the same thing five times.
+   a per-package tag would only say the same thing six times.
 
 6. **Publish the already-reviewed release notes in
    `docs/releases/X.Y.Z.md`.** This committed file is the single source of
@@ -359,7 +371,7 @@ repeat the affected gate rather than waiving it.
    Do not add claims here. Once the tag is remote, a correction requires a new
    version; never move or force-push the published tag.
 7. **Publish to npm.** Pushing the tag in step 5 triggers the
-   `Release` workflow, which publishes all FIVE packages via OIDC trusted
+   `Release` workflow, which publishes all SIX packages via OIDC trusted
    publishing (no token, `--provenance`) once the run is approved in the
    `release` environment. If the current GitHub identity is an allowed
    reviewer, approve the deployment directly with `gh` instead of waiting for
@@ -385,12 +397,13 @@ repeat the affected gate rather than waiving it.
    ```
 
    Send the `url` (the run page has Review deployments -> `release` ->
-   Approve and deploy). The workflow packs the five tarballs with pnpm, checks
+   Approve and deploy). The workflow packs the six tarballs with pnpm, checks
    that no `workspace:` range survived the pack, skips an exact package version
    that already exists, computes the dist-tag (section 1) and publishes every
    package to it. Its `smoke` job then waits, up to 15 minutes per check, for
    the registry to serve each version, its tarball and the dist-tag, and runs
-   `npx stim@X.Y.Z --version` from a scratch directory.
+   `npx stim@X.Y.Z --version` and `stim-server --version` from
+   `@stim-cli/server@X.Y.Z` in a scratch directory.
    A NEW package, a failed publish, or
    a provenance rejection: see
    [docs/release-recovery.md](./docs/release-recovery.md).
@@ -410,6 +423,7 @@ repeat the affected gate rather than waiving it.
    npm view "@stim-cli/cache@$version" version
    npm view "@stim-cli/expo-build-cache@$version" version
    npm view "@stim-cli/metro@$version" version
+   cd /tmp && npx -p "@stim-cli/server@$version" stim-server --version
    ```
    The `npm pack` line lists the published tarball's README. Do not check
    `npm view "stim@$version" readme`: it prints the registry's package-level

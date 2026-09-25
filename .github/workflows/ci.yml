@@ -1,7 +1,7 @@
 # Fast, BLOCKING CI. Runs on every push and pull request.
 #
 # Everything provable on a plain Linux box with no Xcode and no Android SDK:
-# lint, format, typecheck, build, the full vitest unit suite (all five
+# lint, format, typecheck, build, the full vitest unit suite (all six
 # packages), and the fast cross-platform e2e (test/e2e/cache-flow.e2e.js), which
 # drives the real CLI and the real cache library end to end with no compiler.
 # The SLOW native builds live in e2e-native.yml: a smoke on every push to
