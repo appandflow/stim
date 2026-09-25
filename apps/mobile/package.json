@@ -8,6 +8,7 @@
     "ios": "expo run:ios",
     "android": "expo run:android",
     "mock-server": "node mock-server/server.mjs",
+    "dev:pair": "node scripts/dev-pair.mjs",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
     "test": "jest",
