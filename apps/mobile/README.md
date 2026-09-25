@@ -93,6 +93,9 @@ build profiles:
 
 - `development`: a development client, distributed internally.
 - `preview`: a release build, distributed internally.
+
+`development` and `preview` builds install only on devices registered with
+`eas device:create`.
 - `production`: an App Store build. EAS owns the build number
   (`appVersionSource: "remote"`) and increments it on every build. The
   marketing version is `version` in `app.json`.
@@ -127,9 +130,9 @@ or prefix each command with `npx`).
 3. Create the App Store Connect app record, if it does not exist yet. In
    [App Store Connect](https://appstoreconnect.apple.com), under the App&Flow
    team, open **Apps**, choose **+**, then **New App**: platform iOS, name
-   `Stim`, bundle ID `com.appandflow.stim`, and any SKU. Register the bundle ID
-   first under **Certificates, Identifiers & Profiles** if the list does not
-   offer it. `eas submit` can create the record only when it signs in with an
+   `Stim`, bundle ID `com.appandflow.stim`, and any SKU. If the list does not
+   offer the bundle ID, run step 4 first, which registers it, or register it
+   under **Certificates, Identifiers & Profiles**. `eas submit` can create the record only when it signs in with an
    Apple ID; an App Store Connect API key cannot create apps.
 
    Copy the app's **Apple ID** (a number, under **App Information**) into
