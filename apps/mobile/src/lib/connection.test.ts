@@ -5,7 +5,7 @@ class FakeSocket {
   sent: { id: number; method: string; params: unknown }[] = [];
   closed = false;
   onopen: (() => void) | null = null;
-  onmessage: ((message: { data: string }) => void) | null = null;
+  onmessage: ((message: { data: string | ArrayBuffer }) => void) | null = null;
   onclose: (() => void) | null = null;
 
   send(text: string) {
@@ -28,6 +28,16 @@ class FakeSocket {
   }
   emit(event: unknown) {
     this.onmessage?.({ data: JSON.stringify(event) });
+  }
+  emitVideo(subscription: string, sequence: number) {
+    const buffer = new ArrayBuffer(21 + subscription.length + 1);
+    const view = new DataView(buffer);
+    view.setUint8(0, 1);
+    view.setUint16(2, 21 + subscription.length);
+    view.setUint32(4, sequence);
+    view.setUint8(20, subscription.length);
+    new Uint8Array(buffer, 21).set([...subscription].map((c) => c.charCodeAt(0)));
+    this.onmessage?.({ data: buffer });
   }
 }
 
@@ -81,6 +91,41 @@ describe('StimConnection', () => {
     sockets[1].emit({ event: 'status', subscription: 's9', payload: { environments: [2] } });
 
     expect(events.map((e) => (e.event === 'status' ? e.payload.environments : null))).toEqual([[], [2]]);
+  });
+
+  it('hands the subscribe result over and routes binary video by the current subscription id', async () => {
+    const { connection, sockets, timers } = setup();
+    const results: unknown[] = [];
+    const sequences: number[] = [];
+    connection.subscribe(
+      'frames.subscribe',
+      { workspace: '/w', platform: 'ios', video: ['h264'] },
+      () => {},
+      (result) => results.push(result),
+      (packet) => sequences.push(packet.sequence),
+    );
+    connection.start();
+    sockets[0].onopen?.();
+    sockets[0].reply('hello', hello);
+    await flush();
+    sockets[0].reply('frames.subscribe', { subscription: 's1', video: 'h264' });
+    await flush();
+    sockets[0].emitVideo('s1', 1);
+    sockets[0].emitVideo('s2', 2);
+    sockets[0].close();
+    timers[0].fn();
+    sockets[1].onopen?.();
+    sockets[1].reply('hello', hello);
+    await flush();
+    sockets[1].reply('frames.subscribe', { subscription: 's4', video: 'h264' });
+    await flush();
+    sockets[1].emitVideo('s1', 3);
+    sockets[1].emitVideo('s4', 4);
+    expect(results).toEqual([
+      { subscription: 's1', video: 'h264' },
+      { subscription: 's4', video: 'h264' },
+    ]);
+    expect(sequences).toEqual([1, 4]);
   });
 
   it('doubles the retry delay up to 30 seconds and resets it after a successful hello', async () => {
