@@ -65,13 +65,9 @@ const android = ['android'];
 
 export const pathRules = [
   { path: 'packages/core', rows: ['caches', 'loop'] },
-  { path: 'packages/core/state', rows: ['loop', 'caches'] },
-  { path: 'packages/core/state/ledgers.ts', rows: ['loop', 'remote-provider'] },
+  { path: 'packages/core/state', rows: everyRow },
   { path: 'packages/core/state/logs-query.ts', rows: ['logs'] },
   { path: 'packages/core/state/ndjson.ts', rows: ['logs'] },
-  { path: 'packages/core/state/settings-registry.ts', rows: ['loop', 'caches', 'remote-provider'] },
-  { path: 'packages/core/state/settings-schema.ts', rows: ['loop', 'caches', 'remote-provider'] },
-  { path: 'packages/core/state/status.ts', rows: ['loop'] },
   { path: 'packages/cache', rows: ['caches', 'remote-provider'] },
   { path: 'packages/metro', rows: ['caches', 'logs'] },
   { path: 'packages/expo-build-cache', rows: ['caches'] },
