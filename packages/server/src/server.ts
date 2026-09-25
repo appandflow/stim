@@ -12,6 +12,7 @@ import { LogBatcher, logArgs, parseLogFilter, type LogLimits } from './logs.ts';
 import {
   ACTIONS,
   PROTOCOL_VERSION,
+  type BuildPlanResult,
   type ErrorCode,
   type FrameTarget,
   type HelloResult,
@@ -96,6 +97,8 @@ const FRAME_RETRY_MS = 100;
 const STATUS_FEED = { args: ['status', '--watch', '--json'], cwd: homedir(), keep: 1, label: 'stim status --watch' };
 const HEALTH_ROUTE_TIMEOUT_MS = 1000;
 const COMMAND_LIMITS: CommandLimits = { timeoutMs: 60_000, maxOutputBytes: 32 * 1024 * 1024 };
+const PLAN_TIMEOUT_MS = 150_000;
+const SLOT_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const AUDIT_FIELD_CHARS = 256;
 const ACTION_LIMITS: CommandLimits = { timeoutMs: 120_000, maxOutputBytes: 1024 * 1024 };
 
@@ -436,23 +439,27 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       subscriptions.set(subscription, cleanup);
     }
 
-    function command<M extends 'logs.query' | 'stats.get' | 'settings.get'>(
+    function command<M extends 'logs.query' | 'stats.get' | 'settings.get' | 'build.plan'>(
       id: RequestId,
       args: string[],
       cwd: string,
       result: (stdout: string) => Methods[M]['result'],
+      limits: CommandLimits = commandLimits,
     ): void {
       if (commands.size >= MAX_COMMANDS) {
         return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
       }
-      const run = runStim(options.stimCli, options.env, args, cwd, commandLimits);
+      const run = runStim(options.stimCli, options.env, args, cwd, limits);
       commands.add(run.cancel);
       running.add(run.cancel);
       void (async () => {
         const outcome = await run.outcome;
         commands.delete(run.cancel);
         running.delete(run.cancel);
-        if (!outcome.ok) return error(id, 'stim-failed', outcome.message);
+        if (!outcome.ok) {
+          const printed = actionOutcome(outcome);
+          return error(id, 'stim-failed', printed.ok ? outcome.message : printed.error.message);
+        }
         let value: Methods[M]['result'];
         try {
           value = result(outcome.stdout);
@@ -558,6 +565,31 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       void run.outcome.then((outcome) => finish(actionOutcome(outcome)));
     }
 
+    function planBuild(id: RequestId, params: unknown): void {
+      if (!isJsonObject(params)) return error(id, 'bad-request', 'params must be an object.');
+      const { platform, slot } = params;
+      if (platform !== 'ios' && platform !== 'android') {
+        return error(id, 'bad-request', 'params.platform must be ios or android.');
+      }
+      if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot))) {
+        return error(id, 'bad-request', 'params.slot must be 1-64 letters, digits, underscores or hyphens.');
+      }
+      const cwd = workspaceDir(id, params.workspace, true);
+      if (!cwd) return;
+      const args = [platform, '--plan', '--json', ...(slot === undefined ? [] : [`--slot=${slot}`])];
+      command<'build.plan'>(
+        id,
+        args,
+        cwd,
+        (stdout) => {
+          const value: unknown = JSON.parse(stdout);
+          if (!isJsonObject(value) || value.platform !== platform) throw new Error('not a plan');
+          return value as unknown as BuildPlanResult;
+        },
+        { ...commandLimits, timeoutMs: options.commandLimits?.timeoutMs ?? PLAN_TIMEOUT_MS },
+      );
+    }
+
     async function handle(raw: string): Promise<void> {
       if (socket.readyState !== socket.OPEN) return;
       let message: unknown;
@@ -578,6 +610,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (message.method === 'logs.subscribe') return subscribeLogs(id, message.params);
       if (message.method === 'logs.query') return queryLogs(id, message.params);
       if (message.method === 'frames.subscribe') return subscribeFrames(id, message.params);
+      if (message.method === 'build.plan') return planBuild(id, message.params);
       if (message.method === 'stats.get' || message.method === 'settings.get') {
         return workspaceCommand(id, message.method, message.params);
       }

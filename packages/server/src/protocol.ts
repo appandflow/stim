@@ -1,4 +1,4 @@
-import type { NdjsonRecord, StatusPayload } from '@stim-cli/core/state';
+import type { BuildPlanPayload, NdjsonRecord, StatusPayload } from '@stim-cli/core/state';
 
 export const PROTOCOL_VERSION = 1;
 
@@ -17,6 +17,7 @@ export const METHODS = [
   'stats.get',
   'settings.get',
   'frames.subscribe',
+  'build.plan',
   'unsubscribe',
   'action',
 ] as const;
@@ -166,6 +167,16 @@ export interface ActionResult {
   output: Record<string, unknown>;
 }
 
+/** Predicts the next `ios` or `android` build of `workspace` in `slot` (`default` when absent). */
+export interface BuildPlanParams {
+  workspace: string;
+  platform: Platform;
+  slot?: string;
+}
+
+/** `stim ios|android --plan --json`. It builds, boots and installs nothing, and writes no Stim state. */
+export type BuildPlanResult = BuildPlanPayload;
+
 export interface Methods {
   hello: { params: HelloParams; result: HelloResult };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
@@ -174,6 +185,7 @@ export interface Methods {
   'stats.get': { params?: WorkspaceParams; result: StatsResult };
   'settings.get': { params?: WorkspaceParams; result: SettingsResult };
   'frames.subscribe': { params: FrameTarget; result: SubscribeResult };
+  'build.plan': { params: BuildPlanParams; result: BuildPlanResult };
   unsubscribe: { params: UnsubscribeParams; result: Record<string, never> };
   action: { params: ActionParams; result: ActionResult };
 }
@@ -400,6 +412,16 @@ export function protocolJsonSchema(): JsonSchema {
           output: { type: 'object', description: 'The JSON the command printed.' },
         },
       },
+      BuildPlanParams: {
+        type: 'object',
+        required: ['workspace', 'platform'],
+        additionalProperties: false,
+        properties: {
+          workspace: { type: 'string', description: 'An environment path from a status payload.' },
+          platform: { enum: ['ios', 'android'] },
+          slot: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$', default: 'default' },
+        },
+      },
       WorkspaceParams: {
         type: 'object',
         additionalProperties: false,
@@ -412,6 +434,7 @@ export function protocolJsonSchema(): JsonSchema {
           request('logs.query', { $ref: '#/$defs/LogFilter' }),
           request('logs.subscribe', { $ref: '#/$defs/LogFilter' }),
           request('frames.subscribe', { $ref: '#/$defs/FrameTarget' }),
+          request('build.plan', { $ref: '#/$defs/BuildPlanParams' }),
           optionalParams('stats.get', { $ref: '#/$defs/WorkspaceParams' }),
           optionalParams('settings.get', { $ref: '#/$defs/WorkspaceParams' }),
           request('unsubscribe', {
@@ -449,7 +472,8 @@ export function protocolJsonSchema(): JsonSchema {
                   },
                   {
                     type: 'object',
-                    description: 'The payload of `stim stats --json` or `stim settings --json`, or {} for unsubscribe.',
+                    description:
+                      'The payload of `stim stats --json`, `stim settings --json` or `stim ios|android --plan --json`, or {} for unsubscribe.',
                   },
                 ],
               },

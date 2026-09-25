@@ -67,6 +67,12 @@ if (command === 'status') {
   } else {
     setInterval(() => {}, 1000);
   }
+} else if (env.FAKE_STIM_REFUSE) {
+  print({ code: 'STIM_NO_DEVICE', message: 'No system image is installed.', remedy: 'Install one.' });
+  exit(1);
+} else if (args.includes('--plan')) {
+  print({ platform: command, args: args.join(' '), cwd: process.cwd(), cacheHit: 'local' });
+  exit(0);
 } else if (env.FAKE_STIM_HANG || env.FAKE_STIM_STUBBORN) {
   setInterval(() => {}, 1000);
 } else if (env.FAKE_STIM_JSON_FAIL) {
@@ -737,6 +743,43 @@ describe('stats.get and settings.get', () => {
       error: { code: 'stim-failed', message: expect.stringContaining('did not finish') },
     });
     expect(childPids()).toEqual([]);
+  });
+});
+
+describe('build.plan', () => {
+  it('runs the platform plan in the workspace, passing the slot as one argument', async () => {
+    const port = await start();
+    const client = await authed(port);
+    expect(await client.request('build.plan', { workspace, platform: 'android', slot: 'tablet' })).toEqual({
+      id: 2,
+      result: { platform: 'android', args: 'android --plan --json --slot=tablet', cwd: workspace, cacheHit: 'local' },
+    });
+    expect(stimCalls()).toEqual([{ args: 'android --plan --json --slot=tablet', cwd: workspace }]);
+  });
+
+  it('refuses a platform, slot or workspace it cannot plan, running nothing', async () => {
+    const port = await start();
+    const client = await authed(port);
+    expect(await client.request('build.plan', { workspace, platform: 'web' })).toMatchObject({
+      error: { code: 'bad-request' },
+    });
+    for (const slot of ['', '--device', 'a\u0000b']) {
+      expect(await client.request('build.plan', { workspace, platform: 'ios', slot })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+    }
+    expect(await client.request('build.plan', { workspace: '/nowhere', platform: 'ios' })).toMatchObject({
+      error: { code: 'unknown-workspace' },
+    });
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it("reports the CLI's refusal code, message and remedy instead of its exit status", async () => {
+    const port = await start({ env: { FAKE_STIM_REFUSE: '1' } });
+    const client = await authed(port);
+    expect(await client.request('build.plan', { workspace, platform: 'android' })).toMatchObject({
+      error: { code: 'stim-failed', message: 'STIM_NO_DEVICE: No system image is installed. Install one.' },
+    });
   });
 });
 
