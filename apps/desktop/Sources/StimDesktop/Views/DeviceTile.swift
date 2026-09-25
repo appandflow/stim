@@ -12,6 +12,7 @@ struct DeviceTile: View {
   var build: Build? = nil
   @State private var pixelSizes: [UInt32: CGSize] = [:]
   @State private var screenIDs: [UInt32] = [1]
+  @State private var lit: [UInt32: Bool] = [:]
   @State private var folding = false
   @State private var foldError: String?
   @State private var confirmingStop = false
@@ -40,6 +41,9 @@ struct DeviceTile: View {
             remoteControls
           } else if device.isRunning, let workspace {
             stopButton(workspace: workspace)
+          }
+          if let posture {
+            Chip { Text(posture) }.fixedSize()
           }
           if interactive, device.formFactor == .dual, screenIDs.count > 1, SimulatorFold.isAvailable,
             case .ios(_, let sim) = device
@@ -114,7 +118,8 @@ struct DeviceTile: View {
   }
 
   private func foldButton(udid: String) -> some View {
-    Button(folding ? "Folding" : foldError == nil ? "Fold / Unfold" : "Fold failed, retry") {
+    let action = posture == "Folded" ? "Unfold" : posture == "Unfolded" ? "Fold" : "Fold / Unfold"
+    return Button(folding ? "Folding" : foldError == nil ? action : "\(action) failed, retry") {
       folding = true
       Task {
         foldError = await SimulatorFold.toggle(udid: udid)
@@ -127,9 +132,32 @@ struct DeviceTile: View {
     .help(foldError ?? "Sweeps the hinge to the other posture, which lights the other screen.")
   }
 
+  /// The panel an iPhone Duo's posture lit: the only lit one, else the first.
+  private var mainScreenID: UInt32? {
+    let litIDs = screenIDs.filter { lit[$0] == true }
+    return litIDs.count == 1 ? litIDs[0] : screenIDs.first
+  }
+
+  /// Folded when the smaller panel, the cover, is the only lit one.
+  private var posture: String? {
+    guard screenIDs.count > 1, screenIDs.filter({ lit[$0] == true }).count == 1, let main = mainScreenID,
+      let area = pixelArea(main), let smallest = screenIDs.compactMap(pixelArea).min()
+    else { return nil }
+    return area == smallest ? "Folded" : "Unfolded"
+  }
+
+  private func pixelArea(_ screenID: UInt32) -> CGFloat? {
+    pixelSizes[screenID].map { $0.width * $0.height }
+  }
+
+  private func screenHeight(_ screenID: UInt32) -> CGFloat {
+    let full = screenHeight - screenPadding * 2
+    return screenIDs.count > 1 && screenID != mainScreenID ? full * 0.3 : full
+  }
+
   private func screenWidth(_ screenID: UInt32) -> CGFloat? {
     guard let size = pixelSizes[screenID], size.height > 0 else { return nil }
-    return (screenHeight - screenPadding * 2) * size.width / size.height
+    return screenHeight(screenID) * size.width / size.height
   }
 
   private var width: CGFloat {
@@ -156,12 +184,15 @@ struct DeviceTile: View {
   @ViewBuilder private var screen: some View {
     switch device {
     case .ios(_, let sim) where device.isRunning:
-      HStack(spacing: screenPadding) {
+      HStack(alignment: .bottom, spacing: screenPadding) {
         ForEach(screenIDs, id: \.self) { screenID in
-          SimulatorDisplayView(udid: sim.udid, screenID: screenID, interactive: interactive) {
-            pixelSizes[screenID] = $0
-          }
-          .frame(width: screenWidth(screenID))
+          SimulatorDisplayView(
+            udid: sim.udid, screenID: screenID, interactive: interactive,
+            onPixelSizeChange: { pixelSizes[screenID] = $0 },
+            onLitChange: screenIDs.count > 1 ? { lit[screenID] = $0 } : nil
+          )
+          .frame(width: screenWidth(screenID), height: screenHeight(screenID))
+          .opacity(screenID == mainScreenID ? 1 : 0.4)
         }
       }
       .padding(screenPadding)
