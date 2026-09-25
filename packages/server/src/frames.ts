@@ -23,6 +23,11 @@ export interface Frame {
   posture?: Posture;
 }
 
+export interface DeviceInput {
+  send: (command: Record<string, unknown>) => void;
+  detach: () => void;
+}
+
 export interface FrameListener {
   frame: (frame: Frame) => void;
   /**
@@ -668,6 +673,18 @@ export class FramePool {
   private helperSource(device: Device): HelperSource | null {
     const source = this.sources.get(`helper:${deviceKey(device)}`);
     return source instanceof HelperSource ? source : null;
+  }
+
+  /**
+   * Keeps the device's helper running to send it input, or returns null without a helper. `failed` runs when
+   * the helper exits.
+   */
+  control(device: Device, failed: (message: string) => void): DeviceInput | null {
+    const helper = this.helper();
+    if (helper === null) return null;
+    const source = this.stream(helper, device);
+    const detach = source.add({ frame: () => {}, delayed: () => {}, failed }, null);
+    return { send: (command) => source.send(command), detach };
   }
 
   private stream(helper: string, device: Device): HelperSource {

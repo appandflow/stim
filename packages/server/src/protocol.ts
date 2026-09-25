@@ -23,6 +23,11 @@ export const METHODS = [
   'machine.history',
   'unsubscribe',
   'action',
+  'control.begin',
+  'control.end',
+  'input.touch',
+  'input.text',
+  'input.button',
 ] as const;
 
 export type Method = (typeof METHODS)[number];
@@ -51,6 +56,8 @@ export const ERROR_CODES = [
   'unknown-action',
   'action-busy',
   'action-failed',
+  'device-busy',
+  'unknown-session',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -222,6 +229,63 @@ export interface ActionResult {
   output: Record<string, unknown>;
 }
 
+/**
+ * Starts a control session on the device `stim status` lists as owned by `workspace` in `slot`. Needs
+ * `control`. Refused with `device-busy` while an agent, a device lock or another client drives the device,
+ * unless `takeOver` is true.
+ */
+export interface ControlBeginParams {
+  workspace: string;
+  platform: Platform;
+  slot?: string;
+  takeOver?: boolean;
+}
+
+/**
+ * `lease` is the `stim device lock` lease the server holds for the session, or null when it holds none, such
+ * as after taking over a device another workspace leases.
+ */
+export interface ControlBeginResult {
+  session: string;
+  platform: Platform;
+  lease: { grantedAt: string | null; expiresAt: string } | null;
+}
+
+export interface ControlEndParams {
+  session: string;
+}
+
+export const TOUCH_PHASES = ['down', 'move', 'up'] as const;
+
+export type TouchPhase = (typeof TOUCH_PHASES)[number];
+
+/** `x` and `y` are fractions of the upright screen, origin top-left. `display` is 0 for the main display. */
+export interface InputTouchParams {
+  session: string;
+  phase: TouchPhase;
+  x: number;
+  y: number;
+  display?: number;
+}
+
+export const MAX_INPUT_TEXT = 256;
+
+/** Printable ASCII, where `\n` presses Return, `\t` Tab and `\b` Delete. */
+export interface InputTextParams {
+  session: string;
+  text: string;
+}
+
+/** `home` and `lock` on both platforms; `back` and `app-switch` on Android only. */
+export const INPUT_BUTTONS = ['home', 'lock', 'back', 'app-switch'] as const;
+
+export type InputButton = (typeof INPUT_BUTTONS)[number];
+
+export interface InputButtonParams {
+  session: string;
+  button: InputButton;
+}
+
 /** Predicts the next `ios` or `android` build of `workspace` in `slot` (`default` when absent). */
 export interface BuildPlanParams {
   workspace: string;
@@ -299,6 +363,11 @@ export interface Methods {
   'machine.history': { params?: MachineHistoryParams; result: MachineHistory };
   unsubscribe: { params: UnsubscribeParams; result: Record<string, never> };
   action: { params: ActionParams; result: ActionResult };
+  'control.begin': { params: ControlBeginParams; result: ControlBeginResult };
+  'control.end': { params: ControlEndParams; result: Record<string, never> };
+  'input.touch': { params: InputTouchParams; result: Record<string, never> };
+  'input.text': { params: InputTextParams; result: Record<string, never> };
+  'input.button': { params: InputButtonParams; result: Record<string, never> };
 }
 
 export type ClientRequest = {
@@ -368,7 +437,20 @@ export interface FrameDelayedEvent {
   delayed: boolean;
 }
 
-export type ServerEvent = StatusEvent | LogsEvent | FrameEvent | FrameDelayedEvent | ErrorEvent;
+export const CONTROL_END_REASONS = ['idle', 'taken-over', 'device-gone', 'forbidden', 'failed'] as const;
+
+/**
+ * The server ended a control session: no input for 5 minutes, another client took the device over, the device
+ * stopped or changed owner, the device lost `control`, or input could not reach the device.
+ */
+export interface ControlEndedEvent {
+  event: 'control-ended';
+  session: string;
+  reason: (typeof CONTROL_END_REASONS)[number];
+  message: string;
+}
+
+export type ServerEvent = StatusEvent | LogsEvent | FrameEvent | FrameDelayedEvent | ErrorEvent | ControlEndedEvent;
 
 export type ServerMessage = ServerResponse | ServerEvent;
 
@@ -389,6 +471,15 @@ function request(method: Method, params?: JsonSchema): JsonSchema {
     required: params ? ['id', 'method', 'params'] : ['id', 'method'],
     additionalProperties: false,
     properties: { id: requestId, method: { const: method }, params: params ?? { type: 'object', maxProperties: 0 } },
+  };
+}
+
+function session(properties: Record<string, JsonSchema>, required: string[] = []): JsonSchema {
+  return {
+    type: 'object',
+    required: ['session', ...required],
+    additionalProperties: false,
+    properties: { session: { type: 'string' }, ...properties },
   };
 }
 
@@ -548,6 +639,40 @@ export function protocolJsonSchema(): JsonSchema {
           output: { type: 'object', description: 'The JSON the command printed.' },
         },
       },
+      ControlBeginParams: {
+        type: 'object',
+        required: ['workspace', 'platform'],
+        additionalProperties: false,
+        properties: {
+          workspace: { type: 'string', description: 'An environment path from a status payload.' },
+          platform: { enum: ['ios', 'android'] },
+          slot: { type: 'string', minLength: 1, default: 'default' },
+          takeOver: { type: 'boolean', default: false },
+        },
+      },
+      ControlBeginResult: {
+        type: 'object',
+        required: ['session', 'platform', 'lease'],
+        additionalProperties: false,
+        properties: {
+          session: { type: 'string' },
+          platform: { enum: ['ios', 'android'] },
+          lease: {
+            oneOf: [
+              { type: 'null' },
+              {
+                type: 'object',
+                required: ['grantedAt', 'expiresAt'],
+                additionalProperties: false,
+                properties: {
+                  grantedAt: { type: ['string', 'null'], format: 'date-time' },
+                  expiresAt: { type: 'string', format: 'date-time' },
+                },
+              },
+            ],
+          },
+        },
+      },
       BuildPlanParams: {
         type: 'object',
         required: ['workspace', 'platform'],
@@ -667,6 +792,30 @@ export function protocolJsonSchema(): JsonSchema {
             properties: { subscription: { type: 'string' } },
           }),
           request('action', { $ref: '#/$defs/ActionParams' }),
+          request('control.begin', { $ref: '#/$defs/ControlBeginParams' }),
+          request('control.end', session({})),
+          request(
+            'input.touch',
+            session(
+              {
+                phase: { enum: [...TOUCH_PHASES] },
+                x: { type: 'number', minimum: 0, maximum: 1 },
+                y: { type: 'number', minimum: 0, maximum: 1 },
+                display: { type: 'integer', minimum: 0, maximum: 3, default: 0 },
+              },
+              ['phase', 'x', 'y'],
+            ),
+          ),
+          request(
+            'input.text',
+            session(
+              {
+                text: { type: 'string', minLength: 1, maxLength: MAX_INPUT_TEXT, pattern: '^[\\x20-\\x7e\\n\\t\\b]+$' },
+              },
+              ['text'],
+            ),
+          ),
+          request('input.button', session({ button: { enum: [...INPUT_BUTTONS] } }, ['button'])),
         ],
       },
       ServerResponse: {
@@ -680,6 +829,7 @@ export function protocolJsonSchema(): JsonSchema {
               result: {
                 anyOf: [
                   { $ref: '#/$defs/HelloResult' },
+                  { $ref: '#/$defs/ControlBeginResult' },
                   { $ref: '#/$defs/ActionResult' },
                   { $ref: '#/$defs/MachineUsage' },
                   { $ref: '#/$defs/MachineHistory' },
@@ -759,6 +909,17 @@ export function protocolJsonSchema(): JsonSchema {
               event: { const: 'frame-delayed' },
               subscription: { type: 'string' },
               delayed: { type: 'boolean' },
+            },
+          },
+          {
+            type: 'object',
+            required: ['event', 'session', 'reason', 'message'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'control-ended' },
+              session: { type: 'string' },
+              reason: { enum: [...CONTROL_END_REASONS] },
+              message: { type: 'string' },
             },
           },
           {

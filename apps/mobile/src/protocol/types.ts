@@ -224,11 +224,31 @@ export interface FrameTarget {
   workspace: string;
   platform: Platform;
   slot?: string;
+  /** Frames a second, 1 to 30; the server's default is 5. */
   fps?: number;
+  /** Pixels on the longer edge, 240 to 2048; the server's default is 1280. */
   maxEdge?: number;
   /** The codecs the app decodes; a result with `video` sends binary H.264 messages instead of `frame` events. */
   video?: 'h264'[];
 }
+
+/** Needs `control`. The server refuses with `device-busy` while something else drives the device. */
+export interface ControlBeginParams {
+  workspace: string;
+  platform: Platform;
+  slot?: string;
+  takeOver?: boolean;
+}
+
+export interface ControlBeginResult {
+  session: string;
+  platform: Platform;
+  lease: { grantedAt: string | null; expiresAt: string } | null;
+}
+
+export type TouchPhase = 'down' | 'move' | 'up';
+
+export type InputButton = 'home' | 'lock' | 'back' | 'app-switch';
 
 export type ActionName = 'reload' | 'stop';
 
@@ -304,6 +324,16 @@ export interface Methods {
   'machine.history': { params: { sinceMs?: number }; result: MachineHistory };
   unsubscribe: { params: { subscription: string }; result: Record<string, never> };
   action: { params: ActionParams; result: ActionResult };
+  'control.begin': { params: ControlBeginParams; result: ControlBeginResult };
+  'control.end': { params: { session: string }; result: Record<string, never> };
+  /** `x` and `y` are fractions of the upright screen, origin top-left. */
+  'input.touch': {
+    params: { session: string; phase: TouchPhase; x: number; y: number; display?: number };
+    result: Record<string, never>;
+  };
+  /** Printable ASCII; `\n` presses Return, `\t` Tab and `\b` Delete. */
+  'input.text': { params: { session: string; text: string }; result: Record<string, never> };
+  'input.button': { params: { session: string; button: InputButton }; result: Record<string, never> };
 }
 
 export type Method = keyof Methods;
@@ -370,6 +400,14 @@ export interface ErrorEvent {
   error: ProtocolError;
 }
 
-export type ServerEvent = StatusEvent | LogsEvent | FrameEvent | FrameDelayedEvent | ErrorEvent;
+/** The server ended a control session the app began. */
+export interface ControlEndedEvent {
+  event: 'control-ended';
+  session: string;
+  reason: 'idle' | 'taken-over' | 'device-gone' | 'forbidden' | 'failed';
+  message: string;
+}
+
+export type ServerEvent = StatusEvent | LogsEvent | FrameEvent | FrameDelayedEvent | ErrorEvent | ControlEndedEvent;
 
 export type ServerMessage = Response | ServerEvent;

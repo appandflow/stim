@@ -17,17 +17,28 @@ private typealias MouseMessageFn = @convention(c) (
 ) -> UnsafeMutableRawPointer?
 private typealias KeyboardMessageFn = @convention(c) (UInt32, UInt32) -> UnsafeMutableRawPointer?
 private typealias UsageForKeyCodeFn = @convention(c) (UInt32) -> UInt32
+private typealias ButtonMessageFn = @convention(c) (UInt32, UInt32, UInt32) -> UnsafeMutableRawPointer?
+private typealias HIDMessageFn = @convention(c) (UInt32, UInt32, UInt32, UInt32) -> UnsafeMutableRawPointer?
 
 private enum SimulatorKit {
   static let handle = dlopen(CoreSimulator.simulatorKitPath(CoreSimulator.developerDir), RTLD_NOW)
   static let mouseMessage = symbol("IndigoHIDMessageForMouseNSEvent", MouseMessageFn.self)
   static let keyboardMessage = symbol("IndigoHIDMessageForKeyboardArbitrary", KeyboardMessageFn.self)
   static let usageForKeyCode = symbol("hidUsageForCGKeyCode", UsageForKeyCodeFn.self)
+  static let buttonMessage = symbol("IndigoHIDMessageForButton", ButtonMessageFn.self)
+  static let hidMessage = symbol("IndigoHIDMessageForHIDArbitrary", HIDMessageFn.self)
 
   static func symbol<T>(_ name: String, _ type: T.Type) -> T? {
     guard let handle, let pointer = dlsym(handle, name) else { return nil }
     return unsafeBitCast(pointer, to: type)
   }
+}
+
+// Indigo event sources for IndigoHIDMessageForButton; SimulatorKit exports
+// no names for them.
+enum SimulatorButton: UInt32 {
+  case home = 0x0
+  case lock = 0xbb8
 }
 
 enum TouchPhase {
@@ -44,6 +55,7 @@ enum TouchPhase {
 
 final class SimulatorHID {
   private static let mainScreenTarget: UInt32 = 0x32
+  private static let keyboardPage: UInt32 = 0x07
   private static let keyDown: UInt32 = 1
   private static let keyUp: UInt32 = 2
   private static let sendSelector = NSSelectorFromString("sendWithMessage:freeWhenDone:completionQueue:completion:")
@@ -95,7 +107,55 @@ final class SimulatorHID {
     deliver(message)
   }
 
+  // On Xcode 27 a headless simulator ignores keyboard messages sent to
+  // IndigoHIDMessageForKeyboardArbitrary's fixed target (0x64) and button
+  // messages sent to 0x33; both arrive through the main screen's target.
+
+  /// Presses or releases a key, named by its macOS virtual key code.
+  func hardwareKey(code: UInt16, down: Bool) {
+    guard let usage = SimulatorKit.usageForKeyCode?(UInt32(code)), usage != 0,
+      let message = SimulatorKit.hidMessage?(Self.mainScreenTarget, Self.keyboardPage, usage, down ? Self.keyDown : Self.keyUp)
+    else { return }
+    deliver(message)
+  }
+
+  /// Presses or releases a hardware button, named by its Indigo event source.
+  func button(_ button: SimulatorButton, down: Bool) {
+    guard let message = SimulatorKit.buttonMessage?(button.rawValue, down ? Self.keyDown : Self.keyUp, Self.mainScreenTarget)
+    else { return }
+    deliver(message)
+  }
+
   private func deliver(_ message: UnsafeMutableRawPointer) {
     send(client, Self.sendSelector, message, true, nil, nil)
   }
+}
+
+/// Maps a fraction of the upright screen, origin top-left, to a fraction of
+/// the framebuffer in its native portrait orientation, which is what the
+/// simulator's digitizer expects. `orientation` is a UIInterfaceOrientation.
+func nativeScreenPoint(_ point: CGPoint, orientation: UInt32) -> CGPoint {
+  switch orientation {
+  case 2: return CGPoint(x: 1 - point.x, y: 1 - point.y)
+  case 3: return CGPoint(x: point.y, y: 1 - point.x)
+  case 4: return CGPoint(x: 1 - point.y, y: point.x)
+  default: return point
+  }
+}
+
+/// Whether a grid of samples across a BGRA framebuffer is all black. A lit
+/// screen shows at least a status bar, so a dark app still has non-black pixels.
+func isBlack(_ surface: IOSurface) -> Bool {
+  surface.lock(options: .readOnly, seed: nil)
+  defer { surface.unlock(options: .readOnly, seed: nil) }
+  let bytes = surface.baseAddress.assumingMemoryBound(to: UInt8.self)
+  let rowStep = max(surface.height / 64, 1)
+  let columnStep = max(surface.width / 48, 1)
+  for y in stride(from: 0, to: surface.height, by: rowStep) {
+    for x in stride(from: 0, to: surface.width, by: columnStep) {
+      let offset = y * surface.bytesPerRow + x * 4
+      if bytes[offset] | bytes[offset + 1] | bytes[offset + 2] != 0 { return false }
+    }
+  }
+  return true
 }

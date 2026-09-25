@@ -67,6 +67,17 @@ if (command === 'status') {
   } else {
     setInterval(() => {}, 1000);
   }
+} else if (command === 'device' && args[1] === 'lock') {
+  if (env.FAKE_STIM_LOCK_BUSY) {
+    print({ code: 'STIM_DEVICE_BUSY', message: 'Another workspace leases this device.', remedy: 'Wait.' });
+    exit(1);
+  }
+  const grantedAt = env.FAKE_STIM_LOCK_GRANTED ?? new Date().toISOString();
+  print({ platform: args[2], id: args[3], grantedAt, expiresAt: new Date(Date.now() + 120000).toISOString() });
+  exit(0);
+} else if (command === 'device' && args[1] === 'unlock') {
+  print([]);
+  exit(0);
 } else if (env.FAKE_STIM_REFUSE) {
   print({ code: 'STIM_NO_DEVICE', message: 'No system image is installed.', remedy: 'Install one.' });
   exit(1);
@@ -159,6 +170,7 @@ async function start(
     tailscaleState?: ServerOptions['tailscaleState'];
     frameLimits?: ServerOptions['frameLimits'];
     frameHelper?: string | null;
+    controlLimits?: ServerOptions['controlLimits'];
   } = {},
 ): Promise<number> {
   const stimCli = join(root, 'fake-stim.mjs');
@@ -193,6 +205,7 @@ async function start(
     actionLimits: overrides.actionLimits,
     frameLimits: overrides.frameLimits,
     frameHelper: overrides.frameHelper ?? null,
+    controlLimits: overrides.controlLimits,
   });
   return server.addresses[0]!.port;
 }
@@ -1060,6 +1073,7 @@ if (basename(process.argv[1]) === 'sips' && args.includes('bmp')) {
   writeFileSync(args[args.indexOf('--out') + 1], bmp);
   process.exit(0);
 }
+if (basename(process.argv[1]) === 'adb') process.exit(0);
 if (basename(process.argv[1]) === 'sips') {
   writeFileSync(args[args.indexOf('--out') + 1], Buffer.from(env.FAKE_SIPS_JPEG, 'base64'));
   process.exit(0);
@@ -1085,6 +1099,7 @@ const run = { tool: 'stim-frames', args: process.argv.slice(2), pid: process.pid
 const record = () => appendFileSync(env.FAKE_TOOL_CALLS, JSON.stringify(run) + '\\n');
 process.on('exit', record);
 process.on('SIGTERM', () => process.exit(0));
+appendFileSync(env.FAKE_TOOL_CALLS + '.started', process.pid + '\\n');
 const message = (kind, body) => {
   const header = Buffer.alloc(5);
   header.writeUInt32BE(body.length + 1, 0);
@@ -1563,6 +1578,197 @@ describe('frames.subscribe', () => {
       error: { code: 'frames-failed', message: expect.stringContaining('The simulator went away.') },
     });
     expect(toolRuns().some((run) => run.tool === 'xcrun')).toBe(false);
+  });
+
+  const OWNED_EMULATOR = { name: 'stim-app', owned: true, physical: false, serial: 'emulator-5554', state: 'detected' };
+
+  async function startControl(env: Record<string, string> = {}, controlLimits?: ServerOptions['controlLimits']) {
+    const bin = join(root, 'bin');
+    mkdirSync(bin);
+    for (const tool of ['xcrun', 'sips', 'adb']) {
+      writeFileSync(join(bin, tool), FAKE_TOOL);
+      chmodSync(join(bin, tool), 0o755);
+    }
+    toolCalls = join(root, 'tools.ndjson');
+    const home = join(root, 'fake-home');
+    mkdirSync(home);
+    return start({
+      env: {
+        PATH: `${bin}:${process.env.PATH}`,
+        HOME: home,
+        ANDROID_HOME: '',
+        ANDROID_SDK_ROOT: '',
+        FAKE_TOOL_CALLS: toolCalls,
+        FAKE_FRAME_COUNTER: join(root, 'frame-counter'),
+        FAKE_FRAMES: '[]',
+        FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM, android: OWNED_EMULATOR }),
+        ...env,
+      },
+      frameHelper: fakeHelper(),
+      controlLimits,
+    });
+  }
+
+  function lockCalls(): string[] {
+    return stimCalls()
+      .map((call) => call.args)
+      .filter((args) => args.startsWith('device '));
+  }
+
+  test.skipIf(!fakeTailscale)('refuses control to a device paired read-only, and logs it', async () => {
+    const port = await startControl();
+    const client = await authed(port);
+    expect(await client.request('control.begin', { workspace, platform: 'ios' })).toMatchObject({
+      error: { code: 'forbidden' },
+    });
+    expect(await client.request('input.touch', { session: 'c1', phase: 'down', x: 0.5, y: 0.5 })).toMatchObject({
+      error: { code: 'unknown-session' },
+    });
+    expect(readAudit()).toEqual([expect.objectContaining({ action: 'control.begin', ok: false })]);
+    expect(lockCalls()).toEqual([]);
+  });
+
+  test.skipIf(!fakeTailscale)(
+    'sends input to the helper under a device lease and releases the lease when the session ends',
+    async () => {
+      const port = await startControl();
+      const client = await authed(port, true);
+      const begun = await client.request('control.begin', { workspace, platform: 'ios' });
+      if (!('result' in begun)) throw new Error(JSON.stringify(begun));
+      const { session, lease } = begun.result as { session: string; lease: { expiresAt: string } };
+      expect(lease.expiresAt).toEqual(expect.any(String));
+      await until(() => existsSync(`${toolCalls}.started`));
+      expect(await client.request('input.touch', { session, phase: 'down', x: 0.25, y: 0.75 })).toMatchObject({
+        result: {},
+      });
+      expect(await client.request('input.text', { session, text: 'Hi!\n' })).toMatchObject({ result: {} });
+      expect(await client.request('input.button', { session, button: 'home' })).toMatchObject({ result: {} });
+      expect(await client.request('input.button', { session, button: 'back' })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+      expect(await client.request('input.text', { session, text: `caf${String.fromCharCode(233)}` })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+      expect(await client.request('control.end', { session })).toMatchObject({ result: {} });
+      await until(() => helperRuns().length === 1);
+      expect(helperRuns()[0]!.configs).toEqual([
+        { fps: 0, maxEdge: 240, jpeg: false, video: false, bitrate: expect.any(Number) },
+        { input: 'touch', phase: 'down', x: 0.25, y: 0.75, display: 0 },
+        { input: 'text', text: 'Hi!\n' },
+        { input: 'button', button: 'home' },
+      ]);
+      await until(() => lockCalls().length === 2);
+      expect(lockCalls()).toEqual(['device lock ios SIM-1 --for 2m --wait 0 --json', 'device unlock ios --json']);
+      expect(readAudit().map((record) => record.action)).toEqual(['control.begin', 'control.end']);
+    },
+    10_000,
+  );
+
+  test.skipIf(!fakeTailscale)('types and presses buttons on an emulator with adb', async () => {
+    const port = await startControl();
+    const client = await authed(port, true);
+    const begun = await client.request('control.begin', { workspace, platform: 'android' });
+    const { session } = (begun as { result: { session: string } }).result;
+    expect(await client.request('input.text', { session, text: "it's ok\b" })).toMatchObject({ result: {} });
+    expect(await client.request('input.button', { session, button: 'app-switch' })).toMatchObject({ result: {} });
+    expect(
+      toolRuns()
+        .filter((run) => run.tool === 'adb')
+        .map((run) => run.args),
+    ).toEqual([
+      ['-s', 'emulator-5554', 'shell', 'input', 'text', "'it'\\''s%sok'"],
+      ['-s', 'emulator-5554', 'shell', 'input', 'keyevent', 'KEYCODE_DEL'],
+      ['-s', 'emulator-5554', 'shell', 'input', 'keyevent', 'KEYCODE_APP_SWITCH'],
+    ]);
+  });
+
+  test.skipIf(!fakeTailscale)(
+    'refuses a device an agent drives, and takes it over only when asked, keeping the agent lease',
+    async () => {
+      const since = '2026-09-25T12:00:00.000Z';
+      const port = await startControl({
+        FAKE_STIM_PAYLOADS: statusWith({
+          ios: {
+            ...OWNED_SIM,
+            activity: { state: 'driven', driver: { tool: 'agent-device', pid: 42, since }, basis: [] },
+          },
+        }),
+        FAKE_STIM_LOCK_GRANTED: since,
+      });
+      const client = await authed(port, true);
+      expect(await client.request('control.begin', { workspace, platform: 'ios' })).toMatchObject({
+        error: { code: 'device-busy', message: expect.stringContaining('agent-device') },
+      });
+      const taken = await client.request('control.begin', { workspace, platform: 'ios', takeOver: true });
+      const { session } = (taken as { result: { session: string } }).result;
+      await client.request('control.end', { session });
+      await until(() => readAudit().length === 3);
+      expect(readAudit().map((record) => [record.action, record.ok])).toEqual([
+        ['control.begin', false],
+        ['control.take-over', true],
+        ['control.end', true],
+      ]);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(lockCalls()).toEqual(['device lock ios SIM-1 --for 2m --wait 0 --json']);
+    },
+    10_000,
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'lets one client control a device at a time, and ends the session another takes over',
+    async () => {
+      const port = await startControl();
+      const first = await authed(port, true);
+      const second = await authed(port, true);
+      const begun = await first.request('control.begin', { workspace, platform: 'ios' });
+      const { session } = (begun as { result: { session: string } }).result;
+      expect(await second.request('control.begin', { workspace, platform: 'ios' })).toMatchObject({
+        error: { code: 'device-busy', message: expect.stringContaining('Test phone') },
+      });
+      expect(await second.request('control.begin', { workspace, platform: 'ios', takeOver: true })).toMatchObject({
+        result: { session: expect.any(String) },
+      });
+      expect(await first.next()).toMatchObject({ event: 'control-ended', session, reason: 'taken-over' });
+      expect(await first.request('input.touch', { session, phase: 'down', x: 0, y: 0 })).toMatchObject({
+        error: { code: 'unknown-session' },
+      });
+      second.socket.close();
+      await until(() => lockCalls().includes('device unlock ios --json'));
+      expect(lockCalls().filter((args) => args.startsWith('device unlock'))).toHaveLength(1);
+    },
+    10_000,
+  );
+
+  test.skipIf(!fakeTailscale)('ends an idle session, and caps the input and typing rates', async () => {
+    const port = await startControl({}, { idleMs: 700, inputPerSecond: 3, textCharsPerSecond: 1 });
+    const client = await authed(port, true);
+    const begun = await client.request('control.begin', { workspace, platform: 'ios' });
+    const { session } = (begun as { result: { session: string } }).result;
+    const replies = [];
+    for (let i = 0; i < 5; i++)
+      replies.push(await client.request('input.touch', { session, phase: 'move', x: 0, y: 0 }));
+    expect(replies.filter((reply) => 'error' in reply)).toEqual([
+      expect.objectContaining({ error: expect.objectContaining({ code: 'limit-exceeded' }) }),
+      expect.objectContaining({ error: expect.objectContaining({ code: 'limit-exceeded' }) }),
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(await client.request('input.text', { session, text: 'x'.repeat(200) })).toMatchObject({ result: {} });
+    expect(await client.request('input.text', { session, text: 'x'.repeat(100) })).toMatchObject({
+      error: { code: 'limit-exceeded' },
+    });
+    expect(await client.next()).toMatchObject({ event: 'control-ended', session, reason: 'idle' });
+    await until(() => lockCalls().includes('device unlock ios --json'));
+  });
+
+  test.skipIf(!fakeTailscale)('ends a session when the device loses control', async () => {
+    const port = await startControl();
+    const { id, token } = await pair(port, undefined, true);
+    const client = await connect(port);
+    await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+    const begun = await client.request('control.begin', { workspace, platform: 'ios' });
+    const { session } = (begun as { result: { session: string } }).result;
+    grantDevice(id, capabilitiesFor(false));
+    expect(await client.next()).toMatchObject({ event: 'control-ended', session, reason: 'forbidden' });
   });
 
   test.skipIf(!fakeTailscale)('refuses frame rates and sizes outside the protocol range', async () => {

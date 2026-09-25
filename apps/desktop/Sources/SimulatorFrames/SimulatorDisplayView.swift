@@ -337,32 +337,3 @@ private func modifierFlag(keyCode: UInt16) -> NSEvent.ModifierFlags? {
   default: return nil
   }
 }
-
-/// Maps a fraction of the upright screen, origin top-left, to a fraction of
-/// the framebuffer in its native portrait orientation, which is what the
-/// simulator's digitizer expects. `orientation` is a UIInterfaceOrientation.
-func nativeScreenPoint(_ point: CGPoint, orientation: UInt32) -> CGPoint {
-  switch orientation {
-  case 2: return CGPoint(x: 1 - point.x, y: 1 - point.y)
-  case 3: return CGPoint(x: point.y, y: 1 - point.x)
-  case 4: return CGPoint(x: 1 - point.y, y: point.x)
-  default: return point
-  }
-}
-
-/// Whether a grid of samples across a BGRA framebuffer is all black. A lit
-/// screen shows at least a status bar, so a dark app still has non-black pixels.
-func isBlack(_ surface: IOSurface) -> Bool {
-  surface.lock(options: .readOnly, seed: nil)
-  defer { surface.unlock(options: .readOnly, seed: nil) }
-  let bytes = surface.baseAddress.assumingMemoryBound(to: UInt8.self)
-  let rowStep = max(surface.height / 64, 1)
-  let columnStep = max(surface.width / 48, 1)
-  for y in stride(from: 0, to: surface.height, by: rowStep) {
-    for x in stride(from: 0, to: surface.width, by: columnStep) {
-      let offset = y * surface.bytesPerRow + x * 4
-      if bytes[offset] | bytes[offset + 1] | bytes[offset + 2] != 0 { return false }
-    }
-  }
-  return true
-}

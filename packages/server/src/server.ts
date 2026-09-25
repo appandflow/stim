@@ -6,6 +6,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { configDir } from '@stim-cli/core';
 import { isJsonObject, loadConfig, type StatusPayload } from '@stim-cli/core/state';
 import { actionArgs, actionOutcome, appendAudit, parseAction, type AuditRecord } from './actions.ts';
+import { ControlHub, parseControlBegin, parseInput, type Controller } from './control.ts';
 import { FeedPool, type JsonObject } from './feed.ts';
 import { buildFrameHelper, type FrameHint } from './frame-helper.ts';
 import {
@@ -21,6 +22,7 @@ import { LogBatcher, logArgs, parseLogFilter, type LogLimits } from './logs.ts';
 import { readMachineUsage, UsageSampler } from './machine.ts';
 import {
   ACTIONS,
+  MAX_INPUT_TEXT,
   FRAME_EDGE,
   FRAME_FPS,
   PROTOCOL_VERSION,
@@ -69,6 +71,15 @@ export interface ServerOptions {
    * one at startup, and devices subscribed before the build finishes get screenshots.
    */
   frameHelper?: string | null;
+  controlLimits?: Partial<ControlLimits>;
+}
+
+interface ControlLimits {
+  idleMs: number;
+  renewMs: number;
+  leaseFor: string;
+  inputPerSecond: number;
+  textCharsPerSecond: number;
 }
 
 interface ServerHealth {
@@ -114,6 +125,14 @@ const LOG_LIMITS: LogLimits = { maxBufferedBytes: 4 * 1024 * 1024, maxPendingRec
 const FRAME_BUFFER_FRAMES = 2;
 const FRAME_RETRY_MS = 50;
 const HELPER_RETRY_MS = 5 * 60_000;
+const CONTROL_LIMITS: ControlLimits = {
+  idleMs: 5 * 60_000,
+  renewMs: 60_000,
+  leaseFor: '2m',
+  inputPerSecond: 120,
+  textCharsPerSecond: 40,
+};
+const LOCK_LIMITS: CommandLimits = { timeoutMs: 30_000, maxOutputBytes: 64 * 1024 };
 const STATUS_FEED = { args: ['status', '--watch', '--json'], cwd: homedir(), keep: 1, label: 'stim status --watch' };
 const HEALTH_ROUTE_TIMEOUT_MS = 1000;
 const COMMAND_LIMITS: CommandLimits = { timeoutMs: 60_000, maxOutputBytes: 32 * 1024 * 1024 };
@@ -172,6 +191,23 @@ class FailureLimiter {
   record(key: string, now: number = Date.now()): void {
     this.failures.set(key, [...this.recent(key, now), now]);
   }
+}
+
+function auditSafely(record: AuditRecord): void {
+  try {
+    appendAudit(record);
+  } catch (cause) {
+    console.error(`stim-server: could not append to the action log: ${(cause as Error).message}`);
+  }
+}
+
+function take(bucket: { tokens: number; at: number }, cost: number, perSecond: number, capacity: number): boolean {
+  const now = Date.now();
+  bucket.tokens = Math.min(capacity, bucket.tokens + ((now - bucket.at) / 1000) * perSecond);
+  bucket.at = now;
+  if (bucket.tokens < cost) return false;
+  bucket.tokens -= cost;
+  return true;
 }
 
 function send(socket: WebSocket, message: ServerMessage): void {
@@ -243,6 +279,20 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const planQueues = new Map<string, Promise<void>>();
   const sessions = new Map<WebSocket, PairedDevice>();
   const sampler = new UsageSampler();
+  const controllers = new Map<WebSocket, Controller>();
+  const controlLimits: ControlLimits = { ...CONTROL_LIMITS, ...options.controlLimits };
+  const control = new ControlHub({
+    env: options.env,
+    stimCli: options.stimCli,
+    feeds,
+    frames,
+    statusFeed: STATUS_FEED,
+    audit: auditSafely,
+    lockLimits: LOCK_LIMITS,
+    idleMs: controlLimits.idleMs,
+    renewMs: controlLimits.renewMs,
+    leaseFor: controlLimits.leaseFor,
+  });
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
 
   mkdirSync(serverDir(), { recursive: true, mode: 0o700 });
@@ -250,9 +300,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const watcher: FSWatcher = watch(serverDir(), () => {
     revocationCheck ??= setTimeout(() => {
       revocationCheck = null;
-      const paired = new Set(readDevices().map((device) => device.id));
+      const paired = new Map(readDevices().map((device) => [device.id, device]));
       for (const [socket, device] of sessions) {
         if (!paired.has(device.id)) socket.close(CLOSE_UNAUTHORIZED, 'device revoked');
+      }
+      for (const [socket, controller] of controllers) {
+        if (!paired.get(controller.device.id)?.capabilities.includes('control')) {
+          control.endFor(controller, 'forbidden', 'This device can no longer control devices.');
+          controllers.delete(socket);
+        }
       }
     }, 50);
   });
@@ -330,6 +386,86 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
     function error(id: RequestId, code: ErrorCode, message: string): void {
       send(socket, { id, error: { code, message } });
+    }
+
+    const inputs = { tokens: controlLimits.inputPerSecond, at: Date.now() };
+    const characters = { tokens: MAX_INPUT_TEXT, at: Date.now() };
+
+    function controller(session: PairedDevice): Controller {
+      let found = controllers.get(socket);
+      if (!found) {
+        found = { device: session, send: (message) => send(socket, message) };
+        controllers.set(socket, found);
+      }
+      return found;
+    }
+
+    async function beginControl(id: RequestId, params: unknown, session: PairedDevice): Promise<void> {
+      const raw = isJsonObject(params) ? params : {};
+      const clip = (value: unknown) => (typeof value === 'string' ? value.slice(0, AUDIT_FIELD_CHARS) : null);
+      const refuseControl = (code: ErrorCode, message: string) => {
+        auditSafely({
+          at: new Date().toISOString(),
+          device: { id: session.id, name: session.name },
+          action: raw.takeOver === true ? 'control.take-over' : 'control.begin',
+          workspace: clip(raw.workspace),
+          ...(typeof raw.platform === 'string' ? { platform: clip(raw.platform)! } : {}),
+          ok: false,
+          error: { code, message: clip(message)! },
+        });
+        error(id, code, message);
+      };
+      const current = readDevices().find((entry) => entry.id === session.id);
+      if (!current?.capabilities.includes('control')) {
+        return refuseControl(
+          'forbidden',
+          `This device can only read. On the Mac, run \`stim-server devices grant ${session.id} --control\` to let it control devices.`,
+        );
+      }
+      const parsed = parseControlBegin(params);
+      if ('code' in parsed) return refuseControl(parsed.code, parsed.message);
+      const resolved = registeredWorkspace(parsed.value.workspace);
+      if ('code' in resolved) return refuseControl(resolved.code, resolved.message);
+      const owner = controller(session);
+      const outcome = await control.begin(
+        owner,
+        { ...parsed.value, workspace: resolved.dir },
+        resolved.dir,
+        () =>
+          socket.readyState === socket.OPEN &&
+          controllers.get(socket) === owner &&
+          readDevices().some((entry) => entry.id === session.id && entry.capabilities.includes('control')),
+      );
+      if ('code' in outcome) return refuseControl(outcome.code, outcome.message);
+      send(socket, { id, result: outcome });
+    }
+
+    async function input(
+      id: RequestId,
+      method: 'input.touch' | 'input.text' | 'input.button',
+      params: unknown,
+      session: PairedDevice,
+    ): Promise<void> {
+      const owner = controller(session);
+      const parsed = parseInput(method, params, (name) => control.platformOf(owner, name));
+      if ('code' in parsed) return error(id, parsed.code, parsed.message);
+      if (!take(inputs, 1, controlLimits.inputPerSecond, controlLimits.inputPerSecond)) {
+        return error(id, 'limit-exceeded', `A connection can send ${controlLimits.inputPerSecond} inputs a second.`);
+      }
+      const { command: sent } = parsed.value;
+      if (
+        sent.input === 'text' &&
+        !take(characters, sent.text.length, controlLimits.textCharsPerSecond, MAX_INPUT_TEXT)
+      ) {
+        return error(
+          id,
+          'limit-exceeded',
+          `A connection can type ${controlLimits.textCharsPerSecond} characters a second. Send the rest shortly.`,
+        );
+      }
+      const refused = await control.input(owner, parsed.value.session, parsed.value.command);
+      if (refused) return error(id, refused.code, refused.message);
+      send(socket, { id, result: {} });
     }
 
     function workspaceDir(id: RequestId, workspace: unknown, required: boolean): string | null {
@@ -775,6 +911,22 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return workspaceCommand(id, message.method, message.params);
       }
       if (message.method === 'action') return runAction(id, message.params, device);
+      if (message.method === 'control.begin') {
+        void beginControl(id, message.params, device);
+        return;
+      }
+      if (message.method === 'control.end') {
+        const name = isJsonObject(message.params) ? message.params.session : undefined;
+        if (typeof name !== 'string' || !control.endById(controller(device), name)) {
+          return error(id, 'unknown-session', `No control session ${String(name)} on this connection.`);
+        }
+        return send(socket, { id, result: {} });
+      }
+      if (message.method === 'input.touch' || message.method === 'input.text' || message.method === 'input.button') {
+        const method = message.method;
+        void input(id, method, message.params, device);
+        return;
+      }
       if (message.method === 'unsubscribe') {
         const name = isJsonObject(message.params) ? message.params.subscription : undefined;
         const unsubscribe = typeof name === 'string' ? subscriptions.get(name) : undefined;
@@ -799,6 +951,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       clearTimeout(timer);
       sessions.delete(socket);
       if (sessions.size === 0) sampler.stop();
+      const owner = controllers.get(socket);
+      if (owner) control.endFor(owner, null, 'The client disconnected.');
+      controllers.delete(socket);
       for (const unsubscribe of subscriptions.values()) unsubscribe();
       subscriptions.clear();
       for (const cancel of commands) {
@@ -843,6 +998,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     sampler.stop();
     if (revocationCheck) clearTimeout(revocationCheck);
     for (const client of wss.clients) client.terminate();
+    await control.close();
     await Promise.all([frames.close(), feeds.close(), ...[...running].map((cancel) => cancel())]);
     wss.close();
     await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));

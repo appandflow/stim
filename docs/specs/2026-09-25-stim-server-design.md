@@ -308,12 +308,43 @@ Both actions are recoverable: `reload` restarts the JavaScript and `stop`
 shuts the owned device down without deleting it. Actions that delete state,
 such as `gc --delete` or `worktree remove`, stay out of scope.
 
+## Device control
+
+Added 2026-09-25 by #1238, part of #1235. This section narrows "device input
+stays out of scope" from the Actions section: a paired device with `control`
+can drive an owned simulator or emulator from the phone.
+
+- Protocol: `control.begin` starts a session on the device that `stim status`
+  lists as owned by a workspace and slot. It is resolved exactly like frames,
+  so no other device is reachable. `input.touch`, `input.text` and
+  `input.button` take the session. `control.end` ends it, and the server
+  ends it with a `control-ended` event when the session goes idle, is taken
+  over, loses its device or loses `control`. There is one session per device
+  across all connections.
+- Busy devices: when status reports the device driven, or another client
+  controls it, `control.begin` is refused with `device-busy`, unless the
+  client sends `takeOver`, which the app asks the user to confirm first.
+- Lease: the session holds a `stim device lock` lease on the device, which
+  #1237 extended to the workspace's own simulators and emulators. The lease
+  is renewed every minute while the session lasts and released when it ends,
+  so agents see the device as driven by `stim device lock`. This is the one
+  Stim state change a control session makes, and it goes through the CLI.
+- Input path: iOS uses the `stim-frames` helper's SimulatorKit HID client.
+  Android touches use the helper's emulator gRPC `sendTouch`. Android text
+  and buttons use `adb shell input`, because Stim's AVDs have no hardware
+  keyboard.
+- Audit: session start, takeover and end go to the action log. Individual
+  inputs do not.
+- Limits: 120 inputs a second per connection, and 256 printable ASCII
+  characters per text input.
+
 ## Invariants
 
 - One implementation of state reading and locking: the server uses core's
   readers; it never parses `$STIM_HOME` files with its own code.
-- The server changes no Stim state. Its only writes are its own files under
-  `$STIM_HOME/server/`, locked and atomic.
+- The server changes no Stim state itself. Its only writes are its own files
+  under `$STIM_HOME/server/`, locked and atomic. Actions, and a control
+  session's device lease, change Stim state only through the `stim` CLI.
 - Runtime state stays under `$STIM_HOME` (AGENTS.md "Project").
 - Tests redirect `STIM_HOME` (invariant 5) and never bind real interfaces other
   than loopback.

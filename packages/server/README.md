@@ -107,12 +107,13 @@ closes its open connections.
 ## Scopes
 
 A paired device has the `read` capability, which serves state, or also
-`control`, which runs [actions](#actions). Pairing grants `read` only, unless
+`control`, which runs [actions](#actions) and [controls devices](#control). Pairing grants `read` only, unless
 the pairing code came from `stim-server pair --control`. On the Mac,
 `stim-server devices grant <id> --control` adds control to a paired device and
 `--read` takes it away. Nothing a client sends changes its own capabilities.
-The server checks the device's capabilities in `devices.json` on every action,
-so taking control away applies to open connections at once. `hello` reports
+The server checks the device's capabilities in `devices.json` on every action
+and control session, and ends a device's control sessions when it loses
+`control`, so taking control away applies to open connections at once. `hello` reports
 the capabilities and actions of the connection's device when it connects; a
 connection sees a new grant after it reconnects.
 
@@ -298,6 +299,63 @@ to `$STIM_HOME/server/actions.ndjson`: `at`, `device` (`id` and `name`),
 and `durationMs` when it ran. Strings from the client and error messages are
 cut to 256 characters. `stim-server log` prints them, with control characters
 replaced by `?`.
+
+## Control
+
+A device with `control` can drive a simulator or emulator that `stim status`
+lists as owned by a workspace. Nothing it sends reaches any other device.
+
+- `control.begin` takes `workspace`, `platform`, `slot` (`default` when
+  absent) and `takeOver`, and returns `{ "session", "platform", "lease" }`.
+  The server refuses with `device-busy` when status reports the device driven
+  (agent-device, a `stim device lock`, a test runner) or another client
+  controls it, naming the driver. With `takeOver: true` it proceeds anyway;
+  another client's session then ends with `taken-over`.
+- The session holds a `stim device lock <platform> <id> --for 2m` lease,
+  renewed every minute, so `stim status` shows the device as driven by
+  `stim device lock` and agents leave it alone. `lease` carries its
+  `grantedAt`, the `since` of that driver, so a client can tell its own lease
+  from an agent's. The server releases the lease with `stim device unlock`
+  when the session ends, unless the lease was already held before the session
+  began, as when it took the device over from an agent in the same workspace;
+  it renews only a lease it took. Leases belong to the workspace, not to the
+  session: an agent in the same workspace that runs `stim device lock` on the
+  device during a session shares the lease, and the session's end releases
+  it.
+- `input.touch` takes `session`, `phase` (`down`, `move`, `up`), `x` and `y`
+  as fractions of the upright screen, and `display` (0, the main display).
+  `input.text` takes up to 256 printable ASCII characters, where `\n` presses
+  Return, `\t` Tab and `\b` Delete. `input.button` takes `home` or `lock`,
+  and on Android also `back` or `app-switch`. Each answers `{}` once the input
+  is handed to the device: for a simulator, and for an emulator touch, that
+  is when the helper receives it, so a failure there shows only in the
+  server's log. A connection may send 120 inputs a second and type 40
+  characters a second, with a burst of 256; more fail with `limit-exceeded`.
+- `control.end` ends a session. The server also ends it with a
+  `control-ended` event `{ "session", "reason", "message" }` after 5 minutes
+  without input (`idle`), when another client takes the device over
+  (`taken-over`), when the device stops or changes owner (`device-gone`),
+  when the paired device loses `control` (`forbidden`), or when input cannot
+  reach the device (`failed`). Closing the connection ends its sessions.
+
+Input goes through the device's `stim-frames` helper, the process that
+streams its frames:
+
+- Simulators take touches, keys and buttons through SimulatorKit's HID
+  client, addressed to the main screen. Text is typed key by key on a US
+  layout. `lock` is the side button. On Xcode 27 (27A266a), a simulator
+  that a viewer app had opened (Xcode's Device Hub, which `stim ios` opens by
+  default, or Siniulator) ignored this input in testing, even after the
+  viewer quit, until the simulator booted again without one; a simulator
+  booted with `xcrun simctl boot` took it.
+- Emulators take touches through the emulator's gRPC `sendTouch`. Text and
+  buttons go through `adb -s <serial> shell input`, because Stim's AVDs have
+  no hardware keyboard and the emulator drops gRPC key events.
+
+Every session start, takeover and end, and every refused `control.begin`,
+appends a line to the action log, with `action` set to `control.begin`,
+`control.take-over` or `control.end`, and a `reason` that says why the session
+ended or whom it took the device from. Inputs are not logged.
 
 The error codes `unauthorized`, `pairing-expired`, and `protocol-unsupported`
 refuse the client until it pairs again or updates; clients retry the others.
