@@ -8,13 +8,17 @@ import type { FrameTarget } from './protocol.ts';
 import { serverDir } from './registry.ts';
 import { terminate } from './stim-command.ts';
 
-export type Device = { platform: 'ios'; udid: string } | { platform: 'android'; serial: string };
+/** `foldable` marks an iPhone Duo, whose posture lights one of two panels. */
+export type Device = { platform: 'ios'; udid: string; foldable: boolean } | { platform: 'android'; serial: string };
+
+type Posture = 'folded' | 'unfolded';
 
 export interface Frame {
   width: number;
   height: number;
   capturedAt: string;
   data: string;
+  posture?: Posture;
 }
 
 export interface FrameListener {
@@ -67,7 +71,7 @@ export function ownedDevice(payload: StatusPayload, target: FrameTarget, attache
     const sim = devices?.ios;
     if (!sim?.owned) return `No simulator Stim owns runs ${where}.`;
     if (sim.state !== 'Booted') return `The simulator for ${where} is ${sim.state}, not booted.`;
-    return { platform: 'ios', udid: sim.udid };
+    return { platform: 'ios', udid: sim.udid, foldable: /\bDuo\b/.test(sim.name ?? '') };
   }
   const emulator = devices?.android;
   if (!emulator?.owned || emulator.physical) return `No emulator Stim owns runs ${where}.`;
@@ -149,6 +153,7 @@ function runTool(
 interface Capture {
   raw: Buffer;
   jpeg: () => Promise<Buffer>;
+  posture?: Posture;
 }
 
 interface Capturer {
@@ -162,35 +167,75 @@ async function stopTools(running: Set<ChildProcess>, tmp: string | null): Promis
 }
 
 /**
- * Without `--display`, simctl captures the first panel it finds, which on a foldable simulator (iPhone Duo)
- * can be the unlit one and comes back black; `primary` is the panel CoreDevice reports as primary. A simctl
- * that rejects `primary` gets the default display instead.
+ * Without `--display`, simctl captures the first panel it finds; `primary` is the panel CoreDevice reports as
+ * primary. A simctl that rejects `primary` gets the default display instead.
+ *
+ * An iPhone Duo lights one of two panels: `primary` is the cover, lit when folded, and `primary-1` the inner
+ * panel, lit when unfolded; the other one's framebuffer is all black. `litPanels` remembers the lit panel per
+ * simulator across subscriptions, and a black capture tries the other panel.
  */
-function simulatorCapturer(udid: string, env: NodeJS.ProcessEnv, limits: FrameLimits): Capturer {
+function simulatorCapturer(
+  device: { udid: string; foldable: boolean },
+  env: NodeJS.ProcessEnv,
+  limits: FrameLimits,
+  litPanels: Map<string, DuoPanel>,
+): Capturer {
   let tmp: string | null = null;
   let display: string[] = ['--display=primary'];
   let closed = false;
   const running = new Set<ChildProcess>();
-  const screenshot = (output: string) =>
-    runTool(
+  const screenshot = async (panel: string[]): Promise<Buffer> => {
+    tmp ??= mkdtempSync(join(serverDir(), 'frames-'));
+    const output = join(tmp, 'frame.jpg');
+    await runTool(
       'xcrun',
-      ['simctl', 'io', udid, 'screenshot', '--type=jpeg', ...display, output],
+      ['simctl', 'io', device.udid, 'screenshot', '--type=jpeg', ...panel, output],
       env,
       running,
       limits.toolTimeoutMs,
     );
+    return readFileSync(output);
+  };
+  const isBlack = async (jpeg: Buffer): Promise<boolean> => {
+    const input = join(tmp!, 'check.jpg');
+    const output = join(tmp!, 'check.bmp');
+    writeFileSync(input, jpeg);
+    await runTool(
+      'sips',
+      ['-s', 'format', 'bmp', '-z', '24', '24', input, '--out', output],
+      env,
+      running,
+      limits.toolTimeoutMs,
+    );
+    return bmpIsBlack(readFileSync(output));
+  };
+  const open = () => {
+    if (closed) throw new Error('The capture was stopped.');
+  };
+  const captureDuo = async (): Promise<Capture> => {
+    const lit = litPanels.get(device.udid) ?? 'primary';
+    const jpeg = await screenshot([`--display=${lit}`]);
+    open();
+    if (!(await isBlack(jpeg))) return { raw: jpeg, jpeg: async () => jpeg, posture: POSTURES[lit] };
+    const other: DuoPanel = lit === 'primary' ? 'primary-1' : 'primary';
+    open();
+    const otherJpeg = await screenshot([`--display=${other}`]);
+    open();
+    if (await isBlack(otherJpeg)) return { raw: jpeg, jpeg: async () => jpeg };
+    litPanels.set(device.udid, other);
+    return { raw: otherJpeg, jpeg: async () => otherJpeg, posture: POSTURES[other] };
+  };
   return {
     capture: async () => {
-      tmp ??= mkdtempSync(join(serverDir(), 'frames-'));
-      const output = join(tmp, 'frame.jpg');
+      if (device.foldable) return captureDuo();
+      let jpeg: Buffer;
       try {
-        await screenshot(output);
+        jpeg = await screenshot(display);
       } catch (error) {
         if (closed || !display.length || !/display/i.test((error as { stderr?: string }).stderr ?? '')) throw error;
         display = [];
-        await screenshot(output);
+        jpeg = await screenshot(display);
       }
-      const jpeg = readFileSync(output);
       return { raw: jpeg, jpeg: async () => jpeg };
     },
     close: () => {
@@ -198,6 +243,21 @@ function simulatorCapturer(udid: string, env: NodeJS.ProcessEnv, limits: FrameLi
       return stopTools(running, tmp);
     },
   };
+}
+
+type DuoPanel = 'primary' | 'primary-1';
+
+const POSTURES: Record<DuoPanel, Posture> = { primary: 'folded', 'primary-1': 'unfolded' };
+
+/** Whether every pixel of an uncompressed 24- or 32-bit BMP, as `sips -s format bmp` writes it, is black. */
+function bmpIsBlack(bmp: Buffer): boolean {
+  if (bmp.length < 54 || bmp.toString('latin1', 0, 2) !== 'BM') throw new Error('sips did not write a BMP image.');
+  const offset = bmp.readUInt32LE(10);
+  const bytesPerPixel = bmp.readUInt16LE(28) / 8;
+  for (let at = offset; at + 3 <= bmp.length; at += bytesPerPixel) {
+    if (bmp[at]! > 8 || bmp[at + 1]! > 8 || bmp[at + 2]! > 8) return false;
+  }
+  return true;
 }
 
 interface EmulatorEndpoint {
@@ -460,7 +520,12 @@ class FrameSource {
         const size = jpegSize(jpeg);
         if (!size) throw new Error('The screenshot is not a JPEG image.');
         this.lastHash = hash;
-        this.last = { ...size, capturedAt: new Date(started).toISOString(), data: jpeg.toString('base64') };
+        this.last = {
+          ...size,
+          capturedAt: new Date(started).toISOString(),
+          data: jpeg.toString('base64'),
+          ...(capture.posture ? { posture: capture.posture } : {}),
+        };
         took = Date.now() - started;
         return true;
       });
@@ -494,6 +559,7 @@ class FrameSource {
 export class FramePool {
   private readonly sources = new Map<string, FrameSource>();
   private readonly limiter = new Limiter(MAX_CAPTURES);
+  private readonly litPanels = new Map<string, DuoPanel>();
   private readonly env: NodeJS.ProcessEnv;
   private readonly limits: FrameLimits;
 
@@ -508,7 +574,7 @@ export class FramePool {
     if (!source) {
       const capturer =
         device.platform === 'ios'
-          ? simulatorCapturer(device.udid, this.env, this.limits)
+          ? simulatorCapturer(device, this.env, this.limits, this.litPanels)
           : emulatorCapturer(device.serial, this.env, this.limits);
       const created: FrameSource = new FrameSource(capturer, this.limiter, this.limits, () => {
         if (this.sources.get(key) === created) this.sources.delete(key);

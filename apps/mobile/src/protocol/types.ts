@@ -324,6 +324,8 @@ export interface FrameEvent {
   capturedAt: string;
   /** Base64-encoded image bytes. */
   data: string;
+  /** Which panel an iPhone Duo's posture lit: the cover when folded, the inner panel when unfolded. */
+  posture?: 'folded' | 'unfolded';
 }
 
 /**
