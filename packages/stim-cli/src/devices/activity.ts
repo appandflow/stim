@@ -59,6 +59,8 @@ export interface AgentDeviceRecord {
   path: string;
   kind: 'claim' | 'runner-lease';
   deviceId: string | null;
+  session: string | null;
+  deviceName: string | null;
   readable: boolean;
   owner: PidStart | null;
   runner: PidStart | null;
@@ -97,6 +99,8 @@ export function parseAgentDeviceRecord(
     path,
     kind,
     deviceId,
+    session: kind === 'claim' && typeof entry?.session === 'string' && entry.session ? entry.session : null,
+    deviceName: kind === 'claim' && typeof device?.name === 'string' ? device.name : null,
     readable: Boolean(entry && deviceId),
     owner: entry ? field(entry, 'ownerPid', 'ownerStartTime') : null,
     runner: entry && kind === 'runner-lease' ? field(entry, 'runnerPid', 'runnerStartTime') : null,
@@ -240,7 +244,7 @@ function agentDeviceDirs(home: string): { kind: AgentDeviceRecord['kind']; dir: 
   ];
 }
 
-function readAgentDeviceRecords(home: string): AgentDeviceRecord[] {
+export function readAgentDeviceRecords(home: string): AgentDeviceRecord[] {
   return agentDeviceDirs(home).flatMap(({ kind, dir }) => {
     let names: string[];
     try {

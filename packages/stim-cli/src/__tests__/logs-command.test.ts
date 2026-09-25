@@ -1,5 +1,14 @@
 import assert from 'node:assert';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
@@ -154,12 +163,12 @@ describe('option validation', () => {
     const r = validateSources(['metrro']);
     expect(r.sources).toBe(undefined);
     expect(r.error).toMatch(/metrro/);
-    expect(r.error).toMatch(/metro, client, device, build/);
+    expect(r.error).toMatch(/metro, client, device, build, agent/);
   });
 
   test('validateSources expands all to every Contract-1 source', async () => {
-    expect(validateSources(['all'])).toEqual({ sources: ['metro', 'client', 'device', 'build'] });
-    expect(validateSources(['client', 'all'])).toEqual({ sources: ['metro', 'client', 'device', 'build'] });
+    expect(validateSources(['all'])).toEqual({ sources: ['metro', 'client', 'device', 'build', 'agent'] });
+    expect(validateSources(['client', 'all'])).toEqual({ sources: ['metro', 'client', 'device', 'build', 'agent'] });
     expect(validateSources(['metrro']).error).toMatch(/or all/);
   });
 
@@ -608,6 +617,41 @@ describe('logs command', () => {
       }
     }
     expect(out.filter((line) => line.includes('IllegalStateException'))).toHaveLength(1);
+  });
+
+  test('merges agent-device actions on owned devices, and --errors takes them only when selected', async () => {
+    const agentHome = mkdtempSync(join(tmpdir(), 'stim-logscmd-agent-'));
+    cpSync(join(import.meta.dirname, 'fixtures', 'agent-device'), join(agentHome, '.agent-device'), {
+      recursive: true,
+    });
+    vi.stubEnv('HOME', agentHome);
+    vi.stubEnv('USERPROFILE', agentHome);
+    for (const name of ['AGENT_DEVICE_STATE_DIR', 'AGENT_DEVICE_CLAIMS_DIR', 'AGENT_DEVICE_IOS_RUNNER_LEASE_DIR'])
+      vi.stubEnv(name, '');
+    try {
+      upsertProject(project, {
+        platforms: { ios: { owned: true, deviceUdid: 'AD45387C-599D-4EDB-A62B-18176FF3A2A7' } },
+      });
+      writeLog('metro.ndjson', [
+        { ts: Date.parse('2026-09-25T12:00:00Z'), src: 'metro', level: 'error', msg: 'metro error' },
+      ]);
+      await run({ source: ['agent'], json: true });
+      expect(parsedMsgs(out)).toEqual([
+        'Opened com.appandflow.stim',
+        'Tapped (201, 542)',
+        'Failed press: COMMAND_FAILED',
+        'Captured screenshot home-light.png',
+      ]);
+      out.length = 0;
+      await run({ errors: true, json: true });
+      expect(parsedMsgs(out)).toEqual(['metro error']);
+      out.length = 0;
+      await run({ errors: true, source: ['all'], json: true });
+      expect(parsedMsgs(out)).toEqual(['metro error', 'Failed press: COMMAND_FAILED']);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(agentHome, { recursive: true, force: true });
+    }
   });
 
   describe('--errors, after the field test', () => {

@@ -68,6 +68,6 @@ describe('levels', () => {
 
 describe('sources', () => {
   test('SOURCES is the Contract-1 set', () => {
-    expect(SOURCES).toEqual(['metro', 'client', 'device', 'build']);
+    expect(SOURCES).toEqual(['metro', 'client', 'device', 'build', 'agent']);
   });
 });

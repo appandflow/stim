@@ -19,7 +19,10 @@ import {
   parseSince,
   queryLogs,
   readLogRecords,
+  recordMatches,
+  sortByTs,
 } from '@stim-cli/core/state';
+import { createAgentActionReader, workspaceAgentTargets } from '../devices/agent-actions.ts';
 import { errorDiagnostics } from '../diagnostics/error-diagnostics.ts';
 import { launchErrorPreview } from '../diagnostics/launch-error-preview.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
@@ -169,10 +172,10 @@ export default function logsCommand(program: Command): void {
   program
     .command('logs')
     .description(
-      "Query this workspace's merged NDJSON log timeline (bundler, client, device, build). Prints and exits; an existing timeline with nothing matching is a successful, empty result. Use --follow to stream.",
+      "Query this workspace's merged NDJSON log timeline (bundler, client, device, build, agent-device actions). Prints and exits; an existing timeline with nothing matching is a successful, empty result. Use --follow to stream.",
     )
     .option('--slot <name>', 'Only records attributed to this device slot', parseDeviceSlotOption)
-    .option('--source <s...>', 'Only these sources: metro, client, device, build, or all')
+    .option('--source <s...>', 'Only these sources: metro, client, device, build, agent, or all')
     .option('--level <l>', `Minimum level: ${LEVELS.join(', ')}`)
     .option('--since <d>', 'Only records newer than this, e.g. 30s, 5m, 2h')
     .option('--grep <re>', 'Only records whose message matches this regular expression')
@@ -251,7 +254,16 @@ export default function logsCommand(program: Command): void {
 
       const captured = captureWorkspaceCrashes(root, dir);
       const offsets = opts.follow ? fileSizes(dir) : null;
-      const timeline = opts.follow ? readLogRecords(dir) : captured;
+      const workspaceTimeline = opts.follow ? readLogRecords(dir) : captured;
+      const agentSince = workspaceTimeline[0]?.ts ?? (opts.follow ? Date.now() : undefined);
+      const readAgent =
+        (sources ? sources.includes('agent') : !opts.errors) && agentSince !== undefined
+          ? createAgentActionReader({
+              targets: workspaceAgentTargets(loadConfig()?.projects?.[root]),
+              sinceTs: agentSince,
+            })
+          : null;
+      const timeline = readAgent ? sortByTs([...workspaceTimeline, ...readAgent()]) : workspaceTimeline;
       const rawRecords = queryLogs({ ...query, records: timeline });
       const supervisorPort = readWorkspaceState(root)?.supervisor?.port;
       const records = opts.json
@@ -299,8 +311,14 @@ export default function logsCommand(program: Command): void {
         errorsOnly: Boolean(opts.errors),
       });
       const stop = followLogs({ dir, offsets, criteria, onRecord: emit });
+      const agentTimer = readAgent
+        ? setInterval(() => {
+            for (const record of readAgent()) if (recordMatches(record, criteria)) emit(record);
+          }, 500)
+        : null;
       const finish = () => {
         stop();
+        if (agentTimer) clearInterval(agentTimer);
         process.exit(0);
       };
       process.on('SIGINT', finish);

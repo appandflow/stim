@@ -32,8 +32,8 @@ usually untagged: use an unfiltered workspace query to inspect those errors.
 
 FLAGS
   --slot <name>   only this slot's records (default includes untagged records)
-  --source <s...>  metro, client, device, build (one or more), or all. An
-                   unknown value is REJECTED rather than quietly matching
+  --source <s...>  metro, client, device, build, agent (one or more), or all.
+                   An unknown value is REJECTED rather than quietly matching
                    nothing.
   --level <l>      minimum level: debug, info, warn, error, fatal
   --since <d>      only records newer than this: 30s, 5m, 2h
@@ -124,7 +124,7 @@ FLAGS
 
 THE RECORD
   { ts, src, level, msg } always. ts is epoch milliseconds; src is one of
-  metro / client / device / build; level is one of the five above.
+  metro / client / device / build / agent; level is one of the five above.
   Optional fields:
     event    the producer's own event name (bundle_build_done, client_log, ...)
     stack    frames of { file, line, column, fn }, passed through as reported
@@ -273,6 +273,21 @@ WHAT WRITES WHAT
   archive rather than a stream. Streaming with full fidelity needs
   libimobiledevice or pymobiledevice3, which are third-party installs Stim
   does not require. See appandflow/stim#179.
+  agent                no file. Each query reads agent-device's session
+                       records (~/.agent-device/sessions, or
+                       AGENT_DEVICE_STATE_DIR) for this workspace's owned
+                       simulators and emulators, read-only. An action is
+                       info (msg is agent-device's summary, e.g. "Tapped
+                       (201, 731)"; event agent_action with command, session,
+                       deviceId and details); a failed command is error
+                       (event agent_failed). A plain query includes them;
+                       --errors only with --source agent or all. iOS sessions
+                       match a simulator through their runner.log, Android
+                       sessions only while agent-device's claim on the
+                       emulator is live (released claims drop their
+                       actions from later queries). A session in an
+                       unrecognized format yields one warn record
+                       (agent_format_unknown) instead of its actions.
   build-ios.ndjson     the xcodebuild / gradle transcript at level debug, the
   build-android.ndjson extracted diagnostics at level error, and the launch as
                        a marker record. One RUN's worth: each build starts the
