@@ -719,6 +719,10 @@ if (basename(process.argv[1]) === 'sips') {
   writeFileSync(args[args.indexOf('--out') + 1], Buffer.from(env.FAKE_SIPS_JPEG, 'base64'));
   process.exit(0);
 }
+if (env.FAKE_XCRUN_NO_PRIMARY && args.includes('--display=primary')) {
+  process.stderr.write("Device does not have a 'primary' display port");
+  process.exit(22);
+}
 if (env.FAKE_XCRUN_FAIL) {
   process.stderr.write('simctl failed on purpose');
   process.exit(2);
@@ -729,16 +733,18 @@ writeFileSync(env.FAKE_FRAME_COUNTER, String(count + 1));
 writeFileSync(args.at(-1), Buffer.from(frames[Math.min(count, frames.length - 1)], 'base64'));
 `;
 
+function statusPayload(devices: Record<string, unknown>): unknown {
+  return {
+    environments: [{ path: workspace, live: true, memoryMb: 0, warnings: [], ...devices }],
+    capacity: { liveCount: 1, committedMb: 0, totalMemoryMb: 1, overCapacity: false },
+    deviceLeases: [],
+    unprovisionedWorktrees: [],
+    simctlAvailable: true,
+  };
+}
+
 function statusWith(devices: Record<string, unknown>): string {
-  return JSON.stringify([
-    {
-      environments: [{ path: workspace, live: true, memoryMb: 0, warnings: [], ...devices }],
-      capacity: { liveCount: 1, committedMb: 0, totalMemoryMb: 1, overCapacity: false },
-      deviceLeases: [],
-      unprovisionedWorktrees: [],
-      simctlAvailable: true,
-    },
-  ]);
+  return JSON.stringify([statusPayload(devices)]);
 }
 
 const OWNED_SIM = { name: 'stim-app (iPhone 17 27.0)', udid: 'SIM-1', owned: true, state: 'Booted' };
@@ -859,6 +865,41 @@ describe('frames.subscribe', () => {
     expect(toolRuns()).toEqual([]);
   });
 
+  test.skipIf(!fakeTailscale)('ends the subscription when the simulator stops, and stops capturing', async () => {
+    const booted = statusPayload({ ios: OWNED_SIM });
+    const port = await startWithTools({
+      FAKE_STIM_PAYLOADS: JSON.stringify([
+        ...Array.from({ length: 25 }, () => booted),
+        statusPayload({ ios: { ...OWNED_SIM, state: 'Shutdown' } }),
+      ]),
+      FAKE_FRAMES: JSON.stringify([jpeg(10, 20, 'A').toString('base64')]),
+    });
+    const client = await authed(port);
+    await client.request('frames.subscribe', { workspace, platform: 'ios' });
+    expect(await client.next()).toMatchObject({ event: 'frame', width: 10, height: 20 });
+    expect(await client.next()).toEqual({
+      event: 'error',
+      subscription: 's1',
+      error: { code: 'frames-failed', message: expect.stringContaining('is Shutdown, not booted') },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const settled = toolRuns().length;
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    expect(toolRuns()).toHaveLength(settled);
+  });
+
+  test.skipIf(!fakeTailscale)('captures the default display when simctl rejects primary', async () => {
+    const port = await startWithTools({
+      FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }),
+      FAKE_FRAMES: JSON.stringify([jpeg(10, 20, 'A').toString('base64')]),
+      FAKE_XCRUN_NO_PRIMARY: '1',
+    });
+    const client = await authed(port);
+    await client.request('frames.subscribe', { workspace, platform: 'ios' });
+    expect(await client.next()).toMatchObject({ event: 'frame', width: 10, height: 20 });
+    expect(toolRuns()[1]?.args).not.toContain('--display=primary');
+  });
+
   test.skipIf(!fakeTailscale)('ends the subscription when a capture fails', async () => {
     const port = await startWithTools({
       FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }),
@@ -937,6 +978,7 @@ describe('frames.subscribe', () => {
           path: '/android.emulation.control.EmulatorController/getScreenshot',
           authorization: 'Bearer secret-token',
         });
+        expect([...requests[0]!.body]).toEqual([0, 0, 0, 0, 6, 0x18, 0x80, 0x0a, 0x20, 0x80, 0x0a]);
         const [sips] = toolRuns();
         expect(sips?.tool).toBe('sips');
         expect(sips?.args.slice(0, 4)).toEqual(['-s', 'format', 'jpeg', '-s']);

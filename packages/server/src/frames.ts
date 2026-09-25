@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { connect, type ClientHttp2Session } from 'node:http2';
@@ -33,8 +33,9 @@ export function deviceKey(device: Device): string {
   return device.platform === 'ios' ? `ios:${device.udid}` : `android:${device.serial}`;
 }
 
-export function ownedDevice(payload: StatusPayload, target: FrameTarget): Device | string {
+export function ownedDevice(payload: StatusPayload, target: FrameTarget, attached: string | null): Device | string {
   const slot = target.slot ?? 'default';
+  if (!Array.isArray(payload.environments)) return 'stim status printed a payload without environments.';
   const environment = payload.environments.find((candidate) => candidate.path === target.workspace);
   if (!environment) return `${target.workspace} is not a Stim workspace on this Mac.`;
   const devices =
@@ -50,8 +51,11 @@ export function ownedDevice(payload: StatusPayload, target: FrameTarget): Device
   }
   const emulator = devices?.android;
   if (!emulator?.owned || emulator.physical) return `No emulator Stim owns runs ${where}.`;
-  if (emulator.state !== 'detected' || !emulator.serial) return `The emulator for ${where} is not running.`;
-  return { platform: 'android', serial: emulator.serial };
+  if (!emulator.serial) return `The emulator for ${where} is not running.`;
+  const device: Device = { platform: 'android', serial: emulator.serial };
+  const stillAttached = emulator.state === 'unknown' && attached === deviceKey(device);
+  if (emulator.state !== 'detected' && !stillAttached) return `The emulator for ${where} is not running.`;
+  return device;
 }
 
 function jpegSize(bytes: Buffer): { width: number; height: number } | null {
@@ -76,9 +80,11 @@ function jpegSize(bytes: Buffer): { width: number; height: number } | null {
   return null;
 }
 
-function runTool(file: string, args: string[], env: NodeJS.ProcessEnv): Promise<Buffer> {
+function runTool(file: string, args: string[], env: NodeJS.ProcessEnv, running: Set<ChildProcess>): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const child = spawn(file, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    running.add(child);
+    child.once('close', () => running.delete(child));
     const chunks: Buffer[] = [];
     let stderr = '';
     const timer = setTimeout(() => {
@@ -97,7 +103,10 @@ function runTool(file: string, args: string[], env: NodeJS.ProcessEnv): Promise<
     child.on('close', (code) => {
       clearTimeout(timer);
       if (code === 0) resolve(Buffer.concat(chunks));
-      else reject(new Error(`${file} ${args.join(' ')} exited (code ${code}): ${stderr.trim()}`));
+      else
+        reject(
+          Object.assign(new Error(`${file} ${args.join(' ')} exited (code ${code}): ${stderr.trim()}`), { stderr }),
+        );
     });
   });
 }
@@ -109,26 +118,40 @@ interface Capture {
 
 interface Capturer {
   capture: () => Promise<Capture>;
-  close: () => void;
+  close: () => Promise<void>;
+}
+
+async function stopTools(running: Set<ChildProcess>, tmp: string | null): Promise<void> {
+  await Promise.all([...running].map((child) => terminate(child)));
+  if (tmp) rmSync(tmp, { recursive: true, force: true });
 }
 
 /**
  * Without `--display`, simctl captures the first panel it finds, which on a foldable simulator (iPhone Duo)
- * can be the unlit one and comes back black; `primary` is the panel CoreDevice reports as primary.
+ * can be the unlit one and comes back black; `primary` is the panel CoreDevice reports as primary. A simctl
+ * that rejects `primary` gets the default display instead.
  */
 function simulatorCapturer(udid: string, env: NodeJS.ProcessEnv): Capturer {
   let tmp: string | null = null;
+  let display: string[] = ['--display=primary'];
+  const running = new Set<ChildProcess>();
+  const screenshot = (output: string) =>
+    runTool('xcrun', ['simctl', 'io', udid, 'screenshot', '--type=jpeg', ...display, output], env, running);
   return {
     capture: async () => {
       tmp ??= mkdtempSync(join(serverDir(), 'frames-'));
       const output = join(tmp, 'frame.jpg');
-      await runTool('xcrun', ['simctl', 'io', udid, 'screenshot', '--type=jpeg', '--display=primary', output], env);
+      try {
+        await screenshot(output);
+      } catch (error) {
+        if (!display.length || !/display/i.test((error as { stderr?: string }).stderr ?? '')) throw error;
+        display = [];
+        await screenshot(output);
+      }
       const jpeg = readFileSync(output);
       return { raw: jpeg, jpeg: async () => jpeg };
     },
-    close: () => {
-      if (tmp) rmSync(tmp, { recursive: true, force: true });
-    },
+    close: () => stopTools(running, tmp),
   };
 }
 
@@ -241,6 +264,7 @@ function screenshotImage(body: Buffer): Buffer {
 function emulatorCapturer(serial: string, env: NodeJS.ProcessEnv): Capturer {
   let session: ClientHttp2Session | null = null;
   let tmp: string | null = null;
+  const running = new Set<ChildProcess>();
   const call = (endpoint: EmulatorEndpoint) =>
     new Promise<Buffer>((resolve, reject) => {
       if (!session || session.closed || session.destroyed) {
@@ -259,7 +283,7 @@ function emulatorCapturer(serial: string, env: NodeJS.ProcessEnv): Capturer {
       let message: string | undefined;
       const record = (headers: Record<string, unknown>) => {
         if (headers['grpc-status'] !== undefined) status = String(headers['grpc-status']);
-        if (headers['grpc-message'] !== undefined) message = decodeURIComponent(String(headers['grpc-message']));
+        if (headers['grpc-message'] !== undefined) message = String(headers['grpc-message']);
       };
       request.setTimeout(TOOL_TIMEOUT_MS, () => request.close());
       request.on('response', record);
@@ -287,14 +311,14 @@ function emulatorCapturer(serial: string, env: NodeJS.ProcessEnv): Capturer {
           const output = join(tmp, 'frame.jpg');
           writeFileSync(input, png);
           const format = ['-s', 'format', 'jpeg', '-s', 'formatOptions', String(JPEG_QUALITY)];
-          await runTool('sips', [...format, input, '--out', output], env);
+          await runTool('sips', [...format, input, '--out', output], env, running);
           return readFileSync(output);
         },
       };
     },
     close: () => {
       session?.close();
-      if (tmp) rmSync(tmp, { recursive: true, force: true });
+      return stopTools(running, tmp);
     },
   };
 }
@@ -344,44 +368,46 @@ class FrameSource {
     this.listeners.add(listener);
     if (this.last) listener.frame(this.last);
     return () => {
-      if (this.listeners.delete(listener) && this.listeners.size === 0) this.stop();
+      if (this.listeners.delete(listener) && this.listeners.size === 0) void this.stop();
     };
   }
 
-  stop(): void {
-    if (this.stopped) return;
+  stop(): Promise<void> {
+    if (this.stopped) return Promise.resolve();
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
     this.listeners.clear();
-    this.capturer.close();
     this.ended();
+    return this.capturer.close();
   }
 
   private async tick(): Promise<void> {
     this.timer = null;
-    const started = Date.now();
+    let took = 0;
     try {
       const changed = await this.limiter.run(async () => {
         if (this.stopped) return false;
+        const started = Date.now();
         const capture = await this.capturer.capture();
         const hash = createHash('sha256').update(capture.raw).digest('hex');
+        took = Date.now() - started;
         if (hash === this.lastHash || this.stopped) return false;
         const jpeg = await capture.jpeg();
         const size = jpegSize(jpeg);
         if (!size) throw new Error('The screenshot is not a JPEG image.');
         this.lastHash = hash;
         this.last = { ...size, capturedAt: new Date(started).toISOString(), data: jpeg.toString('base64') };
+        took = Date.now() - started;
         return true;
       });
       if (this.stopped) return;
       if (changed) for (const listener of this.listeners) listener.frame(this.last!);
       this.interval = changed ? MIN_INTERVAL_MS : Math.min(this.interval * 2, MAX_INTERVAL_MS);
-      const took = Date.now() - started;
       this.timer = setTimeout(() => void this.tick(), Math.max(this.interval - took, took));
     } catch (error) {
       if (this.stopped) return;
       const listeners = [...this.listeners];
-      this.stop();
+      void this.stop();
       for (const listener of listeners) listener.failed((error as Error).message);
     }
   }
@@ -419,7 +445,7 @@ export class FramePool {
     return source.add(listener);
   }
 
-  close(): void {
-    for (const source of this.sources.values()) source.stop();
+  async close(): Promise<void> {
+    await Promise.all([...this.sources.values()].map((source) => source.stop()));
   }
 }

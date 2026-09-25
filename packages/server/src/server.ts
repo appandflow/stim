@@ -402,7 +402,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       unsubscribeStatus = feeds.subscribe(STATUS_FEED, {
         item: (payload) => {
           if (ended) return;
-          const resolved = ownedDevice(payload as unknown as StatusPayload, frameTarget);
+          const resolved = ownedDevice(payload as unknown as StatusPayload, frameTarget, attached);
           if (typeof resolved === 'string') return queueMicrotask(() => end(resolved));
           if (deviceKey(resolved) === attached) return;
           detach?.();
@@ -411,7 +411,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         },
         failed: (message) => queueMicrotask(() => end(message)),
       });
-      if (ended) unsubscribeStatus();
       subscriptions.set(subscription, cleanup);
     }
 
@@ -546,8 +545,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     watcher.close();
     if (revocationCheck) clearTimeout(revocationCheck);
     for (const client of wss.clients) client.terminate();
-    frames.close();
-    await Promise.all([feeds.close(), ...[...running].map((cancel) => cancel())]);
+    await Promise.all([frames.close(), feeds.close(), ...[...running].map((cancel) => cancel())]);
     wss.close();
     await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));
   };

@@ -186,7 +186,7 @@ export interface ErrorEvent {
   error: ProtocolError;
 }
 
-/** A screenshot of the device, sent only when the screen changed, 1 to 5 times a second. */
+/** A screenshot of the device, sent when the screen changed, at most 5 times a second. */
 export interface FrameEvent {
   event: 'frame';
   subscription: string;
