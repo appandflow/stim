@@ -154,6 +154,7 @@ async function start(
     actionLimits?: ServerOptions['actionLimits'];
     tailscaleState?: ServerOptions['tailscaleState'];
     frameLimits?: ServerOptions['frameLimits'];
+    frameHelper?: string | null;
   } = {},
 ): Promise<number> {
   const stimCli = join(root, 'fake-stim.mjs');
@@ -187,6 +188,7 @@ async function start(
     commandLimits: overrides.commandLimits,
     actionLimits: overrides.actionLimits,
     frameLimits: overrides.frameLimits,
+    frameHelper: overrides.frameHelper ?? null,
   });
   return server.addresses[0]!.port;
 }
@@ -1008,6 +1010,46 @@ writeFileSync(env.FAKE_FRAME_COUNTER, String(count + 1));
 writeFileSync(args.at(-1), Buffer.from(frames[Math.min(count, frames.length - 1)], 'base64'));
 `;
 
+const FAKE_HELPER = `#!/usr/bin/env node
+const { appendFileSync } = require('node:fs');
+const env = process.env;
+const run = { tool: 'stim-frames', args: process.argv.slice(2), pid: process.pid, configs: [] };
+const record = () => appendFileSync(env.FAKE_TOOL_CALLS, JSON.stringify(run) + '\\n');
+process.on('exit', record);
+process.on('SIGTERM', () => process.exit(0));
+const message = (kind, body) => {
+  const header = Buffer.alloc(5);
+  header.writeUInt32BE(body.length + 1, 0);
+  header[4] = kind;
+  process.stdout.write(Buffer.concat([header, body]));
+};
+if (env.FAKE_HELPER_FAIL && !env.FAKE_HELPER_FAIL_AFTER) {
+  message(2, Buffer.from(JSON.stringify({ error: env.FAKE_HELPER_FAIL })));
+  process.exit(1);
+}
+let lines = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
+  lines += chunk;
+  for (let at = lines.indexOf('\\n'); at >= 0; at = lines.indexOf('\\n')) {
+    run.configs.push(JSON.parse(lines.slice(0, at)));
+    lines = lines.slice(at + 1);
+  }
+});
+process.stdin.on('end', () => process.exit(0));
+let sent = 0;
+setInterval(() => {
+  const size = Buffer.alloc(4);
+  size.writeUInt16BE(390, 0);
+  size.writeUInt16BE(844, 2);
+  message(1, Buffer.concat([size, Buffer.from('frame ' + sent++)]));
+  if (env.FAKE_HELPER_FAIL_AFTER && sent >= Number(env.FAKE_HELPER_FAIL_AFTER)) {
+    message(2, Buffer.from(JSON.stringify({ error: env.FAKE_HELPER_FAIL })));
+    process.exit(1);
+  }
+}, Number(env.FAKE_HELPER_INTERVAL_MS ?? 50));
+`;
+
 function statusPayload(devices: Record<string, unknown>): unknown {
   return {
     environments: [{ path: workspace, live: true, memoryMb: 0, warnings: [], ...devices }],
@@ -1030,6 +1072,7 @@ describe('frames.subscribe', () => {
   async function startWithTools(
     env: Record<string, string>,
     frameLimits?: ServerOptions['frameLimits'],
+    frameHelper?: string,
   ): Promise<number> {
     const bin = join(root, 'bin');
     mkdirSync(bin);
@@ -1046,6 +1089,7 @@ describe('frames.subscribe', () => {
         ...env,
       },
       frameLimits,
+      frameHelper,
     });
   }
 
@@ -1283,6 +1327,108 @@ describe('frames.subscribe', () => {
     },
     10_000,
   );
+
+  function fakeHelper(): string {
+    const helper = join(root, 'stim-frames');
+    writeFileSync(helper, FAKE_HELPER);
+    chmodSync(helper, 0o755);
+    return helper;
+  }
+
+  function helperRuns(): { args: string[]; pid: number; configs: { fps: number; maxEdge: number }[] }[] {
+    return toolRuns()
+      .filter((run) => run.tool === 'stim-frames')
+      .map((run) => run as unknown as { args: string[]; pid: number; configs: { fps: number; maxEdge: number }[] });
+  }
+
+  test.skipIf(!fakeTailscale)(
+    'streams helper frames at the rate each subscriber asks for and stops the helper with the last one',
+    async () => {
+      const port = await startWithTools(
+        { FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }), FAKE_FRAMES: '[]', FAKE_HELPER_INTERVAL_MS: '10' },
+        undefined,
+        fakeHelper(),
+      );
+      const slow = await authed(port);
+      const fast = await authed(port);
+      await slow.request('frames.subscribe', { workspace, platform: 'ios', fps: 2, maxEdge: 480 });
+      await fast.request('frames.subscribe', { workspace, platform: 'ios', fps: 20, maxEdge: 960 });
+      expect(await fast.next()).toMatchObject({ event: 'frame', platform: 'ios', mime: 'image/jpeg', width: 390 });
+      const counted = { slow: 0, fast: 0 };
+      slow.socket.on('message', () => counted.slow++);
+      fast.socket.on('message', () => counted.fast++);
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      expect(counted.slow).toBeLessThanOrEqual(3);
+      expect(counted.fast).toBeGreaterThanOrEqual(10);
+      expect(counted.fast).toBeLessThanOrEqual(22);
+      expect(helperRuns()).toEqual([]);
+      fast.socket.close();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      slow.socket.close();
+      await until(() => helperRuns().length === 1);
+      const [run] = helperRuns();
+      expect(run!.args).toEqual(['ios', 'SIM-1']);
+      expect(run!.configs).toEqual([
+        { fps: 2, maxEdge: 480 },
+        { fps: 20, maxEdge: 960 },
+        { fps: 2, maxEdge: 480 },
+      ]);
+      await until(() => !alive(run!.pid));
+      expect(toolRuns().filter((entry) => entry.tool === 'xcrun')).toEqual([]);
+    },
+    10_000,
+  );
+
+  test.skipIf(!fakeTailscale)('falls back to screenshots when the helper fails before its first frame', async () => {
+    const port = await startWithTools(
+      {
+        FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }),
+        FAKE_FRAMES: JSON.stringify([jpeg(10, 20, 'A').toString('base64')]),
+        FAKE_HELPER_FAIL: 'CoreSimulator could not be loaded.',
+      },
+      undefined,
+      fakeHelper(),
+    );
+    const client = await authed(port);
+    await client.request('frames.subscribe', { workspace, platform: 'ios' });
+    expect(await client.next()).toMatchObject({ event: 'frame', width: 10, height: 20 });
+    expect(helperRuns()).toHaveLength(1);
+    expect(toolRuns().some((run) => run.tool === 'xcrun')).toBe(true);
+  });
+
+  test.skipIf(!fakeTailscale)('ends the subscription when the helper fails after streaming', async () => {
+    const port = await startWithTools(
+      {
+        FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }),
+        FAKE_FRAMES: '[]',
+        FAKE_HELPER_INTERVAL_MS: '10',
+        FAKE_HELPER_FAIL_AFTER: '3',
+        FAKE_HELPER_FAIL: 'The simulator went away.',
+      },
+      undefined,
+      fakeHelper(),
+    );
+    const client = await authed(port);
+    await client.request('frames.subscribe', { workspace, platform: 'ios', fps: 30 });
+    let message = await client.next();
+    while ('event' in message && message.event === 'frame') message = await client.next();
+    expect(message).toEqual({
+      event: 'error',
+      subscription: 's1',
+      error: { code: 'frames-failed', message: expect.stringContaining('The simulator went away.') },
+    });
+    expect(toolRuns().some((run) => run.tool === 'xcrun')).toBe(false);
+  });
+
+  test.skipIf(!fakeTailscale)('refuses frame rates and sizes outside the protocol range', async () => {
+    const port = await startWithTools({ FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }), FAKE_FRAMES: '[]' });
+    const client = await authed(port);
+    for (const params of [{ fps: 0 }, { fps: 31 }, { fps: 2.5 }, { maxEdge: 100 }, { maxEdge: 4096 }]) {
+      expect(await client.request('frames.subscribe', { workspace, platform: 'ios', ...params })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+    }
+  });
 
   test.skipIf(!fakeTailscale)(
     'reads an emulator screenshot over gRPC with the discovery token and converts it to JPEG',

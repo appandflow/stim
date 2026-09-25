@@ -141,14 +141,22 @@ export type SettingsResult = Record<string, unknown>;
 
 export type Platform = 'ios' | 'android';
 
+export const FRAME_FPS = { default: 5, max: 30 } as const;
+
+export const FRAME_EDGE = { min: 240, default: 1280, max: 2048 } as const;
+
 /**
  * A device `stim status` lists as owned by `workspace`, in `slot` (`default` when absent). Frames come only
- * from a booted simulator or a running emulator Stim created.
+ * from a booted simulator or a running emulator Stim created. `fps` caps how many frames a second this
+ * subscription gets, and `maxEdge` asks for frames scaled to fit that many pixels; the server may send smaller
+ * frames, and larger ones while another subscriber of the same device asks for more.
  */
 export interface FrameTarget {
   workspace: string;
   platform: Platform;
   slot?: string;
+  fps?: number;
+  maxEdge?: number;
 }
 
 /** Each action runs one fixed `stim` command in the workspace. */
@@ -262,7 +270,7 @@ export interface ErrorEvent {
   error: ProtocolError;
 }
 
-/** A screenshot of the device, sent when the screen changed, at most 5 times a second. */
+/** A frame of the device's screen, sent when the screen changed, at most `fps` times a second. */
 export interface FrameEvent {
   event: 'frame';
   subscription: string;
@@ -419,6 +427,13 @@ export function protocolJsonSchema(): JsonSchema {
           workspace: { type: 'string', description: 'An environment path from a status payload.' },
           platform: { enum: ['ios', 'android'] },
           slot: { type: 'string', minLength: 1, default: 'default' },
+          fps: { type: 'integer', minimum: 1, maximum: FRAME_FPS.max, default: FRAME_FPS.default },
+          maxEdge: {
+            type: 'integer',
+            minimum: FRAME_EDGE.min,
+            maximum: FRAME_EDGE.max,
+            default: FRAME_EDGE.default,
+          },
         },
       },
       ActionParams: {

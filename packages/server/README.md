@@ -146,27 +146,47 @@ Events are `{ "event", "subscription", ... }`.
 - `stats.get` and `settings.get` return the payload of `stim stats --json` and
   `stim settings --json`, which masks sensitive values. Without `workspace`,
   they run in the home directory and cover the machine only.
-- `frames.subscribe` takes `workspace`, `platform` (`ios` or `android`) and
-  `slot` (`default` when absent) and sends `frame` events: a JPEG screenshot,
-  base64 in `data`, with `width`, `height` and `capturedAt`. It serves only a
-  booted simulator or a running emulator that `stim status` lists as owned by
-  that workspace; any other device ends the subscription with a
-  `frames-failed` `error` event, and so does a device that stops or changes
-  owner. Simulators are captured with `xcrun simctl io <udid> screenshot`, of
-  the primary display, or of the default display when that `simctl` does not
-  accept `primary`. An iPhone Duo lights one of two panels: the capture
-  follows the lit one (`primary`, the cover, or `primary-1`, the inner panel)
-  and the frame carries `posture`, `folded` or `unfolded`. Emulators are
-  captured through their gRPC `getScreenshot`, found through the discovery
-  file and token the emulator writes when Stim boots it, scaled to fit 1280
-  pixels and converted with `sips`. An emulator Stim booted before it passed
-  `-grpc` has no endpoint. A frame is sent only when the screen changed: up
-  to 5 per second while it changes, backing off to one capture per second
-  while it does not, with capturing taking at most half of each device's
-  time. All subscribers of a device share one capture loop, which sends a
-  new subscriber the latest frame and stops with the last subscriber, and at
-  most two captures run at once. A client whose socket has
-  more than 1 MiB unsent skips frames and gets the newest once it catches up.
+- `frames.subscribe` takes `workspace`, `platform` (`ios` or `android`),
+  `slot` (`default` when absent), `fps` (1 to 30, 5 by default) and `maxEdge`
+  (240 to 2048 pixels, 1280 by default), and sends `frame` events: a JPEG,
+  base64 in `data`, with `width`, `height` and `capturedAt`, at most `fps` a
+  second and only when the screen changed. It serves only a booted simulator
+  or a running emulator that `stim status` lists as owned by that workspace;
+  any other device ends the subscription with a `frames-failed` `error`
+  event, and so does a device that stops or changes owner. A client whose
+  socket has more than two frames unsent skips frames and gets the newest
+  once it catches up.
+
+  Frames come from the `stim-frames` helper. When it starts, the server
+  compiles it with `xcrun swiftc` from the Swift sources shipped in
+  `dist/stim-frames/` (its own `main.swift` and the frame and input code it
+  shares with Stim Desktop), which takes a few seconds, and keeps it in
+  `$STIM_HOME/server/helpers/`, named by a hash of the sources and the
+  compiler version. For a simulator it renders the display's framebuffer
+  (CoreSimulator's IOSurface) when the display reports damage, turned
+  upright; for an emulator it keeps one gRPC `streamScreenshot` call open,
+  found through the discovery file and token the emulator writes when Stim
+  boots it. It scales frames to fit the largest `maxEdge` and paces them to
+  the highest `fps` its subscribers asked for. All subscribers of a device
+  share one helper, which sends a new subscriber the latest frame and exits
+  with the last subscriber or when the server's end of its stdin closes.
+
+  Without the helper (the compiler is missing or fails, which the server
+  retries every 5 minutes, or the helper fails before its first frame), for a
+  subscription made while it is still being built, and for an iPhone Duo,
+  frames come from screenshots, and `fps` and `maxEdge` only cap the rate. Simulators are
+  captured with `xcrun simctl io <udid> screenshot`, of the primary display,
+  or of the default display when that `simctl` does not accept `primary`. An
+  iPhone Duo lights one of two panels: the capture follows the lit one
+  (`primary`, the cover, or `primary-1`, the inner panel) and the frame
+  carries `posture`, `folded` or `unfolded`. Emulators are captured through
+  their gRPC `getScreenshot`, scaled to fit 1280 pixels and converted with
+  `sips`. A screenshot is sent only when the screen changed: up to 5 per
+  second while it changes, backing off to one capture per second while it
+  does not, with capturing taking at most half of each device's time, and at
+  most two captures run at once. An emulator Stim booted before it passed
+  `-grpc` has no endpoint on either path.
+
 - `build.plan` takes `workspace`, `platform` (`ios` or `android`) and `slot`
   (`default` when absent), and returns the payload of
   `stim <platform> --plan --json` run in the workspace: the fingerprint, the
