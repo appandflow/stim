@@ -12,20 +12,28 @@ public enum EmulatorStreamStatus: Equatable, Sendable {
 /// Live frames of a running emulator's main display, read through the gRPC
 /// endpoint in its discovery file. When `interactive` is true, clicks, drags,
 /// trackpad scrolls and keys go to the emulator over the same endpoint.
+/// `onPixelSizeChange` receives the size of the frames as shown, which the
+/// emulator already turns upright.
 public struct EmulatorDisplayView: NSViewRepresentable {
   public var serial: String
   public var interactive: Bool
   public var onStatus: (EmulatorStreamStatus) -> Void
+  public var onPixelSizeChange: (CGSize) -> Void
 
-  public init(serial: String, interactive: Bool = false, onStatus: @escaping (EmulatorStreamStatus) -> Void) {
+  public init(
+    serial: String, interactive: Bool = false, onStatus: @escaping (EmulatorStreamStatus) -> Void,
+    onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }
+  ) {
     self.serial = serial
     self.interactive = interactive
     self.onStatus = onStatus
+    self.onPixelSizeChange = onPixelSizeChange
   }
 
   public func makeNSView(context: Context) -> EmulatorDisplayNSView {
     let view = EmulatorDisplayNSView()
     view.onStatus = onStatus
+    view.onPixelSizeChange = onPixelSizeChange
     view.attach(serial: serial)
     view.setInteractive(interactive)
     return view
@@ -33,6 +41,7 @@ public struct EmulatorDisplayView: NSViewRepresentable {
 
   public func updateNSView(_ view: EmulatorDisplayNSView, context: Context) {
     view.onStatus = onStatus
+    view.onPixelSizeChange = onPixelSizeChange
     view.attach(serial: serial)
     view.setInteractive(interactive)
   }
@@ -46,6 +55,7 @@ public final class EmulatorDisplayNSView: NSView {
   private static let maxPixels = 960
 
   var onStatus: ((EmulatorStreamStatus) -> Void)?
+  var onPixelSizeChange: (CGSize) -> Void = { _ in }
   private var serial: String?
   private var stream: ScreenshotStream?
   private var retryTimer: Timer?
@@ -155,7 +165,9 @@ public final class EmulatorDisplayNSView: NSView {
     guard stream != nil, let frame, let image = Self.image(frame) else { return }
     lastShown = CACurrentMediaTime()
     layer?.contents = image
-    self.shown = (CGSize(width: frame.width, height: frame.height), frame.rotation)
+    let size = CGSize(width: frame.width, height: frame.height)
+    if size != shown?.size { onPixelSizeChange(size) }
+    self.shown = (size, frame.rotation)
     _ = inputClient()
     report(.streaming)
   }
