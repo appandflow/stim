@@ -854,7 +854,8 @@ prints, for example:
         "mergedInto": null,
         "willRemove": true,
         "reason": null,
-        "detail": "idle 12d"
+        "detail": "idle 12d",
+        "eligibleAt": null
       },
       {
         "path": "/path/to/shipped",
@@ -862,7 +863,17 @@ prints, for example:
         "mergedInto": "origin/main",
         "willRemove": true,
         "reason": null,
-        "detail": "merged into origin/main"
+        "detail": "merged into origin/main",
+        "eligibleAt": null
+      },
+      {
+        "path": "/path/to/just-merged",
+        "idleDays": 0,
+        "mergedInto": "origin/main",
+        "willRemove": false,
+        "reason": "recent-activity",
+        "detail": "recent activity: merged into origin/main 12m ago; removable after 2026-09-25T15:48:00.000Z",
+        "eligibleAt": "2026-09-25T15:48:00.000Z"
       },
       {
         "path": "/path/to/wip",
@@ -870,7 +881,8 @@ prints, for example:
         "mergedInto": null,
         "willRemove": false,
         "reason": "dirty",
-        "detail": "dirty: uncommitted changes or untracked files"
+        "detail": "dirty: uncommitted changes or untracked files",
+        "eligibleAt": null
       }
     ],
     "workspaceBuildOutputs": [
@@ -891,6 +903,8 @@ prints, for example:
 
 The example omits the empty sections. `reason` is `null` for an entry `--delete`
 acts on and otherwise a stable code; `detail` is the text the report prints.
+A linked worktree's `eligibleAt` is the time a `recent-activity` worktree
+becomes removable, and otherwise `null`.
 `bytes` is `null` when the size is unknown. `worktreeSweep` is `null` without
 `--worktrees`, which still reports merged worktrees. With `--delete`, `mode` is `"delete"`, the sections list what
 the run acted on, and `failures` counts the entries it could not delete. A

@@ -437,6 +437,21 @@ test suites and the end-to-end harness use one -- and a scoped config must not
 leave simulators on the machine it cannot account for. A redirected home that
 wants a pool says so with the variable.
 
+THE GC WORKTREE GRACE PERIOD IS MACHINE-LEVEL
+\`gc.worktreeGraceMinutes\` is how long \`gc --delete\` waits before it removes
+a merged or idle linked worktree. The clock starts at the worktree's latest
+activity: a write to its git index, HEAD or HEAD reflog, its Stim workspace
+state or logs, or the merge of its branch into the default branch.
+
+  {
+    "gc": { "worktreeGraceMinutes": 120 }
+  }
+
+in ~/.stim/config.json, or STIM_GC_WORKTREE_GRACE_MINUTES in the environment,
+which overrides the file. Absent means 120. \`0\` removes a finished worktree at
+once. A value that is not a whole number 0 or more is warned about by \`gc\`,
+which then uses 120. See \`guide cleanup\` for what else keeps a worktree.
+
 STIM NEEDS NO PROJECT CHANGES TO RUN
 Nothing above is required to use Stim. The performance caches that used to
 be setup steps are supplied by Stim on the command lines it composes itself:

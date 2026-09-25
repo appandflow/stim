@@ -22,6 +22,8 @@ WHAT RECLAIMS AN OWNED DEVICE
                             verified parked simulators and emulators, and
                             runs \`stim worktree remove\` on every clean,
                             Stim-managed linked worktree whose branch is merged
+                            and that shows no activity within
+                            gc.worktreeGraceMinutes
   stim gc --delete --older-than <days>
                             also reaps the device of a workspace no Stim
                             command has used in that long, even though the
@@ -102,6 +104,26 @@ SWEEPING FINISHED WORKTREES
   initialized submodules. Without --worktrees, the report leaves out the
   source checkout and roots outside git.
 
+  IN USE means its dev server supervisor runs, a stim ios, android or stop
+  run holds its native-run lock, a live build lock or slot names it, a
+  managed tunnel or remote lock is held, an owned simulator or emulator of
+  the workspace is booted (an agent-device session needs one), or it holds
+  an unexpired device lease. When the simulator or emulator list cannot be
+  read, the worktree counts as in use. A device left booted keeps the
+  worktree until \`stim stop\` in it, or \`gc --idle <duration>\`, shuts
+  the device down.
+
+  RECENT ACTIVITY keeps a worktree gc would otherwise remove until
+  gc.worktreeGraceMinutes (120 by default, \`guide settings\`) have passed
+  since the latest of: a write to its git index, HEAD or HEAD reflog, a write
+  to its Stim workspace state or log files, and, for a merged branch, the
+  committer date of the commit that brought it into the default branch. That
+  window is when an agent that just merged runs \`stim stop\` and \`stim
+  worktree remove\` itself. The reason is recent-activity, and the report
+  and the JSON eligibleAt field say when it becomes removable. When that
+  activity cannot be read, the worktree is kept (reason activity-unknown).
+  0 turns the grace period off.
+
   MERGED means, with the default branch taken from origin/HEAD, after a
   \`git fetch origin <default>\` per repository (30s timeout, no credential
   prompt; skipped when that checkout fetched in the last 10 minutes):
@@ -130,8 +152,9 @@ SWEEPING FINISHED WORKTREES
   --cache with --worktrees is refused with STIM_BAD_ARG; run them separately.
   With --delete it runs the \`stim worktree remove\` pipeline, never --force,
   on each removable worktree. That pipeline re-inspects the worktree and
-  re-checks use under the removal locks, and idleness for an idle worktree
-  or an unchanged HEAD for a merged one, then parks devices and handles the
+  re-checks use and recent activity under the removal locks, and idleness
+  for an idle worktree or an unchanged HEAD for a merged one, then parks
+  devices through the same teardown and handles the
   branch exactly as a manual \`stim worktree remove\`, which keeps the
   checkout when its HEAD moves while devices are reclaimed. A worktree that
   changed since the report is kept with the reason. A worktree that fails is

@@ -58,7 +58,7 @@ function valueAt(source: unknown, key: string): unknown {
   return node;
 }
 
-function machineNumber(
+export function machineNumber(
   key: string,
   config: Config | null,
   env: NodeJS.ProcessEnv,

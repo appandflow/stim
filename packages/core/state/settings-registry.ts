@@ -306,6 +306,15 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Live workspaces before idle ones are reclaimed; unset or 0 means no limit',
   },
   {
+    key: 'gc.worktreeGraceMinutes',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 120,
+    env: 'STIM_GC_WORKTREE_GRACE_MINUTES',
+    description:
+      'Minutes after a linked worktree last changed, or its branch merged, before gc removes it; 0 removes it at once',
+  },
+  {
     key: 'pool.iosParkedMax',
     type: PARKED_MAX,
     scopes: MACHINE,

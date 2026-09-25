@@ -236,10 +236,13 @@ the default branch, and plain `gc --delete` removes it. `--worktrees` also
 removes a worktree that is idle: no Stim command has used it for
 `--older-than` days, or 7 days without that option. Either way, gc keeps a
 worktree that is the source checkout, bare, locked, in use, dirty (untracked
-files count), unpushed, or has initialized submodules. With `--delete`, gc
-runs `stim worktree remove` without `--force` on each removable worktree. That
-command checks the worktree again before removing it and handles devices and
-branches as it does when you run it yourself. A worktree that fails is
+files count), unpushed, or has initialized submodules. In use includes a
+running dev server, a Stim run or live build, a booted owned simulator or
+emulator, and a held device lease; a device left booted keeps the worktree
+until `stim stop` or `stim gc --idle` shuts it down. With `--delete`, gc runs
+`stim worktree remove` without `--force` on each removable worktree. That
+command checks the worktree again before removing it, parks or shuts down its
+devices, and handles branches as it does when you run it yourself. A worktree that fails is
 reported and the others still run. A worktree removed with
 `git worktree remove` or `rm -rf` leaves its Stim workspace directory behind;
 plain `gc --delete` removes those.
@@ -269,6 +272,16 @@ cannot answer, gc does not treat the branch as merged and reports why. After a
 squash or rebase merge whose remote branch was deleted and pruned locally, the
 branch's commits exist only locally; gc still removes the worktree, because
 their change is on the default branch, and keeps the branch.
+
+gc also waits out a grace period, 2 hours by default, before it removes a
+finished worktree. The period starts at the worktree's latest activity: a
+change to its git index, HEAD or reflog, a Stim state or log write, or the
+merge of its branch into the default branch. An agent that just merged its
+pull request still has time to run `stim stop` and `stim worktree remove`
+itself. gc reports such a worktree as kept with the reason `recent-activity`
+and the time it becomes removable (`eligibleAt` in `--json`). When gc cannot
+read that activity, it keeps the worktree (`activity-unknown`). Set the period
+in minutes with [`gc.worktreeGraceMinutes`](./settings.md); `0` turns it off.
 
 Ask your agent:
 
