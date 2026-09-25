@@ -1,4 +1,4 @@
-# Publishes the five packages to npm via OIDC trusted publishing when a
+# Publishes the six packages to npm via OIDC trusted publishing when a
 # version tag is pushed. There is NO token: npm trusts a short-lived OIDC
 # credential minted for exactly this repo + workflow + environment, and the
 # `release` environment requires a manual approval, which replaces the OTP.
@@ -29,7 +29,7 @@ jobs:
     outputs:
       dist_tag: ${{ steps.dist-tag.outputs.dist_tag }}
     env:
-      PACKAGE_DIRS: core cache metro expo-build-cache stim-cli
+      PACKAGE_DIRS: core cache metro expo-build-cache stim-cli server
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -158,6 +158,14 @@ jobs:
           else
             npm publish "$RUNNER_TEMP/tarballs/stim-cli.tgz" --provenance --access public --tag "$DIST_TAG"
           fi
+      - name: Publish @stim-cli/server
+        run: |
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/server.package.json').version")
+          if npm view "@stim-cli/server@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/server@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/tarballs/server.tgz" --provenance --access public --tag "$DIST_TAG"
+          fi
 
   # npm can take several minutes to serve a new version's metadata and longer
   # for its tarball. A separate job without id-token lets `npx` run the
@@ -171,7 +179,7 @@ jobs:
     permissions:
       contents: read
     env:
-      PACKAGE_DIRS: core cache metro expo-build-cache stim-cli
+      PACKAGE_DIRS: core cache metro expo-build-cache stim-cli server
       DIST_TAG: ${{ needs.publish.outputs.dist_tag }}
       npm_config_prefer_online: 'true'
     steps:
@@ -224,6 +232,12 @@ jobs:
             [ "$(printf '%s\n' "$out" | tail -1)" = "$version" ]
           }
 
+          server_runs() {
+            local out
+            out=$(cd "$scratch" && npx --yes -p "@stim-cli/server@$version" stim-server --version 2>&1) || { echo "$out"; return 1; }
+            [ "$(printf '%s\n' "$out" | tail -1)" = "$version" ]
+          }
+
           for d in $PACKAGE_DIRS; do
             p=$(node -p "require('./packages/$d/package.json').name")
             wait_for "$p@$version version" version_visible "$p"
@@ -231,3 +245,4 @@ jobs:
             wait_for "$p dist-tag $DIST_TAG -> $version" dist_tag_set "$p"
           done
           wait_for "npx stim@$version --version" cli_runs
+          wait_for "npx -p @stim-cli/server@$version stim-server --version" server_runs

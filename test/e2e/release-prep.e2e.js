@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
 const SCRIPT = join(REPO, 'scripts', 'release-prep.mjs');
-const PACKAGE_DIRS = ['core', 'cache', 'metro', 'expo-build-cache', 'stim-cli'];
+const PACKAGE_DIRS = ['core', 'cache', 'metro', 'expo-build-cache', 'stim-cli', 'server'];
 const ACCEPTED_RANGES = new Set(['workspace:^', 'workspace:~', 'workspace:*']);
 
 const manifestIn = (root, dir) => join(root, 'packages', dir, 'package.json');
@@ -53,11 +53,11 @@ const withWorkspace = (body) => {
 test('--check accepts the repository as it stands', () => {
   const result = spawnSync(process.execPath, [SCRIPT, '--check'], { cwd: REPO, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /5 packages at \d+\.\d+\.\d+/);
+  assert.match(result.stdout, /6 packages at \d+\.\d+\.\d+/);
   assert.match(result.stdout, /inter-package ranges, all workspace:/);
 });
 
-test('the five packages share one version and only bare workspace: ranges', () => {
+test('the six packages share one version and only bare workspace: ranges', () => {
   const versions = new Set(PACKAGE_DIRS.map((dir) => readManifest(REPO, dir).version));
   assert.equal(versions.size, 1, `versions are not in lockstep: ${[...versions].join(', ')}`);
 
@@ -84,7 +84,7 @@ test('--check refuses a versioned dependency on the renamed CLI', () => {
   });
 });
 
-test('a bump rewrites all five versions and leaves the lockfile alone', () => {
+test('a bump rewrites all six versions and leaves the lockfile alone', () => {
   withWorkspace((root) => {
     const before = readManifest(root, 'core').version;
     const lockBefore = readFileSync(join(root, 'pnpm-lock.yaml'), 'utf8');
@@ -93,7 +93,7 @@ test('a bump rewrites all five versions and leaves the lockfile alone', () => {
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(
       versionsIn(root),
-      Array.from({ length: 5 }, () => '99.0.0'),
+      Array.from({ length: PACKAGE_DIRS.length }, () => '99.0.0'),
     );
     assert.notEqual(before, '99.0.0');
 
@@ -126,10 +126,11 @@ test('a manifest the bump cannot rewrite leaves every version where it was', () 
 
     const result = runPrep(root, '99.0.0');
     assert.equal(result.status, 1, result.stdout);
+    const others = PACKAGE_DIRS.filter((dir) => dir !== 'stim-cli');
     assert.deepEqual(
-      PACKAGE_DIRS.slice(0, 4).map((dir) => readManifest(root, dir).version),
-      before.slice(0, 4),
-      'the other four manifests must not be left bumped',
+      others.map((dir) => readManifest(root, dir).version),
+      others.map((dir) => before[PACKAGE_DIRS.indexOf(dir)]),
+      'the other manifests must not be left bumped',
     );
   });
 });
