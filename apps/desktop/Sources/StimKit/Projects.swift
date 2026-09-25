@@ -59,3 +59,29 @@ public func currentBranch(at path: String) -> String? {
   let branch = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
   return process.terminationStatus == 0 && !branch.isEmpty ? branch : nil
 }
+
+/// A project in the sidebar and how many of its workspaces are live. `total`
+/// counts its workspaces and its worktrees with no environment.
+public struct ProjectSummary: Hashable, Sendable {
+  public var project: Project
+  public var live: Int
+  public var total: Int
+}
+
+/// Groups workspaces and worktrees with no environment by project, the ones
+/// with live workspaces first, then by name.
+public func projectSummaries(
+  environments: [Workspace], unprovisioned: [UnprovisionedWorktree], project: (String) -> Project
+) -> [ProjectSummary] {
+  var summaries: [Project: ProjectSummary] = [:]
+  func add(_ path: String, live: Bool) {
+    let key = project(path)
+    summaries[key, default: ProjectSummary(project: key, live: 0, total: 0)].total += 1
+    if live { summaries[key]?.live += 1 }
+  }
+  for env in environments { add(env.path, live: env.live) }
+  for worktree in unprovisioned { add(worktree.path, live: false) }
+  return summaries.values.sorted {
+    ($0.live > 0 ? 0 : 1, $0.project.name.lowercased()) < ($1.live > 0 ? 0 : 1, $1.project.name.lowercased())
+  }
+}

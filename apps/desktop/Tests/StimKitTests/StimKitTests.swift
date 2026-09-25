@@ -88,6 +88,24 @@ import Testing
     #expect(Project.resolve(workspace: repo).root == expected)
   }
 
+  @Test func groupsWorktreesWithNoEnvironmentUnderTheirProject() throws {
+    let json = #"""
+      [{"path":"/r/app","live":false,"warnings":[]},{"path":"/r/zed/.worktrees/a","live":true,"warnings":[]}]
+      """#
+    let envs = try JSONDecoder().decode([Workspace].self, from: Data(json.utf8))
+    let worktrees = [
+      UnprovisionedWorktree(path: "/r/app/.worktrees/b", branch: "feat/b"),
+      UnprovisionedWorktree(path: "/r/new/.worktrees/c", branch: nil),
+    ]
+    let summaries = projectSummaries(environments: envs, unprovisioned: worktrees, project: Project.init(fallbackFor:))
+    #expect(
+      summaries == [
+        ProjectSummary(project: Project(root: "/r/zed"), live: 1, total: 1),
+        ProjectSummary(project: Project(root: "/r/app"), live: 0, total: 2),
+        ProjectSummary(project: Project(root: "/r/new"), live: 0, total: 1),
+      ])
+  }
+
   private func git(_ args: [String]) throws {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
@@ -111,7 +129,12 @@ import Testing
   }
 
   @Test func quotesPathsForTheShell() {
-    #expect(startCommand(worktree: "/Users/dev/it's here").shellLine == "cd '/Users/dev/it'\\''s here' && stim start")
+    #expect(
+      environmentCommands(worktree: "/Users/dev/it's here").map(\.shellLine) == [
+        "cd '/Users/dev/it'\\''s here' && stim start",
+        "cd '/Users/dev/it'\\''s here' && stim ios",
+        "cd '/Users/dev/it'\\''s here' && stim android",
+      ])
   }
 }
 

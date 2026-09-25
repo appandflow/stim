@@ -5,6 +5,7 @@ enum SidebarItem: Hashable {
   case wall
   case project(Project)
   case environment(String)
+  case worktree(String)
   case attention
 }
 
@@ -106,15 +107,27 @@ struct RootView: View {
     logQuery.errorsOnly = true
   }
 
+  private func workspaceDetail(_ env: Workspace) -> some View {
+    WorkspaceDetail(
+      cli: cli, env: env, usage: metrics.usage[env.path], focusedID: $focusedDeviceID, tab: $detailTab,
+      logQuery: $logQuery, openLogs: { openErrors(env.path) })
+  }
+
   @ViewBuilder private var detail: some View {
     switch selection {
     case .environment(let path):
       if let env = store.payload?.environments.first(where: { $0.path == path }) {
-        WorkspaceDetail(
-          cli: cli, env: env, usage: metrics.usage[env.path], focusedID: $focusedDeviceID, tab: $detailTab,
-          logQuery: $logQuery, openLogs: { openErrors(env.path) })
+        workspaceDetail(env)
       } else {
         EmptyState(title: "Workspace gone", message: "stim status no longer reports this workspace.")
+      }
+    case .worktree(let path):
+      if let worktree = store.payload?.unprovisionedWorktrees?.first(where: { $0.path == path }) {
+        NoEnvironmentDetail(worktree: worktree)
+      } else if let env = store.payload?.environments.first(where: { $0.path == path }) {
+        workspaceDetail(env)
+      } else {
+        EmptyState(title: "Worktree gone", message: "stim status no longer reports this worktree.")
       }
     case .attention:
       AttentionView(store: store)

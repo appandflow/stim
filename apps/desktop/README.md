@@ -11,10 +11,16 @@ actions run the `stim` executable with an argument list, never a shell string,
 in the workspace directory:
 
 - Needs attention: preview `stim gc --json`, then run `stim gc --delete` after a
-  confirmation; `stim start` for a worktree with no environment; `stim stop` or
-  `stim android` for a status warning. Each row can also copy its command.
+  confirmation; `stim stop` or `stim android` for a status warning. Each row can
+  also copy its command.
 - Workspace inspector: `stim stop`, and `stim worktree remove` after a
   confirmation that names the worktree and its branch.
+
+A linked worktree Stim has not registered yet, listed in `unprovisionedWorktrees`
+of `stim status --json`, appears under Idle in the sidebar with its project and
+is marked "no environment". It has no action. Selecting it shows its path and
+branch and the `stim start`, `stim ios` and `stim android` commands that create
+its environment, each with a Copy button.
 
 Output streams into an activity sheet with the exit status, and status refreshes
 when the command finishes. Each workspace runs one action at a time.

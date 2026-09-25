@@ -131,7 +131,8 @@ final class StatusStore: ObservableObject {
       return
     }
     let known = projects
-    let missing = payload.environments.map(\.path).filter { known[$0] == nil }
+    let paths = payload.environments.map(\.path) + (payload.unprovisionedWorktrees ?? []).map(\.path)
+    let missing = paths.filter { known[$0] == nil }
     Task.detached {
       let resolved = Dictionary(missing.map { ($0, Project.resolve(workspace: $0)) }, uniquingKeysWith: { first, _ in first })
       await MainActor.run {
@@ -146,7 +147,11 @@ final class StatusStore: ObservableObject {
   }
 
   func project(of env: Workspace) -> Project {
-    projects[env.path] ?? Project(fallbackFor: env.path)
+    project(ofPath: env.path)
+  }
+
+  private func project(ofPath path: String) -> Project {
+    projects[path] ?? Project(fallbackFor: path)
   }
 
   func environments(in project: Project?) -> [Workspace] {
@@ -155,13 +160,16 @@ final class StatusStore: ObservableObject {
     return all.filter { self.project(of: $0) == project }
   }
 
-  /// Projects sorted with the ones that have live workspaces first.
-  var projectList: [(project: Project, live: Int, total: Int)] {
-    let envs = payload?.environments ?? []
-    let grouped = Dictionary(grouping: envs) { project(of: $0) }
-    return grouped
-      .map { (project: $0.key, live: $0.value.filter(\.live).count, total: $0.value.count) }
-      .sorted { ($0.live > 0 ? 0 : 1, $0.project.name.lowercased()) < ($1.live > 0 ? 0 : 1, $1.project.name.lowercased()) }
+  func unprovisionedWorktrees(in project: Project?) -> [UnprovisionedWorktree] {
+    let all = payload?.unprovisionedWorktrees ?? []
+    guard let project else { return all }
+    return all.filter { self.project(ofPath: $0.path) == project }
+  }
+
+  var projectList: [ProjectSummary] {
+    projectSummaries(
+      environments: payload?.environments ?? [], unprovisioned: payload?.unprovisionedWorktrees ?? [],
+      project: project(ofPath:))
   }
 
   var warningCount: Int {
