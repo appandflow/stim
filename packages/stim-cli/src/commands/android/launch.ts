@@ -5,6 +5,7 @@ import type { ChildProcess } from 'node:child_process';
 import { rmSync } from 'node:fs';
 import { basename } from 'node:path';
 import chalk from 'chalk';
+import type { BuildPhase } from '../../engine/build-progress.ts';
 import type { ProviderCallResult } from '@stim-cli/cache';
 import {
   verifyAndroidReleaseLaunch,
@@ -357,6 +358,7 @@ interface FinishAndroidRunArgs {
   out: (line: string) => void;
   emit: (line: string) => void;
   recordRun: ReportAndroidResultArgs['recordRun'];
+  enterPhase: (phase: BuildPhase) => void;
 }
 
 async function resolveInstallSerial({
@@ -456,6 +458,7 @@ export async function finishAndroidRun({
   out,
   emit,
   recordRun,
+  enterPhase,
 }: FinishAndroidRunArgs): Promise<RunAndroidResult> {
   let androidPackage = initialPackage;
   let leaseWarned = false;
@@ -473,6 +476,7 @@ export async function finishAndroidRun({
     return null;
   };
 
+  enterPhase('install');
   const booted = await bootPromise;
   const runCommand = nativeRunCommand('android', slot, { physical, deviceId: booted.serial });
   if (booted.failed) {
@@ -604,6 +608,7 @@ export async function finishAndroidRun({
 
   if (physical) raiseLeaseFor(0, false);
   const scheme = release ? undefined : resolveDevClientScheme(root, apkPath);
+  enterPhase('launch');
   const launchTimer = stepTimer(now);
   const launchedAt = now();
   writer.write({

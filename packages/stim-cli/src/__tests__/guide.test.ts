@@ -616,3 +616,14 @@ test('guide prints the status block before the index and the agent topic, and ne
   expect(logs[1]).toContain('AGENT WORKFLOW');
   expect(logs[2]).not.toContain('STATUS');
 });
+
+test('the facts topic documents every build phase and state status can report', () => {
+  const body = renderSection('facts', 'status');
+  assert(body);
+  const src = readFileSync(new URL('../engine/build-progress.ts', import.meta.url), 'utf-8');
+  const phases = src.slice(src.indexOf('BUILD_PHASES = ['), src.indexOf('] as const'));
+  const states = src.slice(src.indexOf('ActiveBuildState ='), src.indexOf(';', src.indexOf('ActiveBuildState =')));
+  const values = [...`${phases}${states}`.matchAll(/'([a-z-]+)'/g)].map((m) => m[1] as string);
+  expect(values.length).toBeGreaterThan(8);
+  for (const value of values) expect(body).toMatch(new RegExp(`(^|[\\s|"])${value}(?=[\\s|".,]|$)`, 'm'));
+});

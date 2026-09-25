@@ -20,6 +20,14 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     }
   }
 
+  public var platform: String {
+    switch self {
+    case .ios: return "ios"
+    case .android: return "android"
+    case .remote(let d): return d.platform ?? ""
+    }
+  }
+
   public var state: String {
     switch self {
     case .ios(_, let d): return d.state

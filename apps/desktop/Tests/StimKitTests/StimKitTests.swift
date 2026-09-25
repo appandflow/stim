@@ -30,6 +30,28 @@ import Testing
     #expect(workspace.devices[2].model == "iPad Pro 11-inch (M5) 27.0")
     #expect(workspace.devices[2].formFactor == .tablet)
   }
+  @Test func estimatesTheRunningBuildFromComparableRuns() throws {
+    let build = try #require(workspace.build)
+    #expect(build.isRunning && build.phase == "compile" && build.basis == 4)
+    let started = ISO8601DateFormatter().date(from: "2026-09-24T19:50:00Z")!
+    let early = build.progress(at: started.addingTimeInterval(60))
+    #expect(early.fraction == 0.25)
+    #expect(early.remaining == "about 3 min left")
+    #expect(build.progress(at: started.addingTimeInterval(200)).remaining == "under a minute left")
+    let late = build.progress(at: started.addingTimeInterval(600))
+    #expect(late.fraction == 0.99 && late.remaining == "longer than usual")
+  }
+
+  @Test func attachesTheBuildOnlyToTheDeviceItTargets() {
+    #expect(workspace.devices.map { workspace.runningBuild(for: $0) != nil } == [true, false, false, false])
+  }
+
+  @Test func leavesABuildWithoutHistoryIndeterminate() throws {
+    var build = try #require(workspace.build)
+    build.expectedMs = nil
+    let progress = build.progress(at: Date())
+    #expect(progress.fraction == nil && progress.remaining == nil)
+  }
 }
 
 @Suite struct NamingTests {

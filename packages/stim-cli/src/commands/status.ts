@@ -19,7 +19,17 @@ import { findProjectRoot, projectShortcut } from '../workspace/project.ts';
 import { listAllIosSims } from '../devices/ios.ts';
 import { resolveOwnedAvdSerial } from '../devices/android.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
-import { resolveSourceCheckout } from '../workspace/worktree.ts';
+import { gitCommonDir, repoRoot, resolveSourceCheckout } from '../workspace/worktree.ts';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { readStats, statsProjectKey, type RunHistory } from '../engine/stats.ts';
+import {
+  ACTIVE_BUILD_KEY,
+  activeBuildState,
+  buildReport,
+  buildStatusLine,
+  parseActiveBuild,
+  type BuildReport,
+} from '../engine/build-progress.ts';
 import type { WorktreeEntry } from '../workspace/worktree.ts';
 import { volumeRootFor } from '../fs-util.ts';
 import { listLeaseFiles } from '../engine/device-lease.ts';
@@ -86,6 +96,7 @@ async function statusLines(json: boolean): Promise<string[]> {
   const sourcePath = 'path' in source ? source.path : null;
   const worktrees: WorktreeEntry[] = source.entries.filter((entry) => !entry.bare && entry.path !== sourcePath);
 
+  const history = readStats().record?.history;
   const states: EnvironmentState[] = [];
   const labelOnlyRoots: boolean[] = [];
   const easLedger = readEasSessionLedger();
@@ -124,6 +135,7 @@ async function statusLines(json: boolean): Promise<string[]> {
       ),
     );
     const state = states[states.length - 1];
+    if (state) state.build = workspaceBuild(path, history);
     labelOnlyRoots.push(
       Boolean(proj.worktreeRoot && !proj.bundleId && !state?.metro && !state?.ios && !state?.android),
     );
@@ -191,6 +203,10 @@ async function statusLines(json: boolean): Promise<string[]> {
       const health = state.supervisor.healthy ? chalk.green('healthy') : chalk.yellow('not answering');
       const mode = state.supervisor.mode ? chalk.dim(` (${state.supervisor.mode})`) : '';
       out.push(`  supervisor: pid ${state.supervisor.pid}${mode} ${health}`);
+    }
+    if (state.build) {
+      const line = `  ${buildStatusLine(state.build, Date.now())}`;
+      out.push(state.build.state === 'running' ? line : chalk.yellow(line));
     }
     if (state.logs) {
       const n = state.logs.errorsSinceMarker;
@@ -298,6 +314,13 @@ async function watchStatus(json: boolean): Promise<void> {
   sources = watchStatusSources({ home: getConfigDir(), onChange: () => scheduler.trigger() });
   scheduler.trigger(0);
   await new Promise<never>(() => {});
+}
+
+function workspaceBuild(path: string, history: Record<string, RunHistory> | undefined): BuildReport | null {
+  const record = parseActiveBuild(readWorkspaceState(path)?.[ACTIVE_BUILD_KEY]);
+  if (!record) return null;
+  const projectKey = statsProjectKey({ root: path, commonDir: gitCommonDir(path), repoRoot: repoRoot(path) });
+  return buildReport(record, { state: activeBuildState(record.claim), history: history?.[projectKey] });
 }
 
 function readAndroidRuntime(avdName: string): AndroidRuntimeFacts {

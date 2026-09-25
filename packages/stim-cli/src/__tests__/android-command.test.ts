@@ -5315,6 +5315,19 @@ describe('run statistics', () => {
     expect(runs[0]?.now).toBe(clock);
   });
 
+  test('the run enters each phase at its real step, and a cache hit skips compile', async () => {
+    const steps: string[] = [];
+    const progress = { step: (phase: string) => steps.push(phase), durations: () => ({}), clear: () => {} };
+    expect((await harness({ progress }).run()).ok).toBe(true);
+    expect(steps).toEqual(['cache-lookup', 'compile', 'install', 'launch']);
+
+    steps.length = 0;
+    expect((await harness({ progress, resolveCached: () => fakeApk(), build: never('the build') }).run()).ok).toBe(
+      true,
+    );
+    expect(steps).toEqual(['cache-lookup', 'install', 'launch']);
+  });
+
   test('a cache hit compiles nothing, so it carries no build duration', async () => {
     const { runs, recordStats } = recorder();
     const h = harness({ recordStats, resolveCached: () => fakeApk(), build: never('the build') });

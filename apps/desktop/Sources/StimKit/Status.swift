@@ -31,6 +31,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var logs: Logs?
   public var slots: [Slot]?
   public var remoteDevices: [RemoteDevice]?
+  public var build: Build?
 
   public var id: String { path }
 
@@ -45,6 +46,14 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
     }
     for remote in remoteDevices ?? [] { out.append(.remote(remote)) }
     return out
+  }
+
+  /// The running build that targets this local device's platform and slot. The status record does not say
+  /// whether a run targets a remote session, so remote devices get none.
+  public func runningBuild(for device: DeviceRef) -> Build? {
+    if case .remote = device { return nil }
+    guard let build, build.isRunning, build.platform == device.platform, build.slot == device.slot else { return nil }
+    return build
   }
 
   public var names: PathNames { PathNames(path: path) }

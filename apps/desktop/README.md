@@ -47,6 +47,15 @@ stack. Command-C or **Copy** copies the selected records, or every loaded
 record when none is selected. **Reveal log folder** opens the workspace's log
 directory from `stim status`.
 
+## Build progress
+
+While `stim ios` or `stim android` runs in a workspace, its header on the wall
+and the tile of the device it targets show a progress bar with the build phase,
+the elapsed time against the median of that project's comparable runs, and
+"about N min left". With no finished run to compare against, the bar is
+indeterminate. The figures come from the `build` field of `stim status --json`,
+which needs a Stim version that reports it.
+
 ## Take over a device
 
 Device frames are view-only until you turn on **Take over** above a booted iOS

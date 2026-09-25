@@ -25,10 +25,21 @@ export interface StatsBucket {
 
 export type StatsScope = Partial<Record<StatsPlatform, StatsBucket>>;
 
+export type RunOutcomeKind = 'hit' | 'cold';
+
+export interface RunSample {
+  at: string;
+  durationMs: number;
+  phases: Record<string, number>;
+}
+
+export type RunHistory = Partial<Record<StatsPlatform, Partial<Record<RunOutcomeKind, RunSample[]>>>>;
+
 export interface StatsRecord {
   version: number;
   machine: StatsScope;
   projects: Record<string, StatsScope>;
+  history?: Record<string, RunHistory>;
 }
 
 export interface StatsRun {
@@ -40,6 +51,7 @@ export interface StatsRun {
   durationMs: number;
   coldBuildMs?: number;
   podsMs?: number;
+  phases?: Record<string, number>;
 }
 
 /**
@@ -77,6 +89,8 @@ export interface RunRecorder {
 }
 
 const PLATFORMS: StatsPlatform[] = ['ios', 'android'];
+const OUTCOMES: RunOutcomeKind[] = ['hit', 'cold'];
+export const HISTORY_LIMIT = 10;
 
 export function statsFile(): string {
   return join(getConfigDir(), 'stats.json');
@@ -115,7 +129,18 @@ export function updateStats(record: StatsRecord, run: StatsRun, now: number): St
   projects[run.projectKey] = scope;
   machine[run.platform] = applyRun(machine[run.platform] ?? null, run, { at, durationMs, credit, phases });
 
-  return { version: STATS_VERSION, machine, projects };
+  const history = { ...record.history };
+  if (run.phases && !run.failed && !run.waitedForBuild) {
+    const outcome: RunOutcomeKind = isHit(run.cacheHit) ? 'hit' : 'cold';
+    const project: RunHistory = { ...history[run.projectKey] };
+    const lists = { ...project[run.platform] };
+    const sample: RunSample = { at, durationMs, phases: wholePhases(run.phases) };
+    lists[outcome] = [...(lists[outcome] ?? []), sample].slice(-HISTORY_LIMIT);
+    project[run.platform] = lists;
+    history[run.projectKey] = project;
+  }
+
+  return { version: STATS_VERSION, machine, projects, ...(Object.keys(history).length ? { history } : {}) };
 }
 
 export function readStats(): ReadStatsResult {
@@ -189,11 +214,13 @@ export function createRunRecorder({
   write,
   now,
   note,
+  phases,
 }: {
   platform: StatsPlatform;
   write: (run: StatsRun, now: number) => RecordStatsResult;
   now: () => number;
   note: (line: string) => void;
+  phases?: () => Record<string, number>;
 }): RunRecorder {
   let projectKey: string | null = null;
   let cacheKey: string | null = null;
@@ -216,6 +243,7 @@ export function createRunRecorder({
     record({ failed, cacheHit = false, waited = null, durationMs }: RunOutcome): void {
       if (!projectKey || !cacheKey || recorded) return;
       recorded = true;
+      const ran = failed ? {} : (phases?.() ?? {});
       try {
         const outcome = write(
           {
@@ -227,6 +255,7 @@ export function createRunRecorder({
             durationMs,
             ...(coldBuildMs > 0 ? { coldBuildMs } : {}),
             ...(podsMs > 0 ? { podsMs } : {}),
+            ...(Object.keys(ran).length ? { phases: ran } : {}),
           },
           now(),
         );
@@ -294,7 +323,55 @@ function normalize(record: StatsRecord): StatsRecord {
   if (source && typeof source === 'object' && !Array.isArray(source)) {
     for (const [key, scope] of Object.entries(source)) projects[key] = normalizeScope(scope);
   }
-  return { version: STATS_VERSION, machine: normalizeScope(record.machine), projects };
+  const history: Record<string, RunHistory> = {};
+  if (isObject(record.history)) {
+    for (const [key, scope] of Object.entries(record.history)) {
+      const normalized = normalizeHistory(scope);
+      if (Object.keys(normalized).length) history[key] = normalized;
+    }
+  }
+  return {
+    version: STATS_VERSION,
+    machine: normalizeScope(record.machine),
+    projects,
+    ...(Object.keys(history).length ? { history } : {}),
+  };
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeHistory(scope: unknown): RunHistory {
+  const history: RunHistory = {};
+  if (!isObject(scope)) return history;
+  for (const platform of PLATFORMS) {
+    const lists = scope[platform];
+    if (!isObject(lists)) continue;
+    const normalized: Partial<Record<RunOutcomeKind, RunSample[]>> = {};
+    for (const outcome of OUTCOMES) {
+      const samples = lists[outcome];
+      if (!Array.isArray(samples)) continue;
+      const kept = samples.filter(isObject).flatMap((sample): RunSample[] => {
+        const durationMs = wholeMs(sample.durationMs);
+        if (durationMs <= 0) return [];
+        return [{ at: timestamp(sample.at), durationMs, phases: wholePhases(sample.phases) }];
+      });
+      if (kept.length) normalized[outcome] = kept.slice(-HISTORY_LIMIT);
+    }
+    if (Object.keys(normalized).length) history[platform] = normalized;
+  }
+  return history;
+}
+
+function wholePhases(phases: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!isObject(phases)) return out;
+  for (const [name, ms] of Object.entries(phases)) {
+    const value = Number(ms);
+    if (Number.isFinite(value) && value >= 0) out[name] = Math.round(value);
+  }
+  return out;
 }
 
 function normalizeScope(scope: unknown): StatsScope {

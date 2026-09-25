@@ -189,7 +189,9 @@ CAPACITY
   machine, not just this one.
 
 TWO REPORTS, TWO QUESTIONS
-  "What is running" is \`stim status\`: live state, right now. "How much the
+  "What is running" is \`stim status\`: live state, right now, including
+  each running ios or android build's phase and time left (see
+  \`guide facts status\`). "How much the
   cache saved" is \`stim stats\`: aggregate counters for this project and for
   the machine, with a hit rate and an estimate of the time saved (see
   \`guide facts stats\`).
@@ -693,7 +695,9 @@ Runtime state is stored outside the project tree under
 $STIM_HOME/workspaces/<project>--<digest>/ (default ~/.stim/workspaces/).
 The aggregate run counters \`stats\` prints live beside it in
 $STIM_HOME/stats.json, one bucket per project and platform plus a machine-wide
-one; nothing per run is kept there.
+one, and the last 10 successful runs per project, platform and cache outcome
+that size \`status\`'s build estimate. The running build itself is the
+activeBuild key of the workspace's state.json, cleared when the run exits.
 No .gitignore entry is created or required.
 Native preparation can change project files: expo prebuild generates native
 sources, and pod install can update Podfile.lock. Review those changes before

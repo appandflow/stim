@@ -74,7 +74,8 @@ struct WorkspaceDetail: View {
         }
         DeviceTile(
           device: focused, screenHeight: 640,
-          interactive: focused.isRunning && takenOver.contains(focused.id), workspace: env.path)
+          interactive: focused.isRunning && takenOver.contains(focused.id), workspace: env.path,
+          build: env.runningBuild(for: focused))
       } else {
         EmptyState(title: "No devices", message: "This workspace has no recorded simulator or emulator.")
       }

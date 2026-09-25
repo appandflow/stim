@@ -496,6 +496,43 @@ RULES
     caches on this machine
   - --cache together with --worktrees`,
     },
+    status: {
+      summary: "the status payload's build field: a running ios or android build, its phase, and its estimate",
+      body: () => `  stim status --json
+
+  Each entry of environments carries build: null, or the ios or android
+  run that holds this workspace's native-run.lock:
+
+  build   { platform, slot, state, phase, startedAt, phaseStartedAt,
+            outcome, expectedMs, expectedPhaseMs, basis }
+
+  state            "running" while the run's own native-run claim is live;
+                   "stale" when that claim was released or its process is
+                   gone -- the run was killed, and the next run replaces the
+                   record; "unknown" when the claim set cannot be resolved.
+                   Never treat a stale record as a build in progress.
+  phase            prepare | cache-lookup | wait | prebuild | pods |
+                   compile | install | launch. prepare covers settings,
+                   Metro and the owned device; wait is waiting on another
+                   workspace's build of the same fingerprint; install
+                   includes waiting for the device to boot.
+  startedAt        when the run started; phaseStartedAt when its phase did
+  outcome          "cold" once the run reached prebuild, pods or compile,
+                   "hit" once it reached install without them. Before
+                   that, the outcome of this project's most recent run.
+  expectedMs       the median duration of this project's last successful
+                   runs with that outcome on that platform, or null with
+                   no history
+  expectedPhaseMs  the median duration of this phase in those runs, or null
+  basis            how many runs the medians come from (at most 10)
+
+  Plain \`stim status\` prints the same as one line per workspace:
+
+    build: ios compile, 1m10s elapsed -- about 3 min left (median of 4 cold runs)
+
+  There is no completion fraction: a compile's log volume depends on what
+  is already built, so it does not measure progress.`,
+    },
     stats: {
       summary: 'the stats payload, what counts as a run, hit, miss and failed, timeSavedMs, the heartbeat estimate',
       body: () => `  stim stats --json
@@ -527,8 +564,13 @@ HOW A RUN IS COUNTED (\`stats\`)
   as a hit and is credited nothing: the compile it skipped was paid for in the
   wait, and with no cold run recorded for this project and platform there is
   nothing to compare against, so it credits nothing either. The saved figure
-  is therefore an ESTIMATE and is printed as one. Nothing per run is stored;
-  the file is $STIM_HOME/stats.json (see \`guide lifecycle builds\`).
+  is therefore an ESTIMATE and is printed as one. The file is
+  $STIM_HOME/stats.json (see \`guide lifecycle builds\`). Beside the
+  aggregates it keeps the last 10 successful runs per project, platform and
+  outcome (hit or cold) that did not wait for another workspace's build: each
+  one's duration and per-phase durations. \`stim status\` estimates a running
+  build from them (see \`guide facts status\`); \`stats --json\` does not
+  print them.
 
   A run also keeps the duration of its own two long phases in that bucket:
   the build phase of a miss that compiled (lastColdBuildMs) and the last

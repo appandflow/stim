@@ -5750,6 +5750,7 @@ describe('run statistics', () => {
       waitedForBuild: false,
       durationMs: expect.any(Number),
       coldBuildMs: 161000,
+      phases: expect.any(Object),
     });
     expect((runs[0]?.run.durationMs as number) > 0).toBe(true);
     expect(runs[0]?.now).toBe(clock);
@@ -5762,6 +5763,14 @@ describe('run statistics', () => {
 
     expect(runs[0]?.run.coldBuildMs).toBe(161000);
     expect(runs[0]?.run.podsMs).toBe(18000);
+    expect(Object.keys(runs[0]?.run.phases ?? {})).toEqual([
+      'prepare',
+      'cache-lookup',
+      'pods',
+      'compile',
+      'install',
+      'launch',
+    ]);
   });
 
   test('a cache hit compiles nothing, so it carries no build duration', async () => {

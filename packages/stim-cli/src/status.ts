@@ -1,3 +1,4 @@
+import type { BuildReport } from './engine/build-progress.ts';
 import { projectDeviceSlots } from './devices/device-slots.ts';
 import { clockTime, formatElapsed, plural } from './command-output.ts';
 import type { ProjectRecord } from './workspace/config.ts';
@@ -89,6 +90,7 @@ export interface EnvironmentState {
   logs?: { dir: string; errorsSinceMarker: number } | null;
   worktree?: WorktreeFacts | null;
   remoteDevices?: RemoteDeviceState[];
+  build?: BuildReport | null;
 }
 
 export interface DiskInfo {
