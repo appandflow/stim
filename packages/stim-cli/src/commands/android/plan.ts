@@ -13,7 +13,7 @@ import { detectIsExpo } from '../../workspace/project.ts';
 import { listInstalledSystemImages } from '../../devices/android.ts';
 import { parkedMaxSetting } from '../../devices/sim-pool.ts';
 import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
-import type { SettingsObject } from '../../workspace/settings-types.ts';
+import type { SettingsObject } from '@stim-cli/core/state';
 import {
   androidAvdConfigSettingError,
   androidDataPartitionSizeGbSettingError,

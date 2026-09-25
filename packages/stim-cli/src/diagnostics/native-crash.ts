@@ -10,7 +10,7 @@ import { androidHome, androidToolCwd } from '../devices/android.ts';
 import { launchErrorPreview } from './launch-error-preview.ts';
 import { deviceConsoleLevel } from '../collector/ios-device.ts';
 import { writeDiagnosticOnce } from './diagnostic-store.ts';
-import { readLogRecords, sortByTs } from './logs-query.ts';
+import { readLogRecords, sortByTs } from '@stim-cli/core/state';
 import { readWorkspaceLaunches } from '../supervisor/state.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { getProject } from '../workspace/config.ts';

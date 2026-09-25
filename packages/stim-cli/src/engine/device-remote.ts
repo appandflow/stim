@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { getExecutor } from '../exec.ts';
-import { readJsonObject } from '../json-file.ts';
+import { readJsonObject, type RemoteDeviceBackend } from '@stim-cli/core/state';
 import { pidExists } from '../metro.ts';
 import { gateMetroOrigin, REMOTE_METRO_WRONG } from './metro-gate.ts';
 import { workspaceDir, workspaceId, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
@@ -47,7 +47,7 @@ import {
 } from './eas-session-ledger.ts';
 import { getConfigDir } from '../workspace/config.ts';
 
-export type RemoteDeviceBackend = 'proxy' | 'eas';
+export type { RemoteDeviceBackend } from '@stim-cli/core/state';
 
 export const REMOTE_SESSION_ERROR = 'STIM_NO_REMOTE_SESSION';
 const REMOTE_METRO_ERROR = 'STIM_REMOTE_METRO_UNREACHABLE';

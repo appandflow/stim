@@ -1,7 +1,13 @@
 import { isAbsolute } from 'node:path';
-import { ANDROID_COMPILER_CACHE_CHOICES, ANDROID_PCH_CHOICES } from '../optimizations.ts';
-import { TUNNEL_MODES } from '../engine/metro-reach.ts';
-import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
+
+export const ANDROID_COMPILER_CACHE_CHOICES = ['auto', 'ccache', 'cas', 'none'] as const;
+export const ANDROID_PCH_CHOICES = ['auto', 'on', 'off'] as const;
+
+export type TunnelMode = 'auto' | 'off' | 'expo' | 'cloudflared' | 'ngrok';
+
+export const TUNNEL_MODES: readonly TunnelMode[] = ['auto', 'off', 'expo', 'cloudflared', 'ngrok'];
+
+export type RemoteDeviceBackend = 'proxy' | 'eas';
 
 export type SettingScope = 'machine' | 'workspace' | 'repo' | 'committed';
 
@@ -34,6 +40,23 @@ export interface SettingDefinition {
   sensitive?: boolean;
   committedAt?: 'repository';
   scopedHomeValue?: number;
+}
+
+export interface SettingEntry {
+  key: string;
+  value: unknown;
+  origin: SettingScope | 'env' | 'default' | null;
+  layers: Partial<Record<SettingScope, unknown>>;
+  env?: { name: string; value: string };
+  sensitive?: true;
+}
+
+/** The payload `stim settings --json` prints. */
+export interface SettingsPayload {
+  project: string | null;
+  files: Partial<Record<SettingScope, string>>;
+  settings: SettingEntry[];
+  unknown: Array<{ key: string; scope: SettingScope; file: string; value: unknown }>;
 }
 
 export const REMOTE_DEVICE_BACKENDS: readonly RemoteDeviceBackend[] = ['proxy', 'eas'] as const;

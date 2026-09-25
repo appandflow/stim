@@ -2,7 +2,7 @@ import { rotatedLogPath } from '@stim-cli/core';
 import { closeSync, fstatSync, openSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { type NdjsonRecord, parseNdjsonLine } from '../ndjson.ts';
-import { ERROR_SOURCES, logFiles, queryLogs, recordMatches } from './logs-query.ts';
+import { ERROR_SOURCES, logFiles, queryLogs, recordMatches } from '@stim-cli/core/state';
 
 const INDEX_VERSION = 1;
 const HEAD_BYTES = 1024;

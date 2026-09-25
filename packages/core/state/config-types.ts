@@ -1,4 +1,4 @@
-import type { SettingsObject } from './settings-types.ts';
+export type SettingsObject = Record<string, unknown>;
 
 export interface SupervisorRecord {
   processToken?: string;

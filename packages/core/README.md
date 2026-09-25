@@ -29,4 +29,10 @@ they are free. Verify the holder before manually
 removing the named claim or legacy directory. Long operations that spawn native
 children use an explicit claim and record the child's identity.
 
+`@stim-cli/core/state` holds the read side of Stim's state: the `$STIM_HOME`
+path layout, the config and workspace state types and readers, the settings
+registry and its JSON Schema, the created-device and EAS session ledger readers,
+NDJSON log records and queries, and the status and settings payload types. The
+CLI owns every write to that state. The cache packages do not import it.
+
 The npm scope remains `@stim-cli` until the `@stim` scope is available.

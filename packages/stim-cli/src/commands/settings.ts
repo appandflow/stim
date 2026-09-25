@@ -2,7 +2,6 @@ import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 
 import { join } from 'node:path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
-import { isJsonObject } from '../json-file.ts';
 import {
   getConfigPath,
   getProjectSettings,
@@ -15,14 +14,17 @@ import {
 import { findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { readCommittedSettings, unknownSettingKeys, type SettingsObject } from '../workspace/settings.ts';
 import {
+  isJsonObject,
   isSensitiveReference,
   SETTING_SCOPES,
   settingDefinition,
   SETTINGS,
   settingValueError,
   type SettingDefinition,
+  type SettingEntry,
   type SettingScope,
-} from '../workspace/settings-registry.ts';
+  type SettingsPayload,
+} from '@stim-cli/core/state';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 
 const MASK = '********';
@@ -52,22 +54,6 @@ interface SettingsContext {
   repoRoot: string | null;
   machine: Config | null;
   env: NodeJS.ProcessEnv;
-}
-
-interface SettingEntry {
-  key: string;
-  value: unknown;
-  origin: SettingScope | 'env' | 'default' | null;
-  layers: Partial<Record<SettingScope, unknown>>;
-  env?: { name: string; value: string };
-  sensitive?: true;
-}
-
-interface SettingsPayload {
-  project: string | null;
-  files: Partial<Record<SettingScope, string>>;
-  settings: SettingEntry[];
-  unknown: Array<{ key: string; scope: SettingScope; file: string; value: unknown }>;
 }
 
 function readContext(env: NodeJS.ProcessEnv): SettingsContext {

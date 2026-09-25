@@ -1,9 +1,6 @@
 import { isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
-import type { SettingsObject } from './workspace/settings-types.ts';
-
-export const ANDROID_COMPILER_CACHE_CHOICES = ['auto', 'ccache', 'cas', 'none'] as const;
-export const ANDROID_PCH_CHOICES = ['auto', 'on', 'off'] as const;
+import { ANDROID_COMPILER_CACHE_CHOICES, ANDROID_PCH_CHOICES, type SettingsObject } from '@stim-cli/core/state';
 
 export interface Optimizations {
   buildCache: boolean;

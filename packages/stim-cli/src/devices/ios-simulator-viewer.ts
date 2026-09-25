@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { loadConfig } from '../workspace/config.ts';
-import { IOS_SIMULATOR_APPS } from '../workspace/settings-registry.ts';
+import { IOS_SIMULATOR_APPS } from '@stim-cli/core/state';
 
 export type IosSimulatorApp = (typeof IOS_SIMULATOR_APPS)[number];
 

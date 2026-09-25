@@ -2,10 +2,9 @@ import { formatElapsed, plural } from '../command-output.ts';
 import { readClaimSet, type ClaimHandle, type ClaimSurvey } from '../ownership-claim.ts';
 import { clearWorkspaceStateKey, updateWorkspaceState } from '../workspace/workspace-state.ts';
 import type { RunHistory, RunOutcomeKind, RunSample, StatsPlatform } from './stats.ts';
+import { BUILD_PHASES, type ActiveBuildState, type BuildPhase, type BuildReport } from '@stim-cli/core/state';
 
-const BUILD_PHASES = ['prepare', 'cache-lookup', 'wait', 'prebuild', 'pods', 'compile', 'install', 'launch'] as const;
-
-export type BuildPhase = (typeof BUILD_PHASES)[number];
+export type { ActiveBuildState, BuildPhase, BuildReport } from '@stim-cli/core/state';
 
 export const ACTIVE_BUILD_KEY = 'activeBuild';
 
@@ -24,21 +23,6 @@ export interface ActiveBuildRecord {
   phaseStartedAt: string;
   phases: { phase: BuildPhase; startedAt: string }[];
   claim: ActiveBuildClaim;
-}
-
-export type ActiveBuildState = 'running' | 'stale' | 'unknown';
-
-export interface BuildReport {
-  platform: StatsPlatform;
-  slot: string;
-  state: ActiveBuildState;
-  phase: BuildPhase;
-  startedAt: string;
-  phaseStartedAt: string;
-  outcome: RunOutcomeKind | null;
-  expectedMs: number | null;
-  expectedPhaseMs: number | null;
-  basis: number;
 }
 
 export interface BuildProgress {

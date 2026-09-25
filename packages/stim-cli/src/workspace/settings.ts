@@ -6,7 +6,6 @@ import { resolveOptimizations, resolveMetroSharedCache, type Optimizations } fro
 import { gitCommonDir as projectGitCommonDir, repoRoot as projectRepoRoot } from './worktree.ts';
 import { TUNNEL_MODES, type TunnelMode } from '../engine/metro-reach.ts';
 import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
-import type { SettingsObject } from './settings-types.ts';
 import {
   acceptsShape,
   expectedShape,
@@ -14,7 +13,8 @@ import {
   REMOTE_DEVICE_BACKENDS,
   SETTING_GROUPS,
   SETTINGS,
-} from './settings-registry.ts';
+  type SettingsObject,
+} from '@stim-cli/core/state';
 export type { SettingsObject };
 
 function isPlainObject(v: unknown): v is SettingsObject {

@@ -1,22 +1,10 @@
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { readWorkspaceState, type WorkspaceState } from '@stim-cli/core/state';
 import { withDirLock } from '../dir-lock.ts';
-import { readJsonObject } from '../json-file.ts';
-import { ensureWorkspaceStorage, workspaceLogsDir, workspaceStateFile, workspaceStateLock } from './paths.ts';
+import { ensureWorkspaceStorage, workspaceStateFile, workspaceStateLock } from './paths.ts';
 
-export interface WorkspaceState {
-  supervisor?: Record<string, unknown>;
-  collectors?: Record<string, unknown>;
-  lastBuild?: Record<string, unknown>;
-  launches?: Record<string, unknown>;
-  remoteDevice?: Record<string, unknown>;
-  metroTunnel?: Record<string, unknown>;
-  [key: string]: unknown;
-}
-
-export function readWorkspaceState(root: string): WorkspaceState | null {
-  return readJsonObject(workspaceStateFile(root));
-}
+export { lastUseFrom, readWorkspaceState, workspaceLastUsed, type WorkspaceState } from '@stim-cli/core/state';
 
 export function withWorkspaceStateLock<T>(root: string, fn: () => T): T {
   const file = workspaceStateFile(root);
@@ -93,29 +81,4 @@ export function recordWorkspaceUse(root: string, now: Date = new Date()): void {
   try {
     writeWorkspaceState(root, { lastUsedAt: now.toISOString() });
   } catch {}
-}
-
-export function lastUseFrom(state: WorkspaceState | null, logMtimes: readonly number[]): number {
-  const candidates = [
-    Date.parse(String(state?.lastUsedAt ?? '')),
-    Date.parse(String(state?.lastBuild?.startedAt ?? '')),
-    Date.parse(String(state?.supervisor?.startedAt ?? '')),
-    ...logMtimes,
-  ].filter(Number.isFinite);
-  return candidates.length ? Math.max(...candidates) : NaN;
-}
-
-export function workspaceLastUsed(root: string): number {
-  const logs = workspaceLogsDir(root);
-  let mtimes: number[] = [];
-  try {
-    mtimes = readdirSync(logs).flatMap((name) => {
-      try {
-        return [statSync(join(logs, name)).mtimeMs];
-      } catch {
-        return [];
-      }
-    });
-  } catch {}
-  return lastUseFrom(readWorkspaceState(root), mtimes);
 }

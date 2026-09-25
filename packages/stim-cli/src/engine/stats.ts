@@ -2,10 +2,11 @@ import { readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'n
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { getConfigDir, withConfigLock } from '../workspace/config.ts';
 import type { CacheHitLevel } from './build-facts.ts';
+import type { RunOutcomeKind, StatsPlatform } from '@stim-cli/core/state';
+
+export type { RunOutcomeKind, StatsPlatform } from '@stim-cli/core/state';
 
 export const STATS_VERSION = 1;
-
-export type StatsPlatform = 'ios' | 'android';
 
 export interface StatsBucket {
   runs: number;
@@ -24,8 +25,6 @@ export interface StatsBucket {
 }
 
 export type StatsScope = Partial<Record<StatsPlatform, StatsBucket>>;
-
-export type RunOutcomeKind = 'hit' | 'cold';
 
 export interface RunSample {
   at: string;

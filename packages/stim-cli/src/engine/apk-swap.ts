@@ -5,7 +5,7 @@ import { basename, dirname, isAbsolute, join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, waitForChild } from '../process-output.ts';
-import type { SettingsObject } from '../workspace/settings-types.ts';
+import type { SettingsObject } from '@stim-cli/core/state';
 import { androidBuildToolName, findBuildTool, type BuildToolsEntry } from '../devices/android.ts';
 import { cleanLine } from '../supervisor/server-expo.ts';
 import {

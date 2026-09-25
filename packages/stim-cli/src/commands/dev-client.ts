@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { getExecutor } from '../exec.ts';
-import { isJsonObject, readJsonObject } from '../json-file.ts';
+import { isJsonObject, readJsonObject } from '@stim-cli/core/state';
 import { isPackageResolvable } from '../workspace/project.ts';
 
 export function devClientScheme(

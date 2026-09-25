@@ -15,7 +15,7 @@ import {
 } from '../engine/device-capacity.ts';
 import { ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
 import { allConsolePortsAndSerials, getProject, setDevice, upsertProject } from '../workspace/config.ts';
-import type { DeviceRecord } from '../workspace/config-types.ts';
+import type { DeviceRecord } from '@stim-cli/core/state';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';

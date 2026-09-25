@@ -1,14 +1,17 @@
-import { rotatedLogPath, rotateLog } from '@stim-cli/core';
-import { closeSync, mkdirSync, openSync, readFileSync, writeSync } from 'fs';
+import { rotateLog } from '@stim-cli/core';
+import type { NdjsonRecord } from '@stim-cli/core/state';
+import { closeSync, mkdirSync, openSync, writeSync } from 'fs';
 import { dirname } from 'path';
 
-export interface NdjsonRecord {
-  ts?: number;
-  src?: string;
-  level?: string;
-  msg?: string;
-  [key: string]: unknown;
-}
+export {
+  LEVELS,
+  levelRank,
+  parseNdjsonLine,
+  parseNdjsonText,
+  readNdjsonGenerations,
+  SOURCES,
+  type NdjsonRecord,
+} from '@stim-cli/core/state';
 
 export interface NdjsonWriter {
   readonly file: string;
@@ -20,55 +23,6 @@ export interface NdjsonWriter {
 }
 
 const ROTATE_CHECK_MS = 1000;
-
-export const LEVELS: string[] = ['debug', 'info', 'warn', 'error', 'fatal'];
-
-export const SOURCES: string[] = ['metro', 'client', 'device', 'build'];
-
-export function levelRank(level?: string): number {
-  const i = LEVELS.indexOf(level as string);
-  return i < 0 ? 0 : i;
-}
-
-export function parseNdjsonLine(line: unknown): NdjsonRecord | null {
-  if (typeof line !== 'string') return null;
-  const trimmed = line.trim();
-  if (!trimmed) return null;
-  let value: unknown;
-  try {
-    value = JSON.parse(trimmed);
-  } catch {
-    return null;
-  }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  return value as NdjsonRecord;
-}
-
-export function parseNdjsonText(text: unknown): NdjsonRecord[] {
-  if (typeof text !== 'string' || text === '') return [];
-  const out: NdjsonRecord[] = [];
-  const lines = text.split('\n');
-  lines.pop();
-  for (const line of lines) {
-    const record = parseNdjsonLine(line);
-    if (record) out.push(record);
-  }
-  return out;
-}
-
-export function readNdjsonGenerations(file: string): NdjsonRecord[] {
-  const out: NdjsonRecord[] = [];
-  for (const path of [rotatedLogPath(file), file]) {
-    let text;
-    try {
-      text = readFileSync(path, 'utf-8');
-    } catch {
-      continue;
-    }
-    for (const record of parseNdjsonText(text)) out.push(record);
-  }
-  return out;
-}
 
 export function formatNdjsonLine(record: unknown): string | null {
   try {

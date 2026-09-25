@@ -1,5 +1,5 @@
 import { ANDROID_AVD_CONFIG_HELP } from '../workspace/settings.ts';
-import { SETTINGS_SCHEMA_URL } from '../workspace/settings-schema.ts';
+import { SETTINGS_SCHEMA_URL } from '@stim-cli/core/state';
 
 export default {
   summary: 'Settings Stim reads, and where they can live',

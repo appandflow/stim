@@ -26,7 +26,7 @@ import {
   removeEasSessionClaim,
   type EasSessionClaim,
 } from '../../engine/eas-session-ledger.ts';
-import type { Config } from '../../workspace/config-types.ts';
+import type { Config } from '@stim-cli/core/state';
 import { canonicalPath } from './paths.ts';
 
 export interface EasSessionSweep {

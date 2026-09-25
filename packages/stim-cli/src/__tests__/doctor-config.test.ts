@@ -6,7 +6,7 @@ import { checkMachineSettings, readMachineSettings } from '../diagnostics/doctor
 import { runDoctor } from '../diagnostics/doctor.ts';
 import { resolveOptimizations } from '../optimizations.ts';
 import { mergeSettingsLayers, settingsLayers } from '../workspace/settings.ts';
-import type { SettingsObject } from '../workspace/settings-types.ts';
+import type { SettingsObject } from '@stim-cli/core/state';
 import { writeCasToolchain } from './_factories.ts';
 
 const MACHINE = '/home/.stim/config.json';

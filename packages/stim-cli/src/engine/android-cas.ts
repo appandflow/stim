@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { register } from '../cache/cache-manifest.ts';
 import { getConfigDir } from '../workspace/config.ts';
 import { withDirLock } from '../dir-lock.ts';
-import { isJsonObject, readJsonFile } from '../json-file.ts';
+import { isJsonObject, readJsonFile } from '@stim-cli/core/state';
 import type { Optimizations } from '../optimizations.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 

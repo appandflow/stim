@@ -2,7 +2,7 @@ import { existsSync, lstatSync, readdirSync, rmSync, statSync } from 'fs';
 import { basename, isAbsolute, join, relative } from 'path';
 import chalk from 'chalk';
 import { formatBytes, isOnMountedVolume, listMountedVolumes, measuredDirectorySize } from '../../fs-util.ts';
-import { isJsonObject, readJsonFile } from '../../json-file.ts';
+import { isJsonObject, readJsonFile } from '@stim-cli/core/state';
 import { getConfigDir, isPathPrefix, loadConfig } from '../../workspace/config.ts';
 import { emptyWorkspaceDir, workspaceInUse, withIdleWorkspace } from '../../workspace/in-use.ts';
 import { workspaceName } from '../../workspace/paths.ts';

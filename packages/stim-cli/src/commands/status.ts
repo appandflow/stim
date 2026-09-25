@@ -52,6 +52,7 @@ import {
 } from '../status.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../devices/sim-pool.ts';
 import type { AndroidRuntimeFacts, EnvironmentState, VolumeInfo, WorktreeFacts } from '../status.ts';
+import type { StatusPayload } from '@stim-cli/core/state';
 
 type SupervisorRecordExt = SupervisorRecord & { mode?: string | null };
 
@@ -187,7 +188,7 @@ async function statusLines(json: boolean): Promise<string[]> {
         deviceLeases: leases,
         unprovisionedWorktrees: orphanWorktrees,
         simctlAvailable: simsAvailable,
-      }),
+      } satisfies StatusPayload),
     );
     return out;
   }

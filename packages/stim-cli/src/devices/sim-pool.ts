@@ -10,7 +10,7 @@ import {
   withConfigLock,
 } from '../workspace/config.ts';
 import { clearClaimChild, markClaimChildPending, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
-import type { Config, DeviceRecord } from '../workspace/config-types.ts';
+import type { Config, DeviceRecord } from '@stim-cli/core/state';
 
 export type PoolPlatform = 'ios' | 'android';
 

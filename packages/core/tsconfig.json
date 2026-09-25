@@ -5,5 +5,5 @@
     "moduleResolution": "bundler",
     "types": ["node", "vitest/globals"]
   },
-  "include": ["*.ts", "__tests__/**/*.ts"]
+  "include": ["*.ts", "state/**/*.ts", "__tests__/**/*.ts"]
 }

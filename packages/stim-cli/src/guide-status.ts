@@ -4,7 +4,7 @@ import { getConfigDir, getProject, upsertProject } from './workspace/config.ts';
 import { appProjectProblem } from './workspace/project.ts';
 import type { DoctorPlatform } from './diagnostics/doctor.ts';
 import { compareStimVersions } from './diagnostics/stim-installations.ts';
-import type { DoctorRunRecord, ProjectRecord } from './workspace/config-types.ts';
+import type { DoctorRunRecord, ProjectRecord } from '@stim-cli/core/state';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DOCTOR_STALE_MS = 7 * DAY_MS;
