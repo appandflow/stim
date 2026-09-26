@@ -1,9 +1,12 @@
 import { Host, Picker, Switch } from '@expo/ui';
+import * as Clipboard from 'expo-clipboard';
 import { Stack } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
   Pressable,
+  ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -17,12 +20,18 @@ import { Toggle } from '@/components/toggle';
 import { useMacConnection, useLogs, useStatus, type LogsChange } from '@/hooks/mac-connection';
 import {
   appendRecords,
+  copyText,
   DEFAULT_FILTER,
-  firstLine,
+  expoContext,
+  groupRecords,
   LEVELS,
   logFilter,
+  MAX_RECORDS,
+  needsContext,
+  shareText,
   SOURCES,
-  stackLines,
+  viewEntry,
+  type LogEntry,
   type LogFilterState,
 } from '@/lib/logs';
 import { workspaceTitleAt } from '@/lib/workspaces';
@@ -33,16 +42,18 @@ const SOURCE_LABEL = Object.fromEntries(SOURCES.map((s) => [s.source, s.label]))
 
 export function Logs({ path, errorsOnly }: { path: string; errorsOnly: boolean }) {
   const colors = useColors();
-  const { state } = useMacConnection();
+  const { state, home, connection } = useMacConnection();
   const status = useStatus();
   const env = status?.environments.find((e) => e.path === path);
   const slots = useMemo(() => ['default', ...(env?.slots ?? []).map((s) => s.slot)], [env?.slots]);
   const [filter, setFilter] = useState<LogFilterState>({ ...DEFAULT_FILTER, errors: errorsOnly });
   const [grepDraft, setGrepDraft] = useState('');
   const [records, setRecords] = useState<LogRecord[]>([]);
-  const [expanded, setExpanded] = useState<Set<LogRecord>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [fetched, setFetched] = useState<Map<string, string[]>>(new Map());
   const [following, setFollowing] = useState(true);
-  const list = useRef<FlatList<LogRecord>>(null);
+  const list = useRef<FlatList<LogEntry>>(null);
+  const entries = useMemo(() => groupRecords(records), [records]);
 
   const [problem, setProblem] = useState<string | null>(null);
   const onLogs = useCallback((change: LogsChange) => {
@@ -50,6 +61,7 @@ export function Logs({ path, errorsOnly }: { path: string; errorsOnly: boolean }
     if (change.kind === 'error') return setProblem(change.message);
     setRecords([]);
     setExpanded(new Set());
+    setFetched(new Map());
     setProblem(null);
   }, []);
   const active = env && filter.slot !== null && !slots.includes(filter.slot) ? { ...filter, slot: null } : filter;
@@ -73,6 +85,18 @@ export function Logs({ path, errorsOnly }: { path: string; errorsOnly: boolean }
     }
     setProblem(null);
     update({ grep: grepDraft });
+  };
+
+  const fetchContext = (entry: LogEntry) => {
+    if (!connection || !needsContext(entry) || fetched.has(entry.key)) return;
+    setFetched((map) => new Map(map).set(entry.key, []));
+    connection
+      .request('logs.query', { workspace: path, sources: ['metro'], tail: MAX_RECORDS })
+      .then(({ records: metro }) => {
+        const context = expoContext(metro, entry.lead).map((r) => r.msg);
+        if (context.length > 0) setFetched((map) => new Map(map).set(entry.key, context));
+      })
+      .catch(() => {});
   };
 
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -145,8 +169,8 @@ export function Logs({ path, errorsOnly }: { path: string; errorsOnly: boolean }
       </View>
       <FlatList
         ref={list}
-        data={records}
-        keyExtractor={(_, index) => String(index)}
+        data={entries}
+        keyExtractor={(entry) => entry.key}
         onScroll={onScroll}
         scrollEventThrottle={100}
         onContentSizeChange={() => {
@@ -155,22 +179,28 @@ export function Logs({ path, errorsOnly }: { path: string; errorsOnly: boolean }
         ListEmptyComponent={
           <Text style={[styles.empty, { color: colors.tertiary }]}>No records match these filters.</Text>
         }
-        renderItem={({ item }) => (
-          <LogRow
-            colors={colors}
-            record={item}
-            expanded={expanded.has(item)}
-            onPress={() =>
-              setExpanded((set) => {
-                const next = new Set(set);
-                if (!next.delete(item)) next.add(item);
-                return next;
-              })
-            }
-          />
-        )}
+        renderItem={({ item }) => {
+          const context = fetched.get(item.key);
+          return (
+            <LogRow
+              colors={colors}
+              entry={context && context.length > 0 ? { ...item, context } : item}
+              workspace={path}
+              home={home}
+              expanded={expanded.has(item.key)}
+              onPress={() => {
+                if (!expanded.has(item.key)) fetchContext(item);
+                setExpanded((set) => {
+                  const next = new Set(set);
+                  if (!next.delete(item.key)) next.add(item.key);
+                  return next;
+                });
+              }}
+            />
+          );
+        }}
       />
-      {!following && records.length > 0 ? (
+      {!following && entries.length > 0 ? (
         <Pressable
           onPress={() => {
             setFollowing(true);
@@ -195,19 +225,25 @@ function levelColor(colors: Colors, level: string): string {
 
 function LogRow({
   colors,
-  record,
+  entry,
+  workspace,
+  home,
   expanded,
   onPress,
 }: {
   colors: Colors;
-  record: LogRecord;
+  entry: LogEntry;
+  workspace: string;
+  home: string | null;
   expanded: boolean;
   onPress: () => void;
 }) {
+  const record = entry.lead;
   const time = new Date(record.ts).toTimeString().slice(0, 8);
   const tint = levelColor(colors, record.level);
-  const message = typeof record.msg === 'string' ? record.msg : '';
-  const stack = expanded ? stackLines(record.stack) : [];
+  const error = record.level === 'error' || record.level === 'fatal';
+  const view = viewEntry(entry, workspace, home);
+  const [copied, setCopied] = useState(false);
   return (
     <Pressable onPress={onPress} style={[styles.logRow, { borderBottomColor: colors.border }]}>
       <View style={[styles.levelBar, { backgroundColor: tint }]} />
@@ -215,17 +251,56 @@ function LogRow({
         <Text style={[styles.logMeta, { color: colors.tertiary }]}>
           {time} {SOURCE_LABEL[record.src] ?? record.src}
           {record.slot && record.slot !== 'default' ? ` \u00B7 ${record.slot}` : ''} {record.level}
+          {entry.related.length > 0 ? ` \u00B7 ${entry.related.length + 1} records` : ''}
         </Text>
         <Text
-          style={[styles.logText, { color: record.level === 'error' || record.level === 'fatal' ? tint : colors.text }]}
-          numberOfLines={expanded ? undefined : 2}
+          style={[styles.logText, error && styles.title, { color: error ? tint : colors.text }]}
+          numberOfLines={expanded ? undefined : 3}
           selectable={expanded}
         >
-          {expanded ? message : firstLine(message)}
+          {view.title}
         </Text>
-        {expanded && stack.length > 0 ? (
+        {view.location ? (
+          <Text
+            style={[styles.location, { color: colors.text }]}
+            numberOfLines={expanded ? undefined : 1}
+            selectable={expanded}
+          >
+            {view.location}
+          </Text>
+        ) : null}
+        {expanded && view.codeFrame.length > 0 ? (
+          <View style={[styles.codeFrame, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <Text style={[styles.logText, { color: colors.text }]} selectable>
+                {view.codeFrame.join('\n')}
+              </Text>
+            </ScrollView>
+          </View>
+        ) : null}
+        {expanded ? (
+          <View style={styles.actions}>
+            <Pressable
+              onPress={() => void Clipboard.setStringAsync(copyText(view)).then(() => setCopied(true))}
+              accessibilityRole="button"
+              accessibilityLabel="Copy message and location"
+              style={[styles.action, { borderColor: colors.border }]}
+            >
+              <Text style={[styles.actionText, { color: colors.primary }]}>{copied ? 'Copied' : 'Copy'}</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => void Share.share({ message: shareText(view, entry, workspace) }).catch(() => {})}
+              accessibilityRole="button"
+              accessibilityLabel="Share entry"
+              style={[styles.action, { borderColor: colors.border }]}
+            >
+              <Text style={[styles.actionText, { color: colors.primary }]}>Share</Text>
+            </Pressable>
+          </View>
+        ) : null}
+        {expanded && view.details.length > 0 ? (
           <Text style={[styles.logText, { color: colors.secondary }]} selectable>
-            {stack.join('\n')}
+            {view.details.join('\n')}
           </Text>
         ) : null}
       </View>
@@ -246,6 +321,12 @@ const styles = StyleSheet.create({
   logBody: { flex: 1, paddingHorizontal: 10, paddingVertical: 6, gap: 2 },
   logMeta: { fontSize: 11, fontFamily: mono },
   logText: { fontSize: 12, fontFamily: mono, lineHeight: 17 },
+  title: { fontSize: 13, fontWeight: '600' },
+  location: { fontSize: 12, fontFamily: mono, fontWeight: '600' },
+  codeFrame: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 8, padding: 8, marginVertical: 4 },
+  actions: { flexDirection: 'row', gap: 8, paddingTop: 6 },
+  action: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 6 },
+  actionText: { fontSize: 14, fontWeight: '600' },
   jump: {
     position: 'absolute',
     alignSelf: 'center',

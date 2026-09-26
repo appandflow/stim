@@ -1,4 +1,4 @@
-import { tildeHome } from '@/lib/paths';
+import { relativeTo, tildeHome } from '@/lib/paths';
 
 describe('tildeHome', () => {
   const home = '/Users/janic';
@@ -25,5 +25,17 @@ describe('tildeHome', () => {
 
   it('leaves text alone without a known home', () => {
     expect(tildeHome('/Users/janic/a', undefined)).toBe('/Users/janic/a');
+  });
+});
+
+describe('relativeTo', () => {
+  it('writes paths under the root relative to it, and leaves the root itself and other paths alone', () => {
+    expect(relativeTo('SyntaxError: /tmp/app/App.js: Unexpected token', '/tmp/app/')).toBe(
+      'SyntaxError: App.js: Unexpected token',
+    );
+    expect(relativeTo('at x (/tmp/app/node_modules/a.js:1:2) in /tmp/app', '/tmp/app')).toBe(
+      'at x (node_modules/a.js:1:2) in /tmp/app',
+    );
+    expect(relativeTo('/tmp/apple/App.js', '/tmp/app')).toBe('/tmp/apple/App.js');
   });
 });
