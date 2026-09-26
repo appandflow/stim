@@ -576,6 +576,18 @@ describe('the command surface', () => {
     }
   });
 
+  test('web is reserved for the owned Chrome: only stop accepts it as a --slot', async () => {
+    for (const args of [['logs'], ['ios'], ['android'], ['device', 'lock', 'ios'], ['device', 'unlock']]) {
+      const program = new Command();
+      program.exitOverride().configureOutput({ writeErr: () => {} });
+      for (const register of [logsCommand, stopCommand, iosCommand, androidCommand, registerDevice]) register(program);
+      await expect(program.parseAsync(['node', 'stim', ...args, '--slot', 'web'])).rejects.toMatchObject({
+        code: 'commander.invalidArgument',
+        message: expect.stringContaining("web names this workspace's owned Chrome (stim stop --slot web)"),
+      });
+    }
+  });
+
   test('the grant and release lines read the same way the guide says they do', () => {
     const facts = {
       platform: 'ios' as const,

@@ -1445,6 +1445,26 @@ test.each([
   },
 );
 
+test('stop --slot web closes only the owned Chrome, leaving the server, collectors and devices running', async () => {
+  const { calls, opts } = seams({
+    project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'DEFAULT', owned: true } } },
+    state: { pid: 4242, processToken: 'upid1.supervisor', port: 8083, mode: 'expo-child' },
+    collectors: { ios: { pid: 51, processToken: 'collector' } },
+    isAlive: () => true,
+    teardownBrowser: async () => ({ status: 'torn-down' as const, label: 'Chrome pid 77' }),
+  });
+  const result = await runStop({ ...opts, slot: 'web' });
+  expect(calls).toMatchObject({ signals: [], collectorSignals: [], teardowns: [], freed: [], stateCleared: 0 });
+  expect(result).toMatchObject({
+    ok: true,
+    outcomes: {
+      device: { ios: null, android: null, web: { status: 'shut-down', label: 'Chrome' } },
+      port: { status: 'kept', port: 8083 },
+    },
+  });
+  expect(result.summary).toMatch(/^Stopped: web Chrome shut down, port 8083 kept/);
+});
+
 test('stop --slot default never ends the workspace remote session', async () => {
   let remoteTeardownCalled = false;
   const { opts } = seams({

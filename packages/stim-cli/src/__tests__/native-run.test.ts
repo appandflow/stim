@@ -7,6 +7,8 @@ import { runStop, stopWorkspaceNow } from '../commands/stop.ts';
 import { decideStopAction, nativeRunWaitNotice, type NativeRunHolder } from '../engine/native-run.ts';
 import { getExecutor } from '../exec.ts';
 import type { ClaimHolder } from '../ownership-claim.ts';
+import { upsertProject } from '../workspace/config.ts';
+import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 
 const ios = (slot = 'default'): NativeRunHolder => ({ command: 'ios', platform: 'ios', slot });
 
@@ -231,6 +233,7 @@ describe('stop against a real native-run holder', { timeout: 30_000 }, () => {
       slot: 'tablet',
       report: (line) => lines.push(line),
       deviceSlots: () => ['default', 'tablet'],
+      recordedSlots: () => ['default', 'tablet'],
       stop: async (options) => {
         calls.push(options);
         return stopped();
@@ -239,6 +242,49 @@ describe('stop against a real native-run holder', { timeout: 30_000 }, () => {
     expect(result).toMatchObject({ ok: true });
     expect(calls).toEqual([{ root, slot: 'tablet' }]);
     expect(lines.join('\n')).toContain(`leaving \`stim ios\` (pid ${holder.child.pid}`);
+    expect(holder.child.exitCode).toBe(null);
+  });
+
+  test('an unknown slot is refused with the recorded slots before stop waits on the build', async () => {
+    const holder = await startHolder('ios', 'default', 'sleep');
+    upsertProject(root, { deviceSlots: { tablet: { ios: { deviceUdid: 'TABLET', owned: true } } } });
+    writeWorkspaceState(root, { collectors: { 'android:fold': { pid: 1, processToken: 'fold' } } });
+    let stops = 0;
+    const result = await stopWorkspaceNow({
+      root,
+      slot: 'nonexistent',
+      endRemote: () => null,
+      stop: async () => {
+        stops += 1;
+        return stopped();
+      },
+    });
+    expect(result).toMatchObject({
+      refusal: {
+        code: 'STIM_BAD_ARG',
+        message: 'This workspace has no device slot named nonexistent. Its slots are default, fold, tablet.',
+      },
+    });
+    expect(stops).toBe(0);
+    expect(holder.child.exitCode).toBe(null);
+  });
+
+  test('stop --slot web closes the browser without waiting on or interrupting a build', async () => {
+    const holder = await startHolder('ios', 'default', 'sleep');
+    const lines: string[] = [];
+    const calls: { slot?: string }[] = [];
+    const result = await stopWorkspaceNow({
+      root,
+      slot: 'web',
+      report: (line) => lines.push(line),
+      stop: async (options) => {
+        calls.push(options);
+        return stopped();
+      },
+    });
+    expect(result).toMatchObject({ ok: true });
+    expect(calls).toEqual([{ root, slot: 'web' }]);
+    expect(lines).toEqual([]);
     expect(holder.child.exitCode).toBe(null);
   });
 

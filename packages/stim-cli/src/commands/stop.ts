@@ -18,6 +18,7 @@ import {
   parseDeviceSlotOption,
   projectDeviceSlots,
   validateDeviceSlot,
+  WEB_SLOT,
 } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
@@ -45,7 +46,7 @@ import {
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { teardownOwnedBrowser, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
-import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
+import { fileLeaseIo, releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
 import { stopTunnel } from '../engine/tunnel.ts';
 import {
@@ -265,6 +266,7 @@ type StopArgs = Parameters<typeof stopWorkspace>[0];
 
 export async function runStop(options: StopArgs & { slot?: string }): ReturnType<typeof stopWorkspace> {
   if (options.slot === undefined) return stopWorkspace(options);
+  if (options.slot === WEB_SLOT) return stopBrowserOnly(options);
   const slot = validateDeviceSlot(options.slot);
   const root = options.root;
   const project = options.project === undefined ? getProject(root) : options.project;
@@ -308,6 +310,29 @@ export async function runStop(options: StopArgs & { slot?: string }): ReturnType
   result.outcomes.metro = { status: 'skipped', reason: 'The workspace server is shared by all slots.' };
   result.summary = summarize(root, result.outcomes, result.ok);
   return result;
+}
+
+async function stopBrowserOnly({
+  root,
+  project = undefined,
+  teardownBrowser = (projectRoot: string) => teardownOwnedBrowser(projectRoot),
+  report = (line: string) => console.error(line),
+}: Pick<StopArgs, 'root' | 'project' | 'teardownBrowser' | 'report'>): ReturnType<typeof stopWorkspace> {
+  const kept = 'Only the owned Chrome stops; the workspace server and devices keep running.';
+  const port = (project === undefined ? getProject(root) : project)?.metroPort ?? null;
+  const outcomes: StopOutcomes = {
+    supervisor: { status: 'skipped', reason: kept },
+    collectors: { status: 'skipped', entries: [] },
+    metro: { status: 'skipped', reason: kept },
+    device: { ios: null, android: null },
+    port: port === null ? { status: 'none', port } : { status: 'kept', port, reason: kept },
+    metroTunnel: { status: 'none' },
+    releasedLeases: [],
+  };
+  outcomes.device.web = await closeBrowser(root, teardownBrowser, report);
+  if (!outcomes.device.web) report(chalk.dim(phaseLine('device', 'no owned Chrome is running')));
+  const ok = !outcomes.device.web || outcomes.device.web.status === 'shut-down';
+  return { ok, outcomes, summary: summarize(root, outcomes, ok) };
 }
 
 async function stopWorkspace({
@@ -964,6 +989,15 @@ function ownerGoneRefusal(holder: ClaimHolder, at: number): StopBlocked {
   });
 }
 
+function recordedDeviceSlots(root: string): string[] {
+  const slots = new Set(projectDeviceSlots(getProject(root)).map(({ slot }) => slot));
+  for (const key of Object.keys({ ...readCollectorState(root), ...fileLeaseIo.readHolder(root) })) {
+    const parsed = parseDeviceSlotKey(key);
+    if (parsed) slots.add(parsed.slot);
+  }
+  return [...slots].toSorted();
+}
+
 function workspaceDeviceSlots(root: string): string[] {
   const slots = projectDeviceSlots(getProject(root))
     .filter(({ platforms }) => Object.values(platforms).some(Boolean))
@@ -997,6 +1031,7 @@ export async function stopWorkspaceNow({
   interrupt = (pid: number) => process.kill(pid, 'SIGINT'),
   endRemote = (projectRoot: string) => readRemoteSessionEntry(projectRoot, report),
   deviceSlots = workspaceDeviceSlots,
+  recordedSlots = recordedDeviceSlots,
   stop = (options: { root: string; slot?: string }) => runStop(options),
 }: {
   root: string;
@@ -1010,8 +1045,23 @@ export async function stopWorkspaceNow({
   interrupt?: (pid: number) => void;
   endRemote?: (root: string) => DeviceOutcomeEntry | null;
   deviceSlots?: (root: string) => string[];
+  recordedSlots?: (root: string) => string[];
   stop?: (options: { root: string; slot?: string }) => ReturnType<typeof runStop>;
 }): Promise<Awaited<ReturnType<typeof runStop>> | { refusal: StopRefusal; remote: DeviceOutcomeEntry | null }> {
+  if (slot === WEB_SLOT) return stop({ root, slot });
+  if (slot !== undefined) {
+    const known = recordedSlots(root);
+    if (!known.includes(slot)) {
+      return {
+        refusal: {
+          code: 'STIM_BAD_ARG',
+          message: `This workspace has no device slot named ${slot}. Its slots are ${known.join(', ')}.`,
+          remedy: `Run \`stim stop --slot <name>\` with one of those slots, \`stim stop --slot ${WEB_SLOT}\` to close only the owned Chrome, or \`stim stop\` for the whole workspace.`,
+        },
+        remote: null,
+      };
+    }
+  }
   let remote: DeviceOutcomeEntry | null = null;
   let remoteHandled = slot !== undefined;
   const endRemoteNow = () => {
@@ -1112,8 +1162,8 @@ export default function stopCommand(program: Command): void {
     )
     .option(
       '--slot <name>',
-      "Stop only this device slot, keeping the shared server running. Use 'default' for the workspace's default device.",
-      parseDeviceSlotOption,
+      "Stop only this device slot, keeping the shared server running. Use 'default' for the workspace's default device, or 'web' to close only the owned Chrome.",
+      (slot: string) => (slot === WEB_SLOT ? slot : parseDeviceSlotOption(slot)),
     )
     .option('--json', 'print the per-step outcomes as JSON')
     .action(async (opts: StopOptions) => {

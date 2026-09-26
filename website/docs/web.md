@@ -205,6 +205,9 @@ attaches to a browser it did not start.
 
 - `stim stop` closes Chrome and keeps the profile, so cookies and storage
   survive the next `stim web`.
+- `stim stop --slot web` closes only Chrome, also keeping the profile. Metro,
+  simulators and emulators keep running, so a fresh `stim web` does not cost
+  a native relaunch.
 - `stim worktree remove` closes Chrome and deletes the profile.
 - `stim gc --delete` does the same for a workspace whose path is gone.
 
