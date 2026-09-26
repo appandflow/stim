@@ -117,11 +117,15 @@ const TOKEN_KEY = 'pushToken';
 
 /** Starts from the Macs that accepted a registration before, so a relaunch does not notify what they push. */
 const pushedMacs = new Set(
-  storage
-    .getAllKeys()
-    .filter((key) => key.startsWith(PUSHED_PREFIX))
-    .map((key) => key.slice(PUSHED_PREFIX.length)),
+  PUSH_ENABLED
+    ? storage
+        .getAllKeys()
+        .filter((key) => key.startsWith(PUSHED_PREFIX))
+        .map((key) => key.slice(PUSHED_PREFIX.length))
+    : [],
 );
+/** Per Mac, the connection state and registration last sent, so each is sent once per connection. */
+const sentRegistrations = new Map<string, { state: unknown; key: string }>();
 const pushListeners = new Set<() => void>();
 const setPushed = (id: string, pushed: boolean) => {
   if (pushedMacs.has(id) === pushed) return;
@@ -195,6 +199,7 @@ function LocalNotifier({ prefs }: { prefs: NotificationPrefs }) {
 /** Asks the Mac to stop pushing to this phone, before this phone forgets it. */
 export function unregisterPush(connection: StimConnection | null, macId: string): void {
   setPushed(macId, false);
+  sentRegistrations.delete(macId);
   storage.remove(`${PUSHED_PREFIX}${macId}`);
   connection?.request('push.unregister', {}).catch(() => {});
 }
@@ -202,7 +207,6 @@ export function unregisterPush(connection: StimConnection | null, macId: string)
 function PushRegistration({ prefs }: { prefs: NotificationPrefs }) {
   const { connections } = useMacs();
   const [token, setToken] = useState<string | null>(() => storage.getString(TOKEN_KEY) ?? null);
-  const sent = useRef(new Map<string, unknown>());
   const events = prefs.enabled
     ? prefs.events.filter((e): e is PushEvent => (PUSH_EVENTS as readonly string[]).includes(e))
     : [];
@@ -210,43 +214,48 @@ function PushRegistration({ prefs }: { prefs: NotificationPrefs }) {
   const wanted = pushWanted && token !== null ? JSON.stringify({ token, events, agentOnly: prefs.agentOnly }) : null;
   const anyOpen = connections.some((c) => c.state.kind === 'open');
 
+  const fetched = useRef(false);
+
   useEffect(() => {
     if (!pushWanted) return;
+    const projectId = Constants.expoConfig?.extra?.eas?.projectId as string | undefined;
     const save = (next: string) => {
       storage.set(TOKEN_KEY, next);
       setToken(next);
     };
-    const listener = Notifications.addPushTokenListener(() => {
-      const projectId = Constants.expoConfig?.extra?.eas?.projectId as string | undefined;
-      Notifications.getExpoPushTokenAsync({ projectId }).then(
+    const listener = Notifications.addPushTokenListener((devicePushToken) => {
+      Notifications.getExpoPushTokenAsync({ projectId, devicePushToken }).then(
         (result) => save(result.data),
         () => {},
       );
     });
-    if (!token && anyOpen) {
-      const projectId = Constants.expoConfig?.extra?.eas?.projectId as string | undefined;
+    if (anyOpen && !fetched.current) {
+      fetched.current = true;
       Notifications.getExpoPushTokenAsync({ projectId }).then(
         (result) => save(result.data),
-        () => {},
+        () => {
+          fetched.current = false;
+        },
       );
     }
     return () => listener.remove();
-  }, [pushWanted, token, anyOpen]);
+  }, [pushWanted, anyOpen]);
 
   useEffect(() => {
     for (const { mac, state, connection } of connections) {
       if (state.kind !== 'open' || !connection) continue;
       if (pushWanted && wanted === null) continue;
       const key = `${wanted}`;
-      const last = sent.current.get(mac.id) as { state: unknown; key: string } | undefined;
+      const last = sentRegistrations.get(mac.id);
       if (last && last.state === state && last.key === key) continue;
-      sent.current.set(mac.id, { state, key });
+      sentRegistrations.set(mac.id, { state, key });
+      const current = () => sentRegistrations.get(mac.id)?.key === key;
       if (wanted === null) {
         const registered = storage.contains(`${PUSHED_PREFIX}${mac.id}`);
         setPushed(mac.id, false);
         if (!registered) continue;
         connection.request('push.unregister', {}).then(
-          () => storage.remove(`${PUSHED_PREFIX}${mac.id}`),
+          () => current() && storage.remove(`${PUSHED_PREFIX}${mac.id}`),
           () => {},
         );
         continue;
@@ -254,11 +263,12 @@ function PushRegistration({ prefs }: { prefs: NotificationPrefs }) {
       const params = JSON.parse(wanted) as { token: string; events: PushEvent[]; agentOnly: boolean };
       connection.request('push.register', { ...params, ref: mac.id }).then(
         () => {
+          if (!current()) return;
           storage.set(`${PUSHED_PREFIX}${mac.id}`, true);
           setPushed(mac.id, true);
         },
         (cause: Error) => {
-          if (!(cause instanceof RequestError)) return;
+          if (!current() || !(cause instanceof RequestError)) return;
           storage.remove(`${PUSHED_PREFIX}${mac.id}`);
           setPushed(mac.id, false);
         },
