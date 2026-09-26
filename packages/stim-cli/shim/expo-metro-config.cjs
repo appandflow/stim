@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { execFile } = require('node:child_process');
 const { createRequire } = require('node:module');
 const { pathToFileURL } = require('node:url');
 const { bundleResponseMiddleware } = require('./bundle-response.cjs');
@@ -118,6 +119,12 @@ function storeAtRoot(store) {
   return store[STORE_ROOT_TAG] === storeRoot || store['_root'] === storeRoot;
 }
 
+function runLsof(args) {
+  return new Promise((resolve, reject) =>
+    execFile('lsof', args, { timeout: 2000 }, (error, stdout) => (error ? reject(error) : resolve(stdout))),
+  );
+}
+
 function appendStore(config, defaultConfig) {
   const output = config && typeof config === 'object' ? config : {};
   const configuredStores = output.cacheStores != null ? output.cacheStores : defaultConfig.cacheStores;
@@ -130,8 +137,9 @@ function appendStore(config, defaultConfig) {
       ...server,
       enhanceMiddleware(middleware, metroServer) {
         const enhanced = enhanceMiddleware ? enhanceMiddleware(middleware, metroServer) : middleware;
-        const observe = bundleResponseMiddleware((record) =>
-          process.stderr.write(`stim-bundle-response: ${JSON.stringify(record)}\n`),
+        const observe = bundleResponseMiddleware(
+          (record) => process.stderr.write(`stim-bundle-response: ${JSON.stringify(record)}\n`),
+          { runLsof: process.platform === 'darwin' ? runLsof : undefined },
         );
         return (req, res, next) => observe(req, res, () => enhanced(req, res, next));
       },

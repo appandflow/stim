@@ -3,6 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { clearSupervisorState } from '../commands/stop.ts';
 import { readWorkspaceLaunches, writeWorkspaceLaunch, type WorkspaceLaunchRecord } from '../supervisor/state.ts';
+import type { DeviceRecord } from '@stim-cli/core/state';
+import { siblingPlatformSlots } from '../engine/slot-launch.ts';
+import { resetExecutor, setExecutor } from '../exec.ts';
+import { upsertProject } from '../workspace/config.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 
 let stimHome: string;
@@ -90,4 +94,54 @@ test('launches in named slots coexist with default launches and share the superv
   expect(readWorkspaceState(root)?.supervisor).toEqual({ pid: 42 });
   expect(() => writeWorkspaceLaunch(root, 'ios', launch('app', 'INVALID'), '../phone')).toThrow(/device slot/);
   expect(Object.keys(readWorkspaceLaunches(root))).toHaveLength(3);
+});
+
+test('a sibling slot shares Metro while its collector, lease or owned device is live, not once it is stopped', () => {
+  upsertProject(root, {
+    platforms: { android: { avdName: 'stim-a', owned: true } },
+    deviceSlots: {
+      stopped: { android: { avdName: 'stim-stopped', owned: true } },
+      booted: { android: { avdName: 'stim-booted', owned: true } },
+    },
+  });
+  const collector = { pid: 1, processToken: 't' };
+  writeWorkspaceState(root, {
+    collectors: { android: collector, 'android:second': collector, 'ios:tablet': collector },
+    deviceLeases: { 'android:hardware': { id: 'R5C', token: 'lease', kind: 'declared' } },
+  });
+  const deviceRunning = (device: DeviceRecord) => device.avdName !== 'stim-stopped';
+  expect(siblingPlatformSlots(root, 'android', 'default', { deviceRunning })).toEqual(['booted', 'hardware', 'second']);
+  expect(siblingPlatformSlots(root, 'android', 'second', { deviceRunning })).toEqual(['booted', 'default', 'hardware']);
+  expect(siblingPlatformSlots(root, 'ios', 'tablet', { deviceRunning })).toEqual([]);
+});
+
+test('a sibling whose device state cannot be read counts as running, so it can never lend its bundle', () => {
+  upsertProject(root, { deviceSlots: { tablet: { ios: { deviceUdid: 'TABLET', owned: true } } } });
+  setExecutor({
+    runFile: () => {
+      throw new Error('simctl timed out');
+    },
+  });
+  try {
+    expect(siblingPlatformSlots(root, 'ios')).toEqual(['tablet']);
+  } finally {
+    resetExecutor();
+  }
+});
+
+test.each([
+  ['cannot be read', '', ['second']],
+  ['names another AVD', 'stim-other\nOK', []],
+  ['names the sibling', 'stim-second\nOK', ['second']],
+])('an Android sibling is judged from the running emulators when an AVD name %s', (_case, avdName, siblings) => {
+  upsertProject(root, { deviceSlots: { second: { android: { avdName: 'stim-second', owned: true } } } });
+  setExecutor({
+    run: () => 'List of devices attached\nemulator-5554\tdevice\n',
+    runQuiet: () => avdName,
+  });
+  try {
+    expect(siblingPlatformSlots(root, 'android')).toEqual(siblings);
+  } finally {
+    resetExecutor();
+  }
 });

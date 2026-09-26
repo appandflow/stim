@@ -1291,11 +1291,17 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   caps count every slot. Recycling uses the same model/runtime-matched pool
   for every slot, with one shared cap per platform and oldest-first eviction.
 
-  Metro cannot reliably identify a particular simulator's bundle request.
-  When slots coexist, a shared bundle event is not proof that a particular
-  slot launched: Debug launch can report unverified. Check the reported device
-  directly. Release verification still checks its process. reload ios/android
-  addresses matching Metro peers across slots; it is not a single-slot reload.
+  When slots coexist, a Debug launch counts a Metro bundle delivery as proof
+  only when it is attributable to that launch's device. On macOS, Metro records
+  which simulator app process requested an iOS bundle (through lsof), so each
+  simulator slot proves its own launch. Any other delivery (Android, a physical
+  iPhone, or a simulator request lsof could not resolve) proves the launch only
+  while no other slot of the same platform is running: a booted owned device,
+  a log collector or a device lease. stop --slot <name> ends all three.
+  Otherwise the launch reports unverified with "not provably to this device":
+  check the reported device directly. Release verification still checks its
+  process. reload ios/android addresses matching Metro peers across slots; it
+  is not a single-slot reload.
 
   That is the whole surface today, and it is deliberately small. It can grow
   when a flag is genuinely the best answer -- but project-specific knowledge
