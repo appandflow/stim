@@ -1038,7 +1038,11 @@ home did not create, or `user`. It also lists the iOS simulator runtimes and
 Android system images with how many devices use each (a runtime that
 `simctl runtime list` does not show has no size), and the
 `xcrun simctl runtime delete` or `sdkmanager --uninstall` command that removes
-it. The inventory is report only: Stim never runs those commands and never
+it. `inventory.notices` says why a listing is missing or partial, such as an
+AVD or system image folder Stim cannot read. When macOS privacy protection
+blocks the read, for example for AVDs on an external disk, the notice names the
+Privacy & Security setting that allows the app running Stim.
+The inventory is report only: Stim never runs those commands and never
 acts on a device through it.
 `stim guide facts gc` lists every section, field and reason code.
 
