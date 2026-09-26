@@ -114,45 +114,458 @@
             "status": "ok",
             "cacheHit": "local",
             "cacheSkipped": false,
-            "durationMs": 12400,
-            "fingerprint": "8c1e2f0a93b1d4c6e7f8091a2b3c4d5e6f708192",
-            "startedAt": "2026-09-25T04:10:02.114Z",
-            "finishedAt": "2026-09-25T04:10:14.514Z"
+            "durationMs": 10977,
+            "fingerprint": "7a512dbf44e1ddf5f48da02effa9c7c93af6cbf0",
+            "startedAt": "2026-09-26T13:10:36.706Z",
+            "finishedAt": "2026-09-26T13:10:47.683Z"
           },
           "android": {
             "platform": "android",
             "status": "ok",
-            "cacheHit": false,
+            "cacheHit": "local",
             "cacheSkipped": false,
-            "durationMs": 421300,
-            "fingerprint": "4b7d9e1c2a3f5061728394a5b6c7d8e9f0a1b2c3",
-            "startedAt": "2026-09-25T03:51:40.002Z",
-            "finishedAt": "2026-09-25T03:58:41.302Z",
-            "missReason": {
-              "kind": "changed",
-              "summary": "native dependency added: expo-clipboard",
-              "changes": [
-                {
-                  "source": "node_modules/expo-clipboard/android",
-                  "change": "added",
-                  "category": "native-dependency"
-                },
-                {
-                  "source": "expoAutolinkingConfig:android",
-                  "change": "changed",
-                  "category": "autolinking"
-                }
-              ],
-              "changeCount": 2,
-              "baseline": {
-                "fingerprint": "9a0b1c2d3e4f5061728394a5b6c7d8e9f0a1b2c3",
-                "from": "workspace"
-              },
-              "rekeyedBy": []
-            }
+            "durationMs": 3101,
+            "fingerprint": "3c9e0a33311208b706d3a56bd0c75756067ded05",
+            "startedAt": "2026-09-26T13:10:47.795Z",
+            "finishedAt": "2026-09-26T13:10:50.896Z"
           }
         },
-        "issues": []
+        "issues": [],
+        "builds": {
+          "ios": [
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 10977,
+              "fingerprint": "7a512dbf44e1ddf5f48da02effa9c7c93af6cbf0",
+              "startedAt": "2026-09-26T13:10:36.706Z",
+              "finishedAt": "2026-09-26T13:10:47.683Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": "7a512dbf44e1ddf5f48da02effa9c7c93af6cbf0-debug-sim",
+              "phases": {
+                "prepare": 1738,
+                "cache-lookup": 1373,
+                "install": 1770,
+                "launch": 6103
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 18128,
+              "fingerprint": "7a512dbf44e1ddf5f48da02effa9c7c93af6cbf0",
+              "startedAt": "2026-09-26T13:02:49.060Z",
+              "finishedAt": "2026-09-26T13:03:07.188Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": null,
+              "cacheKey": "7a512dbf44e1ddf5f48da02effa9c7c93af6cbf0-debug-sim",
+              "phases": {
+                "prepare": 2700,
+                "cache-lookup": 1144,
+                "install": 3205,
+                "launch": 11087
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "failed",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 99918,
+              "fingerprint": "1bb591733eaa6b594269f849cfce96ca183d665c",
+              "startedAt": "2026-09-26T12:58:33.488Z",
+              "finishedAt": "2026-09-26T13:00:13.406Z",
+              "errorCode": "STIM_CANCELLED",
+              "result": "cancelled",
+              "slot": "default",
+              "configuration": null,
+              "cacheKey": "1bb591733eaa6b594269f849cfce96ca183d665c-debug-sim",
+              "phases": {
+                "prepare": 2260,
+                "cache-lookup": 1798,
+                "prebuild": 5078,
+                "pods": 90794
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "failed",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 203845,
+              "fingerprint": "e0ef5203133fa7f66f4bb236376eacd8f5674dd8",
+              "startedAt": "2026-09-26T12:54:26.134Z",
+              "finishedAt": "2026-09-26T12:57:49.979Z",
+              "errorCode": "STIM_BUILD_FAILED",
+              "missReason": {
+                "kind": "changed",
+                "summary": "ios/ added (+2 more)",
+                "changes": [
+                  {
+                    "source": "ios",
+                    "change": "added",
+                    "category": "native-dir"
+                  },
+                  {
+                    "source": "modules/stim-video/android",
+                    "change": "changed",
+                    "category": "file"
+                  },
+                  {
+                    "source": "modules/stim-video/ios",
+                    "change": "changed",
+                    "category": "file"
+                  }
+                ],
+                "changeCount": 3,
+                "baseline": {
+                  "fingerprint": "4285aad902a8c8eab904e828befa85c42e2049f1",
+                  "from": "workspace"
+                },
+                "rekeyedBy": []
+              },
+              "diagnostics": [
+                {
+                  "file": "/Users/dev/Developer/react-native-reserved-regions/example/apps/mobile/modules/stim-video/ios/AnnexB.swift",
+                  "line": 36,
+                  "column": 29,
+                  "message": "cannot convert value of type 'String' to specified type 'Int'"
+                }
+              ],
+              "result": "failed",
+              "slot": "default",
+              "configuration": null,
+              "cacheKey": "e0ef5203133fa7f66f4bb236376eacd8f5674dd8-debug-sim",
+              "phases": {
+                "prepare": 30112,
+                "cache-lookup": 1431,
+                "prebuild": 3651,
+                "pods": 77545,
+                "compile": 91113
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 199289,
+              "fingerprint": "4285aad902a8c8eab904e828befa85c42e2049f1",
+              "startedAt": "2026-09-26T12:48:35.408Z",
+              "finishedAt": "2026-09-26T12:51:54.697Z",
+              "missReason": {
+                "kind": "changed",
+                "summary": "app config changed",
+                "changes": [
+                  {
+                    "source": "expoConfig",
+                    "change": "changed",
+                    "category": "app-config"
+                  }
+                ],
+                "changeCount": 1,
+                "baseline": {
+                  "fingerprint": "7a512dbf44e1ddf5f48da02effa9c7c93af6cbf0",
+                  "from": "workspace"
+                },
+                "rekeyedBy": []
+              },
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": null,
+              "cacheKey": "4285aad902a8c8eab904e828befa85c42e2049f1-debug-sim",
+              "phases": {
+                "prepare": 4931,
+                "cache-lookup": 1917,
+                "prebuild": 2213,
+                "pods": 35361,
+                "compile": 138083,
+                "install": 3425,
+                "launch": 13369
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 83268,
+              "fingerprint": "7a512dbf44e1ddf5f48da02effa9c7c93af6cbf0",
+              "startedAt": "2026-09-26T12:46:02.208Z",
+              "finishedAt": "2026-09-26T12:47:25.476Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": null,
+              "cacheKey": "7a512dbf44e1ddf5f48da02effa9c7c93af6cbf0-debug-sim",
+              "phases": {
+                "prepare": 9306,
+                "cache-lookup": 10646,
+                "install": 47730,
+                "launch": 15607
+              }
+            }
+          ],
+          "android": [
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 3101,
+              "fingerprint": "3c9e0a33311208b706d3a56bd0c75756067ded05",
+              "startedAt": "2026-09-26T13:10:47.795Z",
+              "finishedAt": "2026-09-26T13:10:50.896Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": "3c9e0a33311208b706d3a56bd0c75756067ded05-debug-sim-arm64-v8a",
+              "phases": {
+                "prepare": 1080,
+                "cache-lookup": 1505,
+                "install": 422,
+                "launch": 98
+              }
+            },
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 4064,
+              "fingerprint": "3c9e0a33311208b706d3a56bd0c75756067ded05",
+              "startedAt": "2026-09-26T13:02:36.852Z",
+              "finishedAt": "2026-09-26T13:02:40.916Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": null,
+              "cacheKey": "3c9e0a33311208b706d3a56bd0c75756067ded05-debug-sim-arm64-v8a",
+              "phases": {
+                "prepare": 1625,
+                "cache-lookup": 1662,
+                "install": 503,
+                "launch": 279
+              }
+            },
+            {
+              "platform": "android",
+              "status": "failed",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 10559,
+              "fingerprint": "3c9e0a33311208b706d3a56bd0c75756067ded05",
+              "startedAt": "2026-09-26T13:01:39.663Z",
+              "finishedAt": "2026-09-26T13:01:50.222Z",
+              "errorCode": "STIM_INSTALL_FAILED",
+              "result": "failed",
+              "slot": "default",
+              "configuration": null,
+              "cacheKey": "3c9e0a33311208b706d3a56bd0c75756067ded05-debug-sim-arm64-v8a",
+              "phases": {
+                "prepare": 2605,
+                "cache-lookup": 5391,
+                "install": 2574
+              }
+            },
+            {
+              "platform": "android",
+              "status": "failed",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": null,
+              "fingerprint": null,
+              "startedAt": "2026-09-26T13:01:14.967Z",
+              "finishedAt": null,
+              "result": "interrupted",
+              "slot": "default",
+              "configuration": null,
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1524,
+                "cache-lookup": 1774,
+                "prebuild": 5989,
+                "compile": 0
+              }
+            },
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 42515,
+              "fingerprint": "2fc518bef144fab3ed61b19c2ffccac40ff42460",
+              "startedAt": "2026-09-26T13:00:20.864Z",
+              "finishedAt": "2026-09-26T13:01:03.379Z",
+              "missReason": {
+                "kind": "changed",
+                "summary": "app config changed (+1 more)",
+                "changes": [
+                  {
+                    "source": "expoConfig",
+                    "change": "changed",
+                    "category": "app-config"
+                  },
+                  {
+                    "source": "android",
+                    "change": "added",
+                    "category": "native-dir"
+                  }
+                ],
+                "changeCount": 2,
+                "baseline": {
+                  "fingerprint": "380355d9cabb7cb7720a4dc100928a2c740fac6d",
+                  "from": "workspace"
+                },
+                "rekeyedBy": []
+              },
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": null,
+              "cacheKey": "2fc518bef144fab3ed61b19c2ffccac40ff42460-debug-sim-arm64-v8a",
+              "phases": {
+                "prepare": 4180,
+                "cache-lookup": 4120,
+                "prebuild": 6722,
+                "compile": 25597,
+                "install": 1672,
+                "launch": 230
+              }
+            },
+            {
+              "platform": "android",
+              "status": "failed",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 27583,
+              "fingerprint": "c5f6a90eaa3bfff9deb9f969f18ed6d02159ab13",
+              "startedAt": "2026-09-26T12:57:50.478Z",
+              "finishedAt": "2026-09-26T12:58:18.061Z",
+              "errorCode": "STIM_BUILD_FAILED",
+              "missReason": {
+                "kind": "changed",
+                "summary": "android/ added (+2 more)",
+                "changes": [
+                  {
+                    "source": "android",
+                    "change": "added",
+                    "category": "native-dir"
+                  },
+                  {
+                    "source": "modules/stim-video/android",
+                    "change": "changed",
+                    "category": "file"
+                  },
+                  {
+                    "source": "modules/stim-video/ios",
+                    "change": "changed",
+                    "category": "file"
+                  }
+                ],
+                "changeCount": 3,
+                "baseline": {
+                  "fingerprint": "380355d9cabb7cb7720a4dc100928a2c740fac6d",
+                  "from": "workspace"
+                },
+                "rekeyedBy": []
+              },
+              "diagnostics": [
+                {
+                  "file": "/Users/dev/Developer/react-native-reserved-regions/example/node_modules/.pnpm/expo@58.0.0-preview.7_@babel+core@7.29.7_supports-color@8.1.1__@expo+dom-webview@58.0.1_adb79376978058b5a5c960732bda7d5f/node_modules/expo/android/src/main/java/inline/modules/AnnexB.kt",
+                  "line": 35,
+                  "column": 29,
+                  "message": "Initializer type mismatch: expected 'Int', actual 'String'."
+                },
+                {
+                  "file": null,
+                  "line": null,
+                  "column": null,
+                  "message": "Task :expo:compileDebugKotlin FAILED"
+                },
+                {
+                  "file": null,
+                  "line": null,
+                  "column": null,
+                  "message": "Execution failed for task ':expo:compileDebugKotlin'. A failure occurred while executing org.jetbrains.kotlin.compilerRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction Compilation error. See log for more details"
+                }
+              ],
+              "result": "failed",
+              "slot": "default",
+              "configuration": null,
+              "cacheKey": "c5f6a90eaa3bfff9deb9f969f18ed6d02159ab13-debug-sim-arm64-v8a",
+              "phases": {
+                "prepare": 1777,
+                "cache-lookup": 2311,
+                "prebuild": 6669,
+                "compile": 16844
+              }
+            },
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 121894,
+              "fingerprint": "380355d9cabb7cb7720a4dc100928a2c740fac6d",
+              "startedAt": "2026-09-26T12:52:01.921Z",
+              "finishedAt": "2026-09-26T12:54:03.815Z",
+              "missReason": {
+                "kind": "changed",
+                "summary": "app config changed",
+                "changes": [
+                  {
+                    "source": "expoConfig",
+                    "change": "changed",
+                    "category": "app-config"
+                  }
+                ],
+                "changeCount": 1,
+                "baseline": {
+                  "fingerprint": "3c9e0a33311208b706d3a56bd0c75756067ded05",
+                  "from": "workspace"
+                },
+                "rekeyedBy": []
+              },
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": null,
+              "cacheKey": "380355d9cabb7cb7720a4dc100928a2c740fac6d-debug-sim-arm64-v8a",
+              "phases": {
+                "prepare": 2057,
+                "cache-lookup": 1934,
+                "prebuild": 8381,
+                "compile": 108170,
+                "install": 1168,
+                "launch": 191
+              }
+            },
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 35569,
+              "fingerprint": "3c9e0a33311208b706d3a56bd0c75756067ded05",
+              "startedAt": "2026-09-26T12:47:31.164Z",
+              "finishedAt": "2026-09-26T12:48:06.733Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": null,
+              "cacheKey": "3c9e0a33311208b706d3a56bd0c75756067ded05-debug-sim-arm64-v8a",
+              "phases": {
+                "prepare": 30771,
+                "cache-lookup": 1478,
+                "install": 3089,
+                "launch": 237
+              }
+            }
+          ]
+        }
       },
       {
         "path": "/Users/dev/Developer/react-native-hinges/example",
@@ -769,6 +1182,7 @@
     "environments[path*=chat-perf-demo].android: added by hand, so one workspace runs both platforms and reload needs a platform",
     "environments[path*=react-native-reserved-regions].lastBuilds and environments[path*=wide-insets].lastBuilds: added by hand in the LastBuild shape; the capture predates the field; the reserved-regions Android missReason follows the shape of a real miss recorded by stim ios after adding expo-clipboard",
     "environments[path*=wide-insets|wide-split-layout|chat-perf-demo|ios27-uiscene|1123-mobile-app].worktree: added by hand with a WorktreeGit git field; the capture predates nested worktree matching and the field",
-    "environments[].warnings and environments[].issues: rewritten by hand in the StatusIssue shape; the capture predates issues and listed not-detected emulators on idle workspaces, which status no longer reports. wide-insets and wide-split-layout keep avd-not-detected as if they had launched on Android, ios27-uiscene has an unverified supervisor, and react-native-hinges/example a missing fold3-camera AVD"
+    "environments[].warnings and environments[].issues: rewritten by hand in the StatusIssue shape; the capture predates issues and listed not-detected emulators on idle workspaces, which status no longer reports. wide-insets and wide-split-layout keep avd-not-detected as if they had launched on Android, ios27-uiscene has an unverified supervisor, and react-native-hinges/example a missing fold3-camera AVD",
+    "environments[path*=react-native-reserved-regions].builds: copied from a real stim status --json build history (hits, misses after an app config change, compile failures, a cancelled and an interrupted run) with paths rewritten; its lastBuilds were replaced with the matching newest entries"
   ]
 }

@@ -1,4 +1,11 @@
-import type { BuildPlan, BuildReport, DeviceActivity, LastBuild, WorktreeGit } from '@/protocol/types';
+import type {
+  BuildHistoryEntry,
+  BuildPlan,
+  BuildReport,
+  DeviceActivity,
+  LastBuild,
+  WorktreeGit,
+} from '@/protocol/types';
 
 const ACTIVE_WINDOW_MS = 10 * 60 * 1000;
 
@@ -90,6 +97,48 @@ export function lastBuildSummary(last: LastBuild, now: number, withReason = true
       ? ' (cache reads off)'
       : '';
   return `Cold build${why}${took}`;
+}
+
+/** A history row's title: how the run ended, and for a finished run where its app came from. */
+export function historyTitle(entry: BuildHistoryEntry): string {
+  if (entry.result === 'interrupted') return 'Interrupted';
+  if (entry.result === 'cancelled') return 'Cancelled';
+  if (entry.result === 'failed') return `Failed (${entry.errorCode ?? 'error'})`;
+  if (entry.cacheHit) return `Cache hit (${entry.cacheHit})`;
+  return 'Cold build';
+}
+
+/** A history row's detail line: the cache outcome of a run that looked one up, when it ran, and its slot. */
+export function historyDetail(entry: BuildHistoryEntry, now: number): string {
+  const cache =
+    entry.result === 'interrupted'
+      ? null
+      : entry.cacheHit
+        ? entry.result === 'succeeded'
+          ? null
+          : `${entry.cacheHit} cache hit`
+        : entry.missReason
+          ? `miss: ${entry.missReason.summary}`
+          : entry.cacheSkipped
+            ? 'cache reads off'
+            : null;
+  const at = Date.parse(entry.startedAt);
+  return [
+    cache,
+    Number.isNaN(at) ? null : `${shortDuration(Math.max(0, now - at))} ago`,
+    entry.slot === 'default' ? null : `slot ${entry.slot}`,
+  ]
+    .filter(Boolean)
+    .join(' \u00B7 ');
+}
+
+/** One sparkline bar per run with a duration, oldest first, its height a fraction of the longest run. */
+export function durationBars(
+  entries: readonly BuildHistoryEntry[],
+): { fraction: number; result: BuildHistoryEntry['result'] }[] {
+  const timed = entries.filter((entry) => entry.durationMs !== null).reverse();
+  const longest = Math.max(1, ...timed.map((entry) => entry.durationMs ?? 0));
+  return timed.map((entry) => ({ fraction: (entry.durationMs ?? 0) / longest, result: entry.result }));
 }
 
 /** What the next build would do and why, worded to follow "Next: ". */

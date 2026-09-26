@@ -95,8 +95,10 @@ reload and stop a workspace:
   the server's read-only `build.plan`. Tapping a card opens that platform's build details: the running build, the
   last build with when it ran, a failed build's compiler errors, and why it missed the cache with the changed
   fingerprint sources; then the next build with the median behind its estimate, why it would miss the cache, a
-  refusal's remedy, when it was checked, and **Check again**. Stim keeps only the last build of each platform, so
-  there is no build history. The screen asks for each platform with a last build or a device when it opens, one plan
+  refusal's remedy, when it was checked, and **Check again**. **Recent builds** lists the platform's last 10 runs
+  from status `builds`, newest first, with a bar per run's duration colored by result: each row shows the result
+  (a cache hit, a cold build, failed, cancelled, or interrupted), its duration, the cache miss reason and when it
+  ran. Tapping a row shows its configuration, fingerprint and phase times, its compiler errors and why it missed. The screen asks for each platform with a last build or a device when it opens, one plan
   at a time, reuses a result for 60 seconds unless that platform's last build changes, asks again after a failure or a
   reconnect, ignores a reply that arrives after it closes, and asks nothing while a build runs. Below the cards come
   warnings, remote sessions, and each

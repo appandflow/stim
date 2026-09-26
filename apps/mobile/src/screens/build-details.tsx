@@ -1,25 +1,54 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { BuildProgressBar } from '@/components/build-progress';
 import { Icon } from '@/components/icon';
 import { useBuildPlan, useMacConnection, useStatus } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
-import { lastBuildSummary, nextBuild, planDetail, shortDuration } from '@/lib/format';
+import {
+  clockDuration,
+  durationBars,
+  historyDetail,
+  historyTitle,
+  lastBuildSummary,
+  nextBuild,
+  planDetail,
+  shortDuration,
+} from '@/lib/format';
 import { relativeTo, tildeHome } from '@/lib/paths';
 import { planKey } from '@/lib/plan-checks';
 import { runningBuild } from '@/lib/workspaces';
-import type { BuildMissChange, BuildMissReason, LastBuild, Platform } from '@/protocol/types';
-import { mono, useColors } from '@/theme';
+import type {
+  BuildDiagnostic,
+  BuildHistoryEntry,
+  BuildMissChange,
+  BuildMissReason,
+  BuildPhase,
+  LastBuild,
+  Platform,
+} from '@/protocol/types';
+import { mono, useColors, type Colors } from '@/theme';
 
 const CHANGE_MARK: Record<BuildMissChange['change'], string> = { added: '+', removed: '\u2212', changed: '~' };
 
-/** One platform's builds in a workspace: the running build, the last build, and what the next would do. */
+const PHASE_ORDER: readonly BuildPhase[] = [
+  'prepare',
+  'cache-lookup',
+  'wait',
+  'prebuild',
+  'pods',
+  'compile',
+  'install',
+  'launch',
+];
+
+/** One platform's builds in a workspace: the running build, the last build, recent runs, and what the next would do. */
 export function BuildDetails({ path, platform }: { path: string; platform: Platform }) {
   const colors = useColors();
   const status = useStatus();
   const env = status?.environments.find((e) => e.path === path);
   const last = env?.lastBuilds?.[platform];
+  const history = env?.builds?.[platform] ?? [];
   const running = env ? runningBuild(env) : null;
   const { plan, checkedAt, recheck } = useBuildPlan(path, platform, planKey(last), running !== null);
   const now = useNow(30_000);
@@ -34,6 +63,12 @@ export function BuildDetails({ path, platform }: { path: string; platform: Platf
       <Section title="Last build">
         {last ? <LastBuildDetails last={last} now={now} root={path} /> : <Note>No build recorded.</Note>}
       </Section>
+
+      {history.length ? (
+        <Section title="Recent builds">
+          <History entries={history} now={now} root={path} />
+        </Section>
+      ) : null}
 
       <Section
         title="Next build"
@@ -97,7 +132,6 @@ export function BuildDetails({ path, platform }: { path: string; platform: Platf
 
 function LastBuildDetails({ last, now, root }: { last: LastBuild; now: number; root: string }) {
   const colors = useColors();
-  const { home } = useMacConnection();
   const failed = last.status === 'failed';
   const when = [
     `Started ${new Date(last.startedAt).toLocaleString()}`,
@@ -117,26 +151,124 @@ function LastBuildDetails({ last, now, root }: { last: LastBuild; now: number; r
         {lastBuildSummary(last, now, false)}
       </Text>
       <Note>{when}</Note>
-      {last.diagnostics?.length ? (
-        <View style={[styles.list, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-          {last.diagnostics.map((d, i) => (
-            <View key={i} style={styles.diagnostic}>
-              {d.file ? (
-                <Text style={[styles.source, { color: colors.secondary }]} numberOfLines={1} ellipsizeMode="head">
-                  {`${tildeHome(relativeTo(d.file, root), home)}${d.line === null ? '' : `:${d.line}`}${
-                    d.column === null ? '' : `:${d.column}`
-                  }`}
-                </Text>
-              ) : null}
-              <Text style={[styles.source, { color: colors.error }]} selectable>
-                {d.message}
-              </Text>
-            </View>
+      {last.diagnostics?.length ? <Diagnostics diagnostics={last.diagnostics} root={root} /> : null}
+      {last.missReason ? <MissReason reason={last.missReason} /> : null}
+    </>
+  );
+}
+
+function Diagnostics({ diagnostics, root }: { diagnostics: BuildDiagnostic[]; root: string }) {
+  const colors = useColors();
+  const { home } = useMacConnection();
+  return (
+    <View style={[styles.list, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+      {diagnostics.map((d, i) => (
+        <View key={i} style={styles.diagnostic}>
+          {d.file ? (
+            <Text style={[styles.source, { color: colors.secondary }]} numberOfLines={1} ellipsizeMode="head">
+              {`${tildeHome(relativeTo(d.file, root), home)}${d.line === null ? '' : `:${d.line}`}${
+                d.column === null ? '' : `:${d.column}`
+              }`}
+            </Text>
+          ) : null}
+          <Text style={[styles.source, { color: colors.error }]} selectable>
+            {d.message}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function resultColor(result: BuildHistoryEntry['result'], colors: Colors): string {
+  if (result === 'succeeded') return colors.live;
+  if (result === 'failed') return colors.error;
+  return colors.warn;
+}
+
+function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: number; root: string }) {
+  const colors = useColors();
+  const [open, setOpen] = useState<string | null>(null);
+  const bars = durationBars(entries);
+  return (
+    <>
+      {bars.length > 1 ? (
+        <View style={styles.spark} accessibilityLabel="Build durations, oldest first">
+          {bars.map((bar, i) => (
+            <View
+              key={i}
+              style={[
+                styles.bar,
+                {
+                  height: `${Math.max(8, Math.round(bar.fraction * 100))}%`,
+                  backgroundColor: resultColor(bar.result, colors),
+                },
+              ]}
+            />
           ))}
         </View>
       ) : null}
-      {last.missReason ? <MissReason reason={last.missReason} /> : null}
+      <View style={[styles.list, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+        {entries.map((entry) => {
+          const key = `${entry.startedAt}-${entry.result}`;
+          const expanded = open === key;
+          return (
+            <Pressable
+              key={key}
+              onPress={() => setOpen(expanded ? null : key)}
+              accessibilityRole="button"
+              accessibilityState={{ expanded }}
+              style={styles.historyRow}
+            >
+              <View style={styles.row}>
+                <View style={[styles.dot, { backgroundColor: resultColor(entry.result, colors) }]} />
+                <Text style={[styles.line, styles.grow, { color: colors.text }]} numberOfLines={1}>
+                  {historyTitle(entry)}
+                </Text>
+                <Text style={[styles.detail, { color: colors.secondary }]}>
+                  {entry.durationMs === null ? '\u2014' : clockDuration(entry.durationMs)}
+                </Text>
+                <View style={{ transform: [{ rotate: expanded ? '90deg' : '0deg' }] }}>
+                  <Icon name="chevron.right" size={12} color={colors.tertiary} />
+                </View>
+              </View>
+              <Text
+                style={[styles.detail, styles.indent, { color: colors.secondary }]}
+                numberOfLines={expanded ? undefined : 1}
+              >
+                {historyDetail(entry, now)}
+              </Text>
+              {expanded ? <HistoryEntryDetails entry={entry} root={root} /> : null}
+            </Pressable>
+          );
+        })}
+      </View>
     </>
+  );
+}
+
+function HistoryEntryDetails({ entry, root }: { entry: BuildHistoryEntry; root: string }) {
+  const colors = useColors();
+  const phases = PHASE_ORDER.filter((phase) => entry.phases[phase] !== undefined)
+    .map((phase) => `${phase} ${clockDuration(entry.phases[phase] ?? 0)}`)
+    .join(' \u00B7 ');
+  const facts = [
+    `Started ${new Date(entry.startedAt).toLocaleString()}`,
+    entry.configuration,
+    entry.fingerprint ? `fingerprint ${entry.fingerprint.slice(0, 8)}` : null,
+  ]
+    .filter(Boolean)
+    .join(' \u00B7 ');
+  return (
+    <View style={[styles.indent, styles.expanded]}>
+      <Note>{facts}</Note>
+      {phases ? <Text style={[styles.detail, { color: colors.tertiary }]}>{phases}</Text> : null}
+      {entry.result === 'interrupted' ? (
+        <Note>The run ended without recording a result; the next run in this workspace recorded it.</Note>
+      ) : null}
+      {entry.diagnostics?.length ? <Diagnostics diagnostics={entry.diagnostics} root={root} /> : null}
+      {entry.missReason ? <MissReason reason={entry.missReason} /> : null}
+    </View>
   );
 }
 
@@ -218,4 +350,11 @@ const styles = StyleSheet.create({
   diagnostic: { paddingHorizontal: 12, paddingVertical: 6, gap: 2 },
   mark: { fontFamily: mono, fontSize: 14, width: 12, textAlign: 'center' },
   source: { fontFamily: mono, fontSize: 12, flex: 1 },
+  spark: { flexDirection: 'row', alignItems: 'flex-end', gap: 3, height: 32 },
+  bar: { flex: 1, maxWidth: 18, borderRadius: 2 },
+  historyRow: { paddingHorizontal: 12, paddingVertical: 8, gap: 2 },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  grow: { flex: 1 },
+  indent: { marginLeft: 14 },
+  expanded: { gap: 6, paddingTop: 6 },
 });
