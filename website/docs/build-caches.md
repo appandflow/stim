@@ -66,8 +66,8 @@ compile apart from the build's. An edit to the app config or a config plugin
 at any point during the run, or to any other input during the compile, means
 the artifact may not match. The only config change Stim accepts is the
 `ios.bundleIdentifier` or `android.package` that `expo prebuild` adds to a
-static `app.json` that lacks one. Stim installs it for the current run, and skips the local cache,
-the cache provider, and remote uploads:
+static `app.json` that lacks one. Otherwise Stim installs the artifact for the
+current run, and skips the local cache, the cache provider, and remote uploads:
 
 ```text
   fingerprint expoConfig changed while the build ran, so the artifact may not match its key; the build will be installed but not cached
