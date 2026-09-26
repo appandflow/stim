@@ -1103,7 +1103,8 @@ emulator process <pid> is still running"
   An owned emulator counts as stopped only when no process launched for its
   AVD (\`qemu-system-*\` or \`emulator\` with \`-avd <name>\`) is left in the
   process table. Stim asks it to quit with \`adb emu kill\`, or skips that when
-  adb cannot reach it. After 30s it sends SIGTERM, then SIGKILL 5s later, but
+  adb cannot reach it. After 60s, or at once when adb cannot reach it, it
+  sends SIGTERM, then SIGKILL 5s later, but
   only to a pid whose command line names the AVD and whose process identity,
   recorded before shutdown, still matches. "(Stim could not verify the
   identity of <pid>, so it sent no signal)" means that identity could not be

@@ -1320,9 +1320,8 @@ const EMULATOR_SIGNAL_GRACE_MS = 5000;
 /**
  * Shuts down the emulator of an owned AVD and returns only once every emulator process launched for it
  * has exited. `shutdown` asks the emulator to quit through its console; it is null when the emulator is
- * not reachable over adb. Processes still running after half the timeout get SIGTERM, then SIGKILL, but
- * only a process whose command line names this AVD and whose identity, captured before shutdown, still
- * matches.
+ * not reachable over adb. Processes still running after the timeout get SIGTERM, then SIGKILL, but only a
+ * process whose command line names this AVD and whose identity, captured before shutdown, still matches.
  */
 export function waitForAndroidEmulatorShutdown(
   avdName: string,
@@ -1392,11 +1391,11 @@ export function waitForAndroidEmulatorShutdown(
       sleep(Math.min(pollMs, remaining));
     }
   };
-  const started = now();
-  const deadline = started + timeoutMs;
   if (shutdown) {
-    shutdown(Math.max(1, Math.floor(timeoutMs / 2)));
-    waitUntil(started + Math.floor(timeoutMs / 2));
+    const deadline = now() + timeoutMs;
+    const shutdownTimeoutMs = deadline - now();
+    if (shutdownTimeoutMs > 0) shutdown(shutdownTimeoutMs);
+    waitUntil(deadline);
   }
   for (const name of ['SIGTERM', 'SIGKILL'] as const) {
     const verified = running().filter((pid) => {
@@ -1409,15 +1408,14 @@ export function waitForAndroidEmulatorShutdown(
         signal(pid, name);
       } catch {}
     }
-    if (waitUntil(name === 'SIGTERM' ? Math.min(deadline, now() + signalGraceMs) : deadline)) break;
+    if (waitUntil(now() + signalGraceMs)) break;
   }
-  waitUntil(deadline);
   const left = new Set(running());
   for (const pid of scanAvdEmulatorProcesses(avdName, platform, listProcesses)) {
     if (!identities.has(pid) || !exited(pid)) left.add(pid);
   }
   if (left.size) {
-    const unverified = [...left].filter((pid) => !identities.get(pid));
+    const unverified = platform === 'win32' ? [] : [...left].filter((pid) => !identities.get(pid));
     throw new Error(
       `Owned AVD ${avdName} did not finish shutting down within ${Math.ceil(timeoutMs / 1000)}s: ` +
         `emulator process ${[...left].join(', ')} is still running` +

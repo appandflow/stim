@@ -621,7 +621,7 @@ test('waitForAndroidEmulatorShutdown waits for the owned AVD process lock to dis
   });
 
   expect(sleeps).toEqual([100]);
-  expect(calls).toEqual(['shutdown:30000', 'wait']);
+  expect(calls).toEqual(['shutdown:60000', 'wait']);
 });
 
 test('waitForAndroidEmulatorShutdown on win32 waits for the crashpad handler qemu left behind, then kills a stuck one', () => {
@@ -720,7 +720,7 @@ test('waitForAndroidEmulatorShutdown includes the shutdown command in its deadli
       },
     ),
   ).toThrow(/did not finish shutting down within 1s/);
-  expect(commandTimeout).toBe(125);
+  expect(commandTimeout).toBe(250);
 });
 
 test('waitForAndroidEmulatorShutdown reads Android emulator lock PIDs on Unix and Windows', () => {
@@ -914,14 +914,14 @@ describe('waitForAndroidEmulatorShutdown when the console kill has no effect', (
     return { options, signals, alive };
   }
 
-  test('signals the verified emulator after half the timeout, SIGTERM before SIGKILL', () => {
+  test('signals the verified emulator once the console shutdown times out, SIGTERM before SIGKILL', () => {
     const { options, signals, alive } = hungEmulator({ pids: [4242] });
     const consoleKills: number[] = [];
 
     waitForAndroidEmulatorShutdown('stim-app', (timeoutMs) => consoleKills.push(timeoutMs), options);
 
-    expect(consoleKills).toEqual([30_000]);
-    expect(signals).toEqual(['SIGTERM:4242@30000', 'SIGKILL:4242@35000']);
+    expect(consoleKills).toEqual([60_000]);
+    expect(signals).toEqual(['SIGTERM:4242@60000', 'SIGKILL:4242@65000']);
     expect(alive.size).toBe(0);
   });
 
@@ -953,7 +953,7 @@ describe('waitForAndroidEmulatorShutdown when the console kill has no effect', (
     expect(() => waitForAndroidEmulatorShutdown('stim-app', () => {}, options)).toThrow(
       'Owned AVD stim-app did not finish shutting down within 60s: emulator process 4242 is still running.',
     );
-    expect(signals).toEqual(['SIGTERM:4242@30000', 'SIGKILL:4242@35000']);
+    expect(signals).toEqual(['SIGTERM:4242@60000', 'SIGKILL:4242@65000']);
   });
 });
 
