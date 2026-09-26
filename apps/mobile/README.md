@@ -26,7 +26,8 @@ reload and stop a workspace:
   machine, with its latest frame, model, workspace name and machine.
   Phones sit two to a row; a device whose frame is wider than tall, such as a
   landscape iPad or an unfolded iPhone Duo, takes a whole row.
-  Tapping a tile opens its workspace. The grid follows the machine and
+  Tapping a tile's screen opens the [device view](#device-view); tapping the
+  rest of the tile opens its workspace. The grid follows the machine and
   project filters. Each tile on screen asks for one frame, scaled to fit 640
   pixels, unsubscribes when
   it arrives, and asks again 2 seconds later, backing off after errors. Tiles
@@ -105,8 +106,17 @@ the mock server.
 
 ## Device view
 
-Tapping a running device's frame on the workspace screen opens it full
-screen. It renders `DeviceScreen` (see Device video): H.264 video at up to
+Tapping a running device's screen, on the workspace screen or in the devices
+grid, grows it into the full-screen viewer: the thumbnail expands into the
+screen's place while the backdrop, title and toolbars fade in, showing the
+thumbnail's frame until the stream's first frame arrives. Back, Android's
+back button, or dragging the screen down while Control is off shrinks it back
+into the thumbnail; a short drag springs back. The route is a transparent
+modal, so the list stays underneath, and the thumbnail hides while the viewer
+covers it. The viewer lays the screen out itself, animating its position and
+size rather than a transform, so Android's `SurfaceView` follows it and the
+stream stays live through both animations. With reduced motion on, the viewer
+opens and closes without animating. It renders `DeviceScreen` (see Device video): H.264 video at up to
 60 frames a second when the server offers it, JPEG frames at up to 30
 otherwise, scaled to the screen's pixels (at most 1600 on the longer edge)
 and fitted to the device's shape. It is view-only until you turn on **Control**. On a read-only pairing,
@@ -180,9 +190,9 @@ lost its state, for example after the app was in the background, or one
 that fell more than three frames behind on Android, drops frames until a
 keyframe it asks the server for with `frames.keyframe`. A server without
 video sends JPEG `frame` events, which the same component shows as images.
-The screen is fitted to the component's bounds at the device's aspect ratio,
-and children render over the fitted screen, so touch overlays share its
-coordinates. Development builds show H.264 fps, bitrate and latency (arrival
+The component fills the bounds its parent gives it, which the viewer sizes to
+the device's aspect ratio, and children render over the screen, so touch
+overlays share its coordinates. Development builds show H.264 fps, bitrate and latency (arrival
 time minus the Mac's capture time) in the corner. The grid tiles keep
 requesting JPEG frames.
 

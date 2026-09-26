@@ -63,7 +63,13 @@ function RootLayoutContent() {
                 <Stack.Screen name="mac/[id]/logs" options={{ title: 'Logs' }} />
                 <Stack.Screen
                   name="mac/[id]/device"
-                  options={{ headerShown: false, animation: 'fade_from_bottom', gestureEnabled: false }}
+                  options={{
+                    headerShown: false,
+                    presentation: 'transparentModal',
+                    animation: 'none',
+                    gestureEnabled: false,
+                    contentStyle: { backgroundColor: 'transparent' },
+                  }}
                 />
                 <Stack.Screen name="mac/[id]/build-miss" options={sheet([0.5, 1])} />
               </Stack>

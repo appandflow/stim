@@ -1,10 +1,11 @@
 import { Image } from 'expo-image';
-import { useEffect } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef } from 'react';
+import { Pressable, StyleSheet, Text, View, type ViewInstance } from 'react-native';
 
 import { ActivityChip } from '@/components/activity-chip';
 import { Card } from '@/components/card';
 import { Icon } from '@/components/icon';
+import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
 import { useFrameSnapshot } from '@/hooks/mac-connection';
 import type { StimConnection } from '@/lib/connection';
 import type { DeviceTileItem } from '@/lib/home';
@@ -44,6 +45,9 @@ export function DeviceGridTile({
     if (frame) onAspect(tile.key, aspect);
   }, [frame, aspect, tile.key, onAspect]);
   const where = [...new Set([item.title, item.project])].join(' \u00B7 ');
+  const thumbnail = useRef<ViewInstance>(null);
+  const target = { macId: item.macId, workspace: item.env.path, platform: device.platform, slot: device.slot };
+  const zoomedAway = useZoomedAway(zoomKey(target));
   return (
     <Pressable
       onPress={onPress}
@@ -54,12 +58,20 @@ export function DeviceGridTile({
       <Card style={styles.card}>
         <View style={[styles.screen, { backgroundColor: colors.screen }]}>
           {frame ? (
-            <Image
-              source={{ uri: `data:${frame.mime};base64,${frame.data}` }}
-              style={{ height: SCREEN_HEIGHT - 16, maxWidth: '100%', aspectRatio: aspect, borderRadius: 6 }}
-              contentFit="contain"
-              transition={0}
-            />
+            <Pressable
+              ref={thumbnail}
+              onPress={() => openDeviceViewer(thumbnail.current, target, frame)}
+              accessibilityRole="button"
+              accessibilityLabel={`Open the live screen of ${device.model}`}
+              style={[{ height: SCREEN_HEIGHT - 16, maxWidth: '100%', aspectRatio: aspect }, zoomedAway && styles.away]}
+            >
+              <Image
+                source={{ uri: `data:${frame.mime};base64,${frame.data}` }}
+                style={[StyleSheet.absoluteFill, { borderRadius: 6 }]}
+                contentFit="contain"
+                transition={0}
+              />
+            </Pressable>
           ) : (
             <Text style={[styles.placeholder, { color: colors.tertiary }]}>
               {streams ? (error ?? 'Waiting for a frame') : 'Frames are only served for devices Stim owns.'}
@@ -98,6 +110,7 @@ const styles = StyleSheet.create({
   wide: { maxWidth: '100%' },
   card: { flex: 1 },
   pressed: { opacity: 0.7 },
+  away: { opacity: 0 },
   screen: { height: SCREEN_HEIGHT, alignItems: 'center', justifyContent: 'center', padding: 8 },
   placeholder: { fontSize: 12, textAlign: 'center', paddingHorizontal: 8 },
   meta: { padding: 10, gap: 2 },
