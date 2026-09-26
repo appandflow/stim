@@ -54,6 +54,12 @@ public struct ServerHealth: Decodable, Equatable, Sendable {
     case server, name, version, stim, stimHome, tailscale, route
     case protocolVersion = "protocol"
   }
+
+  /// Whether `stimHome` is `~/.stim`, compared after resolving symlinks.
+  public func servesDefaultHome(home: String = NSHomeDirectory()) -> Bool {
+    func canonical(_ path: String) -> String { URL(fileURLWithPath: path).resolvingSymlinksInPath().path }
+    return canonical(stimHome) == canonical("\(home)/.stim")
+  }
 }
 
 /// `stim-server pair --json`: the QR payload and when its single-use token expires.

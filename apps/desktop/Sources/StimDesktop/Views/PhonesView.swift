@@ -104,15 +104,24 @@ struct PhonesView: View {
         Text("Starting stim-server\u{2026}").foregroundStyle(Theme.secondary)
       }
     case .running(let health, let owned):
-      HStack(spacing: 8) {
-        StatusDot(color: health.tailscale.isRunning ? Theme.live : Theme.warn)
-        Text(
-          "stim-server \(health.version) on port \(String(server.port))\(owned ? "" : ", started outside Stim Desktop")"
-        )
-        Spacer()
-        Text(health.tailscale.isRunning ? "Tailscale" : "This Mac only")
-          .font(Theme.mono())
-          .foregroundStyle(Theme.tertiary)
+      VStack(alignment: .leading, spacing: 8) {
+        HStack(spacing: 8) {
+          StatusDot(color: health.tailscale.isRunning ? Theme.live : Theme.warn)
+          Text(
+            "stim-server \(health.version) on port \(String(server.port))\(owned ? "" : ", started outside Stim Desktop")"
+          )
+          Spacer()
+          Text(health.tailscale.isRunning ? "Tailscale" : "This Mac only")
+            .font(Theme.mono())
+            .foregroundStyle(Theme.tertiary)
+        }
+        if !health.servesDefaultHome() {
+          Text(
+            "This server keeps pairings in \(abbreviatingHome(health.stimHome)), not ~/.stim. Phones paired now stop working when Stim Desktop serves ~/.stim again."
+          )
+          .foregroundStyle(Theme.warn)
+          .textSelection(.enabled)
+        }
       }
     case .failed(let message):
       VStack(alignment: .leading, spacing: 8) {

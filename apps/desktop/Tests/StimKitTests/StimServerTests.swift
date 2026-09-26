@@ -20,6 +20,23 @@ import Testing
     #expect(running.isRunning && running.dnsName == "mac.tail1.ts.net")
   }
 
+  @Test func recognizesTheDefaultHomeThroughSymlinks() throws {
+    let home = FileManager.default.temporaryDirectory.appendingPathComponent("home-\(UUID().uuidString)").path
+    defer { try? FileManager.default.removeItem(atPath: home) }
+    try FileManager.default.createDirectory(atPath: "\(home)/.stim", withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(atPath: "\(home)/link", withDestinationPath: "\(home)/.stim")
+    func health(_ stimHome: String) throws -> ServerHealth {
+      try StimServerCLI.decoder.decode(
+        ServerHealth.self,
+        from: Data(
+          #"{"server":"stim-server","name":"Mac","version":"1","stim":"1","protocol":1,"stimHome":"\#(stimHome)","tailscale":{"state":"running"}}"#
+            .utf8))
+    }
+    #expect(try health("\(home)/.stim").servesDefaultHome(home: home))
+    #expect(try health("\(home)/link").servesDefaultHome(home: home))
+    #expect(try !health("\(home)/scratch/stimhome").servesDefaultHome(home: home))
+  }
+
   @Test func namesTheEndpointAndSetupCommandOfEachRoute() throws {
     func route(_ json: String) throws -> ServeRoute {
       try StimServerCLI.decoder.decode(ServeRoute.self, from: Data(json.utf8))
