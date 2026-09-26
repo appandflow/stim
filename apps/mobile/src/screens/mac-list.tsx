@@ -8,7 +8,7 @@ import { ScopeChip } from '@/components/read-only';
 import { Touch } from '@/components/touch';
 import { useMacs } from '@/hooks/mac-connection';
 import { forgetMac, type PairedMac } from '@/lib/macs';
-import { mono, radius, useColors } from '@/theme';
+import { mono, useColors } from '@/theme';
 
 export function MacList() {
   const colors = useColors();
@@ -28,42 +28,35 @@ export function MacList() {
       contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={styles.list}
       renderItem={({ item: { mac: item, state, missing } }) => (
-        <Touch
-          feedback="card"
-          accessibilityRole="link"
-          onPress={() => router.push({ pathname: '/mac/[id]', params: { id: item.id } })}
-          style={styles.card}
-        >
-          <Card>
-            <View style={styles.row}>
-              <StatusDot color={connectionColor(state, missing, colors)} />
-              <View style={styles.rowText}>
-                <View style={styles.nameRow}>
-                  <Text style={[styles.name, { color: colors.text }]} numberOfLines={1}>
-                    {item.name}
-                  </Text>
-                  <ScopeChip state={state} />
-                </View>
-                <Text style={[styles.state, { color: colors.secondary }]} numberOfLines={1}>
-                  {describeState(state, missing)}
+        <Card accessibilityRole="link" onPress={() => router.push({ pathname: '/mac/[id]', params: { id: item.id } })}>
+          <View style={styles.row}>
+            <StatusDot color={connectionColor(state, missing, colors)} />
+            <View style={styles.rowText}>
+              <View style={styles.nameRow}>
+                <Text style={[styles.name, { color: colors.text }]} numberOfLines={1}>
+                  {item.name}
                 </Text>
-                <Text style={[styles.endpoint, { color: colors.secondary }]} numberOfLines={1}>
-                  {item.endpoint}
-                </Text>
+                <ScopeChip state={state} />
               </View>
-              <Touch
-                onPress={() => router.push({ pathname: '/rename', params: { id: item.id } })}
-                hitSlop={8}
-                accessibilityLabel={`Rename ${item.name}`}
-              >
-                <Text style={[styles.rowAction, { color: colors.primary }]}>Rename</Text>
-              </Touch>
-              <Touch onPress={() => forget(item)} hitSlop={8} accessibilityLabel={`Forget ${item.name}`}>
-                <Text style={[styles.rowAction, { color: colors.error }]}>Forget</Text>
-              </Touch>
+              <Text style={[styles.state, { color: colors.secondary }]} numberOfLines={1}>
+                {describeState(state, missing)}
+              </Text>
+              <Text style={[styles.endpoint, { color: colors.secondary }]} numberOfLines={1}>
+                {item.endpoint}
+              </Text>
             </View>
-          </Card>
-        </Touch>
+            <Touch
+              onPress={() => router.push({ pathname: '/rename', params: { id: item.id } })}
+              hitSlop={8}
+              accessibilityLabel={`Rename ${item.name}`}
+            >
+              <Text style={[styles.rowAction, { color: colors.primary }]}>Rename</Text>
+            </Touch>
+            <Touch onPress={() => forget(item)} hitSlop={8} accessibilityLabel={`Forget ${item.name}`}>
+              <Text style={[styles.rowAction, { color: colors.error }]}>Forget</Text>
+            </Touch>
+          </View>
+        </Card>
       )}
     />
   );
@@ -71,7 +64,6 @@ export function MacList() {
 
 const styles = StyleSheet.create({
   list: { padding: 16, gap: 12 },
-  card: { borderRadius: radius.card, borderCurve: 'continuous' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 14 },
   rowText: { flex: 1, gap: 4 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },

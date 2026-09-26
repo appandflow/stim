@@ -6,8 +6,8 @@ import { useColors, type Colors } from '@/theme';
 /**
  * How a `Touch` answers a press:
  * - `row`: a tinted underlay behind the content on iOS, a ripple on Android. For rows on a transparent background.
- * - `card`: a slight shrink on iOS, a ripple over the content on Android, clipped to the border radius. For opaque
- *   surfaces such as cards and chips, where an underlay would be hidden behind the content.
+ * - `card`: a slight shrink on iOS, a ripple on Android, clipped to the border radius. For surfaces that set their own
+ *   background, such as cards, chips and filled buttons, where an iOS underlay would be hidden behind the content.
  * - `opacity`: the content dims. For icon buttons, text buttons and toggles.
  */
 export type TouchFeedback = 'row' | 'card' | 'opacity';
@@ -22,7 +22,7 @@ function feedbackProps(feedback: TouchFeedback, colors: Colors): Partial<Touchab
         ? { androidRipple: ripple }
         : { underlayColor: colors.primary, activeUnderlayOpacity: 0.1 };
     case 'card':
-      return Platform.OS === 'android' ? { androidRipple: { ...ripple, foreground: true } } : { activeScale: 0.97 };
+      return Platform.OS === 'android' ? { androidRipple: ripple } : { activeScale: 0.97 };
     case 'opacity':
       return { activeOpacity: 0.5, animationDuration: { in: 0, out: 150 } };
   }
