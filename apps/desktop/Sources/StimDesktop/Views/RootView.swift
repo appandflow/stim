@@ -56,7 +56,7 @@ struct RootView: View {
 
   var body: some View {
     NavigationSplitView(columnVisibility: $columnVisibility) {
-      Sidebar(store: store, autopilot: autopilot, selection: $selection, openLogs: showLogs)
+      Sidebar(store: store, autopilot: autopilot, onboarding: onboarding, selection: $selection, openLogs: showLogs)
         .frame(minWidth: 220, idealWidth: 272, maxWidth: 360)
         .navigationSplitViewColumnWidth(min: 220, ideal: 272, max: 360)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { sidebarWidth = $0 }
