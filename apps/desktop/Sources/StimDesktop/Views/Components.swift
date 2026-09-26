@@ -27,7 +27,7 @@ struct GitIndicator: View {
         if let arrows = git.arrows { Pill { Text(arrows).monospacedDigit() } }
         if git.mergedInto != nil { Pill(tone: .accent) { Text("merged") } }
       } else {
-        HStack(spacing: 4) {
+        HStack(spacing: Space.xs) {
           if git.uncommitted > 0 {
             Text("\u{00B1}\(git.uncommitted)").foregroundStyle(Palette.secondary)
           }
@@ -39,7 +39,7 @@ struct GitIndicator: View {
               .background(RoundedRectangle(cornerRadius: Radius.small).fill(Palette.primary.opacity(Opacity.tint)))
           }
         }
-        .font(Theme.body(10.5, weight: .semibold))
+        .font(.stim(.caption2, weight: .semibold))
         .monospacedDigit()
         .fixedSize()
         .help(git.summary)
@@ -122,7 +122,7 @@ struct EmptyState: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
-    VStack(spacing: 14) {
+    VStack(spacing: Space.lg) {
       if showsHero, let jar = BrandAssets.jar(colorScheme) {
         LottieView(animation: .filepath(jar.path))
           .playbackMode(reduceMotion ? .paused(at: .frame(0)) : .playing(.fromProgress(0, toProgress: 1, loopMode: .loop)))
@@ -130,10 +130,10 @@ struct EmptyState: View {
           .frame(width: 111, height: 180)
           .id(jar)
       }
-      Text(title).font(Theme.heading(17))
+      Text(title).font(.stim(.headline))
       Text(message).foregroundStyle(Palette.secondary).multilineTextAlignment(.center)
     }
-    .padding(40)
+    .padding(Space.huge)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 }
@@ -143,11 +143,11 @@ struct CommandText: View {
 
   var body: some View {
     Text(command)
-      .font(Theme.mono())
+      .font(.stim(.caption, mono: true))
       .foregroundStyle(Palette.secondary)
-      .padding(.horizontal, 8)
-      .padding(.vertical, 5)
-      .background(RoundedRectangle(cornerRadius: 6).fill(Palette.background))
+      .padding(.horizontal, Space.md)
+      .padding(.vertical, Space.xs)
+      .background(RoundedRectangle(cornerRadius: Radius.chip).fill(Palette.background))
       .textSelection(.enabled)
   }
 }
@@ -188,15 +188,15 @@ struct BuildProgressBar: View {
   var body: some View {
     TimelineView(.periodic(from: .now, by: 1)) { context in
       let progress = build.progress(at: context.date)
-      VStack(alignment: .leading, spacing: 5) {
-        HStack(spacing: 8) {
+      VStack(alignment: .leading, spacing: Space.xs) {
+        HStack(spacing: Space.md) {
           Group {
             if compact {
-              Text(build.phase).font(Theme.mono()).foregroundStyle(Palette.primary)
+              Text(build.phase).font(.stim(.caption, mono: true)).foregroundStyle(Palette.primary)
             } else {
               Text("Building \(build.platform)\(build.slot == "default" ? "" : " \u{00B7} \(build.slot)")  ")
                 .foregroundStyle(Palette.text)
-                + Text(build.phase).font(Theme.mono()).foregroundStyle(Palette.primary)
+                + Text(build.phase).font(.stim(.caption, mono: true)).foregroundStyle(Palette.primary)
             }
           }
           .lineLimit(1)
@@ -204,19 +204,19 @@ struct BuildProgressBar: View {
           BuildOutcomeBadge(build: build)
           Spacer(minLength: 4)
           Text(timing(progress))
-            .font(Theme.mono())
+            .font(.stim(.caption, mono: true))
             .foregroundStyle(Palette.secondary)
             .lineLimit(1)
             .fixedSize()
         }
-        .font(Theme.body(11.5))
+        .font(.stim(.footnote))
         if let fraction = progress.fraction {
           ProgressView(value: fraction).tint(Palette.accent)
         } else {
           ProgressView().progressViewStyle(.linear).tint(Palette.accent)
         }
         if let remaining = progress.remaining {
-          Text(remaining).font(Theme.body(10.5)).foregroundStyle(Palette.tertiary).lineLimit(1)
+          Text(remaining).font(.stim(.caption2)).foregroundStyle(Palette.tertiary).lineLimit(1)
         }
       }
       .help(help)

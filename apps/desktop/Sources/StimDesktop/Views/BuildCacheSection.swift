@@ -17,7 +17,7 @@ struct BuildCacheSection: View {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
+    VStack(alignment: .leading, spacing: Space.md) {
       SectionLabel(title: "Builds")
       ForEach(env.runPlatforms, id: \.self) { platform in
         card(platform)
@@ -35,9 +35,9 @@ struct BuildCacheSection: View {
 
   private func card(_ platform: String) -> some View {
     let entry = checks.entry(workspace: env.path, platform: platform)
-    return VStack(alignment: .leading, spacing: 6) {
-      HStack(spacing: 6) {
-        Text(platformName(platform)).font(Theme.body(12, weight: .semibold))
+    return VStack(alignment: .leading, spacing: Space.sm) {
+      HStack(spacing: Space.sm) {
+        Text(platformName(platform)).font(.stim(.callout, weight: .semibold))
         Spacer()
         Button {
           checks.check(workspace: env.path, builds: [platform: buildKey(platform)], force: true)
@@ -88,9 +88,9 @@ struct BuildCacheSection: View {
         nextBuild(entry)
       }
     }
-    .padding(12)
+    .padding(Space.lg)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: 10).fill(Palette.surface))
+    .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
   }
 
   @ViewBuilder
@@ -106,12 +106,12 @@ struct BuildCacheSection: View {
   private func nextBuild(_ entry: BuildPlanChecks.Entry?) -> some View {
     switch entry?.state {
     case .checking:
-      HStack(spacing: 6) {
+      HStack(spacing: Space.sm) {
         ProgressView().controlSize(.mini)
         Text("Checking next build\u{2026}").foregroundStyle(Palette.tertiary)
       }
     case .done(.plan(let plan)):
-      VStack(alignment: .leading, spacing: 2) {
+      VStack(alignment: .leading, spacing: Space.xxs) {
         Text("Next build: \(plan.nextBuild)")
           .foregroundStyle(plan.refusal != nil || plan.cacheHit == .none ? Palette.warning : Palette.success)
           .help(plan.detail ?? "")
@@ -146,12 +146,12 @@ private struct BuildHistoryList: View {
   var body: some View {
     DisclosureGroup(isExpanded: $expanded) {
       TimelineView(.periodic(from: .now, by: 30)) { context in
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: Space.xxs) {
           ForEach(entries, id: \.self) { entry in
             BuildHistoryRow(entry: entry, workspace: workspace, now: context.date)
           }
         }
-        .padding(.top, 4)
+        .padding(.top, Space.xs)
       }
     } label: {
       Text("Recent builds (\(entries.count))").foregroundStyle(Palette.secondary)
@@ -174,12 +174,12 @@ private struct BuildHistoryRow: View {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 4) {
+    VStack(alignment: .leading, spacing: Space.xs) {
       Button {
         expanded.toggle()
       } label: {
         VStack(alignment: .leading, spacing: 1) {
-          HStack(alignment: .firstTextBaseline, spacing: 6) {
+          HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
             Circle().fill(color).frame(width: 6, height: 6)
             Text(entry.outcome)
               .foregroundStyle(entry.result == "succeeded" ? Palette.secondary : color)
@@ -194,14 +194,14 @@ private struct BuildHistoryRow: View {
             Image(systemName: expanded ? "chevron.down" : "chevron.right").foregroundStyle(Palette.tertiary)
           }
           if let detail = entry.detail {
-            Text(detail).foregroundStyle(Palette.tertiary).lineLimit(1).padding(.leading, 12)
+            Text(detail).foregroundStyle(Palette.tertiary).lineLimit(1).padding(.leading, Space.lg)
           }
         }
         .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
       if expanded {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: Space.xs) {
           let facts = [entry.configuration, entry.build.fingerprint.map { "fingerprint \($0.prefix(8))" }]
             .compactMap { $0 }
           if !facts.isEmpty {
@@ -217,7 +217,7 @@ private struct BuildHistoryRow: View {
             MissReasonButton(reason: reason, help: "Why this build missed the cache")
           }
         }
-        .padding(.leading, 12)
+        .padding(.leading, Space.lg)
       }
     }
   }
@@ -229,10 +229,10 @@ private struct BuildDiagnosticsView: View {
   @State private var expanded = false
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 4) {
+    VStack(alignment: .leading, spacing: Space.xs) {
       ForEach(Array((expanded ? diagnostics : [diagnostics[0]]).enumerated()), id: \.offset) { _, diagnostic in
         Text(diagnostic.text(workspace: workspace))
-          .font(Theme.mono(11))
+          .font(.stim(.caption, mono: true))
           .foregroundStyle(Palette.error)
           .fixedSize(horizontal: false, vertical: true)
           .textSelection(.enabled)
@@ -242,7 +242,7 @@ private struct BuildDiagnosticsView: View {
           expanded.toggle()
         }
         .buttonStyle(.link)
-        .font(Theme.body(11))
+        .font(.stim(.caption))
       }
     }
   }
@@ -257,7 +257,7 @@ private struct MissReasonButton: View {
     Button {
       shown.toggle()
     } label: {
-      HStack(spacing: 4) {
+      HStack(spacing: Space.xs) {
         Text("Why: \(reason.summary)").multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
         Image(systemName: "info.circle")
       }
@@ -266,15 +266,15 @@ private struct MissReasonButton: View {
     .buttonStyle(.plain)
     .help(help)
     .popover(isPresented: $shown, arrowEdge: .bottom) {
-      VStack(alignment: .leading, spacing: 8) {
-        Text(reason.summary).font(Theme.body(13, weight: .semibold)).textSelection(.enabled)
+      VStack(alignment: .leading, spacing: Space.md) {
+        Text(reason.summary).font(.stim(.body, weight: .semibold)).textSelection(.enabled)
         if let line = reason.baselineLine {
           Text(line).foregroundStyle(Palette.secondary)
         }
         if !reason.changes.isEmpty {
-          VStack(alignment: .leading, spacing: 3) {
+          VStack(alignment: .leading, spacing: Space.xxs) {
             ForEach(reason.changes, id: \.self) { change in
-              HStack(alignment: .firstTextBaseline, spacing: 6) {
+              HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
                 Text(change.change == "added" ? "+" : change.change == "removed" ? "\u{2212}" : "~")
                   .foregroundStyle(
                     change.change == "added" ? Palette.success : change.change == "removed" ? Palette.error : Palette.warning)
@@ -289,7 +289,7 @@ private struct MissReasonButton: View {
             .foregroundStyle(Palette.tertiary)
         }
       }
-      .padding(14)
+      .padding(Space.lg)
       .frame(width: 380, alignment: .leading)
     }
   }

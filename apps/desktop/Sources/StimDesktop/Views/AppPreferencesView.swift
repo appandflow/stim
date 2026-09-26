@@ -85,7 +85,7 @@ struct AppPreferencesView: View {
         Toggle("Reclaim space when free disk is under the Stim budget", isOn: $actsOnPressure)
         Toggle("Remove worktrees whose pull request was merged or closed", isOn: $removesFinishedWorktrees)
         if removesFinishedWorktrees, let problem = autopilot.pullRequestCheck {
-          Text(problem).font(Theme.body(11.5)).foregroundStyle(Palette.warning)
+          Text(problem).font(.stim(.footnote)).foregroundStyle(Palette.warning)
         }
       } header: {
         Text("Autopilot")
@@ -216,18 +216,18 @@ private struct AutopilotLogRow: View {
   var entry: AutopilotLogEntry
 
   var body: some View {
-    HStack(alignment: .firstTextBaseline, spacing: 10) {
+    HStack(alignment: .firstTextBaseline, spacing: Space.md) {
       Image(systemName: entry.exitStatus == 0 ? "checkmark.circle.fill" : "xmark.octagon.fill")
         .foregroundStyle(entry.exitStatus == 0 ? Palette.success : Palette.error)
-      VStack(alignment: .leading, spacing: 2) {
+      VStack(alignment: .leading, spacing: Space.xxs) {
         HStack {
           Text(entry.trigger.title)
           Spacer()
           Text(entry.date.formatted(date: .abbreviated, time: .shortened)).foregroundStyle(Palette.tertiary)
         }
-        Text(abbreviatingHome(entry.command)).font(Theme.mono()).foregroundStyle(Palette.secondary)
+        Text(abbreviatingHome(entry.command)).font(.stim(.caption, mono: true)).foregroundStyle(Palette.secondary)
         if let note = entry.note {
-          Text(abbreviatingHome(note)).font(Theme.body(11.5)).foregroundStyle(Palette.tertiary).lineLimit(2)
+          Text(abbreviatingHome(note)).font(.stim(.footnote)).foregroundStyle(Palette.tertiary).lineLimit(2)
         }
       }
     }

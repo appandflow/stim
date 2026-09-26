@@ -86,7 +86,7 @@ struct RootView: View {
     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
     .toolbarBackground(.hidden, for: .windowToolbar)
     .tint(Palette.brand)
-    .font(Theme.body())
+    .font(.stim(.body))
     .foregroundStyle(Palette.text)
     .environmentObject(actions)
     .environmentObject(planChecks)
@@ -241,11 +241,11 @@ struct MachineSummary: View {
         row(showsMemory: false, showsBar: false, showsReclaimable: false)
       }
     }
-    .font(Theme.body(12))
+    .font(.stim(.callout))
   }
 
   private func row(showsMemory: Bool, showsBar: Bool, showsReclaimable: Bool) -> some View {
-    HStack(spacing: 18) {
+    HStack(spacing: Space.xl) {
       if let error = store.error {
         Label(abbreviatingHome(error), systemImage: "exclamationmark.triangle.fill").foregroundStyle(Palette.warning)
           .lineLimit(1)
@@ -253,7 +253,7 @@ struct MachineSummary: View {
           .help(abbreviatingHome(error))
       }
       if let cap = store.payload?.capacity {
-        HStack(spacing: 6) {
+        HStack(spacing: Space.sm) {
           StatusDot(color: Palette.success)
           Text("\(cap.liveCount) live")
         }
@@ -262,7 +262,7 @@ struct MachineSummary: View {
             .help("CPU of every live workspace's processes, simulators and emulators, as a percent of one core")
         }
         if showsMemory, let memory = metrics.memory {
-          HStack(spacing: 6) {
+          HStack(spacing: Space.sm) {
             statItem(icon: "memorychip", value: formatMemoryPair(memory), tone: UsageThresholds.memory(memory.pressure))
             if showsBar {
               ProgressView(value: min(1, Double(memory.usedBytes) / Double(max(1, memory.totalBytes))))
@@ -277,7 +277,7 @@ struct MachineSummary: View {
       }
       if let lowest = metrics.volumes.min(by: { $0.freeBytes < $1.freeBytes }) {
         Button { showsDisk.toggle() } label: {
-          HStack(spacing: 6) {
+          HStack(spacing: Space.sm) {
             statItem(icon: "internaldrive", value: "\(formatDisk(lowest.freeBytes)) free", tone: UsageThresholds.disk(freeBytes: lowest.freeBytes))
             if showsReclaimable, let reclaimable = metrics.reclaimable, reclaimable.bytes > 0 {
               Text("\u{00B7} \(formatDisk(reclaimable.bytes)) reclaimable").foregroundStyle(Palette.primary)
@@ -292,24 +292,24 @@ struct MachineSummary: View {
       }
       if store.watching {
         Text("live")
-          .font(Theme.mono())
+          .font(.stim(.caption, mono: true))
           .foregroundStyle(Palette.tertiary)
           .help("stim status --watch reports each change as it happens")
       } else if let at = store.updatedAt {
         TimelineView(.periodic(from: .now, by: 1)) { context in
           Text("\(max(0, Int(context.date.timeIntervalSince(at))))s ago")
-            .font(Theme.mono())
+            .font(.stim(.caption, mono: true))
             .foregroundStyle(Palette.tertiary)
         }
       }
     }
-    .padding(.horizontal, 10)
+    .padding(.horizontal, Space.md)
   }
 
   private func statItem(icon: String, value: String, tone: UsageTone) -> some View {
-    HStack(spacing: 4) {
+    HStack(spacing: Space.xs) {
       Image(systemName: icon)
-      Text(value).font(Theme.mono()).fixedSize()
+      Text(value).font(.stim(.caption, mono: true)).fixedSize()
     }
     .foregroundStyle(Theme.toneColor(tone))
   }
@@ -339,15 +339,15 @@ struct DiskPopover: View {
   var reclaimable: GcReport.Reclaimable?
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
+    VStack(alignment: .leading, spacing: Space.xl) {
       SectionLabel(title: "Disk")
       ForEach(volumes) { volume in
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Space.sm) {
           HStack {
-            Text(volume.name).font(Theme.body(12, weight: .semibold))
+            Text(volume.name).font(.stim(.callout, weight: .semibold))
             Spacer()
             Text("\(formatDisk(volume.freeBytes)) free of \(formatDisk(volume.totalBytes))")
-              .font(Theme.mono())
+              .font(.stim(.caption, mono: true))
               .foregroundStyle(Palette.secondary)
           }
           ProgressView(value: 1 - Double(volume.freeBytes) / Double(max(1, volume.totalBytes)))
@@ -361,7 +361,7 @@ struct DiskPopover: View {
         if reclaimable.entries == 0 {
           Text("stim gc reports nothing to reclaim.").foregroundStyle(Palette.secondary)
         } else {
-          Text(formatDisk(reclaimable.bytes)).font(Theme.heading(20)).foregroundStyle(Palette.primary)
+          Text(formatDisk(reclaimable.bytes)).font(.stim(.title)).foregroundStyle(Palette.primary)
           Text(
             "\(reclaimable.entries) \(reclaimable.entries == 1 ? "entry" : "entries")"
               + (reclaimable.unsized > 0 ? ", \(reclaimable.unsized) of unknown size" : "")
@@ -373,9 +373,9 @@ struct DiskPopover: View {
         Text("Needs a stim version with gc --json.").foregroundStyle(Palette.secondary)
       }
     }
-    .font(Theme.body(12))
+    .font(.stim(.callout))
     .foregroundStyle(Palette.text)
-    .padding(18)
+    .padding(Space.xl)
     .frame(width: 340)
     .background(Palette.sidebar)
   }
@@ -396,9 +396,9 @@ struct ActivityToolbarIndicator: View {
     let active = actions.activeRuns
     if let latest = active.last {
       Button { actions.presented = latest } label: {
-        HStack(spacing: 5) {
+        HStack(spacing: Space.xs) {
           ProgressView().controlSize(.mini)
-          if active.count > 1 { Text("\(active.count)").font(Theme.mono()) }
+          if active.count > 1 { Text("\(active.count)").font(.stim(.caption, mono: true)) }
         }
       }
       .help(active.count == 1 ? latest.title : "\(active.count) commands running")

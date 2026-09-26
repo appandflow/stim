@@ -47,24 +47,24 @@ struct AgentFeed: View {
   var body: some View {
     Group {
       if !model.actions.isEmpty {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: Space.xs) {
           Text("Agent actions")
-            .font(Theme.body(11, weight: .semibold))
+            .font(.stim(.caption, weight: .semibold))
             .foregroundStyle(Palette.secondary)
           ForEach(Array(model.actions.enumerated().reversed()), id: \.offset) { _, record in
-            HStack(spacing: 8) {
+            HStack(spacing: Space.md) {
               Text(record.date.formatted(LogRecord.timeFormat)).foregroundStyle(Palette.tertiary)
               Text(record.msg)
                 .foregroundStyle(record.level >= .error ? Palette.error : Palette.text)
                 .lineLimit(1)
                 .truncationMode(.tail)
             }
-            .font(Theme.mono(11))
+            .font(.stim(.caption, mono: true))
           }
         }
-        .padding(12)
+        .padding(Space.lg)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Palette.sidebar))
+        .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.sidebar))
         .help("stim logs --source agent: what agent-device did on this device")
       }
     }

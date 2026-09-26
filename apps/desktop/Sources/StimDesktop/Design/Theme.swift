@@ -13,18 +13,6 @@ enum Theme {
     }
   }
 
-  static func body(_ size: CGFloat = 13, weight: Font.Weight = .regular) -> Font {
-    .custom(FontFamily.sans, size: size).weight(weight)
-  }
-
-  static func heading(_ size: CGFloat) -> Font {
-    .custom(FontFamily.sans, size: size).weight(.semibold)
-  }
-
-  static func mono(_ size: CGFloat = 11) -> Font {
-    .custom(FontFamily.mono, size: size)
-  }
-
   static func toneColor(_ tone: UsageTone) -> Color {
     switch tone {
     case .critical: return Palette.error

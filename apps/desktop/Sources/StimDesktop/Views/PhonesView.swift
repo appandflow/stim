@@ -99,20 +99,20 @@ struct PhonesView: View {
     case .off:
       Label("Not serving", systemImage: "circle").foregroundStyle(Palette.secondary)
     case .starting:
-      HStack(spacing: 8) {
+      HStack(spacing: Space.md) {
         ProgressView().controlSize(.small)
         Text("Starting stim-server\u{2026}").foregroundStyle(Palette.secondary)
       }
     case .running(let health, let owned):
-      VStack(alignment: .leading, spacing: 8) {
-        HStack(spacing: 8) {
+      VStack(alignment: .leading, spacing: Space.md) {
+        HStack(spacing: Space.md) {
           StatusDot(color: health.tailscale.isRunning ? Palette.success : Palette.warning)
           Text(
             "stim-server \(health.version) on port \(String(server.port))\(owned ? "" : ", started outside Stim Desktop")"
           )
           Spacer()
           Text(health.tailscale.isRunning ? "Tailscale" : "This Mac only")
-            .font(Theme.mono())
+            .font(.stim(.caption, mono: true))
             .foregroundStyle(Palette.tertiary)
         }
         if !health.servesDefaultHome() {
@@ -124,7 +124,7 @@ struct PhonesView: View {
         }
       }
     case .failed(let message):
-      VStack(alignment: .leading, spacing: 8) {
+      VStack(alignment: .leading, spacing: Space.md) {
         Text(abbreviatingHome(message)).foregroundStyle(Palette.error).textSelection(.enabled)
         Button("Try Again") { server.start() }
       }
@@ -148,7 +148,7 @@ private struct TailscaleSetup: View {
 
   var body: some View {
     Section {
-      VStack(alignment: .leading, spacing: 10) {
+      VStack(alignment: .leading, spacing: Space.md) {
         Label(tailscale.summary, systemImage: "exclamationmark.triangle.fill")
           .foregroundStyle(Palette.warning)
         Text("Phones cannot connect until Tailscale runs. Only a client on this Mac, such as an iOS Simulator, can pair now.")
@@ -164,12 +164,12 @@ private struct TailscaleSetup: View {
         }
         Text("3. Run the tailscale serve command this tab then shows, once.")
       }
-      .padding(.vertical, 4)
+      .padding(.vertical, Space.xs)
     }
   }
 
   private func step(_ title: String, command: String) -> some View {
-    VStack(alignment: .leading, spacing: 6) {
+    VStack(alignment: .leading, spacing: Space.sm) {
       Text(title)
       HStack {
         CommandText(command: command)
@@ -186,7 +186,7 @@ private struct RouteSection: View {
 
   var body: some View {
     Section("Tailscale route") {
-      VStack(alignment: .leading, spacing: 10) {
+      VStack(alignment: .leading, spacing: Space.md) {
         switch route.state {
         case "routed":
           Label("Phones connect to \(route.endpoint(dnsName: dnsName)), tailnet only.", systemImage: "checkmark.circle.fill")
@@ -218,7 +218,7 @@ private struct RouteSection: View {
           .fixedSize(horizontal: false, vertical: true)
         }
       }
-      .padding(.vertical, 4)
+      .padding(.vertical, Space.xs)
     }
   }
 
@@ -238,29 +238,29 @@ private struct DeviceRow: View {
   var revoke: () -> Void
 
   var body: some View {
-    HStack(spacing: 12) {
+    HStack(spacing: Space.lg) {
       Image(systemName: "iphone").font(.system(size: 18)).foregroundStyle(Palette.accent)
-      VStack(alignment: .leading, spacing: 3) {
-        HStack(spacing: 6) {
-          Text(device.name).font(Theme.body(13, weight: .semibold))
+      VStack(alignment: .leading, spacing: Space.xxs) {
+        HStack(spacing: Space.sm) {
+          Text(device.name).font(.stim(.body, weight: .semibold))
           ScopeBadge(canControl: device.canControl)
         }
-        Text("\(device.id) \u{00B7} \(device.node)").font(Theme.mono()).foregroundStyle(Palette.secondary)
+        Text("\(device.id) \u{00B7} \(device.node)").font(.stim(.caption, mono: true)).foregroundStyle(Palette.secondary)
       }
       Spacer()
-      VStack(alignment: .trailing, spacing: 3) {
+      VStack(alignment: .trailing, spacing: Space.xxs) {
         Text(lastSeen).foregroundStyle(Palette.secondary)
         Text("Paired \(device.pairedAt.formatted(date: .abbreviated, time: .shortened))")
           .foregroundStyle(Palette.tertiary)
       }
-      .font(Theme.body(11.5))
+      .font(.stim(.footnote))
       Toggle("Allow control", isOn: .init(get: { device.canControl }, set: allowControl))
         .toggleStyle(.checkbox)
         .disabled(changing)
         .help("Let this phone drive simulators and emulators and run reload and stop.")
       Button("Revoke", role: .destructive, action: revoke)
     }
-    .padding(.vertical, 2)
+    .padding(.vertical, Space.xxs)
   }
 
   private var lastSeen: String {
@@ -288,17 +288,17 @@ struct PairSheet: View {
   @State private var allowsControl = true
 
   var body: some View {
-    VStack(spacing: 18) {
-      Text("Pair a Phone").font(Theme.heading(20))
+    VStack(spacing: Space.xl) {
+      Text("Pair a Phone").font(.stim(.title))
       if let paired {
         Image(systemName: "checkmark.circle.fill").font(.system(size: 56)).foregroundStyle(Palette.success)
-        HStack(spacing: 6) {
-          Text("Paired \(paired.name)").font(Theme.body(15, weight: .semibold))
+        HStack(spacing: Space.sm) {
+          Text("Paired \(paired.name)").font(.stim(.headline))
           ScopeBadge(canControl: paired.canControl)
         }
-        Text("\(paired.id) \u{00B7} \(paired.node)").font(Theme.mono()).foregroundStyle(Palette.secondary)
+        Text("\(paired.id) \u{00B7} \(paired.node)").font(.stim(.caption, mono: true)).foregroundStyle(Palette.secondary)
       } else {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: Space.xs) {
           Toggle("Allow this phone to control devices", isOn: $allowsControl)
             .toggleStyle(.checkbox)
             .onChange(of: allowsControl) { load() }
@@ -307,7 +307,7 @@ struct PairSheet: View {
               ? "It can drive simulators and emulators and run reload and stop."
               : "It can only see workspaces, devices and logs. You can allow control later in the Phones tab."
           )
-          .font(Theme.body(11.5))
+          .font(.stim(.footnote))
           .foregroundStyle(Palette.tertiary)
           .fixedSize(horizontal: false, vertical: true)
         }
@@ -326,10 +326,10 @@ struct PairSheet: View {
         Button(paired == nil ? "Cancel" : "Done") { dismiss() }.keyboardShortcut(paired == nil ? .cancelAction : .defaultAction)
       }
     }
-    .padding(24)
+    .padding(Space.xxxl)
     .frame(width: 420)
     .background(Palette.background)
-    .font(Theme.body())
+    .font(.stim(.body))
     .foregroundStyle(Palette.text)
     .onAppear(perform: load)
     .task {
@@ -344,7 +344,7 @@ struct PairSheet: View {
   private func codeView(_ code: PairingCode) -> some View {
     TimelineView(.periodic(from: .now, by: 1)) { context in
       let remaining = Int(code.expiresAt.timeIntervalSince(context.date).rounded(.up))
-      VStack(spacing: 14) {
+      VStack(spacing: Space.lg) {
         Text("Scan this code with the Stim app on your phone. It pairs one phone.")
           .foregroundStyle(Palette.secondary)
           .multilineTextAlignment(.center)
@@ -358,9 +358,9 @@ struct PairSheet: View {
           }
         }
         Text(remaining > 0 ? "Expires in \(remaining / 60):\(String(format: "%02d", remaining % 60))" : "This code expired.")
-          .font(Theme.mono(12))
+          .font(.stim(.callout, mono: true))
           .foregroundStyle(remaining > 30 ? Palette.secondary : Palette.warning)
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Space.sm) {
           detail("Endpoint", code.qr.endpoint)
           detail("Token", code.qr.pairingToken, secret: true)
         }
@@ -374,7 +374,7 @@ struct PairSheet: View {
             systemImage: "exclamationmark.triangle.fill"
           )
           .foregroundStyle(Palette.warning)
-          .font(Theme.body(12))
+          .font(.stim(.callout))
           .fixedSize(horizontal: false, vertical: true)
         }
         if code.isLocalOnly {
@@ -383,7 +383,7 @@ struct PairSheet: View {
             systemImage: "exclamationmark.triangle.fill"
           )
           .foregroundStyle(Palette.warning)
-          .font(Theme.body(12))
+          .font(.stim(.callout))
           .fixedSize(horizontal: false, vertical: true)
         }
       }
@@ -394,9 +394,9 @@ struct PairSheet: View {
     HStack {
       Text(title).foregroundStyle(Palette.tertiary).frame(width: 64, alignment: .leading)
       if secret && !showsToken {
-        Text(String(repeating: "\u{2022}", count: 16)).font(Theme.mono()).lineLimit(1)
+        Text(String(repeating: "\u{2022}", count: 16)).font(.stim(.caption, mono: true)).lineLimit(1)
       } else {
-        Text(value).font(Theme.mono()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+        Text(value).font(.stim(.caption, mono: true)).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
       }
       Spacer()
       if secret {
@@ -407,7 +407,7 @@ struct PairSheet: View {
       }
       Button("Copy") { copy(value) }.controlSize(.small)
     }
-    .font(Theme.body(12))
+    .font(.stim(.callout))
   }
 
   private func load() {
@@ -437,8 +437,8 @@ struct QRCodeImage: View {
         .interpolation(.none)
         .resizable()
         .scaledToFit()
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 12).fill(.white))
+        .padding(Space.lg)
+        .background(RoundedRectangle(cornerRadius: Radius.card).fill(.white))
     }
   }
 

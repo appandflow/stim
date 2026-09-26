@@ -44,7 +44,7 @@ struct IconButton: View {
 
   var body: some View {
     Button(action: action) {
-      HStack(spacing: 3) {
+      HStack(spacing: Space.xxs) {
         Image(systemName: systemImage).font(.system(size: 12, weight: .medium))
         if let badge { Text(badge).textStyle(.caption2, weight: .medium) }
       }

@@ -15,9 +15,9 @@ struct AttentionView: View {
     let groups = attentionGroups(store.payload?.environments ?? [])
     let shown = expanded ? groups : Array(groups.prefix(Self.collapsedGroups))
     ScrollView {
-      VStack(alignment: .leading, spacing: 28) {
-        VStack(alignment: .leading, spacing: 4) {
-          Text("Needs attention").font(Theme.heading(22))
+      VStack(alignment: .leading, spacing: Space.xxxl) {
+        VStack(alignment: .leading, spacing: Space.xs) {
+          Text("Needs attention").font(.stim(.title))
           Text("Run a fix here, or copy the command and hand it to an agent.").foregroundStyle(Palette.secondary)
         }
         cleanup
@@ -45,13 +45,13 @@ struct AttentionView: View {
                 : "Show \(countLabel(groups.count - shown.count, "more workspace", plural: "more workspaces"))"
             ) { expanded.toggle() }
             .buttonStyle(.link)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.horizontal, Space.xl)
+            .padding(.vertical, Space.md)
             .frame(maxWidth: .infinity, alignment: .leading)
           }
         }
       }
-      .padding(28)
+      .padding(Space.xxxl)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
   }
@@ -61,22 +61,22 @@ struct AttentionView: View {
   }
 
   private var cleanup: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      Text("Machine cleanup").font(Theme.heading(15))
+    VStack(alignment: .leading, spacing: Space.md) {
+      Text("Machine cleanup").font(.stim(.headline))
       Card {
-        HStack(spacing: 14) {
+        HStack(spacing: Space.lg) {
           Image(systemName: "trash").foregroundStyle(Palette.accent)
-          VStack(alignment: .leading, spacing: 3) {
+          VStack(alignment: .leading, spacing: Space.xxs) {
             Text("Reclaim what Stim left behind")
             Text("Preview the stim gc report, then confirm before anything is deleted.")
-              .font(Theme.body(11.5)).foregroundStyle(Palette.secondary)
+              .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
           }
           Spacer()
           runButton(
             "Preview cleanup", StimCommand(["gc", "--json"], cwd: NSHomeDirectory()), key: ActionCenter.machineKey)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, Space.xl)
+        .padding(.vertical, Space.lg)
       }
     }
   }
@@ -87,7 +87,7 @@ struct AttentionView: View {
       Button {
         actions.presented = active
       } label: {
-        HStack(spacing: 6) {
+        HStack(spacing: Space.sm) {
           ProgressView().controlSize(.small)
           Text("Running")
         }
@@ -99,28 +99,28 @@ struct AttentionView: View {
   }
 
   private func workspaceHeader(_ env: Workspace) -> some View {
-    HStack(spacing: 8) {
-      Text(env.names.title).font(Theme.heading(13))
-      Text(store.project(of: env).name).font(Theme.body(11.5)).foregroundStyle(Palette.secondary)
+    HStack(spacing: Space.md) {
+      Text(env.names.title).font(.stim(.body, weight: .semibold))
+      Text(store.project(of: env).name).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
       Spacer()
-      Text(env.live ? "live" : "idle").font(Theme.body(11.5)).foregroundStyle(env.live ? Palette.success : Palette.tertiary)
+      Text(env.live ? "live" : "idle").font(.stim(.footnote)).foregroundStyle(env.live ? Palette.success : Palette.tertiary)
     }
-    .padding(.horizontal, 16)
-    .padding(.top, 12)
-    .padding(.bottom, 2)
+    .padding(.horizontal, Space.xl)
+    .padding(.top, Space.lg)
+    .padding(.bottom, Space.xxs)
   }
 
   private func row(_ item: AttentionItem, workspace: Workspace) -> some View {
-    HStack(spacing: 14) {
+    HStack(spacing: Space.lg) {
       Image(systemName: item.isError ? "xmark.octagon" : "exclamationmark.triangle")
         .foregroundStyle(item.isError ? Palette.error : Palette.warning)
-      VStack(alignment: .leading, spacing: 3) {
+      VStack(alignment: .leading, spacing: Space.xxs) {
         Text(abbreviatingHome(item.text)).lineLimit(2)
         if let detail = item.detail {
-          Text(detail).font(Theme.mono(11.5)).foregroundStyle(Palette.error).lineLimit(3).textSelection(.enabled)
+          Text(detail).font(.stim(.footnote, mono: true)).foregroundStyle(Palette.error).lineLimit(3).textSelection(.enabled)
         }
         if let command = item.command {
-          Text("stim \(command.arguments.joined(separator: " "))").font(Theme.mono(11.5)).foregroundStyle(
+          Text("stim \(command.arguments.joined(separator: " "))").font(.stim(.footnote, mono: true)).foregroundStyle(
             Palette.secondary)
         }
       }
@@ -140,17 +140,17 @@ struct AttentionView: View {
         }
       }
     }
-    .padding(.horizontal, 16)
-    .padding(.vertical, 10)
+    .padding(.horizontal, Space.xl)
+    .padding(.vertical, Space.md)
   }
 
   private func finishedRow(_ flag: PullRequestCleanup.Flag) -> some View {
-    HStack(spacing: 14) {
+    HStack(spacing: Space.lg) {
       Image(systemName: "arrow.triangle.pull").foregroundStyle(Palette.warning)
-      VStack(alignment: .leading, spacing: 3) {
+      VStack(alignment: .leading, spacing: Space.xxs) {
         Text(store.names(ofPath: flag.path).title)
-        Text(flag.text).font(Theme.body(11.5)).foregroundStyle(Palette.secondary).lineLimit(2)
-        Text(abbreviatingHome(flag.path)).font(Theme.mono(11.5)).foregroundStyle(Palette.tertiary).lineLimit(1)
+        Text(flag.text).font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(2)
+        Text(abbreviatingHome(flag.path)).font(.stim(.footnote, mono: true)).foregroundStyle(Palette.tertiary).lineLimit(1)
       }
       Spacer()
       if let url = URL(string: flag.pullRequest.url) {
@@ -161,14 +161,14 @@ struct AttentionView: View {
       }
       .help("The autopilot keeps this worktree. Review it, then run stim worktree remove yourself.")
     }
-    .padding(.horizontal, 16)
-    .padding(.vertical, 10)
+    .padding(.horizontal, Space.xl)
+    .padding(.vertical, Space.md)
   }
 
   private func group<Content: View>(_ title: String, count: Int, @ViewBuilder _ content: () -> Content) -> some View {
-    VStack(alignment: .leading, spacing: 10) {
-      HStack(spacing: 8) {
-        Text(title).font(Theme.heading(15))
+    VStack(alignment: .leading, spacing: Space.md) {
+      HStack(spacing: Space.md) {
+        Text(title).font(.stim(.headline))
         Text("\(count)").foregroundStyle(Palette.tertiary)
       }
       if count == 0 {

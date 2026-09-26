@@ -29,7 +29,7 @@ struct SettingsView: View {
       scopeTab(.committed, title: ".stim.json", icon: "doc.text")
     }
     .frame(width: 780, height: 640)
-    .font(Theme.body())
+    .font(.stim(.body))
     .foregroundStyle(Palette.text)
     .tint(Palette.brand)
     .onAppear {
@@ -74,7 +74,7 @@ private struct ScopeSettingsView: View {
   }
 
   private var header: some View {
-    VStack(alignment: .leading, spacing: 6) {
+    VStack(alignment: .leading, spacing: Space.sm) {
       if scope != .machine {
         HStack {
           Picker("Workspace", selection: $workspace) {
@@ -89,13 +89,13 @@ private struct ScopeSettingsView: View {
       }
       if let file = model.payload?.file(for: scope) {
         Text(abbreviatingHome(file))
-          .font(Theme.mono())
+          .font(.stim(.caption, mono: true))
           .foregroundStyle(Palette.secondary)
           .textSelection(.enabled)
       }
-      Text(caption).font(Theme.body(11.5)).foregroundStyle(Palette.tertiary)
+      Text(caption).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
     }
-    .padding(16)
+    .padding(Space.xl)
   }
 
   private var caption: String {
@@ -126,7 +126,7 @@ private struct ScopeSettingsView: View {
           }
           unknown
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, Space.xl)
       }
     }
   }
@@ -134,19 +134,19 @@ private struct ScopeSettingsView: View {
   @ViewBuilder private var unknown: some View {
     let entries = model.payload?.unknown.filter { $0.scope == scope } ?? []
     if !entries.isEmpty {
-      VStack(alignment: .leading, spacing: 8) {
+      VStack(alignment: .leading, spacing: Space.md) {
         SectionLabel(title: "Not read by Stim")
         ForEach(entries, id: \.self) { entry in
           HStack(alignment: .firstTextBaseline) {
-            Text(entry.key).font(Theme.mono(12))
-            Text(abbreviatingHome(entry.value?.display ?? "")).font(Theme.mono()).foregroundStyle(Palette.secondary).lineLimit(1)
+            Text(entry.key).font(.stim(.callout, mono: true))
+            Text(abbreviatingHome(entry.value?.display ?? "")).font(.stim(.caption, mono: true)).foregroundStyle(Palette.secondary).lineLimit(1)
             Spacer()
             Text(abbreviatingHome(entry.file))
-              .font(Theme.body(11)).foregroundStyle(Palette.tertiary).lineLimit(1).truncationMode(.head)
+              .font(.stim(.caption)).foregroundStyle(Palette.tertiary).lineLimit(1).truncationMode(.head)
           }
         }
       }
-      .padding(.vertical, 16)
+      .padding(.vertical, Space.xl)
     }
   }
 
@@ -170,9 +170,9 @@ private struct SettingRow: View {
   private var id: String { SettingsModel.id(field.key, scope) }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      HStack(alignment: .firstTextBaseline, spacing: 8) {
-        Text(field.key).font(Theme.mono(12)).foregroundStyle(Palette.text)
+    VStack(alignment: .leading, spacing: Space.sm) {
+      HStack(alignment: .firstTextBaseline, spacing: Space.md) {
+        Text(field.key).font(.stim(.callout, mono: true)).foregroundStyle(Palette.text)
         if field.sensitive { Pill(tone: .warning) { Text("sensitive") } }
         Spacer()
         if model.writing.contains(id) { ProgressView().controlSize(.small) }
@@ -183,7 +183,7 @@ private struct SettingRow: View {
         }
       }
       if !field.description.isEmpty {
-        Text(field.description).font(Theme.body(12)).foregroundStyle(Palette.secondary)
+        Text(field.description).font(.stim(.callout)).foregroundStyle(Palette.secondary)
       }
       SettingEditor(field: field, value: layerValue, effective: entry?.value == .null ? nil : entry?.value) { value in
         model.write(field, scope: scope, value: value)
@@ -191,14 +191,14 @@ private struct SettingRow: View {
       .disabled(model.writing.contains(id))
       facts
       if let refusal = model.refusals[id] {
-        Text(abbreviatingHome(refusal)).font(Theme.body(11.5)).foregroundStyle(Palette.error).textSelection(.enabled)
+        Text(abbreviatingHome(refusal)).font(.stim(.footnote)).foregroundStyle(Palette.error).textSelection(.enabled)
       }
     }
-    .padding(.vertical, 12)
+    .padding(.vertical, Space.lg)
   }
 
   @ViewBuilder private var facts: some View {
-    HStack(spacing: 12) {
+    HStack(spacing: Space.lg) {
       if let entry {
         if let origin = entry.originLabel {
           Text(abbreviatingHome("Effective: \(entry.value.display) from \(origin)"))
@@ -214,7 +214,7 @@ private struct SettingRow: View {
         }
       }
     }
-    .font(Theme.body(11))
+    .font(.stim(.caption))
     .foregroundStyle(Palette.tertiary)
     .lineLimit(1)
     .truncationMode(.middle)
@@ -271,11 +271,11 @@ private struct SettingEditor: View {
       TokenField(tokens: value?.strings ?? []) { commit(.array($0.map(JSONValue.string))) }
         .frame(height: 24)
     case .json:
-      VStack(alignment: .leading, spacing: 6) {
+      VStack(alignment: .leading, spacing: Space.sm) {
         TextEditor(text: $draft)
-          .font(Theme.mono())
+          .font(.stim(.caption, mono: true))
           .frame(height: 64)
-          .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Palette.border))
+          .overlay(RoundedRectangle(cornerRadius: Radius.small).strokeBorder(Palette.border))
         Button("Apply") {
           if let data = draft.data(using: .utf8), let parsed = try? JSONDecoder().decode(JSONValue.self, from: data) {
             commit(parsed)
