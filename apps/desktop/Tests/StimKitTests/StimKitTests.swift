@@ -544,6 +544,52 @@ import Testing
   }
 }
 
+@Suite struct GcOutcomeTests {
+  @Test func summarizesWhatARunDidApartFromWhatItLeftAlone() throws {
+    let json = """
+      {"mode":"delete","idle":null,"actionable":true,"failures":1,"sections":{
+        "orphanedDevices":[{"kind":"ios","id":"U1","name":"stim-a (iPhone 18 Pro 27.0)","bytes":null}],
+        "idleDevices":[{"kind":"ios","id":"U1","name":"stim-a (iPhone 18 Pro 27.0)","idleForMs":86400000}],
+        "skipped":[{"path":"/s/workspaces/x","detail":"workspace directory not resolved: it has no workspace.json"},
+                   {"path":"/s/workspaces/x","detail":"workspace directory not resolved: it has no workspace.json"}],
+        "unverifiedDevices":[{"kind":"ios","id":"U9","name":"stim-1362-mobile (iPhone 18 Pro 27.0)","command":"xcrun simctl delete U9"}]
+      },"results":[
+        {"kind":"device","status":"done","label":"stim-a (iPhone 18 Pro 27.0)","id":"U1","bytes":null,"detail":null},
+        {"kind":"device","status":"done","label":"stim-b (iPhone 18 Pro 27.0)","id":"U2","bytes":null,"detail":null},
+        {"kind":"workspaceOutputs","status":"done","label":"/p/app","id":null,"bytes":21690000000,"detail":null},
+        {"kind":"worktree","status":"kept","label":"/p/wip","id":null,"bytes":null,"detail":"dirty"},
+        {"kind":"cache","status":"failed","label":"Build cache","id":"/s/build-cache","bytes":null,"detail":"2 entries could not be removed"}
+      ]}
+      """
+    let outcome = try GcOutcome(json: Data(json.utf8))
+    #expect(outcome.done.map(\.label) == ["stim-a (iPhone 18 Pro 27.0)", "stim-b (iPhone 18 Pro 27.0)", "/p/app"])
+    #expect(outcome.failed.map(\.label) == ["Build cache"])
+    #expect(outcome.kept.map(\.label) == ["/p/wip", "stim-1362-mobile (iPhone 18 Pro 27.0)", "/s/workspaces/x"])
+    #expect(outcome.headline.hasPrefix("Freed "))
+    #expect(outcome.headline.hasSuffix("Deleted 2 devices \u{00B7} Cleared build outputs of 1 workspace"))
+    #expect(outcome.failures == 1)
+  }
+
+  @Test func fallsBackToTheReportOnACLIWithoutResults() throws {
+    let json = """
+      {"mode":"delete","actionable":true,"failures":0,"sections":{
+        "orphanedWorkspaces":[{"dir":"/s/workspaces/a","projectRoot":"/p","bytes":4096}],
+        "caches":[{"name":"Metro transform cache","dir":"/s/metro","bytes":7,"willEmpty":false,"note":"no eviction"}]
+      }}
+      """
+    let outcome = try GcOutcome(json: Data(json.utf8))
+    #expect(outcome.done.map(\.label) == ["/s/workspaces/a"])
+    #expect(outcome.headline == "Freed 4 KB \u{00B7} Removed 1 workspace directory")
+  }
+
+  @Test func onlyActingGcJsonRunsHaveAnOutcome() {
+    #expect(GcOutcome.describes(["gc", "--delete", "--json"]))
+    #expect(GcOutcome.describes(["gc", "--idle", "30m", "--json"]))
+    #expect(!GcOutcome.describes(["gc", "--json"]))
+    #expect(!GcOutcome.describes(["gc", "--delete"]))
+  }
+}
+
 @Suite struct ResourceTests {
   let ps = """
       1     0  20176 14:27.71 /sbin/launchd

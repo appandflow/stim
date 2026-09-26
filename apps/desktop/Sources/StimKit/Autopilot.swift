@@ -46,7 +46,7 @@ public enum AutopilotSchedule {
   /// idle that long, build outputs and cache entries unused that long, and devices parked or unused that long.
   /// Pressure runs stay unbounded with `PressurePlan.arguments`.
   public static func nightlyArguments(olderThanDays: Int) -> [String] {
-    ["gc", "--delete", "--worktrees", "--older-than", String(olderThanDays)]
+    ["gc", "--delete", "--worktrees", "--older-than", String(olderThanDays), "--json"]
   }
 }
 
@@ -64,7 +64,7 @@ public struct PressurePlan: Hashable, Sendable {
 
   public var isEmpty: Bool { clearsWorkspaces + removesWorktrees + deletesDevices == 0 && reclaimableBytes == 0 }
 
-  public static let arguments = ["gc", "--delete"]
+  public static let arguments = ["gc", "--delete", "--json"]
 
   /// The plan when free space is under the budget, else nil. A budget of 0 turns the check off, as in the CLI.
   public static func make(freeBytes: Int64, minimumFreeGb: Double, hardFloorGb: Double, report: GcReport?)

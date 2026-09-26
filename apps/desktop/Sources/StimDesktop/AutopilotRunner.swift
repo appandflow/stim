@@ -126,7 +126,7 @@ final class AutopilotRunner: ObservableObject {
       AutopilotSchedule.idleShutdownDue(bootedDevices, minutes: minutes, now: now)
     {
       lastIdleRun = now
-      run(.idle, "Shut down idle devices", ["gc", "--idle", AutopilotSchedule.idleDuration(minutes: minutes)], present: false)
+      run(.idle, "Shut down idle devices", ["gc", "--idle", AutopilotSchedule.idleDuration(minutes: minutes), "--json"], present: false)
       return
     }
     checkPressure()

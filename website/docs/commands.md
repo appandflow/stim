@@ -897,6 +897,7 @@ prints, for example:
   "worktreeSweep": { "olderThan": 7, "defaulted": true },
   "actionable": true,
   "failures": null,
+  "results": [],
   "sections": {
     "deadProjects": [{ "path": "/path/to/removed-app" }],
     "orphanedWorkspaces": [{ "dir": "~/.stim/workspaces/old--1a2b", "projectRoot": "/path/to/old", "bytes": 52428800 }],
@@ -976,13 +977,18 @@ the worktree's branch whose head is or contains HEAD, found with `gh`, with
 could not answer, such as `"gh is not installed"`.
 `bytes` is `null` when the size is unknown. `worktreeSweep` is `null` without
 `--worktrees`, which still reports merged worktrees. With `--delete`, `mode` is `"delete"`, the sections list what
-the run acted on, and `failures` counts the entries it could not delete. A
+the run acted on, `results` lists each outcome, and `failures` counts the entries it could not delete. A
 nonzero count exits with status 1. Run `stim gc --json` again to see what is
 left. `idle` is the `--idle` duration in milliseconds or `null`, and with
 `--idle` `failures` also counts devices it could not shut down. A `--cache`
 name that no cache carries, or `--cache` together with `--worktrees` or
 `--idle`, exits with status 1 and prints
 `{ "code": "STIM_BAD_ARG", "message": "...", "remedy": "..." }`.
+Each `results` entry is `{ kind, status, label, id, bytes, detail }`. `status`
+is `"done"`, `"kept"` or `"failed"`, and `detail` says why an entry was kept or
+failed. For example, a deleted simulator reads
+`{ "kind": "device", "status": "done", "label": "stim-app (iPhone 17 26.5)", "id": "9C1F...", "bytes": null, "detail": null }`.
+`results` is empty on a dry run.
 `stim guide facts gc` lists every section, field and reason code.
 
 Try it with an agent:

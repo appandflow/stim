@@ -70,6 +70,16 @@ final class ActivityProgressTests: XCTestCase {
     XCTAssertEqual(steps[0].duration, "seed current")
   }
 
+  func testIgnoresIndentedLinesOutsideTheProgressLabels() {
+    let steps = ActivityProgress.parse([
+      "  ios stim-1372-mobile (iPhone 18 Pro 27.0) 1E4FC7B7-C74E-4B21-B1C6-F485F7CE4ABB",
+      "  20.2G",
+      "  /s/workspaces/x: workspace directory not resolved: it has no workspace.json",
+      "  device      shut down stim-e2e-2",
+    ])
+    XCTAssertEqual(steps.map(\.label), ["device"])
+  }
+
   func testFailedState() {
     let steps = ActivityProgress.parse([
       "  device      failed to shut down stim-e2e-2: simulator 9C1F.. is still Booted"

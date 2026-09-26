@@ -248,6 +248,41 @@ test('gc --json reports orphaned workspace directories and workspace build outpu
   expect(existsSync(join(stale.dir, 'derived-data'))).toBe(true);
 });
 
+test('gc --delete --json reports what it removed apart from what it kept', async () => {
+  const orphan = goneWorkspace('deleted-worktree');
+  const stale = builtWorkspace('stale', { usedDaysAgo: 10 });
+  const busy = builtWorkspace('busy', { usedDaysAgo: 30 });
+  holdNativeRun(busy.root);
+
+  expect((await gcJson({ olderThan: 3 })).payload.results).toEqual([]);
+  const { payload } = await gcJson({ olderThan: 3, delete: true });
+
+  expect(payload.results).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'workspaceDirectory',
+        status: 'done',
+        label: orphan.dir,
+        bytes: expect.any(Number),
+      }),
+      expect.objectContaining({
+        kind: 'workspaceOutputs',
+        status: 'done',
+        label: stale.root,
+        bytes: expect.any(Number),
+      }),
+      expect.objectContaining({
+        kind: 'workspaceOutputs',
+        status: 'kept',
+        label: busy.root,
+        detail: expect.stringMatching(/^in use: /),
+      }),
+    ]),
+  );
+  expect(payload.results.filter((r: { status: string }) => r.status === 'failed')).toEqual([]);
+  expect(existsSync(orphan.dir)).toBe(false);
+});
+
 test('--delete removes a symlinked orphaned workspace directory as a link and leaves its target', async () => {
   const orphan = goneWorkspace('linked-away');
   const target = join(projects, 'workspace-target');

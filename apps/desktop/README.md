@@ -26,7 +26,7 @@ in the workspace directory:
   Android device if the slot holds one.
 - Idle devices: when the `stim gc --json` preview lists idle devices, the
   sheet offers **Shut down idle** with a duration (30 minutes to 1 day), then
-  runs `stim gc --idle <duration>` after a confirmation. That shuts the devices
+  runs `stim gc --idle <duration> --json` after a confirmation. That shuts the devices
   down like `stim stop` and never deletes them. The preview marks idle and
   unrecognized `stim-*` devices as kept, because `stim gc --delete` never
   touches them.
@@ -71,8 +71,16 @@ folder. It has no action. Selecting it shows its path and
 branch and the `stim start`, `stim ios` and `stim android` commands that create
 its environment, each with a Copy button.
 
-Output streams into an activity sheet with the exit status, and status refreshes
-when the command finishes. Each workspace runs one action at a time.
+Each action opens an activity sheet. While the command runs, the sheet shows a
+spinner and its latest progress line; only the CLI's progress labels (`stim
+guide lifecycle progress`) count as progress. When it finishes, the sheet
+confirms it in one line and closes itself. A failure stays open with the CLI's
+message and remedy. Cleanups run `stim gc --delete --json` or `stim gc --idle
+--json`, and the sheet summarizes the payload's `results`: what was freed and
+deleted, then what gc left alone and what failed, each with its reason. It
+stays open until closed. The command and the raw output are under **Details**.
+Status refreshes when the command finishes. Each workspace runs one action at a
+time.
 
 Status stays current through one long-running `stim status --watch --json`,
 which prints a payload each time the state changes, and the toolbar shows
@@ -158,7 +166,8 @@ a dash before the first measurement.
   with **Reveal in Finder**. A Stim cache inside one of them is subtracted and
   listed under Stim instead.
 - **Reclaim everything safe** previews `stim gc --json` and runs `stim gc
---delete` after a confirmation.
+--json --delete` after a confirmation. The preview stays open until you
+  confirm or close it.
 
 ## Autopilot
 
@@ -168,12 +177,12 @@ user starts, so the two never overlap, and records every run with its exit
 status under **Autopilot activity**.
 
 - **Shut down idle devices** after 30 minutes to 4 hours (1 hour by default)
-  runs `stim gc --idle <minutes>m` when `stim status` shows a booted device idle
+  runs `stim gc --idle <minutes>m --json` when `stim status` shows a booted device idle
   that long. It waits while a device the CLI counts as idle has a screen the app
   saw change more recently, because `gc --idle` would shut that device down too.
 - **Clean up every night** runs at the chosen hour (3:00 by default), or at
   the next check when the Mac slept through it. It runs
-  `stim gc --delete --worktrees --older-than <days>`, and **Only what is
+  `stim gc --delete --worktrees --older-than <days> --json`, and **Only what is
   unused for** sets the days, 7 by default. The run removes merged worktrees
   and clean, pushed worktrees idle that long, clears the build outputs of
   workspaces no Stim command has used that long, trims shared cache entries
@@ -185,7 +194,7 @@ status under **Autopilot activity**.
   space on the volumes Stim writes to, without purgeable space, with
   `budget.minFreeDiskGb` and `budget.hardFloorDiskGb` from `stim settings --json`.
   0 turns the check off, as in the CLI. Under it, the app previews `stim gc
---json` and runs `stim gc --delete` at most once an hour. This run has no age
+--json` and runs `stim gc --delete --json` at most once an hour. This run has no age
   limit: it clears the build outputs of every workspace not in use and empties
   the parked device pool. It still keeps a merged worktree in use or active
   within the CLI's `gc.worktreeGraceMinutes`, 2 hours by default, so an agent

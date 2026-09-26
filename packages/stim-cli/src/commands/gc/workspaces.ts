@@ -9,6 +9,7 @@ import { workspaceName } from '../../workspace/paths.ts';
 import { workspaceLastUsed } from '../../workspace/workspace-state.ts';
 import { canonicalPath } from './paths.ts';
 import type { GcSkip } from './types.ts';
+import { recordGcResult } from './results.ts';
 
 export interface WorkspaceDirEntry {
   dir: string;
@@ -256,6 +257,7 @@ export async function clearWorkspaceOutputs(
     if (!entry.willClear || root === null) {
       if (entry.keptReason) {
         console.log(chalk.dim(`Kept the build outputs of ${root ?? entry.dir}: ${entry.keptReason}`));
+        recordGcResult('workspaceOutputs', 'kept', root ?? entry.dir, { bytes: entry.bytes, detail: entry.keptReason });
       }
       continue;
     }
@@ -279,16 +281,22 @@ export async function clearWorkspaceOutputs(
       console.log(
         chalk.red(`Could not clear the build outputs of ${root}: ${(error as Error)?.message || String(error)}`),
       );
+      recordGcResult('workspaceOutputs', 'failed', root, {
+        bytes: entry.bytes,
+        detail: (error as Error)?.message || String(error),
+      });
       continue;
     }
     const kept = run.ran ? run.value : `in use: ${run.reasons.join('; ')}`;
     if (kept) {
       console.log(chalk.yellow(`Kept the build outputs of ${root}: ${kept}`));
+      recordGcResult('workspaceOutputs', 'kept', root, { bytes: entry.bytes, detail: kept });
       continue;
     }
     cleared += entry.bytes ?? 0;
     clearedRoots.push(root);
     console.log(chalk.green(`Cleared the build outputs of ${root} (${sizeText(entry.bytes)})`));
+    recordGcResult('workspaceOutputs', 'done', root, { bytes: entry.bytes });
   }
   if (cleared) {
     console.log(chalk.dim(`Cleared ${formatBytes(cleared)} of workspace build outputs. ${REBUILD_COST}`));
@@ -322,18 +330,31 @@ export async function deleteOrphanedWorkspaces(orphaned: readonly OrphanedWorksp
     } catch (error) {
       failures++;
       console.log(chalk.red(`Could not remove ${entry.dir}: ${(error as Error)?.message || error}`));
+      recordGcResult('workspaceDirectory', 'failed', entry.dir, {
+        bytes: entry.bytes ?? null,
+        detail: (error as Error)?.message || String(error),
+      });
       continue;
     }
     if (!run.ran) {
       console.log(chalk.yellow(`Kept ${entry.dir}: ${run.reasons.join('; ')}`));
+      recordGcResult('workspaceDirectory', 'kept', entry.dir, {
+        bytes: entry.bytes ?? null,
+        detail: run.reasons.join('; '),
+      });
       continue;
     }
     if (!run.value) {
       console.log(chalk.yellow(`Kept ${entry.dir}: it can no longer be confirmed orphaned.`));
+      recordGcResult('workspaceDirectory', 'kept', entry.dir, {
+        bytes: entry.bytes ?? null,
+        detail: 'it can no longer be confirmed orphaned',
+      });
       continue;
     }
     const size = entry.bytes === undefined ? '' : ` (${sizeText(entry.bytes)})`;
     console.log(chalk.green(`Removed the orphaned workspace directory ${entry.dir}${size}`));
+    recordGcResult('workspaceDirectory', 'done', entry.dir, { bytes: entry.bytes ?? null });
   }
   return failures;
 }
