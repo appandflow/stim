@@ -445,10 +445,9 @@ function bundleTimeoutOutcome({
     );
     return { verified: false, fatal: true, errors, processAlive: false, mode, waitedMs };
   }
-  if (unattributed)
-    return { verified: false, timedOut: true, unattributed: true, record: unattributed, mode, waitedMs };
-  return requested
-    ? { verified: false, timedOut: true, requested: true, record: requested, mode, waitedMs }
+  if (requested) return { verified: false, timedOut: true, requested: true, record: requested, mode, waitedMs };
+  return unattributed
+    ? { verified: false, timedOut: true, unattributed: true, record: unattributed, mode, waitedMs }
     : { verified: false, timedOut: true, mode, waitedMs };
 }
 
@@ -551,7 +550,7 @@ export function unattributedLaunchLines({
   return [
     `UNVERIFIED: Metro delivered ${platform === 'ios' ? 'an iOS' : 'an Android'} bundle on port ${metroPort}, but not provably to this device`,
     `${others} ${platform} on this workspace's Metro, and this bundle request carried nothing that names the device that sent it.`,
-    `Check this device directly: its screen through your device tool, or \`stim logs --slot ${slot} --source device\`.`,
+    `Check this device directly: its screen through your device tool, or \`stim logs --slot ${slot} --source device\`. A slot stops counting as a sibling after \`stim stop --slot <name>\`.`,
   ];
 }
 

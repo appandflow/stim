@@ -171,7 +171,7 @@ async function verifyIosRun({
     ? await d.verifyLaunch({
         requireBundleResponse: true,
         slot: launchSlotScope(root, slot),
-        appPid: remoteDevice ? null : launched?.pid,
+        appPid: physical || remoteDevice ? null : launched?.pid,
         platformShared: siblings.length > 0,
         onReadinessPending: () => phase('readiness', 'waiting for app readiness (up to 30s after bundle load)'),
         logsDir,

@@ -3009,4 +3009,27 @@ describe('verifyLaunch: bundle deliveries in a workspace with device slots', () 
       record: { event: 'bundle_response_finished' },
     });
   });
+
+  test("this device's own logged request still reports bundling beside an unattributed delivery", async () => {
+    const clock = fakeClock();
+    const result = await verifyLaunch({
+      slot: 'phone',
+      platform: 'ios',
+      requireBundleResponse: true,
+      platformShared: true,
+      metroPort: 8083,
+      since: clock.at(),
+      timeoutMs: 100,
+      pollMs: 25,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => delivery(clock.at()),
+      readDeviceRecords: () => [
+        { ts: clock.at(), src: 'device', slot: 'phone', msg: 'GET http://localhost:8083/index.bundle?platform=ios' },
+      ],
+      readClientRecords: () => [],
+    });
+    expect(result).toMatchObject({ verified: false, requested: true });
+    expect(result.unattributed).toBeUndefined();
+  });
 });

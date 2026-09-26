@@ -43,10 +43,10 @@ function bundleResponseMiddleware(write, { runLsof } = {}) {
     }
     const requestId = randomUUID();
     const clientPid = platform === 'ios' ? lookupClientPid(req, runLsof) : null;
-    const send = (event, statusCode, pid) => {
+    const send = (ts, event, statusCode, pid) => {
       try {
         write({
-          ts: Date.now(),
+          ts,
           src: 'metro',
           level: event === 'bundle_response_failed' ? 'error' : 'debug',
           event,
@@ -58,8 +58,11 @@ function bundleResponseMiddleware(write, { runLsof } = {}) {
         });
       } catch {}
     };
-    const emit = (event, statusCode) =>
-      clientPid ? clientPid.then((pid) => send(event, statusCode, pid)) : send(event, statusCode, null);
+    const emit = (event, statusCode) => {
+      const ts = Date.now();
+      if (clientPid) clientPid.then((pid) => send(ts, event, statusCode, pid));
+      else send(ts, event, statusCode, null);
+    };
     emit('bundle_response_started');
     let ended = false;
     const finish = (complete) => {
