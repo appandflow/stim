@@ -1059,8 +1059,8 @@ captured"  (in metro.ndjson, bare RN)
   STIM_CLAIM_REFUSED and names the claim to inspect; an unavailable native
   identity reports STIM_CLAIM_UNAVAILABLE without running the protected work.
   Older lock directories have no process identity. A visible directory left
-  empty before marker publication or during final removal (a process killed
-  between creating it and writing its marker) also cannot prove it is free.
+  empty before marker publication (a process killed between creating it and
+  writing its marker) or during final removal also cannot prove it is free.
   These paths still time out, and the message says no current Stim holds the
   lock and ends with \`rm -rf '<path>'\`. An older Stim version may still be
   using it: if none is running, remove the named directory with that command.
