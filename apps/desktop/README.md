@@ -96,8 +96,15 @@ message and remedy. Cleanups run `stim gc --delete --json` or `stim gc --idle
 --json`, and the sheet summarizes the payload's `results`: what was freed and
 deleted, then what gc left alone and what failed, each with its reason. It
 stays open until closed. The command and the raw output are under **Details**.
-Status refreshes when the command finishes. Each workspace runs one action at a
-time.
+Status follows from the status watch. A finished command triggers a one-shot
+`stim status --json` only while the watch is not running, or after a
+`stim worktree` command, which can change git worktrees the watch does not
+observe. The Machine page,
+the toolbar and the autopilot share one `stim gc --json` report. It is marked
+stale when an action that can change it finishes (a cleanup, a run, start or
+stop, a worktree, port, device lease or setting change), and runs again 2
+seconds after the last such action unless a run started since. A reload or a
+cleanup preview leaves it alone. Each workspace runs one action at a time.
 
 Status stays current through one long-running `stim status --watch --json`,
 which prints a payload each time the state changes, and the toolbar shows

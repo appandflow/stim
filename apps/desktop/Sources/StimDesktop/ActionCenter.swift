@@ -90,7 +90,7 @@ final class ActionCenter: ObservableObject {
 
   @Published private(set) var runs: [String: ActionRun] = [:]
   @Published var presented: ActionRun?
-  var onFinish: (() -> Void)?
+  var onFinish: ((ActionRun) -> Void)?
   private let cli: Task<StimCLI, Never>
 
   init(cli: Task<StimCLI, Never>) {
@@ -129,7 +129,7 @@ final class ActionCenter: ObservableObject {
     Task { [weak self] in
       run.start(cli: await cli.value) { [weak self] in
         self?.objectWillChange.send()
-        self?.onFinish?()
+        self?.onFinish?(run)
         completion?(run)
       }
     }

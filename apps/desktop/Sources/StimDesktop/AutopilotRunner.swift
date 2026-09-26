@@ -26,6 +26,7 @@ final class AutopilotRunner: ObservableObject {
 
   private let status: StatusStore
   private let actions: ActionCenter
+  private let gc: GcReportStore
   private let cli: Task<StimCLI, Never>
   private var timer: Timer?
   private var checking = false
@@ -33,8 +34,6 @@ final class AutopilotRunner: ObservableObject {
   private var lastPressureRun: Date?
   private(set) var budget: (minFree: Double, hardFloor: Double)?
   private var budgetAt: Date?
-  private var report: GcReport?
-  private var reportAt: Date?
   private var notifiedEpisode = false
   private var nightlyHour: Int?
   private var pollingPullRequests = false
@@ -42,9 +41,10 @@ final class AutopilotRunner: ObservableObject {
   private var pullRequestVerdict: (candidates: Set<String>, at: Date, nextEligible: Date?)?
   private var activation: NSObjectProtocol?
 
-  init(status: StatusStore, actions: ActionCenter, cli: Task<StimCLI, Never>) {
+  init(status: StatusStore, actions: ActionCenter, gc: GcReportStore, cli: Task<StimCLI, Never>) {
     self.status = status
     self.actions = actions
+    self.gc = gc
     self.cli = cli
     log = AutopilotLog.decode(UserDefaults.standard.data(forKey: AppPreferences.Key.autopilotLog))
   }
@@ -148,7 +148,7 @@ final class AutopilotRunner: ObservableObject {
     let now = Date()
     let locations = stimDiskLocations(status.payload?.environments ?? [], status: status)
     let budget = budgetAt.map { now.timeIntervalSince($0) < Self.budgetMaxAge } == true ? self.budget : nil
-    let report = reportAt.map { now.timeIntervalSince($0) < Self.reportMaxAge } == true ? self.report : nil
+    let gc = gc
     let cli = cli
     Task.detached(priority: .utility) {
       let cli = await cli.value
@@ -166,24 +166,18 @@ final class AutopilotRunner: ObservableObject {
       var plan = free.flatMap { free in
         limits.flatMap { PressurePlan.make(freeBytes: free, minimumFreeGb: $0.minFree, hardFloorGb: $0.hardFloor, report: nil) }
       }
-      var fresh = report
-      if plan != nil, fresh == nil { fresh = try? cli.gcReport() }
+      let fresh = plan == nil ? nil : await gc.report(maxAge: Self.reportMaxAge)
       let known = free != nil && limits != nil && (plan == nil || fresh != nil)
       if let free, let limits, plan != nil, fresh != nil {
         plan = PressurePlan.make(freeBytes: free, minimumFreeGb: limits.minFree, hardFloorGb: limits.hardFloor, report: fresh)
       }
       let result = plan
-      let checkedReport = fresh
       await MainActor.run {
         self.checking = false
         self.lowestVolume = lowest
         if budget == nil, let limits {
           self.budget = limits
           self.budgetAt = now
-        }
-        if report == nil, let checkedReport {
-          self.report = checkedReport
-          self.reportAt = now
         }
         guard known else { return }
         self.pressure = result
@@ -218,7 +212,6 @@ final class AutopilotRunner: ObservableObject {
     let command = StimCommand(arguments, cwd: NSHomeDirectory())
     actions.run(title, steps: [command], key: ActionCenter.machineKey, present: present) { [weak self] run in
       guard let self else { return }
-      self.reportAt = nil
       self.checkPressure()
       self.record(
         AutopilotLogEntry(
@@ -240,6 +233,7 @@ final class AutopilotRunner: ObservableObject {
     pollingPullRequests = true
     let repositories = Set(environments.compactMap { $0.worktree?.repository })
     let previous = pullRequestVerdict
+    let gc = gc
     let cli = cli
     Task.detached(priority: .utility) {
       let cli = await cli.value
@@ -260,7 +254,7 @@ final class AutopilotRunner: ObservableObject {
         } ?? true
       let answered = finished
       let asked = !candidates.isEmpty && stale
-      let report = asked ? try? cli.gcReport() : nil
+      let report = asked ? await gc.report(startedAfter: Date()) : nil
       await MainActor.run {
         self.pollingPullRequests = false
         self.pullRequestCheck = problem

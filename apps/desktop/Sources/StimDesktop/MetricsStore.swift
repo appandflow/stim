@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import StimKit
 
 struct UsageHistory {
@@ -20,20 +21,22 @@ final class MetricsStore: ObservableObject {
   @Published private(set) var usage: [String: UsageHistory] = [:]
   @Published private(set) var volumes: [DiskVolume] = []
   @Published private(set) var memory: MachineMemory?
-  @Published private(set) var gcReport: GcReport?
-  @Published private(set) var gcRunning = false
-  @Published private(set) var gcAt: Date?
 
   private let status: StatusStore
-  private let cli: Task<StimCLI, Never>
+  let gc: GcReportStore
   private var sampler = ResourceSampler()
   private var timer: Timer?
   private var sampling = false
+  private var relay: AnyCancellable?
 
-  init(status: StatusStore, cli: Task<StimCLI, Never>) {
+  init(status: StatusStore, gc: GcReportStore) {
     self.status = status
-    self.cli = cli
+    self.gc = gc
+    relay = gc.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
   }
+
+  var gcReport: GcReport? { gc.report }
+  var gcRunning: Bool { gc.running }
 
   func start() {
     guard timer == nil else { return }
@@ -71,7 +74,7 @@ final class MetricsStore: ObservableObject {
   private func tick() {
     guard onScreen else { return }
     sample()
-    if !gcRunning, gcAt.map({ Date().timeIntervalSince($0) > 300 }) ?? true { refreshGc() }
+    if !gc.running, gc.at.map({ Date().timeIntervalSince($0) > 300 }) ?? true { gc.refresh() }
   }
 
   private func sample() {
@@ -104,17 +107,7 @@ final class MetricsStore: ObservableObject {
   }
 
   func refreshGc() {
-    guard !gcRunning else { return }
-    gcRunning = true
-    let cli = cli
-    Task.detached {
-      let report = try? await cli.value.gcReport()
-      await MainActor.run {
-        self.gcRunning = false
-        self.gcAt = Date()
-        self.gcReport = report
-      }
-    }
+    gc.refresh()
   }
 }
 
