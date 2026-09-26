@@ -238,16 +238,16 @@ struct MachineSummary: View {
   var body: some View {
     ProposedWidth(width: max(0, width)) {
       ViewThatFits(in: .horizontal) {
-        row(showsMemory: true, showsResident: true, showsReclaimable: true)
-        row(showsMemory: true, showsResident: true, showsReclaimable: false)
-        row(showsMemory: true, showsResident: false, showsReclaimable: false)
-        row(showsMemory: false, showsResident: false, showsReclaimable: false)
+        row(showsMemory: true, showsBar: true, showsReclaimable: true)
+        row(showsMemory: true, showsBar: false, showsReclaimable: true)
+        row(showsMemory: true, showsBar: false, showsReclaimable: false)
+        row(showsMemory: false, showsBar: false, showsReclaimable: false)
       }
     }
     .font(Theme.body(12))
   }
 
-  private func row(showsMemory: Bool, showsResident: Bool, showsReclaimable: Bool) -> some View {
+  private func row(showsMemory: Bool, showsBar: Bool, showsReclaimable: Bool) -> some View {
     HStack(spacing: 18) {
       if let error = store.error {
         Label(abbreviatingHome(error), systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.warn)
@@ -260,43 +260,28 @@ struct MachineSummary: View {
           StatusDot(color: Theme.live)
           Text("\(cap.liveCount) live")
         }
+        if let cpu = metrics.totalCpu {
+          statItem(icon: "cpu", value: formatPercent(cpu), tone: UsageThresholds.cpu(fraction: metrics.totalCpuFraction))
+            .help("CPU of every live workspace's processes, simulators and emulators, as a percent of one core")
+        }
         if showsMemory, let memory = metrics.memory {
-          HStack(spacing: 8) {
-            Text("Memory").foregroundStyle(Theme.secondary).fixedSize()
-            ProgressView(value: min(1, Double(memory.usedBytes) / Double(max(1, memory.totalBytes))))
-              .tint(memory.pressure == .critical ? Theme.error : memory.pressure == .warning ? Theme.warn : Theme.lavender)
-              .frame(width: 70)
-            Text(
-              "\(formatGigabytes(mb: Int(memory.usedBytes >> 20))) / \(formatGigabytes(mb: Int(memory.totalBytes >> 20)))"
-            )
-            .font(Theme.mono())
-            .fixedSize()
+          HStack(spacing: 6) {
+            statItem(icon: "memorychip", value: formatMemoryPair(memory), tone: UsageThresholds.memory(memory.pressure))
+            if showsBar {
+              ProgressView(value: min(1, Double(memory.usedBytes) / Double(max(1, memory.totalBytes))))
+                .tint(Theme.toneColor(UsageThresholds.memory(memory.pressure)))
+                .frame(width: 50)
+            }
           }
           .help(
             "Memory used on this Mac, as Activity Monitor counts it. Stim's share: live workspaces commit \(formatGigabytes(mb: cap.committedMb)) of \(formatGigabytes(mb: cap.totalMemoryMb))."
           )
         }
       }
-      if let cpu = metrics.totalCpu {
-        HStack(spacing: 6) {
-          Text("CPU").foregroundStyle(Theme.secondary)
-          Text(formatPercent(cpu)).font(Theme.mono())
-        }
-        .help("CPU of every live workspace's processes, simulators and emulators, as a percent of one core")
-      }
-      if showsResident, metrics.totalResident > 0 {
-        HStack(spacing: 6) {
-          Text("RAM").foregroundStyle(Theme.secondary)
-          Text(formatMemory(metrics.totalResident)).font(Theme.mono())
-        }
-        .help("Resident memory of every live workspace's processes, simulators and emulators")
-      }
       if let lowest = metrics.volumes.min(by: { $0.availableBytes < $1.availableBytes }) {
         Button { showsDisk.toggle() } label: {
           HStack(spacing: 6) {
-            Image(systemName: "internaldrive").foregroundStyle(Theme.secondary)
-            Text("\(formatDisk(lowest.availableBytes)) free").font(Theme.mono())
-              .foregroundStyle(lowest.availableBytes < 20_000_000_000 ? Theme.warn : Theme.text)
+            statItem(icon: "internaldrive", value: formatDiskFree(lowest.availableBytes), tone: UsageThresholds.disk(freeBytes: lowest.availableBytes))
             if showsReclaimable, let reclaimable = metrics.reclaimable, reclaimable.bytes > 0 {
               Text("\u{00B7} \(formatDisk(reclaimable.bytes)) reclaimable").foregroundStyle(Theme.primary)
             }
@@ -323,6 +308,26 @@ struct MachineSummary: View {
     }
     .padding(.horizontal, 10)
   }
+
+  private func statItem(icon: String, value: String, tone: UsageTone) -> some View {
+    HStack(spacing: 4) {
+      Image(systemName: icon)
+      Text(value).font(Theme.mono()).fixedSize()
+    }
+    .foregroundStyle(Theme.toneColor(tone))
+  }
+}
+
+/// "38.8/48 GB", the compact pairing of used and total memory for the toolbar stat.
+private func formatMemoryPair(_ memory: MachineMemory) -> String {
+  let used = formatGigabytes(mb: Int(memory.usedBytes >> 20)).replacingOccurrences(of: " GB", with: "")
+  let totalGb = Int((Double(memory.totalBytes >> 20) / 1024).rounded())
+  return "\(used)/\(totalGb) GB"
+}
+
+/// "47 GB free", rounded to the whole gigabyte like the phone's compact disk stat.
+private func formatDiskFree(_ bytes: Int64) -> String {
+  "\(Int((Double(bytes) / 1e9).rounded())) GB free"
 }
 
 /// macOS proposes no width to a toolbar item, so this proposes `width` to its content and takes the content's size.

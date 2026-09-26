@@ -595,6 +595,27 @@ import Testing
   }
 }
 
+@Suite struct UsageThresholdsTests {
+  @Test func toneStepsAtTheCpuWarnAndCriticalFractions() {
+    #expect(UsageThresholds.cpu(fraction: 0.79) == .normal)
+    #expect(UsageThresholds.cpu(fraction: 0.8) == .warn)
+    #expect(UsageThresholds.cpu(fraction: 0.95) == .critical)
+  }
+
+  @Test func toneStepsAtTheDiskWarnAndCriticalFloors() {
+    #expect(UsageThresholds.disk(freeBytes: 20_000_000_000) == .normal)
+    #expect(UsageThresholds.disk(freeBytes: 19_999_999_999) == .warn)
+    #expect(UsageThresholds.disk(freeBytes: 4_999_999_999) == .critical)
+  }
+
+  @Test func mapsMemoryPressureToTone() {
+    #expect(UsageThresholds.memory(nil) == .normal)
+    #expect(UsageThresholds.memory(.normal) == .normal)
+    #expect(UsageThresholds.memory(.warning) == .warn)
+    #expect(UsageThresholds.memory(.critical) == .critical)
+  }
+}
+
 @Suite struct OpenURLTests {
   @Test func readsTheDeviceOnlyFromAnOpenURL() {
     #expect(deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://open?udid=U1")!) == .simulator(udid: "U1"))

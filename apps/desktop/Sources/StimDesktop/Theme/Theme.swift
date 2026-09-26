@@ -54,6 +54,14 @@ enum Theme {
   static func mono(_ size: CGFloat = 11) -> Font {
     .custom("JetBrainsMono-Regular", size: size)
   }
+
+  static func toneColor(_ tone: UsageTone) -> Color {
+    switch tone {
+    case .critical: return error
+    case .warn: return warn
+    case .normal: return text
+    }
+  }
 }
 
 extension Color {

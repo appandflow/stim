@@ -98,7 +98,7 @@ struct StorageView: View {
     return HStack(spacing: 14) {
       tile(
         "Free", lowest.map { formatDisk($0.unpurgeableFreeBytes ?? $0.availableBytes) } ?? "\u{2014}",
-        detail: lowest.map { "\($0.name), without purgeable space" })
+        detail: lowest.map { "\($0.name), without purgeable space" }, icon: "internaldrive")
       tile("Workspaces", formatDisk(workspaceBytes), detail: "\(report.workspaces.count) environments")
       tile("Stim caches", formatDisk(cacheBytes), detail: "\(report.caches.count) shared caches")
       VStack(alignment: .leading, spacing: 8) {
@@ -115,9 +115,16 @@ struct StorageView: View {
     }
   }
 
-  private func tile(_ title: String, _ value: String, detail: String?) -> some View {
+  private func tile(_ title: String, _ value: String, detail: String?, icon: String? = nil) -> some View {
     VStack(alignment: .leading, spacing: 8) {
-      SectionLabel(title: title)
+      if let icon {
+        HStack(spacing: 4) {
+          Image(systemName: icon).font(.system(size: 10)).foregroundStyle(Theme.tertiary)
+          SectionLabel(title: title)
+        }
+      } else {
+        SectionLabel(title: title)
+      }
       Text(value).font(Theme.heading(20))
       if let detail { Text(detail).font(Theme.body(11.5)).foregroundStyle(Theme.tertiary).lineLimit(1) }
     }
