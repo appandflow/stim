@@ -50,12 +50,12 @@ struct AgentFeed: View {
         VStack(alignment: .leading, spacing: 4) {
           Text("Agent actions")
             .font(Theme.body(11, weight: .semibold))
-            .foregroundStyle(Theme.secondary)
+            .foregroundStyle(Palette.secondary)
           ForEach(Array(model.actions.enumerated().reversed()), id: \.offset) { _, record in
             HStack(spacing: 8) {
-              Text(record.date.formatted(LogRecord.timeFormat)).foregroundStyle(Theme.tertiary)
+              Text(record.date.formatted(LogRecord.timeFormat)).foregroundStyle(Palette.tertiary)
               Text(record.msg)
-                .foregroundStyle(record.level >= .error ? Theme.error : Theme.text)
+                .foregroundStyle(record.level >= .error ? Palette.error : Palette.text)
                 .lineLimit(1)
                 .truncationMode(.tail)
             }
@@ -64,7 +64,7 @@ struct AgentFeed: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.sidebar))
+        .background(RoundedRectangle(cornerRadius: 10).fill(Palette.sidebar))
         .help("stim logs --source agent: what agent-device did on this device")
       }
     }

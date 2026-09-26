@@ -44,13 +44,13 @@ struct Sidebar: View {
       }
     }
     .scrollContentBackground(.hidden)
-    .background(Theme.sidebar)
+    .background(Palette.sidebar)
     .safeAreaInset(edge: .top, spacing: 0) {
       VStack(spacing: 0) {
         brand
         pinned
       }
-      .background(Theme.sidebar)
+      .background(Palette.sidebar)
     }
     .safeAreaInset(edge: .bottom, spacing: 0) {
       SidebarFooter(store: store, autopilot: autopilot, onboarding: onboarding, selection: $selection)
@@ -71,8 +71,8 @@ struct Sidebar: View {
             .font(Theme.body(11, weight: .medium))
             .padding(.horizontal, 7)
             .padding(.vertical, 1)
-            .background(Capsule().fill(Theme.warn.opacity(0.18)))
-            .foregroundStyle(Theme.warn)
+            .background(Capsule().fill(Palette.warning.opacity(0.18)))
+            .foregroundStyle(Palette.warning)
             .fixedSize()
         }
       }
@@ -80,7 +80,7 @@ struct Sidebar: View {
         SidebarLabel(title: "Machine", icon: "internaldrive", selected: selection == .machine)
         Spacer()
         if autopilot.pressure != nil {
-          Image(systemName: "exclamationmark.circle.fill").font(.system(size: 11)).foregroundStyle(Theme.warn)
+          Image(systemName: "exclamationmark.circle.fill").font(.system(size: 11)).foregroundStyle(Palette.warning)
             .help("Free disk is under the Stim budget")
         }
       }
@@ -104,13 +104,13 @@ struct Sidebar: View {
   private func emptyText(_ options: SidebarOptions) -> some View {
     HStack(spacing: 4) {
       if options.status != .all {
-        Text("No \(options.status.rawValue) workspaces \u{00B7}").foregroundStyle(Theme.tertiary)
-        Button("Show all") { prefs.status = .all }.buttonStyle(.plain).foregroundStyle(Theme.primary)
+        Text("No \(options.status.rawValue) workspaces \u{00B7}").foregroundStyle(Palette.tertiary)
+        Button("Show all") { prefs.status = .all }.buttonStyle(.plain).foregroundStyle(Palette.primary)
       } else if options.differsFromDefaults(projects: store.projectList.map(\.project)) {
-        Text("Nothing matches \u{00B7}").foregroundStyle(Theme.tertiary)
-        Button("Reset") { prefs.reset() }.buttonStyle(.plain).foregroundStyle(Theme.primary)
+        Text("Nothing matches \u{00B7}").foregroundStyle(Palette.tertiary)
+        Button("Reset") { prefs.reset() }.buttonStyle(.plain).foregroundStyle(Palette.primary)
       } else {
-        Text("No workspaces").foregroundStyle(Theme.tertiary)
+        Text("No workspaces").foregroundStyle(Palette.tertiary)
       }
     }
     .font(Theme.body(12))
@@ -138,7 +138,7 @@ struct SidebarLabel: View {
     Label {
       Text(title).lineLimit(1)
     } icon: {
-      Image(systemName: icon).foregroundStyle(selected ? Theme.primary : Theme.secondary)
+      Image(systemName: icon).foregroundStyle(selected ? Palette.primary : Palette.secondary)
     }
   }
 }
@@ -158,7 +158,7 @@ private struct PinnedRow<Content: View>: View {
         .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
         .background(
           RoundedRectangle(cornerRadius: 6)
-            .fill(selection == item ? Theme.selected : hovering ? Theme.raised.opacity(0.5) : Color.clear))
+            .fill(selection == item ? Palette.selection : hovering ? Palette.raised.opacity(0.5) : Color.clear))
         .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
@@ -176,13 +176,13 @@ struct ProjectRow: View {
   var body: some View {
     HStack(spacing: 10) {
       Image(systemName: "folder")
-        .foregroundStyle(selected || summary.live > 0 ? Theme.primary : Theme.tertiary)
+        .foregroundStyle(selected || summary.live > 0 ? Palette.primary : Palette.tertiary)
       Text(summary.project.name).lineLimit(1).truncationMode(.middle)
       Spacer()
       if summary.live > 0 {
-        Text("\(summary.live) live").font(Theme.body(11)).foregroundStyle(Theme.live).fixedSize()
+        Text("\(summary.live) live").font(Theme.body(11)).foregroundStyle(Palette.success).fixedSize()
       } else {
-        Text("\(summary.total)").font(Theme.body(11)).foregroundStyle(Theme.tertiary).fixedSize()
+        Text("\(summary.total)").font(Theme.body(11)).foregroundStyle(Palette.tertiary).fixedSize()
       }
     }
     .contextMenu {
@@ -235,7 +235,7 @@ struct WorkspaceRow: View {
 
   var body: some View {
     HStack(spacing: 10) {
-      StatusDot(color: env.live ? Theme.live : Theme.tertiary, filled: env.live)
+      StatusDot(color: env.live ? Palette.success : Palette.tertiary, filled: env.live)
       VStack(alignment: .leading, spacing: 1) {
         HStack(spacing: 6) {
           Text(env.names.title).lineLimit(1).truncationMode(.middle).layoutPriority(1)
@@ -246,19 +246,19 @@ struct WorkspaceRow: View {
               Image(systemName: "xmark.octagon.fill").font(.system(size: 10))
               Text("\(errors)").font(Theme.body(10.5, weight: .semibold)).monospacedDigit()
             }
-            .foregroundStyle(Theme.error)
+            .foregroundStyle(Palette.error)
             .fixedSize()
             .help(countLabel(errors, "error") + " in the logs")
           }
           if !env.warnings.isEmpty {
-            Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundStyle(Theme.warn)
+            Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundStyle(Palette.warning)
           }
         }
         HStack(spacing: 6) {
           SidebarSubtitle(title: env.names.title, parts: [subtitle, env.names.inCheckout])
           Spacer(minLength: 0)
           if let metro = env.metro {
-            Text(":\(String(metro.port))").font(Theme.mono(10.5)).foregroundStyle(Theme.tertiary).fixedSize()
+            Text(":\(String(metro.port))").font(Theme.mono(10.5)).foregroundStyle(Palette.tertiary).fixedSize()
           }
         }
       }
@@ -314,7 +314,7 @@ private struct SidebarSubtitle: View {
 
   var body: some View {
     let text = parts.compactMap { $0 }.filter { $0 != title }.joined(separator: " \u{00B7} ")
-    Text(text.isEmpty ? " " : text).font(Theme.body(11)).foregroundStyle(Theme.secondary).lineLimit(1)
+    Text(text.isEmpty ? " " : text).font(Theme.body(11)).foregroundStyle(Palette.secondary).lineLimit(1)
       .truncationMode(.middle)
   }
 }
@@ -330,7 +330,7 @@ struct NoEnvironmentRow: View {
   var body: some View {
     let names = worktree.names
     HStack(spacing: 10) {
-      StatusDot(color: Theme.tertiary, filled: false)
+      StatusDot(color: Palette.tertiary, filled: false)
       VStack(alignment: .leading, spacing: 1) {
         Text(names.title).lineLimit(1).truncationMode(.middle)
         SidebarSubtitle(title: names.title, parts: [subtitle, names.inCheckout])
@@ -340,7 +340,7 @@ struct NoEnvironmentRow: View {
       if showsGit, worktree.git?.isNotable == true {
         GitIndicator(git: worktree.git)
       } else {
-        Text("no environment").font(Theme.body(10.5)).foregroundStyle(Theme.tertiary).fixedSize()
+        Text("no environment").font(Theme.body(10.5)).foregroundStyle(Palette.tertiary).fixedSize()
       }
     }
     .sidebarTag(.worktree(worktree.path), selection: selection)
@@ -371,7 +371,7 @@ struct NoEnvironmentRow: View {
 }
 
 /// AppKit draws the selected source-list row as emphasized, which turns its disclosure chevron white on the
-/// light `Theme.selected` background. The row background already marks the selection.
+/// light `Palette.selection` background. The row background already marks the selection.
 private struct PlainSelectionHighlight: NSViewRepresentable {
   func makeNSView(context: Context) -> NSView { NSView() }
 
@@ -386,7 +386,7 @@ private struct PlainSelectionHighlight: NSViewRepresentable {
 
 extension View {
   fileprivate func sidebarTag(_ item: SidebarItem, selection: SidebarItem?) -> some View {
-    tag(item).listRowBackground(item == selection ? Theme.selected : Color.clear)
+    tag(item).listRowBackground(item == selection ? Palette.selection : Color.clear)
   }
 }
 
@@ -421,47 +421,47 @@ struct SidebarFooter: View {
     }
     .padding(.horizontal, 10)
     .frame(height: 44)
-    .background(Theme.sidebar)
-    .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 1) }
+    .background(Palette.sidebar)
+    .overlay(alignment: .top) { Rectangle().fill(Palette.border).frame(height: 1) }
   }
 
   @ViewBuilder private var leftStatus: some View {
     switch status {
     case .stimUnavailable(let compatibility):
       Button(action: onboarding.installStim) {
-        statusLabel(dot: Theme.warn, text: compatibility == .missing ? "Install stim" : "stim update available")
+        statusLabel(dot: Palette.warning, text: compatibility == .missing ? "Install stim" : "stim update available")
       }
       .buttonStyle(.plain)
     case .diskCritical(let freeBytes):
       Button { selection = .machine } label: {
-        statusLabel(dot: Theme.error, text: "Low disk: \(formatDisk(freeBytes)) free")
+        statusLabel(dot: Palette.error, text: "Low disk: \(formatDisk(freeBytes)) free")
       }
       .buttonStyle(.plain)
     case .desktopUpdateAvailable:
       Button(action: updater.checkForUpdates) {
-        statusLabel(dot: Theme.primary, text: "Update available")
+        statusLabel(dot: Palette.primary, text: "Update available")
       }
       .buttonStyle(.plain)
     case .diskWarning(let freeBytes):
       Button { selection = .machine } label: {
-        statusLabel(dot: Theme.warn, text: "Low disk: \(formatDisk(freeBytes)) free")
+        statusLabel(dot: Palette.warning, text: "Low disk: \(formatDisk(freeBytes)) free")
       }
       .buttonStyle(.plain)
     case .normal(let version):
-      statusLabel(dot: Theme.live, text: version.map { "Stim \($0)" } ?? "Stim")
+      statusLabel(dot: Palette.success, text: version.map { "Stim \($0)" } ?? "Stim")
     }
   }
 
   private func statusLabel(dot: Color, text: String) -> some View {
     HStack(spacing: 6) {
       Circle().fill(dot).frame(width: 6, height: 6)
-      Text(text).font(Theme.body(11.5)).foregroundStyle(Theme.secondary).lineLimit(1)
+      Text(text).font(Theme.body(11.5)).foregroundStyle(Palette.secondary).lineLimit(1)
     }
   }
 
   private var agentsButton: some View {
     FooterIconButton(
-      systemImage: "cursorarrow.rays", tint: Theme.lavender, badge: "\(drivenDevices.count)", help: agentsTooltip
+      systemImage: "cursorarrow.rays", tint: Palette.accent, badge: "\(drivenDevices.count)", help: agentsTooltip
     ) {
       selection = .wall
     }
@@ -493,7 +493,7 @@ struct SidebarFooter: View {
 
 private struct FooterIconButton: View {
   var systemImage: String
-  var tint = Theme.secondary
+  var tint = Palette.secondary
   /// A short count shown next to the icon, such as an agent-driven device count.
   var badge: String?
   var help: String
@@ -509,7 +509,7 @@ private struct FooterIconButton: View {
       .foregroundStyle(tint)
       .padding(.horizontal, badge == nil ? 0 : 6)
       .frame(minWidth: 26, minHeight: 24)
-      .background(RoundedRectangle(cornerRadius: 6).fill(hovering ? Theme.raised : Color.clear))
+      .background(RoundedRectangle(cornerRadius: 6).fill(hovering ? Palette.raised : Color.clear))
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
@@ -518,7 +518,7 @@ private struct FooterIconButton: View {
   }
 }
 
-/// The hand-lettered "Stim" wordmark, tinted to `Theme.primary` for both appearances.
+/// The hand-lettered "Stim" wordmark, tinted to `Palette.primary` for both appearances.
 struct StimWordmark: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var wiggles = 0
@@ -530,7 +530,7 @@ struct StimWordmark: View {
         .renderingMode(.template)
         .aspectRatio(contentMode: .fit)
         .frame(height: 22)
-        .foregroundStyle(Theme.primary)
+        .foregroundStyle(Palette.primary)
         .keyframeAnimator(initialValue: Wiggle(), trigger: wiggles) { content, value in
           content.rotationEffect(.degrees(value.angle)).scaleEffect(value.scale)
         } keyframes: { _ in

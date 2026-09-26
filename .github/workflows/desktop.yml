@@ -6,12 +6,14 @@ on:
     branches: [main]
     paths:
       - 'apps/desktop/**'
+      - 'apps/mobile/src/design/tokens.ts'
       - 'packages/server/helper/**'
       - '.github/workflows/desktop.yml'
       - '.github/workflows/desktop-release.yml'
   pull_request:
     paths:
       - 'apps/desktop/**'
+      - 'apps/mobile/src/design/tokens.ts'
       - 'packages/server/helper/**'
       - '.github/workflows/desktop.yml'
       - '.github/workflows/desktop-release.yml'
@@ -31,6 +33,12 @@ jobs:
         working-directory: apps/desktop
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Check the generated design tokens
+        run: node scripts/generate-tokens.mjs --check
       - run: swift build
       - run: swift test
       - name: Compile the stim-server frames helper

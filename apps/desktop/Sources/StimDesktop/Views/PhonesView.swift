@@ -21,7 +21,7 @@ struct PhonesView: View {
         Text(
           "Runs stim-server on port \(String(server.port)) while Stim Desktop is open, or uses one that is already running. Phones connect through Tailscale. A read-only phone sees workspaces, devices and logs; a phone allowed to control can also drive simulators and emulators and run reload and stop."
         )
-        .foregroundStyle(Theme.tertiary)
+        .foregroundStyle(Palette.tertiary)
         .multilineTextAlignment(.leading)
         .frame(maxWidth: .infinity, alignment: .leading)
       }
@@ -38,10 +38,10 @@ struct PhonesView: View {
 
       Section {
         ForEach([server.devicesError, server.changeError].compactMap { $0 }, id: \.self) { error in
-          Text(abbreviatingHome(error)).foregroundStyle(Theme.error)
+          Text(abbreviatingHome(error)).foregroundStyle(Palette.error)
         }
         if server.devices.isEmpty {
-          Text("No paired phones.").foregroundStyle(Theme.secondary)
+          Text("No paired phones.").foregroundStyle(Palette.secondary)
         }
         ForEach(server.devices) { device in
           DeviceRow(
@@ -64,12 +64,12 @@ struct PhonesView: View {
           Button("Choose\u{2026}", action: chooseExecutable)
         }
         Text("Overrides PATH the next time the server starts.")
-          .foregroundStyle(Theme.tertiary)
+          .foregroundStyle(Palette.tertiary)
       }
     }
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
-    .background(Theme.background)
+    .background(Palette.background)
     .task {
       while !Task.isCancelled {
         server.refresh()
@@ -97,35 +97,35 @@ struct PhonesView: View {
   @ViewBuilder private var serverState: some View {
     switch server.state {
     case .off:
-      Label("Not serving", systemImage: "circle").foregroundStyle(Theme.secondary)
+      Label("Not serving", systemImage: "circle").foregroundStyle(Palette.secondary)
     case .starting:
       HStack(spacing: 8) {
         ProgressView().controlSize(.small)
-        Text("Starting stim-server\u{2026}").foregroundStyle(Theme.secondary)
+        Text("Starting stim-server\u{2026}").foregroundStyle(Palette.secondary)
       }
     case .running(let health, let owned):
       VStack(alignment: .leading, spacing: 8) {
         HStack(spacing: 8) {
-          StatusDot(color: health.tailscale.isRunning ? Theme.live : Theme.warn)
+          StatusDot(color: health.tailscale.isRunning ? Palette.success : Palette.warning)
           Text(
             "stim-server \(health.version) on port \(String(server.port))\(owned ? "" : ", started outside Stim Desktop")"
           )
           Spacer()
           Text(health.tailscale.isRunning ? "Tailscale" : "This Mac only")
             .font(Theme.mono())
-            .foregroundStyle(Theme.tertiary)
+            .foregroundStyle(Palette.tertiary)
         }
         if !health.servesDefaultHome() {
           Text(
             "This server keeps pairings in \(abbreviatingHome(health.stimHome)), not ~/.stim. Phones paired now stop working when Stim Desktop serves ~/.stim again."
           )
-          .foregroundStyle(Theme.warn)
+          .foregroundStyle(Palette.warning)
           .textSelection(.enabled)
         }
       }
     case .failed(let message):
       VStack(alignment: .leading, spacing: 8) {
-        Text(abbreviatingHome(message)).foregroundStyle(Theme.error).textSelection(.enabled)
+        Text(abbreviatingHome(message)).foregroundStyle(Palette.error).textSelection(.enabled)
         Button("Try Again") { server.start() }
       }
     }
@@ -150,9 +150,9 @@ private struct TailscaleSetup: View {
     Section {
       VStack(alignment: .leading, spacing: 10) {
         Label(tailscale.summary, systemImage: "exclamationmark.triangle.fill")
-          .foregroundStyle(Theme.warn)
+          .foregroundStyle(Palette.warning)
         Text("Phones cannot connect until Tailscale runs. Only a client on this Mac, such as an iOS Simulator, can pair now.")
-          .foregroundStyle(Theme.secondary)
+          .foregroundStyle(Palette.secondary)
         step("1. Start Tailscale.", command: "tailscale up")
         Text(
           canRestart
@@ -190,31 +190,31 @@ private struct RouteSection: View {
         switch route.state {
         case "routed":
           Label("Phones connect to \(route.endpoint(dnsName: dnsName)), tailnet only.", systemImage: "checkmark.circle.fill")
-            .foregroundStyle(Theme.live)
+            .foregroundStyle(Palette.success)
           Text("tailscale serve forwards HTTPS port \(String(route.port)) to 127.0.0.1:\(String(port)).")
-            .foregroundStyle(Theme.secondary)
+            .foregroundStyle(Palette.secondary)
         case "funneled":
           Label(
             "Tailscale Funnel is on for port \((route.ports ?? []).map(String.init).joined(separator: ", ")), which forwards to stim-server, so the server is reachable from the public internet. Pairing is refused.",
             systemImage: "exclamationmark.octagon.fill"
           )
-          .foregroundStyle(Theme.error)
+          .foregroundStyle(Palette.error)
           .fixedSize(horizontal: false, vertical: true)
           Text("Remove that handler (see tailscale serve status), then serve stim-server on a tailnet-only port:")
-            .foregroundStyle(Theme.secondary)
+            .foregroundStyle(Palette.secondary)
           command
         case "missing":
           Label("No tailscale serve route reaches port \(String(port)), so phones cannot connect yet.", systemImage: "exclamationmark.triangle.fill")
-            .foregroundStyle(Theme.warn)
+            .foregroundStyle(Palette.warning)
           Text("Once, serve it on a dedicated tailnet-only port. Phones then connect to \(route.endpoint(dnsName: dnsName)).")
-            .foregroundStyle(Theme.secondary)
+            .foregroundStyle(Palette.secondary)
           command
         default:
           Label(
             "Could not read tailscale serve status: \(route.reason ?? "unknown reason"). Pairing assumes \(route.endpoint(dnsName: dnsName)).",
             systemImage: "exclamationmark.triangle.fill"
           )
-          .foregroundStyle(Theme.warn)
+          .foregroundStyle(Palette.warning)
           .fixedSize(horizontal: false, vertical: true)
         }
       }
@@ -239,19 +239,19 @@ private struct DeviceRow: View {
 
   var body: some View {
     HStack(spacing: 12) {
-      Image(systemName: "iphone").font(.system(size: 18)).foregroundStyle(Theme.lavender)
+      Image(systemName: "iphone").font(.system(size: 18)).foregroundStyle(Palette.accent)
       VStack(alignment: .leading, spacing: 3) {
         HStack(spacing: 6) {
           Text(device.name).font(Theme.body(13, weight: .semibold))
           ScopeBadge(canControl: device.canControl)
         }
-        Text("\(device.id) \u{00B7} \(device.node)").font(Theme.mono()).foregroundStyle(Theme.secondary)
+        Text("\(device.id) \u{00B7} \(device.node)").font(Theme.mono()).foregroundStyle(Palette.secondary)
       }
       Spacer()
       VStack(alignment: .trailing, spacing: 3) {
-        Text(lastSeen).foregroundStyle(Theme.secondary)
+        Text(lastSeen).foregroundStyle(Palette.secondary)
         Text("Paired \(device.pairedAt.formatted(date: .abbreviated, time: .shortened))")
-          .foregroundStyle(Theme.tertiary)
+          .foregroundStyle(Palette.tertiary)
       }
       .font(Theme.body(11.5))
       Toggle("Allow control", isOn: .init(get: { device.canControl }, set: allowControl))
@@ -275,10 +275,10 @@ private struct ScopeBadge: View {
   var body: some View {
     Text(canControl ? "Can control" : "Read-only")
       .font(Theme.body(10.5, weight: .semibold))
-      .foregroundStyle(canControl ? Theme.live : Theme.secondary)
+      .foregroundStyle(canControl ? Palette.success : Palette.secondary)
       .padding(.horizontal, 6)
       .padding(.vertical, 2)
-      .background(Capsule().fill((canControl ? Theme.live : Theme.secondary).opacity(0.14)))
+      .background(Capsule().fill((canControl ? Palette.success : Palette.secondary).opacity(0.14)))
       .lineLimit(1)
   }
 }
@@ -297,12 +297,12 @@ struct PairSheet: View {
     VStack(spacing: 18) {
       Text("Pair a Phone").font(Theme.heading(20))
       if let paired {
-        Image(systemName: "checkmark.circle.fill").font(.system(size: 56)).foregroundStyle(Theme.live)
+        Image(systemName: "checkmark.circle.fill").font(.system(size: 56)).foregroundStyle(Palette.success)
         HStack(spacing: 6) {
           Text("Paired \(paired.name)").font(Theme.body(15, weight: .semibold))
           ScopeBadge(canControl: paired.canControl)
         }
-        Text("\(paired.id) \u{00B7} \(paired.node)").font(Theme.mono()).foregroundStyle(Theme.secondary)
+        Text("\(paired.id) \u{00B7} \(paired.node)").font(Theme.mono()).foregroundStyle(Palette.secondary)
       } else {
         VStack(alignment: .leading, spacing: 4) {
           Toggle("Allow this phone to control devices", isOn: $allowsControl)
@@ -314,12 +314,12 @@ struct PairSheet: View {
               : "It can only see workspaces, devices and logs. You can allow control later in the Phones tab."
           )
           .font(Theme.body(11.5))
-          .foregroundStyle(Theme.tertiary)
+          .foregroundStyle(Palette.tertiary)
           .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         if let error {
-          Text(abbreviatingHome(error)).foregroundStyle(Theme.error).textSelection(.enabled)
+          Text(abbreviatingHome(error)).foregroundStyle(Palette.error).textSelection(.enabled)
           Button("Try Again", action: load)
         } else if let code {
           codeView(code)
@@ -334,9 +334,9 @@ struct PairSheet: View {
     }
     .padding(24)
     .frame(width: 420)
-    .background(Theme.background)
+    .background(Palette.background)
     .font(Theme.body())
-    .foregroundStyle(Theme.text)
+    .foregroundStyle(Palette.text)
     .onAppear(perform: load)
     .task {
       while !Task.isCancelled, paired == nil {
@@ -352,7 +352,7 @@ struct PairSheet: View {
       let remaining = Int(code.expiresAt.timeIntervalSince(context.date).rounded(.up))
       VStack(spacing: 14) {
         Text("Scan this code with the Stim app on your phone. It pairs one phone.")
-          .foregroundStyle(Theme.secondary)
+          .foregroundStyle(Palette.secondary)
           .multilineTextAlignment(.center)
           .fixedSize(horizontal: false, vertical: true)
         ZStack {
@@ -365,7 +365,7 @@ struct PairSheet: View {
         }
         Text(remaining > 0 ? "Expires in \(remaining / 60):\(String(format: "%02d", remaining % 60))" : "This code expired.")
           .font(Theme.mono(12))
-          .foregroundStyle(remaining > 30 ? Theme.secondary : Theme.warn)
+          .foregroundStyle(remaining > 30 ? Palette.secondary : Palette.warning)
         VStack(alignment: .leading, spacing: 6) {
           detail("Endpoint", code.qr.endpoint)
           detail("Token", code.qr.pairingToken, secret: true)
@@ -379,7 +379,7 @@ struct PairSheet: View {
                 : "Could not read tailscale serve status, so this endpoint is assumed. See the Phones tab.",
             systemImage: "exclamationmark.triangle.fill"
           )
-          .foregroundStyle(Theme.warn)
+          .foregroundStyle(Palette.warning)
           .font(Theme.body(12))
           .fixedSize(horizontal: false, vertical: true)
         }
@@ -388,7 +388,7 @@ struct PairSheet: View {
             "Tailscale is not running, so this endpoint works only on this Mac, for example in an iOS Simulator.",
             systemImage: "exclamationmark.triangle.fill"
           )
-          .foregroundStyle(Theme.warn)
+          .foregroundStyle(Palette.warning)
           .font(Theme.body(12))
           .fixedSize(horizontal: false, vertical: true)
         }
@@ -398,7 +398,7 @@ struct PairSheet: View {
 
   private func detail(_ title: String, _ value: String, secret: Bool = false) -> some View {
     HStack {
-      Text(title).foregroundStyle(Theme.tertiary).frame(width: 64, alignment: .leading)
+      Text(title).foregroundStyle(Palette.tertiary).frame(width: 64, alignment: .leading)
       if secret && !showsToken {
         Text(String(repeating: "\u{2022}", count: 16)).font(Theme.mono()).lineLimit(1)
       } else {

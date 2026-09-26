@@ -488,6 +488,15 @@ swift run
 swift test
 ```
 
+`Sources/StimDesktop/Design/Tokens.swift` is generated from the phone app's
+design tokens in `apps/mobile/src/design/tokens.ts`: spacing, radii, opacity,
+the text styles with their macOS sizes from `macosText`, and the light and dark
+colors. After changing that file, regenerate it with
+`node apps/desktop/scripts/generate-tokens.mjs`. Desktop CI runs the same
+script with `--check` and fails when the committed file is stale. The color
+names match the phone's; `Palette` colors follow the system appearance and the
+app's Appearance setting.
+
 ## Build the app
 
 ```bash
@@ -510,4 +519,4 @@ Stim Desktop checks for updates with Sparkle 2 against the appcast at `SUFeedURL
 - `Support/SimFold`: the `sim-fold` helper, an iOS Simulator executable that `scripts/bundle.sh` builds into the app's resources. stim-server builds the same sources to fold an iPhone Duo from the phone.
 - `Sources/EmulatorFrames`: live emulator frames through the emulator's localhost gRPC `streamScreenshot` call, found through its discovery file, and input through the same endpoint. An emulator without a hardware keyboard (`hw.keyboard=no`) drops key events, so Desktop types on it with `adb shell input`. Emulators Stim booted before it passed `-grpc` show no frames until their next boot.
 - stim-server's `stim-frames` helper compiles the non-view files of both modules, listed in `packages/server/helper/desktop-sources.txt`, together with its own `main.swift`. Desktop CI compiles it, so keep those files free of AppKit views, SwiftUI and StimKit. Desktop and the helper both send keys through `SimulatorHID.hardwareKey`.
-- `Sources/StimDesktop`: the SwiftUI app and its brand theme.
+- `Sources/StimDesktop`: the SwiftUI app. `Design/` holds the generated tokens and the theme layer over them: `.textStyle(_:)`, `Font.stim(_:)` and the dynamic colors.

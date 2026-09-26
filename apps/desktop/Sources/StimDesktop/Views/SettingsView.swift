@@ -30,8 +30,8 @@ struct SettingsView: View {
     }
     .frame(width: 780, height: 640)
     .font(Theme.body())
-    .foregroundStyle(Theme.text)
-    .tint(Theme.purple)
+    .foregroundStyle(Palette.text)
+    .tint(Palette.brand)
     .onAppear {
       workspace = openRequests.selectedWorkspace ?? workspace ?? (lastWorkspace.isEmpty ? nil : lastWorkspace)
       model.load(directory: workspace)
@@ -67,10 +67,10 @@ private struct ScopeSettingsView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       header
-      Rectangle().fill(Theme.border).frame(height: 1)
+      Rectangle().fill(Palette.border).frame(height: 1)
       content
     }
-    .background(Theme.background)
+    .background(Palette.background)
   }
 
   private var header: some View {
@@ -90,10 +90,10 @@ private struct ScopeSettingsView: View {
       if let file = model.payload?.file(for: scope) {
         Text(abbreviatingHome(file))
           .font(Theme.mono())
-          .foregroundStyle(Theme.secondary)
+          .foregroundStyle(Palette.secondary)
           .textSelection(.enabled)
       }
-      Text(caption).font(Theme.body(11.5)).foregroundStyle(Theme.tertiary)
+      Text(caption).font(Theme.body(11.5)).foregroundStyle(Palette.tertiary)
     }
     .padding(16)
   }
@@ -122,7 +122,7 @@ private struct ScopeSettingsView: View {
         LazyVStack(alignment: .leading, spacing: 0) {
           ForEach(model.fields(in: scope)) { field in
             SettingRow(field: field, scope: scope, model: model)
-            Rectangle().fill(Theme.border).frame(height: 1)
+            Rectangle().fill(Palette.border).frame(height: 1)
           }
           unknown
         }
@@ -139,10 +139,10 @@ private struct ScopeSettingsView: View {
         ForEach(entries, id: \.self) { entry in
           HStack(alignment: .firstTextBaseline) {
             Text(entry.key).font(Theme.mono(12))
-            Text(abbreviatingHome(entry.value?.display ?? "")).font(Theme.mono()).foregroundStyle(Theme.secondary).lineLimit(1)
+            Text(abbreviatingHome(entry.value?.display ?? "")).font(Theme.mono()).foregroundStyle(Palette.secondary).lineLimit(1)
             Spacer()
             Text(abbreviatingHome(entry.file))
-              .font(Theme.body(11)).foregroundStyle(Theme.tertiary).lineLimit(1).truncationMode(.head)
+              .font(Theme.body(11)).foregroundStyle(Palette.tertiary).lineLimit(1).truncationMode(.head)
           }
         }
       }
@@ -172,8 +172,8 @@ private struct SettingRow: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
       HStack(alignment: .firstTextBaseline, spacing: 8) {
-        Text(field.key).font(Theme.mono(12)).foregroundStyle(Theme.text)
-        if field.sensitive { Chip(tint: Theme.warn) { Text("sensitive") } }
+        Text(field.key).font(Theme.mono(12)).foregroundStyle(Palette.text)
+        if field.sensitive { Chip(tint: Palette.warning) { Text("sensitive") } }
         Spacer()
         if model.writing.contains(id) { ProgressView().controlSize(.small) }
         if layerValue != nil {
@@ -183,7 +183,7 @@ private struct SettingRow: View {
         }
       }
       if !field.description.isEmpty {
-        Text(field.description).font(Theme.body(12)).foregroundStyle(Theme.secondary)
+        Text(field.description).font(Theme.body(12)).foregroundStyle(Palette.secondary)
       }
       SettingEditor(field: field, value: layerValue, effective: entry?.value == .null ? nil : entry?.value) { value in
         model.write(field, scope: scope, value: value)
@@ -191,7 +191,7 @@ private struct SettingRow: View {
       .disabled(model.writing.contains(id))
       facts
       if let refusal = model.refusals[id] {
-        Text(abbreviatingHome(refusal)).font(Theme.body(11.5)).foregroundStyle(Theme.error).textSelection(.enabled)
+        Text(abbreviatingHome(refusal)).font(Theme.body(11.5)).foregroundStyle(Palette.error).textSelection(.enabled)
       }
     }
     .padding(.vertical, 12)
@@ -210,12 +210,12 @@ private struct SettingRow: View {
             : "Overrides \(lower.source): \(lower.value.display)"))
         }
         if let env = entry.env {
-          Text(abbreviatingHome("\(env.name)=\(env.value) in the environment wins")).foregroundStyle(Theme.warn)
+          Text(abbreviatingHome("\(env.name)=\(env.value) in the environment wins")).foregroundStyle(Palette.warning)
         }
       }
     }
     .font(Theme.body(11))
-    .foregroundStyle(Theme.tertiary)
+    .foregroundStyle(Palette.tertiary)
     .lineLimit(1)
     .truncationMode(.middle)
   }
@@ -257,9 +257,9 @@ private struct SettingEditor: View {
         )
         .labelsHidden()
         if let minimum, let maximum {
-          Text("\(format(minimum))\u{2013}\(format(maximum))").foregroundStyle(Theme.tertiary)
+          Text("\(format(minimum))\u{2013}\(format(maximum))").foregroundStyle(Palette.tertiary)
         } else if integer, let minimum {
-          Text("\(format(minimum)) or more").foregroundStyle(Theme.tertiary)
+          Text("\(format(minimum)) or more").foregroundStyle(Palette.tertiary)
         }
       }
     case .filePicker:
@@ -275,7 +275,7 @@ private struct SettingEditor: View {
         TextEditor(text: $draft)
           .font(Theme.mono())
           .frame(height: 64)
-          .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.border))
+          .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Palette.border))
         Button("Apply") {
           if let data = draft.data(using: .utf8), let parsed = try? JSONDecoder().decode(JSONValue.self, from: data) {
             commit(parsed)

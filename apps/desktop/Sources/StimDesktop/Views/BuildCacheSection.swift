@@ -62,7 +62,7 @@ struct BuildCacheSection: View {
           Text(
             "Last: \(last.summary)\(last.endedAt.map { " \u{00B7} \(formatAgo(context.date.timeIntervalSince($0)))" } ?? "")"
           )
-          .foregroundStyle(last.status == "ok" ? Theme.secondary : Theme.error)
+          .foregroundStyle(last.status == "ok" ? Palette.secondary : Palette.error)
           .help(last.fingerprint.map { "Fingerprint \($0)" } ?? "")
         }
         if let diagnostics = last.diagnostics, !diagnostics.isEmpty {
@@ -72,7 +72,7 @@ struct BuildCacheSection: View {
           MissReasonButton(reason: reason, help: "Why this build missed the cache")
         }
       } else {
-        Text("No build recorded").foregroundStyle(Theme.tertiary)
+        Text("No build recorded").foregroundStyle(Palette.tertiary)
       }
       let history = env.builds?.builds(for: platform) ?? []
       if !history.isEmpty {
@@ -82,7 +82,7 @@ struct BuildCacheSection: View {
         if running.platform == platform {
           BuildProgressBar(build: running, compact: true)
         } else {
-          Text("Next build: checked after the running build").foregroundStyle(Theme.tertiary)
+          Text("Next build: checked after the running build").foregroundStyle(Palette.tertiary)
         }
       } else {
         nextBuild(entry)
@@ -90,14 +90,14 @@ struct BuildCacheSection: View {
     }
     .padding(12)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
+    .background(RoundedRectangle(cornerRadius: 10).fill(Palette.surface))
   }
 
   @ViewBuilder
   private func checkedAt(_ date: Date?) -> some View {
     if let date {
       TimelineView(.periodic(from: .now, by: 30)) { context in
-        Text("Checked \(formatAgo(context.date.timeIntervalSince(date)))").foregroundStyle(Theme.tertiary)
+        Text("Checked \(formatAgo(context.date.timeIntervalSince(date)))").foregroundStyle(Palette.tertiary)
       }
     }
   }
@@ -108,12 +108,12 @@ struct BuildCacheSection: View {
     case .checking:
       HStack(spacing: 6) {
         ProgressView().controlSize(.mini)
-        Text("Checking next build\u{2026}").foregroundStyle(Theme.tertiary)
+        Text("Checking next build\u{2026}").foregroundStyle(Palette.tertiary)
       }
     case .done(.plan(let plan)):
       VStack(alignment: .leading, spacing: 2) {
         Text("Next build: \(plan.nextBuild)")
-          .foregroundStyle(plan.refusal != nil || plan.cacheHit == .none ? Theme.warn : Theme.live)
+          .foregroundStyle(plan.refusal != nil || plan.cacheHit == .none ? Palette.warning : Palette.success)
           .help(plan.detail ?? "")
         checkedAt(entry?.checkedAt)
         if let reason = plan.missReason {
@@ -121,17 +121,17 @@ struct BuildCacheSection: View {
         }
         if let refusal = plan.refusal {
           Text([refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " "))
-            .foregroundStyle(Theme.secondary)
+            .foregroundStyle(Palette.secondary)
             .textSelection(.enabled)
         }
       }
     case .done(.refused(let refusal)):
       Text("Cannot plan: \([refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " "))")
-        .foregroundStyle(Theme.warn)
+        .foregroundStyle(Palette.warning)
         .textSelection(.enabled)
         .help(refusal.code)
     case .failed(let message):
-      Text(message).foregroundStyle(Theme.error)
+      Text(message).foregroundStyle(Palette.error)
     case nil:
       EmptyView()
     }
@@ -154,7 +154,7 @@ private struct BuildHistoryList: View {
         .padding(.top, 4)
       }
     } label: {
-      Text("Recent builds (\(entries.count))").foregroundStyle(Theme.secondary)
+      Text("Recent builds (\(entries.count))").foregroundStyle(Palette.secondary)
     }
   }
 }
@@ -167,9 +167,9 @@ private struct BuildHistoryRow: View {
 
   private var color: Color {
     switch entry.result {
-    case "succeeded": return Theme.live
-    case "failed": return Theme.error
-    default: return Theme.warn
+    case "succeeded": return Palette.success
+    case "failed": return Palette.error
+    default: return Palette.warning
     }
   }
 
@@ -182,19 +182,19 @@ private struct BuildHistoryRow: View {
           HStack(alignment: .firstTextBaseline, spacing: 6) {
             Circle().fill(color).frame(width: 6, height: 6)
             Text(entry.outcome)
-              .foregroundStyle(entry.result == "succeeded" ? Theme.secondary : color)
+              .foregroundStyle(entry.result == "succeeded" ? Palette.secondary : color)
               .lineLimit(1)
             Spacer(minLength: 4)
             Text(
               [entry.build.durationMs.map { formatDuration(ms: $0) }, entry.build.endedAt.map { formatAgo(now.timeIntervalSince($0)) }]
                 .compactMap { $0 }.joined(separator: " \u{00B7} ")
             )
-            .foregroundStyle(Theme.tertiary)
+            .foregroundStyle(Palette.tertiary)
             .fixedSize()
-            Image(systemName: expanded ? "chevron.down" : "chevron.right").foregroundStyle(Theme.tertiary)
+            Image(systemName: expanded ? "chevron.down" : "chevron.right").foregroundStyle(Palette.tertiary)
           }
           if let detail = entry.detail {
-            Text(detail).foregroundStyle(Theme.tertiary).lineLimit(1).padding(.leading, 12)
+            Text(detail).foregroundStyle(Palette.tertiary).lineLimit(1).padding(.leading, 12)
           }
         }
         .contentShape(Rectangle())
@@ -205,10 +205,10 @@ private struct BuildHistoryRow: View {
           let facts = [entry.configuration, entry.build.fingerprint.map { "fingerprint \($0.prefix(8))" }]
             .compactMap { $0 }
           if !facts.isEmpty {
-            Text(facts.joined(separator: " \u{00B7} ")).foregroundStyle(Theme.tertiary)
+            Text(facts.joined(separator: " \u{00B7} ")).foregroundStyle(Palette.tertiary)
           }
           if let phases = entry.phaseLine {
-            Text(phases).foregroundStyle(Theme.tertiary)
+            Text(phases).foregroundStyle(Palette.tertiary)
           }
           if let diagnostics = entry.build.diagnostics, !diagnostics.isEmpty {
             BuildDiagnosticsView(diagnostics: diagnostics, workspace: workspace)
@@ -233,7 +233,7 @@ private struct BuildDiagnosticsView: View {
       ForEach(Array((expanded ? diagnostics : [diagnostics[0]]).enumerated()), id: \.offset) { _, diagnostic in
         Text(diagnostic.text(workspace: workspace))
           .font(Theme.mono(11))
-          .foregroundStyle(Theme.error)
+          .foregroundStyle(Palette.error)
           .fixedSize(horizontal: false, vertical: true)
           .textSelection(.enabled)
       }
@@ -261,7 +261,7 @@ private struct MissReasonButton: View {
         Text("Why: \(reason.summary)").multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
         Image(systemName: "info.circle")
       }
-      .foregroundStyle(Theme.warn)
+      .foregroundStyle(Palette.warning)
     }
     .buttonStyle(.plain)
     .help(help)
@@ -269,7 +269,7 @@ private struct MissReasonButton: View {
       VStack(alignment: .leading, spacing: 8) {
         Text(reason.summary).font(Theme.body(13, weight: .semibold)).textSelection(.enabled)
         if let line = reason.baselineLine {
-          Text(line).foregroundStyle(Theme.secondary)
+          Text(line).foregroundStyle(Palette.secondary)
         }
         if !reason.changes.isEmpty {
           VStack(alignment: .leading, spacing: 3) {
@@ -277,7 +277,7 @@ private struct MissReasonButton: View {
               HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(change.change == "added" ? "+" : change.change == "removed" ? "\u{2212}" : "~")
                   .foregroundStyle(
-                    change.change == "added" ? Theme.live : change.change == "removed" ? Theme.error : Theme.warn)
+                    change.change == "added" ? Palette.success : change.change == "removed" ? Palette.error : Palette.warning)
                 Text(change.source).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
               }
             }
@@ -286,7 +286,7 @@ private struct MissReasonButton: View {
         if reason.changeCount > reason.changes.count {
           let hidden = reason.changeCount - reason.changes.count
           Text(hidden == 1 ? "1 more source changed." : "\(hidden) more sources changed.")
-            .foregroundStyle(Theme.tertiary)
+            .foregroundStyle(Palette.tertiary)
         }
       }
       .padding(14)
@@ -302,10 +302,10 @@ struct BuildOutcomeBadge: View {
     if let label = build.outcomeLabel {
       Text(label)
         .font(Theme.body(10.5, weight: .semibold))
-        .foregroundStyle(build.outcome == "hit" ? Theme.live : Theme.warn)
+        .foregroundStyle(build.outcome == "hit" ? Palette.success : Palette.warning)
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
-        .background(Capsule().fill((build.outcome == "hit" ? Theme.live : Theme.warn).opacity(0.14)))
+        .background(Capsule().fill((build.outcome == "hit" ? Palette.success : Palette.warning).opacity(0.14)))
         .lineLimit(1)
     }
   }

@@ -35,21 +35,21 @@ struct DeviceTile: View {
         if let build {
           BuildProgressBar(build: build, compact: true).padding(.horizontal, 12).padding(.bottom, 9)
         }
-        Rectangle().fill(Theme.border).frame(height: 1)
+        Rectangle().fill(Palette.border).frame(height: 1)
         if let workspace, showsStoppedBar {
           stoppedBar(runCommand(for: device, cwd: workspace))
         } else {
           screen
             .frame(height: screenHeight)
-            .background(Theme.screen)
+            .background(Media.screen)
         }
       }
     }
     .overlay {
       if case .remote = device {
-        RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.remote, lineWidth: 2)
+        RoundedRectangle(cornerRadius: 12).strokeBorder(Palette.info, lineWidth: 2)
       } else if interactive {
-        RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.lavender, lineWidth: 2)
+        RoundedRectangle(cornerRadius: 12).strokeBorder(Palette.accent, lineWidth: 2)
       }
     }
     .frame(width: width)
@@ -58,12 +58,12 @@ struct DeviceTile: View {
   private var header: some View {
     VStack(alignment: .leading, spacing: 6) {
       HStack(spacing: 8) {
-        StatusDot(color: device.isRunning ? Theme.live : Theme.tertiary, filled: device.isRunning)
+        StatusDot(color: device.isRunning ? Palette.success : Palette.tertiary, filled: device.isRunning)
         ViewThatFits(in: .horizontal) {
           HStack(spacing: 4) {
             Text(device.label).font(Theme.body(12, weight: .semibold))
             if let detail = device.detail {
-              Text(detail).font(Theme.body(12)).foregroundStyle(Theme.secondary)
+              Text(detail).font(Theme.body(12)).foregroundStyle(Palette.secondary)
             }
           }
           Text(device.label).font(Theme.body(12, weight: .semibold))
@@ -101,7 +101,7 @@ struct DeviceTile: View {
           }
         }
         if device.appStopped {
-          Chip(tint: Theme.warn) { Text("App not running") }
+          Chip(tint: Palette.warning) { Text("App not running") }
             .fixedSize()
             .help("stim status sees no \(device.app?.id ?? "app") process on this device.")
           if let workspace, let run = runCommand(for: device, cwd: workspace) {
@@ -114,7 +114,7 @@ struct DeviceTile: View {
             .help((["stim"] + run.arguments).joined(separator: " "))
           }
         }
-        Text(source).font(Theme.body(10.5)).foregroundStyle(Theme.tertiary).lineLimit(1).fixedSize()
+        Text(source).font(Theme.body(10.5)).foregroundStyle(Palette.tertiary).lineLimit(1).fixedSize()
         if let posture = posture ?? emulatorPosture?.label {
           Chip { Text(posture) }.fixedSize()
         }
@@ -127,7 +127,7 @@ struct DeviceTile: View {
       if takenOver {
         Button("Release", systemImage: "hand.raised.fill", action: onToggleTakeOver)
           .buttonStyle(.borderedProminent)
-          .tint(Theme.lavender)
+          .tint(Palette.accent)
           .controlSize(.small)
           .fixedSize()
           .help("Release control so an agent can drive this device again.")
@@ -158,7 +158,7 @@ struct DeviceTile: View {
           ?? (isPhysical ? "Not connected." : "Shut down. Stim does not boot a device it does not own.")
       )
       .font(Theme.body(12))
-      .foregroundStyle(Theme.secondary)
+      .foregroundStyle(Palette.secondary)
       .fixedSize(horizontal: false, vertical: true)
       Spacer(minLength: 0)
       if let run {
@@ -183,7 +183,7 @@ struct DeviceTile: View {
   }
 
   @ViewBuilder private var remoteControls: some View {
-    Chip(tint: Theme.warn) { Text("billable") }
+    Chip(tint: Palette.warning) { Text("billable") }
       .fixedSize()
       .help("This remote session is billed while it runs.")
     if let workspace {
@@ -208,9 +208,9 @@ struct DeviceTile: View {
   private func activityChip(_ badge: ActivityBadge) -> some View {
     let tint: Color
     switch badge {
-    case .driven: tint = Theme.lavender
-    case .idle: tint = Theme.tertiary
-    case .unknown: tint = Theme.warn
+    case .driven: tint = Palette.accent
+    case .idle: tint = Palette.tertiary
+    case .unknown: tint = Palette.warning
     }
     return Chip(tint: tint) { Text(badge.text) }
       .fixedSize()
@@ -425,7 +425,7 @@ private struct RemotePreview: NSViewRepresentable {
     let view = WKWebView(frame: .zero, configuration: configuration)
     view.navigationDelegate = context.coordinator
     view.setValue(false, forKey: "drawsBackground")
-    view.underPageBackgroundColor = NSColor(hex: 0x0C0A11)
+    view.underPageBackgroundColor = NSColor(Media.screen)
     return view
   }
 
@@ -463,7 +463,7 @@ private struct ScreenMessage: View {
   var body: some View {
     Text(text)
       .font(Theme.body(12))
-      .foregroundStyle(Theme.tertiary)
+      .foregroundStyle(Palette.tertiary)
       .multilineTextAlignment(.center)
       .padding()
       .frame(maxWidth: .infinity, maxHeight: .infinity)

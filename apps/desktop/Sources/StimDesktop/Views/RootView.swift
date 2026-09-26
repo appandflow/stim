@@ -63,8 +63,8 @@ struct RootView: View {
     } detail: {
       detail
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.background)
-        .toolbarBackdrop(showsWorkspace ? .clear : Theme.background)
+        .background(Palette.background)
+        .toolbarBackdrop(showsWorkspace ? .clear : Palette.background)
         .overlay(alignment: .bottom) { onboardingPopup }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
         .navigationSplitViewColumnWidth(min: 440, ideal: 900)
@@ -85,9 +85,9 @@ struct RootView: View {
     .onChange(of: inspectorFits) { showsInspectorOverlay = false }
     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
     .toolbarBackground(.hidden, for: .windowToolbar)
-    .tint(Theme.purple)
+    .tint(Palette.brand)
     .font(Theme.body())
-    .foregroundStyle(Theme.text)
+    .foregroundStyle(Palette.text)
     .environmentObject(actions)
     .environmentObject(planChecks)
     .sheet(item: $actions.presented) { run in
@@ -247,14 +247,14 @@ struct MachineSummary: View {
   private func row(showsMemory: Bool, showsBar: Bool, showsReclaimable: Bool) -> some View {
     HStack(spacing: 18) {
       if let error = store.error {
-        Label(abbreviatingHome(error), systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.warn)
+        Label(abbreviatingHome(error), systemImage: "exclamationmark.triangle.fill").foregroundStyle(Palette.warning)
           .lineLimit(1)
           .frame(maxWidth: 220)
           .help(abbreviatingHome(error))
       }
       if let cap = store.payload?.capacity {
         HStack(spacing: 6) {
-          StatusDot(color: Theme.live)
+          StatusDot(color: Palette.success)
           Text("\(cap.liveCount) live")
         }
         if let cpu = metrics.totalCpu {
@@ -280,7 +280,7 @@ struct MachineSummary: View {
           HStack(spacing: 6) {
             statItem(icon: "internaldrive", value: "\(formatDisk(lowest.freeBytes)) free", tone: UsageThresholds.disk(freeBytes: lowest.freeBytes))
             if showsReclaimable, let reclaimable = metrics.reclaimable, reclaimable.bytes > 0 {
-              Text("\u{00B7} \(formatDisk(reclaimable.bytes)) reclaimable").foregroundStyle(Theme.primary)
+              Text("\u{00B7} \(formatDisk(reclaimable.bytes)) reclaimable").foregroundStyle(Palette.primary)
             }
           }
         }
@@ -293,13 +293,13 @@ struct MachineSummary: View {
       if store.watching {
         Text("live")
           .font(Theme.mono())
-          .foregroundStyle(Theme.tertiary)
+          .foregroundStyle(Palette.tertiary)
           .help("stim status --watch reports each change as it happens")
       } else if let at = store.updatedAt {
         TimelineView(.periodic(from: .now, by: 1)) { context in
           Text("\(max(0, Int(context.date.timeIntervalSince(at))))s ago")
             .font(Theme.mono())
-            .foregroundStyle(Theme.tertiary)
+            .foregroundStyle(Palette.tertiary)
         }
       }
     }
@@ -348,36 +348,36 @@ struct DiskPopover: View {
             Spacer()
             Text("\(formatDisk(volume.freeBytes)) free of \(formatDisk(volume.totalBytes))")
               .font(Theme.mono())
-              .foregroundStyle(Theme.secondary)
+              .foregroundStyle(Palette.secondary)
           }
           ProgressView(value: 1 - Double(volume.freeBytes) / Double(max(1, volume.totalBytes)))
-            .tint(volume.freeBytes < UsageThresholds.lowDiskBytes ? Theme.warn : Theme.lavender)
-          Text(volume.holds.joined(separator: ", ")).foregroundStyle(Theme.tertiary)
+            .tint(volume.freeBytes < UsageThresholds.lowDiskBytes ? Palette.warning : Palette.accent)
+          Text(volume.holds.joined(separator: ", ")).foregroundStyle(Palette.tertiary)
         }
       }
-      Rectangle().fill(Theme.border).frame(height: 1)
+      Rectangle().fill(Palette.border).frame(height: 1)
       SectionLabel(title: "Reclaimable")
       if let reclaimable {
         if reclaimable.entries == 0 {
-          Text("stim gc reports nothing to reclaim.").foregroundStyle(Theme.secondary)
+          Text("stim gc reports nothing to reclaim.").foregroundStyle(Palette.secondary)
         } else {
-          Text(formatDisk(reclaimable.bytes)).font(Theme.heading(20)).foregroundStyle(Theme.primary)
+          Text(formatDisk(reclaimable.bytes)).font(Theme.heading(20)).foregroundStyle(Palette.primary)
           Text(
             "\(reclaimable.entries) \(reclaimable.entries == 1 ? "entry" : "entries")"
               + (reclaimable.unsized > 0 ? ", \(reclaimable.unsized) of unknown size" : "")
           )
-          .foregroundStyle(Theme.secondary)
+          .foregroundStyle(Palette.secondary)
         }
         CommandText(command: "stim gc")
       } else {
-        Text("Needs a stim version with gc --json.").foregroundStyle(Theme.secondary)
+        Text("Needs a stim version with gc --json.").foregroundStyle(Palette.secondary)
       }
     }
     .font(Theme.body(12))
-    .foregroundStyle(Theme.text)
+    .foregroundStyle(Palette.text)
     .padding(18)
     .frame(width: 340)
-    .background(Theme.sidebar)
+    .background(Palette.sidebar)
   }
 }
 

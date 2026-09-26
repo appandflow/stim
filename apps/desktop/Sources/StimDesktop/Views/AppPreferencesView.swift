@@ -85,7 +85,7 @@ struct AppPreferencesView: View {
         Toggle("Reclaim space when free disk is under the Stim budget", isOn: $actsOnPressure)
         Toggle("Remove worktrees whose pull request was merged or closed", isOn: $removesFinishedWorktrees)
         if removesFinishedWorktrees, let problem = autopilot.pullRequestCheck {
-          Text(problem).font(Theme.body(11.5)).foregroundStyle(Theme.warn)
+          Text(problem).font(Theme.body(11.5)).foregroundStyle(Palette.warning)
         }
       } header: {
         Text("Autopilot")
@@ -95,12 +95,12 @@ struct AppPreferencesView: View {
         )
         .multilineTextAlignment(.leading)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .foregroundStyle(Theme.tertiary)
+        .foregroundStyle(Palette.tertiary)
       }
 
       Section {
         if autopilot.log.isEmpty {
-          Text("No runs yet.").foregroundStyle(Theme.tertiary)
+          Text("No runs yet.").foregroundStyle(Palette.tertiary)
         } else {
           ForEach(autopilot.log.prefix(50)) { entry in AutopilotLogRow(entry: entry) }
         }
@@ -117,7 +117,7 @@ struct AppPreferencesView: View {
       Section("Notifications") {
         if !Notifier.isAvailable {
           Text("Notifications need the bundled app; `swift run` cannot post them.")
-            .foregroundStyle(Theme.tertiary)
+            .foregroundStyle(Palette.tertiary)
         }
         ForEach(StatusEvent.Kind.allCases, id: \.self) { kind in
           NotificationToggle(kind: kind)
@@ -136,7 +136,7 @@ struct AppPreferencesView: View {
         Toggle("Launch at login", isOn: $launchesAtLogin)
           .onChange(of: launchesAtLogin) { _, enabled in setLaunchAtLogin(enabled) }
         if let loginError {
-          Text(abbreviatingHome(loginError)).foregroundStyle(Theme.error)
+          Text(abbreviatingHome(loginError)).foregroundStyle(Palette.error)
         }
       }
 
@@ -147,7 +147,7 @@ struct AppPreferencesView: View {
         Text("Updates")
       } footer: {
         if !updater.isAvailable {
-          Text("This build has no update key, so it never checks for updates.").foregroundStyle(Theme.tertiary)
+          Text("This build has no update key, so it never checks for updates.").foregroundStyle(Palette.tertiary)
         }
       }
 
@@ -157,12 +157,12 @@ struct AppPreferencesView: View {
           Button("Choose\u{2026}", action: chooseExecutable)
         }
         Text("Overrides STIM_BIN and PATH. Takes effect the next time Stim Desktop starts.")
-          .foregroundStyle(Theme.tertiary)
+          .foregroundStyle(Palette.tertiary)
       }
     }
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
-    .background(Theme.background)
+    .background(Palette.background)
   }
 
   private func appPicker(_ title: String, selection: Binding<String>, apps: [ExternalApp]) -> some View {
@@ -218,16 +218,16 @@ private struct AutopilotLogRow: View {
   var body: some View {
     HStack(alignment: .firstTextBaseline, spacing: 10) {
       Image(systemName: entry.exitStatus == 0 ? "checkmark.circle.fill" : "xmark.octagon.fill")
-        .foregroundStyle(entry.exitStatus == 0 ? Theme.live : Theme.error)
+        .foregroundStyle(entry.exitStatus == 0 ? Palette.success : Palette.error)
       VStack(alignment: .leading, spacing: 2) {
         HStack {
           Text(entry.trigger.title)
           Spacer()
-          Text(entry.date.formatted(date: .abbreviated, time: .shortened)).foregroundStyle(Theme.tertiary)
+          Text(entry.date.formatted(date: .abbreviated, time: .shortened)).foregroundStyle(Palette.tertiary)
         }
-        Text(abbreviatingHome(entry.command)).font(Theme.mono()).foregroundStyle(Theme.secondary)
+        Text(abbreviatingHome(entry.command)).font(Theme.mono()).foregroundStyle(Palette.secondary)
         if let note = entry.note {
-          Text(abbreviatingHome(note)).font(Theme.body(11.5)).foregroundStyle(Theme.tertiary).lineLimit(2)
+          Text(abbreviatingHome(note)).font(Theme.body(11.5)).foregroundStyle(Palette.tertiary).lineLimit(2)
         }
       }
     }

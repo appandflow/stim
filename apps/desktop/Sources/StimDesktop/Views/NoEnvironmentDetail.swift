@@ -14,15 +14,15 @@ struct NoEnvironmentDetail: View {
             Text(names.title).font(Theme.heading(22))
             Chip(tint: nil) { Text("no environment") }
           }
-          Text(abbreviatingHome(worktree.path)).font(Theme.mono()).foregroundStyle(Theme.secondary).textSelection(.enabled)
+          Text(abbreviatingHome(worktree.path)).font(Theme.mono()).foregroundStyle(Palette.secondary).textSelection(.enabled)
           if let branch = worktree.branch {
-            Label(branch, systemImage: "arrow.triangle.branch").foregroundStyle(Theme.secondary)
+            Label(branch, systemImage: "arrow.triangle.branch").foregroundStyle(Palette.secondary)
           }
         }
         VStack(alignment: .leading, spacing: 10) {
           SectionLabel(title: "Create an environment")
           Text("Stim has not registered this worktree yet. Any of these commands creates its environment.")
-            .foregroundStyle(Theme.secondary)
+            .foregroundStyle(Palette.secondary)
           ForEach(environmentCommands(worktree: worktree.path), id: \.self) { command in
             HStack(spacing: 10) {
               CommandText(command: command.displayLine())

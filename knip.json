@@ -9,6 +9,9 @@
     "scripts/agent-benchmark/watch-app.mjs"
   ],
   "workspaces": {
+    ".": {
+      "entry": ["apps/desktop/scripts/*.mjs"]
+    },
     "packages/server": {
       "ignoreDependencies": ["stim"]
     }

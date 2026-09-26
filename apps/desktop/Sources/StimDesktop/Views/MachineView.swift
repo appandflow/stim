@@ -78,12 +78,12 @@ struct MachineView: View {
       VStack(alignment: .leading, spacing: 4) {
         Text("Machine").font(Theme.heading(22))
         Text("What uses this Mac's disk, largest first, and what Stim can free.")
-          .foregroundStyle(Theme.secondary)
+          .foregroundStyle(Palette.secondary)
       }
       Spacer()
       if let at = storage.measuredAt, !storage.measuring, !metrics.gcRunning {
         TimelineView(.periodic(from: .now, by: 30)) { context in
-          Text("Measured \(formatAgo(context.date.timeIntervalSince(at)))").foregroundStyle(Theme.tertiary)
+          Text("Measured \(formatAgo(context.date.timeIntervalSince(at)))").foregroundStyle(Palette.tertiary)
         }
       }
       Button("Refresh") {
@@ -97,13 +97,13 @@ struct MachineView: View {
 
   private func pressureBanner(_ plan: PressurePlan) -> some View {
     HStack(alignment: .top, spacing: 14) {
-      Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.warn).font(.system(size: 18))
+      Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Palette.warning).font(.system(size: 18))
       VStack(alignment: .leading, spacing: 4) {
         Text(plan.headline).font(Theme.body(13, weight: .semibold))
-        Text(plan.proposal).foregroundStyle(Theme.secondary)
+        Text(plan.proposal).foregroundStyle(Palette.secondary)
         if plan.belowHardFloor {
           Text("Below the hard floor, stim start, ios and android refuse with STIM_LOW_DISK.")
-            .foregroundStyle(Theme.warn)
+            .foregroundStyle(Palette.warning)
         }
       }
       Spacer()
@@ -114,20 +114,20 @@ struct MachineView: View {
       }
     }
     .padding(16)
-    .background(RoundedRectangle(cornerRadius: 12).fill(Theme.warn.opacity(0.12)))
-    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.warn.opacity(0.35)))
+    .background(RoundedRectangle(cornerRadius: 12).fill(Palette.warning.opacity(0.12)))
+    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Palette.warning.opacity(0.35)))
   }
 
   // MARK: Headline
 
   private static func color(_ category: DiskCategory) -> Color {
     switch category {
-    case .stimDevices: return Theme.primary
-    case .stimCaches: return Theme.lavender.opacity(0.55)
-    case .nodeModules: return Theme.remote
-    case .otherDevices: return Theme.warn
-    case .runtimes: return Theme.error.opacity(0.75)
-    case .otherTools: return Theme.tertiary.opacity(0.6)
+    case .stimDevices: return Palette.primary
+    case .stimCaches: return Palette.accent.opacity(0.55)
+    case .nodeModules: return Palette.info
+    case .otherDevices: return Palette.warning
+    case .runtimes: return Palette.error.opacity(0.75)
+    case .otherTools: return Palette.tertiary.opacity(0.6)
     }
   }
 
@@ -141,16 +141,16 @@ struct MachineView: View {
       HStack(alignment: .firstTextBaseline, spacing: 10) {
         Text(lowest.map { formatDisk($0.freeBytes) } ?? "\u{2014}")
           .font(Theme.heading(26))
-          .foregroundStyle(under ? Theme.warn : Theme.text)
+          .foregroundStyle(under ? Palette.warning : Palette.text)
         VStack(alignment: .leading, spacing: 2) {
           Text(lowest.map { "free on \($0.name) of \(formatDisk($0.totalBytes))" } ?? "free")
-            .foregroundStyle(Theme.secondary)
+            .foregroundStyle(Palette.secondary)
           Text(
             budget.map { under ? "Under the \(formatDisk($0)) Stim budget" : "Stim budget \(formatDisk($0)) free" }
               ?? "No Stim disk budget set"
           )
           .font(Theme.body(11.5))
-          .foregroundStyle(under ? Theme.warn : Theme.tertiary)
+          .foregroundStyle(under ? Palette.warning : Palette.tertiary)
         }
         Spacer()
       }
@@ -173,10 +173,10 @@ struct MachineView: View {
         ForEach(categories, id: \.0) { category, value in
           HStack(spacing: 6) {
             RoundedRectangle(cornerRadius: 2).fill(Self.color(category)).frame(width: 9, height: 9)
-            Text(category.title).foregroundStyle(Theme.secondary)
+            Text(category.title).foregroundStyle(Palette.secondary)
             Text(value.complete ? formatDisk(value.bytes) : value.bytes == 0 ? "\u{2014}" : "\u{2265} " + formatDisk(value.bytes))
               .font(Theme.mono(11.5))
-              .foregroundStyle(value.complete ? Theme.text : Theme.tertiary)
+              .foregroundStyle(value.complete ? Palette.text : Palette.tertiary)
               .help(value.complete ? "" : "Some of it is still being measured or could not be sized")
           }
         }
@@ -184,8 +184,8 @@ struct MachineView: View {
       .font(Theme.body(12))
     }
     .padding(18)
-    .background(RoundedRectangle(cornerRadius: 12).fill(Theme.surface))
-    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border))
+    .background(RoundedRectangle(cornerRadius: 12).fill(Palette.surface))
+    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Palette.border))
   }
 
   // MARK: Safe to free now
@@ -197,7 +197,7 @@ struct MachineView: View {
     return VStack(alignment: .leading, spacing: 10) {
       HStack(alignment: .firstTextBaseline, spacing: 8) {
         Text("Safe to free now").font(Theme.heading(15))
-        Text("\(report.free.count)").foregroundStyle(Theme.tertiary)
+        Text("\(report.free.count)").foregroundStyle(Palette.tertiary)
         Spacer()
         if let active = actions.active(for: ActionCenter.machineKey) {
           Button {
@@ -217,14 +217,14 @@ struct MachineView: View {
         }
       }
       if metrics.gcReport == nil {
-        Text(metrics.gcRunning ? "Waiting for stim gc\u{2026}" : "stim gc has not reported yet.").foregroundStyle(Theme.tertiary)
+        Text(metrics.gcRunning ? "Waiting for stim gc\u{2026}" : "stim gc has not reported yet.").foregroundStyle(Palette.tertiary)
       } else if report.free.isEmpty {
-        Text("stim gc found nothing to free.").foregroundStyle(Theme.tertiary)
+        Text("stim gc found nothing to free.").foregroundStyle(Palette.tertiary)
       } else {
         Card {
           VStack(spacing: 0) {
             ForEach(Array(report.free.enumerated()), id: \.element.id) { index, item in
-              if index > 0 { Rectangle().fill(Theme.border).frame(height: 1) }
+              if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
               freeRow(item, selected: selected)
             }
           }
@@ -233,7 +233,7 @@ struct MachineView: View {
           "Rows marked stim gc are freed together by one stim gc --delete, which also frees the worktree and build outputs rows. Free previews or confirms its commands first."
         )
         .font(Theme.body(11.5))
-        .foregroundStyle(Theme.tertiary)
+        .foregroundStyle(Palette.tertiary)
       }
     }
   }
@@ -260,7 +260,7 @@ struct MachineView: View {
           Text(freeTitle(item)).lineLimit(1).truncationMode(.middle)
           Chip(tint: nil) { Text(actionLabel(item.action)) }
         }
-        Text(abbreviatingHome(item.detail)).font(Theme.body(11.5)).foregroundStyle(Theme.secondary).lineLimit(1)
+        Text(abbreviatingHome(item.detail)).font(Theme.body(11.5)).foregroundStyle(Palette.secondary).lineLimit(1)
           .truncationMode(.middle)
       }
       Spacer()
@@ -299,28 +299,28 @@ struct MachineView: View {
     VStack(alignment: .leading, spacing: 10) {
       HStack(spacing: 8) {
         Text("Projects").font(Theme.heading(15))
-        Text("\(report.repositories.count)").foregroundStyle(Theme.tertiary)
+        Text("\(report.repositories.count)").foregroundStyle(Palette.tertiary)
         Spacer()
         if storage.hasGitHubCLI == false {
           Text("Install the GitHub CLI (gh) to show open pull requests.").font(Theme.body(11.5))
-            .foregroundStyle(Theme.tertiary)
+            .foregroundStyle(Palette.tertiary)
         }
       }
       if report.repositories.isEmpty {
-        Text("stim status reports no workspaces.").foregroundStyle(Theme.tertiary)
+        Text("stim status reports no workspaces.").foregroundStyle(Palette.tertiary)
       } else {
         Card {
           VStack(spacing: 0) {
             if !compact { columnHeader }
             ForEach(Array(report.repositories.enumerated()), id: \.element.id) { index, repository in
-              if index > 0 || !compact { Rectangle().fill(Theme.border).frame(height: 1) }
+              if index > 0 || !compact { Rectangle().fill(Palette.border).frame(height: 1) }
               if repository.worktrees.count == 1, let workspace = repository.worktrees.first {
                 workspaceRow(workspace, nested: false)
               } else {
                 repositoryRow(repository)
                 if expanded.contains(repository.id) {
                   ForEach(repository.worktrees) { workspace in
-                    Rectangle().fill(Theme.border.opacity(0.6)).frame(height: 1).padding(.leading, 36)
+                    Rectangle().fill(Palette.border.opacity(0.6)).frame(height: 1).padding(.leading, 36)
                     workspaceRow(workspace, nested: true)
                   }
                 }
@@ -344,7 +344,7 @@ struct MachineView: View {
       Color.clear.frame(width: 28)
     }
     .font(Theme.body(11, weight: .medium))
-    .foregroundStyle(Theme.tertiary)
+    .foregroundStyle(Palette.tertiary)
     .padding(.horizontal, 16)
     .padding(.vertical, 8)
   }
@@ -357,10 +357,10 @@ struct MachineView: View {
       HStack(spacing: 12) {
         Image(systemName: open ? "chevron.down" : "chevron.right")
           .font(.system(size: 11, weight: .semibold))
-          .foregroundStyle(Theme.tertiary)
+          .foregroundStyle(Palette.tertiary)
           .frame(width: 12)
         Text(repository.name).font(Theme.body(13, weight: .semibold)).lineLimit(1)
-        Text("\(repository.worktrees.count) worktrees").foregroundStyle(Theme.tertiary)
+        Text("\(repository.worktrees.count) worktrees").foregroundStyle(Palette.tertiary)
         Spacer()
         totalText(repository.total, complete: repository.totalComplete)
         Color.clear.frame(width: 28)
@@ -383,10 +383,10 @@ struct MachineView: View {
         if compact {
           HStack(spacing: 6) {
             lifecycleChip(lifecycle, workspace: workspace)
-            Text(breakdown(workspace)).font(Theme.body(11)).foregroundStyle(Theme.secondary).lineLimit(1)
+            Text(breakdown(workspace)).font(Theme.body(11)).foregroundStyle(Palette.secondary).lineLimit(1)
           }
         } else if let inCheckout = names.inCheckout {
-          Text(inCheckout).font(Theme.body(11)).foregroundStyle(Theme.secondary).lineLimit(1)
+          Text(inCheckout).font(Theme.body(11)).foregroundStyle(Palette.secondary).lineLimit(1)
         }
       }
       .help(abbreviatingHome(workspace.path))
@@ -402,17 +402,17 @@ struct MachineView: View {
             if case .size = workspace.buildOutputs {
               Image(systemName: workspace.buildOutputsKept == nil ? "trash" : "lock")
                 .font(.system(size: 9))
-                .foregroundStyle(workspace.buildOutputsKept == nil ? Theme.warn : Theme.tertiary)
+                .foregroundStyle(workspace.buildOutputsKept == nil ? Palette.warning : Palette.tertiary)
                 .help(workspace.buildOutputsKept.map { "Kept by stim gc --delete: \(abbreviatingHome($0))" } ?? "stim gc --delete clears these")
             }
           }
         size(workspace.logs)
           .overlay(alignment: .leading) {
             if let trimmed = workspace.logsTrimmed {
-              Image(systemName: "scissors").font(.system(size: 9)).foregroundStyle(Theme.warn)
+              Image(systemName: "scissors").font(.system(size: 9)).foregroundStyle(Palette.warning)
                 .help("stim gc --delete trims \(formatDisk(trimmed)) from logs over twice the 8 MiB cap")
             } else if let kept = workspace.logsKept {
-              Image(systemName: "lock").font(.system(size: 9)).foregroundStyle(Theme.tertiary)
+              Image(systemName: "lock").font(.system(size: 9)).foregroundStyle(Palette.tertiary)
                 .help("Logs over the cap, kept by stim gc --delete: \(abbreviatingHome(kept))")
             }
           }
@@ -447,25 +447,25 @@ struct MachineView: View {
   @ViewBuilder
   private func lifecycleChip(_ lifecycle: WorktreeLifecycle?, workspace: WorkspaceStorage) -> some View {
     if workspace.missing {
-      Chip(tint: Theme.warn) { Text("Folder gone") }
+      Chip(tint: Palette.warning) { Text("Folder gone") }
         .help("stim gc --delete drops this project's record and deletes its owned devices")
     } else {
       switch lifecycle {
       case .merged:
-        Chip(tint: Theme.live) { Text(lifecycle!.title) }.help(abbreviatingHome(workspace.worktree?.detail ?? ""))
+        Chip(tint: Palette.success) { Text(lifecycle!.title) }.help(abbreviatingHome(workspace.worktree?.detail ?? ""))
       case .pullRequest(_, let url):
         Button { URL(string: url).map { _ = NSWorkspace.shared.open($0) } } label: {
-          Chip(tint: Theme.remote) { Text(lifecycle!.title) }
+          Chip(tint: Palette.info) { Text(lifecycle!.title) }
         }
         .buttonStyle(.plain)
         .help(url)
       case .stale:
-        Chip(tint: Theme.warn) { Text(lifecycle!.title) }.help("No recorded use for that long")
+        Chip(tint: Palette.warning) { Text(lifecycle!.title) }.help("No recorded use for that long")
       case .active:
-        Text(workspace.unprovisioned ? "Not warmed" : "Active").foregroundStyle(Theme.tertiary)
+        Text(workspace.unprovisioned ? "Not warmed" : "Active").foregroundStyle(Palette.tertiary)
       case nil:
         Text(workspace.unprovisioned ? "Not warmed" : metrics.gcReport == nil ? "\u{2014}" : "Checkout")
-          .foregroundStyle(Theme.tertiary)
+          .foregroundStyle(Palette.tertiary)
           .help(workspace.unprovisioned ? "A linked worktree stim worktree warm has not set up" : "A source checkout; stim gc never removes it")
       }
     }
@@ -478,13 +478,13 @@ struct MachineView: View {
     return VStack(alignment: .leading, spacing: 10) {
       HStack(spacing: 8) {
         Text("Simulators and emulators").font(Theme.heading(15))
-        Text("\(report.devices.count)").foregroundStyle(Theme.tertiary)
+        Text("\(report.devices.count)").foregroundStyle(Palette.tertiary)
       }
       Text("Stim acts only on devices this Stim home created. The others are listed so you can see their size; manage them in Xcode or Android Studio.")
         .font(Theme.body(11.5))
-        .foregroundStyle(Theme.tertiary)
+        .foregroundStyle(Palette.tertiary)
       ForEach(report.inventoryNotices, id: \.self) { notice in
-        Label(notice, systemImage: "exclamationmark.triangle").font(Theme.body(11.5)).foregroundStyle(Theme.warn)
+        Label(notice, systemImage: "exclamationmark.triangle").font(Theme.body(11.5)).foregroundStyle(Palette.warning)
       }
       if !report.hasInventory {
         inventoryMissing
@@ -492,16 +492,16 @@ struct MachineView: View {
         Card {
           VStack(spacing: 0) {
             ForEach(Array(shown.enumerated()), id: \.element.id) { index, device in
-              if index > 0 { Rectangle().fill(Theme.border).frame(height: 1) }
+              if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
               deviceRow(device)
             }
             if report.devices.count > Self.deviceLimit {
-              Rectangle().fill(Theme.border).frame(height: 1)
+              Rectangle().fill(Palette.border).frame(height: 1)
               Button(showsAllDevices ? "Show the largest \(Self.deviceLimit)" : "Show all \(report.devices.count)") {
                 showsAllDevices.toggle()
               }
               .buttonStyle(.plain)
-              .foregroundStyle(Theme.primary)
+              .foregroundStyle(Palette.primary)
               .padding(10)
             }
           }
@@ -512,9 +512,9 @@ struct MachineView: View {
 
   @ViewBuilder private var inventoryMissing: some View {
     if metrics.gcReport == nil {
-      Text(metrics.gcRunning ? "Waiting for stim gc\u{2026}" : "stim gc has not reported yet.").foregroundStyle(Theme.tertiary)
+      Text(metrics.gcRunning ? "Waiting for stim gc\u{2026}" : "stim gc has not reported yet.").foregroundStyle(Palette.tertiary)
     } else {
-      Text("Update stim to list every simulator, AVD, runtime and system image here.").foregroundStyle(Theme.tertiary)
+      Text("Update stim to list every simulator, AVD, runtime and system image here.").foregroundStyle(Palette.tertiary)
     }
   }
 
@@ -524,18 +524,18 @@ struct MachineView: View {
       .compactMap { $0 }.joined(separator: " \u{00B7} ")
     return HStack(spacing: 12) {
       Image(systemName: device.kind == "ios" ? "iphone" : "smartphone")
-        .foregroundStyle(entry.isStim ? Theme.lavender : Theme.tertiary)
+        .foregroundStyle(entry.isStim ? Palette.accent : Palette.tertiary)
         .frame(width: 16)
       VStack(alignment: .leading, spacing: 2) {
         Text(device.name).lineLimit(1).truncationMode(.middle)
-        Text(subtitle).font(Theme.body(11)).foregroundStyle(Theme.secondary).lineLimit(1)
+        Text(subtitle).font(Theme.body(11)).foregroundStyle(Palette.secondary).lineLimit(1)
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       .help(device.directory.map { abbreviatingHome($0) } ?? device.id)
       owner(entry).frame(width: compact ? 150 : 200, alignment: .leading)
       if !compact {
         Text(entry.lastUsed.map(lastUsed) ?? "\u{2014}")
-          .foregroundStyle(Theme.tertiary)
+          .foregroundStyle(Palette.tertiary)
           .frame(width: 90, alignment: .trailing)
           .help(entry.lastUsed == nil ? "Never booted, or its last use is not recorded" : "Last used")
       }
@@ -559,16 +559,16 @@ struct MachineView: View {
     switch device.owner {
     case .workspace:
       let name = device.project.map { status.names(ofPath: $0).title } ?? "a workspace"
-      Chip(tint: Theme.primary) {
+      Chip(tint: Palette.primary) {
         Text("Stim \u{00B7} \(name)" + (device.slot.map { $0 == "default" ? "" : " (\($0))" } ?? ""))
           .lineLimit(1).truncationMode(.middle)
       }
       .help(device.project.map { abbreviatingHome($0) } ?? "")
     case .parked:
-      Chip(tint: Theme.primary) { Text("Stim \u{00B7} parked") }
+      Chip(tint: Palette.primary) { Text("Stim \u{00B7} parked") }
         .help("Kept for reuse by the next workspace; stim gc --delete deletes it")
     case .orphaned:
-      Chip(tint: Theme.warn) { Text("Stim \u{00B7} no workspace") }
+      Chip(tint: Palette.warning) { Text("Stim \u{00B7} no workspace") }
         .help("This Stim home created it and no workspace uses it; stim gc --delete deletes it")
     case .otherStimHome:
       Chip(tint: nil) { Text("Another Stim home") }
@@ -591,23 +591,23 @@ struct MachineView: View {
       HStack(spacing: 8) {
         Text("Runtimes and system images").font(Theme.heading(15))
         if !unused.isEmpty {
-          Chip(tint: Theme.warn) {
+          Chip(tint: Palette.warning) {
             Text("\(unused.count) unused \u{00B7} \(formatDisk(unused.compactMap(\.size.bytes).reduce(0, +)))")
           }
         }
       }
       Text("Stim never deletes these. Copy the vendor command to remove one no device uses.")
         .font(Theme.body(11.5))
-        .foregroundStyle(Theme.tertiary)
+        .foregroundStyle(Palette.tertiary)
       if !report.hasInventory {
         inventoryMissing
       } else if report.runtimes.isEmpty {
-        Text("No simulator runtime or Android system image is installed.").foregroundStyle(Theme.tertiary)
+        Text("No simulator runtime or Android system image is installed.").foregroundStyle(Palette.tertiary)
       } else {
         Card {
           VStack(spacing: 0) {
             ForEach(Array(report.runtimes.enumerated()), id: \.element.id) { index, runtime in
-              if index > 0 { Rectangle().fill(Theme.border).frame(height: 1) }
+              if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
               runtimeRow(runtime)
             }
           }
@@ -619,17 +619,17 @@ struct MachineView: View {
   private func runtimeRow(_ runtime: RuntimeStorage) -> some View {
     HStack(spacing: 12) {
       Image(systemName: runtime.id.hasPrefix("system-images;") ? "square.stack.3d.up" : "cpu")
-        .foregroundStyle(runtime.unused ? Theme.warn : Theme.tertiary)
+        .foregroundStyle(runtime.unused ? Palette.warning : Palette.tertiary)
         .frame(width: 16)
       VStack(alignment: .leading, spacing: 2) {
         Text(runtime.title).lineLimit(1)
-        if let detail = runtime.detail { Text(detail).font(Theme.body(11)).foregroundStyle(Theme.secondary).lineLimit(1) }
+        if let detail = runtime.detail { Text(detail).font(Theme.body(11)).foregroundStyle(Palette.secondary).lineLimit(1) }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       if runtime.unused {
-        Chip(tint: Theme.warn) { Text("Unused") }
+        Chip(tint: Palette.warning) { Text("Unused") }
       } else {
-        Text(runtime.deviceCount == 1 ? "1 device" : "\(runtime.deviceCount) devices").foregroundStyle(Theme.secondary)
+        Text(runtime.deviceCount == 1 ? "1 device" : "\(runtime.deviceCount) devices").foregroundStyle(Palette.secondary)
       }
       size(runtime.size, reason: runtime.size == .notMeasured ? "simctl does not report its size" : nil)
       Group {
@@ -643,7 +643,7 @@ struct MachineView: View {
           .buttonStyle(.stim(runtime.unused ? .primary : .secondary))
           .help("Copies: \(command)")
         } else {
-          Text("\u{2014}").foregroundStyle(Theme.tertiary).help("simctl reports no delete command for it")
+          Text("\u{2014}").foregroundStyle(Palette.tertiary).help("simctl reports no delete command for it")
         }
       }
       .frame(width: 80, alignment: .trailing)
@@ -659,17 +659,17 @@ struct MachineView: View {
       Text("Other tools").font(Theme.heading(15))
       Text("Space Xcode, Gradle and other apps use. Stim never deletes these; clear them from the tool that owns them.")
         .font(Theme.body(11.5))
-        .foregroundStyle(Theme.tertiary)
+        .foregroundStyle(Palette.tertiary)
       Card {
         VStack(spacing: 0) {
           ForEach(Array(report.unmanaged.enumerated()), id: \.element.id) { index, location in
-            if index > 0 { Rectangle().fill(Theme.border).frame(height: 1) }
+            if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
             HStack(spacing: 12) {
-              Image(systemName: "folder").foregroundStyle(Theme.tertiary).frame(width: 16)
+              Image(systemName: "folder").foregroundStyle(Palette.tertiary).frame(width: 16)
               VStack(alignment: .leading, spacing: 2) {
                 Text(location.title)
                 Text(abbreviatingHome(location.detail ?? location.path ?? "")).font(Theme.body(11))
-                  .foregroundStyle(Theme.secondary).lineLimit(1).truncationMode(.middle)
+                  .foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle)
               }
               Spacer()
               size(location.size)
@@ -690,7 +690,7 @@ struct MachineView: View {
   private func totalText(_ total: Int64?, complete: Bool) -> some View {
     Text(total.map { (complete ? "" : "\u{2265} ") + formatDisk($0) } ?? "\u{2026}")
       .font(Theme.mono(11.5)).fontWeight(.semibold)
-      .foregroundStyle(complete ? Theme.text : Theme.tertiary)
+      .foregroundStyle(complete ? Palette.text : Palette.tertiary)
       .frame(width: Self.sizeWidth, alignment: .trailing)
       .help(complete ? "" : total == nil ? "Measuring" : "Some parts are not sized yet")
   }
@@ -707,7 +707,7 @@ struct MachineView: View {
     }
     return Text(text)
       .font(Theme.mono(11.5))
-      .foregroundStyle(measurement.bytes.map { $0 > 0 } == true ? Theme.text : Theme.tertiary)
+      .foregroundStyle(measurement.bytes.map { $0 > 0 } == true ? Palette.text : Palette.tertiary)
       .frame(width: Self.sizeWidth, alignment: .trailing)
       .help(override ?? reason)
   }
