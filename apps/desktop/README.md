@@ -294,7 +294,11 @@ next write fails. A server the app did not start keeps running after the app
 quits. `stim-server` is found on the login shell's `PATH`, or at the path you
 choose in the same tab. While a server runs, the tab re-checks it every 5
 seconds, and the pairing and device commands use the `STIM_HOME` its health
-reports, so they act on that server's pairing state.
+reports, so they act on that server's pairing state. When that `STIM_HOME` is
+not `~/.stim`, the tab names it and warns that phones paired now are stored
+there. This happens when Stim Desktop was launched with another `STIM_HOME`, or
+adopted a server started with one. Those phones stop working once Stim Desktop
+serves `~/.stim` again.
 
 A read-only phone sees workspaces, devices and logs. A phone allowed to control
 can also drive simulators and emulators and run reload and stop.
