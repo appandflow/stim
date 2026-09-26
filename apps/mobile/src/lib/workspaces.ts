@@ -52,8 +52,8 @@ export function repositoryRoots(payload: Pick<StatusPayload, 'environments' | 'u
   for (const { path, worktree } of payload.environments) {
     roots.add(worktreeRoot(path) ?? worktree?.repository ?? path);
   }
-  for (const { path } of payload.unprovisionedWorktrees ?? []) {
-    const root = worktreeRoot(path);
+  for (const { path, repository } of payload.unprovisionedWorktrees ?? []) {
+    const root = worktreeRoot(path) ?? repository;
     if (root) roots.add(root);
   }
   return [...roots];
@@ -74,17 +74,41 @@ export function projectOf(env: Pick<EnvironmentState, 'path' | 'worktree'>, root
   return { key: root, name: basename(root) };
 }
 
-/** Where the workspace sits inside its checkout, such as `apps/tlon-mobile`; null at the checkout root. */
-export function pathInCheckout(env: Pick<EnvironmentState, 'path' | 'worktree'>, roots: string[]): string | null {
-  const parts = env.path.split('/');
-  let checkout: string | null = null;
-  for (let i = parts.length - 2; i > 0 && checkout === null; i--) {
+/** The `.worktrees/<name>` or `.claude/worktrees/<name>` folder holding `path`. */
+function markedCheckout(path: string): string | null {
+  const parts = path.split('/');
+  for (let i = parts.length - 2; i > 0; i--) {
     if (parts[i] === '.worktrees' || (parts[i] === 'worktrees' && parts[i - 1] === '.claude')) {
-      checkout = parts.slice(0, i + 2).join('/');
+      return parts.slice(0, i + 2).join('/');
     }
   }
-  checkout ??= env.worktree?.path ?? projectOf(env, roots).key;
+  return null;
+}
+
+/** Where the workspace sits inside its checkout, such as `apps/tlon-mobile`; null at the checkout root. */
+export function pathInCheckout(env: Pick<EnvironmentState, 'path' | 'worktree'>, roots: string[]): string | null {
+  const checkout = markedCheckout(env.path) ?? env.worktree?.path ?? projectOf(env, roots).key;
   return env.path.startsWith(`${checkout}/`) ? env.path.slice(checkout.length + 1) : null;
+}
+
+/**
+ * A workspace's name: its worktree's branch, else the worktree's folder, else the project for a main checkout.
+ * `stim status` reports worktree facts only for linked worktrees, so a nested app in a repository with no known
+ * worktree is its own project and is named after its folder.
+ */
+export function workspaceTitle(env: Pick<EnvironmentState, 'path' | 'worktree'>, roots: string[]): string {
+  if (env.worktree?.branch) return env.worktree.branch;
+  const checkout = env.worktree?.path ?? markedCheckout(env.path);
+  return checkout ? basename(checkout) : projectOf(env, roots).name;
+}
+
+/** `workspaceTitle` of the workspace at `path` in `status`, or a name from the path alone when status lacks it. */
+export function workspaceTitleAt(
+  path: string,
+  status: Pick<StatusPayload, 'environments' | 'unprovisionedWorktrees'> | null | undefined,
+): string {
+  const env = status?.environments.find((e) => e.path === path);
+  return env && status ? workspaceTitle(env, repositoryRoots(status)) : workspaceNames(path).title;
 }
 
 export function isActive(env: EnvironmentState): boolean {

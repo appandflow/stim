@@ -26,7 +26,7 @@ import {
   projectOf,
   repositoryRoots,
   runningBuild,
-  workspaceNames,
+  workspaceTitleAt,
 } from '@/lib/workspaces';
 import type { ActionName, Platform as DevicePlatform } from '@/protocol/types';
 import { mono, useColors } from '@/theme';
@@ -41,9 +41,11 @@ export function WorkspaceDetail({ path }: { path: string }) {
   const { mac, state, home, connection } = useMacConnection();
   const status = useStatus();
   const env = status?.environments.find((e) => e.path === path);
-  const names = workspaceNames(path);
+  const title = workspaceTitleAt(path, status);
   const macId = mac?.id ?? '';
-  const project = status && env ? projectOf(env, repositoryRoots(status)).name : null;
+  const roots = status ? repositoryRoots(status) : [];
+  const project = status && env ? projectOf(env, roots).name : null;
+  const inCheckout = env ? pathInCheckout(env, roots) : null;
   const actions = useAction(path);
   const [toast, setToast] = useState<Toast | null>(null);
   const dismissToast = useCallback(() => setToast(null), []);
@@ -54,11 +56,11 @@ export function WorkspaceDetail({ path }: { path: string }) {
 
   const perform = async (action: ActionName, platform?: DevicePlatform) => {
     const app = platform ? ` the ${PLATFORM_NAMES[platform]} app` : '';
-    setToast({ kind: 'pending', message: action === 'stop' ? `Stopping ${names.title}` : `Reloading${app}` });
+    setToast({ kind: 'pending', message: action === 'stop' ? `Stopping ${title}` : `Reloading${app}` });
     const error = await actions.run(action, platform ? { platform } : {});
     setToast(
       error === null
-        ? { kind: 'success', message: action === 'stop' ? `Stopped ${names.title}` : `Reloaded${app}` }
+        ? { kind: 'success', message: action === 'stop' ? `Stopped ${title}` : `Reloaded${app}` }
         : { kind: 'error', message: error },
     );
   };
@@ -73,7 +75,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
   };
 
   const stop = () =>
-    Alert.alert(`Stop ${names.title}?`, "Stim stops Metro and shuts down this workspace's simulators and emulators.", [
+    Alert.alert(`Stop ${title}?`, "Stim stops Metro and shuts down this workspace's simulators and emulators.", [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Stop', style: 'destructive', onPress: () => void perform('stop') },
     ]);
@@ -88,7 +90,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
           headerTransparent: Platform.OS === 'ios',
           headerBlurEffect: 'systemChromeMaterial',
           headerTitle: () => (
-            <HeaderTitle title={names.title} subtitle={[project, mac?.name].filter(Boolean).join(' \u00B7 ')} />
+            <HeaderTitle title={title} subtitle={[project, inCheckout, mac?.name].filter(Boolean).join(' \u00B7 ')} />
           ),
         }}
       />
@@ -181,7 +183,6 @@ export function WorkspaceDetail({ path }: { path: string }) {
   const devices = orderDevices(devicesOf(env));
   const { byDevice, general } = deviceWarnings(env.warnings, devices);
   const errors = env.logs?.errorsSinceMarker ?? 0;
-  const inCheckout = pathInCheckout(env, repositoryRoots(status));
   const metroHealthy = Boolean(env.metro?.running) && env.supervisor?.healthy !== false;
   return (
     <>
@@ -254,7 +255,12 @@ function HeaderTitle({ title, subtitle }: { title: string; subtitle: string }) {
   const colors = useColors();
   return (
     <View style={styles.headerTitle}>
-      <Text style={[styles.title, { color: colors.text }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+      <Text
+        style={[styles.title, { color: colors.text }]}
+        numberOfLines={1}
+        ellipsizeMode="middle"
+        maxFontSizeMultiplier={1.3}
+      >
         {title}
       </Text>
       {subtitle ? (

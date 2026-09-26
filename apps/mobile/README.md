@@ -12,7 +12,10 @@ reload and stop a workspace:
   free space of the volumes that hold Stim's workspaces, Stim home and the
   simulators. **+**
   pairs another machine. Below, one list of every workspace on every machine,
-  building and live ones first, with the machine's name, project, branch and its
+  building and live ones first. Each is titled by its worktree's branch, or the
+  worktree's folder when it has no branch, or the project for a main checkout,
+  truncated in the middle when long. Under the title are the project, the app's
+  folder in its checkout, the machine's name and the
   git state (a dot with the count of uncommitted files, arrows for commits ahead
   of and behind the upstream, and **merged** once gc would call the branch
   merged), Metro, devices and
@@ -20,7 +23,7 @@ reload and stop a workspace:
   counts, and remote EAS sessions.
 - **Devices**: the Workspaces / Devices toggle under the machine chips switches
   the list to a grid of every running simulator and emulator on every paired
-  machine, with its latest frame, model, workspace, branch and machine.
+  machine, with its latest frame, model, workspace name and machine.
   Phones sit two to a row; a device whose frame is wider than tall, such as a
   landscape iPad or an unfolded iPhone Duo, takes a whole row.
   Tapping a tile opens its workspace. The grid follows the machine and

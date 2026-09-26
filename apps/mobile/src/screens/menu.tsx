@@ -11,7 +11,7 @@ import { useMacs } from '@/hooks/mac-connection';
 import { useRecents } from '@/hooks/recents';
 import { drawerStatus, UPDATE_READY_TEXT, type DrawerMachine } from '@/lib/drawer-status';
 import { machineStats } from '@/lib/home';
-import { isActive, workspaceNames } from '@/lib/workspaces';
+import { isActive, workspaceTitleAt } from '@/lib/workspaces';
 import { useColors } from '@/theme';
 
 const WORDMARK = require('@/assets/images/wordmark.png');
@@ -37,7 +37,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
     const connection = connections.find((c) => c.mac.id === recent.macId);
     if (!connection) return [];
     const env = connection.status?.environments.find((e) => e.path === recent.path);
-    return [{ ...recent, title: workspaceNames(recent.path).title, live: env ? isActive(env) : false }];
+    return [{ ...recent, title: workspaceTitleAt(recent.path, connection.status), live: env ? isActive(env) : false }];
   });
   const machines: DrawerMachine[] = connections.map((c) => ({
     id: c.mac.id,
@@ -94,7 +94,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
                 style={({ pressed }) => [styles.recent, pressed && { backgroundColor: colors.border }]}
               >
                 <Icon name="arrow.triangle.branch" size={15} color={recent.live ? colors.live : colors.tertiary} />
-                <Text numberOfLines={1} style={[styles.recentTitle, { color: colors.text }]}>
+                <Text numberOfLines={1} ellipsizeMode="middle" style={[styles.recentTitle, { color: colors.text }]}>
                   {recent.title}
                 </Text>
               </Pressable>

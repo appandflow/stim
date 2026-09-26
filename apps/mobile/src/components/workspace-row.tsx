@@ -27,7 +27,7 @@ export function WorkspaceRow({
   const active = isActive(env);
   const running = devicesOf(env).filter((d) => d.running);
   const errors = env.logs?.errorsSinceMarker ?? 0;
-  const where = [item.project, env.worktree?.branch ?? item.inCheckout].filter(Boolean).join(' \u00B7 ');
+  const where = [item.project, item.inCheckout].filter(Boolean).join(' \u00B7 ');
   const tint = build ? colors.accent : active ? colors.live : colors.tertiary;
   return (
     <Pressable
@@ -40,7 +40,11 @@ export function WorkspaceRow({
         <View style={[styles.ring, { borderColor: tint, backgroundColor: active ? tint : 'transparent' }]} />
       </View>
       <View style={styles.body}>
-        <Text style={[styles.title, { color: active ? colors.text : colors.secondary }]} numberOfLines={1}>
+        <Text
+          style={[styles.title, { color: active ? colors.text : colors.secondary }]}
+          numberOfLines={1}
+          ellipsizeMode="middle"
+        >
           {item.title}
         </Text>
         <View style={styles.meta}>

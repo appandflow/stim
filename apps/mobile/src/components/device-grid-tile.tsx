@@ -43,7 +43,7 @@ export function DeviceGridTile({
   useEffect(() => {
     if (frame) onAspect(tile.key, aspect);
   }, [frame, aspect, tile.key, onAspect]);
-  const where = [item.title, item.env.worktree?.branch].filter(Boolean).join(' \u00B7 ');
+  const where = [...new Set([item.title, item.project])].join(' \u00B7 ');
   return (
     <Pressable
       onPress={onPress}
@@ -75,8 +75,8 @@ export function DeviceGridTile({
           <Text style={[styles.model, { color: colors.text }]} numberOfLines={1}>
             {device.model}
           </Text>
-          <Text style={[styles.detail, { color: colors.secondary }]} numberOfLines={1}>
-            {where}
+          <Text style={[styles.detail, { color: colors.secondary }]} numberOfLines={1} ellipsizeMode="middle">
+            {item.title}
           </Text>
           <View style={styles.mac}>
             <Icon name="laptopcomputer" size={13} color={colors.tertiary} />
