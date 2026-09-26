@@ -23,7 +23,11 @@ reload and stop a workspace:
   counts, and remote EAS sessions. A machine that is not connected keeps its
   last status: its rows are dimmed with a hollow dot and "Last seen 3m ago",
   and their activity and build times stop at the moment it disconnected. Its
-  device chips turn grey.
+  device chips turn grey. The phone keeps each machine's last status on disk,
+  written at most every 5 seconds and when the app leaves the foreground or the
+  connection drops, so a cold launch shows those rows, dimmed with "Last seen",
+  until the machine's live status replaces them. Forgetting a machine deletes
+  its saved status.
   "Activity unknown" is grey: it means Stim has no data, not a problem.
 - **Needs attention**: a strip between the machine chips and the list, hidden
   when nothing is wrong, lists the problems on every paired machine, whatever
