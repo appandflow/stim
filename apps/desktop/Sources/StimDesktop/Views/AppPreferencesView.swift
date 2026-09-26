@@ -84,6 +84,9 @@ struct AppPreferencesView: View {
         .disabled(!nightly)
         Toggle("Reclaim space when free disk is under the Stim budget", isOn: $actsOnPressure)
         Toggle("Remove worktrees whose pull request was merged or closed", isOn: $removesFinishedWorktrees)
+        if removesFinishedWorktrees, let problem = autopilot.pullRequestCheck {
+          Text(problem).font(Theme.body(11.5)).foregroundStyle(Theme.warn)
+        }
       } header: {
         Text("Autopilot")
       } footer: {

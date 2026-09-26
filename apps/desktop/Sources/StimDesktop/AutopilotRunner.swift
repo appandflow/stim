@@ -21,6 +21,8 @@ final class AutopilotRunner: ObservableObject {
   @Published private(set) var lowestVolume: DiskVolume?
   /// Worktrees whose pull request was merged or closed that `stim gc` keeps, with the reason.
   @Published private(set) var finishedPullRequests: [PullRequestCleanup.Flag] = []
+  /// Why the last pull request check could not ask GitHub, or nil when it could.
+  @Published private(set) var pullRequestCheck: String?
 
   private let status: StatusStore
   private let actions: ActionCenter
@@ -248,6 +250,8 @@ final class AutopilotRunner: ObservableObject {
           finished[repository] = branches
         }
       }
+      let problem = PullRequestCleanup.problem(
+        hasGitHubCLI: gh.executable != nil, repositories: repositories.count, answered: finished.count)
       let candidates = PullRequestCleanup.candidates(environments, finished: finished)
       let stale =
         previous.map {
@@ -257,6 +261,7 @@ final class AutopilotRunner: ObservableObject {
       let report = !candidates.isEmpty && stale ? try? cli.gcReport() : nil
       await MainActor.run {
         self.pollingPullRequests = false
+        self.pullRequestCheck = problem
         if candidates.isEmpty {
           self.pullRequestVerdict = nil
           self.finishedPullRequests = []

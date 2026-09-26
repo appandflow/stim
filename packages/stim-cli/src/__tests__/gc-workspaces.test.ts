@@ -913,6 +913,33 @@ test('gc --delete removes a worktree whose pull request merged or closed only wh
   for (const name of ['unsaved', 'wip', 'gone', 'noPr']) expect(existsSync(worktrees[name]!)).toBe(true);
 }, 120_000);
 
+test('a signed-out or unresponsive gh is asked once per gc run, and every worktree says why', async () => {
+  const { worktrees } = gitRepoWithWorktrees(['one', 'two']);
+  for (const path of Object.values(worktrees)) upsertProject(path, { metroPort: null });
+  const current = getExecutor();
+  for (const [failure, reason] of [
+    [{ status: 4 }, 'gh is not signed in; run `gh auth login`'],
+    [{ code: 'ETIMEDOUT' }, 'gh pr list did not answer within 20s'],
+  ] as const) {
+    let calls = 0;
+    setExecutor({
+      ...current,
+      findExecutable: (name) => (name === 'gh' ? '/usr/bin/gh' : current.findExecutable(name)),
+      runFile: (file, args, opts) => {
+        if (file !== 'gh') return current.runFile(file, args, opts);
+        calls++;
+        throw Object.assign(new Error('gh failed'), failure);
+      },
+    });
+    const { payload } = await gcJson({});
+    expect(calls).toBe(1);
+    expect(payload.sections.linkedWorktrees.map((w: { pullRequestUnknown: string }) => w.pullRequestUnknown)).toEqual([
+      reason,
+      reason,
+    ]);
+  }
+}, 60_000);
+
 test('worktree remove accepts local-only commits that a merged pull request holds, not a closed one', async () => {
   const { worktrees } = gitRepoWithWorktrees(['squashed', 'closed']);
   const git = (args: string, cwd: string) =>

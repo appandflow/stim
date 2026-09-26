@@ -86,8 +86,8 @@ function firstLine(error: unknown): string {
 
 /**
  * Asks GitHub, through `gh`, which pull requests have `branch` as their head, run from `cwd` so `gh` picks the
- * repository from its remotes. Each call is one fixed `gh pr list` invocation. Once `gh` is missing or signed out,
- * every later lookup through the same function answers `unavailable` without running it again.
+ * repository from its remotes. Each call is one fixed `gh pr list` invocation. Once `gh` is missing, signed out or
+ * times out, every later lookup through the same function answers `unavailable` without running it again.
  */
 export function pullRequestLookup(): (cwd: string, branch: string, head: string) => PullRequestLookup {
   const exec = getExecutor();
@@ -106,6 +106,10 @@ export function pullRequestLookup(): (cwd: string, branch: string, head: string)
     } catch (error) {
       if ((error as { status?: number }).status === SIGNED_OUT_EXIT) {
         unavailable = 'gh is not signed in; run `gh auth login`';
+        return { unavailable };
+      }
+      if ((error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
+        unavailable = `gh pr list did not answer within ${GH_TIMEOUT_MS / 1000}s`;
         return { unavailable };
       }
       return { unavailable: `gh pr list failed: ${firstLine(error)}` };

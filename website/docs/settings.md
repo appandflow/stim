@@ -259,7 +259,8 @@ to Android emulators. See [owned devices](/docs/owned-devices) for adoption clea
 
 `gc.worktreeGraceMinutes` is how long `stim gc --delete` waits before it
 removes a merged or idle linked worktree, counted from the worktree's latest
-git or Stim activity or the merge of its branch. Absent means 120; `0` removes
+git or Stim activity, the merge of its branch, or when its pull request was
+merged or closed. Absent means 120; `0` removes
 a finished worktree at once. `STIM_GC_WORKTREE_GRACE_MINUTES` overrides it. See
 [removing finished worktrees in bulk](./worktrees.md#remove-finished-worktrees-in-bulk).
 

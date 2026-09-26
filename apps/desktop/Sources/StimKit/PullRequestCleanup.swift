@@ -19,6 +19,15 @@ public enum PullRequestCleanup {
     return (try? JSONDecoder().decode([Entry].self, from: json)).map { Set($0.map(\.headRefName)) }
   }
 
+  /// Why a check found no pull requests because `gh` could not answer, or nil when it answered for a repository.
+  public static func problem(hasGitHubCLI: Bool, repositories: Int, answered: Int) -> String? {
+    if !hasGitHubCLI { return "gh is not on the login shell's PATH, so no worktree is removed for its pull request." }
+    if repositories > 0, answered == 0 {
+      return "gh answered for no repository. Run gh auth login, or check the network."
+    }
+    return nil
+  }
+
   /// Paths of linked worktrees whose branch has a merged or closed pull request, by repository.
   public static func candidates(_ environments: [Workspace], finished: [String: Set<String>]) -> Set<String> {
     Set(

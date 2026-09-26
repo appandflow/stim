@@ -318,7 +318,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 120,
     env: 'STIM_GC_WORKTREE_GRACE_MINUTES',
     description:
-      'Minutes after a linked worktree last changed, or its branch merged, before gc removes it; 0 removes it at once',
+      'Minutes after a linked worktree last changed, or its branch or pull request finished, before gc removes it; 0 removes it at once',
   },
   {
     key: 'pool.iosParkedMax',
