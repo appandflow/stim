@@ -51,6 +51,7 @@ export function Logs({ path, errorsOnly }: { path: string; errorsOnly: boolean }
   const [records, setRecords] = useState<LogRecord[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [fetched, setFetched] = useState<Map<string, string[]>>(new Map());
+  const generation = useRef(0);
   const [following, setFollowing] = useState(true);
   const list = useRef<FlatList<LogEntry>>(null);
   const entries = useMemo(() => groupRecords(records), [records]);
@@ -62,6 +63,7 @@ export function Logs({ path, errorsOnly }: { path: string; errorsOnly: boolean }
     setRecords([]);
     setExpanded(new Set());
     setFetched(new Map());
+    generation.current += 1;
     setProblem(null);
   }, []);
   const active = env && filter.slot !== null && !slots.includes(filter.slot) ? { ...filter, slot: null } : filter;
@@ -87,14 +89,17 @@ export function Logs({ path, errorsOnly }: { path: string; errorsOnly: boolean }
     update({ grep: grepDraft });
   };
 
+  const hidesContext = active.errors || active.level === 'warn' || active.level === 'error' || active.grep !== '';
   const fetchContext = (entry: LogEntry) => {
-    if (!connection || !needsContext(entry) || fetched.has(entry.key)) return;
+    if (!connection || !hidesContext || !needsContext(entry) || fetched.has(entry.key)) return;
+    const started = generation.current;
     setFetched((map) => new Map(map).set(entry.key, []));
     connection
       .request('logs.query', { workspace: path, sources: ['metro'], tail: MAX_RECORDS })
       .then(({ records: metro }) => {
         const context = expoContext(metro, entry.lead).map((r) => r.msg);
-        if (context.length > 0) setFetched((map) => new Map(map).set(entry.key, context));
+        if (context.length > 0 && generation.current === started)
+          setFetched((map) => new Map(map).set(entry.key, context));
       })
       .catch(() => {});
   };

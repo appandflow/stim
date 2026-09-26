@@ -179,11 +179,22 @@ export function groupRecords(records: LogRecord[]): LogEntry[] {
   });
   const responses = groups.filter((g) => records[g.lead]!.event === 'bundle_response_failed');
   const merged = new Set<(typeof groups)[number]>();
+  const answered = new Set<(typeof groups)[number]>();
   for (const response of responses) {
-    const ts = records[response.lead]!.ts;
-    const target = failures.find((g) => Math.abs(records[g.indexes[0]!]!.ts - ts) <= BUNDLE_RESPONSE_WINDOW_MS);
+    const { ts, platform } = records[response.lead]!;
+    const distance = (g: (typeof groups)[number]) => Math.abs(records[g.indexes[0]!]!.ts - ts);
+    const target = failures
+      .filter(
+        (g) =>
+          !answered.has(g) &&
+          distance(g) <= BUNDLE_RESPONSE_WINDOW_MS &&
+          (typeof platform !== 'string' ||
+            records[g.indexes[0]!]!.msg.toLowerCase().startsWith(`${platform.toLowerCase()} `)),
+      )
+      .sort((a, b) => distance(a) - distance(b))[0];
     if (!target) continue;
     target.indexes.push(response.lead);
+    answered.add(target);
     merged.add(response);
   }
 

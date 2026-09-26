@@ -118,6 +118,34 @@ describe('groupRecords and viewEntry, on records captured from an Expo app', () 
     expect(entries[0]!.related).toEqual([marker, response]);
   });
 
+  it('gives each platform failure its own bundle response when iOS and Android fail together', () => {
+    const [marker, error] = errorsOnly;
+    const response = (platform: string): LogRecord => ({
+      ts: lead.ts,
+      src: 'metro',
+      level: 'error',
+      event: 'bundle_response_failed',
+      platform,
+      requestId: platform,
+      statusCode: 500,
+      msg: `${platform} bundle response failed`,
+    });
+    const android = { ...marker!, ts: lead.ts + 5, msg: 'Android Bundling failed 131ms index.js (1 module)' };
+    const androidError = { ...error!, ts: lead.ts + 5 };
+    const entries = groupRecords([marker!, error!, response('android'), response('ios'), android, androidError]);
+    expect(entries.map((e) => e.related.map((r) => r.msg))).toEqual([
+      ['iOS Bundling failed 128ms index.js (1 module)', 'ios bundle response failed'],
+      ['android bundle response failed', 'Android Bundling failed 131ms index.js (1 module)'],
+    ]);
+  });
+
+  it('keeps an entry key while its records stream in', () => {
+    const key = groupRecords(syntax)[1]!.key;
+    for (let n = 2; n <= syntax.length; n += 1) {
+      expect(groupRecords(syntax.slice(0, n))[1]!.key).toBe(key);
+    }
+  });
+
   it('under Errors only, finds the code frame in the Metro records the filter left out', () => {
     const [entry] = groupRecords(errorsOnly);
     expect(needsContext(entry!)).toBe(true);
