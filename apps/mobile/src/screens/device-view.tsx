@@ -135,10 +135,16 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
     if (!keyboardShown || !controlling) keyboard.current?.blur();
   }, [keyboardShown, controlling]);
   const rest = zoom.screenRect;
+  const headerGap = theme.space.md;
   const lift = useAnimatedStyle(() => {
     const covered = keyboardHeight.get();
     if (!rest || covered <= 0 || rootHeight <= 0) return { transform: [{ translateY: 0 }] };
-    const shift = liftAbove(rest[1], rest[3], rootHeight - covered - TYPING_BAR_HEIGHT, insets.top + barBottom);
+    const shift = liftAbove(
+      rest[1],
+      rest[3],
+      rootHeight - covered - TYPING_BAR_HEIGHT,
+      insets.top + barBottom + headerGap,
+    );
     return { transform: [{ translateY: -shift }] };
   });
   const typingBar = useAnimatedStyle(() => ({ transform: [{ translateY: -keyboardHeight.get() }] }));
@@ -327,7 +333,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
               ]}
             >
               <View style={styles.root}>
-                <View style={{ height: barBottom }} />
+                <View style={{ height: barBottom + headerGap }} />
                 {landscape ? null : readOnlyBanner}
                 <Banner
                   control={control.state}
