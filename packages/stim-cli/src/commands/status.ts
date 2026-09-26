@@ -8,7 +8,7 @@ import {
 } from '../status-watch.ts';
 import type { StatusSources } from '../status-watch.ts';
 import chalk from 'chalk';
-import { existsSync } from 'fs';
+import { existsSync, fstatSync } from 'fs';
 import { homedir, totalmem } from 'os';
 import { basename, dirname } from 'path';
 import type { Command } from 'commander';
@@ -92,6 +92,7 @@ interface StatusOptions {
 }
 
 const WATCH_GIT_MAX_AGE_MS = 60_000;
+const WATCH_READER_CHECK_MS = 2_000;
 
 function formatGb(mb: number): string {
   return `${(mb / 1024).toFixed(1)} GB`;
@@ -524,9 +525,19 @@ async function watchStatus(json: boolean): Promise<void> {
   });
   const fallback = setInterval(() => scheduler.trigger('full'), WATCH_FALLBACK_MS);
   const machine = setInterval(() => json && snapshot?.machine && scheduler.trigger('light'), WATCH_LIGHT_INTERVAL_MS);
+  const parent = process.ppid;
+  const stdout = fstatSync(1);
+  const linuxPipe = process.platform === 'linux' && (stdout.isFIFO() || stdout.isSocket());
+  // A zero-length write to a pipe or socket whose reader is gone fails with EPIPE, except to a
+  // Linux pipe(2), which returns 0 without checking the reader; there the parent's exit stands in.
+  const reader = setInterval(() => {
+    if (linuxPipe && process.ppid !== parent) finish();
+    else process.stdout.write('');
+  }, WATCH_READER_CHECK_MS);
   const finish = () => {
     clearInterval(fallback);
     clearInterval(machine);
+    clearInterval(reader);
     scheduler.stop();
     sources?.stop();
     process.exit(0);
