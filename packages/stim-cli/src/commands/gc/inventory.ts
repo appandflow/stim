@@ -111,6 +111,29 @@ function parseSimRuntimeList(jsonOutput: string): SimRuntimeRecord[] {
   return runtimes;
 }
 
+function unlistedRuntimes(jsonOutput: string, images: readonly SimRuntimeRecord[]): SimRuntimeRecord[] {
+  const known = new Set(images.map((image) => image.runtimeIdentifier));
+  const parsed = JSON.parse(jsonOutput) as { runtimes?: unknown };
+  if (!Array.isArray(parsed.runtimes)) throw new Error('Expected simctl list runtimes to return a runtimes array.');
+  return parsed.runtimes.flatMap((value: unknown) => {
+    if (value === null || typeof value !== 'object') return [];
+    const entry = value as Record<string, unknown>;
+    const identifier = text(entry.identifier);
+    if (!identifier || !/\.iOS-/.test(identifier) || known.has(identifier)) return [];
+    return [
+      {
+        identifier,
+        runtimeIdentifier: identifier,
+        version: text(entry.version),
+        build: text(entry.buildversion),
+        sizeBytes: null,
+        deletable: false,
+        lastUsedAt: null,
+      },
+    ];
+  });
+}
+
 function modelName(deviceTypeIdentifier: string): string {
   return deviceTypeIdentifier.replace(/^com\.apple\.CoreSimulator\.SimDeviceType\./, '').replaceAll('-', ' ');
 }
@@ -146,10 +169,8 @@ function buildInventory({
       continue;
     }
     for (const { slot, platforms } of slots) {
-      if (platforms.ios?.owned && platforms.ios.deviceUdid)
-        assigned.set(`ios:${platforms.ios.deviceUdid}`, { project, slot });
-      if (platforms.android?.owned && platforms.android.avdName)
-        assigned.set(`android:${platforms.android.avdName}`, { project, slot });
+      if (platforms.ios?.deviceUdid) assigned.set(`ios:${platforms.ios.deviceUdid}`, { project, slot });
+      if (platforms.android?.avdName) assigned.set(`android:${platforms.android.avdName}`, { project, slot });
     }
   }
   const parked = new Set([
@@ -276,24 +297,29 @@ function listAvdRecords(roots: readonly string[] = avdStorageRoots()): AvdRecord
   return [...records.values()];
 }
 
+function simctl(args: string[]): string {
+  return getExecutor().runFile('xcrun', ['simctl', ...args], {
+    timeoutMs: DEVICE_LIST_TIMEOUT_MS,
+    killSignal: 'SIGKILL',
+  });
+}
+
 export function collectInventory(config: Config | null, deadProjects: readonly string[]): GcInventory {
   const notices: string[] = [];
   let sims: IosSimRecord[] = [];
   let runtimes: SimRuntimeRecord[] = [];
-  try {
-    sims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
-  } catch (error) {
-    notices.push(`simulators not listed: ${describeError(error)}`);
-  }
-  try {
-    runtimes = parseSimRuntimeList(
-      getExecutor().runFile('xcrun', ['simctl', 'runtime', 'list', '-j'], {
-        timeoutMs: DEVICE_LIST_TIMEOUT_MS,
-        killSignal: 'SIGKILL',
-      }),
-    );
-  } catch (error) {
-    notices.push(`simulator runtimes not listed: ${describeError(error)}`);
+  if (process.platform === 'darwin') {
+    try {
+      sims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+    } catch (error) {
+      notices.push(`simulators not listed: ${describeError(error)}`);
+    }
+    try {
+      runtimes = parseSimRuntimeList(simctl(['runtime', 'list', '-j']));
+      runtimes.push(...unlistedRuntimes(simctl(['list', 'runtimes', '-j']), runtimes));
+    } catch (error) {
+      notices.push(`simulator runtimes not listed: ${describeError(error)}`);
+    }
   }
   const imagesRoot = join(androidHome(), 'system-images');
   const images = listInstalledSystemImages().map((image) => ({

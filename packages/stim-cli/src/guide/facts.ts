@@ -538,10 +538,12 @@ RULES
                     home has no record of creating) or user
     runtimes      { identifier, runtimeIdentifier, version, build, bytes,
                     lastUsedAt, deviceCount, command }  iOS simulator
-                    runtimes from \`xcrun simctl runtime list -j\`.
-                    deviceCount is the simulators on it; command is the
-                    \`xcrun simctl runtime delete\` line for a deletable
-                    runtime, else null. Stim never runs it
+                    runtimes from \`xcrun simctl runtime list -j\`, then
+                    any other \`simctl list runtimes\` shows, with bytes
+                    and command null. deviceCount is the simulators on
+                    it; command is the \`xcrun simctl runtime delete\`
+                    line for a deletable runtime, else null. Stim never
+                    runs it. Empty off macOS
     systemImages  { package, directory, avdCount, command }  installed
                     Android system images; avdCount is the AVDs whose
                     image.sysdir.1 names it; command is the

@@ -1035,7 +1035,8 @@ A dry run without `--cache` or `--idle` also carries `inventory`, which is
 runtime or system image, last use and `owner`: `workspace` (with `project` and
 `slot`), `parked`, `orphaned`, `otherStimHome` for a `stim-*` device this Stim
 home did not create, or `user`. It also lists the iOS simulator runtimes and
-Android system images with how many devices use each, and the
+Android system images with how many devices use each (a runtime that
+`simctl runtime list` does not show has no size), and the
 `xcrun simctl runtime delete` or `sdkmanager --uninstall` command that removes
 it. The inventory is report only: Stim never runs those commands and never
 acts on a device through it.
