@@ -219,8 +219,13 @@ public struct RepositoryStorage: Identifiable, Hashable, Sendable {
 
   public var id: String { path }
   public var name: String { (path as NSString).lastPathComponent }
+  /// The sum of its worktrees, counting a `node_modules` that two workspaces of one worktree share once.
   public var total: Int64? {
-    let known = worktrees.compactMap(\.total)
+    var seen = Set<String>()
+    let known = worktrees.compactMap { workspace -> Int64? in
+      guard let total = workspace.total else { return nil }
+      return seen.insert(workspace.worktreePath).inserted ? total : total - (workspace.nodeModules.bytes ?? 0)
+    }
     return known.isEmpty ? nil : known.reduce(0, +)
   }
   public var totalComplete: Bool { worktrees.allSatisfy(\.totalComplete) }

@@ -142,6 +142,13 @@ import Testing
       environments: [try env("/t/app", repository: nil), try env("/t/.w/a", repository: "/t")], gc: nil, disk: disk,
       paths: paths, projectRoots: ["/t/app": "/t", "/t/.w/a": "/t"])
     #expect(checkout.repositories.map(\.name) == ["t"])
+
+    let nested = try JSONDecoder().decode(
+      Workspace.self,
+      from: Data(#"{"path":"/t/.w/a/app","live":false,"warnings":[],"worktree":{"path":"/t/.w/a","branch":"b","repository":"/t"}}"#.utf8))
+    let shared = StorageReport.make(
+      environments: [try env("/t/.w/a", repository: "/t"), nested], gc: nil, disk: disk, paths: paths)
+    #expect(shared.repositories.first?.total == 5 && shared.total(.nodeModules).bytes == 5)
   }
 
   /// Catches a slow or timed-out tree blanking every row, and an absent gc entry reading as unknown.
