@@ -21,8 +21,9 @@ import IOSurface
 // keyboard.
 // stdout carries messages framed as a 4-byte big-endian length, then a kind byte:
 // 1 is a frame (2-byte width, 2-byte height, JPEG bytes), 2 is a JSON notice
-// ({"error": message} before a failed exit, {"inputError": message}, or on an emulator
-// {"keyboard": "yes|no"} once it reports its hardware), 3 is an H.264 access unit (1-byte
+// ({"error": message} before a failed exit, {"inputError": message}, on a simulator
+// with several displays {"display": n} when display n is the one lit and streamed, or
+// on an emulator {"keyboard": "yes|no"} once it reports its hardware), 3 is an H.264 access unit (1-byte
 // flags with bit 0 set on a keyframe, 8-byte big-endian float capture time in
 // milliseconds since the epoch, 2-byte width, 2-byte height, Annex-B bytes).
 // The helper exits when stdin closes.
@@ -88,7 +89,7 @@ enum Output {
     }
   }
 
-  static func notice(_ object: [String: String]) {
+  static func notice(_ object: [String: Any]) {
     guard let json = try? JSONSerialization.data(withJSONObject: object) else { return }
     writer.sync { write(Data([2]) + json) }
   }
@@ -191,7 +192,9 @@ final class SimulatorSource {
   let inputQueue = DispatchQueue(label: "stim.frames.input")
   var hid: SimulatorHID?
   private let pacer: Pacer
-  private var display: SimDisplay?
+  private var displays: [SimDisplay] = []
+  private var displayIndex = 0
+  private var reportedDisplay: Int?
   private let callbackID = NSUUID()
   private let video = videoEncoder()
   private let jpegGate = JpegGate()
@@ -206,35 +209,58 @@ final class SimulatorSource {
   var queue: DispatchQueue { pacer.queue }
 
   func start(deadline: Date = Date().addingTimeInterval(30)) {
-    guard let display = CoreSimulator.displays(udid: udid).first else {
+    let found = CoreSimulator.displays(udid: udid)
+    guard !found.isEmpty else {
       if Date() > deadline { fail("Simulator \(udid) has no display with a framebuffer. Is it booted?") }
       queue.asyncAfter(deadline: .now() + 1) { self.start(deadline: deadline) }
       return
     }
-    self.display = display
-    display.registerDamageCallback(callbackID) { [weak self] _ in self?.pacer.changed() }
-    display.registerSurfacesCallback(callbackID) { [weak self] _ in self?.pacer.changed() }
-    display.registerPropertiesCallback(callbackID) { [weak self] _ in self?.pacer.changed() }
+    displays = found
+    displayIndex = 0
+    for display in found {
+      display.registerDamageCallback(callbackID) { [weak self] _ in self?.pacer.changed() }
+      display.registerSurfacesCallback(callbackID) { [weak self] _ in self?.pacer.changed() }
+      display.registerPropertiesCallback(callbackID) { [weak self] _ in self?.pacer.changed() }
+    }
     pacer.changed()
-    watch(display)
+    watch()
   }
 
   // A simulator that shuts down and boots again gets new display objects, and
   // the old ones stop reporting damage; so does its HID client. CoreSimulator
   // returns a new proxy for the same display on every lookup, so the watch
   // follows the device state instead, where 3 is SimDeviceStateBooted.
-  private func watch(_ display: SimDisplay) {
+  private func watch() {
     queue.asyncAfter(deadline: .now() + 2) {
       guard CoreSimulator.device(udid: self.udid)?.value(forKey: "state") as? Int != 3 else {
-        return self.watch(display)
+        return self.watch()
       }
-      display.unregisterDamageCallback(self.callbackID)
-      display.unregisterSurfacesCallback(self.callbackID)
-      display.unregisterPropertiesCallback(self.callbackID)
-      self.display = nil
+      for display in self.displays {
+        display.unregisterDamageCallback(self.callbackID)
+        display.unregisterSurfacesCallback(self.callbackID)
+        display.unregisterPropertiesCallback(self.callbackID)
+      }
+      self.displays = []
+      self.reportedDisplay = nil
       self.inputQueue.async { self.hid = nil }
       self.start()
     }
+  }
+
+  // CoreSimulator keeps the display an iPhone Duo's posture turned off, the
+  // cover or the inner one, all black, and sends damage when the other lights up.
+  private func litDisplay() -> SimDisplay? {
+    guard displays.count > 1 else { return displays.first }
+    let lit = { (index: Int) in self.displays[index].framebufferSurface.map { !isBlack($0) } ?? false }
+    guard let index = lit(displayIndex) ? displayIndex : displays.indices.first(where: lit) else {
+      return displays[displayIndex]
+    }
+    displayIndex = index
+    if reportedDisplay != index {
+      reportedDisplay = index
+      Output.notice(["display": index])
+    }
+    return displays[index]
   }
 
   func configure(_ config: Config) {
@@ -253,10 +279,10 @@ final class SimulatorSource {
   // uiOrientation is a UIInterfaceOrientation; the framebuffer stays in the
   // display's native portrait orientation, so the image is turned upright.
   private func render(_ config: Config) {
-    guard let surface = display?.framebufferSurface else { return }
+    guard let display = litDisplay(), let surface = display.framebufferSurface else { return }
     let orientation: CGImagePropertyOrientation
     let quarterTurns: Int
-    switch display?.screenProperties?.uiOrientation ?? 1 {
+    switch display.screenProperties?.uiOrientation ?? 1 {
     case 2: (orientation, quarterTurns) = (.down, 2)
     case 3: (orientation, quarterTurns) = (.right, 3)
     case 4: (orientation, quarterTurns) = (.left, 1)

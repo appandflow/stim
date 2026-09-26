@@ -10,8 +10,8 @@ export interface DeviceStream {
   streamId: string;
   /** The latest JPEG frame, while the server sends images instead of video. */
   frame: FrameEvent | null;
-  /** The size of the latest video frame, once the first H.264 keyframe arrives. */
-  video: { width: number; height: number } | null;
+  /** The size of the latest video frame, and an iPhone Duo's posture, once the first H.264 keyframe arrives. */
+  video: { width: number; height: number; posture?: 'folded' | 'unfolded' } | null;
   error: string | null;
   delayed: boolean;
   meter: VideoMeter;
@@ -22,7 +22,7 @@ export interface DeviceStream {
 interface StreamState {
   key: string;
   frame: FrameEvent | null;
-  video: { width: number; height: number } | null;
+  video: { width: number; height: number; posture?: 'folded' | 'unfolded' } | null;
   error: string | null;
   delayed: boolean;
 }
@@ -74,10 +74,11 @@ export function useDeviceStream(
         pushAccessUnit(streamId, packet.accessUnit, packet.width, packet.height);
         meter.add(packet, Date.now());
         if (!size && !packet.keyframe) return;
-        const next = `${packet.width}x${packet.height}`;
+        const next = `${packet.width}x${packet.height} ${packet.posture ?? ''}`;
         if (next === size) return;
         size = next;
-        update({ frame: null, video: { width: packet.width, height: packet.height }, error: null });
+        const { width, height, posture } = packet;
+        update({ frame: null, video: { width, height, ...(posture ? { posture } : {}) }, error: null });
       },
     );
     return () => {

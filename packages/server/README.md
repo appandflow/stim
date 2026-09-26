@@ -165,7 +165,10 @@ Events are `{ "event", "subscription", ... }`.
   `$STIM_HOME/server/helpers/`, named by a hash of the sources and the
   compiler version. For a simulator it renders the display's framebuffer
   (CoreSimulator's IOSurface) when the display reports damage, turned
-  upright; for an emulator it keeps one gRPC `streamScreenshot` call open,
+  upright. An iPhone Duo lights one of its two panels, the cover while
+  folded and the inner panel while unfolded, and leaves the other black, so
+  the helper streams whichever panel is lit; its frames and video carry
+  `posture`, and the size changes with the panel. For an emulator it keeps one gRPC `streamScreenshot` call open,
   found through the discovery file and token the emulator writes when Stim
   boots it. It scales frames to fit the largest `maxEdge` and paces them to
   the highest `fps` its subscribers asked for. All subscribers of a device
@@ -176,12 +179,15 @@ Events are `{ "event", "subscription", ... }`.
   built, the result carries `video: "h264"`, `fps` may go up to 60, and
   frames arrive as binary WebSocket messages instead of `frame` events: a
   big-endian header (u8 version 1, u8 flags with bit 0 set on a keyframe,
+  and on an iPhone Duo bit 1 while folded or bit 2 while unfolded,
   u16 header length, u32 sequence number of the messages sent on this
   subscription, f64 capture time in milliseconds since the epoch on the
   Mac's clock, u16 width, u16 height, u8 subscription id length and the
   ASCII id), then one Annex-B access unit. Every keyframe carries its SPS
   and PPS, and the stream has no B-frames, so each access unit is shown as
-  it arrives. The helper encodes with VideoToolbox in real time: Main
+  it arrives. A change of size, such as a rotation or a Duo fold, restarts
+  the encoder, and the next access unit is a keyframe with the new SPS and
+  PPS. The helper encodes with VideoToolbox in real time: Main
   profile, a keyframe at least every 2 seconds, straight from the
   simulator's IOSurface or from the emulator's RGBA frames, only when the
   screen changed. A subscriber starts at a keyframe, and `frames.keyframe`
@@ -195,13 +201,13 @@ Events are `{ "event", "subscription", ... }`.
   subscribers of the same device still get at most the `fps` they asked
   for. Watching video needs only `read`. Without the helper, the result has
   no `video`, `fps` above 30 is lowered to 30, and `frame` events arrive as
-  before; an iPhone Duo and a helper that fails before its first frame also
-  fall back to `frame` events within a video subscription.
+  before; a helper that fails before its first frame also falls back to
+  `frame` events within a video subscription.
 
   Without the helper (the compiler is missing or fails, which the server
-  retries every 5 minutes, or the helper fails before its first frame), for a
-  subscription made while it is still being built, and for an iPhone Duo,
-  frames come from screenshots, and `fps` and `maxEdge` only cap the rate. Simulators are
+  retries every 5 minutes, or the helper fails before its first frame), and
+  for a subscription made while it is still being built, frames come from
+  screenshots, and `fps` and `maxEdge` only cap the rate. Simulators are
   captured with `xcrun simctl io <udid> screenshot`, of the primary display,
   or of the default display when that `simctl` does not accept `primary`. An
   iPhone Duo lights one of two panels: the capture follows the lit one

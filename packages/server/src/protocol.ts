@@ -178,7 +178,7 @@ export type VideoCodec = (typeof VIDEO_CODECS)[number];
 
 /**
  * With `video`, frames arrive as binary WebSocket messages, one H.264 access unit each; see {@link VideoPacket}.
- * A subscription whose device cannot be encoded, such as an iPhone Duo, still sends JSON `frame` events.
+ * A subscription whose device falls back to screenshots still sends JSON `frame` events.
  */
 export interface FramesSubscribeResult extends SubscribeResult {
   video?: VideoCodec;
@@ -194,9 +194,13 @@ export const VIDEO_HEADER_VERSION = 1;
 /** The keyframe bit of a {@link VideoPacket}'s flags. */
 export const VIDEO_KEYFRAME = 1;
 
+/** The flag bits of a {@link VideoPacket} that carry an iPhone Duo's posture, as `posture` on a `frame` event. */
+export const VIDEO_FOLDED = 2;
+export const VIDEO_UNFOLDED = 4;
+
 /**
  * The layout of a binary video message, big-endian: u8 version ({@link VIDEO_HEADER_VERSION}), u8 flags
- * ({@link VIDEO_KEYFRAME}), u16 header length, u32 sequence number of the messages sent on this subscription, f64 capture time in milliseconds since the
+ * ({@link VIDEO_KEYFRAME}, and on an iPhone Duo {@link VIDEO_FOLDED} or {@link VIDEO_UNFOLDED}), u16 header length, u32 sequence number of the messages sent on this subscription, f64 capture time in milliseconds since the
  * epoch on the Mac's clock, u16 width, u16 height, u8 subscription id length N, N bytes of ASCII subscription
  * id. After the header comes one Annex-B H.264 access unit; a keyframe carries its SPS and PPS. The stream has
  * no B-frames, so each access unit is shown as it arrives.
@@ -208,6 +212,7 @@ export interface VideoPacket {
   capturedAt: number;
   width: number;
   height: number;
+  posture?: 'folded' | 'unfolded';
   accessUnit: Uint8Array;
 }
 

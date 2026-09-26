@@ -1,4 +1,4 @@
-import { VIDEO_HEADER_VERSION, VIDEO_KEYFRAME } from './protocol.ts';
+import { VIDEO_FOLDED, VIDEO_HEADER_VERSION, VIDEO_KEYFRAME, VIDEO_UNFOLDED } from './protocol.ts';
 
 /** One H.264 access unit from the helper, in Annex-B form; a keyframe starts with its SPS and PPS. */
 export interface AccessUnit {
@@ -7,6 +7,8 @@ export interface AccessUnit {
   capturedAt: number;
   width: number;
   height: number;
+  /** An iPhone Duo's posture, from the panel the helper streams. */
+  posture?: 'folded' | 'unfolded';
   data: Buffer;
 }
 
@@ -17,7 +19,8 @@ export function videoPacket(subscription: string, sequence: number, unit: Access
   const id = Buffer.from(subscription, 'ascii');
   const header = Buffer.alloc(FIXED_HEADER_BYTES + id.length);
   header.writeUInt8(VIDEO_HEADER_VERSION, 0);
-  header.writeUInt8(unit.keyframe ? VIDEO_KEYFRAME : 0, 1);
+  const posture = unit.posture === 'folded' ? VIDEO_FOLDED : unit.posture === 'unfolded' ? VIDEO_UNFOLDED : 0;
+  header.writeUInt8((unit.keyframe ? VIDEO_KEYFRAME : 0) | posture, 1);
   header.writeUInt16BE(header.length, 2);
   header.writeUInt32BE(sequence >>> 0, 4);
   header.writeDoubleBE(unit.capturedAt, 8);
