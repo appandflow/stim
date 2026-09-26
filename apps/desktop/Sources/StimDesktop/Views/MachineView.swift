@@ -22,7 +22,8 @@ struct MachineView: View {
   var body: some View {
     let report = StorageReport.make(
       environments: status.payload?.environments ?? [], unprovisioned: status.payload?.unprovisionedWorktrees ?? [],
-      gc: metrics.gcReport, disk: storage.disk, paths: storage.paths)
+      gc: metrics.gcReport, disk: storage.disk, paths: storage.paths,
+      projectRoots: status.projects.mapValues(\.root))
     ScrollView {
       VStack(alignment: .leading, spacing: 28) {
         header
@@ -46,7 +47,7 @@ struct MachineView: View {
       "Free this space?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
       titleVisibility: .visible, presenting: confirming
     ) { commands in
-      Button("Run \(commands.count) commands", role: .destructive) {
+      Button(commands.count == 1 ? "Run the command" : "Run \(commands.count) commands", role: .destructive) {
         actions.run("Free disk space", steps: commands, key: ActionCenter.machineKey)
       }
     } message: { commands in
@@ -173,7 +174,7 @@ struct MachineView: View {
           HStack(spacing: 6) {
             RoundedRectangle(cornerRadius: 2).fill(Self.color(category)).frame(width: 9, height: 9)
             Text(category.title).foregroundStyle(Theme.secondary)
-            Text((value.complete ? "" : "\u{2265} ") + formatDisk(value.bytes))
+            Text(value.complete ? formatDisk(value.bytes) : value.bytes == 0 ? "\u{2014}" : "\u{2265} " + formatDisk(value.bytes))
               .font(Theme.mono(11.5))
               .foregroundStyle(value.complete ? Theme.text : Theme.tertiary)
               .help(value.complete ? "" : "Some of it is still being measured or could not be sized")
@@ -190,7 +191,7 @@ struct MachineView: View {
   // MARK: Safe to free now
 
   private func safeToFree(_ report: StorageReport) -> some View {
-    let selected = selection ?? FreePlan.defaultSelection(report.free)
+    let selected = FreePlan.effective(selection ?? FreePlan.defaultSelection(report.free), items: report.free)
     let commands = FreePlan.commands(selected, home: NSHomeDirectory())
     let bytes = FreePlan.bytes(report.free, selected: selected)
     return VStack(alignment: .leading, spacing: 10) {
@@ -421,7 +422,7 @@ struct MachineView: View {
         Button("Reveal in Finder") { reveal(workspace.worktreePath) }
         Divider()
         Button(
-          "Remove worktree" + (workspace.total.map { ", frees \(workspace.totalComplete ? "" : "at least ")\(formatDisk($0))" } ?? "")
+          "Remove worktree" + (workspace.removable.map { ", frees about \(formatDisk($0))" } ?? "")
             + "\u{2026}", role: .destructive
         ) { removing = workspace }
         .disabled(actions.active(for: workspace.path) != nil || workspace.missing || workspace.unprovisioned)

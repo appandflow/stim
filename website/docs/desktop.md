@@ -84,7 +84,7 @@ the action that frees a row sits next to it.
   and lifecycle, and remove a worktree from its menu.
 - **Simulators and emulators** lists every simulator and AVD with its runtime,
   last use, size and owner. The owner is a Stim workspace, Stim's parked pool,
-  another Stim home, or you. Stim only lists devices it did not create in this
+  this Stim home with no workspace, another Stim home, or you. Stim only lists devices it did not create in this
   home; manage those in Xcode or Android Studio.
 - **Runtimes and system images** shows how many devices use each iOS runtime
   and Android system image, and marks unused ones. **Copy** copies the

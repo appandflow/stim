@@ -175,7 +175,9 @@ its help tag.
 - **Safe to free now**: one list, largest first, built from `stim gc --json`:
   parked, orphaned and stale owned devices, orphaned workspace directories,
   records of deleted folders, logs over the cap, build outputs of idle
-  workspaces, merged worktrees and non-empty shared caches. Each row carries a
+  workspaces, merged worktrees (sized by their `node_modules`, since their build
+  outputs and logs are rows of their own) and non-empty shared caches. A row
+  that a refreshed report no longer lists is never acted on. Each row carries a
   checkbox and the command that frees it. Rows marked **stim gc** are one unit,
   `stim gc --delete`, which also removes merged worktrees and clears idle build
   outputs; while it is checked, those rows are checked and locked. With it
@@ -198,7 +200,9 @@ gc --json`, with its `--cache` scope) in the activity sheet, whose **Delete**
   repository when the GitHub CLI is signed in, **Stale Nd** after 7 days without
   recorded use, **Active**, **Checkout** for a source checkout, or **Folder
   gone**. A row's menu reveals the worktree in Finder or runs `stim worktree
-remove` in it, with the bytes that frees. In a narrow window the category
+remove` in it, with what that frees: its `node_modules`, build outputs and
+  logs. Its devices are parked or deleted by the pool rules, so they are not
+  counted. In a narrow window the category
   columns fold into one line under the name.
 - **Simulators and emulators**: every simulator and AVD from the `inventory`
   of `stim gc --json`, largest first, with its model, runtime or system image,
@@ -219,7 +223,8 @@ remove` in it, with the bytes that frees. In a narrow window the category
   of them is subtracted and counted under Stim instead.
 
 With a `stim` that reports no inventory, the device and runtime sections say to
-update `stim`, and each workspace's devices read a dash.
+update `stim`, each workspace's simulators read a dash, and the headline shows
+those categories as unknown.
 
 ## Autopilot
 

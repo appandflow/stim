@@ -94,6 +94,7 @@ import Testing
     #expect(report.total(.stimDevices) == CategoryTotal(bytes: 10240 + 3072 + 5 * 1024, complete: true))
     #expect(report.total(.otherDevices) == CategoryTotal(bytes: 7168 + 1024 + 2 * 1024, complete: false))
     #expect(report.total(.nodeModules).bytes == 4096)
+    #expect(report.free.first { $0.id == "worktree:/r/.worktrees/a" }?.bytes == 4096)
 
     #expect(report.runtimes.map(\.title) == ["iOS 18.3.1", "Android 30 \u{00B7} google_apis", "iOS 27.0", "Android 36 \u{00B7} google_apis"])
     #expect(report.runtimes[1].size == .size(Int64(3 * 1024)) && report.runtimes[1].unused)
@@ -120,6 +121,7 @@ import Testing
     #expect(!report.hasInventory && report.devices.isEmpty && report.runtimes.isEmpty)
     #expect(row.deviceCount == 2)
     #expect(row.devices == .notMeasured)
+    #expect(!report.total(.stimDevices).complete && !report.total(.runtimes).complete)
   }
 
   /// Catches worktrees of one repository scattered through the list, or a repository ranked by its first worktree.
@@ -135,6 +137,11 @@ import Testing
       gc: nil, disk: disk, paths: paths)
     #expect(report.repositories.map(\.name) == ["t", "solo"])
     #expect(report.repositories[0].total == 11 && report.repositories[0].worktrees.map(\.path) == ["/t/.w/b", "/t/.w/a"])
+
+    let checkout = StorageReport.make(
+      environments: [try env("/t/app", repository: nil), try env("/t/.w/a", repository: "/t")], gc: nil, disk: disk,
+      paths: paths, projectRoots: ["/t/app": "/t", "/t/.w/a": "/t"])
+    #expect(checkout.repositories.map(\.name) == ["t"])
   }
 
   /// Catches a slow or timed-out tree blanking every row, and an absent gc entry reading as unknown.
@@ -235,6 +242,14 @@ import Testing
       ])
     #expect(commands.first?.cwd == "/r")
     #expect(FreePlan.bytes(items, selected: alone) == 23)
+  }
+
+  /// Catches Free acting on a row a refreshed report no longer lists, such as a worktree that got new commits.
+  @Test func dropsSelectedActionsTheReportNoLongerLists() {
+    let items = [FreeItem(id: "d", title: "stim-parked", path: nil, detail: "", bytes: 3, action: .gc)]
+    let effective = FreePlan.effective([.gc, worktree, .cache("gone")], items: items)
+    #expect(effective == [.gc])
+    #expect(FreePlan.effective([worktree], items: []).isEmpty)
   }
 
   /// Catches several commands squeezed into one gc preview whose Delete would act on only one of them.

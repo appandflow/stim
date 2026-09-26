@@ -20,8 +20,9 @@ public struct StoragePaths: Sendable {
     derivedData = "\(home)/Library/Developer/Xcode/DerivedData"
     gradleCaches = "\(home)/.gradle/caches"
     libraryCaches = "\(home)/Library/Caches"
-    let sdk = environment["ANDROID_HOME"] ?? environment["ANDROID_SDK_ROOT"] ?? "\(home)/Library/Android/sdk"
-    systemImages = "\(sdk)/system-images"
+    let sdk = [environment["ANDROID_HOME"], environment["ANDROID_SDK_ROOT"]].compactMap { $0 }.first { !$0.isEmpty }
+      ?? "\(home)/Library/Android/sdk"
+    systemImages = "\(sdk.hasSuffix("/") ? String(sdk.dropLast()) : sdk)/system-images"
   }
 
   public func simulator(_ udid: String) -> String { "\(simulatorDevices)/\(udid)" }
@@ -152,6 +153,13 @@ public struct WorkspaceStorage: Identifiable, Hashable, Sendable {
     return parts.compactMap(\.bytes).reduce(0, +)
   }
 
+  /// What `stim worktree remove` frees: `node_modules`, build outputs and logs. Its devices are parked or deleted
+  /// by the pool rules, so they are left out.
+  public var removable: Int64? {
+    let parts = [nodeModules, buildOutputs, logs].compactMap(\.bytes)
+    return parts.isEmpty ? nil : parts.reduce(0, +)
+  }
+
   /// Whether every category has a size, so `total` is not a lower bound.
   public var totalComplete: Bool { [buildOutputs, nodeModules, logs, devices].allSatisfy { $0.bytes != nil } }
 
@@ -254,6 +262,11 @@ public enum FreePlan {
   /// The actions checked by default: everything but emptying whole caches.
   public static func defaultSelection(_ items: [FreeItem]) -> Set<FreeAction> {
     Set(items.map(\.action).filter { if case .cache = $0 { return false } else { return true } })
+  }
+
+  /// The selected actions that still free a listed item, so a row a refreshed report no longer lists is never acted on.
+  public static func effective(_ selected: Set<FreeAction>, items: [FreeItem]) -> Set<FreeAction> {
+    selected.intersection(items.map(\.action))
   }
 
   public static func frees(_ action: FreeAction, selected: Set<FreeAction>) -> Bool {
@@ -372,7 +385,7 @@ public struct StorageReport: Sendable {
 
   public static func make(
     environments: [Workspace], unprovisioned: [UnprovisionedWorktree] = [], gc: GcReport?,
-    disk: DiskMeasurements, paths: StoragePaths
+    disk: DiskMeasurements, paths: StoragePaths, projectRoots: [String: String] = [:]
   ) -> StorageReport {
     let outputs = Dictionary(
       (gc?.sections.workspaceBuildOutputs ?? []).compactMap { entry in entry.projectRoot.map { ($0, entry) } },
@@ -443,7 +456,7 @@ public struct StorageReport: Sendable {
           deviceCount: 0, worktree: worktrees[tree.path], unprovisioned: true))
     }
     workspaces.sort(by: largestFirst(\.total, \.path))
-    let repositories = Dictionary(grouping: workspaces) { $0.repository ?? $0.worktreePath }
+    let repositories = Dictionary(grouping: workspaces) { projectRoots[$0.path] ?? $0.repository ?? $0.worktreePath }
       .map { RepositoryStorage(path: $0.key, worktrees: $0.value) }
       .sorted(by: largestFirst(\.total, \.path))
 
@@ -488,12 +501,15 @@ public struct StorageReport: Sendable {
     let stimOutputs =
       allCaches.map { $0.bytes.map(DiskSize.size) ?? .failed } + workspaces.flatMap { [$0.buildOutputs, $0.logs] }
       + (gc?.sections.orphanedWorkspaces ?? []).map { $0.bytes.map(DiskSize.size) ?? .failed }
+    let inventoried: ([DiskSize]) -> [DiskSize] = { inventory == nil ? [.notMeasured] : $0 }
+    var seenModules = Set<String>()
+    let modules = workspaces.filter { seenModules.insert($0.worktreePath).inserted }.map(\.nodeModules)
     let categories: [DiskCategory: CategoryTotal] = [
-      .stimDevices: total(devices.filter(\.isStim).map(\.size)),
+      .stimDevices: total(inventoried(devices.filter(\.isStim).map(\.size))),
       .stimCaches: total(gc == nil ? [.notMeasured] : stimOutputs),
-      .nodeModules: total(workspaces.map(\.nodeModules)),
-      .otherDevices: total(devices.filter { !$0.isStim }.map(\.size)),
-      .runtimes: total(runtimes.map(\.size)),
+      .nodeModules: total(modules),
+      .otherDevices: total(inventoried(devices.filter { !$0.isStim }.map(\.size))),
+      .runtimes: total(inventoried(runtimes.map(\.size))),
       .otherTools: total(unmanaged.map(\.size)),
     ]
 
@@ -556,12 +572,13 @@ public struct StorageReport: Sendable {
     }
     for worktree in gc.mergedWorktrees {
       let inside = workspaces.filter { $0.worktreePath == worktree.path }
-      let bytes = inside.compactMap(\.total).reduce(0, +)
+      let bytes = inside.first?.nodeModules.bytes
       items.append(
         FreeItem(
           id: "worktree:\(worktree.path)", title: "Worktree", path: worktree.path,
-          detail: worktree.detail ?? worktree.mergedInto.map { "Merged into \($0)" } ?? "Merged",
-          bytes: inside.isEmpty ? nil : bytes,
+          detail: (worktree.detail ?? worktree.mergedInto.map { "Merged into \($0)" } ?? "Merged")
+            + "; its node_modules and checkout go, its devices are parked or deleted",
+          bytes: bytes,
           action: .removeWorktree(path: worktree.path, repository: inside.first?.repository)))
     }
     for cache in caches where (cache.bytes ?? 0) > 0 {
