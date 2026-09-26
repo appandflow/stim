@@ -158,7 +158,6 @@ function finishedResult(record: Record<string, unknown>): BuildResult {
   return record.errorCode === 'STIM_CANCELLED' ? 'cancelled' : 'failed';
 }
 
-/** Record a finished run as its platform's last build and the newest entry of its history, in one locked write. */
 export function recordFinishedBuild(
   root: string,
   record: Record<string, unknown>,

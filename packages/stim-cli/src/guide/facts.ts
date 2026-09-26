@@ -811,13 +811,15 @@ RULES
   in 7m02s". To predict the next run instead, see \`guide facts plan\`.
 
   An environment with a recorded run also carries builds, each platform's
-  last 10 runs, newest first. The first entry is the run lastBuilds reports.
+  last 10 runs, newest first. Its newest entry that is not "interrupted" is
+  the run lastBuilds reports, once a run has recorded builds.
 
   builds         { ios?, android? }, each a list of lastBuilds entries
                  with { result, slot, configuration, cacheKey, phases }
-  result         "succeeded", "failed", "cancelled" (an interrupt or
-                 \`stim stop\` ended it) or "interrupted": its process ended
-                 without recording a result, so the next run recorded it with
+  result         "succeeded", "failed", "cancelled" (Stim stopped the run
+                 after an interrupt or \`stim stop\`) or "interrupted": its
+                 process ended without recording a result, such as a kill or a
+                 second interrupt, so the next run recorded it with
                  null durationMs and finishedAt, no cache facts, and 0 for the
                  phase it stopped in
   slot           the device slot, "default" without --slot
@@ -829,8 +831,8 @@ RULES
                  prepare, cache-lookup, wait, prebuild, pods, compile,
                  install and launch
 
-  A run that stops before looking up a build, such as a bad flag, is not
-  recorded. Estimates (expectedMs) come from run statistics, not builds.
+  Only runs that record a last build are listed: a run that stops before
+  looking up a build, such as a bad flag, is not. Estimates (expectedMs) come from run statistics, not builds.
 
   There is no completion fraction: a compile's log volume depends on what
   is already built, so it does not measure progress.`,

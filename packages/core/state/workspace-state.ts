@@ -48,10 +48,8 @@ export const LAST_BUILD_KEYS: Readonly<Record<StatsPlatform, string>> = {
   android: 'lastAndroidBuild',
 };
 
-/** Each platform's recent runs, newest first: `{ ios?: [...], android?: [...] }`. */
 export const BUILD_HISTORY_KEY = 'buildHistory';
 
-/** How many runs of each platform a workspace keeps: the same count run statistics keep per outcome. */
 export const BUILD_HISTORY_LIMIT = 10;
 
 const MISS_KINDS: ReadonlySet<string> = new Set([
