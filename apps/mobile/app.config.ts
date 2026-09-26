@@ -11,7 +11,7 @@ const config: ExpoConfig = {
   name: dev ? 'Stim Dev' : 'Stim',
   slug: 'stim-mobile',
   version: '0.1.0',
-  orientation: 'portrait',
+  orientation: 'default',
   icon: dev ? './assets/images/icon-dev.png' : './assets/images/icon.png',
   scheme: dev ? ['stim', 'stim-dev'] : 'stim',
   userInterfaceStyle: 'automatic',

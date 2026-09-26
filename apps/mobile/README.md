@@ -152,6 +152,14 @@ and **Reconnect** (see [Read-only pairings](#read-only-pairings)). The same
 banner appears when the server refuses `control.begin` with `forbidden`, or
 ends a session because the Mac took control away.
 
+The viewer is the one screen on a phone that turns to landscape with the
+phone; every other screen stays portrait. In landscape the title stays on
+top, and the Control toolbars and the read-only banner move to a column right
+of the screen. Turning the phone does not restart the stream, and
+touches keep landing where they are drawn once the screen settles into its new
+size. The phone does not turn by itself when the device is landscape. On iPad
+every screen follows the iPad's orientation.
+
 With **Control** on, the server starts a control session (`control.begin`)
 and holds a `stim device lock` lease on the device, so agents see it as
 driven. Touches on the frame go to the device as a touch that follows your

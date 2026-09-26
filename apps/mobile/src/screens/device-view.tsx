@@ -6,6 +6,7 @@ import {
   PixelRatio,
   Platform as OS,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -44,6 +45,7 @@ const TYPING_BAR_HEIGHT = 56;
 const ROTATE_WAIT_MS = 2500;
 const ROTATE_NOTE_MS = 4000;
 const NOTE_INSET = 64;
+const SIDE_WIDTH = 240;
 
 /** Maps the Settings screen's video quality choice to the fps, max edge and codecs requested from the server. */
 const QUALITY_PRESETS: Record<VideoQuality, { fps: number; maxEdge: number | null; video: 'h264'[] }> = {
@@ -62,6 +64,7 @@ const POSTURE_LABELS: Record<DevicePosture, string> = {
 export function DeviceView({ workspace, platform, slot }: { workspace: string; platform: Platform; slot: string }) {
   const colors = useColors();
   const window = useWindowDimensions();
+  const landscape = window.width > window.height;
   const { videoQuality } = useSettings();
   const preset = QUALITY_PRESETS[videoQuality];
   const windowMaxEdge = Math.min(MAX_EDGE, Math.round(Math.max(window.width, window.height) * PixelRatio.get()));
@@ -213,6 +216,62 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
       .catch((cause: Error) => Alert.alert('Posture not changed', cause.message))
       .finally(() => setMoving(null));
   };
+  const readOnlyBanner = readOnly ? (
+    <View style={[styles.banner, { borderColor: colors.warn }]}>
+      <View style={styles.bannerBody}>
+        <Text style={styles.bannerTitle}>{READ_ONLY_REASON}</Text>
+        <Text style={styles.bannerSteps}>{allowControlSteps(mac?.name, deviceId)}</Text>
+        <View style={styles.bannerActions}>
+          {deviceId ? (
+            <Pressable
+              onPress={() => void Clipboard.setStringAsync(grantCommand(deviceId)).then(() => setCopied(true))}
+              accessibilityRole="button"
+              hitSlop={6}
+            >
+              <Text style={[styles.bannerAction, { color: colors.primary }]}>{copied ? 'Copied' : 'Copy command'}</Text>
+            </Pressable>
+          ) : null}
+          <Pressable onPress={() => connection?.reconnect()} accessibilityRole="button" hitSlop={6}>
+            <Text style={[styles.bannerAction, { color: colors.primary }]}>Reconnect</Text>
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  ) : null;
+  const toolbars =
+    controlling || readOnly ? (
+      <>
+        <View style={styles.toolbar}>
+          <ToolButton
+            label={typing ? 'Hide keyboard' : 'Keyboard'}
+            disabled={readOnly}
+            onPress={() => (typing ? keyboard.current?.blur() : keyboard.current?.focus())}
+          />
+          <ToolButton label="Home" disabled={readOnly} onPress={() => press('home')} />
+          {platform === 'android' ? (
+            <ToolButton label="Back" disabled={readOnly} onPress={() => press('back')} />
+          ) : null}
+          {platform === 'android' ? (
+            <ToolButton label="Apps" disabled={readOnly} onPress={() => press('app-switch')} />
+          ) : null}
+          <ToolButton label="Lock" disabled={readOnly} onPress={() => press('lock')} />
+        </View>
+        <View style={styles.toolbar}>
+          <ToolButton label="Rotate left" disabled={readOnly} onPress={() => rotate('left')} />
+          <ToolButton label="Rotate right" disabled={readOnly} onPress={() => rotate('right')} />
+          {postures
+            .filter((posture) => platform === 'android' || posture !== shown)
+            .map((posture) => (
+              <ToolButton
+                key={posture}
+                label={moving === posture ? 'Moving...' : POSTURE_LABELS[posture]}
+                disabled={moving !== null}
+                onPress={() => move(posture)}
+              />
+            ))}
+        </View>
+      </>
+    ) : null;
   const model = device?.model ?? (platform === 'ios' ? 'iOS Simulator' : 'Android Emulator');
   const title = workspaceTitleAt(workspace, status);
 
@@ -230,7 +289,17 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
             pointerEvents="none"
           />
           <Animated.View style={[styles.root, zoom.fadeStyle]}>
-            <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+            <View
+              style={[
+                styles.root,
+                {
+                  paddingTop: insets.top,
+                  paddingBottom: insets.bottom,
+                  paddingLeft: insets.left,
+                  paddingRight: insets.right,
+                },
+              ]}
+            >
               <View style={styles.root}>
                 <View
                   style={styles.bar}
@@ -269,32 +338,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                     />
                   ) : null}
                 </View>
-                {readOnly ? (
-                  <View style={[styles.banner, { borderColor: colors.warn }]}>
-                    <View style={styles.bannerBody}>
-                      <Text style={styles.bannerTitle}>{READ_ONLY_REASON}</Text>
-                      <Text style={styles.bannerSteps}>{allowControlSteps(mac?.name, deviceId)}</Text>
-                      <View style={styles.bannerActions}>
-                        {deviceId ? (
-                          <Pressable
-                            onPress={() =>
-                              void Clipboard.setStringAsync(grantCommand(deviceId)).then(() => setCopied(true))
-                            }
-                            accessibilityRole="button"
-                            hitSlop={6}
-                          >
-                            <Text style={[styles.bannerAction, { color: colors.primary }]}>
-                              {copied ? 'Copied' : 'Copy command'}
-                            </Text>
-                          </Pressable>
-                        ) : null}
-                        <Pressable onPress={() => connection?.reconnect()} accessibilityRole="button" hitSlop={6}>
-                          <Text style={[styles.bannerAction, { color: colors.primary }]}>Reconnect</Text>
-                        </Pressable>
-                      </View>
-                    </View>
-                  </View>
-                ) : null}
+                {landscape ? null : readOnlyBanner}
                 <Banner
                   colors={colors}
                   control={control.state}
@@ -309,44 +353,23 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                     <Chip tint={colors.warn}>Screen updates delayed</Chip>
                   </View>
                 ) : null}
-                <View ref={stage} style={styles.stage} onLayout={zoom.measure} collapsable={false}>
-                  {streams ? null : (
-                    <Text style={styles.placeholder}>{device?.state ?? 'This device is not running.'}</Text>
+                <View style={landscape ? styles.row : styles.root}>
+                  <View ref={stage} style={styles.stage} onLayout={zoom.measure} collapsable={false}>
+                    {streams ? null : (
+                      <Text style={styles.placeholder}>{device?.state ?? 'This device is not running.'}</Text>
+                    )}
+                  </View>
+                  {landscape ? (
+                    controlling || readOnly ? (
+                      <ScrollView style={styles.side} contentContainerStyle={styles.sideContent}>
+                        {readOnlyBanner}
+                        {toolbars}
+                      </ScrollView>
+                    ) : null
+                  ) : (
+                    toolbars
                   )}
                 </View>
-                {controlling || readOnly ? (
-                  <View style={styles.toolbar}>
-                    <ToolButton
-                      label={typing ? 'Hide keyboard' : 'Keyboard'}
-                      disabled={readOnly}
-                      onPress={() => (typing ? keyboard.current?.blur() : keyboard.current?.focus())}
-                    />
-                    <ToolButton label="Home" disabled={readOnly} onPress={() => press('home')} />
-                    {platform === 'android' ? (
-                      <ToolButton label="Back" disabled={readOnly} onPress={() => press('back')} />
-                    ) : null}
-                    {platform === 'android' ? (
-                      <ToolButton label="Apps" disabled={readOnly} onPress={() => press('app-switch')} />
-                    ) : null}
-                    <ToolButton label="Lock" disabled={readOnly} onPress={() => press('lock')} />
-                  </View>
-                ) : null}
-                {controlling || readOnly ? (
-                  <View style={styles.toolbar}>
-                    <ToolButton label="Rotate left" disabled={readOnly} onPress={() => rotate('left')} />
-                    <ToolButton label="Rotate right" disabled={readOnly} onPress={() => rotate('right')} />
-                    {postures
-                      .filter((posture) => platform === 'android' || posture !== shown)
-                      .map((posture) => (
-                        <ToolButton
-                          key={posture}
-                          label={moving === posture ? 'Moving...' : POSTURE_LABELS[posture]}
-                          disabled={moving !== null}
-                          onPress={() => move(posture)}
-                        />
-                      ))}
-                  </View>
-                ) : null}
               </View>
             </View>
           </Animated.View>
@@ -379,7 +402,12 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
           {rotateNote && rest ? (
             <Animated.View
               pointerEvents="none"
-              style={[styles.noteRow, { top: rest[1] + rest[3] - NOTE_INSET }, zoom.fadeStyle, lift]}
+              style={[
+                styles.noteRow,
+                { top: rest[1] + rest[3] - NOTE_INSET, left: rest[0], width: rest[2] },
+                zoom.fadeStyle,
+                lift,
+              ]}
             >
               <Text
                 accessibilityLiveRegion="polite"
@@ -391,7 +419,12 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
             </Animated.View>
           ) : null}
           <Animated.View
-            style={[styles.typingBar, typingBar, !typingBarShown && styles.hidden]}
+            style={[
+              styles.typingBar,
+              { paddingLeft: 16 + insets.left, paddingRight: 16 + insets.right },
+              typingBar,
+              !typingBarShown && styles.hidden,
+            ]}
             pointerEvents={typingBarShown ? 'auto' : 'none'}
             accessibilityElementsHidden={!typingBarShown}
             importantForAccessibility={typingBarShown ? 'auto' : 'no-hide-descendants'}
@@ -406,6 +439,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
               autoCorrect={false}
               spellCheck={false}
               keyboardType="ascii-capable"
+              disableFullscreenUI
               submitBehavior="submit"
               onChangeText={(next) => {
                 const delta = keyboardDelta(typed, next);
@@ -513,7 +547,7 @@ const styles = StyleSheet.create({
   title: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
   subtitle: { color: '#FFFFFF99', fontSize: 12 },
   chips: { flexDirection: 'row', paddingHorizontal: 16, paddingBottom: 6 },
-  noteRow: { position: 'absolute', left: 24, right: 24, alignItems: 'center' },
+  noteRow: { position: 'absolute', alignItems: 'center', paddingHorizontal: 16 },
   note: {
     overflow: 'hidden',
     paddingHorizontal: 12,
@@ -525,6 +559,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
   },
+  row: { flex: 1, flexDirection: 'row' },
+  side: { width: SIDE_WIDTH, flexGrow: 0 },
+  sideContent: { flexGrow: 1, justifyContent: 'center', paddingVertical: 8 },
   stage: { flex: 1, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' },
   flying: { position: 'absolute', overflow: 'hidden' },
   overlay: {
@@ -576,7 +613,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    paddingHorizontal: 16,
     backgroundColor: '#1C1C1E',
   },
   hidden: { opacity: 0 },
