@@ -73,7 +73,7 @@ const processes = table([
     501,
     500,
     60,
-    '/Users/me/Library/Android/sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64 -avd stim-b -port 5554',
+    '/Users/Jane Doe/Library/Android/sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64 -avd stim-b -port 5554',
   ],
   [502, 501, 0, '/Users/me/Library/Android/sdk/emulator/crashpad_handler'],
   [600, 1, 0.2, 'stim-web-supervisor'],

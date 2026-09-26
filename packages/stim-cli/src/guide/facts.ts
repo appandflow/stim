@@ -935,10 +935,11 @@ RULES
 
   Each process counts in exactly one owner, the one whose root process is
   its nearest ancestor, so the supervisor a build started counts as Metro,
-  not as the build. Processes with no owner are left out. machine comes
-  from the same host ps status already reads, and is null when no simulator
-  is booted, no workspace is live and no build runs: status then reads no
-  process table. \`status --watch --json\` rereads it every 15 seconds while
+  not as the build, and a Gradle or Kotlin daemon counts in the build that
+  started it until that build exits, then as shared. Processes with no owner
+  are left out. machine comes from one host ps, the one status reads for
+  device activity, and is null when no simulator is booted, no workspace is
+  live and no build runs: status then reads no process table. \`status --watch --json\` rereads it every 15 seconds while
   machine is not null, with no other subprocess.`,
     },
     plan: {

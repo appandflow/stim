@@ -29,13 +29,10 @@ const SERVER = /(^|[\s/])stim-server(\.mjs)?(\s|$)/;
 const LAUNCHD_SIM = /^launchd_sim\s.*\/Devices\/([^/\s]+)\//;
 const MAX_DEPTH = 64;
 
+const EMULATOR = /(?:^|\/)(?:qemu-system-[^\s/]+|emulator)(?:\s.*)?\s(?:-avd\s+|@)(\S+)/;
+
 function emulatorAvd(command: string): string | null {
-  const tokens = command.split(/\s+/);
-  const exe = tokens[0]?.split('/').pop() ?? '';
-  if (exe !== 'emulator' && !exe.startsWith('qemu-system')) return null;
-  const at = tokens.indexOf('-avd');
-  if (at >= 0) return tokens[at + 1] ?? null;
-  return tokens.find((token) => token.startsWith('@') && token.length > 1)?.slice(1) ?? null;
+  return EMULATOR.exec(command)?.[1] ?? null;
 }
 
 type Owner = Omit<MachineOwner, 'cpuPercent' | 'residentMb' | 'processes'>;
