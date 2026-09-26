@@ -91,7 +91,8 @@ Symbolication is best effort. In development, Stim asks the verified workspace's
 Metro `/symbolicate` endpoint to resolve captured JavaScript coordinates, with a
 short timeout and the original coordinates as fallback. Resolved launch context
 is saved separately so it remains readable after Metro stops. Expo's printed source
-excerpt and Call Stack are included when available. Uncorrelated bare React Native
+excerpt and stack lines are included when available, even when Stim's own bundle
+response records land between them. Uncorrelated bare React Native
 symbolication events remain explicitly separate context. Shortened bundle locations
 are labeled **unsymbolicated**, and a component stack is never used
 to invent a missing error stack. OS logging can truncate text before Stim captures

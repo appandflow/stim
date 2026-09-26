@@ -115,11 +115,13 @@ FLAGS
   not stack depth. For untouched captured records use:
     stim logs --source all --json
   Neither form can restore text the runtime truncated before capture.
-  In non-follow human output, an Expo error includes its immediately
-  following code frame and Call Stack lines. Bare React Native symbolication is
-  shown as separate context because Metro does not provide an error correlation
-  identifier. Context does not change the error count or the raw error records
-  returned by --json. --json is never capped, and neither is an explicit --tail.
+  In non-follow human output, an Expo error includes the code frame and stack
+  lines Expo printed after it. Stim's own Metro records that land between
+  those lines, such as bundle responses, do not cut the stack short. Bare
+  React Native symbolication is shown as separate context because Metro does
+  not provide an error correlation identifier. Context does not change the
+  error count or the raw error records returned by --json. --json is never
+  capped, and neither is an explicit --tail.
 
   In --follow mode the marker window is dropped -- every error arriving from
   then on is by definition after the last marker seen.
