@@ -11,6 +11,7 @@ final class OpenRequests: ObservableObject {
   /// The workspace selected in the main window, which the Settings window edits.
   @Published var selectedWorkspace: String?
   @Published var showsStorage = false
+  @Published var pairsPhone = false
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
