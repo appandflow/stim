@@ -1022,7 +1022,7 @@ test('gc --delete removes a worktree whose pull request merged or closed only wh
   for (const name of ['unsaved', 'wip', 'gone', 'noPr']) expect(existsSync(worktrees[name]!)).toBe(true);
 }, 120_000);
 
-test('a signed-out or unresponsive gh is asked once per gc run, and every worktree says why', async () => {
+test('a signed-out or unresponsive gh is asked once per repository per gc run, and every worktree says why', async () => {
   const { worktrees } = gitRepoWithWorktrees(['one', 'two']);
   for (const path of Object.values(worktrees)) upsertProject(path, { metroPort: null });
   const current = getExecutor();

@@ -219,7 +219,6 @@ interface DeviceReads {
   avdSerial: ReturnType<typeof ownedAvdSerialResolver>;
 }
 
-/** One simulator list and one AVD resolver, each read on first use and then shared by every later check. */
 function deviceReads(): DeviceReads {
   let sims: IosSimRecord[] | null | undefined;
   let resolver: ReturnType<typeof ownedAvdSerialResolver> | undefined;
@@ -390,7 +389,7 @@ interface Inspected {
 
 /**
  * Classifies each Stim-managed linked worktree. A merged one is removable; with `idle`, so is one unused for
- * `olderThan` days. Device use is read after the git facts, against one simulator list and one AVD resolver, so
+ * `olderThan` days. Device use is read last, in one pass against one simulator list and one AVD resolver, so
  * the resolver's time budget covers only device reads. Pull requests are asked once per repository, all
  * repositories at once. Merge state is checked only where it decides the verdict, after one fetch per repository.
  */
@@ -466,9 +465,13 @@ export async function collectWorktreeSweep({
       branch: head && entry?.branch ? entry.branch : null,
     });
   }
+  const linked = inspected.filter(({ facts }) => facts.source === 'linked');
+  for (const { candidate, facts } of linked) {
+    facts.inUse = candidate.keys.flatMap((key) => workspaceInUse(key, { managedLocks: true }));
+  }
   const devices = deviceReads();
-  for (const { candidate, facts } of inspected) {
-    if (facts.source === 'linked') facts.inUse = inUseOf(candidate.keys, { managedLocks: true }, devices);
+  for (const { candidate, facts } of linked) {
+    facts.inUse = [...new Set([...facts.inUse, ...deviceUseOf(candidate.keys, devices)])];
   }
   await lookUpPullRequests(inspected);
   const worktrees: WorktreeCandidate[] = [];
