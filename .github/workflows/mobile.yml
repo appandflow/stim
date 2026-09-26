@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['apps/mobile/**', '.github/workflows/mobile.yml', 'pnpm-lock.yaml', 'pnpm-workspace.yaml']
+    paths: ['apps/mobile/**', '.github/workflows/mobile.yml', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml']
   pull_request:
-    paths: ['apps/mobile/**', '.github/workflows/mobile.yml', 'pnpm-lock.yaml', 'pnpm-workspace.yaml']
+    paths: ['apps/mobile/**', '.github/workflows/mobile.yml', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml']
 
 concurrency:
   group: mobile-${{ github.ref }}

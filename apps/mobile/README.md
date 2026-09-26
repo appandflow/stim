@@ -482,7 +482,8 @@ pnpm run typecheck
 pnpm test
 ```
 
-`.github/workflows/mobile.yml` runs them for changes under `apps/mobile`.
+`.github/workflows/mobile.yml` runs them for changes under `apps/mobile` and to
+the root `package.json`, `pnpm-lock.yaml` and `pnpm-workspace.yaml`.
 
 ## Ship to TestFlight
 
