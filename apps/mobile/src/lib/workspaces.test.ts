@@ -65,6 +65,11 @@ describe('workspaceTitle', () => {
   });
 
   it('names a main checkout, nested app or not, by its project', () => {
+    const onlyUnprovisioned = repositoryRoots({
+      environments: [env('/u/stim/apps/mobile')],
+      unprovisionedWorktrees: [{ path: '/u/stim-1373', repository: '/u/stim' }],
+    });
+    expect(workspaceTitle(env('/u/stim/apps/mobile'), onlyUnprovisioned)).toBe('stim');
     expect(workspaceTitle(env('/u/stim/apps/mobile', { worktree: null }), roots)).toBe('stim');
     expect(workspaceTitle(env('/u/tlon-apps'), roots)).toBe('tlon-apps');
   });

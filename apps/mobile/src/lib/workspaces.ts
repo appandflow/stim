@@ -52,8 +52,8 @@ export function repositoryRoots(payload: Pick<StatusPayload, 'environments' | 'u
   for (const { path, worktree } of payload.environments) {
     roots.add(worktreeRoot(path) ?? worktree?.repository ?? path);
   }
-  for (const { path } of payload.unprovisionedWorktrees ?? []) {
-    const root = worktreeRoot(path);
+  for (const { path, repository } of payload.unprovisionedWorktrees ?? []) {
+    const root = worktreeRoot(path) ?? repository;
     if (root) roots.add(root);
   }
   return [...roots];
@@ -93,7 +93,8 @@ export function pathInCheckout(env: Pick<EnvironmentState, 'path' | 'worktree'>,
 
 /**
  * A workspace's name: its worktree's branch, else the worktree's folder, else the project for a main checkout.
- * `stim status` reports worktree facts only for linked worktrees.
+ * `stim status` reports worktree facts only for linked worktrees, so a nested app in a repository with no known
+ * worktree is its own project and is named after its folder.
  */
 export function workspaceTitle(env: Pick<EnvironmentState, 'path' | 'worktree'>, roots: string[]): string {
   if (env.worktree?.branch) return env.worktree.branch;

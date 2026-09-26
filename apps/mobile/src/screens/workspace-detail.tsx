@@ -42,7 +42,9 @@ export function WorkspaceDetail({ path }: { path: string }) {
   const env = status?.environments.find((e) => e.path === path);
   const title = workspaceTitleAt(path, status);
   const macId = mac?.id ?? '';
-  const project = status && env ? projectOf(env, repositoryRoots(status)).name : null;
+  const roots = status ? repositoryRoots(status) : [];
+  const project = status && env ? projectOf(env, roots).name : null;
+  const inCheckout = env ? pathInCheckout(env, roots) : null;
   const actions = useAction(path);
   const [toast, setToast] = useState<Toast | null>(null);
   const dismissToast = useCallback(() => setToast(null), []);
@@ -97,7 +99,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
           headerTransparent: Platform.OS === 'ios',
           headerBlurEffect: 'systemChromeMaterial',
           headerTitle: () => (
-            <HeaderTitle title={title} subtitle={[project, mac?.name].filter(Boolean).join(' \u00B7 ')} />
+            <HeaderTitle title={title} subtitle={[project, inCheckout, mac?.name].filter(Boolean).join(' \u00B7 ')} />
           ),
         }}
       />
@@ -184,7 +186,6 @@ export function WorkspaceDetail({ path }: { path: string }) {
   const devices = orderDevices(devicesOf(env));
   const { byDevice, general } = deviceWarnings(env.warnings, devices);
   const errors = env.logs?.errorsSinceMarker ?? 0;
-  const inCheckout = pathInCheckout(env, repositoryRoots(status));
   const metroHealthy = Boolean(env.metro?.running) && env.supervisor?.healthy !== false;
   return (
     <>
