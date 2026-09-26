@@ -98,7 +98,7 @@ import Testing
     let git = try #require(payload.unprovisionedWorktrees?.first?.git)
     #expect(git.uncommitted == 3)
     #expect(git.arrows == "\u{2191}3 \u{2193}1")
-    #expect(git.summary == "3 uncommitted changes, 3 ahead of origin/feat/x, 1 behind")
+    #expect(git.summary == "3 uncommitted changes, 3 commits not pushed to origin/feat/x, 1 commit behind origin/feat/x")
     #expect(workspace.worktree?.git == nil)
   }
 
@@ -520,6 +520,16 @@ import Testing
     let idle = activity("idle", last: "2026-09-24T20:00:00.000Z")
     #expect(ActivityBadge(idle, screenChangedAt: now.addingTimeInterval(-120), now: now) == nil)
     #expect(ActivityBadge(idle, screenChangedAt: now.addingTimeInterval(-3600), now: now)?.text == "Idle 1h")
+  }
+
+  @Test func driversSummaryNamesEachToolOnceWithTheLatestStart() {
+    let first = activity("driven", since: "2026-09-25T01:00:00.000Z")
+    let second = activity("driven", since: "2026-09-25T01:48:00.000Z")
+    var other = activity("driven", since: "2026-09-25T01:30:00.000Z")
+    other.driver?.tool = "agent-device"
+    #expect(ActivityBadge.driversSummary([first, nil, activity("idle"), second, other], now: now) == "maestro, agent-device \u{00B7} 12m")
+    #expect(ActivityBadge.driversSummary([activity("driven")], now: now) == "an unknown tool")
+    #expect(ActivityBadge.driversSummary([activity("idle"), nil], now: now) == nil)
   }
 
   @Test func activeShowsNothingAndUnknownNeverReadsAsIdle() {

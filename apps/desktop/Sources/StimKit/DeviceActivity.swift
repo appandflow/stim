@@ -69,6 +69,22 @@ public enum ActivityBadge: Equatable, Sendable {
   }
 }
 
+extension ActivityBadge {
+  /// A workspace's drivers for one pill: each driving tool once, then the time since the most recent driver
+  /// started, such as "agent-device, maestro \u{00B7} 12m". Nil when no device is driven.
+  public static func driversSummary(_ activities: [DeviceActivity?], now: Date = Date()) -> String? {
+    let driven = activities.compactMap { $0 }.filter { $0.state == "driven" }
+    guard !driven.isEmpty else { return nil }
+    var tools: [String] = []
+    for tool in driven.map({ $0.driver?.tool ?? "an unknown tool" }) where !tools.contains(tool) {
+      tools.append(tool)
+    }
+    let names = tools.joined(separator: ", ")
+    guard let latest = driven.compactMap({ $0.driver?.since.flatMap(date) }).max() else { return names }
+    return "\(names) \u{00B7} \(duration(max(0, now.timeIntervalSince(latest))))"
+  }
+}
+
 /// When the app last saw each device's screen change, keyed by simulator UDID or emulator serial.
 public final class ScreenActivity: @unchecked Sendable {
   public static let shared = ScreenActivity()

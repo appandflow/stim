@@ -23,9 +23,21 @@ struct GitIndicator: View {
   var body: some View {
     if let git, git.isNotable {
       if chips {
-        if git.uncommitted > 0 { Pill(tone: .warning) { Text("\(git.uncommitted) uncommitted") } }
-        if let arrows = git.arrows { Pill { Text(arrows).monospacedDigit() } }
-        if git.mergedInto != nil { Pill(tone: .accent) { Text("merged") } }
+        if git.uncommitted > 0 {
+          Pill(tone: .warning) { Text("\(git.uncommitted) uncommitted") }
+            .help("\(git.uncommitted) uncommitted \(git.uncommitted == 1 ? "change" : "changes")")
+        }
+        if let ahead = git.ahead, ahead > 0 {
+          Pill { Text("\u{2191}\(ahead) unpushed").monospacedDigit() }
+            .help(git.unpushedLabel(ahead))
+            .accessibilityLabel(git.unpushedLabel(ahead))
+        }
+        if let behind = git.behind, behind > 0 {
+          Pill { Text("\u{2193}\(behind) behind").monospacedDigit() }
+            .help(git.behindLabel(behind))
+            .accessibilityLabel(git.behindLabel(behind))
+        }
+        if let mergedInto = git.mergedInto { Pill(tone: .accent) { Text("merged") }.help("merged into \(mergedInto)") }
       } else {
         HStack(spacing: Space.xs) {
           if git.uncommitted > 0 {
@@ -45,6 +57,39 @@ struct GitIndicator: View {
         .help(git.summary)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(git.summary)
+      }
+    }
+  }
+}
+
+/// The workspace's committed memory estimate from `stim status`, which is a fixed budget rather than a measurement.
+struct MemoryEstimatePill: View {
+  var mb: Int
+
+  var body: some View {
+    Pill {
+      Image(systemName: "memorychip")
+      Text(formatGigabytes(mb: mb))
+    }
+    .help("Committed memory estimate from stim status")
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel("Estimated to use about \(formatGigabytes(mb: mb)) of memory")
+  }
+}
+
+/// One pill naming everything driving a workspace's devices, so the device tiles only mark which ones are driven.
+struct DriversPill: View {
+  var activities: [DeviceActivity?]
+
+  var body: some View {
+    TimelineView(.periodic(from: .now, by: 30)) { context in
+      if let summary = ActivityBadge.driversSummary(activities, now: context.date) {
+        Pill(tone: .accent) {
+          StatusDot(color: Palette.primary)
+          Text("Driven by \(summary)")
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Driven by \(summary.replacingOccurrences(of: " \u{00B7} ", with: " for "))")
       }
     }
   }

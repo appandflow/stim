@@ -312,9 +312,12 @@ struct Inspector: View {
           }
           .help(env.supervisor.map { "\($0.mode ?? "supervisor") \u{00B7} \($0.healthy == true ? "healthy" : "unhealthy")" } ?? "")
         }
-        GitIndicator(git: env.worktree?.git, chips: true).help(env.worktree?.git?.summary ?? "")
+        if env.devices.contains(where: { $0.isRunning && $0.activity?.state == "driven" }) {
+          DriversPill(activities: env.devices.filter(\.isRunning).map(\.activity))
+        }
+        GitIndicator(git: env.worktree?.git, chips: true)
         if let mb = env.memoryMb, mb > 0 {
-          Pill { Text(formatGigabytes(mb: mb)) }.help("Committed memory estimate from stim status")
+          MemoryEstimatePill(mb: mb)
         }
         if env.logs != nil {
           Button(action: openLogs) {
