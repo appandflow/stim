@@ -1,4 +1,5 @@
 import Constants from 'expo-constants';
+import * as Updates from 'expo-updates';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { describeState } from '@/components/mac-chip';
@@ -15,6 +16,9 @@ export function About() {
       <View style={[styles.group, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <Text style={[styles.line, { color: colors.text }]}>
           {`Stim for phones ${Constants.expoConfig?.version ?? ''} · protocol ${PROTOCOL_VERSION}`}
+        </Text>
+        <Text style={[styles.note, { color: colors.secondary }]}>
+          {`Update ${Updates.isEmbeddedLaunch || !Updates.updateId ? 'embedded' : Updates.updateId}`}
         </Text>
         <Text style={[styles.note, { color: colors.secondary }]}>
           Read-only: this app watches workspaces, devices and logs on your machines and changes nothing.
