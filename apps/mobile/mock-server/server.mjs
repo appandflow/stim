@@ -15,6 +15,7 @@ const { values } = parseArgs({
     read: { type: 'boolean', default: false },
     workspaces: { type: 'string' },
     'free-gb': { type: 'string', default: '212' },
+    overlay: { type: 'string' },
   },
 });
 
@@ -58,8 +59,23 @@ const busy = new Set();
 
 const startedAt = Date.now();
 const only = values.workspaces ? new RegExp(values.workspaces) : null;
+const readOverlay = () => {
+  if (!values.overlay) return {};
+  try {
+    return JSON.parse(readFileSync(values.overlay, 'utf8'));
+  } catch {
+    return {};
+  }
+};
+const overlaid = (payload) => {
+  const changes = readOverlay().environments ?? {};
+  return {
+    ...payload,
+    environments: payload.environments.map((env) => ({ ...env, ...changes[env.path] })),
+  };
+};
 const status = () => {
-  const payload = shiftTimestamps(fixtures.status, startedAt - Date.parse(fixtures.capturedAt));
+  const payload = overlaid(shiftTimestamps(fixtures.status, startedAt - Date.parse(fixtures.capturedAt)));
   if (!only) return payload;
   const environments = payload.environments.filter((env) => only.test(env.path));
   const live = environments.filter((env) => env.live);
@@ -79,7 +95,7 @@ const usage = () => ({
     {
       mount: '/',
       holds: ['Workspaces', 'Stim home', 'Simulators'],
-      freeBytes: Number(values['free-gb']) * GB,
+      freeBytes: Number(readOverlay().freeGb ?? values['free-gb']) * GB,
       totalBytes: 994.66 * GB,
     },
   ],

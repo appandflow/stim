@@ -10,6 +10,7 @@ import { StatusDot } from '@/components/pill';
 import { ScopeChip } from '@/components/read-only';
 import { Text } from '@/components/text';
 import { useMacs } from '@/hooks/mac-connection';
+import { unregisterPush } from '@/hooks/notifications';
 import { forgetMac, type PairedMac } from '@/lib/macs';
 
 export function MacList() {
@@ -20,7 +21,14 @@ export function MacList() {
   const forget = (mac: PairedMac) =>
     Alert.alert(`Forget ${mac.name}?`, 'This phone stops connecting to it. Pair again from Stim Desktop to undo.', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Forget', style: 'destructive', onPress: () => forgetMac(mac.id).then(reload) },
+      {
+        text: 'Forget',
+        style: 'destructive',
+        onPress: () => {
+          unregisterPush(connections.find((c) => c.mac.id === mac.id)?.connection ?? null, mac.id);
+          void forgetMac(mac.id).then(reload);
+        },
+      },
     ]);
 
   return (

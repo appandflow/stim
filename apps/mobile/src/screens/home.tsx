@@ -17,7 +17,7 @@ import { Touch } from '@/components/touch';
 import { useMenuDrawer } from '@/components/menu-drawer';
 import { WorkspaceRow } from '@/components/workspace-row';
 import { useHomeFilters } from '@/hooks/home-filters';
-import { useMacs, usePairedMacs, useWorkspaceItems } from '@/hooks/mac-connection';
+import { toAttentionMachine, useMacs, usePairedMacs, useWorkspaceItems } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
 import { homeAttention, type HomeAttentionItem } from '@/lib/attention';
 import {
@@ -271,24 +271,7 @@ export function Home() {
 
 function HomeAttention({ now, onOpen }: { now: number; onOpen: (item: HomeAttentionItem) => void }) {
   const { connections } = useMacs();
-  const items = useMemo(
-    () =>
-      homeAttention(
-        connections.map((c) => ({
-          id: c.mac.id,
-          name: c.mac.name,
-          state: c.state,
-          missing: c.missing,
-          status: c.cachedSeenAt === null ? c.status : null,
-          usage: c.usage,
-          home: c.home,
-          disconnectedAt: c.disconnectedAt,
-          seenAt: c.cachedSeenAt,
-        })),
-        now,
-      ),
-    [connections, now],
-  );
+  const items = useMemo(() => homeAttention(connections.map(toAttentionMachine), now), [connections, now]);
   return <AttentionStrip items={items} onOpen={onOpen} />;
 }
 

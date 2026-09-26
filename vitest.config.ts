@@ -9,12 +9,14 @@ delete process.env.NODE_PATH;
 
 export default defineConfig({
   oxc: {
+    tsconfig: false,
     jsx: {
       runtime: 'automatic',
     },
   },
   resolve: {
     alias: {
+      '@': fileURLToPath(new URL('./apps/mobile/src', import.meta.url)),
       '@theme/CodeBlock': fileURLToPath(new URL('./website/src/test/CodeBlock.ts', import.meta.url)),
       '@docusaurus/useIsBrowser': fileURLToPath(new URL('./website/src/test/useIsBrowser.ts', import.meta.url)),
     },

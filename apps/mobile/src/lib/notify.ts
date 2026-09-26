@@ -1,5 +1,5 @@
 /**
- * Which attention items notify, and when. apps/mobile/src/lib/notify.ts holds the same code;
+ * Which attention items notify, and when. packages/server/src/notify.ts holds the same code;
  * packages/server/__tests__/attention-agreement.test.ts fails when the two disagree.
  */
 

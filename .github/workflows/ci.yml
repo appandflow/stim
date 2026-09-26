@@ -20,6 +20,8 @@ on:
       - '!apps/mobile/**'
       - '!.github/workflows/mobile.yml'
       - 'apps/mobile/src/protocol/types.ts'
+      - 'apps/mobile/src/lib/**'
+      - 'apps/mobile/mock-server/fixtures/status.json'
       - 'apps/desktop/Sources/SimulatorFrames/**'
       - 'apps/desktop/Sources/EmulatorFrames/**'
   pull_request:
@@ -30,6 +32,8 @@ on:
       - '!apps/mobile/**'
       - '!.github/workflows/mobile.yml'
       - 'apps/mobile/src/protocol/types.ts'
+      - 'apps/mobile/src/lib/**'
+      - 'apps/mobile/mock-server/fixtures/status.json'
       - 'apps/desktop/Sources/SimulatorFrames/**'
       - 'apps/desktop/Sources/EmulatorFrames/**'
 

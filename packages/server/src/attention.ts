@@ -3,7 +3,8 @@ import type { MachineVolume, PushEvent } from './protocol.ts';
 
 /**
  * The attention items a push can report, computed like the phone's home attention strip
- * (apps/mobile/src/lib/attention.ts, `homeAttention`).
+ * (apps/mobile/src/lib/attention.ts, `homeAttention`). __tests__/attention-agreement.test.ts runs both on the same
+ * statuses and fails when they disagree.
  */
 export interface AttentionCandidate {
   /** `disk`, or `<workspace path>\n<item>` as the phone keys the same item after its machine id. */

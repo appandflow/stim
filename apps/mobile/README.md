@@ -252,6 +252,58 @@ connection to pick up the grant. When the server refuses control or an action
 with `forbidden`, or ends a control session for that reason, the app
 reconnects on its own, so a revoked grant shows as read-only everywhere.
 
+## Notifications
+
+**Settings > Notifications** turns on notifications for the problems the
+**Needs attention** strip shows, with a switch per event: a failed build, new
+log errors, disk below Stim's floor, a machine going offline or refusing the
+pairing, a live device's app stopping, and a build running more than twice its
+median. **Only workspaces an agent drives** keeps workspace notifications to
+workspaces with a device an agent drives at that moment, so a workspace whose
+devices are gone, such as after a failed first build, does not notify. The app
+asks for notification permission when you first turn them on, never at launch;
+when it is refused, the switch stays off and the app offers the system
+settings.
+
+Each problem notifies once: a later failed build, or a problem that cleared
+for two minutes and came back, notifies again. What is already wrong when you
+turn notifications on does not notify. New log errors notify once their count
+has held for 10 seconds (at most a minute after the first), then at most every
+5 minutes. A machine notifies as offline after a minute offline while the app
+is open. Four or more notifications at once become one that opens home.
+Tapping a notification opens the workspace, its logs with **Errors only**, or
+the machine sheet.
+
+When notifications can arrive:
+
+- **iPhone, from a Mac whose `stim-server` pushes** (#1577): failed builds, log
+  errors, low disk, stopped apps and slow builds arrive while the app is open,
+  in the background or closed, as long as `stim-server` runs on the Mac and
+  the phone has a network connection. The app registers its Expo push token
+  with each Mac over the existing connection; the Mac sends through Expo's push
+  service and Apple, with the workspace title, a short reason, the screen to
+  open and the workspace's path. The app then does not notify those events
+  itself, so nothing arrives twice. Push needs the production app and an
+  APNs key in the EAS credentials for `com.appandflow.stim` (`eas credentials
+--platform ios`, **Push Notifications**); without one Expo refuses every
+  push with `InvalidCredentials`, which `stim-server` prints on stderr. Stim
+  Dev has no push credentials and notifies only locally, unless Metro starts
+  with `STIM_DEV_PUSH=1`.
+- **Everything else, and all of Android**: only while the app is open. The
+  app notifies from its own connection to each Mac, which iOS closes seconds
+  after the app leaves the foreground. What went wrong while the app was
+  closed notifies when you next open it, as one summary when there are four or
+  more. Android push needs FCM credentials the
+  app does not have yet. A machine going offline or refusing the pairing is
+  only ever noticed by the phone, so it notifies only while the app is open.
+
+A background check was not added: `expo-background-task` runs at most every
+15 minutes on Android, and on iOS it schedules a `BGProcessingTask` that the
+system runs rarely and at times of its choosing, often only while the phone
+charges, and never after the app is swiped away. It would also need the Mac's
+token readable while the phone is locked. Push covers the same cases on iPhone
+without waking the phone.
+
 ## Device video
 
 `DeviceScreen` (`src/components/device-screen.tsx`) shows the stream
@@ -356,6 +408,13 @@ To try the home screen with two Macs, run two mock servers on different ports.
 node mock-server/server.mjs --port 7797 --name "MacBook Pro" --workspaces tlon-apps
 node mock-server/server.mjs --port 7798 --name "Mac mini" --workspaces 'Developer/stim|hinges' --free-gb 14
 ```
+
+`--overlay <file>` changes the status while the server runs, to try
+notifications. The server rereads the JSON file for each status push (every 5
+seconds) and `machine.get`: `freeGb` replaces `--free-gb`, and `environments`
+maps a workspace path to fields that replace the fixture's, such as
+`{ "logs": { "dir": "/l", "errorsSinceMarker": 3 } }` or a failed
+`lastBuilds` entry.
 
 ## Design system
 

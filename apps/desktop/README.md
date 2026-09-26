@@ -417,6 +417,9 @@ serves `~/.stim` again.
 
 A read-only phone sees workspaces, devices and logs. A phone allowed to control
 can also drive simulators and emulators and run reload and stop.
+An iPhone that turns on notifications gets push notifications from the server
+while **Serve to phones** is on, even when the app on the phone is closed; see
+[Push notifications](../../packages/server/README.md#push-notifications).
 
 **Pair a Phone** runs `stim-server pair --json`, with `--control` while **Allow
 this phone to control devices** is checked (the default), and shows its
