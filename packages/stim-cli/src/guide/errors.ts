@@ -621,13 +621,14 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
 "this project's sim is X, but --device-type asked for Y"
   The project already owns a simulator of a different model, and Stim will
   not silently boot a different one. Reap it (\`worktree remove\`, or
-  \`gc --delete\`) and run \`stim ios\` again to create the requested model.
-  That loses the old sim's app state.
+  \`gc --delete\`) and run \`stim ios\` again to create the requested model,
+  which loses the old sim's app state, or pass \`--slot <name>\` to create it
+  beside the current one. The \`remedy\` field in \`--json\` names the same
+  choices.
 
 "this project's sim runs iOS X, but --runtime asked for Y"
   The same refusal for an explicit \`--runtime\` that names another installed
-  iOS version than the project's sim runs. Reap the sim the same way, or pass
-  \`--slot <name>\` to create one on the requested runtime beside it. The
+  iOS version than the project's sim runs, with the same remedy. The
   ios.runtime setting alone never refuses; it applies at creation.
 
 "this project's emulator uses device profile X, but Y was requested"

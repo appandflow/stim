@@ -2533,9 +2533,11 @@ describe('ensureOwnedDevice: the requested model against the sim this workspace 
           settings: {},
           flags: { deviceType: 'iPhone 17 Pro' },
         }),
-      ).rejects.toThrow(
-        /this project's sim is iPhone 16, but --device-type asked for iPhone 17 Pro\. Stim will not silently boot a different model\. Run `stim worktree remove` \(or `stim gc --delete`\) to reap the current sim, then `stim ios` again to create the requested one\./,
-      );
+      ).rejects.toMatchObject({
+        message:
+          "this project's sim is iPhone 16, but --device-type asked for iPhone 17 Pro. Stim will not silently boot a different model.",
+        remedy: expect.stringMatching(/stim worktree remove.*stim gc --delete.*--slot <name>/),
+      });
 
       expect(run.some((cmd) => /simctl boot/.test(cmd))).toBe(false);
       expect(run.some((cmd) => /simctl create/.test(cmd))).toBe(false);
@@ -2571,9 +2573,11 @@ describe('ensureOwnedDevice: the requested model against the sim this workspace 
   test('--runtime naming another installed version than the sim runs refuses and creates nothing', async () => {
     const { root, run, ensured } = ensureOnSim26({ runtime: '18.6', runtimeFlag: '18.6' });
     try {
-      await expect(ensured).rejects.toThrow(
-        /this project's sim runs iOS 26\.2, but --runtime asked for 18\.6\. Stim will not silently boot a different iOS version\..*--slot <name>/,
-      );
+      await expect(ensured).rejects.toMatchObject({
+        message:
+          "this project's sim runs iOS 26.2, but --runtime asked for 18.6. Stim will not silently boot a different iOS version.",
+        remedy: expect.stringMatching(/stim worktree remove.*stim gc --delete.*--slot <name>/),
+      });
       expect(run.some((cmd) => /simctl create/.test(cmd))).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
