@@ -95,7 +95,7 @@ export function pullRequestLookup(): (cwd: string, branch: string, head: string)
   let unavailable: string | null | undefined;
   return (cwd, branch, head) => {
     const exec = getExecutor();
-    unavailable ??= exec.findExecutable('gh') ? null : 'gh is not installed';
+    if (unavailable === undefined) unavailable = exec.findExecutable('gh') ? null : 'gh is not installed';
     if (unavailable) return { unavailable };
     const isAncestor = (ancestor: string, descendant: string) =>
       exec.runFileQuiet('git', ['-C', cwd, 'merge-base', '--is-ancestor', ancestor, descendant]) !== null;

@@ -202,7 +202,7 @@ status under **Autopilot activity**.
   merged or closed: clean, with no commit that exists only locally except
   those a merged pull request holds, no live Metro, build or device, and past
   `gc.worktreeGraceMinutes`. Right before that it skips a worktree the latest
-  `stim status` shows live or on another branch; a `stim start` in the seconds
+  `stim status` shows live, building or on another branch; a `stim start` in the seconds
   between that and `stim worktree remove` would still be stopped. A worktree with a finished pull request that gc
   keeps for another reason is listed under **Finished pull requests** in Needs
   attention, as "PR #123 merged, 2 uncommitted or untracked files", with

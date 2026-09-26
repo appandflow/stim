@@ -63,7 +63,10 @@ import Testing
        {"path":"/r/detached","live":false,"warnings":[],"worktree":{"path":"/r/detached","repository":"/r"}}]
       """
     let environments = try JSONDecoder().decode([Workspace].self, from: Data(json.utf8))
-    let finished = try #require(PullRequestCleanup.branches(Data(#"[{"headRefName":"done"}]"#.utf8)))
+    let finished = try #require(
+      PullRequestCleanup.branches(
+        Data(#"[{"headRefName":"done","isCrossRepository":false},{"headRefName":"fork","isCrossRepository":true}]"#.utf8)))
+    #expect(finished == ["done"])
     #expect(PullRequestCleanup.candidates(environments, finished: ["/r": finished]) == ["/r/wt"])
   }
 

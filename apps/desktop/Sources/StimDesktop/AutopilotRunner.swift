@@ -264,7 +264,7 @@ final class AutopilotRunner: ObservableObject {
       await MainActor.run {
         self.pollingPullRequests = false
         self.pullRequestCheck = problem
-        if candidates.isEmpty {
+        if candidates.isEmpty, problem == nil {
           self.pullRequestVerdict = nil
           self.finishedPullRequests = []
           return

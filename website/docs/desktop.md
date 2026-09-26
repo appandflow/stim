@@ -69,7 +69,7 @@ safe:
   ([`gc.worktreeGraceMinutes`](./settings.md)).
 
 Just before removing, the app skips a worktree that `stim status` now shows
-live or on another branch, and `stim worktree remove` checks again for
+live, building or on another branch, and `stim worktree remove` checks again for
 uncommitted and unpushed work under its locks. A worktree that fails a check
 is not removed. It is listed under **Finished
 pull requests** in **Needs attention** with the reason, such as "PR #123

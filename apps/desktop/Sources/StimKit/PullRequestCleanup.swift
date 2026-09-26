@@ -11,12 +11,20 @@ public enum PullRequestCleanup {
   public static let reportMaxAge: TimeInterval = 30 * 60
 
   /// `gh pr list` arguments for the repository's 100 newest merged and closed pull requests.
-  public static let listArguments = ["pr", "list", "--state", "closed", "--limit", "100", "--json", "headRefName"]
+  public static let listArguments = [
+    "pr", "list", "--state", "closed", "--limit", "100", "--json", "headRefName,isCrossRepository",
+  ]
 
-  /// Head branch names from `gh pr list --json headRefName` output, or nil when it is not that.
+  /// Head branch names of the repository's own pull requests in `gh pr list --json` output, or nil when it is
+  /// not that. A fork's pull request only shares the branch name, and `stim gc` ignores it too.
   public static func branches(_ json: Data) -> Set<String>? {
-    struct Entry: Decodable { var headRefName: String }
-    return (try? JSONDecoder().decode([Entry].self, from: json)).map { Set($0.map(\.headRefName)) }
+    struct Entry: Decodable {
+      var headRefName: String
+      var isCrossRepository: Bool?
+    }
+    return (try? JSONDecoder().decode([Entry].self, from: json)).map {
+      Set($0.filter { $0.isCrossRepository != true }.map(\.headRefName))
+    }
   }
 
   /// Why a check found no pull requests because `gh` could not answer, or nil when it answered for a repository.
@@ -45,13 +53,14 @@ public enum PullRequestCleanup {
   }
 
   /// The worktrees of `removable` that the latest `stim status` still shows on a branch with a finished pull
-  /// request and not live, so one that started Metro, a build or a device, or switched branches, since
-  /// `stim gc --json` judged it is left for the next check.
+  /// request, not live and not building, so one that started Metro, a build or a device, or switched branches,
+  /// since `stim gc --json` judged it waits for the next `stim gc` verdict.
   public static func stillRemovable(
     _ removable: [GcReport.LinkedWorktree], environments: [Workspace], finished: [String: Set<String>]
   ) -> [GcReport.LinkedWorktree] {
-    let current = candidates(environments.filter { !$0.live }, finished: finished)
-    let live = Set(environments.filter(\.live).compactMap { $0.worktree?.path })
+    let busy = environments.filter { $0.live || $0.build?.isRunning == true }
+    let current = candidates(environments, finished: finished)
+    let live = Set(busy.compactMap { $0.worktree?.path })
     return removable.filter { current.contains($0.path) && !live.contains($0.path) }
   }
 
