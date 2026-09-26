@@ -92,7 +92,11 @@ Metro `/symbolicate` endpoint to resolve captured JavaScript coordinates, with a
 short timeout and the original coordinates as fallback. Resolved launch context
 is saved separately so it remains readable after Metro stops. Expo's printed source
 excerpt and stack lines are included when available, even when Stim's own bundle
-response records land between them. Uncorrelated bare React Native
+response records land between them. With `--errors`, this holds in human, `--json`,
+and `--follow` output. `--json` keeps the error's `msg` as captured and adds those
+lines as a `context` array of strings on the error record. `--follow` waits for
+one quiet poll, about 500 ms, before it prints an Expo error, so its lines arrive
+with it. Uncorrelated bare React Native
 symbolication events remain explicitly separate context. Shortened bundle locations
 are labeled **unsymbolicated**, and a component stack is never used
 to invent a missing error stack. OS logging can truncate text before Stim captures
@@ -136,7 +140,8 @@ or lease; after release, already-captured reports remain available without
 collecting another workspace's crashes.
 
 Non-follow human queries enrich errors; `--follow` streams captured records and
-does not continuously poll OS crash reports. `--json` preserves raw evidence.
+does not continuously poll OS crash reports. `--json` preserves raw evidence; its
+only addition is the Expo `context` field described above.
 Stim does not resymbolicate an older error after a recorded Metro rebuild.
 Historical unsymbolicated JS coordinates require
 the matching bundle/source maps, not an unrelated rebuilt Metro bundle.

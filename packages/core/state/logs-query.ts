@@ -206,16 +206,37 @@ function isExpoErrorContext(record: NdjsonRecord, event: unknown): boolean {
   );
 }
 
-export function attachExpoErrorContext(all: NdjsonRecord[], matched: NdjsonRecord[]): NdjsonRecord[] {
+function isExpoError(record: NdjsonRecord): boolean {
+  return (
+    record.src === 'metro' &&
+    record.raw === true &&
+    (record.level === 'error' || record.level === 'fatal') &&
+    typeof record.msg === 'string'
+  );
+}
+
+function isSameExpoStream(record: NdjsonRecord, error: NdjsonRecord): boolean {
+  return record.src === 'metro' && record.raw === true && record.event === error.event;
+}
+
+type ExpoContextTarget = 'msg' | 'field';
+
+function withExpoContext(record: NdjsonRecord, context: string[], into: ExpoContextTarget): NdjsonRecord {
+  if (context.length === 0) return record;
+  return into === 'msg' ? { ...record, msg: [record.msg, ...context].join('\n') } : { ...record, context };
+}
+
+/**
+ * Adds the code frame and stack lines Expo printed after each Expo error record, either joined into
+ * `msg` or as a `context` string array.
+ */
+export function attachExpoErrorContext(
+  all: NdjsonRecord[],
+  matched: NdjsonRecord[],
+  into: ExpoContextTarget = 'msg',
+): NdjsonRecord[] {
   return matched.map((record) => {
-    if (
-      record.src !== 'metro' ||
-      record.raw !== true ||
-      (record.level !== 'error' && record.level !== 'fatal') ||
-      typeof record.msg !== 'string'
-    ) {
-      return record;
-    }
+    if (!isExpoError(record)) return record;
     const index = all.findIndex(
       (entry) =>
         entry.ts === record.ts && entry.src === record.src && entry.msg === record.msg && entry.event === record.event,
@@ -224,12 +245,55 @@ export function attachExpoErrorContext(all: NdjsonRecord[], matched: NdjsonRecor
     const context: string[] = [];
     for (let i = index + 1; i < all.length; i += 1) {
       const next = all[i] as NdjsonRecord;
-      if (next.src !== 'metro' || next.raw !== true || next.event !== record.event) continue;
+      if (!isSameExpoStream(next, record)) continue;
       if (!isExpoErrorContext(next, record.event)) break;
       context.push(next.msg as string);
     }
-    return context.length > 0 ? { ...record, msg: [record.msg, ...context].join('\n') } : record;
+    return withExpoContext(record, context, into);
   });
+}
+
+function expoContextFollower(onRecord: (record: NdjsonRecord) => void, into: ExpoContextTarget) {
+  let pending: { record: NdjsonRecord; context: string[]; queued: NdjsonRecord[] } | null = null;
+  let grew = false;
+
+  function flush(): void {
+    if (!pending) return;
+    const { record, context, queued } = pending;
+    pending = null;
+    onRecord(withExpoContext(record, context, into));
+    for (const next of queued) onRecord(next);
+  }
+
+  function push(record: NdjsonRecord, matches: boolean): void {
+    if (pending && isSameExpoStream(record, pending.record)) {
+      if (!isExpoErrorContext(record, pending.record.event)) {
+        flush();
+      } else {
+        pending.context.push(record.msg as string);
+        if (matches) pending.queued.push(record);
+        grew = true;
+        return;
+      }
+    }
+    if (pending) {
+      if (matches) pending.queued.push(record);
+      return;
+    }
+    if (matches && isExpoError(record)) {
+      pending = { record, context: [], queued: [] };
+      grew = true;
+      return;
+    }
+    if (matches) onRecord(record);
+  }
+
+  function settle(): void {
+    if (!grew) flush();
+    grew = false;
+  }
+
+  return { push, settle, flush };
 }
 
 function includeBareErrorContext(
@@ -358,13 +422,17 @@ export function followLogs({
   criteria = {},
   intervalMs = 500,
   offsets = null,
+  errorContext,
 }: {
   dir: string;
   onRecord: (record: NdjsonRecord) => void;
   criteria?: QueryCriteria;
   intervalMs?: number;
   offsets?: Record<string, number> | null;
+  /** Holds each Expo error until a poll adds no more of its code frame or stack lines, then attaches them. */
+  errorContext?: ExpoContextTarget;
 }): () => void {
+  const follower = errorContext ? expoContextFollower(onRecord, errorContext) : null;
   const state = new Map<string, TailState>();
   const decoders = new Map<string, StringDecoder>();
   for (const [name, size] of Object.entries(offsets || fileSizes(dir))) {
@@ -374,7 +442,9 @@ export function followLogs({
 
   function emit(records: NdjsonRecord[]): void {
     for (const record of records) {
-      if (recordMatches(record, criteria)) onRecord(record);
+      const matches = recordMatches(record, criteria);
+      if (follower) follower.push(record, matches);
+      else if (matches) onRecord(record);
     }
   }
 
@@ -410,11 +480,13 @@ export function followLogs({
         pollFile(name);
       } catch {}
     }
+    follower?.settle();
   }
 
   const timer = setInterval(poll, intervalMs);
   return function stop() {
     clearInterval(timer);
+    follower?.flush();
   };
 }
 

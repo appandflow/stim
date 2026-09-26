@@ -211,12 +211,16 @@ export function groupRecords(records: LogRecord[]): LogEntry[] {
         key: `${first.ts}:${ordinal}`,
         lead,
         related: indexes.filter((i) => i !== g.lead).map((i) => records[i]!),
-        context: g.context.map((i) => records[i]!.msg),
+        context:
+          g.context.length > 0 || !Array.isArray(lead.context) ? g.context.map((i) => records[i]!.msg) : lead.context,
       };
     });
 }
 
-/** An Expo error line whose code frame lines the current filter left out, such as Errors only. */
+/**
+ * An Expo error line whose code frame lines the current filter left out: a level or search filter, or
+ * Errors only from a Stim that does not attach them as `context`.
+ */
 export function needsContext(entry: LogEntry): boolean {
   return isExpoLine(entry.lead) && isError(entry.lead) && entry.context.length === 0;
 }

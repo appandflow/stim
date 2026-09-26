@@ -11,6 +11,7 @@ import { workspaceLogsDir } from '../workspace/paths.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import {
+  attachExpoErrorContext,
   buildCriteria,
   compileGrep,
   fileSizes,
@@ -267,7 +268,9 @@ export default function logsCommand(program: Command): void {
       const rawRecords = queryLogs({ ...query, records: timeline });
       const supervisorPort = readWorkspaceState(root)?.supervisor?.port;
       const records = opts.json
-        ? rawRecords
+        ? opts.errors
+          ? attachExpoErrorContext(timeline, rawRecords, 'field')
+          : rawRecords
         : await errorDiagnostics(rawRecords, {
             root,
             logsDir: dir,
@@ -310,7 +313,13 @@ export default function logsCommand(program: Command): void {
         grep: opts.grep,
         errorsOnly: Boolean(opts.errors),
       });
-      const stop = followLogs({ dir, offsets, criteria, onRecord: emit });
+      const stop = followLogs({
+        dir,
+        offsets,
+        criteria,
+        onRecord: emit,
+        errorContext: opts.errors ? (opts.json ? 'field' : 'msg') : undefined,
+      });
       const agentTimer = readAgent
         ? setInterval(() => {
             for (const record of readAgent()) if (recordMatches(record, criteria)) emit(record);

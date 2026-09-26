@@ -381,6 +381,21 @@ describe('logs command', () => {
     out.length = 0;
     await run({ errors: true, json: true });
     expect(out).toHaveLength(1);
+    expect(parseNdjsonLine(out[0])).toEqual({
+      ...error,
+      context: [
+        'Code: _layout.tsx',
+        '> 27 |   throw new Error(...)',
+        '     |                  ^',
+        'Call Stack',
+        '  RootLayout (app/_layout.tsx:27:18)',
+        '  at app/index.tsx:1:1',
+      ],
+    });
+
+    out.length = 0;
+    await run({ json: true });
+    expect(out).toHaveLength(8);
     expect(parseNdjsonLine(out[0])).toEqual(error);
   });
 

@@ -454,6 +454,10 @@ test('the logs guides distinguish an unused workspace from an empty filtered tim
   expect(noProject).toContain('nearest registered descendant app');
 });
 
+test('the logs guide documents the context field that --errors --json adds to Expo errors', () => {
+  expect(renderTopic('logs')).toMatch(/^ {4}context {2}--errors --json only/m);
+});
+
 test('the agent and lifecycle guides name both workflows', () => {
   for (const guide of [renderTopic('agent'), renderTopic('lifecycle')]) {
     assert(guide);

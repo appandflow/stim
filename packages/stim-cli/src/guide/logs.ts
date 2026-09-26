@@ -51,7 +51,8 @@ FLAGS
                    ZERO matches is ZERO bytes on stdout (an empty NDJSON
                    stream), exit 0 -- parse stdout line by line, never as one
                    JSON document. The "No matching log records" note is human
-                   mode only, on stderr.
+                   mode only, on stderr. With --errors, an Expo error record
+                   also carries context (see THE RECORD).
 
 --ERRORS, PRECISELY
   Level error or fatal, from metro, client and build, plus device records with
@@ -115,13 +116,18 @@ FLAGS
   not stack depth. For untouched captured records use:
     stim logs --source all --json
   Neither form can restore text the runtime truncated before capture.
-  In non-follow human output, an Expo error includes the code frame and stack
-  lines Expo printed after it. Stim's own Metro records that land between
-  those lines, such as bundle responses, do not cut the stack short. Bare
-  React Native symbolication is shown as separate context because Metro does
-  not provide an error correlation identifier. Context does not change the
-  error count or the raw error records returned by --json. --json is never
-  capped, and neither is an explicit --tail.
+  With --errors, an Expo error includes the code frame and stack lines Expo
+  printed after it, in human and --json output, with or without --follow.
+  Stim's own Metro records that land between those lines, such as bundle
+  responses, do not cut the stack short. Human output joins the lines to the
+  message. --json leaves msg as captured and adds them to the error record as
+  a context array of strings; each record is still one line. --follow holds an
+  Expo error until a poll, about every 500 ms, adds no more of its lines, so
+  it can print up to about a second after Expo does. Non-follow human output
+  also shows bare React Native symbolication as separate context, because
+  Metro does not provide an error correlation identifier. Context never
+  changes the error count or adds records to --json. --json is never capped,
+  and neither is an explicit --tail.
 
   In --follow mode the marker window is dropped -- every error arriving from
   then on is by definition after the last marker seen.
@@ -143,6 +149,10 @@ THE RECORD
              A collector_clock warning then says timestamps retain device time.
     raw      true when the level was inferred from a line of text rather than
              reported by the producer (every expo-child record)
+    context  --errors --json only: the code frame and stack lines Expo
+             printed after this error, as an array of strings. Absent when
+             there are none. Stim adds it at query time; it is not in the
+             log files.
 
 WHAT WRITES WHAT
   metro.ndjson         the bundler, in both supervisor modes

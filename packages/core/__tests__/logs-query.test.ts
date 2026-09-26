@@ -559,6 +559,76 @@ describe('incremental tailing', () => {
     }
   });
 
+  test('follow holds an Expo error until a poll adds no more of its lines, then attaches them', () => {
+    vi.useFakeTimers();
+    try {
+      const expo = (level: string, msg: string) =>
+        `${JSON.stringify({ ts: 1, src: 'metro', level, raw: true, event: 'expo_stdout', msg })}\n`;
+      const response = `${JSON.stringify({ ts: 1, src: 'metro', level: 'error', event: 'bundle_response_failed', msg: 'ios bundle response failed' })}\n`;
+      writeFileSync(join(dir, 'metro.ndjson'), '');
+      const seen: Record<string, unknown>[] = [];
+      const stop = followLogs({
+        dir,
+        onRecord: (record) => seen.push(record),
+        criteria: { minLevel: 'error' },
+        intervalMs: 100,
+        errorContext: 'field',
+      });
+      appendFileSync(
+        join(dir, 'metro.ndjson'),
+        expo('error', ' ERROR  SyntaxError: App.js: Unexpected token') + expo('info', '  3 |') + response,
+      );
+      vi.advanceTimersByTime(100);
+      expect(seen).toEqual([]);
+      appendFileSync(
+        join(dir, 'metro.ndjson'),
+        expo('info', '> 5 |   const broken = {;') + expo('info', '    at parse (/app/index.js:1:2)'),
+      );
+      vi.advanceTimersByTime(100);
+      expect(seen).toEqual([]);
+      vi.advanceTimersByTime(100);
+      stop();
+      expect(seen.map((record) => [record.msg, record.context])).toEqual([
+        [
+          ' ERROR  SyntaxError: App.js: Unexpected token',
+          ['  3 |', '> 5 |   const broken = {;', '    at parse (/app/index.js:1:2)'],
+        ],
+        ['ios bundle response failed', undefined],
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('stopping a follow emits the Expo error it was still holding', () => {
+    vi.useFakeTimers();
+    try {
+      writeFileSync(join(dir, 'metro.ndjson'), '');
+      const seen: unknown[] = [];
+      const stop = followLogs({
+        dir,
+        onRecord: (record) => seen.push(record.msg),
+        intervalMs: 100,
+        criteria: { minLevel: 'error' },
+        errorContext: 'msg',
+      });
+      appendFileSync(
+        join(dir, 'metro.ndjson'),
+        [' ERROR  boom', '    at a (/app/a.js:1:2)']
+          .map(
+            (msg, i) =>
+              `${JSON.stringify({ ts: 1, src: 'metro', level: i ? 'info' : 'error', raw: true, event: 'expo_stdout', msg })}\n`,
+          )
+          .join(''),
+      );
+      vi.advanceTimersByTime(100);
+      stop();
+      expect(seen).toEqual([' ERROR  boom\n    at a (/app/a.js:1:2)']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('fileSizes reports a byte size per log file, and {} for a missing dir', () => {
     writeFileSync(join(dir, 'metro.ndjson'), 'abcde');
     expect(fileSizes(dir)).toEqual({ 'metro.ndjson': 5 });
