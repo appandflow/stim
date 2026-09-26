@@ -1733,8 +1733,8 @@ describe('ensureOwnedDevice: android', () => {
         runFile() {
           return '';
         },
-        runFileQuiet() {
-          return null;
+        runFileQuiet(file: string) {
+          return file === 'ps' ? '' : null;
         },
         spawn(cmd: string, args: readonly string[], opts?: object) {
           if (args[0] === 'create') {

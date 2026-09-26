@@ -96,7 +96,7 @@ beforeEach(() => {
       if (file === 'xcrun') return JSON.stringify({ devices: {}, devicetypes: [] });
       throw new Error(`Unexpected command: ${file}`);
     },
-    runFileQuiet: () => null,
+    runFileQuiet: (file) => (file === 'ps' ? '' : null),
   });
 });
 

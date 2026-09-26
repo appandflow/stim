@@ -22,6 +22,7 @@ import { homedir, tmpdir } from 'os';
 import { dirname, isAbsolute, join, resolve } from 'path';
 import { type Executor, getExecutor } from '../exec.ts';
 import { pidExists, signalProcessTree } from '../metro.ts';
+import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
 import { androidDataPartitionSizeBytes } from '../workspace/settings.ts';
 import { settingDefinition } from '@stim-cli/core/state';
 
@@ -1230,21 +1231,63 @@ function resolveAvdProcess(
   return { directory, processId: null };
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export function parseAvdEmulatorProcesses(psOutput: string, avdName: string): number[] {
+  const command = new RegExp(
+    `(?:^|/)(?:qemu-system-[^\\s/]+|emulator)(?:\\.exe)?(?:\\s.*)?\\s(?:-avd\\s+|@)${escapeRegExp(avdName)}(?:\\s|$)`,
+  );
+  const pids: number[] = [];
+  for (const line of psOutput.split('\n')) {
+    const match = /^\s*(\d+)\s+(.*)$/.exec(line);
+    if (match && command.test(match[2]!)) pids.push(Number(match[1]));
+  }
+  return pids;
+}
+
+/**
+ * Live emulator processes launched for `avdName`, read from the process table, or null when the table
+ * cannot be read. Windows has no `ps`, so there only the AVD's process lock is checked.
+ */
+function listAvdEmulatorProcesses(avdName: string, platform: NodeJS.Platform): number[] | null {
+  if (platform === 'win32') return [];
+  const out = getExecutor().runFileQuiet('ps', ['-axww', '-o', 'pid=,command='], { timeoutMs: 5000 });
+  return out === null ? null : parseAvdEmulatorProcesses(out, avdName);
+}
+
+function scanAvdEmulatorProcesses(
+  avdName: string,
+  platform: NodeJS.Platform,
+  listProcesses: typeof listAvdEmulatorProcesses,
+): number[] {
+  const pids = listProcesses(avdName, platform);
+  if (pids === null) {
+    throw new Error(`Could not read the process table to verify that owned AVD ${avdName} stopped.`);
+  }
+  return pids;
+}
+
 export function assertOwnedAvdStopped(
   avdName: string,
   {
     processAlive = pidExists,
+    listProcesses = listAvdEmulatorProcesses,
     ...resolveOptions
   }: {
     platform?: NodeJS.Platform;
     resolveDirectory?: typeof ownedAvdDirectory;
     readProcessId?: (path: string) => number | null;
     processAlive?: (pid: number) => boolean;
+    listProcesses?: typeof listAvdEmulatorProcesses;
   } = {},
 ): void {
   const { processId } = resolveAvdProcess(avdName, resolveOptions);
-  if (processId !== null && processAlive(processId)) {
-    throw new Error(`Owned AVD ${avdName} still has a live emulator process (${processId}).`);
+  const live = new Set(scanAvdEmulatorProcesses(avdName, resolveOptions.platform ?? process.platform, listProcesses));
+  if (processId !== null && processAlive(processId)) live.add(processId);
+  if (live.size) {
+    throw new Error(`Owned AVD ${avdName} still has a live emulator process (${[...live].join(', ')}).`);
   }
 }
 
@@ -1272,16 +1315,30 @@ function emulatorCrashHandlerPids(qemuPid: number): number[] {
     .filter((pid) => Number.isSafeInteger(pid) && pid > 0);
 }
 
+const EMULATOR_SIGNAL_GRACE_MS = 5000;
+
+/**
+ * Shuts down the emulator of an owned AVD and returns only once every emulator process launched for it
+ * has exited. `shutdown` asks the emulator to quit through its console; it is null when the emulator is
+ * not reachable over adb. Processes still running after half the timeout get SIGTERM, then SIGKILL, but
+ * only a process whose command line names this AVD and whose identity, captured before shutdown, still
+ * matches.
+ */
 export function waitForAndroidEmulatorShutdown(
   avdName: string,
-  shutdown: (timeoutMs: number) => void,
+  shutdown: ((timeoutMs: number) => void) | null,
   {
     timeoutMs = ANDROID_EMULATOR_SHUTDOWN_TIMEOUT_MS,
     pollMs = ANDROID_EMULATOR_SHUTDOWN_POLL_MS,
+    signalGraceMs = EMULATOR_SIGNAL_GRACE_MS,
     platform = process.platform,
     resolveDirectory = ownedAvdDirectory,
     readProcessId = readAvdProcessId,
     processAlive = pidExists,
+    listProcesses = listAvdEmulatorProcesses,
+    captureIdentity = captureProcessIdentity,
+    inspectIdentity = inspectProcessIdentity,
+    signal = (pid: number, name: NodeJS.Signals) => signalProcessTree(pid, name, { platform }),
     directoryExists = (path: string) => statSync(path).isDirectory(),
     crashHandlerPids = emulatorCrashHandlerPids,
     killCrashHandler = (pid: number) => signalProcessTree(pid, 'SIGKILL', { platform }),
@@ -1290,10 +1347,15 @@ export function waitForAndroidEmulatorShutdown(
   }: {
     timeoutMs?: number;
     pollMs?: number;
+    signalGraceMs?: number;
     platform?: NodeJS.Platform;
     resolveDirectory?: typeof ownedAvdDirectory;
     readProcessId?: (path: string) => number | null;
     processAlive?: (pid: number) => boolean;
+    listProcesses?: typeof listAvdEmulatorProcesses;
+    captureIdentity?: typeof captureProcessIdentity;
+    inspectIdentity?: typeof inspectProcessIdentity;
+    signal?: (pid: number, name: NodeJS.Signals) => void;
     directoryExists?: (path: string) => boolean;
     crashHandlerPids?: (qemuPid: number) => number[];
     killCrashHandler?: (pid: number) => void;
@@ -1302,23 +1364,70 @@ export function waitForAndroidEmulatorShutdown(
   } = {},
 ): void {
   const { directory, processId } = resolveAvdProcess(avdName, { platform, resolveDirectory, readProcessId });
-  if (processId === null) {
-    throw new Error(`Could not find the emulator process lock for owned AVD ${avdName}.`);
+  const identities = new Map<number, ProcessRecord | null>();
+  for (const pid of scanAvdEmulatorProcesses(avdName, platform, listProcesses)) {
+    const captured = captureIdentity(pid);
+    identities.set(pid, captured.ok ? { pid, processToken: captured.token } : null);
   }
-  const deadline = now() + timeoutMs;
-  const shutdownTimeoutMs = deadline - now();
-  if (shutdownTimeoutMs <= 0) {
-    throw new Error(`Owned AVD ${avdName} did not finish shutting down within ${Math.ceil(timeoutMs / 1000)}s.`);
+  if (processId === null && identities.size === 0) {
+    if (shutdown) throw new Error(`Could not find the emulator process lock for owned AVD ${avdName}.`);
+    return;
   }
-  shutdown(shutdownTimeoutMs);
-  while (processAlive(processId)) {
-    const remaining = deadline - now();
-    if (remaining <= 0) {
-      throw new Error(`Owned AVD ${avdName} did not finish shutting down within ${Math.ceil(timeoutMs / 1000)}s.`);
+  const exited = (pid: number) => {
+    const record = identities.get(pid);
+    if (!record) return !processAlive(pid);
+    const status = inspectIdentity(record);
+    return status === 'gone' || status === 'different';
+  };
+  const running = () => {
+    const pids = [...identities.keys()].filter((pid) => !exited(pid));
+    if (processId !== null && !identities.has(processId) && processAlive(processId)) pids.push(processId);
+    return pids;
+  };
+  const waitUntil = (until: number) => {
+    for (;;) {
+      if (running().length === 0) return true;
+      const remaining = until - now();
+      if (remaining <= 0) return false;
+      sleep(Math.min(pollMs, remaining));
     }
-    sleep(Math.min(pollMs, remaining));
+  };
+  const started = now();
+  const deadline = started + timeoutMs;
+  if (shutdown) {
+    shutdown(Math.max(1, Math.floor(timeoutMs / 2)));
+    waitUntil(started + Math.floor(timeoutMs / 2));
   }
-  if (platform === 'win32') {
+  for (const name of ['SIGTERM', 'SIGKILL'] as const) {
+    const verified = running().filter((pid) => {
+      const record = identities.get(pid);
+      return record && inspectIdentity(record) === 'same';
+    });
+    if (verified.length === 0) break;
+    for (const pid of verified) {
+      try {
+        signal(pid, name);
+      } catch {}
+    }
+    if (waitUntil(name === 'SIGTERM' ? Math.min(deadline, now() + signalGraceMs) : deadline)) break;
+  }
+  waitUntil(deadline);
+  const left = new Set(running());
+  for (const pid of scanAvdEmulatorProcesses(avdName, platform, listProcesses)) {
+    if (!identities.has(pid) || !exited(pid)) left.add(pid);
+  }
+  if (left.size) {
+    const unverified = [...left].filter((pid) => !identities.get(pid));
+    throw new Error(
+      `Owned AVD ${avdName} did not finish shutting down within ${Math.ceil(timeoutMs / 1000)}s: ` +
+        `emulator process ${[...left].join(', ')} is still running` +
+        (unverified.length
+          ? ` (Stim could not verify the identity of ${unverified.join(', ')}, so it sent no signal)`
+          : '') +
+        '.',
+    );
+  }
+  if (platform === 'win32' && processId !== null) {
     const handlerDeadline = now() + CRASH_HANDLER_EXIT_TIMEOUT_MS;
     for (const handler of crashHandlerPids(processId)) {
       while (processAlive(handler) && now() < handlerDeadline) sleep(pollMs);

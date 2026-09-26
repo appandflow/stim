@@ -1096,7 +1096,20 @@ the supervisor could not be verified"  (stop)
 "teardown failed: <reason>"
   Stim could not release the owned device and keeps its record for a retry.
   \`worktree remove\` exits 1 without removing the worktree while the device is
-  still tracked. Fix the reported cause and re-run.`,
+  still tracked. Fix the reported cause and re-run.
+
+"teardown failed: Owned AVD <name> did not finish shutting down within 60s:
+emulator process <pid> is still running"
+  An owned emulator counts as stopped only when no process launched for its
+  AVD (\`qemu-system-*\` or \`emulator\` with \`-avd <name>\`) is left in the
+  process table. Stim asks it to quit with \`adb emu kill\`, or skips that when
+  adb cannot reach it. After 30s it sends SIGTERM, then SIGKILL 5s later, but
+  only to a pid whose command line names the AVD and whose process identity,
+  recorded before shutdown, still matches. "(Stim could not verify the
+  identity of <pid>, so it sent no signal)" means that identity could not be
+  read. Check \`ps -p <pid> -o command=\`, stop the process yourself, then
+  re-run the command or \`gc --delete\`. Windows has no process-table
+  check: there Stim waits only for the pid in the AVD's process lock.`,
     },
     remove: {
       summary: 'worktree remove refused a dirty tree: what it restores itself and what --force discards',

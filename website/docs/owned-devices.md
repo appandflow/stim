@@ -317,6 +317,14 @@ continues. Agent-device calls have
 a combined 15-second budget per device and require local socket transport and
 support for `--session-lock reject`. Remote daemons are never used.
 
+An owned emulator counts as stopped only when no emulator process launched for
+its AVD is left. Stim asks it to quit with `adb emu kill`. A hung emulator that
+ignores that, or that adb cannot reach, gets SIGTERM and then SIGKILL, but only
+after Stim verifies that the process runs that AVD and is the same process it
+saw before shutdown. If the emulator still runs, `stop`, `worktree remove` and
+`gc` report `teardown failed` and keep the device record instead of reporting it
+stopped or parked.
+
 If deletion fails, Stim keeps the ownership record and exits with an error. A
 later cleanup can then retry without losing track of the resource.
 

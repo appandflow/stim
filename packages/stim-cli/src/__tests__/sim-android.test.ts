@@ -45,6 +45,7 @@ import {
   physicalDeviceModel,
   resolvePhysicalDevice,
   assertOwnedAvdStopped,
+  parseAvdEmulatorProcesses,
   parseEmulatorVersion,
   suppressEmulatorCrashConsent,
   waitForAndroidEmulatorShutdown,
@@ -620,7 +621,7 @@ test('waitForAndroidEmulatorShutdown waits for the owned AVD process lock to dis
   });
 
   expect(sleeps).toEqual([100]);
-  expect(calls).toEqual(['shutdown:60000', 'wait']);
+  expect(calls).toEqual(['shutdown:30000', 'wait']);
 });
 
 test('waitForAndroidEmulatorShutdown on win32 waits for the crashpad handler qemu left behind, then kills a stuck one', () => {
@@ -719,7 +720,7 @@ test('waitForAndroidEmulatorShutdown includes the shutdown command in its deadli
       },
     ),
   ).toThrow(/did not finish shutting down within 1s/);
-  expect(commandTimeout).toBe(250);
+  expect(commandTimeout).toBe(125);
 });
 
 test('waitForAndroidEmulatorShutdown reads Android emulator lock PIDs on Unix and Windows', () => {
@@ -842,6 +843,118 @@ test('waitForAndroidEmulatorShutdown refuses to signal a process without an AVD 
     }),
   ).toThrow(/Could not find the emulator process lock/);
   expect(shutdown).not.toHaveBeenCalled();
+});
+
+test('parseAvdEmulatorProcesses matches only emulator processes launched for that exact AVD', () => {
+  const table = [
+    '  101 /sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64-headless -avd stim-app -port 5554 -grpc 8554',
+    '  102 /Users/me/Android SDK/emulator/emulator @stim-app -no-window',
+    '  103 C:\\sdk\\emulator\\qemu-system-x86_64.exe -avd stim-app',
+    '  104 /sdk/emulator/qemu/linux-x86_64/qemu-system-x86_64 -avd stim-app-2 -port 5556',
+    '  105 grep -avd stim-app',
+    '  106 node stim.mjs android -avd stim-app',
+    '  107 /sdk/emulator/emulator -avd stim-apps',
+  ].join('\n');
+
+  expect(parseAvdEmulatorProcesses(table, 'stim-app')).toEqual([101, 102]);
+});
+
+test('assertOwnedAvdStopped refuses an emulator process of the AVD that its process lock does not name', () => {
+  expect(() =>
+    assertOwnedAvdStopped('stim-app', {
+      resolveDirectory: () => '/avds/stim-app.avd',
+      readProcessId: () => null,
+      listProcesses: () => [4242],
+    }),
+  ).toThrow('Owned AVD stim-app still has a live emulator process (4242).');
+  expect(() =>
+    assertOwnedAvdStopped('stim-app', {
+      resolveDirectory: () => '/avds/stim-app.avd',
+      readProcessId: () => null,
+      listProcesses: () => null,
+    }),
+  ).toThrow(/Could not read the process table/);
+});
+
+describe('waitForAndroidEmulatorShutdown when the console kill has no effect', () => {
+  function hungEmulator({
+    pids,
+    identity = () => 'same',
+    captured = () => true,
+    dies = ['SIGKILL'],
+  }: {
+    pids: number[];
+    identity?: (pid: number) => 'same' | 'different';
+    captured?: (pid: number) => boolean;
+    dies?: NodeJS.Signals[];
+  }) {
+    let clock = 0;
+    const alive = new Set(pids);
+    const signals: string[] = [];
+    const options = {
+      timeoutMs: 60_000,
+      resolveDirectory: () => '/avds/stim-app.avd',
+      readProcessId: () => pids[0] ?? null,
+      processAlive: (pid: number) => alive.has(pid),
+      listProcesses: () => [...alive],
+      captureIdentity: (pid: number) =>
+        captured(pid) ? { ok: true as const, token: `token-${pid}` } : { ok: false as const, reason: 'EPERM' },
+      inspectIdentity: (record: { pid?: unknown } | null | undefined): 'same' | 'different' | 'gone' =>
+        alive.has(record?.pid as number) ? identity(record?.pid as number) : 'gone',
+      signal: (pid: number, name: NodeJS.Signals) => {
+        signals.push(`${name}:${pid}@${clock}`);
+        if (dies.includes(name)) alive.delete(pid);
+      },
+      directoryExists: () => true,
+      now: () => clock,
+      sleep: (ms: number) => {
+        clock += ms;
+      },
+    };
+    return { options, signals, alive };
+  }
+
+  test('signals the verified emulator after half the timeout, SIGTERM before SIGKILL', () => {
+    const { options, signals, alive } = hungEmulator({ pids: [4242] });
+    const consoleKills: number[] = [];
+
+    waitForAndroidEmulatorShutdown('stim-app', (timeoutMs) => consoleKills.push(timeoutMs), options);
+
+    expect(consoleKills).toEqual([30_000]);
+    expect(signals).toEqual(['SIGTERM:4242@30000', 'SIGKILL:4242@35000']);
+    expect(alive.size).toBe(0);
+  });
+
+  test('stops an orphaned emulator that holds no process lock and is not reachable over adb', () => {
+    const { options, signals } = hungEmulator({ pids: [4242], dies: ['SIGTERM'] });
+
+    waitForAndroidEmulatorShutdown('stim-app', null, { ...options, readProcessId: () => null });
+
+    expect(signals).toEqual(['SIGTERM:4242@0']);
+  });
+
+  test('never signals a pid whose identity changed or could not be captured, and refuses instead', () => {
+    const different = hungEmulator({ pids: [4242], identity: () => 'different' });
+    const unverified = hungEmulator({ pids: [4242], captured: () => false });
+
+    waitForAndroidEmulatorShutdown('stim-app', () => {}, different.options);
+    expect(different.signals).toEqual([]);
+
+    expect(() => waitForAndroidEmulatorShutdown('stim-app', () => {}, unverified.options)).toThrow(
+      'Owned AVD stim-app did not finish shutting down within 60s: emulator process 4242 is still running ' +
+        '(Stim could not verify the identity of 4242, so it sent no signal).',
+    );
+    expect(unverified.signals).toEqual([]);
+  });
+
+  test('refuses when the emulator survives SIGKILL', () => {
+    const { options, signals } = hungEmulator({ pids: [4242], dies: [] });
+
+    expect(() => waitForAndroidEmulatorShutdown('stim-app', () => {}, options)).toThrow(
+      'Owned AVD stim-app did not finish shutting down within 60s: emulator process 4242 is still running.',
+    );
+    expect(signals).toEqual(['SIGTERM:4242@30000', 'SIGKILL:4242@35000']);
+  });
 });
 
 test('waitForAndroidEmulatorShutdown verifies the AVD directory remains available', () => {

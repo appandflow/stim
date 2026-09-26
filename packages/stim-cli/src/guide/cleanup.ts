@@ -409,7 +409,10 @@ THE ONE CASE GC WILL NOT REAP
   disabled. The first boot and a boot after the emulator, system image, or AVD
   settings change are cold, while later supported boots load the one automatic
   snapshot saved on exit. \`stop\` waits for the emulator process and, when
-  enabled, the snapshot save to finish.
+  enabled, the snapshot save to finish. An emulator that ignores \`adb emu
+  kill\` or is unreachable over adb is signalled once its identity is verified;
+  one that still runs fails the teardown and keeps its record (see \`stim guide
+  errors teardown\`).
   New owned AVDs default to an 8 GiB data partition, though project settings can
   change it. When enabled, Quick Boot keeps one automatic snapshot until the AVD is
   parked or deleted.
