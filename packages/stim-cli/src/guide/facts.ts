@@ -3,7 +3,7 @@ import type { GuideTopic } from './types.ts';
 
 const facts: GuideTopic = {
   summary:
-    'The --json payloads: `start`, `ios`, `android`, `ios|android --plan`, `reload`, `stop`, `status`, `doctor`, `device lock`/`unlock`, `gc`, and the error contract',
+    'The --json payloads: `start`, `ios`, `android`, `web`, `ios|android --plan`, `reload`, `stop`, `status`, `doctor`, `device lock`/`unlock`, `gc`, and the error contract',
   preamble: () => `SLOTS
 Named ios/android runs add slot to their JSON facts. Default-run fields remain
 compatible. status adds a slots array per environment with each named slot's
@@ -12,7 +12,7 @@ Named collector, lease-holder, and launch keys use platform:slot internally.
 
 FACTS CONTRACT
 
-\`start\`, \`ios\`, \`android\`, \`reload\`, \`stop\`, \`status\`, \`stats\`, \`doctor\`,
+\`start\`, \`ios\`, \`android\`, \`web\`, \`reload\`, \`stop\`, \`status\`, \`stats\`, \`doctor\`,
 \`gc\`, and \`device lock\`/\`device unlock\` each print exactly ONE line of JSON on
 stdout for \`--json\`. Every other line goes to stderr, so it is always safe
 to pipe. \`logs --json\` is the one exception: it is NDJSON, one record per
@@ -75,7 +75,7 @@ Plain status prints one "remote <platform>: EAS session <id> billable" line
 per session, with the preview URL.`,
   sections: {
     payloads: {
-      summary: 'every field of the start, ios, android and reload payloads, the error contract, the device rules',
+      summary: 'every field of the start, ios, android, web and reload payloads, the error contract, the device rules',
       body: () => `  stim start --json
 
   port            the Metro port RESERVED for this workspace
@@ -330,6 +330,28 @@ per session, with the preview URL.`,
                   this app on that Metro and the request addressed all of
                   them, not only deviceId. Completion is not observed
 
+  stim web --json
+
+  platform        "web"
+  browser         "chrome"
+  version         the Chrome product, such as "Chrome/153.0.8010.49"
+  running         true: the owned Chrome answered and holds the page
+  pid             the owned Chrome's browser process
+  supervisorPid   the Stim process holding its DevTools session
+  url             the page opened, web.url with its ports filled in
+  headless        false only with --headed
+  viewport        "desktop" | "phone" (web.viewport)
+  profile         the Stim-owned Chrome user data directory
+  cdpEndpoint     http://127.0.0.1:<port>, the reserved DevTools endpoint
+  reused          true when the running Chrome navigated again instead of
+                  starting: same --headed, viewport and certificate options
+  launched        true | "bundling" | "unverified" (see \`guide web\`)
+  metroPort       the Metro port the page loads from, or null for a web.url
+                  that does not use {port:metro}
+  logs            { dir }: web.ndjson holds the page records
+  durationMs      wall time of the run
+  devServer       as in ios, present when this run started Metro
+
   stim doctor --json
 
   project         the resolved app root
@@ -377,6 +399,11 @@ ON FAILURE
   session first, and exits 1:
 
     { "root": "...", "ok": false, "code": "STIM_STOP_BLOCKED", "message": "...", "remedy": "..." }
+
+  device.web is present when the workspace had an owned Chrome:
+  { status, label: "Chrome", kind?, reason?, remedy? }. status is "shut-down"
+  when Chrome closed (its profile is kept), else "skipped" (its identity could
+  not be verified) or "failed", and ok is then false.
 
   Branch on \`code\`, never on the message text. \`guide errors\` enumerates
   every code.
