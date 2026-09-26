@@ -19,7 +19,7 @@ import {
 } from '../ownership-claim.ts';
 import { captureProcessIdentity, captureProcessToken } from '../process-identity.ts';
 import { connectOwnedBrowser, type CdpConnection, type CdpEvent } from './cdp.ts';
-import { PHONE_SCREEN, chromeArgs } from './chrome.ts';
+import { DESKTOP_PAGE, PHONE_SCREEN, chromeArgs } from './chrome.ts';
 import { consoleRecord, exceptionRecord, logEntryRecord, networkFailureRecord } from './events.ts';
 import { chromeProcessState, liveProfileHolder, removeSingletonFiles } from './profile.ts';
 import {
@@ -367,6 +367,8 @@ export async function runWebSupervisor(
     if (options.viewport === 'phone') {
       await connection.send('Emulation.setDeviceMetricsOverride', { ...PHONE_SCREEN, mobile: true }, sessionId);
       await connection.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 }, sessionId);
+    } else {
+      await fitDesktopPage(connection, targetId, sessionId);
     }
     updateWebRecord(root, owner, { targetId, version });
     log(
@@ -382,6 +384,25 @@ export async function runWebSupervisor(
     await stopChrome();
     finish(1, 'error', 'web_browser_failed', `could not start the owned Chrome: ${describe(error)}`);
   }
+}
+
+// --window-size sets Chrome's outer window, and Chrome's UI takes part of it even when headless.
+async function fitDesktopPage(connection: CdpConnection, targetId: string, sessionId: string): Promise<void> {
+  const { windowId, bounds } = (await connection.send('Browser.getWindowForTarget', { targetId })) as {
+    windowId: number;
+    bounds: { width: number; height: number };
+  };
+  const { result } = (await connection.send(
+    'Runtime.evaluate',
+    { expression: '[innerWidth, innerHeight]', returnByValue: true },
+    sessionId,
+  )) as { result: { value: [number, number] } };
+  const [width, height] = result.value;
+  if (width === DESKTOP_PAGE.width && height === DESKTOP_PAGE.height) return;
+  await connection.send('Browser.setWindowBounds', {
+    windowId,
+    bounds: { width: bounds.width + DESKTOP_PAGE.width - width, height: bounds.height + DESKTOP_PAGE.height - height },
+  });
 }
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {

@@ -65,7 +65,7 @@ An https:// URL on a plain HTTP server fails with ERR_SSL_PROTOCOL_ERROR, and
 an http:// URL on an HTTPS server with ERR_EMPTY_RESPONSE; the remedy line
 prints the settings command that switches the scheme. web.viewport phone
 gives the page a 390x844 touch screen at 3x instead of the 1280x800 desktop
-window. See stim guide settings.
+page. See stim guide settings.
 
 MONOREPO RECIPE: A VITE PACKAGE WITH A BASE PATH AND HTTPS
 

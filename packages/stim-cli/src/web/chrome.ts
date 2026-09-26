@@ -50,7 +50,7 @@ export function findChrome({
   return null;
 }
 
-const DESKTOP_WINDOW = { width: 1280, height: 800 } as const;
+export const DESKTOP_PAGE = { width: 1280, height: 800 } as const;
 
 export const PHONE_SCREEN = { width: 390, height: 844, deviceScaleFactor: 3 } as const;
 
@@ -67,7 +67,7 @@ export function chromeArgs({
   ignoreCertificateErrors: boolean;
   viewport: WebViewport;
 }): string[] {
-  const window = viewport === 'phone' ? PHONE_SCREEN : DESKTOP_WINDOW;
+  const window = viewport === 'phone' ? PHONE_SCREEN : DESKTOP_PAGE;
   return [
     `--user-data-dir=${profile}`,
     `--remote-debugging-port=${port}`,

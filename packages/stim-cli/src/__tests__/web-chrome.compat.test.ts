@@ -7,6 +7,7 @@ import { runWeb } from '../commands/web.ts';
 import { teardownOwnedBrowser } from '../devices/teardown.ts';
 import { readNdjsonGenerations } from '../ndjson.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
+import { connectOwnedBrowser } from '../web/cdp.ts';
 import { findChrome } from '../web/chrome.ts';
 import { runReload } from '../commands/reload.ts';
 import { liveWebRecord } from '../web/page.ts';
@@ -63,6 +64,20 @@ test('real Chrome accepts the owned-profile argv, reports page logs and launched
 
   const record = liveWebRecord(readWebRecord(root));
   assert(record, 'the owned Chrome is not verified live after stim web');
+  const cdp = await connectOwnedBrowser(record.cdpPort, record.chromeProcess!.pid);
+  try {
+    const { sessionId } = (await cdp.send('Target.attachToTarget', { targetId: record.targetId, flatten: true })) as {
+      sessionId: string;
+    };
+    const size = (await cdp.send(
+      'Runtime.evaluate',
+      { expression: '[innerWidth, innerHeight]', returnByValue: true },
+      sessionId,
+    )) as { result: { value: unknown } };
+    expect(size.result.value).toEqual([1280, 800]);
+  } finally {
+    cdp.close();
+  }
   expect(record.profile.startsWith(process.env.STIM_HOME!)).toBe(true);
 
   const deadline = Date.now() + 5000;
