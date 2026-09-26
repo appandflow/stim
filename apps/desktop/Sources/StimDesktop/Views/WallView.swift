@@ -41,7 +41,7 @@ struct WallView: View {
                     Button { selection = .environment(env.path) } label: {
                       DeviceTile(
                         device: device, screenHeight: tileSize.screenHeight, workspace: env.path,
-                        build: env.runningBuild(for: device))
+                        workspaceTitle: env.names.title, build: env.runningBuild(for: device))
                     }
                     .buttonStyle(.plain)
                   }

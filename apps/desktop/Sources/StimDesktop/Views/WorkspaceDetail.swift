@@ -163,6 +163,7 @@ struct WorkspaceDetail: View {
         DeviceTile(
           device: focused, screenHeight: 640,
           interactive: focused.isRunning && takenOver.contains(focused.id), workspace: env.path,
+          workspaceTitle: env.names.title,
           build: env.runningBuild(for: focused),
           takenOver: takenOver.contains(focused.id),
           onToggleTakeOver: focused.isInteractive

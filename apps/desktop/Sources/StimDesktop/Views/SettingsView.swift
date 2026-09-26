@@ -43,7 +43,9 @@ struct SettingsView: View {
   }
 
   private func scopeTab(_ scope: SettingScope, title: String, icon: String) -> some View {
-    ScopeSettingsView(scope: scope, model: model, workspace: $workspace, workspaces: workspacePaths)
+    ScopeSettingsView(
+      scope: scope, model: model, workspace: $workspace, workspaces: workspacePaths,
+      title: { store.names(ofPath: $0).title })
       .tabItem { Label(title, systemImage: icon) }
       .tag(scope.rawValue)
   }
@@ -60,6 +62,7 @@ private struct ScopeSettingsView: View {
   @ObservedObject var model: SettingsModel
   @Binding var workspace: String?
   var workspaces: [String]
+  var title: (String) -> String
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -77,7 +80,7 @@ private struct ScopeSettingsView: View {
           Picker("Workspace", selection: $workspace) {
             Text("None").tag(String?.none)
             ForEach(workspaces, id: \.self) { path in
-              Text("\(PathNames(path: path).title) \u{2014} \(abbreviatingHome(path))")
+              Text("\(title(path)) \u{2014} \(abbreviatingHome(path))")
                 .tag(String?.some(path))
             }
           }

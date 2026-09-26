@@ -9,6 +9,7 @@ struct DeviceTile: View {
   var screenHeight: CGFloat
   var interactive = false
   var workspace: String?
+  var workspaceTitle: String?
   var build: Build? = nil
   var takenOver = false
   var onToggleTakeOver: (() -> Void)? = nil
@@ -194,7 +195,7 @@ struct DeviceTile: View {
         .confirmationDialog("Stop this workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
           Button("Run stim stop", role: .destructive) {
             actions.run(
-              "Stop \(PathNames(path: workspace).title)", StimCommand(["stop"], cwd: workspace))
+              "Stop \(workspaceTitle ?? workspace)", StimCommand(["stop"], cwd: workspace))
           }
         } message: {
           Text(
