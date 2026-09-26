@@ -256,7 +256,7 @@ Events are `{ "event", "subscription", ... }`.
   critical) and `diskFreeBytes` of the startup volume; a field is null when it
   cannot be read. `sinceMs` returns only the samples taken after it.
 - `unsubscribe` ends a subscription.
-- `push.register` takes `token`, an Expo push token, `events`, the
+- `push.register` takes `token`, an Expo push token, `events`, one or more
   [push notifications](#push-notifications) the phone wants (`build-failed`,
   `log-errors`, `disk`, `app-stopped`, `slow-build`), an optional
   `agentOnly`, and `ref`, an opaque string of up to 128 characters that every
@@ -283,7 +283,9 @@ waiting records the server ends that subscription with `slow-client`.
 
 A paired phone that sends `push.register` gets attention notifications while
 its app is in the background or closed. The server keeps the registration
-with the pairing in `devices.json`, so revoking the device drops it.
+with the pairing in `devices.json`, so revoking the device drops it. A token
+belongs to one pairing: registering it from a new pairing of the same phone
+removes it from the old one.
 
 While at least one device is registered, the server keeps its own
 `stim status --watch --json` child running, even with no client connected,
@@ -313,10 +315,12 @@ summary push that opens the phone's home screen.
 
 Pushes go to the Expo push service, `https://exp.host/--/api/v2/push/send`,
 which forwards them to Apple. No APNs key or other secret lives on the Mac.
-Each push carries the workspace title or the Mac's name, a short reason such
-as `iOS build failed (STIM_BUILD_FAILED)`, the Mac's name as the subtitle, and
-in `data` the `ref`, the screen to open (`home`, `machine`, `workspace` or
-`logs`) and the workspace path. It carries no logs and no other paths. The
+A workspace push carries the workspace title, a short reason such as `iOS
+build failed (STIM_BUILD_FAILED)` and the Mac's name as the subtitle; a disk
+or summary push has the Mac's name as its title. In `data` it carries the
+`ref`, the screen to open (`home`, `machine`, `workspace` or `logs`) and, for
+a workspace, its absolute path, which the phone needs to open that workspace
+before it has reconnected. It carries no logs and no other paths. The
 server checks the push receipts 15 minutes later and drops a token that Expo
 reports as `DeviceNotRegistered`. Pushes are not retried, and nothing is
 pushed while the server is not running.

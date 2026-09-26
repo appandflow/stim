@@ -622,6 +622,15 @@ describe('push.register', () => {
     await until(() => !alive(pid!));
   });
 
+  it('moves a token registered from a new pairing of the same phone off the old pairing', async () => {
+    const port = await start();
+    const first = await authed(port);
+    await first.request('push.register', PUSH);
+    const second = await authed(port);
+    await second.request('push.register', PUSH);
+    expect(readDevices().map((device) => device.push?.token)).toEqual([undefined, PUSH.token]);
+  });
+
   it('drops the registration with a revoked pairing', async () => {
     const port = await start();
     const client = await authed(port);
@@ -639,6 +648,7 @@ describe('push.register', () => {
     for (const params of [
       { ...PUSH, token: 'https://example.com/hook' },
       { ...PUSH, events: ['offline'] },
+      { ...PUSH, events: [] },
       { ...PUSH, ref: '' },
       { ...PUSH, agentOnly: 'yes' },
     ]) {

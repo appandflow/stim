@@ -359,8 +359,11 @@ out: it carries notification text, never status or frames.
   subscription and reads the disks every minute. `src/attention.ts` copies
   the phone's attention strip rules for failed builds, log errors, low disk,
   stopped apps and slow builds; `src/notify.ts` decides what notifies, once
-  per occurrence, with settle and cooldown times. The phone keeps the same
-  rules in `apps/mobile/src/lib`.
+  per occurrence, with settle and cooldown times. The phone's local
+  notifications (#1578) keep copies of both.
+- Payload: the workspace title or Mac name, a short reason, and in `data` the
+  screen to open and the workspace's absolute path, which the phone needs to
+  open it from a cold start. No logs.
 - Delivery: pushes go to `exp.host`, at most 20 per device per hour, with a
   summary for more than three at once. A `DeviceNotRegistered` ticket or
   receipt drops the token. Nothing is pushed while the server is down.

@@ -1,21 +1,10 @@
-/**
- * Which attention items become notifications, and when. apps/mobile/src/lib/notify.ts holds the same rules for
- * the phone's local notifications; __tests__/attention-agreement.test.ts fails when the two disagree.
- */
-
 interface NotifyEntry {
   occurrence: string;
-  /** When this occurrence was first seen. */
   since: number;
-  /** When the oldest occurrence still waiting to notify was first seen; bounds how long log errors settle. */
   heldSince: number;
-  /** When the item was last present. */
   seenAt: number;
-  /** When the item last notified, across occurrences; spaces out log error notifications. */
   notifiedAt: number | null;
-  /** Whether this occurrence notified or was passed over: present at the first check, or its event was off. */
   done: boolean;
-  /** For `log-errors`, the count last notified or passed over. */
   count?: number;
 }
 

@@ -135,8 +135,12 @@ function setup(options: { devices?: PairedDevice[] } = {}) {
   };
 }
 
-async function settle(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 50));
+const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
+
+/** Waits until `pushes` messages reached the fake Expo, then a little longer to catch extra ones. */
+async function settle(pushes = 0): Promise<void> {
+  for (let i = 0; i < 500 && expo.sent.flat().length < pushes; i++) await tick();
+  for (let i = 0; i < 5; i++) await tick();
 }
 
 const bodies = () => expo.sent.flat().map((m) => `${m.title} | ${m.body}`);
@@ -154,7 +158,7 @@ describe('PushNotifier', () => {
     t.at(60_000);
     t.emit(status(env({ lastBuilds: failed('2026-09-26T12:00:30Z') })));
     t.emit(status(env({ lastBuilds: failed('2026-09-26T12:00:30Z') })));
-    await settle();
+    await settle(1);
     expect(expo.sent).toEqual([
       [
         {
@@ -180,7 +184,7 @@ describe('PushNotifier', () => {
     t.emit(status(env({ logs: { dir: '/l', errorsSinceMarker: 3 } })));
     t.at(16_000);
     t.emit(status(env({ logs: { dir: '/l', errorsSinceMarker: 3 } })));
-    await settle();
+    await settle(1);
     expect(bodies()).toEqual(['feat/login | 3 errors in the logs']);
     expect(expo.sent[0]![0]!.data).toEqual({ ref: 'mac-1', target: 'logs', path: '/u/app/.worktrees/login' });
 
@@ -193,7 +197,7 @@ describe('PushNotifier', () => {
 
     t.at(320_000);
     t.emit(status(env({ logs: { dir: '/l', errorsSinceMarker: 7 } })));
-    await settle();
+    await settle(2);
     expect(bodies()).toEqual(['feat/login | 3 errors in the logs', 'feat/login | 4 new errors in the logs']);
   });
 
@@ -206,7 +210,7 @@ describe('PushNotifier', () => {
     t.setFreeGb(3);
     await settle();
     t.emit(status(env({ ios: { ...stopped, app: { id: 'a', state: 'stopped' } } })));
-    await settle();
+    await settle(1);
     expect(expo.sent).toEqual([
       [
         {
@@ -235,7 +239,7 @@ describe('PushNotifier', () => {
     t.emit(status(env(), env({ path: '/u/app/.worktrees/agent', worktree: undefined })));
     t.at(1000);
     t.emit(status(env(sim('idle')), env({ path: '/u/app/.worktrees/agent', worktree: undefined, ...sim('driven') })));
-    await settle();
+    await settle(1);
     expect(bodies()).toEqual(['agent | App not running on iPhone 18 Pro 27.0']);
   });
 
@@ -246,7 +250,7 @@ describe('PushNotifier', () => {
     const broken = (name: string) =>
       env({ path: `/u/app/.worktrees/${name}`, worktree: undefined, lastBuilds: failed('2026-09-26T12:00:00Z') });
     t.emit(status(broken('a'), broken('b'), broken('c'), broken('d')));
-    await settle();
+    await settle(1);
     expect(expo.sent).toEqual([
       [
         {
@@ -274,7 +278,7 @@ describe('PushNotifier', () => {
     t.emit(status());
     t.at(1000);
     t.emit(status(env({ lastBuilds: failed('2026-09-26T12:00:00Z') })));
-    await settle();
+    for (let i = 0; i < 500 && t.dropped.length < 2; i++) await tick();
     expect(expo.receiptQueries).toEqual([['t1']]);
     expect(t.dropped).toEqual([TOKEN, 'ExponentPushToken[phone-b]']);
   });
@@ -295,7 +299,7 @@ describe('PushNotifier', () => {
       t.at(i * 1000);
       t.emit(status(env({ lastBuilds: failed(new Date(T0 + i * 1000).toISOString()) })));
     }
-    await settle();
+    await settle(20);
     expect(expo.sent.flat()).toHaveLength(20);
   });
 });

@@ -919,6 +919,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         typeof token !== 'string' ||
         !pushToken.test(token) ||
         !Array.isArray(events) ||
+        events.length === 0 ||
         !events.every((event) => (PUSH_EVENTS as readonly unknown[]).includes(event)) ||
         typeof agentOnly !== 'boolean' ||
         typeof ref !== 'string' ||
@@ -928,7 +929,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return error(
           id,
           'bad-request',
-          'push.register takes an Expo push token, events from ' +
+          'push.register takes an Expo push token, one or more events from ' +
             `${PUSH_EVENTS.join(', ')}, an optional boolean agentOnly and a ref of 1 to 128 characters.`,
         );
       }

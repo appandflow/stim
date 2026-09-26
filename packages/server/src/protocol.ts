@@ -395,7 +395,7 @@ export type PushEvent = (typeof PUSH_EVENTS)[number];
 
 /**
  * Asks the server to push this device's attention notifications through the Expo push service to `token`, an
- * Expo push token. Registering again replaces the previous registration. `ref` is echoed as `data.ref` in every
+ * Expo push token, for at least one event. Registering again replaces the previous registration. `ref` is echoed as `data.ref` in every
  * push, so the phone can tell which Mac sent it.
  */
 export interface PushRegisterParams {
@@ -894,7 +894,7 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: {
               token: { type: 'string', pattern: PUSH_TOKEN_PATTERN, description: 'An Expo push token.' },
-              events: { type: 'array', uniqueItems: true, items: { enum: [...PUSH_EVENTS] } },
+              events: { type: 'array', minItems: 1, uniqueItems: true, items: { enum: [...PUSH_EVENTS] } },
               agentOnly: { type: 'boolean', default: false },
               ref: { type: 'string', minLength: 1, maxLength: 128 },
             },

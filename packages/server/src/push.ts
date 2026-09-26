@@ -138,6 +138,7 @@ export class PushNotifier {
       failed: (message) => {
         console.error(`stim-server: push notifications paused: ${message}`);
         this.unsubscribe = null;
+        this.status = null;
         this.resubscribe = setTimeout(() => {
           this.resubscribe = null;
           if (this.registered.size > 0 && !this.closed) this.subscribe();
@@ -248,9 +249,17 @@ export class PushNotifier {
       const to = messages[index]?.to;
       if (!to) return;
       if (ticket.status === 'ok' && typeof ticket.id === 'string') receipts.set(ticket.id, to);
-      else if (ticket.details?.error === 'DeviceNotRegistered') this.options.dropToken(to);
+      else if (ticket.details?.error === 'DeviceNotRegistered') this.drop(to);
     });
     if (receipts.size > 0) this.later(() => void this.checkReceipts(receipts), this.limits.receiptDelayMs);
+  }
+
+  private drop(token: string): void {
+    try {
+      this.options.dropToken(token);
+    } catch (cause) {
+      console.error(`stim-server: could not drop an unregistered push token: ${(cause as Error).message}`);
+    }
   }
 
   private async checkReceipts(receipts: Map<string, string>): Promise<void> {
@@ -263,7 +272,7 @@ export class PushNotifier {
     if (!data || typeof data !== 'object') return;
     for (const [id, receipt] of Object.entries(data as Record<string, Ticket>)) {
       const to = receipts.get(id);
-      if (to && receipt.details?.error === 'DeviceNotRegistered') this.options.dropToken(to);
+      if (to && receipt.details?.error === 'DeviceNotRegistered') this.drop(to);
     }
   }
 }

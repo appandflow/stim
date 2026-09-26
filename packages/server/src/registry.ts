@@ -234,12 +234,16 @@ export function grantDevice(id: string, capabilities: Capability[]): boolean {
   });
 }
 
-/** Sets or, with null, removes a device's push registration. False when the device is no longer paired. */
+/**
+ * Sets or, with null, removes a device's push registration, taking the token from any other pairing, such as the
+ * same phone's previous one. False when the device is no longer paired.
+ */
 export function setDevicePush(id: string, push: PushRegistration | null): boolean {
   return transaction(() => {
     const devices = readDevices();
     const device = devices.find((entry) => entry.id === id);
     if (!device) return false;
+    for (const other of devices) if (push && other.push?.token === push.token) delete other.push;
     if (push) device.push = push;
     else delete device.push;
     writeJson(devicesFile(), { version: 1, devices });
