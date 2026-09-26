@@ -111,10 +111,10 @@ public struct BuildHistoryEntry: Decodable, Hashable, Sendable {
   public init(from decoder: Decoder) throws {
     build = try LastBuild(from: decoder)
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    result = try container.decodeIfPresent(String.self, forKey: .result) ?? (build.status == "ok" ? "succeeded" : "failed")
-    slot = try container.decodeIfPresent(String.self, forKey: .slot) ?? DeviceRef.defaultSlot
+    result = try container.decode(String.self, forKey: .result)
+    slot = try container.decode(String.self, forKey: .slot)
     configuration = try container.decodeIfPresent(String.self, forKey: .configuration)
-    phases = try container.decodeIfPresent([String: Double].self, forKey: .phases) ?? [:]
+    phases = try container.decode([String: Double].self, forKey: .phases)
   }
 
   /// How the run ended in a word or two, for a list row; `detail` carries the error code and miss reason.
@@ -139,15 +139,13 @@ public struct BuildHistoryEntry: Decodable, Hashable, Sendable {
     return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
   }
 
-  public var started: Date? { parseTimestamp(build.startedAt) }
 
   /// The phases the run entered, in build order, as `compile 1m 58s · install 0m 3s`.
   public var phaseLine: String? {
     let order = ["prepare", "cache-lookup", "wait", "prebuild", "pods", "compile", "install", "launch"]
+    let stoppedIn = result == "interrupted" ? order.last { phases[$0] != nil } : nil
     let parts = order.compactMap { phase in
-      phases[phase].map { ms in
-        result == "interrupted" && ms == 0 ? "stopped in \(phase)" : "\(phase) \(formatDuration(ms: ms))"
-      }
+      phases[phase].map { ms in phase == stoppedIn ? "stopped in \(phase)" : "\(phase) \(formatDuration(ms: ms))" }
     }
     return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
   }

@@ -115,7 +115,7 @@ or failed, with its duration and age). A compiled build shows why it missed
 the cache from `missReason`; clicking it opens a popover with the changed
 fingerprint sources. **Recent builds** under it discloses the platform's last
 10 runs from status `builds`, newest first: how each ended (local cache,
-compiled, failed, cancelled or interrupted), its duration, miss reason, age and
+remote cache, compiled, failed, cancelled or interrupted), its duration, miss reason, age and
 slot. Clicking a run shows its configuration, fingerprint, phase times,
 compiler errors and miss reason popover. When the section opens, it runs
 `stim <platform> --plan --json` in the workspace for each platform with a last

@@ -186,7 +186,7 @@ private struct BuildHistoryRow: View {
               .lineLimit(1)
             Spacer(minLength: 4)
             Text(
-              [entry.build.durationMs.map { formatDuration(ms: $0) }, entry.started.map { formatAgo(now.timeIntervalSince($0)) }]
+              [entry.build.durationMs.map { formatDuration(ms: $0) }, entry.build.endedAt.map { formatAgo(now.timeIntervalSince($0)) }]
                 .compactMap { $0 }.joined(separator: " \u{00B7} ")
             )
             .foregroundStyle(Theme.tertiary)
@@ -200,7 +200,6 @@ private struct BuildHistoryRow: View {
         .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
-      .help(entry.build.summary)
       if expanded {
         VStack(alignment: .leading, spacing: 4) {
           let facts = [entry.configuration, entry.build.fingerprint.map { "fingerprint \($0.prefix(8))" }]

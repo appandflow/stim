@@ -34,7 +34,8 @@ import Testing
            "errorCode":"STIM_CANCELLED","result":"cancelled","slot":"default","configuration":"Debug","cacheKey":null,
            "phases":{"pods":90794,"prepare":2260}},
           {"platform":"ios","status":"ok","cacheHit":"local","cacheSkipped":false,"durationMs":18128,
-           "fingerprint":"7a512dbf","startedAt":"2026-09-26T12:50:00.000Z","finishedAt":"2026-09-26T12:50:18.128Z"}],
+           "fingerprint":"7a512dbf","startedAt":"2026-09-26T12:50:00.000Z","finishedAt":"2026-09-26T12:50:18.128Z",
+           "result":"succeeded","slot":"default","configuration":"Debug","cacheKey":"7a512dbf-debug-sim","phases":{}}],
         "android":[
           {"platform":"android","status":"failed","cacheHit":false,"cacheSkipped":false,"durationMs":null,
            "fingerprint":null,"startedAt":"2026-09-26T13:00:20.861Z","finishedAt":null,"result":"interrupted",
