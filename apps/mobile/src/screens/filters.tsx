@@ -1,7 +1,8 @@
 import { Host, Switch } from '@expo/ui';
 import { useMemo, type ReactNode } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
+import { ScrollView } from '@/components/lists';
 import { Toggle } from '@/components/toggle';
 import { Touch } from '@/components/touch';
 import { useHomeFilters } from '@/hooks/home-filters';

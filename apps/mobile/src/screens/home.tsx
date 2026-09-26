@@ -1,22 +1,13 @@
 import { Image } from 'expo-image';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Platform,
-  ScrollView,
-  SectionList,
-  StyleSheet,
-  Text,
-  View,
-  type ListViewToken,
-} from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, Text, View, type ListViewToken } from 'react-native';
 
 import { AttentionStrip } from '@/components/attention-strip';
 import { DeviceGridTile } from '@/components/device-grid-tile';
 import { EmptyState } from '@/components/empty-state';
 import { Icon } from '@/components/icon';
+import { FlatList, ScrollView, SectionList } from '@/components/lists';
 import { MacChip } from '@/components/mac-chip';
 import { StimJar } from '@/components/stim-jar';
 import { Touch } from '@/components/touch';

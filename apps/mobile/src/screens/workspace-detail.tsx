@@ -2,7 +2,7 @@ import * as Clipboard from 'expo-clipboard';
 import { Stack, useRouter } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, StyleSheet, Text, View } from 'react-native';
 
 import { ActionToast, type Toast } from '@/components/action-toast';
 import { BuildCards } from '@/components/build-card';
@@ -12,6 +12,7 @@ import { ConnectionBanner } from '@/components/connection-banner';
 import { DeviceTile } from '@/components/device-tile';
 import { EmptyState } from '@/components/empty-state';
 import { GitIndicator } from '@/components/git-indicator';
+import { ScrollView } from '@/components/lists';
 import { explainReadOnly, READ_ONLY_REASON } from '@/components/read-only';
 import { RemoteTile } from '@/components/remote-tile';
 import { Touch } from '@/components/touch';

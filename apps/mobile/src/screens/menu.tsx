@@ -1,10 +1,11 @@
 import Constants from 'expo-constants';
 import { Image } from 'expo-image';
 import { usePathname, useRouter, type Href } from 'expo-router';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon, type IconName } from '@/components/icon';
+import { ScrollView } from '@/components/lists';
 import { Touch } from '@/components/touch';
 import { useAppUpdate } from '@/hooks/app-update';
 import { useHomeFilters, type HomeView } from '@/hooks/home-filters';

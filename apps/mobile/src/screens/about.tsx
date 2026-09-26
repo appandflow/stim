@@ -1,7 +1,8 @@
 import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
+import { ScrollView } from '@/components/lists';
 import { describeState } from '@/components/mac-chip';
 import { useMacs } from '@/hooks/mac-connection';
 import { PROTOCOL_VERSION } from '@/protocol/types';

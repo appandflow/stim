@@ -3,8 +3,6 @@ import * as Clipboard from 'expo-clipboard';
 import { Stack } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import {
-  FlatList,
-  ScrollView,
   Share,
   StyleSheet,
   Text,
@@ -15,6 +13,7 @@ import {
 } from 'react-native';
 
 import { ConnectionBanner } from '@/components/connection-banner';
+import { FlatList, ScrollView } from '@/components/lists';
 import { Toggle } from '@/components/toggle';
 import { Touch } from '@/components/touch';
 import { useMacConnection, useLogs, useStatus, type LogsChange } from '@/hooks/mac-connection';

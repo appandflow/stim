@@ -1,8 +1,9 @@
 import { useRouter } from 'expo-router';
-import { Alert, FlatList, StyleSheet, Text, View } from 'react-native';
+import { Alert, StyleSheet, Text, View } from 'react-native';
 
 import { Card } from '@/components/card';
 import { StatusDot } from '@/components/chip';
+import { FlatList } from '@/components/lists';
 import { connectionColor, describeState } from '@/components/mac-chip';
 import { ScopeChip } from '@/components/read-only';
 import { Touch } from '@/components/touch';

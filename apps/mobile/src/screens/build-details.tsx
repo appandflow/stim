@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import { BuildProgressBar } from '@/components/build-progress';
 import { Icon } from '@/components/icon';
+import { ScrollView } from '@/components/lists';
 import { Touch } from '@/components/touch';
 import { useBuildPlan, useMacConnection, useStatus } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
