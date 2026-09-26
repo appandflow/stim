@@ -85,7 +85,7 @@ platform "web":
 Expo also prints web console calls on Metro ("Web LOG"), so they can appear
 twice: once from the page (client), once from Metro (metro, level info).
 stim web writes no launch marker, so logs --errors still lists page errors
-from earlier stim web runs; add --since 1m to see only the latest load.
+from earlier stim web runs; add --since 2m to see only the latest load.
 
 AGENTS AND OTHER TOOLS ON THE SAME BROWSER
 
