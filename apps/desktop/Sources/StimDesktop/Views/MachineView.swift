@@ -25,7 +25,7 @@ struct MachineView: View {
       gc: metrics.gcReport, disk: storage.disk, paths: storage.paths,
       projectRoots: status.projects.mapValues(\.root))
     ScrollView {
-      VStack(alignment: .leading, spacing: 28) {
+      VStack(alignment: .leading, spacing: Space.xxxl) {
         header
         if let plan = autopilot.pressure { pressureBanner(plan) }
         headline(report)
@@ -35,7 +35,7 @@ struct MachineView: View {
         runtimes(report)
         otherTools(report)
       }
-      .padding(compact ? 20 : 28)
+      .padding(compact ? Space.xxl : Space.xxxl)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
     .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
@@ -75,8 +75,8 @@ struct MachineView: View {
 
   private var header: some View {
     HStack(alignment: .firstTextBaseline) {
-      VStack(alignment: .leading, spacing: 4) {
-        Text("Machine").font(Theme.heading(22))
+      VStack(alignment: .leading, spacing: Space.xs) {
+        Text("Machine").font(.stim(.title))
         Text("What uses this Mac's disk, largest first, and what Stim can free.")
           .foregroundStyle(Palette.secondary)
       }
@@ -97,7 +97,7 @@ struct MachineView: View {
 
   private func pressureBanner(_ plan: PressurePlan) -> some View {
     Banner(tone: .warning, icon: "exclamationmark.triangle.fill") {
-      Text(plan.headline).font(Theme.body(13, weight: .semibold))
+      Text(plan.headline).font(.stim(.body, weight: .semibold))
       Text(plan.proposal).foregroundStyle(Palette.secondary)
       if plan.belowHardFloor {
         Text("Below the hard floor, stim start, ios and android refuse with STIM_LOW_DISK.")
@@ -131,25 +131,25 @@ struct MachineView: View {
     let categories: [(DiskCategory, CategoryTotal)] = DiskCategory.allCases.map { ($0, report.total($0)) }
     let total = max(1, categories.map { $0.1.bytes }.reduce(0, +))
     let under = lowest.flatMap { volume in budget.map { volume.freeBytes < $0 } } ?? false
-    return VStack(alignment: .leading, spacing: 14) {
-      HStack(alignment: .firstTextBaseline, spacing: 10) {
+    return VStack(alignment: .leading, spacing: Space.lg) {
+      HStack(alignment: .firstTextBaseline, spacing: Space.md) {
         Text(lowest.map { formatDisk($0.freeBytes) } ?? "\u{2014}")
-          .font(Theme.heading(26))
+          .font(.stim(.title))
           .foregroundStyle(under ? Palette.warning : Palette.text)
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: Space.xxs) {
           Text(lowest.map { "free on \($0.name) of \(formatDisk($0.totalBytes))" } ?? "free")
             .foregroundStyle(Palette.secondary)
           Text(
             budget.map { under ? "Under the \(formatDisk($0)) Stim budget" : "Stim budget \(formatDisk($0)) free" }
               ?? "No Stim disk budget set"
           )
-          .font(Theme.body(11.5))
+          .font(.stim(.footnote))
           .foregroundStyle(under ? Palette.warning : Palette.tertiary)
         }
         Spacer()
       }
       GeometryReader { proxy in
-        HStack(spacing: 2) {
+        HStack(spacing: Space.xxs) {
           ForEach(categories, id: \.0) { category, value in
             if value.bytes > 0 {
               Rectangle()
@@ -162,24 +162,24 @@ struct MachineView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
       }
       .frame(height: 14)
-      .clipShape(RoundedRectangle(cornerRadius: 4))
-      FlowLayout(spacing: 16) {
+      .clipShape(RoundedRectangle(cornerRadius: Radius.small))
+      FlowLayout(spacing: Space.xl) {
         ForEach(categories, id: \.0) { category, value in
-          HStack(spacing: 6) {
+          HStack(spacing: Space.sm) {
             RoundedRectangle(cornerRadius: 2).fill(Self.color(category)).frame(width: 9, height: 9)
             Text(category.title).foregroundStyle(Palette.secondary)
             Text(value.complete ? formatDisk(value.bytes) : value.bytes == 0 ? "\u{2014}" : "\u{2265} " + formatDisk(value.bytes))
-              .font(Theme.mono(11.5))
+              .font(.stim(.footnote, mono: true))
               .foregroundStyle(value.complete ? Palette.text : Palette.tertiary)
               .help(value.complete ? "" : "Some of it is still being measured or could not be sized")
           }
         }
       }
-      .font(Theme.body(12))
+      .font(.stim(.callout))
     }
-    .padding(18)
-    .background(RoundedRectangle(cornerRadius: 12).fill(Palette.surface))
-    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Palette.border))
+    .padding(Space.xl)
+    .background(RoundedRectangle(cornerRadius: Radius.card).fill(Palette.surface))
+    .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
   }
 
   // MARK: Safe to free now
@@ -188,16 +188,16 @@ struct MachineView: View {
     let selected = FreePlan.effective(selection ?? FreePlan.defaultSelection(report.free), items: report.free)
     let commands = FreePlan.commands(selected, home: NSHomeDirectory())
     let bytes = FreePlan.bytes(report.free, selected: selected)
-    return VStack(alignment: .leading, spacing: 10) {
-      HStack(alignment: .firstTextBaseline, spacing: 8) {
-        Text("Safe to free now").font(Theme.heading(15))
+    return VStack(alignment: .leading, spacing: Space.md) {
+      HStack(alignment: .firstTextBaseline, spacing: Space.md) {
+        Text("Safe to free now").font(.stim(.headline))
         Text("\(report.free.count)").foregroundStyle(Palette.tertiary)
         Spacer()
         if let active = actions.active(for: ActionCenter.machineKey) {
           Button {
             actions.presented = active
           } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: Space.sm) {
               ProgressView().controlSize(.mini)
               Text("Running")
             }
@@ -219,7 +219,7 @@ struct MachineView: View {
         Text(
           "Rows marked stim gc are freed together by one stim gc --delete, which also frees the worktree and build outputs rows. Free previews or confirms its commands first."
         )
-        .font(Theme.body(11.5))
+        .font(.stim(.footnote))
         .foregroundStyle(Palette.tertiary)
       }
     }
@@ -228,7 +228,7 @@ struct MachineView: View {
   private func freeRow(_ item: FreeItem, selected: Set<FreeAction>) -> some View {
     let on = FreePlan.frees(item.action, selected: selected)
     let enabled = FreePlan.canToggle(item.action, selected: selected)
-    return HStack(spacing: 12) {
+    return HStack(spacing: Space.lg) {
       Toggle(
         isOn: Binding(
           get: { on },
@@ -242,19 +242,19 @@ struct MachineView: View {
       .labelsHidden()
       .disabled(!enabled)
       .help(enabled ? "" : "stim gc --delete frees this too; uncheck the stim gc rows to choose it alone")
-      VStack(alignment: .leading, spacing: 2) {
-        HStack(spacing: 6) {
+      VStack(alignment: .leading, spacing: Space.xxs) {
+        HStack(spacing: Space.sm) {
           Text(freeTitle(item)).lineLimit(1).truncationMode(.middle)
           Pill(tone: .neutral) { Text(actionLabel(item.action)) }
         }
-        Text(abbreviatingHome(item.detail)).font(Theme.body(11.5)).foregroundStyle(Palette.secondary).lineLimit(1)
+        Text(abbreviatingHome(item.detail)).font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1)
           .truncationMode(.middle)
       }
       Spacer()
       size(item.bytes.map(DiskSize.size) ?? .notMeasured, reason: item.bytes == nil ? "A record only, or not sized" : nil)
     }
-    .padding(.horizontal, 16)
-    .padding(.vertical, 9)
+    .padding(.horizontal, Space.xl)
+    .padding(.vertical, Space.md)
     .opacity(on ? 1 : 0.7)
   }
 
@@ -283,13 +283,13 @@ struct MachineView: View {
   // MARK: Projects
 
   private func projects(_ report: StorageReport) -> some View {
-    VStack(alignment: .leading, spacing: 10) {
-      HStack(spacing: 8) {
-        Text("Projects").font(Theme.heading(15))
+    VStack(alignment: .leading, spacing: Space.md) {
+      HStack(spacing: Space.md) {
+        Text("Projects").font(.stim(.headline))
         Text("\(report.repositories.count)").foregroundStyle(Palette.tertiary)
         Spacer()
         if storage.hasGitHubCLI == false {
-          Text("Install the GitHub CLI (gh) to show open pull requests.").font(Theme.body(11.5))
+          Text("Install the GitHub CLI (gh) to show open pull requests.").font(.stim(.footnote))
             .foregroundStyle(Palette.tertiary)
         }
       }
@@ -307,7 +307,7 @@ struct MachineView: View {
                 repositoryRow(repository)
                 if expanded.contains(repository.id) {
                   ForEach(repository.worktrees) { workspace in
-                    Rectangle().fill(Palette.border.opacity(0.6)).frame(height: 1).padding(.leading, 36)
+                    Rectangle().fill(Palette.border.opacity(0.6)).frame(height: 1).padding(.leading, Space.xl + Space.xxxl)
                     workspaceRow(workspace, nested: true)
                   }
                 }
@@ -320,7 +320,7 @@ struct MachineView: View {
   }
 
   private var columnHeader: some View {
-    HStack(spacing: 12) {
+    HStack(spacing: Space.lg) {
       Text("Repository and worktree").frame(maxWidth: .infinity, alignment: .leading)
       Text("Lifecycle").frame(width: 130, alignment: .leading)
       Text("node_modules").frame(width: Self.sizeWidth, alignment: .trailing)
@@ -330,10 +330,10 @@ struct MachineView: View {
       Text("Total").frame(width: Self.sizeWidth, alignment: .trailing)
       Color.clear.frame(width: 28)
     }
-    .font(Theme.body(11, weight: .medium))
+    .font(.stim(.caption, weight: .medium))
     .foregroundStyle(Palette.tertiary)
-    .padding(.horizontal, 16)
-    .padding(.vertical, 8)
+    .padding(.horizontal, Space.xl)
+    .padding(.vertical, Space.md)
   }
 
   private func repositoryRow(_ repository: RepositoryStorage) -> some View {
@@ -341,12 +341,12 @@ struct MachineView: View {
     return Button {
       if open { expanded.remove(repository.id) } else { expanded.insert(repository.id) }
     } label: {
-      HStack(spacing: 12) {
+      HStack(spacing: Space.lg) {
         Image(systemName: open ? "chevron.down" : "chevron.right")
           .font(.system(size: 11, weight: .semibold))
           .foregroundStyle(Palette.tertiary)
           .frame(width: 12)
-        Text(repository.name).font(Theme.body(13, weight: .semibold)).lineLimit(1)
+        Text(repository.name).font(.stim(.body, weight: .semibold)).lineLimit(1)
         Text("\(repository.worktrees.count) worktrees").foregroundStyle(Palette.tertiary)
         Spacer()
         totalText(repository.total, complete: repository.totalComplete)
@@ -356,29 +356,29 @@ struct MachineView: View {
     }
     .buttonStyle(.plain)
     .help(abbreviatingHome(repository.path))
-    .padding(.horizontal, 16)
-    .padding(.vertical, 10)
+    .padding(.horizontal, Space.xl)
+    .padding(.vertical, Space.md)
   }
 
   private func workspaceRow(_ workspace: WorkspaceStorage, nested: Bool) -> some View {
     let names = status.names(ofPath: workspace.path)
     let lifecycle = WorktreeLifecycle(
       worktree: workspace.worktree, branch: workspace.branch, pulls: storage.pulls(for: workspace))
-    return HStack(spacing: 12) {
-      VStack(alignment: .leading, spacing: 2) {
+    return HStack(spacing: Space.lg) {
+      VStack(alignment: .leading, spacing: Space.xxs) {
         Text(names.title).lineLimit(1).truncationMode(.middle)
         if compact {
-          HStack(spacing: 6) {
+          HStack(spacing: Space.sm) {
             lifecycleChip(lifecycle, workspace: workspace)
-            Text(breakdown(workspace)).font(Theme.body(11)).foregroundStyle(Palette.secondary).lineLimit(1)
+            Text(breakdown(workspace)).font(.stim(.caption)).foregroundStyle(Palette.secondary).lineLimit(1)
           }
         } else if let inCheckout = names.inCheckout {
-          Text(inCheckout).font(Theme.body(11)).foregroundStyle(Palette.secondary).lineLimit(1)
+          Text(inCheckout).font(.stim(.caption)).foregroundStyle(Palette.secondary).lineLimit(1)
         }
       }
       .help(abbreviatingHome(workspace.path))
       .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(.leading, nested ? 24 : 0)
+      .padding(.leading, nested ? Space.xxxl : 0)
       if !compact {
         lifecycleChip(lifecycle, workspace: workspace).frame(width: 130, alignment: .leading)
         size(workspace.nodeModules)
@@ -420,8 +420,8 @@ struct MachineView: View {
       .menuIndicator(.hidden)
       .frame(width: 28)
     }
-    .padding(.horizontal, 16)
-    .padding(.vertical, 8)
+    .padding(.horizontal, Space.xl)
+    .padding(.vertical, Space.md)
   }
 
   private func breakdown(_ workspace: WorkspaceStorage) -> String {
@@ -462,16 +462,16 @@ struct MachineView: View {
 
   private func devices(_ report: StorageReport) -> some View {
     let shown = showsAllDevices ? report.devices : Array(report.devices.prefix(Self.deviceLimit))
-    return VStack(alignment: .leading, spacing: 10) {
-      HStack(spacing: 8) {
-        Text("Simulators and emulators").font(Theme.heading(15))
+    return VStack(alignment: .leading, spacing: Space.md) {
+      HStack(spacing: Space.md) {
+        Text("Simulators and emulators").font(.stim(.headline))
         Text("\(report.devices.count)").foregroundStyle(Palette.tertiary)
       }
       Text("Stim acts only on devices this Stim home created. The others are listed so you can see their size; manage them in Xcode or Android Studio.")
-        .font(Theme.body(11.5))
+        .font(.stim(.footnote))
         .foregroundStyle(Palette.tertiary)
       ForEach(report.inventoryNotices, id: \.self) { notice in
-        Label(notice, systemImage: "exclamationmark.triangle").font(Theme.body(11.5)).foregroundStyle(Palette.warning)
+        Label(notice, systemImage: "exclamationmark.triangle").font(.stim(.footnote)).foregroundStyle(Palette.warning)
       }
       if !report.hasInventory {
         inventoryMissing
@@ -489,7 +489,7 @@ struct MachineView: View {
               }
               .buttonStyle(.plain)
               .foregroundStyle(Palette.primary)
-              .padding(10)
+              .padding(Space.md)
             }
           }
         }
@@ -509,13 +509,13 @@ struct MachineView: View {
     let device = entry.device
     let subtitle = [entry.isStim || device.owner == .otherStimHome ? device.model : nil, entry.runtimeTitle, compact ? entry.lastUsed.map { "used \(lastUsed($0))" } : nil]
       .compactMap { $0 }.joined(separator: " \u{00B7} ")
-    return HStack(spacing: 12) {
+    return HStack(spacing: Space.lg) {
       Image(systemName: device.kind == "ios" ? "iphone" : "smartphone")
         .foregroundStyle(entry.isStim ? Palette.accent : Palette.tertiary)
         .frame(width: 16)
-      VStack(alignment: .leading, spacing: 2) {
+      VStack(alignment: .leading, spacing: Space.xxs) {
         Text(device.name).lineLimit(1).truncationMode(.middle)
-        Text(subtitle).font(Theme.body(11)).foregroundStyle(Palette.secondary).lineLimit(1)
+        Text(subtitle).font(.stim(.caption)).foregroundStyle(Palette.secondary).lineLimit(1)
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       .help(device.directory.map { abbreviatingHome($0) } ?? device.id)
@@ -528,8 +528,8 @@ struct MachineView: View {
       }
       size(entry.size, reason: sizeReason(entry))
     }
-    .padding(.horizontal, 16)
-    .padding(.vertical, 8)
+    .padding(.horizontal, Space.xl)
+    .padding(.vertical, Space.md)
   }
 
   private func sizeReason(_ entry: DeviceStorage) -> String? {
@@ -574,9 +574,9 @@ struct MachineView: View {
 
   private func runtimes(_ report: StorageReport) -> some View {
     let unused = report.runtimes.filter(\.unused)
-    return VStack(alignment: .leading, spacing: 10) {
-      HStack(spacing: 8) {
-        Text("Runtimes and system images").font(Theme.heading(15))
+    return VStack(alignment: .leading, spacing: Space.md) {
+      HStack(spacing: Space.md) {
+        Text("Runtimes and system images").font(.stim(.headline))
         if !unused.isEmpty {
           Pill(tone: .warning) {
             Text("\(unused.count) unused \u{00B7} \(formatDisk(unused.compactMap(\.size.bytes).reduce(0, +)))")
@@ -584,7 +584,7 @@ struct MachineView: View {
         }
       }
       Text("Stim never deletes these. Copy the vendor command to remove one no device uses.")
-        .font(Theme.body(11.5))
+        .font(.stim(.footnote))
         .foregroundStyle(Palette.tertiary)
       if !report.hasInventory {
         inventoryMissing
@@ -604,13 +604,13 @@ struct MachineView: View {
   }
 
   private func runtimeRow(_ runtime: RuntimeStorage) -> some View {
-    HStack(spacing: 12) {
+    HStack(spacing: Space.lg) {
       Image(systemName: runtime.id.hasPrefix("system-images;") ? "square.stack.3d.up" : "cpu")
         .foregroundStyle(runtime.unused ? Palette.warning : Palette.tertiary)
         .frame(width: 16)
-      VStack(alignment: .leading, spacing: 2) {
+      VStack(alignment: .leading, spacing: Space.xxs) {
         Text(runtime.title).lineLimit(1)
-        if let detail = runtime.detail { Text(detail).font(Theme.body(11)).foregroundStyle(Palette.secondary).lineLimit(1) }
+        if let detail = runtime.detail { Text(detail).font(.stim(.caption)).foregroundStyle(Palette.secondary).lineLimit(1) }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       if runtime.unused {
@@ -635,27 +635,27 @@ struct MachineView: View {
       }
       .frame(width: 80, alignment: .trailing)
     }
-    .padding(.horizontal, 16)
-    .padding(.vertical, 8)
+    .padding(.horizontal, Space.xl)
+    .padding(.vertical, Space.md)
   }
 
   // MARK: Other tools
 
   private func otherTools(_ report: StorageReport) -> some View {
-    VStack(alignment: .leading, spacing: 10) {
-      Text("Other tools").font(Theme.heading(15))
+    VStack(alignment: .leading, spacing: Space.md) {
+      Text("Other tools").font(.stim(.headline))
       Text("Space Xcode, Gradle and other apps use. Stim never deletes these; clear them from the tool that owns them.")
-        .font(Theme.body(11.5))
+        .font(.stim(.footnote))
         .foregroundStyle(Palette.tertiary)
       Card {
         VStack(spacing: 0) {
           ForEach(Array(report.unmanaged.enumerated()), id: \.element.id) { index, location in
             if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
-            HStack(spacing: 12) {
+            HStack(spacing: Space.lg) {
               Image(systemName: "folder").foregroundStyle(Palette.tertiary).frame(width: 16)
-              VStack(alignment: .leading, spacing: 2) {
+              VStack(alignment: .leading, spacing: Space.xxs) {
                 Text(location.title)
-                Text(abbreviatingHome(location.detail ?? location.path ?? "")).font(Theme.body(11))
+                Text(abbreviatingHome(location.detail ?? location.path ?? "")).font(.stim(.caption))
                   .foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle)
               }
               Spacer()
@@ -664,8 +664,8 @@ struct MachineView: View {
                 Button("Reveal") { reveal(path) }.buttonStyle(.stim()).frame(width: 80, alignment: .trailing)
               }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.horizontal, Space.xl)
+            .padding(.vertical, Space.md)
           }
         }
       }
@@ -676,7 +676,7 @@ struct MachineView: View {
 
   private func totalText(_ total: Int64?, complete: Bool) -> some View {
     Text(total.map { (complete ? "" : "\u{2265} ") + formatDisk($0) } ?? "\u{2026}")
-      .font(Theme.mono(11.5)).fontWeight(.semibold)
+      .font(.stim(.footnote, mono: true)).fontWeight(.semibold)
       .foregroundStyle(complete ? Palette.text : Palette.tertiary)
       .frame(width: Self.sizeWidth, alignment: .trailing)
       .help(complete ? "" : total == nil ? "Measuring" : "Some parts are not sized yet")
@@ -693,7 +693,7 @@ struct MachineView: View {
     case .notMeasured: (text, reason) = ("\u{2014}", "Not measured yet")
     }
     return Text(text)
-      .font(Theme.mono(11.5))
+      .font(.stim(.footnote, mono: true))
       .foregroundStyle(measurement.bytes.map { $0 > 0 } == true ? Palette.text : Palette.tertiary)
       .frame(width: Self.sizeWidth, alignment: .trailing)
       .help(override ?? reason)

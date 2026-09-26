@@ -30,10 +30,10 @@ struct DeviceTile: View {
     Card {
       VStack(spacing: 0) {
         header
-          .padding(.horizontal, 12)
-          .padding(.vertical, 9)
+          .padding(.horizontal, Space.lg)
+          .padding(.vertical, Space.md)
         if let build {
-          BuildProgressBar(build: build, compact: true).padding(.horizontal, 12).padding(.bottom, 9)
+          BuildProgressBar(build: build, compact: true).padding(.horizontal, Space.lg).padding(.bottom, Space.md)
         }
         Rectangle().fill(Palette.border).frame(height: 1)
         if let workspace, showsStoppedBar {
@@ -47,26 +47,26 @@ struct DeviceTile: View {
     }
     .overlay {
       if case .remote = device {
-        RoundedRectangle(cornerRadius: 12).strokeBorder(Palette.info, lineWidth: 2)
+        RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.info, lineWidth: 2)
       } else if interactive {
-        RoundedRectangle(cornerRadius: 12).strokeBorder(Palette.accent, lineWidth: 2)
+        RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.accent, lineWidth: 2)
       }
     }
     .frame(width: width)
   }
 
   private var header: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      HStack(spacing: 8) {
+    VStack(alignment: .leading, spacing: Space.sm) {
+      HStack(spacing: Space.md) {
         StatusDot(color: device.isRunning ? Palette.success : Palette.tertiary, filled: device.isRunning)
         ViewThatFits(in: .horizontal) {
-          HStack(spacing: 4) {
-            Text(device.label).font(Theme.body(12, weight: .semibold))
+          HStack(spacing: Space.xs) {
+            Text(device.label).font(.stim(.callout, weight: .semibold))
             if let detail = device.detail {
-              Text(detail).font(Theme.body(12)).foregroundStyle(Palette.secondary)
+              Text(detail).font(.stim(.callout)).foregroundStyle(Palette.secondary)
             }
           }
-          Text(device.label).font(Theme.body(12, weight: .semibold))
+          Text(device.label).font(.stim(.callout, weight: .semibold))
         }
         .help([device.label, device.detail].compactMap { $0 }.joined(separator: " "))
         .lineLimit(1)
@@ -91,7 +91,7 @@ struct DeviceTile: View {
           postureMenu(serial: serial, current: emulatorPosture)
         }
       }
-      FlowLayout(spacing: 6) {
+      FlowLayout(spacing: Space.sm) {
         TimelineView(.periodic(from: .now, by: 30)) { context in
           if let badge = ActivityBadge(
             device.activity, screenChangedAt: device.activityKey.flatMap(ScreenActivity.shared.lastChange),
@@ -113,7 +113,7 @@ struct DeviceTile: View {
             .help((["stim"] + run.arguments).joined(separator: " "))
           }
         }
-        Text(source).font(Theme.body(10.5)).foregroundStyle(Palette.tertiary).lineLimit(1).fixedSize()
+        Text(source).font(.stim(.caption2)).foregroundStyle(Palette.tertiary).lineLimit(1).fixedSize()
         if let posture = posture ?? emulatorPosture?.label {
           Pill { Text(posture) }
         }
@@ -151,12 +151,12 @@ struct DeviceTile: View {
   }
 
   private func stoppedBar(_ run: StimCommand?) -> some View {
-    HStack(spacing: 10) {
+    HStack(spacing: Space.md) {
       Text(
         run.map { "Not running. Run stim \($0.arguments.joined(separator: " ")) to boot it and install the app." }
           ?? (isPhysical ? "Not connected." : "Shut down. Stim does not boot a device it does not own.")
       )
-      .font(Theme.body(12))
+      .font(.stim(.callout))
       .foregroundStyle(Palette.secondary)
       .fixedSize(horizontal: false, vertical: true)
       Spacer(minLength: 0)
@@ -168,7 +168,7 @@ struct DeviceTile: View {
           .help(run.displayLine())
       }
     }
-    .padding(12)
+    .padding(Space.lg)
   }
 
   private func stopButton(workspace: String) -> some View {
@@ -459,7 +459,7 @@ private struct ScreenMessage: View {
 
   var body: some View {
     Text(text)
-      .font(Theme.body(12))
+      .font(.stim(.callout))
       .foregroundStyle(Palette.tertiary)
       .multilineTextAlignment(.center)
       .padding()

@@ -29,14 +29,14 @@ struct ActivitySheet: View {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
+    VStack(alignment: .leading, spacing: Space.xl) {
       header
       content
       if !run.isRunning { details }
       footer
     }
-    .font(Theme.body(12))
-    .padding(22)
+    .font(.stim(.callout))
+    .padding(Space.xxl)
     .frame(width: 560)
     .background(Palette.background)
     .onChange(of: run.exitStatus) { _, status in
@@ -63,15 +63,15 @@ struct ActivitySheet: View {
       outcomeView(outcome)
     } else {
       Label(Self.pastTense(run.title), systemImage: "checkmark.circle.fill")
-        .font(Theme.body(13, weight: .medium))
+        .font(.stim(.body, weight: .medium))
         .foregroundStyle(Palette.success)
     }
   }
 
   @ViewBuilder private var header: some View {
     HStack(alignment: .top) {
-      VStack(alignment: .leading, spacing: 2) {
-        Text(run.isRunning ? Self.gerund(run.title) : run.title).font(Theme.heading(17))
+      VStack(alignment: .leading, spacing: Space.xxs) {
+        Text(run.isRunning ? Self.gerund(run.title) : run.title).font(.stim(.headline))
         if abbreviatingHome(run.command.cwd) != "~" {
           Text(abbreviatingHome(run.command.cwd)).foregroundStyle(Palette.tertiary).lineLimit(1).truncationMode(.middle)
         }
@@ -83,8 +83,8 @@ struct ActivitySheet: View {
 
   private var runningView: some View {
     TimelineView(.periodic(from: run.startedAt, by: 1)) { context in
-      VStack(alignment: .leading, spacing: 10) {
-        HStack(spacing: 10) {
+      VStack(alignment: .leading, spacing: Space.md) {
+        HStack(spacing: Space.md) {
           ProgressView().controlSize(.small)
           Text(currentStep)
             .foregroundStyle(Palette.text)
@@ -92,7 +92,7 @@ struct ActivitySheet: View {
             .truncationMode(.middle)
           Spacer()
           Text(formatDuration(ms: context.date.timeIntervalSince(run.startedAt) * 1000))
-            .font(Theme.mono())
+            .font(.stim(.caption, mono: true))
             .foregroundStyle(Palette.tertiary)
         }
         if let waiting = ActivityProgress.waitingStep(steps) {
@@ -101,9 +101,9 @@ struct ActivitySheet: View {
             .lineLimit(2)
         }
       }
-      .padding(12)
+      .padding(Space.lg)
       .frame(maxWidth: .infinity, alignment: .leading)
-      .background(RoundedRectangle(cornerRadius: 8).fill(Palette.surface))
+      .background(RoundedRectangle(cornerRadius: Radius.chip).fill(Palette.surface))
     }
   }
 
@@ -125,7 +125,7 @@ struct ActivitySheet: View {
   }
 
   private func failureView(_ message: String) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
+    VStack(alignment: .leading, spacing: Space.md) {
       Label(abbreviatingHome(message), systemImage: "xmark.octagon.fill")
         .foregroundStyle(Palette.error)
         .textSelection(.enabled)
@@ -136,19 +136,19 @@ struct ActivitySheet: View {
   }
 
   private func outcomeView(_ outcome: GcOutcome) -> some View {
-    VStack(alignment: .leading, spacing: 12) {
+    VStack(alignment: .leading, spacing: Space.lg) {
       Label(outcome.headline, systemImage: outcome.failures > 0 ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-        .font(Theme.body(13, weight: .medium))
+        .font(.stim(.body, weight: .medium))
         .foregroundStyle(outcome.failures > 0 ? Palette.warning : Palette.success)
       if !outcome.done.isEmpty, outcome.done.count <= 6 {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: Space.xs) {
           ForEach(outcome.done, id: \.self) { item in itemRow(item, icon: "checkmark", tint: Palette.tertiary) }
         }
       }
       if !outcome.failed.isEmpty {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Space.sm) {
           Text(outcome.failed.count == 1 ? "1 failed" : "\(outcome.failed.count) failed")
-            .font(Theme.heading(13))
+            .font(.stim(.body, weight: .semibold))
             .foregroundStyle(Palette.error)
           ForEach(outcome.failed, id: \.self) { item in itemRow(item, icon: "xmark.octagon.fill", tint: Palette.error) }
         }
@@ -158,7 +158,7 @@ struct ActivitySheet: View {
       }
       if !outcome.kept.isEmpty {
         DisclosureGroup(isExpanded: $showsKept) {
-          let rows = VStack(alignment: .leading, spacing: 6) {
+          let rows = VStack(alignment: .leading, spacing: Space.sm) {
             ForEach(outcome.kept, id: \.self) { item in itemRow(item, icon: "minus.circle", tint: Palette.tertiary) }
           }
           .frame(maxWidth: .infinity, alignment: .leading)
@@ -175,9 +175,9 @@ struct ActivitySheet: View {
   }
 
   private func itemRow(_ item: GcOutcome.Item, icon: String, tint: Color) -> some View {
-    HStack(alignment: .firstTextBaseline, spacing: 8) {
+    HStack(alignment: .firstTextBaseline, spacing: Space.md) {
       Image(systemName: icon).foregroundStyle(tint).frame(width: 14)
-      VStack(alignment: .leading, spacing: 2) {
+      VStack(alignment: .leading, spacing: Space.xxs) {
         Text(abbreviatingHome(item.label)).lineLimit(2).truncationMode(.middle)
         if let detail = item.detail {
           Text(abbreviatingHome(detail)).foregroundStyle(Palette.tertiary).lineLimit(3)
@@ -186,7 +186,7 @@ struct ActivitySheet: View {
       Spacer()
       if let bytes = item.bytes, bytes > 0 {
         Text(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
-          .font(Theme.mono())
+          .font(.stim(.caption, mono: true))
           .foregroundStyle(Palette.tertiary)
       }
     }
@@ -195,8 +195,8 @@ struct ActivitySheet: View {
 
   private var details: some View {
     DisclosureGroup("Details", isExpanded: $showsDetails) {
-      VStack(alignment: .leading, spacing: 8) {
-        HStack(alignment: .top, spacing: 8) {
+      VStack(alignment: .leading, spacing: Space.md) {
+        HStack(alignment: .top, spacing: Space.md) {
           CommandText(command: run.steps.map { $0.displayLine() }.joined(separator: "\n"))
           Button {
             NSPasteboard.general.clearContents()
@@ -210,7 +210,7 @@ struct ActivitySheet: View {
         output.frame(height: 160)
       }
     }
-    .font(Theme.body(11.5))
+    .font(.stim(.footnote))
     .foregroundStyle(Palette.tertiary)
   }
 
@@ -345,12 +345,12 @@ struct ActivitySheet: View {
               .id(index)
           }
         }
-        .font(Theme.mono())
+        .font(.stim(.caption, mono: true))
         .textSelection(.enabled)
-        .padding(10)
+        .padding(Space.md)
       }
-      .background(RoundedRectangle(cornerRadius: 8).fill(Palette.surface))
-      .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Palette.border))
+      .background(RoundedRectangle(cornerRadius: Radius.chip).fill(Palette.surface))
+      .overlay(RoundedRectangle(cornerRadius: Radius.chip).strokeBorder(Palette.border))
       .onAppear {
         if !run.logLines.isEmpty { proxy.scrollTo(run.logLines.count - 1, anchor: .bottom) }
       }
@@ -366,13 +366,13 @@ struct GcPreviewView: View {
       EmptyState(title: "Nothing to clean up", message: "stim gc found nothing left behind.")
     } else {
       ScrollView {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: Space.lg) {
           Text(report.actionable ? "stim gc --delete would act on the entries not marked kept." : "Nothing here is deletable.")
             .foregroundStyle(Palette.secondary)
           ForEach(report.sections, id: \.key) { section in
-            VStack(alignment: .leading, spacing: 6) {
-              HStack(spacing: 8) {
-                Text(section.title).font(Theme.heading(13))
+            VStack(alignment: .leading, spacing: Space.sm) {
+              HStack(spacing: Space.md) {
+                Text(section.title).font(.stim(.body, weight: .semibold))
                 Text("\(section.entries.count)").foregroundStyle(Palette.tertiary)
               }
               ForEach(Array(section.entries.enumerated()), id: \.offset) { _, entry in
@@ -387,13 +387,13 @@ struct GcPreviewView: View {
   }
 
   private func entryRow(_ entry: GcPreview.Entry) -> some View {
-    HStack(alignment: .firstTextBaseline, spacing: 8) {
+    HStack(alignment: .firstTextBaseline, spacing: Space.md) {
       Image(systemName: entry.kept == nil ? "trash" : "lock")
         .foregroundStyle(entry.kept == nil ? Palette.warning : Palette.tertiary)
         .frame(width: 14)
-      VStack(alignment: .leading, spacing: 2) {
+      VStack(alignment: .leading, spacing: Space.xxs) {
         Text(abbreviatingHome(entry.label))
-          .font(Theme.mono())
+          .font(.stim(.caption, mono: true))
           .foregroundStyle(entry.kept == nil ? Palette.text : Palette.secondary)
           .lineLimit(1)
           .truncationMode(.middle)
@@ -404,7 +404,7 @@ struct GcPreviewView: View {
       Spacer()
       if let bytes = entry.bytes, bytes > 0 {
         Text(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
-          .font(Theme.mono())
+          .font(.stim(.caption, mono: true))
           .foregroundStyle(Palette.tertiary)
       }
     }

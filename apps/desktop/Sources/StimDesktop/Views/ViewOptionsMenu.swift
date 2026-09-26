@@ -239,7 +239,7 @@ private struct MenuRows: View {
     VStack(alignment: .leading, spacing: 0) {
       ForEach(items) { item in
         if item.dividerBefore {
-          Divider().padding(.horizontal, 8).padding(.vertical, 4)
+          Divider().padding(.horizontal, Space.md).padding(.vertical, Space.xs)
         }
         Button {
           activate(item)
@@ -252,7 +252,7 @@ private struct MenuRows: View {
         }
       }
     }
-    .padding(5)
+    .padding(Space.xs)
     .frame(minWidth: 250, alignment: .leading)
     .fixedSize()
   }
@@ -263,7 +263,7 @@ private struct MenuRow: View {
   var highlighted: Bool
 
   var body: some View {
-    HStack(spacing: 8) {
+    HStack(spacing: Space.md) {
       Text(item.title).foregroundStyle(Palette.text).lineLimit(1)
       Spacer(minLength: 16)
       switch item.accessory {
@@ -283,10 +283,10 @@ private struct MenuRow: View {
           .foregroundStyle(Palette.tertiary)
       }
     }
-    .font(Theme.body(13))
-    .padding(.horizontal, 10)
+    .font(.stim(.body))
+    .padding(.horizontal, Space.md)
     .frame(height: 28)
-    .background(RoundedRectangle(cornerRadius: 6).fill(highlighted ? Palette.selection : Color.clear))
+    .background(RoundedRectangle(cornerRadius: Radius.chip).fill(highlighted ? Palette.selection : Color.clear))
     .contentShape(Rectangle())
   }
 }

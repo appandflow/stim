@@ -24,19 +24,19 @@ struct WallView: View {
         showsHero: true)
     } else {
       ScrollView {
-        VStack(alignment: .leading, spacing: 32) {
+        VStack(alignment: .leading, spacing: Space.huge) {
           if let project {
-            Text(project.name).font(Theme.heading(22))
+            Text(project.name).font(.stim(.title))
           }
           ForEach(live) { env in
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: Space.lg) {
               WorkspaceHeader(
                 env: env, project: store.project(of: env), usage: metrics.usage[env.path],
                 openLogs: { openLogs(env.path) }
               )
               .onTapGesture { selection = .environment(env.path) }
               ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 16) {
+                HStack(alignment: .top, spacing: Space.xl) {
                   ForEach(env.devices.filter { $0.isRunning || env.runningBuild(for: $0) != nil }) { device in
                     Button { selection = .environment(env.path) } label: {
                       DeviceTile(
@@ -50,7 +50,7 @@ struct WallView: View {
             }
           }
         }
-        .padding(28)
+        .padding(Space.xxxl)
       }
     }
   }
@@ -63,7 +63,7 @@ struct WorkspaceHeader: View {
   var openLogs: () -> Void
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
+    VStack(alignment: .leading, spacing: Space.md) {
       row
       if let build = env.build, build.isRunning {
         BuildProgressBar(build: build).frame(maxWidth: 520)
@@ -74,12 +74,12 @@ struct WorkspaceHeader: View {
 
   private var row: some View {
     ViewThatFits(in: .horizontal) {
-      HStack(spacing: 12) {
+      HStack(spacing: Space.lg) {
         titleGroup
         Spacer(minLength: 12)
         chips
       }
-      VStack(alignment: .leading, spacing: 8) {
+      VStack(alignment: .leading, spacing: Space.md) {
         titleGroup
         chips
       }
@@ -87,24 +87,24 @@ struct WorkspaceHeader: View {
   }
 
   private var titleGroup: some View {
-    HStack(spacing: 12) {
-      Text(env.names.title).font(Theme.heading(16)).lineLimit(1).truncationMode(.middle)
+    HStack(spacing: Space.lg) {
+      Text(env.names.title).font(.stim(.headline)).lineLimit(1).truncationMode(.middle)
       if project.name != env.names.title {
-        Text(project.name).font(Theme.body(12)).foregroundStyle(Palette.primary).lineLimit(1).fixedSize()
+        Text(project.name).font(.stim(.callout)).foregroundStyle(Palette.primary).lineLimit(1).fixedSize()
       }
       if let inCheckout = env.names.inCheckout {
-        Text(inCheckout).font(Theme.body(12)).foregroundStyle(Palette.tertiary).lineLimit(1).fixedSize()
+        Text(inCheckout).font(.stim(.callout)).foregroundStyle(Palette.tertiary).lineLimit(1).fixedSize()
       }
     }
   }
 
   private var chips: some View {
-    FlowLayout(spacing: 8, lineSpacing: 6) {
+    FlowLayout(spacing: Space.md, lineSpacing: Space.sm) {
       if let metro = env.metro {
         Pill(tone: metro.running ? .neutral : .error) {
           StatusDot(color: metro.running ? Palette.success : Palette.error)
           Text("Metro")
-          Text(":\(String(metro.port))").font(Theme.mono())
+          Text(":\(String(metro.port))").font(.stim(.caption, mono: true))
         }
       }
       if let supervisor = env.supervisor, supervisor.healthy != true {
@@ -115,14 +115,14 @@ struct WorkspaceHeader: View {
           Pill {
             Sparkline(values: usage.cpu, minimumPeak: 100).frame(width: 34, height: 12)
             Text("CPU")
-            Text(formatPercent(cpu)).font(Theme.mono())
+            Text(formatPercent(cpu)).font(.stim(.caption, mono: true))
           }
           .help("CPU of the workspace's processes, simulators and emulators, as a percent of one core")
         }
         Pill {
           Sparkline(values: usage.resident, minimumPeak: 1_073_741_824).frame(width: 34, height: 12)
           Text("RAM")
-          Text(formatMemory(usage.latest.residentBytes)).font(Theme.mono())
+          Text(formatMemory(usage.latest.residentBytes)).font(.stim(.caption, mono: true))
         }
         .help("Resident memory of the workspace's processes, simulators and emulators")
       }

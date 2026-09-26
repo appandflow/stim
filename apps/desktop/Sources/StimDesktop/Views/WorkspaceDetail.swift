@@ -70,7 +70,7 @@ struct WorkspaceDetail: View {
       .pickerStyle(.segmented)
       .labelsHidden()
       .fixedSize()
-      .padding(.vertical, 12)
+      .padding(.vertical, Space.lg)
       Rectangle().fill(Palette.border).frame(height: 1)
       switch tab {
       case .device: deviceView(devices: devices, focused: focused)
@@ -111,26 +111,26 @@ struct WorkspaceDetail: View {
     let segments = devices.filter { $0.isRunning || $0.id == focused?.id }
     let stopped = devices.filter { !$0.isRunning }
     if segments.count > 1 || !stopped.isEmpty {
-      HStack(spacing: 8) {
+      HStack(spacing: Space.md) {
         if segments.count > 1 {
-          HStack(spacing: 2) {
+          HStack(spacing: Space.xxs) {
             ForEach(segments) { device in
               Button { focusedID = device.id } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: Space.sm) {
                   StatusDot(color: stateColor(device), filled: device.isRunning)
                   Text(device.label(among: devices)).lineLimit(1)
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 6).fill(device.id == focused?.id ? Palette.surface : .clear))
+                .padding(.horizontal, Space.md)
+                .padding(.vertical, Space.xs)
+                .background(RoundedRectangle(cornerRadius: Radius.chip).fill(device.id == focused?.id ? Palette.surface : .clear))
                 .contentShape(Rectangle())
               }
               .buttonStyle(.plain)
               .help(device.detail.map { "\(device.label) \u{00B7} \($0) \u{00B7} \(device.state)" } ?? device.state)
             }
           }
-          .padding(2)
-          .background(RoundedRectangle(cornerRadius: 8).fill(Palette.border))
+          .padding(Space.xxs)
+          .background(RoundedRectangle(cornerRadius: Radius.chip).fill(Palette.border))
         }
         if !stopped.isEmpty {
           Menu {
@@ -147,7 +147,7 @@ struct WorkspaceDetail: View {
           .help("Devices of this workspace that are not running")
         }
       }
-      .font(Theme.body(12))
+      .font(.stim(.callout))
     }
   }
 
@@ -157,7 +157,7 @@ struct WorkspaceDetail: View {
   }
 
   private func deviceView(devices: [DeviceRef], focused: DeviceRef?) -> some View {
-    VStack(spacing: 16) {
+    VStack(spacing: Space.xl) {
       devicePicker(devices: devices, focused: focused)
       if let focused {
         DeviceTile(
@@ -178,7 +178,7 @@ struct WorkspaceDetail: View {
       }
       Spacer(minLength: 0)
     }
-    .padding(24)
+    .padding(Space.xxxl)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 }
@@ -195,15 +195,15 @@ struct Inspector: View {
 
   var body: some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: 24) {
+      VStack(alignment: .leading, spacing: Space.xxxl) {
         statusCard
 
         if let usage {
-          VStack(alignment: .leading, spacing: 8) {
+          VStack(alignment: .leading, spacing: Space.md) {
             SectionLabel(title: "Resources \u{00B7} " + countLabel(usage.latest.processCount, "process", plural: "processes"))
             ViewThatFits(in: .horizontal) {
-              HStack(alignment: .top, spacing: 10) { usageCards(usage) }
-              VStack(spacing: 10) { usageCards(usage) }
+              HStack(alignment: .top, spacing: Space.md) { usageCards(usage) }
+              VStack(spacing: Space.md) { usageCards(usage) }
             }
           }
         }
@@ -211,7 +211,7 @@ struct Inspector: View {
         ListSection("Devices", env.orderedDevices, style: .separated) { device in
           ListRow(compact: true) {
             StatusDot(color: device.isRunning ? Palette.success : Palette.tertiary, filled: device.isRunning)
-            Text(device.label(among: env.devices)).font(Theme.body(12, weight: .semibold)).lineLimit(1)
+            Text(device.label(among: env.devices)).font(.stim(.callout, weight: .semibold)).lineLimit(1)
               .layoutPriority(1)
             if let detail = device.detail {
               Text(detail).foregroundStyle(Palette.secondary).lineLimit(1)
@@ -232,17 +232,17 @@ struct Inspector: View {
           .id(env.path)
 
         if let project = stats?.project, project.ios != nil || project.android != nil {
-          VStack(alignment: .leading, spacing: 8) {
+          VStack(alignment: .leading, spacing: Space.md) {
             SectionLabel(title: "Build cache \u{00B7} project")
             ViewThatFits(in: .horizontal) {
-              HStack(alignment: .top, spacing: 10) { statCards(project) }
-              VStack(spacing: 10) { statCards(project) }
+              HStack(alignment: .top, spacing: Space.md) { statCards(project) }
+              VStack(spacing: Space.md) { statCards(project) }
             }
           }
         }
 
         if !env.warnings.isEmpty {
-          VStack(alignment: .leading, spacing: 8) {
+          VStack(alignment: .leading, spacing: Space.md) {
             SectionLabel(title: "Warnings")
             ForEach(env.warnings, id: \.self) { warning in
               Label(abbreviatingHome(warning), systemImage: "exclamationmark.triangle.fill")
@@ -252,8 +252,8 @@ struct Inspector: View {
           }
         }
       }
-      .font(Theme.body(12))
-      .padding(20)
+      .font(.stim(.callout))
+      .padding(Space.xxl)
     }
     .confirmationDialog(
       "Stop this remote session?",
@@ -294,18 +294,18 @@ struct Inspector: View {
   private var statusCard: some View {
     let errors = env.logs?.errorsSinceMarker ?? 0
     let metroHealthy = env.metro?.running == true && env.supervisor?.healthy != false
-    return VStack(alignment: .leading, spacing: 10) {
-      HStack(spacing: 8) {
+    return VStack(alignment: .leading, spacing: Space.md) {
+      HStack(spacing: Space.md) {
         if let branch = env.worktree?.branch {
-          Text(branch).font(Theme.body(12, weight: .semibold)).lineLimit(1)
+          Text(branch).font(.stim(.callout, weight: .semibold)).lineLimit(1)
         }
         if let folder = pathInCheckout(env.path, worktree: env.worktree?.path) {
-          Text(folder).font(Theme.mono()).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle)
+          Text(folder).font(.stim(.caption, mono: true)).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle)
         }
         Spacer(minLength: 0)
         actionsMenu
       }
-      FlowLayout(spacing: 6) {
+      FlowLayout(spacing: Space.sm) {
         if let metro = env.metro {
           Pill(tone: metroHealthy ? .success : .error) {
             Text("Metro :\(String(metro.port)) \u{00B7} \(metro.running ? (metroHealthy ? "healthy" : "unhealthy") : "stopped")")
@@ -325,7 +325,7 @@ struct Inspector: View {
         }
       }
       if let active = actions.active(for: env.path) {
-        HStack(spacing: 8) {
+        HStack(spacing: Space.md) {
           ProgressView().controlSize(.small)
           Text(active.title).lineLimit(1)
           Spacer()
@@ -333,10 +333,10 @@ struct Inspector: View {
         }
       }
     }
-    .padding(12)
+    .padding(Space.lg)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: 10).fill(Palette.surface))
-    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Palette.border))
+    .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
+    .overlay(RoundedRectangle(cornerRadius: Radius.control).strokeBorder(Palette.border))
     .controlSize(.small)
   }
 
@@ -413,20 +413,20 @@ struct Inspector: View {
   private func usageCard(_ icon: String, _ title: String, _ value: String, values: [Double], minimumPeak: Double)
     -> some View
   {
-    VStack(alignment: .leading, spacing: 6) {
+    VStack(alignment: .leading, spacing: Space.sm) {
       Label(title, systemImage: icon).foregroundStyle(Palette.secondary)
-      Text(value).font(Theme.heading(22))
+      Text(value).font(.stim(.title))
       Sparkline(values: values, minimumPeak: minimumPeak).frame(height: 32)
     }
-    .padding(12)
+    .padding(Space.lg)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: 10).fill(Palette.surface))
+    .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
   }
 
   private func statCard(_ title: String, _ platform: ProjectStats.Platform) -> some View {
-    VStack(alignment: .leading, spacing: 6) {
+    VStack(alignment: .leading, spacing: Space.sm) {
       Text(title).foregroundStyle(Palette.secondary)
-      Text("\(Int((platform.hitRate * 100).rounded()))%").font(Theme.heading(22))
+      Text("\(Int((platform.hitRate * 100).rounded()))%").font(.stim(.title))
       ProgressView(value: platform.hitRate).tint(Palette.accent)
       Text("\(countLabel(platform.hits, "hit")) \u{00B7} \(countLabel(platform.misses, "miss", plural: "misses"))").foregroundStyle(Palette.secondary)
       if let cold = platform.lastColdBuildMs {
@@ -436,8 +436,8 @@ struct Inspector: View {
         Text("Saved \(formatDuration(ms: saved))").foregroundStyle(Palette.primary)
       }
     }
-    .padding(12)
+    .padding(Space.lg)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: 10).fill(Palette.surface))
+    .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
   }
 }

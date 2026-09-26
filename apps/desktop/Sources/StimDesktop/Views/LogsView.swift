@@ -64,7 +64,7 @@ struct LogsView: View {
   }
 
   private var filterBar: some View {
-    FlowLayout(spacing: 8) {
+    FlowLayout(spacing: Space.md) {
       ForEach(LogSource.allCases, id: \.self) { source in
         let on = query.sources.contains(source)
         Button {
@@ -107,13 +107,13 @@ struct LogsView: View {
       .help("stim logs --errors: errors and fatals since the last marker")
       TextField("Search (regular expression)", text: $search)
         .textFieldStyle(.roundedBorder)
-        .font(Theme.mono(11.5))
+        .font(.stim(.footnote, mono: true))
         .frame(width: 220)
         .onSubmit { query.search = search }
     }
     .controlSize(.small)
-    .padding(.horizontal, 14)
-    .padding(.vertical, 10)
+    .padding(.horizontal, Space.lg)
+    .padding(.vertical, Space.md)
   }
 
   @ViewBuilder private var overlay: some View {
@@ -129,12 +129,12 @@ struct LogsView: View {
         Label("Jump to latest", systemImage: "arrow.down.to.line")
       }
       .buttonStyle(.stim(.primary, .regular))
-      .padding(16)
+      .padding(Space.xl)
     }
   }
 
   private var footer: some View {
-    HStack(spacing: 10) {
+    HStack(spacing: Space.md) {
       switch model.phase {
       case .following:
         StatusDot(color: model.pinnedToLatest ? Palette.success : Palette.warning)
@@ -158,11 +158,11 @@ struct LogsView: View {
       }
       .disabled(env.logs?.dir == nil)
     }
-    .font(Theme.body(11.5))
+    .font(.stim(.footnote))
     .foregroundStyle(Palette.secondary)
     .controlSize(.small)
-    .padding(.horizontal, 14)
-    .padding(.vertical, 8)
+    .padding(.horizontal, Space.lg)
+    .padding(.vertical, Space.md)
   }
 
   private func copy() {
@@ -209,8 +209,8 @@ private struct RecordDetail: View {
 
   var body: some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: 6) {
-        HStack(spacing: 8) {
+      VStack(alignment: .leading, spacing: Space.sm) {
+        HStack(spacing: Space.md) {
           Text(record.date.formatted(LogRecord.timeFormat)).foregroundStyle(Palette.tertiary)
           Text(record.level.rawValue.uppercased()).foregroundStyle(LogRowText.color(record.level))
           Text(LogRowText.sourceLabel(record.src)).foregroundStyle(Palette.primary)
@@ -223,10 +223,10 @@ private struct RecordDetail: View {
           Text("  at \(abbreviatingHome(frame.description))").foregroundStyle(Palette.secondary)
         }
       }
-      .font(Theme.mono(11.5))
+      .font(.stim(.footnote, mono: true))
       .textSelection(.enabled)
       .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(12)
+      .padding(Space.lg)
     }
     .background(Palette.sidebar)
   }

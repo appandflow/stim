@@ -58,7 +58,7 @@ struct Sidebar: View {
   }
 
   private var pinned: some View {
-    VStack(spacing: 2) {
+    VStack(spacing: Space.xxs) {
       PinnedRow(item: .wall, selection: $selection) {
         SidebarLabel(title: "All devices", icon: "square.grid.2x2", selected: selection == .wall)
       }
@@ -79,24 +79,24 @@ struct Sidebar: View {
         }
       }
     }
-    .padding(.horizontal, 10)
-    .padding(.bottom, 8)
+    .padding(.horizontal, Space.md)
+    .padding(.bottom, Space.md)
   }
 
   private var brand: some View {
-    HStack(spacing: 10) {
+    HStack(spacing: Space.md) {
       StimWordmark()
       Spacer()
       ViewOptionsButton(
         projects: store.projectList.map(\.project).sorted { $0.name.lowercased() < $1.name.lowercased() })
     }
-    .padding(.horizontal, 16)
-    .padding(.vertical, 10)
+    .padding(.horizontal, Space.xl)
+    .padding(.vertical, Space.md)
   }
 
   @ViewBuilder
   private func emptyText(_ options: SidebarOptions) -> some View {
-    HStack(spacing: 4) {
+    HStack(spacing: Space.xs) {
       if options.status != .all {
         Text("No \(options.status.rawValue) workspaces \u{00B7}").foregroundStyle(Palette.tertiary)
         Button("Show all") { prefs.status = .all }.buttonStyle(.plain).foregroundStyle(Palette.primary)
@@ -107,7 +107,7 @@ struct Sidebar: View {
         Text("No workspaces").foregroundStyle(Palette.tertiary)
       }
     }
-    .font(Theme.body(12))
+    .font(.stim(.callout))
   }
 
   private func isExpanded(_ summary: ProjectSummary) -> Binding<Bool> {
@@ -148,10 +148,10 @@ private struct PinnedRow<Content: View>: View {
       selection = item
     } label: {
       HStack { content }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, Space.md)
         .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
         .background(
-          RoundedRectangle(cornerRadius: 6)
+          RoundedRectangle(cornerRadius: Radius.chip)
             .fill(selection == item ? Palette.selection : hovering ? Palette.raised.opacity(0.5) : Color.clear))
         .contentShape(Rectangle())
     }
@@ -168,15 +168,15 @@ struct ProjectRow: View {
   @State private var confirmingStopAll = false
 
   var body: some View {
-    HStack(spacing: 10) {
+    HStack(spacing: Space.md) {
       Image(systemName: "folder")
         .foregroundStyle(selected || summary.live > 0 ? Palette.primary : Palette.tertiary)
       Text(summary.project.name).lineLimit(1).truncationMode(.middle)
       Spacer()
       if summary.live > 0 {
-        Text("\(summary.live) live").font(Theme.body(11)).foregroundStyle(Palette.success).fixedSize()
+        Text("\(summary.live) live").font(.stim(.caption)).foregroundStyle(Palette.success).fixedSize()
       } else {
-        Text("\(summary.total)").font(Theme.body(11)).foregroundStyle(Palette.tertiary).fixedSize()
+        Text("\(summary.total)").font(.stim(.caption)).foregroundStyle(Palette.tertiary).fixedSize()
       }
     }
     .contextMenu {
@@ -228,17 +228,17 @@ struct WorkspaceRow: View {
   @State private var removal: WorktreeRemoval?
 
   var body: some View {
-    HStack(spacing: 10) {
+    HStack(spacing: Space.md) {
       StatusDot(color: env.live ? Palette.success : Palette.tertiary, filled: env.live)
       VStack(alignment: .leading, spacing: 1) {
-        HStack(spacing: 6) {
+        HStack(spacing: Space.sm) {
           Text(env.names.title).lineLimit(1).truncationMode(.middle).layoutPriority(1)
           Spacer(minLength: 0)
           if showsGit { GitIndicator(git: env.worktree?.git) }
           if let errors = env.logs?.errorsSinceMarker, errors > 0 {
-            HStack(spacing: 3) {
+            HStack(spacing: Space.xxs) {
               Image(systemName: "xmark.octagon.fill").font(.system(size: 10))
-              Text("\(errors)").font(Theme.body(10.5, weight: .semibold)).monospacedDigit()
+              Text("\(errors)").font(.stim(.caption2, weight: .semibold)).monospacedDigit()
             }
             .foregroundStyle(Palette.error)
             .fixedSize()
@@ -248,11 +248,11 @@ struct WorkspaceRow: View {
             Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundStyle(Palette.warning)
           }
         }
-        HStack(spacing: 6) {
+        HStack(spacing: Space.sm) {
           SidebarSubtitle(title: env.names.title, parts: [subtitle, env.names.inCheckout])
           Spacer(minLength: 0)
           if let metro = env.metro {
-            Text(":\(String(metro.port))").font(Theme.mono(10.5)).foregroundStyle(Palette.tertiary).fixedSize()
+            Text(":\(String(metro.port))").font(.stim(.caption2, mono: true)).foregroundStyle(Palette.tertiary).fixedSize()
           }
         }
       }
@@ -308,7 +308,7 @@ private struct SidebarSubtitle: View {
 
   var body: some View {
     let text = parts.compactMap { $0 }.filter { $0 != title }.joined(separator: " \u{00B7} ")
-    Text(text.isEmpty ? " " : text).font(Theme.body(11)).foregroundStyle(Palette.secondary).lineLimit(1)
+    Text(text.isEmpty ? " " : text).font(.stim(.caption)).foregroundStyle(Palette.secondary).lineLimit(1)
       .truncationMode(.middle)
   }
 }
@@ -323,7 +323,7 @@ struct NoEnvironmentRow: View {
 
   var body: some View {
     let names = worktree.names
-    HStack(spacing: 10) {
+    HStack(spacing: Space.md) {
       StatusDot(color: Palette.tertiary, filled: false)
       VStack(alignment: .leading, spacing: 1) {
         Text(names.title).lineLimit(1).truncationMode(.middle)
@@ -334,7 +334,7 @@ struct NoEnvironmentRow: View {
       if showsGit, worktree.git?.isNotable == true {
         GitIndicator(git: worktree.git)
       } else {
-        Text("no environment").font(Theme.body(10.5)).foregroundStyle(Palette.tertiary).fixedSize()
+        Text("no environment").font(.stim(.caption2)).foregroundStyle(Palette.tertiary).fixedSize()
       }
     }
     .sidebarTag(.worktree(worktree.path), selection: selection)
@@ -406,14 +406,14 @@ struct SidebarFooter: View {
   private var drivenDevices: [DrivenDevice] { DrivenDevice.all(in: store.payload?.environments ?? []) }
 
   var body: some View {
-    HStack(spacing: 6) {
+    HStack(spacing: Space.sm) {
       leftStatus
       Spacer(minLength: 8)
       if !drivenDevices.isEmpty { agentsButton }
       if servesPhones { phonesButton }
       settingsButton
     }
-    .padding(.horizontal, 10)
+    .padding(.horizontal, Space.md)
     .frame(height: 44)
     .background(Palette.sidebar)
     .overlay(alignment: .top) { Rectangle().fill(Palette.border).frame(height: 1) }
@@ -447,9 +447,9 @@ struct SidebarFooter: View {
   }
 
   private func statusLabel(dot: Color, text: String) -> some View {
-    HStack(spacing: 6) {
+    HStack(spacing: Space.sm) {
       Circle().fill(dot).frame(width: 6, height: 6)
-      Text(text).font(Theme.body(11.5)).foregroundStyle(Palette.secondary).lineLimit(1)
+      Text(text).font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1)
     }
   }
 

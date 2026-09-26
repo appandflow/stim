@@ -49,7 +49,7 @@ struct OnboardingBanner: View {
     let missing = report.stim == .missing
     let minimum = StimCLI.minimumVersion.description
     return popupCard(kind: .stim, icon: missing ? "shippingbox" : "arrow.up.circle", tone: .accent) {
-      Text(missing ? "Install stim to get started" : "Update stim to use Stim Desktop").font(Theme.heading(14))
+      Text(missing ? "Install stim to get started" : "Update stim to use Stim Desktop").font(.stim(.headline))
       Text("Stim Desktop needs stim \(minimum) or later to show and drive your workspaces.")
         .foregroundStyle(Palette.secondary)
       disclosure { Text(detail(report.stim, name: "stim", path: report.stimPath)) }
@@ -61,7 +61,7 @@ struct OnboardingBanner: View {
 
   private func relaunchPopup(_ report: Onboarding.Report) -> some View {
     popupCard(kind: .relaunch, icon: "arrow.clockwise", tone: .accent) {
-      Text("Restart Stim Desktop to use the new stim").font(Theme.heading(14))
+      Text("Restart Stim Desktop to use the new stim").font(.stim(.headline))
       Text("Stim Desktop resolves stim once at launch, and it now finds a different one.")
         .foregroundStyle(Palette.secondary)
       disclosure { Text(abbreviatingHome(report.stimPath ?? "stim")) }
@@ -78,7 +78,7 @@ struct OnboardingBanner: View {
     return AnyView(
       popupCard(kind: .server, icon: "iphone.gen3.radiowaves.left.and.right", tone: .warning) {
         Text(missing ? "Install stim-server to serve phones" : "Update stim-server to serve phones")
-          .font(Theme.heading(14))
+          .font(.stim(.headline))
         Text("stim-server shares Stim's status with paired phones, and Stim Desktop needs \(StimServerCLI.minimumVersion.description) or later.")
           .foregroundStyle(Palette.secondary)
         disclosure { Text(detail(server, name: "stim-server", path: report.serverPath)) }
@@ -92,15 +92,15 @@ struct OnboardingBanner: View {
 
   private func viewerPopup(_ keys: [String]) -> some View {
     popupCard(kind: .viewer, icon: "macwindow", tone: .accent) {
-      Text("Show Stim's devices in Stim Desktop").font(Theme.heading(14))
+      Text("Show Stim's devices in Stim Desktop").font(.stim(.headline))
       Text("Stim can open the simulators and emulators it boots here instead of in their own windows.")
         .foregroundStyle(Palette.secondary)
       disclosure {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Space.sm) {
           ForEach(keys, id: \.self) { key in
-            VStack(alignment: .leading, spacing: 2) {
-              Text("stim settings set \(key) stim-desktop --scope machine").font(Theme.mono())
-              Text(Self.viewerExplanation[key] ?? "").font(Theme.body(11)).foregroundStyle(Palette.secondary)
+            VStack(alignment: .leading, spacing: Space.xxs) {
+              Text("stim settings set \(key) stim-desktop --scope machine").font(.stim(.caption, mono: true))
+              Text(Self.viewerExplanation[key] ?? "").font(.stim(.caption)).foregroundStyle(Palette.secondary)
             }
           }
         }
@@ -134,9 +134,9 @@ struct OnboardingBanner: View {
   @ViewBuilder
   private func disclosure<Content: View>(@ViewBuilder content: @escaping () -> Content) -> some View {
     DisclosureGroup("Show command", isExpanded: $showsCommand) {
-      content().font(Theme.body(11.5)).foregroundStyle(Palette.tertiary).padding(.top, 4)
+      content().font(.stim(.footnote)).foregroundStyle(Palette.tertiary).padding(.top, Space.xs)
     }
-    .font(Theme.body(11.5)).foregroundStyle(Palette.secondary)
+    .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
   }
 
   @ViewBuilder
@@ -147,7 +147,7 @@ struct OnboardingBanner: View {
       Button {
         actions.presented = active
       } label: {
-        HStack(spacing: 6) {
+        HStack(spacing: Space.sm) {
           ProgressView().controlSize(.small)
           Text("Running")
         }
