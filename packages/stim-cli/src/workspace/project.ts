@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, realpathSync } from 'fs';
 import { basename, join, dirname, resolve } from 'path';
-import { type ProjectRecord, loadConfig, findEnclosingWorktreeRoot, getProject } from './config.ts';
+import { type ProjectRecord, loadConfig, findEnclosingWorktreeRoot, getProject, isPathPrefix } from './config.ts';
 import { repoRoot } from './worktree.ts';
 
 interface PackageJson {
@@ -119,6 +119,33 @@ export function findProjectRoot(startDir: string): string | null {
     const parent = dirname(dir);
     if (parent === dir) return null;
     dir = parent;
+  }
+}
+
+export function findServerWorkspace(startDir: string): { root: string; from: string | null } | null {
+  const nearest = findProjectRoot(startDir);
+  if (!nearest) return null;
+  if (appProjectProblem(nearest)?.kind !== 'not-an-app') return { root: nearest, from: null };
+  if (Object.keys(getProject(nearest)?.ports ?? {}).length) return { root: nearest, from: null };
+  const top = repoRoot(nearest);
+  if (!top) return { root: nearest, from: null };
+  const worktree = expandedRealpath(top);
+  const apps = Object.keys(loadConfig()?.projects ?? {}).filter((path) => {
+    if (path === nearest || !isPathPrefix(worktree, expandedRealpath(path)) || appProjectProblem(path) !== null)
+      return false;
+    const owner = repoRoot(path);
+    return owner !== null && expandedRealpath(owner) === worktree;
+  });
+  return apps.length === 1 ? { root: apps[0]!, from: nearest } : { root: nearest, from: null };
+}
+
+// Registry keys can hold Windows 8.3 short names (RUNNER~1) that git never prints; only the native realpath
+// expands them.
+function expandedRealpath(path: string): string {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return resolve(path);
   }
 }
 

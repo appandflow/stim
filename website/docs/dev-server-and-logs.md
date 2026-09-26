@@ -318,7 +318,22 @@ server. Both leave Metro alone. `worktree remove` and `gc --delete` also stop
 listeners before releasing their named allocations.
 
 Allocations belong to the nearest directory with a `package.json`, resolved
-through symlinks. Run the commands from the same package in a monorepo.
+through symlinks. In a monorepo whose web app lives in its own package, a
+package that depends on neither `react-native` nor `expo` uses the one Stim app
+registered in the same Git worktree, and stderr names it. Register the app
+first with `stim start`, `stim ios` or `stim android`, then run `ports` from
+the web package:
+
+<StimTabs
+code={`cd apps/web
+pnpm exec vite --port "$(stim ports get web)" --strictPort`}
+/>
+
+Every `ports` command there acts on the app's ports. A package that already
+holds ports keeps them until you release them. With no registered app in the
+worktree, or more than one, the nearest package keeps the allocation; run
+`ports` from the app directory instead.
+
 Shared services are not modeled: pass a shared service's port through the
 environment instead of allocating one per worktree.
 
