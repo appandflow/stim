@@ -39,6 +39,7 @@ test('a device another Stim home created is not owned by this home, whatever its
 test('recording or forgetting a device of one platform keeps the other platforms, browser profiles included', () => {
   useHome();
   recordCreatedDevice('web', '/stim/workspaces/app/web/profile');
+  recordCreatedDevice('android', 'stim-gone');
   recordCreatedDevice('ios', 'SIM');
   forgetCreatedDevice('android', 'stim-gone');
   expect(readCreatedDevices()).toEqual({
