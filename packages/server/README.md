@@ -322,7 +322,8 @@ or summary push has the Mac's name as its title. In `data` it carries the
 a workspace, its absolute path, which the phone needs to open that workspace
 before it has reconnected. It carries no logs and no other paths. The
 server checks the push receipts 15 minutes later and drops a token that Expo
-reports as `DeviceNotRegistered`. Pushes are not retried, and nothing is
+reports as `DeviceNotRegistered`, and prints any other refusal, such as
+missing APNs credentials, on stderr. Pushes are not retried, and nothing is
 pushed while the server is not running.
 
 ## Actions

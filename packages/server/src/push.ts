@@ -57,6 +57,7 @@ interface Registered {
 
 interface Ticket {
   status?: unknown;
+  message?: unknown;
   id?: unknown;
   details?: { error?: unknown };
 }
@@ -257,6 +258,7 @@ export class PushNotifier {
       if (!to) return;
       if (ticket?.status === 'ok' && typeof ticket.id === 'string') receipts.set(ticket.id, to);
       else if (ticket?.details?.error === 'DeviceNotRegistered') this.drop(to);
+      else if (ticket?.status === 'error') console.error(`stim-server: Expo refused a push: ${String(ticket.message)}`);
     });
     if (receipts.size > 0) this.later(() => void this.checkReceipts(receipts), this.limits.receiptDelayMs);
   }
@@ -280,6 +282,7 @@ export class PushNotifier {
     for (const [id, receipt] of Object.entries(data as Record<string, Ticket | null>)) {
       const to = receipts.get(id);
       if (to && receipt?.details?.error === 'DeviceNotRegistered') this.drop(to);
+      else if (receipt?.status === 'error') console.error(`stim-server: a push failed: ${String(receipt.message)}`);
     }
   }
 }
