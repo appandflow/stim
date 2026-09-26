@@ -5,9 +5,12 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon, type IconName } from '@/components/icon';
+import { useAppUpdate } from '@/hooks/app-update';
 import { useHomeFilters, type HomeView } from '@/hooks/home-filters';
 import { useMacs } from '@/hooks/mac-connection';
 import { useRecents } from '@/hooks/recents';
+import { drawerStatus, UPDATE_READY_TEXT, type DrawerMachine } from '@/lib/drawer-status';
+import { machineStats } from '@/lib/home';
 import { isActive, workspaceNames } from '@/lib/workspaces';
 import { useColors } from '@/theme';
 
@@ -21,6 +24,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
   const { connections } = useMacs();
   const { view, setView } = useHomeFilters();
   const { recents } = useRecents();
+  const update = useAppUpdate();
   const go = (href: Href) => {
     onClose();
     router.push(href);
@@ -35,6 +39,19 @@ export function Menu({ onClose }: { onClose: () => void }) {
     const env = connection.status?.environments.find((e) => e.path === recent.path);
     return [{ ...recent, title: workspaceNames(recent.path).title, live: env ? isActive(env) : false }];
   });
+  const machines: DrawerMachine[] = connections.map((c) => ({
+    id: c.mac.id,
+    name: c.mac.name,
+    state: c.state,
+    missing: c.missing,
+    diskTone: machineStats(c.usage).find((s) => s.kind === 'disk')?.tone ?? 'normal',
+  }));
+  const versionText = `Stim ${Constants.expoConfig?.version ?? ''}${
+    Constants.nativeBuildVersion ? ` (${Constants.nativeBuildVersion})` : ''
+  }`;
+  const status = drawerStatus(machines, update.ready, versionText);
+  const statusColor =
+    status.tone === 'critical' ? colors.error : status.tone === 'warn' ? colors.warn : colors.secondary;
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 8 }]}>
@@ -80,24 +97,37 @@ export function Menu({ onClose }: { onClose: () => void }) {
           </>
         ) : null}
       </ScrollView>
-      <Pressable
-        onPress={() => go('/about')}
-        accessibilityRole="button"
-        accessibilityLabel="About"
-        style={({ pressed }) => [styles.footer, pressed && { opacity: 0.6 }]}
-      >
-        <View style={[styles.badge, { backgroundColor: colors.text }]}>
-          <Text style={[styles.badgeText, { color: colors.sidebar }]}>{connections.length}</Text>
-        </View>
-        <View>
-          <Text style={[styles.footerTitle, { color: colors.text }]}>
-            {connections.length === 1 ? '1 machine' : `${connections.length} machines`}
-          </Text>
-          <Text style={[styles.footerDetail, { color: colors.secondary }]}>
-            {`Stim for phones ${Constants.expoConfig?.version ?? ''}`}
-          </Text>
-        </View>
-      </Pressable>
+      <View style={styles.footer}>
+        <Pressable
+          onPress={() => go(status.macId ? { pathname: '/mac/[id]', params: { id: status.macId } } : '/about')}
+          accessibilityRole="button"
+          accessibilityLabel={
+            connections.length === 1 ? `1 machine, ${status.text}` : `${connections.length} machines, ${status.text}`
+          }
+          style={({ pressed }) => [styles.footerLeft, pressed && { opacity: 0.6 }]}
+        >
+          <View style={[styles.badge, { backgroundColor: colors.text }]}>
+            <Text style={[styles.badgeText, { color: colors.sidebar }]}>{connections.length}</Text>
+          </View>
+          <View style={styles.footerStatusRow}>
+            {status.text === UPDATE_READY_TEXT ? (
+              <View style={[styles.updateDot, { backgroundColor: colors.primary }]} />
+            ) : null}
+            <Text numberOfLines={1} style={[styles.footerDetail, { color: statusColor }]}>
+              {status.text}
+            </Text>
+          </View>
+        </Pressable>
+        <Pressable
+          onPress={() => go('/settings')}
+          accessibilityRole="button"
+          accessibilityLabel="Settings"
+          hitSlop={8}
+          style={({ pressed }) => [styles.gearButton, pressed && { backgroundColor: colors.border }]}
+        >
+          <Icon name="gearshape" size={20} color={colors.secondary} />
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -153,9 +183,12 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
   },
   recentTitle: { flex: 1, fontSize: 16 },
-  footer: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 24, paddingTop: 12 },
-  badge: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  badgeText: { fontSize: 16, fontWeight: '600' },
-  footerTitle: { fontSize: 16, fontWeight: '500' },
-  footerDetail: { fontSize: 13 },
+  footer: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingTop: 12 },
+  footerLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 8 },
+  badge: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  badgeText: { fontSize: 15, fontWeight: '600' },
+  footerStatusRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  footerDetail: { flex: 1, fontSize: 13 },
+  updateDot: { width: 6, height: 6, borderRadius: 3 },
+  gearButton: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
 });

@@ -1,3 +1,4 @@
+import { createContext, useContext } from 'react';
 import { Platform, useColorScheme } from 'react-native';
 
 /** Stim's brand tokens from website/src/css/custom.css, shared with apps/desktop Theme.swift. */
@@ -41,8 +42,19 @@ const dark: typeof light = {
 
 export type Colors = typeof light;
 
+export type Appearance = 'system' | 'light' | 'dark';
+
+/** Overrides the system color scheme when the Settings screen's Appearance choice is not "System". */
+export const AppearanceOverride = createContext<Appearance>('system');
+
+export function useEffectiveScheme(): 'light' | 'dark' {
+  const override = useContext(AppearanceOverride);
+  const system = useColorScheme();
+  return (override === 'system' ? system : override) === 'dark' ? 'dark' : 'light';
+}
+
 export function useColors(): Colors {
-  return useColorScheme() === 'dark' ? dark : light;
+  return useEffectiveScheme() === 'dark' ? dark : light;
 }
 
 export const mono = Platform.select({ ios: 'Menlo', default: 'monospace' });

@@ -221,7 +221,7 @@ const PRESSURE_TONES: UsageTone[] = ['normal', 'warn', 'critical'];
 
 const cpuTone = (fraction: number): UsageTone =>
   fraction >= CPU_CRITICAL_FRACTION ? 'critical' : fraction >= CPU_WARN_FRACTION ? 'warn' : 'normal';
-const diskTone = (freeBytes: number): UsageTone =>
+export const diskTone = (freeBytes: number): UsageTone =>
   freeBytes < DISK_CRITICAL_BYTES ? 'critical' : freeBytes < LOW_DISK_BYTES ? 'warn' : 'normal';
 const pressureTone = (level: number): UsageTone => PRESSURE_TONES[level] ?? 'normal';
 

@@ -1,16 +1,24 @@
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useColorScheme } from 'react-native';
 
 import { MenuDrawer } from '@/components/menu-drawer';
 import { DevPairing } from '@/hooks/dev-pairing';
 import { HomeFiltersProvider } from '@/hooks/home-filters';
 import { MacsProvider } from '@/hooks/mac-connection';
 import { RecentsProvider } from '@/hooks/recents';
-import { useColors } from '@/theme';
+import { SettingsProvider } from '@/hooks/settings';
+import { useColors, useEffectiveScheme } from '@/theme';
 
 export default function RootLayout() {
-  const scheme = useColorScheme();
+  return (
+    <SettingsProvider>
+      <RootLayoutContent />
+    </SettingsProvider>
+  );
+}
+
+function RootLayoutContent() {
+  const scheme = useEffectiveScheme();
   const colors = useColors();
   const base = scheme === 'dark' ? DarkTheme : DefaultTheme;
   const theme = {
@@ -34,7 +42,7 @@ export default function RootLayout() {
     }) as const;
   return (
     <ThemeProvider value={theme}>
-      <StatusBar style="auto" />
+      <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
       <MacsProvider>
         <DevPairing />
         <HomeFiltersProvider>
@@ -45,6 +53,7 @@ export default function RootLayout() {
                 <Stack.Screen name="filters" options={sheet([0.6, 1])} />
                 <Stack.Screen name="macs" options={{ title: 'Machines', headerLargeTitle: true }} />
                 <Stack.Screen name="about" options={sheet([0.5, 1])} />
+                <Stack.Screen name="settings" options={{ title: 'Settings', headerLargeTitle: true }} />
                 <Stack.Screen name="pair" options={{ title: 'Pair a machine', presentation: 'modal' }} />
                 <Stack.Screen name="rename" options={{ title: 'Rename machine', presentation: 'modal' }} />
                 <Stack.Screen name="mac/[id]/index" options={sheet([0.75, 1])} />

@@ -30,20 +30,22 @@ interface StreamState {
 const EMPTY: Omit<StreamState, 'key'> = { frame: null, video: null, error: null, delayed: false };
 
 /**
- * Subscribes to a device's frames, asking for H.264. Video goes straight to the `StimVideoView` with the
- * returned `streamId`, which must be mounted before the first keyframe arrives; JPEG frames come back as `frame`.
+ * Subscribes to a device's frames, asking for the given codecs. Video goes straight to the `StimVideoView` with
+ * the returned `streamId`, which must be mounted before the first keyframe arrives; JPEG frames (when `video` is
+ * empty, or the server has no H.264 to offer) come back as `frame`.
  */
 export function useDeviceStream(
   target: { workspace: string; platform: Platform; slot: string },
-  options: { enabled: boolean; fps: number; maxEdge: number },
+  options: { enabled: boolean; fps: number; maxEdge: number; video: 'h264'[] },
 ): DeviceStream {
   const { connection } = useMacConnection();
   const streamId = useId();
   const { workspace, platform, slot } = target;
-  const { fps, maxEdge } = options;
+  const { fps, maxEdge, video } = options;
   const [latest, setLatest] = useState<StreamState | null>(null);
   const subscription = useRef<string | null>(null);
-  const key = connection && options.enabled ? `${workspace}\n${platform}\n${slot}\n${fps}\n${maxEdge}` : null;
+  const key =
+    connection && options.enabled ? `${workspace}\n${platform}\n${slot}\n${fps}\n${maxEdge}\n${video.join(',')}` : null;
   const [meter] = useState(() => new VideoMeter());
   useEffect(() => {
     if (!connection || key === null) return;
@@ -53,7 +55,7 @@ export function useDeviceStream(
       setLatest((prev) => ({ ...(prev && prev.key === key ? prev : { key, ...EMPTY }), ...patch, key }));
     const unsubscribe = connection.subscribe(
       'frames.subscribe',
-      { workspace, platform, slot, fps, maxEdge, video: ['h264'] },
+      { workspace, platform, slot, fps, maxEdge, video },
       (event) => {
         if (event.event === 'frame') {
           size = '';
@@ -81,7 +83,7 @@ export function useDeviceStream(
       subscription.current = null;
       unsubscribe();
     };
-  }, [connection, key, streamId, workspace, platform, slot, fps, maxEdge, meter]);
+  }, [connection, key, streamId, workspace, platform, slot, fps, maxEdge, video, meter]);
   const requestKeyframe = useCallback(() => {
     const current = subscription.current;
     if (connection && current) connection.request('frames.keyframe', { subscription: current }).catch(() => {});
