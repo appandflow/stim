@@ -1,5 +1,6 @@
 import { Platform, StyleSheet } from 'react-native';
 import { Touchable, type TouchableProps } from 'react-native-gesture-handler';
+import { withUnistyles } from 'react-native-unistyles';
 
 import { useColors, type Colors } from '@/theme';
 
@@ -11,6 +12,8 @@ import { useColors, type Colors } from '@/theme';
  * - `opacity`: the content dims. For icon buttons, text buttons and toggles.
  */
 type TouchFeedback = 'row' | 'card' | 'opacity';
+
+const ThemedTouchable = withUnistyles(Touchable);
 
 export type TouchProps = TouchableProps & { feedback?: TouchFeedback };
 
@@ -52,7 +55,7 @@ export function Touch({
 }: TouchProps) {
   const colors = useColors();
   return (
-    <Touchable
+    <ThemedTouchable
       {...feedbackProps(feedback, colors)}
       accessible={accessible}
       accessibilityRole={accessibilityRole}

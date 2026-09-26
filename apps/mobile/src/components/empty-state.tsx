@@ -1,21 +1,32 @@
 import type { ReactNode } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
-import { useColors } from '@/theme';
+import { Text } from '@/components/text';
 
 export function EmptyState({ title, message, children }: { title: string; message?: string; children?: ReactNode }) {
-  const colors = useColors();
   return (
     <View style={styles.container}>
-      <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
-      {message ? <Text style={[styles.message, { color: colors.secondary }]}>{message}</Text> : null}
+      <Text variant="headline" style={styles.centered}>
+        {title}
+      </Text>
+      {message ? (
+        <Text variant="callout" tone="secondary" style={styles.centered}>
+          {message}
+        </Text>
+      ) : null}
       {children}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 10 },
-  title: { fontSize: 17, fontWeight: '600', textAlign: 'center' },
-  message: { fontSize: 14, textAlign: 'center', lineHeight: 20 },
-});
+const styles = StyleSheet.create((theme) => ({
+  container: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: theme.space.huge,
+    gap: theme.space.md,
+  },
+  centered: { textAlign: 'center' },
+}));

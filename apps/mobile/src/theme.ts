@@ -1,47 +1,33 @@
 import { Platform, useColorScheme } from 'react-native';
 
-/** Stim's brand tokens from website/src/css/custom.css, shared with apps/desktop Theme.swift. */
-const light = {
-  primary: '#5521FF',
-  accent: '#7045FF',
-  onPrimary: '#FFFFFF',
-  background: '#FFFFFF',
-  sidebar: '#F6F4FA',
-  surface: '#FCFBFF',
-  raised: '#F3EFFF',
-  border: '#ECE7FA',
-  screen: '#0C0A11',
-  text: '#121212',
-  secondary: '#6B6B6B',
-  tertiary: '#96929F',
-  live: '#16A34A',
-  warn: '#B7791F',
-  error: '#DC2626',
-  remote: '#2F6BFF',
-  grouped: '#F6F4FA',
-  groupedRow: '#FFFFFF',
-};
+import { colors, fonts, media, radius as radii } from '@/design/tokens';
 
-const dark: typeof light = {
-  primary: '#B39CFF',
-  accent: '#AA90FF',
-  onPrimary: '#15121D',
-  background: '#15121D',
-  sidebar: '#0E0C13',
-  surface: '#201B2B',
-  raised: '#2A2338',
-  border: '#352A48',
-  screen: '#0C0A11',
-  text: '#F3EFFF',
-  secondary: '#B8B0CC',
-  tertiary: '#8C84A3',
-  live: '#4ADE80',
-  warn: '#F5B454',
-  error: '#FF6B6B',
-  remote: '#7AA7FF',
-  grouped: '#0E0C13',
-  groupedRow: '#201B2B',
-};
+function legacyColors(scheme: 'light' | 'dark') {
+  const c = colors[scheme];
+  return {
+    primary: c.primary,
+    accent: c.accent,
+    onPrimary: c.onPrimary,
+    background: c.background,
+    sidebar: c.sidebar,
+    surface: c.surface,
+    raised: c.raised,
+    border: c.border,
+    screen: media.screen,
+    text: c.text,
+    secondary: c.secondary,
+    tertiary: c.tertiary,
+    live: c.success,
+    warn: c.warning,
+    error: c.error,
+    remote: c.info,
+    grouped: c.grouped,
+    groupedRow: c.groupedRow,
+  };
+}
+
+const light = legacyColors('light');
+const dark = legacyColors('dark');
 
 export type Colors = typeof light;
 
@@ -60,6 +46,6 @@ export function useColors(): Colors {
   return useEffectiveScheme() === 'dark' ? dark : light;
 }
 
-export const mono = Platform.select({ ios: 'Menlo', default: 'monospace' });
+export const mono = Platform.select({ ios: fonts.mono.ios, default: fonts.mono.android });
 
-export const radius = { chip: 7, card: 12 };
+export const radius = { chip: radii.chip, card: radii.card };
