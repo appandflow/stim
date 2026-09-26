@@ -134,8 +134,8 @@ the mock server.
 Tapping a running device's screen, on the workspace screen or in the devices
 grid, grows it into the full-screen viewer: the thumbnail expands into the
 screen's place while the backdrop, title and toolbars fade in, showing the
-thumbnail's frame until the stream's first frame arrives. The title is the
-workspace's name, with the device's model and slot under it. The close
+thumbnail's frame until the stream's first frame arrives. The centered title
+is the workspace's name, with the device's model and slot under it. The close
 button at the top left, Android's back button, or dragging the screen down
 while Control is off shrinks it back into the thumbnail; a short drag springs back. The route is a transparent
 modal, so the list stays underneath, and the thumbnail hides while the viewer

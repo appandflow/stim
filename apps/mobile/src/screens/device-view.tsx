@@ -107,6 +107,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
   const [tookOver, setTookOver] = useState(false);
   const [rootHeight, setRootHeight] = useState(0);
   const [barBottom, setBarBottom] = useState(0);
+  const [barSides, setBarSides] = useState<[number, number]>([0, 0]);
   const { height: keyboardHeight, shown: keyboardShown } = useKeyboardHeight();
   const typingBarShown = typing && keyboardShown;
   useEffect(() => {
@@ -310,6 +311,10 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                   }}
                 >
                   <Pressable
+                    onLayout={(event) => {
+                      const { width } = event.nativeEvent.layout;
+                      setBarSides(([, right]) => [width, right]);
+                    }}
                     onPress={() => {
                       Keyboard.dismiss();
                       keyboardHeight.set(withTiming(0, { duration: 200 }));
@@ -321,7 +326,15 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                   >
                     <Icon name="xmark" size={22} color="#FFFFFF" />
                   </Pressable>
-                  <View style={styles.titles}>
+                  <View
+                    style={[
+                      styles.titles,
+                      {
+                        paddingLeft: Math.max(0, barSides[1] - barSides[0]),
+                        paddingRight: Math.max(0, barSides[0] - barSides[1]),
+                      },
+                    ]}
+                  >
                     <Text style={styles.title} numberOfLines={1}>
                       {title}
                     </Text>
@@ -329,15 +342,22 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                       {`${model} · ${slot}`}
                     </Text>
                   </View>
-                  {control.allowed !== null ? (
-                    <Toggle
-                      colors={colors}
-                      label={controlling ? 'Control on' : 'Control'}
-                      on={controlling}
-                      disabled={readOnly}
-                      onPress={toggle}
-                    />
-                  ) : null}
+                  <View
+                    onLayout={(event) => {
+                      const { width } = event.nativeEvent.layout;
+                      setBarSides(([left]) => [left, width]);
+                    }}
+                  >
+                    {control.allowed !== null ? (
+                      <Toggle
+                        colors={colors}
+                        label={controlling ? 'Control on' : 'Control'}
+                        on={controlling}
+                        disabled={readOnly}
+                        onPress={toggle}
+                      />
+                    ) : null}
+                  </View>
                 </View>
                 {landscape ? null : readOnlyBanner}
                 <Banner
@@ -543,7 +563,7 @@ function ToolButton({ label, onPress, disabled }: { label: string; onPress: () =
 const styles = StyleSheet.create({
   root: { flex: 1 },
   bar: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 8 },
-  titles: { flex: 1 },
+  titles: { flex: 1, alignItems: 'center' },
   title: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
   subtitle: { color: '#FFFFFF99', fontSize: 12 },
   chips: { flexDirection: 'row', paddingHorizontal: 16, paddingBottom: 6 },
