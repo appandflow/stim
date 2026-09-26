@@ -52,8 +52,11 @@ import Testing
       BuildPlan.self,
       """
       {"platform":"android","fingerprint":"f","cacheKey":"k","cacheHit":false,"provider":null,"cacheSkipped":false,
-       "prebuild":"regenerate","outcome":"cold","expectedMs":null,"basis":0}
+       "prebuild":"regenerate","outcome":"cold","expectedMs":null,"basis":0,
+       "missReason":{"kind":"prebuild-pending","summary":"native inputs match the last build (before prebuild regenerates android/)",
+         "changes":[],"changeCount":0,"baseline":{"fingerprint":"0123456789abcdef","from":"workspace"},"rekeyedBy":[]}}
       """)
+    #expect(miss.missReason?.baselineLine == "Compared with 01234567, the last build in this workspace.")
     #expect(miss.nextBuild == "cold build, regenerates the native dir")
     #expect(miss.detail == "No cold run of this project recorded yet")
 

@@ -88,7 +88,8 @@ fingerprint sources. When the section opens, it runs
 `stim <platform> --plan --json` in the workspace for each platform with a last
 build or a device, and shows the result on the platform's row: "Next build:
 cache hit (local)", "cache hit (remote)" or "cold build, ~5m 40s", or the
-refusal with its remedy. That builds, boots and installs nothing, but it
+refusal with its remedy. A predicted cold build also shows why from the plan's
+`missReason`, with the same popover as the last build's. That builds, boots and installs nothing, but it
 fingerprints the project, so a workspace runs one plan at a time, a result
 stays for 60 seconds unless that platform's last build changes, closing the
 section stops the plan, and nothing is checked while a build runs; the row
