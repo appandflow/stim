@@ -8,7 +8,7 @@ import {
 import { withDirLock } from '../dir-lock.ts';
 import { getConfigDir } from '../workspace/config.ts';
 
-export { readCreatedDevices, type CreatedDevicePlatform, type CreatedDevices } from '@stim-cli/core/state';
+export { readCreatedDevices, type CreatedDevicePlatform } from '@stim-cli/core/state';
 
 function update(platform: CreatedDevicePlatform, change: (entries: Set<string>) => boolean): void {
   const dir = getConfigDir();

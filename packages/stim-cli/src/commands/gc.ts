@@ -12,8 +12,7 @@ import { detectIsExpo, findProjectRoot } from '../workspace/project.ts';
 import { describeDereferenced, reclaimProject } from '../devices/reclaim.ts';
 import { listAllIosSims, type IosSimRecord } from '../devices/ios.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
-import { isStimOwnedAvdName, listAvds, listOrphanedAvdDirectories, ownedAvdDirectory } from '../devices/android.ts';
-import { isStimOwnedSim } from '../devices/device-ownership.ts';
+import { listAvds, listOrphanedAvdDirectories, ownedAvdDirectory } from '../devices/android.ts';
 import { discoverCaches, sizeCaches } from '../cache/caches.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import type { GcSkip, OrphanedDevice } from './gc/types.ts';
@@ -267,15 +266,6 @@ export async function collectGcReport(
       config: cfg,
       isMounted,
       deadProjects,
-      isOwned: (device) =>
-        device.kind === 'ios'
-          ? isStimOwnedSim({ udid: device.id, name: device.name })
-          : isStimOwnedAvdName(
-              device.id,
-              ownedAvdDirectory(device.id) ??
-                orphanedAvdDirectories.find((entry) => entry.name === device.id)?.directory ??
-                null,
-            ),
     });
     unverifiedDevices = found.unverified;
     orphanedDevices = withAndroidAvdSizes(

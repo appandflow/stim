@@ -1,37 +1,39 @@
-import { readCreatedDevices, type CreatedDevices } from './created-devices.ts';
+import { loadConfig } from '@stim-cli/core/state';
+import { readCreatedDevices, type CreatedDevicePlatform } from './created-devices.ts';
+import { projectDeviceSlots } from './device-slots.ts';
+import { readParked } from './sim-pool.ts';
 
-const OWNED_SIM_NAME = /^stim-[A-Za-z0-9._-]+ \(.* \d+(?:\.\d+)*\)(?: [A-Za-z0-9-]+)?$/;
-const OWNED_AVD_NAME = /^stim-[A-Za-z0-9._-]+$/;
-const GIB = 1024 ** 3;
-
-export function isOwnedSimName(name: string): boolean {
-  return OWNED_SIM_NAME.test(name);
-}
-
-function isOwnedAvdName(name: string): boolean {
-  return OWNED_AVD_NAME.test(name);
-}
-
-function avdConfigWrittenByStim(configIni: string | null): boolean {
-  for (const line of String(configIni ?? '').split(/\r?\n/)) {
-    const match = /^disk\.dataPartition\.size=(\d+)$/.exec(line.trim());
-    if (match) return Number(match[1]) > 0 && Number(match[1]) % GIB === 0;
+function recordedAsOwned(platform: CreatedDevicePlatform, id: string): boolean {
+  const config = loadConfig();
+  if (!config) return false;
+  const parked =
+    platform === 'ios'
+      ? readParked('ios', { config }).some((sim) => sim.udid === id)
+      : readParked('android', { config }).some((avd) => avd.name === id);
+  if (parked) return true;
+  for (const project of Object.values(config.projects ?? {})) {
+    let slots: ReturnType<typeof projectDeviceSlots>;
+    try {
+      slots = projectDeviceSlots(project);
+    } catch {
+      continue;
+    }
+    for (const { platforms } of slots) {
+      const record = platforms[platform];
+      if (record?.owned && (platform === 'ios' ? record.deviceUdid : record.avdName) === id) return true;
+    }
   }
   return false;
 }
 
-export function isStimOwnedSim(
-  sim: { udid: string; name?: string | null },
-  created: CreatedDevices = readCreatedDevices(),
-): boolean {
-  const name = sim.name ?? '';
-  return name.startsWith('stim-') && (created.ios.has(sim.udid) || isOwnedSimName(name));
+function isStimOwnedDevice(platform: CreatedDevicePlatform, id: string): boolean {
+  return readCreatedDevices()[platform].has(id) || recordedAsOwned(platform, id);
 }
 
-export function isStimOwnedAvd(
-  name: string,
-  readConfig: () => string | null,
-  created: CreatedDevices = readCreatedDevices(),
-): boolean {
-  return isOwnedAvdName(name) && (created.android.has(name) || avdConfigWrittenByStim(readConfig()));
+export function isStimOwnedSim(sim: { udid: string; name?: string | null }): boolean {
+  return (sim.name ?? '').startsWith('stim-') && isStimOwnedDevice('ios', sim.udid);
+}
+
+export function isStimOwnedAvd(name: string): boolean {
+  return name.startsWith('stim-') && isStimOwnedDevice('android', name);
 }

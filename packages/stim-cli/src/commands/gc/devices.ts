@@ -1,4 +1,4 @@
-import { isStimOwnedSim } from '../../devices/device-ownership.ts';
+import { isStimOwnedAvd, isStimOwnedSim } from '../../devices/device-ownership.ts';
 import { deviceSlotPlatforms, projectDeviceSlots } from '../../devices/device-slots.ts';
 import { existsSync } from 'fs';
 import { isAbsolute } from 'path';
@@ -8,7 +8,7 @@ import { plural } from '../../command-output.ts';
 import { directorySize } from '../../fs-util.ts';
 import { leaseIsExpired, listLeaseFiles, type LeaseFileEntry } from '../../engine/device-lease.ts';
 import { listAllIosSims, listIosDeviceTypes, parseRuntimeVersion, type IosSimRecord } from '../../devices/ios.ts';
-import { isStimOwnedAvdName, listAvds, ownedAvdDirectory, type OrphanedAvdDirectory } from '../../devices/android.ts';
+import { listAvds, ownedAvdDirectory, type OrphanedAvdDirectory } from '../../devices/android.ts';
 import { dropParked, readParked, type ParkedSim } from '../../devices/sim-pool.ts';
 import {
   teardownOwnedIosSim,
@@ -92,14 +92,12 @@ export function findOrphanedDevices({
   config,
   isMounted,
   deadProjects = [],
-  isOwned = isStimCreated,
 }: {
   sims?: IosSimRecord[];
   avds?: string[];
   config: Config | null;
   isMounted?: (path: string) => boolean;
   deadProjects?: string[];
-  isOwned?: (device: UnverifiedDevice) => boolean;
 }): { orphaned: OrphanedDevice[]; kept: KeptDevice[]; unverified: UnverifiedDevice[] } {
   const dead = new Set(deadProjects);
   const referenced = new Map<string, { path: string; mounted: boolean }>();
@@ -133,7 +131,7 @@ export function findOrphanedDevices({
     if (!sim?.name?.startsWith('stim-')) continue;
     const ref = referenced.get(sim.udid);
     const device = { kind: 'ios' as const, id: sim.udid, name: sim.name };
-    if (!ref && !isOwned(device)) {
+    if (!ref && !isStimCreated(device)) {
       unverified.push(device);
     } else if (!ref) {
       orphaned.push(device);
@@ -146,7 +144,7 @@ export function findOrphanedDevices({
     if (!avdName?.startsWith('stim-')) continue;
     const ref = referenced.get(avdName);
     const device = { kind: 'android' as const, id: avdName, name: avdName };
-    if (!ref && !isOwned(device)) {
+    if (!ref && !isStimCreated(device)) {
       unverified.push(device);
     } else if (!ref) {
       orphaned.push(device);
@@ -165,7 +163,7 @@ export interface UnverifiedDevice {
 }
 
 function isStimCreated(device: UnverifiedDevice): boolean {
-  return device.kind === 'ios' ? isStimOwnedSim({ udid: device.id, name: device.name }) : isStimOwnedAvdName(device.id);
+  return device.kind === 'ios' ? isStimOwnedSim({ udid: device.id, name: device.name }) : isStimOwnedAvd(device.id);
 }
 
 export function unverifiedDeviceCommand(device: UnverifiedDevice): string {

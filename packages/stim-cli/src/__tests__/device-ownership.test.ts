@@ -1,18 +1,64 @@
-import { ownedSimName, parkedSimName } from '../devices/ios.ts';
-import { isOwnedSimName } from '../devices/device-ownership.ts';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { isStimOwnedAvd, isStimOwnedSim } from '../devices/device-ownership.ts';
+import { ownedSimName } from '../devices/ios.ts';
+import { saveConfig } from '../workspace/config.ts';
 
-test.each([
-  ownedSimName('wide-split-layout-tlon-mobile', { model: 'iPad mini (A17 Pro)', runtime: '27.0' }),
-  ownedSimName('app', { model: 'iPhone 17 Pro', runtime: '26.5.1' }, ' 1a2b3c-1'),
-  ownedSimName('a'.repeat(80), { model: 'iPad Pro 13-inch (M5)', runtime: '27.0' }),
-  parkedSimName('ABCD-1234', { model: 'iPhone Duo', runtime: '27.1' }),
-])('names Stim generates match the owned format: %s', (name) => {
-  expect(isOwnedSimName(name)).toBe(true);
+const homes: string[] = [];
+
+function useHome(): void {
+  const home = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  homes.push(home);
+  process.env.STIM_HOME = home;
+}
+
+afterEach(() => {
+  delete process.env.STIM_HOME;
+  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
 });
 
-test.each(['stim-desktop-duo-test', 'stim-app', 'stim- (iPhone 17 26.5)', 'My stim-app (iPhone 17 26.5)'])(
-  'other names do not: %s',
-  (name) => {
-    expect(isOwnedSimName(name)).toBe(false);
-  },
-);
+const foreignSim = {
+  udid: 'FOREIGN-UDID',
+  name: ownedSimName('1362-mobile', { model: 'iPhone 18 Pro', runtime: '27.0' }),
+};
+
+test('a device another Stim home created is not owned by this home, whatever its name', () => {
+  useHome();
+  recordCreatedDevice('ios', foreignSim.udid);
+  recordCreatedDevice('android', 'stim-1362-mobile');
+  expect(isStimOwnedSim(foreignSim)).toBe(true);
+  expect(isStimOwnedAvd('stim-1362-mobile')).toBe(true);
+
+  useHome();
+  expect(isStimOwnedSim(foreignSim)).toBe(false);
+  expect(isStimOwnedAvd('stim-1362-mobile')).toBe(false);
+});
+
+test('this home owns a pre-ledger device its project registry or pool records as owned', () => {
+  useHome();
+  saveConfig({
+    version: 2,
+    repos: {},
+    projects: {
+      '/p': { platforms: { ios: { deviceUdid: 'PROJECT-UDID', owned: true }, android: { avdName: 'stim-p' } } },
+    },
+    parked: {
+      ios: [],
+      android: [
+        {
+          udid: 'stim-parked',
+          name: 'stim-parked',
+          systemImage: 'system-images;android-36;google_apis;arm64-v8a',
+          configuration: '[]',
+          parkedAt: '2026-09-01T00:00:00.000Z',
+        },
+      ],
+    },
+  });
+  expect(isStimOwnedSim({ udid: 'PROJECT-UDID', name: 'stim-p (iPhone 17 26.5)' })).toBe(true);
+  expect(isStimOwnedAvd('stim-parked')).toBe(true);
+  expect(isStimOwnedAvd('stim-p')).toBe(false);
+  expect(isStimOwnedSim({ udid: 'PROJECT-UDID', name: 'iPhone 17' })).toBe(false);
+});

@@ -1,9 +1,11 @@
 import { closeOwnedDeviceSessions } from './agent-device-cleanup.ts';
 import { deviceSlotPlatforms, projectDeviceSlots } from './device-slots.ts';
+import { forgetCreatedDevice, recordCreatedDevice } from './created-devices.ts';
+import { isStimOwnedAvd } from './device-ownership.ts';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { lstatSync, renameSync, rmSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { loadConfig, withConfigLock } from '../workspace/config.ts';
 import {
   deleteParkedIosSim,
@@ -29,7 +31,6 @@ import {
   shutdownAndroidEmulator,
   waitForAndroidEmulatorShutdown,
   deleteAvd,
-  isStimOwnedAvdName,
   ownedAvdMatchesConfiguration,
   ownedAvdSystemImage,
   sleepSync,
@@ -290,8 +291,16 @@ function removeOrphanedAvdDirectory(candidate: OrphanedAvdDirectory, owner?: Avd
       throw new Error(`AVD data at ${candidate.directory} changed or is registered; it was kept.`);
     }
     assertAvdReferences(candidate.name, owner);
-    const destination = join(dirname(candidate.directory), `stim-gc-${randomUUID()}.avd`);
-    renameSync(candidate.directory, destination);
+    const name = `stim-gc-${randomUUID()}`;
+    recordCreatedDevice('android', name);
+    const destination = join(dirname(candidate.directory), `${name}.avd`);
+    try {
+      renameSync(candidate.directory, destination);
+    } catch (error) {
+      forgetCreatedDevice('android', name);
+      throw error;
+    }
+    forgetCreatedDevice('android', candidate.name);
     return destination;
   });
   const current = lstatSync(detached);
@@ -305,6 +314,7 @@ function removeOrphanedAvdDirectory(candidate: OrphanedAvdDirectory, owner?: Avd
       cause: error,
     });
   }
+  forgetCreatedDevice('android', basename(detached, '.avd'));
 }
 
 function teardownUnregisteredAvd(
@@ -347,7 +357,7 @@ interface AvdTeardownOptions {
 export function teardownOwnedAvd(avdName: string, options: AvdTeardownOptions = {}): TeardownOutcome {
   let claim: ClaimHandle | undefined;
   try {
-    if (!isStimOwnedAvdName(avdName, options.orphanedDirectory ? options.orphanedDirectory.directory : undefined)) {
+    if (!isStimOwnedAvd(avdName)) {
       return {
         status: 'skipped',
         kind: 'not-owned',

@@ -359,16 +359,6 @@ function avdConfigIni(avdName: string, directory: string | null = ownedAvdDirect
   }
 }
 
-function registeredOrOrphanedAvdDirectory(avdName: string): string | null {
-  return ownedAvdDirectory(avdName) ?? listOrphanedAvdDirectories(avdName)[0]?.directory ?? null;
-}
-
-export function isStimOwnedAvdName(avdName: string, directory?: string | null): boolean {
-  return isStimOwnedAvd(avdName, () =>
-    avdConfigIni(avdName, directory === undefined ? registeredOrOrphanedAvdDirectory(avdName) : directory),
-  );
-}
-
 export function ownedAvdName(label: string): string {
   const clean = sanitizeAvdLabel(label);
   return `stim-${clean.startsWith('stim-') ? clean.slice('stim-'.length) : clean}`;
@@ -377,7 +367,7 @@ export function ownedAvdName(label: string): string {
 const AVDMANAGER_DELETE_TIMEOUT_MS = 120_000;
 
 export function deleteAvd(avdName: string): void {
-  if (!isStimOwnedAvdName(avdName)) {
+  if (!isStimOwnedAvd(avdName)) {
     throw new Error(`Refusing to delete AVD "${avdName}": not a Stim-owned AVD; Stim has no record of creating it.`);
   }
   getExecutor().run(`${androidTool('avdmanager')} delete avd -n "${avdName}"`, {
@@ -1397,7 +1387,7 @@ export function ownedAvdSerialResolver({ timeoutMs }: { timeoutMs?: number } = {
   };
   return (avdName) => {
     if (!avds().includes(avdName)) return { missing: true };
-    if (!isStimOwnedAvdName(avdName)) return { notOwned: true };
+    if (!isStimOwnedAvd(avdName)) return { notOwned: true };
     const devices = adb();
     const candidates = [
       ...devices.emulators,
