@@ -62,6 +62,7 @@ struct StimDesktopApp: App {
   @StateObject private var actions: ActionCenter
   @StateObject private var autopilot: AutopilotRunner
   @StateObject private var onboarding: Onboarding
+  @StateObject private var gc: GcReportStore
   @AppStorage(AppPreferences.Key.showsMenuBarExtra) private var showsMenuBarExtra = false
   private let cli: Task<StimCLI, Never>
 
@@ -84,7 +85,9 @@ struct StimDesktopApp: App {
     _notifier = StateObject(wrappedValue: Notifier(store: store))
     let actions = ActionCenter(cli: cli)
     _actions = StateObject(wrappedValue: actions)
-    let autopilot = AutopilotRunner(status: store, actions: actions, cli: cli)
+    let gc = GcReportStore(cli: cli)
+    _gc = StateObject(wrappedValue: gc)
+    let autopilot = AutopilotRunner(status: store, actions: actions, gc: gc, cli: cli)
     _autopilot = StateObject(wrappedValue: autopilot)
     let onboarding = Onboarding(environment: environment, cli: cli, actions: actions)
     _onboarding = StateObject(wrappedValue: onboarding)
@@ -97,7 +100,7 @@ struct StimDesktopApp: App {
 
   var body: some Scene {
     WindowGroup("Stim", id: "main") {
-      RootView(cli: cli, store: store, actions: actions, autopilot: autopilot, onboarding: onboarding)
+      RootView(cli: cli, store: store, actions: actions, autopilot: autopilot, onboarding: onboarding, gc: gc)
         .frame(minWidth: 700, minHeight: 720)
         .onAppear { notifier.start() }
     }

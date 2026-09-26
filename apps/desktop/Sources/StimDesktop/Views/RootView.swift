@@ -39,14 +39,14 @@ struct RootView: View {
 
   init(
     cli: Task<StimCLI, Never>, store: StatusStore, actions: ActionCenter, autopilot: AutopilotRunner,
-    onboarding: Onboarding
+    onboarding: Onboarding, gc: GcReportStore
   ) {
     self.cli = cli
     self.onboarding = onboarding
     self.store = store
     self.actions = actions
     self.autopilot = autopilot
-    _metrics = StateObject(wrappedValue: MetricsStore(status: store, cli: cli))
+    _metrics = StateObject(wrappedValue: MetricsStore(status: store, gc: gc))
     _storage = StateObject(wrappedValue: StorageStore(status: store, cli: cli))
     _planChecks = StateObject(
       wrappedValue: BuildPlanChecks { platform, workspace in
@@ -94,9 +94,9 @@ struct RootView: View {
       ActivitySheet(run: run).environmentObject(actions)
     }
     .onAppear {
-      actions.onFinish = { [store, metrics] in
-        store.refresh()
-        metrics.refreshGc()
+      actions.onFinish = { [store, metrics] run in
+        if !store.watching { store.refresh() }
+        if run.steps.contains(where: GcReport.changed(by:)) { metrics.gc.changed() }
       }
       store.start()
       metrics.start()

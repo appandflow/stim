@@ -257,6 +257,18 @@ public struct MachineMemory: Equatable, Sendable {
 
 /// The parts of the `stim gc --json` dry run that size what Stim can reclaim.
 public struct GcReport: Decodable, Sendable {
+  /// Whether a finished `command` can change what `stim gc --json` reports: a cleanup, a run, start or stop,
+  /// a worktree, port, device lease or setting change. A reload or a read-only command cannot.
+  public static func changed(by command: StimCommand) -> Bool {
+    guard command.program == "stim", let verb = command.arguments.first else { return false }
+    switch verb {
+    case "gc": return command.arguments.contains("--delete") || command.arguments.contains("--idle")
+    case "stop", "start", "ios", "android", "web", "worktree", "ports", "device": return true
+    case "settings": return ["set", "unset"].contains(command.arguments.dropFirst().first)
+    default: return false
+    }
+  }
+
   public struct Sized: Decodable, Hashable, Sendable {
     public var dir: String?
     public var bytes: Int64?

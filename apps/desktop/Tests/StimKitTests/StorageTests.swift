@@ -417,3 +417,27 @@ import Testing
     #expect(payload.entry("budget.hardFloorDiskGb")?.number == 5)
   }
 }
+
+@Suite struct GcReportChangeTests {
+  func changes(_ arguments: [String], program: String = "stim") -> Bool {
+    GcReport.changed(by: StimCommand(arguments, cwd: "/r", program: program))
+  }
+
+  @Test func actionsThatChangeTheReportRefreshIt() {
+    #expect(changes(["stop"]))
+    #expect(changes(["ios"]))
+    #expect(changes(["start"]))
+    #expect(changes(["worktree", "remove"]))
+    #expect(changes(["gc", "--delete", "--json"]))
+    #expect(changes(["gc", "--idle", "30m", "--json"]))
+    #expect(changes(["settings", "set", "gc.worktreeGraceMinutes", "0", "--scope", "machine"]))
+  }
+
+  @Test func reloadsReadsAndDryRunsDoNot() {
+    #expect(!changes(["reload"]))
+    #expect(!changes(["gc", "--json"]))
+    #expect(!changes(["settings", "get", "gc.worktreeGraceMinutes"]))
+    #expect(!changes(["logs", "--errors"]))
+    #expect(!changes(["stop"], program: "adb"))
+  }
+}
