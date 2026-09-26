@@ -224,7 +224,7 @@ export function attachExpoErrorContext(all: NdjsonRecord[], matched: NdjsonRecor
     const context: string[] = [];
     for (let i = index + 1; i < all.length; i += 1) {
       const next = all[i] as NdjsonRecord;
-      if (next.src !== 'metro') continue;
+      if (next.src !== 'metro' || next.raw !== true || next.event !== record.event) continue;
       if (!isExpoErrorContext(next, record.event)) break;
       context.push(next.msg as string);
     }

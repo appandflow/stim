@@ -384,6 +384,37 @@ describe('logs command', () => {
     expect(parseNdjsonLine(out[0])).toEqual(error);
   });
 
+  test('--errors keeps an Expo stack whole when a bundle response record lands between its lines', async () => {
+    const event = 'expo_stdout';
+    const line = (ts: number, msg: string) => ({ ts, src: 'metro', level: 'info', raw: true, event, msg });
+    writeLog('metro.ndjson', [
+      { ts: 1, src: 'metro', level: 'error', raw: true, event, marker: true, msg: 'iOS Bundling failed 2604ms' },
+      {
+        ts: 1,
+        src: 'metro',
+        level: 'error',
+        raw: true,
+        event,
+        msg: ' ERROR  SyntaxError: /app/App.js: Unexpected token (5:19)',
+      },
+      line(1, '  3 |'),
+      { ts: 1, src: 'metro', level: 'error', event: 'bundle_response_failed', msg: 'ios bundle response failed' },
+      line(2, '> 5 |   const broken = {;'),
+      line(2, '    |                   ^'),
+      line(2, '    at FlowParserMixin.raise (/app/node_modules/@babel/parser/lib/index.js:1:2)'),
+      line(2, '    at /app/node_modules/@babel/parser/lib/index.js:3:4'),
+      line(3, 'iOS Bundled 50ms'),
+    ]);
+
+    await run({ errors: true });
+    const syntaxError = out.find((entry) => entry.includes('SyntaxError')) ?? '';
+    expect(syntaxError).toContain('> 5 |   const broken = {;');
+    expect(syntaxError).toContain('at FlowParserMixin.raise');
+    expect(syntaxError).toContain('at /app/node_modules/@babel/parser/lib/index.js:3:4');
+    expect(out.join('\n')).not.toContain('iOS Bundled');
+    expect(out.some((entry) => entry.includes('ios bundle response failed'))).toBe(true);
+  });
+
   test('--errors groups split Android frames into one complete stack before limiting error records', async () => {
     const base = { ts: 1000, src: 'device', level: 'error', platform: 'android', proc: 'ReactNativeJS(42)' };
     const records = [
