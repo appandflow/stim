@@ -1,7 +1,12 @@
 import { existsSync, readFileSync, readdirSync, type Dirent } from 'fs';
 import { join } from 'path';
 import { readProjectConfig } from '../engine/remote-cache.ts';
-import { readAppConfigText } from './project.ts';
+import { readAppConfigText, readAppJson } from './project.ts';
+
+interface AppIds {
+  bundleId: string | null;
+  androidPackage: string | null;
+}
 
 function configString(config: unknown, platform: 'ios' | 'android', key: string): string | null {
   if (!config || typeof config !== 'object') return null;
@@ -13,19 +18,40 @@ function configString(config: unknown, platform: 'ios' | 'android', key: string)
   return typeof value === 'string' && value ? value : null;
 }
 
-function detectFromConfig(projectRoot: string, platform: 'ios' | 'android', key: string): string | null {
-  const read = readProjectConfig(projectRoot);
-  if (!read.unavailable) return configString(read.config, platform, key);
-  const text = readAppConfigText(projectRoot);
+function literalString(text: string | null, key: string): string | null {
   return text?.match(new RegExp(`${key}\\s*:\\s*["']([^"']+)["']`))?.[1] ?? null;
 }
 
+function idsFromConfig(projectRoot: string): AppIds {
+  const read = readProjectConfig(projectRoot);
+  if (!read.unavailable) {
+    return {
+      bundleId: configString(read.config, 'ios', 'bundleIdentifier'),
+      androidPackage: configString(read.config, 'android', 'package'),
+    };
+  }
+  const appJson = readAppJson(projectRoot);
+  const text = readAppConfigText(projectRoot);
+  return {
+    bundleId: configString(appJson, 'ios', 'bundleIdentifier') ?? literalString(text, 'bundleIdentifier'),
+    androidPackage: configString(appJson, 'android', 'package') ?? literalString(text, 'package'),
+  };
+}
+
+export function detectAppIds(projectRoot: string): AppIds {
+  const ids = idsFromConfig(projectRoot);
+  return {
+    bundleId: ids.bundleId ?? detectBundleIdFromPbxproj(projectRoot),
+    androidPackage: ids.androidPackage ?? detectAndroidPackageFromGradle(projectRoot),
+  };
+}
+
 export function detectBundleId(projectRoot: string): string | null {
-  return detectFromConfig(projectRoot, 'ios', 'bundleIdentifier') ?? detectBundleIdFromPbxproj(projectRoot);
+  return detectAppIds(projectRoot).bundleId;
 }
 
 export function detectAndroidPackage(projectRoot: string): string | null {
-  return detectFromConfig(projectRoot, 'android', 'package') ?? detectAndroidPackageFromGradle(projectRoot);
+  return detectAppIds(projectRoot).androidPackage;
 }
 
 function detectBundleIdFromPbxproj(projectRoot: string): string | null {

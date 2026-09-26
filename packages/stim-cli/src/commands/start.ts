@@ -16,7 +16,7 @@ import { levelRank } from '../ndjson.ts';
 import { ensureWorkspaceStorage, supervisorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
 import { reserveMetroPort } from '../ports.ts';
 import { appProjectProblem, detectIsExpo, findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
-import { detectAndroidPackage, detectBundleId } from '../workspace/app-id.ts';
+import { detectAppIds } from '../workspace/app-id.ts';
 import { clearManagedMetroTunnel, readMetroTunnel } from '../supervisor/state.ts';
 import {
   clearWorkspaceStateKeys,
@@ -481,9 +481,10 @@ export async function startDevServer(
 
     const managedRemote = remote && !tunnel && !publicUrl && tunnelMode !== 'off';
     const runStart = async (): Promise<StartFacts> => {
+      const appIds = detectAppIds(root);
       upsertProject(root, {
-        bundleId: detectBundleId(root) ?? undefined,
-        androidPackage: detectAndroidPackage(root) ?? undefined,
+        bundleId: appIds.bundleId ?? undefined,
+        androidPackage: appIds.androidPackage ?? undefined,
         isExpo,
       });
 

@@ -229,7 +229,7 @@ function podfileUsesExpoModules(projectRoot: string): boolean {
   }
 }
 
-function readAppJson(projectRoot: string): AnyJson | null {
+export function readAppJson(projectRoot: string): AnyJson | null {
   const p = join(projectRoot, 'app.json');
   if (!existsSync(p)) return null;
   try {

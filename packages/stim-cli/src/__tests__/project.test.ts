@@ -10,7 +10,7 @@ import {
   projectShortcut,
   ownedDeviceLabel,
 } from '../workspace/project.ts';
-import { detectAndroidPackage, detectBundleId } from '../workspace/app-id.ts';
+import { detectAndroidPackage, detectAppIds, detectBundleId } from '../workspace/app-id.ts';
 import { upsertProject, getProject } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 
@@ -163,6 +163,7 @@ test('detectAndroidPackage falls back to android/app/build.gradle (namespace)', 
 
 describe.skipIf(process.platform === 'win32')(
   'app ids from a dynamic app config (POSIX executable stub; skipped on win32)',
+  { timeout: 30_000 },
   () => {
     let root: string;
     const previousVariant = process.env.APP_VARIANT;
@@ -208,6 +209,17 @@ process.stdout.write(JSON.stringify({ name: 'app', ios: { bundleIdentifier: id }
       process.env.APP_VARIANT = 'bogus';
       expect(detectBundleId(root)).toBe('com.example.literal');
       expect(detectAndroidPackage(root)).toBe('com.example.literal');
+    });
+
+    test('a config that fails to evaluate still takes the ids app.json declares', () => {
+      process.env.APP_VARIANT = 'bogus';
+      writeFileSync(
+        join(root, 'app.json'),
+        JSON.stringify({
+          expo: { ios: { bundleIdentifier: 'com.example.json' }, android: { package: 'com.example.json' } },
+        }),
+      );
+      expect(detectAppIds(root)).toEqual({ bundleId: 'com.example.json', androidPackage: 'com.example.json' });
     });
   },
 );

@@ -12,7 +12,7 @@ import { formatDuration, phaseLine, refuseNoProject, SLOW_STEP_MS, stepClock, st
 import type { CcacheActivity, DevServerStart } from '../engine/build-facts.ts';
 import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
 import { appProjectProblem, findProjectRoot, projectShortcut } from '../workspace/project.ts';
-import { detectAndroidPackage, detectBundleId } from '../workspace/app-id.ts';
+import { detectAppIds } from '../workspace/app-id.ts';
 import {
   REMOTE_DEVICE_BACKENDS,
   resolveCacheProviderConfig,
@@ -820,11 +820,12 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     buildCache: requestedBuildCache,
   });
   if (isEasBuildFailure(easBuild)) return fail(easBuild.code, easBuild.message, easBuild.remedy);
-  let androidPackage = detectAndroidPackage(root);
+  const appIds = detectAppIds(root);
+  let androidPackage = appIds.androidPackage;
   record.bundleId = androidPackage;
   const registerProject = () =>
     upsertProject(root, {
-      bundleId: detectBundleId(root) ?? undefined,
+      bundleId: appIds.bundleId ?? undefined,
       androidPackage: androidPackage ?? undefined,
       isExpo,
     });
